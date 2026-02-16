@@ -494,11 +494,12 @@ async function isRetriableError(
       const llmProviderPatterns = [
         "Anthropic API error", // anthropic_client.py:759
         "OpenAI API error", // openai_client.py:1034
+        "ChatGPT API error: upstream connect error", // chatgpt_oauth_client.py - upstream connect errors
         "Google Vertex API error", // google_vertex_client.py:848
         "overloaded", // anthropic_client.py:753 - used for LLMProviderOverloaded
         "api_error", // Anthropic SDK error type field
         "Network error", // Transient network failures during streaming
-        "Connection error during Anthropic streaming", // Peer disconnections, incomplete chunked reads
+        "Connection error during", // Peer disconnections, incomplete chunked reads (Anthropic, ChatGPT streaming)
       ];
       if (
         llmProviderPatterns.some((pattern) => detail.includes(pattern)) &&
