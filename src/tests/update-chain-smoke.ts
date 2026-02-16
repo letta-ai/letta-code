@@ -62,7 +62,6 @@ async function runCommand(
     env?: NodeJS.ProcessEnv;
     timeoutMs?: number;
     expectExit?: number;
-    stdin?: string;
   } = {},
 ): Promise<{ stdout: string; stderr: string; exitCode: number | null }> {
   const {
@@ -70,7 +69,6 @@ async function runCommand(
     env = process.env,
     timeoutMs = 180000,
     expectExit = 0,
-    stdin,
   } = options;
 
   return new Promise((resolve, reject) => {
@@ -79,11 +77,6 @@ async function runCommand(
       env,
       shell: false,
     });
-
-    if (typeof stdin === "string") {
-      proc.stdin?.write(stdin);
-      proc.stdin?.end();
-    }
 
     let stdout = "";
     let stderr = "";
@@ -215,23 +208,40 @@ async function buildAndPackVersion(
   return targetTarball;
 }
 
-async function authenticateToRegistry(env: NodeJS.ProcessEnv): Promise<void> {
-  await runCommand(
-    "bash",
-    [
-      "-lc",
-      'printf \'%s\n%s\n%s\n\' "$NPM_USER" "$NPM_PASS" "$NPM_EMAIL" | npm adduser --registry "$NPM_REGISTRY_URL" --auth-type legacy',
-    ],
+async function authenticateToRegistry(
+  npmUserConfigPath: string,
+): Promise<void> {
+  const response = await fetch(
+    `${REGISTRY_URL}/-/user/org.couchdb.user:${encodeURIComponent(REGISTRY_USER)}`,
     {
-      env: {
-        ...env,
-        NPM_USER: REGISTRY_USER,
-        NPM_PASS: REGISTRY_PASS,
-        NPM_EMAIL: REGISTRY_EMAIL,
-        NPM_REGISTRY_URL: REGISTRY_URL,
-      },
-      timeoutMs: 60000,
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        name: REGISTRY_USER,
+        password: REGISTRY_PASS,
+        email: REGISTRY_EMAIL,
+      }),
+      signal: AbortSignal.timeout(10000),
     },
+  );
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(
+      `Failed to authenticate with Verdaccio (${response.status}): ${text}`,
+    );
+  }
+
+  const data = (await response.json()) as { token?: string };
+  if (typeof data.token !== "string" || data.token.length === 0) {
+    throw new Error("Verdaccio auth response missing token");
+  }
+
+  const registryHost = new URL(REGISTRY_URL).host;
+  writeFileSync(
+    npmUserConfigPath,
+    `registry=${REGISTRY_URL}\n//${registryHost}/:_authToken=${data.token}\nalways-auth=true\n`,
+    "utf8",
   );
 }
 
@@ -379,7 +389,7 @@ async function main() {
     await waitForVerdaccio();
 
     await prepareWorkspace(baseEnv, workspaceDir);
-    await authenticateToRegistry(baseEnv);
+    await authenticateToRegistry(npmUserConfig);
 
     const oldTarball = await buildAndPackVersion(
       workspaceDir,
