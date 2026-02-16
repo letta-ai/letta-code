@@ -346,7 +346,7 @@ test("plan mode - allows read-only Bash commands", () => {
   // cd && git should be allowed (common CLI pattern)
   const cdGitResult = checkPermission(
     "Bash",
-    { command: "cd /some/path && git status" },
+    { command: "cd src && git status" },
     permissions,
     "/Users/test/project",
   );
@@ -355,7 +355,7 @@ test("plan mode - allows read-only Bash commands", () => {
   // cd && git show should be allowed
   const cdGitShowResult = checkPermission(
     "Bash",
-    { command: "cd /some/path && git show abc123" },
+    { command: "cd src && git show abc123" },
     permissions,
     "/Users/test/project",
   );
@@ -373,7 +373,7 @@ test("plan mode - allows read-only Bash commands", () => {
   // cd && dangerous command should still be denied
   const cdDangerousResult = checkPermission(
     "Bash",
-    { command: "cd /some/path && npm install" },
+    { command: "cd src && npm install" },
     permissions,
     "/Users/test/project",
   );
