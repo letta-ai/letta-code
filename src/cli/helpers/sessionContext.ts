@@ -195,7 +195,16 @@ export function buildSessionContext(options: SessionContextOptions): string {
       }
     }
 
-    const memoryDir = getMemoryFilesystemRoot(agentInfo.id);
+    const showMemoryDir = (() => {
+      try {
+        return settingsManager.isMemfsEnabled(agentInfo.id);
+      } catch {
+        return false;
+      }
+    })();
+    const memoryDirLine = showMemoryDir
+      ? `\n- **MEMORY_DIR env var**: \`${getMemoryFilesystemRoot(agentInfo.id)}\``
+      : "";
 
     // Build the context
     let context = `${SYSTEM_REMINDER_OPEN}
@@ -242,8 +251,7 @@ ${gitInfo.status}
     context += `
 ## Agent Information (i.e. information about you)
 - **Agent ID**: ${agentInfo.id}
-- **AGENT_ID env var**: \`${agentInfo.id}\`
-- **MEMORY_DIR env var**: \`${memoryDir}\`
+- **AGENT_ID env var**: \`${agentInfo.id}\`${memoryDirLine}
 - **Agent name**: ${agentInfo.name || "(unnamed)"} (the user can change this with /rename)
 - **Agent description**: ${agentInfo.description || "(no description)"} (the user can change this with /description)
 - **Last message**: ${lastRunInfo}

@@ -184,15 +184,17 @@ export function getShellEnv(): NodeJS.ProcessEnv {
   // Add Letta context for skill scripts
   try {
     const agentId = getCurrentAgentId();
-    const memoryDir = getMemoryFilesystemRoot(agentId);
     env.LETTA_AGENT_ID = agentId;
     env.AGENT_ID = agentId;
-    env.LETTA_MEMORY_DIR = memoryDir;
-    env.MEMORY_DIR = memoryDir;
+
+    if (settingsManager.isMemfsEnabled(agentId)) {
+      const memoryDir = getMemoryFilesystemRoot(agentId);
+      env.LETTA_MEMORY_DIR = memoryDir;
+      env.MEMORY_DIR = memoryDir;
+    }
   } catch {
     // Context not set yet (e.g., during startup), skip
   }
-
   // Inject API key and base URL from settings if not already in env
   if (!env.LETTA_API_KEY || !env.LETTA_BASE_URL) {
     try {

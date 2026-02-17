@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import * as path from "node:path";
 import { setCurrentAgentId } from "../../agent/context";
 import { getMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
+import { settingsManager } from "../../settings-manager";
 import {
   ensureLettaShimDir,
   getShellEnv,
@@ -140,15 +141,57 @@ describe("shellEnv letta shim", () => {
   });
 });
 
-test("getShellEnv injects AGENT_ID and MEMORY_DIR aliases", () => {
+test("getShellEnv injects AGENT_ID aliases", () => {
   const agentId = `agent-test-${Date.now()}`;
   setCurrentAgentId(agentId);
 
   const env = getShellEnv();
-  const expectedMemoryDir = getMemoryFilesystemRoot(agentId);
 
   expect(env.LETTA_AGENT_ID).toBe(agentId);
   expect(env.AGENT_ID).toBe(agentId);
-  expect(env.LETTA_MEMORY_DIR).toBe(expectedMemoryDir);
-  expect(env.MEMORY_DIR).toBe(expectedMemoryDir);
+});
+
+test("getShellEnv does not inject MEMORY_DIR aliases when memfs is disabled", () => {
+  const agentId = `agent-test-${Date.now()}`;
+  setCurrentAgentId(agentId);
+
+  const original = settingsManager.isMemfsEnabled.bind(settingsManager);
+  (
+    settingsManager as unknown as { isMemfsEnabled: (id: string) => boolean }
+  ).isMemfsEnabled = () => false;
+
+  try {
+    const env = getShellEnv();
+    expect(env.LETTA_MEMORY_DIR).toBeUndefined();
+    expect(env.MEMORY_DIR).toBeUndefined();
+  } finally {
+    (
+      settingsManager as unknown as {
+        isMemfsEnabled: (id: string) => boolean;
+      }
+    ).isMemfsEnabled = original;
+  }
+});
+
+test("getShellEnv injects MEMORY_DIR aliases when memfs is enabled", () => {
+  const agentId = `agent-test-${Date.now()}`;
+  setCurrentAgentId(agentId);
+
+  const original = settingsManager.isMemfsEnabled.bind(settingsManager);
+  (
+    settingsManager as unknown as { isMemfsEnabled: (id: string) => boolean }
+  ).isMemfsEnabled = () => true;
+
+  try {
+    const env = getShellEnv();
+    const expectedMemoryDir = getMemoryFilesystemRoot(agentId);
+    expect(env.LETTA_MEMORY_DIR).toBe(expectedMemoryDir);
+    expect(env.MEMORY_DIR).toBe(expectedMemoryDir);
+  } finally {
+    (
+      settingsManager as unknown as {
+        isMemfsEnabled: (id: string) => boolean;
+      }
+    ).isMemfsEnabled = original;
+  }
 });
