@@ -93,7 +93,7 @@ import {
 import { debugLog, debugWarn } from "../utils/debug";
 import {
   handleMcpAdd,
-  handleMcpUsage,
+
   type McpCommandContext,
   setActiveCommandId as setActiveMcpCommandId,
 } from "./commands/mcp";
@@ -5922,15 +5922,33 @@ export default function App({
             return { submitted: true };
           }
 
+          // /mcp help - show usage
+          if (firstWord === "help") {
+            const cmd = commandRunner.start(msg, "Showing MCP help...");
+            const output = [
+              "/mcp help",
+              "",
+              "Manage MCP servers.",
+              "",
+              "USAGE",
+              "  /mcp              — open MCP server manager",
+              "  /mcp add ...      — add a new server (without OAuth)",
+              "  /mcp connect      — interactive wizard with OAuth support",
+              "  /mcp help         — show this help",
+              "",
+              "EXAMPLES",
+              "  /mcp add --transport http notion https://mcp.notion.com/mcp",
+            ].join("\n");
+            cmd.finish(output, true);
+            return { submitted: true };
+          }
+
           // Unknown subcommand
           {
             const cmd = commandRunner.start(msg, "Checking MCP usage...");
-            setActiveMcpCommandId(cmd.id);
-            try {
-              handleMcpUsage(mcpCtx, msg);
-            } finally {
-              setActiveMcpCommandId(null);
-            }
+            cmd.fail(
+              `Unknown subcommand: "${firstWord}". Run /mcp help for usage.`,
+            );
           }
           return { submitted: true };
         }
@@ -6648,17 +6666,36 @@ export default function App({
         // Supports: /compact, /compact all, /compact sliding_window
         if (msg.trim().startsWith("/compact")) {
           const parts = msg.trim().split(/\s+/);
-          const modeArg = parts[1] as "all" | "sliding_window" | undefined;
+          const rawModeArg = parts[1];
           const validModes = ["all", "sliding_window"];
+
+          if (rawModeArg === "help") {
+            const cmd = commandRunner.start(msg.trim(), "Showing compact help...");
+            const output = [
+              "/compact help",
+              "",
+              "Summarize conversation history (compaction).",
+              "",
+              "USAGE",
+              "  /compact                   — compact with default mode",
+              "  /compact all               — compact all messages",
+              "  /compact sliding_window    — compact with sliding window",
+              "  /compact help              — show this help",
+            ].join("\n");
+            cmd.finish(output, true);
+            return { submitted: true };
+          }
+
+          const modeArg = rawModeArg as "all" | "sliding_window" | undefined;
 
           // Validate mode if provided
           if (modeArg && !validModes.includes(modeArg)) {
             const cmd = commandRunner.start(
               msg.trim(),
-              `Invalid mode "${modeArg}". Valid modes: ${validModes.join(", ")}`,
+              `Invalid mode "${modeArg}".`,
             );
             cmd.fail(
-              `Invalid mode "${modeArg}". Valid modes: ${validModes.join(", ")}`,
+              `Invalid mode "${modeArg}". Run /compact help for usage.`,
             );
             return { submitted: true };
           }
@@ -6771,6 +6808,21 @@ export default function App({
           const subcommand = parts[1]?.toLowerCase();
           const cmd = commandRunner.start(msg.trim(), "Processing rename...");
 
+          if (subcommand === "help") {
+            const output = [
+              "/rename help",
+              "",
+              "Rename the current agent or conversation.",
+              "",
+              "USAGE",
+              "  /rename agent <name>      — rename the agent",
+              "  /rename convo <summary>   — rename the conversation",
+              "  /rename help              — show this help",
+            ].join("\n");
+            cmd.finish(output, true);
+            return { submitted: true };
+          }
+
           if (
             !subcommand ||
             (subcommand !== "agent" && subcommand !== "convo")
@@ -6851,8 +6903,22 @@ export default function App({
             "Updating description...",
           );
 
+          if (newDescription === "help") {
+            const output = [
+              "/description help",
+              "",
+              "Update the current agent's description.",
+              "",
+              "USAGE",
+              "  /description <text>   — set agent description",
+              "  /description help     — show this help",
+            ].join("\n");
+            cmd.finish(output, true);
+            return { submitted: true };
+          }
+
           if (!newDescription) {
-            cmd.fail("Please provide a description: /description <text>");
+            cmd.fail("Usage: /description <text>");
             return { submitted: true };
           }
 
@@ -6897,6 +6963,22 @@ export default function App({
         if (msg.trim().startsWith("/resume")) {
           const parts = msg.trim().split(/\s+/);
           const targetConvId = parts[1]; // Optional conversation ID
+
+          if (targetConvId === "help") {
+            const cmd = commandRunner.start(msg.trim(), "Showing resume help...");
+            const output = [
+              "/resume help",
+              "",
+              "Resume a previous conversation.",
+              "",
+              "USAGE",
+              "  /resume                       — open conversation selector",
+              "  /resume <conversation_id>     — switch directly to a conversation",
+              "  /resume help                  — show this help",
+            ].join("\n");
+            cmd.finish(output, true);
+            return { submitted: true };
+          }
 
           if (targetConvId) {
             const cmd = commandRunner.start(
@@ -7186,6 +7268,22 @@ export default function App({
         if (msg.trim() === "/pin" || msg.trim().startsWith("/pin ")) {
           const argsStr = msg.trim().slice(4).trim();
 
+          if (argsStr === "help") {
+            const cmd = commandRunner.start(msg.trim(), "Showing pin help...");
+            const output = [
+              "/pin help",
+              "",
+              "Pin the current agent.",
+              "",
+              "USAGE",
+              "  /pin        — pin globally (interactive)",
+              "  /pin -l     — pin locally to this directory",
+              "  /pin help   — show this help",
+            ].join("\n");
+            cmd.finish(output, true);
+            return { submitted: true };
+          }
+
           // Parse args to check if name was provided
           const parts = argsStr.split(/\s+/).filter(Boolean);
           let hasNameArg = false;
@@ -7235,6 +7333,24 @@ export default function App({
 
         // Special handling for /unpin command - unpin current agent from project (or globally with -g)
         if (msg.trim() === "/unpin" || msg.trim().startsWith("/unpin ")) {
+          const unpinArgsStr = msg.trim().slice(6).trim();
+
+          if (unpinArgsStr === "help") {
+            const cmd = commandRunner.start(msg.trim(), "Showing unpin help...");
+            const output = [
+              "/unpin help",
+              "",
+              "Unpin the current agent.",
+              "",
+              "USAGE",
+              "  /unpin       — unpin globally",
+              "  /unpin -l    — unpin locally",
+              "  /unpin help  — show this help",
+            ].join("\n");
+            cmd.finish(output, true);
+            return { submitted: true };
+          }
+
           const profileCtx: ProfileCommandContext = {
             buffersRef,
             refreshDerived,
@@ -7385,12 +7501,17 @@ export default function App({
 
           if (!subcommand || subcommand === "help") {
             const output = [
-              "memfs commands:",
-              "- /memfs status  — show status",
-              "- /memfs enable  — enable filesystem-backed memory",
-              "- /memfs disable — disable filesystem-backed memory",
-              "- /memfs sync    — sync blocks and files now",
-              "- /memfs reset   — move local memfs to /tmp and recreate dirs",
+              "/memfs help",
+              "",
+              "Manage filesystem-backed memory.",
+              "",
+              "USAGE",
+              "  /memfs status    — show status",
+              "  /memfs enable    — enable filesystem-backed memory",
+              "  /memfs disable   — disable filesystem-backed memory",
+              "  /memfs sync      — sync blocks and files now",
+              "  /memfs reset     — move local memfs to /tmp and recreate dirs",
+              "  /memfs help      — show this help",
             ].join("\n");
             cmd.finish(output, true);
             return { submitted: true };
@@ -7599,7 +7720,7 @@ export default function App({
 
           // Unknown subcommand
           cmd.fail(
-            `Unknown subcommand: ${subcommand}. Use /memfs, /memfs enable, /memfs disable, /memfs sync, or /memfs reset.`,
+            `Unknown subcommand: "${subcommand}". Run /memfs help for usage.`,
           );
           return { submitted: true };
         }
