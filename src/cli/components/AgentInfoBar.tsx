@@ -79,27 +79,29 @@ export const AgentInfoBar = memo(function AgentInfoBar({
         )}
       </Box>
 
-      {/* Alien + Links */}
+      {/* Alien + ADE link / server URL */}
       <Box>
         <Text color={colors.footer.agentName}>{alienLines[1]}</Text>
         {isCloudUser && adeUrl && !isTmux && (
-          <>
-            <Link url={adeUrl}>
-              <Text>Open in ADE ↗</Text>
-            </Link>
-            <Text dimColor>· </Text>
-          </>
+          <Link url={adeUrl}>
+            <Text>Open in ADE ↗</Text>
+          </Link>
         )}
         {isCloudUser && adeUrl && isTmux && (
-          <Text dimColor>Open in ADE: {adeUrl} · </Text>
-        )}
-        {isCloudUser && (
-          <Link url="https://app.letta.com/settings/organization/usage">
-            <Text>View usage ↗</Text>
-          </Link>
+          <Text dimColor>Open in ADE: {adeUrl}</Text>
         )}
         {!isCloudUser && <Text dimColor>{serverUrl}</Text>}
       </Box>
+
+      {/* Usage link on its own line to avoid terminal URL auto-link merging */}
+      {isCloudUser && (
+        <Box>
+          <Text>{"          "}</Text>
+          <Link url="https://app.letta.com/settings/organization/usage">
+            <Text>View usage ↗</Text>
+          </Link>
+        </Box>
+      )}
 
       {/* Alien + Agent ID */}
       <Box>
