@@ -8161,37 +8161,49 @@ ${SYSTEM_REMINDER_CLOSE}
       pushReminder(sessionContextReminder);
 
       // Inject available skills as system-reminder (LET-7353)
-      // Lazy-discover on first message, reinject after compaction
+      // Discover each turn so on-disk skill changes can trigger reinjection.
       {
-        if (!discoveredSkillsRef.current) {
-          try {
-            const { discoverSkills: discover, SKILLS_DIR: defaultDir } =
-              await import("../agent/skills");
-            const { getSkillsDirectory, getNoSkills } = await import(
-              "../agent/context"
-            );
-            const skillsDir =
-              getSkillsDirectory() || join(process.cwd(), defaultDir);
-            const { skills } = await discover(skillsDir, agentId, {
-              skipBundled: getNoSkills(),
-            });
-            discoveredSkillsRef.current = skills;
-          } catch {
-            discoveredSkillsRef.current = [];
-          }
+        const {
+          discoverSkills: discover,
+          SKILLS_DIR: defaultDir,
+          formatSkillsAsSystemReminder,
+        } = await import("../agent/skills");
+        const { getSkillsDirectory, getNoSkills } = await import(
+          "../agent/context"
+        );
+
+        const previousSkillsReminder = discoveredSkillsRef.current
+          ? formatSkillsAsSystemReminder(discoveredSkillsRef.current)
+          : null;
+
+        let latestSkills = discoveredSkillsRef.current ?? [];
+        try {
+          const skillsDir =
+            getSkillsDirectory() || join(process.cwd(), defaultDir);
+          const { skills } = await discover(skillsDir, agentId, {
+            skipBundled: getNoSkills(),
+          });
+          latestSkills = skills;
+        } catch {
+          // Keep the previous snapshot when discovery fails.
+        }
+
+        discoveredSkillsRef.current = latestSkills;
+        const latestSkillsReminder = formatSkillsAsSystemReminder(
+          discoveredSkillsRef.current,
+        );
+        if (
+          previousSkillsReminder !== null &&
+          previousSkillsReminder !== latestSkillsReminder
+        ) {
+          contextTrackerRef.current.pendingSkillsReinject = true;
         }
 
         const needsSkillsReinject =
           contextTrackerRef.current.pendingSkillsReinject;
         if (!hasInjectedSkillsRef.current || needsSkillsReinject) {
-          const { formatSkillsAsSystemReminder } = await import(
-            "../agent/skills"
-          );
-          const skillsReminder = formatSkillsAsSystemReminder(
-            discoveredSkillsRef.current,
-          );
-          if (skillsReminder) {
-            pushReminder(skillsReminder);
+          if (latestSkillsReminder) {
+            pushReminder(latestSkillsReminder);
           }
           hasInjectedSkillsRef.current = true;
           contextTrackerRef.current.pendingSkillsReinject = false;

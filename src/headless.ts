@@ -78,6 +78,41 @@ const LLM_API_ERROR_MAX_RETRIES = 3;
 const CONVERSATION_BUSY_MAX_RETRIES = 1; // Only retry once, fail on 2nd 409
 const CONVERSATION_BUSY_RETRY_DELAY_MS = 2500; // 2.5 seconds
 
+export function prependSkillsReminderToContent(
+  content: MessageCreate["content"],
+  skillsReminder: string,
+): MessageCreate["content"] {
+  if (!skillsReminder) {
+    return content;
+  }
+
+  if (typeof content === "string") {
+    return `${skillsReminder}\n\n${content}`;
+  }
+
+  if (Array.isArray(content)) {
+    return [
+      {
+        type: "text",
+        text: `${skillsReminder}\n\n`,
+      },
+      ...content,
+    ] as MessageCreate["content"];
+  }
+
+  return content;
+}
+
+export function shouldReinjectSkillsAfterCompaction(lines: Line[]): boolean {
+  return lines.some(
+    (line) =>
+      line.kind === "event" &&
+      line.eventType === "compaction" &&
+      line.phase === "finished" &&
+      (line.summary !== undefined || line.stats !== undefined),
+  );
+}
+
 export async function handleHeadlessCommand(
   argv: string[],
   model?: string,
@@ -2013,6 +2048,12 @@ async function runBidirectionalMode(
 
   // Track current operation for interrupt support
   let currentAbortController: AbortController | null = null;
+  // Skills reminder lifecycle in bidirectional mode:
+  // - Inject once on first user turn
+  // - Reinject only after compaction completion or skills diff
+  let hasInjectedSkillsReminder = false;
+  let pendingSkillsReinject = false;
+  let cachedSkillsReminder: string | null = null;
 
   // Resolve pending approvals for this conversation before retrying user input.
   const resolveAllPendingApprovals = async () => {
@@ -2278,7 +2319,7 @@ async function runBidirectionalMode(
 
     let message: {
       type: string;
-      message?: { role: string; content: string };
+      message?: { role: string; content: MessageCreate["content"] };
       request_id?: string;
       request?: { subtype: string };
       session_id?: string;
@@ -2417,7 +2458,7 @@ async function runBidirectionalMode(
     }
 
     // Handle user messages
-    if (message.type === "user" && message.message?.content) {
+    if (message.type === "user" && message.message?.content !== undefined) {
       const userContent = message.message.content;
 
       // Create abort controller for this operation
@@ -2431,27 +2472,45 @@ async function runBidirectionalMode(
         let sawStreamError = false; // Track if we emitted an error during streaming
         let preStreamTransientRetries = 0;
 
-        // Inject available skills as system-reminder for bidirectional mode (LET-7353)
+        // Inject available skills as system-reminder for bidirectional mode (LET-7353).
+        // Discover each turn so skill file changes are naturally picked up.
         let enrichedContent = userContent;
-        if (typeof enrichedContent === "string") {
-          try {
-            const {
-              discoverSkills: discover,
-              SKILLS_DIR: defaultDir,
-              formatSkillsAsSystemReminder,
-            } = await import("./agent/skills");
-            const { getSkillsDirectory } = await import("./agent/context");
-            const { join } = await import("node:path");
-            const skillsDir =
-              getSkillsDirectory() || join(process.cwd(), defaultDir);
-            const { skills } = await discover(skillsDir, agent.id);
-            const skillsReminder = formatSkillsAsSystemReminder(skills);
-            if (skillsReminder) {
-              enrichedContent = `${skillsReminder}\n\n${enrichedContent}`;
-            }
-          } catch {
-            // Skills discovery failed, skip
+        try {
+          const {
+            discoverSkills: discover,
+            SKILLS_DIR: defaultDir,
+            formatSkillsAsSystemReminder,
+          } = await import("./agent/skills");
+          const { getSkillsDirectory } = await import("./agent/context");
+          const { join } = await import("node:path");
+          const skillsDir =
+            getSkillsDirectory() || join(process.cwd(), defaultDir);
+          const { skills } = await discover(skillsDir, agent.id);
+          const latestSkillsReminder = formatSkillsAsSystemReminder(skills);
+
+          // Trigger reinjection when the available-skills block changed on disk.
+          if (
+            cachedSkillsReminder !== null &&
+            latestSkillsReminder !== cachedSkillsReminder
+          ) {
+            pendingSkillsReinject = true;
           }
+          cachedSkillsReminder = latestSkillsReminder;
+
+          const shouldInjectSkillsReminder =
+            !hasInjectedSkillsReminder || pendingSkillsReinject;
+          if (shouldInjectSkillsReminder && latestSkillsReminder) {
+            enrichedContent = prependSkillsReminderToContent(
+              enrichedContent,
+              latestSkillsReminder,
+            );
+          }
+          if (shouldInjectSkillsReminder) {
+            hasInjectedSkillsReminder = true;
+            pendingSkillsReinject = false;
+          }
+        } catch {
+          // Skills discovery failed, skip
         }
 
         // Initial input is the user message
@@ -2792,6 +2851,9 @@ async function runBidirectionalMode(
         // Emit result
         const durationMs = performance.now() - startTime;
         const lines = toLines(buffers);
+        if (shouldReinjectSkillsAfterCompaction(lines)) {
+          pendingSkillsReinject = true;
+        }
         const reversed = [...lines].reverse();
         const lastAssistant = reversed.find(
           (line) =>
