@@ -35,6 +35,7 @@ export interface StatusLineConfig {
   debounceMs?: number; // Debounce for event-driven refreshes (default 300)
   refreshIntervalMs?: number; // Optional polling interval ms (opt-in)
   disabled?: boolean; // Disable at this level
+  prompt?: string; // Custom input prompt character (default ">")
 }
 
 /**
@@ -59,6 +60,7 @@ export interface Settings {
   reflectionTrigger: "off" | "step-count" | "compaction-event";
   reflectionBehavior: "reminder" | "auto-launch";
   reflectionStepCount: number;
+  conversationSwitchAlertEnabled: boolean; // Send system-reminder when switching conversations/agents
   globalSharedBlockIds: Record<string, string>; // DEPRECATED: kept for backwards compat
   profiles?: Record<string, string>; // DEPRECATED: old format, kept for migration
   pinnedAgents?: string[]; // DEPRECATED: kept for backwards compat, use pinnedAgentsByServer
@@ -116,6 +118,7 @@ const DEFAULT_SETTINGS: Settings = {
   tokenStreaming: false,
   showCompactions: false,
   enableSleeptime: false,
+  conversationSwitchAlertEnabled: false,
   sessionContextEnabled: true,
   memoryReminderInterval: 25, // DEPRECATED: use reflection* fields
   reflectionTrigger: "step-count",

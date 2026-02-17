@@ -451,6 +451,18 @@ function extractTextPart(v: unknown): string {
   return "";
 }
 
+function resolveLineIdForKind(
+  b: Buffers,
+  canonicalId: string,
+  kind: "assistant" | "reasoning",
+): string {
+  const existing = b.byId.get(canonicalId);
+  if (!existing || existing.kind === kind) return canonicalId;
+
+  // Avoid cross-kind collisions when providers reuse the same id/otid.
+  return `${kind}:${canonicalId}`;
+}
+
 function resolveAssistantLineId(
   b: Buffers,
   chunk: LettaStreamingResponse & { id?: string; otid?: string },
@@ -468,6 +480,28 @@ function resolveAssistantLineId(
   let canonical =
     canonicalFromMessageId || canonicalFromOtid || messageId || otid;
   if (!canonical) return undefined;
+
+  // When a new otid arrives whose messageId maps to an already-finished line,
+  // start a fresh canonical so the new content block gets its own line.
+  // This handles Anthropic responses like [text, thinking, text] where both
+  // text blocks share the same message id but need separate rendering lifecycles
+  // (the first gets committed to static before the second starts streaming).
+  if (otid && !canonicalFromOtid && canonicalFromMessageId) {
+    const existingLineId = resolveLineIdForKind(
+      b,
+      canonicalFromMessageId,
+      "assistant",
+    );
+    const existingLine = b.byId.get(existingLineId);
+    if (
+      existingLine &&
+      existingLine.kind === "assistant" &&
+      "phase" in existingLine &&
+      existingLine.phase === "finished"
+    ) {
+      canonical = otid;
+    }
+  }
 
   // If both aliases exist but disagree, prefer the one that already has a line.
   if (
@@ -499,7 +533,13 @@ function resolveAssistantLineId(
     b.assistantCanonicalByOtid.set(otid, canonical);
   }
 
-  return canonical;
+  const lineId = resolveLineIdForKind(b, canonical, "assistant");
+  if (lineId !== canonical) {
+    if (messageId) b.assistantCanonicalByMessageId.set(messageId, lineId);
+    if (otid) b.assistantCanonicalByOtid.set(otid, lineId);
+  }
+
+  return lineId;
 }
 
 function resolveReasoningLineId(
@@ -519,6 +559,25 @@ function resolveReasoningLineId(
   let canonical =
     canonicalFromMessageId || canonicalFromOtid || messageId || otid;
   if (!canonical) return undefined;
+
+  // Same fix as resolveAssistantLineId: when a new otid maps to a
+  // finished reasoning line via messageId, start a fresh canonical.
+  if (otid && !canonicalFromOtid && canonicalFromMessageId) {
+    const existingLineId = resolveLineIdForKind(
+      b,
+      canonicalFromMessageId,
+      "reasoning",
+    );
+    const existingLine = b.byId.get(existingLineId);
+    if (
+      existingLine &&
+      existingLine.kind === "reasoning" &&
+      "phase" in existingLine &&
+      existingLine.phase === "finished"
+    ) {
+      canonical = otid;
+    }
+  }
 
   if (
     canonicalFromMessageId &&
@@ -549,7 +608,13 @@ function resolveReasoningLineId(
     b.reasoningCanonicalByOtid.set(otid, canonical);
   }
 
-  return canonical;
+  const lineId = resolveLineIdForKind(b, canonical, "reasoning");
+  if (lineId !== canonical) {
+    if (messageId) b.reasoningCanonicalByMessageId.set(messageId, lineId);
+    if (otid) b.reasoningCanonicalByOtid.set(otid, lineId);
+  }
+
+  return lineId;
 }
 
 /**

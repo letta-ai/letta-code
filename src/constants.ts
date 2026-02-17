@@ -23,6 +23,10 @@ export const INTERRUPTED_BY_USER = "Interrupted by user";
 export const SYSTEM_REMINDER_TAG = "system-reminder";
 export const SYSTEM_REMINDER_OPEN = `<${SYSTEM_REMINDER_TAG}>`;
 export const SYSTEM_REMINDER_CLOSE = `</${SYSTEM_REMINDER_TAG}>`;
+// Legacy tag kept for parsing/backward compatibility with older saved messages.
+export const SYSTEM_ALERT_TAG = "system-alert";
+export const SYSTEM_ALERT_OPEN = `<${SYSTEM_ALERT_TAG}>`;
+export const SYSTEM_ALERT_CLOSE = `</${SYSTEM_ALERT_TAG}>`;
 
 /**
  * How often (in turns) to check for memfs sync conflicts, even without

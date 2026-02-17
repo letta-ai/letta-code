@@ -237,6 +237,10 @@ describe("isReadOnlyShellCommand", () => {
       expect(isReadOnlyShellCommand("  ")).toBe(false);
     });
 
+    test("allows relative cd chaining with read-only git", () => {
+      expect(isReadOnlyShellCommand("cd src && git status")).toBe(true);
+    });
+
     test("blocks unknown commands", () => {
       expect(isReadOnlyShellCommand("rm file")).toBe(false);
       expect(isReadOnlyShellCommand("mv a b")).toBe(false);

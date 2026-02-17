@@ -3,8 +3,13 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import {
+  buildInstallCommand,
+  buildLatestVersionUrl,
   checkForUpdate,
   detectPackageManager,
+  resolveUpdateInstallRegistryUrl,
+  resolveUpdatePackageName,
+  resolveUpdateRegistryBaseUrl,
 } from "../../updater/auto-update";
 
 describe("auto-update ENOTEMPTY handling", () => {
@@ -218,15 +223,117 @@ describe("detectPackageManager", () => {
   });
 });
 
+describe("update config resolution", () => {
+  test("resolveUpdatePackageName uses default when unset", () => {
+    expect(resolveUpdatePackageName({} as NodeJS.ProcessEnv)).toBe(
+      "@letta-ai/letta-code",
+    );
+  });
+
+  test("resolveUpdatePackageName uses valid override", () => {
+    expect(
+      resolveUpdatePackageName({
+        LETTA_UPDATE_PACKAGE_NAME: "@scope/pkg",
+      } as NodeJS.ProcessEnv),
+    ).toBe("@scope/pkg");
+  });
+
+  test("resolveUpdatePackageName ignores invalid override", () => {
+    expect(
+      resolveUpdatePackageName({
+        LETTA_UPDATE_PACKAGE_NAME: "bad pkg",
+      } as NodeJS.ProcessEnv),
+    ).toBe("@letta-ai/letta-code");
+  });
+
+  test("resolveUpdatePackageName ignores command-substitution-like override", () => {
+    expect(
+      resolveUpdatePackageName({
+        LETTA_UPDATE_PACKAGE_NAME: "@scope/pkg$(id)",
+      } as NodeJS.ProcessEnv),
+    ).toBe("@letta-ai/letta-code");
+  });
+
+  test("resolveUpdateRegistryBaseUrl uses default when unset", () => {
+    expect(resolveUpdateRegistryBaseUrl({} as NodeJS.ProcessEnv)).toBe(
+      "https://registry.npmjs.org",
+    );
+  });
+
+  test("resolveUpdateRegistryBaseUrl uses valid override", () => {
+    expect(
+      resolveUpdateRegistryBaseUrl({
+        LETTA_UPDATE_REGISTRY_BASE_URL: "http://localhost:4873",
+      } as NodeJS.ProcessEnv),
+    ).toBe("http://localhost:4873");
+  });
+
+  test("resolveUpdateRegistryBaseUrl ignores invalid override", () => {
+    expect(
+      resolveUpdateRegistryBaseUrl({
+        LETTA_UPDATE_REGISTRY_BASE_URL: "javascript:alert(1)",
+      } as NodeJS.ProcessEnv),
+    ).toBe("https://registry.npmjs.org");
+  });
+
+  test("resolveUpdateInstallRegistryUrl returns null when unset", () => {
+    expect(resolveUpdateInstallRegistryUrl({} as NodeJS.ProcessEnv)).toBeNull();
+  });
+
+  test("resolveUpdateInstallRegistryUrl returns valid override", () => {
+    expect(
+      resolveUpdateInstallRegistryUrl({
+        LETTA_UPDATE_INSTALL_REGISTRY_URL: "http://localhost:4873",
+      } as NodeJS.ProcessEnv),
+    ).toBe("http://localhost:4873");
+  });
+
+  test("resolveUpdateInstallRegistryUrl rejects command-substitution-like override", () => {
+    expect(
+      resolveUpdateInstallRegistryUrl({
+        LETTA_UPDATE_INSTALL_REGISTRY_URL: "http://localhost:4873/$(id)",
+      } as NodeJS.ProcessEnv),
+    ).toBeNull();
+  });
+
+  test("buildLatestVersionUrl constructs expected endpoint", () => {
+    expect(
+      buildLatestVersionUrl("@letta-ai/letta-code", "http://localhost:4873/"),
+    ).toBe("http://localhost:4873/@letta-ai/letta-code/latest");
+  });
+
+  test("buildInstallCommand adds registry when configured", () => {
+    expect(
+      buildInstallCommand("npm", {
+        LETTA_UPDATE_INSTALL_REGISTRY_URL: "http://localhost:4873",
+      } as NodeJS.ProcessEnv),
+    ).toContain("--registry http://localhost:4873");
+  });
+
+  test("buildInstallCommand uses default package and no registry by default", () => {
+    expect(buildInstallCommand("pnpm", {} as NodeJS.ProcessEnv)).toBe(
+      "pnpm add -g @letta-ai/letta-code@latest",
+    );
+  });
+});
+
 describe("checkForUpdate with fetch", () => {
   let originalFetch: typeof globalThis.fetch;
+  let originalRegistry: string | undefined;
 
   beforeEach(() => {
     originalFetch = globalThis.fetch;
+    originalRegistry = process.env.LETTA_UPDATE_REGISTRY_BASE_URL;
+    delete process.env.LETTA_UPDATE_REGISTRY_BASE_URL;
   });
 
   afterEach(() => {
     globalThis.fetch = originalFetch;
+    if (originalRegistry === undefined) {
+      delete process.env.LETTA_UPDATE_REGISTRY_BASE_URL;
+    } else {
+      process.env.LETTA_UPDATE_REGISTRY_BASE_URL = originalRegistry;
+    }
   });
 
   test("returns updateAvailable when registry version differs", async () => {
@@ -272,5 +379,23 @@ describe("checkForUpdate with fetch", () => {
     const result = await checkForUpdate();
     expect(result.updateAvailable).toBe(false);
     expect(result.checkFailed).toBe(true);
+  });
+
+  test("uses registry override URL", async () => {
+    process.env.LETTA_UPDATE_REGISTRY_BASE_URL = "http://localhost:4873";
+    const capturedUrls: string[] = [];
+    globalThis.fetch = mock((url: string | URL | Request) => {
+      capturedUrls.push(String(url));
+      return Promise.resolve(
+        new Response(JSON.stringify({ version: "99.0.0" }), { status: 200 }),
+      );
+    }) as unknown as typeof fetch;
+
+    await checkForUpdate();
+
+    expect(capturedUrls.length).toBe(1);
+    expect(capturedUrls[0]).toBe(
+      "http://localhost:4873/@letta-ai/letta-code/latest",
+    );
   });
 });

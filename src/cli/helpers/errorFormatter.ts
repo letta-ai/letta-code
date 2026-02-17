@@ -433,6 +433,41 @@ export function formatErrorDetails(
   return String(e);
 }
 
+const DEFAULT_RETRY_MESSAGE =
+  "Unexpected downstream LLM API error, retrying...";
+
+/**
+ * Return a user-facing status message for a retriable LLM API error.
+ * Matches known provider error patterns from the run's error detail and
+ * returns a specific message; falls back to a generic one otherwise.
+ */
+export function getRetryStatusMessage(
+  errorDetail: string | null | undefined,
+): string {
+  if (!errorDetail) return DEFAULT_RETRY_MESSAGE;
+
+  if (errorDetail.includes("Anthropic API is overloaded"))
+    return "Anthropic API is overloaded, retrying...";
+  if (
+    errorDetail.includes("ChatGPT API error") ||
+    errorDetail.includes("ChatGPT server error") ||
+    errorDetail.includes("upstream connect error")
+  ) {
+    return "OpenAI ChatGPT backend connection failed, retrying...";
+  }
+  if (
+    errorDetail.includes("Connection error during streaming") ||
+    errorDetail.includes("incomplete chunked read") ||
+    errorDetail.includes("connection termination")
+  ) {
+    return "OpenAI ChatGPT streaming connection dropped, retrying...";
+  }
+  if (errorDetail.includes("OpenAI API error"))
+    return "OpenAI API error, retrying...";
+
+  return DEFAULT_RETRY_MESSAGE;
+}
+
 /**
  * Create a terminal hyperlink to the agent with run ID displayed
  */

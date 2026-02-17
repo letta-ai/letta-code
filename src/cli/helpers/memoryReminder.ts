@@ -25,7 +25,7 @@ export interface ReflectionSettings {
 }
 
 const DEFAULT_REFLECTION_SETTINGS: ReflectionSettings = {
-  trigger: "step-count",
+  trigger: "compaction-event",
   behavior: "reminder",
   stepCount: DEFAULT_STEP_COUNT,
 };

@@ -38,9 +38,28 @@ export function getMemoryRepoDir(agentId: string): string {
   return join(getAgentRootDir(agentId), "memory");
 }
 
+/**
+ * Normalize a configured server URL for use in git credential config keys.
+ *
+ * Git credential config lookup is sensitive to URL key shape. We normalize to
+ * origin form (scheme + host + optional port) and remove trailing slashes so
+ * pull/push flows remain resilient when LETTA_BASE_URL has path/trailing-slash
+ * variations.
+ */
+export function normalizeCredentialBaseUrl(serverUrl: string): string {
+  const trimmed = serverUrl.trim().replace(/\/+$/, "");
+  try {
+    const parsed = new URL(trimmed);
+    return parsed.origin;
+  } catch {
+    // Fall back to a conservative slash-trimmed value if URL parsing fails.
+    return trimmed;
+  }
+}
+
 /** Git remote URL for the agent's state repo */
 function getGitRemoteUrl(agentId: string): string {
-  const baseUrl = getServerUrl();
+  const baseUrl = getServerUrl().trim().replace(/\/+$/, "");
   return `${baseUrl}/v1/git/${agentId}/state.git`;
 }
 
@@ -95,10 +114,26 @@ async function configureLocalCredentialHelper(
   dir: string,
   token: string,
 ): Promise<void> {
-  const baseUrl = getServerUrl();
+  const rawBaseUrl = getServerUrl();
+  const normalizedBaseUrl = normalizeCredentialBaseUrl(rawBaseUrl);
   const helper = `!f() { echo "username=letta"; echo "password=${token}"; }; f`;
-  await runGit(dir, ["config", `credential.${baseUrl}.helper`, helper]);
-  debugLog("memfs-git", "Configured local credential helper");
+
+  // Primary config: normalized origin key (most robust for git's credential lookup)
+  await runGit(dir, [
+    "config",
+    `credential.${normalizedBaseUrl}.helper`,
+    helper,
+  ]);
+
+  // Backcompat: also set raw configured URL key if it differs (older repos/configs)
+  if (rawBaseUrl !== normalizedBaseUrl) {
+    await runGit(dir, ["config", `credential.${rawBaseUrl}.helper`, helper]);
+  }
+
+  debugLog(
+    "memfs-git",
+    `Configured local credential helper for ${normalizedBaseUrl}${rawBaseUrl !== normalizedBaseUrl ? ` (and raw ${rawBaseUrl})` : ""}`,
+  );
 }
 
 /**
@@ -332,7 +367,7 @@ export async function pullMemory(
   installPreCommitHook(dir);
 
   try {
-    const { stdout, stderr } = await runGit(dir, ["pull", "--ff-only"]);
+    const { stdout, stderr } = await runGit(dir, ["pull", "--ff-only"], token);
     const output = stdout + stderr;
     const updated = !output.includes("Already up to date");
     return {
@@ -343,13 +378,16 @@ export async function pullMemory(
     // If ff-only fails (diverged), try rebase
     debugWarn("memfs-git", "Fast-forward pull failed, trying rebase");
     try {
-      const { stdout, stderr } = await runGit(dir, ["pull", "--rebase"]);
+      const { stdout, stderr } = await runGit(dir, ["pull", "--rebase"], token);
       return { updated: true, summary: (stdout + stderr).trim() };
     } catch (rebaseErr) {
       const msg =
         rebaseErr instanceof Error ? rebaseErr.message : String(rebaseErr);
       debugWarn("memfs-git", `Pull failed: ${msg}`);
-      return { updated: false, summary: `Pull failed: ${msg}` };
+      return {
+        updated: false,
+        summary: `Pull failed: ${msg}\nHint: verify remote and auth:\n- git -C ${dir} remote -v\n- git -C ${dir} config --get-regexp '^credential\\..*\\.helper$'`,
+      };
     }
   }
 }

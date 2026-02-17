@@ -37,20 +37,17 @@ describe("Replace tool (Gemini)", () => {
     expect(readFileSync(filePath, "utf-8")).toBe("qux bar qux baz");
   });
 
-  test("creates new file when old_string is empty", async () => {
+  test("throws error when old_string is empty", async () => {
     testDir = new TestDirectory();
     const filePath = testDir.resolve("new.txt");
 
-    // Gemini's replace with empty old_string creates a new file
-    // But our Edit tool requires the file to exist, so this should throw
-    // Skip this test or use write_file_gemini instead
     await expect(
       replace({
         file_path: filePath,
         old_string: "",
         new_string: "New content",
       }),
-    ).rejects.toThrow(/does not exist/);
+    ).rejects.toThrow("old_string cannot be empty");
   });
 
   test("throws error when file not found with non-empty old_string", async () => {

@@ -3,9 +3,13 @@
  * This allows tools to access the current agent ID without threading it through params.
  */
 
+import { ALL_SKILL_SOURCES } from "./skillSources";
+import type { SkillSource } from "./skills";
+
 interface AgentContext {
   agentId: string | null;
   skillsDirectory: string | null;
+  skillSources: SkillSource[];
   conversationId: string | null;
 }
 
@@ -23,6 +27,7 @@ function getContext(): AgentContext {
     global[CONTEXT_KEY] = {
       agentId: null,
       skillsDirectory: null,
+      skillSources: [...ALL_SKILL_SOURCES],
       conversationId: null,
     };
   }
@@ -35,13 +40,17 @@ const context = getContext();
  * Set the current agent context
  * @param agentId - The agent ID
  * @param skillsDirectory - Optional skills directory path
+ * @param skillSources - Enabled skill sources for this session
  */
 export function setAgentContext(
   agentId: string,
   skillsDirectory?: string,
+  skillSources?: SkillSource[],
 ): void {
   context.agentId = agentId;
   context.skillsDirectory = skillsDirectory || null;
+  context.skillSources =
+    skillSources !== undefined ? [...skillSources] : [...ALL_SKILL_SOURCES];
 }
 
 /**
@@ -68,6 +77,20 @@ export function getCurrentAgentId(): string {
  */
 export function getSkillsDirectory(): string | null {
   return context.skillsDirectory;
+}
+
+/**
+ * Get enabled skill sources for discovery/injection.
+ */
+export function getSkillSources(): SkillSource[] {
+  return [...context.skillSources];
+}
+
+/**
+ * Backwards-compat helper: returns true when bundled skills are disabled.
+ */
+export function getNoSkills(): boolean {
+  return !context.skillSources.includes("bundled");
 }
 
 /**

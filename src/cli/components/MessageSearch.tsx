@@ -18,7 +18,11 @@ interface MessageSearchProps {
   /** Current conversation ID for "current conv" filter */
   conversationId?: string;
   /** Callback when user wants to open a conversation */
-  onOpenConversation?: (agentId: string, conversationId?: string) => void;
+  onOpenConversation?: (
+    agentId: string,
+    conversationId?: string,
+    searchContext?: { query: string; message: string },
+  ) => void;
 }
 
 const VISIBLE_ITEMS = 5;
@@ -347,7 +351,11 @@ export function MessageSearch({
           conversation_id?: string;
         };
         if (msgData.agent_id) {
-          onOpenConversation(msgData.agent_id, msgData.conversation_id);
+          const fullText = getMessageText(expandedMessage);
+          onOpenConversation(msgData.agent_id, msgData.conversation_id, {
+            query: activeQuery,
+            message: fullText,
+          });
         }
       }
       return;

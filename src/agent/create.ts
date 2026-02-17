@@ -10,6 +10,7 @@ import { DEFAULT_AGENT_NAME } from "../constants";
 import { getModelContextWindow } from "./available-models";
 import { getClient } from "./client";
 import { getDefaultMemoryBlocks } from "./memory";
+import { type MemoryPromptMode, reconcileMemoryPrompt } from "./memoryPrompt";
 import {
   formatAvailableModels,
   getDefaultModel,
@@ -60,6 +61,8 @@ export interface CreateAgentOptions {
   systemPromptCustom?: string;
   /** Additional text to append to the resolved system prompt */
   systemPromptAppend?: string;
+  /** Which managed memory prompt mode to apply */
+  memoryPromptMode?: MemoryPromptMode;
   /** Block labels to initialize (from default blocks) */
   initBlocks?: string[];
   /** Base tools to include */
@@ -70,6 +73,8 @@ export interface CreateAgentOptions {
   >;
   /** Override values for preset blocks (label → value) */
   blockValues?: Record<string, string>;
+  /** Tags to organize and categorize the agent */
+  tags?: string[];
 }
 
 export async function createAgent(
@@ -252,9 +257,14 @@ export async function createAgent(
     blockProvenance.push({ label: blockId, source: "shared" });
   }
 
-  // Get the model's context window from its configuration (if known)
-  // First try models.json, then fall back to API-cached context window for BYOK models
-  const modelUpdateArgs = getModelUpdateArgs(modelHandle);
+  // Get the model's context window from its configuration (if known).
+  // If the caller specified a model *ID* (e.g. gpt-5.3-codex-plus-pro-high),
+  // use that identifier to preserve tier-specific updateArgs like reasoning_effort.
+  // Otherwise, fall back to the resolved handle.
+  const modelIdentifierForDefaults = options.model ?? modelHandle;
+  const modelUpdateArgs = options.model
+    ? getModelUpdateArgs(modelIdentifierForDefaults)
+    : undefined;
   const contextWindow =
     (modelUpdateArgs?.context_window as number | undefined) ??
     (await getModelContextWindow(modelHandle));
@@ -262,13 +272,19 @@ export async function createAgent(
   // Resolve system prompt content:
   // 1. If systemPromptCustom is provided, use it as-is
   // 2. Otherwise, resolve systemPromptPreset to content
-  // 3. If systemPromptAppend is provided, append it to the result
+  // 3. Reconcile to the selected managed memory mode
+  // 4. If systemPromptAppend is provided, append it to the result
   let systemPromptContent: string;
   if (options.systemPromptCustom) {
     systemPromptContent = options.systemPromptCustom;
   } else {
     systemPromptContent = await resolveSystemPrompt(options.systemPromptPreset);
   }
+
+  systemPromptContent = reconcileMemoryPrompt(
+    systemPromptContent,
+    options.memoryPromptMode ?? "standard",
+  );
 
   // Append additional instructions if provided
   if (options.systemPromptAppend) {
@@ -282,6 +298,9 @@ export async function createAgent(
   const tags = ["origin:letta-code"];
   if (isSubagent) {
     tags.push("role:subagent");
+  }
+  if (options.tags && Array.isArray(options.tags)) {
+    tags.push(...options.tags);
   }
 
   const agentDescription =
@@ -313,11 +332,17 @@ export async function createAgent(
 
   // Note: Preflight check above falls back to 'memory' when 'memory_apply_patch' is unavailable.
 
-  // Apply updateArgs if provided (e.g., context_window, reasoning_effort, verbosity, etc.)
-  // We intentionally pass context_window through so updateAgentLLMConfig can set
+  // Apply updateArgs if provided (e.g., context_window, reasoning_effort, verbosity, etc.).
+  // Also apply tier defaults from models.json when the caller explicitly selected a model.
+  //
+  // Note: we intentionally pass context_window through so updateAgentLLMConfig can set
   // context_window_limit using the latest server API, avoiding any fallback.
-  if (options.updateArgs && Object.keys(options.updateArgs).length > 0) {
-    await updateAgentLLMConfig(agent.id, modelHandle, options.updateArgs);
+  const mergedUpdateArgs = {
+    ...(modelUpdateArgs ?? {}),
+    ...(options.updateArgs ?? {}),
+  };
+  if (Object.keys(mergedUpdateArgs).length > 0) {
+    await updateAgentLLMConfig(agent.id, modelHandle, mergedUpdateArgs);
   }
 
   // Always retrieve the agent to ensure we get the full state with populated memory blocks

@@ -29,10 +29,15 @@ import {
   getDisplayableToolReturn,
 } from "../agent/approval-execution";
 import {
+  extractConflictDetail,
   fetchRunErrorDetail,
+  getPreStreamErrorAction,
   isApprovalPendingError,
-  isConversationBusyError,
   isInvalidToolCallIdsError,
+  parseRetryAfterHeaderMs,
+  rebuildInputWithFreshDenials,
+  shouldAttemptApprovalRecovery,
+  shouldRetryRunMetadataError,
 } from "../agent/approval-recovery";
 import { prefetchAvailableModelHandles } from "../agent/available-models";
 import { getResumeData } from "../agent/check-approval";
@@ -53,6 +58,8 @@ import { SessionStats } from "../agent/stats";
 import {
   INTERRUPTED_BY_USER,
   MEMFS_CONFLICT_CHECK_INTERVAL,
+  SYSTEM_ALERT_CLOSE,
+  SYSTEM_ALERT_OPEN,
   SYSTEM_REMINDER_CLOSE,
   SYSTEM_REMINDER_OPEN,
 } from "../constants";
@@ -130,6 +137,7 @@ import { PinDialog, validateAgentName } from "./components/PinDialog";
 import { ProviderSelector } from "./components/ProviderSelector";
 import { ReasoningMessage } from "./components/ReasoningMessageRich";
 import { formatDuration, formatUsageStats } from "./components/SessionStats";
+import { SkillsDialog } from "./components/SkillsDialog";
 import { SleeptimeSelector } from "./components/SleeptimeSelector";
 // InlinePlanApproval kept for easy rollback if needed
 // import { InlinePlanApproval } from "./components/InlinePlanApproval";
@@ -173,6 +181,7 @@ import {
 import { setErrorContext } from "./helpers/errorContext";
 import {
   formatErrorDetails,
+  getRetryStatusMessage,
   isEncryptedContentError,
 } from "./helpers/errorFormatter";
 import { formatCompact } from "./helpers/format";
@@ -203,7 +212,10 @@ import {
 } from "./helpers/queuedMessageParts";
 import { safeJsonParseOr } from "./helpers/safeJsonParse";
 import { getDeviceType, getLocalTime } from "./helpers/sessionContext";
-import { resolveStatusLineConfig } from "./helpers/statusLineConfig";
+import {
+  resolvePromptChar,
+  resolveStatusLineConfig,
+} from "./helpers/statusLineConfig";
 import { formatStatusLineHelp } from "./helpers/statusLineHelp";
 import { buildStatusLinePayload } from "./helpers/statusLinePayload";
 import { executeStatusLineCommand } from "./helpers/statusLineRuntime";
@@ -472,28 +484,7 @@ async function isRetriableError(
       const errorType = metaError?.error_type ?? metaError?.error?.error_type;
       const detail = metaError?.detail ?? metaError?.error?.detail ?? "";
 
-      // Don't retry 4xx client errors (validation, auth, malformed requests)
-      // These are not transient and won't succeed on retry
-      const is4xxError = /Error code: 4\d{2}/.test(detail);
-
-      if (errorType === "llm_error" && !is4xxError) return true;
-
-      // Fallback: detect LLM provider errors from detail even if misclassified
-      // This handles edge cases where streaming errors weren't properly converted to LLMError
-      // Patterns are derived from handle_llm_error() message formats in the backend
-      const llmProviderPatterns = [
-        "Anthropic API error", // anthropic_client.py:759
-        "OpenAI API error", // openai_client.py:1034
-        "Google Vertex API error", // google_vertex_client.py:848
-        "overloaded", // anthropic_client.py:753 - used for LLMProviderOverloaded
-        "api_error", // Anthropic SDK error type field
-        "Network error", // Transient network failures during streaming
-        "Connection error during Anthropic streaming", // Peer disconnections, incomplete chunked reads
-      ];
-      if (
-        llmProviderPatterns.some((pattern) => detail.includes(pattern)) &&
-        !is4xxError
-      ) {
+      if (shouldRetryRunMetadataError(errorType, detail)) {
         return true;
       }
 
@@ -716,6 +707,10 @@ function stripSystemReminders(text: string): string {
       ),
       "",
     )
+    .replace(
+      new RegExp(`${SYSTEM_ALERT_OPEN}[\\s\\S]*?${SYSTEM_ALERT_CLOSE}`, "g"),
+      "",
+    )
     .trim();
 }
 
@@ -811,6 +806,7 @@ export default function App({
   showCompactions = false,
   agentProvenance = null,
   releaseNotes = null,
+  sessionContextReminderEnabled = true,
 }: {
   agentId: string;
   agentState?: AgentState | null;
@@ -830,6 +826,7 @@ export default function App({
   showCompactions?: boolean;
   agentProvenance?: AgentProvenance | null;
   releaseNotes?: string | null; // Markdown release notes to display above header
+  sessionContextReminderEnabled?: boolean;
 }) {
   // Warm the model-access cache in the background so /model is fast on first open.
   useEffect(() => {
@@ -864,6 +861,11 @@ export default function App({
   }, [conversationId]);
 
   const resumeKey = useSuspend();
+
+  // Pending conversation switch context — consumed on first message after a switch
+  const pendingConversationSwitchRef = useRef<
+    import("./helpers/conversationSwitchAlert").ConversationSwitchContext | null
+  >(null);
 
   // Track previous prop values to detect actual prop changes (not internal state changes)
   const prevInitialAgentIdRef = useRef(initialAgentId);
@@ -1172,6 +1174,7 @@ export default function App({
     | "help"
     | "hooks"
     | "connect"
+    | "skills"
     | null;
   const [activeOverlay, setActiveOverlay] = useState<ActiveOverlay>(null);
   const pendingOverlayCommandRef = useRef<{
@@ -1265,7 +1268,7 @@ export default function App({
   }, [llmConfig]);
   const [currentModelId, setCurrentModelId] = useState<string | null>(null);
   // Full model handle for API calls (e.g., "anthropic/claude-sonnet-4-5-20251101")
-  const [currentModelHandle, setCurrentModelHandle] = useState<string | null>(
+  const [_currentModelHandle, setCurrentModelHandle] = useState<string | null>(
     null,
   );
   // Derive agentName from agentState (single source of truth)
@@ -1459,6 +1462,12 @@ export default function App({
   // Track if we've sent the session context for this CLI session
   const hasSentSessionContextRef = useRef(false);
 
+  // Track if we've set the conversation summary for this new conversation
+  // Initialized to true for resumed conversations (they already have context)
+  const hasSetConversationSummaryRef = useRef(resumedExistingConversation);
+  // Store first user query for conversation summary
+  const firstUserQueryRef = useRef<string | null>(null);
+
   // Track skills injection state (LET-7353)
   const discoveredSkillsRef = useRef<import("../agent/skills").Skill[] | null>(
     null,
@@ -1526,6 +1535,9 @@ export default function App({
   const lastSentInputRef = useRef<Array<MessageCreate | ApprovalCreate> | null>(
     null,
   );
+  // Non-null only when the previous turn was explicitly interrupted by the user.
+  // Used to gate recovery alert injection to true user-interrupt retries.
+  const pendingInterruptRecoveryConversationIdRef = useRef<string | null>(null);
 
   // Epoch counter to force dequeue effect re-run when refs change but state doesn't
   // Incremented when userCancelledRef is reset while messages are queued
@@ -2997,13 +3009,22 @@ export default function App({
         setNetworkPhase("upload");
         abortControllerRef.current = new AbortController();
 
-        // Recover interrupted message: if cache contains ONLY user messages, prepend them
+        // Recover interrupted message only after explicit user interrupt:
+        // if cache contains ONLY user messages, prepend them.
         // Note: type="message" is a local discriminator (not in SDK types) to distinguish from approvals
         const originalInput = currentInput;
         const cacheIsAllUserMsgs = lastSentInputRef.current?.every(
           (m) => m.type === "message" && m.role === "user",
         );
-        if (cacheIsAllUserMsgs && lastSentInputRef.current) {
+        const canInjectInterruptRecovery =
+          pendingInterruptRecoveryConversationIdRef.current !== null &&
+          pendingInterruptRecoveryConversationIdRef.current ===
+            conversationIdRef.current;
+        if (
+          cacheIsAllUserMsgs &&
+          lastSentInputRef.current &&
+          canInjectInterruptRecovery
+        ) {
           currentInput = [
             ...lastSentInputRef.current,
             ...currentInput.map((m) =>
@@ -3020,12 +3041,14 @@ export default function App({
                 : m,
             ),
           ];
+          pendingInterruptRecoveryConversationIdRef.current = null;
           // Cache old + new for chained recovery
           lastSentInputRef.current = [
             ...lastSentInputRef.current,
             ...originalInput,
           ];
         } else {
+          pendingInterruptRecoveryConversationIdRef.current = null;
           lastSentInputRef.current = originalInput;
         }
 
@@ -3107,40 +3130,60 @@ export default function App({
               { agentId: agentIdRef.current },
             );
           } catch (preStreamError) {
-            // Extract error detail from APIError (handles both direct and nested structures)
-            // Direct: e.error.detail | Nested: e.error.error.detail (matches formatErrorDetails)
-            let errorDetail = "";
+            // Extract error detail using shared helper (handles nested/direct/message shapes)
+            const errorDetail = extractConflictDetail(preStreamError);
+
+            // Route through shared pre-stream conflict classifier (parity with headless.ts)
+            const preStreamAction = getPreStreamErrorAction(
+              errorDetail,
+              conversationBusyRetriesRef.current,
+              CONVERSATION_BUSY_MAX_RETRIES,
+              {
+                status:
+                  preStreamError instanceof APIError
+                    ? preStreamError.status
+                    : undefined,
+                transientRetries: llmApiErrorRetriesRef.current,
+                maxTransientRetries: LLM_API_ERROR_MAX_RETRIES,
+              },
+            );
+
+            // Resolve stale approval conflict: fetch real pending approvals, auto-deny, retry.
+            // Shares llmApiErrorRetriesRef budget with LLM transient-error retries (max 3 per turn).
+            // Resets on each processConversation entry and on success.
             if (
-              preStreamError instanceof APIError &&
-              preStreamError.error &&
-              typeof preStreamError.error === "object"
+              shouldAttemptApprovalRecovery({
+                approvalPendingDetected:
+                  preStreamAction === "resolve_approval_pending",
+                retries: llmApiErrorRetriesRef.current,
+                maxRetries: LLM_API_ERROR_MAX_RETRIES,
+              })
             ) {
-              const errObj = preStreamError.error as Record<string, unknown>;
-              // Check nested structure first: e.error.error.detail
-              if (
-                errObj.error &&
-                typeof errObj.error === "object" &&
-                "detail" in errObj.error
-              ) {
-                const nested = errObj.error as Record<string, unknown>;
-                errorDetail =
-                  typeof nested.detail === "string" ? nested.detail : "";
+              llmApiErrorRetriesRef.current += 1;
+              try {
+                const client = await getClient();
+                const agent = await client.agents.retrieve(agentIdRef.current);
+                const { pendingApprovals: existingApprovals } =
+                  await getResumeData(client, agent, conversationIdRef.current);
+                currentInput = rebuildInputWithFreshDenials(
+                  currentInput,
+                  existingApprovals ?? [],
+                  "Auto-denied: stale approval from interrupted session",
+                );
+              } catch {
+                // Fetch failed — strip stale payload and retry plain message
+                currentInput = rebuildInputWithFreshDenials(
+                  currentInput,
+                  [],
+                  "",
+                );
               }
-              // Fallback to direct structure: e.error.detail
-              if (!errorDetail && typeof errObj.detail === "string") {
-                errorDetail = errObj.detail;
-              }
-            }
-            // Final fallback: use Error.message
-            if (!errorDetail && preStreamError instanceof Error) {
-              errorDetail = preStreamError.message;
+              buffersRef.current.interrupted = false;
+              continue;
             }
 
-            // Check for 409 "conversation busy" error - retry once with delay
-            if (
-              isConversationBusyError(errorDetail) &&
-              conversationBusyRetriesRef.current < CONVERSATION_BUSY_MAX_RETRIES
-            ) {
+            // Check for 409 "conversation busy" error - retry with exponential backoff
+            if (preStreamAction === "retry_conversation_busy") {
               conversationBusyRetriesRef.current += 1;
               const retryDelayMs =
                 CONVERSATION_BUSY_RETRY_BASE_DELAY_MS *
@@ -3180,6 +3223,54 @@ export default function App({
               if (!cancelled) {
                 // Reset interrupted flag so retry stream chunks are processed
                 buffersRef.current.interrupted = false;
+                continue;
+              }
+              // User pressed ESC - fall through to error handling
+            }
+
+            // Retry pre-stream transient errors (429/5xx/network) with shared LLM retry budget
+            if (preStreamAction === "retry_transient") {
+              llmApiErrorRetriesRef.current += 1;
+              const attempt = llmApiErrorRetriesRef.current;
+              const retryAfterMs =
+                preStreamError instanceof APIError
+                  ? parseRetryAfterHeaderMs(
+                      preStreamError.headers?.get("retry-after"),
+                    )
+                  : null;
+              const delayMs = retryAfterMs ?? 1000 * 2 ** (attempt - 1);
+
+              const statusId = uid("status");
+              buffersRef.current.byId.set(statusId, {
+                kind: "status",
+                id: statusId,
+                lines: [getRetryStatusMessage(errorDetail)],
+              });
+              buffersRef.current.order.push(statusId);
+              refreshDerived();
+
+              let cancelled = false;
+              const startTime = Date.now();
+              while (Date.now() - startTime < delayMs) {
+                if (
+                  abortControllerRef.current?.signal.aborted ||
+                  userCancelledRef.current
+                ) {
+                  cancelled = true;
+                  break;
+                }
+                await new Promise((resolve) => setTimeout(resolve, 100));
+              }
+
+              buffersRef.current.byId.delete(statusId);
+              buffersRef.current.order = buffersRef.current.order.filter(
+                (id) => id !== statusId,
+              );
+              refreshDerived();
+
+              if (!cancelled) {
+                buffersRef.current.interrupted = false;
+                conversationBusyRetriesRef.current = 0;
                 continue;
               }
               // User pressed ESC - fall through to error handling
@@ -3231,7 +3322,8 @@ export default function App({
                               c.type === "text" &&
                               "text" in c &&
                               typeof c.text === "string" &&
-                              !c.text.includes(SYSTEM_REMINDER_OPEN),
+                              !c.text.includes(SYSTEM_REMINDER_OPEN) &&
+                              !c.text.includes(SYSTEM_ALERT_OPEN),
                           )
                           .map((c) => c.text)
                           .join("\n");
@@ -3472,6 +3564,7 @@ export default function App({
             conversationBusyRetriesRef.current = 0;
             lastDequeuedMessageRef.current = null; // Clear - message was processed successfully
             lastSentInputRef.current = null; // Clear - no recovery needed
+            pendingInterruptRecoveryConversationIdRef.current = null;
 
             // Get last assistant message, user message, and reasoning for Stop hook
             const lastAssistant = Array.from(
@@ -3541,6 +3634,29 @@ export default function App({
             // Any new approvals from here on are from our own turn, not orphaned
             if (needsEagerApprovalCheck) {
               setNeedsEagerApprovalCheck(false);
+            }
+
+            // Set conversation summary from first user query for new conversations
+            if (
+              !hasSetConversationSummaryRef.current &&
+              firstUserQueryRef.current &&
+              conversationIdRef.current !== "default"
+            ) {
+              hasSetConversationSummaryRef.current = true;
+              const client = await getClient();
+              client.conversations
+                .update(conversationIdRef.current, {
+                  summary: firstUserQueryRef.current,
+                })
+                .catch((err) => {
+                  // Silently ignore - not critical
+                  if (process.env.DEBUG) {
+                    console.error(
+                      "[DEBUG] Failed to set conversation summary:",
+                      err,
+                    );
+                  }
+                });
             }
 
             const trajectorySnapshot = sessionStatsRef.current.endTrajectory();
@@ -3662,6 +3778,7 @@ export default function App({
             setAutoHandledResults([]);
             setAutoDeniedApprovals([]);
             lastSentInputRef.current = null; // Clear - message was received by server
+            pendingInterruptRecoveryConversationIdRef.current = null;
 
             // Use new approvals array, fallback to legacy approval for backward compat
             const approvalsToProcess =
@@ -4185,7 +4302,8 @@ export default function App({
                           c.type === "text" &&
                           "text" in c &&
                           typeof c.text === "string" &&
-                          !c.text.includes(SYSTEM_REMINDER_OPEN),
+                          !c.text.includes(SYSTEM_REMINDER_OPEN) &&
+                          !c.text.includes(SYSTEM_ALERT_OPEN),
                       )
                       .map((c) => c.text)
                       .join("\n");
@@ -4235,16 +4353,20 @@ export default function App({
             }
           }
 
-          // Check for approval pending error (sent user message while approval waiting)
-          // This is the lazy recovery path for when needsEagerApprovalCheck is false
+          // Check for approval pending error (sent user message while approval waiting).
+          // This is the lazy recovery path: fetch real pending approvals, auto-deny, retry.
+          // Works regardless of hasApprovalInPayload — stale queued approvals from an
+          // interrupt may have been rejected by the backend.
           const approvalPendingDetected =
             isApprovalPendingError(detailFromRun) ||
             isApprovalPendingError(latestErrorText);
 
           if (
-            !hasApprovalInPayload &&
-            approvalPendingDetected &&
-            llmApiErrorRetriesRef.current < LLM_API_ERROR_MAX_RETRIES
+            shouldAttemptApprovalRecovery({
+              approvalPendingDetected,
+              retries: llmApiErrorRetriesRef.current,
+              maxRetries: LLM_API_ERROR_MAX_RETRIES,
+            })
           ) {
             llmApiErrorRetriesRef.current += 1;
 
@@ -4254,28 +4376,14 @@ export default function App({
               const agent = await client.agents.retrieve(agentIdRef.current);
               const { pendingApprovals: existingApprovals } =
                 await getResumeData(client, agent, conversationIdRef.current);
-
-              if (existingApprovals && existingApprovals.length > 0) {
-                // Create denial results for all stale approvals
-                // Use the same format as handleCancelApprovals (lines 6390-6395)
-                const denialResults = existingApprovals.map((approval) => ({
-                  type: "approval" as const,
-                  tool_call_id: approval.toolCallId,
-                  approve: false,
-                  reason:
-                    "Auto-denied: stale approval from interrupted session",
-                }));
-
-                // Prepend approval denials to the current input (keeps user message)
-                const approvalPayload: ApprovalCreate = {
-                  type: "approval",
-                  approvals: denialResults,
-                };
-                currentInput.unshift(approvalPayload);
-              }
-              // else: No approvals found - server state may have cleared, just retry
+              currentInput = rebuildInputWithFreshDenials(
+                currentInput,
+                existingApprovals ?? [],
+                "Auto-denied: stale approval from interrupted session",
+              );
             } catch {
-              // If we can't fetch approvals, just retry the original message
+              // Fetch failed — strip stale payload and retry plain message
+              currentInput = rebuildInputWithFreshDenials(currentInput, [], "");
             }
 
             // Reset interrupted flag so retry stream chunks are processed
@@ -4299,9 +4407,7 @@ export default function App({
 
             // Show subtle grey status message
             const statusId = uid("status");
-            const statusLines = [
-              "Unexpected downstream LLM API error, retrying...",
-            ];
+            const statusLines = [getRetryStatusMessage(detailFromRun)];
             buffersRef.current.byId.set(statusId, {
               kind: "status",
               id: statusId,
@@ -4701,11 +4807,28 @@ export default function App({
         abortControllerRef.current = null;
       }
 
+      pendingInterruptRecoveryConversationIdRef.current =
+        conversationIdRef.current;
       userCancelledRef.current = true; // Prevent dequeue
       setStreaming(false);
+      resetTrajectoryBases();
       setIsExecutingTool(false);
       toolResultsInFlightRef.current = false;
       refreshDerived();
+
+      // Send cancel request to backend (fire-and-forget).
+      // Without this, the backend stays in requires_approval state after tool interrupt,
+      // causing CONFLICT on the next user message.
+      getClient()
+        .then((client) => {
+          if (conversationIdRef.current === "default") {
+            return client.agents.messages.cancel(agentIdRef.current);
+          }
+          return client.conversations.cancel(conversationIdRef.current);
+        })
+        .catch(() => {
+          // Silently ignore - cancellation already happened client-side
+        });
 
       // Delay flag reset to ensure React has flushed state updates before dequeue can fire.
       // Use setTimeout(50) instead of setTimeout(0) - the longer delay ensures React's
@@ -4752,6 +4875,8 @@ export default function App({
       }
 
       // Set cancellation flag to prevent processConversation from starting
+      pendingInterruptRecoveryConversationIdRef.current =
+        conversationIdRef.current;
       userCancelledRef.current = true;
 
       // Increment generation to mark any in-flight processConversation as stale.
@@ -4765,6 +4890,7 @@ export default function App({
       // Stop streaming and show error message (unless tool calls were cancelled,
       // since the tool result will show "Interrupted by user")
       setStreaming(false);
+      resetTrajectoryBases();
       toolResultsInFlightRef.current = false;
       if (!toolsCancelled) {
         appendError(INTERRUPT_MESSAGE, true);
@@ -4846,6 +4972,8 @@ export default function App({
         if (abortControllerRef.current) {
           abortControllerRef.current.abort();
         }
+        pendingInterruptRecoveryConversationIdRef.current =
+          conversationIdRef.current;
       } catch (e) {
         const errorDetails = formatErrorDetails(e, agentId);
         appendError(`Failed to interrupt stream: ${errorDetails}`);
@@ -4864,6 +4992,7 @@ export default function App({
     autoHandledResults,
     autoDeniedApprovals,
     queueApprovalResults,
+    resetTrajectoryBases,
   ]);
 
   // Keep ref to latest processConversation to avoid circular deps in useEffect
@@ -4968,6 +5097,31 @@ export default function App({
         setLlmConfig(agent.llm_config);
         setConversationId(targetConversationId);
 
+        // Set conversation switch context for agent switch
+        {
+          const { getModelDisplayName } = await import("../agent/model");
+          const modelHandle =
+            agent.model ||
+            (agent.llm_config?.model_endpoint_type && agent.llm_config?.model
+              ? `${agent.llm_config.model_endpoint_type}/${agent.llm_config.model}`
+              : null);
+          const modelLabel =
+            (modelHandle && getModelDisplayName(modelHandle)) ||
+            modelHandle ||
+            "unknown";
+          pendingConversationSwitchRef.current = {
+            origin: "agent-switch",
+            conversationId: targetConversationId,
+            isDefault: targetConversationId === "default",
+            agentSwitchContext: {
+              name: agent.name || targetAgentId,
+              description: agent.description ?? undefined,
+              model: modelLabel,
+              blockCount: agent.blocks?.length ?? 0,
+            },
+          };
+        }
+
         // Reset context token tracking for new agent
         resetContextHistory(contextTrackerRef.current);
 
@@ -5025,6 +5179,12 @@ export default function App({
       try {
         // Create the new agent
         const { agent } = await createAgent(name);
+
+        // Enable memfs by default on Letta Cloud for new agents
+        const { enableMemfsIfCloud } = await import(
+          "../agent/memoryFilesystem"
+        );
+        await enableMemfsIfCloud(agent.id);
 
         // Update project settings with new agent
         await updateProjectSettings({ lastAgent: agent.id });
@@ -5501,6 +5661,18 @@ export default function App({
         );
       }
 
+      // Capture first user query for conversation summary (before any async work)
+      // Only for new conversations, non-commands, and if we haven't captured yet
+      if (
+        !hasSetConversationSummaryRef.current &&
+        firstUserQueryRef.current === null &&
+        !isSystemOnly &&
+        userTextForInput.length > 0 &&
+        !userTextForInput.startsWith("/")
+      ) {
+        firstUserQueryRef.current = userTextForInput.slice(0, 100);
+      }
+
       // Block submission if waiting for explicit user action (approvals)
       // In this case, input is hidden anyway, so this shouldn't happen
       if (pendingApprovals.length > 0) {
@@ -5524,6 +5696,15 @@ export default function App({
           `Bumping dequeueEpoch: userCancelledRef was reset, ${messageQueue.length} message(s) queued, agent not busy`,
         );
         setDequeueEpoch((e) => e + 1);
+      }
+
+      const isSlashCommand = userTextForInput.startsWith("/");
+      if (isAgentBusy() && isSlashCommand) {
+        const attemptedCommand = userTextForInput.split(/\s+/)[0] || "/";
+        const disabledMessage = `'${attemptedCommand}' is disabled while the agent is running.`;
+        const cmd = commandRunner.start(userTextForInput, disabledMessage);
+        cmd.fail(disabledMessage);
+        return { submitted: true }; // Clears input
       }
 
       // Interactive slash commands (like /memory, /model, /agents) bypass queueing
@@ -5636,7 +5817,11 @@ export default function App({
 
         // Special handling for /ade command - open agent in browser
         if (trimmed === "/ade") {
-          const adeUrl = `https://app.letta.com/agents/${agentId}?conversation=${conversationIdRef.current}`;
+          const adeUrl =
+            conversationIdRef.current === "default"
+              ? `https://app.letta.com/agents/${agentId}`
+              : `https://app.letta.com/agents/${agentId}?conversation=${conversationIdRef.current}`;
+
           const cmd = commandRunner.start("/ade", "Opening ADE...");
 
           // Fire-and-forget browser open
@@ -5891,9 +6076,12 @@ export default function App({
 
         // Special handling for /statusline command
         if (trimmed === "/statusline" || trimmed.startsWith("/statusline ")) {
-          const parts = trimmed.slice("/statusline".length).trim().split(/\s+/);
-          const sub = parts[0] || "show";
-          const rest = parts.slice(1).join(" ");
+          const rawArgs = trimmed.slice("/statusline".length).trim();
+          const spaceIdx = rawArgs.indexOf(" ");
+          const sub =
+            spaceIdx === -1 ? rawArgs || "show" : rawArgs.slice(0, spaceIdx);
+          const rest =
+            spaceIdx === -1 ? "" : rawArgs.slice(spaceIdx + 1).trim();
           const cmd = commandRunner.start(trimmed, "Managing status line...");
 
           (async () => {
@@ -5934,15 +6122,20 @@ export default function App({
                 lines.push(
                   `Effective: ${effective ? `command="${effective.command}" refreshInterval=${effective.refreshIntervalMs ?? "off"} timeout=${effective.timeout}ms debounce=${effective.debounceMs}ms padding=${effective.padding}` : "(inactive)"}`,
                 );
+                const effectivePrompt = resolvePromptChar(wd);
+                lines.push(`Prompt: "${effectivePrompt}"`);
                 cmd.finish(lines.join("\n"), true);
               } else if (sub === "set") {
                 if (!rest) {
                   cmd.finish("Usage: /statusline set <command> [-l|-p]", false);
                   return;
                 }
-                const isLocal = rest.endsWith(" -l");
-                const isProject = rest.endsWith(" -p");
-                const command = rest.replace(/\s+-(l|p)$/, "");
+                const scopeMatch = rest.match(/\s+-(l|p)$/);
+                const command = scopeMatch
+                  ? rest.slice(0, scopeMatch.index)
+                  : rest;
+                const isLocal = scopeMatch?.[1] === "l";
+                const isProject = scopeMatch?.[1] === "p";
                 const config = { command };
                 if (isLocal) {
                   settingsManager.updateLocalProjectSettings(
@@ -5951,6 +6144,7 @@ export default function App({
                   );
                   cmd.finish(`Status line set (local): ${command}`, true);
                 } else if (isProject) {
+                  await settingsManager.loadProjectSettings(wd);
                   settingsManager.updateProjectSettings(
                     { statusLine: config },
                     wd,
@@ -5970,6 +6164,7 @@ export default function App({
                   );
                   cmd.finish("Status line cleared (local)", true);
                 } else if (isProject) {
+                  await settingsManager.loadProjectSettings(wd);
                   settingsManager.updateProjectSettings(
                     { statusLine: undefined },
                     wd,
@@ -6031,12 +6226,17 @@ export default function App({
                 cmd.finish("Status line disabled", true);
               } else if (sub === "enable") {
                 const current = settingsManager.getSettings().statusLine;
-                if (current) {
+                if (!current?.command) {
+                  cmd.finish(
+                    "No status line configured. Use /statusline set <command> first.",
+                    false,
+                  );
+                } else {
                   settingsManager.updateSettings({
                     statusLine: { ...current, disabled: false },
                   });
+                  cmd.finish("Status line enabled", true);
                 }
-                cmd.finish("Status line enabled", true);
               } else {
                 cmd.finish(
                   `Unknown subcommand: ${sub}. Use help|show|set|clear|test|enable|disable`,
@@ -6131,23 +6331,12 @@ export default function App({
           const usedTokens = contextTrackerRef.current.lastContextTokens;
           const history = contextTrackerRef.current.contextTokensHistory;
 
-          // Phase 1: Show single-color bar + chart + "Fetching breakdown..."
-          // Stays in dynamic area ("running" phase) so it can be updated
-          const initialOutput = renderContextUsage({
-            usedTokens,
-            contextWindow,
-            model,
-            history,
-          });
+          const cmd = commandRunner.start(
+            trimmed,
+            "Fetching context breakdown...",
+          );
 
-          const cmd = commandRunner.start(trimmed, "");
-          cmd.update({
-            output: initialOutput,
-            phase: "running",
-            preformatted: true,
-          });
-
-          // Phase 2: Fetch breakdown (5s timeout), then finish with color-coded bar
+          // Fetch breakdown (5s timeout)
           let breakdown: ContextWindowOverview | undefined;
           try {
             const settings =
@@ -6175,7 +6364,7 @@ export default function App({
             // Timeout or network error — proceed without breakdown
           }
 
-          // Finish with breakdown (bar colors + legend) or fallback
+          // Render the full chart once, directly into the finished output
           cmd.finish(
             renderContextUsage({
               usedTokens,
@@ -6369,6 +6558,12 @@ export default function App({
             // Update conversationId state
             setConversationId(conversation.id);
 
+            pendingConversationSwitchRef.current = {
+              origin: "new",
+              conversationId: conversation.id,
+              isDefault: false,
+            };
+
             // Save the new session to settings
             settingsManager.setLocalLastSession(
               { agentId, conversationId: conversation.id },
@@ -6441,6 +6636,13 @@ export default function App({
               isolated_block_labels: [...ISOLATED_BLOCK_LABELS],
             });
             setConversationId(conversation.id);
+
+            pendingConversationSwitchRef.current = {
+              origin: "clear",
+              conversationId: conversation.id,
+              isDefault: false,
+            };
+
             settingsManager.setLocalLastSession(
               { agentId, conversationId: conversation.id },
               process.cwd(),
@@ -6767,6 +6969,15 @@ export default function App({
 
                 // Only update state after validation succeeds
                 setConversationId(targetConvId);
+
+                pendingConversationSwitchRef.current = {
+                  origin: "resume-direct",
+                  conversationId: targetConvId,
+                  isDefault: targetConvId === "default",
+                  messageCount: resumeData.messageHistory.length,
+                  messageHistory: resumeData.messageHistory,
+                };
+
                 settingsManager.setLocalLastSession(
                   { agentId, conversationId: targetConvId },
                   process.cwd(),
@@ -7245,15 +7456,6 @@ export default function App({
           }
 
           if (subcommand === "enable") {
-            // memfs requires Letta Cloud (git memfs not supported on self-hosted)
-            const serverUrl = getServerUrl();
-            if (!serverUrl.includes("api.letta.com")) {
-              cmd.fail(
-                "Memory filesystem is only available on Letta Cloud (api.letta.com).",
-              );
-              return { submitted: true };
-            }
-
             updateMemorySyncCommand(
               cmdId,
               "Enabling memory filesystem...",
@@ -7264,30 +7466,13 @@ export default function App({
             setCommandRunning(true);
 
             try {
-              // 1. Detach memory tools from agent
-              const { detachMemoryTools } = await import("../tools/toolset");
-              await detachMemoryTools(agentId);
-
-              // 2. Update settings
-              settingsManager.setMemfsEnabled(agentId, true);
-
-              // 3. Update system prompt to include memfs section
-              const { updateAgentSystemPromptMemfs } = await import(
-                "../agent/modify"
+              const { applyMemfsFlags } = await import(
+                "../agent/memoryFilesystem"
               );
-              await updateAgentSystemPromptMemfs(agentId, true);
-
-              // 4. Add git-memory-enabled tag and clone repo
-              const { addGitMemoryTag, isGitRepo, cloneMemoryRepo } =
-                await import("../agent/memoryGit");
-              await addGitMemoryTag(agentId);
-              if (!isGitRepo(agentId)) {
-                await cloneMemoryRepo(agentId);
-              }
-              const memoryDir = getMemoryFilesystemRoot(agentId);
+              const result = await applyMemfsFlags(agentId, true, false);
               updateMemorySyncCommand(
                 cmdId,
-                `Memory filesystem enabled (git-backed).\nPath: ${memoryDir}`,
+                `Memory filesystem enabled (git-backed).\nPath: ${result.memoryDir}`,
                 true,
                 msg,
               );
@@ -7463,9 +7648,23 @@ export default function App({
           return { submitted: true };
         }
 
-        // Special handling for /skill command - enter skill creation mode
-        if (trimmed.startsWith("/skill")) {
-          // Extract optional description after `/skill`
+        // /skills - browse available skills overlay
+        if (trimmed === "/skills") {
+          startOverlayCommand(
+            "skills",
+            "/skills",
+            "Opening skills browser...",
+            "Skills browser dismissed",
+          );
+          setActiveOverlay("skills");
+          return { submitted: true };
+        }
+
+        // /skill-creator - enter skill creation mode
+        if (
+          trimmed === "/skill-creator" ||
+          trimmed.startsWith("/skill-creator ")
+        ) {
           const [, ...rest] = trimmed.split(/\s+/);
           const description = rest.join(" ").trim();
 
@@ -7479,7 +7678,7 @@ export default function App({
           const approvalCheck = await checkPendingApprovalsForSlashCommand();
           if (approvalCheck.blocked) {
             cmd.fail(
-              "Pending approval(s). Resolve approvals before running /skill.",
+              "Pending approval(s). Resolve approvals before running /skill-creator.",
             );
             return { submitted: false }; // Keep /skill in input box, user handles approval first
           }
@@ -7495,7 +7694,7 @@ export default function App({
             // Build system-reminder content for skill creation
             const userDescriptionLine = description
               ? `\n\nUser-provided skill description:\n${description}`
-              : "\n\nThe user did not provide a description with /skill. Ask what kind of skill they want to create before proceeding.";
+              : "\n\nThe user did not provide a description with /skill-creator. Ask what kind of skill they want to create before proceeding.";
 
             const skillMessage = `${SYSTEM_REMINDER_OPEN}\n${SKILL_CREATOR_PROMPT}${userDescriptionLine}\n${SYSTEM_REMINDER_CLOSE}`;
 
@@ -7690,9 +7889,13 @@ ${recentCommits}
 ## Memory Filesystem Location
 
 Your memory blocks are synchronized with the filesystem at:
-\`~/.letta/agents/${agentId}/memory/\`
+\`${getMemoryFilesystemRoot(agentId)}\`
 
-Use this path when working with memory files during initialization.
+Environment variables available in Letta Code:
+- \`AGENT_ID=${agentId}\`
+- \`MEMORY_DIR=${getMemoryFilesystemRoot(agentId)}\`
+
+Use \`$MEMORY_DIR\` when working with memory files during initialization.
 `
               : "";
 
@@ -7859,7 +8062,11 @@ ${SYSTEM_REMINDER_CLOSE}`;
       const sessionContextEnabled = settingsManager.getSetting(
         "sessionContextEnabled",
       );
-      if (!hasSentSessionContextRef.current && sessionContextEnabled) {
+      if (
+        !hasSentSessionContextRef.current &&
+        sessionContextEnabled &&
+        sessionContextReminderEnabled
+      ) {
         const { buildSessionContext } = await import(
           "./helpers/sessionContext"
         );
@@ -7952,7 +8159,7 @@ ${SYSTEM_REMINDER_CLOSE}
           plan: "Read-only mode. Focus on exploration and planning.",
           bypassPermissions: "All tools auto-approved. Bias toward action.",
         };
-        permissionModeAlert = `<system-alert>Permission mode changed to: ${currentMode}. ${modeDescriptions[currentMode]}</system-alert>\n\n`;
+        permissionModeAlert = `${SYSTEM_REMINDER_OPEN}Permission mode changed to: ${currentMode}. ${modeDescriptions[currentMode]}${SYSTEM_REMINDER_CLOSE}\n\n`;
         lastNotifiedModeRef.current = currentMode;
       }
 
@@ -8004,41 +8211,73 @@ ${SYSTEM_REMINDER_CLOSE}
       pushReminder(sessionContextReminder);
 
       // Inject available skills as system-reminder (LET-7353)
-      // Lazy-discover on first message, reinject after compaction
+      // Discover each turn so on-disk skill changes can trigger reinjection.
       {
-        if (!discoveredSkillsRef.current) {
-          try {
-            const { discoverSkills: discover, SKILLS_DIR: defaultDir } =
-              await import("../agent/skills");
-            const { getSkillsDirectory } = await import("../agent/context");
-            const skillsDir =
-              getSkillsDirectory() || join(process.cwd(), defaultDir);
-            const { skills } = await discover(skillsDir, agentId);
-            discoveredSkillsRef.current = skills;
-          } catch {
-            discoveredSkillsRef.current = [];
-          }
+        const {
+          discoverSkills: discover,
+          SKILLS_DIR: defaultDir,
+          formatSkillsAsSystemReminder,
+        } = await import("../agent/skills");
+        const { getSkillsDirectory, getSkillSources } = await import(
+          "../agent/context"
+        );
+
+        const previousSkillsReminder = discoveredSkillsRef.current
+          ? formatSkillsAsSystemReminder(discoveredSkillsRef.current)
+          : null;
+
+        let latestSkills = discoveredSkillsRef.current ?? [];
+        try {
+          const skillsDir =
+            getSkillsDirectory() || join(process.cwd(), defaultDir);
+          const { skills } = await discover(skillsDir, agentId, {
+            sources: getSkillSources(),
+          });
+          latestSkills = skills;
+        } catch {
+          // Keep the previous snapshot when discovery fails.
+        }
+
+        discoveredSkillsRef.current = latestSkills;
+        const latestSkillsReminder = formatSkillsAsSystemReminder(
+          discoveredSkillsRef.current,
+        );
+        if (
+          previousSkillsReminder !== null &&
+          previousSkillsReminder !== latestSkillsReminder
+        ) {
+          contextTrackerRef.current.pendingSkillsReinject = true;
         }
 
         const needsSkillsReinject =
           contextTrackerRef.current.pendingSkillsReinject;
         if (!hasInjectedSkillsRef.current || needsSkillsReinject) {
-          const { formatSkillsAsSystemReminder } = await import(
-            "../agent/skills"
-          );
-          const skillsReminder = formatSkillsAsSystemReminder(
-            discoveredSkillsRef.current,
-          );
-          if (skillsReminder) {
-            pushReminder(skillsReminder);
+          if (latestSkillsReminder) {
+            pushReminder(latestSkillsReminder);
           }
           hasInjectedSkillsRef.current = true;
           contextTrackerRef.current.pendingSkillsReinject = false;
         }
       }
 
+      // Build conversation switch alert if a switch is pending (behind feature flag)
+      let conversationSwitchAlert = "";
+      if (
+        pendingConversationSwitchRef.current &&
+        settingsManager.getSetting("conversationSwitchAlertEnabled")
+      ) {
+        const { buildConversationSwitchAlert } = await import(
+          "./helpers/conversationSwitchAlert"
+        );
+        conversationSwitchAlert = buildConversationSwitchAlert(
+          pendingConversationSwitchRef.current,
+        );
+      }
+      pendingConversationSwitchRef.current = null;
+
       pushReminder(sessionStartHookFeedback);
       pushReminder(permissionModeAlert);
+      pushReminder(conversationSwitchAlert);
       pushReminder(planModeReminder);
       pushReminder(ralphModeReminder);
 
@@ -8706,6 +8945,7 @@ ${SYSTEM_REMINDER_CLOSE}
       pendingRalphConfig,
       openTrajectorySegment,
       resetTrajectoryBases,
+      sessionContextReminderEnabled,
       appendTaskNotificationEvents,
     ],
   );
@@ -9559,13 +9799,8 @@ ${SYSTEM_REMINDER_CLOSE}
             phase: "running",
           });
 
-          const { updateAgentSystemPromptRaw } = await import(
-            "../agent/modify"
-          );
-          const result = await updateAgentSystemPromptRaw(
-            agentId,
-            prompt.content,
-          );
+          const { updateAgentSystemPrompt } = await import("../agent/modify");
+          const result = await updateAgentSystemPrompt(agentId, promptId);
 
           if (result.success) {
             setCurrentSystemPromptId(promptId);
@@ -9783,6 +10018,15 @@ ${SYSTEM_REMINDER_CLOSE}
                 );
 
                 setConversationId(action.conversationId);
+
+                pendingConversationSwitchRef.current = {
+                  origin: "resume-selector",
+                  conversationId: action.conversationId,
+                  isDefault: action.conversationId === "default",
+                  messageCount: resumeData.messageHistory.length,
+                  messageHistory: resumeData.messageHistory,
+                };
+
                 settingsManager.setLocalLastSession(
                   { agentId, conversationId: action.conversationId },
                   process.cwd(),
@@ -10555,7 +10799,7 @@ Plan file path: ${planFilePath}`;
               {item.kind === "welcome" ? (
                 <WelcomeScreen loadingState="ready" {...item.snapshot} />
               ) : item.kind === "user" ? (
-                <UserMessage line={item} />
+                <UserMessage line={item} prompt={statusLine.prompt} />
               ) : item.kind === "reasoning" ? (
                 <ReasoningMessage line={item} />
               ) : item.kind === "assistant" ? (
@@ -10688,7 +10932,7 @@ Plan file path: ${planFilePath}`;
                             showPreview={showApprovalPreview}
                           />
                         ) : ln.kind === "user" ? (
-                          <UserMessage line={ln} />
+                          <UserMessage line={ln} prompt={statusLine.prompt} />
                         ) : ln.kind === "reasoning" ? (
                           <ReasoningMessage line={ln} />
                         ) : ln.kind === "assistant" ? (
@@ -10874,6 +11118,7 @@ Plan file path: ${planFilePath}`;
                 statusLineText={statusLine.text || undefined}
                 statusLineRight={statusLine.rightText || undefined}
                 statusLinePadding={statusLine.padding || 0}
+                statusLinePrompt={statusLine.prompt}
               />
             </Box>
 
@@ -10999,7 +11244,7 @@ Plan file path: ${planFilePath}`;
                 agentId={agentId}
                 agentName={agentName ?? undefined}
                 currentConversationId={conversationId}
-                onSelect={async (convId) => {
+                onSelect={async (convId, selectorContext) => {
                   const overlayCommand = consumeOverlayCommand("conversations");
                   closeOverlay();
 
@@ -11061,6 +11306,18 @@ Plan file path: ${planFilePath}`;
 
                       // Only update state after validation succeeds
                       setConversationId(convId);
+
+                      pendingConversationSwitchRef.current = {
+                        origin: "resume-selector",
+                        conversationId: convId,
+                        isDefault: convId === "default",
+                        messageCount:
+                          selectorContext?.messageCount ??
+                          resumeData.messageHistory.length,
+                        summary: selectorContext?.summary,
+                        messageHistory: resumeData.messageHistory,
+                      };
+
                       settingsManager.setLocalLastSession(
                         { agentId, conversationId: convId },
                         process.cwd(),
@@ -11279,7 +11536,11 @@ Plan file path: ${planFilePath}`;
                 initialQuery={searchQuery || undefined}
                 agentId={agentId}
                 conversationId={conversationId}
-                onOpenConversation={async (targetAgentId, targetConvId) => {
+                onOpenConversation={async (
+                  targetAgentId,
+                  targetConvId,
+                  searchContext,
+                ) => {
                   const overlayCommand = consumeOverlayCommand("search");
                   closeOverlay();
 
@@ -11348,6 +11609,17 @@ Plan file path: ${planFilePath}`;
                       );
 
                       setConversationId(actualTargetConv);
+
+                      pendingConversationSwitchRef.current = {
+                        origin: "search",
+                        conversationId: actualTargetConv,
+                        isDefault: actualTargetConv === "default",
+                        messageCount: resumeData.messageHistory.length,
+                        messageHistory: resumeData.messageHistory,
+                        searchQuery: searchContext?.query,
+                        searchMessage: searchContext?.message,
+                      };
+
                       settingsManager.setLocalLastSession(
                         { agentId, conversationId: actualTargetConv },
                         process.cwd(),
@@ -11530,6 +11802,11 @@ Plan file path: ${planFilePath}`;
 
             {/* Help Dialog - conditionally mounted as overlay */}
             {activeOverlay === "help" && <HelpDialog onClose={closeOverlay} />}
+
+            {/* Skills Dialog - browse available skills */}
+            {activeOverlay === "skills" && (
+              <SkillsDialog onClose={closeOverlay} agentId={agentId} />
+            )}
 
             {/* Hooks Manager - for managing hooks configuration */}
             {activeOverlay === "hooks" && (

@@ -4,11 +4,14 @@
  * including bundled tools like ripgrep in PATH and Letta context for skill scripts.
  */
 
+import { mkdirSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { getServerUrl } from "../../agent/client";
 import { getCurrentAgentId } from "../../agent/context";
+import { getMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
 import { settingsManager } from "../../settings-manager";
 
 /**
@@ -45,30 +48,176 @@ function getPackageNodeModulesDir(): string | undefined {
   }
 }
 
+interface LettaInvocation {
+  command: string;
+  args: string[];
+}
+
+const LETTA_BIN_ARGS_ENV = "LETTA_CODE_BIN_ARGS_JSON";
+
+function normalizeInvocationCommand(raw: string | undefined): string | null {
+  if (!raw) return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+
+  const wrappedInDoubleQuotes =
+    trimmed.length >= 2 && trimmed.startsWith('"') && trimmed.endsWith('"');
+  const wrappedInSingleQuotes =
+    trimmed.length >= 2 && trimmed.startsWith("'") && trimmed.endsWith("'");
+
+  const normalized =
+    wrappedInDoubleQuotes || wrappedInSingleQuotes
+      ? trimmed.slice(1, -1).trim()
+      : trimmed;
+
+  return normalized || null;
+}
+
+function parseInvocationArgs(raw: string | undefined): string[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (
+      Array.isArray(parsed) &&
+      parsed.every((item) => typeof item === "string")
+    ) {
+      return parsed;
+    }
+  } catch {
+    // Ignore malformed JSON and fall back to empty args.
+  }
+  return [];
+}
+
+function isDevLettaEntryScript(scriptPath: string): boolean {
+  const normalized = scriptPath.replaceAll("\\", "/");
+  return normalized.endsWith("/src/index.ts");
+}
+
+export function resolveLettaInvocation(
+  env: NodeJS.ProcessEnv = process.env,
+  argv: string[] = process.argv,
+  execPath: string = process.execPath,
+): LettaInvocation | null {
+  const explicitBin = normalizeInvocationCommand(env.LETTA_CODE_BIN);
+  if (explicitBin) {
+    return {
+      command: explicitBin,
+      args: parseInvocationArgs(env[LETTA_BIN_ARGS_ENV]),
+    };
+  }
+
+  const scriptPath = argv[1] || "";
+  if (scriptPath && isDevLettaEntryScript(scriptPath)) {
+    return { command: execPath, args: [scriptPath] };
+  }
+
+  return null;
+}
+
+function shellEscape(arg: string): string {
+  return `'${arg.replaceAll("'", `'"'"'`)}'`;
+}
+
+export function ensureLettaShimDir(invocation: LettaInvocation): string | null {
+  if (!invocation.command) return null;
+
+  const shimDir = path.join(tmpdir(), "letta-code-shell-shim");
+  mkdirSync(shimDir, { recursive: true });
+
+  if (process.platform === "win32") {
+    const cmdPath = path.join(shimDir, "letta.cmd");
+    const quotedCommand = `"${invocation.command.replaceAll('"', '""')}"`;
+    const quotedArgs = invocation.args
+      .map((arg) => `"${arg.replaceAll('"', '""')}"`)
+      .join(" ");
+    writeFileSync(
+      cmdPath,
+      `@echo off\r\n${quotedCommand} ${quotedArgs} %*\r\n`,
+    );
+    return shimDir;
+  }
+
+  const shimPath = path.join(shimDir, "letta");
+  const commandWithArgs = [invocation.command, ...invocation.args]
+    .map(shellEscape)
+    .join(" ");
+  writeFileSync(shimPath, `#!/bin/sh\nexec ${commandWithArgs} "$@"\n`, {
+    mode: 0o755,
+  });
+  return shimDir;
+}
+
 /**
  * Get enhanced environment variables for shell execution.
  * Includes bundled tools (like ripgrep) in PATH and Letta context for skill scripts.
  */
 export function getShellEnv(): NodeJS.ProcessEnv {
   const env = { ...process.env };
+  const pathKey =
+    Object.keys(env).find((k) => k.toUpperCase() === "PATH") || "PATH";
+  const pathPrefixes: string[] = [];
+
+  const lettaInvocation = resolveLettaInvocation(env);
+  if (lettaInvocation) {
+    env.LETTA_CODE_BIN = lettaInvocation.command;
+    env[LETTA_BIN_ARGS_ENV] = JSON.stringify(lettaInvocation.args);
+    const shimDir = ensureLettaShimDir(lettaInvocation);
+    if (shimDir) {
+      pathPrefixes.push(shimDir);
+    }
+  }
 
   // Add ripgrep bin directory to PATH if available
   const rgBinDir = getRipgrepBinDir();
   if (rgBinDir) {
-    // Windows uses "Path" (not "PATH"), and env vars are case-insensitive there.
-    // Find the actual key to avoid clobbering the user's PATH.
-    const pathKey =
-      Object.keys(env).find((k) => k.toUpperCase() === "PATH") || "PATH";
-    env[pathKey] = `${rgBinDir}${path.delimiter}${env[pathKey] || ""}`;
+    pathPrefixes.push(rgBinDir);
   }
 
-  // Add Letta context for skill scripts
+  if (pathPrefixes.length > 0) {
+    const existingPath = env[pathKey] || "";
+    env[pathKey] = existingPath
+      ? `${pathPrefixes.join(path.delimiter)}${path.delimiter}${existingPath}`
+      : pathPrefixes.join(path.delimiter);
+  }
+
+  // Add Letta context for skill scripts.
+  // Prefer explicit agent context, but fall back to inherited env values.
+  let agentId: string | undefined;
   try {
-    env.LETTA_AGENT_ID = getCurrentAgentId();
+    const resolvedAgentId = getCurrentAgentId();
+    if (typeof resolvedAgentId === "string" && resolvedAgentId.trim()) {
+      agentId = resolvedAgentId.trim();
+    }
   } catch {
-    // Context not set yet (e.g., during startup), skip
+    // Context not set yet (e.g., during startup), try env fallback below.
   }
 
+  if (!agentId) {
+    const fallbackAgentId = env.AGENT_ID || env.LETTA_AGENT_ID;
+    if (typeof fallbackAgentId === "string" && fallbackAgentId.trim()) {
+      agentId = fallbackAgentId.trim();
+    }
+  }
+
+  if (agentId) {
+    env.LETTA_AGENT_ID = agentId;
+    env.AGENT_ID = agentId;
+
+    try {
+      if (settingsManager.isMemfsEnabled(agentId)) {
+        const memoryDir = getMemoryFilesystemRoot(agentId);
+        env.LETTA_MEMORY_DIR = memoryDir;
+        env.MEMORY_DIR = memoryDir;
+      } else {
+        // Clear inherited/stale memory-dir vars for non-memfs agents.
+        delete env.LETTA_MEMORY_DIR;
+        delete env.MEMORY_DIR;
+      }
+    } catch {
+      // Settings may not be initialized in tests/startup; preserve inherited values.
+    }
+  }
   // Inject API key and base URL from settings if not already in env
   if (!env.LETTA_API_KEY || !env.LETTA_BASE_URL) {
     try {

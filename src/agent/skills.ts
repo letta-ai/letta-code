@@ -13,6 +13,7 @@ import { readdir, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseFrontmatter } from "../utils/frontmatter";
+import { ALL_SKILL_SOURCES } from "./skillSources";
 
 /**
  * Get the bundled skills directory path
@@ -67,6 +68,11 @@ export interface SkillDiscoveryResult {
   skills: Skill[];
   /** Any errors encountered during discovery */
   errors: SkillDiscoveryError[];
+}
+
+export interface SkillDiscoveryOptions {
+  skipBundled?: boolean;
+  sources?: SkillSource[];
 }
 
 /**
@@ -167,25 +173,35 @@ async function discoverSkillsFromDir(
 export async function discoverSkills(
   projectSkillsPath: string = join(process.cwd(), SKILLS_DIR),
   agentId?: string,
+  options?: SkillDiscoveryOptions,
 ): Promise<SkillDiscoveryResult> {
   const allErrors: SkillDiscoveryError[] = [];
   const skillsById = new Map<string, Skill>();
+  const sourceSet = new Set(options?.sources ?? ALL_SKILL_SOURCES);
+  const includeSource = (source: SkillSource) => sourceSet.has(source);
 
   // 1. Start with bundled skills (lowest priority)
-  const bundledSkills = await getBundledSkills();
-  for (const skill of bundledSkills) {
-    skillsById.set(skill.id, skill);
+  if (includeSource("bundled") && !options?.skipBundled) {
+    const bundledSkills = await getBundledSkills();
+    for (const skill of bundledSkills) {
+      skillsById.set(skill.id, skill);
+    }
   }
 
   // 2. Add global skills (override bundled)
-  const globalResult = await discoverSkillsFromDir(GLOBAL_SKILLS_DIR, "global");
-  allErrors.push(...globalResult.errors);
-  for (const skill of globalResult.skills) {
-    skillsById.set(skill.id, skill);
+  if (includeSource("global")) {
+    const globalResult = await discoverSkillsFromDir(
+      GLOBAL_SKILLS_DIR,
+      "global",
+    );
+    allErrors.push(...globalResult.errors);
+    for (const skill of globalResult.skills) {
+      skillsById.set(skill.id, skill);
+    }
   }
 
   // 3. Add agent skills if agentId provided (override global)
-  if (agentId) {
+  if (agentId && includeSource("agent")) {
     const agentSkillsDir = getAgentSkillsDir(agentId);
     const agentResult = await discoverSkillsFromDir(agentSkillsDir, "agent");
     allErrors.push(...agentResult.errors);
@@ -195,13 +211,15 @@ export async function discoverSkills(
   }
 
   // 4. Add project skills (override all - highest priority)
-  const projectResult = await discoverSkillsFromDir(
-    projectSkillsPath,
-    "project",
-  );
-  allErrors.push(...projectResult.errors);
-  for (const skill of projectResult.skills) {
-    skillsById.set(skill.id, skill);
+  if (includeSource("project")) {
+    const projectResult = await discoverSkillsFromDir(
+      projectSkillsPath,
+      "project",
+    );
+    allErrors.push(...projectResult.errors);
+    for (const skill of projectResult.skills) {
+      skillsById.set(skill.id, skill);
+    }
   }
 
   return {

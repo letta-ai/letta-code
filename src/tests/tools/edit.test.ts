@@ -66,6 +66,62 @@ describe("Edit tool", () => {
     expect(result.replacements).toBe(3);
   });
 
+  test("uses expected_replacements as a safety check", async () => {
+    testDir = new TestDirectory();
+    const file = testDir.createFile("duplicate.txt", "foo bar foo baz");
+
+    await expect(
+      edit({
+        file_path: file,
+        old_string: "foo",
+        new_string: "qux",
+        expected_replacements: 1,
+      }),
+    ).rejects.toThrow("Expected 1 occurrence but found 2");
+  });
+
+  test("replaces all when expected_replacements > 1", async () => {
+    testDir = new TestDirectory();
+    const file = testDir.createFile("duplicate.txt", "foo bar foo baz");
+
+    const result = await edit({
+      file_path: file,
+      old_string: "foo",
+      new_string: "qux",
+      expected_replacements: 2,
+    });
+
+    expect(readFileSync(file, "utf-8")).toBe("qux bar qux baz");
+    expect(result.replacements).toBe(2);
+  });
+
+  test("throws error for invalid expected_replacements", async () => {
+    testDir = new TestDirectory();
+    const file = testDir.createFile("test.txt", "foo");
+
+    await expect(
+      edit({
+        file_path: file,
+        old_string: "foo",
+        new_string: "bar",
+        expected_replacements: 0,
+      }),
+    ).rejects.toThrow("expected_replacements must be a positive integer");
+  });
+
+  test("throws error when old_string is empty", async () => {
+    testDir = new TestDirectory();
+    const file = testDir.createFile("test.txt", "Hello, World!");
+
+    await expect(
+      edit({
+        file_path: file,
+        old_string: "",
+        new_string: "Bun",
+      }),
+    ).rejects.toThrow("old_string cannot be empty");
+  });
+
   test("throws error when file_path is missing", async () => {
     await expect(
       edit({
@@ -114,18 +170,15 @@ describe("Edit tool", () => {
 
   test("handles CRLF line endings (Windows compatibility)", async () => {
     testDir = new TestDirectory();
-    // Create file with CRLF line endings (Windows style)
     const file = testDir.createFile("crlf.txt", "");
     writeFileSync(file, "line1\r\nline2\r\nline3\r\n", "utf-8");
 
-    // Edit with LF line endings (what the model typically sends)
     const result = await edit({
       file_path: file,
       old_string: "line1\nline2",
       new_string: "changed1\nchanged2",
     });
 
-    // Should successfully find and replace despite CRLF vs LF mismatch
     expect(result.replacements).toBe(1);
     const content = readFileSync(file, "utf-8");
     expect(content).toContain("changed1");
@@ -135,10 +188,8 @@ describe("Edit tool", () => {
   test("handles mixed line endings", async () => {
     testDir = new TestDirectory();
     const file = testDir.createFile("mixed.txt", "");
-    // File with CRLF
     writeFileSync(file, "function foo() {\r\n  return 1;\r\n}\r\n", "utf-8");
 
-    // Model sends LF
     const result = await edit({
       file_path: file,
       old_string: "function foo() {\n  return 1;\n}",

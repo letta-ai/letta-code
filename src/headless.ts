@@ -9,18 +9,22 @@ import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/mes
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
 import type { ApprovalResult } from "./agent/approval-execution";
 import {
+  extractConflictDetail,
   fetchRunErrorDetail,
   getPreStreamErrorAction,
   isApprovalPendingError,
   isInvalidToolCallIdsError,
+  parseRetryAfterHeaderMs,
+  shouldRetryRunMetadataError,
 } from "./agent/approval-recovery";
-import { getClient, getServerUrl } from "./agent/client";
+import { getClient } from "./agent/client";
 import { setAgentContext, setConversationId } from "./agent/context";
 import { createAgent } from "./agent/create";
 import { ISOLATED_BLOCK_LABELS } from "./agent/memory";
-
 import { sendMessageStream } from "./agent/message";
 import { getModelUpdateArgs } from "./agent/model";
+import { resolveSkillSourcesSelection } from "./agent/skillSources";
+import type { SkillSource } from "./agent/skills";
 import { SessionStats } from "./agent/stats";
 import {
   createBuffers,
@@ -31,10 +35,25 @@ import {
 import { classifyApprovals } from "./cli/helpers/approvalClassification";
 import { formatErrorDetails } from "./cli/helpers/errorFormatter";
 import {
+  getReflectionSettings,
+  type ReflectionBehavior,
+  type ReflectionSettings,
+  type ReflectionTrigger,
+  reflectionSettingsToLegacyMode,
+} from "./cli/helpers/memoryReminder";
+import {
+  type QueuedMessage,
+  setMessageQueueAdder,
+} from "./cli/helpers/messageQueueBridge";
+import {
   type DrainStreamHook,
   drainStreamWithResume,
 } from "./cli/helpers/stream";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "./constants";
+import {
+  mergeQueuedTurnInput,
+  type QueuedTurnInput,
+} from "./queue/turnQueueRuntime";
 import { settingsManager } from "./settings-manager";
 import {
   isHeadlessAutoAllowTool,
@@ -75,13 +94,175 @@ const LLM_API_ERROR_MAX_RETRIES = 3;
 const CONVERSATION_BUSY_MAX_RETRIES = 1; // Only retry once, fail on 2nd 409
 const CONVERSATION_BUSY_RETRY_DELAY_MS = 2500; // 2.5 seconds
 
+export function prependSkillsReminderToContent(
+  content: MessageCreate["content"],
+  skillsReminder: string,
+): MessageCreate["content"] {
+  if (!skillsReminder) {
+    return content;
+  }
+
+  if (typeof content === "string") {
+    return `${skillsReminder}\n\n${content}`;
+  }
+
+  if (Array.isArray(content)) {
+    return [
+      {
+        type: "text",
+        text: `${skillsReminder}\n\n`,
+      },
+      ...content,
+    ] as MessageCreate["content"];
+  }
+
+  return content;
+}
+
+export function shouldReinjectSkillsAfterCompaction(lines: Line[]): boolean {
+  return lines.some(
+    (line) =>
+      line.kind === "event" &&
+      line.eventType === "compaction" &&
+      line.phase === "finished" &&
+      (line.summary !== undefined || line.stats !== undefined),
+  );
+}
+export type BidirectionalQueuedInput = QueuedTurnInput<
+  MessageCreate["content"]
+>;
+
+export function mergeBidirectionalQueuedInput(
+  queued: BidirectionalQueuedInput[],
+): MessageCreate["content"] | null {
+  return mergeQueuedTurnInput(queued, {
+    normalizeUserContent: (content) => content,
+  });
+}
+
+type ReflectionOverrides = {
+  trigger?: ReflectionTrigger;
+  behavior?: ReflectionBehavior;
+  stepCount?: number;
+};
+
+function parseReflectionOverrides(
+  values: Record<string, unknown>,
+): ReflectionOverrides {
+  const triggerRaw = values["reflection-trigger"] as string | undefined;
+  const behaviorRaw = values["reflection-behavior"] as string | undefined;
+  const stepCountRaw = values["reflection-step-count"] as string | undefined;
+
+  if (!triggerRaw && !behaviorRaw && !stepCountRaw) {
+    return {};
+  }
+
+  const overrides: ReflectionOverrides = {};
+
+  if (triggerRaw !== undefined) {
+    if (
+      triggerRaw !== "off" &&
+      triggerRaw !== "step-count" &&
+      triggerRaw !== "compaction-event"
+    ) {
+      throw new Error(
+        `Invalid --reflection-trigger "${triggerRaw}". Valid values: off, step-count, compaction-event`,
+      );
+    }
+    overrides.trigger = triggerRaw;
+  }
+
+  if (behaviorRaw !== undefined) {
+    if (behaviorRaw !== "reminder" && behaviorRaw !== "auto-launch") {
+      throw new Error(
+        `Invalid --reflection-behavior "${behaviorRaw}". Valid values: reminder, auto-launch`,
+      );
+    }
+    overrides.behavior = behaviorRaw;
+  }
+
+  if (stepCountRaw !== undefined) {
+    const parsed = Number.parseInt(stepCountRaw, 10);
+    if (Number.isNaN(parsed) || parsed <= 0) {
+      throw new Error(
+        `Invalid --reflection-step-count "${stepCountRaw}". Expected a positive integer.`,
+      );
+    }
+    overrides.stepCount = parsed;
+  }
+
+  return overrides;
+}
+
+function hasReflectionOverrides(overrides: ReflectionOverrides): boolean {
+  return (
+    overrides.trigger !== undefined ||
+    overrides.behavior !== undefined ||
+    overrides.stepCount !== undefined
+  );
+}
+
+async function applyReflectionOverrides(
+  agentId: string,
+  overrides: ReflectionOverrides,
+): Promise<ReflectionSettings> {
+  const current = getReflectionSettings();
+  const merged: ReflectionSettings = {
+    trigger: overrides.trigger ?? current.trigger,
+    behavior: overrides.behavior ?? current.behavior,
+    stepCount: overrides.stepCount ?? current.stepCount,
+  };
+
+  if (!hasReflectionOverrides(overrides)) {
+    return merged;
+  }
+
+  const memfsEnabled = settingsManager.isMemfsEnabled(agentId);
+  if (!memfsEnabled && merged.trigger === "compaction-event") {
+    throw new Error(
+      "--reflection-trigger compaction-event requires memfs enabled for this agent.",
+    );
+  }
+  if (
+    !memfsEnabled &&
+    merged.trigger !== "off" &&
+    merged.behavior === "auto-launch"
+  ) {
+    throw new Error(
+      "--reflection-behavior auto-launch requires memfs enabled for this agent.",
+    );
+  }
+
+  try {
+    settingsManager.getLocalProjectSettings();
+  } catch {
+    await settingsManager.loadLocalProjectSettings();
+  }
+
+  const legacyMode = reflectionSettingsToLegacyMode(merged);
+  settingsManager.updateLocalProjectSettings({
+    memoryReminderInterval: legacyMode,
+    reflectionTrigger: merged.trigger,
+    reflectionBehavior: merged.behavior,
+    reflectionStepCount: merged.stepCount,
+  });
+  settingsManager.updateSettings({
+    memoryReminderInterval: legacyMode,
+    reflectionTrigger: merged.trigger,
+    reflectionBehavior: merged.behavior,
+    reflectionStepCount: merged.stepCount,
+  });
+
+  return merged;
+}
+
 export async function handleHeadlessCommand(
   argv: string[],
   model?: string,
-  skillsDirectory?: string,
+  skillsDirectoryOverride?: string,
+  skillSourcesOverride?: SkillSource[],
+  systemInfoReminderEnabledOverride?: boolean,
 ) {
-  const settings = settingsManager.getSettings();
-
   // Parse CLI args
   // Include all flags from index.ts to prevent them from being treated as positionals
   const { values, positionals } = parseArgs({
@@ -118,13 +299,21 @@ export async function handleHeadlessCommand(
       "permission-mode": { type: "string" },
       yolo: { type: "boolean" },
       skills: { type: "string" },
+      "skill-sources": { type: "string" },
       "pre-load-skills": { type: "string" },
       "init-blocks": { type: "string" },
       "base-tools": { type: "string" },
       "from-af": { type: "string" },
+      tags: { type: "string" },
 
       memfs: { type: "boolean" },
       "no-memfs": { type: "boolean" },
+      "no-skills": { type: "boolean" },
+      "no-bundled-skills": { type: "boolean" },
+      "no-system-info-reminder": { type: "boolean" },
+      "reflection-trigger": { type: "string" },
+      "reflection-behavior": { type: "string" },
+      "reflection-step-count": { type: "string" },
       "max-turns": { type: "string" }, // Maximum number of agentic turns
     },
     strict: false,
@@ -260,11 +449,69 @@ export async function handleHeadlessCommand(
   const blockValueArgs = values["block-value"] as string[] | undefined;
   const initBlocksRaw = values["init-blocks"] as string | undefined;
   const baseToolsRaw = values["base-tools"] as string | undefined;
+  const skillsDirectory =
+    (values.skills as string | undefined) ?? skillsDirectoryOverride;
+  const noSkillsFlag = values["no-skills"] as boolean | undefined;
+  const noBundledSkillsFlag = values["no-bundled-skills"] as
+    | boolean
+    | undefined;
+  const skillSourcesRaw = values["skill-sources"] as string | undefined;
   const memfsFlag = values.memfs as boolean | undefined;
   const noMemfsFlag = values["no-memfs"] as boolean | undefined;
+  const requestedMemoryPromptMode: "memfs" | "standard" | undefined = memfsFlag
+    ? "memfs"
+    : noMemfsFlag
+      ? "standard"
+      : undefined;
+  const shouldAutoEnableMemfsForNewAgent = !memfsFlag && !noMemfsFlag;
   const fromAfFile = values["from-af"] as string | undefined;
   const preLoadSkillsRaw = values["pre-load-skills"] as string | undefined;
+  const systemInfoReminderEnabled =
+    systemInfoReminderEnabledOverride ??
+    !(values["no-system-info-reminder"] as boolean | undefined);
+  const reflectionOverrides = (() => {
+    try {
+      return parseReflectionOverrides(values);
+    } catch (error) {
+      console.error(
+        error instanceof Error ? `Error: ${error.message}` : String(error),
+      );
+      process.exit(1);
+    }
+  })();
   const maxTurnsRaw = values["max-turns"] as string | undefined;
+  const tagsRaw = values.tags as string | undefined;
+  const resolvedSkillSources = (() => {
+    if (skillSourcesOverride) {
+      return skillSourcesOverride;
+    }
+    try {
+      return resolveSkillSourcesSelection({
+        skillSourcesRaw,
+        noSkills: noSkillsFlag,
+        noBundledSkills: noBundledSkillsFlag,
+      });
+    } catch (error) {
+      console.error(
+        error instanceof Error ? `Error: ${error.message}` : String(error),
+      );
+      process.exit(1);
+    }
+  })();
+
+  // Parse and validate base tools
+  let tags: string[] | undefined;
+  if (tagsRaw !== undefined) {
+    const trimmed = tagsRaw.trim();
+    if (!trimmed || trimmed.toLowerCase() === "none") {
+      tags = [];
+    } else {
+      tags = trimmed
+        .split(",")
+        .map((name) => name.trim())
+        .filter((name) => name.length > 0);
+    }
+  }
 
   // Parse and validate max-turns if provided
   let maxTurns: number | undefined;
@@ -277,6 +524,13 @@ export async function handleHeadlessCommand(
       process.exit(1);
     }
     maxTurns = parsed;
+  }
+
+  if (preLoadSkillsRaw && resolvedSkillSources.length === 0) {
+    console.error(
+      "Error: --pre-load-skills cannot be used when all skill sources are disabled.",
+    );
+    process.exit(1);
   }
 
   // Handle --conv {agent-id} shorthand: --conv agent-xyz → --agent agent-xyz --conv default
@@ -574,54 +828,68 @@ export async function handleHeadlessCommand(
       systemPromptPreset,
       systemPromptCustom: systemCustom,
       systemPromptAppend: systemAppend,
+      memoryPromptMode: requestedMemoryPromptMode,
       initBlocks,
       baseTools,
       memoryBlocks,
       blockValues,
+      tags,
     };
     const result = await createAgent(createOptions);
     agent = result.agent;
+
+    // Enable memfs by default on Letta Cloud for new agents when no explicit memfs flags are provided.
+    if (shouldAutoEnableMemfsForNewAgent) {
+      const { enableMemfsIfCloud } = await import("./agent/memoryFilesystem");
+      await enableMemfsIfCloud(agent.id);
+    }
   }
 
   // Priority 4: Try to resume from project settings (.letta/settings.local.json)
+  // Store local conversation ID for use in conversation resolution below
+  let resolvedLocalConvId: string | null = null;
   if (!agent) {
     await settingsManager.loadLocalProjectSettings();
-    const localProjectSettings = settingsManager.getLocalProjectSettings();
-    if (localProjectSettings?.lastAgent) {
+    const localAgentId = settingsManager.getLocalLastAgentId(process.cwd());
+    if (localAgentId) {
       try {
-        agent = await client.agents.retrieve(localProjectSettings.lastAgent);
+        agent = await client.agents.retrieve(localAgentId);
+        // Store local conversation for downstream resolution
+        const localSession = settingsManager.getLocalLastSession(process.cwd());
+        resolvedLocalConvId = localSession?.conversationId ?? null;
       } catch (_error) {
         // Local LRU agent doesn't exist - log and continue
-        console.error(
-          `Unable to locate agent ${localProjectSettings.lastAgent} in .letta/`,
-        );
+        console.error(`Unable to locate agent ${localAgentId} in .letta/`);
       }
     }
   }
 
-  // Priority 5: Try to reuse global lastAgent if --continue flag is passed
-  if (!agent && shouldContinue) {
-    if (settings.lastAgent) {
+  // Priority 5: Try to reuse global LRU (covers directory-switching case)
+  // Do NOT restore global conversation — use default (project-scoped conversations)
+  if (!agent) {
+    const globalAgentId = settingsManager.getGlobalLastAgentId();
+    if (globalAgentId) {
       try {
-        agent = await client.agents.retrieve(settings.lastAgent);
+        agent = await client.agents.retrieve(globalAgentId);
       } catch (_error) {
         // Global LRU agent doesn't exist
       }
     }
-    // --continue requires an LRU agent to exist
-    if (!agent) {
-      console.error("No recent session found in .letta/ or ~/.letta.");
-      console.error("Run 'letta' to get started.");
-      process.exit(1);
-    }
   }
 
-  // Priority 6: Fresh user with no LRU - create Memo (same as interactive mode)
+  // Priority 6: --continue with no agent found → error
+  if (!agent && shouldContinue) {
+    console.error("No recent session found in .letta/ or ~/.letta.");
+    console.error("Run 'letta' to get started.");
+    process.exit(1);
+  }
+
+  // Priority 7: Fresh user with no LRU - create default agent
   if (!agent) {
     const { ensureDefaultAgents } = await import("./agent/defaults");
-    const memoAgent = await ensureDefaultAgents(client);
-    if (memoAgent) {
-      agent = memoAgent;
+    const defaultAgent = await ensureDefaultAgents(client);
+    if (defaultAgent) {
+      agent = defaultAgent;
     }
   }
 
@@ -674,56 +942,42 @@ export async function handleHeadlessCommand(
 
   // Determine which conversation to use
   let conversationId: string;
+  let effectiveReflectionSettings: ReflectionSettings;
 
   const isSubagent = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
 
   // Apply memfs flag if explicitly specified (memfs is opt-in via /memfs enable or --memfs)
-  if (memfsFlag) {
-    // memfs requires Letta Cloud (git memfs not supported on self-hosted)
-    const serverUrl = getServerUrl();
-    if (!serverUrl.includes("api.letta.com")) {
-      console.error(
-        "--memfs is only available on Letta Cloud (api.letta.com).",
-      );
-      process.exit(1);
-    }
-    settingsManager.setMemfsEnabled(agent.id, true);
-  } else if (noMemfsFlag) {
-    settingsManager.setMemfsEnabled(agent.id, false);
-  }
-
-  // Ensure agent's system prompt includes/excludes memfs section to match setting
-  if (memfsFlag || noMemfsFlag) {
-    const { updateAgentSystemPromptMemfs } = await import("./agent/modify");
-    await updateAgentSystemPromptMemfs(
+  try {
+    const { applyMemfsFlags } = await import("./agent/memoryFilesystem");
+    const memfsResult = await applyMemfsFlags(
       agent.id,
-      settingsManager.isMemfsEnabled(agent.id),
+      memfsFlag,
+      noMemfsFlag,
+      { pullOnExistingRepo: true },
     );
-  }
-
-  // Git-backed memory: clone or pull on startup (only if memfs is enabled)
-  if (settingsManager.isMemfsEnabled(agent.id)) {
-    try {
-      const { isGitRepo, cloneMemoryRepo, pullMemory } = await import(
-        "./agent/memoryGit"
-      );
-      if (!isGitRepo(agent.id)) {
-        await cloneMemoryRepo(agent.id);
-      } else {
-        const result = await pullMemory(agent.id);
-        if (result.summary.includes("CONFLICT")) {
-          console.error(
-            "Memory has merge conflicts. Run in interactive mode to resolve.",
-          );
-          process.exit(1);
-        }
-      }
-    } catch (error) {
+    if (memfsResult.pullSummary?.includes("CONFLICT")) {
       console.error(
-        `Memory git sync failed: ${error instanceof Error ? error.message : String(error)}`,
+        "Memory has merge conflicts. Run in interactive mode to resolve.",
       );
       process.exit(1);
     }
+  } catch (error) {
+    console.error(
+      `Memory git sync failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    process.exit(1);
+  }
+
+  try {
+    effectiveReflectionSettings = await applyReflectionOverrides(
+      agent.id,
+      reflectionOverrides,
+    );
+  } catch (error) {
+    console.error(
+      `Failed to apply sleeptime settings: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    process.exit(1);
   }
 
   // Determine which blocks to isolate for the conversation
@@ -793,8 +1047,21 @@ export async function handleHeadlessCommand(
       isolated_block_labels: isolatedBlockLabels,
     });
     conversationId = conversation.id;
+  } else if (resolvedLocalConvId) {
+    // Resumed from local LRU — restore the local conversation
+    if (resolvedLocalConvId === "default") {
+      conversationId = "default";
+    } else {
+      try {
+        await client.conversations.retrieve(resolvedLocalConvId);
+        conversationId = resolvedLocalConvId;
+      } catch {
+        // Local conversation no longer exists — fall back to default
+        conversationId = "default";
+      }
+    }
   } else {
-    // Default (including --new-agent, --agent): use the agent's "default" conversation
+    // Default (including --new-agent, --agent, global LRU fallback): use "default" conversation
     conversationId = "default";
   }
   markMilestone("HEADLESS_CONVERSATION_READY");
@@ -834,7 +1101,7 @@ export async function handleHeadlessCommand(
   }
 
   // Set agent context for tools that need it (e.g., Skill tool, Task tool)
-  setAgentContext(agent.id, skillsDirectory);
+  setAgentContext(agent.id, skillsDirectory, resolvedSkillSources);
 
   // Validate output format
   const outputFormat =
@@ -869,6 +1136,9 @@ export async function handleHeadlessCommand(
       outputFormat,
       includePartialMessages,
       availableTools,
+      resolvedSkillSources,
+      systemInfoReminderEnabled,
+      effectiveReflectionSettings,
     );
     return;
   }
@@ -896,6 +1166,12 @@ export async function handleHeadlessCommand(
       mcp_servers: [],
       permission_mode: "",
       slash_commands: [],
+      memfs_enabled: settingsManager.isMemfsEnabled(agent.id),
+      skill_sources: resolvedSkillSources,
+      system_info_reminder_enabled: systemInfoReminderEnabled,
+      reflection_trigger: effectiveReflectionSettings.trigger,
+      reflection_behavior: effectiveReflectionSettings.behavior,
+      reflection_step_count: effectiveReflectionSettings.stepCount,
       uuid: `init-${agent.id}`,
     };
     console.log(JSON.stringify(initEvent));
@@ -1098,7 +1374,9 @@ ${SYSTEM_REMINDER_CLOSE}
     const { join } = await import("node:path");
     try {
       const skillsDir = getSkillsDirectory() || join(process.cwd(), defaultDir);
-      const { skills } = await discoverSkills(skillsDir, agent.id);
+      const { skills } = await discoverSkills(skillsDir, agent.id, {
+        sources: resolvedSkillSources,
+      });
       const skillsReminder = formatSkillsAsSystemReminder(skills);
       if (skillsReminder) {
         pushPart(skillsReminder);
@@ -1211,35 +1489,21 @@ ${SYSTEM_REMINDER_CLOSE}
           agentId: agent.id,
         });
       } catch (preStreamError) {
-        // Extract error detail from APIError
-        let errorDetail = "";
-        if (
-          preStreamError instanceof APIError &&
-          preStreamError.error &&
-          typeof preStreamError.error === "object"
-        ) {
-          const errObj = preStreamError.error as Record<string, unknown>;
-          if (
-            errObj.error &&
-            typeof errObj.error === "object" &&
-            "detail" in errObj.error
-          ) {
-            const nested = errObj.error as Record<string, unknown>;
-            errorDetail =
-              typeof nested.detail === "string" ? nested.detail : "";
-          }
-          if (!errorDetail && typeof errObj.detail === "string") {
-            errorDetail = errObj.detail;
-          }
-        }
-        if (!errorDetail && preStreamError instanceof Error) {
-          errorDetail = preStreamError.message;
-        }
+        // Extract error detail using shared helper (handles nested/direct/message shapes)
+        const errorDetail = extractConflictDetail(preStreamError);
 
         const preStreamAction = getPreStreamErrorAction(
           errorDetail,
           conversationBusyRetries,
           CONVERSATION_BUSY_MAX_RETRIES,
+          {
+            status:
+              preStreamError instanceof APIError
+                ? preStreamError.status
+                : undefined,
+            transientRetries: llmApiErrorRetries,
+            maxTransientRetries: LLM_API_ERROR_MAX_RETRIES,
+          },
         );
 
         // Check for pending approval blocking new messages - resolve and retry.
@@ -1292,6 +1556,41 @@ ${SYSTEM_REMINDER_CLOSE}
           await new Promise((resolve) =>
             setTimeout(resolve, CONVERSATION_BUSY_RETRY_DELAY_MS),
           );
+          continue;
+        }
+
+        if (preStreamAction === "retry_transient") {
+          const attempt = llmApiErrorRetries + 1;
+          const retryAfterMs =
+            preStreamError instanceof APIError
+              ? parseRetryAfterHeaderMs(
+                  preStreamError.headers?.get("retry-after"),
+                )
+              : null;
+          const delayMs = retryAfterMs ?? 1000 * 2 ** (attempt - 1);
+
+          llmApiErrorRetries = attempt;
+
+          if (outputFormat === "stream-json") {
+            const retryMsg: RetryMessage = {
+              type: "retry",
+              reason: "llm_api_error",
+              attempt,
+              max_attempts: LLM_API_ERROR_MAX_RETRIES,
+              delay_ms: delayMs,
+              session_id: sessionId,
+              uuid: `retry-pre-stream-${crypto.randomUUID()}`,
+            };
+            console.log(JSON.stringify(retryMsg));
+          } else {
+            const delaySeconds = Math.round(delayMs / 1000);
+            console.error(
+              `Transient API error before streaming (attempt ${attempt} of ${LLM_API_ERROR_MAX_RETRIES}), retrying in ${delaySeconds}s...`,
+            );
+          }
+
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
+          conversationBusyRetries = 0;
           continue;
         }
 
@@ -1701,31 +2000,9 @@ ${SYSTEM_REMINDER_CLOSE}
           const errorType =
             metaError?.error_type ?? metaError?.error?.error_type;
 
-          // Fallback: detect LLM provider errors from detail even if misclassified
-          // Patterns are derived from handle_llm_error() message formats in the backend
           const detail = metaError?.detail ?? metaError?.error?.detail ?? "";
 
-          // Don't retry 4xx client errors (validation, auth, malformed requests)
-          // These are not transient and won't succeed on retry
-          const is4xxError = /Error code: 4\d{2}/.test(detail);
-
-          const llmProviderPatterns = [
-            "Anthropic API error", // anthropic_client.py:759
-            "OpenAI API error", // openai_client.py:1034
-            "Google Vertex API error", // google_vertex_client.py:848
-            "overloaded", // anthropic_client.py:753 - used for LLMProviderOverloaded
-            "api_error", // Anthropic SDK error type field
-            "Network error", // Transient network failures during streaming
-            "Connection error during Anthropic streaming", // Peer disconnections, incomplete chunked reads
-          ];
-          const isLlmErrorFromDetail = llmProviderPatterns.some((pattern) =>
-            detail.includes(pattern),
-          );
-
-          if (
-            (errorType === "llm_error" || isLlmErrorFromDetail) &&
-            !is4xxError
-          ) {
+          if (shouldRetryRunMetadataError(errorType, detail)) {
             const attempt = llmApiErrorRetries + 1;
             const baseDelayMs = 1000;
             const delayMs = baseDelayMs * 2 ** (attempt - 1);
@@ -1965,6 +2242,9 @@ async function runBidirectionalMode(
   _outputFormat: string,
   includePartialMessages: boolean,
   availableTools: string[],
+  skillSources: SkillSource[],
+  systemInfoReminderEnabled: boolean,
+  reflectionSettings: ReflectionSettings,
 ): Promise<void> {
   const sessionId = agent.id;
   const readline = await import("node:readline");
@@ -1979,12 +2259,24 @@ async function runBidirectionalMode(
     model: agent.llm_config?.model,
     tools: availableTools,
     cwd: process.cwd(),
+    memfs_enabled: settingsManager.isMemfsEnabled(agent.id),
+    skill_sources: skillSources,
+    system_info_reminder_enabled: systemInfoReminderEnabled,
+    reflection_trigger: reflectionSettings.trigger,
+    reflection_behavior: reflectionSettings.behavior,
+    reflection_step_count: reflectionSettings.stepCount,
     uuid: `init-${agent.id}`,
   };
   console.log(JSON.stringify(initEvent));
 
   // Track current operation for interrupt support
   let currentAbortController: AbortController | null = null;
+  // Skills reminder lifecycle in bidirectional mode:
+  // - Inject once on first user turn
+  // - Reinject only after compaction completion or skills diff
+  let hasInjectedSkillsReminder = false;
+  let pendingSkillsReinject = false;
+  let cachedSkillsReminder: string | null = null;
 
   // Resolve pending approvals for this conversation before retrying user input.
   const resolveAllPendingApprovals = async () => {
@@ -2120,6 +2412,29 @@ async function runBidirectionalMode(
   const lineQueue: string[] = [];
   let lineResolver: ((line: string | null) => void) | null = null;
 
+  const serializeQueuedMessageAsUserLine = (queuedMessage: QueuedMessage) =>
+    JSON.stringify({
+      type: "user",
+      message: {
+        role: "user",
+        content: queuedMessage.text,
+      },
+      _queuedKind: queuedMessage.kind,
+    });
+
+  // Connect Task/subagent background notifications to the same queueing path
+  // used by user input so bidirectional mode inherits TUI-style queue behavior.
+  setMessageQueueAdder((queuedMessage) => {
+    const syntheticUserLine = serializeQueuedMessageAsUserLine(queuedMessage);
+    if (lineResolver) {
+      const resolve = lineResolver;
+      lineResolver = null;
+      resolve(syntheticUserLine);
+      return;
+    }
+    lineQueue.push(syntheticUserLine);
+  });
+
   // Feed lines into queue or resolver
   rl.on("line", (line) => {
     if (lineResolver) {
@@ -2132,6 +2447,7 @@ async function runBidirectionalMode(
   });
 
   rl.on("close", () => {
+    setMessageQueueAdder(null);
     if (lineResolver) {
       const resolve = lineResolver;
       lineResolver = null;
@@ -2250,7 +2566,7 @@ async function runBidirectionalMode(
 
     let message: {
       type: string;
-      message?: { role: string; content: string };
+      message?: { role: string; content: MessageCreate["content"] };
       request_id?: string;
       request?: { subtype: string };
       session_id?: string;
@@ -2286,6 +2602,12 @@ async function runBidirectionalMode(
               agent_id: agent.id,
               model: agent.llm_config?.model,
               tools: availableTools,
+              memfs_enabled: settingsManager.isMemfsEnabled(agent.id),
+              skill_sources: skillSources,
+              system_info_reminder_enabled: systemInfoReminderEnabled,
+              reflection_trigger: reflectionSettings.trigger,
+              reflection_behavior: reflectionSettings.behavior,
+              reflection_step_count: reflectionSettings.stepCount,
             },
           },
           session_id: sessionId,
@@ -2389,8 +2711,78 @@ async function runBidirectionalMode(
     }
 
     // Handle user messages
-    if (message.type === "user" && message.message?.content) {
-      const userContent = message.message.content;
+    if (message.type === "user" && message.message?.content !== undefined) {
+      const queuedInputs: BidirectionalQueuedInput[] = [
+        {
+          kind: "user",
+          content: message.message.content,
+        },
+      ];
+
+      // Batch any already-buffered user lines into the same turn, mirroring
+      // TUI queue dequeue behavior (single coalesced submit when idle).
+      while (lineQueue.length > 0) {
+        const candidate = lineQueue[0];
+        if (!candidate?.trim()) {
+          lineQueue.shift();
+          continue;
+        }
+
+        let parsedCandidate: {
+          type?: string;
+          message?: { content?: MessageCreate["content"] };
+          _queuedKind?: QueuedMessage["kind"];
+        };
+        try {
+          parsedCandidate = JSON.parse(candidate);
+        } catch {
+          // Leave malformed lines for the main loop to surface as parse errors.
+          break;
+        }
+
+        if (
+          parsedCandidate.type === "user" &&
+          parsedCandidate.message?.content !== undefined
+        ) {
+          lineQueue.shift();
+          if (parsedCandidate._queuedKind === "task_notification") {
+            const notificationText =
+              typeof parsedCandidate.message.content === "string"
+                ? parsedCandidate.message.content
+                : parsedCandidate.message.content
+                    .reduce((texts: string[], part) => {
+                      if (
+                        part.type === "text" &&
+                        "text" in part &&
+                        typeof part.text === "string"
+                      ) {
+                        texts.push(part.text);
+                      }
+                      return texts;
+                    }, [])
+                    .join("");
+            queuedInputs.push({
+              kind: "task_notification",
+              text: notificationText,
+            });
+          } else {
+            queuedInputs.push({
+              kind: "user",
+              content: parsedCandidate.message.content,
+            });
+          }
+          continue;
+        }
+
+        // Stop coalescing when the queue head is not a user-input line.
+        // The outer loop must process control/error/system lines in-order.
+        break;
+      }
+
+      const userContent = mergeBidirectionalQueuedInput(queuedInputs);
+      if (userContent === null) {
+        continue;
+      }
 
       // Create abort controller for this operation
       currentAbortController = new AbortController();
@@ -2401,28 +2793,49 @@ async function runBidirectionalMode(
         let numTurns = 0;
         let lastStopReason: StopReasonType | null = null; // Track for result subtype
         let sawStreamError = false; // Track if we emitted an error during streaming
+        let preStreamTransientRetries = 0;
 
-        // Inject available skills as system-reminder for bidirectional mode (LET-7353)
+        // Inject available skills as system-reminder for bidirectional mode (LET-7353).
+        // Discover each turn so skill file changes are naturally picked up.
         let enrichedContent = userContent;
-        if (typeof enrichedContent === "string") {
-          try {
-            const {
-              discoverSkills: discover,
-              SKILLS_DIR: defaultDir,
-              formatSkillsAsSystemReminder,
-            } = await import("./agent/skills");
-            const { getSkillsDirectory } = await import("./agent/context");
-            const { join } = await import("node:path");
-            const skillsDir =
-              getSkillsDirectory() || join(process.cwd(), defaultDir);
-            const { skills } = await discover(skillsDir, agent.id);
-            const skillsReminder = formatSkillsAsSystemReminder(skills);
-            if (skillsReminder) {
-              enrichedContent = `${skillsReminder}\n\n${enrichedContent}`;
-            }
-          } catch {
-            // Skills discovery failed, skip
+        try {
+          const {
+            discoverSkills: discover,
+            SKILLS_DIR: defaultDir,
+            formatSkillsAsSystemReminder,
+          } = await import("./agent/skills");
+          const { getSkillsDirectory } = await import("./agent/context");
+          const { join } = await import("node:path");
+          const skillsDir =
+            getSkillsDirectory() || join(process.cwd(), defaultDir);
+          const { skills } = await discover(skillsDir, agent.id, {
+            sources: skillSources,
+          });
+          const latestSkillsReminder = formatSkillsAsSystemReminder(skills);
+
+          // Trigger reinjection when the available-skills block changed on disk.
+          if (
+            cachedSkillsReminder !== null &&
+            latestSkillsReminder !== cachedSkillsReminder
+          ) {
+            pendingSkillsReinject = true;
           }
+          cachedSkillsReminder = latestSkillsReminder;
+
+          const shouldInjectSkillsReminder =
+            !hasInjectedSkillsReminder || pendingSkillsReinject;
+          if (shouldInjectSkillsReminder && latestSkillsReminder) {
+            enrichedContent = prependSkillsReminderToContent(
+              enrichedContent,
+              latestSkillsReminder,
+            );
+          }
+          if (shouldInjectSkillsReminder) {
+            hasInjectedSkillsReminder = true;
+            pendingSkillsReinject = false;
+          }
+        } catch {
+          // Skills discovery failed, skip
         }
 
         // Initial input is the user message
@@ -2467,31 +2880,21 @@ async function runBidirectionalMode(
               agentId: agent.id,
             });
           } catch (preStreamError) {
-            let errorDetail = "";
-            if (
-              preStreamError instanceof APIError &&
-              preStreamError.error &&
-              typeof preStreamError.error === "object"
-            ) {
-              const errObj = preStreamError.error as Record<string, unknown>;
-              if (
-                errObj.error &&
-                typeof errObj.error === "object" &&
-                "detail" in errObj.error
-              ) {
-                const nested = errObj.error as Record<string, unknown>;
-                errorDetail =
-                  typeof nested.detail === "string" ? nested.detail : "";
-              }
-              if (!errorDetail && typeof errObj.detail === "string") {
-                errorDetail = errObj.detail;
-              }
-            }
-            if (!errorDetail && preStreamError instanceof Error) {
-              errorDetail = preStreamError.message;
-            }
+            // Extract error detail using shared helper (handles nested/direct/message shapes)
+            const errorDetail = extractConflictDetail(preStreamError);
 
-            if (isApprovalPendingError(errorDetail)) {
+            // Route through shared pre-stream conflict classifier (parity with main loop + TUI)
+            // Bidir mode has no conversation-busy retry budget, so pass 0/0 to disable busy-retry.
+            const preStreamAction = getPreStreamErrorAction(errorDetail, 0, 0, {
+              status:
+                preStreamError instanceof APIError
+                  ? preStreamError.status
+                  : undefined,
+              transientRetries: preStreamTransientRetries,
+              maxTransientRetries: LLM_API_ERROR_MAX_RETRIES,
+            });
+
+            if (preStreamAction === "resolve_approval_pending") {
               const recoveryMsg: RecoveryMessage = {
                 type: "recovery",
                 recovery_type: "approval_pending",
@@ -2505,8 +2908,35 @@ async function runBidirectionalMode(
               continue;
             }
 
+            if (preStreamAction === "retry_transient") {
+              const attempt = preStreamTransientRetries + 1;
+              const retryAfterMs =
+                preStreamError instanceof APIError
+                  ? parseRetryAfterHeaderMs(
+                      preStreamError.headers?.get("retry-after"),
+                    )
+                  : null;
+              const delayMs = retryAfterMs ?? 1000 * 2 ** (attempt - 1);
+              preStreamTransientRetries = attempt;
+
+              const retryMsg: RetryMessage = {
+                type: "retry",
+                reason: "llm_api_error",
+                attempt,
+                max_attempts: LLM_API_ERROR_MAX_RETRIES,
+                delay_ms: delayMs,
+                session_id: sessionId,
+                uuid: `retry-bidir-${crypto.randomUUID()}`,
+              };
+              console.log(JSON.stringify(retryMsg));
+
+              await new Promise((resolve) => setTimeout(resolve, delayMs));
+              continue;
+            }
+
             throw preStreamError;
           }
+          preStreamTransientRetries = 0;
           const streamJsonHook: DrainStreamHook = ({
             chunk,
             shouldOutput,
@@ -2746,6 +3176,9 @@ async function runBidirectionalMode(
         // Emit result
         const durationMs = performance.now() - startTime;
         const lines = toLines(buffers);
+        if (shouldReinjectSkillsAfterCompaction(lines)) {
+          pendingSkillsReinject = true;
+        }
         const reversed = [...lines].reverse();
         const lastAssistant = reversed.find(
           (line) =>
@@ -2860,5 +3293,6 @@ async function runBidirectionalMode(
   }
 
   // Stdin closed, exit gracefully
+  setMessageQueueAdder(null);
   process.exit(0);
 }

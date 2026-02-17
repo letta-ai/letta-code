@@ -4,7 +4,7 @@ import { APIError } from "@letta-ai/letta-client/core/error";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
 import { getResumeData, type ResumeData } from "./agent/check-approval";
-import { getClient, getServerUrl } from "./agent/client";
+import { getClient } from "./agent/client";
 import {
   setAgentContext,
   setConversationId as setContextConversationId,
@@ -12,6 +12,7 @@ import {
 import type { AgentProvenance } from "./agent/create";
 import { getLettaCodeHeaders } from "./agent/http-headers";
 import { ISOLATED_BLOCK_LABELS } from "./agent/memory";
+import { resolveSkillSourcesSelection } from "./agent/skillSources";
 import { LETTA_CLOUD_API_URL } from "./auth/oauth";
 import { ConversationSelector } from "./cli/components/ConversationSelector";
 import type { ApprovalRequest } from "./cli/helpers/stream";
@@ -19,6 +20,7 @@ import { ProfileSelectionInline } from "./cli/profile-selection";
 import { runSubcommand } from "./cli/subcommands/router";
 import { permissionMode } from "./permissions/mode";
 import { settingsManager } from "./settings-manager";
+import { startStartupAutoUpdateCheck } from "./startup-auto-update";
 import { telemetry } from "./telemetry";
 import { loadTools } from "./tools/manager";
 import { markMilestone } from "./utils/timing";
@@ -77,10 +79,21 @@ OPTIONS
                         Emit stream_event wrappers for each chunk (stream-json only)
   --from-agent <id>     Inject agent-to-agent system reminder (headless mode)
   --skills <path>       Custom path to skills directory (default: .skills in current directory)
+  --skill-sources <csv> Skill sources: all,bundled,global,agent,project (default: all)
+  --no-skills           Disable all skill sources
+  --no-bundled-skills   Disable bundled skills only
   --import <path>       Create agent from an AgentFile (.af) template
                         Use @author/name to import from the agent registry
   --memfs               Enable memory filesystem for this agent
   --no-memfs            Disable memory filesystem for this agent
+  --no-system-info-reminder
+                        Disable first-turn environment reminder (device/git/cwd context)
+  --reflection-trigger <mode>
+                        Sleeptime trigger: off, step-count, compaction-event
+  --reflection-behavior <mode>
+                        Sleeptime behavior: reminder, auto-launch
+  --reflection-step-count <n>
+                        Sleeptime step-count interval (positive integer)
 
 SUBCOMMANDS (JSON-only)
   letta memfs status --agent <id>
@@ -365,21 +378,7 @@ async function main(): Promise<void> {
 
   // Check for updates on startup (non-blocking)
   const { checkAndAutoUpdate } = await import("./updater/auto-update");
-  checkAndAutoUpdate()
-    .then((result) => {
-      // Surface ENOTEMPTY failures so users know how to fix
-      if (result?.enotemptyFailed) {
-        console.error(
-          "\nAuto-update failed due to filesystem issue (ENOTEMPTY).",
-        );
-        console.error(
-          "Fix: rm -rf $(npm prefix -g)/lib/node_modules/@letta-ai/letta-code && npm i -g @letta-ai/letta-code\n",
-        );
-      }
-    })
-    .catch(() => {
-      // Silently ignore other update failures (network timeouts, etc.)
-    });
+  startStartupAutoUpdateCheck(checkAndAutoUpdate);
 
   // Clean up old overflow files (non-blocking, 24h retention)
   const { cleanupOldOverflowFiles } = await import("./tools/impl/overflow");
@@ -436,12 +435,20 @@ async function main(): Promise<void> {
         "include-partial-messages": { type: "boolean" },
         "from-agent": { type: "string" },
         skills: { type: "string" },
+        "skill-sources": { type: "string" },
         "pre-load-skills": { type: "string" },
         "from-af": { type: "string" },
         import: { type: "string" },
+        tags: { type: "string" },
 
         memfs: { type: "boolean" },
         "no-memfs": { type: "boolean" },
+        "no-skills": { type: "boolean" },
+        "no-bundled-skills": { type: "boolean" },
+        "no-system-info-reminder": { type: "boolean" },
+        "reflection-trigger": { type: "string" },
+        "reflection-behavior": { type: "string" },
+        "reflection-step-count": { type: "string" },
         "max-turns": { type: "string" },
       },
       strict: true,
@@ -470,6 +477,16 @@ async function main(): Promise<void> {
   // Handle help flag first
   if (values.help) {
     printHelp();
+
+    // Test-only hook to keep process alive briefly so startup auto-update can run.
+    const helpDelayMs = Number.parseInt(
+      process.env.LETTA_TEST_HELP_EXIT_DELAY_MS ?? "",
+      10,
+    );
+    if (Number.isFinite(helpDelayMs) && helpDelayMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, helpDelayMs));
+    }
+
     process.exit(0);
   }
 
@@ -553,6 +570,34 @@ async function main(): Promise<void> {
   const skillsDirectory = (values.skills as string | undefined) ?? undefined;
   const memfsFlag = values.memfs as boolean | undefined;
   const noMemfsFlag = values["no-memfs"] as boolean | undefined;
+  const requestedMemoryPromptMode: "memfs" | "standard" | undefined = memfsFlag
+    ? "memfs"
+    : noMemfsFlag
+      ? "standard"
+      : undefined;
+  const shouldAutoEnableMemfsForNewAgent = !memfsFlag && !noMemfsFlag;
+  const noSkillsFlag = values["no-skills"] as boolean | undefined;
+  const noBundledSkillsFlag = values["no-bundled-skills"] as
+    | boolean
+    | undefined;
+  const skillSourcesRaw = values["skill-sources"] as string | undefined;
+  const noSystemInfoReminderFlag = values["no-system-info-reminder"] as
+    | boolean
+    | undefined;
+  const resolvedSkillSources = (() => {
+    try {
+      return resolveSkillSourcesSelection({
+        skillSourcesRaw,
+        noSkills: noSkillsFlag,
+        noBundledSkills: noBundledSkillsFlag,
+      });
+    } catch (error) {
+      console.error(
+        error instanceof Error ? `Error: ${error.message}` : String(error),
+      );
+      process.exit(1);
+    }
+  })();
   const fromAfFile =
     (values.import as string | undefined) ??
     (values["from-af"] as string | undefined);
@@ -946,7 +991,13 @@ async function main(): Promise<void> {
     markMilestone("TOOLS_LOADED");
 
     const { handleHeadlessCommand } = await import("./headless");
-    await handleHeadlessCommand(process.argv, specifiedModel, skillsDirectory);
+    await handleHeadlessCommand(
+      process.argv,
+      specifiedModel,
+      skillsDirectory,
+      resolvedSkillSources,
+      !noSystemInfoReminderFlag,
+    );
     return;
   }
 
@@ -1139,7 +1190,6 @@ async function main(): Promise<void> {
         // Load settings
         await settingsManager.loadLocalProjectSettings();
         const localSettings = settingsManager.getLocalProjectSettings();
-        const globalPinned = settingsManager.getGlobalPinnedAgents();
         const client = await getClient();
 
         // For self-hosted servers, pre-fetch available models
@@ -1322,63 +1372,89 @@ async function main(): Promise<void> {
 
         // =====================================================================
         // DEFAULT PATH: No special flags
-        // Check local LRU, then selector, then defaults
+        // Check local LRU → global LRU → selector → create default
         // =====================================================================
 
-        // Check if user would see selector (fresh dir, no bypass flags)
-        const wouldShowSelector =
-          !localSettings.lastAgent && !forceNew && !agentIdArg && !fromAfFile;
+        // Short-circuit: flags handled by init() skip resolution entirely
+        if (forceNew || agentIdArg || fromAfFile) {
+          setLoadingState("assembling");
+          return;
+        }
 
-        if (
-          wouldShowSelector &&
-          globalPinned.length === 0 &&
-          !needsModelPicker
-        ) {
-          // New user with no pinned agents - create a fresh Memo agent
-          // NOTE: Always creates a new agent (no server-side tag lookup) to avoid
-          // picking up agents created by other users on shared orgs.
-          // Skip if needsModelPicker is true - let user select a model first.
-          const { ensureDefaultAgents } = await import("./agent/defaults");
+        // Step 1: Check local project LRU (session helpers centralize legacy fallback)
+        const localAgentId = settingsManager.getLocalLastAgentId(process.cwd());
+        let localAgentExists = false;
+        if (localAgentId) {
           try {
-            const memoAgent = await ensureDefaultAgents(client);
-            if (memoAgent) {
-              setSelectedGlobalAgentId(memoAgent.id);
-              setLoadingState("assembling");
-              return;
-            }
-            // If memoAgent is null (createDefaultAgents disabled), fall through
-          } catch (err) {
-            console.error(
-              `Failed to create default agents: ${err instanceof Error ? err.message : String(err)}`,
+            await client.agents.retrieve(localAgentId);
+            localAgentExists = true;
+          } catch {
+            setFailedAgentMessage(
+              `Unable to locate recently used agent ${localAgentId}`,
             );
-            process.exit(1);
           }
         }
 
-        // If there's a local LRU, use it directly (takes priority over model picker)
-        if (localSettings.lastAgent) {
+        // Step 2: Check global LRU (covers directory-switching case)
+        const globalAgentId = settingsManager.getGlobalLastAgentId();
+        let globalAgentExists = false;
+        if (globalAgentId && globalAgentId !== localAgentId) {
           try {
-            await client.agents.retrieve(localSettings.lastAgent);
+            await client.agents.retrieve(globalAgentId);
+            globalAgentExists = true;
+          } catch {
+            // Global agent doesn't exist either
+          }
+        } else if (globalAgentId && globalAgentId === localAgentId) {
+          globalAgentExists = localAgentExists;
+        }
+
+        // Step 3: Resolve startup target using pure decision logic
+        const mergedPinned = settingsManager.getMergedPinnedAgents(
+          process.cwd(),
+        );
+        const { resolveStartupTarget } = await import(
+          "./agent/resolve-startup-agent"
+        );
+        const target = resolveStartupTarget({
+          localAgentId,
+          localConversationId: null, // DEFAULT PATH always uses default conv
+          localAgentExists,
+          globalAgentId,
+          globalAgentExists,
+          mergedPinnedCount: mergedPinned.length,
+          forceNew: false, // forceNew short-circuited above
+          needsModelPicker,
+        });
+
+        switch (target.action) {
+          case "resume":
+            setSelectedGlobalAgentId(target.agentId);
+            // Don't set selectedConversationId — DEFAULT PATH uses default conv.
+            // Conversation restoration is handled by --continue path instead.
             setLoadingState("assembling");
             return;
-          } catch {
-            // LRU agent doesn't exist, show message and fall through to selector
-            setFailedAgentMessage(
-              `Unable to locate recently used agent ${localSettings.lastAgent}`,
-            );
+          case "select":
+            setLoadingState("selecting_global");
+            return;
+          case "create": {
+            const { ensureDefaultAgents } = await import("./agent/defaults");
+            try {
+              const defaultAgent = await ensureDefaultAgents(client);
+              if (defaultAgent) {
+                setSelectedGlobalAgentId(defaultAgent.id);
+                setLoadingState("assembling");
+                return;
+              }
+              // If null (createDefaultAgents disabled), fall through
+            } catch (err) {
+              console.error(
+                `Failed to create default agent: ${err instanceof Error ? err.message : String(err)}`,
+              );
+              process.exit(1);
+            }
+            break;
           }
-        }
-
-        // On self-hosted with unavailable default model, show selector to pick a model
-        if (needsModelPicker) {
-          setLoadingState("selecting_global");
-          return;
-        }
-
-        // Show selector if there are pinned agents to choose from
-        if (wouldShowSelector && globalPinned.length > 0) {
-          setLoadingState("selecting_global");
-          return;
         }
 
         setLoadingState("assembling");
@@ -1600,11 +1676,20 @@ async function main(): Promise<void> {
             skillsDirectory,
             parallelToolCalls: true,
             systemPromptPreset,
+            memoryPromptMode: requestedMemoryPromptMode,
             initBlocks,
             baseTools,
           });
           agent = result.agent;
           setAgentProvenance(result.provenance);
+
+          // Enable memfs by default on Letta Cloud for new agents when no explicit memfs flags are provided.
+          if (shouldAutoEnableMemfsForNewAgent) {
+            const { enableMemfsIfCloud } = await import(
+              "./agent/memoryFilesystem"
+            );
+            await enableMemfsIfCloud(agent.id);
+          }
         }
 
         // Priority 4: Try to resume from project settings LRU (.letta/settings.local.json)
@@ -1679,50 +1764,16 @@ async function main(): Promise<void> {
         }
 
         // Set agent context for tools that need it (e.g., Skill tool)
-        setAgentContext(agent.id, skillsDirectory);
+        setAgentContext(agent.id, skillsDirectory, resolvedSkillSources);
 
         // Apply memfs flag if explicitly specified (memfs is opt-in via /memfs enable or --memfs)
         const isSubagent = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
-        if (memfsFlag) {
-          // memfs requires Letta Cloud (git memfs not supported on self-hosted)
-          const serverUrl = getServerUrl();
-          if (!serverUrl.includes("api.letta.com")) {
-            console.error(
-              "--memfs is only available on Letta Cloud (api.letta.com).",
-            );
-            process.exit(1);
-          }
-          settingsManager.setMemfsEnabled(agent.id, true);
-        } else if (noMemfsFlag) {
-          settingsManager.setMemfsEnabled(agent.id, false);
-        }
-
-        // When memfs is being enabled via flag, detach old API-based memory tools
-        if (settingsManager.isMemfsEnabled(agent.id) && memfsFlag) {
-          const { detachMemoryTools } = await import("./tools/toolset");
-          await detachMemoryTools(agent.id);
-        }
-
-        // Ensure agent's system prompt includes/excludes memfs section to match setting
-        if (memfsFlag || noMemfsFlag) {
-          const { updateAgentSystemPromptMemfs } = await import(
-            "./agent/modify"
-          );
-          await updateAgentSystemPromptMemfs(
-            agent.id,
-            settingsManager.isMemfsEnabled(agent.id),
-          );
-        }
-
-        // Git-backed memory: ensure tag + repo are set up
-        if (settingsManager.isMemfsEnabled(agent.id)) {
-          const { addGitMemoryTag, isGitRepo, cloneMemoryRepo } = await import(
-            "./agent/memoryGit"
-          );
-          await addGitMemoryTag(agent.id);
-          if (!isGitRepo(agent.id)) {
-            await cloneMemoryRepo(agent.id);
-          }
+        try {
+          const { applyMemfsFlags } = await import("./agent/memoryFilesystem");
+          await applyMemfsFlags(agent.id, memfsFlag, noMemfsFlag);
+        } catch (error) {
+          console.error(error instanceof Error ? error.message : String(error));
+          process.exit(1);
         }
 
         // Check if we're resuming an existing agent
@@ -2053,6 +2104,7 @@ async function main(): Promise<void> {
         showCompactions: settings.showCompactions,
         agentProvenance,
         releaseNotes,
+        sessionContextReminderEnabled: !noSystemInfoReminderFlag,
       });
     }
 
@@ -2070,6 +2122,7 @@ async function main(): Promise<void> {
       showCompactions: settings.showCompactions,
       agentProvenance,
       releaseNotes,
+      sessionContextReminderEnabled: !noSystemInfoReminderFlag,
     });
   }
 

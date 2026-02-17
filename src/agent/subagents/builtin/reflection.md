@@ -55,11 +55,14 @@ cd "$MEMORY_DIR"
 git log --oneline -10
 ```
 
-Look for commits starting with "reflection:" - the most
-recent one tells you when the last reflection ran. When
-searching conversation history in Phase 2, you only need
-to go back to roughly that time. If there are no prior
-reflection commits, search a larger window.
+Look for reflection commits — they may use legacy
+`reflection:` subjects, include 🔮 in the subject line,
+and/or have a `(reflection)` scope (e.g.,
+`chore(reflection): ...`). The most recent one tells you
+when the last reflection ran. When searching conversation
+history in Phase 2, you only need to go back to roughly
+that time. If there are no prior reflection commits, search
+a larger window.
 
 **Step 1b: Create worktree**
 
@@ -126,6 +129,14 @@ to search the parent agent's history, not your own.
 - Prefer substance over trivia.
 - Corrections and frustrations are HIGH priority.
 
+**If nothing is worth saving** (rare — most conversations
+have at least something): If after thorough review you
+genuinely find nothing new worth preserving, skip Phase 4,
+clean up the worktree (Step 5d), and report "reviewed N
+messages, no updates needed." But be sure you've looked
+carefully — corrections, preferences, and project context
+are easy to overlook.
+
 ### Phase 4: Update Memory Files in Worktree
 
 Edit files in the **worktree**, not the main memory dir:
@@ -176,55 +187,169 @@ Read({ file_path: "$WORK/persona/soul.md" })
 - **Attribute when useful** - "Prefers X over Y
   (corrected agent on 2025-12-15)".
 
-### Phase 5: Commit, Merge, Clean Up
+### Phase 5: Merge, Push, and Clean Up (MANDATORY)
 
-After all edits are done:
+Your reflection has two completion states:
+- **Complete**: merged to main AND pushed to remote.
+- **Partially complete**: merged to main, push failed.
+  Clean up the worktree, but report that local main is
+  ahead of remote and needs a push.
+
+The commit in the worktree is neither — it's an intermediate
+step. Without at least a merge to main, your work is lost.
+
+**Step 5a: Commit in worktree**
 
 ```bash
 MEMORY_DIR=~/.letta/agents/$LETTA_PARENT_AGENT_ID/memory
 WORKTREE_DIR=~/.letta/agents/$LETTA_PARENT_AGENT_ID/memory-worktrees
 cd $WORKTREE_DIR/$BRANCH
-
-# Stage and commit all changes
 git add -A
-git commit -m "reflection: <summary of what was learned>
+```
+
+Check `git status` — if there are no changes to commit,
+skip straight to Step 5d (cleanup). Report "no updates
+needed" in your output.
+
+If there are changes, commit using Conventional Commits
+format with the `(reflection)` scope and 🔮 signature:
+
+```bash
+git commit -m "<type>(reflection): <summary> 🔮
 
 Reviewed messages from <start-date> to <end-date>.
 
 Updates:
 - <bullet point for each memory update made>
-- <what conversation context prompted each update>"
+- <what conversation context prompted each update>
 
-# Merge back to main branch
+Generated-By: Letta Code
+Agent-ID: <value of $LETTA_AGENT_ID>
+Parent-Agent-ID: <value of $LETTA_PARENT_AGENT_ID>"
+```
+
+**Commit type** — pick the one that fits:
+- `chore` — routine memory consolidation (most common)
+- `fix` — correcting stale or wrong memory entries
+- `feat` — adding a wholly new memory block/topic
+- `refactor` — restructuring existing content
+- `docs` — documentation-style notes
+
+**Example subjects:**
+- `chore(reflection): consolidate recent learnings 🔮`
+- `fix(reflection): correct stale user preference note 🔮`
+- `feat(reflection): add new project context block 🔮`
+
+**Trailers:** Omit `Agent-ID` or `Parent-Agent-ID` if the
+corresponding environment variable is unset (don't write
+the literal variable name).
+
+**Step 5b: Pull + merge to main**
+
+```bash
 cd $MEMORY_DIR
-git merge $BRANCH --no-edit
+```
 
-# Clean up worktree and branch
+First, check that main is in a clean state (`git status`).
+If a merge or rebase is in progress (lock file, dirty
+index), wait and retry up to 3 times with backoff (sleep 2,
+5, 10 seconds). Never delete `.git/index.lock` manually.
+If still busy after retries, go to Error Handling.
+
+Pull from remote:
+
+```bash
+git pull --ff-only
+```
+
+If `--ff-only` fails (remote has diverged), fall back:
+
+```bash
+git pull --rebase
+```
+
+If rebase has conflicts, resolve them autonomously to
+stabilize local `main` against remote `main` first. In this
+step, prefer **remote main** content for conflicting files,
+then run `git rebase --continue`.
+
+Important: do not apply reflection branch content yet during
+this rebase step. Reflection edits are merged later in this
+phase with `git merge $BRANCH --no-edit`.
+
+Now merge the reflection branch:
+
+```bash
+git merge $BRANCH --no-edit
+```
+
+If the merge has conflicts, resolve by preferring reflection
+branch/worktree content for memory files, stage the resolved
+files, and complete with `git commit --no-edit`.
+
+If you cannot resolve conflicts after 2 attempts, go to
+Error Handling.
+
+**Step 5c: Push to remote**
+
+```bash
+git push
+```
+
+If push fails, retry once. If it still fails, report that
+local main is ahead of remote and needs a push. Proceed to
+cleanup — the merge succeeded and data is safe on local
+main.
+
+**Step 5d: Clean up worktree and branch**
+
+Only clean up when merge to main completed (success or
+partially complete):
+
+```bash
 git worktree remove $WORKTREE_DIR/$BRANCH
 git branch -d $BRANCH
 ```
 
-If the merge has conflicts, resolve them by preferring
-the worktree's version (your edits are newer).
+**Step 5e: Verify**
+
+```bash
+git status
+git log --oneline -3
+```
+
+Confirm main is clean and your reflection commit (🔮 in
+subject) is visible in the log.
 
 ## Error Handling
 
-If anything goes wrong (git not available, memory dir
-not initialized, worktree creation fails, merge conflicts
-you can't resolve, etc.):
+If anything goes wrong at any phase:
 
-1. Clean up any partial worktree if possible:
+1. Stabilize main first (abort in-progress operations):
    ```bash
    cd $MEMORY_DIR
-   git worktree remove $WORKTREE_DIR/$BRANCH 2>/dev/null
-   git branch -d $BRANCH 2>/dev/null
+   git merge --abort 2>/dev/null
+   git rebase --abort 2>/dev/null
    ```
-2. Report the error clearly in your output, including:
+
+2. Do NOT clean up the worktree or branch on failure —
+   preserve them for debugging and manual recovery.
+
+3. Report clearly in your output:
    - What failed and the error message
-   - What state things were left in
-   - Suggested fix for the main agent or user
-3. Do NOT leave uncommitted changes in the main memory
-   directory.
+   - Worktree path: `$WORKTREE_DIR/$BRANCH`
+   - Branch name: `$BRANCH`
+   - Whether main has uncommitted/dirty state
+   - Concrete resume commands, e.g.:
+     ```bash
+     cd ~/.letta/agents/$LETTA_PARENT_AGENT_ID/memory
+     git merge <branch-name> --no-edit
+     git push
+     git worktree remove ../memory-worktrees/<branch-name>
+     git branch -d <branch-name>
+     ```
+
+4. Do NOT leave uncommitted changes on main.
 
 ## Output Format
 
@@ -257,7 +382,8 @@ For each edit:
 4. **Don't reorganize** - Add/update, don't restructure
 5. **Be selective** - Few meaningful > many trivial
 6. **No relative dates** - "2025-12-15", not "today"
-7. **Always commit and merge** - Don't leave dangling
-   worktrees or uncommitted changes
+7. **Always commit, merge, AND push** - Your work is wasted
+   if it isn't merged to main and pushed to remote. Don't
+   leave dangling worktrees or unsynced changes.
 8. **Report errors clearly** - If something breaks, say
    what happened and suggest a fix

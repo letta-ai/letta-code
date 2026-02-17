@@ -4,7 +4,7 @@ import type { Conversation } from "@letta-ai/letta-client/resources/conversation
 import { Box, useInput } from "ink";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getClient } from "../../agent/client";
-import { SYSTEM_REMINDER_OPEN } from "../../constants";
+import { SYSTEM_ALERT_OPEN, SYSTEM_REMINDER_OPEN } from "../../constants";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
 import { MarkdownDisplay } from "./MarkdownDisplay";
@@ -17,7 +17,13 @@ interface ConversationSelectorProps {
   agentId: string;
   agentName?: string;
   currentConversationId: string;
-  onSelect: (conversationId: string) => void;
+  onSelect: (
+    conversationId: string,
+    context?: {
+      summary?: string;
+      messageCount: number;
+    },
+  ) => void;
   onNewConversation: () => void;
   onCancel: () => void;
 }
@@ -87,7 +93,12 @@ function extractUserMessagePreview(message: Message): string | null {
       const part = content[i];
       if (part?.type === "text" && part.text) {
         // Skip system-reminder blocks
-        if (part.text.startsWith(SYSTEM_REMINDER_OPEN)) continue;
+        if (
+          part.text.startsWith(SYSTEM_REMINDER_OPEN) ||
+          part.text.startsWith(SYSTEM_ALERT_OPEN)
+        ) {
+          continue;
+        }
         textToShow = part.text;
         break;
       }
@@ -370,7 +381,10 @@ export function ConversationSelector({
     } else if (key.return) {
       const selected = pageConversations[selectedIndex];
       if (selected?.conversation.id) {
-        onSelect(selected.conversation.id);
+        onSelect(selected.conversation.id, {
+          summary: selected.conversation.summary ?? undefined,
+          messageCount: selected.messageCount,
+        });
       }
     } else if (key.escape) {
       onCancel();

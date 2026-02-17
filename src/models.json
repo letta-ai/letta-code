@@ -1,10 +1,22 @@
 [
   {
+    "id": "sonnet",
+    "handle": "anthropic/claude-sonnet-4-6",
+    "label": "Sonnet 4.6",
+    "description": "Anthropic's new Sonnet model with adaptive thinking",
+    "isDefault": true,
+    "isFeatured": true,
+    "updateArgs": {
+      "context_window": 200000,
+      "max_output_tokens": 128000,
+      "enable_reasoner": true
+    }
+  },
+  {
     "id": "sonnet-4.5",
     "handle": "anthropic/claude-sonnet-4-5-20250929",
     "label": "Sonnet 4.5",
-    "description": "The recommended default model",
-    "isDefault": true,
+    "description": "Previous default Sonnet model",
     "isFeatured": true,
     "updateArgs": {
       "context_window": 180000,
@@ -524,18 +536,9 @@
     }
   },
   {
-    "id": "glm-4.6",
-    "handle": "zai/glm-4.6",
-    "label": "GLM-4.6",
-    "description": "Zai's legacy model",
-    "updateArgs": {
-      "context_window": 200000
-    }
-  },
-  {
-    "id": "glm-4.7",
-    "handle": "zai/glm-4.7",
-    "label": "GLM-4.7",
+    "id": "glm-5",
+    "handle": "zai/glm-5",
+    "label": "GLM-5",
     "description": "zAI's latest coding model",
     "isFeatured": true,
     "free": true,
@@ -544,10 +547,33 @@
     }
   },
   {
+    "id": "glm-4.7",
+    "handle": "zai/glm-4.7",
+    "label": "GLM-4.7",
+    "description": "zAI's latest coding model (legacy)",
+    "isFeatured": true,
+    "free": true,
+    "updateArgs": {
+      "context_window": 200000
+    }
+  },
+  {
+    "id": "minimax-m2.5",
+    "handle": "minimax/MiniMax-M2.5",
+    "label": "MiniMax 2.5",
+    "description": "MiniMax's latest coding model",
+    "isFeatured": true,
+    "free": true,
+    "updateArgs": {
+      "context_window": 160000,
+      "max_output_tokens": 64000
+    }
+  },
+  {
     "id": "minimax-m2.1",
     "handle": "minimax/MiniMax-M2.1",
     "label": "MiniMax 2.1",
-    "description": "MiniMax's latest coding model",
+    "description": "MiniMax's latest coding model (legacy)",
     "isFeatured": true,
     "free": true,
     "updateArgs": {

@@ -1,1 +1,1 @@
-<system-alert>The user interrupted the active stream.</system-alert>
+<system-reminder>The user interrupted the active stream.</system-reminder>

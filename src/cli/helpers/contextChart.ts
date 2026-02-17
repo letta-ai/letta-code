@@ -24,11 +24,14 @@ interface ContextChartOptions {
     compacted?: boolean;
   }>;
   breakdown?: ContextWindowOverview;
+  /** When true, breakdown is still being fetched (show placeholder). */
+  loading?: boolean;
 }
 
 /** Renders the /context command output with usage bar, legend, and braille chart. */
 export function renderContextUsage(opts: ContextChartOptions): string {
-  const { usedTokens, contextWindow, model, history, breakdown } = opts;
+  const { usedTokens, contextWindow, model, history, breakdown, loading } =
+    opts;
 
   if (usedTokens === 0) {
     return "Context data not available yet. Run a turn to see context usage.";
@@ -175,12 +178,16 @@ export function renderContextUsage(opts: ContextChartOptions): string {
   } else {
     const barColor = hexToFgAnsi(brandColors.primaryAccent);
     bar = `${barColor}${"▰".repeat(filledFromUsage)}${reset}${"▱".repeat(totalSegments - filledFromUsage)}`;
-    // Reserve same line count as breakdown legend to avoid layout shift
-    const placeholderLines = [
-      `${dim}  Fetching breakdown...${reset}`,
-      ...new Array(6).fill(""),
-    ];
-    legend = `\n${placeholderLines.join("\n")}`;
+    if (loading) {
+      const placeholderLines = [
+        `${dim}  Fetching breakdown...${reset}`,
+        ...new Array(6).fill(""),
+      ];
+      legend = `\n${placeholderLines.join("\n")}`;
+    } else {
+      // Fetch completed without breakdown — show nothing instead of stale placeholder
+      legend = "";
+    }
   }
 
   let output = `${bold}Context Usage${reset}\n\n`;

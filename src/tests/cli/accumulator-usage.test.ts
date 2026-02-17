@@ -237,4 +237,33 @@ describe("accumulator usage statistics", () => {
     expect(line && "text" in line ? line.text : "").toBe("Think through it");
     expect(buffers.byId.get("reasoning-msg-2")).toBeUndefined();
   });
+
+  test("separates reasoning and assistant lines when ids overlap", () => {
+    const buffers = createBuffers();
+
+    onChunk(buffers, {
+      message_type: "reasoning_message",
+      id: "shared-stream-id",
+      reasoning: "Thinking... ",
+    } as unknown as LettaStreamingResponse);
+
+    onChunk(buffers, {
+      message_type: "assistant_message",
+      id: "shared-stream-id",
+      content: [{ type: "text", text: "Final answer" }],
+    } as unknown as LettaStreamingResponse);
+
+    const reasoning = buffers.byId.get("shared-stream-id");
+    const assistant = buffers.byId.get("assistant:shared-stream-id");
+
+    expect(reasoning?.kind).toBe("reasoning");
+    expect(reasoning && "text" in reasoning ? reasoning.text : "").toBe(
+      "Thinking... ",
+    );
+
+    expect(assistant?.kind).toBe("assistant");
+    expect(assistant && "text" in assistant ? assistant.text : "").toBe(
+      "Final answer",
+    );
+  });
 });
