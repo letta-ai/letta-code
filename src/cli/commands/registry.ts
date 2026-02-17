@@ -9,6 +9,7 @@ interface Command {
   args?: string; // Optional argument syntax hint (e.g., "[conversation_id]", "<name>")
   hidden?: boolean; // Hidden commands don't show in autocomplete but still work
   order?: number; // Lower numbers appear first in autocomplete (default: 100)
+  noArgs?: boolean; // If true, reject any arguments passed to this command
 }
 
 export const commands: Record<string, Command> = {
@@ -16,6 +17,7 @@ export const commands: Record<string, Command> = {
   "/agents": {
     desc: "Browse agents (pinned, Letta Code, all)",
     order: 10,
+    noArgs: true,
     handler: () => {
       // Handled specially in App.tsx to open agent browser
       return "Opening agent browser...";
@@ -24,6 +26,7 @@ export const commands: Record<string, Command> = {
   "/model": {
     desc: "Switch model",
     order: 11,
+    noArgs: true,
     handler: () => {
       return "Opening model selector...";
     },
@@ -31,6 +34,7 @@ export const commands: Record<string, Command> = {
   "/init": {
     desc: "Initialize (or re-init) your agent's memory",
     order: 12,
+    noArgs: true,
     handler: () => {
       // Handled specially in App.tsx to send initialization prompt
       return "Initializing memory...";
@@ -47,6 +51,7 @@ export const commands: Record<string, Command> = {
   "/skills": {
     desc: "Browse available skills",
     order: 28,
+    noArgs: true,
     handler: () => {
       // Handled specially in App.tsx to open skills browser overlay
       return "Opening skills browser...";
@@ -63,6 +68,7 @@ export const commands: Record<string, Command> = {
   "/memory": {
     desc: "View your agent's memory blocks",
     order: 15,
+    noArgs: true,
     handler: () => {
       // Handled specially in App.tsx to open memory viewer
       return "Opening memory viewer...";
@@ -71,6 +77,7 @@ export const commands: Record<string, Command> = {
   "/sleeptime": {
     desc: "Configure reflection reminder trigger settings",
     order: 15.5,
+    noArgs: true,
     handler: () => {
       // Handled specially in App.tsx to open sleeptime settings
       return "Opening sleeptime settings...";
@@ -96,6 +103,7 @@ export const commands: Record<string, Command> = {
   "/connect": {
     desc: "Connect your LLM API keys (OpenAI, Anthropic, etc.)",
     order: 17,
+    noArgs: true,
     handler: () => {
       // Handled specially in App.tsx - opens ProviderSelector
       return "Opening provider connection...";
@@ -104,6 +112,7 @@ export const commands: Record<string, Command> = {
   "/clear": {
     desc: "Clear in-context messages",
     order: 18,
+    noArgs: true,
     handler: () => {
       // Handled specially in App.tsx to reset agent messages
       return "Clearing in-context messages...";
@@ -114,6 +123,7 @@ export const commands: Record<string, Command> = {
   "/new": {
     desc: "Start a new conversation (keep agent memory)",
     order: 20,
+    noArgs: true,
     handler: () => {
       // Handled specially in App.tsx to create new conversation
       return "Starting new conversation...";
@@ -154,6 +164,7 @@ export const commands: Record<string, Command> = {
   "/export": {
     desc: "Export AgentFile (.af)",
     order: 26,
+    noArgs: true,
     handler: () => {
       // Handled specially in App.tsx to access agent ID and client
       return "Exporting agent file...";
@@ -162,6 +173,7 @@ export const commands: Record<string, Command> = {
   "/toolset": {
     desc: "Switch toolset (replaces /link and /unlink)",
     order: 27,
+    noArgs: true,
     handler: () => {
       // Handled specially in App.tsx to access agent ID and client
       return "Opening toolset selector...";
@@ -170,6 +182,7 @@ export const commands: Record<string, Command> = {
   "/ade": {
     desc: "Open agent in ADE (browser)",
     order: 28,
+    noArgs: true,
     handler: () => {
       // Handled specially in App.tsx to access agent ID and open browser
       return "Opening ADE...";
@@ -180,6 +193,7 @@ export const commands: Record<string, Command> = {
   "/system": {
     desc: "Switch system prompt",
     order: 30,
+    noArgs: true,
     handler: () => {
       // Handled specially in App.tsx to open system prompt selector
       return "Opening system prompt selector...";
@@ -188,6 +202,7 @@ export const commands: Record<string, Command> = {
   "/subagents": {
     desc: "Manage custom subagents",
     order: 31,
+    noArgs: true,
     handler: () => {
       // Handled specially in App.tsx to open SubagentManager component
       return "Opening subagent manager...";
@@ -204,6 +219,7 @@ export const commands: Record<string, Command> = {
   "/usage": {
     desc: "Show session usage statistics and balance",
     order: 33,
+    noArgs: true,
     handler: () => {
       // Handled specially in App.tsx to display usage stats
       return "Fetching usage statistics...";
@@ -212,6 +228,7 @@ export const commands: Record<string, Command> = {
   "/context": {
     desc: "Show context window usage",
     order: 33.5,
+    noArgs: true,
     handler: () => {
       // Handled specially in App.tsx to display context usage
       return "Fetching context usage...";
@@ -229,6 +246,7 @@ export const commands: Record<string, Command> = {
     desc: "Show available commands",
     order: 35,
     hidden: true, // Redundant with improved autocomplete, but still works if typed
+    noArgs: true,
     handler: () => {
       // Handled specially in App.tsx to open help dialog
       return "Opening help...";
@@ -237,6 +255,7 @@ export const commands: Record<string, Command> = {
   "/hooks": {
     desc: "Manage hooks configuration",
     order: 36,
+    noArgs: true,
     handler: () => {
       // Handled specially in App.tsx to open hooks manager
       return "Opening hooks manager...";
@@ -308,6 +327,7 @@ export const commands: Record<string, Command> = {
   "/plan": {
     desc: "Enter plan mode",
     order: 40,
+    noArgs: true,
     handler: () => {
       // Handled specially in App.tsx
       return "Entering plan mode...";
@@ -324,6 +344,7 @@ export const commands: Record<string, Command> = {
   "/bg": {
     desc: "Show background shell processes",
     order: 42,
+    noArgs: true,
     handler: () => {
       // Handled specially in App.tsx to show background processes
       return "Showing background processes...";
@@ -332,6 +353,7 @@ export const commands: Record<string, Command> = {
   "/exit": {
     desc: "Exit this session",
     order: 43,
+    noArgs: true,
     handler: () => {
       // Handled specially in App.tsx
       return "Exiting...";
@@ -340,6 +362,7 @@ export const commands: Record<string, Command> = {
   "/logout": {
     desc: "Clear credentials and exit",
     order: 44,
+    noArgs: true,
     handler: () => {
       // Handled specially in App.tsx to access settings manager
       return "Clearing credentials...";
@@ -368,6 +391,7 @@ export const commands: Record<string, Command> = {
   "/stream": {
     desc: "Toggle token streaming on/off",
     hidden: true,
+    noArgs: true,
     handler: () => {
       // Handled specially in App.tsx for live toggling
       return "Toggling token streaming...";
@@ -384,6 +408,7 @@ export const commands: Record<string, Command> = {
   "/link": {
     desc: "Attach all Letta Code tools to agent (deprecated, use /toolset instead)",
     hidden: true,
+    noArgs: true,
     handler: () => {
       // Handled specially in App.tsx to access agent ID and client
       return "Linking tools...";
@@ -392,6 +417,7 @@ export const commands: Record<string, Command> = {
   "/unlink": {
     desc: "Remove all Letta Code tools from agent (deprecated, use /toolset instead)",
     hidden: true,
+    noArgs: true,
     handler: () => {
       // Handled specially in App.tsx to access agent ID and client
       return "Unlinking tools...";
@@ -409,6 +435,7 @@ export const commands: Record<string, Command> = {
   "/pinned": {
     desc: "Browse pinned agents",
     hidden: true, // Alias for /agents (opens to Pinned tab)
+    noArgs: true,
     handler: () => {
       return "Opening agent browser...";
     },
@@ -416,6 +443,7 @@ export const commands: Record<string, Command> = {
   "/profiles": {
     desc: "Browse pinned agents",
     hidden: true, // Alias for /agents (opens to Pinned tab)
+    noArgs: true,
     handler: () => {
       return "Opening agent browser...";
     },
@@ -423,6 +451,7 @@ export const commands: Record<string, Command> = {
   "/download": {
     desc: "Export AgentFile (.af)",
     hidden: true, // Legacy alias for /export
+    noArgs: true,
     handler: () => {
       return "Exporting agent file...";
     },
@@ -450,6 +479,13 @@ export async function executeCommand(
       success: false,
       output: `Unknown command: ${command}`,
       notFound: true,
+    };
+  }
+
+  if (handler.noArgs && args.length > 0) {
+    return {
+      success: false,
+      output: `${command} does not accept arguments.`,
     };
   }
 
