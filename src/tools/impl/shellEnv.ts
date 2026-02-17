@@ -11,6 +11,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { getServerUrl } from "../../agent/client";
 import { getCurrentAgentId } from "../../agent/context";
+import { getMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
 import { settingsManager } from "../../settings-manager";
 
 /**
@@ -180,13 +181,43 @@ export function getShellEnv(): NodeJS.ProcessEnv {
       : pathPrefixes.join(path.delimiter);
   }
 
-  // Add Letta context for skill scripts
+  // Add Letta context for skill scripts.
+  // Prefer explicit agent context, but fall back to inherited env values.
+  let agentId: string | undefined;
   try {
-    env.LETTA_AGENT_ID = getCurrentAgentId();
+    const resolvedAgentId = getCurrentAgentId();
+    if (typeof resolvedAgentId === "string" && resolvedAgentId.trim()) {
+      agentId = resolvedAgentId.trim();
+    }
   } catch {
-    // Context not set yet (e.g., during startup), skip
+    // Context not set yet (e.g., during startup), try env fallback below.
   }
 
+  if (!agentId) {
+    const fallbackAgentId = env.AGENT_ID || env.LETTA_AGENT_ID;
+    if (typeof fallbackAgentId === "string" && fallbackAgentId.trim()) {
+      agentId = fallbackAgentId.trim();
+    }
+  }
+
+  if (agentId) {
+    env.LETTA_AGENT_ID = agentId;
+    env.AGENT_ID = agentId;
+
+    try {
+      if (settingsManager.isMemfsEnabled(agentId)) {
+        const memoryDir = getMemoryFilesystemRoot(agentId);
+        env.LETTA_MEMORY_DIR = memoryDir;
+        env.MEMORY_DIR = memoryDir;
+      } else {
+        // Clear inherited/stale memory-dir vars for non-memfs agents.
+        delete env.LETTA_MEMORY_DIR;
+        delete env.MEMORY_DIR;
+      }
+    } catch {
+      // Settings may not be initialized in tests/startup; preserve inherited values.
+    }
+  }
   // Inject API key and base URL from settings if not already in env
   if (!env.LETTA_API_KEY || !env.LETTA_BASE_URL) {
     try {
