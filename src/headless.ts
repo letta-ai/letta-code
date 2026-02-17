@@ -42,6 +42,10 @@ import {
   reflectionSettingsToLegacyMode,
 } from "./cli/helpers/memoryReminder";
 import {
+  type QueuedMessage,
+  setMessageQueueAdder,
+} from "./cli/helpers/messageQueueBridge";
+import {
   type DrainStreamHook,
   drainStreamWithResume,
 } from "./cli/helpers/stream";
@@ -119,6 +123,54 @@ export function shouldReinjectSkillsAfterCompaction(lines: Line[]): boolean {
       line.phase === "finished" &&
       (line.summary !== undefined || line.stats !== undefined),
   );
+}
+
+type MessageContentParts = Exclude<MessageCreate["content"], string>;
+
+export type BidirectionalQueuedInput =
+  | {
+      kind: "user";
+      content: MessageCreate["content"];
+    }
+  | {
+      kind: "task_notification";
+      text: string;
+    };
+
+export function mergeBidirectionalQueuedInput(
+  queued: BidirectionalQueuedInput[],
+): MessageCreate["content"] | null {
+  if (queued.length === 0) {
+    return null;
+  }
+
+  const mergedParts: MessageContentParts = [];
+  let isFirst = true;
+
+  for (const item of queued) {
+    if (!isFirst) {
+      mergedParts.push({ type: "text", text: "\n" });
+    }
+    isFirst = false;
+
+    if (item.kind === "task_notification") {
+      mergedParts.push({ type: "text", text: item.text });
+      continue;
+    }
+
+    if (typeof item.content === "string") {
+      mergedParts.push({ type: "text", text: item.content });
+      continue;
+    }
+
+    mergedParts.push(...item.content);
+  }
+
+  if (mergedParts.length === 0) {
+    return null;
+  }
+
+  return mergedParts as MessageCreate["content"];
 }
 
 type ReflectionOverrides = {
@@ -2393,6 +2445,29 @@ async function runBidirectionalMode(
   const lineQueue: string[] = [];
   let lineResolver: ((line: string | null) => void) | null = null;
 
+  const serializeQueuedMessageAsUserLine = (queuedMessage: QueuedMessage) =>
+    JSON.stringify({
+      type: "user",
+      message: {
+        role: "user",
+        content: queuedMessage.text,
+      },
+      _queuedKind: queuedMessage.kind,
+    });
+
+  // Connect Task/subagent background notifications to the same queueing path
+  // used by user input so bidirectional mode inherits TUI-style queue behavior.
+  setMessageQueueAdder((queuedMessage) => {
+    const syntheticUserLine = serializeQueuedMessageAsUserLine(queuedMessage);
+    if (lineResolver) {
+      const resolve = lineResolver;
+      lineResolver = null;
+      resolve(syntheticUserLine);
+      return;
+    }
+    lineQueue.push(syntheticUserLine);
+  });
+
   // Feed lines into queue or resolver
   rl.on("line", (line) => {
     if (lineResolver) {
@@ -2405,6 +2480,7 @@ async function runBidirectionalMode(
   });
 
   rl.on("close", () => {
+    setMessageQueueAdder(null);
     if (lineResolver) {
       const resolve = lineResolver;
       lineResolver = null;
@@ -2669,7 +2745,77 @@ async function runBidirectionalMode(
 
     // Handle user messages
     if (message.type === "user" && message.message?.content !== undefined) {
-      const userContent = message.message.content;
+      const queuedInputs: BidirectionalQueuedInput[] = [
+        {
+          kind: "user",
+          content: message.message.content,
+        },
+      ];
+
+      // Batch any already-buffered user lines into the same turn, mirroring
+      // TUI queue dequeue behavior (single coalesced submit when idle).
+      while (lineQueue.length > 0) {
+        const candidate = lineQueue[0];
+        if (!candidate?.trim()) {
+          lineQueue.shift();
+          continue;
+        }
+
+        let parsedCandidate: {
+          type?: string;
+          message?: { content?: MessageCreate["content"] };
+          _queuedKind?: QueuedMessage["kind"];
+        };
+        try {
+          parsedCandidate = JSON.parse(candidate);
+        } catch {
+          // Leave malformed lines for the main loop to surface as parse errors.
+          break;
+        }
+
+        if (
+          parsedCandidate.type === "user" &&
+          parsedCandidate.message?.content !== undefined
+        ) {
+          lineQueue.shift();
+          if (parsedCandidate._queuedKind === "task_notification") {
+            const notificationText =
+              typeof parsedCandidate.message.content === "string"
+                ? parsedCandidate.message.content
+                : parsedCandidate.message.content
+                    .reduce((texts: string[], part) => {
+                      if (
+                        part.type === "text" &&
+                        "text" in part &&
+                        typeof part.text === "string"
+                      ) {
+                        texts.push(part.text);
+                      }
+                      return texts;
+                    }, [])
+                    .join("");
+            queuedInputs.push({
+              kind: "task_notification",
+              text: notificationText,
+            });
+          } else {
+            queuedInputs.push({
+              kind: "user",
+              content: parsedCandidate.message.content,
+            });
+          }
+          continue;
+        }
+
+        // Stop coalescing when the queue head is not a user-input line.
+        // The outer loop must process control/error/system lines in-order.
+        break;
+      }
+
+      const userContent = mergeBidirectionalQueuedInput(queuedInputs);
+      if (userContent === null) {
+        continue;
+      }
 
       // Create abort controller for this operation
       currentAbortController = new AbortController();
@@ -3180,5 +3326,6 @@ async function runBidirectionalMode(
   }
 
   // Stdin closed, exit gracefully
+  setMessageQueueAdder(null);
   process.exit(0);
 }
