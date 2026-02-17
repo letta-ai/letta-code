@@ -233,10 +233,29 @@ export const ToolCallMessage = memo(
     const dotShouldAnimate =
       line.phase === "running" || (line.phase === "ready" && !isStreaming);
 
+    // Extract display text from tool result (handles JSON responses)
+    const extractMessageFromResult = (text: string): string => {
+      try {
+        const parsed = JSON.parse(text);
+        // If it's a JSON object with a message field, extract that
+        if (
+          parsed &&
+          typeof parsed === "object" &&
+          typeof parsed.message === "string"
+        ) {
+          return parsed.message;
+        }
+      } catch {
+        // Not JSON or parsing failed, use as-is
+      }
+      return text;
+    };
+
     // Format result for display
     const getResultElement = () => {
       if (!line.resultText) return null;
 
+      const extractedText = extractMessageFromResult(line.resultText);
       const prefix = `  ⎿  `; // Match old format: 2 spaces, glyph, 2 spaces
       const prefixWidth = 5; // Total width of prefix
       const contentWidth = Math.max(0, columns - prefixWidth);
@@ -270,7 +289,7 @@ export const ToolCallMessage = memo(
 
       // Truncate the result text for display (UI only, API gets full response)
       // Strip trailing newlines to avoid extra visual spacing (e.g., from bash echo)
-      const displayResultText = clipToolReturn(line.resultText).replace(
+      const displayResultText = clipToolReturn(extractedText).replace(
         /\n+$/,
         "",
       );

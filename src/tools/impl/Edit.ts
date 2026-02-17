@@ -12,6 +12,7 @@ interface EditArgs {
 interface EditResult {
   message: string;
   replacements: number;
+  startLine?: number;
 }
 
 function countOccurrences(content: string, needle: string): number {
@@ -184,13 +185,22 @@ export async function edit(args: EditArgs): Promise<EditResult> {
       (expected_replacements !== undefined && expected_replacements > 1);
     let newContent: string;
     let replacements: number;
+    let startLine: number | undefined;
+
     if (effectiveReplaceAll) {
       newContent = content.split(finalOldString).join(finalNewString);
       replacements = occurrences;
+      // For replace_all, calculate line number of first occurrence
+      const firstIndex = content.indexOf(finalOldString);
+      if (firstIndex !== -1) {
+        startLine = content.substring(0, firstIndex).split("\n").length;
+      }
     } else {
       const index = content.indexOf(finalOldString);
       if (index === -1)
         throw new Error(`String not found in file: ${finalOldString}`);
+      // Calculate the line number where old_string starts (1-indexed)
+      startLine = content.substring(0, index).split("\n").length;
       newContent =
         content.substring(0, index) +
         finalNewString +
@@ -198,9 +208,11 @@ export async function edit(args: EditArgs): Promise<EditResult> {
       replacements = 1;
     }
     await fs.writeFile(resolvedPath, newContent, "utf-8");
+
     return {
       message: `Successfully replaced ${replacements} occurrence${replacements !== 1 ? "s" : ""} in ${resolvedPath}`,
       replacements,
+      startLine,
     };
   } catch (error) {
     const err = error as NodeJS.ErrnoException;
