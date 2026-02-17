@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import * as path from "node:path";
+import { setCurrentAgentId } from "../../agent/context";
+import { getMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
 import {
   ensureLettaShimDir,
   getShellEnv,
@@ -136,4 +138,17 @@ describe("shellEnv letta shim", () => {
       }
     }
   });
+});
+
+test("getShellEnv injects AGENT_ID and MEMORY_DIR aliases", () => {
+  const agentId = `agent-test-${Date.now()}`;
+  setCurrentAgentId(agentId);
+
+  const env = getShellEnv();
+  const expectedMemoryDir = getMemoryFilesystemRoot(agentId);
+
+  expect(env.LETTA_AGENT_ID).toBe(agentId);
+  expect(env.AGENT_ID).toBe(agentId);
+  expect(env.LETTA_MEMORY_DIR).toBe(expectedMemoryDir);
+  expect(env.MEMORY_DIR).toBe(expectedMemoryDir);
 });

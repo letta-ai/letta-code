@@ -3,6 +3,7 @@
 
 import { execSync } from "node:child_process";
 import { platform } from "node:os";
+import { getMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
 import { LETTA_CLOUD_API_URL } from "../../auth/oauth";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "../../constants";
 import { settingsManager } from "../../settings-manager";
@@ -194,6 +195,8 @@ export function buildSessionContext(options: SessionContextOptions): string {
       }
     }
 
+    const memoryDir = getMemoryFilesystemRoot(agentInfo.id);
+
     // Build the context
     let context = `${SYSTEM_REMINDER_OPEN}
 This is an automated message providing context about the user's environment.
@@ -239,6 +242,8 @@ ${gitInfo.status}
     context += `
 ## Agent Information (i.e. information about you)
 - **Agent ID**: ${agentInfo.id}
+- **AGENT_ID env var**: \`${agentInfo.id}\`
+- **MEMORY_DIR env var**: \`${memoryDir}\`
 - **Agent name**: ${agentInfo.name || "(unnamed)"} (the user can change this with /rename)
 - **Agent description**: ${agentInfo.description || "(no description)"} (the user can change this with /description)
 - **Last message**: ${lastRunInfo}

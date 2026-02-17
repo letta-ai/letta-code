@@ -7843,9 +7843,13 @@ ${recentCommits}
 ## Memory Filesystem Location
 
 Your memory blocks are synchronized with the filesystem at:
-\`~/.letta/agents/${agentId}/memory/\`
+\`${getMemoryFilesystemRoot(agentId)}\`
 
-Use this path when working with memory files during initialization.
+Environment variables available in Letta Code:
+- \`AGENT_ID=${agentId}\`
+- \`MEMORY_DIR=${getMemoryFilesystemRoot(agentId)}\`
+
+Use \`$MEMORY_DIR\` when working with memory files during initialization.
 `
               : "";
 

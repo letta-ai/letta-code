@@ -11,6 +11,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { getServerUrl } from "../../agent/client";
 import { getCurrentAgentId } from "../../agent/context";
+import { getMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
 import { settingsManager } from "../../settings-manager";
 
 /**
@@ -182,7 +183,12 @@ export function getShellEnv(): NodeJS.ProcessEnv {
 
   // Add Letta context for skill scripts
   try {
-    env.LETTA_AGENT_ID = getCurrentAgentId();
+    const agentId = getCurrentAgentId();
+    const memoryDir = getMemoryFilesystemRoot(agentId);
+    env.LETTA_AGENT_ID = agentId;
+    env.AGENT_ID = agentId;
+    env.LETTA_MEMORY_DIR = memoryDir;
+    env.MEMORY_DIR = memoryDir;
   } catch {
     // Context not set yet (e.g., during startup), skip
   }
