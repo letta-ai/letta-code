@@ -4,6 +4,12 @@
  */
 
 import WebSocket from "ws";
+import type { Stream } from "@letta-ai/letta-client/core/streaming";
+import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
+import type {
+  ApprovalCreate,
+  LettaStreamingResponse,
+} from "@letta-ai/letta-client/resources/agents/messages";
 import { sendMessageStream } from "../agent/message";
 import { createBuffers } from "../cli/helpers/accumulator";
 import { drainStreamWithResume } from "../cli/helpers/stream";
@@ -43,11 +49,7 @@ interface IncomingMessage {
   type: "message";
   agentId?: string;
   conversationId?: string;
-  messages: Array<{
-    role: "user";
-    content: string | Array<{ type: "text"; text: string }>;
-    otid?: string;
-  }>;
+  messages: Array<MessageCreate | ApprovalCreate>;
 }
 
 interface ResultMessage {
@@ -307,12 +309,20 @@ async function handleIncomingMessage(
       "type" in firstMessage &&
       firstMessage.type === "approval";
 
-    let messagesToSend = msg.messages;
+    let messagesToSend: Array<MessageCreate | ApprovalCreate> = msg.messages;
 
     if (isApprovalMessage && "approvals" in firstMessage) {
+      const approvalMessage = firstMessage as ApprovalCreate;
+      if (!approvalMessage.approvals) {
+        if (process.env.DEBUG) {
+          console.error("[Listen] Approval message has no approvals array");
+        }
+        return;
+      }
+
       if (process.env.DEBUG) {
         console.log(
-          `[Listen] Processing approval message with ${firstMessage.approvals.length} approval(s)`,
+          `[Listen] Processing approval message with ${approvalMessage.approvals.length} approval(s)`,
         );
       }
 
@@ -332,15 +342,14 @@ async function handleIncomingMessage(
 
       // Execute approved tools locally and build ToolReturn messages
       const toolReturns = await Promise.all(
-        firstMessage.approvals.map(
-          async (approval: {
-            type?: string;
-            approve?: boolean;
-            tool_call_id: string;
-            reason?: string;
-          }) => {
+        approvalMessage.approvals.map(async (approval) => {
             // If already a tool return, pass through
             if (approval.type === "tool") {
+              return approval;
+            }
+
+            // Type guard: if it's not a tool return, it must be an approval return
+            if (!("approve" in approval)) {
               return approval;
             }
 
@@ -396,7 +405,7 @@ async function handleIncomingMessage(
             return {
               type: "tool",
               tool_call_id: approval.tool_call_id,
-              tool_return: approval.reason || "Tool execution denied",
+              tool_return: ("reason" in approval && approval.reason) || "Tool execution denied",
               status: "error",
             };
           },
@@ -408,7 +417,7 @@ async function handleIncomingMessage(
         {
           type: "approval",
           approvals: toolReturns,
-        },
+        } as ApprovalCreate,
       ];
     }
 
@@ -453,16 +462,16 @@ async function handleIncomingMessage(
     }
 
     // Process the collected chunks through drainStreamWithResume
-    // We need to convert the array back to an async iterable
-    async function* replayChunks() {
+    // We need to convert the array back to a Stream-like object
+    async function* replayChunks(): AsyncGenerator<LettaStreamingResponse, void, unknown> {
       for (const chunk of interceptedChunks) {
-        yield chunk;
+        yield chunk as LettaStreamingResponse;
       }
     }
 
     const buffers = createBuffers(agentId);
     const result = await drainStreamWithResume(
-      replayChunks(),
+      replayChunks() as unknown as Stream<LettaStreamingResponse>,
       buffers,
       () => {},
     );

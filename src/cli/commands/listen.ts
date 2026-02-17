@@ -6,6 +6,7 @@
 import { hostname } from "node:os";
 import { getServerUrl } from "../../agent/client";
 import { settingsManager } from "../../settings-manager";
+import { getErrorMessage } from "../../utils/error";
 import type { Buffers, Line } from "../helpers/accumulator";
 
 // tiny helper for unique ids
@@ -198,7 +199,7 @@ export async function handleListen(
     });
 
     if (!registerResponse.ok) {
-      const error = await registerResponse.json();
+      const error = (await registerResponse.json()) as { message?: string };
       throw new Error(error.message || "Registration failed");
     }
 

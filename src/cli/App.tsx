@@ -6015,12 +6015,14 @@ export default function App({
           let listenAgentId: string | undefined;
 
           for (let i = 1; i < parts.length; i++) {
-            if (parts[i] === "--name" && parts[i + 1]) {
+            const part = parts[i];
+            const nextPart = parts[i + 1];
+            if (part === "--name" && nextPart) {
               // Remove quotes if present
-              name = parts[i + 1].replace(/^["']|["']$/g, "");
+              name = nextPart.replace(/^["']|["']$/g, "");
               i++;
-            } else if (parts[i] === "--agent" && parts[i + 1]) {
-              listenAgentId = parts[i + 1];
+            } else if (part === "--agent" && nextPart) {
+              listenAgentId = nextPart;
               i++;
             }
           }

@@ -107,7 +107,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     });
 
     if (!registerResponse.ok) {
-      const error = await registerResponse.json();
+      const error = (await registerResponse.json()) as { message?: string };
       console.error(`Registration failed: ${error.message || "Unknown error"}`);
       return 1;
     }
