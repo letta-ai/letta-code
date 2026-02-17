@@ -6009,11 +6009,11 @@ export default function App({
         // Special handling for /listen command - start listener mode
         if (trimmed.startsWith("/listen")) {
           const parts = trimmed.split(/\s+/);
-          
+
           // Parse flags
           let name: string | undefined;
           let listenAgentId: string | undefined;
-          
+
           for (let i = 1; i < parts.length; i++) {
             if (parts[i] === "--name" && parts[i + 1]) {
               // Remove quotes if present
@@ -6029,10 +6029,8 @@ export default function App({
           const targetAgentId = listenAgentId || agentId;
 
           const cmd = commandRunner.start(msg, "Starting listener...");
-          const {
-            handleListen,
-            setActiveCommandId: setActiveListenCommandId,
-          } = await import("./commands/listen");
+          const { handleListen, setActiveCommandId: setActiveListenCommandId } =
+            await import("./commands/listen");
           setActiveListenCommandId(cmd.id);
           try {
             await handleListen(
