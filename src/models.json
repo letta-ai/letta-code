@@ -1,6 +1,6 @@
 [
   {
-    "id": "sonnet-4.6",
+    "id": "sonnet",
     "handle": "anthropic/claude-sonnet-4-6",
     "label": "Sonnet 4.6",
     "description": "Anthropic's new Sonnet model with adaptive thinking",
