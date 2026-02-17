@@ -266,6 +266,12 @@ export async function handleHeadlessCommand(
   const baseToolsRaw = values["base-tools"] as string | undefined;
   const memfsFlag = values.memfs as boolean | undefined;
   const noMemfsFlag = values["no-memfs"] as boolean | undefined;
+  const requestedMemoryPromptMode: "memfs" | "standard" | undefined = memfsFlag
+    ? "memfs"
+    : noMemfsFlag
+      ? "standard"
+      : undefined;
+  const shouldAutoEnableMemfsForNewAgent = !memfsFlag && !noMemfsFlag;
   const fromAfFile = values["from-af"] as string | undefined;
   const preLoadSkillsRaw = values["pre-load-skills"] as string | undefined;
   const maxTurnsRaw = values["max-turns"] as string | undefined;
@@ -593,6 +599,7 @@ export async function handleHeadlessCommand(
       systemPromptPreset,
       systemPromptCustom: systemCustom,
       systemPromptAppend: systemAppend,
+      memoryPromptMode: requestedMemoryPromptMode,
       initBlocks,
       baseTools,
       memoryBlocks,
@@ -602,9 +609,11 @@ export async function handleHeadlessCommand(
     const result = await createAgent(createOptions);
     agent = result.agent;
 
-    // Enable memfs by default on Letta Cloud for new agents
-    const { enableMemfsIfCloud } = await import("./agent/memoryFilesystem");
-    await enableMemfsIfCloud(agent.id);
+    // Enable memfs by default on Letta Cloud for new agents when no explicit memfs flags are provided.
+    if (shouldAutoEnableMemfsForNewAgent) {
+      const { enableMemfsIfCloud } = await import("./agent/memoryFilesystem");
+      await enableMemfsIfCloud(agent.id);
+    }
   }
 
   // Priority 4: Try to resume from project settings (.letta/settings.local.json)
