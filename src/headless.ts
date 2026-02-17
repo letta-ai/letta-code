@@ -2452,6 +2452,7 @@ async function runBidirectionalMode(
         role: "user",
         content: queuedMessage.text,
       },
+      _queuedKind: queuedMessage.kind,
     });
 
   // Connect Task/subagent background notifications to the same queueing path
@@ -2763,10 +2764,12 @@ async function runBidirectionalMode(
         let parsedCandidate: {
           type?: string;
           message?: { content?: MessageCreate["content"] };
+          _queuedKind?: QueuedMessage["kind"];
         };
         try {
           parsedCandidate = JSON.parse(candidate);
         } catch {
+          // Leave malformed lines for the main loop to surface as parse errors.
           break;
         }
 
@@ -2775,13 +2778,37 @@ async function runBidirectionalMode(
           parsedCandidate.message?.content !== undefined
         ) {
           lineQueue.shift();
-          queuedInputs.push({
-            kind: "user",
-            content: parsedCandidate.message.content,
-          });
+          if (parsedCandidate._queuedKind === "task_notification") {
+            const notificationText =
+              typeof parsedCandidate.message.content === "string"
+                ? parsedCandidate.message.content
+                : parsedCandidate.message.content
+                    .reduce((texts: string[], part) => {
+                      if (
+                        part.type === "text" &&
+                        "text" in part &&
+                        typeof part.text === "string"
+                      ) {
+                        texts.push(part.text);
+                      }
+                      return texts;
+                    }, [])
+                    .join("");
+            queuedInputs.push({
+              kind: "task_notification",
+              text: notificationText,
+            });
+          } else {
+            queuedInputs.push({
+              kind: "user",
+              content: parsedCandidate.message.content,
+            });
+          }
           continue;
         }
 
+        // Stop coalescing when the queue head is not a user-input line.
+        // The outer loop must process control/error/system lines in-order.
         break;
       }
 

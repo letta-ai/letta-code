@@ -15,6 +15,8 @@ export type QueuedMessage = {
 
 type QueueAdder = (message: QueuedMessage) => void;
 
+// Global bridge is intentionally single-consumer. Each process runs either
+// one TUI App instance or one headless bidirectional loop.
 let queueAdder: QueueAdder | null = null;
 const pendingMessages: QueuedMessage[] = [];
 const MAX_PENDING_MESSAGES = 10;

@@ -60,6 +60,7 @@ describe("headless bidirectional queue wiring", () => {
 
     expect(source).toContain("setMessageQueueAdder((queuedMessage) =>");
     expect(source).toContain("serializeQueuedMessageAsUserLine");
+    expect(source).toContain("_queuedKind");
     expect(source).toContain("setMessageQueueAdder(null)");
   });
 });
