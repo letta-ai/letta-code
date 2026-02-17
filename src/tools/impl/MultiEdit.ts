@@ -11,9 +11,15 @@ export interface MultiEditArgs {
   file_path: string;
   edits: Edit[];
 }
+interface EditWithLine {
+  description: string;
+  startLine: number;
+}
+
 interface MultiEditResult {
   message: string;
   edits_applied: number;
+  edits: EditWithLine[];
 }
 
 export async function multi_edit(
@@ -45,7 +51,7 @@ export async function multi_edit(
     const rawContent = await fs.readFile(resolvedPath, "utf-8");
     // Normalize line endings to LF for consistent matching (Windows uses CRLF)
     let content = rawContent.replace(/\r\n/g, "\n");
-    const appliedEdits: string[] = [];
+    const appliedEdits: EditWithLine[] = [];
     for (let i = 0; i < edits.length; i++) {
       const edit = edits[i];
       if (!edit) continue;
@@ -61,26 +67,33 @@ export async function multi_edit(
           `Found ${occurrences} matches of the string to replace, but replace_all is false. To replace all occurrences, set replace_all to true. To replace only one occurrence, please provide more context to uniquely identify the instance.\nString: ${old_string}`,
         );
       }
+      
+      // Calculate start line before applying the edit
+      const index = content.indexOf(old_string);
+      const startLine = content.substring(0, index).split('\n').length;
+      
       if (replace_all) {
         content = content.split(old_string).join(new_string);
       } else {
-        const index = content.indexOf(old_string);
         content =
           content.substring(0, index) +
           new_string +
           content.substring(index + old_string.length);
       }
-      appliedEdits.push(
-        `Replaced "${old_string.substring(0, 50)}${old_string.length > 50 ? "..." : ""}" with "${new_string.substring(0, 50)}${new_string.length > 50 ? "..." : ""}"`,
-      );
+      appliedEdits.push({
+        description: `Replaced "${old_string.substring(0, 50)}${old_string.length > 50 ? "..." : ""}" with "${new_string.substring(0, 50)}${new_string.length > 50 ? "..." : ""}"`,
+        startLine,
+      });
     }
     await fs.writeFile(resolvedPath, content, "utf-8");
     const editList = appliedEdits
-      .map((edit, i) => `${i + 1}. ${edit}`)
+      .map((edit, i) => `${i + 1}. ${edit.description}`)
       .join("\n");
+    
     return {
       message: `Applied ${edits.length} edit${edits.length !== 1 ? "s" : ""} to ${resolvedPath}:\n${editList}`,
       edits_applied: edits.length,
+      edits: appliedEdits,
     };
   } catch (error) {
     const err = error as NodeJS.ErrnoException;

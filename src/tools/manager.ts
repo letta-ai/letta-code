@@ -949,6 +949,12 @@ function flattenToolResponse(result: unknown): ToolReturnContent {
   }
 
   if (typeof result.message === "string") {
+    // If there are other fields besides 'message', return the full object as JSON
+
+    const keys = Object.keys(result);
+    if (keys.length > 1) {
+      return JSON.stringify(result);
+    }
     return result.message;
   }
 
