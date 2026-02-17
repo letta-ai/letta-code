@@ -9,8 +9,7 @@ Each file contains metadata frontmatter include a `description` (the description
 The filesystem tree is always available in your system prompt, along with the contents of files in the `system/` folder.
 You also have additional external memory (e.g. your message history) that is accessible and that you can bring into context with tools when needed.
 
-When running in Letta Code, shell tools provide these environment variables:
-- `AGENT_ID`: your current agent ID
+When running in Letta Code, shell tools provide:
 - `MEMORY_DIR`: absolute path to this agent's memory repository
 
 ## How It Works

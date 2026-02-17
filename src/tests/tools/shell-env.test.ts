@@ -155,10 +155,15 @@ test("getShellEnv does not inject MEMORY_DIR aliases when memfs is disabled", ()
   const agentId = `agent-test-${Date.now()}`;
   setCurrentAgentId(agentId);
 
-  const original = settingsManager.isMemfsEnabled.bind(settingsManager);
+  const originalIsMemfsEnabled =
+    settingsManager.isMemfsEnabled.bind(settingsManager);
+  const originalMemoryDir = process.env.MEMORY_DIR;
+  const originalLettaMemoryDir = process.env.LETTA_MEMORY_DIR;
   (
     settingsManager as unknown as { isMemfsEnabled: (id: string) => boolean }
   ).isMemfsEnabled = () => false;
+  process.env.MEMORY_DIR = "/tmp/stale-memory-dir";
+  process.env.LETTA_MEMORY_DIR = "/tmp/stale-memory-dir";
 
   try {
     const env = getShellEnv();
@@ -169,7 +174,19 @@ test("getShellEnv does not inject MEMORY_DIR aliases when memfs is disabled", ()
       settingsManager as unknown as {
         isMemfsEnabled: (id: string) => boolean;
       }
-    ).isMemfsEnabled = original;
+    ).isMemfsEnabled = originalIsMemfsEnabled;
+
+    if (originalMemoryDir === undefined) {
+      delete process.env.MEMORY_DIR;
+    } else {
+      process.env.MEMORY_DIR = originalMemoryDir;
+    }
+
+    if (originalLettaMemoryDir === undefined) {
+      delete process.env.LETTA_MEMORY_DIR;
+    } else {
+      process.env.LETTA_MEMORY_DIR = originalLettaMemoryDir;
+    }
   }
 });
 

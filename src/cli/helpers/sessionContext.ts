@@ -203,7 +203,7 @@ export function buildSessionContext(options: SessionContextOptions): string {
       }
     })();
     const memoryDirLine = showMemoryDir
-      ? `\n- **MEMORY_DIR env var**: \`${getMemoryFilesystemRoot(agentInfo.id)}\``
+      ? `\n- **Memory directory (also stored in \`MEMORY_DIR\` env var)**: \`${getMemoryFilesystemRoot(agentInfo.id)}\``
       : "";
 
     // Build the context
@@ -250,8 +250,7 @@ ${gitInfo.status}
     // Add agent info
     context += `
 ## Agent Information (i.e. information about you)
-- **Agent ID**: ${agentInfo.id}
-- **AGENT_ID env var**: \`${agentInfo.id}\`${memoryDirLine}
+- **Agent ID (also stored in \`AGENT_ID\` env var)**: ${agentInfo.id}${memoryDirLine}
 - **Agent name**: ${agentInfo.name || "(unnamed)"} (the user can change this with /rename)
 - **Agent description**: ${agentInfo.description || "(no description)"} (the user can change this with /description)
 - **Last message**: ${lastRunInfo}

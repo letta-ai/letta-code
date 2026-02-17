@@ -191,6 +191,10 @@ export function getShellEnv(): NodeJS.ProcessEnv {
       const memoryDir = getMemoryFilesystemRoot(agentId);
       env.LETTA_MEMORY_DIR = memoryDir;
       env.MEMORY_DIR = memoryDir;
+    } else {
+      // Clear inherited/stale memory-dir vars for non-memfs agents.
+      delete env.LETTA_MEMORY_DIR;
+      delete env.MEMORY_DIR;
     }
   } catch {
     // Context not set yet (e.g., during startup), skip

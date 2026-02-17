@@ -16,8 +16,9 @@ describe("session context reminder", () => {
       serverUrl: "https://api.letta.com",
     });
 
-    expect(context).toContain(`- **Agent ID**: ${agentId}`);
-    expect(context).toContain(`- **AGENT_ID env var**: \`${agentId}\``);
+    expect(context).toContain(
+      `- **Agent ID (also stored in \`AGENT_ID\` env var)**: ${agentId}`,
+    );
   });
 
   test("does not include MEMORY_DIR env var when memfs is disabled", () => {
@@ -40,7 +41,9 @@ describe("session context reminder", () => {
         serverUrl: "https://api.letta.com",
       });
 
-      expect(context).not.toContain("- **MEMORY_DIR env var**:");
+      expect(context).not.toContain(
+        "Memory directory (also stored in `MEMORY_DIR` env var)",
+      );
       expect(context).not.toContain(getMemoryFilesystemRoot(agentId));
     } finally {
       (
@@ -72,7 +75,7 @@ describe("session context reminder", () => {
       });
 
       expect(context).toContain(
-        `- **MEMORY_DIR env var**: \`${getMemoryFilesystemRoot(agentId)}\``,
+        `- **Memory directory (also stored in \`MEMORY_DIR\` env var)**: \`${getMemoryFilesystemRoot(agentId)}\``,
       );
     } finally {
       (
