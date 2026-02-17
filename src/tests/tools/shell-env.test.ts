@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import * as path from "node:path";
-import { setCurrentAgentId } from "../../agent/context";
 import { getMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
 import { settingsManager } from "../../settings-manager";
 import {
@@ -9,6 +8,30 @@ import {
   getShellEnv,
   resolveLettaInvocation,
 } from "../../tools/impl/shellEnv";
+
+function withTemporaryAgentEnv<T>(agentId: string, fn: () => T): T {
+  const originalAgentId = process.env.AGENT_ID;
+  const originalLettaAgentId = process.env.LETTA_AGENT_ID;
+
+  process.env.AGENT_ID = agentId;
+  process.env.LETTA_AGENT_ID = agentId;
+
+  try {
+    return fn();
+  } finally {
+    if (originalAgentId === undefined) {
+      delete process.env.AGENT_ID;
+    } else {
+      process.env.AGENT_ID = originalAgentId;
+    }
+
+    if (originalLettaAgentId === undefined) {
+      delete process.env.LETTA_AGENT_ID;
+    } else {
+      process.env.LETTA_AGENT_ID = originalLettaAgentId;
+    }
+  }
+}
 
 describe("shellEnv letta shim", () => {
   test("resolveLettaInvocation prefers explicit launcher env", () => {
@@ -142,75 +165,72 @@ describe("shellEnv letta shim", () => {
 });
 
 test("getShellEnv injects AGENT_ID aliases", () => {
-  const agentId = `agent-test-${Date.now()}`;
-  setCurrentAgentId(agentId);
+  withTemporaryAgentEnv(`agent-test-${Date.now()}`, () => {
+    const env = getShellEnv();
 
-  const env = getShellEnv();
-
-  expect(env.AGENT_ID).toBeTruthy();
-  expect(env.LETTA_AGENT_ID).toBe(env.AGENT_ID);
+    expect(env.AGENT_ID).toBeTruthy();
+    expect(env.LETTA_AGENT_ID).toBe(env.AGENT_ID);
+  });
 });
 
 test("getShellEnv does not inject MEMORY_DIR aliases when memfs is disabled", () => {
-  const agentId = `agent-test-${Date.now()}`;
-  setCurrentAgentId(agentId);
-
-  const originalIsMemfsEnabled =
-    settingsManager.isMemfsEnabled.bind(settingsManager);
-  const originalMemoryDir = process.env.MEMORY_DIR;
-  const originalLettaMemoryDir = process.env.LETTA_MEMORY_DIR;
-  (
-    settingsManager as unknown as { isMemfsEnabled: (id: string) => boolean }
-  ).isMemfsEnabled = () => false;
-  process.env.MEMORY_DIR = "/tmp/stale-memory-dir";
-  process.env.LETTA_MEMORY_DIR = "/tmp/stale-memory-dir";
-
-  try {
-    const env = getShellEnv();
-    expect(env.LETTA_MEMORY_DIR).toBeUndefined();
-    expect(env.MEMORY_DIR).toBeUndefined();
-  } finally {
+  withTemporaryAgentEnv(`agent-test-${Date.now()}`, () => {
+    const originalIsMemfsEnabled =
+      settingsManager.isMemfsEnabled.bind(settingsManager);
+    const originalMemoryDir = process.env.MEMORY_DIR;
+    const originalLettaMemoryDir = process.env.LETTA_MEMORY_DIR;
     (
-      settingsManager as unknown as {
-        isMemfsEnabled: (id: string) => boolean;
+      settingsManager as unknown as { isMemfsEnabled: (id: string) => boolean }
+    ).isMemfsEnabled = () => false;
+    process.env.MEMORY_DIR = "/tmp/stale-memory-dir";
+    process.env.LETTA_MEMORY_DIR = "/tmp/stale-memory-dir";
+
+    try {
+      const env = getShellEnv();
+      expect(env.LETTA_MEMORY_DIR).toBeUndefined();
+      expect(env.MEMORY_DIR).toBeUndefined();
+    } finally {
+      (
+        settingsManager as unknown as {
+          isMemfsEnabled: (id: string) => boolean;
+        }
+      ).isMemfsEnabled = originalIsMemfsEnabled;
+
+      if (originalMemoryDir === undefined) {
+        delete process.env.MEMORY_DIR;
+      } else {
+        process.env.MEMORY_DIR = originalMemoryDir;
       }
-    ).isMemfsEnabled = originalIsMemfsEnabled;
 
-    if (originalMemoryDir === undefined) {
-      delete process.env.MEMORY_DIR;
-    } else {
-      process.env.MEMORY_DIR = originalMemoryDir;
+      if (originalLettaMemoryDir === undefined) {
+        delete process.env.LETTA_MEMORY_DIR;
+      } else {
+        process.env.LETTA_MEMORY_DIR = originalLettaMemoryDir;
+      }
     }
-
-    if (originalLettaMemoryDir === undefined) {
-      delete process.env.LETTA_MEMORY_DIR;
-    } else {
-      process.env.LETTA_MEMORY_DIR = originalLettaMemoryDir;
-    }
-  }
+  });
 });
 
 test("getShellEnv injects MEMORY_DIR aliases when memfs is enabled", () => {
-  const agentId = `agent-test-${Date.now()}`;
-  setCurrentAgentId(agentId);
-
-  const original = settingsManager.isMemfsEnabled.bind(settingsManager);
-  (
-    settingsManager as unknown as { isMemfsEnabled: (id: string) => boolean }
-  ).isMemfsEnabled = () => true;
-
-  try {
-    const env = getShellEnv();
-    expect(env.AGENT_ID).toBeTruthy();
-    const resolvedAgentId = env.AGENT_ID as string;
-    const expectedMemoryDir = getMemoryFilesystemRoot(resolvedAgentId);
-    expect(env.LETTA_MEMORY_DIR).toBe(expectedMemoryDir);
-    expect(env.MEMORY_DIR).toBe(expectedMemoryDir);
-  } finally {
+  withTemporaryAgentEnv(`agent-test-${Date.now()}`, () => {
+    const original = settingsManager.isMemfsEnabled.bind(settingsManager);
     (
-      settingsManager as unknown as {
-        isMemfsEnabled: (id: string) => boolean;
-      }
-    ).isMemfsEnabled = original;
-  }
+      settingsManager as unknown as { isMemfsEnabled: (id: string) => boolean }
+    ).isMemfsEnabled = () => true;
+
+    try {
+      const env = getShellEnv();
+      expect(env.AGENT_ID).toBeTruthy();
+      const resolvedAgentId = env.AGENT_ID as string;
+      const expectedMemoryDir = getMemoryFilesystemRoot(resolvedAgentId);
+      expect(env.LETTA_MEMORY_DIR).toBe(expectedMemoryDir);
+      expect(env.MEMORY_DIR).toBe(expectedMemoryDir);
+    } finally {
+      (
+        settingsManager as unknown as {
+          isMemfsEnabled: (id: string) => boolean;
+        }
+      ).isMemfsEnabled = original;
+    }
+  });
 });
