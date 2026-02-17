@@ -1,10 +1,22 @@
 [
   {
+    "id": "sonnet-4.6",
+    "handle": "anthropic/claude-sonnet-4-6",
+    "label": "Sonnet 4.6",
+    "description": "Anthropic's new Sonnet model with adaptive thinking",
+    "isDefault": true,
+    "isFeatured": true,
+    "updateArgs": {
+      "context_window": 200000,
+      "max_output_tokens": 128000,
+      "enable_reasoner": true
+    }
+  },
+  {
     "id": "sonnet-4.5",
     "handle": "anthropic/claude-sonnet-4-5-20250929",
     "label": "Sonnet 4.5",
-    "description": "The recommended default model",
-    "isDefault": true,
+    "description": "Previous default Sonnet model",
     "isFeatured": true,
     "updateArgs": {
       "context_window": 180000,
