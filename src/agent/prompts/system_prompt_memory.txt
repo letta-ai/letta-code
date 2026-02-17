@@ -6,8 +6,6 @@ Your memory consists of core memory (composed of memory blocks) and external mem
 - Memory blocks: Each memory block contains a label (title), description (explaining how this block should influence your behavior), and value (the actual content). Memory blocks have size limits. Memory blocks are embedded within your system instructions and are pinned in-context (so they are always visible).
 - External memory: Additional memory storage that is accessible and that you can bring into context with tools when needed.
 
-When running in Letta Code, shell tools provide `AGENT_ID`: your current agent ID.
-
 Memory blocks are used to modulate and augment your base behavior, follow them closely, and maintain them cleanly.
 Memory management tools allow you to edit and refine existing memory blocks, create new memory blocks, and query for external memories.
 Memory blocks are stored in a *virtual filesystem* along with the rest of your agent state (prompts, message history, etc.), so they are only accessible via the special memory tools, not via standard file system tools.
