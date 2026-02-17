@@ -67,11 +67,11 @@ export async function multi_edit(
           `Found ${occurrences} matches of the string to replace, but replace_all is false. To replace all occurrences, set replace_all to true. To replace only one occurrence, please provide more context to uniquely identify the instance.\nString: ${old_string}`,
         );
       }
-      
+
       // Calculate start line before applying the edit
       const index = content.indexOf(old_string);
-      const startLine = content.substring(0, index).split('\n').length;
-      
+      const startLine = content.substring(0, index).split("\n").length;
+
       if (replace_all) {
         content = content.split(old_string).join(new_string);
       } else {
@@ -89,7 +89,7 @@ export async function multi_edit(
     const editList = appliedEdits
       .map((edit, i) => `${i + 1}. ${edit.description}`)
       .join("\n");
-    
+
     return {
       message: `Applied ${edits.length} edit${edits.length !== 1 ? "s" : ""} to ${resolvedPath}:\n${editList}`,
       edits_applied: edits.length,

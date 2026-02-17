@@ -238,7 +238,11 @@ export const ToolCallMessage = memo(
       try {
         const parsed = JSON.parse(text);
         // If it's a JSON object with a message field, extract that
-        if (parsed && typeof parsed === 'object' && typeof parsed.message === 'string') {
+        if (
+          parsed &&
+          typeof parsed === "object" &&
+          typeof parsed.message === "string"
+        ) {
           return parsed.message;
         }
       } catch {
