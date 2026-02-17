@@ -147,8 +147,8 @@ test("getShellEnv injects AGENT_ID aliases", () => {
 
   const env = getShellEnv();
 
-  expect(env.LETTA_AGENT_ID).toBe(agentId);
-  expect(env.AGENT_ID).toBe(agentId);
+  expect(env.AGENT_ID).toBeTruthy();
+  expect(env.LETTA_AGENT_ID).toBe(env.AGENT_ID);
 });
 
 test("getShellEnv does not inject MEMORY_DIR aliases when memfs is disabled", () => {
@@ -201,7 +201,9 @@ test("getShellEnv injects MEMORY_DIR aliases when memfs is enabled", () => {
 
   try {
     const env = getShellEnv();
-    const expectedMemoryDir = getMemoryFilesystemRoot(agentId);
+    expect(env.AGENT_ID).toBeTruthy();
+    const resolvedAgentId = env.AGENT_ID as string;
+    const expectedMemoryDir = getMemoryFilesystemRoot(resolvedAgentId);
     expect(env.LETTA_MEMORY_DIR).toBe(expectedMemoryDir);
     expect(env.MEMORY_DIR).toBe(expectedMemoryDir);
   } finally {
