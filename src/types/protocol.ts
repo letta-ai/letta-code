@@ -89,6 +89,11 @@ export interface SystemInitMessage extends MessageEnvelope {
   permission_mode: string;
   slash_commands: string[];
   memfs_enabled?: boolean;
+  skill_sources?: Array<"bundled" | "global" | "agent" | "project">;
+  system_info_reminder_enabled?: boolean;
+  reflection_trigger?: "off" | "step-count" | "compaction-event";
+  reflection_behavior?: "reminder" | "auto-launch";
+  reflection_step_count?: number;
   // output_style omitted - Letta Code doesn't have output styles feature
 }
 
