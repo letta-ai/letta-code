@@ -12,6 +12,7 @@ import {
 import type { AgentProvenance } from "./agent/create";
 import { getLettaCodeHeaders } from "./agent/http-headers";
 import { ISOLATED_BLOCK_LABELS } from "./agent/memory";
+import { resolveSkillSourcesSelection } from "./agent/skillSources";
 import { LETTA_CLOUD_API_URL } from "./auth/oauth";
 import { ConversationSelector } from "./cli/components/ConversationSelector";
 import type { ApprovalRequest } from "./cli/helpers/stream";
@@ -78,10 +79,21 @@ OPTIONS
                         Emit stream_event wrappers for each chunk (stream-json only)
   --from-agent <id>     Inject agent-to-agent system reminder (headless mode)
   --skills <path>       Custom path to skills directory (default: .skills in current directory)
+  --skill-sources <csv> Skill sources: all,bundled,global,agent,project (default: all)
+  --no-skills           Disable all skill sources
+  --no-bundled-skills   Disable bundled skills only
   --import <path>       Create agent from an AgentFile (.af) template
                         Use @author/name to import from the agent registry
   --memfs               Enable memory filesystem for this agent
   --no-memfs            Disable memory filesystem for this agent
+  --no-system-info-reminder
+                        Disable first-turn environment reminder (device/git/cwd context)
+  --reflection-trigger <mode>
+                        Sleeptime trigger: off, step-count, compaction-event
+  --reflection-behavior <mode>
+                        Sleeptime behavior: reminder, auto-launch
+  --reflection-step-count <n>
+                        Sleeptime step-count interval (positive integer)
 
 SUBCOMMANDS (JSON-only)
   letta memfs status --agent <id>
@@ -423,6 +435,7 @@ async function main(): Promise<void> {
         "include-partial-messages": { type: "boolean" },
         "from-agent": { type: "string" },
         skills: { type: "string" },
+        "skill-sources": { type: "string" },
         "pre-load-skills": { type: "string" },
         "from-af": { type: "string" },
         import: { type: "string" },
@@ -431,6 +444,11 @@ async function main(): Promise<void> {
         memfs: { type: "boolean" },
         "no-memfs": { type: "boolean" },
         "no-skills": { type: "boolean" },
+        "no-bundled-skills": { type: "boolean" },
+        "no-system-info-reminder": { type: "boolean" },
+        "reflection-trigger": { type: "string" },
+        "reflection-behavior": { type: "string" },
+        "reflection-step-count": { type: "string" },
         "max-turns": { type: "string" },
       },
       strict: true,
@@ -559,6 +577,27 @@ async function main(): Promise<void> {
       : undefined;
   const shouldAutoEnableMemfsForNewAgent = !memfsFlag && !noMemfsFlag;
   const noSkillsFlag = values["no-skills"] as boolean | undefined;
+  const noBundledSkillsFlag = values["no-bundled-skills"] as
+    | boolean
+    | undefined;
+  const skillSourcesRaw = values["skill-sources"] as string | undefined;
+  const noSystemInfoReminderFlag = values["no-system-info-reminder"] as
+    | boolean
+    | undefined;
+  const resolvedSkillSources = (() => {
+    try {
+      return resolveSkillSourcesSelection({
+        skillSourcesRaw,
+        noSkills: noSkillsFlag,
+        noBundledSkills: noBundledSkillsFlag,
+      });
+    } catch (error) {
+      console.error(
+        error instanceof Error ? `Error: ${error.message}` : String(error),
+      );
+      process.exit(1);
+    }
+  })();
   const fromAfFile =
     (values.import as string | undefined) ??
     (values["from-af"] as string | undefined);
@@ -956,7 +995,8 @@ async function main(): Promise<void> {
       process.argv,
       specifiedModel,
       skillsDirectory,
-      noSkillsFlag,
+      resolvedSkillSources,
+      !noSystemInfoReminderFlag,
     );
     return;
   }
@@ -1724,7 +1764,7 @@ async function main(): Promise<void> {
         }
 
         // Set agent context for tools that need it (e.g., Skill tool)
-        setAgentContext(agent.id, skillsDirectory, noSkillsFlag);
+        setAgentContext(agent.id, skillsDirectory, resolvedSkillSources);
 
         // Apply memfs flag if explicitly specified (memfs is opt-in via /memfs enable or --memfs)
         const isSubagent = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
@@ -2064,6 +2104,7 @@ async function main(): Promise<void> {
         showCompactions: settings.showCompactions,
         agentProvenance,
         releaseNotes,
+        sessionContextReminderEnabled: !noSystemInfoReminderFlag,
       });
     }
 
@@ -2081,6 +2122,7 @@ async function main(): Promise<void> {
       showCompactions: settings.showCompactions,
       agentProvenance,
       releaseNotes,
+      sessionContextReminderEnabled: !noSystemInfoReminderFlag,
     });
   }
 

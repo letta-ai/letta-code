@@ -806,6 +806,7 @@ export default function App({
   showCompactions = false,
   agentProvenance = null,
   releaseNotes = null,
+  sessionContextReminderEnabled = true,
 }: {
   agentId: string;
   agentState?: AgentState | null;
@@ -825,6 +826,7 @@ export default function App({
   showCompactions?: boolean;
   agentProvenance?: AgentProvenance | null;
   releaseNotes?: string | null; // Markdown release notes to display above header
+  sessionContextReminderEnabled?: boolean;
 }) {
   // Warm the model-access cache in the background so /model is fast on first open.
   useEffect(() => {
@@ -8016,7 +8018,11 @@ ${SYSTEM_REMINDER_CLOSE}`;
       const sessionContextEnabled = settingsManager.getSetting(
         "sessionContextEnabled",
       );
-      if (!hasSentSessionContextRef.current && sessionContextEnabled) {
+      if (
+        !hasSentSessionContextRef.current &&
+        sessionContextEnabled &&
+        sessionContextReminderEnabled
+      ) {
         const { buildSessionContext } = await import(
           "./helpers/sessionContext"
         );
@@ -8168,7 +8174,7 @@ ${SYSTEM_REMINDER_CLOSE}
           SKILLS_DIR: defaultDir,
           formatSkillsAsSystemReminder,
         } = await import("../agent/skills");
-        const { getSkillsDirectory, getNoSkills } = await import(
+        const { getSkillsDirectory, getSkillSources } = await import(
           "../agent/context"
         );
 
@@ -8181,7 +8187,7 @@ ${SYSTEM_REMINDER_CLOSE}
           const skillsDir =
             getSkillsDirectory() || join(process.cwd(), defaultDir);
           const { skills } = await discover(skillsDir, agentId, {
-            skipBundled: getNoSkills(),
+            sources: getSkillSources(),
           });
           latestSkills = skills;
         } catch {
@@ -8895,6 +8901,7 @@ ${SYSTEM_REMINDER_CLOSE}
       pendingRalphConfig,
       openTrajectorySegment,
       resetTrajectoryBases,
+      sessionContextReminderEnabled,
       appendTaskNotificationEvents,
     ],
   );

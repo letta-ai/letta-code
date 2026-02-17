@@ -21,9 +21,10 @@ import { getClient } from "./agent/client";
 import { setAgentContext, setConversationId } from "./agent/context";
 import { createAgent } from "./agent/create";
 import { ISOLATED_BLOCK_LABELS } from "./agent/memory";
-
 import { sendMessageStream } from "./agent/message";
 import { getModelUpdateArgs } from "./agent/model";
+import { resolveSkillSourcesSelection } from "./agent/skillSources";
+import type { SkillSource } from "./agent/skills";
 import { SessionStats } from "./agent/stats";
 import {
   createBuffers,
@@ -33,6 +34,13 @@ import {
 } from "./cli/helpers/accumulator";
 import { classifyApprovals } from "./cli/helpers/approvalClassification";
 import { formatErrorDetails } from "./cli/helpers/errorFormatter";
+import {
+  getReflectionSettings,
+  type ReflectionBehavior,
+  type ReflectionSettings,
+  type ReflectionTrigger,
+  reflectionSettingsToLegacyMode,
+} from "./cli/helpers/memoryReminder";
 import {
   type DrainStreamHook,
   drainStreamWithResume,
@@ -113,11 +121,128 @@ export function shouldReinjectSkillsAfterCompaction(lines: Line[]): boolean {
   );
 }
 
+type ReflectionOverrides = {
+  trigger?: ReflectionTrigger;
+  behavior?: ReflectionBehavior;
+  stepCount?: number;
+};
+
+function parseReflectionOverrides(
+  values: Record<string, unknown>,
+): ReflectionOverrides {
+  const triggerRaw = values["reflection-trigger"] as string | undefined;
+  const behaviorRaw = values["reflection-behavior"] as string | undefined;
+  const stepCountRaw = values["reflection-step-count"] as string | undefined;
+
+  if (!triggerRaw && !behaviorRaw && !stepCountRaw) {
+    return {};
+  }
+
+  const overrides: ReflectionOverrides = {};
+
+  if (triggerRaw !== undefined) {
+    if (
+      triggerRaw !== "off" &&
+      triggerRaw !== "step-count" &&
+      triggerRaw !== "compaction-event"
+    ) {
+      throw new Error(
+        `Invalid --reflection-trigger "${triggerRaw}". Valid values: off, step-count, compaction-event`,
+      );
+    }
+    overrides.trigger = triggerRaw;
+  }
+
+  if (behaviorRaw !== undefined) {
+    if (behaviorRaw !== "reminder" && behaviorRaw !== "auto-launch") {
+      throw new Error(
+        `Invalid --reflection-behavior "${behaviorRaw}". Valid values: reminder, auto-launch`,
+      );
+    }
+    overrides.behavior = behaviorRaw;
+  }
+
+  if (stepCountRaw !== undefined) {
+    const parsed = Number.parseInt(stepCountRaw, 10);
+    if (Number.isNaN(parsed) || parsed <= 0) {
+      throw new Error(
+        `Invalid --reflection-step-count "${stepCountRaw}". Expected a positive integer.`,
+      );
+    }
+    overrides.stepCount = parsed;
+  }
+
+  return overrides;
+}
+
+function hasReflectionOverrides(overrides: ReflectionOverrides): boolean {
+  return (
+    overrides.trigger !== undefined ||
+    overrides.behavior !== undefined ||
+    overrides.stepCount !== undefined
+  );
+}
+
+async function applyReflectionOverrides(
+  agentId: string,
+  overrides: ReflectionOverrides,
+): Promise<ReflectionSettings> {
+  const current = getReflectionSettings();
+  const merged: ReflectionSettings = {
+    trigger: overrides.trigger ?? current.trigger,
+    behavior: overrides.behavior ?? current.behavior,
+    stepCount: overrides.stepCount ?? current.stepCount,
+  };
+
+  if (!hasReflectionOverrides(overrides)) {
+    return merged;
+  }
+
+  const memfsEnabled = settingsManager.isMemfsEnabled(agentId);
+  if (!memfsEnabled && merged.trigger === "compaction-event") {
+    throw new Error(
+      "--reflection-trigger compaction-event requires memfs enabled for this agent.",
+    );
+  }
+  if (
+    !memfsEnabled &&
+    merged.trigger !== "off" &&
+    merged.behavior === "auto-launch"
+  ) {
+    throw new Error(
+      "--reflection-behavior auto-launch requires memfs enabled for this agent.",
+    );
+  }
+
+  try {
+    settingsManager.getLocalProjectSettings();
+  } catch {
+    await settingsManager.loadLocalProjectSettings();
+  }
+
+  const legacyMode = reflectionSettingsToLegacyMode(merged);
+  settingsManager.updateLocalProjectSettings({
+    memoryReminderInterval: legacyMode,
+    reflectionTrigger: merged.trigger,
+    reflectionBehavior: merged.behavior,
+    reflectionStepCount: merged.stepCount,
+  });
+  settingsManager.updateSettings({
+    memoryReminderInterval: legacyMode,
+    reflectionTrigger: merged.trigger,
+    reflectionBehavior: merged.behavior,
+    reflectionStepCount: merged.stepCount,
+  });
+
+  return merged;
+}
+
 export async function handleHeadlessCommand(
   argv: string[],
   model?: string,
-  skillsDirectory?: string,
-  noSkills?: boolean,
+  skillsDirectoryOverride?: string,
+  skillSourcesOverride?: SkillSource[],
+  systemInfoReminderEnabledOverride?: boolean,
 ) {
   // Parse CLI args
   // Include all flags from index.ts to prevent them from being treated as positionals
@@ -155,6 +280,7 @@ export async function handleHeadlessCommand(
       "permission-mode": { type: "string" },
       yolo: { type: "boolean" },
       skills: { type: "string" },
+      "skill-sources": { type: "string" },
       "pre-load-skills": { type: "string" },
       "init-blocks": { type: "string" },
       "base-tools": { type: "string" },
@@ -164,6 +290,11 @@ export async function handleHeadlessCommand(
       memfs: { type: "boolean" },
       "no-memfs": { type: "boolean" },
       "no-skills": { type: "boolean" },
+      "no-bundled-skills": { type: "boolean" },
+      "no-system-info-reminder": { type: "boolean" },
+      "reflection-trigger": { type: "string" },
+      "reflection-behavior": { type: "string" },
+      "reflection-step-count": { type: "string" },
       "max-turns": { type: "string" }, // Maximum number of agentic turns
     },
     strict: false,
@@ -299,6 +430,13 @@ export async function handleHeadlessCommand(
   const blockValueArgs = values["block-value"] as string[] | undefined;
   const initBlocksRaw = values["init-blocks"] as string | undefined;
   const baseToolsRaw = values["base-tools"] as string | undefined;
+  const skillsDirectory =
+    (values.skills as string | undefined) ?? skillsDirectoryOverride;
+  const noSkillsFlag = values["no-skills"] as boolean | undefined;
+  const noBundledSkillsFlag = values["no-bundled-skills"] as
+    | boolean
+    | undefined;
+  const skillSourcesRaw = values["skill-sources"] as string | undefined;
   const memfsFlag = values.memfs as boolean | undefined;
   const noMemfsFlag = values["no-memfs"] as boolean | undefined;
   const requestedMemoryPromptMode: "memfs" | "standard" | undefined = memfsFlag
@@ -309,8 +447,38 @@ export async function handleHeadlessCommand(
   const shouldAutoEnableMemfsForNewAgent = !memfsFlag && !noMemfsFlag;
   const fromAfFile = values["from-af"] as string | undefined;
   const preLoadSkillsRaw = values["pre-load-skills"] as string | undefined;
+  const systemInfoReminderEnabled =
+    systemInfoReminderEnabledOverride ??
+    !(values["no-system-info-reminder"] as boolean | undefined);
+  const reflectionOverrides = (() => {
+    try {
+      return parseReflectionOverrides(values);
+    } catch (error) {
+      console.error(
+        error instanceof Error ? `Error: ${error.message}` : String(error),
+      );
+      process.exit(1);
+    }
+  })();
   const maxTurnsRaw = values["max-turns"] as string | undefined;
   const tagsRaw = values.tags as string | undefined;
+  const resolvedSkillSources = (() => {
+    if (skillSourcesOverride) {
+      return skillSourcesOverride;
+    }
+    try {
+      return resolveSkillSourcesSelection({
+        skillSourcesRaw,
+        noSkills: noSkillsFlag,
+        noBundledSkills: noBundledSkillsFlag,
+      });
+    } catch (error) {
+      console.error(
+        error instanceof Error ? `Error: ${error.message}` : String(error),
+      );
+      process.exit(1);
+    }
+  })();
 
   // Parse and validate base tools
   let tags: string[] | undefined;
@@ -337,6 +505,13 @@ export async function handleHeadlessCommand(
       process.exit(1);
     }
     maxTurns = parsed;
+  }
+
+  if (preLoadSkillsRaw && resolvedSkillSources.length === 0) {
+    console.error(
+      "Error: --pre-load-skills cannot be used when all skill sources are disabled.",
+    );
+    process.exit(1);
   }
 
   // Handle --conv {agent-id} shorthand: --conv agent-xyz → --agent agent-xyz --conv default
@@ -748,6 +923,7 @@ export async function handleHeadlessCommand(
 
   // Determine which conversation to use
   let conversationId: string;
+  let effectiveReflectionSettings: ReflectionSettings;
 
   const isSubagent = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
 
@@ -769,6 +945,18 @@ export async function handleHeadlessCommand(
   } catch (error) {
     console.error(
       `Memory git sync failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    process.exit(1);
+  }
+
+  try {
+    effectiveReflectionSettings = await applyReflectionOverrides(
+      agent.id,
+      reflectionOverrides,
+    );
+  } catch (error) {
+    console.error(
+      `Failed to apply sleeptime settings: ${error instanceof Error ? error.message : String(error)}`,
     );
     process.exit(1);
   }
@@ -894,7 +1082,7 @@ export async function handleHeadlessCommand(
   }
 
   // Set agent context for tools that need it (e.g., Skill tool, Task tool)
-  setAgentContext(agent.id, skillsDirectory, noSkills);
+  setAgentContext(agent.id, skillsDirectory, resolvedSkillSources);
 
   // Validate output format
   const outputFormat =
@@ -929,6 +1117,9 @@ export async function handleHeadlessCommand(
       outputFormat,
       includePartialMessages,
       availableTools,
+      resolvedSkillSources,
+      systemInfoReminderEnabled,
+      effectiveReflectionSettings,
     );
     return;
   }
@@ -957,6 +1148,11 @@ export async function handleHeadlessCommand(
       permission_mode: "",
       slash_commands: [],
       memfs_enabled: settingsManager.isMemfsEnabled(agent.id),
+      skill_sources: resolvedSkillSources,
+      system_info_reminder_enabled: systemInfoReminderEnabled,
+      reflection_trigger: effectiveReflectionSettings.trigger,
+      reflection_behavior: effectiveReflectionSettings.behavior,
+      reflection_step_count: effectiveReflectionSettings.stepCount,
       uuid: `init-${agent.id}`,
     };
     console.log(JSON.stringify(initEvent));
@@ -1160,7 +1356,7 @@ ${SYSTEM_REMINDER_CLOSE}
     try {
       const skillsDir = getSkillsDirectory() || join(process.cwd(), defaultDir);
       const { skills } = await discoverSkills(skillsDir, agent.id, {
-        skipBundled: noSkills,
+        sources: resolvedSkillSources,
       });
       const skillsReminder = formatSkillsAsSystemReminder(skills);
       if (skillsReminder) {
@@ -2027,6 +2223,9 @@ async function runBidirectionalMode(
   _outputFormat: string,
   includePartialMessages: boolean,
   availableTools: string[],
+  skillSources: SkillSource[],
+  systemInfoReminderEnabled: boolean,
+  reflectionSettings: ReflectionSettings,
 ): Promise<void> {
   const sessionId = agent.id;
   const readline = await import("node:readline");
@@ -2042,6 +2241,11 @@ async function runBidirectionalMode(
     tools: availableTools,
     cwd: process.cwd(),
     memfs_enabled: settingsManager.isMemfsEnabled(agent.id),
+    skill_sources: skillSources,
+    system_info_reminder_enabled: systemInfoReminderEnabled,
+    reflection_trigger: reflectionSettings.trigger,
+    reflection_behavior: reflectionSettings.behavior,
+    reflection_step_count: reflectionSettings.stepCount,
     uuid: `init-${agent.id}`,
   };
   console.log(JSON.stringify(initEvent));
@@ -2355,6 +2559,12 @@ async function runBidirectionalMode(
               agent_id: agent.id,
               model: agent.llm_config?.model,
               tools: availableTools,
+              memfs_enabled: settingsManager.isMemfsEnabled(agent.id),
+              skill_sources: skillSources,
+              system_info_reminder_enabled: systemInfoReminderEnabled,
+              reflection_trigger: reflectionSettings.trigger,
+              reflection_behavior: reflectionSettings.behavior,
+              reflection_step_count: reflectionSettings.stepCount,
             },
           },
           session_id: sessionId,
@@ -2485,7 +2695,9 @@ async function runBidirectionalMode(
           const { join } = await import("node:path");
           const skillsDir =
             getSkillsDirectory() || join(process.cwd(), defaultDir);
-          const { skills } = await discover(skillsDir, agent.id);
+          const { skills } = await discover(skillsDir, agent.id, {
+            sources: skillSources,
+          });
           const latestSkillsReminder = formatSkillsAsSystemReminder(skills);
 
           // Trigger reinjection when the available-skills block changed on disk.
