@@ -4809,6 +4809,7 @@ export default function App({
         conversationIdRef.current;
       userCancelledRef.current = true; // Prevent dequeue
       setStreaming(false);
+      resetTrajectoryBases();
       setIsExecutingTool(false);
       toolResultsInFlightRef.current = false;
       refreshDerived();
@@ -4887,6 +4888,7 @@ export default function App({
       // Stop streaming and show error message (unless tool calls were cancelled,
       // since the tool result will show "Interrupted by user")
       setStreaming(false);
+      resetTrajectoryBases();
       toolResultsInFlightRef.current = false;
       if (!toolsCancelled) {
         appendError(INTERRUPT_MESSAGE, true);
@@ -4988,6 +4990,7 @@ export default function App({
     autoHandledResults,
     autoDeniedApprovals,
     queueApprovalResults,
+    resetTrajectoryBases,
   ]);
 
   // Keep ref to latest processConversation to avoid circular deps in useEffect
