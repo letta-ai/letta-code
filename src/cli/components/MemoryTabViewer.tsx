@@ -39,7 +39,7 @@ export function MemoryTabViewer({
   const terminalWidth = useTerminalWidth();
   const solidLine = SOLID_LINE.repeat(Math.max(terminalWidth, 10));
   const isTmux = Boolean(process.env.TMUX);
-  const adeUrl = `https://app.letta.com/agents/${agentId}?view=memory${conversationId ? `&conversation=${conversationId}` : ""}`;
+  const adeUrl = `https://app.letta.com/agents/${agentId}?view=memory${conversationId && conversationId !== "default" ? `&conversation=${conversationId}` : ""}`;
 
   const [selectedTabIndex, setSelectedTabIndex] = useState(0);
   const [scrollOffset, setScrollOffset] = useState(0);
