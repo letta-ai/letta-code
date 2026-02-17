@@ -69,6 +69,7 @@ let activeConnection: WebSocket | null = null;
 let heartbeatInterval: NodeJS.Timeout | null = null;
 let reconnectTimeout: NodeJS.Timeout | null = null;
 let isIntentionallyClosed = false;
+let hasSuccessfulConnection = false;
 
 // Retry configuration
 const MAX_RETRY_DURATION_MS = 5 * 60 * 1000; // 5 minutes
@@ -82,6 +83,7 @@ export async function startListenerClient(
   opts: StartListenerOptions,
 ): Promise<void> {
   isIntentionallyClosed = false;
+  hasSuccessfulConnection = false;
   await connectWithRetry(opts);
 }
 
@@ -179,6 +181,7 @@ async function connectWithRetry(
     if (process.env.DEBUG) {
       console.log(`[Listen] WebSocket connected (attempt ${attempt})`);
     }
+    hasSuccessfulConnection = true;
     opts.onConnected();
 
     // Start heartbeat ping every 30 seconds
@@ -239,7 +242,12 @@ async function connectWithRetry(
       if (process.env.DEBUG) {
         console.log("[Listen] Connection lost, attempting to reconnect...");
       }
-      connectWithRetry(opts, attempt + 1, startTime).catch((error) => {
+      // Reset retry state if we had a successful connection
+      const nextAttempt = hasSuccessfulConnection ? 0 : attempt + 1;
+      const nextStartTime = hasSuccessfulConnection ? Date.now() : startTime;
+      hasSuccessfulConnection = false;
+
+      connectWithRetry(opts, nextAttempt, nextStartTime).catch((error) => {
         if (process.env.DEBUG) {
           console.error("[Listen] Reconnect failed:", error);
         }
