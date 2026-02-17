@@ -50,6 +50,10 @@ import {
   drainStreamWithResume,
 } from "./cli/helpers/stream";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "./constants";
+import {
+  mergeQueuedTurnInput,
+  type QueuedTurnInput,
+} from "./queue/turnQueueRuntime";
 import { settingsManager } from "./settings-manager";
 import {
   isHeadlessAutoAllowTool,
@@ -124,53 +128,16 @@ export function shouldReinjectSkillsAfterCompaction(lines: Line[]): boolean {
       (line.summary !== undefined || line.stats !== undefined),
   );
 }
-
-type MessageContentParts = Exclude<MessageCreate["content"], string>;
-
-export type BidirectionalQueuedInput =
-  | {
-      kind: "user";
-      content: MessageCreate["content"];
-    }
-  | {
-      kind: "task_notification";
-      text: string;
-    };
+export type BidirectionalQueuedInput = QueuedTurnInput<
+  MessageCreate["content"]
+>;
 
 export function mergeBidirectionalQueuedInput(
   queued: BidirectionalQueuedInput[],
 ): MessageCreate["content"] | null {
-  if (queued.length === 0) {
-    return null;
-  }
-
-  const mergedParts: MessageContentParts = [];
-  let isFirst = true;
-
-  for (const item of queued) {
-    if (!isFirst) {
-      mergedParts.push({ type: "text", text: "\n" });
-    }
-    isFirst = false;
-
-    if (item.kind === "task_notification") {
-      mergedParts.push({ type: "text", text: item.text });
-      continue;
-    }
-
-    if (typeof item.content === "string") {
-      mergedParts.push({ type: "text", text: item.content });
-      continue;
-    }
-
-    mergedParts.push(...item.content);
-  }
-
-  if (mergedParts.length === 0) {
-    return null;
-  }
-
-  return mergedParts as MessageCreate["content"];
+  return mergeQueuedTurnInput(queued, {
+    normalizeUserContent: (content) => content,
+  });
 }
 
 type ReflectionOverrides = {

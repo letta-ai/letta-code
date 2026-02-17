@@ -1,4 +1,5 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
+import { mergeQueuedTurnInput } from "../../queue/turnQueueRuntime";
 import type { QueuedMessage } from "./messageQueueBridge";
 import { buildMessageContentFromDisplay } from "./pasteRegistry";
 import { extractTaskNotificationsForDisplay } from "./taskNotifications";
@@ -18,21 +19,23 @@ export function getQueuedNotificationSummaries(
 export function buildQueuedContentParts(
   queued: QueuedMessage[],
 ): MessageCreate["content"] {
-  const parts: MessageCreate["content"] = [];
-  let isFirst = true;
-  for (const item of queued) {
-    if (!isFirst) {
-      parts.push({ type: "text", text: "\n" });
-    }
-    isFirst = false;
-    if (item.kind === "task_notification") {
-      parts.push({ type: "text", text: item.text });
-      continue;
-    }
-    const userParts = buildMessageContentFromDisplay(item.text);
-    parts.push(...userParts);
+  const queueInput = queued.map((item) =>
+    item.kind === "task_notification"
+      ? ({ kind: "task_notification", text: item.text } as const)
+      : ({ kind: "user", content: item.text } as const),
+  );
+
+  const merged = mergeQueuedTurnInput(queueInput, {
+    normalizeUserContent: buildMessageContentFromDisplay,
+  });
+
+  if (merged === null) {
+    return [];
   }
-  return parts;
+  if (typeof merged === "string") {
+    return [{ type: "text", text: merged }];
+  }
+  return merged;
 }
 
 export function buildQueuedUserText(queued: QueuedMessage[]): string {
