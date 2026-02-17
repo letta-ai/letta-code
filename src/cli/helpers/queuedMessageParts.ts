@@ -32,9 +32,6 @@ export function buildQueuedContentParts(
   if (merged === null) {
     return [];
   }
-  if (typeof merged === "string") {
-    return [{ type: "text", text: merged }];
-  }
   return merged;
 }
 

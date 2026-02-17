@@ -15,7 +15,6 @@ export type QueuedTurnInput<TUserContent> =
 type MergeQueuedTurnInputOptions<TUserContent> = {
   normalizeUserContent: (content: TUserContent) => MessageCreate["content"];
   separatorText?: string;
-  preserveSingleUserString?: boolean;
 };
 
 function appendContentParts(
@@ -38,16 +37,6 @@ export function mergeQueuedTurnInput<TUserContent>(
   }
 
   const separatorText = options.separatorText ?? "\n";
-
-  const first = queued[0];
-  if (
-    options.preserveSingleUserString &&
-    queued.length === 1 &&
-    first &&
-    first.kind === "user"
-  ) {
-    return options.normalizeUserContent(first.content);
-  }
 
   const mergedParts: MessageContentParts = [];
   let isFirst = true;
