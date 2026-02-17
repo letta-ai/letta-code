@@ -10,6 +10,7 @@ import { DEFAULT_AGENT_NAME } from "../constants";
 import { getModelContextWindow } from "./available-models";
 import { getClient } from "./client";
 import { getDefaultMemoryBlocks } from "./memory";
+import { type MemoryPromptMode, reconcileMemoryPrompt } from "./memoryPrompt";
 import {
   formatAvailableModels,
   getDefaultModel,
@@ -17,10 +18,7 @@ import {
   resolveModel,
 } from "./model";
 import { updateAgentLLMConfig } from "./modify";
-import {
-  resolveSystemPrompt,
-  SYSTEM_PROMPT_MEMORY_ADDON,
-} from "./promptAssets";
+import { resolveSystemPrompt } from "./promptAssets";
 import { SLEEPTIME_MEMORY_PERSONA } from "./prompts/sleeptime";
 
 /**
@@ -63,6 +61,8 @@ export interface CreateAgentOptions {
   systemPromptCustom?: string;
   /** Additional text to append to the resolved system prompt */
   systemPromptAppend?: string;
+  /** Which managed memory prompt mode to apply */
+  memoryPromptMode?: MemoryPromptMode;
   /** Block labels to initialize (from default blocks) */
   initBlocks?: string[];
   /** Base tools to include */
@@ -272,7 +272,8 @@ export async function createAgent(
   // Resolve system prompt content:
   // 1. If systemPromptCustom is provided, use it as-is
   // 2. Otherwise, resolve systemPromptPreset to content
-  // 3. If systemPromptAppend is provided, append it to the result
+  // 3. Reconcile to the selected managed memory mode
+  // 4. If systemPromptAppend is provided, append it to the result
   let systemPromptContent: string;
   if (options.systemPromptCustom) {
     systemPromptContent = options.systemPromptCustom;
@@ -280,9 +281,10 @@ export async function createAgent(
     systemPromptContent = await resolveSystemPrompt(options.systemPromptPreset);
   }
 
-  // Append the non-memfs memory section by default.
-  // If memfs is enabled, updateAgentSystemPromptMemfs() will swap it for the memfs version.
-  systemPromptContent = `${systemPromptContent}\n${SYSTEM_PROMPT_MEMORY_ADDON}`;
+  systemPromptContent = reconcileMemoryPrompt(
+    systemPromptContent,
+    options.memoryPromptMode ?? "standard",
+  );
 
   // Append additional instructions if provided
   if (options.systemPromptAppend) {

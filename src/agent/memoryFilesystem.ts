@@ -149,11 +149,11 @@ export interface ApplyMemfsFlagsResult {
  * Shared between interactive (index.ts), headless (headless.ts), and
  * the /memfs enable command (App.tsx) to avoid duplicating the setup logic.
  *
- * Steps when enabling:
- *   1. Validate Letta Cloud requirement
- *   2. Persist memfs setting
- *   3. Detach old API-based memory tools
- *   4. Update system prompt to include memfs section
+ * Steps when toggling:
+ *   1. Validate Letta Cloud requirement (for explicit enable)
+ *   2. Reconcile system prompt to the target memory mode
+ *   3. Persist memfs setting locally
+ *   4. Detach old API-based memory tools (when enabling)
  *   5. Add git-memory-enabled tag + clone/pull repo
  *
  * @throws {Error} if Letta Cloud validation fails or git setup fails
@@ -167,7 +167,7 @@ export async function applyMemfsFlags(
   const { getServerUrl } = await import("./client");
   const { settingsManager } = await import("../settings-manager");
 
-  // 1. Validate + persist setting
+  // 1. Validate explicit enable on supported backend.
   if (memfsFlag) {
     const serverUrl = getServerUrl();
     if (!serverUrl.includes("api.letta.com")) {
@@ -175,26 +175,39 @@ export async function applyMemfsFlags(
         "--memfs is only available on Letta Cloud (api.letta.com).",
       );
     }
-    settingsManager.setMemfsEnabled(agentId, true);
-  } else if (noMemfsFlag) {
-    settingsManager.setMemfsEnabled(agentId, false);
   }
 
-  const isEnabled = settingsManager.isMemfsEnabled(agentId);
+  const hasExplicitToggle = Boolean(memfsFlag || noMemfsFlag);
+  const targetEnabled = memfsFlag
+    ? true
+    : noMemfsFlag
+      ? false
+      : settingsManager.isMemfsEnabled(agentId);
 
-  // 2. Detach old API-based memory tools when enabling
+  // 2. Reconcile system prompt first, then persist local memfs setting.
+  if (hasExplicitToggle) {
+    const { updateAgentSystemPromptMemfs } = await import("./modify");
+    const promptUpdate = await updateAgentSystemPromptMemfs(
+      agentId,
+      targetEnabled,
+    );
+    if (!promptUpdate.success) {
+      throw new Error(promptUpdate.message);
+    }
+    settingsManager.setMemfsEnabled(agentId, targetEnabled);
+  }
+
+  const isEnabled = hasExplicitToggle
+    ? targetEnabled
+    : settingsManager.isMemfsEnabled(agentId);
+
+  // 3. Detach old API-based memory tools when explicitly enabling.
   if (isEnabled && memfsFlag) {
     const { detachMemoryTools } = await import("../tools/toolset");
     await detachMemoryTools(agentId);
   }
 
-  // 3. Update system prompt to include/exclude memfs section
-  if (memfsFlag || noMemfsFlag) {
-    const { updateAgentSystemPromptMemfs } = await import("./modify");
-    await updateAgentSystemPromptMemfs(agentId, isEnabled);
-  }
-
-  // 4. Add git tag + clone/pull repo
+  // 4. Add git tag + clone/pull repo.
   let pullSummary: string | undefined;
   if (isEnabled) {
     const { addGitMemoryTag, isGitRepo, cloneMemoryRepo, pullMemory } =

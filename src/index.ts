@@ -552,6 +552,12 @@ async function main(): Promise<void> {
   const skillsDirectory = (values.skills as string | undefined) ?? undefined;
   const memfsFlag = values.memfs as boolean | undefined;
   const noMemfsFlag = values["no-memfs"] as boolean | undefined;
+  const requestedMemoryPromptMode: "memfs" | "standard" | undefined = memfsFlag
+    ? "memfs"
+    : noMemfsFlag
+      ? "standard"
+      : undefined;
+  const shouldAutoEnableMemfsForNewAgent = !memfsFlag && !noMemfsFlag;
   const noSkillsFlag = values["no-skills"] as boolean | undefined;
   const fromAfFile =
     (values.import as string | undefined) ??
@@ -1630,17 +1636,20 @@ async function main(): Promise<void> {
             skillsDirectory,
             parallelToolCalls: true,
             systemPromptPreset,
+            memoryPromptMode: requestedMemoryPromptMode,
             initBlocks,
             baseTools,
           });
           agent = result.agent;
           setAgentProvenance(result.provenance);
 
-          // Enable memfs by default on Letta Cloud for new agents
-          const { enableMemfsIfCloud } = await import(
-            "./agent/memoryFilesystem"
-          );
-          await enableMemfsIfCloud(agent.id);
+          // Enable memfs by default on Letta Cloud for new agents when no explicit memfs flags are provided.
+          if (shouldAutoEnableMemfsForNewAgent) {
+            const { enableMemfsIfCloud } = await import(
+              "./agent/memoryFilesystem"
+            );
+            await enableMemfsIfCloud(agent.id);
+          }
         }
 
         // Priority 4: Try to resume from project settings LRU (.letta/settings.local.json)

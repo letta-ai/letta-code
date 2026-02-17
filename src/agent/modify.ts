@@ -245,13 +245,25 @@ export async function updateAgentSystemPrompt(
   systemPromptId: string,
 ): Promise<UpdateSystemPromptResult> {
   try {
-    const { resolveSystemPrompt, SYSTEM_PROMPT_MEMORY_ADDON } = await import(
-      "./promptAssets"
+    const { resolveSystemPrompt } = await import("./promptAssets");
+    const { detectMemoryPromptDrift, reconcileMemoryPrompt } = await import(
+      "./memoryPrompt"
     );
+    const { settingsManager } = await import("../settings-manager");
+
+    const client = await getClient();
+    const currentAgent = await client.agents.retrieve(agentId);
     const baseContent = await resolveSystemPrompt(systemPromptId);
-    // Append the non-memfs memory section by default.
-    // If memfs is enabled, the caller should follow up with updateAgentSystemPromptMemfs().
-    const systemPromptContent = `${baseContent}\n${SYSTEM_PROMPT_MEMORY_ADDON}`;
+
+    const settingIndicatesMemfs = settingsManager.isMemfsEnabled(agentId);
+    const promptIndicatesMemfs = detectMemoryPromptDrift(
+      currentAgent.system || "",
+      "standard",
+    ).some((drift) => drift.code === "memfs_language_with_standard_mode");
+
+    const memoryMode =
+      settingIndicatesMemfs || promptIndicatesMemfs ? "memfs" : "standard";
+    const systemPromptContent = reconcileMemoryPrompt(baseContent, memoryMode);
 
     const updateResult = await updateAgentSystemPromptRaw(
       agentId,
@@ -266,7 +278,6 @@ export async function updateAgentSystemPrompt(
     }
 
     // Re-fetch agent to get updated state
-    const client = await getClient();
     const agent = await client.agents.retrieve(agentId);
 
     return {
@@ -284,10 +295,10 @@ export async function updateAgentSystemPrompt(
 }
 
 /**
- * Updates an agent's system prompt to swap between the memfs and non-memfs memory sections.
+ * Updates an agent's system prompt to swap between managed memory modes.
  *
- * When enabling memfs: strips any existing # Memory section, appends the memfs memory addon.
- * When disabling memfs: strips any existing # Memory section, appends the non-memfs memory addon.
+ * Uses the shared memory prompt reconciler so we safely replace managed memory
+ * sections without corrupting fenced code blocks or leaving orphan fragments.
  *
  * @param agentId - The agent ID to update
  * @param enableMemfs - Whether to enable (add) or disable (remove) the memfs addon
@@ -300,26 +311,15 @@ export async function updateAgentSystemPromptMemfs(
   try {
     const client = await getClient();
     const agent = await client.agents.retrieve(agentId);
-    let currentSystemPrompt = agent.system || "";
+    const { reconcileMemoryPrompt } = await import("./memoryPrompt");
 
-    const { SYSTEM_PROMPT_MEMFS_ADDON, SYSTEM_PROMPT_MEMORY_ADDON } =
-      await import("./promptAssets");
-
-    // Strip any existing memory section (covers both old inline "# Memory" / "## Memory"
-    // sections and the new addon format including "## Memory Filesystem" subsections).
-    // Matches from "# Memory" or "## Memory" to the next top-level heading or end of string.
-    const memoryHeaderRegex =
-      /\n#{1,2} Memory\b[\s\S]*?(?=\n#{1,2} (?!Memory|Filesystem|Structure|How It Works|Syncing|History)[^\n]|$)/;
-    currentSystemPrompt = currentSystemPrompt.replace(memoryHeaderRegex, "");
-
-    // Append the appropriate memory section
-    const addon = enableMemfs
-      ? SYSTEM_PROMPT_MEMFS_ADDON
-      : SYSTEM_PROMPT_MEMORY_ADDON;
-    currentSystemPrompt = `${currentSystemPrompt}\n${addon}`;
+    const nextSystemPrompt = reconcileMemoryPrompt(
+      agent.system || "",
+      enableMemfs ? "memfs" : "standard",
+    );
 
     await client.agents.update(agentId, {
-      system: currentSystemPrompt,
+      system: nextSystemPrompt,
     });
 
     return {
