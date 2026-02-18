@@ -46,7 +46,8 @@ export const SHARED_REMINDER_CATALOG: ReadonlyArray<SharedReminderDefinition> =
     },
     {
       id: "reflection-compaction",
-      description: "Compaction-triggered reflection reminder/auto-launch behavior",
+      description:
+        "Compaction-triggered reflection reminder/auto-launch behavior",
       modes: ["interactive", "headless-one-shot", "headless-bidirectional"],
     },
   ];
@@ -55,9 +56,10 @@ export const SHARED_REMINDER_IDS = SHARED_REMINDER_CATALOG.map(
   (entry) => entry.id,
 );
 
-const SHARED_REMINDER_BY_ID = new Map<SharedReminderId, SharedReminderDefinition>(
-  SHARED_REMINDER_CATALOG.map((entry) => [entry.id, entry]),
-);
+const SHARED_REMINDER_BY_ID = new Map<
+  SharedReminderId,
+  SharedReminderDefinition
+>(SHARED_REMINDER_CATALOG.map((entry) => [entry.id, entry]));
 
 export function reminderEnabledInMode(
   id: SharedReminderId,

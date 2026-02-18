@@ -1383,7 +1383,9 @@ ${SYSTEM_REMINDER_CLOSE}
       }
     }
     if (loadedContents.length > 0) {
-      pushPart(`<loaded_skills>\n${loadedContents.join("\n\n")}\n</loaded_skills>`);
+      pushPart(
+        `<loaded_skills>\n${loadedContents.join("\n\n")}\n</loaded_skills>`,
+      );
     }
   }
 

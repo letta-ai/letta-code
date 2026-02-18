@@ -10,8 +10,8 @@ import {
 import {
   buildCompactionMemoryReminder,
   buildMemoryReminder,
-  shouldFireStepCountTrigger,
   type ReflectionSettings,
+  shouldFireStepCountTrigger,
 } from "../cli/helpers/memoryReminder";
 import { buildSessionContext } from "../cli/helpers/sessionContext";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "../constants";
@@ -102,7 +102,9 @@ async function buildSkillsReminder(
     latestSkillsReminder = formatSkillsAsSystemReminder(skills);
     context.state.skillPathById = Object.fromEntries(
       skills
-        .filter((skill) => typeof skill.path === "string" && skill.path.length > 0)
+        .filter(
+          (skill) => typeof skill.path === "string" && skill.path.length > 0,
+        )
         .map((skill) => [skill.id, skill.path as string]),
     );
   } catch {
@@ -119,7 +121,8 @@ async function buildSkillsReminder(
   context.state.cachedSkillsReminder = latestSkillsReminder;
 
   const shouldInject =
-    !context.state.hasInjectedSkillsReminder || context.state.pendingSkillsReinject;
+    !context.state.hasInjectedSkillsReminder ||
+    context.state.pendingSkillsReinject;
   if (!shouldInject) {
     return null;
   }
@@ -194,7 +197,10 @@ async function buildReflectionStepReminder(
 
   if (shouldFireStepTrigger) {
     if (context.reflectionSettings.behavior === "reminder" || !memfsEnabled) {
-      reminder = await buildMemoryReminder(context.state.turnCount, context.agent.id);
+      reminder = await buildMemoryReminder(
+        context.state.turnCount,
+        context.agent.id,
+      );
     } else {
       if (context.maybeLaunchReflectionSubagent) {
         await context.maybeLaunchReflectionSubagent("step-count");

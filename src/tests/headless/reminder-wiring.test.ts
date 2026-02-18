@@ -4,7 +4,9 @@ import { fileURLToPath } from "node:url";
 
 describe("headless shared reminder wiring", () => {
   test("one-shot mode builds shared reminders with system-info flag", () => {
-    const headlessPath = fileURLToPath(new URL("../../headless.ts", import.meta.url));
+    const headlessPath = fileURLToPath(
+      new URL("../../headless.ts", import.meta.url),
+    );
     const source = readFileSync(headlessPath, "utf-8");
 
     expect(source).toContain('mode: "headless-one-shot"');
@@ -14,7 +16,9 @@ describe("headless shared reminder wiring", () => {
   });
 
   test("bidirectional mode builds shared reminders with plan-mode resolver", () => {
-    const headlessPath = fileURLToPath(new URL("../../headless.ts", import.meta.url));
+    const headlessPath = fileURLToPath(
+      new URL("../../headless.ts", import.meta.url),
+    );
     const source = readFileSync(headlessPath, "utf-8");
 
     expect(source).toContain('mode: "headless-bidirectional"');
@@ -23,7 +27,9 @@ describe("headless shared reminder wiring", () => {
   });
 
   test("all headless drains pass context tracker for compaction-driven reminder state", () => {
-    const headlessPath = fileURLToPath(new URL("../../headless.ts", import.meta.url));
+    const headlessPath = fileURLToPath(
+      new URL("../../headless.ts", import.meta.url),
+    );
     const source = readFileSync(headlessPath, "utf-8");
 
     expect(source).toContain("syncReminderStateFromContextTracker(");
@@ -31,7 +37,9 @@ describe("headless shared reminder wiring", () => {
   });
 
   test("one-shot approval drain uses shared stream processor", () => {
-    const headlessPath = fileURLToPath(new URL("../../headless.ts", import.meta.url));
+    const headlessPath = fileURLToPath(
+      new URL("../../headless.ts", import.meta.url),
+    );
     const source = readFileSync(headlessPath, "utf-8");
 
     expect(source).toContain("const approvalStream = await sendMessageStream(");

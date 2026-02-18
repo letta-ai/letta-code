@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import type { ReflectionSettings } from "../../cli/helpers/memoryReminder";
 import type { SkillSource } from "../../agent/skills";
+import type { ReflectionSettings } from "../../cli/helpers/memoryReminder";
 import { SHARED_REMINDER_IDS } from "../../reminders/catalog";
 import {
   buildSharedReminderParts,
@@ -61,7 +61,9 @@ describe("shared reminder parity", () => {
     expect(interactive.appliedReminderIds).toEqual(SHARED_REMINDER_IDS);
     expect(oneShot.appliedReminderIds).toEqual(SHARED_REMINDER_IDS);
     expect(bidirectional.appliedReminderIds).toEqual(SHARED_REMINDER_IDS);
-    expect(interactive.parts.map((part) => part.text)).toEqual(SHARED_REMINDER_IDS);
+    expect(interactive.parts.map((part) => part.text)).toEqual(
+      SHARED_REMINDER_IDS,
+    );
     expect(oneShot.parts.map((part) => part.text)).toEqual(SHARED_REMINDER_IDS);
     expect(bidirectional.parts.map((part) => part.text)).toEqual(
       SHARED_REMINDER_IDS,

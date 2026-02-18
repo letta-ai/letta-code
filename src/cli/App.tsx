@@ -78,6 +78,12 @@ import {
   type RalphState,
   ralphMode,
 } from "../ralph/mode";
+import { buildSharedReminderParts } from "../reminders/engine";
+import {
+  createSharedReminderState,
+  resetSharedReminderState,
+  syncReminderStateFromContextTracker,
+} from "../reminders/state";
 import { updateProjectSettings } from "../settings";
 import { settingsManager } from "../settings-manager";
 import { telemetry } from "../telemetry";
@@ -254,12 +260,6 @@ import { useConfigurableStatusLine } from "./hooks/useConfigurableStatusLine";
 import { useSuspend } from "./hooks/useSuspend/useSuspend.ts";
 import { useSyncedState } from "./hooks/useSyncedState";
 import { useTerminalRows, useTerminalWidth } from "./hooks/useTerminalWidth";
-import { buildSharedReminderParts } from "../reminders/engine";
-import {
-  createSharedReminderState,
-  resetSharedReminderState,
-  syncReminderStateFromContextTracker,
-} from "../reminders/state";
 
 // Used only for terminal resize, not for dialog dismissal (see PR for details)
 const CLEAR_SCREEN_AND_HOME = "\u001B[2J\u001B[H";
@@ -2708,7 +2708,9 @@ export default function App({
     // Runs every N turns to detect uncommitted changes or unpushed commits.
     const isIntervalTurn =
       sharedReminderStateRef.current.turnCount > 0 &&
-      sharedReminderStateRef.current.turnCount % MEMFS_CONFLICT_CHECK_INTERVAL === 0;
+      sharedReminderStateRef.current.turnCount %
+        MEMFS_CONFLICT_CHECK_INTERVAL ===
+        0;
 
     if (isIntervalTurn && !memfsGitCheckInFlightRef.current) {
       memfsGitCheckInFlightRef.current = true;
