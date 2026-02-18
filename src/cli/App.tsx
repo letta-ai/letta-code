@@ -52,7 +52,11 @@ import {
   getMemoryFilesystemRoot,
 } from "../agent/memoryFilesystem";
 import { sendMessageStream } from "../agent/message";
-import { getModelInfo, getModelShortName } from "../agent/model";
+import {
+  getModelInfo,
+  getModelShortName,
+  type ModelReasoningEffort,
+} from "../agent/model";
 import { INTERRUPT_RECOVERY_ALERT } from "../agent/promptAssets";
 import { SessionStats } from "../agent/stats";
 import {
@@ -130,6 +134,7 @@ import { McpSelector } from "./components/McpSelector";
 import { MemfsTreeViewer } from "./components/MemfsTreeViewer";
 import { MemoryTabViewer } from "./components/MemoryTabViewer";
 import { MessageSearch } from "./components/MessageSearch";
+import { ModelReasoningSelector } from "./components/ModelReasoningSelector";
 import { ModelSelector } from "./components/ModelSelector";
 import { NewAgentDialog } from "./components/NewAgentDialog";
 import { PendingApprovalStub } from "./components/PendingApprovalStub";
@@ -1199,6 +1204,11 @@ export default function App({
     filterProvider?: string;
     forceRefresh?: boolean;
   }>({});
+  const [modelReasoningPrompt, setModelReasoningPrompt] = useState<{
+    modelLabel: string;
+    initialModelId: string;
+    options: Array<{ effort: ModelReasoningEffort; modelId: string }>;
+  } | null>(null);
   const closeOverlay = useCallback(() => {
     const pending = pendingOverlayCommandRef.current;
     if (pending && pending.overlay === activeOverlay) {
@@ -1209,6 +1219,7 @@ export default function App({
     setFeedbackPrefill("");
     setSearchQuery("");
     setModelSelectorOptions({});
+    setModelReasoningPrompt(null);
   }, [activeOverlay]);
 
   // Queued overlay action - executed after end_turn when user makes a selection
@@ -9567,21 +9578,64 @@ ${SYSTEM_REMINDER_CLOSE}
   }, [pendingApprovals, refreshDerived, queueApprovalResults]);
 
   const handleModelSelect = useCallback(
-    async (modelId: string, commandId?: string | null) => {
-      const overlayCommand = commandId
+    async (
+      modelId: string,
+      commandId?: string | null,
+      opts?: { skipReasoningPrompt?: boolean },
+    ) => {
+      let overlayCommand = commandId
         ? commandRunner.getHandle(commandId, "/model")
-        : consumeOverlayCommand("model");
+        : null;
+      const resolveOverlayCommand = () => {
+        if (overlayCommand) {
+          return overlayCommand;
+        }
+        overlayCommand = consumeOverlayCommand("model");
+        return overlayCommand;
+      };
 
       let selectedModel: {
         id: string;
         handle?: string;
         label: string;
-        updateArgs?: { context_window?: number };
+        updateArgs?: Record<string, unknown>;
       } | null = null;
 
       try {
-        const { models } = await import("../agent/model");
+        const { getReasoningTierOptionsForHandle, models } = await import(
+          "../agent/model"
+        );
+        const pickPreferredModelForHandle = (handle: string) => {
+          const candidates = models.filter((m) => m.handle === handle);
+          return (
+            candidates.find((m) => m.isDefault) ??
+            candidates.find((m) => m.isFeatured) ??
+            candidates.find(
+              (m) =>
+                (m.updateArgs as { reasoning_effort?: unknown } | undefined)
+                  ?.reasoning_effort === "medium",
+            ) ??
+            candidates.find(
+              (m) =>
+                (m.updateArgs as { reasoning_effort?: unknown } | undefined)
+                  ?.reasoning_effort === "high",
+            ) ??
+            candidates[0] ??
+            null
+          );
+        };
         selectedModel = models.find((m) => m.id === modelId) ?? null;
+
+        if (!selectedModel && modelId.includes("/")) {
+          const handleMatch = pickPreferredModelForHandle(modelId);
+          if (handleMatch) {
+            selectedModel = {
+              ...handleMatch,
+              id: modelId,
+              handle: modelId,
+            } as unknown as (typeof models)[number];
+          }
+        }
 
         if (!selectedModel && modelId.includes("/")) {
           const { getModelContextWindow } = await import(
@@ -9602,17 +9656,60 @@ ${SYSTEM_REMINDER_CLOSE}
 
         if (!selectedModel) {
           const output = `Model not found: ${modelId}. Run /model and press R to refresh available models.`;
-          const cmd = overlayCommand ?? commandRunner.start("/model", output);
+          const cmd =
+            resolveOverlayCommand() ?? commandRunner.start("/model", output);
           cmd.fail(output);
           return;
         }
         const model = selectedModel;
         const modelHandle = model.handle ?? model.id;
+        const modelUpdateArgs = model.updateArgs as
+          | { reasoning_effort?: unknown; enable_reasoner?: unknown }
+          | undefined;
+        const rawReasoningEffort = modelUpdateArgs?.reasoning_effort;
+        const reasoningLevel =
+          typeof rawReasoningEffort === "string"
+            ? rawReasoningEffort === "none"
+              ? "no"
+              : rawReasoningEffort === "xhigh"
+                ? "max"
+                : rawReasoningEffort
+            : modelUpdateArgs?.enable_reasoner === false
+              ? "no"
+              : null;
+        const reasoningTierOptions =
+          getReasoningTierOptionsForHandle(modelHandle);
+
+        if (
+          !opts?.skipReasoningPrompt &&
+          activeOverlay === "model" &&
+          reasoningTierOptions.length > 1
+        ) {
+          const selectedEffort = (
+            model.updateArgs as { reasoning_effort?: unknown } | undefined
+          )?.reasoning_effort;
+          const preferredOption =
+            (typeof selectedEffort === "string" &&
+              reasoningTierOptions.find(
+                (option) => option.effort === selectedEffort,
+              )) ??
+            reasoningTierOptions.find((option) => option.effort === "medium") ??
+            reasoningTierOptions[0];
+
+          if (preferredOption) {
+            setModelReasoningPrompt({
+              modelLabel: model.label,
+              initialModelId: preferredOption.modelId,
+              options: reasoningTierOptions,
+            });
+            return;
+          }
+        }
 
         if (isAgentBusy()) {
           setActiveOverlay(null);
           const cmd =
-            overlayCommand ??
+            resolveOverlayCommand() ??
             commandRunner.start(
               "/model",
               `Model switch queued – will switch after current task completes`,
@@ -9631,7 +9728,7 @@ ${SYSTEM_REMINDER_CLOSE}
 
         await withCommandLock(async () => {
           const cmd =
-            overlayCommand ??
+            resolveOverlayCommand() ??
             commandRunner.start(
               "/model",
               `Switching model to ${model.label}...`,
@@ -9686,7 +9783,7 @@ ${SYSTEM_REMINDER_CLOSE}
             ? `Automatically switched toolset to ${toolsetName}. Use /toolset to change back if desired.\nConsider switching to a different system prompt using /system to match.`
             : null;
           const outputLines = [
-            `Switched to ${model.label}`,
+            `Switched to ${model.label}${reasoningLevel ? ` (${reasoningLevel} reasoning)` : ""}`,
             ...(autoToolsetLine ? [autoToolsetLine] : []),
           ].join("\n");
 
@@ -9698,7 +9795,7 @@ ${SYSTEM_REMINDER_CLOSE}
         const guidance =
           "Run /model and press R to refresh available models. If the model is still unavailable, choose another model or connect a provider with /connect.";
         const cmd =
-          overlayCommand ??
+          resolveOverlayCommand() ??
           commandRunner.start(
             "/model",
             `Failed to switch model to ${modelLabel}.`,
@@ -9709,6 +9806,7 @@ ${SYSTEM_REMINDER_CLOSE}
       }
     },
     [
+      activeOverlay,
       agentId,
       commandRunner,
       consumeOverlayCommand,
@@ -11103,24 +11201,38 @@ Plan file path: ${planFilePath}`;
             </Box>
 
             {/* Model Selector - conditionally mounted as overlay */}
-            {activeOverlay === "model" && (
-              <ModelSelector
-                currentModelId={currentModelId ?? undefined}
-                onSelect={handleModelSelect}
-                onCancel={closeOverlay}
-                filterProvider={modelSelectorOptions.filterProvider}
-                forceRefresh={modelSelectorOptions.forceRefresh}
-                billingTier={billingTier ?? undefined}
-                isSelfHosted={(() => {
-                  const settings = settingsManager.getSettings();
-                  const baseURL =
-                    process.env.LETTA_BASE_URL ||
-                    settings.env?.LETTA_BASE_URL ||
-                    "https://api.letta.com";
-                  return !baseURL.includes("api.letta.com");
-                })()}
-              />
-            )}
+            {activeOverlay === "model" &&
+              (modelReasoningPrompt ? (
+                <ModelReasoningSelector
+                  modelLabel={modelReasoningPrompt.modelLabel}
+                  options={modelReasoningPrompt.options}
+                  initialModelId={modelReasoningPrompt.initialModelId}
+                  onSelect={(selectedModelId) => {
+                    setModelReasoningPrompt(null);
+                    void handleModelSelect(selectedModelId, null, {
+                      skipReasoningPrompt: true,
+                    });
+                  }}
+                  onCancel={() => setModelReasoningPrompt(null)}
+                />
+              ) : (
+                <ModelSelector
+                  currentModelId={currentModelId ?? undefined}
+                  onSelect={handleModelSelect}
+                  onCancel={closeOverlay}
+                  filterProvider={modelSelectorOptions.filterProvider}
+                  forceRefresh={modelSelectorOptions.forceRefresh}
+                  billingTier={billingTier ?? undefined}
+                  isSelfHosted={(() => {
+                    const settings = settingsManager.getSettings();
+                    const baseURL =
+                      process.env.LETTA_BASE_URL ||
+                      settings.env?.LETTA_BASE_URL ||
+                      "https://api.letta.com";
+                    return !baseURL.includes("api.letta.com");
+                  })()}
+                />
+              ))}
 
             {activeOverlay === "sleeptime" && (
               <SleeptimeSelector

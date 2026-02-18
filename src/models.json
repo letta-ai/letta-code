@@ -3,13 +3,65 @@
     "id": "sonnet",
     "handle": "anthropic/claude-sonnet-4-6",
     "label": "Sonnet 4.6",
-    "description": "Anthropic's new Sonnet model with adaptive thinking",
+    "description": "Anthropic's new Sonnet model (high reasoning)",
     "isDefault": true,
     "isFeatured": true,
     "updateArgs": {
       "context_window": 200000,
       "max_output_tokens": 128000,
+      "reasoning_effort": "high",
       "enable_reasoner": true
+    }
+  },
+  {
+    "id": "sonnet-4.6-no-reasoning",
+    "handle": "anthropic/claude-sonnet-4-6",
+    "label": "Sonnet 4.6",
+    "description": "Sonnet 4.6 with no reasoning (faster)",
+    "updateArgs": {
+      "context_window": 200000,
+      "max_output_tokens": 128000,
+      "reasoning_effort": "none",
+      "enable_reasoner": false
+    }
+  },
+  {
+    "id": "sonnet-4.6-low",
+    "handle": "anthropic/claude-sonnet-4-6",
+    "label": "Sonnet 4.6",
+    "description": "Sonnet 4.6 (low reasoning)",
+    "updateArgs": {
+      "context_window": 200000,
+      "max_output_tokens": 128000,
+      "reasoning_effort": "low",
+      "enable_reasoner": true,
+      "max_reasoning_tokens": 4000
+    }
+  },
+  {
+    "id": "sonnet-4.6-medium",
+    "handle": "anthropic/claude-sonnet-4-6",
+    "label": "Sonnet 4.6",
+    "description": "Sonnet 4.6 (med reasoning)",
+    "updateArgs": {
+      "context_window": 200000,
+      "max_output_tokens": 128000,
+      "reasoning_effort": "medium",
+      "enable_reasoner": true,
+      "max_reasoning_tokens": 12000
+    }
+  },
+  {
+    "id": "sonnet-4.6-xhigh",
+    "handle": "anthropic/claude-sonnet-4-6",
+    "label": "Sonnet 4.6",
+    "description": "Sonnet 4.6 (max reasoning)",
+    "updateArgs": {
+      "context_window": 200000,
+      "max_output_tokens": 128000,
+      "reasoning_effort": "xhigh",
+      "enable_reasoner": true,
+      "max_reasoning_tokens": 31999
     }
   },
   {
@@ -39,12 +91,64 @@
     "id": "opus",
     "handle": "anthropic/claude-opus-4-6",
     "label": "Opus 4.6",
-    "description": "Anthropic's best model with adaptive thinking",
+    "description": "Anthropic's best model (high reasoning)",
     "isFeatured": true,
     "updateArgs": {
       "context_window": 200000,
       "max_output_tokens": 128000,
+      "reasoning_effort": "high",
       "enable_reasoner": true
+    }
+  },
+  {
+    "id": "opus-4.6-no-reasoning",
+    "handle": "anthropic/claude-opus-4-6",
+    "label": "Opus 4.6",
+    "description": "Opus 4.6 with no reasoning (faster)",
+    "updateArgs": {
+      "context_window": 200000,
+      "max_output_tokens": 128000,
+      "reasoning_effort": "none",
+      "enable_reasoner": false
+    }
+  },
+  {
+    "id": "opus-4.6-low",
+    "handle": "anthropic/claude-opus-4-6",
+    "label": "Opus 4.6",
+    "description": "Opus 4.6 (low reasoning)",
+    "updateArgs": {
+      "context_window": 200000,
+      "max_output_tokens": 128000,
+      "reasoning_effort": "low",
+      "enable_reasoner": true,
+      "max_reasoning_tokens": 4000
+    }
+  },
+  {
+    "id": "opus-4.6-medium",
+    "handle": "anthropic/claude-opus-4-6",
+    "label": "Opus 4.6",
+    "description": "Opus 4.6 (med reasoning)",
+    "updateArgs": {
+      "context_window": 200000,
+      "max_output_tokens": 128000,
+      "reasoning_effort": "medium",
+      "enable_reasoner": true,
+      "max_reasoning_tokens": 12000
+    }
+  },
+  {
+    "id": "opus-4.6-xhigh",
+    "handle": "anthropic/claude-opus-4-6",
+    "label": "Opus 4.6",
+    "description": "Opus 4.6 (max reasoning)",
+    "updateArgs": {
+      "context_window": 200000,
+      "max_output_tokens": 128000,
+      "reasoning_effort": "xhigh",
+      "enable_reasoner": true,
+      "max_reasoning_tokens": 31999
     }
   },
   {
@@ -83,6 +187,30 @@
     }
   },
   {
+    "id": "gpt-5.3-codex-plus-pro-none",
+    "handle": "chatgpt-plus-pro/gpt-5.3-codex",
+    "label": "GPT-5.3 Codex",
+    "description": "GPT-5.3 Codex (no reasoning) via ChatGPT Plus/Pro",
+    "updateArgs": {
+      "reasoning_effort": "none",
+      "verbosity": "medium",
+      "context_window": 272000,
+      "max_output_tokens": 128000
+    }
+  },
+  {
+    "id": "gpt-5.3-codex-plus-pro-low",
+    "handle": "chatgpt-plus-pro/gpt-5.3-codex",
+    "label": "GPT-5.3 Codex",
+    "description": "GPT-5.3 Codex (low reasoning) via ChatGPT Plus/Pro",
+    "updateArgs": {
+      "reasoning_effort": "low",
+      "verbosity": "medium",
+      "context_window": 272000,
+      "max_output_tokens": 128000
+    }
+  },
+  {
     "id": "gpt-5.3-codex-plus-pro-medium",
     "handle": "chatgpt-plus-pro/gpt-5.3-codex",
     "label": "GPT-5.3 Codex",
@@ -99,8 +227,21 @@
     "handle": "chatgpt-plus-pro/gpt-5.3-codex",
     "label": "GPT-5.3 Codex",
     "description": "GPT-5.3 Codex (high reasoning) via ChatGPT Plus/Pro",
+    "isFeatured": true,
     "updateArgs": {
       "reasoning_effort": "high",
+      "verbosity": "medium",
+      "context_window": 272000,
+      "max_output_tokens": 128000
+    }
+  },
+  {
+    "id": "gpt-5.3-codex-plus-pro-xhigh",
+    "handle": "chatgpt-plus-pro/gpt-5.3-codex",
+    "label": "GPT-5.3 Codex",
+    "description": "GPT-5.3 Codex (max reasoning) via ChatGPT Plus/Pro",
+    "updateArgs": {
+      "reasoning_effort": "xhigh",
       "verbosity": "medium",
       "context_window": 272000,
       "max_output_tokens": 128000

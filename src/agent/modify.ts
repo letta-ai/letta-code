@@ -54,8 +54,15 @@ function buildModelSettings(
           | "minimal"
           | "low"
           | "medium"
-          | "high",
+          | "high"
+          | "xhigh",
       };
+    }
+    const verbosity = updateArgs?.verbosity;
+    if (verbosity === "low" || verbosity === "medium" || verbosity === "high") {
+      // The backend supports verbosity for OpenAI-family providers; the generated
+      // client type may lag this field, so set it via a narrow record cast.
+      (openaiSettings as Record<string, unknown>).verbosity = verbosity;
     }
     settings = openaiSettings;
   } else if (isAnthropic) {
