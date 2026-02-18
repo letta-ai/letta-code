@@ -977,3 +977,37 @@ describe("Settings Manager - Agents Array Migration", () => {
     expect(settingsManager.isMemfsEnabled("agent-persist-test")).toBe(true);
   });
 });
+
+describe("Settings Manager - Toolset Preferences", () => {
+  test("getToolsetPreference defaults to auto", async () => {
+    await settingsManager.initialize();
+
+    expect(settingsManager.getToolsetPreference("agent-unset")).toBe("auto");
+  });
+
+  test("setToolsetPreference stores and clears manual override", async () => {
+    await settingsManager.initialize();
+
+    settingsManager.setToolsetPreference("agent-toolset", "codex");
+    expect(settingsManager.getToolsetPreference("agent-toolset")).toBe("codex");
+
+    settingsManager.setToolsetPreference("agent-toolset", "auto");
+    expect(settingsManager.getToolsetPreference("agent-toolset")).toBe("auto");
+  });
+
+  test("setToolsetPreference persists to disk", async () => {
+    await settingsManager.initialize();
+
+    settingsManager.setToolsetPreference("agent-toolset-persist", "gemini");
+
+    // Wait for async persist
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    await settingsManager.reset();
+    await settingsManager.initialize();
+
+    expect(settingsManager.getToolsetPreference("agent-toolset-persist")).toBe(
+      "gemini",
+    );
+  });
+});

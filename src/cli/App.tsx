@@ -89,11 +89,10 @@ import {
   analyzeToolApproval,
   checkToolPermission,
   executeTool,
-  isGeminiModel,
-  isOpenAIModel,
   savePermissionRule,
   type ToolExecutionResult,
 } from "../tools/manager";
+import type { ToolsetName, ToolsetPreference } from "../tools/toolset";
 import { debugLog, debugWarn } from "../utils/debug";
 import {
   handleMcpAdd,
@@ -1239,13 +1238,7 @@ export default function App({
       }
     | {
         type: "switch_toolset";
-        toolsetId:
-          | "codex"
-          | "codex_snake"
-          | "default"
-          | "gemini"
-          | "gemini_snake"
-          | "none";
+        toolsetId: ToolsetPreference;
         commandId?: string;
       }
     | { type: "switch_system"; promptId: string; commandId?: string }
@@ -1263,15 +1256,11 @@ export default function App({
   const [currentSystemPromptId, setCurrentSystemPromptId] = useState<
     string | null
   >("default");
-  const [currentToolset, setCurrentToolset] = useState<
-    | "codex"
-    | "codex_snake"
-    | "default"
-    | "gemini"
-    | "gemini_snake"
-    | "none"
-    | null
-  >(null);
+  const [currentToolset, setCurrentToolset] = useState<ToolsetName | null>(
+    null,
+  );
+  const [currentToolsetPreference, setCurrentToolsetPreference] =
+    useState<ToolsetPreference>("auto");
   const [llmConfig, setLlmConfig] = useState<LlmConfig | null>(null);
   const llmConfigRef = useRef(llmConfig);
   useEffect(() => {
@@ -1279,7 +1268,7 @@ export default function App({
   }, [llmConfig]);
   const [currentModelId, setCurrentModelId] = useState<string | null>(null);
   // Full model handle for API calls (e.g., "anthropic/claude-sonnet-4-5-20251101")
-  const [_currentModelHandle, setCurrentModelHandle] = useState<string | null>(
+  const [currentModelHandle, setCurrentModelHandle] = useState<string | null>(
     null,
   );
   // Derive agentName from agentState (single source of truth)
@@ -2669,14 +2658,27 @@ export default function App({
           // Store full handle for API calls (e.g., compaction)
           setCurrentModelHandle(agentModelHandle || null);
 
-          // Derive toolset from agent's model (not persisted, computed on resume)
-          if (agentModelHandle) {
-            const derivedToolset = isOpenAIModel(agentModelHandle)
-              ? "codex"
-              : isGeminiModel(agentModelHandle)
-                ? "gemini"
-                : "default";
-            setCurrentToolset(derivedToolset);
+          const persistedToolsetPreference =
+            settingsManager.getToolsetPreference(agentId);
+          setCurrentToolsetPreference(persistedToolsetPreference);
+
+          if (persistedToolsetPreference === "auto") {
+            if (agentModelHandle) {
+              const { switchToolsetForModel } = await import(
+                "../tools/toolset"
+              );
+              const derivedToolset = await switchToolsetForModel(
+                agentModelHandle,
+                agentId,
+              );
+              setCurrentToolset(derivedToolset);
+            } else {
+              setCurrentToolset(null);
+            }
+          } else {
+            const { forceToolsetSwitch } = await import("../tools/toolset");
+            await forceToolsetSwitch(persistedToolsetPreference, agentId);
+            setCurrentToolset(persistedToolsetPreference);
           }
         } catch (error) {
           console.error("Error fetching agent config:", error);
@@ -5126,6 +5128,13 @@ export default function App({
         setAgentId(targetAgentId);
         setAgentState(agent);
         setLlmConfig(agent.llm_config);
+        const agentModelHandle =
+          agent.llm_config.model_endpoint_type && agent.llm_config.model
+            ? agent.llm_config.model_endpoint_type +
+              "/" +
+              agent.llm_config.model
+            : (agent.llm_config.model ?? null);
+        setCurrentModelHandle(agentModelHandle);
         setConversationId(targetConversationId);
 
         // Ensure bootstrap reminders are re-injected on the first user turn
@@ -5260,6 +5269,13 @@ export default function App({
         setAgentId(agent.id);
         setAgentState(agent);
         setLlmConfig(agent.llm_config);
+        const agentModelHandle =
+          agent.llm_config.model_endpoint_type && agent.llm_config.model
+            ? agent.llm_config.model_endpoint_type +
+              "/" +
+              agent.llm_config.model
+            : (agent.llm_config.model ?? null);
+        setCurrentModelHandle(agentModelHandle);
 
         // Reset context token tracking for new agent
         resetContextHistory(contextTrackerRef.current);
@@ -9763,42 +9779,42 @@ ${SYSTEM_REMINDER_CLOSE}
 
           // Reset context token tracking since different models have different tokenizers
           resetContextHistory(contextTrackerRef.current);
+          setCurrentModelHandle(modelHandle);
 
-          const { isOpenAIModel, isGeminiModel } = await import(
-            "../tools/manager"
-          );
-          const targetToolset:
-            | "codex"
-            | "codex_snake"
-            | "default"
-            | "gemini"
-            | "gemini_snake"
-            | "none" = isOpenAIModel(modelHandle)
-            ? "codex"
-            : isGeminiModel(modelHandle)
-              ? "gemini"
-              : "default";
+          const persistedToolsetPreference =
+            settingsManager.getToolsetPreference(agentId);
+          let toolsetNoticeLine: string | null = null;
 
-          let toolsetName:
-            | "codex"
-            | "codex_snake"
-            | "default"
-            | "gemini"
-            | "gemini_snake"
-            | "none"
-            | null = null;
-          if (currentToolset !== targetToolset) {
+          if (persistedToolsetPreference === "auto") {
             const { switchToolsetForModel } = await import("../tools/toolset");
-            toolsetName = await switchToolsetForModel(modelHandle, agentId);
+            const toolsetName = await switchToolsetForModel(
+              modelHandle,
+              agentId,
+            );
+            setCurrentToolsetPreference("auto");
             setCurrentToolset(toolsetName);
+            toolsetNoticeLine =
+              "Auto toolset selected: switched to " +
+              toolsetName +
+              ". Use /toolset to set a manual override.";
+          } else {
+            const { forceToolsetSwitch } = await import("../tools/toolset");
+            if (currentToolset !== persistedToolsetPreference) {
+              await forceToolsetSwitch(persistedToolsetPreference, agentId);
+              setCurrentToolset(persistedToolsetPreference);
+            }
+            setCurrentToolsetPreference(persistedToolsetPreference);
+            toolsetNoticeLine =
+              "Manual toolset override remains active: " +
+              persistedToolsetPreference +
+              ".";
           }
 
-          const autoToolsetLine = toolsetName
-            ? `Automatically switched toolset to ${toolsetName}. Use /toolset to change back if desired.\nConsider switching to a different system prompt using /system to match.`
-            : null;
           const outputLines = [
-            `Switched to ${model.label}${reasoningLevel ? ` (${reasoningLevel} reasoning)` : ""}`,
-            ...(autoToolsetLine ? [autoToolsetLine] : []),
+            "Switched to " +
+              model.label +
+              (reasoningLevel ? ` (${reasoningLevel} reasoning)` : ""),
+            ...(toolsetNoticeLine ? [toolsetNoticeLine] : []),
           ].join("\n");
 
           cmd.finish(outputLines, true);
@@ -9990,16 +10006,7 @@ ${SYSTEM_REMINDER_CLOSE}
   );
 
   const handleToolsetSelect = useCallback(
-    async (
-      toolsetId:
-        | "codex"
-        | "codex_snake"
-        | "default"
-        | "gemini"
-        | "gemini_snake"
-        | "none",
-      commandId?: string | null,
-    ) => {
+    async (toolsetId: ToolsetPreference, commandId?: string | null) => {
       const overlayCommand = commandId
         ? commandRunner.getHandle(commandId, "/toolset")
         : consumeOverlayCommand("toolset");
@@ -10028,20 +10035,51 @@ ${SYSTEM_REMINDER_CLOSE}
       await withCommandLock(async () => {
         const cmd =
           overlayCommand ??
-          commandRunner.start(
-            "/toolset",
-            `Switching toolset to ${toolsetId}...`,
-          );
+          commandRunner.start("/toolset", "Switching toolset...");
         cmd.update({
-          output: `Switching toolset to ${toolsetId}...`,
+          output: "Switching toolset...",
           phase: "running",
         });
 
         try {
-          const { forceToolsetSwitch } = await import("../tools/toolset");
+          const { forceToolsetSwitch, switchToolsetForModel } = await import(
+            "../tools/toolset"
+          );
+
+          if (toolsetId === "auto") {
+            const modelHandle =
+              currentModelHandle ??
+              (llmConfig?.model_endpoint_type && llmConfig?.model
+                ? `${llmConfig.model_endpoint_type}/${llmConfig.model}`
+                : (llmConfig?.model ?? null));
+            if (!modelHandle) {
+              throw new Error(
+                "Could not determine current model for auto toolset",
+              );
+            }
+
+            const derivedToolset = await switchToolsetForModel(
+              modelHandle,
+              agentId,
+            );
+            settingsManager.setToolsetPreference(agentId, "auto");
+            setCurrentToolsetPreference("auto");
+            setCurrentToolset(derivedToolset);
+            cmd.finish(
+              `Toolset mode set to auto (currently ${derivedToolset}).`,
+              true,
+            );
+            return;
+          }
+
           await forceToolsetSwitch(toolsetId, agentId);
+          settingsManager.setToolsetPreference(agentId, toolsetId);
+          setCurrentToolsetPreference(toolsetId);
           setCurrentToolset(toolsetId);
-          cmd.finish(`Switched toolset to ${toolsetId}`, true);
+          cmd.finish(
+            `Switched toolset to ${toolsetId} (manual override)`,
+            true,
+          );
         } catch (error) {
           const errorDetails = formatErrorDetails(error, agentId);
           cmd.fail(`Failed to switch toolset: ${errorDetails}`);
@@ -10052,7 +10090,9 @@ ${SYSTEM_REMINDER_CLOSE}
       agentId,
       commandRunner,
       consumeOverlayCommand,
+      currentModelHandle,
       isAgentBusy,
+      llmConfig,
       withCommandLock,
     ],
   );
@@ -11307,6 +11347,7 @@ Plan file path: ${planFilePath}`;
             {activeOverlay === "toolset" && (
               <ToolsetSelector
                 currentToolset={currentToolset ?? undefined}
+                currentPreference={currentToolsetPreference}
                 onSelect={handleToolsetSelect}
                 onCancel={closeOverlay}
               />

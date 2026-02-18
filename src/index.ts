@@ -69,7 +69,7 @@ OPTIONS
   -n, --name <name>     Resume agent by name (from pinned agents, case-insensitive)
   -m, --model <id>      Model ID or handle (e.g., "opus-4.5" or "anthropic/claude-opus-4-5")
   -s, --system <id>     System prompt ID or subagent name (applies to new or existing agent)
-  --toolset <name>      Force toolset: "codex", "default", or "gemini" (overrides model-based auto-selection)
+  --toolset <name>      Toolset mode: "auto", "codex", "default", or "gemini" (manual values override model-based auto-selection)
   -p, --prompt          Headless prompt mode
   --output-format <fmt> Output format for headless mode (text, json, stream-json)
                         Default: text
@@ -252,7 +252,7 @@ async function printInfo() {
  */
 function getModelForToolLoading(
   specifiedModel?: string,
-  specifiedToolset?: "codex" | "default" | "gemini",
+  specifiedToolset?: "auto" | "codex" | "default" | "gemini",
 ): string | undefined {
   // If toolset is explicitly specified, use a dummy model from that provider
   // to trigger the correct toolset loading logic
@@ -658,10 +658,11 @@ async function main(): Promise<void> {
     specifiedToolset &&
     specifiedToolset !== "codex" &&
     specifiedToolset !== "default" &&
-    specifiedToolset !== "gemini"
+    specifiedToolset !== "gemini" &&
+    specifiedToolset !== "auto"
   ) {
     console.error(
-      `Error: Invalid toolset "${specifiedToolset}". Must be "codex", "default", or "gemini".`,
+      `Error: Invalid toolset "${specifiedToolset}". Must be "auto", "codex", "default", or "gemini".`,
     );
     process.exit(1);
   }
@@ -985,7 +986,7 @@ async function main(): Promise<void> {
     // For headless mode, load tools synchronously (respecting model/toolset when provided)
     const modelForTools = getModelForToolLoading(
       specifiedModel,
-      specifiedToolset as "codex" | "default" | undefined,
+      specifiedToolset as "auto" | "codex" | "default" | "gemini" | undefined,
     );
     await loadTools(modelForTools);
     markMilestone("TOOLS_LOADED");
@@ -1042,7 +1043,7 @@ async function main(): Promise<void> {
     agentIdArg: string | null;
     model?: string;
     systemPromptPreset?: string;
-    toolset?: "codex" | "default" | "gemini";
+    toolset?: "auto" | "codex" | "default" | "gemini";
     skillsDirectory?: string;
     fromAfFile?: string;
     isRegistryImport?: boolean;
@@ -1540,12 +1541,11 @@ async function main(): Promise<void> {
         // Set resuming state early so loading messages are accurate
         setIsResumingSession(!!resumingAgentId);
 
-        // Load toolset: use explicit --toolset flag if provided, otherwise derive from model
-        // NOTE: We don't persist toolset per-agent. On resume, toolset is re-derived from model.
-        // If explicit toolset overrides need to persist, see comment in tools/toolset.ts
+        // Load an initial toolset for startup (explicit --toolset or model-derived).
+        // App.tsx will reconcile persisted per-agent toolset preference after agent metadata loads.
         const modelForTools = getModelForToolLoading(
           model,
-          toolset as "codex" | "default" | undefined,
+          toolset as "auto" | "codex" | "default" | "gemini" | undefined,
         );
         await loadTools(modelForTools);
 
@@ -2136,7 +2136,12 @@ async function main(): Promise<void> {
       agentIdArg: specifiedAgentId,
       model: specifiedModel,
       systemPromptPreset: systemPromptPreset,
-      toolset: specifiedToolset as "codex" | "default" | "gemini" | undefined,
+      toolset: specifiedToolset as
+        | "auto"
+        | "codex"
+        | "default"
+        | "gemini"
+        | undefined,
       skillsDirectory: skillsDirectory,
       fromAfFile: fromAfFile,
       isRegistryImport: isRegistryImport,
