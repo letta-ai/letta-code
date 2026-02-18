@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { ReflectionSettings } from "../../cli/helpers/memoryReminder";
+import type { SkillSource } from "../../agent/skills";
 import { SHARED_REMINDER_IDS } from "../../reminders/catalog";
 import {
   buildSharedReminderParts,
@@ -8,24 +9,18 @@ import {
 import { createSharedReminderState } from "../../reminders/state";
 
 const originalProviders = { ...sharedReminderProviders };
+const providerMap = sharedReminderProviders;
 
 afterEach(() => {
-  for (const [id, provider] of Object.entries(originalProviders)) {
-    (
-      sharedReminderProviders as Record<string, (ctx: unknown) => Promise<string | null>>
-    )[id] = provider;
+  for (const reminderId of SHARED_REMINDER_IDS) {
+    providerMap[reminderId] = originalProviders[reminderId];
   }
 });
 
 describe("shared reminder parity", () => {
   test("shared reminder order is identical across interactive and headless modes", async () => {
     for (const reminderId of SHARED_REMINDER_IDS) {
-      (
-        sharedReminderProviders as Record<
-          string,
-          (ctx: unknown) => Promise<string | null>
-        >
-      )[reminderId] = async () => reminderId;
+      providerMap[reminderId] = async () => reminderId;
     }
 
     const reflectionSettings: ReflectionSettings = {
@@ -43,9 +38,9 @@ describe("shared reminder parity", () => {
       },
       sessionContextReminderEnabled: true,
       reflectionSettings,
-      skillSources: [],
+      skillSources: [] as SkillSource[],
       resolvePlanModeReminder: () => "plan",
-    } as const;
+    };
 
     const interactive = await buildSharedReminderParts({
       ...base,
