@@ -1299,22 +1299,15 @@ export async function handleHeadlessCommand(
         approvalMessages,
         { agentId: agent.id },
       );
-      if (outputFormat === "stream-json") {
-        // Consume quickly but don't emit message frames to stdout
-        for await (const _ of approvalStream) {
-          // no-op
-        }
-      } else {
-        await drainStreamWithResume(
-          approvalStream,
-          createBuffers(agent.id),
-          () => {},
-          undefined,
-          undefined,
-          undefined,
-          reminderContextTracker,
-        );
-      }
+      await drainStreamWithResume(
+        approvalStream,
+        createBuffers(agent.id),
+        () => {},
+        undefined,
+        undefined,
+        undefined,
+        reminderContextTracker,
+      );
     }
   };
 

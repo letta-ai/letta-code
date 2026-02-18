@@ -90,7 +90,9 @@ async function buildSkillsReminder(
   context: SharedReminderContext,
 ): Promise<string | null> {
   const previousSkillsReminder = context.state.cachedSkillsReminder;
-  let latestSkillsReminder = previousSkillsReminder;
+  // Keep a stable empty baseline so a later successful discovery can diff
+  // against "" and trigger reinjection, even after an earlier discovery failure.
+  let latestSkillsReminder = previousSkillsReminder ?? "";
 
   try {
     const skillsDir = getSkillsDirectory() || join(process.cwd(), SKILLS_DIR);

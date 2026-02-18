@@ -29,4 +29,13 @@ describe("headless shared reminder wiring", () => {
     expect(source).toContain("syncReminderStateFromContextTracker(");
     expect(source).toContain("reminderContextTracker");
   });
+
+  test("one-shot approval drain uses shared stream processor", () => {
+    const headlessPath = fileURLToPath(new URL("../../headless.ts", import.meta.url));
+    const source = readFileSync(headlessPath, "utf-8");
+
+    expect(source).toContain("const approvalStream = await sendMessageStream(");
+    expect(source).toContain("await drainStreamWithResume(");
+    expect(source).not.toContain("for await (const _ of approvalStream)");
+  });
 });
