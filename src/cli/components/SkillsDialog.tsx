@@ -167,7 +167,7 @@ export function SkillsDialog({ onClose, agentId }: SkillsDialogProps) {
             backgroundColor={
               isActive ? colors.selector.itemHighlighted : undefined
             }
-            color={isActive ? "black" : undefined}
+            color={isActive ? "white" : undefined}
             bold={isActive}
           >
             {` ${getTabLabel(tab)} `}

@@ -576,7 +576,7 @@ export function ModelSelector({
             backgroundColor={
               isActive ? colors.selector.itemHighlighted : undefined
             }
-            color={isActive ? "black" : undefined}
+            color={isActive ? "white" : undefined}
             bold={isActive}
           >
             {` ${getCategoryLabel(cat)} `}
