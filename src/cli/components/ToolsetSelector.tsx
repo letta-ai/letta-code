@@ -1,6 +1,7 @@
 // Import useInput from vendored Ink for bracketed paste support
 import { Box, useInput } from "ink";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import type { ToolsetName, ToolsetPreference } from "../../tools/toolset";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
 import { Text } from "./Text";
@@ -8,114 +9,86 @@ import { Text } from "./Text";
 // Horizontal line character (matches approval dialogs)
 const SOLID_LINE = "─";
 
-type ToolsetId =
-  | "codex"
-  | "codex_snake"
-  | "default"
-  | "gemini"
-  | "gemini_snake"
-  | "none";
-
 interface ToolsetOption {
-  id: ToolsetId;
+  id: ToolsetPreference;
   label: string;
   description: string;
-  tools: string[];
   isFeatured?: boolean;
 }
 
 const toolsets: ToolsetOption[] = [
   {
+    id: "auto",
+    label: "Auto",
+    description: "Auto-select based on the model",
+    isFeatured: true,
+  },
+  {
+    id: "none",
+    label: "None",
+    description: "Remove all Letta Code tools from your agent",
+    isFeatured: true,
+  },
+  {
     id: "default",
-    label: "Default Tools",
-    description: "Toolset optimized for Claude models",
-    tools: [
-      "Bash",
-      "TaskOutput",
-      "Edit",
-      "Glob",
-      "Grep",
-      "LS",
-      "MultiEdit",
-      "Read",
-      "TodoWrite",
-      "Write",
-    ],
+    label: "Claude toolset",
+    description: "Optimized for Anthropic models",
     isFeatured: true,
   },
   {
     id: "codex",
-    label: "Codex Tools",
-    description: "Toolset optimized for GPT/Codex models",
-    tools: [
-      "AskUserQuestion",
-      "EnterPlanMode",
-      "ExitPlanMode",
-      "Task",
-      "Skill",
-      "ShellCommand",
-      "ApplyPatch",
-      "UpdatePlan",
-      "ViewImage",
-    ],
+    label: "Codex toolset",
+    description: "Optimized for GPT/Codex models",
+    isFeatured: true,
+  },
+  {
+    id: "gemini",
+    label: "Gemini toolset",
+    description: "Optimized for Google Gemini models",
     isFeatured: true,
   },
   {
     id: "codex_snake",
-    label: "Codex Tools (snake_case)",
-    description: "Toolset optimized for GPT/Codex models (snake_case)",
-    tools: ["shell_command", "apply_patch", "update_plan", "view_image"],
-  },
-  {
-    id: "gemini",
-    label: "Gemini Tools",
-    description: "Toolset optimized for Gemini models",
-    tools: [
-      "RunShellCommand",
-      "ReadFileGemini",
-      "ListDirectory",
-      "GlobGemini",
-      "SearchFileContent",
-      "Replace",
-      "WriteFileGemini",
-      "WriteTodos",
-      "ReadManyFiles",
-    ],
-    isFeatured: true,
+    label: "Codex toolset (snake_case)",
+    description: "Optimized for GPT/Codex models (snake_case)",
   },
   {
     id: "gemini_snake",
-    label: "Gemini Tools (snake_case)",
-    description: "Toolset optimized for Gemini models (snake_case)",
-    tools: [
-      "run_shell_command",
-      "read_file_gemini",
-      "list_directory",
-      "glob_gemini",
-      "search_file_content",
-      "replace",
-      "write_file_gemini",
-      "write_todos",
-      "read_many_files",
-    ],
-  },
-  {
-    id: "none",
-    label: "None (Disable Tools)",
-    description: "Remove all Letta Code tools from the agent",
-    tools: [],
-    isFeatured: true,
+    label: "Gemini toolset (snake_case)",
+    description: "Optimized for Google Gemini models (snake_case)",
   },
 ];
 
+function formatEffectiveToolset(toolset?: ToolsetName): string {
+  if (!toolset) return "Unknown";
+  switch (toolset) {
+    case "default":
+      return "Claude";
+    case "codex":
+      return "Codex";
+    case "codex_snake":
+      return "Codex (snake_case)";
+    case "gemini":
+      return "Gemini";
+    case "gemini_snake":
+      return "Gemini (snake_case)";
+    case "none":
+      return "None";
+    default:
+      return toolset;
+  }
+}
+
 interface ToolsetSelectorProps {
-  currentToolset?: ToolsetId;
-  onSelect: (toolsetId: ToolsetId) => void;
+  currentToolset?: ToolsetName;
+  currentPreference?: ToolsetPreference;
+  onSelect: (toolsetId: ToolsetPreference) => void;
   onCancel: () => void;
 }
 
 export function ToolsetSelector({
   currentToolset,
+  currentPreference = "auto",
   onSelect,
   onCancel,
 }: ToolsetSelectorProps) {
@@ -132,13 +105,16 @@ export function ToolsetSelector({
   const visibleToolsets = useMemo(() => {
     if (showAll) return toolsets;
     if (featuredToolsets.length > 0) return featuredToolsets;
-    return toolsets.slice(0, 3);
+    return toolsets;
   }, [featuredToolsets, showAll]);
 
-  const hasHiddenToolsets = visibleToolsets.length < toolsets.length;
-  const hasShowAllOption = !showAll && hasHiddenToolsets;
+  const canToggleShowAll = featuredToolsets.length < toolsets.length;
 
-  const totalItems = visibleToolsets.length + (hasShowAllOption ? 1 : 0);
+  useEffect(() => {
+    if (selectedIndex >= visibleToolsets.length) {
+      setSelectedIndex(Math.max(0, visibleToolsets.length - 1));
+    }
+  }, [selectedIndex, visibleToolsets.length]);
 
   useInput((input, key) => {
     // CTRL-C: immediately cancel
@@ -150,17 +126,16 @@ export function ToolsetSelector({
     if (key.upArrow) {
       setSelectedIndex((prev) => Math.max(0, prev - 1));
     } else if (key.downArrow) {
-      setSelectedIndex((prev) => Math.min(totalItems - 1, prev + 1));
+      setSelectedIndex((prev) =>
+        Math.min(visibleToolsets.length - 1, prev + 1),
+      );
     } else if (key.return) {
-      if (hasShowAllOption && selectedIndex === visibleToolsets.length) {
-        setShowAll(true);
-        setSelectedIndex(0);
-      } else {
-        const selectedToolset = visibleToolsets[selectedIndex];
-        if (selectedToolset) {
-          onSelect(selectedToolset.id);
-        }
+      const selectedToolset = visibleToolsets[selectedIndex];
+      if (selectedToolset) {
+        onSelect(selectedToolset.id);
       }
+    } else if (canToggleShowAll && (input === "a" || input === "A")) {
+      setShowAll((prev) => !prev);
     } else if (key.escape) {
       onCancel();
     }
@@ -184,56 +159,43 @@ export function ToolsetSelector({
       <Box flexDirection="column">
         {visibleToolsets.map((toolset, index) => {
           const isSelected = index === selectedIndex;
-          const isCurrent = toolset.id === currentToolset;
+          const isCurrent = toolset.id === currentPreference;
+
+          const labelText =
+            toolset.id === "auto"
+              ? isCurrent
+                ? `Auto (current - ${formatEffectiveToolset(currentToolset)})`
+                : "Auto"
+              : isCurrent
+                ? `${toolset.label} (current)`
+                : toolset.label;
 
           return (
-            <Box key={toolset.id} flexDirection="column" marginBottom={1}>
-              <Box flexDirection="row">
-                <Text
-                  color={
-                    isSelected ? colors.selector.itemHighlighted : undefined
-                  }
-                >
-                  {isSelected ? "> " : "  "}
-                </Text>
-                <Text
-                  bold={isSelected}
-                  color={
-                    isSelected ? colors.selector.itemHighlighted : undefined
-                  }
-                >
-                  {toolset.label}
-                  {isCurrent && (
-                    <Text color={colors.selector.itemCurrent}> (current)</Text>
-                  )}
-                </Text>
-              </Box>
-              <Text dimColor>
-                {"  "}
-                {toolset.description}
+            <Box key={toolset.id} flexDirection="row">
+              <Text
+                color={isSelected ? colors.selector.itemHighlighted : undefined}
+              >
+                {isSelected ? "> " : "  "}
               </Text>
+              <Text
+                bold={isSelected}
+                color={isSelected ? colors.selector.itemHighlighted : undefined}
+              >
+                {labelText}
+              </Text>
+              <Text dimColor>{` · ${toolset.description}`}</Text>
             </Box>
           );
         })}
-        {hasShowAllOption && (
-          <Box flexDirection="row">
-            <Text
-              color={
-                selectedIndex === visibleToolsets.length
-                  ? colors.selector.itemHighlighted
-                  : undefined
-              }
-            >
-              {selectedIndex === visibleToolsets.length ? "> " : "  "}
-            </Text>
-            <Text dimColor>Show all toolsets</Text>
-          </Box>
-        )}
       </Box>
 
       {/* Footer */}
       <Box marginTop={1}>
-        <Text dimColor>{"  "}Enter select · ↑↓ navigate · Esc cancel</Text>
+        <Text dimColor>
+          {canToggleShowAll
+            ? "  Enter select · ↑↓ navigate · A show all · Esc cancel"
+            : "  Enter select · ↑↓ navigate · Esc cancel"}
+        </Text>
       </Box>
     </Box>
   );

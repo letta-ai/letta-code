@@ -47,6 +47,14 @@ export interface AgentSettings {
   baseUrl?: string; // undefined = Letta API (api.letta.com)
   pinned?: boolean; // true if agent is pinned
   memfs?: boolean; // true if memory filesystem is enabled
+  toolset?:
+    | "auto"
+    | "codex"
+    | "codex_snake"
+    | "default"
+    | "gemini"
+    | "gemini_snake"
+    | "none"; // toolset mode for this agent (manual override or auto)
 }
 
 export interface Settings {
@@ -1317,10 +1325,15 @@ class SettingsManager {
         pinned: updates.pinned !== undefined ? updates.pinned : existing.pinned,
         // Use nullish coalescing for memfs (undefined = keep existing)
         memfs: updates.memfs !== undefined ? updates.memfs : existing.memfs,
+        // Use nullish coalescing for toolset (undefined = keep existing)
+        toolset:
+          updates.toolset !== undefined ? updates.toolset : existing.toolset,
       };
       // Clean up undefined/false values
       if (!updated.pinned) delete updated.pinned;
       if (!updated.memfs) delete updated.memfs;
+      if (!updated.toolset || updated.toolset === "auto")
+        delete updated.toolset;
       if (!updated.baseUrl) delete updated.baseUrl;
       agents[idx] = updated;
     } else {
@@ -1333,6 +1346,8 @@ class SettingsManager {
       // Clean up undefined/false values
       if (!newAgent.pinned) delete newAgent.pinned;
       if (!newAgent.memfs) delete newAgent.memfs;
+      if (!newAgent.toolset || newAgent.toolset === "auto")
+        delete newAgent.toolset;
       if (!newAgent.baseUrl) delete newAgent.baseUrl;
       agents.push(newAgent);
     }
@@ -1352,6 +1367,40 @@ class SettingsManager {
    */
   setMemfsEnabled(agentId: string, enabled: boolean): void {
     this.upsertAgentSettings(agentId, { memfs: enabled });
+  }
+
+  /**
+   * Get toolset preference for an agent on the current server.
+   * Defaults to "auto" when no manual override is stored.
+   */
+  getToolsetPreference(
+    agentId: string,
+  ):
+    | "auto"
+    | "codex"
+    | "codex_snake"
+    | "default"
+    | "gemini"
+    | "gemini_snake"
+    | "none" {
+    return this.getAgentSettings(agentId)?.toolset ?? "auto";
+  }
+
+  /**
+   * Set toolset preference for an agent on the current server.
+   */
+  setToolsetPreference(
+    agentId: string,
+    preference:
+      | "auto"
+      | "codex"
+      | "codex_snake"
+      | "default"
+      | "gemini"
+      | "gemini_snake"
+      | "none",
+  ): void {
+    this.upsertAgentSettings(agentId, { toolset: preference });
   }
 
   /**

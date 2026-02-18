@@ -5,6 +5,7 @@ import {
   clearToolsWithLock,
   GEMINI_PASCAL_TOOLS,
   getToolNames,
+  isGeminiModel,
   isOpenAIModel,
   loadSpecificTools,
   loadTools,
@@ -35,6 +36,18 @@ export type ToolsetName =
   | "gemini"
   | "gemini_snake"
   | "none";
+export type ToolsetPreference = ToolsetName | "auto";
+
+export function deriveToolsetFromModel(
+  modelIdentifier: string,
+): "codex" | "gemini" | "default" {
+  const resolvedModel = resolveModel(modelIdentifier) ?? modelIdentifier;
+  return isOpenAIModel(resolvedModel)
+    ? "codex"
+    : isGeminiModel(resolvedModel)
+      ? "gemini"
+      : "default";
+}
 
 /**
  * Ensures the correct memory tool is attached to the agent based on the model.
@@ -248,11 +261,6 @@ export async function forceToolsetSwitch(
   const useMemoryPatch =
     toolsetName === "codex" || toolsetName === "codex_snake";
   await ensureCorrectMemoryTool(agentId, modelForLoading, useMemoryPatch);
-
-  // NOTE: Toolset is not persisted. On resume, we derive from agent's model.
-  // If we want to persist explicit toolset overrides in the future, add:
-  //   agentToolsets: Record<string, ToolsetName> to Settings (global, since agent IDs are UUIDs)
-  // and save here: settingsManager.updateSettings({ agentToolsets: { ...current, [agentId]: toolsetName } })
 }
 
 /**
@@ -293,13 +301,6 @@ export async function switchToolsetForModel(
   // Ensure base memory tool is correct for the model
   await ensureCorrectMemoryTool(agentId, resolvedModel);
 
-  const { isGeminiModel } = await import("./manager");
-  const toolsetName = isOpenAIModel(resolvedModel)
-    ? "codex"
-    : isGeminiModel(resolvedModel)
-      ? "gemini"
-      : "default";
-
-  // NOTE: Toolset is derived from model, not persisted. See comment in forceToolsetSwitch.
+  const toolsetName = deriveToolsetFromModel(resolvedModel);
   return toolsetName;
 }
