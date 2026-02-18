@@ -184,6 +184,10 @@ class SettingsManager {
   private initialized = false;
   private pendingWrites = new Set<Promise<void>>();
   private secretsAvailable: boolean | null = null;
+  // Keys loaded from the file or explicitly set via updateSettings().
+  // persistSettings() only writes these keys, so manual file edits for
+  // keys we never touched are preserved instead of being clobbered by defaults.
+  private managedKeys = new Set<string>();
 
   /**
    * Initialize the settings manager (loads from disk)
@@ -199,6 +203,9 @@ class SettingsManager {
       if (!exists(settingsPath)) {
         // Create default settings file
         this.settings = { ...DEFAULT_SETTINGS };
+        for (const key of Object.keys(DEFAULT_SETTINGS)) {
+          this.managedKeys.add(key);
+        }
         await this.persistSettings();
       } else {
         // Read and parse settings
@@ -206,6 +213,9 @@ class SettingsManager {
         const loadedSettings = JSON.parse(content) as Settings;
         // Merge with defaults in case new fields were added
         this.settings = { ...DEFAULT_SETTINGS, ...loadedSettings };
+        for (const key of Object.keys(loadedSettings)) {
+          this.managedKeys.add(key);
+        }
       }
 
       this.initialized = true;
@@ -223,6 +233,9 @@ class SettingsManager {
     } catch (error) {
       console.error("Error loading settings, using defaults:", error);
       this.settings = { ...DEFAULT_SETTINGS };
+      for (const key of Object.keys(DEFAULT_SETTINGS)) {
+        this.managedKeys.add(key);
+      }
       this.initialized = true;
 
       // Still check secrets support and try to migrate in case of partial failure
@@ -292,6 +305,8 @@ class SettingsManager {
             }
 
             this.settings = updatedSettings;
+            this.managedKeys.add("refreshToken");
+            this.managedKeys.add("env");
             await this.persistSettings();
 
             debugWarn("settings", "Successfully migrated tokens to secrets");
@@ -357,6 +372,7 @@ class SettingsManager {
 
     if (agents.length > 0) {
       this.settings = { ...this.settings, agents };
+      this.managedKeys.add("agents");
       // Persist the migration (async, fire-and-forget)
       this.persistSettings().catch((error) => {
         console.warn("Failed to persist agents array migration:", error);
@@ -461,6 +477,13 @@ class SettingsManager {
       ...(updatedEnv && { env: { ...this.settings.env, ...updatedEnv } }),
     };
 
+    for (const key of Object.keys(otherUpdates)) {
+      this.managedKeys.add(key);
+    }
+    if (updatedEnv) {
+      this.managedKeys.add("env");
+    }
+
     // Handle secure tokens in keychain
     const secureTokens: SecureTokens = {};
     if (apiKey) {
@@ -518,6 +541,7 @@ class SettingsManager {
 
       if (secureTokens.refreshToken) {
         fallbackSettings.refreshToken = secureTokens.refreshToken;
+        this.managedKeys.add("refreshToken");
       }
 
       if (secureTokens.apiKey) {
@@ -525,6 +549,7 @@ class SettingsManager {
           ...fallbackSettings.env,
           LETTA_API_KEY: secureTokens.apiKey,
         };
+        this.managedKeys.add("env");
       }
 
       this.settings = fallbackSettings;
@@ -645,12 +670,20 @@ class SettingsManager {
         }
       }
 
-      // Merge: existing fields + our managed settings
-      // Our settings take precedence for fields we manage
-      const merged = {
-        ...existingSettings,
-        ...this.settings,
-      };
+      // Only write keys we loaded from the file or explicitly set via updateSettings().
+      // This preserves manual file edits for keys we never touched (e.g. defaults).
+      const merged: Record<string, unknown> = { ...existingSettings };
+      const settingsRecord = this.settings as unknown as Record<
+        string,
+        unknown
+      >;
+      for (const key of this.managedKeys) {
+        if (key in settingsRecord) {
+          merged[key] = settingsRecord[key];
+        } else {
+          delete merged[key];
+        }
+      }
 
       await writeFile(settingsPath, JSON.stringify(merged, null, 2));
     } catch (error) {
@@ -1446,6 +1479,7 @@ class SettingsManager {
     const settings = this.getSettings();
     const { oauthState: _, ...rest } = settings;
     this.settings = { ...DEFAULT_SETTINGS, ...rest };
+    this.managedKeys.add("oauthState");
     this.persistSettings().catch((error) => {
       console.error(
         "Failed to persist settings after clearing OAuth state:",
@@ -1586,6 +1620,7 @@ class SettingsManager {
     this.initialized = false;
     this.pendingWrites.clear();
     this.secretsAvailable = null;
+    this.managedKeys.clear();
   }
 }
 
