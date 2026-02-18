@@ -1105,7 +1105,10 @@ describe("Settings Manager - Managed Keys Preservation", () => {
     } else {
       // No keychain: tokens fall back to the settings file and must be persisted
       await settingsManager.initialize();
-      settingsManager.updateSettings({ refreshToken: "rt-fallback-test" });
+      settingsManager.updateSettings({
+        refreshToken: "rt-fallback-test",
+        env: { LETTA_API_KEY: "sk-fallback-test" },
+      });
       await new Promise((resolve) => setTimeout(resolve, 100));
 
       const { readFile } = await import("../utils/fs.js");
@@ -1115,6 +1118,10 @@ describe("Settings Manager - Managed Keys Preservation", () => {
       ) as Record<string, unknown>;
 
       expect(raw.refreshToken).toBe("rt-fallback-test");
+      // LETTA_API_KEY also falls back to the file when keychain is unavailable
+      expect((raw.env as Record<string, unknown>)?.LETTA_API_KEY).toBe(
+        "sk-fallback-test",
+      );
     }
   });
 });
