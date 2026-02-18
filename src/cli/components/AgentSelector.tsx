@@ -615,7 +615,7 @@ export function AgentSelector({
         }
         loadPinnedAgents();
       }
-    } else if (input === "d" || input === "D") {
+    } else if (input === "D") {
       // Delete agent - open confirmation
       let selectedAgent: AgentState | null = null;
       let selectedAgentId: string | null = null;
@@ -937,7 +937,7 @@ export function AgentSelector({
               : activeTab === "letta-code"
                 ? `Page ${lettaCodePage + 1}${lettaCodeHasMore ? "+" : `/${lettaCodeTotalPages || 1}`}${lettaCodeLoadingMore ? " (loading...)" : ""}`
                 : `Page ${allPage + 1}${allHasMore ? "+" : `/${allTotalPages || 1}`}${allLoadingMore ? " (loading...)" : ""}`;
-          const hintsText = `Enter select · ↑↓ ←→ navigate · Tab switch · D delete${activeTab === "pinned" ? " · P unpin" : ""}${onCreateNewAgent ? " · N new" : ""} · Esc cancel`;
+          const hintsText = `Enter select · ↑↓ ←→ navigate · Tab switch · Shift+D delete${activeTab === "pinned" ? " · P unpin" : ""}${onCreateNewAgent ? " · N new" : ""} · Esc cancel`;
 
           return (
             <Box flexDirection="column">
