@@ -153,7 +153,11 @@ async function buildPermissionModeReminder(
 
   const shouldEmit = (() => {
     if (context.mode === "interactive") {
-      return previousMode !== null && previousMode !== currentMode;
+      if (previousMode === null) {
+        // First turn: only remind if in a non-default mode (e.g. bypassPermissions).
+        return currentMode !== "default";
+      }
+      return previousMode !== currentMode;
     }
     return previousMode !== currentMode;
   })();

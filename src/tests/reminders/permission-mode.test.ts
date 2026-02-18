@@ -41,7 +41,7 @@ describe("shared permission-mode reminder", () => {
     expect(reminder).toContain("Permission mode active: default");
   });
 
-  test("interactive emits only after mode changes", async () => {
+  test("interactive does not emit on first turn in default mode", async () => {
     permissionMode.setMode("default");
     const provider = sharedReminderProviders["permission-mode"];
     const context = baseContext("interactive");
@@ -52,5 +52,19 @@ describe("shared permission-mode reminder", () => {
     permissionMode.setMode("bypassPermissions");
     const second = await provider(context);
     expect(second).toContain("Permission mode changed to: bypassPermissions");
+  });
+
+  test("interactive emits on first turn in bypassPermissions mode", async () => {
+    permissionMode.setMode("bypassPermissions");
+    const provider = sharedReminderProviders["permission-mode"];
+    const reminder = await provider(baseContext("interactive"));
+    expect(reminder).toContain("Permission mode active: bypassPermissions");
+  });
+
+  test("interactive emits on first turn in acceptEdits mode", async () => {
+    permissionMode.setMode("acceptEdits");
+    const provider = sharedReminderProviders["permission-mode"];
+    const reminder = await provider(baseContext("interactive"));
+    expect(reminder).toContain("Permission mode active: acceptEdits");
   });
 });
