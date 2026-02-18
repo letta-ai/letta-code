@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 describe("bootstrap reminder reset wiring", () => {
-  test("defines helper that clears session, skills, and discovery cache", () => {
+  test("defines helper that resets shared reminder state", () => {
     const appPath = fileURLToPath(
       new URL("../../cli/App.tsx", import.meta.url),
     );
@@ -12,9 +12,12 @@ describe("bootstrap reminder reset wiring", () => {
     expect(source).toContain(
       "const resetBootstrapReminderState = useCallback(() => {",
     );
-    expect(source).toContain("hasSentSessionContextRef.current = false;");
-    expect(source).toContain("hasInjectedSkillsRef.current = false;");
-    expect(source).toContain("discoveredSkillsRef.current = null;");
+    expect(source).toContain(
+      "resetSharedReminderState(sharedReminderStateRef.current);",
+    );
+    expect(source).not.toContain("hasSentSessionContextRef.current = false;");
+    expect(source).not.toContain("hasInjectedSkillsRef.current = false;");
+    expect(source).not.toContain("discoveredSkillsRef.current = null;");
   });
 
   test("invokes helper for all conversation/agent switch entry points", () => {
