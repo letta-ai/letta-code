@@ -5137,6 +5137,9 @@ export default function App({
         return;
       }
 
+      // Drop any pending reasoning-tier debounce before switching contexts.
+      resetPendingReasoningCycle();
+
       // If agent is busy, queue the switch for after end_turn
       if (isAgentBusy()) {
         const cmd =
@@ -6646,6 +6649,8 @@ export default function App({
             "Starting new conversation...",
           );
 
+          // New conversations should not inherit pending reasoning-tier debounce.
+          resetPendingReasoningCycle();
           setCommandRunning(true);
 
           // Run SessionEnd hooks for current session before starting new one
@@ -6722,6 +6727,8 @@ export default function App({
             "Clearing in-context messages...",
           );
 
+          // Clearing conversation state should also clear pending reasoning-tier debounce.
+          resetPendingReasoningCycle();
           setCommandRunning(true);
 
           // Run SessionEnd hooks for current session before clearing
@@ -9815,6 +9822,9 @@ ${SYSTEM_REMINDER_CLOSE}
           }
         }
 
+        // Switching models should discard any pending debounce from the previous model.
+        resetPendingReasoningCycle();
+
         if (isAgentBusy()) {
           setActiveOverlay(null);
           const cmd =
@@ -10457,6 +10467,15 @@ ${SYSTEM_REMINDER_CLOSE}
   } | null>(null);
   const reasoningCycleLastConfirmedRef = useRef<LlmConfig | null>(null);
 
+  const resetPendingReasoningCycle = () => {
+    if (reasoningCycleTimerRef.current) {
+      clearTimeout(reasoningCycleTimerRef.current);
+      reasoningCycleTimerRef.current = null;
+    }
+    reasoningCycleDesiredRef.current = null;
+    reasoningCycleLastConfirmedRef.current = null;
+  };
+
   const flushPendingReasoningEffort = useCallback(async () => {
     const desired = reasoningCycleDesiredRef.current;
     if (!desired) return;
@@ -10467,11 +10486,13 @@ ${SYSTEM_REMINDER_CLOSE}
     // Don't change model settings mid-run.
     // If a flush is requested while busy, ensure we still apply once the run completes.
     if (isAgentBusy()) {
-      if (!reasoningCycleTimerRef.current) {
-        reasoningCycleTimerRef.current = setTimeout(() => {
-          void flushPendingReasoningEffort();
-        }, reasoningCycleDebounceMs);
+      if (reasoningCycleTimerRef.current) {
+        clearTimeout(reasoningCycleTimerRef.current);
       }
+      reasoningCycleTimerRef.current = setTimeout(() => {
+        reasoningCycleTimerRef.current = null;
+        void flushPendingReasoningEffort();
+      }, reasoningCycleDebounceMs);
       return;
     }
 
@@ -10611,6 +10632,7 @@ ${SYSTEM_REMINDER_CLOSE}
         clearTimeout(reasoningCycleTimerRef.current);
       }
       reasoningCycleTimerRef.current = setTimeout(() => {
+        reasoningCycleTimerRef.current = null;
         void flushPendingReasoningEffort();
       }, reasoningCycleDebounceMs);
     })();
