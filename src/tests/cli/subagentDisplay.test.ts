@@ -27,7 +27,7 @@ describe("getSubagentModelDisplay", () => {
       "lc-anthropic/claude-haiku-4-5-20251001",
     );
     expect(display).toEqual({
-      label: "claude-haiku-4-5-20251001",
+      label: "Haiku 4.5",
       isByokProvider: true,
       isOpenAICodexProvider: false,
     });
