@@ -576,7 +576,7 @@ export function ModelSelector({
             backgroundColor={
               isActive ? colors.selector.itemHighlighted : undefined
             }
-            color={isActive ? "black" : undefined}
+            color={isActive ? "white" : undefined}
             bold={isActive}
           >
             {` ${getCategoryLabel(cat)} `}
@@ -599,7 +599,7 @@ export function ModelSelector({
         <Text bold color={colors.selector.title}>
           Swap your agent's model
         </Text>
-        {!isLoading && !refreshing && (
+        {!isLoading && (
           <Box flexDirection="column" paddingLeft={1}>
             {renderTabBar()}
             <Text dimColor> {getCategoryDescription(category)}</Text>
@@ -622,12 +622,6 @@ export function ModelSelector({
         </Box>
       )}
 
-      {refreshing && (
-        <Box paddingLeft={2}>
-          <Text dimColor>Refreshing models...</Text>
-        </Box>
-      )}
-
       {error && (
         <Box paddingLeft={2}>
           <Text color="yellow">
@@ -647,60 +641,68 @@ export function ModelSelector({
       )}
 
       {/* Model list */}
+      {refreshing && (
+        <Box paddingLeft={2}>
+          <Text dimColor>Refreshing list...</Text>
+        </Box>
+      )}
       <Box flexDirection="column">
-        {visibleModels.map((model, index) => {
-          const actualIndex = startIndex + index;
-          const isSelected = actualIndex === selectedIndex;
-          const isCurrent = model.id === currentModelId;
-          // Show lock for non-free models when on free tier (only for Letta API tabs)
-          const showLock =
-            isFreeTier &&
-            !model.free &&
-            (category === "supported" || category === "all");
+        {!refreshing &&
+          visibleModels.map((model, index) => {
+            const actualIndex = startIndex + index;
+            const isSelected = actualIndex === selectedIndex;
+            const isCurrent = model.id === currentModelId;
+            // Show lock for non-free models when on free tier (only for Letta API tabs)
+            const showLock =
+              isFreeTier &&
+              !model.free &&
+              (category === "supported" || category === "all");
 
-          return (
-            <Box key={model.id} flexDirection="row">
-              <Text
-                color={isSelected ? colors.selector.itemHighlighted : undefined}
-              >
-                {isSelected ? "> " : "  "}
-              </Text>
-              {showLock && <Text dimColor>🔒 </Text>}
-              <Text
-                bold={isSelected}
-                color={
-                  isSelected
-                    ? colors.selector.itemHighlighted
-                    : isCurrent
-                      ? colors.selector.itemCurrent
-                      : undefined
-                }
-              >
-                {model.label}
-                {isCurrent && <Text> (current)</Text>}
-              </Text>
-              {model.description && (
-                <Text dimColor> · {model.description}</Text>
-              )}
-            </Box>
-          );
-        })}
-        {showScrollDown ? (
+            return (
+              <Box key={model.id} flexDirection="row">
+                <Text
+                  color={
+                    isSelected ? colors.selector.itemHighlighted : undefined
+                  }
+                >
+                  {isSelected ? "> " : "  "}
+                </Text>
+                {showLock && <Text dimColor>🔒 </Text>}
+                <Text
+                  bold={isSelected}
+                  color={
+                    isSelected
+                      ? colors.selector.itemHighlighted
+                      : isCurrent
+                        ? colors.selector.itemCurrent
+                        : undefined
+                  }
+                >
+                  {model.label}
+                  {isCurrent && <Text> (current)</Text>}
+                </Text>
+                {model.description && (
+                  <Text dimColor> · {model.description}</Text>
+                )}
+              </Box>
+            );
+          })}
+        {!refreshing && showScrollDown ? (
           <Text dimColor>
             {"  "}↓ {itemsBelow} more below
           </Text>
-        ) : currentList.length > visibleCount ? (
+        ) : !refreshing && currentList.length > visibleCount ? (
           <Text> </Text>
         ) : null}
       </Box>
 
       {/* Footer */}
-      {!isLoading && !refreshing && currentList.length > 0 && (
+      {!isLoading && currentList.length > 0 && (
         <Box flexDirection="column" marginTop={1}>
           <Text dimColor>
             {"  "}
             {currentList.length} models{isCached ? " · cached" : ""} · R to
-            refresh availability
+            refresh list
           </Text>
           <Text dimColor>
             {"  "}Enter select · ↑↓ navigate · ←→/Tab switch · Esc cancel

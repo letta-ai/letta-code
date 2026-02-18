@@ -406,7 +406,7 @@ export function MemfsTreeViewer({
                   backgroundColor={
                     isSelected ? colors.selector.itemHighlighted : undefined
                   }
-                  color={isSelected ? "black" : undefined}
+                  color={isSelected ? "white" : undefined}
                 >
                   {prefix}
                 </Text>

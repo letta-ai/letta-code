@@ -1469,7 +1469,9 @@ export default function App({
   const hasSetConversationSummaryRef = useRef(resumedExistingConversation);
   // Store first user query for conversation summary
   const firstUserQueryRef = useRef<string | null>(null);
-
+  const resetBootstrapReminderState = useCallback(() => {
+    resetSharedReminderState(sharedReminderStateRef.current);
+  }, []);
   // Static items (things that are done rendering and can be frozen)
   const [staticItems, setStaticItems] = useState<StaticItem[]>([]);
 
@@ -5077,14 +5079,16 @@ export default function App({
         setStaticRenderEpoch((e) => e + 1);
         resetTrajectoryBases();
 
-        resetSharedReminderState(sharedReminderStateRef.current);
-
         // Update agent state - also update ref immediately for any code that runs before re-render
         agentIdRef.current = targetAgentId;
         setAgentId(targetAgentId);
         setAgentState(agent);
         setLlmConfig(agent.llm_config);
         setConversationId(targetConversationId);
+
+        // Ensure bootstrap reminders are re-injected on the first user turn
+        // after switching to a different conversation/agent context.
+        resetBootstrapReminderState();
 
         // Set conversation switch context for agent switch
         {
@@ -5150,6 +5154,7 @@ export default function App({
       isAgentBusy,
       resetDeferredToolCallCommits,
       resetTrajectoryBases,
+      resetBootstrapReminderState,
     ],
   );
 
@@ -5205,8 +5210,6 @@ export default function App({
         setStaticRenderEpoch((e) => e + 1);
         resetTrajectoryBases();
 
-        resetSharedReminderState(sharedReminderStateRef.current);
-
         // Update agent state
         agentIdRef.current = agent.id;
         setAgentId(agent.id);
@@ -5215,6 +5218,9 @@ export default function App({
 
         // Reset context token tracking for new agent
         resetContextHistory(contextTrackerRef.current);
+
+        // Ensure bootstrap reminders are re-injected after creating a new agent.
+        resetBootstrapReminderState();
 
         const separator = {
           kind: "separator" as const,
@@ -5237,6 +5243,7 @@ export default function App({
       setCommandRunning,
       resetDeferredToolCallCommits,
       resetTrajectoryBases,
+      resetBootstrapReminderState,
     ],
   );
 
@@ -6521,7 +6528,8 @@ export default function App({
             // Reset context tokens for new conversation
             resetContextHistory(contextTrackerRef.current);
 
-            resetSharedReminderState(sharedReminderStateRef.current);
+            // Ensure bootstrap reminders are re-injected for the new conversation.
+            resetBootstrapReminderState();
 
             // Re-run SessionStart hooks for new conversation
             sessionHooksRanRef.current = false;
@@ -6598,7 +6606,8 @@ export default function App({
             // Reset context tokens for new conversation
             resetContextHistory(contextTrackerRef.current);
 
-            resetSharedReminderState(sharedReminderStateRef.current);
+            // Ensure bootstrap reminders are re-injected for the new conversation.
+            resetBootstrapReminderState();
 
             // Re-run SessionStart hooks for new conversation
             sessionHooksRanRef.current = false;
@@ -6959,6 +6968,7 @@ export default function App({
                 buffersRef.current.order = [];
                 buffersRef.current.tokenCount = 0;
                 resetContextHistory(contextTrackerRef.current);
+                resetBootstrapReminderState();
                 emittedIdsRef.current.clear();
                 resetDeferredToolCallCommits();
                 setStaticItems([]);
@@ -9862,6 +9872,7 @@ ${SYSTEM_REMINDER_CLOSE}
 
                 // Reset context tokens for new conversation
                 resetContextHistory(contextTrackerRef.current);
+                resetBootstrapReminderState();
 
                 cmd.finish(
                   `Switched to conversation (${resumeData.messageHistory.length} messages)`,
@@ -9902,6 +9913,7 @@ ${SYSTEM_REMINDER_CLOSE}
     setCommandRunning,
     commandRunner.getHandle,
     commandRunner.start,
+    resetBootstrapReminderState,
   ]);
 
   // Handle escape when profile confirmation is pending
@@ -11182,6 +11194,7 @@ Plan file path: ${planFilePath}`;
                       buffersRef.current.order = [];
                       buffersRef.current.tokenCount = 0;
                       resetContextHistory(contextTrackerRef.current);
+                      resetBootstrapReminderState();
                       emittedIdsRef.current.clear();
                       resetDeferredToolCallCommits();
                       setStaticItems([]);
@@ -11334,6 +11347,7 @@ Plan file path: ${planFilePath}`;
                     buffersRef.current.order = [];
                     buffersRef.current.tokenCount = 0;
                     resetContextHistory(contextTrackerRef.current);
+                    resetBootstrapReminderState();
                     emittedIdsRef.current.clear();
                     resetDeferredToolCallCommits();
                     setStaticItems([]);
@@ -11474,6 +11488,7 @@ Plan file path: ${planFilePath}`;
                       buffersRef.current.order = [];
                       buffersRef.current.tokenCount = 0;
                       resetContextHistory(contextTrackerRef.current);
+                      resetBootstrapReminderState();
                       emittedIdsRef.current.clear();
                       resetDeferredToolCallCommits();
                       setStaticItems([]);
