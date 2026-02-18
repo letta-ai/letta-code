@@ -1295,6 +1295,20 @@ export default function App({
       currentModelLabel.split("/").pop())
     : null;
   const currentModelProvider = llmConfig?.provider_name ?? null;
+  const llmReasoningEffort = llmConfig?.reasoning_effort;
+  const llmEnableReasoner = (llmConfig as { enable_reasoner?: boolean | null })
+    ?.enable_reasoner;
+  const currentReasoningEffort: ModelReasoningEffort | null =
+    llmReasoningEffort === "none" ||
+    llmReasoningEffort === "minimal" ||
+    llmReasoningEffort === "low" ||
+    llmReasoningEffort === "medium" ||
+    llmReasoningEffort === "high" ||
+    llmReasoningEffort === "xhigh"
+      ? llmReasoningEffort
+      : llmEnableReasoner === false
+        ? "none"
+        : null;
 
   // Billing tier for conditional UI and error context (fetched once on mount)
   const [billingTier, setBillingTier] = useState<string | null>(null);
@@ -11177,6 +11191,7 @@ Plan file path: ${planFilePath}`;
                 agentName={agentName}
                 currentModel={currentModelDisplay}
                 currentModelProvider={currentModelProvider}
+                currentReasoningEffort={currentReasoningEffort}
                 messageQueue={messageQueue}
                 onEnterQueueEditMode={handleEnterQueueEditMode}
                 onEscapeCancel={

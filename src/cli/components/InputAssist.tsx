@@ -1,5 +1,6 @@
 import { Box } from "ink";
 import { useEffect } from "react";
+import type { ModelReasoningEffort } from "../../agent/model";
 import { AgentInfoBar } from "./AgentInfoBar";
 import { FileAutocomplete } from "./FileAutocomplete";
 import { SlashCommandAutocomplete } from "./SlashCommandAutocomplete";
@@ -13,6 +14,8 @@ interface InputAssistProps {
   onAutocompleteActiveChange: (isActive: boolean) => void;
   agentId?: string;
   agentName?: string | null;
+  currentModel?: string | null;
+  currentReasoningEffort?: ModelReasoningEffort | null;
   serverUrl?: string;
   workingDirectory?: string;
   conversationId?: string;
@@ -33,6 +36,8 @@ export function InputAssist({
   onAutocompleteActiveChange,
   agentId,
   agentName,
+  currentModel,
+  currentReasoningEffort,
   serverUrl,
   workingDirectory,
   conversationId,
@@ -80,6 +85,8 @@ export function InputAssist({
         <AgentInfoBar
           agentId={agentId}
           agentName={agentName}
+          currentModel={currentModel}
+          currentReasoningEffort={currentReasoningEffort}
           serverUrl={serverUrl}
           conversationId={conversationId}
         />
