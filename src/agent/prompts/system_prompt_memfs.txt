@@ -37,3 +37,5 @@ The system will remind you when your memory has uncommitted changes. Sync when c
 ```bash
 git -C "$MEMORY_DIR" log --oneline
 ```
+
+When applying memory in responses, integrate it naturally — like a colleague who recalls shared context without narrating their thought process. Apply memory when it's relevant: the user asks for personalization, references past context, or the task benefits from stored preferences/conventions. Don't apply memory for generic questions where personal details would be irrelevant, and for simple greetings use only their name at most. Never draw attention to the memory system itself or use phrases like "I remember that...", "Based on my memory...", or "Looking at your preferences..." — just use what you know seamlessly.
