@@ -192,6 +192,22 @@ export function getModelUpdateArgs(
  * @returns The model entry if found, null otherwise
  */
 function findModelByHandle(handle: string): (typeof models)[number] | null {
+  const pickPreferred = (candidates: (typeof models)[number][]) =>
+    candidates.find((m) => m.isDefault) ??
+    candidates.find((m) => m.isFeatured) ??
+    candidates.find(
+      (m) =>
+        (m.updateArgs as { reasoning_effort?: unknown } | undefined)
+          ?.reasoning_effort === "medium",
+    ) ??
+    candidates.find(
+      (m) =>
+        (m.updateArgs as { reasoning_effort?: unknown } | undefined)
+          ?.reasoning_effort === "high",
+    ) ??
+    candidates[0] ??
+    null;
+
   // Try exact match first
   const exactMatch = models.find((m) => m.handle === handle);
   if (exactMatch) return exactMatch;
@@ -204,7 +220,7 @@ function findModelByHandle(handle: string): (typeof models)[number] | null {
     const modelPortion = rest.join("/");
     // Find models with the same provider where the model portion is contained
     // in the models.json handle (handles vendor prefixes and version suffixes)
-    const partialMatch = models.find((m) => {
+    const providerMatches = models.filter((m) => {
       if (!m.handle.startsWith(`${provider}/`)) return false;
       const mModelPortion = m.handle.slice(provider.length + 1);
       // Check if either contains the other (handles both directions)
@@ -213,7 +229,17 @@ function findModelByHandle(handle: string): (typeof models)[number] | null {
         modelPortion.includes(mModelPortion)
       );
     });
-    if (partialMatch) return partialMatch;
+    const providerMatch = pickPreferred(providerMatches);
+    if (providerMatch) return providerMatch;
+
+    // Cross-provider fallback by model suffix. This helps when llm_config reports
+    // provider_type=openai for BYOK models that are represented in models.json
+    // under a different provider prefix (e.g. chatgpt-plus-pro/*).
+    const suffixMatches = models.filter((m) =>
+      m.handle.endsWith(`/${modelPortion}`),
+    );
+    const suffixMatch = pickPreferred(suffixMatches);
+    if (suffixMatch) return suffixMatch;
   }
 
   return null;

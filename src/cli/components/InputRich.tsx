@@ -17,6 +17,7 @@ import {
   useState,
 } from "react";
 import stringWidth from "string-width";
+import type { ModelReasoningEffort } from "../../agent/model";
 import { LETTA_CLOUD_API_URL } from "../../auth/oauth";
 import {
   ELAPSED_DISPLAY_THRESHOLD_MS,
@@ -48,6 +49,18 @@ function truncateEnd(value: string, maxChars: number): string {
   if (value.length <= maxChars) return value;
   if (maxChars <= 3) return value.slice(0, maxChars);
   return `${value.slice(0, maxChars - 3)}...`;
+}
+
+function getReasoningEffortTag(
+  effort: ModelReasoningEffort | null | undefined,
+): string | null {
+  if (effort === "none") return "no";
+  if (effort === "xhigh") return "max";
+  if (effort === "minimal") return "minimal";
+  if (effort === "low") return "low";
+  if (effort === "medium") return "medium";
+  if (effort === "high") return "high";
+  return null;
 }
 
 /**
@@ -203,6 +216,7 @@ const InputFooter = memo(function InputFooter({
   showExitHint,
   agentName,
   currentModel,
+  currentReasoningEffort,
   isOpenAICodexProvider,
   isByokProvider,
   hideFooter,
@@ -219,6 +233,7 @@ const InputFooter = memo(function InputFooter({
   showExitHint: boolean;
   agentName: string | null | undefined;
   currentModel: string | null | undefined;
+  currentReasoningEffort?: ModelReasoningEffort | null;
   isOpenAICodexProvider: boolean;
   isByokProvider: boolean;
   hideFooter: boolean;
@@ -230,10 +245,13 @@ const InputFooter = memo(function InputFooter({
   const hideFooterContent = hideFooter;
   const maxAgentChars = Math.max(10, Math.floor(rightColumnWidth * 0.45));
   const displayAgentName = truncateEnd(agentName || "Unnamed", maxAgentChars);
+  const reasoningTag = getReasoningEffortTag(currentReasoningEffort);
   const byokExtraChars = isByokProvider ? 2 : 0; // " ▲"
   const reservedChars = displayAgentName.length + byokExtraChars + 4;
   const maxModelChars = Math.max(8, rightColumnWidth - reservedChars);
-  const displayModel = truncateEnd(currentModel ?? "unknown", maxModelChars);
+  const modelWithReasoning =
+    (currentModel ?? "unknown") + (reasoningTag ? ` (${reasoningTag})` : "");
+  const displayModel = truncateEnd(modelWithReasoning, maxModelChars);
   const rightTextLength =
     displayAgentName.length + displayModel.length + byokExtraChars + 3;
   const rightPrefixSpaces = Math.max(0, rightColumnWidth - rightTextLength);
@@ -522,6 +540,7 @@ export function Input({
   agentName,
   currentModel,
   currentModelProvider,
+  currentReasoningEffort,
   messageQueue,
   onEnterQueueEditMode,
   onEscapeCancel,
@@ -561,6 +580,7 @@ export function Input({
   agentName?: string | null;
   currentModel?: string | null;
   currentModelProvider?: string | null;
+  currentReasoningEffort?: ModelReasoningEffort | null;
   messageQueue?: QueuedMessage[];
   onEnterQueueEditMode?: () => void;
   onEscapeCancel?: () => void;
@@ -1293,6 +1313,8 @@ export function Input({
               onAutocompleteActiveChange={setIsAutocompleteActive}
               agentId={agentId}
               agentName={agentName}
+              currentModel={currentModel}
+              currentReasoningEffort={currentReasoningEffort}
               serverUrl={serverUrl}
               workingDirectory={process.cwd()}
               conversationId={conversationId}
@@ -1307,6 +1329,7 @@ export function Input({
               showExitHint={ralphActive || ralphPending}
               agentName={agentName}
               currentModel={currentModel}
+              currentReasoningEffort={currentReasoningEffort}
               isOpenAICodexProvider={
                 currentModelProvider === OPENAI_CODEX_PROVIDER_NAME
               }
@@ -1354,6 +1377,7 @@ export function Input({
     ralphActive,
     ralphPending,
     currentModel,
+    currentReasoningEffort,
     currentModelProvider,
     hideFooter,
     footerRightColumnWidth,

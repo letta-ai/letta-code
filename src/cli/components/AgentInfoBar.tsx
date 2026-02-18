@@ -1,6 +1,7 @@
 import { Box } from "ink";
 import Link from "ink-link";
 import { memo, useMemo } from "react";
+import type { ModelReasoningEffort } from "../../agent/model";
 import { DEFAULT_AGENT_NAME } from "../../constants";
 import { settingsManager } from "../../settings-manager";
 import { getVersion } from "../../version";
@@ -10,8 +11,22 @@ import { Text } from "./Text";
 interface AgentInfoBarProps {
   agentId?: string;
   agentName?: string | null;
+  currentModel?: string | null;
+  currentReasoningEffort?: ModelReasoningEffort | null;
   serverUrl?: string;
   conversationId?: string;
+}
+
+function formatReasoningLabel(
+  effort: ModelReasoningEffort | null | undefined,
+): string | null {
+  if (effort === "none") return "no";
+  if (effort === "xhigh") return "max";
+  if (effort === "minimal") return "minimal";
+  if (effort === "low") return "low";
+  if (effort === "medium") return "medium";
+  if (effort === "high") return "high";
+  return null;
 }
 
 /**
@@ -20,6 +35,8 @@ interface AgentInfoBarProps {
 export const AgentInfoBar = memo(function AgentInfoBar({
   agentId,
   agentName,
+  currentModel,
+  currentReasoningEffort,
   serverUrl,
   conversationId,
 }: AgentInfoBarProps) {
@@ -38,6 +55,10 @@ export const AgentInfoBar = memo(function AgentInfoBar({
       ? `https://app.letta.com/agents/${agentId}${conversationId && conversationId !== "default" ? `?conversation=${conversationId}` : ""}`
       : "";
   const showBottomBar = agentId && agentId !== "loading";
+  const reasoningLabel = formatReasoningLabel(currentReasoningEffort);
+  const modelLine = currentModel
+    ? `${currentModel}${reasoningLabel ? ` (${reasoningLabel})` : ""}`
+    : null;
 
   if (!showBottomBar) {
     return null;
@@ -101,9 +122,15 @@ export const AgentInfoBar = memo(function AgentInfoBar({
         {!isCloudUser && <Text dimColor>{serverUrl}</Text>}
       </Box>
 
-      {/* Alien + Agent ID */}
+      {/* Model summary */}
       <Box>
         <Text color={colors.footer.agentName}>{alienLines[2]}</Text>
+        <Text dimColor>{modelLine ?? "model unknown"}</Text>
+      </Box>
+
+      {/* Agent ID */}
+      <Box>
+        <Text>{alienLines[3]}</Text>
         <Text dimColor>{agentId}</Text>
       </Box>
 
