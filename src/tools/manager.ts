@@ -7,6 +7,7 @@ import {
   runPostToolUseHooks,
   runPreToolUseHooks,
 } from "../hooks";
+import { OPENAI_CODEX_PROVIDER_NAME } from "../providers/openai-codex-provider";
 import { telemetry } from "../telemetry";
 import { debugLog } from "../utils/debug";
 import { TOOL_DEFINITIONS, type ToolName } from "./toolDefinitions";
@@ -805,10 +806,17 @@ export async function loadTools(modelIdentifier?: string): Promise<void> {
 export function isOpenAIModel(modelIdentifier: string): boolean {
   const info = getModelInfo(modelIdentifier);
   if (info?.handle && typeof info.handle === "string") {
-    return info.handle.startsWith("openai/");
+    return (
+      info.handle.startsWith("openai/") ||
+      info.handle.startsWith(`${OPENAI_CODEX_PROVIDER_NAME}/`)
+    );
   }
-  // Fallback: treat raw handle-style identifiers as OpenAI if they start with openai/
-  return modelIdentifier.startsWith("openai/");
+  // Fallback: treat raw handle-style identifiers as OpenAI for openai/*
+  // and ChatGPT OAuth Codex provider handles.
+  return (
+    modelIdentifier.startsWith("openai/") ||
+    modelIdentifier.startsWith(`${OPENAI_CODEX_PROVIDER_NAME}/`)
+  );
 }
 
 export function isGeminiModel(modelIdentifier: string): boolean {
