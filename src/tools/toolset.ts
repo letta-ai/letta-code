@@ -8,11 +8,13 @@ import {
   isOpenAIModel,
   loadSpecificTools,
   loadTools,
+  OPENAI_DEFAULT_TOOLS,
   OPENAI_PASCAL_TOOLS,
 } from "./manager";
 
 // Toolset definitions from manager.ts (single source of truth)
 const CODEX_TOOLS = OPENAI_PASCAL_TOOLS;
+const CODEX_SNAKE_TOOLS = OPENAI_DEFAULT_TOOLS;
 const GEMINI_TOOLS = GEMINI_PASCAL_TOOLS;
 
 // Server-side memory tool names that can mutate memory blocks.
@@ -228,7 +230,7 @@ export async function forceToolsetSwitch(
     await loadSpecificTools([...CODEX_TOOLS]);
     modelForLoading = "openai/gpt-4";
   } else if (toolsetName === "codex_snake") {
-    await loadTools("openai/gpt-4");
+    await loadSpecificTools([...CODEX_SNAKE_TOOLS]);
     modelForLoading = "openai/gpt-4";
   } else if (toolsetName === "gemini") {
     await loadSpecificTools([...GEMINI_TOOLS]);

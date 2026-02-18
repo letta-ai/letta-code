@@ -63,6 +63,15 @@ describe("Shell Launchers", () => {
         expect(bashLauncher).toBeDefined();
       });
 
+      test("uses login shell flag when login=true", () => {
+        const launchers = buildShellLaunchers("echo test", { login: true });
+        const loginLauncher = launchers.find(
+          (l) =>
+            (l[0]?.includes("bash") || l[0]?.includes("zsh")) && l[1] === "-lc",
+        );
+        expect(loginLauncher).toBeDefined();
+      });
+
       test("prefers user SHELL environment", () => {
         const originalShell = process.env.SHELL;
         process.env.SHELL = "/bin/zsh";

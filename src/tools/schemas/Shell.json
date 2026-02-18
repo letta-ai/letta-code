@@ -17,13 +17,20 @@
       "type": "number",
       "description": "The timeout for the command in milliseconds"
     },
-    "with_escalated_permissions": {
-      "type": "boolean",
-      "description": "Whether to request escalated permissions. Set to true if command needs to be run without sandbox restrictions"
+    "sandbox_permissions": {
+      "type": "string",
+      "description": "Sandbox permissions for the command. Set to \"require_escalated\" to request running without sandbox restrictions; defaults to \"use_default\"."
     },
     "justification": {
       "type": "string",
-      "description": "Only set if with_escalated_permissions is true. 1-sentence explanation of why we want to run this command."
+      "description": "Only set if sandbox_permissions is \"require_escalated\". Request approval from the user to run this command outside the sandbox. Phrased as a simple question that summarizes the purpose of the command as it relates to the task at hand - e.g. 'Do you want to fetch and pull the latest version of this git branch?'"
+    },
+    "prefix_rule": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Only specify when sandbox_permissions is `require_escalated`. Suggest a prefix command pattern that will allow you to fulfill similar requests from the user in the future. Should be a short but reasonable prefix, e.g. [\"git\", \"pull\"] or [\"uv\", \"run\"] or [\"pytest\"]."
     }
   },
   "required": ["command"],

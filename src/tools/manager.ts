@@ -82,15 +82,11 @@ export const ANTHROPIC_DEFAULT_TOOLS: ToolName[] = [
 
 export const OPENAI_DEFAULT_TOOLS: ToolName[] = [
   "shell_command",
-  "shell",
-  "read_file",
-  "list_dir",
-  "grep_files",
+  // TODO(codex-parity): add once request_user_input tool exists in raw codex path.
+  // "request_user_input",
   "apply_patch",
   "update_plan",
   "view_image",
-  "Skill",
-  "Task",
 ];
 
 export const GEMINI_DEFAULT_TOOLS: ToolName[] = [
@@ -117,11 +113,7 @@ export const OPENAI_PASCAL_TOOLS: ToolName[] = [
   "Skill",
   // Standard Codex tools
   "ShellCommand",
-  "Shell",
-  "ReadFile",
-  "view_image",
-  "ListDir",
-  "GrepFiles",
+  "ViewImage",
   "ApplyPatch",
   "UpdatePlan",
 ];
@@ -162,6 +154,7 @@ const TOOL_PERMISSIONS: Record<ToolName, { requiresApproval: boolean }> = {
   MultiEdit: { requiresApproval: true },
   Read: { requiresApproval: false },
   view_image: { requiresApproval: false },
+  ViewImage: { requiresApproval: false },
   ReadLSP: { requiresApproval: false },
   Skill: { requiresApproval: false },
   Task: { requiresApproval: true },
