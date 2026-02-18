@@ -96,7 +96,13 @@ const DynamicPreview: React.FC<DynamicPreviewProps> = ({
     const cmd =
       typeof cmdVal === "string" ? cmdVal : toolArgs || "(no arguments)";
     const descVal = parsedArgs?.description;
-    const desc = typeof descVal === "string" ? descVal : "";
+    const justificationVal = parsedArgs?.justification;
+    const desc =
+      typeof descVal === "string"
+        ? descVal
+        : typeof justificationVal === "string"
+          ? justificationVal
+          : "";
 
     return (
       <Box flexDirection="column" paddingLeft={2}>

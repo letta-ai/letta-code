@@ -1,4 +1,7 @@
 const SEP = "\u0000";
+type ShellLaunchOptions = {
+  login?: boolean;
+};
 
 function pushUnique(
   list: string[][],
@@ -53,7 +56,16 @@ function windowsLaunchers(command: string): string[][] {
   return launchers;
 }
 
-function unixLaunchers(command: string): string[][] {
+function shellCommandFlag(shellName: string, login: boolean): string {
+  if (!login) return "-c";
+  const normalized = shellName.replace(/\\/g, "/").toLowerCase();
+  if (normalized.includes("bash") || normalized.includes("zsh")) {
+    return "-lc";
+  }
+  return "-c";
+}
+
+function unixLaunchers(command: string, login: boolean): string[][] {
   const trimmed = command.trim();
   if (!trimmed) return [];
   const launchers: string[][] = [];
@@ -62,42 +74,50 @@ function unixLaunchers(command: string): string[][] {
   // On macOS, ALWAYS prefer zsh first due to bash 3.2's HEREDOC parsing bug
   // with odd numbers of apostrophes. This takes precedence over $SHELL.
   if (process.platform === "darwin") {
-    pushUnique(launchers, seen, ["/bin/zsh", "-c", trimmed]);
+    pushUnique(launchers, seen, [
+      "/bin/zsh",
+      shellCommandFlag("/bin/zsh", login),
+      trimmed,
+    ]);
   }
 
   // Try user's preferred shell from $SHELL environment variable
-  // Use -c (non-login) to avoid profile sourcing that can hang on CI
+  // Use login semantics only when explicitly requested.
   const envShell = process.env.SHELL?.trim();
   if (envShell) {
-    pushUnique(launchers, seen, [envShell, "-c", trimmed]);
+    pushUnique(launchers, seen, [
+      envShell,
+      shellCommandFlag(envShell, login),
+      trimmed,
+    ]);
   }
 
-  // Fallback defaults - prefer simple "bash" PATH lookup first (like original code)
-  // then absolute paths. Use -c (non-login shell) to avoid profile sourcing.
+  // Fallback defaults - prefer simple "bash" PATH lookup first (like original code),
+  // then absolute paths.
   const defaults: string[][] =
     process.platform === "darwin"
       ? [
-          ["/bin/zsh", "-c", trimmed],
-          ["bash", "-c", trimmed], // PATH lookup, like original
-          ["/bin/bash", "-c", trimmed],
-          ["/usr/bin/bash", "-c", trimmed],
-          ["/bin/sh", "-c", trimmed],
-          ["/bin/ash", "-c", trimmed],
-          ["/usr/bin/env", "zsh", "-c", trimmed],
-          ["/usr/bin/env", "bash", "-c", trimmed],
-          ["/usr/bin/env", "sh", "-c", trimmed],
-          ["/usr/bin/env", "ash", "-c", trimmed],
+          ["/bin/zsh", shellCommandFlag("/bin/zsh", login), trimmed],
+          ["bash", shellCommandFlag("bash", login), trimmed], // PATH lookup, like original
+          ["/bin/bash", shellCommandFlag("/bin/bash", login), trimmed],
+          ["/usr/bin/bash", shellCommandFlag("/usr/bin/bash", login), trimmed],
+          ["/bin/sh", shellCommandFlag("/bin/sh", login), trimmed],
+          ["/bin/ash", shellCommandFlag("/bin/ash", login), trimmed],
+          ["/usr/bin/env", "zsh", shellCommandFlag("zsh", login), trimmed],
+          ["/usr/bin/env", "bash", shellCommandFlag("bash", login), trimmed],
+          ["/usr/bin/env", "sh", shellCommandFlag("sh", login), trimmed],
+          ["/usr/bin/env", "ash", shellCommandFlag("ash", login), trimmed],
         ]
       : [
-          ["/bin/bash", "-c", trimmed],
-          ["/usr/bin/bash", "-c", trimmed],
-          ["/bin/zsh", "-c", trimmed],
-          ["/bin/sh", "-c", trimmed],
-          ["/bin/ash", "-c", trimmed],
-          ["/usr/bin/env", "bash", "-c", trimmed],
-          ["/usr/bin/env", "zsh", "-c", trimmed],
-          ["/usr/bin/env", "sh", "-c", trimmed],
-          ["/usr/bin/env", "ash", "-c", trimmed],
+          ["/bin/bash", shellCommandFlag("/bin/bash", login), trimmed],
+          ["/usr/bin/bash", shellCommandFlag("/usr/bin/bash", login), trimmed],
+          ["/bin/zsh", shellCommandFlag("/bin/zsh", login), trimmed],
+          ["/bin/sh", shellCommandFlag("/bin/sh", login), trimmed],
+          ["/bin/ash", shellCommandFlag("/bin/ash", login), trimmed],
+          ["/usr/bin/env", "bash", shellCommandFlag("bash", login), trimmed],
+          ["/usr/bin/env", "zsh", shellCommandFlag("zsh", login), trimmed],
+          ["/usr/bin/env", "sh", shellCommandFlag("sh", login), trimmed],
+          ["/usr/bin/env", "ash", shellCommandFlag("ash", login), trimmed],
         ];
   for (const entry of defaults) {
     pushUnique(launchers, seen, entry);
@@ -105,8 +125,12 @@ function unixLaunchers(command: string): string[][] {
   return launchers;
 }
 
-export function buildShellLaunchers(command: string): string[][] {
+export function buildShellLaunchers(
+  command: string,
+  options?: ShellLaunchOptions,
+): string[][] {
+  const login = options?.login ?? false;
   return process.platform === "win32"
     ? windowsLaunchers(command)
-    : unixLaunchers(command);
+    : unixLaunchers(command, login);
 }

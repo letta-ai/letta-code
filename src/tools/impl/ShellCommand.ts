@@ -6,9 +6,11 @@ import { validateRequiredParams } from "./validation.js";
 interface ShellCommandArgs {
   command: string;
   workdir?: string;
+  login?: boolean;
   timeout_ms?: number;
-  with_escalated_permissions?: boolean;
+  sandbox_permissions?: "use_default" | "require_escalated";
   justification?: string;
+  prefix_rule?: string[];
   signal?: AbortSignal;
   onOutput?: (chunk: string, stream: "stdout" | "stderr") => void;
 }
@@ -31,13 +33,13 @@ export async function shell_command(
   const {
     command,
     workdir,
+    login = true,
     timeout_ms,
-    with_escalated_permissions,
     justification,
     signal,
     onOutput,
   } = args;
-  const launchers = buildShellLaunchers(command);
+  const launchers = buildShellLaunchers(command, { login });
   if (launchers.length === 0) {
     throw new Error("Command must be a non-empty string");
   }
@@ -51,7 +53,6 @@ export async function shell_command(
         command: launcher,
         workdir,
         timeout_ms,
-        with_escalated_permissions,
         justification,
         signal,
         onOutput,

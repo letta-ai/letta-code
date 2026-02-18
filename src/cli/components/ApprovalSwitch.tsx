@@ -109,7 +109,11 @@ function getBashInfo(approval: ApprovalRequest): BashInfo | null {
       command =
         typeof args.command === "string" ? args.command : "(no command)";
       description =
-        typeof args.description === "string" ? args.description : "";
+        typeof args.description === "string"
+          ? args.description
+          : typeof args.justification === "string"
+            ? args.justification
+            : "";
     }
 
     return {

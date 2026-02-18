@@ -194,6 +194,11 @@ const toolDefinitions = {
     description: ViewImageDescription.trim(),
     impl: view_image as unknown as ToolImplementation,
   },
+  ViewImage: {
+    schema: ViewImageSchema,
+    description: ViewImageDescription.trim(),
+    impl: view_image as unknown as ToolImplementation,
+  },
   // LSP-enhanced Read - used when LETTA_ENABLE_LSP is set
   ReadLSP: {
     schema: ReadLSPSchema,
