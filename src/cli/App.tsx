@@ -1295,20 +1295,50 @@ export default function App({
       currentModelLabel.split("/").pop())
     : null;
   const currentModelProvider = llmConfig?.provider_name ?? null;
-  const llmReasoningEffort = llmConfig?.reasoning_effort;
-  const llmEnableReasoner = (llmConfig as { enable_reasoner?: boolean | null })
-    ?.enable_reasoner;
-  const currentReasoningEffort: ModelReasoningEffort | null =
-    llmReasoningEffort === "none" ||
-    llmReasoningEffort === "minimal" ||
-    llmReasoningEffort === "low" ||
-    llmReasoningEffort === "medium" ||
-    llmReasoningEffort === "high" ||
-    llmReasoningEffort === "xhigh"
-      ? llmReasoningEffort
-      : llmEnableReasoner === false
-        ? "none"
-        : null;
+  // Derive reasoning effort from model_settings (preferred over deprecated llm_config)
+  const currentReasoningEffort: ModelReasoningEffort | null = (() => {
+    const ms = agentState?.model_settings;
+    if (ms && "provider_type" in ms) {
+      // OpenAI/OpenRouter: reasoning.reasoning_effort
+      if (ms.provider_type === "openai" && "reasoning" in ms && ms.reasoning) {
+        const re = (ms.reasoning as { reasoning_effort?: string })
+          .reasoning_effort;
+        if (
+          re === "none" ||
+          re === "minimal" ||
+          re === "low" ||
+          re === "medium" ||
+          re === "high" ||
+          re === "xhigh"
+        )
+          return re;
+      }
+      // Anthropic/Bedrock: effort field (maps to output_config.effort in the API)
+      if (ms.provider_type === "anthropic" || ms.provider_type === "bedrock") {
+        const effort = (ms as { effort?: string | null }).effort;
+        if (effort === "low" || effort === "medium" || effort === "high")
+          return effort;
+        if (effort === "max") return "xhigh";
+      }
+    }
+    // Fallback: deprecated llm_config fields
+    const re = llmConfig?.reasoning_effort;
+    if (
+      re === "none" ||
+      re === "minimal" ||
+      re === "low" ||
+      re === "medium" ||
+      re === "high" ||
+      re === "xhigh"
+    )
+      return re;
+    if (
+      (llmConfig as { enable_reasoner?: boolean | null })?.enable_reasoner ===
+      false
+    )
+      return "none";
+    return null;
+  })();
 
   // Billing tier for conditional UI and error context (fetched once on mount)
   const [billingTier, setBillingTier] = useState<string | null>(null);
