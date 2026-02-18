@@ -1299,7 +1299,7 @@ export async function handleHeadlessCommand(
         approvalMessages,
         { agentId: agent.id },
       );
-      await drainStreamWithResume(
+      const drainResult = await drainStreamWithResume(
         approvalStream,
         createBuffers(agent.id),
         () => {},
@@ -1308,6 +1308,16 @@ export async function handleHeadlessCommand(
         undefined,
         reminderContextTracker,
       );
+      // If the approval drain errored or was cancelled, abort rather than
+      // looping back and re-fetching approvals (which would restart the cycle).
+      if (
+        drainResult.stopReason === "error" ||
+        drainResult.stopReason === "cancelled"
+      ) {
+        throw new Error(
+          `Approval drain ended with stop reason: ${drainResult.stopReason}`,
+        );
+      }
     }
   };
 
@@ -2366,7 +2376,7 @@ async function runBidirectionalMode(
         approvalMessages,
         { agentId: agent.id },
       );
-      await drainStreamWithResume(
+      const drainResult = await drainStreamWithResume(
         approvalStream,
         createBuffers(agent.id),
         () => {},
@@ -2375,6 +2385,14 @@ async function runBidirectionalMode(
         undefined,
         reminderContextTracker,
       );
+      if (
+        drainResult.stopReason === "error" ||
+        drainResult.stopReason === "cancelled"
+      ) {
+        throw new Error(
+          `Approval drain ended with stop reason: ${drainResult.stopReason}`,
+        );
+      }
     }
   };
 

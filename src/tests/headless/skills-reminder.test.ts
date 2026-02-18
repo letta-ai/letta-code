@@ -3,11 +3,14 @@ import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agen
 import { prependReminderPartsToContent } from "../../reminders/engine";
 
 describe("headless shared reminder content helpers", () => {
-  test("prepends reminder text to string user content", () => {
+  test("prepends reminder text to string user content as parts array", () => {
     const result = prependReminderPartsToContent("hello", [
       { type: "text", text: "<skills>demo</skills>" },
     ]);
-    expect(result).toBe("<skills>demo</skills>\n\nhello");
+    expect(Array.isArray(result)).toBe(true);
+    if (!Array.isArray(result)) return;
+    expect(result[0]).toEqual({ type: "text", text: "<skills>demo</skills>" });
+    expect(result[1]).toEqual({ type: "text", text: "hello" });
   });
 
   test("prepends reminder parts for multimodal user content", () => {

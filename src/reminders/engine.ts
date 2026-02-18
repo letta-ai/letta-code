@@ -306,8 +306,10 @@ export function prependReminderPartsToContent(
   }
 
   if (typeof content === "string") {
-    const prefix = reminderParts.map((part) => part.text).join("\n\n");
-    return `${prefix}\n\n${content}`;
+    return [
+      ...reminderParts,
+      { type: "text", text: content },
+    ] as MessageCreate["content"];
   }
 
   if (Array.isArray(content)) {
