@@ -187,13 +187,10 @@ import {
 import { formatCompact } from "./helpers/format";
 import { parsePatchOperations } from "./helpers/formatArgsDisplay";
 import {
-  buildCompactionMemoryReminder,
-  buildMemoryReminder,
   getReflectionSettings,
   parseMemoryPreference,
   type ReflectionSettings,
   reflectionSettingsToLegacyMode,
-  shouldFireStepCountTrigger,
 } from "./helpers/memoryReminder";
 import {
   type QueuedMessage,
@@ -257,6 +254,12 @@ import { useConfigurableStatusLine } from "./hooks/useConfigurableStatusLine";
 import { useSuspend } from "./hooks/useSuspend/useSuspend.ts";
 import { useSyncedState } from "./hooks/useSyncedState";
 import { useTerminalRows, useTerminalWidth } from "./hooks/useTerminalWidth";
+import { buildSharedReminderParts } from "../reminders/engine";
+import {
+  createSharedReminderState,
+  resetSharedReminderState,
+  syncReminderStateFromContextTracker,
+} from "../reminders/state";
 
 // Used only for terminal resize, not for dialog dismissal (see PR for details)
 const CLEAR_SCREEN_AND_HOME = "\u001B[2J\u001B[H";
@@ -1459,23 +1462,13 @@ export default function App({
   // Show exit stats on exit (double Ctrl+C)
   const [showExitStats, setShowExitStats] = useState(false);
 
-  // Track if we've sent the session context for this CLI session
-  const hasSentSessionContextRef = useRef(false);
+  const sharedReminderStateRef = useRef(createSharedReminderState());
 
   // Track if we've set the conversation summary for this new conversation
   // Initialized to true for resumed conversations (they already have context)
   const hasSetConversationSummaryRef = useRef(resumedExistingConversation);
   // Store first user query for conversation summary
   const firstUserQueryRef = useRef<string | null>(null);
-
-  // Track skills injection state (LET-7353)
-  const discoveredSkillsRef = useRef<import("../agent/skills").Skill[] | null>(
-    null,
-  );
-  const hasInjectedSkillsRef = useRef(false);
-
-  // Track conversation turn count for periodic memory reminders
-  const turnCountRef = useRef(0);
 
   // Track last notified permission mode to detect changes
   const lastNotifiedModeRef = useRef<PermissionMode>("default");
@@ -2715,8 +2708,8 @@ export default function App({
     // Git-backed memory: check status periodically (fire-and-forget).
     // Runs every N turns to detect uncommitted changes or unpushed commits.
     const isIntervalTurn =
-      turnCountRef.current > 0 &&
-      turnCountRef.current % MEMFS_CONFLICT_CHECK_INTERVAL === 0;
+      sharedReminderStateRef.current.turnCount > 0 &&
+      sharedReminderStateRef.current.turnCount % MEMFS_CONFLICT_CHECK_INTERVAL === 0;
 
     if (isIntervalTurn && !memfsGitCheckInFlightRef.current) {
       memfsGitCheckInFlightRef.current = true;
@@ -5087,8 +5080,7 @@ export default function App({
         setStaticRenderEpoch((e) => e + 1);
         resetTrajectoryBases();
 
-        // Reset turn counter for memory reminders when switching agents
-        turnCountRef.current = 0;
+        resetSharedReminderState(sharedReminderStateRef.current);
 
         // Update agent state - also update ref immediately for any code that runs before re-render
         agentIdRef.current = targetAgentId;
@@ -5216,8 +5208,7 @@ export default function App({
         setStaticRenderEpoch((e) => e + 1);
         resetTrajectoryBases();
 
-        // Reset turn counter for memory reminders
-        turnCountRef.current = 0;
+        resetSharedReminderState(sharedReminderStateRef.current);
 
         // Update agent state
         agentIdRef.current = agent.id;
@@ -6533,8 +6524,7 @@ export default function App({
             // Reset context tokens for new conversation
             resetContextHistory(contextTrackerRef.current);
 
-            // Reset turn counter for memory reminders
-            turnCountRef.current = 0;
+            resetSharedReminderState(sharedReminderStateRef.current);
 
             // Re-run SessionStart hooks for new conversation
             sessionHooksRanRef.current = false;
@@ -6611,8 +6601,7 @@ export default function App({
             // Reset context tokens for new conversation
             resetContextHistory(contextTrackerRef.current);
 
-            // Reset turn counter for memory reminders
-            turnCountRef.current = 0;
+            resetSharedReminderState(sharedReminderStateRef.current);
 
             // Re-run SessionStart hooks for new conversation
             sessionHooksRanRef.current = false;
@@ -7995,9 +7984,6 @@ ${SYSTEM_REMINDER_CLOSE}`;
       const contentParts =
         overrideContentParts ?? buildMessageContentFromDisplay(msg);
 
-      // Prepend plan mode reminder if in plan mode
-      const planModeReminder = getPlanModeReminder();
-
       // Prepend ralph mode reminder if in ralph mode
       let ralphModeReminder = "";
       if (ralphMode.getState().isActive) {
@@ -8011,30 +7997,6 @@ ${SYSTEM_REMINDER_CLOSE}`;
           const ralphState = ralphMode.getState();
           ralphModeReminder = `${buildRalphContinuationReminder(ralphState)}\n\n`;
         }
-      }
-
-      // Prepend session context on first message of CLI session (if enabled)
-      let sessionContextReminder = "";
-      const sessionContextEnabled = settingsManager.getSetting(
-        "sessionContextEnabled",
-      );
-      if (
-        !hasSentSessionContextRef.current &&
-        sessionContextEnabled &&
-        sessionContextReminderEnabled
-      ) {
-        const { buildSessionContext } = await import(
-          "./helpers/sessionContext"
-        );
-        sessionContextReminder = buildSessionContext({
-          agentInfo: {
-            id: agentId,
-            name: agentName,
-            description: agentDescription,
-            lastRunAt: agentLastRunAt,
-          },
-        });
-        hasSentSessionContextRef.current = true;
       }
 
       // Inject SessionStart hook feedback (stdout on exit 2) into first message only
@@ -8062,24 +8024,6 @@ ${SYSTEM_REMINDER_CLOSE}
 
       const reflectionSettings = getReflectionSettings();
       const memfsEnabledForAgent = settingsManager.isMemfsEnabled(agentId);
-      const shouldFireStepTrigger = shouldFireStepCountTrigger(
-        turnCountRef.current,
-        reflectionSettings,
-      );
-      let memoryReminderContent = "";
-      if (
-        shouldFireStepTrigger &&
-        (reflectionSettings.behavior === "reminder" || !memfsEnabledForAgent)
-      ) {
-        // Step-count reminder mode (or non-memfs fallback)
-        memoryReminderContent = await buildMemoryReminder(
-          turnCountRef.current,
-          agentId,
-        );
-      }
-
-      // Increment turn count for next iteration
-      turnCountRef.current += 1;
 
       // Build git memory sync reminder if uncommitted changes or unpushed commits
       let memoryGitReminder = "";
@@ -8164,56 +8108,28 @@ ${SYSTEM_REMINDER_CLOSE}
           return false;
         }
       };
-      pushReminder(sessionContextReminder);
-
-      // Inject available skills as system-reminder (LET-7353)
-      // Discover each turn so on-disk skill changes can trigger reinjection.
-      {
-        const {
-          discoverSkills: discover,
-          SKILLS_DIR: defaultDir,
-          formatSkillsAsSystemReminder,
-        } = await import("../agent/skills");
-        const { getSkillsDirectory, getSkillSources } = await import(
-          "../agent/context"
-        );
-
-        const previousSkillsReminder = discoveredSkillsRef.current
-          ? formatSkillsAsSystemReminder(discoveredSkillsRef.current)
-          : null;
-
-        let latestSkills = discoveredSkillsRef.current ?? [];
-        try {
-          const skillsDir =
-            getSkillsDirectory() || join(process.cwd(), defaultDir);
-          const { skills } = await discover(skillsDir, agentId, {
-            sources: getSkillSources(),
-          });
-          latestSkills = skills;
-        } catch {
-          // Keep the previous snapshot when discovery fails.
-        }
-
-        discoveredSkillsRef.current = latestSkills;
-        const latestSkillsReminder = formatSkillsAsSystemReminder(
-          discoveredSkillsRef.current,
-        );
-        if (
-          previousSkillsReminder !== null &&
-          previousSkillsReminder !== latestSkillsReminder
-        ) {
-          contextTrackerRef.current.pendingSkillsReinject = true;
-        }
-
-        const needsSkillsReinject =
-          contextTrackerRef.current.pendingSkillsReinject;
-        if (!hasInjectedSkillsRef.current || needsSkillsReinject) {
-          if (latestSkillsReminder) {
-            pushReminder(latestSkillsReminder);
-          }
-          hasInjectedSkillsRef.current = true;
-          contextTrackerRef.current.pendingSkillsReinject = false;
-        }
+      syncReminderStateFromContextTracker(
+        sharedReminderStateRef.current,
+        contextTrackerRef.current,
+      );
+      const { getSkillSources } = await import("../agent/context");
+      const { parts: sharedReminderParts } = await buildSharedReminderParts({
+        mode: "interactive",
+        agent: {
+          id: agentId,
+          name: agentName,
+          description: agentDescription,
+          lastRunAt: agentLastRunAt,
+        },
+        state: sharedReminderStateRef.current,
+        sessionContextReminderEnabled,
+        reflectionSettings,
+        skillSources: getSkillSources(),
+        resolvePlanModeReminder: getPlanModeReminder,
+        maybeLaunchReflectionSubagent,
+      });
+      for (const part of sharedReminderParts) {
+        reminderParts.push(part);
       }
 
       // Build conversation switch alert if a switch is pending (behind feature flag)
@@ -8234,39 +8150,9 @@ ${SYSTEM_REMINDER_CLOSE}
       pushReminder(sessionStartHookFeedback);
       pushReminder(permissionModeAlert);
       pushReminder(conversationSwitchAlert);
-      pushReminder(planModeReminder);
       pushReminder(ralphModeReminder);
-
       pushReminder(bashCommandPrefix);
       pushReminder(userPromptSubmitHookFeedback);
-      pushReminder(memoryReminderContent);
-
-      // Step-count auto-launch mode: fire reflection in background on interval.
-      if (
-        shouldFireStepTrigger &&
-        reflectionSettings.trigger === "step-count" &&
-        reflectionSettings.behavior === "auto-launch"
-      ) {
-        await maybeLaunchReflectionSubagent("step-count");
-      }
-
-      // Consume compaction-triggered reflection behavior on next user turn.
-      if (contextTrackerRef.current.pendingReflectionTrigger) {
-        contextTrackerRef.current.pendingReflectionTrigger = false;
-        if (reflectionSettings.trigger === "compaction-event") {
-          if (
-            reflectionSettings.behavior === "auto-launch" &&
-            memfsEnabledForAgent
-          ) {
-            await maybeLaunchReflectionSubagent("compaction-event");
-          } else {
-            const compactionReminderContent =
-              await buildCompactionMemoryReminder(agentId);
-            pushReminder(compactionReminderContent);
-          }
-        }
-      }
-
       pushReminder(memoryGitReminder);
       const messageContent =
         reminderParts.length > 0
