@@ -266,7 +266,6 @@ const MIN_CLEAR_INTERVAL_MS = 750;
 const STABLE_WIDTH_SETTLE_MS = 180;
 const TOOL_CALL_COMMIT_DEFER_MS = 50;
 const ANIMATION_RESUME_HYSTERESIS_ROWS = 2;
-const MAX_STATIC_ITEMS_ON_RESIZE = 15;
 
 // Eager approval checking is now CONDITIONAL (LET-7101):
 // - Enabled when resuming a session (--resume, --continue, or startupApprovals exist)
@@ -1675,12 +1674,6 @@ export default function App({
       ) {
         process.stdout.write(CLEAR_SCREEN_AND_HOME);
       }
-      setStaticItems((prev) => {
-        if (prev.length <= MAX_STATIC_ITEMS_ON_RESIZE) {
-          return prev;
-        }
-        return prev.slice(-MAX_STATIC_ITEMS_ON_RESIZE);
-      });
       setStaticRenderEpoch((epoch) => epoch + 1);
       lastClearedColumnsRef.current = targetColumns;
       lastClearAtRef.current = Date.now();
