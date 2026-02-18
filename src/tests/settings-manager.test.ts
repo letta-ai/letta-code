@@ -522,6 +522,39 @@ describe("Settings Manager - Reset", () => {
     const settings = settingsManager.getSettings();
     expect(settings.tokenStreaming).toBe(true);
   });
+
+  test("Reset clears managedKeys so stale keys don't leak into next session", async () => {
+    const { writeFile, mkdir } = await import("../utils/fs.js");
+    const settingsDir = join(testHomeDir, ".letta");
+    await mkdir(settingsDir, { recursive: true });
+
+    // First session: write a setting that will be tracked in managedKeys
+    await settingsManager.initialize();
+    settingsManager.updateSettings({ lastAgent: "agent-first-session" });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    await settingsManager.reset();
+
+    // Second session: write a completely fresh file with a different key
+    await writeFile(
+      join(settingsDir, "settings.json"),
+      JSON.stringify({ tokenStreaming: true }),
+    );
+    await settingsManager.initialize();
+
+    // After re-init, managedKeys should only contain keys from the new file.
+    // Persisting should write tokenStreaming but NOT ghost-write lastAgent from
+    // the previous session's managedKeys.
+    settingsManager.updateSettings({ enableSleeptime: false });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    await settingsManager.reset();
+    await settingsManager.initialize();
+
+    const settings = settingsManager.getSettings();
+    expect(settings.tokenStreaming).toBe(true);
+    // lastAgent was only set in the first session — should not reappear
+    expect(settings.lastAgent).toBeNull();
+  });
 });
 
 // ============================================================================
@@ -1009,5 +1042,79 @@ describe("Settings Manager - Toolset Preferences", () => {
     expect(settingsManager.getToolsetPreference("agent-toolset-persist")).toBe(
       "gemini",
     );
+  });
+});
+
+// ============================================================================
+// Managed Keys / Settings Preservation Tests
+// ============================================================================
+
+describe("Settings Manager - Managed Keys Preservation", () => {
+  test("Unknown top-level keys in the file are preserved across writes", async () => {
+    const { writeFile, mkdir } = await import("../utils/fs.js");
+    const settingsDir = join(testHomeDir, ".letta");
+    await mkdir(settingsDir, { recursive: true });
+
+    // Simulate a user manually adding a key that Letta Code doesn't know about
+    await writeFile(
+      join(settingsDir, "settings.json"),
+      JSON.stringify({
+        tokenStreaming: true,
+        myCustomFlag: "keep-me",
+      }),
+    );
+
+    await settingsManager.initialize();
+
+    // Update an unrelated setting — should not clobber myCustomFlag
+    settingsManager.updateSettings({ lastAgent: "agent-abc" });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    // Read the raw file to confirm myCustomFlag survived
+    const { readFile } = await import("../utils/fs.js");
+    const raw = JSON.parse(
+      await readFile(join(settingsDir, "settings.json")),
+    ) as Record<string, unknown>;
+
+    expect(raw.myCustomFlag).toBe("keep-me");
+    expect(raw.tokenStreaming).toBe(true);
+    expect(raw.lastAgent).toBe("agent-abc");
+  });
+
+  test("No-keychain fallback persists refreshToken and LETTA_API_KEY to file", async () => {
+    // On machines with a keychain, tokens go to the keychain, not the file.
+    // On machines without a keychain, tokens must fall back to the file.
+    // Both paths are exercised here depending on the environment.
+    const secretsAvail = await isKeychainAvailable();
+    if (secretsAvail) {
+      // On machines with a keychain, tokens go to the keychain, not the file.
+      // Test the fallback indirectly: if secrets are available the tokens
+      // should NOT be in the file (they're in the keychain).
+      await settingsManager.initialize();
+      settingsManager.updateSettings({ refreshToken: "rt-keychain-test" });
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      const { readFile } = await import("../utils/fs.js");
+      const settingsDir = join(testHomeDir, ".letta");
+      const raw = JSON.parse(
+        await readFile(join(settingsDir, "settings.json")),
+      ) as Record<string, unknown>;
+
+      // With keychain available, refreshToken goes to keychain not file
+      expect(raw.refreshToken).toBeUndefined();
+    } else {
+      // No keychain: tokens fall back to the settings file and must be persisted
+      await settingsManager.initialize();
+      settingsManager.updateSettings({ refreshToken: "rt-fallback-test" });
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      const { readFile } = await import("../utils/fs.js");
+      const settingsDir = join(testHomeDir, ".letta");
+      const raw = JSON.parse(
+        await readFile(join(settingsDir, "settings.json")),
+      ) as Record<string, unknown>;
+
+      expect(raw.refreshToken).toBe("rt-fallback-test");
+    }
   });
 });

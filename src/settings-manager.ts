@@ -541,6 +541,7 @@ class SettingsManager {
 
       if (secureTokens.refreshToken) {
         fallbackSettings.refreshToken = secureTokens.refreshToken;
+        this.managedKeys.add("refreshToken");
       }
 
       if (secureTokens.apiKey) {
@@ -548,6 +549,7 @@ class SettingsManager {
           ...fallbackSettings.env,
           LETTA_API_KEY: secureTokens.apiKey,
         };
+        this.managedKeys.add("env");
       }
 
       this.settings = fallbackSettings;
@@ -671,9 +673,13 @@ class SettingsManager {
       // Only write keys we loaded from the file or explicitly set via updateSettings().
       // This preserves manual file edits for keys we never touched (e.g. defaults).
       const merged: Record<string, unknown> = { ...existingSettings };
+      const settingsRecord = this.settings as unknown as Record<
+        string,
+        unknown
+      >;
       for (const key of this.managedKeys) {
-        if (key in (this.settings as Record<string, unknown>)) {
-          merged[key] = (this.settings as Record<string, unknown>)[key];
+        if (key in settingsRecord) {
+          merged[key] = settingsRecord[key];
         } else {
           delete merged[key];
         }
@@ -1614,6 +1620,7 @@ class SettingsManager {
     this.initialized = false;
     this.pendingWrites.clear();
     this.secretsAvailable = null;
+    this.managedKeys.clear();
   }
 }
 
