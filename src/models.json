@@ -14,6 +14,18 @@
     }
   },
   {
+    "id": "sonnet-1m",
+    "handle": "anthropic/claude-sonnet-4-6",
+    "label": "Sonnet 4.6 1M",
+    "description": "Claude Sonnet 4.6 with 1M token context window (high reasoning)",
+    "updateArgs": {
+      "context_window": 1000000,
+      "max_output_tokens": 128000,
+      "reasoning_effort": "high",
+      "enable_reasoner": true
+    }
+  },
+  {
     "id": "sonnet-4.6-no-reasoning",
     "handle": "anthropic/claude-sonnet-4-6",
     "label": "Sonnet 4.6",
