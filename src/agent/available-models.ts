@@ -44,6 +44,17 @@ export function getAvailableModelsCacheInfo(): {
 }
 
 /**
+ * Return cached model handles if available.
+ * Used by UI components to bootstrap from cache without showing a loading flash.
+ */
+export function getCachedModelHandles(): Set<string> | null {
+  if (!cache) {
+    return null;
+  }
+  return new Set(cache.handles);
+}
+
+/**
  * Provider response from /v1/providers/ endpoint
  */
 type Provider = {

@@ -5,6 +5,52 @@ import modelsData from "../models.json";
 
 export const models = modelsData;
 
+export type ModelReasoningEffort =
+  | "none"
+  | "minimal"
+  | "low"
+  | "medium"
+  | "high"
+  | "xhigh";
+
+const REASONING_EFFORT_ORDER: ModelReasoningEffort[] = [
+  "none",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+];
+
+function isModelReasoningEffort(value: unknown): value is ModelReasoningEffort {
+  return (
+    typeof value === "string" &&
+    REASONING_EFFORT_ORDER.includes(value as ModelReasoningEffort)
+  );
+}
+
+export function getReasoningTierOptionsForHandle(modelHandle: string): Array<{
+  effort: ModelReasoningEffort;
+  modelId: string;
+}> {
+  const byEffort = new Map<ModelReasoningEffort, string>();
+
+  for (const model of models) {
+    if (model.handle !== modelHandle) continue;
+    const effort = (model.updateArgs as { reasoning_effort?: unknown } | null)
+      ?.reasoning_effort;
+    if (!isModelReasoningEffort(effort)) continue;
+    if (!byEffort.has(effort)) {
+      byEffort.set(effort, model.id);
+    }
+  }
+
+  return REASONING_EFFORT_ORDER.flatMap((effort) => {
+    const modelId = byEffort.get(effort);
+    return modelId ? [{ effort, modelId }] : [];
+  });
+}
+
 /**
  * Resolve a model by ID or handle
  * @param modelIdentifier - Can be either a model ID (e.g., "opus-4.5") or a full handle (e.g., "anthropic/claude-opus-4-5")

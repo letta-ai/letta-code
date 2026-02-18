@@ -5,6 +5,7 @@ import {
   clearAvailableModelsCache,
   getAvailableModelHandles,
   getAvailableModelsCacheInfo,
+  getCachedModelHandles,
 } from "../../agent/available-models";
 import { models } from "../../agent/model";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
@@ -90,17 +91,20 @@ export function ModelSelector({
 
   const [category, setCategory] = useState<ModelCategory>(defaultCategory);
   const [selectedIndex, setSelectedIndex] = useState(0);
+  const cachedHandlesAtMount = useMemo(() => getCachedModelHandles(), []);
 
   // undefined: not loaded yet (show spinner)
   // Set<string>: loaded and filtered
   // null: error fallback (show all models + warning)
   const [availableHandles, setAvailableHandles] = useState<
     Set<string> | null | undefined
-  >(undefined);
-  const [allApiHandles, setAllApiHandles] = useState<string[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  >(cachedHandlesAtMount ?? undefined);
+  const [allApiHandles, setAllApiHandles] = useState<string[]>(
+    cachedHandlesAtMount ? Array.from(cachedHandlesAtMount) : [],
+  );
+  const [isLoading, setIsLoading] = useState(cachedHandlesAtMount === null);
   const [error, setError] = useState<string | null>(null);
-  const [isCached, setIsCached] = useState(false);
+  const [isCached, setIsCached] = useState(cachedHandlesAtMount !== null);
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
 
@@ -148,9 +152,25 @@ export function ModelSelector({
     loadModels.current(forceRefreshOnMount ?? false);
   }, [forceRefreshOnMount]);
 
-  // Handles from models.json (for filtering "all" category)
-  const staticModelHandles = useMemo(
-    () => new Set(typedModels.map((m) => m.handle)),
+  const pickPreferredStaticModel = useCallback(
+    (handle: string): UiModel | undefined => {
+      const staticCandidates = typedModels.filter((m) => m.handle === handle);
+      return (
+        staticCandidates.find((m) => m.isDefault) ??
+        staticCandidates.find((m) => m.isFeatured) ??
+        staticCandidates.find(
+          (m) =>
+            (m.updateArgs as { reasoning_effort?: unknown } | undefined)
+              ?.reasoning_effort === "medium",
+        ) ??
+        staticCandidates.find(
+          (m) =>
+            (m.updateArgs as { reasoning_effort?: unknown } | undefined)
+              ?.reasoning_effort === "high",
+        ) ??
+        staticCandidates[0]
+      );
+    },
     [typedModels],
   );
 
@@ -203,15 +223,47 @@ export function ModelSelector({
     [],
   );
 
-  // All other models: API handles not in models.json and not BYOK
-  const otherModelHandles = useMemo(() => {
-    const filtered = allApiHandles.filter(
-      (handle) => !staticModelHandles.has(handle) && !isByokHandle(handle),
-    );
-    if (!searchQuery) return filtered;
+  // Letta API (all): all non-BYOK handles from API, including recommended models.
+  const allLettaModels = useMemo(() => {
+    if (availableHandles === undefined) return [];
+
+    const modelsForHandles = allApiHandles
+      .filter((handle) => !isByokHandle(handle))
+      .map((handle) => {
+        const staticModel = pickPreferredStaticModel(handle);
+        if (staticModel) {
+          return {
+            ...staticModel,
+            id: handle,
+            handle,
+          };
+        }
+        return {
+          id: handle,
+          handle,
+          label: handle,
+          description: "",
+        } satisfies UiModel;
+      });
+
+    if (!searchQuery) {
+      return modelsForHandles;
+    }
+
     const query = searchQuery.toLowerCase();
-    return filtered.filter((handle) => handle.toLowerCase().includes(query));
-  }, [allApiHandles, staticModelHandles, searchQuery, isByokHandle]);
+    return modelsForHandles.filter(
+      (model) =>
+        model.label.toLowerCase().includes(query) ||
+        model.description.toLowerCase().includes(query) ||
+        model.handle.toLowerCase().includes(query),
+    );
+  }, [
+    availableHandles,
+    allApiHandles,
+    isByokHandle,
+    pickPreferredStaticModel,
+    searchQuery,
+  ]);
 
   // Provider name mappings for BYOK -> models.json lookup
   // Maps BYOK provider prefix to models.json provider prefix
@@ -251,7 +303,7 @@ export function ModelSelector({
     const matched: UiModel[] = [];
     for (const handle of byokHandles) {
       const baseHandle = toBaseHandle(handle);
-      const staticModel = typedModels.find((m) => m.handle === baseHandle);
+      const staticModel = pickPreferredStaticModel(baseHandle);
       if (staticModel) {
         // Use models.json data but with the BYOK handle as the ID
         matched.push({
@@ -277,23 +329,17 @@ export function ModelSelector({
   }, [
     availableHandles,
     allApiHandles,
-    typedModels,
+    pickPreferredStaticModel,
     searchQuery,
     isByokHandle,
     toBaseHandle,
   ]);
 
-  // BYOK (all): BYOK handles from API that don't have matching models.json entries
+  // BYOK (all): all BYOK handles from API (including recommended ones)
   const byokAllModels = useMemo(() => {
     if (availableHandles === undefined) return [];
 
-    // Get BYOK handles that don't have a match in models.json (using alias)
-    const byokHandles = allApiHandles.filter((handle) => {
-      if (!isByokHandle(handle)) return false;
-      const baseHandle = toBaseHandle(handle);
-      // Exclude if there's a matching entry in models.json
-      return !staticModelHandles.has(baseHandle);
-    });
+    const byokHandles = allApiHandles.filter(isByokHandle);
 
     // Apply search filter
     let filtered = byokHandles;
@@ -305,14 +351,7 @@ export function ModelSelector({
     }
 
     return filtered;
-  }, [
-    availableHandles,
-    allApiHandles,
-    staticModelHandles,
-    searchQuery,
-    isByokHandle,
-    toBaseHandle,
-  ]);
+  }, [availableHandles, allApiHandles, searchQuery, isByokHandle]);
 
   // Server-recommended models: models.json entries available on the server (for self-hosted)
   // Filter out letta/letta-free legacy model
@@ -374,19 +413,13 @@ export function ModelSelector({
         description: "",
       }));
     }
-    // For "all" category, convert handles to simple UiModel objects
-    return otherModelHandles.map((handle) => ({
-      id: handle,
-      handle,
-      label: handle,
-      description: "",
-    }));
+    return allLettaModels;
   }, [
     category,
     supportedModels,
     byokModels,
     byokAllModels,
-    otherModelHandles,
+    allLettaModels,
     serverRecommendedModels,
     serverAllModels,
   ]);
@@ -538,7 +571,7 @@ export function ModelSelector({
     if (cat === "server-recommended")
       return `Recommended [${serverRecommendedModels.length}]`;
     if (cat === "server-all") return `All models [${serverAllModels.length}]`;
-    return `Letta API (all) [${otherModelHandles.length}]`;
+    return `Letta API (all) [${allLettaModels.length}]`;
   };
 
   const getCategoryDescription = (cat: ModelCategory) => {
