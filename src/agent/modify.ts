@@ -70,6 +70,14 @@ function buildModelSettings(
       provider_type: "anthropic",
       parallel_tool_calls: true,
     };
+    // Map reasoning_effort to Anthropic's effort field (controls token spending via output_config)
+    const effort = updateArgs?.reasoning_effort;
+    if (effort === "low" || effort === "medium" || effort === "high") {
+      anthropicSettings.effort = effort;
+    } else if (effort === "xhigh") {
+      // "max" is valid on the backend but the SDK type hasn't caught up yet
+      (anthropicSettings as Record<string, unknown>).effort = "max";
+    }
     // Build thinking config if either enable_reasoner or max_reasoning_tokens is specified
     if (
       updateArgs?.enable_reasoner !== undefined ||
@@ -126,6 +134,13 @@ function buildModelSettings(
       provider_type: "bedrock",
       parallel_tool_calls: true,
     };
+    // Map reasoning_effort to Anthropic's effort field (Bedrock runs Claude models)
+    const effort = updateArgs?.reasoning_effort;
+    if (effort === "low" || effort === "medium" || effort === "high") {
+      bedrockSettings.effort = effort;
+    } else if (effort === "xhigh") {
+      bedrockSettings.effort = "max";
+    }
     // Build thinking config if either enable_reasoner or max_reasoning_tokens is specified
     if (
       updateArgs?.enable_reasoner !== undefined ||
