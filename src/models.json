@@ -81,7 +81,6 @@
     "handle": "anthropic/claude-sonnet-4-5-20250929",
     "label": "Sonnet 4.5",
     "description": "Previous default Sonnet model",
-    "isFeatured": true,
     "updateArgs": {
       "context_window": 180000,
       "max_output_tokens": 64000,
