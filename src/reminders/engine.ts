@@ -14,6 +14,7 @@ import {
   type ReflectionSettings,
 } from "../cli/helpers/memoryReminder";
 import { buildSessionContext } from "../cli/helpers/sessionContext";
+import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "../constants";
 import { permissionMode } from "../permissions/mode";
 import { settingsManager } from "../settings-manager";
 import {
@@ -137,6 +138,43 @@ async function buildPlanModeReminder(
   return reminder || null;
 }
 
+const PERMISSION_MODE_DESCRIPTIONS = {
+  default: "Normal approval flow.",
+  acceptEdits: "File edits auto-approved.",
+  plan: "Read-only mode. Focus on exploration and planning.",
+  bypassPermissions: "All tools auto-approved. Bias toward action.",
+} as const;
+
+async function buildPermissionModeReminder(
+  context: SharedReminderContext,
+): Promise<string | null> {
+  const currentMode = permissionMode.getMode();
+  const previousMode = context.state.lastNotifiedPermissionMode;
+
+  const shouldEmit = (() => {
+    if (context.mode === "interactive") {
+      return previousMode !== null && previousMode !== currentMode;
+    }
+    return previousMode !== currentMode;
+  })();
+
+  context.state.lastNotifiedPermissionMode = currentMode;
+  if (!shouldEmit) {
+    return null;
+  }
+
+  const description =
+    PERMISSION_MODE_DESCRIPTIONS[
+      currentMode as keyof typeof PERMISSION_MODE_DESCRIPTIONS
+    ] ?? "Permission behavior updated.";
+  const prefix =
+    previousMode === null
+      ? "Permission mode active"
+      : "Permission mode changed to";
+
+  return `${SYSTEM_REMINDER_OPEN}${prefix}: ${currentMode}. ${description}${SYSTEM_REMINDER_CLOSE}\n\n`;
+}
+
 async function buildReflectionStepReminder(
   context: SharedReminderContext,
 ): Promise<string | null> {
@@ -198,6 +236,7 @@ export const sharedReminderProviders: Record<
 > = {
   "session-context": buildSessionContextReminder,
   skills: buildSkillsReminder,
+  "permission-mode": buildPermissionModeReminder,
   "plan-mode": buildPlanModeReminder,
   "reflection-step-count": buildReflectionStepReminder,
   "reflection-compaction": buildReflectionCompactionReminder,

@@ -1470,9 +1470,6 @@ export default function App({
   // Store first user query for conversation summary
   const firstUserQueryRef = useRef<string | null>(null);
 
-  // Track last notified permission mode to detect changes
-  const lastNotifiedModeRef = useRef<PermissionMode>("default");
-
   // Static items (things that are done rendering and can be frozen)
   const [staticItems, setStaticItems] = useState<StaticItem[]>([]);
 
@@ -8049,20 +8046,6 @@ ${SYSTEM_REMINDER_CLOSE}
         pendingGitReminderRef.current = null;
       }
 
-      // Build permission mode change alert if mode changed since last notification
-      let permissionModeAlert = "";
-      const currentMode = permissionMode.getMode();
-      if (currentMode !== lastNotifiedModeRef.current) {
-        const modeDescriptions: Record<PermissionMode, string> = {
-          default: "Normal approval flow.",
-          acceptEdits: "File edits auto-approved.",
-          plan: "Read-only mode. Focus on exploration and planning.",
-          bypassPermissions: "All tools auto-approved. Bias toward action.",
-        };
-        permissionModeAlert = `${SYSTEM_REMINDER_OPEN}Permission mode changed to: ${currentMode}. ${modeDescriptions[currentMode]}${SYSTEM_REMINDER_CLOSE}\n\n`;
-        lastNotifiedModeRef.current = currentMode;
-      }
-
       // Combine reminders with content as separate text parts.
       // This preserves each reminder boundary in the API payload.
       // Note: Task notifications now come through messageQueue directly (added by messageQueueBridge)
@@ -8148,7 +8131,6 @@ ${SYSTEM_REMINDER_CLOSE}
       pendingConversationSwitchRef.current = null;
 
       pushReminder(sessionStartHookFeedback);
-      pushReminder(permissionModeAlert);
       pushReminder(conversationSwitchAlert);
       pushReminder(ralphModeReminder);
       pushReminder(bashCommandPrefix);
