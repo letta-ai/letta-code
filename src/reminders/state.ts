@@ -26,14 +26,7 @@ export function createSharedReminderState(): SharedReminderState {
 }
 
 export function resetSharedReminderState(state: SharedReminderState): void {
-  state.hasSentSessionContext = false;
-  state.hasInjectedSkillsReminder = false;
-  state.cachedSkillsReminder = null;
-  state.skillPathById = {};
-  state.lastNotifiedPermissionMode = null;
-  state.turnCount = 0;
-  state.pendingSkillsReinject = false;
-  state.pendingReflectionTrigger = false;
+  Object.assign(state, createSharedReminderState());
 }
 
 export function syncReminderStateFromContextTracker(

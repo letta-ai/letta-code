@@ -55,10 +55,13 @@ export const SHARED_REMINDER_IDS = SHARED_REMINDER_CATALOG.map(
   (entry) => entry.id,
 );
 
+const SHARED_REMINDER_BY_ID = new Map<SharedReminderId, SharedReminderDefinition>(
+  SHARED_REMINDER_CATALOG.map((entry) => [entry.id, entry]),
+);
+
 export function reminderEnabledInMode(
   id: SharedReminderId,
   mode: SharedReminderMode,
 ): boolean {
-  const definition = SHARED_REMINDER_CATALOG.find((entry) => entry.id === id);
-  return definition?.modes.includes(mode) ?? false;
+  return SHARED_REMINDER_BY_ID.get(id)?.modes.includes(mode) ?? false;
 }
