@@ -3,13 +3,13 @@
  * Connects to Letta Cloud and receives messages to execute locally
  */
 
-import WebSocket from "ws";
 import type { Stream } from "@letta-ai/letta-client/core/streaming";
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type {
   ApprovalCreate,
   LettaStreamingResponse,
 } from "@letta-ai/letta-client/resources/agents/messages";
+import WebSocket from "ws";
 import { sendMessageStream } from "../agent/message";
 import { createBuffers } from "../cli/helpers/accumulator";
 import { drainStreamWithResume } from "../cli/helpers/stream";
@@ -343,73 +343,74 @@ async function handleIncomingMessage(
       // Execute approved tools locally and build ToolReturn messages
       const toolReturns = await Promise.all(
         approvalMessage.approvals.map(async (approval) => {
-            // If already a tool return, pass through
-            if (approval.type === "tool") {
-              return approval;
-            }
+          // If already a tool return, pass through
+          if (approval.type === "tool") {
+            return approval;
+          }
 
-            // Type guard: if it's not a tool return, it must be an approval return
-            if (!("approve" in approval)) {
-              return approval;
-            }
+          // Type guard: if it's not a tool return, it must be an approval return
+          if (!("approve" in approval)) {
+            return approval;
+          }
 
-            // Handle approve: true by executing locally
-            if (approval.approve === true) {
-              const pending = pendingApprovals.find(
-                (p) => p.toolCallId === approval.tool_call_id,
-              );
-              if (!pending) {
-                if (process.env.DEBUG) {
-                  console.warn(
-                    `[Listen] No pending approval found for ${approval.tool_call_id}`,
-                  );
-                }
-                return {
-                  type: "tool",
-                  tool_call_id: approval.tool_call_id,
-                  tool_return: "Error: Pending approval not found",
-                  status: "error",
-                };
-              }
-
+          // Handle approve: true by executing locally
+          if (approval.approve === true) {
+            const pending = pendingApprovals.find(
+              (p) => p.toolCallId === approval.tool_call_id,
+            );
+            if (!pending) {
               if (process.env.DEBUG) {
-                console.log(
-                  `[Listen] Executing tool locally: ${pending.toolName}`,
+                console.warn(
+                  `[Listen] No pending approval found for ${approval.tool_call_id}`,
                 );
               }
-              try {
-                const result = await executeTool(
-                  pending.toolName,
-                  JSON.parse(pending.toolArgs || "{}"),
-                );
-
-                return {
-                  type: "tool",
-                  tool_call_id: approval.tool_call_id,
-                  tool_return: result.toolReturn,
-                  status: result.status,
-                  stdout: result.stdout ? [result.stdout] : undefined,
-                  stderr: result.stderr ? [result.stderr] : undefined,
-                };
-              } catch (error) {
-                return {
-                  type: "tool",
-                  tool_call_id: approval.tool_call_id,
-                  tool_return: `Error: ${error instanceof Error ? error.message : String(error)}`,
-                  status: "error",
-                };
-              }
+              return {
+                type: "tool",
+                tool_call_id: approval.tool_call_id,
+                tool_return: "Error: Pending approval not found",
+                status: "error",
+              };
             }
 
-            // Denied - return error
-            return {
-              type: "tool",
-              tool_call_id: approval.tool_call_id,
-              tool_return: ("reason" in approval && approval.reason) || "Tool execution denied",
-              status: "error",
-            };
-          },
-        ),
+            if (process.env.DEBUG) {
+              console.log(
+                `[Listen] Executing tool locally: ${pending.toolName}`,
+              );
+            }
+            try {
+              const result = await executeTool(
+                pending.toolName,
+                JSON.parse(pending.toolArgs || "{}"),
+              );
+
+              return {
+                type: "tool",
+                tool_call_id: approval.tool_call_id,
+                tool_return: result.toolReturn,
+                status: result.status,
+                stdout: result.stdout ? [result.stdout] : undefined,
+                stderr: result.stderr ? [result.stderr] : undefined,
+              };
+            } catch (error) {
+              return {
+                type: "tool",
+                tool_call_id: approval.tool_call_id,
+                tool_return: `Error: ${error instanceof Error ? error.message : String(error)}`,
+                status: "error",
+              };
+            }
+          }
+
+          // Denied - return error
+          return {
+            type: "tool",
+            tool_call_id: approval.tool_call_id,
+            tool_return:
+              ("reason" in approval && approval.reason) ||
+              "Tool execution denied",
+            status: "error",
+          };
+        }),
       );
 
       // Replace approvals with tool returns
@@ -463,7 +464,11 @@ async function handleIncomingMessage(
 
     // Process the collected chunks through drainStreamWithResume
     // We need to convert the array back to a Stream-like object
-    async function* replayChunks(): AsyncGenerator<LettaStreamingResponse, void, unknown> {
+    async function* replayChunks(): AsyncGenerator<
+      LettaStreamingResponse,
+      void,
+      unknown
+    > {
       for (const chunk of interceptedChunks) {
         yield chunk as LettaStreamingResponse;
       }
