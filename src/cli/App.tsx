@@ -103,6 +103,7 @@ import {
   type ToolExecutionResult,
 } from "../tools/manager";
 import type { ToolsetName, ToolsetPreference } from "../tools/toolset";
+import { formatToolsetName } from "../tools/toolset-labels";
 import { debugLog, debugWarn } from "../utils/debug";
 import {
   handleMcpAdd,
@@ -314,6 +315,63 @@ const OPUS_BEDROCK_FALLBACK_HINT =
 // Generic hint for llm_api_error when specific model suggestion not applicable
 const PROVIDER_FALLBACK_HINT =
   "Downstream provider issues? Use /model to switch to another provider";
+
+/**
+ * Derives the current reasoning effort from agent state (canonical) with llm_config as fallback.
+ * model_settings is the source of truth; llm_config.reasoning_effort is a legacy field.
+ */
+function deriveReasoningEffort(
+  modelSettings: AgentState["model_settings"] | undefined | null,
+  llmConfig: LlmConfig | null | undefined,
+): ModelReasoningEffort | null {
+  if (modelSettings && "provider_type" in modelSettings) {
+    // OpenAI/OpenRouter: reasoning.reasoning_effort
+    if (
+      modelSettings.provider_type === "openai" &&
+      "reasoning" in modelSettings &&
+      modelSettings.reasoning
+    ) {
+      const re = (modelSettings.reasoning as { reasoning_effort?: string })
+        .reasoning_effort;
+      if (
+        re === "none" ||
+        re === "minimal" ||
+        re === "low" ||
+        re === "medium" ||
+        re === "high" ||
+        re === "xhigh"
+      )
+        return re;
+    }
+    // Anthropic/Bedrock: effort field
+    if (
+      modelSettings.provider_type === "anthropic" ||
+      modelSettings.provider_type === "bedrock"
+    ) {
+      const effort = (modelSettings as { effort?: string | null }).effort;
+      if (effort === "low" || effort === "medium" || effort === "high")
+        return effort;
+      if (effort === "max") return "xhigh";
+    }
+  }
+  // Fallback: deprecated llm_config fields
+  const re = llmConfig?.reasoning_effort;
+  if (
+    re === "none" ||
+    re === "minimal" ||
+    re === "low" ||
+    re === "medium" ||
+    re === "high" ||
+    re === "xhigh"
+  )
+    return re;
+  if (
+    (llmConfig as { enable_reasoner?: boolean | null })?.enable_reasoner ===
+    false
+  )
+    return "none";
+  return null;
+}
 
 // Helper to get appropriate error hint based on stop reason and current model
 function getErrorHintForStopReason(
@@ -1284,6 +1342,10 @@ export default function App({
   useEffect(() => {
     llmConfigRef.current = llmConfig;
   }, [llmConfig]);
+  const agentStateRef = useRef(agentState);
+  useEffect(() => {
+    agentStateRef.current = agentState;
+  }, [agentState]);
   const [currentModelId, setCurrentModelId] = useState<string | null>(null);
   // Full model handle for API calls (e.g., "anthropic/claude-sonnet-4-5-20251101")
   const [currentModelHandle, setCurrentModelHandle] = useState<string | null>(
@@ -1302,50 +1364,9 @@ export default function App({
       currentModelLabel.split("/").pop())
     : null;
   const currentModelProvider = llmConfig?.provider_name ?? null;
-  // Derive reasoning effort from model_settings (preferred over deprecated llm_config)
-  const currentReasoningEffort: ModelReasoningEffort | null = (() => {
-    const ms = agentState?.model_settings;
-    if (ms && "provider_type" in ms) {
-      // OpenAI/OpenRouter: reasoning.reasoning_effort
-      if (ms.provider_type === "openai" && "reasoning" in ms && ms.reasoning) {
-        const re = (ms.reasoning as { reasoning_effort?: string })
-          .reasoning_effort;
-        if (
-          re === "none" ||
-          re === "minimal" ||
-          re === "low" ||
-          re === "medium" ||
-          re === "high" ||
-          re === "xhigh"
-        )
-          return re;
-      }
-      // Anthropic/Bedrock: effort field (maps to output_config.effort in the API)
-      if (ms.provider_type === "anthropic" || ms.provider_type === "bedrock") {
-        const effort = (ms as { effort?: string | null }).effort;
-        if (effort === "low" || effort === "medium" || effort === "high")
-          return effort;
-        if (effort === "max") return "xhigh";
-      }
-    }
-    // Fallback: deprecated llm_config fields
-    const re = llmConfig?.reasoning_effort;
-    if (
-      re === "none" ||
-      re === "minimal" ||
-      re === "low" ||
-      re === "medium" ||
-      re === "high" ||
-      re === "xhigh"
-    )
-      return re;
-    if (
-      (llmConfig as { enable_reasoner?: boolean | null })?.enable_reasoner ===
-      false
-    )
-      return "none";
-    return null;
-  })();
+  // Derive reasoning effort from model_settings (canonical) with llm_config as legacy fallback
+  const currentReasoningEffort: ModelReasoningEffort | null =
+    deriveReasoningEffort(agentState?.model_settings, llmConfig);
 
   // Billing tier for conditional UI and error context (fetched once on mount)
   const [billingTier, setBillingTier] = useState<string | null>(null);
@@ -5202,6 +5223,9 @@ export default function App({
     modelId: string;
   } | null>(null);
   const reasoningCycleLastConfirmedRef = useRef<LlmConfig | null>(null);
+  const reasoningCycleLastConfirmedAgentStateRef = useRef<AgentState | null>(
+    null,
+  );
 
   const resetPendingReasoningCycle = useCallback(() => {
     if (reasoningCycleTimerRef.current) {
@@ -5210,6 +5234,7 @@ export default function App({
     }
     reasoningCycleDesiredRef.current = null;
     reasoningCycleLastConfirmedRef.current = null;
+    reasoningCycleLastConfirmedAgentStateRef.current = null;
   }, []);
 
   const handleAgentSelect = useCallback(
@@ -10064,12 +10089,22 @@ ${SYSTEM_REMINDER_CLOSE}
           });
 
           const { updateAgentLLMConfig } = await import("../agent/modify");
-          const updatedConfig = await updateAgentLLMConfig(
+          const updatedAgent = await updateAgentLLMConfig(
             agentId,
             modelHandle,
             model.updateArgs,
           );
-          setLlmConfig(updatedConfig);
+          setLlmConfig(updatedAgent.llm_config);
+          // Refresh agentState so model_settings (canonical reasoning effort source) is current
+          setAgentState((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  llm_config: updatedAgent.llm_config,
+                  model_settings: updatedAgent.model_settings,
+                }
+              : updatedAgent,
+          );
           setCurrentModelId(modelId);
 
           // Reset context token tracking since different models have different tokenizers
@@ -10090,17 +10125,20 @@ ${SYSTEM_REMINDER_CLOSE}
             );
             setCurrentToolsetPreference("auto");
             setCurrentToolset(toolsetName);
-            toolsetNoticeLine =
-              "Auto toolset selected: switched to " +
-              toolsetName +
-              ". Use /toolset to set a manual override.";
-            maybeRecordToolsetChangeReminder({
-              source: "/model (auto toolset)",
-              previousToolset: previousToolsetSnapshot,
-              newToolset: toolsetName,
-              previousTools: previousToolNamesSnapshot,
-              newTools: getToolNames(),
-            });
+            // Only notify when the toolset actually changes (e.g., Claude → Codex)
+            if (toolsetName !== currentToolset) {
+              toolsetNoticeLine =
+                "Auto toolset selected: switched to " +
+                formatToolsetName(toolsetName) +
+                ". Use /toolset to set a manual override.";
+              maybeRecordToolsetChangeReminder({
+                source: "/model (auto toolset)",
+                previousToolset: previousToolsetSnapshot,
+                newToolset: toolsetName,
+                previousTools: previousToolNamesSnapshot,
+                newTools: getToolNames(),
+              });
+            }
           } else {
             const { forceToolsetSwitch } = await import("../tools/toolset");
             if (currentToolset !== persistedToolsetPreference) {
@@ -10117,7 +10155,7 @@ ${SYSTEM_REMINDER_CLOSE}
             setCurrentToolsetPreference(persistedToolsetPreference);
             toolsetNoticeLine =
               "Manual toolset override remains active: " +
-              persistedToolsetPreference +
+              formatToolsetName(persistedToolsetPreference) +
               ".";
           }
 
@@ -10388,7 +10426,7 @@ ${SYSTEM_REMINDER_CLOSE}
               newTools: getToolNames(),
             });
             cmd.finish(
-              `Toolset mode set to auto (currently ${derivedToolset}).`,
+              `Toolset mode set to auto (currently ${formatToolsetName(derivedToolset)}).`,
               true,
             );
             return;
@@ -10406,7 +10444,7 @@ ${SYSTEM_REMINDER_CLOSE}
             newTools: getToolNames(),
           });
           cmd.finish(
-            `Switched toolset to ${toolsetId} (manual override)`,
+            `Switched toolset to ${formatToolsetName(toolsetId)} (manual override)`,
             true,
           );
         } catch (error) {
@@ -10731,7 +10769,7 @@ ${SYSTEM_REMINDER_CLOSE}
 
         try {
           const { updateAgentLLMConfig } = await import("../agent/modify");
-          const updated = await updateAgentLLMConfig(
+          const updatedAgent = await updateAgentLLMConfig(
             agentId,
             desired.modelHandle,
             {
@@ -10739,12 +10777,23 @@ ${SYSTEM_REMINDER_CLOSE}
             },
           );
 
-          setLlmConfig(updated);
+          setLlmConfig(updatedAgent.llm_config);
+          // Refresh agentState so model_settings (canonical reasoning effort source) is current
+          setAgentState((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  llm_config: updatedAgent.llm_config,
+                  model_settings: updatedAgent.model_settings,
+                }
+              : updatedAgent,
+          );
           setCurrentModelId(desired.modelId);
 
           // Clear pending state.
           reasoningCycleDesiredRef.current = null;
           reasoningCycleLastConfirmedRef.current = null;
+          reasoningCycleLastConfirmedAgentStateRef.current = null;
 
           const display =
             desired.effort === "medium"
@@ -10763,6 +10812,11 @@ ${SYSTEM_REMINDER_CLOSE}
             reasoningCycleDesiredRef.current = null;
             reasoningCycleLastConfirmedRef.current = null;
             setLlmConfig(prev);
+            // Also revert the agentState optimistic patch
+            if (reasoningCycleLastConfirmedAgentStateRef.current) {
+              setAgentState(reasoningCycleLastConfirmedAgentStateRef.current);
+              reasoningCycleLastConfirmedAgentStateRef.current = null;
+            }
 
             const { getModelInfo } = await import("../agent/model");
             const modelHandle =
@@ -10802,7 +10856,10 @@ ${SYSTEM_REMINDER_CLOSE}
           : current?.model;
       if (!modelHandle) return;
 
-      const currentEffort = current?.reasoning_effort ?? "none";
+      // Derive current effort from agentState.model_settings (canonical) with llmConfig fallback
+      const currentEffort =
+        deriveReasoningEffort(agentStateRef.current?.model_settings, current) ??
+        "none";
 
       const { models } = await import("../agent/model");
       const tiers = models
@@ -10836,12 +10893,55 @@ ${SYSTEM_REMINDER_CLOSE}
       // Snapshot the last confirmed config once per burst so we can revert on failure.
       if (!reasoningCycleLastConfirmedRef.current) {
         reasoningCycleLastConfirmedRef.current = current ?? null;
+        reasoningCycleLastConfirmedAgentStateRef.current =
+          agentStateRef.current ?? null;
       }
 
       // Optimistic UI update (footer changes immediately).
       setLlmConfig((prev) =>
         prev ? ({ ...prev, reasoning_effort: next.effort } as LlmConfig) : prev,
       );
+      // Also patch agentState.model_settings for OpenAI/Anthropic/Bedrock so the footer
+      // (which prefers model_settings) reflects the change without waiting for the server.
+      setAgentState((prev) => {
+        if (!prev) return prev ?? null;
+        const ms = prev.model_settings;
+        if (!ms || !("provider_type" in ms)) return prev;
+        if (ms.provider_type === "openai") {
+          return {
+            ...prev,
+            model_settings: {
+              ...ms,
+              reasoning: {
+                ...(ms as { reasoning?: Record<string, unknown> }).reasoning,
+                reasoning_effort: next.effort as
+                  | "none"
+                  | "minimal"
+                  | "low"
+                  | "medium"
+                  | "high"
+                  | "xhigh",
+              },
+            },
+          } as AgentState;
+        }
+        if (
+          ms.provider_type === "anthropic" ||
+          ms.provider_type === "bedrock"
+        ) {
+          // Map "xhigh" → "max": footer derivation only recognizes "max" for Anthropic effort.
+          // Cast needed: "max" is valid on the backend but not yet in the SDK type.
+          const anthropicEffort = next.effort === "xhigh" ? "max" : next.effort;
+          return {
+            ...prev,
+            model_settings: {
+              ...ms,
+              effort: anthropicEffort as "low" | "medium" | "high" | "max",
+            },
+          } as AgentState;
+        }
+        return prev;
+      });
       setCurrentModelId(next.id);
 
       // Debounce the server update.
