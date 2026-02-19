@@ -10094,7 +10094,15 @@ ${SYSTEM_REMINDER_CLOSE}
             modelHandle,
             model.updateArgs,
           );
-          setLlmConfig(updatedAgent.llm_config);
+          // The API may not echo reasoning_effort back in llm_config or model_settings.effort,
+          // so populate it from model.updateArgs as a reliable fallback.
+          const rawEffort = modelUpdateArgs?.reasoning_effort;
+          setLlmConfig({
+            ...updatedAgent.llm_config,
+            ...(typeof rawEffort === "string"
+              ? { reasoning_effort: rawEffort as ModelReasoningEffort }
+              : {}),
+          });
           // Refresh agentState so model_settings (canonical reasoning effort source) is current
           setAgentState((prev) =>
             prev
@@ -10777,7 +10785,11 @@ ${SYSTEM_REMINDER_CLOSE}
             },
           );
 
-          setLlmConfig(updatedAgent.llm_config);
+          // The API may not echo reasoning_effort back; populate from desired.effort.
+          setLlmConfig({
+            ...updatedAgent.llm_config,
+            reasoning_effort: desired.effort as ModelReasoningEffort,
+          });
           // Refresh agentState so model_settings (canonical reasoning effort source) is current
           setAgentState((prev) =>
             prev
