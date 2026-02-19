@@ -93,7 +93,6 @@ import {
 import { debugLog, debugWarn } from "../utils/debug";
 import {
   handleMcpAdd,
-
   type McpCommandContext,
   setActiveCommandId as setActiveMcpCommandId,
 } from "./commands/mcp";
@@ -6670,7 +6669,10 @@ export default function App({
           const validModes = ["all", "sliding_window"];
 
           if (rawModeArg === "help") {
-            const cmd = commandRunner.start(msg.trim(), "Showing compact help...");
+            const cmd = commandRunner.start(
+              msg.trim(),
+              "Showing compact help...",
+            );
             const output = [
               "/compact help",
               "",
@@ -6694,9 +6696,7 @@ export default function App({
               msg.trim(),
               `Invalid mode "${modeArg}".`,
             );
-            cmd.fail(
-              `Invalid mode "${modeArg}". Run /compact help for usage.`,
-            );
+            cmd.fail(`Invalid mode "${modeArg}". Run /compact help for usage.`);
             return { submitted: true };
           }
 
@@ -6965,7 +6965,10 @@ export default function App({
           const targetConvId = parts[1]; // Optional conversation ID
 
           if (targetConvId === "help") {
-            const cmd = commandRunner.start(msg.trim(), "Showing resume help...");
+            const cmd = commandRunner.start(
+              msg.trim(),
+              "Showing resume help...",
+            );
             const output = [
               "/resume help",
               "",
@@ -7336,7 +7339,10 @@ export default function App({
           const unpinArgsStr = msg.trim().slice(6).trim();
 
           if (unpinArgsStr === "help") {
-            const cmd = commandRunner.start(msg.trim(), "Showing unpin help...");
+            const cmd = commandRunner.start(
+              msg.trim(),
+              "Showing unpin help...",
+            );
             const output = [
               "/unpin help",
               "",
