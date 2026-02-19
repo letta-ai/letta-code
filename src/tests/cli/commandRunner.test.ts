@@ -94,9 +94,7 @@ describe("commandRunner", () => {
     cmd.finish("Switched", true);
     cmd.finish("Switched again", true);
 
-    expect(finishedEvents).toEqual([
-      { input: "/model", output: "Switched" },
-    ]);
+    expect(finishedEvents).toEqual([{ input: "/model", output: "Switched" }]);
   });
 });
 

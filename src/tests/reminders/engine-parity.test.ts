@@ -17,8 +17,9 @@ const originalProviders = { ...sharedReminderProviders };
 const providerMap = sharedReminderProviders;
 
 function reminderIdsForMode(mode: SharedReminderMode): SharedReminderId[] {
-  return SHARED_REMINDER_CATALOG.filter((entry) => entry.modes.includes(mode))
-    .map((entry) => entry.id);
+  return SHARED_REMINDER_CATALOG.filter((entry) =>
+    entry.modes.includes(mode),
+  ).map((entry) => entry.id);
 }
 
 afterEach(() => {

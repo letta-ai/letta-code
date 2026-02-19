@@ -24,8 +24,9 @@ describe("shared reminder catalog", () => {
     > = ["interactive", "headless-one-shot", "headless-bidirectional"];
 
     for (const mode of modes) {
-      expect(SHARED_REMINDER_CATALOG.some((entry) => entry.modes.includes(mode)))
-        .toBe(true);
+      expect(
+        SHARED_REMINDER_CATALOG.some((entry) => entry.modes.includes(mode)),
+      ).toBe(true);
     }
   });
 
