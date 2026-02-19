@@ -1,4 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
+import { homedir } from "node:os";
+import { join, relative } from "node:path";
 import { checkPermission } from "../permissions/checker";
 import { permissionMode } from "../permissions/mode";
 import type { PermissionRules } from "../permissions/types";
@@ -274,6 +276,88 @@ test("plan mode - denies Write", () => {
   expect(result.decision).toBe("deny");
   expect(result.matchedRule).toBe("plan mode");
   // Reason now includes detailed guidance (planFilePath not set in test, so shows error fallback)
+  expect(result.reason).toContain("Plan mode is active");
+});
+
+test("plan mode - allows Write to plan markdown file", () => {
+  permissionMode.setMode("plan");
+
+  const permissions: PermissionRules = {
+    allow: [],
+    deny: [],
+    ask: [],
+  };
+
+  const planPath = join(homedir(), ".letta", "plans", "unit-test-plan.md");
+  const result = checkPermission(
+    "Write",
+    { file_path: planPath },
+    permissions,
+    "/Users/test/project",
+  );
+
+  expect(result.decision).toBe("allow");
+  expect(result.matchedRule).toBe("plan mode");
+});
+
+test("plan mode - allows ApplyPatch with relative path to plan file", () => {
+  permissionMode.setMode("plan");
+
+  const permissions: PermissionRules = {
+    allow: [],
+    deny: [],
+    ask: [],
+  };
+
+  const workingDirectory = join(homedir(), "dev", "repo");
+  const planPath = join(homedir(), ".letta", "plans", "zesty-witty-cloud.md");
+  const relativePlanPath = relative(workingDirectory, planPath);
+  const patch = `*** Begin Patch
+*** Add File: ${relativePlanPath}
++## Plan
+*** End Patch`;
+
+  const result = checkPermission(
+    "ApplyPatch",
+    { input: patch },
+    permissions,
+    workingDirectory,
+  );
+
+  expect(result.decision).toBe("allow");
+  expect(result.matchedRule).toBe("plan mode");
+});
+
+test("plan mode - denies ApplyPatch when any target is outside plans dir", () => {
+  permissionMode.setMode("plan");
+
+  const permissions: PermissionRules = {
+    allow: [],
+    deny: [],
+    ask: [],
+  };
+
+  const workingDirectory = join(homedir(), "dev", "repo");
+  const planPath = join(homedir(), ".letta", "plans", "zesty-witty-cloud.md");
+  const relativePlanPath = relative(workingDirectory, planPath);
+  const patch = `*** Begin Patch
+*** Add File: ${relativePlanPath}
++## Plan
+*** Update File: src/App.tsx
+@@
+-old
++new
+*** End Patch`;
+
+  const result = checkPermission(
+    "ApplyPatch",
+    { input: patch },
+    permissions,
+    workingDirectory,
+  );
+
+  expect(result.decision).toBe("deny");
+  expect(result.matchedRule).toBe("plan mode");
   expect(result.reason).toContain("Plan mode is active");
 });
 

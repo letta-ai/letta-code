@@ -2,7 +2,7 @@
 // Permission mode management (default, acceptEdits, plan, bypassPermissions)
 
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 
 import { isReadOnlyShellCommand } from "./readOnlyShell";
 
@@ -55,6 +55,45 @@ function getGlobalModeBeforePlan(): PermissionMode | null {
 function setGlobalModeBeforePlan(value: PermissionMode | null): void {
   const global = globalThis as GlobalWithMode;
   global[MODE_BEFORE_PLAN_KEY] = value;
+}
+
+function resolvePlanTargetPath(
+  targetPath: string,
+  workingDirectory: string,
+): string | null {
+  const trimmedPath = targetPath.trim();
+  if (!trimmedPath) return null;
+
+  if (trimmedPath.startsWith("~/")) {
+    return resolve(homedir(), trimmedPath.slice(2));
+  }
+  if (isAbsolute(trimmedPath)) {
+    return resolve(trimmedPath);
+  }
+  return resolve(workingDirectory, trimmedPath);
+}
+
+function isPathInPlansDir(path: string, plansDir: string): boolean {
+  if (!path.endsWith(".md")) return false;
+  const rel = relative(plansDir, path);
+  return rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
+}
+
+function extractApplyPatchPaths(input: string): string[] {
+  const paths: string[] = [];
+  const fileDirectivePattern = /\*\*\* (?:Add|Update|Delete) File:\s*(.+)/g;
+  const moveDirectivePattern = /\*\*\* Move to:\s*(.+)/g;
+
+  for (const match of input.matchAll(fileDirectivePattern)) {
+    const matchPath = match[1]?.trim();
+    if (matchPath) paths.push(matchPath);
+  }
+  for (const match of input.matchAll(moveDirectivePattern)) {
+    const matchPath = match[1]?.trim();
+    if (matchPath) paths.push(matchPath);
+  }
+
+  return paths;
 }
 
 /**
@@ -131,6 +170,7 @@ class PermissionModeManager {
   checkModeOverride(
     toolName: string,
     toolArgs?: Record<string, unknown>,
+    workingDirectory: string = process.cwd(),
   ): "allow" | "deny" | null {
     switch (this.currentMode) {
       case "bypassPermissions":
@@ -218,26 +258,34 @@ class PermissionModeManager {
         // plan mode was exited/reset by simply writing to any plan file.
         if (writeTools.includes(toolName)) {
           const plansDir = join(homedir(), ".letta", "plans");
-          let targetPath =
+          const targetPath =
             (toolArgs?.file_path as string) || (toolArgs?.path as string);
+          let candidatePaths: string[] = [];
 
-          // ApplyPatch/apply_patch: extract file path from patch input
+          // ApplyPatch/apply_patch: extract all file directives.
           if (
             (toolName === "ApplyPatch" || toolName === "apply_patch") &&
             toolArgs?.input
           ) {
             const input = toolArgs.input as string;
-            // Extract path from "*** Add File: path", "*** Update File: path", or "*** Delete File: path"
-            const match = input.match(
-              /\*\*\* (?:Add|Update|Delete) File:\s*(.+)/,
-            );
-            if (match?.[1]) {
-              targetPath = match[1].trim();
-            }
+            candidatePaths = extractApplyPatchPaths(input);
+          } else if (typeof targetPath === "string") {
+            candidatePaths = [targetPath];
           }
 
-          // Allow if target is any .md file in the plans directory
-          if (targetPath?.startsWith(plansDir) && targetPath.endsWith(".md")) {
+          // Allow only if every target resolves to a .md file within ~/.letta/plans.
+          if (
+            candidatePaths.length > 0 &&
+            candidatePaths.every((path) => {
+              const resolvedPath = resolvePlanTargetPath(
+                path,
+                workingDirectory,
+              );
+              return resolvedPath
+                ? isPathInPlansDir(resolvedPath, plansDir)
+                : false;
+            })
+          ) {
             return "allow";
           }
         }
