@@ -21,7 +21,7 @@ import {
   isPatchTool,
   isPlanTool,
   isSearchTool,
-  isShellTool,
+  isShellOutputTool,
   isTaskTool,
   isTodoTool,
 } from "../helpers/toolNameMapping.js";
@@ -192,7 +192,12 @@ export const ToolCallMessage = memo(
         const truncatedDisplay = needsTruncation
           ? `${normalizedDisplay.slice(0, maxArgsChars - 1)}…`
           : normalizedDisplay;
-        args = `(${truncatedDisplay})`;
+        if (rawName.toLowerCase() === "taskoutput") {
+          const separator = truncatedDisplay.startsWith("(") ? "" : " ";
+          args = separator + truncatedDisplay;
+        } else {
+          args = `(${truncatedDisplay})`;
+        }
       }
     }
 
@@ -850,16 +855,21 @@ export const ToolCallMessage = memo(
         </Box>
 
         {/* Streaming output for shell tools during execution */}
-        {isShellTool(rawName) && line.phase === "running" && line.streaming && (
-          <StreamingOutputDisplay streaming={line.streaming} />
-        )}
+        {isShellOutputTool(rawName) &&
+          line.phase === "running" &&
+          line.streaming && (
+            <StreamingOutputDisplay streaming={line.streaming} />
+          )}
 
         {/* Collapsed output for shell tools after completion */}
-        {isShellTool(rawName) &&
+        {isShellOutputTool(rawName) &&
           line.phase === "finished" &&
           line.resultText &&
           line.resultOk !== false && (
-            <CollapsedOutputDisplay output={line.resultText} maxChars={300} />
+            <CollapsedOutputDisplay
+              output={extractMessageFromResult(line.resultText)}
+              maxChars={300}
+            />
           )}
 
         {/* Tool result for non-shell tools or shell tool errors */}
@@ -869,7 +879,7 @@ export const ToolCallMessage = memo(
           // - Shell tool with error (show error message)
           // - Shell tool in streaming/ready phase (show default "Running..." etc)
           const showDefaultResult =
-            !isShellTool(rawName) ||
+            !isShellOutputTool(rawName) ||
             (line.phase === "finished" && line.resultOk === false) ||
             (line.phase !== "running" && line.phase !== "finished");
           return showDefaultResult ? getResultElement() : null;

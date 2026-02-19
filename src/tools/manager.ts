@@ -15,6 +15,8 @@ import { TOOL_DEFINITIONS, type ToolName } from "./toolDefinitions";
 export const TOOL_NAMES = Object.keys(TOOL_DEFINITIONS) as ToolName[];
 const STREAMING_SHELL_TOOLS = new Set([
   "Bash",
+  "BashOutput",
+  "TaskOutput",
   "shell_command",
   "ShellCommand",
   "shell",
@@ -110,6 +112,8 @@ export const OPENAI_PASCAL_TOOLS: ToolName[] = [
   "EnterPlanMode",
   "ExitPlanMode",
   "Task",
+  "TaskOutput",
+  "TaskStop",
   "Skill",
   // Standard Codex tools
   "ShellCommand",
