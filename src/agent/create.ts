@@ -93,6 +93,42 @@ async function addBaseToolsToServer(): Promise<boolean> {
   }
 }
 
+type CreateWithToolsFn = (tools: string[]) => Promise<AgentState>;
+type AddBaseToolsFn = () => Promise<boolean>;
+
+export async function createAgentWithBaseToolsRecovery(
+  createWithTools: CreateWithToolsFn,
+  toolNames: string[],
+  addBaseTools: AddBaseToolsFn = addBaseToolsToServer,
+): Promise<AgentState> {
+  try {
+    return await createWithTools(toolNames);
+  } catch (err) {
+    if (!isToolsNotFoundError(err)) {
+      throw err;
+    }
+
+    console.warn(
+      "Agent creation failed due to missing base tools. Attempting to add base tools on server...",
+    );
+    await addBaseTools();
+
+    try {
+      return await createWithTools(toolNames);
+    } catch (retryErr) {
+      console.warn(
+        `Agent creation still failed after base-tool bootstrap: ${
+          retryErr instanceof Error ? retryErr.message : String(retryErr)
+        }`,
+      );
+      console.warn(
+        "Retrying agent creation with no server-side tools attached.",
+      );
+      return await createWithTools([]);
+    }
+  }
+}
+
 export interface CreateAgentOptions {
   name?: string;
   /** Agent description shown in /agents selector */
@@ -383,33 +419,11 @@ export async function createAgent(
       tools,
     });
 
-  let agent: AgentState;
-  try {
-    agent = await createWithTools(toolNames);
-  } catch (err) {
-    if (!isToolsNotFoundError(err)) {
-      throw err;
-    }
-
-    console.warn(
-      "Agent creation failed due to missing base tools. Attempting to add base tools on server...",
-    );
-    await addBaseToolsToServer();
-
-    try {
-      agent = await createWithTools(toolNames);
-    } catch (retryErr) {
-      console.warn(
-        `Agent creation still failed after base-tool bootstrap: ${
-          retryErr instanceof Error ? retryErr.message : String(retryErr)
-        }`,
-      );
-      console.warn(
-        "Retrying agent creation with no server-side tools attached.",
-      );
-      agent = await createWithTools([]);
-    }
-  }
+  const agent = await createAgentWithBaseToolsRecovery(
+    createWithTools,
+    toolNames,
+    addBaseToolsToServer,
+  );
 
   // Note: Preflight check above falls back to 'memory' when 'memory_apply_patch' is unavailable.
 
