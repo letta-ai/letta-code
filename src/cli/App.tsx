@@ -11666,6 +11666,12 @@ Plan file path: ${planFilePath}`;
                             allowPersistence={
                               currentApprovalContext?.allowPersistence ?? true
                             }
+                            defaultScope={
+                              currentApprovalContext?.defaultScope === "user"
+                                ? "session"
+                                : (currentApprovalContext?.defaultScope ??
+                                  "project")
+                            }
                             showPreview={showApprovalPreview}
                           />
                         ) : ln.kind === "user" ? (
@@ -11744,6 +11750,11 @@ Plan file path: ${planFilePath}`;
                     }
                     allowPersistence={
                       currentApprovalContext?.allowPersistence ?? true
+                    }
+                    defaultScope={
+                      currentApprovalContext?.defaultScope === "user"
+                        ? "session"
+                        : (currentApprovalContext?.defaultScope ?? "project")
                     }
                     showPreview={showApprovalPreview}
                   />

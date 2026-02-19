@@ -368,3 +368,59 @@ test("Saving local settings creates .gitignore if missing", async () => {
   const content = await gitignoreFile.text();
   expect(content).toContain(".letta/settings.local.json");
 });
+
+test("Save permission dedupes canonical shell aliases", async () => {
+  const projectDir = join(testDir, "project");
+  await savePermissionRule(
+    "run_shell_command(curl -s http://localhost:4321/intro)",
+    "allow",
+    "project",
+    projectDir,
+  );
+  await savePermissionRule(
+    "Bash(curl -s http://localhost:4321/intro)",
+    "allow",
+    "project",
+    projectDir,
+  );
+
+  const settingsPath = join(projectDir, ".letta", "settings.json");
+  const file = Bun.file(settingsPath);
+  const settings = await file.json();
+
+  expect(settings.permissions.allow).toContain(
+    "Bash(curl -s http://localhost:4321/intro)",
+  );
+  expect(
+    settings.permissions.allow.filter(
+      (r: string) => r === "Bash(curl -s http://localhost:4321/intro)",
+    ),
+  ).toHaveLength(1);
+});
+
+test("Save permission dedupes slash variants for file patterns", async () => {
+  const projectDir = join(testDir, "project");
+  await savePermissionRule(
+    "Edit(.skills\\skilled-mcp\\**)",
+    "allow",
+    "project",
+    projectDir,
+  );
+  await savePermissionRule(
+    "Edit(.skills/skilled-mcp/**)",
+    "allow",
+    "project",
+    projectDir,
+  );
+
+  const settingsPath = join(projectDir, ".letta", "settings.json");
+  const file = Bun.file(settingsPath);
+  const settings = await file.json();
+
+  expect(settings.permissions.allow).toContain("Edit(.skills/skilled-mcp/**)");
+  expect(
+    settings.permissions.allow.filter(
+      (r: string) => r === "Edit(.skills/skilled-mcp/**)",
+    ),
+  ).toHaveLength(1);
+});

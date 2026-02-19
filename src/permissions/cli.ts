@@ -2,6 +2,13 @@
 // CLI-level permission overrides from command-line flags
 // These take precedence over settings.json but not over enterprise managed policies
 
+import {
+  canonicalToolName,
+  isFileToolName,
+  isShellToolName,
+} from "./canonical";
+import { normalizePermissionRule } from "./rule-normalization";
+
 /**
  * CLI permission overrides that are set via --allowedTools and --disallowedTools flags.
  * These rules override settings.json permissions for the current session.
@@ -77,24 +84,27 @@ class CliPermissions {
    * - Tool patterns with parentheses stay as-is
    */
   private normalizePattern(pattern: string): string {
+    const trimmed = pattern.trim();
+
     // If pattern has parentheses, keep as-is
-    if (pattern.includes("(")) {
-      return pattern;
+    if (trimmed.includes("(")) {
+      return normalizePermissionRule(trimmed);
     }
 
-    // Bash without parentheses needs wildcard to match all commands
-    if (pattern === "Bash") {
+    const canonicalTool = canonicalToolName(trimmed);
+
+    // Bash/shell aliases without parentheses need wildcard to match all commands
+    if (isShellToolName(canonicalTool)) {
       return "Bash(:*)";
     }
 
     // File tools need wildcard to match all files
-    const fileTools = ["Read", "Write", "Edit", "Glob", "Grep"];
-    if (fileTools.includes(pattern)) {
-      return `${pattern}(**)`;
+    if (isFileToolName(canonicalTool)) {
+      return `${canonicalTool}(**)`;
     }
 
     // All other bare tool names stay as-is
-    return pattern;
+    return canonicalTool;
   }
 
   /**

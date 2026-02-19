@@ -641,3 +641,39 @@ test("Tool with alternative path parameter (Glob uses 'path' not 'file_path')", 
 
   expect(result.decision).toBe("allow");
 });
+
+test("Shell alias tools match Bash permission patterns", () => {
+  const permissions: PermissionRules = {
+    allow: ["Bash(curl:*)"],
+    deny: [],
+    ask: [],
+  };
+
+  const result = checkPermission(
+    "run_shell_command",
+    { command: "curl -s http://localhost:4321/health" },
+    permissions,
+    "/Users/test/project",
+  );
+
+  expect(result.decision).toBe("allow");
+  expect(result.matchedRule).toBe("Bash(curl:*)");
+});
+
+test("Legacy bare WriteFileGemini rule still matches write invocations", () => {
+  const permissions: PermissionRules = {
+    allow: ["WriteFileGemini"],
+    deny: [],
+    ask: [],
+  };
+
+  const result = checkPermission(
+    "WriteFileGemini",
+    { file_path: "src/main.ts", content: "console.log('x');" },
+    permissions,
+    "/Users/test/project",
+  );
+
+  expect(result.decision).toBe("allow");
+  expect(result.matchedRule).toBe("WriteFileGemini");
+});

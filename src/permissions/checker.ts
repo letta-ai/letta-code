@@ -4,6 +4,7 @@
 import { resolve } from "node:path";
 import { getCurrentAgentId } from "../agent/context";
 import { runPermissionRequestHooks } from "../hooks";
+import { canonicalToolName, isShellToolName } from "./canonical";
 import { cliPermissions } from "./cli";
 import {
   matchesBashPattern,
@@ -22,30 +23,7 @@ import type {
 /**
  * Tools that don't require approval within working directory
  */
-const WORKING_DIRECTORY_TOOLS = [
-  // Default/Anthropic toolset
-  "Read",
-  "Glob",
-  "Grep",
-  // Codex toolset
-  "read_file",
-  "ReadFile",
-  "list_dir",
-  "ListDir",
-  "grep_files",
-  "GrepFiles",
-  // Gemini toolset
-  "read_file_gemini",
-  "ReadFileGemini",
-  "glob_gemini",
-  "GlobGemini",
-  "list_directory",
-  "ListDirectory",
-  "search_file_content",
-  "SearchFileContent",
-  "read_many_files",
-  "ReadManyFiles",
-];
+const WORKING_DIRECTORY_TOOLS = ["Read", "Glob", "Grep", "ListDir"];
 const READ_ONLY_SHELL_TOOLS = new Set([
   "Bash",
   "shell",
@@ -83,8 +61,9 @@ export function checkPermission(
   permissions: PermissionRules,
   workingDirectory: string = process.cwd(),
 ): PermissionCheckResult {
+  const canonicalTool = canonicalToolName(toolName);
   // Build permission query string
-  const query = buildPermissionQuery(toolName, toolArgs);
+  const query = buildPermissionQuery(canonicalTool, toolArgs);
 
   // Get session rules
   const sessionRules = sessionPermissions.getRules();
@@ -155,7 +134,7 @@ export function checkPermission(
     };
   }
 
-  if (READ_ONLY_SHELL_TOOLS.has(toolName)) {
+  if (READ_ONLY_SHELL_TOOLS.has(toolName) || isShellToolName(canonicalTool)) {
     const shellCommand = extractShellCommand(toolArgs);
     if (shellCommand && isReadOnlyShellCommand(shellCommand)) {
       return {
@@ -180,7 +159,7 @@ export function checkPermission(
   }
 
   // After checking CLI overrides, check if Read/Glob/Grep within working directory
-  if (WORKING_DIRECTORY_TOOLS.includes(toolName)) {
+  if (WORKING_DIRECTORY_TOOLS.includes(canonicalTool)) {
     const filePath = extractFilePath(toolArgs);
     if (
       filePath &&
@@ -300,25 +279,7 @@ function buildPermissionQuery(toolName: string, toolArgs: ToolArgs): string {
     case "Glob":
     case "Grep":
     // Codex file tools
-    case "read_file":
-    case "ReadFile":
-    case "list_dir":
-    case "ListDir":
-    case "grep_files":
-    case "GrepFiles":
-    // Gemini file tools
-    case "read_file_gemini":
-    case "ReadFileGemini":
-    case "write_file_gemini":
-    case "WriteFileGemini":
-    case "glob_gemini":
-    case "GlobGemini":
-    case "list_directory":
-    case "ListDirectory":
-    case "search_file_content":
-    case "SearchFileContent":
-    case "read_many_files":
-    case "ReadManyFiles": {
+    case "ListDir": {
       const filePath = extractFilePath(toolArgs);
       return filePath ? `${toolName}(${filePath})` : toolName;
     }
@@ -330,7 +291,9 @@ function buildPermissionQuery(toolName: string, toolArgs: ToolArgs): string {
       return `Bash(${command})`;
     }
     case "shell":
-    case "shell_command": {
+    case "shell_command":
+    case "run_shell_command":
+    case "RunShellCommand": {
       const command =
         typeof toolArgs.command === "string"
           ? toolArgs.command
@@ -357,34 +320,7 @@ function extractShellCommand(toolArgs: ToolArgs): string | string[] | null {
 /**
  * File tools that use glob matching for permissions
  */
-const FILE_TOOLS = [
-  // Default/Anthropic toolset
-  "Read",
-  "Write",
-  "Edit",
-  "Glob",
-  "Grep",
-  // Codex toolset
-  "read_file",
-  "ReadFile",
-  "list_dir",
-  "ListDir",
-  "grep_files",
-  "GrepFiles",
-  // Gemini toolset
-  "read_file_gemini",
-  "ReadFileGemini",
-  "write_file_gemini",
-  "WriteFileGemini",
-  "glob_gemini",
-  "GlobGemini",
-  "list_directory",
-  "ListDirectory",
-  "search_file_content",
-  "SearchFileContent",
-  "read_many_files",
-  "ReadManyFiles",
-];
+const FILE_TOOLS = ["Read", "Write", "Edit", "Glob", "Grep", "ListDir"];
 
 /**
  * Check if query matches a permission pattern
@@ -395,22 +331,19 @@ function matchesPattern(
   pattern: string,
   workingDirectory: string,
 ): boolean {
+  const canonicalTool = canonicalToolName(toolName);
   // File tools use glob matching
-  if (FILE_TOOLS.includes(toolName)) {
+  if (FILE_TOOLS.includes(canonicalTool)) {
     return matchesFilePattern(query, pattern, workingDirectory);
   }
 
   // Bash uses prefix matching
-  if (
-    toolName === "Bash" ||
-    toolName === "shell" ||
-    toolName === "shell_command"
-  ) {
+  if (canonicalTool === "Bash") {
     return matchesBashPattern(query, pattern);
   }
 
   // Other tools use simple name matching
-  return matchesToolPattern(toolName, pattern);
+  return matchesToolPattern(canonicalTool, pattern);
 }
 
 /**

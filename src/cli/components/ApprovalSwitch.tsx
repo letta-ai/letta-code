@@ -68,6 +68,7 @@ type Props = {
   approveAlwaysText?: string;
   allowPersistence?: boolean;
   showPreview?: boolean;
+  defaultScope?: "project" | "session";
 
   // Special handlers for ExitPlanMode
   onPlanApprove?: (acceptEdits: boolean) => void;
@@ -215,6 +216,7 @@ export const ApprovalSwitch = memo(
     precomputedDiff,
     allDiffs,
     showPreview = true,
+    defaultScope = "project",
   }: Props) => {
     const toolName = approval.toolName;
 
@@ -251,6 +253,7 @@ export const ApprovalSwitch = memo(
             isFocused={isFocused}
             approveAlwaysText={approveAlwaysText}
             allowPersistence={allowPersistence}
+            defaultScope={defaultScope}
             showPreview={showPreview}
           />
         );
@@ -271,6 +274,7 @@ export const ApprovalSwitch = memo(
             isFocused={isFocused}
             approveAlwaysText={approveAlwaysText}
             allowPersistence={allowPersistence}
+            defaultScope={defaultScope}
             showPreview={showPreview}
           />
         );
@@ -340,6 +344,7 @@ export const ApprovalSwitch = memo(
         isFocused={isFocused}
         approveAlwaysText={approveAlwaysText}
         allowPersistence={allowPersistence}
+        defaultScope={defaultScope}
         showPreview={showPreview}
       />
     );

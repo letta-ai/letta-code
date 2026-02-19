@@ -564,3 +564,24 @@ test("Very long non-git commands should generate prefix-based wildcards", () => 
   expect(context.recommendedRule).toBe("Bash(npm run lint:*)");
   expect(context.approveAlwaysText).toContain("npm run lint");
 });
+
+test("WriteFileGemini uses write-family wildcard rule", () => {
+  const context = analyzeApprovalContext(
+    "WriteFileGemini",
+    { file_path: "src/main.ts", content: "console.log('hi');" },
+    "/Users/test/project",
+  );
+
+  expect(context.recommendedRule).toBe("Write(**)");
+  expect(context.defaultScope).toBe("session");
+});
+
+test("run_shell_command is analyzed as Bash", () => {
+  const context = analyzeApprovalContext(
+    "run_shell_command",
+    { command: "curl -s http://localhost:4321/intro" },
+    "/Users/test/project",
+  );
+
+  expect(context.recommendedRule).toBe("Bash(curl:*)");
+});

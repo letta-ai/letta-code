@@ -17,6 +17,7 @@ type Props = {
   approveAlwaysText?: string;
   allowPersistence?: boolean;
   showPreview?: boolean;
+  defaultScope?: "project" | "session";
 };
 
 // Horizontal line character for Claude Code style
@@ -58,6 +59,7 @@ export const InlineGenericApproval = memo(
     approveAlwaysText,
     allowPersistence = true,
     showPreview = true,
+    defaultScope = "project",
   }: Props) => {
     const [selectedOption, setSelectedOption] = useState(0);
     const {
@@ -121,7 +123,7 @@ export const InlineGenericApproval = memo(
           if (selectedOption === 0) {
             onApprove();
           } else if (selectedOption === 1 && allowPersistence) {
-            onApproveAlways("project");
+            onApproveAlways(defaultScope);
           }
           return;
         }
@@ -136,7 +138,7 @@ export const InlineGenericApproval = memo(
           return;
         }
         if (input === "2" && allowPersistence) {
-          onApproveAlways("project");
+          onApproveAlways(defaultScope);
           return;
         }
       },

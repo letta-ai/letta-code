@@ -179,11 +179,15 @@ class PermissionModeManager {
           "GrepFiles",
           "UpdatePlan",
           // Gemini toolset (snake_case)
+          "read_file_gemini",
+          "glob_gemini",
           "list_directory",
           "search_file_content",
           "write_todos",
           "read_many_files",
           // Gemini toolset (PascalCase)
+          "ReadFileGemini",
+          "GlobGemini",
           "ListDirectory",
           "SearchFileContent",
           "WriteTodos",

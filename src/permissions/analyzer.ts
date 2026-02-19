@@ -3,6 +3,7 @@
 
 import { homedir } from "node:os";
 import { dirname, relative, resolve, win32 } from "node:path";
+import { canonicalToolName, isFileToolName } from "./canonical";
 
 export interface ApprovalContext {
   // What rule should be saved if user clicks "approve always"
@@ -98,29 +99,30 @@ export function analyzeApprovalContext(
   toolArgs: ToolArgs,
   workingDirectory: string,
 ): ApprovalContext {
+  const canonicalTool = canonicalToolName(toolName);
   const resolveFilePath = () => {
     const candidate =
       toolArgs.file_path ?? toolArgs.path ?? toolArgs.notebook_path ?? "";
     return typeof candidate === "string" ? candidate : "";
   };
 
-  switch (toolName) {
+  switch (canonicalTool) {
     case "Read":
-    case "read_file":
       return analyzeReadApproval(resolveFilePath(), workingDirectory);
 
     case "Write":
       return analyzeWriteApproval(resolveFilePath(), workingDirectory);
 
     case "Edit":
-    case "MultiEdit":
       return analyzeEditApproval(resolveFilePath(), workingDirectory);
 
     case "Bash":
-    case "shell":
-    case "shell_command":
       return analyzeBashApproval(
-        typeof toolArgs.command === "string" ? toolArgs.command : "",
+        typeof toolArgs.command === "string"
+          ? toolArgs.command
+          : Array.isArray(toolArgs.command)
+            ? toolArgs.command.join(" ")
+            : "",
         workingDirectory,
       );
 
@@ -131,9 +133,8 @@ export function analyzeApprovalContext(
 
     case "Glob":
     case "Grep":
-    case "grep_files":
       return analyzeSearchApproval(
-        toolName,
+        canonicalTool,
         typeof toolArgs.path === "string" ? toolArgs.path : workingDirectory,
         workingDirectory,
       );
@@ -150,7 +151,7 @@ export function analyzeApprovalContext(
       };
 
     default:
-      return analyzeDefaultApproval(toolName);
+      return analyzeDefaultApproval(canonicalTool, toolArgs, workingDirectory);
   }
 }
 
@@ -280,6 +281,7 @@ const SAFE_READONLY_COMMANDS = [
   "diff",
   "file",
   "stat",
+  "curl",
 ];
 
 // Commands that should never be auto-approved
@@ -751,7 +753,41 @@ function analyzeSearchApproval(
 /**
  * Default approval for unknown tools
  */
-function analyzeDefaultApproval(toolName: string): ApprovalContext {
+function analyzeDefaultApproval(
+  toolName: string,
+  toolArgs: ToolArgs,
+  workingDir: string,
+): ApprovalContext {
+  if (isFileToolName(toolName)) {
+    const candidate =
+      toolArgs.file_path ?? toolArgs.path ?? toolArgs.notebook_path ?? "";
+    const filePath = typeof candidate === "string" ? candidate : "";
+    if (filePath.trim().length > 0) {
+      const absolutePath = resolvePathForContext(workingDir, filePath);
+      if (!isPathWithinDirectory(absolutePath, workingDir)) {
+        const dirPath = dirnameForContext(absolutePath);
+        const displayPath = formatDisplayPath(dirPath);
+        return {
+          recommendedRule: `${toolName}(${formatAbsoluteRulePath(dirPath)}/**)`,
+          ruleDescription: `${toolName} in ${displayPath}/`,
+          approveAlwaysText: `Yes, allow ${toolName} in ${displayPath}/ in this project`,
+          defaultScope: "project",
+          allowPersistence: true,
+          safetyLevel: "moderate",
+        };
+      }
+    }
+
+    return {
+      recommendedRule: `${toolName}(**)`,
+      ruleDescription: `${toolName} operations`,
+      approveAlwaysText: `Yes, allow ${toolName} operations during this session`,
+      defaultScope: "session",
+      allowPersistence: true,
+      safetyLevel: "moderate",
+    };
+  }
+
   return {
     recommendedRule: toolName,
     ruleDescription: `${toolName} operations`,

@@ -3,6 +3,7 @@
 
 import { resolve } from "node:path";
 import { minimatch } from "minimatch";
+import { canonicalToolName } from "./canonical";
 
 /**
  * Normalize path separators to forward slashes for consistent glob matching.
@@ -115,21 +116,25 @@ export function matchesFilePattern(
 ): boolean {
   // Extract tool name and file path from query
   // Format: "ToolName(filePath)"
-  const queryMatch = query.match(/^([^(]+)\((.+)\)$/);
+  const queryMatch = query.match(/^([^(]+)\(([\s\S]+)\)$/);
   if (!queryMatch || !queryMatch[1] || !queryMatch[2]) {
     return false;
   }
-  const queryTool = queryMatch[1];
+  const queryTool = canonicalToolName(queryMatch[1]);
   // Normalize path separators for cross-platform compatibility
   const filePath = normalizePath(queryMatch[2]);
 
   // Extract tool name and glob pattern from permission rule
   // Format: "ToolName(pattern)"
-  const patternMatch = pattern.match(/^([^(]+)\((.+)\)$/);
+  const patternMatch = pattern.match(/^([^(]+)\(([\s\S]+)\)$/);
   if (!patternMatch || !patternMatch[1] || !patternMatch[2]) {
+    // Legacy fallback: allow bare tool names (for rules saved before param suffixes were added)
+    return canonicalToolName(pattern) === queryTool;
+  }
+  const patternTool = canonicalToolName(patternMatch[1]);
+  if (!patternTool) {
     return false;
   }
-  const patternTool = patternMatch[1];
   // Normalize path separators for cross-platform compatibility
   let globPattern = normalizePath(patternMatch[2]);
 
@@ -220,22 +225,36 @@ function extractActualCommand(command: string): string {
 
 export function matchesBashPattern(query: string, pattern: string): boolean {
   // Extract the command from query
-  // Format: "Bash(actual command)" or "Bash()"
-  const queryMatch = query.match(/^Bash\((.*)\)$/);
-  if (!queryMatch || queryMatch[1] === undefined) {
+  // Format: "Tool(actual command)" or "Tool()"
+  const queryMatch = query.match(/^([^(]+)\(([\s\S]*)\)$/);
+  if (
+    !queryMatch ||
+    queryMatch[1] === undefined ||
+    queryMatch[2] === undefined
+  ) {
     return false;
   }
-  const rawCommand = queryMatch[1];
+  if (canonicalToolName(queryMatch[1]) !== "Bash") {
+    return false;
+  }
+  const rawCommand = queryMatch[2];
   // Extract actual command by stripping cd prefixes from compound commands
   const command = extractActualCommand(rawCommand);
 
   // Extract the command pattern from permission rule
-  // Format: "Bash(command pattern)" or "Bash()"
-  const patternMatch = pattern.match(/^Bash\((.*)\)$/);
-  if (!patternMatch || patternMatch[1] === undefined) {
+  // Format: "Tool(command pattern)" or "Tool()"
+  const patternMatch = pattern.match(/^([^(]+)\(([\s\S]*)\)$/);
+  if (
+    !patternMatch ||
+    patternMatch[1] === undefined ||
+    patternMatch[2] === undefined
+  ) {
+    return canonicalToolName(pattern) === "Bash";
+  }
+  if (canonicalToolName(patternMatch[1]) !== "Bash") {
     return false;
   }
-  const commandPattern = patternMatch[1];
+  const commandPattern = patternMatch[2];
 
   // Check for wildcard suffix
   if (commandPattern.endsWith(":*")) {
@@ -260,19 +279,25 @@ export function matchesBashPattern(query: string, pattern: string): boolean {
  * @param pattern - The permission pattern
  */
 export function matchesToolPattern(toolName: string, pattern: string): boolean {
+  const canonicalTool = canonicalToolName(toolName);
   // Wildcard matches everything
   if (pattern === "*") {
     return true;
   }
 
+  if (canonicalToolName(pattern) === canonicalTool) {
+    return true;
+  }
+
   // Check for tool name match (with or without parens)
-  if (pattern === toolName || pattern === `${toolName}()`) {
+  if (pattern === canonicalTool || pattern === `${canonicalTool}()`) {
     return true;
   }
 
   // Check for tool name prefix (e.g., "WebFetch(...)")
-  if (pattern.startsWith(`${toolName}(`)) {
-    return true;
+  const patternToolMatch = pattern.match(/^([^(]+)\(/);
+  if (patternToolMatch?.[1]) {
+    return canonicalToolName(patternToolMatch[1]) === canonicalTool;
   }
 
   return false;

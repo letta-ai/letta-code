@@ -399,3 +399,19 @@ test("Precedence: CLI allowedTools > settings allow", () => {
   expect(dockerResult.decision).toBe("allow");
   expect(dockerResult.matchedRule).toBe("Bash(docker:*)");
 });
+
+test("CLI allowedTools normalizes shell aliases to Bash wildcard", () => {
+  cliPermissions.clear();
+  cliPermissions.setAllowedTools("run_shell_command");
+
+  const tools = cliPermissions.getAllowedTools();
+  expect(tools).toEqual(["Bash(:*)"]);
+});
+
+test("CLI allowedTools normalizes file alias family", () => {
+  cliPermissions.clear();
+  cliPermissions.setAllowedTools("WriteFileGemini");
+
+  const tools = cliPermissions.getAllowedTools();
+  expect(tools).toEqual(["Write(**)"]);
+});
