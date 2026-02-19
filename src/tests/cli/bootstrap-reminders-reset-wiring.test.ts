@@ -42,9 +42,30 @@ describe("bootstrap reminder reset wiring", () => {
       const anchorIndex = source.indexOf(anchor);
       expect(anchorIndex).toBeGreaterThanOrEqual(0);
 
+      const windowStart = Math.max(0, anchorIndex - 2500);
       const windowEnd = Math.min(source.length, anchorIndex + 5000);
-      const scoped = source.slice(anchorIndex, windowEnd);
+      const scoped = source.slice(windowStart, windowEnd);
       expect(scoped).toContain("resetBootstrapReminderState();");
     }
+  });
+
+  test("new-agent creation flow resets routing to default conversation", () => {
+    const appPath = fileURLToPath(
+      new URL("../../cli/App.tsx", import.meta.url),
+    );
+    const source = readFileSync(appPath, "utf-8");
+
+    const anchor = 'const inputCmd = "/new";';
+    const anchorIndex = source.indexOf(anchor);
+    expect(anchorIndex).toBeGreaterThanOrEqual(0);
+
+    const windowEnd = Math.min(source.length, anchorIndex + 8000);
+    const scoped = source.slice(anchorIndex, windowEnd);
+
+    expect(scoped).toContain('const targetConversationId = "default";');
+    expect(scoped).toContain("setConversationId(targetConversationId);");
+    expect(scoped).toContain("settingsManager.setLocalLastSession(");
+    expect(scoped).toContain("settingsManager.setGlobalLastSession({");
+    expect(scoped).toContain("conversationId: targetConversationId");
   });
 });
