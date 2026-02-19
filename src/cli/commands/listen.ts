@@ -181,6 +181,12 @@ export async function handleListen(
 
     // Register with cloud to get connectionId
     const serverUrl = getServerUrl();
+    const settings = await settingsManager.getSettingsWithSecureTokens();
+    const apiKey = process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
+
+    if (!apiKey) {
+      throw new Error("Missing LETTA_API_KEY");
+    }
 
     // Call register endpoint
     const registerUrl = `${serverUrl}/v1/listeners/register`;
@@ -188,7 +194,7 @@ export async function handleListen(
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${process.env.LETTA_API_KEY || settingsManager.getSettings().env?.LETTA_API_KEY}`,
+        Authorization: `Bearer ${apiKey}`,
         "X-Letta-Source": "letta-code",
       },
       body: JSON.stringify({

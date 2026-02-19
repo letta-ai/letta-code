@@ -6007,10 +6007,15 @@ export default function App({
         }
 
         // Special handling for /listen command - start listener mode
-        if (trimmed.startsWith("/listen")) {
-          const parts = trimmed.split(/\s+/);
+        if (trimmed === "/listen" || trimmed.startsWith("/listen ")) {
+          // Tokenize with quote support: --name "my laptop"
+          const parts = Array.from(
+            trimmed.matchAll(
+              /"([^"\\]*(?:\\.[^"\\]*)*)"|'([^'\\]*(?:\\.[^'\\]*)*)'|(\S+)/g,
+            ),
+            (match) => match[1] ?? match[2] ?? match[3],
+          );
 
-          // Parse flags
           let name: string | undefined;
           let listenAgentId: string | undefined;
 
@@ -6018,8 +6023,7 @@ export default function App({
             const part = parts[i];
             const nextPart = parts[i + 1];
             if (part === "--name" && nextPart) {
-              // Remove quotes if present
-              name = nextPart.replace(/^["']|["']$/g, "");
+              name = nextPart;
               i++;
             } else if (part === "--agent" && nextPart) {
               listenAgentId = nextPart;

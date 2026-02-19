@@ -8,8 +8,16 @@ import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agen
 import type {
   ApprovalCreate,
   LettaStreamingResponse,
+  ToolReturn,
 } from "@letta-ai/letta-client/resources/agents/messages";
 import WebSocket from "ws";
+import {
+  type ApprovalDecision,
+  type ApprovalResult,
+  executeApprovalBatch,
+} from "../agent/approval-execution";
+import { getResumeData } from "../agent/check-approval";
+import { getClient } from "../agent/client";
 import { sendMessageStream } from "../agent/message";
 import { createBuffers } from "../cli/helpers/accumulator";
 import { drainStreamWithResume } from "../cli/helpers/stream";
@@ -36,7 +44,6 @@ interface StartListenerOptions {
   ) => void;
 }
 
-// WebSocket message types
 interface PingMessage {
   type: "ping";
 }
@@ -66,43 +73,210 @@ interface RunStartedMessage {
 type ServerMessage = PongMessage | IncomingMessage;
 type ClientMessage = PingMessage | ResultMessage | RunStartedMessage;
 
-// Global WebSocket instance
-let activeConnection: WebSocket | null = null;
-let heartbeatInterval: NodeJS.Timeout | null = null;
-let reconnectTimeout: NodeJS.Timeout | null = null;
-let isIntentionallyClosed = false;
-let hasSuccessfulConnection = false;
+type ListenerRuntime = {
+  socket: WebSocket | null;
+  heartbeatInterval: NodeJS.Timeout | null;
+  reconnectTimeout: NodeJS.Timeout | null;
+  intentionallyClosed: boolean;
+  hasSuccessfulConnection: boolean;
+  messageQueue: Promise<void>;
+};
 
-// Retry configuration
+type ApprovalSlot =
+  | { type: "result"; value: ApprovalResult }
+  | { type: "decision" };
+
+// Listen mode supports one active connection per process.
+let activeRuntime: ListenerRuntime | null = null;
+
 const MAX_RETRY_DURATION_MS = 5 * 60 * 1000; // 5 minutes
 const INITIAL_RETRY_DELAY_MS = 1000; // 1 second
 const MAX_RETRY_DELAY_MS = 30000; // 30 seconds
 
+function createRuntime(): ListenerRuntime {
+  return {
+    socket: null,
+    heartbeatInterval: null,
+    reconnectTimeout: null,
+    intentionallyClosed: false,
+    hasSuccessfulConnection: false,
+    messageQueue: Promise.resolve(),
+  };
+}
+
+function clearRuntimeTimers(runtime: ListenerRuntime): void {
+  if (runtime.reconnectTimeout) {
+    clearTimeout(runtime.reconnectTimeout);
+    runtime.reconnectTimeout = null;
+  }
+  if (runtime.heartbeatInterval) {
+    clearInterval(runtime.heartbeatInterval);
+    runtime.heartbeatInterval = null;
+  }
+}
+
+function stopRuntime(
+  runtime: ListenerRuntime,
+  suppressCallbacks: boolean,
+): void {
+  runtime.intentionallyClosed = true;
+  clearRuntimeTimers(runtime);
+
+  if (!runtime.socket) {
+    return;
+  }
+
+  const socket = runtime.socket;
+  runtime.socket = null;
+
+  // Stale runtimes being replaced should not emit callbacks/retries.
+  if (suppressCallbacks) {
+    socket.removeAllListeners();
+  }
+
+  if (
+    socket.readyState === WebSocket.OPEN ||
+    socket.readyState === WebSocket.CONNECTING
+  ) {
+    socket.close();
+  }
+}
+
+function parseServerMessage(data: WebSocket.RawData): ServerMessage | null {
+  try {
+    const raw = typeof data === "string" ? data : data.toString();
+    const parsed = JSON.parse(raw) as { type?: string };
+    if (parsed.type === "pong" || parsed.type === "message") {
+      return parsed as ServerMessage;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function sendClientMessage(socket: WebSocket, payload: ClientMessage): void {
+  if (socket.readyState === WebSocket.OPEN) {
+    socket.send(JSON.stringify(payload));
+  }
+}
+
+function buildApprovalExecutionPlan(
+  approvalMessage: ApprovalCreate,
+  pendingApprovals: Array<{
+    toolCallId: string;
+    toolName: string;
+    toolArgs: string;
+  }>,
+): {
+  slots: ApprovalSlot[];
+  decisions: ApprovalDecision[];
+} {
+  const pendingByToolCallId = new Map(
+    pendingApprovals.map((approval) => [approval.toolCallId, approval]),
+  );
+
+  const slots: ApprovalSlot[] = [];
+  const decisions: ApprovalDecision[] = [];
+
+  for (const approval of approvalMessage.approvals ?? []) {
+    if (approval.type === "tool") {
+      slots.push({ type: "result", value: approval as ToolReturn });
+      continue;
+    }
+
+    if (approval.type !== "approval") {
+      slots.push({
+        type: "result",
+        value: {
+          type: "tool",
+          tool_call_id: "unknown",
+          tool_return: "Error: Unsupported approval payload",
+          status: "error",
+        },
+      });
+      continue;
+    }
+
+    const pending = pendingByToolCallId.get(approval.tool_call_id);
+
+    if (approval.approve) {
+      if (!pending) {
+        slots.push({
+          type: "result",
+          value: {
+            type: "tool",
+            tool_call_id: approval.tool_call_id,
+            tool_return: "Error: Pending approval not found",
+            status: "error",
+          },
+        });
+        continue;
+      }
+
+      decisions.push({
+        type: "approve",
+        approval: {
+          toolCallId: pending.toolCallId,
+          toolName: pending.toolName,
+          toolArgs: pending.toolArgs || "{}",
+        },
+      });
+      slots.push({ type: "decision" });
+      continue;
+    }
+
+    decisions.push({
+      type: "deny",
+      approval: {
+        toolCallId: approval.tool_call_id,
+        toolName: pending?.toolName ?? "",
+        toolArgs: pending?.toolArgs ?? "{}",
+      },
+      reason:
+        typeof approval.reason === "string" && approval.reason.length > 0
+          ? approval.reason
+          : "Tool execution denied",
+    });
+    slots.push({ type: "decision" });
+  }
+
+  return { slots, decisions };
+}
+
 /**
- * Start the listener WebSocket client with automatic retry
+ * Start the listener WebSocket client with automatic retry.
  */
 export async function startListenerClient(
   opts: StartListenerOptions,
 ): Promise<void> {
-  isIntentionallyClosed = false;
-  hasSuccessfulConnection = false;
-  await connectWithRetry(opts);
+  // Replace any existing runtime without stale callback leakage.
+  if (activeRuntime) {
+    stopRuntime(activeRuntime, true);
+  }
+
+  const runtime = createRuntime();
+  activeRuntime = runtime;
+
+  await connectWithRetry(runtime, opts);
 }
 
 /**
- * Connect to WebSocket with exponential backoff retry
+ * Connect to WebSocket with exponential backoff retry.
  */
 async function connectWithRetry(
+  runtime: ListenerRuntime,
   opts: StartListenerOptions,
   attempt: number = 0,
   startTime: number = Date.now(),
 ): Promise<void> {
-  // Calculate time elapsed
+  if (runtime !== activeRuntime || runtime.intentionallyClosed) {
+    return;
+  }
+
   const elapsedTime = Date.now() - startTime;
 
-  // Calculate retry delay with exponential backoff
   if (attempt > 0) {
-    // Check if we've exceeded max retry duration before waiting
     if (elapsedTime >= MAX_RETRY_DURATION_MS) {
       opts.onError(new Error("Failed to connect after 5 minutes of retrying"));
       return;
@@ -116,44 +290,24 @@ async function connectWithRetry(
       Math.log2(MAX_RETRY_DURATION_MS / INITIAL_RETRY_DELAY_MS),
     );
 
-    if (process.env.DEBUG) {
-      console.log(
-        `[Listen] Retry attempt ${attempt}, waiting ${Math.round(delay / 1000)}s before reconnecting...`,
-      );
-    }
     opts.onRetrying?.(attempt, maxAttempts, delay);
 
-    await new Promise((resolve) => {
-      reconnectTimeout = setTimeout(resolve, delay);
+    await new Promise<void>((resolve) => {
+      runtime.reconnectTimeout = setTimeout(resolve, delay);
     });
+
+    runtime.reconnectTimeout = null;
+    if (runtime !== activeRuntime || runtime.intentionallyClosed) {
+      return;
+    }
   }
 
-  // Close existing connection if any
-  if (activeConnection) {
-    activeConnection.close();
-    activeConnection = null;
-  }
+  clearRuntimeTimers(runtime);
 
-  if (heartbeatInterval) {
-    clearInterval(heartbeatInterval);
-    heartbeatInterval = null;
-  }
-
-  // Load tools only on first attempt
   if (attempt === 0) {
-    // CRITICAL: Load tools into registry before starting listener
-    // This ensures getClientToolsFromRegistry() returns the full tool harness
-    // when messages are executed via sendMessageStream()
-    if (process.env.DEBUG) {
-      console.log("[Listen] Loading tool registry...");
-    }
     await loadTools();
-    if (process.env.DEBUG) {
-      console.log("[Listen] Tool registry loaded");
-    }
   }
 
-  // Get API key for authentication
   const settings = await settingsManager.getSettingsWithSecureTokens();
   const apiKey = process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
 
@@ -161,7 +315,6 @@ async function connectWithRetry(
     throw new Error("Missing LETTA_API_KEY");
   }
 
-  // Build WebSocket URL with query params
   const url = new URL(opts.wsUrl);
   url.searchParams.set("deviceId", opts.deviceId);
   url.searchParams.set("connectionName", opts.connectionName);
@@ -169,112 +322,103 @@ async function connectWithRetry(
     url.searchParams.set("agentId", opts.agentId);
   }
 
-  // Create WebSocket connection with auth
-  const ws = new WebSocket(url.toString(), {
+  const socket = new WebSocket(url.toString(), {
     headers: {
       Authorization: `Bearer ${apiKey}`,
     },
   });
 
-  activeConnection = ws;
+  runtime.socket = socket;
 
-  // Handle connection open
-  ws.on("open", () => {
-    if (process.env.DEBUG) {
-      console.log(`[Listen] WebSocket connected (attempt ${attempt})`);
+  socket.on("open", () => {
+    if (runtime !== activeRuntime || runtime.intentionallyClosed) {
+      return;
     }
-    hasSuccessfulConnection = true;
+
+    runtime.hasSuccessfulConnection = true;
     opts.onConnected();
 
-    // Start heartbeat ping every 30 seconds
-    heartbeatInterval = setInterval(() => {
-      if (ws.readyState === WebSocket.OPEN) {
-        const pingMsg: ClientMessage = { type: "ping" };
-        ws.send(JSON.stringify(pingMsg));
-      }
+    runtime.heartbeatInterval = setInterval(() => {
+      sendClientMessage(socket, { type: "ping" });
     }, 30000);
   });
 
-  // Handle incoming messages
-  ws.on("message", async (data: Buffer) => {
-    try {
-      const msg: ServerMessage = JSON.parse(data.toString());
+  socket.on("message", (data: WebSocket.RawData) => {
+    const parsed = parseServerMessage(data);
+    if (!parsed || parsed.type !== "message") {
+      return;
+    }
 
-      if (msg.type === "pong") {
-        // Heartbeat response - no action needed
-        return;
-      }
-
-      if (msg.type === "message") {
-        if (process.env.DEBUG) {
-          console.log(
-            `[Listen] Received message for agent ${msg.agentId || "default"}`,
-          );
+    runtime.messageQueue = runtime.messageQueue
+      .then(async () => {
+        if (runtime !== activeRuntime || runtime.intentionallyClosed) {
+          return;
         }
+
         opts.onStatusChange?.("receiving", opts.connectionId);
         await handleIncomingMessage(
-          msg,
+          parsed,
+          socket,
           opts.onStatusChange,
           opts.connectionId,
         );
         opts.onStatusChange?.("idle", opts.connectionId);
-      }
-    } catch (error) {
-      if (process.env.DEBUG) {
-        console.error("[Listen] Error handling message:", error);
-      }
-    }
+      })
+      .catch((error: unknown) => {
+        if (process.env.DEBUG) {
+          console.error("[Listen] Error handling queued message:", error);
+        }
+        opts.onStatusChange?.("idle", opts.connectionId);
+      });
   });
 
-  // Handle connection close
-  ws.on("close", (code, reason) => {
+  socket.on("close", (code: number, reason: Buffer) => {
+    if (runtime !== activeRuntime) {
+      return;
+    }
+
     if (process.env.DEBUG) {
       console.log(
         `[Listen] WebSocket disconnected (code: ${code}, reason: ${reason.toString()})`,
       );
     }
-    if (heartbeatInterval) {
-      clearInterval(heartbeatInterval);
-      heartbeatInterval = null;
-    }
-    activeConnection = null;
 
-    // Only retry if not intentionally closed
-    if (!isIntentionallyClosed) {
-      if (process.env.DEBUG) {
-        console.log("[Listen] Connection lost, attempting to reconnect...");
-      }
-      // Reset retry state if we had a successful connection
-      const nextAttempt = hasSuccessfulConnection ? 0 : attempt + 1;
-      const nextStartTime = hasSuccessfulConnection ? Date.now() : startTime;
-      hasSuccessfulConnection = false;
+    clearRuntimeTimers(runtime);
+    runtime.socket = null;
 
-      connectWithRetry(opts, nextAttempt, nextStartTime).catch((error) => {
-        if (process.env.DEBUG) {
-          console.error("[Listen] Reconnect failed:", error);
-        }
-        opts.onError(error);
-      });
-    } else {
+    if (runtime.intentionallyClosed) {
       opts.onDisconnected();
+      return;
     }
+
+    // If we had connected before, restart backoff from zero for this outage window.
+    const nextAttempt = runtime.hasSuccessfulConnection ? 0 : attempt + 1;
+    const nextStartTime = runtime.hasSuccessfulConnection
+      ? Date.now()
+      : startTime;
+    runtime.hasSuccessfulConnection = false;
+
+    connectWithRetry(runtime, opts, nextAttempt, nextStartTime).catch(
+      (error) => {
+        opts.onError(error instanceof Error ? error : new Error(String(error)));
+      },
+    );
   });
 
-  // Handle connection error
-  ws.on("error", (error) => {
+  socket.on("error", (error: Error) => {
     if (process.env.DEBUG) {
       console.error("[Listen] WebSocket error:", error);
     }
-    // Error will trigger close event, which handles retry
+    // Error triggers close(), which handles retry logic.
   });
 }
 
 /**
- * Handle an incoming message from the cloud
- * Execute it locally using the letta-code harness
+ * Handle an incoming message from the cloud.
  */
 async function handleIncomingMessage(
   msg: IncomingMessage,
+  socket: WebSocket,
   onStatusChange?: (
     status: "idle" | "receiving" | "processing",
     connectionId: string,
@@ -283,254 +427,126 @@ async function handleIncomingMessage(
 ): Promise<void> {
   try {
     const agentId = msg.agentId;
-    const conversationId = msg.conversationId || "default";
+    const requestedConversationId = msg.conversationId;
+    const conversationId = requestedConversationId ?? "default";
 
     if (!agentId) {
-      if (process.env.DEBUG) {
-        console.error("[Listen] No agentId provided in message");
-      }
       return;
-    }
-
-    if (process.env.DEBUG) {
-      console.log(
-        `[Listen] Executing message for agent ${agentId}, conversation ${conversationId}`,
-      );
     }
 
     if (connectionId) {
       onStatusChange?.("processing", connectionId);
     }
 
-    // Check if this is an approval message - need to execute tools locally
+    let messagesToSend: Array<MessageCreate | ApprovalCreate> = msg.messages;
+
     const firstMessage = msg.messages[0];
     const isApprovalMessage =
       firstMessage &&
       "type" in firstMessage &&
-      firstMessage.type === "approval";
+      firstMessage.type === "approval" &&
+      "approvals" in firstMessage;
 
-    let messagesToSend: Array<MessageCreate | ApprovalCreate> = msg.messages;
-
-    if (isApprovalMessage && "approvals" in firstMessage) {
+    if (isApprovalMessage) {
       const approvalMessage = firstMessage as ApprovalCreate;
-      if (!approvalMessage.approvals) {
-        if (process.env.DEBUG) {
-          console.error("[Listen] Approval message has no approvals array");
-        }
-        return;
-      }
-
-      if (process.env.DEBUG) {
-        console.log(
-          `[Listen] Processing approval message with ${approvalMessage.approvals.length} approval(s)`,
-        );
-      }
-
-      const { getClient } = await import("../agent/client");
-      const { executeTool } = await import("../tools/manager");
-      const { getResumeData } = await import("../agent/check-approval");
       const client = await getClient();
-
-      // Fetch agent and pending approvals
       const agent = await client.agents.retrieve(agentId);
       const resumeData = await getResumeData(
         client,
         agent,
-        conversationId === "default" ? undefined : conversationId,
-      );
-      const pendingApprovals = resumeData.pendingApprovals;
-
-      // Execute approved tools locally and build ToolReturn messages
-      const toolReturns = await Promise.all(
-        approvalMessage.approvals.map(async (approval) => {
-          // If already a tool return, pass through
-          if (approval.type === "tool") {
-            return approval;
-          }
-
-          // Type guard: if it's not a tool return, it must be an approval return
-          if (!("approve" in approval)) {
-            return approval;
-          }
-
-          // Handle approve: true by executing locally
-          if (approval.approve === true) {
-            const pending = pendingApprovals.find(
-              (p) => p.toolCallId === approval.tool_call_id,
-            );
-            if (!pending) {
-              if (process.env.DEBUG) {
-                console.warn(
-                  `[Listen] No pending approval found for ${approval.tool_call_id}`,
-                );
-              }
-              return {
-                type: "tool",
-                tool_call_id: approval.tool_call_id,
-                tool_return: "Error: Pending approval not found",
-                status: "error",
-              };
-            }
-
-            if (process.env.DEBUG) {
-              console.log(
-                `[Listen] Executing tool locally: ${pending.toolName}`,
-              );
-            }
-            try {
-              const result = await executeTool(
-                pending.toolName,
-                JSON.parse(pending.toolArgs || "{}"),
-              );
-
-              return {
-                type: "tool",
-                tool_call_id: approval.tool_call_id,
-                tool_return: result.toolReturn,
-                status: result.status,
-                stdout: result.stdout ? [result.stdout] : undefined,
-                stderr: result.stderr ? [result.stderr] : undefined,
-              };
-            } catch (error) {
-              return {
-                type: "tool",
-                tool_call_id: approval.tool_call_id,
-                tool_return: `Error: ${error instanceof Error ? error.message : String(error)}`,
-                status: "error",
-              };
-            }
-          }
-
-          // Denied - return error
-          return {
-            type: "tool",
-            tool_call_id: approval.tool_call_id,
-            tool_return:
-              ("reason" in approval && approval.reason) ||
-              "Tool execution denied",
-            status: "error",
-          };
-        }),
+        requestedConversationId,
       );
 
-      // Replace approvals with tool returns
+      const { slots, decisions } = buildApprovalExecutionPlan(
+        approvalMessage,
+        resumeData.pendingApprovals,
+      );
+      const decisionResults =
+        decisions.length > 0 ? await executeApprovalBatch(decisions) : [];
+
+      const rebuiltApprovals: ApprovalResult[] = [];
+      let decisionResultIndex = 0;
+
+      for (const slot of slots) {
+        if (slot.type === "result") {
+          rebuiltApprovals.push(slot.value);
+          continue;
+        }
+
+        const next = decisionResults[decisionResultIndex];
+        if (next) {
+          rebuiltApprovals.push(next);
+          decisionResultIndex++;
+          continue;
+        }
+
+        rebuiltApprovals.push({
+          type: "tool",
+          tool_call_id: "unknown",
+          tool_return: "Error: Missing approval execution result",
+          status: "error",
+        });
+      }
+
       messagesToSend = [
         {
           type: "approval",
-          approvals: toolReturns,
-        } as ApprovalCreate,
+          approvals: rebuiltApprovals,
+        },
       ];
     }
 
-    // Send message to core (either original or with executed tool returns)
     const stream = await sendMessageStream(conversationId, messagesToSend, {
       agentId,
       streamTokens: true,
       background: true,
     });
 
-    // Capture runId from first stream chunk and send to cloud
-    let runId: string | undefined;
     let runIdSent = false;
-
-    // Wrap stream to intercept chunks
-    const originalStream = stream;
-    const interceptedChunks: unknown[] = [];
-
-    for await (const chunk of originalStream) {
-      interceptedChunks.push(chunk);
-
-      // Extract runId from first chunk
-      if (!runIdSent && "run_id" in chunk && chunk.run_id) {
-        runId = chunk.run_id;
-        runIdSent = true;
-
-        // Send runId back to cloud immediately
-        if (
-          activeConnection &&
-          activeConnection.readyState === WebSocket.OPEN
-        ) {
-          const runStartedMsg: ClientMessage = {
-            type: "run_started",
-            runId,
-          };
-          activeConnection.send(JSON.stringify(runStartedMsg));
-          if (process.env.DEBUG) {
-            console.log(`[Listen] Sent runId to cloud: ${runId}`);
-          }
-        }
-      }
-    }
-
-    // Process the collected chunks through drainStreamWithResume
-    // We need to convert the array back to a Stream-like object
-    async function* replayChunks(): AsyncGenerator<
-      LettaStreamingResponse,
-      void,
-      unknown
-    > {
-      for (const chunk of interceptedChunks) {
-        yield chunk as LettaStreamingResponse;
-      }
-    }
 
     const buffers = createBuffers(agentId);
     const result = await drainStreamWithResume(
-      replayChunks() as unknown as Stream<LettaStreamingResponse>,
+      stream as Stream<LettaStreamingResponse>,
       buffers,
       () => {},
+      undefined,
+      undefined,
+      ({ chunk }) => {
+        const maybeRunId = (chunk as { run_id?: unknown }).run_id;
+        if (!runIdSent && typeof maybeRunId === "string") {
+          runIdSent = true;
+          sendClientMessage(socket, {
+            type: "run_started",
+            runId: maybeRunId,
+          });
+        }
+        return undefined;
+      },
     );
 
-    if (process.env.DEBUG) {
-      console.log(
-        `[Listen] Execution complete. Stop reason: ${result.stopReason}`,
-      );
-    }
-
-    // Send result back to cloud (optional)
-    if (activeConnection && activeConnection.readyState === WebSocket.OPEN) {
-      const resultMsg: ClientMessage = {
-        type: "result",
-        success: result.stopReason === "end_turn",
-        stopReason: result.stopReason,
-      };
-      activeConnection.send(JSON.stringify(resultMsg));
-    }
-  } catch (error) {
-    if (process.env.DEBUG) {
-      console.error("[Listen] Error executing message:", error);
-    }
-
-    // Send error result back
-    if (activeConnection && activeConnection.readyState === WebSocket.OPEN) {
-      const resultMsg: ClientMessage = {
-        type: "result",
-        success: false,
-        stopReason: "error",
-      };
-      activeConnection.send(JSON.stringify(resultMsg));
-    }
+    sendClientMessage(socket, {
+      type: "result",
+      success: result.stopReason === "end_turn",
+      stopReason: result.stopReason,
+    });
+  } catch {
+    sendClientMessage(socket, {
+      type: "result",
+      success: false,
+      stopReason: "error",
+    });
   }
 }
 
 /**
- * Stop the active listener connection
+ * Stop the active listener connection.
  */
 export function stopListenerClient(): void {
-  isIntentionallyClosed = true;
-
-  if (reconnectTimeout) {
-    clearTimeout(reconnectTimeout);
-    reconnectTimeout = null;
+  if (!activeRuntime) {
+    return;
   }
 
-  if (heartbeatInterval) {
-    clearInterval(heartbeatInterval);
-    heartbeatInterval = null;
-  }
-
-  if (activeConnection) {
-    activeConnection.close();
-    activeConnection = null;
-  }
+  const runtime = activeRuntime;
+  activeRuntime = null;
+  stopRuntime(runtime, true);
 }
