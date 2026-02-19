@@ -181,4 +181,30 @@ describe("formatErrorDetails", () => {
     expect(message).toContain("minimax-m2.1");
     expect(message).toContain("/model");
   });
+
+  test("formats rate limited with premium-usage-exceeded and not-enough-credits", () => {
+    // This is the error format from the underlying service when credits are exhausted
+    const error = new APIError(
+      402,
+      {
+        error: "Rate limited",
+        reasons: ["premium-usage-exceeded", "not-enough-credits"],
+        currentRequestFrequency: 0,
+        currentTokenFrequency: 0,
+        remainingMonthlyCredits: 0,
+        remainingPurchasedCredits: 0,
+      },
+      undefined,
+      new Headers(),
+    );
+
+    const message = formatErrorDetails(error);
+
+    // Should show friendly message, not raw JSON
+    expect(message).toContain("out of credits");
+    expect(message).toContain("/connect");
+    expect(message).not.toContain("Rate limited");
+    expect(message).not.toContain("premium-usage-exceeded");
+    expect(message).not.toContain("remainingMonthlyCredits");
+  });
 });

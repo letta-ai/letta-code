@@ -358,6 +358,29 @@ export function formatErrorDetails(
     if (hasErrorReason(e, "free-usage-exceeded", reasons)) {
       return `You've reached the Free plan hosted model usage limit. Switch to free hosted models with /model (glm-4.7 or minimax-m2.1), upgrade at ${LETTA_USAGE_URL}, or connect your own provider keys with /connect.`;
     }
+
+    // Check for "Rate limited" error with credit-related reasons (e.g., premium-usage-exceeded + not-enough-credits)
+    // This is a specific format that comes from the underlying service being rate limited due to credit exhaustion
+    const errorBody = e.error;
+    if (e.status === 402 && errorBody && typeof errorBody === "object") {
+      const errorMsg = (errorBody as Record<string, unknown>).error;
+      if (
+        typeof errorMsg === "string" &&
+        errorMsg.toLowerCase() === "rate limited"
+      ) {
+        const hasCreditReasons = reasons.some(
+          (r) =>
+            r === "not-enough-credits" ||
+            r === "premium-usage-exceeded" ||
+            r === "standard-usage-exceeded" ||
+            r === "basic-usage-exceeded",
+        );
+        if (hasCreditReasons) {
+          return `Your account is out of credits for hosted inference. Add credits, enable auto-recharge, or upgrade at ${LETTA_USAGE_URL}. You can also connect your own provider keys with /connect.`;
+        }
+      }
+    }
+
     // Check for nested error structure: e.error.error
     if (e.error && typeof e.error === "object" && "error" in e.error) {
       const errorData = e.error.error;
