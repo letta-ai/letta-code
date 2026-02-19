@@ -167,10 +167,13 @@ export async function applyMemfsFlags(
   const { getServerUrl } = await import("./client");
   const { settingsManager } = await import("../settings-manager");
 
-  // 1. Validate explicit enable on supported backend.
+  // Validate explicit enable on supported backend.
   if (memfsFlag) {
     const serverUrl = getServerUrl();
-    if (!serverUrl.includes("api.letta.com")) {
+    if (
+      !serverUrl.includes("api.letta.com") &&
+      process.env.LETTA_MEMFS_LOCAL !== "1"
+    ) {
       throw new Error(
         "--memfs is only available on Letta Cloud (api.letta.com).",
       );
@@ -236,7 +239,11 @@ export async function applyMemfsFlags(
 export async function enableMemfsIfCloud(agentId: string): Promise<void> {
   const { getServerUrl } = await import("./client");
   const serverUrl = getServerUrl();
-  if (!serverUrl.includes("api.letta.com")) return;
+  if (
+    !serverUrl.includes("api.letta.com") &&
+    process.env.LETTA_MEMFS_LOCAL !== "1"
+  )
+    return;
 
   try {
     await applyMemfsFlags(agentId, true, undefined);
