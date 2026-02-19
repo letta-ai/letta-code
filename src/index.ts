@@ -15,6 +15,7 @@ import { ISOLATED_BLOCK_LABELS } from "./agent/memory";
 import { resolveSkillSourcesSelection } from "./agent/skillSources";
 import { LETTA_CLOUD_API_URL } from "./auth/oauth";
 import { ConversationSelector } from "./cli/components/ConversationSelector";
+import { formatErrorDetails } from "./cli/helpers/errorFormatter";
 import type { ApprovalRequest } from "./cli/helpers/stream";
 import { ProfileSelectionInline } from "./cli/profile-selection";
 import { runSubcommand } from "./cli/subcommands/router";
@@ -1991,8 +1992,7 @@ async function main(): Promise<void> {
 
       init().catch((err) => {
         // Handle errors gracefully without showing raw stack traces
-        const message =
-          err instanceof Error ? err.message : "An unexpected error occurred";
+        const message = formatErrorDetails(err);
         console.error(`\nError during initialization: ${message}`);
         if (process.env.DEBUG) {
           console.error(err);
