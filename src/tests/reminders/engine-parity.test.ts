@@ -1,7 +1,12 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { SkillSource } from "../../agent/skills";
 import type { ReflectionSettings } from "../../cli/helpers/memoryReminder";
-import { SHARED_REMINDER_IDS } from "../../reminders/catalog";
+import {
+  SHARED_REMINDER_CATALOG,
+  SHARED_REMINDER_IDS,
+  type SharedReminderId,
+  type SharedReminderMode,
+} from "../../reminders/catalog";
 import {
   buildSharedReminderParts,
   sharedReminderProviders,
@@ -10,6 +15,12 @@ import { createSharedReminderState } from "../../reminders/state";
 
 const originalProviders = { ...sharedReminderProviders };
 const providerMap = sharedReminderProviders;
+
+function reminderIdsForMode(mode: SharedReminderMode): SharedReminderId[] {
+  return SHARED_REMINDER_CATALOG.filter((entry) =>
+    entry.modes.includes(mode),
+  ).map((entry) => entry.id);
+}
 
 afterEach(() => {
   for (const reminderId of SHARED_REMINDER_IDS) {
@@ -58,15 +69,23 @@ describe("shared reminder parity", () => {
       state: createSharedReminderState(),
     });
 
-    expect(interactive.appliedReminderIds).toEqual(SHARED_REMINDER_IDS);
-    expect(oneShot.appliedReminderIds).toEqual(SHARED_REMINDER_IDS);
-    expect(bidirectional.appliedReminderIds).toEqual(SHARED_REMINDER_IDS);
-    expect(interactive.parts.map((part) => part.text)).toEqual(
-      SHARED_REMINDER_IDS,
+    expect(interactive.appliedReminderIds).toEqual(
+      reminderIdsForMode("interactive"),
     );
-    expect(oneShot.parts.map((part) => part.text)).toEqual(SHARED_REMINDER_IDS);
+    expect(oneShot.appliedReminderIds).toEqual(
+      reminderIdsForMode("headless-one-shot"),
+    );
+    expect(bidirectional.appliedReminderIds).toEqual(
+      reminderIdsForMode("headless-bidirectional"),
+    );
+    expect(interactive.parts.map((part) => part.text)).toEqual(
+      reminderIdsForMode("interactive"),
+    );
+    expect(oneShot.parts.map((part) => part.text)).toEqual(
+      reminderIdsForMode("headless-one-shot"),
+    );
     expect(bidirectional.parts.map((part) => part.text)).toEqual(
-      SHARED_REMINDER_IDS,
+      reminderIdsForMode("headless-bidirectional"),
     );
   });
 });

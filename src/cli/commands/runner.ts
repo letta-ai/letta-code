@@ -24,12 +24,22 @@ export type CommandHandle = {
   fail: (output: string) => void;
 };
 
+export type CommandFinishedEvent = {
+  id: string;
+  input: string;
+  output: string;
+  success: boolean;
+  dimOutput?: boolean;
+  preformatted?: boolean;
+};
+
 type CreateId = (prefix: string) => string;
 
 type RunnerDeps = {
   buffersRef: MutableRefObject<Buffers>;
   refreshDerived: () => void;
   createId: CreateId;
+  onCommandFinished?: (event: CommandFinishedEvent) => void;
 };
 
 function upsertCommandLine(
@@ -56,13 +66,33 @@ export function createCommandRunner({
   buffersRef,
   refreshDerived,
   createId,
+  onCommandFinished,
 }: RunnerDeps) {
   function getHandle(id: string, input: string): CommandHandle {
     const update = (updateData: CommandUpdate) => {
+      const previous = buffersRef.current.byId.get(id);
+      const wasFinished =
+        previous?.kind === "command" && previous.phase === "finished";
+
       upsertCommandLine(buffersRef.current, id, input, updateData);
       if (!buffersRef.current.order.includes(id)) {
         buffersRef.current.order.push(id);
       }
+
+      const next = buffersRef.current.byId.get(id);
+      const becameFinished =
+        !wasFinished && next?.kind === "command" && next.phase === "finished";
+      if (becameFinished) {
+        onCommandFinished?.({
+          id,
+          input: next.input,
+          output: next.output,
+          success: next.success !== false,
+          dimOutput: next.dimOutput,
+          preformatted: next.preformatted,
+        });
+      }
+
       refreshDerived();
     };
 
