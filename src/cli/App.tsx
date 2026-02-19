@@ -5369,6 +5369,19 @@ export default function App({
         // Update project settings with new agent
         await updateProjectSettings({ lastAgent: agent.id });
 
+        // New agents always start on their default conversation route.
+        // Persist this explicitly so routing and resume state do not retain
+        // a previous agent's non-default conversation id.
+        const targetConversationId = "default";
+        settingsManager.setLocalLastSession(
+          { agentId: agent.id, conversationId: targetConversationId },
+          process.cwd(),
+        );
+        settingsManager.setGlobalLastSession({
+          agentId: agent.id,
+          conversationId: targetConversationId,
+        });
+
         // Build success message with hints
         const agentUrl = `https://app.letta.com/projects/default-project/agents/${agent.id}`;
         const successOutput = [
@@ -5408,6 +5421,24 @@ export default function App({
               agent.llm_config.model
             : (agent.llm_config.model ?? null);
         setCurrentModelHandle(agentModelHandle);
+        setConversationId(targetConversationId);
+
+        // Set conversation switch context for new agent switch
+        pendingConversationSwitchRef.current = {
+          origin: "agent-switch",
+          conversationId: targetConversationId,
+          isDefault: true,
+          agentSwitchContext: {
+            name: agent.name || agent.id,
+            description: agent.description ?? undefined,
+            model: agentModelHandle
+              ? (await import("../agent/model")).getModelDisplayName(
+                  agentModelHandle,
+                ) || agentModelHandle
+              : "unknown",
+            blockCount: agent.blocks?.length ?? 0,
+          },
+        };
 
         // Reset context token tracking for new agent
         resetContextHistory(contextTrackerRef.current);
