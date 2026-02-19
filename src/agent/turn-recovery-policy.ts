@@ -46,6 +46,7 @@ const NON_RETRYABLE_PROVIDER_DETAIL_PATTERNS = [
   "context_length_exceeded",
   "invalid_encrypted_content",
 ];
+const NON_RETRYABLE_429_REASONS = ["agents-limit-exceeded"];
 const NON_RETRYABLE_4XX_PATTERN = /Error code:\s*4(0[0-8]|1\d|2\d|3\d|4\d|51)/i;
 const RETRYABLE_429_PATTERN = /Error code:\s*429|rate limit|too many requests/i;
 
@@ -109,7 +110,16 @@ export function shouldRetryPreStreamTransientError(opts: {
   detail: unknown;
 }): boolean {
   const { status, detail } = opts;
-  if (status === 429) return true;
+  if (status === 429) {
+    // Don't retry non-recoverable 429s (e.g. agent limit reached)
+    if (
+      typeof detail === "string" &&
+      NON_RETRYABLE_429_REASONS.some((r) => detail.includes(r))
+    ) {
+      return false;
+    }
+    return true;
+  }
   if (status !== undefined && status >= 500) return true;
   if (status !== undefined && status >= 400) return false;
 
