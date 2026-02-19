@@ -179,11 +179,15 @@ class PermissionModeManager {
           "GrepFiles",
           "UpdatePlan",
           // Gemini toolset (snake_case)
+          "read_file_gemini",
+          "glob_gemini",
           "list_directory",
           "search_file_content",
           "write_todos",
           "read_many_files",
           // Gemini toolset (PascalCase)
+          "ReadFileGemini",
+          "GlobGemini",
           "ListDirectory",
           "SearchFileContent",
           "WriteTodos",
@@ -269,6 +273,8 @@ class PermissionModeManager {
           "ShellCommand",
           "run_shell_command",
           "RunShellCommand",
+          "run_shell_command_gemini",
+          "RunShellCommandGemini",
         ];
         if (shellTools.includes(toolName)) {
           const command = toolArgs?.command as string | string[] | undefined;
