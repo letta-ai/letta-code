@@ -617,13 +617,36 @@ export async function handleDisconnect(
   const parts = msg.trim().split(/\s+/);
   const provider = parts[1]?.toLowerCase();
 
+  // /disconnect help
+  if (provider === "help") {
+    addCommandResult(
+      ctx.buffersRef,
+      ctx.refreshDerived,
+      msg,
+      [
+        "/disconnect help",
+        "",
+        "Disconnect an existing account.",
+        "",
+        "USAGE",
+        "  /disconnect <provider>   — disconnect a provider",
+        "  /disconnect help         — show this help",
+        "",
+        "PROVIDERS",
+        "  codex, claude, zai, minimax, openrouter, bedrock",
+      ].join("\n"),
+      true,
+    );
+    return;
+  }
+
   // If no provider specified, show usage
   if (!provider) {
     addCommandResult(
       ctx.buffersRef,
       ctx.refreshDerived,
       msg,
-      "Usage: /disconnect <provider>\n\nAvailable providers: codex, claude, zai, minimax, openrouter, bedrock",
+      "Usage: /disconnect <provider>",
       false,
     );
     return;
@@ -670,7 +693,7 @@ export async function handleDisconnect(
     ctx.buffersRef,
     ctx.refreshDerived,
     msg,
-    `Error: Unknown provider "${provider}"\n\nAvailable providers: codex, claude, zai, minimax, openrouter, bedrock\nUsage: /disconnect <provider>`,
+    `Unknown provider: "${provider}". Run /disconnect help for usage.`,
     false,
   );
 }

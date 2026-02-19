@@ -274,6 +274,19 @@ export const commands: Record<string, Command> = {
     desc: "Setup terminal shortcuts [--revert]",
     order: 37,
     handler: async (args: string[]) => {
+      if (args.includes("help")) {
+        return [
+          "/terminal help",
+          "",
+          "Setup terminal keyboard shortcuts.",
+          "",
+          "USAGE",
+          "  /terminal            — install Shift+Enter keybinding",
+          "  /terminal --revert   — remove keybinding",
+          "  /terminal help       — show this help",
+        ].join("\n");
+      }
+
       const {
         detectTerminalType,
         getKeybindingsPath,
