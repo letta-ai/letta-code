@@ -182,6 +182,25 @@ describe("formatErrorDetails", () => {
     expect(message).toContain("/model");
   });
 
+  test("formats agents-limit-exceeded error", () => {
+    const error = new APIError(
+      429,
+      {
+        error: "Rate limited",
+        reasons: ["agents-limit-exceeded"],
+      },
+      undefined,
+      new Headers(),
+    );
+
+    const message = formatErrorDetails(error);
+
+    // Should show friendly message, not raw JSON
+    expect(message).toContain("agent limit");
+    expect(message).not.toContain("Rate limited");
+    expect(message).not.toContain("agents-limit-exceeded");
+  });
+
   test("formats rate limited with premium-usage-exceeded and not-enough-credits", () => {
     // This is the error format from the underlying service when credits are exhausted
     const error = new APIError(
