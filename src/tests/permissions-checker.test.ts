@@ -677,3 +677,107 @@ test("Legacy bare WriteFileGemini rule still matches write invocations", () => {
   expect(result.decision).toBe("allow");
   expect(result.matchedRule).toBe("WriteFileGemini");
 });
+
+test("LETTA_PERMISSIONS_V2=0 preserves legacy alias mismatch behavior", () => {
+  const original = process.env.LETTA_PERMISSIONS_V2;
+  process.env.LETTA_PERMISSIONS_V2 = "0";
+
+  try {
+    const permissions: PermissionRules = {
+      allow: ["Bash(curl:*)"],
+      deny: [],
+      ask: [],
+    };
+
+    const result = checkPermission(
+      "run_shell_command",
+      { command: "curl -s http://localhost:4321/health" },
+      permissions,
+      "/Users/test/project",
+    );
+
+    expect(result.decision).toBe("ask");
+  } finally {
+    if (original === undefined) {
+      delete process.env.LETTA_PERMISSIONS_V2;
+    } else {
+      process.env.LETTA_PERMISSIONS_V2 = original;
+    }
+  }
+});
+
+test("permission trace is attached for ask decisions when LETTA_PERMISSION_TRACE=1", () => {
+  const originalTrace = process.env.LETTA_PERMISSION_TRACE;
+  process.env.LETTA_PERMISSION_TRACE = "1";
+
+  try {
+    const result = checkPermission(
+      "Bash",
+      { command: "npm install" },
+      { allow: [], deny: [], ask: [] },
+      "/Users/test/project",
+    );
+
+    expect(result.decision).toBe("ask");
+    expect(result.trace).toBeDefined();
+    expect(result.trace?.engine).toBe("v2");
+    expect(result.trace?.events.length).toBeGreaterThan(0);
+  } finally {
+    if (originalTrace === undefined) {
+      delete process.env.LETTA_PERMISSION_TRACE;
+    } else {
+      process.env.LETTA_PERMISSION_TRACE = originalTrace;
+    }
+  }
+});
+
+test("dual eval attaches shadow decision when enabled", () => {
+  const originalTrace = process.env.LETTA_PERMISSION_TRACE;
+  const originalTraceAll = process.env.LETTA_PERMISSION_TRACE_ALL;
+  const originalDual = process.env.LETTA_PERMISSIONS_DUAL_EVAL;
+  const originalV2 = process.env.LETTA_PERMISSIONS_V2;
+  delete process.env.LETTA_PERMISSIONS_V2;
+  process.env.LETTA_PERMISSION_TRACE = "0";
+  process.env.LETTA_PERMISSION_TRACE_ALL = "1";
+  process.env.LETTA_PERMISSIONS_DUAL_EVAL = "1";
+
+  try {
+    const permissions: PermissionRules = {
+      allow: ["Bash(curl:*)"],
+      deny: [],
+      ask: [],
+    };
+
+    const result = checkPermission(
+      "run_shell_command",
+      { command: "curl -s http://localhost:4321/health" },
+      permissions,
+      "/Users/test/project",
+    );
+
+    expect(result.decision).toBe("allow");
+    expect(result.trace?.shadow?.engine).toBe("v1");
+    expect(result.trace?.shadow?.decision).toBe("ask");
+  } finally {
+    if (originalTrace === undefined) {
+      delete process.env.LETTA_PERMISSION_TRACE;
+    } else {
+      process.env.LETTA_PERMISSION_TRACE = originalTrace;
+    }
+    if (originalTraceAll === undefined) {
+      delete process.env.LETTA_PERMISSION_TRACE_ALL;
+    } else {
+      process.env.LETTA_PERMISSION_TRACE_ALL = originalTraceAll;
+    }
+    if (originalDual === undefined) {
+      delete process.env.LETTA_PERMISSIONS_DUAL_EVAL;
+    } else {
+      process.env.LETTA_PERMISSIONS_DUAL_EVAL = originalDual;
+    }
+    if (originalV2 === undefined) {
+      delete process.env.LETTA_PERMISSIONS_V2;
+    } else {
+      process.env.LETTA_PERMISSIONS_V2 = originalV2;
+    }
+  }
+});
