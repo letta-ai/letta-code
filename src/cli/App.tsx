@@ -373,6 +373,31 @@ function deriveReasoningEffort(
   return null;
 }
 
+function inferReasoningEffortFromModelPreset(
+  modelId: string | null | undefined,
+  modelHandle: string | null | undefined,
+): ModelReasoningEffort | null {
+  const modelInfo =
+    (modelId ? getModelInfo(modelId) : null) ??
+    (modelHandle ? getModelInfo(modelHandle) : null);
+  const presetEffort = (
+    modelInfo?.updateArgs as { reasoning_effort?: unknown } | undefined
+  )?.reasoning_effort;
+
+  if (
+    presetEffort === "none" ||
+    presetEffort === "minimal" ||
+    presetEffort === "low" ||
+    presetEffort === "medium" ||
+    presetEffort === "high" ||
+    presetEffort === "xhigh"
+  ) {
+    return presetEffort;
+  }
+
+  return null;
+}
+
 // Helper to get appropriate error hint based on stop reason and current model
 function getErrorHintForStopReason(
   stopReason: StopReasonType | null,
@@ -1364,9 +1389,12 @@ export default function App({
       currentModelLabel.split("/").pop())
     : null;
   const currentModelProvider = llmConfig?.provider_name ?? null;
-  // Derive reasoning effort from model_settings (canonical) with llm_config as legacy fallback
+  // Derive reasoning effort from model_settings (canonical) with llm_config as legacy fallback.
+  // Some providers may omit explicit effort for default tiers (e.g., Sonnet 4.6 high),
+  // so fall back to the selected model preset when needed.
   const currentReasoningEffort: ModelReasoningEffort | null =
-    deriveReasoningEffort(agentState?.model_settings, llmConfig);
+    deriveReasoningEffort(agentState?.model_settings, llmConfig) ??
+    inferReasoningEffortFromModelPreset(currentModelId, currentModelLabel);
 
   // Billing tier for conditional UI and error context (fetched once on mount)
   const [billingTier, setBillingTier] = useState<string | null>(null);
