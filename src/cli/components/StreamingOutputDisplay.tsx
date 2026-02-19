@@ -68,6 +68,13 @@ export const StreamingOutputDisplay = memo(
             {"     "}… +{hiddenCount} more lines ({elapsed}s){interruptHint}
           </Text>
         )}
+
+        {/* Always show elapsed while running, even if output is short */}
+        {hiddenCount === 0 && (
+          <Text dimColor>
+            {"     "}({elapsed}s){interruptHint}
+          </Text>
+        )}
       </Box>
     );
   },
