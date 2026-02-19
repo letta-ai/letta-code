@@ -46,9 +46,11 @@ export async function sendMessageStream(
     background?: boolean;
     agentId?: string; // Required when conversationId is "default"
   } = { streamTokens: true, background: true },
+  // TODO: Re-enable once issues are resolved - disabled retries were causing problems
   // Disable SDK retries by default - state management happens outside the stream,
   // so retries would violate idempotency and create race conditions
-  requestOptions: { maxRetries?: number } = { maxRetries: 0 },
+  // requestOptions: { maxRetries?: number } = { maxRetries: 0 },
+  requestOptions: { maxRetries?: number } = {},
 ): Promise<Stream<LettaStreamingResponse>> {
   const requestStartTime = isTimingsEnabled() ? performance.now() : undefined;
   const client = await getClient();
