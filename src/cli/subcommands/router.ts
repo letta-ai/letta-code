@@ -1,5 +1,6 @@
 import { runAgentsSubcommand } from "./agents";
 import { runBlocksSubcommand } from "./blocks";
+import { runListenSubcommand } from "./listen.tsx";
 import { runMemfsSubcommand } from "./memfs";
 import { runMessagesSubcommand } from "./messages";
 
@@ -19,6 +20,8 @@ export async function runSubcommand(argv: string[]): Promise<number | null> {
       return runMessagesSubcommand(rest);
     case "blocks":
       return runBlocksSubcommand(rest);
+    case "listen":
+      return runListenSubcommand(rest);
     default:
       return null;
   }

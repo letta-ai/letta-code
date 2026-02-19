@@ -6223,6 +6223,54 @@ export default function App({
           return { submitted: true };
         }
 
+        // Special handling for /listen command - start listener mode
+        if (trimmed === "/listen" || trimmed.startsWith("/listen ")) {
+          // Tokenize with quote support: --name "my laptop"
+          const parts = Array.from(
+            trimmed.matchAll(
+              /"([^"\\]*(?:\\.[^"\\]*)*)"|'([^'\\]*(?:\\.[^'\\]*)*)'|(\S+)/g,
+            ),
+            (match) => match[1] ?? match[2] ?? match[3],
+          );
+
+          let name: string | undefined;
+          let listenAgentId: string | undefined;
+
+          for (let i = 1; i < parts.length; i++) {
+            const part = parts[i];
+            const nextPart = parts[i + 1];
+            if (part === "--name" && nextPart) {
+              name = nextPart;
+              i++;
+            } else if (part === "--agent" && nextPart) {
+              listenAgentId = nextPart;
+              i++;
+            }
+          }
+
+          // Default to current agent if not specified
+          const targetAgentId = listenAgentId || agentId;
+
+          const cmd = commandRunner.start(msg, "Starting listener...");
+          const { handleListen, setActiveCommandId: setActiveListenCommandId } =
+            await import("./commands/listen");
+          setActiveListenCommandId(cmd.id);
+          try {
+            await handleListen(
+              {
+                buffersRef,
+                refreshDerived,
+                setCommandRunning,
+              },
+              msg,
+              { name, agentId: targetAgentId },
+            );
+          } finally {
+            setActiveListenCommandId(null);
+          }
+          return { submitted: true };
+        }
+
         // Special handling for /help command - opens help dialog
         if (trimmed === "/help") {
           startOverlayCommand(

@@ -34,7 +34,8 @@
     "glob": "^13.0.0",
     "ink-link": "^5.0.0",
     "open": "^10.2.0",
-    "sharp": "^0.34.5"
+    "sharp": "^0.34.5",
+    "ws": "^8.19.0"
   },
   "optionalDependencies": {
     "@vscode/ripgrep": "^1.17.0"
@@ -44,6 +45,7 @@
     "@types/diff": "^8.0.0",
     "@types/picomatch": "^4.0.2",
     "@types/react": "^19.2.9",
+    "@types/ws": "^8.18.1",
     "diff": "^8.0.2",
     "husky": "9.1.7",
     "ink": "^5.0.0",
