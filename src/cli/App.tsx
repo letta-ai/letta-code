@@ -929,6 +929,11 @@ export default function App({
   const [uiPermissionMode, setUiPermissionMode] = useState(
     permissionMode.getMode(),
   );
+  const uiPermissionModeRef = useRef(uiPermissionMode);
+  useEffect(() => {
+    uiPermissionModeRef.current = uiPermissionMode;
+  }, [uiPermissionMode]);
+
   const statusLineTriggerVersionRef = useRef(0);
   const [statusLineTriggerVersion, setStatusLineTriggerVersion] = useState(0);
 
@@ -2956,6 +2961,7 @@ export default function App({
           setUiRalphActive(false);
           if (wasYolo) {
             permissionMode.setMode("default");
+            setUiPermissionMode("default");
           }
 
           // Add completion status to transcript
@@ -2980,6 +2986,7 @@ export default function App({
           setUiRalphActive(false);
           if (wasYolo) {
             permissionMode.setMode("default");
+            setUiPermissionMode("default");
           }
 
           // Add status to transcript
@@ -3928,6 +3935,14 @@ export default function App({
             }
 
             // Check permissions for all approvals (including fancy UI tools)
+            // Ensure the singleton permission mode matches what the UI shows.
+            // This prevents rare races where the footer shows YOLO but approvals still
+            // get classified using the default mode.
+            const desiredMode = uiPermissionModeRef.current;
+            if (permissionMode.getMode() !== desiredMode) {
+              permissionMode.setMode(desiredMode);
+            }
+
             const { needsUserInput, autoAllowed, autoDenied } =
               await classifyApprovals(approvalsToProcess, {
                 getContext: analyzeToolApproval,
@@ -5513,6 +5528,11 @@ export default function App({
       }
 
       // There are pending approvals - check permissions (respects yolo mode)
+      const desiredMode = uiPermissionModeRef.current;
+      if (permissionMode.getMode() !== desiredMode) {
+        permissionMode.setMode(desiredMode);
+      }
+
       const { needsUserInput, autoAllowed, autoDenied } =
         await classifyApprovals(existingApprovals, {
           getContext: analyzeToolApproval,
@@ -5831,6 +5851,7 @@ export default function App({
         justActivatedRalph = true;
         if (isYolo) {
           permissionMode.setMode("bypassPermissions");
+          setUiPermissionMode("bypassPermissions");
         }
 
         const ralphState = ralphMode.getState();
@@ -6522,6 +6543,7 @@ export default function App({
             setUiRalphActive(true);
             if (isYolo) {
               permissionMode.setMode("bypassPermissions");
+              setUiPermissionMode("bypassPermissions");
             }
 
             const ralphState = ralphMode.getState();
@@ -8453,6 +8475,11 @@ ${SYSTEM_REMINDER_CLOSE}
 
           if (existingApprovals && existingApprovals.length > 0) {
             // There are pending approvals - check permissions first (respects yolo mode)
+            const desiredMode = uiPermissionModeRef.current;
+            if (permissionMode.getMode() !== desiredMode) {
+              permissionMode.setMode(desiredMode);
+            }
+
             const { needsUserInput, autoAllowed, autoDenied } =
               await classifyApprovals(existingApprovals, {
                 getContext: analyzeToolApproval,
