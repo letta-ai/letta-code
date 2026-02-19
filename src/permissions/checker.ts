@@ -298,7 +298,11 @@ function checkPermissionForEngine(
     }
   }
 
-  const modeOverride = permissionMode.checkModeOverride(toolName, toolArgs);
+  const modeOverride = permissionMode.checkModeOverride(
+    toolName,
+    toolArgs,
+    workingDirectory,
+  );
   if (modeOverride) {
     const currentMode = permissionMode.getMode();
     let reason = `Permission mode: ${currentMode}`;
