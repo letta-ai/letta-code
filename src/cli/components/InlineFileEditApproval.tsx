@@ -45,6 +45,7 @@ type Props = {
   approveAlwaysText?: string;
   allowPersistence?: boolean;
   showPreview?: boolean;
+  defaultScope?: "project" | "session";
 };
 
 // Horizontal line characters for Claude Code style
@@ -160,6 +161,7 @@ export const InlineFileEditApproval = memo(
     approveAlwaysText,
     allowPersistence = true,
     showPreview = true,
+    defaultScope = "project",
   }: Props) => {
     const [selectedOption, setSelectedOption] = useState(0);
     const {
@@ -268,7 +270,7 @@ export const InlineFileEditApproval = memo(
             onApprove(diffsToPass.size > 0 ? diffsToPass : undefined);
           } else if (selectedOption === 1 && allowPersistence) {
             onApproveAlways(
-              "project",
+              defaultScope,
               diffsToPass.size > 0 ? diffsToPass : undefined,
             );
           }
@@ -286,7 +288,7 @@ export const InlineFileEditApproval = memo(
         }
         if (input === "2" && allowPersistence) {
           onApproveAlways(
-            "project",
+            defaultScope,
             diffsToPass.size > 0 ? diffsToPass : undefined,
           );
           return;

@@ -4,6 +4,10 @@ import { exists, readFile, writeFile } from "../utils/fs.js";
 
 import { homedir } from "node:os";
 import { join } from "node:path";
+import {
+  normalizePermissionRule,
+  permissionRulesEquivalent,
+} from "./rule-normalization";
 import type { PermissionRules } from "./types";
 
 type SettingsFile = {
@@ -69,13 +73,13 @@ function mergePermissions(
   source: PermissionRules,
 ): void {
   if (source.allow) {
-    target.allow = [...(target.allow || []), ...source.allow];
+    target.allow = mergeRuleList(target.allow, source.allow);
   }
   if (source.deny) {
-    target.deny = [...(target.deny || []), ...source.deny];
+    target.deny = mergeRuleList(target.deny, source.deny);
   }
   if (source.ask) {
-    target.ask = [...(target.ask || []), ...source.ask];
+    target.ask = mergeRuleList(target.ask, source.ask);
   }
   if (source.additionalDirectories) {
     target.additionalDirectories = [
@@ -83,6 +87,19 @@ function mergePermissions(
       ...source.additionalDirectories,
     ];
   }
+}
+
+function mergeRuleList(
+  existing: string[] | undefined,
+  incoming: string[],
+): string[] {
+  const merged = [...(existing || [])];
+  for (const rule of incoming) {
+    if (!merged.some((current) => permissionRulesEquivalent(current, rule))) {
+      merged.push(rule);
+    }
+  }
+  return merged;
 }
 
 /**
@@ -131,9 +148,15 @@ export async function savePermissionRule(
     settings.permissions[ruleType] = [];
   }
 
-  // Add rule if not already present
-  if (!settings.permissions[ruleType].includes(rule)) {
-    settings.permissions[ruleType].push(rule);
+  const normalizedRule = normalizePermissionRule(rule);
+
+  // Add rule if not already present (canonicalized comparison for alias/path variants)
+  if (
+    !settings.permissions[ruleType].some((existingRule) =>
+      permissionRulesEquivalent(existingRule, normalizedRule),
+    )
+  ) {
+    settings.permissions[ruleType].push(normalizedRule);
   }
 
   // Save settings

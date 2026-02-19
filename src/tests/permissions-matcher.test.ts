@@ -419,3 +419,10 @@ test("File pattern: extended UNC pattern matches UNC query path", () => {
     ),
   ).toBe(true);
 });
+
+test("Bash pattern: multiline command rules match", () => {
+  const pattern = `Bash(curl -s http://localhost:4321/intro 2>/dev/null | grep -o\n'class="[^"]*"' | sort -u:*)`;
+  const query = `Bash(curl -s http://localhost:4321/intro 2>/dev/null | grep -o\n'class="[^"]*"' | sort -u | head -20)`;
+
+  expect(matchesBashPattern(query, pattern)).toBe(true);
+});

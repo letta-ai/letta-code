@@ -469,3 +469,23 @@ test("plan mode - remembers and restores previous mode", () => {
   // Once we leave plan mode, the remembered mode is consumed.
   expect(permissionMode.getModeBeforePlan()).toBe(null);
 });
+
+test("plan mode - allows read_file_gemini", () => {
+  permissionMode.setMode("plan");
+
+  const permissions: PermissionRules = {
+    allow: [],
+    deny: [],
+    ask: [],
+  };
+
+  const result = checkPermission(
+    "read_file_gemini",
+    { file_path: "/tmp/test.txt" },
+    permissions,
+    "/Users/test/project",
+  );
+
+  expect(result.decision).toBe("allow");
+  expect(result.matchedRule).toBe("plan mode");
+});
