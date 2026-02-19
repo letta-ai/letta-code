@@ -21,6 +21,7 @@ import {
   isPatchTool,
   isPlanTool,
   isSearchTool,
+  isShellTool,
   isTaskTool,
   isTodoTool,
 } from "../helpers/toolNameMapping.js";
@@ -61,22 +62,6 @@ type ToolCallLine = {
   phase: "streaming" | "ready" | "running" | "finished";
   streaming?: StreamingState;
 };
-
-/**
- * Check if tool is a shell/bash tool that supports streaming output
- */
-function isShellTool(name: string): boolean {
-  const shellTools = [
-    "Bash",
-    "Shell",
-    "shell",
-    "shell_command",
-    "run_shell_command",
-    "RunShellCommand",
-    "ShellCommand",
-  ];
-  return shellTools.includes(name);
-}
 
 /**
  * ToolCallMessageRich - Rich formatting version with old layout logic
