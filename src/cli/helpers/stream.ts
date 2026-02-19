@@ -3,7 +3,7 @@ import type { Stream } from "@letta-ai/letta-client/core/streaming";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
 import { getClient } from "../../agent/client";
-import { STREAM_REQUEST_START_TIME } from "../../agent/message";
+import { getStreamRequestStartTime } from "../../agent/message";
 import { debugWarn } from "../../utils/debug";
 import { formatDuration, logTiming } from "../../utils/timing";
 
@@ -64,11 +64,7 @@ export async function drainStream(
   contextTracker?: ContextTracker,
 ): Promise<DrainResult> {
   const startTime = performance.now();
-
-  // Extract request start time for TTFT logging (attached by sendMessageStream)
-  const requestStartTime = (
-    stream as unknown as Record<symbol, number | undefined>
-  )[STREAM_REQUEST_START_TIME];
+  const requestStartTime = getStreamRequestStartTime(stream) ?? startTime;
   let hasLoggedTTFT = false;
 
   const streamProcessor = new StreamProcessor();
@@ -146,7 +142,6 @@ export async function drainStream(
       // Log TTFT (time-to-first-token) when first content chunk arrives
       if (
         !hasLoggedTTFT &&
-        requestStartTime !== undefined &&
         (chunk.message_type === "reasoning_message" ||
           chunk.message_type === "assistant_message")
       ) {

@@ -237,6 +237,7 @@ type ToolRegistry = Map<string, ToolDefinition>;
 // This prevents Bun's bundler from creating duplicate instances
 const REGISTRY_KEY = Symbol.for("@letta/toolRegistry");
 const SWITCH_LOCK_KEY = Symbol.for("@letta/toolSwitchLock");
+const EXECUTION_CONTEXTS_KEY = Symbol.for("@letta/toolExecutionContexts");
 
 interface SwitchLockState {
   promise: Promise<void> | null;
@@ -247,6 +248,7 @@ interface SwitchLockState {
 type GlobalWithToolState = typeof globalThis & {
   [REGISTRY_KEY]?: ToolRegistry;
   [SWITCH_LOCK_KEY]?: SwitchLockState;
+  [EXECUTION_CONTEXTS_KEY]?: Map<string, ToolExecutionContextSnapshot>;
 };
 
 function getRegistry(): ToolRegistry {
@@ -266,6 +268,57 @@ function getSwitchLock(): SwitchLockState {
 }
 
 const toolRegistry = getRegistry();
+let toolExecutionContextCounter = 0;
+
+type ToolExecutionContextSnapshot = {
+  toolRegistry: ToolRegistry;
+  externalTools: Map<string, ExternalToolDefinition>;
+  externalExecutor?: ExternalToolExecutor;
+};
+
+export type CapturedToolExecutionContext = {
+  contextId: string;
+  clientTools: ClientTool[];
+};
+
+function getExecutionContexts(): Map<string, ToolExecutionContextSnapshot> {
+  const global = globalThis as GlobalWithToolState;
+  if (!global[EXECUTION_CONTEXTS_KEY]) {
+    global[EXECUTION_CONTEXTS_KEY] = new Map();
+  }
+  return global[EXECUTION_CONTEXTS_KEY];
+}
+
+function saveExecutionContext(snapshot: ToolExecutionContextSnapshot): string {
+  const contexts = getExecutionContexts();
+  const contextId = `ctx-${Date.now()}-${toolExecutionContextCounter++}`;
+  contexts.set(contextId, snapshot);
+
+  // Keep memory bounded; stale turns won't need old snapshots.
+  const MAX_CONTEXTS = 4096;
+  if (contexts.size > MAX_CONTEXTS) {
+    const oldestContextId = contexts.keys().next().value;
+    if (oldestContextId) {
+      contexts.delete(oldestContextId);
+    }
+  }
+
+  return contextId;
+}
+
+function getExecutionContextById(
+  contextId: string,
+): ToolExecutionContextSnapshot | undefined {
+  return getExecutionContexts().get(contextId);
+}
+
+export function clearCapturedToolExecutionContexts(): void {
+  getExecutionContexts().clear();
+}
+
+export function releaseToolExecutionContext(contextId: string): void {
+  getExecutionContexts().delete(contextId);
+}
 
 /**
  * Acquires the toolset switch lock. Call before starting async tool loading.
@@ -331,13 +384,16 @@ export function isToolsetSwitchInProgress(): boolean {
  * - Otherwise, fall back to the alias mapping used for Gemini tools.
  * - Returns undefined if no matching tool is loaded.
  */
-function resolveInternalToolName(name: string): string | undefined {
-  if (toolRegistry.has(name)) {
+function resolveInternalToolName(
+  name: string,
+  registry: ToolRegistry = toolRegistry,
+): string | undefined {
+  if (registry.has(name)) {
     return name;
   }
 
   const internalName = getInternalToolName(name);
-  if (toolRegistry.has(internalName)) {
+  if (registry.has(internalName)) {
     return internalName;
   }
 
@@ -419,6 +475,10 @@ export function setExternalToolExecutor(executor: ExternalToolExecutor): void {
   (globalThis as GlobalWithExternalTools)[EXTERNAL_EXECUTOR_KEY] = executor;
 }
 
+function getExternalToolExecutor(): ExternalToolExecutor | undefined {
+  return (globalThis as GlobalWithExternalTools)[EXTERNAL_EXECUTOR_KEY];
+}
+
 /**
  * Clear external tools (for testing or session cleanup)
  */
@@ -461,10 +521,9 @@ export async function executeExternalTool(
   toolCallId: string,
   toolName: string,
   input: Record<string, unknown>,
+  executorOverride?: ExternalToolExecutor,
 ): Promise<ToolExecutionResult> {
-  const executor = (globalThis as GlobalWithExternalTools)[
-    EXTERNAL_EXECUTOR_KEY
-  ];
+  const executor = executorOverride ?? getExternalToolExecutor();
   if (!executor) {
     return {
       toolReturn: `External tool executor not set for tool: ${toolName}`,
@@ -516,6 +575,40 @@ export function getClientToolsFromRegistry(): ClientTool[] {
   const externalTools = getExternalToolsAsClientTools();
 
   return [...builtInTools, ...externalTools];
+}
+
+/**
+ * Capture a turn-scoped tool snapshot and corresponding client_tools payload.
+ * The returned context id can be used later to execute tool calls against this
+ * exact snapshot even if the global registry changes between dispatch and execute.
+ */
+export function captureToolExecutionContext(): CapturedToolExecutionContext {
+  const snapshot: ToolExecutionContextSnapshot = {
+    toolRegistry: new Map(toolRegistry),
+    externalTools: new Map(getExternalToolsRegistry()),
+    externalExecutor: getExternalToolExecutor(),
+  };
+  const contextId = saveExecutionContext(snapshot);
+
+  const builtInTools = Array.from(snapshot.toolRegistry.entries()).map(
+    ([name, tool]) => ({
+      name: getServerToolName(name),
+      description: tool.schema.description,
+      parameters: tool.schema.input_schema,
+    }),
+  );
+  const externalTools = Array.from(snapshot.externalTools.values()).map(
+    (tool) => ({
+      name: tool.name,
+      description: tool.description,
+      parameters: tool.parameters,
+    }),
+  );
+
+  return {
+    contextId,
+    clientTools: [...builtInTools, ...externalTools],
+  };
 }
 
 /**
@@ -1030,29 +1123,46 @@ export async function executeTool(
     signal?: AbortSignal;
     toolCallId?: string;
     onOutput?: (chunk: string, stream: "stdout" | "stderr") => void;
+    toolContextId?: string;
   },
 ): Promise<ToolExecutionResult> {
+  const context = options?.toolContextId
+    ? getExecutionContextById(options.toolContextId)
+    : undefined;
+  if (options?.toolContextId && !context) {
+    return {
+      toolReturn: `Tool execution context not found: ${options.toolContextId}`,
+      status: "error",
+    };
+  }
+  const activeRegistry = context?.toolRegistry ?? toolRegistry;
+  const activeExternalTools =
+    context?.externalTools ?? getExternalToolsRegistry();
+  const activeExternalExecutor =
+    context?.externalExecutor ?? getExternalToolExecutor();
+
   // Check if this is an external tool (SDK-executed)
-  if (isExternalTool(name)) {
+  if (activeExternalTools.has(name)) {
     return executeExternalTool(
       options?.toolCallId ?? `ext-${Date.now()}`,
       name,
       args as Record<string, unknown>,
+      activeExternalExecutor,
     );
   }
 
-  const internalName = resolveInternalToolName(name);
+  const internalName = resolveInternalToolName(name, activeRegistry);
   if (!internalName) {
     return {
-      toolReturn: `Tool not found: ${name}. Available tools: ${Array.from(toolRegistry.keys()).join(", ")}`,
+      toolReturn: `Tool not found: ${name}. Available tools: ${Array.from(activeRegistry.keys()).join(", ")}`,
       status: "error",
     };
   }
 
-  const tool = toolRegistry.get(internalName);
+  const tool = activeRegistry.get(internalName);
   if (!tool) {
     return {
-      toolReturn: `Tool not found: ${name}. Available tools: ${Array.from(toolRegistry.keys()).join(", ")}`,
+      toolReturn: `Tool not found: ${name}. Available tools: ${Array.from(activeRegistry.keys()).join(", ")}`,
       status: "error",
     };
   }
