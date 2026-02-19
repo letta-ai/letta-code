@@ -7,12 +7,18 @@ import {
   isFileReadTool,
   isFileWriteTool,
   isPatchTool,
+  isPlanTool,
   isShellTool,
+  isTodoTool,
 } from "./toolNameMapping.js";
 
 // Small helpers
 const isRecord = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null;
+
+function formatItemCount(count: number): string {
+  return `${String(count)} item${count === 1 ? "" : "s"}`;
+}
 
 /**
  * Formats a file path for display (matches Claude Code style):
@@ -277,6 +283,18 @@ export function formatArgsDisplay(
             const taskId = String(parsed.task_id);
             const isNonBlocking = parsed.block === false;
             display = isNonBlocking ? `(non-blocking) ${taskId}` : taskId;
+            return { display, parsed };
+          }
+
+          // Plan tools: only show compact plan item count.
+          if (isPlanTool(toolName) && Array.isArray(parsed.plan)) {
+            display = formatItemCount(parsed.plan.length);
+            return { display, parsed };
+          }
+
+          // Todo tools: only show compact todo item count.
+          if (isTodoTool(toolName) && Array.isArray(parsed.todos)) {
+            display = formatItemCount(parsed.todos.length);
             return { display, parsed };
           }
 
