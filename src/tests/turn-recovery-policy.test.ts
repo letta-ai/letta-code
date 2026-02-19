@@ -210,6 +210,14 @@ describe("provider detail retry helpers", () => {
         detail: "rate limited",
       }),
     ).toBe(true);
+    // Non-recoverable 429: agents-limit-exceeded should NOT retry
+    expect(
+      shouldRetryPreStreamTransientError({
+        status: 429,
+        detail:
+          '429 {"error":"Rate limited","reasons":["agents-limit-exceeded"]}',
+      }),
+    ).toBe(false);
     expect(
       shouldRetryPreStreamTransientError({
         status: 401,
