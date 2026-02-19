@@ -25,11 +25,14 @@ describe("queue ordering wiring", () => {
     expect(segment).toContain("!commandRunning");
     expect(segment).toContain("!isExecutingTool");
     expect(segment).toContain("!anySelectorOpen");
+    expect(segment).toContain("!queuedOverlayAction");
     expect(segment).toContain("!waitingForQueueCancelRef.current");
     expect(segment).toContain("!userCancelledRef.current");
     expect(segment).toContain("!abortControllerRef.current");
+    expect(segment).toContain("queuedOverlayAction=");
     expect(segment).toContain("setMessageQueue([]);");
     expect(segment).toContain("onSubmitRef.current(concatenatedMessage);");
+    expect(segment).toContain("queuedOverlayAction,");
   });
 
   test("queued overlay effect only runs when idle and clears action before processing", () => {

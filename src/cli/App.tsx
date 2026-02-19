@@ -8900,6 +8900,7 @@ ${SYSTEM_REMINDER_CLOSE}
     if (
       !streaming &&
       hasAnythingQueued &&
+      !queuedOverlayAction && // Prioritize queued model/toolset/system switches before dequeuing messages
       pendingApprovals.length === 0 &&
       !commandRunning &&
       !isExecutingTool &&
@@ -8933,7 +8934,7 @@ ${SYSTEM_REMINDER_CLOSE}
       // Log why dequeue was blocked (useful for debugging stuck queues)
       debugLog(
         "queue",
-        `Dequeue blocked: streaming=${streaming}, pendingApprovals=${pendingApprovals.length}, commandRunning=${commandRunning}, isExecutingTool=${isExecutingTool}, anySelectorOpen=${anySelectorOpen}, waitingForQueueCancel=${waitingForQueueCancelRef.current}, userCancelled=${userCancelledRef.current}, abortController=${!!abortControllerRef.current}`,
+        `Dequeue blocked: streaming=${streaming}, queuedOverlayAction=${!!queuedOverlayAction}, pendingApprovals=${pendingApprovals.length}, commandRunning=${commandRunning}, isExecutingTool=${isExecutingTool}, anySelectorOpen=${anySelectorOpen}, waitingForQueueCancel=${waitingForQueueCancelRef.current}, userCancelled=${userCancelledRef.current}, abortController=${!!abortControllerRef.current}`,
       );
     }
   }, [
@@ -8943,6 +8944,7 @@ ${SYSTEM_REMINDER_CLOSE}
     commandRunning,
     isExecutingTool,
     anySelectorOpen,
+    queuedOverlayAction,
     dequeueEpoch, // Triggered when userCancelledRef is reset OR task notifications added
   ]);
 
