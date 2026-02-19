@@ -5,6 +5,17 @@ import { resolve } from "node:path";
 import { minimatch } from "minimatch";
 import { canonicalToolName } from "./canonical";
 
+export interface MatcherOptions {
+  canonicalizeToolNames?: boolean;
+  allowBareToolFallback?: boolean;
+}
+
+function toolForMatch(toolName: string, options?: MatcherOptions): string {
+  return options?.canonicalizeToolNames === false
+    ? toolName
+    : canonicalToolName(toolName);
+}
+
 /**
  * Normalize path separators to forward slashes for consistent glob matching.
  * This is needed because:
@@ -113,6 +124,7 @@ export function matchesFilePattern(
   query: string,
   pattern: string,
   workingDirectory: string,
+  options?: MatcherOptions,
 ): boolean {
   // Extract tool name and file path from query
   // Format: "ToolName(filePath)"
@@ -120,7 +132,7 @@ export function matchesFilePattern(
   if (!queryMatch || !queryMatch[1] || !queryMatch[2]) {
     return false;
   }
-  const queryTool = canonicalToolName(queryMatch[1]);
+  const queryTool = toolForMatch(queryMatch[1], options);
   // Normalize path separators for cross-platform compatibility
   const filePath = normalizePath(queryMatch[2]);
 
@@ -129,9 +141,12 @@ export function matchesFilePattern(
   const patternMatch = pattern.match(/^([^(]+)\(([\s\S]+)\)$/);
   if (!patternMatch || !patternMatch[1] || !patternMatch[2]) {
     // Legacy fallback: allow bare tool names (for rules saved before param suffixes were added)
-    return canonicalToolName(pattern) === queryTool;
+    if (options?.allowBareToolFallback === false) {
+      return false;
+    }
+    return toolForMatch(pattern, options) === queryTool;
   }
-  const patternTool = canonicalToolName(patternMatch[1]);
+  const patternTool = toolForMatch(patternMatch[1], options);
   if (!patternTool) {
     return false;
   }
@@ -223,7 +238,11 @@ function extractActualCommand(command: string): string {
   return command;
 }
 
-export function matchesBashPattern(query: string, pattern: string): boolean {
+export function matchesBashPattern(
+  query: string,
+  pattern: string,
+  options?: MatcherOptions,
+): boolean {
   // Extract the command from query
   // Format: "Tool(actual command)" or "Tool()"
   const queryMatch = query.match(/^([^(]+)\(([\s\S]*)\)$/);
@@ -234,7 +253,7 @@ export function matchesBashPattern(query: string, pattern: string): boolean {
   ) {
     return false;
   }
-  if (canonicalToolName(queryMatch[1]) !== "Bash") {
+  if (toolForMatch(queryMatch[1], options) !== "Bash") {
     return false;
   }
   const rawCommand = queryMatch[2];
@@ -249,9 +268,12 @@ export function matchesBashPattern(query: string, pattern: string): boolean {
     patternMatch[1] === undefined ||
     patternMatch[2] === undefined
   ) {
-    return canonicalToolName(pattern) === "Bash";
+    if (options?.allowBareToolFallback === false) {
+      return false;
+    }
+    return toolForMatch(pattern, options) === "Bash";
   }
-  if (canonicalToolName(patternMatch[1]) !== "Bash") {
+  if (toolForMatch(patternMatch[1], options) !== "Bash") {
     return false;
   }
   const commandPattern = patternMatch[2];
@@ -278,14 +300,18 @@ export function matchesBashPattern(query: string, pattern: string): boolean {
  * @param toolName - The tool name
  * @param pattern - The permission pattern
  */
-export function matchesToolPattern(toolName: string, pattern: string): boolean {
-  const canonicalTool = canonicalToolName(toolName);
+export function matchesToolPattern(
+  toolName: string,
+  pattern: string,
+  options?: MatcherOptions,
+): boolean {
+  const canonicalTool = toolForMatch(toolName, options);
   // Wildcard matches everything
   if (pattern === "*") {
     return true;
   }
 
-  if (canonicalToolName(pattern) === canonicalTool) {
+  if (toolForMatch(pattern, options) === canonicalTool) {
     return true;
   }
 
@@ -297,7 +323,7 @@ export function matchesToolPattern(toolName: string, pattern: string): boolean {
   // Check for tool name prefix (e.g., "WebFetch(...)")
   const patternToolMatch = pattern.match(/^([^(]+)\(/);
   if (patternToolMatch?.[1]) {
-    return canonicalToolName(patternToolMatch[1]) === canonicalTool;
+    return toolForMatch(patternToolMatch[1], options) === canonicalTool;
   }
 
   return false;
