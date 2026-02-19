@@ -7,7 +7,6 @@ import type {
   GoogleAIModelSettings,
   OpenAIModelSettings,
 } from "@letta-ai/letta-client/resources/agents/agents";
-import type { LlmConfig } from "@letta-ai/letta-client/resources/models/models";
 import { OPENAI_CODEX_PROVIDER_NAME } from "../providers/openai-codex-provider";
 import { getModelContextWindow } from "./available-models";
 import { getClient } from "./client";
@@ -181,13 +180,13 @@ function buildModelSettings(
  * @param modelHandle - The model handle (e.g., "anthropic/claude-sonnet-4-5-20250929")
  * @param updateArgs - Additional config args (context_window, reasoning_effort, enable_reasoner, etc.)
  * @param preserveParallelToolCalls - If true, preserves the parallel_tool_calls setting when updating the model
- * @returns The updated LLM configuration from the server
+ * @returns The updated agent state from the server (includes llm_config and model_settings)
  */
 export async function updateAgentLLMConfig(
   agentId: string,
   modelHandle: string,
   updateArgs?: Record<string, unknown>,
-): Promise<LlmConfig> {
+): Promise<AgentState> {
   const client = await getClient();
 
   const modelSettings = buildModelSettings(modelHandle, updateArgs);
@@ -207,7 +206,7 @@ export async function updateAgentLLMConfig(
   });
 
   const finalAgent = await client.agents.retrieve(agentId);
-  return finalAgent.llm_config;
+  return finalAgent;
 }
 
 export interface SystemPromptUpdateResult {

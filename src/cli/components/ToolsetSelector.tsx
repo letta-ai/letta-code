@@ -2,6 +2,7 @@
 import { Box, useInput } from "ink";
 import { useEffect, useMemo, useState } from "react";
 import type { ToolsetName, ToolsetPreference } from "../../tools/toolset";
+import { formatToolsetName } from "../../tools/toolset-labels";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
 import { Text } from "./Text";
@@ -58,26 +59,6 @@ const toolsets: ToolsetOption[] = [
     description: "Optimized for Google Gemini models (snake_case)",
   },
 ];
-
-function formatEffectiveToolset(toolset?: ToolsetName): string {
-  if (!toolset) return "Unknown";
-  switch (toolset) {
-    case "default":
-      return "Claude";
-    case "codex":
-      return "Codex";
-    case "codex_snake":
-      return "Codex (snake_case)";
-    case "gemini":
-      return "Gemini";
-    case "gemini_snake":
-      return "Gemini (snake_case)";
-    case "none":
-      return "None";
-    default:
-      return toolset;
-  }
-}
 
 interface ToolsetSelectorProps {
   currentToolset?: ToolsetName;
@@ -164,7 +145,7 @@ export function ToolsetSelector({
           const labelText =
             toolset.id === "auto"
               ? isCurrent
-                ? `Auto (current - ${formatEffectiveToolset(currentToolset)})`
+                ? `Auto (current - ${formatToolsetName(currentToolset)})`
                 : "Auto"
               : isCurrent
                 ? `${toolset.label} (current)`
@@ -179,7 +160,13 @@ export function ToolsetSelector({
               </Text>
               <Text
                 bold={isSelected}
-                color={isSelected ? colors.selector.itemHighlighted : undefined}
+                color={
+                  isSelected
+                    ? colors.selector.itemHighlighted
+                    : isCurrent
+                      ? colors.selector.itemCurrent
+                      : undefined
+                }
               >
                 {labelText}
               </Text>
