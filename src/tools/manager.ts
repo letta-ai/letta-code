@@ -898,14 +898,16 @@ export function isOpenAIModel(modelIdentifier: string): boolean {
   if (info?.handle && typeof info.handle === "string") {
     return (
       info.handle.startsWith("openai/") ||
-      info.handle.startsWith(`${OPENAI_CODEX_PROVIDER_NAME}/`)
+      info.handle.startsWith(`${OPENAI_CODEX_PROVIDER_NAME}/`) ||
+      info.handle.startsWith("chatgpt_oauth/")
     );
   }
   // Fallback: treat raw handle-style identifiers as OpenAI for openai/*
   // and ChatGPT OAuth Codex provider handles.
   return (
     modelIdentifier.startsWith("openai/") ||
-    modelIdentifier.startsWith(`${OPENAI_CODEX_PROVIDER_NAME}/`)
+    modelIdentifier.startsWith(`${OPENAI_CODEX_PROVIDER_NAME}/`) ||
+    modelIdentifier.startsWith("chatgpt_oauth/")
   );
 }
 
