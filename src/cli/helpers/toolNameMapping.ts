@@ -68,9 +68,8 @@ export function getDisplayToolName(rawName: string): string {
   if (rawName === "Replace" || rawName === "replace") return "Update";
   if (rawName === "WriteFile" || rawName === "write_file") return "Write";
   if (rawName === "KillBash") return "Kill Bash";
-  if (rawName === "BashOutput" || rawName === "TaskOutput") {
-    return "Shell Output";
-  }
+  if (rawName === "BashOutput") return "Shell Output";
+  if (rawName === "TaskOutput") return "Task Output";
   if (rawName === "MultiEdit") return "Update";
 
   // No mapping found, return as-is
@@ -213,6 +212,15 @@ export function isShellTool(name: string): boolean {
     n === "run_shell_command" ||
     n === "runshellcommand"
   );
+}
+
+/**
+ * Checks if a tool should use shell-style streaming output rendering.
+ * Includes shell command tools plus TaskOutput/BashOutput pollers.
+ */
+export function isShellOutputTool(name: string): boolean {
+  const n = name.toLowerCase();
+  return isShellTool(name) || n === "taskoutput" || n === "bashoutput";
 }
 
 /**

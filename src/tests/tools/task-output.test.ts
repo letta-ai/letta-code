@@ -31,6 +31,7 @@ describe.skipIf(isWindows)("TaskOutput and TaskStop", () => {
     // Should return in less than 500ms (not waiting for 2s sleep)
     expect(elapsed).toBeLessThan(500);
     expect(result.status).toBe("running");
+    expect(result.message).toContain("Task is still running");
 
     // Cleanup
     await task_stop({ task_id: taskId });
@@ -57,6 +58,31 @@ describe.skipIf(isWindows)("TaskOutput and TaskStop", () => {
 
     // Should have waited and gotten the output
     expect(result.message).toContain("completed");
+    expect(result.status).toBe("completed");
+  });
+
+  test("TaskOutput with block=true streams output chunks", async () => {
+    const startResult = await bash({
+      command: "sleep 0.2 && echo 'first' && sleep 0.2 && echo 'second'",
+      description: "Streaming process",
+      run_in_background: true,
+    });
+
+    const match = startResult.content[0]?.text.match(/bash_(\d+)/);
+    expect(match).toBeDefined();
+    const taskId = `bash_${match?.[1]}`;
+
+    const outputChunks: string[] = [];
+    const result = await task_output({
+      task_id: taskId,
+      block: true,
+      timeout: 5000,
+      onOutput: (chunk) => outputChunks.push(chunk),
+    });
+
+    const streamed = outputChunks.join("");
+    expect(streamed).toContain("first");
+    expect(streamed).toContain("second");
     expect(result.status).toBe("completed");
   });
 

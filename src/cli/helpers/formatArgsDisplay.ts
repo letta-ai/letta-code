@@ -272,6 +272,14 @@ export function formatArgsDisplay(
             return { display, parsed };
           }
 
+          // TaskOutput: show task id with optional non-blocking marker
+          if (toolName.toLowerCase() === "taskoutput" && parsed.task_id) {
+            const taskId = String(parsed.task_id);
+            const isNonBlocking = parsed.block === false;
+            display = isNonBlocking ? `(non-blocking) ${taskId}` : taskId;
+            return { display, parsed };
+          }
+
           // Shell/Bash tools: show just the command
           if (isShellTool(toolName) && parsed.command) {
             // Handle both string and array command formats

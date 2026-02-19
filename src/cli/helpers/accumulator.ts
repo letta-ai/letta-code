@@ -16,7 +16,7 @@ import { extractCompactionSummary } from "./backfill";
 import type { ContextTracker } from "./contextTracker";
 import { MAX_CONTEXT_HISTORY } from "./contextTracker";
 import { findLastSafeSplitPoint } from "./markdownSplit";
-import { isShellTool } from "./toolNameMapping";
+import { isShellOutputTool } from "./toolNameMapping";
 
 type CompactionSummaryMessageChunk = {
   message_type: "summary_message";
@@ -1207,7 +1207,7 @@ export function setToolCallsRunning(b: Buffers, toolCallIds: string[]): void {
       const line = b.byId.get(lineId);
       if (line && line.kind === "tool_call") {
         const shouldSeedStreaming =
-          line.name && isShellTool(line.name) && !line.streaming;
+          line.name && isShellOutputTool(line.name) && !line.streaming;
         b.byId.set(lineId, {
           ...line,
           phase: "running",
