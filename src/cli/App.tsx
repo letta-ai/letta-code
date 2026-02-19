@@ -5111,6 +5111,28 @@ export default function App({
     processConversationRef.current = processConversation;
   }, [processConversation]);
 
+  // Reasoning tier cycling state shared by /model, /agents, and tab-cycling flows.
+  const reasoningCycleDebounceMs = 500;
+  const reasoningCycleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
+  const reasoningCycleInFlightRef = useRef(false);
+  const reasoningCycleDesiredRef = useRef<{
+    modelHandle: string;
+    effort: string;
+    modelId: string;
+  } | null>(null);
+  const reasoningCycleLastConfirmedRef = useRef<LlmConfig | null>(null);
+
+  const resetPendingReasoningCycle = useCallback(() => {
+    if (reasoningCycleTimerRef.current) {
+      clearTimeout(reasoningCycleTimerRef.current);
+      reasoningCycleTimerRef.current = null;
+    }
+    reasoningCycleDesiredRef.current = null;
+    reasoningCycleLastConfirmedRef.current = null;
+  }, []);
+
   const handleAgentSelect = useCallback(
     async (
       targetAgentId: string,
@@ -5283,6 +5305,7 @@ export default function App({
       resetDeferredToolCallCommits,
       resetTrajectoryBases,
       resetBootstrapReminderState,
+      resetPendingReasoningCycle,
     ],
   );
 
@@ -9931,6 +9954,7 @@ ${SYSTEM_REMINDER_CLOSE}
       consumeOverlayCommand,
       currentToolset,
       isAgentBusy,
+      resetPendingReasoningCycle,
       withCommandLock,
     ],
   );
@@ -10455,26 +10479,6 @@ ${SYSTEM_REMINDER_CLOSE}
   //
   // We update the footer immediately (optimistic local state) and debounce the
   // actual server update so users can rapidly cycle tiers.
-  const reasoningCycleDebounceMs = 500;
-  const reasoningCycleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
-    null,
-  );
-  const reasoningCycleInFlightRef = useRef(false);
-  const reasoningCycleDesiredRef = useRef<{
-    modelHandle: string;
-    effort: string;
-    modelId: string;
-  } | null>(null);
-  const reasoningCycleLastConfirmedRef = useRef<LlmConfig | null>(null);
-
-  const resetPendingReasoningCycle = () => {
-    if (reasoningCycleTimerRef.current) {
-      clearTimeout(reasoningCycleTimerRef.current);
-      reasoningCycleTimerRef.current = null;
-    }
-    reasoningCycleDesiredRef.current = null;
-    reasoningCycleLastConfirmedRef.current = null;
-  };
 
   const flushPendingReasoningEffort = useCallback(async () => {
     const desired = reasoningCycleDesiredRef.current;

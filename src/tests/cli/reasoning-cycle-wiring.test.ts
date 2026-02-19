@@ -9,7 +9,9 @@ describe("reasoning tier cycle wiring", () => {
     );
     const source = readFileSync(appPath, "utf-8");
 
-    expect(source).toContain("const resetPendingReasoningCycle = () => {");
+    expect(source).toContain(
+      "const resetPendingReasoningCycle = useCallback(() => {",
+    );
     expect(source).toContain("reasoningCycleDesiredRef.current = null;");
     expect(source).toContain("reasoningCycleLastConfirmedRef.current = null;");
 
@@ -38,7 +40,7 @@ describe("reasoning tier cycle wiring", () => {
 
     const callbackBlocks =
       source.match(
-        /reasoningCycleTimerRef\.current = setTimeout\(\(\) => \{\n        reasoningCycleTimerRef\.current = null;\n        void flushPendingReasoningEffort\(\);\n      \}, reasoningCycleDebounceMs\);/g,
+        /reasoningCycleTimerRef\.current = setTimeout\(\(\) => \{\n {8}reasoningCycleTimerRef\.current = null;\n {8}void flushPendingReasoningEffort\(\);\n {6}\}, reasoningCycleDebounceMs\);/g,
       ) ?? [];
 
     expect(callbackBlocks.length).toBeGreaterThanOrEqual(2);
