@@ -7,8 +7,10 @@ import type {
   AgentType,
 } from "@letta-ai/letta-client/resources/agents/agents";
 import { DEFAULT_AGENT_NAME } from "../constants";
+import { settingsManager } from "../settings-manager";
 import { getModelContextWindow } from "./available-models";
-import { getClient } from "./client";
+import { getClient, getServerUrl } from "./client";
+import { getLettaCodeHeaders } from "./http-headers";
 import { getDefaultMemoryBlocks } from "./memory";
 import { type MemoryPromptMode, reconcileMemoryPrompt } from "./memoryPrompt";
 import {
@@ -43,6 +45,52 @@ export interface AgentProvenance {
 export interface CreateAgentResult {
   agent: AgentState;
   provenance: AgentProvenance;
+}
+
+function isToolsNotFoundError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  const status = (err as { status?: unknown } | null)?.status;
+
+  return (
+    typeof message === "string" &&
+    /tools not found by name/i.test(message) &&
+    /memory_apply_patch|memory|web_search|fetch_webpage/i.test(message) &&
+    (status === undefined || status === 400)
+  );
+}
+
+async function addBaseToolsToServer(): Promise<boolean> {
+  const settings = await settingsManager.getSettingsWithSecureTokens();
+  const apiKey = process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
+
+  if (!apiKey) {
+    console.warn(
+      "Cannot auto-populate base tools: missing LETTA_API_KEY for manual endpoint call.",
+    );
+    return false;
+  }
+
+  try {
+    const response = await fetch(`${getServerUrl()}/v1/tools/add-base-tools`, {
+      method: "POST",
+      headers: getLettaCodeHeaders(apiKey),
+    });
+
+    if (!response.ok) {
+      const body = await response.text();
+      console.warn(
+        `Failed to add base tools via /v1/tools/add-base-tools (${response.status}): ${body || response.statusText}`,
+      );
+      return false;
+    }
+
+    return true;
+  } catch (err) {
+    console.warn(
+      `Failed to call /v1/tools/add-base-tools: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return false;
+  }
 }
 
 export interface CreateAgentOptions {
@@ -306,7 +354,7 @@ export async function createAgent(
   const agentDescription =
     options.description ?? `Letta Code agent created in ${process.cwd()}`;
 
-  const agent = await client.agents.create({
+  const createAgentRequestBase = {
     agent_type: "letta_v1_agent" as AgentType,
     system: systemPromptContent,
     name,
@@ -314,7 +362,6 @@ export async function createAgent(
     embedding: embeddingModelVal || undefined,
     model: modelHandle,
     ...(contextWindow && { context_window_limit: contextWindow }),
-    tools: toolNames,
     // New blocks created inline with agent (saves ~2s of sequential API calls)
     memory_blocks:
       filteredMemoryBlocks.length > 0 ? filteredMemoryBlocks : undefined,
@@ -328,7 +375,41 @@ export async function createAgent(
     initial_message_sequence: [],
     parallel_tool_calls: parallelToolCallsVal,
     enable_sleeptime: enableSleeptimeVal,
-  });
+  };
+
+  const createWithTools = (tools: string[]) =>
+    client.agents.create({
+      ...createAgentRequestBase,
+      tools,
+    });
+
+  let agent: AgentState;
+  try {
+    agent = await createWithTools(toolNames);
+  } catch (err) {
+    if (!isToolsNotFoundError(err)) {
+      throw err;
+    }
+
+    console.warn(
+      "Agent creation failed due to missing base tools. Attempting to add base tools on server...",
+    );
+    await addBaseToolsToServer();
+
+    try {
+      agent = await createWithTools(toolNames);
+    } catch (retryErr) {
+      console.warn(
+        `Agent creation still failed after base-tool bootstrap: ${
+          retryErr instanceof Error ? retryErr.message : String(retryErr)
+        }`,
+      );
+      console.warn(
+        "Retrying agent creation with no server-side tools attached.",
+      );
+      agent = await createWithTools([]);
+    }
+  }
 
   // Note: Preflight check above falls back to 'memory' when 'memory_apply_patch' is unavailable.
 
