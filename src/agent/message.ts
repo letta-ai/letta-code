@@ -9,14 +9,26 @@ import type {
   LettaStreamingResponse,
 } from "@letta-ai/letta-client/resources/agents/messages";
 import {
-  getClientToolsFromRegistry,
+  captureToolExecutionContext,
   waitForToolsetReady,
 } from "../tools/manager";
 import { isTimingsEnabled } from "../utils/timing";
 import { getClient } from "./client";
 
-// Symbol to store timing info on the stream object
-export const STREAM_REQUEST_START_TIME = Symbol("streamRequestStartTime");
+const streamRequestStartTimes = new WeakMap<object, number>();
+const streamToolContextIds = new WeakMap<object, string>();
+
+export function getStreamRequestStartTime(
+  stream: Stream<LettaStreamingResponse>,
+): number | undefined {
+  return streamRequestStartTimes.get(stream as object);
+}
+
+export function getStreamToolContextId(
+  stream: Stream<LettaStreamingResponse>,
+): string | null {
+  return streamToolContextIds.get(stream as object) ?? null;
+}
 
 /**
  * Send a message to a conversation and return a streaming response.
@@ -40,14 +52,13 @@ export async function sendMessageStream(
   // requestOptions: { maxRetries?: number } = { maxRetries: 0 },
   requestOptions: { maxRetries?: number } = {},
 ): Promise<Stream<LettaStreamingResponse>> {
-  // Capture request start time for TTFT measurement when timings are enabled
   const requestStartTime = isTimingsEnabled() ? performance.now() : undefined;
-
   const client = await getClient();
 
   // Wait for any in-progress toolset switch to complete before reading tools
   // This prevents sending messages with stale tools during a switch
   await waitForToolsetReady();
+  const { clientTools, contextId } = captureToolExecutionContext();
 
   let stream: Stream<LettaStreamingResponse>;
 
@@ -71,7 +82,7 @@ export async function sendMessageStream(
         streaming: true,
         stream_tokens: opts.streamTokens ?? true,
         background: opts.background ?? true,
-        client_tools: getClientToolsFromRegistry(),
+        client_tools: clientTools,
         include_compaction_messages: true,
       },
       requestOptions,
@@ -85,18 +96,17 @@ export async function sendMessageStream(
         streaming: true,
         stream_tokens: opts.streamTokens ?? true,
         background: opts.background ?? true,
-        client_tools: getClientToolsFromRegistry(),
+        client_tools: clientTools,
         include_compaction_messages: true,
       },
       requestOptions,
     );
   }
 
-  // Attach start time to stream for TTFT calculation in drainStream
   if (requestStartTime !== undefined) {
-    (stream as unknown as Record<symbol, number>)[STREAM_REQUEST_START_TIME] =
-      requestStartTime;
+    streamRequestStartTimes.set(stream as object, requestStartTime);
   }
+  streamToolContextIds.set(stream as object, contextId);
 
   return stream;
 }

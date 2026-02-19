@@ -21,7 +21,7 @@ import { getClient } from "./agent/client";
 import { setAgentContext, setConversationId } from "./agent/context";
 import { createAgent } from "./agent/create";
 import { ISOLATED_BLOCK_LABELS } from "./agent/memory";
-import { sendMessageStream } from "./agent/message";
+import { getStreamToolContextId, sendMessageStream } from "./agent/message";
 import { getModelUpdateArgs } from "./agent/model";
 import { resolveSkillSourcesSelection } from "./agent/skillSources";
 import type { SkillSource } from "./agent/skills";
@@ -1465,10 +1465,12 @@ ${SYSTEM_REMINDER_CLOSE}
 
       // Wrap sendMessageStream in try-catch to handle pre-stream errors (e.g., 409)
       let stream: Awaited<ReturnType<typeof sendMessageStream>>;
+      let turnToolContextId: string | null = null;
       try {
         stream = await sendMessageStream(conversationId, currentInput, {
           agentId: agent.id,
         });
+        turnToolContextId = getStreamToolContextId(stream);
       } catch (preStreamError) {
         // Extract error detail using shared helper (handles nested/direct/message shapes)
         const errorDetail = extractConflictDetail(preStreamError);
@@ -1838,7 +1840,13 @@ ${SYSTEM_REMINDER_CLOSE}
         const { executeApprovalBatch } = await import(
           "./agent/approval-execution"
         );
-        const executedResults = await executeApprovalBatch(decisions);
+        const executedResults = await executeApprovalBatch(
+          decisions,
+          undefined,
+          {
+            toolContextId: turnToolContextId ?? undefined,
+          },
+        );
 
         // Send all results in one batch
         currentInput = [
@@ -2854,10 +2862,12 @@ async function runBidirectionalMode(
           // Send message to agent.
           // Wrap in try-catch to handle pre-stream 409 approval-pending errors.
           let stream: Awaited<ReturnType<typeof sendMessageStream>>;
+          let turnToolContextId: string | null = null;
           try {
             stream = await sendMessageStream(conversationId, currentInput, {
               agentId: agent.id,
             });
+            turnToolContextId = getStreamToolContextId(stream);
           } catch (preStreamError) {
             // Extract error detail using shared helper (handles nested/direct/message shapes)
             const errorDetail = extractConflictDetail(preStreamError);
@@ -3135,7 +3145,11 @@ async function runBidirectionalMode(
             const { executeApprovalBatch } = await import(
               "./agent/approval-execution"
             );
-            const executedResults = await executeApprovalBatch(decisions);
+            const executedResults = await executeApprovalBatch(
+              decisions,
+              undefined,
+              { toolContextId: turnToolContextId ?? undefined },
+            );
 
             // Send approval results back to continue
             currentInput = [
