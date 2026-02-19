@@ -783,6 +783,14 @@
     }
   },
   {
+    "id": "gemini-3.1",
+    "handle": "google_ai/gemini-3.1-pro-preview",
+    "label": "Gemini 3.1 Pro",
+    "description": "Google's latest and smartest model",
+    "isFeatured": true,
+    "updateArgs": { "context_window": 180000, "temperature": 1.0 }
+  },
+  {
     "id": "gemini-3",
     "handle": "google_ai/gemini-3-pro-preview",
     "label": "Gemini 3 Pro",
