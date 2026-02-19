@@ -1,5 +1,6 @@
 import { APIError } from "@letta-ai/letta-client/core/error";
 import { getErrorContext } from "./errorContext";
+import { checkZaiError } from "./zaiErrors";
 
 const LETTA_USAGE_URL = "https://app.letta.com/settings/organization/usage";
 const LETTA_AGENTS_URL =
@@ -293,6 +294,20 @@ export function formatErrorDetails(
   const encryptedContentMsg = checkEncryptedContentError(e);
   if (encryptedContentMsg) return encryptedContentMsg;
 
+  // Check for Z.ai provider errors (wrapped in generic "OpenAI" messages)
+  const errorText =
+    e instanceof APIError
+      ? e.message
+      : e instanceof Error
+        ? e.message
+        : typeof e === "string"
+          ? e
+          : undefined;
+  if (errorText) {
+    const zaiMsg = checkZaiError(errorText);
+    if (zaiMsg) return zaiMsg;
+  }
+
   // Handle APIError from streaming (event: error)
   if (e instanceof APIError) {
     const reasons = getErrorReasons(e);
@@ -445,6 +460,8 @@ export function getRetryStatusMessage(
   errorDetail: string | null | undefined,
 ): string {
   if (!errorDetail) return DEFAULT_RETRY_MESSAGE;
+
+  if (checkZaiError(errorDetail)) return "Z.ai API error, retrying...";
 
   if (errorDetail.includes("Anthropic API is overloaded"))
     return "Anthropic API is overloaded, retrying...";
