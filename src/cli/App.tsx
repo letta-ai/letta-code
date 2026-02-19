@@ -45,7 +45,6 @@ import { getClient, getServerUrl } from "../agent/client";
 import { getCurrentAgentId, setCurrentAgentId } from "../agent/context";
 import { type AgentProvenance, createAgent } from "../agent/create";
 import { getLettaCodeHeaders } from "../agent/http-headers";
-
 import { ISOLATED_BLOCK_LABELS } from "../agent/memory";
 import {
   ensureMemoryFilesystemDirs,
@@ -77,6 +76,7 @@ import {
 } from "../hooks";
 import type { ApprovalContext } from "../permissions/analyzer";
 import { type PermissionMode, permissionMode } from "../permissions/mode";
+import { OPENAI_CODEX_PROVIDER_NAME } from "../providers/openai-codex-provider";
 import {
   DEFAULT_COMPLETION_PROMISE,
   type RalphState,
@@ -2655,6 +2655,66 @@ export default function App({
           setAgentState(agent);
           setLlmConfig(agent.llm_config);
           setAgentDescription(agent.description ?? null);
+
+          // Infer the system prompt id for footer/selector display by matching the
+          // stored agent.system content against our known prompt presets.
+          try {
+            const agentSystem = (agent as { system?: unknown }).system;
+            if (typeof agentSystem === "string") {
+              const normalize = (s: string) => {
+                // Match prompt presets even if memfs addon is enabled/disabled.
+                // The memfs addon is appended to the stored agent.system prompt.
+                const withoutMemfs = s.replace(
+                  /\n## Memory Filesystem[\s\S]*?(?=\n# |$)/,
+                  "",
+                );
+                return withoutMemfs.replace(/\r\n/g, "\n").trim();
+              };
+              const sysNorm = normalize(agentSystem);
+              const { SYSTEM_PROMPTS, SYSTEM_PROMPT } = await import(
+                "../agent/promptAssets"
+              );
+
+              // Best-effort preset detection.
+              // Exact match is ideal, but allow prefix-matches because the stored
+              // agent.system may have additional sections appended.
+              let matched: string | null = null;
+
+              const contentMatches = (content: string): boolean => {
+                const norm = normalize(content);
+                return (
+                  norm === sysNorm ||
+                  (norm.length > 0 &&
+                    (sysNorm.startsWith(norm) || norm.startsWith(sysNorm)))
+                );
+              };
+
+              const defaultPrompt = SYSTEM_PROMPTS.find(
+                (p) => p.id === "default",
+              );
+              if (defaultPrompt && contentMatches(defaultPrompt.content)) {
+                matched = "default";
+              } else {
+                const found = SYSTEM_PROMPTS.find((p) =>
+                  contentMatches(p.content),
+                );
+                if (found) {
+                  matched = found.id;
+                } else if (contentMatches(SYSTEM_PROMPT)) {
+                  // SYSTEM_PROMPT is used when no preset was specified.
+                  // Display as default since it maps to the default selector option.
+                  matched = "default";
+                }
+              }
+
+              setCurrentSystemPromptId(matched ?? "custom");
+            } else {
+              setCurrentSystemPromptId("custom");
+            }
+          } catch {
+            // best-effort only
+            setCurrentSystemPromptId("custom");
+          }
           // Get last message timestamp from agent state if available
           const lastRunCompletion = (agent as { last_run_completion?: string })
             .last_run_completion;
@@ -5071,6 +5131,28 @@ export default function App({
     processConversationRef.current = processConversation;
   }, [processConversation]);
 
+  // Reasoning tier cycling state shared by /model, /agents, and tab-cycling flows.
+  const reasoningCycleDebounceMs = 500;
+  const reasoningCycleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
+  const reasoningCycleInFlightRef = useRef(false);
+  const reasoningCycleDesiredRef = useRef<{
+    modelHandle: string;
+    effort: string;
+    modelId: string;
+  } | null>(null);
+  const reasoningCycleLastConfirmedRef = useRef<LlmConfig | null>(null);
+
+  const resetPendingReasoningCycle = useCallback(() => {
+    if (reasoningCycleTimerRef.current) {
+      clearTimeout(reasoningCycleTimerRef.current);
+      reasoningCycleTimerRef.current = null;
+    }
+    reasoningCycleDesiredRef.current = null;
+    reasoningCycleLastConfirmedRef.current = null;
+  }, []);
+
   const handleAgentSelect = useCallback(
     async (
       targetAgentId: string,
@@ -5096,6 +5178,9 @@ export default function App({
         cmd.finish(`Already on "${label}"`, true);
         return;
       }
+
+      // Drop any pending reasoning-tier debounce before switching contexts.
+      resetPendingReasoningCycle();
 
       // If agent is busy, queue the switch for after end_turn
       if (isAgentBusy()) {
@@ -5240,6 +5325,7 @@ export default function App({
       resetDeferredToolCallCommits,
       resetTrajectoryBases,
       resetBootstrapReminderState,
+      resetPendingReasoningCycle,
     ],
   );
 
@@ -5703,6 +5789,10 @@ export default function App({
       }
 
       if (!msg) return { submitted: false };
+
+      // If the user just cycled reasoning tiers, flush the final choice before
+      // sending the next message so the upcoming run uses the selected tier.
+      await flushPendingReasoningEffort();
 
       // Run UserPromptSubmit hooks - can block the prompt from being processed
       const isCommand = userTextForInput.startsWith("/");
@@ -6603,6 +6693,8 @@ export default function App({
             "Starting new conversation...",
           );
 
+          // New conversations should not inherit pending reasoning-tier debounce.
+          resetPendingReasoningCycle();
           setCommandRunning(true);
 
           // Run SessionEnd hooks for current session before starting new one
@@ -6679,6 +6771,8 @@ export default function App({
             "Clearing in-context messages...",
           );
 
+          // Clearing conversation state should also clear pending reasoning-tier debounce.
+          resetPendingReasoningCycle();
           setCommandRunning(true);
 
           // Run SessionEnd hooks for current session before clearing
@@ -9784,6 +9878,9 @@ ${SYSTEM_REMINDER_CLOSE}
           }
         }
 
+        // Switching models should discard any pending debounce from the previous model.
+        resetPendingReasoningCycle();
+
         if (isAgentBusy()) {
           setActiveOverlay(null);
           const cmd =
@@ -9890,6 +9987,7 @@ ${SYSTEM_REMINDER_CLOSE}
       consumeOverlayCommand,
       currentToolset,
       isAgentBusy,
+      resetPendingReasoningCycle,
       withCommandLock,
     ],
   );
@@ -10409,6 +10507,173 @@ ${SYSTEM_REMINDER_CLOSE}
     },
     [triggerStatusLineRefresh],
   );
+
+  // Reasoning tier cycling (Tab hotkey in InputRich.tsx)
+  //
+  // We update the footer immediately (optimistic local state) and debounce the
+  // actual server update so users can rapidly cycle tiers.
+
+  const flushPendingReasoningEffort = useCallback(async () => {
+    const desired = reasoningCycleDesiredRef.current;
+    if (!desired) return;
+
+    if (reasoningCycleInFlightRef.current) return;
+    if (!agentId) return;
+
+    // Don't change model settings mid-run.
+    // If a flush is requested while busy, ensure we still apply once the run completes.
+    if (isAgentBusy()) {
+      if (reasoningCycleTimerRef.current) {
+        clearTimeout(reasoningCycleTimerRef.current);
+      }
+      reasoningCycleTimerRef.current = setTimeout(() => {
+        reasoningCycleTimerRef.current = null;
+        void flushPendingReasoningEffort();
+      }, reasoningCycleDebounceMs);
+      return;
+    }
+
+    // Clear any pending timer; we're flushing now.
+    if (reasoningCycleTimerRef.current) {
+      clearTimeout(reasoningCycleTimerRef.current);
+      reasoningCycleTimerRef.current = null;
+    }
+
+    reasoningCycleInFlightRef.current = true;
+    try {
+      await withCommandLock(async () => {
+        const cmd = commandRunner.start("/reasoning", "Setting reasoning...");
+
+        try {
+          const { updateAgentLLMConfig } = await import("../agent/modify");
+          const updated = await updateAgentLLMConfig(
+            agentId,
+            desired.modelHandle,
+            {
+              reasoning_effort: desired.effort,
+            },
+          );
+
+          setLlmConfig(updated);
+          setCurrentModelId(desired.modelId);
+
+          // Clear pending state.
+          reasoningCycleDesiredRef.current = null;
+          reasoningCycleLastConfirmedRef.current = null;
+
+          const display =
+            desired.effort === "medium"
+              ? "med"
+              : desired.effort === "minimal"
+                ? "low"
+                : desired.effort;
+          cmd.finish(`Reasoning set to ${display}`, true);
+        } catch (error) {
+          const errorDetails = formatErrorDetails(error, agentId);
+          cmd.fail(`Failed to set reasoning: ${errorDetails}`);
+
+          // Revert optimistic UI if we have a confirmed config snapshot.
+          if (reasoningCycleLastConfirmedRef.current) {
+            const prev = reasoningCycleLastConfirmedRef.current;
+            reasoningCycleDesiredRef.current = null;
+            reasoningCycleLastConfirmedRef.current = null;
+            setLlmConfig(prev);
+
+            const { getModelInfo } = await import("../agent/model");
+            const modelHandle =
+              prev.model_endpoint_type && prev.model
+                ? `${
+                    prev.model_endpoint_type === "chatgpt_oauth"
+                      ? OPENAI_CODEX_PROVIDER_NAME
+                      : prev.model_endpoint_type
+                  }/${prev.model}`
+                : prev.model;
+            const modelInfo = modelHandle ? getModelInfo(modelHandle) : null;
+            setCurrentModelId(modelInfo?.id ?? null);
+          }
+        }
+      });
+    } finally {
+      reasoningCycleInFlightRef.current = false;
+    }
+  }, [agentId, commandRunner, isAgentBusy, withCommandLock]);
+
+  const handleCycleReasoningEffort = useCallback(() => {
+    void (async () => {
+      if (!agentId) return;
+      if (reasoningCycleInFlightRef.current) return;
+
+      const current = llmConfigRef.current;
+      // For ChatGPT OAuth sessions, llm_config may report model_endpoint_type as
+      // "chatgpt_oauth" while our code/model registry uses the provider name
+      // "chatgpt-plus-pro" in handles.
+      const modelHandle =
+        current?.model_endpoint_type && current?.model
+          ? `${
+              current.model_endpoint_type === "chatgpt_oauth"
+                ? OPENAI_CODEX_PROVIDER_NAME
+                : current.model_endpoint_type
+            }/${current.model}`
+          : current?.model;
+      if (!modelHandle) return;
+
+      const currentEffort = current?.reasoning_effort ?? "none";
+
+      const { models } = await import("../agent/model");
+      const tiers = models
+        .filter((m) => m.handle === modelHandle)
+        .map((m) => {
+          const effort = (
+            m.updateArgs as { reasoning_effort?: unknown } | undefined
+          )?.reasoning_effort;
+          return {
+            id: m.id,
+            effort: typeof effort === "string" ? effort : null,
+          };
+        })
+        .filter((m): m is { id: string; effort: string } => Boolean(m.effort));
+
+      // Only enable cycling when there are multiple tiers for the same handle.
+      if (tiers.length < 2) return;
+
+      const order = ["none", "minimal", "low", "medium", "high", "xhigh"];
+      const rank = (effort: string): number => {
+        const idx = order.indexOf(effort);
+        return idx >= 0 ? idx : 999;
+      };
+
+      const sorted = [...tiers].sort((a, b) => rank(a.effort) - rank(b.effort));
+      const curIndex = sorted.findIndex((t) => t.effort === currentEffort);
+      const nextIndex = (curIndex + 1) % sorted.length;
+      const next = sorted[nextIndex];
+      if (!next) return;
+
+      // Snapshot the last confirmed config once per burst so we can revert on failure.
+      if (!reasoningCycleLastConfirmedRef.current) {
+        reasoningCycleLastConfirmedRef.current = current ?? null;
+      }
+
+      // Optimistic UI update (footer changes immediately).
+      setLlmConfig((prev) =>
+        prev ? ({ ...prev, reasoning_effort: next.effort } as LlmConfig) : prev,
+      );
+      setCurrentModelId(next.id);
+
+      // Debounce the server update.
+      reasoningCycleDesiredRef.current = {
+        modelHandle,
+        effort: next.effort,
+        modelId: next.id,
+      };
+      if (reasoningCycleTimerRef.current) {
+        clearTimeout(reasoningCycleTimerRef.current);
+      }
+      reasoningCycleTimerRef.current = setTimeout(() => {
+        reasoningCycleTimerRef.current = null;
+        void flushPendingReasoningEffort();
+      }, reasoningCycleDebounceMs);
+    })();
+  }, [agentId, flushPendingReasoningEffort]);
 
   const handlePlanApprove = useCallback(
     async (acceptEdits: boolean = false) => {
@@ -11272,6 +11537,7 @@ Plan file path: ${planFilePath}`;
                 }
                 permissionMode={uiPermissionMode}
                 onPermissionModeChange={handlePermissionModeChange}
+                onCycleReasoningEffort={handleCycleReasoningEffort}
                 onExit={handleExit}
                 onInterrupt={handleInterrupt}
                 interruptRequested={interruptRequested}
