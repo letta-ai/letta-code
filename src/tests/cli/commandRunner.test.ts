@@ -75,6 +75,29 @@ describe("commandRunner", () => {
     });
     expect(buffers.order).toEqual(["cmd-1"]);
   });
+
+  test("onCommandFinished fires once on running->finished transition", () => {
+    const buffers = createBuffers();
+    const buffersRef = { current: buffers };
+    const finishedEvents: Array<{ input: string; output: string }> = [];
+    const runner = createCommandRunner({
+      buffersRef,
+      refreshDerived: () => {},
+      createId: () => "cmd-1",
+      onCommandFinished: (event) => {
+        finishedEvents.push({ input: event.input, output: event.output });
+      },
+    });
+
+    const cmd = runner.start("/model", "Opening model selector...");
+    cmd.update({ output: "Still opening...", phase: "running" });
+    cmd.finish("Switched", true);
+    cmd.finish("Switched again", true);
+
+    expect(finishedEvents).toEqual([
+      { input: "/model", output: "Switched" },
+    ]);
+  });
 });
 
 describe("command input preservation in handlers", () => {

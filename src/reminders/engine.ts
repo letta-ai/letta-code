@@ -242,6 +242,107 @@ async function buildReflectionCompactionReminder(
   return buildCompactionMemoryReminder(context.agent.id);
 }
 
+const MAX_COMMAND_REMINDERS_PER_TURN = 10;
+const MAX_TOOLSET_REMINDERS_PER_TURN = 5;
+const MAX_COMMAND_INPUT_CHARS = 2000;
+const MAX_COMMAND_OUTPUT_CHARS = 4000;
+const MAX_TOOL_LIST_CHARS = 3000;
+
+function escapeXml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function truncate(value: string, maxChars: number): string {
+  if (value.length <= maxChars) {
+    return value;
+  }
+  return `${value.slice(0, maxChars)}... [truncated]`;
+}
+
+function formatToolList(tools: string[]): string {
+  const uniqueTools = Array.from(new Set(tools));
+  if (uniqueTools.length === 0) {
+    return "(none)";
+  }
+  return truncate(uniqueTools.join(", "), MAX_TOOL_LIST_CHARS);
+}
+
+async function buildCommandIoReminder(
+  context: SharedReminderContext,
+): Promise<string | null> {
+  if (context.state.pendingCommandIoReminders.length === 0) {
+    return null;
+  }
+
+  const queued = context.state.pendingCommandIoReminders.splice(0);
+  const recent = queued.slice(-MAX_COMMAND_REMINDERS_PER_TURN);
+  const dropped = queued.length - recent.length;
+
+  const commandBlocks = recent.map((entry) => {
+    const status = entry.success ? "success" : "error";
+    const safeInput = escapeXml(truncate(entry.input, MAX_COMMAND_INPUT_CHARS));
+    const safeOutput = escapeXml(
+      truncate(entry.output || "(no output)", MAX_COMMAND_OUTPUT_CHARS),
+    );
+    return `<user-command>
+<user-command-input>${safeInput}</user-command-input>
+<user-command-output>${safeOutput}</user-command-output>
+<user-command-status>${status}</user-command-status>
+</user-command>`;
+  });
+
+  const droppedLine =
+    dropped > 0 ? `\nOmitted ${dropped} older command event(s).` : "";
+
+  return `${SYSTEM_REMINDER_OPEN}
+The following slash commands were executed in the Letta Code harness since your last user message.
+Treat these as execution context from the CLI, not new user requests.${droppedLine}
+${commandBlocks.join("\n")}
+${SYSTEM_REMINDER_CLOSE}
+
+`;
+}
+
+async function buildToolsetChangeReminder(
+  context: SharedReminderContext,
+): Promise<string | null> {
+  if (context.state.pendingToolsetChangeReminders.length === 0) {
+    return null;
+  }
+
+  const queued = context.state.pendingToolsetChangeReminders.splice(0);
+  const recent = queued.slice(-MAX_TOOLSET_REMINDERS_PER_TURN);
+  const dropped = queued.length - recent.length;
+
+  const changeBlocks = recent.map((entry) => {
+    const source = escapeXml(entry.source);
+    const previousToolset = escapeXml(entry.previousToolset ?? "unknown");
+    const newToolset = escapeXml(entry.newToolset ?? "unknown");
+    const previousTools = escapeXml(formatToolList(entry.previousTools));
+    const newTools = escapeXml(formatToolList(entry.newTools));
+    return `<toolset-change>
+<source>${source}</source>
+<previous-toolset>${previousToolset}</previous-toolset>
+<new-toolset>${newToolset}</new-toolset>
+<previous-tools>${previousTools}</previous-tools>
+<new-tools>${newTools}</new-tools>
+</toolset-change>`;
+  });
+
+  const droppedLine =
+    dropped > 0 ? `\nOmitted ${dropped} older toolset change event(s).` : "";
+
+  return `${SYSTEM_REMINDER_OPEN}
+The user just changed your toolset (specifically, client-side tools that are attached to the Letta Code harness, which may be a subset of your total tools).${droppedLine}
+${changeBlocks.join("\n")}
+${SYSTEM_REMINDER_CLOSE}
+
+`;
+}
+
 export const sharedReminderProviders: Record<
   SharedReminderId,
   SharedReminderProvider
@@ -252,6 +353,8 @@ export const sharedReminderProviders: Record<
   "plan-mode": buildPlanModeReminder,
   "reflection-step-count": buildReflectionStepReminder,
   "reflection-compaction": buildReflectionCompactionReminder,
+  "command-io": buildCommandIoReminder,
+  "toolset-change": buildToolsetChangeReminder,
 };
 
 export function assertSharedReminderCoverage(): void {

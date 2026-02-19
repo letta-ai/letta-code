@@ -85,6 +85,8 @@ import {
 import { buildSharedReminderParts } from "../reminders/engine";
 import {
   createSharedReminderState,
+  enqueueCommandIoReminder,
+  enqueueToolsetChangeReminder,
   resetSharedReminderState,
   syncReminderStateFromContextTracker,
 } from "../reminders/state";
@@ -95,6 +97,7 @@ import {
   analyzeToolApproval,
   checkToolPermission,
   executeTool,
+  getToolNames,
   releaseToolExecutionContext,
   savePermissionRule,
   type ToolExecutionResult,
@@ -117,7 +120,11 @@ import {
   setActiveCommandId as setActiveProfileCommandId,
   validateProfileLoad,
 } from "./commands/profile";
-import { type CommandHandle, createCommandRunner } from "./commands/runner";
+import {
+  type CommandFinishedEvent,
+  type CommandHandle,
+  createCommandRunner,
+} from "./commands/runner";
 import { AgentSelector } from "./components/AgentSelector";
 // ApprovalDialog removed - all approvals now render inline
 import { ApprovalPreview } from "./components/ApprovalPreview";
@@ -2281,14 +2288,47 @@ export default function App({
     commitEligibleLines(b);
   }, [commitEligibleLines]);
 
+  const recordCommandReminder = useCallback((event: CommandFinishedEvent) => {
+    const input = event.input.trim();
+    if (!input.startsWith("/")) {
+      return;
+    }
+    enqueueCommandIoReminder(sharedReminderStateRef.current, {
+      input,
+      output: event.output,
+      success: event.success,
+    });
+  }, []);
+
+  const maybeRecordToolsetChangeReminder = useCallback(
+    (params: {
+      source: string;
+      previousToolset: string | null;
+      newToolset: string | null;
+      previousTools: string[];
+      newTools: string[];
+    }) => {
+      const toolsetChanged = params.previousToolset !== params.newToolset;
+      const previousSnapshot = params.previousTools.join("\n");
+      const nextSnapshot = params.newTools.join("\n");
+      const toolsChanged = previousSnapshot !== nextSnapshot;
+      if (!toolsetChanged && !toolsChanged) {
+        return;
+      }
+      enqueueToolsetChangeReminder(sharedReminderStateRef.current, params);
+    },
+    [],
+  );
+
   const commandRunner = useMemo(
     () =>
       createCommandRunner({
         buffersRef,
         refreshDerived,
         createId: uid,
+        onCommandFinished: recordCommandReminder,
       }),
-    [refreshDerived],
+    [recordCommandReminder, refreshDerived],
   );
 
   const startOverlayCommand = useCallback(
@@ -10034,6 +10074,8 @@ ${SYSTEM_REMINDER_CLOSE}
 
           const persistedToolsetPreference =
             settingsManager.getToolsetPreference(agentId);
+          const previousToolsetSnapshot = currentToolset;
+          const previousToolNamesSnapshot = getToolNames();
           let toolsetNoticeLine: string | null = null;
 
           if (persistedToolsetPreference === "auto") {
@@ -10048,11 +10090,25 @@ ${SYSTEM_REMINDER_CLOSE}
               "Auto toolset selected: switched to " +
               toolsetName +
               ". Use /toolset to set a manual override.";
+            maybeRecordToolsetChangeReminder({
+              source: "/model (auto toolset)",
+              previousToolset: previousToolsetSnapshot,
+              newToolset: toolsetName,
+              previousTools: previousToolNamesSnapshot,
+              newTools: getToolNames(),
+            });
           } else {
             const { forceToolsetSwitch } = await import("../tools/toolset");
             if (currentToolset !== persistedToolsetPreference) {
               await forceToolsetSwitch(persistedToolsetPreference, agentId);
               setCurrentToolset(persistedToolsetPreference);
+              maybeRecordToolsetChangeReminder({
+                source: "/model (manual toolset override)",
+                previousToolset: previousToolsetSnapshot,
+                newToolset: persistedToolsetPreference,
+                previousTools: previousToolNamesSnapshot,
+                newTools: getToolNames(),
+              });
             }
             setCurrentToolsetPreference(persistedToolsetPreference);
             toolsetNoticeLine =
@@ -10093,6 +10149,7 @@ ${SYSTEM_REMINDER_CLOSE}
       consumeOverlayCommand,
       currentToolset,
       isAgentBusy,
+      maybeRecordToolsetChangeReminder,
       resetPendingReasoningCycle,
       withCommandLock,
     ],
@@ -10297,6 +10354,8 @@ ${SYSTEM_REMINDER_CLOSE}
           const { forceToolsetSwitch, switchToolsetForModel } = await import(
             "../tools/toolset"
           );
+          const previousToolsetSnapshot = currentToolset;
+          const previousToolNamesSnapshot = getToolNames();
 
           if (toolsetId === "auto") {
             const modelHandle =
@@ -10317,6 +10376,13 @@ ${SYSTEM_REMINDER_CLOSE}
             settingsManager.setToolsetPreference(agentId, "auto");
             setCurrentToolsetPreference("auto");
             setCurrentToolset(derivedToolset);
+            maybeRecordToolsetChangeReminder({
+              source: "/toolset",
+              previousToolset: previousToolsetSnapshot,
+              newToolset: derivedToolset,
+              previousTools: previousToolNamesSnapshot,
+              newTools: getToolNames(),
+            });
             cmd.finish(
               `Toolset mode set to auto (currently ${derivedToolset}).`,
               true,
@@ -10328,6 +10394,13 @@ ${SYSTEM_REMINDER_CLOSE}
           settingsManager.setToolsetPreference(agentId, toolsetId);
           setCurrentToolsetPreference(toolsetId);
           setCurrentToolset(toolsetId);
+          maybeRecordToolsetChangeReminder({
+            source: "/toolset",
+            previousToolset: previousToolsetSnapshot,
+            newToolset: toolsetId,
+            previousTools: previousToolNamesSnapshot,
+            newTools: getToolNames(),
+          });
           cmd.finish(
             `Switched toolset to ${toolsetId} (manual override)`,
             true,
@@ -10342,9 +10415,11 @@ ${SYSTEM_REMINDER_CLOSE}
       agentId,
       commandRunner,
       consumeOverlayCommand,
+      currentToolset,
       currentModelHandle,
       isAgentBusy,
       llmConfig,
+      maybeRecordToolsetChangeReminder,
       withCommandLock,
     ],
   );

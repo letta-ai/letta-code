@@ -9,7 +9,9 @@ export type SharedReminderId =
   | "permission-mode"
   | "plan-mode"
   | "reflection-step-count"
-  | "reflection-compaction";
+  | "reflection-compaction"
+  | "command-io"
+  | "toolset-change";
 
 export interface SharedReminderDefinition {
   id: SharedReminderId;
@@ -49,6 +51,16 @@ export const SHARED_REMINDER_CATALOG: ReadonlyArray<SharedReminderDefinition> =
       description:
         "Compaction-triggered reflection reminder/auto-launch behavior",
       modes: ["interactive", "headless-one-shot", "headless-bidirectional"],
+    },
+    {
+      id: "command-io",
+      description: "Recent slash command input/output context",
+      modes: ["interactive"],
+    },
+    {
+      id: "toolset-change",
+      description: "Client-side toolset change context",
+      modes: ["interactive"],
     },
   ];
 
