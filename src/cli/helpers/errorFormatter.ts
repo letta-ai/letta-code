@@ -460,12 +460,32 @@ export function getRetryStatusMessage(
     errorDetail.includes("incomplete chunked read") ||
     errorDetail.includes("connection termination")
   ) {
-    return "LLM streaming connection dropped, retrying...";
+    const provider = getProviderDisplayName();
+    return `${provider} streaming connection dropped, retrying...`;
   }
   if (errorDetail.includes("OpenAI API error"))
     return "OpenAI API error, retrying...";
 
   return DEFAULT_RETRY_MESSAGE;
+}
+
+const ENDPOINT_TYPE_DISPLAY_NAMES: Record<string, string> = {
+  openai: "OpenAI",
+  anthropic: "Anthropic",
+  chatgpt: "ChatGPT",
+  chatgpt_oauth: "ChatGPT",
+  google_ai: "Google AI",
+  google_vertex: "Google Vertex",
+  bedrock: "AWS Bedrock",
+  openrouter: "OpenRouter",
+  minimax: "MiniMax",
+  zai: "zAI",
+};
+
+function getProviderDisplayName(): string {
+  const { modelEndpointType } = getErrorContext();
+  if (!modelEndpointType) return "LLM";
+  return ENDPOINT_TYPE_DISPLAY_NAMES[modelEndpointType] ?? modelEndpointType;
 }
 
 /**

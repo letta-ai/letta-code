@@ -1405,8 +1405,9 @@ export default function App({
     setErrorContext({
       modelDisplayName: currentModelDisplay ?? undefined,
       billingTier: billingTier ?? undefined,
+      modelEndpointType: llmConfig?.model_endpoint_type ?? undefined,
     });
-  }, [currentModelDisplay, billingTier]);
+  }, [currentModelDisplay, billingTier, llmConfig?.model_endpoint_type]);
 
   // Fetch billing tier once on mount
   useEffect(() => {
