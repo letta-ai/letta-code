@@ -206,6 +206,11 @@ import {
 import { formatCompact } from "./helpers/format";
 import { parsePatchOperations } from "./helpers/formatArgsDisplay";
 import {
+  buildHealthWarning,
+  checkMemfsHealth,
+  renderHealthReport,
+} from "./helpers/healthCheck";
+import {
   getReflectionSettings,
   parseMemoryPreference,
   type ReflectionSettings,
@@ -6731,6 +6736,43 @@ export default function App({
             false,
             true,
           );
+
+          return { submitted: true };
+        }
+
+        // Special handling for /health command - memory health check
+        if (trimmed === "/health") {
+          const agentId = agentIdRef.current;
+          const contextWindow = llmConfigRef.current?.context_window ?? 0;
+
+          const cmd = commandRunner.start(trimmed, "Checking memory health...");
+
+          if (!settingsManager.isMemfsEnabled(agentId)) {
+            cmd.finish(
+              "Memory health check requires memfs. Run /memfs enable first.",
+              true,
+              false,
+              true,
+            );
+            return { submitted: true };
+          }
+
+          const report = checkMemfsHealth(agentId, contextWindow);
+          cmd.finish(renderHealthReport(report), true, false, true);
+
+          // If over threshold, inject a system-reminder so the agent trims its memory
+          if (report.isOverThreshold) {
+            const warning = buildHealthWarning(report);
+            await processConversation([
+              {
+                type: "message",
+                role: "user",
+                content: buildTextParts(
+                  `${SYSTEM_REMINDER_OPEN}\n${warning}\n${SYSTEM_REMINDER_CLOSE}`,
+                ),
+              },
+            ]);
+          }
 
           return { submitted: true };
         }
