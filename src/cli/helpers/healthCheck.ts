@@ -5,8 +5,8 @@
  * approximation (same heuristic used by Codex: codex-rs/core/src/truncate.rs).
  */
 
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { join, relative } from "node:path";
 import { getMemorySystemDir } from "../../agent/memoryFilesystem";
 import { hexToFgAnsi } from "../components/colors";
 import { formatCompact } from "./format";
@@ -41,6 +41,36 @@ export interface HealthReport {
   memfsEnabled: boolean;
 }
 
+/** Recursively collect all .md files under a directory. */
+function collectMdFiles(
+  dir: string,
+  systemDir: string,
+  files: HealthFileInfo[],
+): void {
+  const entries = readdirSync(dir, { withFileTypes: true });
+  for (const entry of entries) {
+    const filePath = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      collectMdFiles(filePath, systemDir, files);
+    } else if (entry.isFile() && entry.name.endsWith(".md")) {
+      try {
+        const content = readFileSync(filePath, "utf8");
+        const tokens = estimateTokens(content);
+        const rel = relative(systemDir, filePath).replace(/\.md$/, "");
+        const label = `system/${rel.replace(/\\/g, "/")}`;
+        files.push({
+          path: filePath,
+          label,
+          bytes: Buffer.byteLength(content, "utf8"),
+          tokens,
+        });
+      } catch {
+        // Skip unreadable files silently
+      }
+    }
+  }
+}
+
 /**
  * Scan the agent's system/ directory and build a health report.
  * Token counts are estimated via byte length / 4.
@@ -53,20 +83,7 @@ export function checkMemfsHealth(
   const files: HealthFileInfo[] = [];
 
   if (existsSync(systemDir)) {
-    const entries = readdirSync(systemDir, { withFileTypes: true });
-    for (const entry of entries) {
-      if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
-      const filePath = join(systemDir, entry.name);
-      try {
-        const content = readFileSync(filePath, "utf8");
-        const bytes = statSync(filePath).size;
-        const tokens = estimateTokens(content);
-        const label = `system/${entry.name.replace(/\.md$/, "")}`;
-        files.push({ path: filePath, label, bytes, tokens });
-      } catch {
-        // Skip unreadable files silently
-      }
-    }
+    collectMdFiles(systemDir, systemDir, files);
   }
 
   // Sort largest first
