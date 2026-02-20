@@ -916,14 +916,14 @@ export async function handleHeadlessCommand(
 
   const isSubagent = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
 
-  // Apply memfs flag if explicitly specified (memfs is opt-in via /memfs enable or --memfs)
+  // Apply memfs flags and auto-enable from server tag when local settings are missing.
   try {
     const { applyMemfsFlags } = await import("./agent/memoryFilesystem");
     const memfsResult = await applyMemfsFlags(
       agent.id,
       memfsFlag,
       noMemfsFlag,
-      { pullOnExistingRepo: true },
+      { pullOnExistingRepo: true, agentTags: agent.tags },
     );
     if (memfsResult.pullSummary?.includes("CONFLICT")) {
       console.error(

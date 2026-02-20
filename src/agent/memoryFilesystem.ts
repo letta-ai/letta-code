@@ -143,6 +143,11 @@ export interface ApplyMemfsFlagsResult {
   pullSummary?: string;
 }
 
+export interface ApplyMemfsFlagsOptions {
+  pullOnExistingRepo?: boolean;
+  agentTags?: string[];
+}
+
 /**
  * Apply --memfs / --no-memfs CLI flags (or /memfs enable) to an agent.
  *
@@ -162,7 +167,7 @@ export async function applyMemfsFlags(
   agentId: string,
   memfsFlag: boolean | undefined,
   noMemfsFlag: boolean | undefined,
-  options?: { pullOnExistingRepo?: boolean },
+  options?: ApplyMemfsFlagsOptions,
 ): Promise<ApplyMemfsFlagsResult> {
   const { getServerUrl } = await import("./client");
   const { settingsManager } = await import("../settings-manager");
@@ -181,14 +186,22 @@ export async function applyMemfsFlags(
   }
 
   const hasExplicitToggle = Boolean(memfsFlag || noMemfsFlag);
+  const localMemfsEnabled = settingsManager.isMemfsEnabled(agentId);
+  const { GIT_MEMORY_ENABLED_TAG } = await import("./memoryGit");
+  const shouldAutoEnableFromTag =
+    !hasExplicitToggle &&
+    !localMemfsEnabled &&
+    Boolean(options?.agentTags?.includes(GIT_MEMORY_ENABLED_TAG));
   const targetEnabled = memfsFlag
     ? true
     : noMemfsFlag
       ? false
-      : settingsManager.isMemfsEnabled(agentId);
+      : shouldAutoEnableFromTag
+        ? true
+        : localMemfsEnabled;
 
   // 2. Reconcile system prompt first, then persist local memfs setting.
-  if (hasExplicitToggle) {
+  if (hasExplicitToggle || shouldAutoEnableFromTag) {
     const { updateAgentSystemPromptMemfs } = await import("./modify");
     const promptUpdate = await updateAgentSystemPromptMemfs(
       agentId,
@@ -200,14 +213,21 @@ export async function applyMemfsFlags(
     settingsManager.setMemfsEnabled(agentId, targetEnabled);
   }
 
-  const isEnabled = hasExplicitToggle
-    ? targetEnabled
-    : settingsManager.isMemfsEnabled(agentId);
+  const isEnabled =
+    hasExplicitToggle || shouldAutoEnableFromTag
+      ? targetEnabled
+      : settingsManager.isMemfsEnabled(agentId);
 
-  // 3. Detach old API-based memory tools when explicitly enabling.
-  if (isEnabled && memfsFlag) {
+  // 3. Detach old API-based memory tools when enabling.
+  if (isEnabled && (memfsFlag || shouldAutoEnableFromTag)) {
     const { detachMemoryTools } = await import("../tools/toolset");
     await detachMemoryTools(agentId);
+  }
+
+  // Keep server-side state aligned with explicit disable.
+  if (noMemfsFlag) {
+    const { removeGitMemoryTag } = await import("./memoryGit");
+    await removeGitMemoryTag(agentId);
   }
 
   // 4. Add git tag + clone/pull repo.
@@ -224,7 +244,12 @@ export async function applyMemfsFlags(
     }
   }
 
-  const action = memfsFlag ? "enabled" : noMemfsFlag ? "disabled" : "unchanged";
+  const action =
+    memfsFlag || shouldAutoEnableFromTag
+      ? "enabled"
+      : noMemfsFlag
+        ? "disabled"
+        : "unchanged";
   return {
     action,
     memoryDir: isEnabled ? getMemoryFilesystemRoot(agentId) : undefined,
