@@ -23,6 +23,7 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
+import { getVersion } from "../../version";
 import {
   type ApprovalResult,
   executeAutoAllowedTools,
