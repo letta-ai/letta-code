@@ -1466,12 +1466,10 @@ export default function App({
   const sessionHooksRanRef = useRef(false);
 
   // Initialize chunk log for this agent + session (clears buffer, GCs old files).
-  // Must wait until agentId resolves from "loading" to the real ID.
-  const chunkLogInitRef = useRef(false);
+  // Re-runs when agentId changes (e.g. agent switch via /agents).
   useEffect(() => {
-    if (agentId && agentId !== "loading" && !chunkLogInitRef.current) {
+    if (agentId && agentId !== "loading") {
       chunkLog.init(agentId, telemetry.getSessionId());
-      chunkLogInitRef.current = true;
     }
   }, [agentId]);
 

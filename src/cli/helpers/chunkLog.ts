@@ -22,6 +22,7 @@ import {
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
+import { debugWarn } from "../../utils/debug";
 
 const MAX_ENTRIES = 100;
 const CONTENT_TRUNCATE_LEN = 200;
@@ -111,10 +112,11 @@ function truncateChunk(chunk: LettaStreamingResponse): Record<string, unknown> {
 // ---------------------------------------------------------------------------
 
 class ChunkLog {
-  private buffer: string[] = [];
+  private buffer: Record<string, unknown>[] = [];
   private dirty = false;
   private logPath: string | null = null;
   private agentDir: string | null = null;
+  private dirCreated = false;
 
   /**
    * Initialize the chunk log for a specific agent + session.
@@ -126,6 +128,7 @@ class ChunkLog {
     this.logPath = join(this.agentDir, `${sessionId}.jsonl`);
     this.buffer = [];
     this.dirty = false;
+    this.dirCreated = false;
 
     // GC old session files for this agent (keep last N)
     this.pruneOldSessions();
@@ -136,12 +139,11 @@ class ChunkLog {
    * Call flush() after a stream completes to persist.
    */
   append(chunk: LettaStreamingResponse): void {
-    const entry = truncateChunk(chunk);
-    this.buffer.push(JSON.stringify(entry));
+    this.buffer.push(truncateChunk(chunk));
 
-    // Trim to max entries
+    // Drop oldest entry if over capacity
     if (this.buffer.length > MAX_ENTRIES) {
-      this.buffer = this.buffer.slice(-MAX_ENTRIES);
+      this.buffer.shift();
     }
 
     this.dirty = true;
@@ -161,7 +163,7 @@ class ChunkLog {
    * Get all entries as an array of objects (for sending in feedback payload).
    */
   getEntries(): Record<string, unknown>[] {
-    return this.buffer.map((line) => JSON.parse(line));
+    return this.buffer;
   }
 
   /**
@@ -175,21 +177,42 @@ class ChunkLog {
   // Disk I/O
   // -----------------------------------------------------------------------
 
-  private writeToDisk(): void {
-    if (!this.logPath || !this.agentDir) return;
+  private ensureDir(): void {
+    if (this.dirCreated || !this.agentDir) return;
     try {
       if (!existsSync(this.agentDir)) {
         mkdirSync(this.agentDir, { recursive: true });
       }
-      writeFileSync(this.logPath, `${this.buffer.join("\n")}\n`, "utf8");
-    } catch {
-      // Silently ignore write errors -- in-memory log still works
+      this.dirCreated = true;
+    } catch (e) {
+      debugWarn(
+        "chunkLog",
+        `Failed to create directory ${this.agentDir}: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+  }
+
+  private writeToDisk(): void {
+    if (!this.logPath) return;
+    this.ensureDir();
+    try {
+      const content = this.buffer
+        .map((entry) => JSON.stringify(entry))
+        .join("\n");
+      writeFileSync(this.logPath, `${content}\n`, "utf8");
+    } catch (e) {
+      debugWarn(
+        "chunkLog",
+        `Failed to write ${this.logPath}: ${e instanceof Error ? e.message : String(e)}`,
+      );
     }
   }
 
   /**
    * Remove old session log files, keeping only the most recent N.
-   * Sorted by filename (which contains the session timestamp prefix).
+   *
+   * Session filenames start with Date.now() (e.g. "1740000000000-abc123.jsonl"),
+   * so lexicographic sort orders them chronologically.
    */
   private pruneOldSessions(): void {
     if (!this.agentDir) return;
@@ -206,13 +229,19 @@ class ChunkLog {
         for (const file of toDelete) {
           try {
             unlinkSync(join(this.agentDir, file));
-          } catch {
-            // ignore individual delete failures
+          } catch (e) {
+            debugWarn(
+              "chunkLog",
+              `Failed to delete old session log ${file}: ${e instanceof Error ? e.message : String(e)}`,
+            );
           }
         }
       }
-    } catch {
-      // ignore GC failures -- not critical
+    } catch (e) {
+      debugWarn(
+        "chunkLog",
+        `Failed to prune old sessions: ${e instanceof Error ? e.message : String(e)}`,
+      );
     }
   }
 }

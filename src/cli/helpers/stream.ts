@@ -155,7 +155,11 @@ export async function drainStream(
         streamProcessor.processChunk(chunk);
 
       // Log chunk for feedback diagnostics
-      chunkLog.append(chunk);
+      try {
+        chunkLog.append(chunk);
+      } catch {
+        // Silently ignore -- diagnostics should not break streaming
+      }
 
       // Check abort signal before processing - don't add data after interrupt
       if (abortSignal?.aborted) {
@@ -232,7 +236,11 @@ export async function drainStream(
     queueMicrotask(refresh);
   } finally {
     // Persist chunk log to disk (one write per stream, not per chunk)
-    chunkLog.flush();
+    try {
+      chunkLog.flush();
+    } catch {
+      // Silently ignore -- diagnostics should not break streaming
+    }
 
     // Clean up abort listener
     if (abortSignal) {
