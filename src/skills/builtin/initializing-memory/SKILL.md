@@ -717,4 +717,4 @@ git push
 | Subagent exits with code `null`, 0 tool uses | `letta.js` not built | Run `bun run build` |
 | Subagent hangs on "Tool requires approval" | Wrong subagent type | Use `subagent_type: "history-analyzer"` (workers) or `"memory"` (synthesis) |
 | Merge conflict during synthesis | Workers touched overlapping files | Resolve by checking `git log` for context |
-| Auth fails on push ("repository not found") | Credential helper broken | Use `http.extraHeader` (see syncing-memory-filesystem skill) |
+| Auth fails on push ("repository not found") | Credential helper broken or global helper conflict | Reconfigure **repo-local** helper and check/clear conflicting global `credential.<host>.helper` entries (see syncing-memory-filesystem skill) |
