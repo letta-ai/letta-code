@@ -10666,15 +10666,14 @@ ${SYSTEM_REMINDER_CLOSE}
                 version: getVersion(),
                 platform: process.platform,
                 settings: JSON.stringify(safeSettings),
-                // Additional context for debugging
-                system_info: {
-                  local_time: getLocalTime(),
-                  device_type: getDeviceType(),
-                  cwd: process.cwd(),
-                },
-                session_stats: (() => {
+                // System info
+                local_time: getLocalTime(),
+                device_type: getDeviceType(),
+                cwd: process.cwd(),
+                // Session stats
+                ...(() => {
                   const stats = sessionStatsRef.current?.getSnapshot();
-                  if (!stats) return undefined;
+                  if (!stats) return {};
                   return {
                     total_api_ms: stats.totalApiMs,
                     total_wall_ms: stats.totalWallMs,
@@ -10688,14 +10687,12 @@ ${SYSTEM_REMINDER_CLOSE}
                     context_tokens: stats.usage.contextTokens,
                   };
                 })(),
-                agent_info: {
-                  agent_name: agentName,
-                  agent_description: agentDescription,
-                  model: currentModelId,
-                },
-                account_info: {
-                  billing_tier: billingTier,
-                },
+                // Agent info
+                agent_name: agentName,
+                agent_description: agentDescription,
+                model: currentModelId,
+                // Account info
+                billing_tier: billingTier,
               }),
             },
           );
