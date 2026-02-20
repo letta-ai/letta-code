@@ -286,7 +286,7 @@ export async function updateAgentLLMConfig(
       context_window_limit: updateArgs.context_window as number,
     }),
     ...(hasMaxOutputTokensArg && {
-      max_tokens: updateArgs.max_output_tokens,
+      max_tokens: updateArgs.max_output_tokens as number,
     }),
   });
 

@@ -854,7 +854,11 @@
     "label": "Gemini 3.1 Pro",
     "description": "Google's latest and smartest model",
     "isFeatured": true,
-    "updateArgs": { "context_window": 180000, "temperature": 1.0, "parallel_tool_calls": true}
+    "updateArgs": {
+      "context_window": 180000,
+      "temperature": 1.0,
+      "parallel_tool_calls": true
+    }
   },
   {
     "id": "gemini-3",
@@ -862,7 +866,11 @@
     "label": "Gemini 3 Pro",
     "description": "Google's smartest model",
     "isFeatured": true,
-    "updateArgs": { "context_window": 180000, "temperature": 1.0, "parallel_tool_calls": true}
+    "updateArgs": {
+      "context_window": 180000,
+      "temperature": 1.0,
+      "parallel_tool_calls": true
+    }
   },
   {
     "id": "gemini-3-flash",
@@ -870,55 +878,63 @@
     "label": "Gemini 3 Flash",
     "description": "Google's fastest Gemini 3 model",
     "isFeatured": true,
-    "updateArgs": { "context_window": 180000, "temperature": 1.0, "parallel_tool_calls": true}
+    "updateArgs": {
+      "context_window": 180000,
+      "temperature": 1.0,
+      "parallel_tool_calls": true
+    }
   },
   {
     "id": "gemini-flash",
     "handle": "google_ai/gemini-2.5-flash",
     "label": "Gemini 2.5 Flash",
     "description": "Google's fastest model",
-    "updateArgs": { "context_window": 180000, "parallel_tool_calls": true}
+    "updateArgs": { "context_window": 180000, "parallel_tool_calls": true }
   },
   {
     "id": "gemini-pro",
     "handle": "google_ai/gemini-2.5-pro",
     "label": "Gemini 2.5 Pro",
     "description": "Google's last generation flagship model",
-    "updateArgs": { "context_window": 180000, "parallel_tool_calls": true}
+    "updateArgs": { "context_window": 180000, "parallel_tool_calls": true }
   },
   {
     "id": "gpt-4.1",
     "handle": "openai/gpt-4.1",
     "label": "GPT-4.1",
     "description": "OpenAI's most recent non-reasoner model",
-    "updateArgs": { "context_window": 1047576, "parallel_tool_calls": true}
+    "updateArgs": { "context_window": 1047576, "parallel_tool_calls": true }
   },
   {
     "id": "gpt-4.1-mini",
     "handle": "openai/gpt-4.1-mini-2025-04-14",
     "label": "GPT-4.1-Mini",
     "description": "OpenAI's most recent non-reasoner model (mini version)",
-    "updateArgs": { "context_window": 1047576, "parallel_tool_calls": true}
+    "updateArgs": { "context_window": 1047576, "parallel_tool_calls": true }
   },
   {
     "id": "gpt-4.1-nano",
     "handle": "openai/gpt-4.1-nano-2025-04-14",
     "label": "GPT-4.1-Nano",
     "description": "OpenAI's most recent non-reasoner model (nano version)",
-    "updateArgs": { "context_window": 1047576, "parallel_tool_calls": true}
+    "updateArgs": { "context_window": 1047576, "parallel_tool_calls": true }
   },
   {
     "id": "o4-mini",
     "handle": "openai/o4-mini",
     "label": "o4-mini",
     "description": "OpenAI's latest o-series reasoning model",
-    "updateArgs": { "context_window": 180000, "parallel_tool_calls": true}
+    "updateArgs": { "context_window": 180000, "parallel_tool_calls": true }
   },
   {
     "id": "gemini-3-vertex",
     "handle": "google_vertex/gemini-3-pro-preview",
     "label": "Gemini 3 Pro",
     "description": "Google's smartest Gemini 3 Pro model (via Vertex AI)",
-    "updateArgs": { "context_window": 180000, "temperature": 1.0, "parallel_tool_calls": true}
+    "updateArgs": {
+      "context_window": 180000,
+      "temperature": 1.0,
+      "parallel_tool_calls": true
+    }
   }
 ]
