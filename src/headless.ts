@@ -882,23 +882,37 @@ export async function handleHeadlessCommand(
     (!forceNew && !fromAfFile)
   );
 
-  // If resuming and a model or system prompt was specified, apply those changes
-  if (isResumingAgent && (model || systemPromptPreset)) {
+  // If resuming, refresh model settings from presets and apply optional
+  // command-line overrides (model/system prompt).
+  if (isResumingAgent) {
+    const { updateAgentLLMConfig } = await import("./agent/modify");
+
     if (model) {
       const { resolveModel } = await import("./agent/model");
       const modelHandle = resolveModel(model);
-      if (!modelHandle) {
+      if (typeof modelHandle !== "string") {
         console.error(`Error: Invalid model "${model}"`);
         process.exit(1);
       }
 
       // Always apply model update - different model IDs can share the same
       // handle but have different settings (e.g., gpt-5.2-medium vs gpt-5.2-xhigh)
-      const { updateAgentLLMConfig } = await import("./agent/modify");
       const updateArgs = getModelUpdateArgs(model);
       await updateAgentLLMConfig(agent.id, modelHandle, updateArgs);
       // Refresh agent state after model update
       agent = await client.agents.retrieve(agent.id);
+    } else {
+      const { getModelPresetUpdateForAgent } = await import("./agent/model");
+      const presetRefresh = getModelPresetUpdateForAgent(agent);
+      if (presetRefresh) {
+        await updateAgentLLMConfig(
+          agent.id,
+          presetRefresh.modelHandle,
+          presetRefresh.updateArgs,
+        );
+        // Refresh agent state after model update
+        agent = await client.agents.retrieve(agent.id);
+      }
     }
 
     if (systemPromptPreset) {

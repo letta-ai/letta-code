@@ -62,4 +62,17 @@ describe("approval recovery wiring", () => {
     expect(segment).toContain("client.agents.messages.cancel");
     expect(segment).toContain("client.conversations.cancel");
   });
+
+  test("resume flow refreshes model preset without explicit --model", () => {
+    const indexPath = fileURLToPath(new URL("../../index.ts", import.meta.url));
+    const source = readFileSync(indexPath, "utf-8");
+
+    expect(source).toContain("getModelPresetUpdateForAgent");
+    expect(source).toContain(
+      "const presetRefresh = getModelPresetUpdateForAgent(agent)",
+    );
+    expect(source).toContain("await updateAgentLLMConfig(");
+    expect(source).toContain("presetRefresh.modelHandle");
+    expect(source).toContain("presetRefresh.updateArgs");
+  });
 });

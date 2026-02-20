@@ -1794,8 +1794,11 @@ async function main(): Promise<void> {
         );
         setIsResumingSession(resuming);
 
-        // If resuming and a model or system prompt was specified, apply those changes
-        if (resuming && (model || systemPromptPreset)) {
+        // If resuming, refresh model settings from presets and apply optional
+        // command-line overrides (model/system prompt).
+        if (resuming) {
+          const { updateAgentLLMConfig } = await import("./agent/modify");
+
           if (model) {
             const { resolveModel, getModelUpdateArgs } = await import(
               "./agent/model"
@@ -1808,11 +1811,24 @@ async function main(): Promise<void> {
 
             // Always apply model update - different model IDs can share the same
             // handle but have different settings (e.g., gpt-5.2-medium vs gpt-5.2-xhigh)
-            const { updateAgentLLMConfig } = await import("./agent/modify");
             const updateArgs = getModelUpdateArgs(model);
             await updateAgentLLMConfig(agent.id, modelHandle, updateArgs);
             // Refresh agent state after model update
             agent = await client.agents.retrieve(agent.id);
+          } else {
+            const { getModelPresetUpdateForAgent } = await import(
+              "./agent/model"
+            );
+            const presetRefresh = getModelPresetUpdateForAgent(agent);
+            if (presetRefresh) {
+              await updateAgentLLMConfig(
+                agent.id,
+                presetRefresh.modelHandle,
+                presetRefresh.updateArgs,
+              );
+              // Refresh agent state after model update
+              agent = await client.agents.retrieve(agent.id);
+            }
           }
 
           if (systemPromptPreset) {

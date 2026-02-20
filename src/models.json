@@ -10,7 +10,8 @@
       "context_window": 200000,
       "max_output_tokens": 128000,
       "reasoning_effort": "high",
-      "enable_reasoner": true
+      "enable_reasoner": true,
+      "parallel_tool_calls": true
     }
   },
   {
@@ -22,7 +23,8 @@
       "context_window": 1000000,
       "max_output_tokens": 128000,
       "reasoning_effort": "high",
-      "enable_reasoner": true
+      "enable_reasoner": true,
+      "parallel_tool_calls": true
     }
   },
   {
@@ -34,7 +36,8 @@
       "context_window": 200000,
       "max_output_tokens": 128000,
       "reasoning_effort": "none",
-      "enable_reasoner": false
+      "enable_reasoner": false,
+      "parallel_tool_calls": true
     }
   },
   {
@@ -47,7 +50,8 @@
       "max_output_tokens": 128000,
       "reasoning_effort": "low",
       "enable_reasoner": true,
-      "max_reasoning_tokens": 4000
+      "max_reasoning_tokens": 4000,
+      "parallel_tool_calls": true
     }
   },
   {
@@ -60,7 +64,8 @@
       "max_output_tokens": 128000,
       "reasoning_effort": "medium",
       "enable_reasoner": true,
-      "max_reasoning_tokens": 12000
+      "max_reasoning_tokens": 12000,
+      "parallel_tool_calls": true
     }
   },
   {
@@ -73,7 +78,8 @@
       "max_output_tokens": 128000,
       "reasoning_effort": "xhigh",
       "enable_reasoner": true,
-      "max_reasoning_tokens": 31999
+      "max_reasoning_tokens": 31999,
+      "parallel_tool_calls": true
     }
   },
   {
@@ -84,7 +90,8 @@
     "updateArgs": {
       "context_window": 180000,
       "max_output_tokens": 64000,
-      "max_reasoning_tokens": 31999
+      "max_reasoning_tokens": 31999,
+      "parallel_tool_calls": true
     }
   },
   {
@@ -95,7 +102,8 @@
     "updateArgs": {
       "enable_reasoner": false,
       "context_window": 180000,
-      "max_output_tokens": 64000
+      "max_output_tokens": 64000,
+      "parallel_tool_calls": true
     }
   },
   {
@@ -108,7 +116,8 @@
       "context_window": 200000,
       "max_output_tokens": 128000,
       "reasoning_effort": "high",
-      "enable_reasoner": true
+      "enable_reasoner": true,
+      "parallel_tool_calls": true
     }
   },
   {
@@ -120,7 +129,8 @@
       "context_window": 200000,
       "max_output_tokens": 128000,
       "reasoning_effort": "none",
-      "enable_reasoner": false
+      "enable_reasoner": false,
+      "parallel_tool_calls": true
     }
   },
   {
@@ -133,7 +143,8 @@
       "max_output_tokens": 128000,
       "reasoning_effort": "low",
       "enable_reasoner": true,
-      "max_reasoning_tokens": 4000
+      "max_reasoning_tokens": 4000,
+      "parallel_tool_calls": true
     }
   },
   {
@@ -146,7 +157,8 @@
       "max_output_tokens": 128000,
       "reasoning_effort": "medium",
       "enable_reasoner": true,
-      "max_reasoning_tokens": 12000
+      "max_reasoning_tokens": 12000,
+      "parallel_tool_calls": true
     }
   },
   {
@@ -159,7 +171,8 @@
       "max_output_tokens": 128000,
       "reasoning_effort": "xhigh",
       "enable_reasoner": true,
-      "max_reasoning_tokens": 31999
+      "max_reasoning_tokens": 31999,
+      "parallel_tool_calls": true
     }
   },
   {
@@ -170,7 +183,8 @@
     "updateArgs": {
       "context_window": 180000,
       "max_output_tokens": 64000,
-      "max_reasoning_tokens": 31999
+      "max_reasoning_tokens": 31999,
+      "parallel_tool_calls": true
     }
   },
   {
@@ -183,7 +197,8 @@
     "updateArgs": {
       "context_window": 180000,
       "max_output_tokens": 64000,
-      "max_reasoning_tokens": 31999
+      "max_reasoning_tokens": 31999,
+      "parallel_tool_calls": true
     }
   },
   {
@@ -194,7 +209,8 @@
     "isFeatured": true,
     "updateArgs": {
       "context_window": 180000,
-      "max_output_tokens": 64000
+      "max_output_tokens": 64000,
+      "parallel_tool_calls": true
     }
   },
   {
@@ -206,7 +222,8 @@
       "reasoning_effort": "none",
       "verbosity": "low",
       "context_window": 272000,
-      "max_output_tokens": 128000
+      "max_output_tokens": 128000,
+      "parallel_tool_calls": true
     }
   },
   {
@@ -218,7 +235,8 @@
       "reasoning_effort": "low",
       "verbosity": "low",
       "context_window": 272000,
-      "max_output_tokens": 128000
+      "max_output_tokens": 128000,
+      "parallel_tool_calls": true
     }
   },
   {
@@ -230,7 +248,8 @@
       "reasoning_effort": "medium",
       "verbosity": "low",
       "context_window": 272000,
-      "max_output_tokens": 128000
+      "max_output_tokens": 128000,
+      "parallel_tool_calls": true
     }
   },
   {
@@ -243,7 +262,8 @@
       "reasoning_effort": "high",
       "verbosity": "low",
       "context_window": 272000,
-      "max_output_tokens": 128000
+      "max_output_tokens": 128000,
+      "parallel_tool_calls": true
     }
   },
   {
@@ -255,7 +275,8 @@
       "reasoning_effort": "xhigh",
       "verbosity": "low",
       "context_window": 272000,
-      "max_output_tokens": 128000
+      "max_output_tokens": 128000,
+      "parallel_tool_calls": true
     }
   },
   {
@@ -267,7 +288,8 @@
       "reasoning_effort": "medium",
       "verbosity": "medium",
       "context_window": 272000,
-      "max_output_tokens": 128000
+      "max_output_tokens": 128000,
+      "parallel_tool_calls": true
     }
   },
   {
@@ -279,7 +301,8 @@
       "reasoning_effort": "high",
       "verbosity": "medium",
       "context_window": 272000,
-      "max_output_tokens": 128000
+      "max_output_tokens": 128000,
+      "parallel_tool_calls": true
     }
   },
   {
@@ -291,7 +314,8 @@
       "reasoning_effort": "medium",
       "verbosity": "medium",
       "context_window": 272000,
-      "max_output_tokens": 128000
+      "max_output_tokens": 128000,
+      "parallel_tool_calls": true
     }
   },
   {
@@ -303,7 +327,8 @@
       "reasoning_effort": "high",
       "verbosity": "medium",
       "context_window": 272000,
-      "max_output_tokens": 128000
+      "max_output_tokens": 128000,
+      "parallel_tool_calls": true
     }
   },
   {
@@ -315,7 +340,8 @@
       "reasoning_effort": "medium",
       "verbosity": "medium",
       "context_window": 272000,
-      "max_output_tokens": 128000
+      "max_output_tokens": 128000,
+      "parallel_tool_calls": true
     }
   },
   {
@@ -327,7 +353,8 @@
       "reasoning_effort": "high",
       "verbosity": "medium",
       "context_window": 272000,
-      "max_output_tokens": 128000
+      "max_output_tokens": 128000,
+      "parallel_tool_calls": true
     }
   },
   {
@@ -339,7 +366,8 @@
       "reasoning_effort": "medium",
       "verbosity": "medium",
       "context_window": 272000,
-      "max_output_tokens": 128000
+      "max_output_tokens": 128000,
+      "parallel_tool_calls": true
     }
   },
   {
@@ -351,7 +379,8 @@
       "reasoning_effort": "high",
       "verbosity": "medium",
       "context_window": 272000,
-      "max_output_tokens": 128000
+      "max_output_tokens": 128000,
+      "parallel_tool_calls": true
     }
   },
   {
@@ -363,7 +392,8 @@
       "reasoning_effort": "xhigh",
       "verbosity": "medium",
       "context_window": 272000,
-      "max_output_tokens": 128000
+      "max_output_tokens": 128000,
+      "parallel_tool_calls": true
     }
   },
   {
@@ -375,7 +405,8 @@
       "reasoning_effort": "medium",
       "verbosity": "medium",
       "context_window": 272000,
-      "max_output_tokens": 128000
+      "max_output_tokens": 128000,
+      "parallel_tool_calls": true
     }
   },
   {
@@ -387,7 +418,8 @@
       "reasoning_effort": "none",
       "verbosity": "medium",
       "context_window": 272000,
-      "max_output_tokens": 128000
+      "max_output_tokens": 128000,
+      "parallel_tool_calls": true
     }
   },
   {
@@ -399,7 +431,8 @@
       "reasoning_effort": "low",
       "verbosity": "medium",
       "context_window": 272000,
-      "max_output_tokens": 128000
+      "max_output_tokens": 128000,
+      "parallel_tool_calls": true
     }
   },
   {
@@ -412,7 +445,8 @@
       "reasoning_effort": "medium",
       "verbosity": "medium",
       "context_window": 272000,
-      "max_output_tokens": 128000
+      "max_output_tokens": 128000,
+      "parallel_tool_calls": true
     }
   },
   {
@@ -424,7 +458,8 @@
       "reasoning_effort": "high",
       "verbosity": "medium",
       "context_window": 272000,
-      "max_output_tokens": 128000
+      "max_output_tokens": 128000,
+      "parallel_tool_calls": true
     }
   },
   {
@@ -436,7 +471,8 @@
       "reasoning_effort": "xhigh",
       "verbosity": "medium",
       "context_window": 272000,
-      "max_output_tokens": 128000
+      "max_output_tokens": 128000,
+      "parallel_tool_calls": true
     }
   },
   {
@@ -448,7 +484,8 @@
       "reasoning_effort": "none",
       "verbosity": "medium",
       "context_window": 272000,
-      "max_output_tokens": 128000
+      "max_output_tokens": 128000,
+      "parallel_tool_calls": true
     }
   },
   {
@@ -460,7 +497,8 @@
       "reasoning_effort": "low",
       "verbosity": "medium",
       "context_window": 272000,
-      "max_output_tokens": 128000
+      "max_output_tokens": 128000,
+      "parallel_tool_calls": true
     }
   },
   {
@@ -473,7 +511,8 @@
       "reasoning_effort": "medium",
       "verbosity": "medium",
       "context_window": 272000,
-      "max_output_tokens": 128000
+      "max_output_tokens": 128000,
+      "parallel_tool_calls": true
     }
   },
   {
@@ -485,7 +524,8 @@
       "reasoning_effort": "high",
       "verbosity": "medium",
       "context_window": 272000,
-      "max_output_tokens": 128000
+      "max_output_tokens": 128000,
+      "parallel_tool_calls": true
     }
   },
   {
@@ -497,7 +537,8 @@
       "reasoning_effort": "xhigh",
       "verbosity": "medium",
       "context_window": 272000,
-      "max_output_tokens": 128000
+      "max_output_tokens": 128000,
+      "parallel_tool_calls": true
     }
   },
   {
@@ -509,7 +550,8 @@
       "reasoning_effort": "none",
       "verbosity": "medium",
       "context_window": 272000,
-      "max_output_tokens": 128000
+      "max_output_tokens": 128000,
+      "parallel_tool_calls": true
     }
   },
   {
@@ -521,7 +563,8 @@
       "reasoning_effort": "low",
       "verbosity": "medium",
       "context_window": 272000,
-      "max_output_tokens": 128000
+      "max_output_tokens": 128000,
+      "parallel_tool_calls": true
     }
   },
   {
@@ -533,7 +576,8 @@
       "reasoning_effort": "medium",
       "verbosity": "medium",
       "context_window": 272000,
-      "max_output_tokens": 128000
+      "max_output_tokens": 128000,
+      "parallel_tool_calls": true
     }
   },
   {
@@ -545,7 +589,8 @@
       "reasoning_effort": "high",
       "verbosity": "medium",
       "context_window": 272000,
-      "max_output_tokens": 128000
+      "max_output_tokens": 128000,
+      "parallel_tool_calls": true
     }
   },
   {
@@ -557,7 +602,8 @@
       "reasoning_effort": "none",
       "verbosity": "medium",
       "context_window": 272000,
-      "max_output_tokens": 128000
+      "max_output_tokens": 128000,
+      "parallel_tool_calls": true
     }
   },
   {
@@ -570,7 +616,8 @@
       "reasoning_effort": "medium",
       "verbosity": "medium",
       "context_window": 272000,
-      "max_output_tokens": 128000
+      "max_output_tokens": 128000,
+      "parallel_tool_calls": true
     }
   },
   {
@@ -582,7 +629,8 @@
       "reasoning_effort": "high",
       "verbosity": "medium",
       "context_window": 272000,
-      "max_output_tokens": 128000
+      "max_output_tokens": 128000,
+      "parallel_tool_calls": true
     }
   },
   {
@@ -594,7 +642,8 @@
       "reasoning_effort": "medium",
       "verbosity": "medium",
       "context_window": 272000,
-      "max_output_tokens": 128000
+      "max_output_tokens": 128000,
+      "parallel_tool_calls": true
     }
   },
   {
@@ -606,7 +655,8 @@
       "reasoning_effort": "high",
       "verbosity": "medium",
       "context_window": 272000,
-      "max_output_tokens": 128000
+      "max_output_tokens": 128000,
+      "parallel_tool_calls": true
     }
   },
   {
@@ -618,7 +668,8 @@
       "reasoning_effort": "xhigh",
       "verbosity": "medium",
       "context_window": 272000,
-      "max_output_tokens": 128000
+      "max_output_tokens": 128000,
+      "parallel_tool_calls": true
     }
   },
   {
@@ -629,7 +680,8 @@
     "updateArgs": {
       "reasoning_effort": "minimal",
       "verbosity": "medium",
-      "context_window": 272000
+      "context_window": 272000,
+      "parallel_tool_calls": true
     }
   },
   {
@@ -640,7 +692,8 @@
     "updateArgs": {
       "reasoning_effort": "low",
       "verbosity": "medium",
-      "context_window": 272000
+      "context_window": 272000,
+      "parallel_tool_calls": true
     }
   },
   {
@@ -651,7 +704,8 @@
     "updateArgs": {
       "reasoning_effort": "medium",
       "verbosity": "medium",
-      "context_window": 272000
+      "context_window": 272000,
+      "parallel_tool_calls": true
     }
   },
   {
@@ -662,7 +716,8 @@
     "updateArgs": {
       "reasoning_effort": "high",
       "verbosity": "medium",
-      "context_window": 272000
+      "context_window": 272000,
+      "parallel_tool_calls": true
     }
   },
   {
@@ -673,7 +728,8 @@
     "updateArgs": {
       "reasoning_effort": "medium",
       "verbosity": "medium",
-      "context_window": 272000
+      "context_window": 272000,
+      "parallel_tool_calls": true
     }
   },
   {
@@ -684,7 +740,8 @@
     "updateArgs": {
       "reasoning_effort": "medium",
       "verbosity": "medium",
-      "context_window": 272000
+      "context_window": 272000,
+      "parallel_tool_calls": true
     }
   },
   {
@@ -695,7 +752,8 @@
     "isFeatured": true,
     "free": true,
     "updateArgs": {
-      "context_window": 200000
+      "context_window": 200000,
+      "parallel_tool_calls": true
     }
   },
   {
@@ -706,7 +764,8 @@
     "isFeatured": true,
     "free": true,
     "updateArgs": {
-      "context_window": 200000
+      "context_window": 200000,
+      "parallel_tool_calls": true
     }
   },
   {
@@ -718,7 +777,8 @@
     "free": true,
     "updateArgs": {
       "context_window": 160000,
-      "max_output_tokens": 64000
+      "max_output_tokens": 64000,
+      "parallel_tool_calls": true
     }
   },
   {
@@ -730,7 +790,8 @@
     "free": true,
     "updateArgs": {
       "context_window": 160000,
-      "max_output_tokens": 64000
+      "max_output_tokens": 64000,
+      "parallel_tool_calls": true
     }
   },
   {
@@ -740,7 +801,8 @@
     "description": "Minimax's latest model",
     "updateArgs": {
       "context_window": 160000,
-      "max_output_tokens": 64000
+      "max_output_tokens": 64000,
+      "parallel_tool_calls": true
     }
   },
   {
@@ -749,7 +811,8 @@
     "label": "Kimi K2",
     "description": "Kimi's K2 model",
     "updateArgs": {
-      "context_window": 262144
+      "context_window": 262144,
+      "parallel_tool_calls": true
     }
   },
   {
@@ -760,7 +823,8 @@
     "updateArgs": {
       "context_window": 256000,
       "max_output_tokens": 16000,
-      "temperature": 1.0
+      "temperature": 1.0,
+      "parallel_tool_calls": true
     }
   },
   {
@@ -770,7 +834,8 @@
     "description": "Kimi's latest coding model",
     "isFeatured": true,
     "updateArgs": {
-      "context_window": 262144
+      "context_window": 262144,
+      "parallel_tool_calls": true
     }
   },
   {
@@ -779,7 +844,8 @@
     "label": "DeepSeek Chat V3.1",
     "description": "DeepSeek V3.1 model",
     "updateArgs": {
-      "context_window": 128000
+      "context_window": 128000,
+      "parallel_tool_calls": true
     }
   },
   {
@@ -788,7 +854,7 @@
     "label": "Gemini 3.1 Pro",
     "description": "Google's latest and smartest model",
     "isFeatured": true,
-    "updateArgs": { "context_window": 180000, "temperature": 1.0 }
+    "updateArgs": { "context_window": 180000, "temperature": 1.0, "parallel_tool_calls": true}
   },
   {
     "id": "gemini-3",
@@ -796,7 +862,7 @@
     "label": "Gemini 3 Pro",
     "description": "Google's smartest model",
     "isFeatured": true,
-    "updateArgs": { "context_window": 180000, "temperature": 1.0 }
+    "updateArgs": { "context_window": 180000, "temperature": 1.0, "parallel_tool_calls": true}
   },
   {
     "id": "gemini-3-flash",
@@ -804,55 +870,55 @@
     "label": "Gemini 3 Flash",
     "description": "Google's fastest Gemini 3 model",
     "isFeatured": true,
-    "updateArgs": { "context_window": 180000, "temperature": 1.0 }
+    "updateArgs": { "context_window": 180000, "temperature": 1.0, "parallel_tool_calls": true}
   },
   {
     "id": "gemini-flash",
     "handle": "google_ai/gemini-2.5-flash",
     "label": "Gemini 2.5 Flash",
     "description": "Google's fastest model",
-    "updateArgs": { "context_window": 180000 }
+    "updateArgs": { "context_window": 180000, "parallel_tool_calls": true}
   },
   {
     "id": "gemini-pro",
     "handle": "google_ai/gemini-2.5-pro",
     "label": "Gemini 2.5 Pro",
     "description": "Google's last generation flagship model",
-    "updateArgs": { "context_window": 180000 }
+    "updateArgs": { "context_window": 180000, "parallel_tool_calls": true}
   },
   {
     "id": "gpt-4.1",
     "handle": "openai/gpt-4.1",
     "label": "GPT-4.1",
     "description": "OpenAI's most recent non-reasoner model",
-    "updateArgs": { "context_window": 1047576 }
+    "updateArgs": { "context_window": 1047576, "parallel_tool_calls": true}
   },
   {
     "id": "gpt-4.1-mini",
     "handle": "openai/gpt-4.1-mini-2025-04-14",
     "label": "GPT-4.1-Mini",
     "description": "OpenAI's most recent non-reasoner model (mini version)",
-    "updateArgs": { "context_window": 1047576 }
+    "updateArgs": { "context_window": 1047576, "parallel_tool_calls": true}
   },
   {
     "id": "gpt-4.1-nano",
     "handle": "openai/gpt-4.1-nano-2025-04-14",
     "label": "GPT-4.1-Nano",
     "description": "OpenAI's most recent non-reasoner model (nano version)",
-    "updateArgs": { "context_window": 1047576 }
+    "updateArgs": { "context_window": 1047576, "parallel_tool_calls": true}
   },
   {
     "id": "o4-mini",
     "handle": "openai/o4-mini",
     "label": "o4-mini",
     "description": "OpenAI's latest o-series reasoning model",
-    "updateArgs": { "context_window": 180000 }
+    "updateArgs": { "context_window": 180000, "parallel_tool_calls": true}
   },
   {
     "id": "gemini-3-vertex",
     "handle": "google_vertex/gemini-3-pro-preview",
     "label": "Gemini 3 Pro",
     "description": "Google's smartest Gemini 3 Pro model (via Vertex AI)",
-    "updateArgs": { "context_window": 180000, "temperature": 1.0 }
+    "updateArgs": { "context_window": 180000, "temperature": 1.0, "parallel_tool_calls": true}
   }
 ]
