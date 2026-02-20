@@ -34,6 +34,7 @@ interface StartListenerOptions {
   deviceId: string;
   connectionName: string;
   agentId?: string;
+  defaultConversationId?: string;
   onConnected: () => void;
   onDisconnected: () => void;
   onError: (error: Error) => void;
@@ -438,6 +439,7 @@ async function connectWithRetry(
             socket,
             opts.onStatusChange,
             opts.connectionId,
+            opts.defaultConversationId,
           );
           opts.onStatusChange?.("idle", opts.connectionId);
         })
@@ -502,6 +504,7 @@ async function handleIncomingMessage(
     connectionId: string,
   ) => void,
   connectionId?: string,
+  defaultConversationId?: string,
 ): Promise<void> {
   try {
     const agentId = msg.agentId;
@@ -512,7 +515,7 @@ async function handleIncomingMessage(
     const requestedConversationId = msg.conversationId || undefined;
 
     // For sendMessageStream: "default" means use agent endpoint, else use conversations endpoint
-    const conversationId = requestedConversationId ?? "default";
+    const conversationId = requestedConversationId ?? defaultConversationId ?? "default";
 
     if (!agentId) {
       return;
