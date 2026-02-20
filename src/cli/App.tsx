@@ -4953,11 +4953,17 @@ export default function App({
 
     // Record session to local history file
     try {
-      recordSessionEnd(agentId, stats, {
-        project: projectDirectory,
-        model: currentModelLabel ?? "",
-        provider: currentModelProvider ?? "",
-      }, undefined, telemetry.getSessionId());
+      recordSessionEnd(
+        agentId,
+        stats,
+        {
+          project: projectDirectory,
+          model: currentModelLabel ?? "",
+          provider: currentModelProvider ?? "",
+        },
+        undefined,
+        telemetry.getSessionId(),
+      );
     } catch {
       // Non-critical, don't fail the exit
     }
@@ -4970,7 +4976,13 @@ export default function App({
     setTimeout(() => {
       process.exit(0);
     }, 100);
-  }, [runEndHooks, agentId, projectDirectory, currentModelLabel, currentModelProvider]);
+  }, [
+    runEndHooks,
+    agentId,
+    projectDirectory,
+    currentModelLabel,
+    currentModelProvider,
+  ]);
 
   // Handler when user presses UP/ESC to load queue into input for editing
   const handleEnterQueueEditMode = useCallback(() => {
@@ -6783,11 +6795,17 @@ export default function App({
 
             // Record session to local history file
             try {
-              recordSessionEnd(agentId, stats, {
-                project: projectDirectory,
-                model: currentModelLabel ?? "",
-                provider: currentModelProvider ?? "",
-              }, undefined, telemetry.getSessionId());
+              recordSessionEnd(
+                agentId,
+                stats,
+                {
+                  project: projectDirectory,
+                  model: currentModelLabel ?? "",
+                  provider: currentModelProvider ?? "",
+                },
+                undefined,
+                telemetry.getSessionId(),
+              );
             } catch {
               // Non-critical, don't fail the exit
             }
