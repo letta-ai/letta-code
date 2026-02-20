@@ -1465,8 +1465,15 @@ export default function App({
   const sessionStartTimeRef = useRef(Date.now());
   const sessionHooksRanRef = useRef(false);
 
-  // Initialize chunk log for this agent + session (clears buffer, GCs old files)
-  useRef(chunkLog.init(agentId, telemetry.getSessionId()));
+  // Initialize chunk log for this agent + session (clears buffer, GCs old files).
+  // Must wait until agentId resolves from "loading" to the real ID.
+  const chunkLogInitRef = useRef(false);
+  useEffect(() => {
+    if (agentId && agentId !== "loading" && !chunkLogInitRef.current) {
+      chunkLog.init(agentId, telemetry.getSessionId());
+      chunkLogInitRef.current = true;
+    }
+  }, [agentId]);
 
   const syncTrajectoryTokenBase = useCallback(() => {
     const snapshot = sessionStatsRef.current.getTrajectorySnapshot();
@@ -10707,11 +10714,11 @@ ${SYSTEM_REMINDER_CLOSE}
                   };
                 })(),
                 // Agent info
-                agent_name: agentName,
-                agent_description: agentDescription,
-                model: currentModelId,
+                agent_name: agentName ?? undefined,
+                agent_description: agentDescription ?? undefined,
+                model: currentModelId ?? undefined,
                 // Account info
-                billing_tier: billingTier,
+                billing_tier: billingTier ?? undefined,
                 // Recent chunk log for diagnostics
                 recent_chunks: chunkLog.getEntries(),
               }),
