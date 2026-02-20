@@ -110,16 +110,17 @@ export function recordSessionStart(data: SessionStartData): void {
 export function recordSessionEnd(
   sessionId: string,
   stats: SessionStatsSnapshot,
+  sessionInfo?: { project?: string; model?: string; provider?: string },
   cost?: { credits_used?: number; usd_byok?: number; type: "hosted" | "byok" },
 ): void {
   // For now, we'll append a new "end" entry with the final stats
   // A more sophisticated approach would update the existing entry
   const entry: SessionHistoryEntry = {
     session_id: sessionId,
-    timestamp: stats.sessionStartMs,
-    project: "", // Would need to track this from session start
-    model: "", // Would need to track this from session start
-    provider: "",
+    timestamp: Date.now(),
+    project: sessionInfo?.project ?? "",
+    model: sessionInfo?.model ?? "",
+    provider: sessionInfo?.provider ?? "",
     usage: {
       prompt_tokens: stats.usage.promptTokens,
       completion_tokens: stats.usage.completionTokens,

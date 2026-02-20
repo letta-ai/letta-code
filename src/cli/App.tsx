@@ -4953,7 +4953,11 @@ export default function App({
 
     // Record session to local history file
     try {
-      recordSessionEnd(agentId, stats);
+      recordSessionEnd(agentId, stats, {
+        project: projectDirectory,
+        model: currentModelLabel ?? "",
+        provider: currentModelProvider ?? "",
+      });
     } catch {
       // Non-critical, don't fail the exit
     }
@@ -4966,7 +4970,7 @@ export default function App({
     setTimeout(() => {
       process.exit(0);
     }, 100);
-  }, [runEndHooks, agentId]);
+  }, [runEndHooks, agentId, projectDirectory, currentModelLabel, currentModelProvider]);
 
   // Handler when user presses UP/ESC to load queue into input for editing
   const handleEnterQueueEditMode = useCallback(() => {
@@ -6779,7 +6783,11 @@ export default function App({
 
             // Record session to local history file
             try {
-              recordSessionEnd(agentId, stats);
+              recordSessionEnd(agentId, stats, {
+                project: projectDirectory,
+                model: currentModelLabel ?? "",
+                provider: currentModelProvider ?? "",
+              });
             } catch {
               // Non-critical, don't fail the exit
             }
