@@ -149,6 +149,23 @@ a:hover { text-decoration: underline; }
   overflow: hidden;
   background: var(--panel);
 }
+.file-chars {
+  color: var(--text-dim);
+  font-size: 11px;
+  opacity: 0.6;
+}
+.tree-desc {
+  padding: 8px 12px;
+  font-size: 10px;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  background: var(--surface-2);
+  z-index: 1;
+}
 .tree-panel {
   overflow: auto;
 }
@@ -165,37 +182,27 @@ a:hover { text-decoration: underline; }
   white-space: nowrap;
 }
 .tree-item.dir {
+  padding-left: 10px;
   color: var(--text-muted);
-  font-weight: 600;
+  font-weight: 400;
   cursor: pointer;
   user-select: none;
+  border-left: 2px solid transparent;
+  margin-top: 2px;
 }
+.tree-item.dir:not(.collapsed) { border-left-color: var(--accent); }
 .tree-item.dir:hover { background: var(--surface-2); }
-.tree-item.dir .chevron {
-  display: inline-block;
-  font-size: 10px;
-  transition: transform 0.15s;
-  width: 12px;
-  text-align: center;
-  flex-shrink: 0;
-}
-.tree-item.dir.collapsed .chevron { transform: rotate(-90deg); }
 .tree-item.dir.collapsed ~ .tree-children { display: none; }
 .tree-children { /* wrapper for dir contents */ }
 .tree-children.hidden { display: none; }
-.tree-item.file { cursor: pointer; }
+.tree-item.file { cursor: pointer; padding-left: 24px; }
 .tree-item.file:hover { background: var(--hover-accent); }
 .tree-item.file.active {
   background: var(--accent-light);
   color: var(--accent);
   font-weight: 600;
 }
-.tree-item.system-child {
-  border-left: 2px solid var(--accent-light-border);
-}
-.tree-item.system-child.active {
-  border-left-color: var(--accent);
-}
+
 .diff-bar {
   display: inline-flex;
   align-items: center;
@@ -593,7 +600,24 @@ html.dark .stat-row { background: var(--surface-2); }
 
 
 html.dark .tabs { background: var(--surface-2); }
-html.dark .tree-panel { background: var(--surface-2); }
+html.dark .file-chars {
+  color: var(--text-dim);
+  font-size: 11px;
+  opacity: 0.6;
+}
+.tree-desc {
+  padding: 8px 12px;
+  font-size: 10px;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  background: var(--surface-2);
+  z-index: 1;
+}
+.tree-panel { background: var(--surface-2); }
 html.dark .file-last-commit { background: var(--surface); }
 html.dark .file-meta { background: var(--surface); }
 html.dark .commit-full-body { background: var(--surface); }
@@ -638,15 +662,25 @@ html.dark .warning-badge { background: hsl(42, 30%, 18%); color: hsl(42, 80%, 70
   </header>
 
   <nav class="tabs">
-    <div class="tab active" data-tab="files">Context</div>
+    <div class="tab active" data-tab="core" id="tab-core-label">Core Memory</div>
+    <div class="tab" data-tab="external" id="tab-external-label">External Memory</div>
     <div class="tab" data-tab="history">History</div>
   </nav>
 
   <main class="main">
-    <section id="tab-files">
+    <section id="tab-core">
       <div class="files-layout">
-        <div class="panel tree-panel" id="tree-panel"></div>
-        <div class="panel file-panel" id="file-panel">
+        <div class="panel tree-panel" id="tree-panel-core"></div>
+        <div class="panel file-panel" id="file-panel-core">
+          <div class="empty">Select a file from the tree</div>
+        </div>
+      </div>
+    </section>
+
+    <section id="tab-external" style="display:none">
+      <div class="files-layout">
+        <div class="panel tree-panel" id="tree-panel-external"></div>
+        <div class="panel file-panel" id="file-panel-external">
           <div class="empty">Select a file from the tree</div>
         </div>
       </div>
@@ -783,7 +817,8 @@ html.dark .warning-badge { background: hsl(42, 30%, 18%); color: hsl(42, 80%, 70
     tabs.forEach(function(el) {
       el.classList.toggle('active', el.dataset.tab === name);
     });
-    document.getElementById('tab-files').style.display = name === 'files' ? '' : 'none';
+    document.getElementById('tab-core').style.display = name === 'core' ? '' : 'none';
+    document.getElementById('tab-external').style.display = name === 'external' ? '' : 'none';
     document.getElementById('tab-history').style.display = name === 'history' ? '' : 'none';
     location.hash = name;
   }
@@ -807,9 +842,27 @@ html.dark .warning-badge { background: hsl(42, 30%, 18%); color: hsl(42, 80%, 70
     return root;
   }
 
-  var treeRoot = buildTree(DATA.files || []);
-  var treePanel = document.getElementById('tree-panel');
-  var filePanel = document.getElementById('file-panel');
+  var allFiles = DATA.files || [];
+  var coreFiles = allFiles.filter(function(f) { return f.isSystem; });
+  var externalFiles = allFiles.filter(function(f) { return !f.isSystem; });
+
+  // Strip system/ prefix for core files display
+  var coreFilesStripped = coreFiles.map(function(f) {
+    var stripped = String(f.path).replace(/^system[\\/]/, '');
+    return { path: stripped, origPath: f.path, isSystem: f.isSystem, frontmatter: f.frontmatter, content: f.content };
+  });
+
+  var coreTreeRoot = buildTree(coreFilesStripped);
+  var externalTreeRoot = buildTree(externalFiles);
+
+  var treePanelCore = document.getElementById('tree-panel-core');
+  var filePanelCore = document.getElementById('file-panel-core');
+  var treePanelExternal = document.getElementById('tree-panel-external');
+  var filePanelExternal = document.getElementById('file-panel-external');
+
+  // Set tab counts
+  document.getElementById('tab-core-label').textContent = 'Core Memory (' + coreFiles.length + ')';
+  document.getElementById('tab-external-label').textContent = 'External Memory (' + externalFiles.length + ')';
   var fileMap = Object.create(null);
   (DATA.files || []).forEach(function(f) { fileMap[f.path] = f; });
 
@@ -837,10 +890,8 @@ html.dark .warning-badge { background: hsl(42, 30%, 18%); color: hsl(42, 80%, 70
       var isUnderSystem = isSystemRoot || fullDir.indexOf('system/') === 0;
       var sysCls = isUnderSystem ? ' system-child' : '';
       var fileCount = countFiles(node.dirs[dir]);
-      html += '<div class="tree-item dir' + sysCls + '" data-dir="' + escAttr(fullDir) + '" style="padding-left:' + (10 + depth * 16) + 'px">';
-      html += '<span class="chevron">&#9660;</span> ';
+      html += '<div class="tree-item dir' + sysCls + '" data-dir="' + escAttr(fullDir) + '">';
       html += escHtml(dir) + '/';
-      if (isSystemRoot) html += '<span class="badge">in system prompt</span>';
       html += '<span class="dir-count">' + fileCount + '</span>';
       html += '</div>';
       html += '<div class="tree-children" data-parent="' + escAttr(fullDir) + '">';
@@ -851,31 +902,38 @@ html.dark .warning-badge { background: hsl(42, 30%, 18%); color: hsl(42, 80%, 70
     node.files.sort(function(a, b) { return String(a.path).localeCompare(String(b.path)); });
     node.files.forEach(function(file) {
       var name = String(file.path).split(/[\\/]/).pop();
-      var sysCls = file.isSystem ? ' system-child' : '';
-      html += '<div class="tree-item file' + sysCls + '" data-path="' + escAttr(file.path) + '" style="padding-left:' + (10 + depth * 16) + 'px">';
-      html += '&#128196; ' + escHtml(name);
+      var displayName = name.replace(/\.md$/, '');
+      html += '<div class="tree-item file" data-path="' + escAttr(file.origPath || file.path) + '">';
+      var charCount = (file.content || '').length;
+      var charLabel = charCount >= 1000 ? Math.round(charCount / 1000) + 'k' : String(charCount);
+      html += escHtml(displayName) + ' <span class="file-chars">' + charLabel + ' chars</span>';
       html += '</div>';
     });
 
     return html;
   }
 
-  treePanel.innerHTML = renderTree(treeRoot, 0, '');
+  treePanelCore.innerHTML = '<div class="tree-desc">Memory stored in-context</div>' + renderTree(coreTreeRoot, 0, '');
+  treePanelExternal.innerHTML = '<div class="tree-desc">Memory stored out-of-context</div>' + (externalFiles.length > 0 ? renderTree(externalTreeRoot, 0, '') : '<div class="empty" style="padding:16px">No external memory files</div>');
 
-  // Collapsible directory toggling
-  treePanel.addEventListener('click', function(ev) {
-    var dirItem = ev.target.closest('.tree-item.dir[data-dir]');
-    if (dirItem) {
-      var dirPath = dirItem.dataset.dir;
-      var children = treePanel.querySelector('.tree-children[data-parent="' + dirPath + '"]');
-      if (children) {
-        var isCollapsed = children.classList.contains('hidden');
-        children.classList.toggle('hidden');
-        dirItem.classList.toggle('collapsed', !isCollapsed);
+  // Collapsible directory toggling (both tree panels)
+  function attachTreeHandlers(treePanel, filePanel) {
+    treePanel.addEventListener('click', function(ev) {
+      var dirItem = ev.target.closest('.tree-item.dir[data-dir]');
+      if (dirItem) {
+        var dirPath = dirItem.dataset.dir;
+        var children = treePanel.querySelector('.tree-children[data-parent="' + dirPath + '"]');
+        if (children) {
+          var isCollapsed = children.classList.contains('hidden');
+          children.classList.toggle('hidden');
+          dirItem.classList.toggle('collapsed', !isCollapsed);
+        }
+        return;
       }
-      return;
-    }
-  });
+    });
+  }
+  attachTreeHandlers(treePanelCore, filePanelCore);
+  attachTreeHandlers(treePanelExternal, filePanelExternal);
 
   // Build per-file last-commit index from commit data
   var fileLastCommit = Object.create(null);
@@ -911,7 +969,11 @@ html.dark .warning-badge { background: hsl(42, 30%, 18%); color: hsl(42, 80%, 70
 
   var rawMode = false;
 
-  function renderFile(file) {
+  var activeFilePanel = null;
+
+  function renderFile(file, targetPanel) {
+    var panel = targetPanel || activeFilePanel;
+    if (!panel) return;
     var fm = file.frontmatter || {};
     var metaHtml = '';
     var pills = '';
@@ -934,39 +996,46 @@ html.dark .warning-badge { background: hsl(42, 30%, 18%); color: hsl(42, 80%, 70
 
     metaHtml += lcHtml;
     metaHtml += '<div class="file-meta">';
-    metaHtml += '<button class="raw-toggle' + (rawMode ? ' active' : '') + '" id="raw-toggle">' + (rawMode ? 'Rendered' : 'Raw') + '</button>';
+    metaHtml += '<button class="raw-toggle' + (rawMode ? ' active' : '') + '">' + (rawMode ? 'Rendered' : 'Raw') + '</button>';
     metaHtml += '<div class="file-path">' + escHtml(file.path) + '</div>';
     if (pills) metaHtml += '<div class="meta-row">' + pills + '</div>';
     metaHtml += '</div>';
 
-    filePanel.innerHTML =
+    panel.innerHTML =
       metaHtml +
       '<article class="file-body" style="' + (rawMode ? 'display:none' : '') + '">' + renderMarkdown(file.content || '') + '</article>' +
       '<pre class="file-body-raw" style="' + (rawMode ? 'display:block' : '') + '">' + escHtml(file.content || '') + '</pre>';
 
-    filePanel.currentFile = file;
-    document.getElementById('raw-toggle').addEventListener('click', function() {
+    panel.currentFile = file;
+    panel.querySelector('.raw-toggle').addEventListener('click', function() {
       rawMode = !rawMode;
-      renderFile(filePanel.currentFile);
+      renderFile(panel.currentFile, panel);
     });
   }
 
-  treePanel.addEventListener('click', function(ev) {
-    var node = ev.target.closest('.tree-item.file[data-path]');
-    if (!node) return;
-    var path = node.dataset.path;
-    var file = fileMap[path];
-    if (!file) return;
+  function attachFileClickHandler(treePanel, filePanel) {
+    treePanel.addEventListener('click', function(ev) {
+      var node = ev.target.closest('.tree-item.file[data-path]');
+      if (!node) return;
+      var path = node.dataset.path;
+      var file = fileMap[path];
+      if (!file) return;
 
-    Array.prototype.forEach.call(treePanel.querySelectorAll('.tree-item.file'), function(el) {
-      el.classList.remove('active');
+      Array.prototype.forEach.call(treePanel.querySelectorAll('.tree-item.file'), function(el) {
+        el.classList.remove('active');
+      });
+      node.classList.add('active');
+      activeFilePanel = filePanel;
+      renderFile(file, filePanel);
     });
-    node.classList.add('active');
-    renderFile(file);
-  });
+  }
+  attachFileClickHandler(treePanelCore, filePanelCore);
+  attachFileClickHandler(treePanelExternal, filePanelExternal);
 
-  var first = treePanel.querySelector('.tree-item.file[data-path]');
-  if (first) first.click();
+  var firstCore = treePanelCore.querySelector('.tree-item.file[data-path]');
+  if (firstCore) firstCore.click();
+  var firstExternal = treePanelExternal.querySelector('.tree-item.file[data-path]');
+  if (firstExternal) firstExternal.click();
 
   // History
   var commits = DATA.commits || [];
@@ -1015,18 +1084,18 @@ html.dark .warning-badge { background: hsl(42, 30%, 18%); color: hsl(42, 80%, 70
 
   function navigateToFile(filePath) {
     if (fileMap[filePath]) {
-      activateTab('files');
-      // Click the tree item
-      var treeItem = treePanel.querySelector('.tree-item.file[data-path="' + filePath + '"]');
+      var isCore = fileMap[filePath].isSystem;
+      var tp = isCore ? treePanelCore : treePanelExternal;
+      activateTab(isCore ? 'core' : 'external');
+      var treeItem = tp.querySelector('.tree-item.file[data-path="' + filePath + '"]');
       if (treeItem) {
-        // Expand parent dirs if collapsed
         var parent = treeItem.parentElement;
-        while (parent && parent !== treePanel) {
+        while (parent && parent !== tp) {
           if (parent.classList && parent.classList.contains('hidden')) {
             parent.classList.remove('hidden');
             var dirPath = parent.dataset.parent;
             if (dirPath) {
-              var dirItem = treePanel.querySelector('.tree-item.dir[data-dir="' + dirPath + '"]');
+              var dirItem = tp.querySelector('.tree-item.dir[data-dir="' + dirPath + '"]');
               if (dirItem) dirItem.classList.remove('collapsed');
             }
           }
@@ -1234,6 +1303,7 @@ html.dark .warning-badge { background: hsl(42, 30%, 18%); color: hsl(42, 80%, 70
 
   var hash = String(location.hash || '').replace('#', '');
   if (hash === 'history') activateTab('history');
+  else if (hash === 'external') activateTab('external');
 })();
 </script>
 </body>
