@@ -33,15 +33,16 @@ This local setup is the default and recommended approach.
 
 Why this matters: host-level **global** credential helpers (e.g. installed by other tooling) can conflict with memfs auth and cause confusing failures.
 
+**Important:** Always use **single-line** format for credential helpers. Multi-line helpers can break tools that parse `git config --list` line-by-line.
+
 ```bash
 cd ~/.letta/agents/<agent-id>/memory
 
 # Check local helper(s)
 git config --local --get-regexp '^credential\..*\.helper$'
 
-# Reconfigure local helper (e.g. after API key rotation)
-git config --local credential.$LETTA_BASE_URL.helper \
-  '!f() { echo "username=letta"; echo "password=$LETTA_API_KEY"; }; f'
+# Reconfigure local helper (e.g. after API key rotation) - SINGLE LINE
+git config --local credential.$LETTA_BASE_URL.helper '!f() { echo "username=letta"; echo "password=$LETTA_API_KEY"; }; f'
 ```
 
 If you suspect global helper conflicts, inspect and clear host-specific global entries:
@@ -115,10 +116,9 @@ curl -X PATCH "$LETTA_BASE_URL/v1/agents/$AGENT_ID" \
 mkdir -p "$MEMORY_REPO_DIR"
 git clone "$LETTA_BASE_URL/v1/git/$AGENT_ID/state.git" "$MEMORY_REPO_DIR"
 
-# 3. Configure local credential helper
+# 3. Configure local credential helper (single-line format required)
 cd "$MEMORY_REPO_DIR"
-git config --local credential.$LETTA_BASE_URL.helper \
-  '!f() { echo "username=letta"; echo "password=$LETTA_API_KEY"; }; f'
+git config --local credential.$LETTA_BASE_URL.helper '!f() { echo "username=letta"; echo "password=$LETTA_API_KEY"; }; f'
 ```
 
 ## Bidirectional Sync
