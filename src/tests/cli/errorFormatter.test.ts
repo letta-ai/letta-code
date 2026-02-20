@@ -181,4 +181,22 @@ describe("formatErrorDetails", () => {
     expect(message).toContain("minimax-m2.1");
     expect(message).toContain("/model");
   });
+
+  test("formats Z.ai error from APIError with embedded error code", () => {
+    const error = new APIError(
+      429,
+      {
+        error:
+          "Rate limited by OpenAI: Error code: 429 - {'error': {'code': 1302, 'message': 'High concurrency usage exceeds limits'}}",
+      },
+      undefined,
+      new Headers(),
+    );
+
+    const message = formatErrorDetails(error);
+
+    expect(message).toContain("Z.ai rate limit");
+    expect(message).toContain("High concurrency usage exceeds limits");
+    expect(message).not.toContain("OpenAI");
+  });
 });
