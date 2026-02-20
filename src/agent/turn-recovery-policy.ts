@@ -8,6 +8,7 @@
 
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
+import { isZaiNonRetryableError } from "../cli/helpers/zaiErrors";
 
 // ── Error fragment constants ────────────────────────────────────────
 
@@ -81,6 +82,7 @@ export function isRetryableProviderErrorDetail(detail: unknown): boolean {
 /** Non-transient auth/validation style provider detail that should not be retried. */
 export function isNonRetryableProviderErrorDetail(detail: unknown): boolean {
   if (typeof detail !== "string") return false;
+  if (isZaiNonRetryableError(detail)) return true;
   const normalized = detail.toLowerCase();
   if (NON_RETRYABLE_4XX_PATTERN.test(detail)) return true;
   return NON_RETRYABLE_PROVIDER_DETAIL_PATTERNS.some((pattern) =>

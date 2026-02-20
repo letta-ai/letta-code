@@ -1,5 +1,6 @@
 import { APIError } from "@letta-ai/letta-client/core/error";
 import { getErrorContext } from "./errorContext";
+import { checkZaiError } from "./zaiErrors";
 
 const LETTA_USAGE_URL = "https://app.letta.com/settings/organization/usage";
 const LETTA_AGENTS_URL =
@@ -293,6 +294,20 @@ export function formatErrorDetails(
   const encryptedContentMsg = checkEncryptedContentError(e);
   if (encryptedContentMsg) return encryptedContentMsg;
 
+  // Check for Z.ai provider errors (wrapped in generic "OpenAI" messages)
+  const errorText =
+    e instanceof APIError
+      ? e.message
+      : e instanceof Error
+        ? e.message
+        : typeof e === "string"
+          ? e
+          : undefined;
+  if (errorText) {
+    const zaiMsg = checkZaiError(errorText);
+    if (zaiMsg) return zaiMsg;
+  }
+
   // Handle APIError from streaming (event: error)
   if (e instanceof APIError) {
     const reasons = getErrorReasons(e);
@@ -446,26 +461,47 @@ export function getRetryStatusMessage(
 ): string {
   if (!errorDetail) return DEFAULT_RETRY_MESSAGE;
 
+  if (checkZaiError(errorDetail)) return "Z.ai API error, retrying...";
+
   if (errorDetail.includes("Anthropic API is overloaded"))
     return "Anthropic API is overloaded, retrying...";
   if (
     errorDetail.includes("ChatGPT API error") ||
-    errorDetail.includes("ChatGPT server error") ||
-    errorDetail.includes("upstream connect error")
+    errorDetail.includes("ChatGPT server error")
   ) {
     return "OpenAI ChatGPT backend connection failed, retrying...";
   }
   if (
+    errorDetail.includes("upstream connect error") ||
     errorDetail.includes("Connection error during streaming") ||
     errorDetail.includes("incomplete chunked read") ||
     errorDetail.includes("connection termination")
   ) {
-    return "OpenAI ChatGPT streaming connection dropped, retrying...";
+    const provider = getProviderDisplayName();
+    return `${provider} streaming connection dropped, retrying...`;
   }
   if (errorDetail.includes("OpenAI API error"))
     return "OpenAI API error, retrying...";
 
   return DEFAULT_RETRY_MESSAGE;
+}
+
+const ENDPOINT_TYPE_DISPLAY_NAMES: Record<string, string> = {
+  openai: "OpenAI",
+  anthropic: "Anthropic",
+  chatgpt_oauth: "ChatGPT",
+  google_ai: "Google AI",
+  google_vertex: "Google Vertex",
+  bedrock: "AWS Bedrock",
+  openrouter: "OpenRouter",
+  minimax: "MiniMax",
+  zai: "zAI",
+};
+
+function getProviderDisplayName(): string {
+  const { modelEndpointType } = getErrorContext();
+  if (!modelEndpointType) return "LLM";
+  return ENDPOINT_TYPE_DISPLAY_NAMES[modelEndpointType] ?? modelEndpointType;
 }
 
 /**

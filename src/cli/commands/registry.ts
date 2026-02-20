@@ -66,7 +66,7 @@ export const commands: Record<string, Command> = {
     },
   },
   "/memory": {
-    desc: "View your agent's memory blocks",
+    desc: "View your agent's memory",
     order: 15,
     noArgs: true,
     handler: () => {

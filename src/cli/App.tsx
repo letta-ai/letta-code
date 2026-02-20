@@ -1405,8 +1405,9 @@ export default function App({
     setErrorContext({
       modelDisplayName: currentModelDisplay ?? undefined,
       billingTier: billingTier ?? undefined,
+      modelEndpointType: llmConfig?.model_endpoint_type ?? undefined,
     });
-  }, [currentModelDisplay, billingTier]);
+  }, [currentModelDisplay, billingTier, llmConfig?.model_endpoint_type]);
 
   // Fetch billing tier once on mount
   useEffect(() => {
@@ -2699,7 +2700,7 @@ export default function App({
           ? [
               "→ **/agents**    list all agents",
               "→ **/resume**    resume a previous conversation",
-              "→ **/memory**    view your agent's memory blocks",
+              "→ **/memory**    view your agent's memory",
               "→ **/init**      initialize your agent's memory",
               "→ **/remember**  teach your agent",
             ]
@@ -5135,6 +5136,7 @@ export default function App({
       setStreaming(false);
       resetTrajectoryBases();
       toolResultsInFlightRef.current = false;
+      setIsExecutingTool(false);
       if (!toolsCancelled) {
         appendError(INTERRUPT_MESSAGE, true);
       }
@@ -5214,13 +5216,18 @@ export default function App({
 
         if (abortControllerRef.current) {
           abortControllerRef.current.abort();
+          abortControllerRef.current = null;
         }
+        setIsExecutingTool(false);
+        toolResultsInFlightRef.current = false;
         pendingInterruptRecoveryConversationIdRef.current =
           conversationIdRef.current;
       } catch (e) {
         const errorDetails = formatErrorDetails(e, agentId);
         appendError(`Failed to interrupt stream: ${errorDetails}`);
         setInterruptRequested(false);
+        setIsExecutingTool(false);
+        toolResultsInFlightRef.current = false;
       }
     }
   }, [
@@ -11496,7 +11503,7 @@ Plan file path: ${planFilePath}`;
         ? [
             "→ **/agents**    list all agents",
             "→ **/resume**    resume a previous conversation",
-            "→ **/memory**    view your agent's memory blocks",
+            "→ **/memory**    view your agent's memory",
             "→ **/init**      initialize your agent's memory",
             "→ **/remember**  teach your agent",
           ]
@@ -12564,6 +12571,7 @@ Plan file path: ${planFilePath}`;
               (settingsManager.isMemfsEnabled(agentId) ? (
                 <MemfsTreeViewer
                   agentId={agentId}
+                  agentName={agentState?.name}
                   onClose={closeOverlay}
                   conversationId={conversationId}
                 />

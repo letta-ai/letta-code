@@ -26,7 +26,7 @@ import { getClient, getServerUrl } from "./client";
 
 const execFile = promisify(execFileCb);
 
-const GIT_MEMORY_ENABLED_TAG = "git-memory-enabled";
+export const GIT_MEMORY_ENABLED_TAG = "git-memory-enabled";
 
 /** Get the agent root directory (~/.letta/agents/{id}/) */
 export function getAgentRootDir(agentId: string): string {
