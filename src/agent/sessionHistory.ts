@@ -4,8 +4,8 @@ import * as path from "node:path";
 import type { SessionStatsSnapshot } from "./stats";
 
 export interface SessionHistoryEntry {
+  agent_id: string;
   session_id: string;
-  invocation_id?: string;
   timestamp: number;
   project: string;
   model: string;
@@ -32,6 +32,7 @@ export interface SessionHistoryEntry {
 }
 
 interface SessionStartData {
+  agentId: string;
   sessionId: string;
   project: string;
   model: string;
@@ -76,6 +77,7 @@ export function recordSessionStart(data: SessionStartData): void {
   ensureHistoryFile();
 
   const entry: SessionHistoryEntry = {
+    agent_id: data.agentId,
     session_id: data.sessionId,
     timestamp: Date.now(),
     project: data.project,
@@ -109,17 +111,17 @@ export function recordSessionStart(data: SessionStartData): void {
  * would require rewriting the file or using a different storage approach
  */
 export function recordSessionEnd(
+  agentId: string,
   sessionId: string,
   stats: SessionStatsSnapshot,
   sessionInfo?: { project?: string; model?: string; provider?: string },
   cost?: { credits_used?: number; usd_byok?: number; type: "hosted" | "byok" },
-  invocationId?: string,
 ): void {
   // For now, we'll append a new "end" entry with the final stats
   // A more sophisticated approach would update the existing entry
   const entry: SessionHistoryEntry = {
+    agent_id: agentId,
     session_id: sessionId,
-    ...(invocationId != null ? { invocation_id: invocationId } : {}),
     timestamp: Date.now(),
     project: sessionInfo?.project ?? "",
     model: sessionInfo?.model ?? "",
