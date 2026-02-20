@@ -3,35 +3,59 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Memory Viewer</title>
+<title>Memory Palace</title>
 <style>
+@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@300;400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500&display=swap');
 :root {
-  --accent: #3939bd;
-  --accent-light: #ececff;
-  --bg: #fbfbf9;
+  --accent: hsl(240, 93%, 35%);
+  --accent-light: hsl(240, 67%, 98%);
+  --accent-light-border: hsl(240, 62%, 94%);
+  --bg: #ffffff;
   --panel: #ffffff;
-  --border: #d9d9d2;
-  --text: #1d1d1a;
-  --text-muted: #66665f;
-  --text-dim: #8a8a82;
-  --mono: "SF Mono", "Cascadia Mono", "Fira Code", Menlo, Consolas, monospace;
-  --sans: "Avenir Next", "Helvetica Neue", "Segoe UI", sans-serif;
-  --serif: "Iowan Old Style", "Book Antiqua", "Palatino Linotype", serif;
-  --radius: 10px;
+  --border: hsl(210, 10%, 92.2%);
+  --text: hsl(0, 0%, 8%);
+  --text-muted: hsl(210, 3%, 28%);
+  --text-dim: hsl(210, 3%, 66%);
+  --mono: 'Fira Code', Menlo, Courier, monospace;
+  --sans: 'Manrope', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', sans-serif;
+  --serif: 'Iowan Old Style', 'Palatino Linotype', 'Book Antiqua', Georgia, serif;
+  --radius: 6px;
   --max-w: 1180px;
+  --surface: hsl(0, 0%, 98%);
+  --surface-2: hsl(0, 0%, 96%);
+  --hover: hsl(0, 0%, 96%);
+  --hover-accent: hsl(240, 67%, 98%);
   --diff-add-bg: #dafbe1;
   --diff-del-bg: #ffebe9;
   --diff-hunk-bg: #ddf4ff;
+}
+
+html.dark {
+  --accent: hsl(240, 80%, 68%);
+  --accent-light: hsl(240, 20%, 18%);
+  --accent-light-border: hsl(240, 15%, 25%);
+  --bg: hsl(0, 0%, 11%);
+  --panel: hsl(0, 0%, 13%);
+  --surface: hsl(0, 0%, 15%);
+  --surface-2: hsl(0, 0%, 18%);
+  --hover: hsl(0, 0%, 18%);
+  --hover-accent: hsl(240, 15%, 20%);
+  --border: hsl(210, 3%, 20%);
+  --text: hsl(210, 7%, 84%);
+  --text-muted: hsl(210, 3%, 60%);
+  --text-dim: hsl(210, 3%, 42%);
+  --diff-add-bg: hsl(140, 30%, 14%);
+  --diff-del-bg: hsl(0, 40%, 16%);
+  --diff-hunk-bg: hsl(210, 30%, 16%);
 }
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body {
   font-family: var(--sans);
   color: var(--text);
-  background:
-    radial-gradient(circle at 15% 20%, rgba(57,57,189,0.08), transparent 40%),
-    radial-gradient(circle at 80% 10%, rgba(175,128,93,0.08), transparent 45%),
-    var(--bg);
+  background: var(--bg);
   line-height: 1.55;
+  font-weight: 300;
 }
 a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
@@ -40,24 +64,40 @@ a:hover { text-decoration: underline; }
   max-width: var(--max-w);
   margin: 22px auto;
   border: 1px solid var(--border);
-  border-radius: 14px;
+  border-radius: 8px;
   overflow: hidden;
   background: var(--panel);
-  box-shadow: 0 14px 32px rgba(20, 20, 12, 0.08);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04), 0 6px 16px rgba(0, 0, 0, 0.04);
 }
 
 .header {
-  padding: 16px 20px;
+  padding: 14px 20px;
   border-bottom: 1px solid var(--border);
-  background: linear-gradient(to right, #f5f5f2 0%, #fcfcfa 42%, #f7f7f3 100%);
+  background: var(--panel);
   display: flex;
   gap: 12px;
-  align-items: baseline;
+  align-items: center;
 }
 .header h1 {
-  font-family: var(--serif);
-  font-size: 24px;
-  letter-spacing: 0.2px;
+  display: none;
+}
+.header-brand {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.header-brand svg {
+  height: 26px;
+  width: auto;
+  fill: var(--text);
+}
+.header-brand .subtitle {
+  font-family: var(--sans);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  color: var(--text-dim);
 }
 .header .agent-meta {
   margin-left: auto;
@@ -76,20 +116,21 @@ a:hover { text-decoration: underline; }
 .tabs {
   display: flex;
   border-bottom: 1px solid var(--border);
-  background: #f7f7f4;
+  background: var(--surface);
 }
 .tab {
   padding: 10px 16px;
   cursor: pointer;
   font-size: 13px;
+  font-weight: 400;
   color: var(--text-muted);
-  border-right: 1px solid #ecece8;
   user-select: none;
 }
+.tab:hover { color: var(--text); }
 .tab.active {
   color: var(--accent);
-  background: #fff;
-  font-weight: 600;
+  background: var(--panel);
+  font-weight: 500;
   box-shadow: inset 0 -2px 0 var(--accent);
 }
 
@@ -108,7 +149,7 @@ a:hover { text-decoration: underline; }
   border: 1px solid var(--border);
   border-radius: var(--radius);
   overflow: hidden;
-  background: #fff;
+  background: var(--panel);
 }
 .tree-panel {
   overflow: auto;
@@ -131,7 +172,7 @@ a:hover { text-decoration: underline; }
   cursor: pointer;
   user-select: none;
 }
-.tree-item.dir:hover { background: #f5f5f2; }
+.tree-item.dir:hover { background: var(--surface-2); }
 .tree-item.dir .chevron {
   display: inline-block;
   font-size: 10px;
@@ -145,14 +186,14 @@ a:hover { text-decoration: underline; }
 .tree-children { /* wrapper for dir contents */ }
 .tree-children.hidden { display: none; }
 .tree-item.file { cursor: pointer; }
-.tree-item.file:hover { background: #f7f8fe; }
+.tree-item.file:hover { background: var(--hover-accent); }
 .tree-item.file.active {
   background: var(--accent-light);
-  color: #2424a8;
+  color: var(--accent);
   font-weight: 600;
 }
 .tree-item.system-child {
-  border-left: 2px solid #c8c8f0;
+  border-left: 2px solid var(--accent-light-border);
 }
 .tree-item.system-child.active {
   border-left-color: var(--accent);
@@ -181,9 +222,9 @@ a:hover { text-decoration: underline; }
 .badge {
   margin-left: 6px;
   font-size: 10px;
-  color: #2e2ea0;
-  background: #dfe2ff;
-  border: 1px solid #c7cbfb;
+  color: var(--accent);
+  background: var(--accent-light);
+  border: 1px solid var(--accent-light-border);
   border-radius: 999px;
   padding: 0 6px;
 }
@@ -200,17 +241,17 @@ a:hover { text-decoration: underline; }
   align-items: center;
   gap: 10px;
   padding: 8px 14px;
-  background: #f0f0ec;
+  background: var(--surface);
   border-bottom: 1px solid var(--border);
   font-size: 12px;
   cursor: pointer;
 }
-.file-last-commit:hover { background: #e8e8e3; }
+.file-last-commit:hover { background: var(--hover-accent); }
 .file-last-commit .lc-hash {
   font-family: var(--mono);
   font-size: 11px;
-  color: #2f2fa2;
-  background: #e9e9fd;
+  color: var(--accent);
+  background: var(--accent-light);
   border-radius: 3px;
   padding: 1px 5px;
   flex-shrink: 0;
@@ -229,7 +270,7 @@ a:hover { text-decoration: underline; }
 }
 .file-meta {
   border-bottom: 1px solid var(--border);
-  background: #f7f7f4;
+  background: var(--surface);
   padding: 10px 14px;
 }
 .file-path {
@@ -246,7 +287,7 @@ a:hover { text-decoration: underline; }
 .meta-pill {
   font-size: 12px;
   color: var(--text-muted);
-  background: #fff;
+  background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 999px;
   padding: 2px 8px;
@@ -261,7 +302,7 @@ a:hover { text-decoration: underline; }
   padding: 3px 8px;
   border: 1px solid var(--border);
   border-radius: 4px;
-  background: #fff;
+  background: var(--panel);
   color: var(--text-muted);
   cursor: pointer;
   z-index: 2;
@@ -273,17 +314,17 @@ a:hover { text-decoration: underline; }
   align-items: center;
   gap: 10px;
   padding: 8px 14px;
-  background: #f0f0ec;
+  background: var(--surface);
   border-bottom: 1px solid var(--border);
   font-size: 12px;
   cursor: pointer;
 }
-.file-last-commit:hover { background: #e8e8e3; }
+.file-last-commit:hover { background: var(--hover-accent); }
 .file-last-commit .lc-hash {
   font-family: var(--mono);
   font-size: 11px;
-  color: #2f2fa2;
-  background: #e9e9fd;
+  color: var(--accent);
+  background: var(--accent-light);
   border-radius: 3px;
   padding: 1px 5px;
   flex-shrink: 0;
@@ -327,7 +368,7 @@ a:hover { text-decoration: underline; }
   margin-bottom: 8px;
 }
 .file-body h1 { font-size: 30px; }
-.file-body h2 { font-size: 23px; border-bottom: 1px solid #ecece7; padding-bottom: 3px; }
+.file-body h2 { font-size: 23px; border-bottom: 1px solid var(--border); padding-bottom: 3px; }
 .file-body h3 { font-size: 18px; }
 .file-body p, .file-body ul, .file-body ol, .file-body pre, .file-body table, .file-body blockquote {
   margin-bottom: 12px;
@@ -337,15 +378,15 @@ a:hover { text-decoration: underline; }
 }
 .file-body code {
   font-family: var(--mono);
-  background: #f3f3ef;
-  border: 1px solid #e8e8e1;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
   border-radius: 4px;
   padding: 1px 5px;
   font-size: 13px;
 }
 .file-body pre {
-  background: #f5f5f1;
-  border: 1px solid #e8e8e2;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
   border-radius: 8px;
   padding: 12px;
   overflow: auto;
@@ -363,7 +404,7 @@ a:hover { text-decoration: underline; }
   border: 1px solid #ddd;
   padding: 6px 10px;
 }
-.file-body th { background: #f7f7f4; text-align: left; }
+.file-body th { background: var(--surface); text-align: left; }
 .file-body blockquote {
   border-left: 3px solid var(--accent);
   padding-left: 10px;
@@ -374,10 +415,10 @@ a:hover { text-decoration: underline; }
 .commit-list { list-style: none; }
 .commit-item {
   border: 1px solid var(--border);
-  border-radius: 9px;
+  border-radius: var(--radius);
   margin-bottom: 10px;
   overflow: hidden;
-  background: #fff;
+  background: var(--panel);
 }
 .commit-head {
   padding: 11px 13px;
@@ -388,12 +429,12 @@ a:hover { text-decoration: underline; }
   column-gap: 10px;
   row-gap: 0;
 }
-.commit-head:hover { background: #fafbff; }
+.commit-head:hover { background: var(--hover-accent); }
 .commit-hash {
   font-family: var(--mono);
   font-size: 11px;
-  color: #2f2fa2;
-  background: #e9e9fd;
+  color: var(--accent);
+  background: var(--accent-light);
   border-radius: 4px;
   padding: 2px 6px;
 }
@@ -404,7 +445,7 @@ a:hover { text-decoration: underline; }
 }
 .commit-title {
   font-size: 14px;
-  font-weight: 600;
+  font-weight: 500;
   word-break: break-word;
 }
 .commit-meta {
@@ -431,7 +472,7 @@ a:hover { text-decoration: underline; }
 .commit-item.expanded .commit-preview { display: none; }
 .commit-full-body {
   padding: 10px 14px;
-  background: #fafaf8;
+  background: var(--surface);
   border-bottom: 1px solid var(--border);
   font-size: 13px;
   line-height: 1.6;
@@ -446,7 +487,7 @@ a:hover { text-decoration: underline; }
 .commit-item.expanded .commit-body { display: block; }
 .commit-stats {
   padding: 10px 14px;
-  background: #fafaf8;
+  background: var(--surface);
   border-bottom: 1px solid var(--border);
   font-family: var(--mono);
   font-size: 12px;
@@ -474,7 +515,7 @@ a:hover { text-decoration: underline; }
 }
 .diff-file-header {
   padding: 6px 12px;
-  background: #f4f5f8;
+  background: var(--surface);
   font-family: var(--mono);
   font-size: 12px;
   border-top: 1px solid var(--border);
@@ -497,7 +538,7 @@ a:hover { text-decoration: underline; }
 }
 .diff-line.add { background: var(--diff-add-bg); }
 .diff-line.del { background: var(--diff-del-bg); }
-.diff-line.hunk { background: var(--diff-hunk-bg); color: #475467; }
+.diff-line.hunk { background: var(--diff-hunk-bg); color: var(--text-muted); }
 .note {
   padding: 8px 12px;
   font-size: 12px;
@@ -507,14 +548,14 @@ a:hover { text-decoration: underline; }
 .show-more {
   margin-top: 8px;
   width: 100%;
-  border: 1px dashed #bfc0cf;
-  background: #f7f8fc;
-  color: #303084;
+  border: 1px dashed var(--border);
+  background: var(--accent-light);
+  color: var(--accent);
   border-radius: 8px;
   padding: 10px;
   cursor: pointer;
 }
-.show-more:hover { background: #eceefe; }
+.show-more:hover { background: hsl(240, 62%, 94%); }
 
 .empty {
   padding: 24px;
@@ -533,12 +574,66 @@ a:hover { text-decoration: underline; }
 @media (max-width: 900px) {
   .files-layout { grid-template-columns: 1fr; }
 }
+
+/* Dark mode overrides */
+html.dark .app-shell { box-shadow: 0 1px 3px rgba(0,0,0,0.2), 0 6px 16px rgba(0,0,0,0.3); }
+html.dark .tab:hover { color: var(--text); }
+html.dark .show-more:hover { background: hsl(240, 15%, 22%); }
+html.dark .diff-line.add { background: var(--diff-add-bg); color: hsl(140, 60%, 70%); }
+html.dark .diff-line.del { background: var(--diff-del-bg); color: hsl(0, 70%, 72%); }
+html.dark .diff-line.hunk { background: var(--diff-hunk-bg); color: hsl(210, 40%, 70%); }
+html.dark .stat-plus { color: hsl(140, 55%, 55%); }
+html.dark .stat-minus { color: hsl(0, 65%, 60%); }
+html.dark .db-block.add { background: hsl(140, 50%, 45%); }
+html.dark .db-block.del { background: hsl(0, 60%, 50%); }
+html.dark .db-block.neutral { background: hsl(210, 3%, 30%); }
+html.dark .badge { background: var(--surface); border-color: var(--border); }
+html.dark code { background: var(--surface); border-color: var(--border); }
+html.dark pre { background: var(--surface-2); border-color: var(--border); }
+html.dark .diff-header { background: var(--surface-2); }
+html.dark .stat-row { background: var(--surface-2); }
+
+
+html.dark .tabs { background: var(--surface-2); }
+html.dark .tree-panel { background: var(--surface-2); }
+html.dark .file-last-commit { background: var(--surface); }
+html.dark .file-meta { background: var(--surface); }
+html.dark .commit-full-body { background: var(--surface); }
+html.dark .commit-body { border-color: var(--border); }
+html.dark .commit-preview { color: var(--text-dim); }
+html.dark .commit-meta { color: var(--text-dim); }
+html.dark .commit-title { color: var(--text); }
+html.dark .file-body { color: var(--text); }
+html.dark .file-body h1, html.dark .file-body h2, html.dark .file-body h3 { color: var(--text); border-color: var(--border); }
+html.dark .file-body th { background: var(--surface); color: var(--text); }
+html.dark .file-body td { border-color: var(--border); }
+html.dark .file-body th { border-color: var(--border); }
+html.dark .file-body table { border-color: var(--border); }
+html.dark .file-body a { color: var(--accent); }
+html.dark .file-body-raw { background: var(--surface-2); color: var(--text); }
+html.dark .tree-item { color: var(--text); }
+html.dark .tree-item.active { background: var(--accent-light); }
+html.dark .tree-badge-system { background: var(--accent-light); color: var(--accent); }
+html.dark .reflection { background: hsl(280, 20%, 18%); color: hsl(280, 60%, 72%); }
+html.dark .footer { color: var(--text-dim); }
+html.dark .empty { color: var(--text-dim); }
+html.dark .history-note { color: var(--text-dim); }
+html.dark .file-path { color: var(--text); }
+html.dark .agent-name { color: var(--text-muted); }
+html.dark .agent-id { color: var(--text-dim); }
+html.dark h1 { color: var(--text); }
+html.dark a { color: var(--accent); }
+html.dark .warning-badge { background: hsl(42, 30%, 18%); color: hsl(42, 80%, 70%); }
 </style>
 </head>
 <body>
 <div class="app-shell">
   <header class="header">
-    <h1>Memory Viewer</h1>
+    <h1>Memory Palace</h1>
+  <div class="header-brand">
+    <svg viewBox="0 0 1020 183" xmlns="http://www.w3.org/2000/svg"><g clip-path="url(#lc)"><path d="M109.63 73.09H73.09V109.63H109.63V73.09Z"/><path d="M146.18 24.9V0H36.54V24.9C36.54 31.34 31.33 36.55 24.89 36.55H0V146.19H24.9C31.34 146.19 36.55 151.4 36.55 157.84V182.73H146.19V157.84C146.19 151.4 151.4 146.19 157.84 146.19H182.74V36.54H157.84C151.4 36.54 146.19 31.33 146.19 24.89L146.18 24.9ZM146.18 134.53C146.18 140.96 140.97 146.18 134.53 146.18H48.2C41.76 146.18 36.55 140.97 36.55 134.53V48.19C36.55 41.75 41.76 36.54 48.2 36.54H134.54C140.98 36.54 146.19 41.75 146.19 48.19V134.53H146.18Z"/><path d="M290.2 36.54H274.08V146.18H345.7V130.67H290.2V36.54Z"/><path d="M392.16 68.82H386.43C369.2 68.82 351.83 79.38 351.83 102.97V114.44C351.83 135.82 364.2 148.59 384.93 148.59H393.68C411.17 148.59 423.61 138.3 426.16 121.72L426.38 120.26H409.78L409.51 121.16C407.05 129.29 400.63 133.08 389.3 133.08C374.6 133.08 367.66 126.55 367.49 112.53H426.77V102.96C426.77 79.37 409.39 68.81 392.17 68.81L392.16 68.82ZM367.97 98.84C369.61 88.56 375.9 84.33 389.3 84.33C402.7 84.33 408.98 88.56 410.62 98.84H367.97Z"/><path d="M458.92 36.55H442.81V68.83H432.1V84.34H442.81V115.05C442.81 142.14 459.29 146.18 469.12 146.18H479.29V130.67H473.5C463.15 130.67 458.93 125.44 458.93 112.63V84.33H479.29V68.82H458.93V36.54L458.92 36.55Z"/><path d="M513.36 36.55H497.25V68.83H486.54V84.34H497.25V115.05C497.25 142.14 513.73 146.18 523.56 146.18H533.73V130.67H527.94C517.59 130.67 513.37 125.44 513.37 112.63V84.33H533.73V68.82H513.37V36.54L513.36 36.55Z"/><path d="M616.73 130.67C613.54 130.67 612.12 129.34 612.12 126.36V99.96C612.12 72.87 595.64 68.83 585.81 68.83H571.03C558.25 68.83 544.57 78.19 544.57 92.12V93.39H560.68V92.12C560.68 87.83 565.93 84.34 572.38 84.34H581.43C592.99 84.34 595.49 88.5 595.95 97.8H572.68C554.69 97.8 542.6 107.4 542.6 121.7V123.36C542.6 130.91 545.53 148.46 572.68 148.46C579.61 148.46 591.73 147.25 598.25 139.51C602.2 146.19 610.52 146.19 616.73 146.19H618V130.68H616.73V130.67ZM596 111.78V122.43C596 131.04 582.33 132.93 577.05 132.93C561.71 132.93 558.71 129.19 558.71 122.73C558.71 115.56 565.06 111.78 577.05 111.78H596Z"/><path d="M755.83 109.7C754.29 116.63 750.78 122.3 745.39 126.53C739.99 130.77 732.78 132.92 723.95 132.92C711.01 132.92 701.57 129.46 695.91 122.64C690.28 115.75 687.43 106.62 687.43 95.49V87.66C687.43 76.43 690.29 67.2 695.91 60.21C701.58 53.29 711.02 49.78 723.95 49.78C732.1 49.78 738.92 51.73 744.23 55.6C749.52 59.35 753.12 64.42 754.95 70.66L755.18 71.45H771.8L771.52 70.13C769.99 62.78 767.13 56.35 763.04 51.02C758.94 45.69 753.95 41.58 748.2 38.81C742.46 36.04 736.37 34.64 730.11 34.64H717.77C708.99 34.64 701.01 36.66 694.05 40.66C687.07 44.66 681.51 50.64 677.51 58.42C673.64 66.07 671.67 75.5 671.67 86.46V96.69C671.67 107.65 673.63 117.13 677.51 124.89C681.5 132.57 687.07 138.49 694.04 142.49C701 146.48 708.98 148.5 717.76 148.5H730.1C736.76 148.5 743.1 147.04 748.95 144.17C754.91 141.19 759.96 136.77 763.96 131.03C768.05 125.2 770.75 118.16 771.97 110.1L772.16 108.84H756L755.81 109.7H755.83Z"/><path d="M836.22 72.98C831.27 70.51 825.74 69.25 819.77 69.25H811.04C805.08 69.25 799.54 70.5 794.59 72.98C789.6 75.47 785.55 79.31 782.54 84.4C779.65 89.46 778.18 95.77 778.18 103.16V114.6C778.18 121.98 779.65 128.29 782.55 133.37C785.55 138.45 789.61 142.29 794.59 144.78C799.54 147.25 805.07 148.51 811.04 148.51H819.77C825.73 148.51 831.27 147.26 836.22 144.78C841.21 142.28 845.22 138.44 848.11 133.37C851.11 128.3 852.63 121.99 852.63 114.6V103.16C852.63 95.77 851.11 89.45 848.12 84.4C845.21 79.31 841.21 75.47 836.22 72.98ZM836.89 105.57V112.19C836.89 119.1 835.22 124.41 831.9 128.01C828.72 131.56 823.18 133.36 815.41 133.36C807.64 133.36 802.04 131.56 798.77 128.01C795.56 124.42 793.93 119.1 793.93 112.19V105.57C793.93 98.66 795.56 93.34 798.76 89.76C802.04 86.2 807.64 84.4 815.41 84.4C823.18 84.4 828.72 86.2 831.91 89.76C835.21 93.35 836.89 98.66 836.89 105.57Z"/><path d="M917.7 81.85C915.43 78.73 912.47 76.02 908.85 73.79C904.08 70.78 899.17 69.26 894.27 69.26C884.79 69.26 876.85 72.2 870.64 77.98C864.52 83.69 861.41 92.16 861.41 103.17V114.61C861.41 125.61 864.51 134.13 870.65 139.95C876.85 145.63 884.8 148.52 894.27 148.52C899.17 148.52 904.08 146.99 908.85 143.99C912.47 141.75 915.44 139.05 917.71 135.92V146.1H933.45V36.54H917.7V81.84V81.85ZM914.55 93.8C916.64 97.22 917.7 101.74 917.7 107.22V110.53C917.7 116.02 916.64 120.53 914.55 123.95C912.47 127.35 909.85 129.79 906.76 131.2C903.61 132.63 900.37 133.36 897.13 133.36C890.36 133.36 885.27 131.51 882.01 127.87C878.79 124.18 877.16 118.91 877.16 112.19V105.57C877.16 98.85 878.79 93.58 882 89.9C885.28 86.25 890.37 84.4 897.13 84.4C900.37 84.4 903.61 85.13 906.76 86.56C909.85 87.96 912.47 90.4 914.55 93.81V93.8Z"/><path d="M1019.23 103.16C1019.23 95.85 1017.61 89.58 1014.41 84.53C1011.3 79.35 1007.04 75.46 1001.75 72.97C996.6 70.5 990.92 69.25 984.87 69.25H979.15C973.1 69.25 967.37 70.5 962.12 72.97C956.94 75.46 952.68 79.34 949.47 84.52C946.37 89.59 944.79 95.86 944.79 103.15V114.59C944.79 125.69 947.84 134.21 953.87 139.93C959.97 145.62 967.97 148.5 977.65 148.5H986.38C994.52 148.5 1001.63 146.25 1007.51 141.81C1013.55 137.23 1017.28 130.51 1018.62 121.84L1018.82 120.57H1002.57L1002.33 121.35C999.86 129.43 993.21 133.36 982.01 133.36C974.13 133.36 968.43 131.55 965.06 128C961.81 124.48 960.14 119.27 960.09 112.54H1019.23V103.16ZM960.54 99.2C961.25 94.5 963.09 90.91 966.01 88.5C969.3 85.77 974.69 84.39 982.01 84.39C989.33 84.39 994.66 85.77 997.88 88.51C1000.89 90.92 1002.77 94.51 1003.49 99.19H960.54V99.2Z"/></g><defs><clipPath id="lc"><rect width="1019.23" height="182.72" fill="none"/></clipPath></defs></svg>
+    <span class="subtitle">Memory Palace</span>
+  </div>
     <div class="agent-meta">
       <div class="agent-name" id="agent-name"></div>
       <a class="agent-id" id="agent-id" rel="noopener"></a>
@@ -583,6 +678,14 @@ a:hover { text-decoration: underline; }
 <script>
 (function() {
   'use strict';
+
+  // Auto dark mode from OS preference
+  if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
+    document.documentElement.classList.add('dark');
+  }
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function(e) {
+    document.documentElement.classList.toggle('dark', e.matches);
+  });
 
   var dataEl = document.getElementById('letta-data');
   var DATA;
