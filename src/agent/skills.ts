@@ -9,7 +9,7 @@
  */
 
 import { existsSync } from "node:fs";
-import { readdir, readFile } from "node:fs/promises";
+import { readdir, readFile, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseFrontmatter } from "../utils/frontmatter";
@@ -249,7 +249,9 @@ async function findSkillFiles(
     for (const entry of entries) {
       const fullPath = join(currentPath, entry.name);
 
-      if (entry.isDirectory()) {
+      // Follows symlinks to detect directories and files correctly
+      const entryStat = await stat(fullPath);
+      if (entryStat.isDirectory()) {
         // Recursively search subdirectories
         await findSkillFiles(fullPath, rootPath, skills, errors, source);
       } else if (entry.isFile() && entry.name.toUpperCase() === "SKILL.MD") {
