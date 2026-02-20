@@ -1,5 +1,6 @@
 import { readdirSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { debugLog } from "../../utils/debug";
 
 interface FileMatch {
   path: string;
@@ -245,7 +246,7 @@ export async function searchFiles(
     });
   } catch (error) {
     // Return empty array on any error
-    console.error("File search error:", error);
+    debugLog("file-search", "File search error: %O", error);
     return [];
   }
 

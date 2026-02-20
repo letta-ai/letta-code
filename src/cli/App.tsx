@@ -2547,7 +2547,11 @@ export default function App({
           setApprovalContexts(contexts);
         } catch (error) {
           // If analysis fails, leave context as null (will show basic options)
-          console.error("Failed to analyze startup approvals:", error);
+          debugLog(
+            "approvals",
+            "Failed to analyze startup approvals: %O",
+            error,
+          );
         }
       };
 
@@ -2861,7 +2865,7 @@ export default function App({
             setCurrentToolset(persistedToolsetPreference);
           }
         } catch (error) {
-          console.error("Error fetching agent config:", error);
+          debugLog("agent-config", "Error fetching agent config: %O", error);
         }
       };
       fetchConfig();
@@ -3680,7 +3684,7 @@ export default function App({
               }
             } catch (error) {
               // Silently fail - don't interrupt the conversation flow
-              console.error("Failed to sync agent state:", error);
+              debugLog("sync-agent", "Failed to sync agent state: %O", error);
             }
           };
 
@@ -7496,8 +7500,9 @@ export default function App({
                     setApprovalContexts(contexts);
                   } catch (approvalError) {
                     // If analysis fails, leave context as null (will show basic options)
-                    console.error(
-                      "Failed to analyze resume approvals:",
+                    debugLog(
+                      "approvals",
+                      "Failed to analyze resume approvals: %O",
                       approvalError,
                     );
                   }
@@ -9524,9 +9529,12 @@ ${SYSTEM_REMINDER_CLOSE}
             a.size === b.size && [...a].every((id) => b.has(id));
 
           if (!setsEqual(expectedIds, sendingIds)) {
-            console.error("[BUG] Approval ID mismatch detected");
-            console.error("Expected IDs:", Array.from(expectedIds));
-            console.error("Sending IDs:", Array.from(sendingIds));
+            debugLog(
+              "approvals",
+              "[BUG] Approval ID mismatch detected. Expected: %O, Sending: %O",
+              Array.from(expectedIds),
+              Array.from(sendingIds),
+            );
             throw new Error(
               "Approval ID mismatch - refusing to send mismatched IDs",
             );
@@ -12229,8 +12237,9 @@ Plan file path: ${planFilePath}`;
                           setApprovalContexts(contexts);
                         } catch (approvalError) {
                           // If analysis fails, leave context as null (will show basic options)
-                          console.error(
-                            "Failed to analyze resume approvals:",
+                          debugLog(
+                            "approvals",
+                            "Failed to analyze resume approvals: %O",
                             approvalError,
                           );
                         }
