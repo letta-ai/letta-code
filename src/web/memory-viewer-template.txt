@@ -102,7 +102,7 @@ a:hover { text-decoration: underline; }
   display: grid;
   grid-template-columns: 320px 1fr;
   gap: 16px;
-  min-height: 560px;
+  height: 74vh;
 }
 .panel {
   border: 1px solid var(--border);
@@ -111,8 +111,11 @@ a:hover { text-decoration: underline; }
   background: #fff;
 }
 .tree-panel {
-  max-height: 74vh;
   overflow: auto;
+}
+.file-panel {
+  display: flex;
+  flex-direction: column;
 }
 .tree-item {
   padding: 4px 10px;
@@ -300,8 +303,9 @@ a:hover { text-decoration: underline; }
 .file-meta { position: relative; }
 .file-body-raw {
   padding: 20px 28px;
-  max-height: 70vh;
+  flex: 1;
   overflow: auto;
+  min-height: 0;
   font-family: var(--mono);
   font-size: 13px;
   white-space: pre-wrap;
@@ -312,8 +316,9 @@ a:hover { text-decoration: underline; }
 }
 .file-body {
   padding: 20px 28px;
-  max-height: 70vh;
+  flex: 1;
   overflow: auto;
+  min-height: 0;
   font-family: var(--serif);
   font-size: 16px;
 }
@@ -549,7 +554,7 @@ a:hover { text-decoration: underline; }
     <section id="tab-files">
       <div class="files-layout">
         <div class="panel tree-panel" id="tree-panel"></div>
-        <div class="panel" id="file-panel">
+        <div class="panel file-panel" id="file-panel">
           <div class="empty">Select a file from the tree</div>
         </div>
       </div>
