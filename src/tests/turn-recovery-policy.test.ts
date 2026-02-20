@@ -195,6 +195,18 @@ describe("provider detail retry helpers", () => {
         "OpenAI API error: invalid_request_error",
       ),
     ).toBe(false);
+    expect(
+      shouldRetryRunMetadataError(
+        "llm_error",
+        '429 {"error":"Rate limited","reasons":["exceeded-quota"]}',
+      ),
+    ).toBe(false);
+    expect(
+      shouldRetryRunMetadataError(
+        "llm_error",
+        "You've reached your hosted model usage limit.",
+      ),
+    ).toBe(false);
   });
 
   test("pre-stream transient classifier handles status and detail", () => {
@@ -216,6 +228,13 @@ describe("provider detail retry helpers", () => {
         status: 429,
         detail:
           '429 {"error":"Rate limited","reasons":["agents-limit-exceeded"]}',
+      }),
+    ).toBe(false);
+    expect(
+      shouldRetryPreStreamTransientError({
+        status: 429,
+        detail:
+          '429 {"error":"Rate limited","reasons":["premium-usage-exceeded"]}',
       }),
     ).toBe(false);
     expect(
