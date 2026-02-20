@@ -1,5 +1,6 @@
 import { getLettaCodeHeaders } from "../agent/http-headers";
 import { settingsManager } from "../settings-manager";
+import { getVersion } from "../version";
 
 export interface TelemetryEvent {
   type: "session_start" | "session_end" | "tool_usage" | "error" | "user_input";
@@ -254,7 +255,7 @@ class TelemetryManager {
 
     const data: SessionStartData = {
       startup_command: args.join(" "),
-      version: process.env.npm_package_version || "unknown",
+      version: getVersion(),
       platform: process.platform,
       node_version: process.version,
     };

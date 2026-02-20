@@ -23,6 +23,7 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
+import { getVersion } from "../../version";
 import {
   type ApprovalResult,
   executeAutoAllowedTools,
@@ -10662,7 +10663,7 @@ ${SYSTEM_REMINDER_CLOSE}
                 feature: "letta-code",
                 agent_id: agentId,
                 session_id: telemetry.getSessionId(),
-                version: process.env.npm_package_version || "unknown",
+                version: getVersion(),
                 platform: process.platform,
                 settings: JSON.stringify(safeSettings),
                 // Additional context for debugging
