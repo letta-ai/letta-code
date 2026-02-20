@@ -84,7 +84,7 @@ describe("formatZaiError", () => {
   test("formats API errors (1200-1234)", () => {
     const result = formatZaiError(1210, "Unsupported model");
     expect(result).toBe(
-      "Z.ai API error: Unsupported model. This is a Z.ai issue, not a Letta problem.",
+      "Z.ai API error: Unsupported model. Try again later or switch providers with /model.",
     );
   });
 
