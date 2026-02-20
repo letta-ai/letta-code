@@ -184,6 +184,7 @@ import {
 } from "./helpers/accumulator";
 import { classifyApprovals } from "./helpers/approvalClassification";
 import { backfillBuffers } from "./helpers/backfill";
+import { chunkLog } from "./helpers/chunkLog";
 import {
   type ContextWindowOverview,
   renderContextUsage,
@@ -1463,6 +1464,9 @@ export default function App({
   const sessionStatsRef = useRef(new SessionStats());
   const sessionStartTimeRef = useRef(Date.now());
   const sessionHooksRanRef = useRef(false);
+
+  // Initialize chunk log for this agent + session (clears buffer, GCs old files)
+  useRef(chunkLog.init(agentId, telemetry.getSessionId()));
 
   const syncTrajectoryTokenBase = useCallback(() => {
     const snapshot = sessionStatsRef.current.getTrajectorySnapshot();
@@ -10708,6 +10712,8 @@ ${SYSTEM_REMINDER_CLOSE}
                 model: currentModelId,
                 // Account info
                 billing_tier: billingTier,
+                // Recent chunk log for diagnostics
+                recent_chunks: chunkLog.getEntries(),
               }),
             },
           );
