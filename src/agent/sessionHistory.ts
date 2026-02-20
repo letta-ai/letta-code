@@ -5,6 +5,7 @@ import type { SessionStatsSnapshot } from "./stats";
 
 export interface SessionHistoryEntry {
   session_id: string;
+  invocation_id?: string;
   timestamp: number;
   project: string;
   model: string;
@@ -112,11 +113,13 @@ export function recordSessionEnd(
   stats: SessionStatsSnapshot,
   sessionInfo?: { project?: string; model?: string; provider?: string },
   cost?: { credits_used?: number; usd_byok?: number; type: "hosted" | "byok" },
+  invocationId?: string,
 ): void {
   // For now, we'll append a new "end" entry with the final stats
   // A more sophisticated approach would update the existing entry
   const entry: SessionHistoryEntry = {
     session_id: sessionId,
+    ...(invocationId != null ? { invocation_id: invocationId } : {}),
     timestamp: Date.now(),
     project: sessionInfo?.project ?? "",
     model: sessionInfo?.model ?? "",

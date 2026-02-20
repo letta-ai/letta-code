@@ -4957,7 +4957,7 @@ export default function App({
         project: projectDirectory,
         model: currentModelLabel ?? "",
         provider: currentModelProvider ?? "",
-      });
+      }, undefined, telemetry.getSessionId());
     } catch {
       // Non-critical, don't fail the exit
     }
@@ -6787,7 +6787,7 @@ export default function App({
                 project: projectDirectory,
                 model: currentModelLabel ?? "",
                 provider: currentModelProvider ?? "",
-              });
+              }, undefined, telemetry.getSessionId());
             } catch {
               // Non-critical, don't fail the exit
             }
