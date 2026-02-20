@@ -4953,11 +4953,22 @@ export default function App({
 
     // Record session to local history file
     try {
-      recordSessionEnd(agentId, telemetry.getSessionId(), stats, {
-        project: projectDirectory,
-        model: currentModelLabel ?? "",
-        provider: currentModelProvider ?? "",
-      });
+      recordSessionEnd(
+        agentId,
+        telemetry.getSessionId(),
+        stats,
+        {
+          project: projectDirectory,
+          model: currentModelLabel ?? "",
+          provider: currentModelProvider ?? "",
+        },
+        undefined,
+        {
+          messageCount: telemetry.getMessageCount(),
+          toolCallCount: telemetry.getToolCallCount(),
+          exitReason: "exit_command",
+        },
+      );
     } catch {
       // Non-critical, don't fail the exit
     }
@@ -6789,11 +6800,22 @@ export default function App({
 
             // Record session to local history file
             try {
-              recordSessionEnd(agentId, telemetry.getSessionId(), stats, {
-                project: projectDirectory,
-                model: currentModelLabel ?? "",
-                provider: currentModelProvider ?? "",
-              });
+              recordSessionEnd(
+                agentId,
+                telemetry.getSessionId(),
+                stats,
+                {
+                  project: projectDirectory,
+                  model: currentModelLabel ?? "",
+                  provider: currentModelProvider ?? "",
+                },
+                undefined,
+                {
+                  messageCount: telemetry.getMessageCount(),
+                  toolCallCount: telemetry.getToolCallCount(),
+                  exitReason: "logout",
+                },
+              );
             } catch {
               // Non-critical, don't fail the exit
             }

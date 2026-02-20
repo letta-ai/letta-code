@@ -29,6 +29,9 @@ export interface SessionHistoryEntry {
     credits_used?: number;
     usd_byok?: number;
   };
+  message_count?: number;
+  tool_call_count?: number;
+  exit_reason?: string;
 }
 
 interface SessionStartData {
@@ -116,6 +119,11 @@ export function recordSessionEnd(
   stats: SessionStatsSnapshot,
   sessionInfo?: { project?: string; model?: string; provider?: string },
   cost?: { credits_used?: number; usd_byok?: number; type: "hosted" | "byok" },
+  metadata?: {
+    messageCount?: number;
+    toolCallCount?: number;
+    exitReason?: string;
+  },
 ): void {
   // For now, we'll append a new "end" entry with the final stats
   // A more sophisticated approach would update the existing entry
@@ -141,6 +149,9 @@ export function recordSessionEnd(
       wall_ms: stats.totalWallMs,
     },
     cost: cost || { type: "hosted" },
+    message_count: metadata?.messageCount,
+    tool_call_count: metadata?.toolCallCount,
+    exit_reason: metadata?.exitReason,
   };
 
   // For v1, we just append end entries - in future, we could update the start entry
