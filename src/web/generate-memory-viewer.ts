@@ -426,7 +426,7 @@ export async function generateAndOpenMemoryViewer(
   const jsonPayload = JSON.stringify(data).replace(/</g, "\\u003c");
   const html = memoryViewerTemplate.replace(
     "<!--LETTA_DATA_PLACEHOLDER-->",
-    jsonPayload,
+    () => jsonPayload,
   );
 
   // 3. Write to ~/.letta/viewers/ with owner-only permissions
