@@ -629,7 +629,8 @@
     "updateArgs": {
       "reasoning_effort": "minimal",
       "verbosity": "medium",
-      "context_window": 272000
+      "context_window": 272000,
+      "max_output_tokens": 128000
     }
   },
   {
@@ -640,7 +641,8 @@
     "updateArgs": {
       "reasoning_effort": "low",
       "verbosity": "medium",
-      "context_window": 272000
+      "context_window": 272000,
+      "max_output_tokens": 128000
     }
   },
   {
@@ -651,7 +653,8 @@
     "updateArgs": {
       "reasoning_effort": "medium",
       "verbosity": "medium",
-      "context_window": 272000
+      "context_window": 272000,
+      "max_output_tokens": 128000
     }
   },
   {
@@ -662,7 +665,8 @@
     "updateArgs": {
       "reasoning_effort": "high",
       "verbosity": "medium",
-      "context_window": 272000
+      "context_window": 272000,
+      "max_output_tokens": 128000
     }
   },
   {
@@ -673,7 +677,8 @@
     "updateArgs": {
       "reasoning_effort": "medium",
       "verbosity": "medium",
-      "context_window": 272000
+      "context_window": 272000,
+      "max_output_tokens": 128000
     }
   },
   {
@@ -684,7 +689,8 @@
     "updateArgs": {
       "reasoning_effort": "medium",
       "verbosity": "medium",
-      "context_window": 272000
+      "context_window": 272000,
+      "max_output_tokens": 128000
     }
   },
   {
