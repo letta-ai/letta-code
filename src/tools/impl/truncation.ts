@@ -4,6 +4,7 @@
  * When outputs exceed limits, full content can be written to overflow files.
  */
 
+import { debugLog } from "../../utils/debug.js";
 import { OVERFLOW_CONFIG, writeOverflowFile } from "./overflow.js";
 
 // Limits based on Claude Code's proven production values
@@ -64,7 +65,7 @@ export function truncateByChars(
       );
     } catch (error) {
       // Silently fail if overflow file creation fails
-      console.error("Failed to write overflow file:", error);
+      debugLog("truncation", "Failed to write overflow file: %O", error);
     }
   }
 
@@ -167,7 +168,7 @@ export function truncateByLines(
       );
     } catch (error) {
       // Silently fail if overflow file creation fails
-      console.error("Failed to write overflow file:", error);
+      debugLog("truncation", "Failed to write overflow file: %O", error);
     }
   }
 
@@ -250,7 +251,7 @@ export function truncateArray<T>(
       );
     } catch (error) {
       // Silently fail if overflow file creation fails
-      console.error("Failed to write overflow file:", error);
+      debugLog("truncation", "Failed to write overflow file: %O", error);
     }
   }
 

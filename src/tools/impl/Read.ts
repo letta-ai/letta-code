@@ -8,6 +8,7 @@ import { LETTA_CLOUD_API_URL } from "../../auth/oauth.js";
 import { resizeImageIfNeeded } from "../../cli/helpers/imageResize.js";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "../../constants";
 import { settingsManager } from "../../settings-manager.js";
+import { debugLog } from "../../utils/debug.js";
 import { OVERFLOW_CONFIG, writeOverflowFile } from "./overflow.js";
 import { LIMITS } from "./truncation.js";
 import { validateRequiredParams } from "./validation.js";
@@ -179,7 +180,7 @@ function formatWithLineNumbers(
       overflowPath = writeOverflowFile(content, workingDirectory, "Read");
     } catch (error) {
       // Silently fail if overflow file creation fails
-      console.error("Failed to write overflow file:", error);
+      debugLog("read", "Failed to write overflow file: %O", error);
     }
   }
 
