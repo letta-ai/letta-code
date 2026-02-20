@@ -192,7 +192,7 @@ a:hover { text-decoration: underline; }
 .tree-item.dir:not(.collapsed) { border-left-color: var(--accent); }
 .tree-item.dir:hover { background: var(--surface-2); }
 .tree-item.dir.collapsed ~ .tree-children { display: none; }
-.tree-children { /* wrapper for dir contents */ }
+.tree-children { padding-left: 12px; }
 .tree-children.hidden { display: none; }
 .tree-item.file { cursor: pointer; padding-left: 24px; }
 .tree-item.file:hover { background: var(--hover-accent); }
