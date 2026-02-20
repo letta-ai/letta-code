@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Memory Palace</title>
+<title>Memory Palace | Letta Code</title>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@300;400;500;600;700&display=swap');
 @import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500&display=swap');
@@ -119,7 +119,7 @@ a:hover { text-decoration: underline; }
   cursor: pointer;
   font-size: 10px;
   font-weight: 400;
-  letter-spacing: 2.5px;
+  letter-spacing: 1.5px;
   text-transform: uppercase;
   color: var(--text-muted);
   user-select: none;
@@ -128,7 +128,6 @@ a:hover { text-decoration: underline; }
 .tab.active {
   color: var(--accent);
   background: var(--panel);
-  font-weight: 500;
   box-shadow: inset 0 -2px 0 var(--accent);
 }
 
@@ -157,7 +156,7 @@ a:hover { text-decoration: underline; }
 .tree-desc {
   padding: 8px 12px;
   font-size: 10px;
-  letter-spacing: 1.5px;
+  letter-spacing: 1px;
   text-transform: uppercase;
   color: var(--text-dim);
   border-bottom: 1px solid var(--border);
@@ -646,6 +645,142 @@ html.dark .agent-id { color: var(--text-dim); }
 html.dark h1 { color: var(--text); }
 html.dark a { color: var(--accent); }
 html.dark .warning-badge { background: hsl(42, 30%, 18%); color: hsl(42, 80%, 70%); }
+
+/* Context tab */
+.context-layout {
+  display: flex;
+  gap: 0;
+  min-height: 400px;
+}
+.context-grid-area {
+  flex: 1;
+  padding: 20px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+}
+.context-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  max-width: 700px;
+  padding: 8px;
+}
+.context-grid .block {
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  line-height: 1;
+  opacity: 0;
+  animation: blockIn 0.3s ease forwards;
+  cursor: default;
+  user-select: none;
+}
+.context-grid .block.alive {
+  animation: blockIn 0.3s ease forwards, idlePulse 3s ease-in-out infinite;
+  animation-delay: var(--enter-delay, 0ms), var(--pulse-delay, 0s);
+}
+.context-grid .block.dim {
+  opacity: 0.15 !important;
+  transition: opacity 0.12s;
+}
+.context-grid .block.glow {
+  filter: brightness(1.8) drop-shadow(0 0 3px currentColor);
+  transform: scale(1.3);
+  transition: filter 0.1s, transform 0.1s;
+}
+@keyframes blockIn {
+  from { opacity: 0; transform: scale(0); }
+  to { opacity: var(--target-opacity, 1); transform: scale(1); }
+}
+@keyframes idlePulse {
+  0%, 100% { filter: brightness(1); }
+  50% { filter: brightness(0.6); }
+}
+.context-sidebar {
+  width: 280px;
+  min-width: 280px;
+  padding: 20px;
+  border-left: 1px solid var(--border);
+  background: var(--surface);
+}
+.ctx-model {
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--text);
+  margin-bottom: 2px;
+}
+.ctx-model-sub {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-bottom: 12px;
+}
+.ctx-usage-label {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+.ctx-bar-track {
+  height: 6px;
+  background: var(--surface-2);
+  border-radius: 3px;
+  overflow: hidden;
+  margin-bottom: 4px;
+}
+.ctx-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 1.5s ease;
+}
+.ctx-bar-text {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-bottom: 20px;
+}
+.ctx-legend-title {
+  font-size: 10px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-bottom: 10px;
+}
+.ctx-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.ctx-legend-sym {
+  font-size: 14px;
+  width: 18px;
+  text-align: center;
+  flex-shrink: 0;
+}
+.ctx-legend-name { flex: 1; }
+.ctx-legend-item { transition: opacity 0.15s; }
+.ctx-legend-item.legend-dim { opacity: 0.25; }
+.ctx-legend-item.legend-glow { opacity: 1; }
+.ctx-legend-item[data-tab-link] { cursor: pointer; }
+.ctx-legend-item[data-tab-link] .ctx-legend-arrow {
+  font-size: 10px;
+  color: var(--text-dim);
+  margin-left: 4px;
+}
+.ctx-legend-value { text-align: right; color: var(--text-dim); }
+.context-legend {
+  padding: 0 20px 20px;
+}
+.ctx-unavailable {
+  padding: 40px 20px;
+  text-align: center;
+  color: var(--text-dim);
+  font-size: 13px;
+}
 </style>
 </head>
 <body>
@@ -662,13 +797,24 @@ html.dark .warning-badge { background: hsl(42, 30%, 18%); color: hsl(42, 80%, 70
   </header>
 
   <nav class="tabs">
-    <div class="tab active" data-tab="core" id="tab-core-label">Core Memory</div>
+    <div class="tab active" data-tab="context">Context</div>
+    <div class="tab" data-tab="core" id="tab-core-label">Core Memory</div>
     <div class="tab" data-tab="external" id="tab-external-label">External Memory</div>
     <div class="tab" data-tab="history">History</div>
   </nav>
 
   <main class="main">
-    <section id="tab-core">
+    <section id="tab-context">
+      <div class="context-layout">
+        <div class="context-grid-area">
+          <div class="context-grid" id="context-grid"></div>
+        </div>
+        <div class="context-sidebar" id="context-sidebar"></div>
+      </div>
+      <div class="context-legend" id="context-legend"></div>
+    </section>
+
+    <section id="tab-core" style="display:none">
       <div class="files-layout">
         <div class="panel tree-panel" id="tree-panel-core"></div>
         <div class="panel file-panel" id="file-panel-core">
@@ -811,12 +957,182 @@ html.dark .warning-badge { background: hsl(42, 30%, 18%); color: hsl(42, 80%, 70
   }
   document.getElementById('generated-at').textContent = 'Generated ' + new Date(DATA.generatedAt).toLocaleString();
 
+
+  // ---- Context tab ----
+  var CTX_COLORS = {
+    system:    'rgb(224, 112, 80)',
+    coreMemory:'rgb(224, 160, 64)',
+    tools:     'rgb(32, 178, 170)',
+    messages:  'rgb(140, 140, 249)',
+    summary:   'rgb(160, 160, 160)',
+    free:      'var(--text-dim)'
+  };
+  var CTX_SYMBOLS = {
+    system:     '\u25C9',
+    coreMemory: '\u25C9',
+    tools:      '\u25CF',
+    messages:   '\u25CF',
+    summary:    '\u29BB',
+    free:       '\u25A1'
+  };
+  var CTX_LABELS = {
+    system: 'System',
+    coreMemory: 'Core Memory',
+    tools: 'Tools',
+    messages: 'Messages',
+    summary: 'Summary',
+    free: 'Free'
+  };
+
+  function renderContextTab() {
+    var ctx = DATA.context;
+    var gridEl = document.getElementById('context-grid');
+    var sidebarEl = document.getElementById('context-sidebar');
+
+    if (!ctx) {
+      gridEl.parentElement.parentElement.innerHTML = '<div class="ctx-unavailable">Context data not available. Send a message first to see context usage.</div>';
+      return;
+    }
+
+    var bd = ctx.breakdown;
+    var total = ctx.contextWindow || 200000;
+    var used = ctx.usedTokens || 0;
+    var pct = total > 0 ? Math.round(used / total * 100) : 0;
+
+    var cats = [
+      { key: 'system', tokens: bd.system },
+      { key: 'coreMemory', tokens: bd.coreMemory },
+      { key: 'tools', tokens: bd.tools },
+      { key: 'messages', tokens: bd.messages },
+      { key: 'summary', tokens: bd.summaryMemory }
+    ].filter(function(c) { return c.tokens > 0; });
+
+    var freeTokens = Math.max(0, total - used);
+
+    var BLOCK_COUNT = 480;
+    var tokensPerBlock = total / BLOCK_COUNT;
+    var blocks = [];
+
+    cats.forEach(function(cat) {
+      var count = Math.round(cat.tokens / tokensPerBlock);
+      if (count < 1 && cat.tokens > 0) count = 1;
+      for (var i = 0; i < count && blocks.length < BLOCK_COUNT; i++) {
+        blocks.push(cat.key);
+      }
+    });
+    while (blocks.length < BLOCK_COUNT) blocks.push('free');
+
+    var gridHtml = '';
+    for (var i = 0; i < blocks.length; i++) {
+      var key = blocks[i];
+      var color = CTX_COLORS[key] || CTX_COLORS.free;
+      var sym = CTX_SYMBOLS[key] || CTX_SYMBOLS.free;
+      var enterDelay = (i * 3);
+      var isActive = key !== 'free';
+      var opacity = isActive ? '1' : '0.25';
+      // Stagger idle pulse randomly so they don't sync
+      var pulseDelay = isActive ? (Math.random() * 3).toFixed(2) + 's' : '0s';
+      var cls = isActive ? 'block alive' : 'block';
+      gridHtml += '<div class="' + cls + '" data-cat="' + key + '" style="color:' + color + ';--target-opacity:' + opacity + ';--enter-delay:' + enterDelay + 'ms;--pulse-delay:' + pulseDelay + ';animation-delay:' + enterDelay + 'ms,' + pulseDelay + '">' + sym + '</div>';
+    }
+    gridEl.innerHTML = gridHtml;
+
+    // Hover: glow ALL blocks of the same category, dim everything else
+    var allBlockEls;
+    gridEl.addEventListener('mouseover', function(ev) {
+      var block = ev.target.closest('.block');
+      if (!block) return;
+      var cat = block.dataset.cat;
+      if (!cat) return;
+      if (!allBlockEls) allBlockEls = Array.prototype.slice.call(gridEl.querySelectorAll('.block'));
+      for (var i = 0; i < allBlockEls.length; i++) {
+        var b = allBlockEls[i];
+        if (b.dataset.cat === cat) {
+          b.classList.add('glow');
+          b.classList.remove('dim');
+        } else {
+          b.classList.add('dim');
+          b.classList.remove('glow');
+        }
+      }
+      // Highlight matching sidebar legend item
+      var legendItems = sidebarEl.querySelectorAll('.ctx-legend-item[data-legend]');
+      for (var j = 0; j < legendItems.length; j++) {
+        if (legendItems[j].dataset.legend === cat) {
+          legendItems[j].classList.add('legend-glow');
+          legendItems[j].classList.remove('legend-dim');
+        } else {
+          legendItems[j].classList.add('legend-dim');
+          legendItems[j].classList.remove('legend-glow');
+        }
+      }
+    });
+    gridEl.addEventListener('mouseleave', function() {
+      if (!allBlockEls) return;
+      for (var i = 0; i < allBlockEls.length; i++) {
+        allBlockEls[i].classList.remove('glow', 'dim');
+      }
+      var legendItems = sidebarEl.querySelectorAll('.ctx-legend-item[data-legend]');
+      for (var j = 0; j < legendItems.length; j++) {
+        legendItems[j].classList.remove('legend-glow', 'legend-dim');
+      }
+    });
+
+    // Sidebar
+    function fmtK(n) { return n >= 1000 ? Math.round(n / 1000) + 'k' : String(n); }
+    var barColor = pct > 90 ? 'rgb(224, 80, 80)' : pct > 70 ? 'rgb(224, 160, 64)' : 'var(--accent)';
+    var agentName = DATA.agent.name || 'Agent';
+    var modelDisplay = ctx.model && ctx.model !== 'unknown' ? ctx.model : '';
+
+    var sHtml = '';
+    sHtml += '<div class="ctx-model">' + escHtml(agentName) + '</div>';
+    if (modelDisplay) sHtml += '<div class="ctx-model-sub">' + escHtml(modelDisplay) + '</div>';
+    sHtml += '<div class="ctx-usage-label">' + fmtK(used) + '/' + fmtK(total) + ' tokens (' + pct + '%)</div>';
+    sHtml += '<div class="ctx-bar-track"><div class="ctx-bar-fill" id="ctx-bar-fill" style="width:0%;background:' + barColor + '"></div></div>';
+    sHtml += '<div class="ctx-bar-text">' + (total - used > 0 ? fmtK(total - used) + ' tokens remaining' : 'Context full') + '</div>';
+
+    sHtml += '<div class="ctx-legend-title">Estimated usage</div>';
+    cats.forEach(function(cat) {
+      var cpct = total > 0 ? (cat.tokens / total * 100).toFixed(1) : '0';
+      var tabLink = cat.key === 'coreMemory' ? 'core' : '';
+      sHtml += '<div class="ctx-legend-item" data-legend="' + cat.key + '"' + (tabLink ? ' data-tab-link="' + tabLink + '"' : '') + '>';
+      sHtml += '<span class="ctx-legend-sym" style="color:' + CTX_COLORS[cat.key] + '">' + CTX_SYMBOLS[cat.key] + '</span>';
+      sHtml += '<span class="ctx-legend-name">' + CTX_LABELS[cat.key] + (tabLink ? '<span class="ctx-legend-arrow">\u2192</span>' : '') + '</span>';
+      sHtml += '<span class="ctx-legend-value">' + fmtK(cat.tokens) + ' (' + cpct + '%)</span>';
+      sHtml += '</div>';
+    });
+    if (freeTokens > 0) {
+      var fpct = (freeTokens / total * 100).toFixed(1);
+      sHtml += '<div class="ctx-legend-item" data-legend="free">';
+      sHtml += '<span class="ctx-legend-sym" style="color:var(--text-dim);opacity:0.4">' + CTX_SYMBOLS.free + '</span>';
+      sHtml += '<span class="ctx-legend-name">Free</span>';
+      sHtml += '<span class="ctx-legend-value">' + fmtK(freeTokens) + ' (' + fpct + '%)</span>';
+      sHtml += '</div>';
+    }
+
+    sidebarEl.innerHTML = sHtml;
+
+    // Click on legend items with tab links
+    sidebarEl.addEventListener('click', function(ev) {
+      var item = ev.target.closest('[data-tab-link]');
+      if (item) activateTab(item.dataset.tabLink);
+    });
+
+    setTimeout(function() {
+      var bar = document.getElementById('ctx-bar-fill');
+      if (bar) bar.style.width = pct + '%';
+    }, 100);
+  }
+
+  renderContextTab();
+
   // Tabs
   var tabs = Array.prototype.slice.call(document.querySelectorAll('.tab'));
   function activateTab(name) {
     tabs.forEach(function(el) {
       el.classList.toggle('active', el.dataset.tab === name);
     });
+    document.getElementById('tab-context').style.display = name === 'context' ? '' : 'none';
     document.getElementById('tab-core').style.display = name === 'core' ? '' : 'none';
     document.getElementById('tab-external').style.display = name === 'external' ? '' : 'none';
     document.getElementById('tab-history').style.display = name === 'history' ? '' : 'none';
@@ -1302,7 +1618,8 @@ html.dark .warning-badge { background: hsl(42, 30%, 18%); color: hsl(42, 80%, 70
   });
 
   var hash = String(location.hash || '').replace('#', '');
-  if (hash === 'history') activateTab('history');
+  if (hash === 'context') activateTab('context');
+  else if (hash === 'history') activateTab('history');
   else if (hash === 'external') activateTab('external');
 })();
 </script>

@@ -20,7 +20,12 @@ import {
   scanMemoryFilesystem,
 } from "../agent/memoryScanner";
 import memoryViewerTemplate from "./memory-viewer-template.txt";
-import type { MemoryCommit, MemoryFile, MemoryViewerData } from "./types";
+import type {
+  ContextData,
+  MemoryCommit,
+  MemoryFile,
+  MemoryViewerData,
+} from "./types";
 
 const execFile = promisify(execFileCb);
 
@@ -270,17 +275,118 @@ async function collectMemoryData(
   try {
     serverUrl = getServerUrl();
   } catch {
-    serverUrl = "";
+    serverUrl = process.env.LETTA_BASE_URL || "https://api.letta.com";
   }
 
-  // Fetch agent name (best-effort, falls back to agentId)
+  // Fetch agent info and context breakdown (best-effort, parallel)
   let agentName = agentId;
+  let context: ContextData | undefined;
+  let model = "unknown";
+
+  // Try SDK client for agent name + model info
   try {
     const client = await getClient();
     const agent = await client.agents.retrieve(agentId);
     if (agent.name) agentName = agent.name;
+    model = agent.llm_config?.model ?? "unknown";
+
+    // Fetch context breakdown via raw API (not in SDK)
+    const apiKey =
+      (client as unknown as { apiKey?: string }).apiKey ||
+      process.env.LETTA_API_KEY ||
+      "";
+    const contextWindow = agent.llm_config?.context_window ?? 0;
+    try {
+      const contextRes = await fetch(
+        `${serverUrl}/v1/agents/${agentId}/context`,
+        {
+          headers: { Authorization: `Bearer ${apiKey}` },
+          signal: AbortSignal.timeout(5000),
+        },
+      );
+      if (contextRes.ok) {
+        const overview = (await contextRes.json()) as {
+          context_window_size_max: number;
+          context_window_size_current: number;
+          num_tokens_system: number;
+          num_tokens_core_memory: number;
+          num_tokens_external_memory_summary: number;
+          num_tokens_summary_memory: number;
+          num_tokens_functions_definitions: number;
+          num_tokens_messages: number;
+        };
+        context = {
+          contextWindow: contextWindow || overview.context_window_size_max,
+          usedTokens: overview.context_window_size_current,
+          model,
+          breakdown: {
+            system: overview.num_tokens_system,
+            coreMemory: overview.num_tokens_core_memory,
+            externalMemory: overview.num_tokens_external_memory_summary,
+            summaryMemory: overview.num_tokens_summary_memory,
+            tools: overview.num_tokens_functions_definitions,
+            messages: overview.num_tokens_messages,
+          },
+        };
+      }
+    } catch {
+      // Context fetch failed - continue without it
+    }
   } catch {
-    // Offline or auth issue - use agentId as name
+    // SDK client failed - try raw API with env key as fallback
+    try {
+      const apiKey = process.env.LETTA_API_KEY || "";
+      if (apiKey && serverUrl) {
+        // Fetch agent info + context in parallel
+        const [agentRes, contextRes] = await Promise.all([
+          fetch(`${serverUrl}/v1/agents/${agentId}`, {
+            headers: { Authorization: `Bearer ${apiKey}` },
+            signal: AbortSignal.timeout(5000),
+          }).catch(() => null),
+          fetch(`${serverUrl}/v1/agents/${agentId}/context`, {
+            headers: { Authorization: `Bearer ${apiKey}` },
+            signal: AbortSignal.timeout(5000),
+          }).catch(() => null),
+        ]);
+
+        if (agentRes?.ok) {
+          const agentData = (await agentRes.json()) as {
+            name?: string;
+            llm_config?: { model?: string; context_window?: number };
+          };
+          if (agentData.name) agentName = agentData.name;
+          if (agentData.llm_config?.model) model = agentData.llm_config.model;
+        }
+
+        if (contextRes?.ok) {
+          const overview = (await contextRes.json()) as {
+            context_window_size_max: number;
+            context_window_size_current: number;
+            num_tokens_system: number;
+            num_tokens_core_memory: number;
+            num_tokens_external_memory_summary: number;
+            num_tokens_summary_memory: number;
+            num_tokens_functions_definitions: number;
+            num_tokens_messages: number;
+          };
+          context = {
+            contextWindow: overview.context_window_size_max,
+            usedTokens: overview.context_window_size_current,
+            model,
+            breakdown: {
+              system: overview.num_tokens_system,
+              coreMemory: overview.num_tokens_core_memory,
+              externalMemory: overview.num_tokens_external_memory_summary,
+              summaryMemory: overview.num_tokens_summary_memory,
+              tools: overview.num_tokens_functions_definitions,
+              messages: overview.num_tokens_messages,
+            },
+          };
+        }
+      }
+    } catch {
+      // All API calls failed - continue without context
+    }
   }
 
   return {
@@ -289,6 +395,7 @@ async function collectMemoryData(
     totalCommitCount: totalCount || commits.length,
     files,
     commits,
+    context,
   };
 }
 
