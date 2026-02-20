@@ -167,6 +167,19 @@ function isCreditExhaustedError(e: APIError, reasons?: string[]): boolean {
   return hasErrorReason(e, "not-enough-credits", reasons);
 }
 
+function getTierUsageLimitMessage(reasons: string[]): string | undefined {
+  if (reasons.includes("premium-usage-exceeded")) {
+    return `You've reached your Premium model usage limit. Try switching to Standard or Basic hosted models with /model. View your plan and usage at ${LETTA_USAGE_URL}, or connect your own provider keys with /connect.`;
+  }
+  if (reasons.includes("standard-usage-exceeded")) {
+    return `You've reached your Standard model usage limit. Try switching to Basic hosted models with /model. View your plan and usage at ${LETTA_USAGE_URL}, or connect your own provider keys with /connect.`;
+  }
+  if (reasons.includes("basic-usage-exceeded")) {
+    return `You've reached your Basic model usage limit. Try switching models with /model, view your plan and usage at ${LETTA_USAGE_URL}, or connect your own provider keys with /connect.`;
+  }
+  return undefined;
+}
+
 const ENCRYPTED_CONTENT_HINT = [
   "",
   "This occurs when the conversation contains messages with encrypted",
@@ -356,13 +369,8 @@ export function formatErrorDetails(
       return `Your account is out of credits for hosted inference. Add credits, enable auto-recharge, or upgrade at ${LETTA_USAGE_URL}. You can also connect your own provider keys with /connect.`;
     }
 
-    if (
-      hasErrorReason(e, "premium-usage-exceeded", reasons) ||
-      hasErrorReason(e, "standard-usage-exceeded", reasons) ||
-      hasErrorReason(e, "basic-usage-exceeded", reasons)
-    ) {
-      return `You've reached your hosted model usage limit. View your plan and usage at ${LETTA_USAGE_URL}, or connect your own provider keys with /connect.`;
-    }
+    const tierUsageLimitMsg = getTierUsageLimitMessage(reasons);
+    if (tierUsageLimitMsg) return tierUsageLimitMsg;
 
     if (hasErrorReason(e, "byok-not-available-on-free-tier", reasons)) {
       const { modelDisplayName } = getErrorContext();
