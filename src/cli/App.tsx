@@ -2699,7 +2699,7 @@ export default function App({
           ? [
               "→ **/agents**    list all agents",
               "→ **/resume**    resume a previous conversation",
-              "→ **/memory**    view your agent's memory blocks",
+              "→ **/memory**    view your agent's memory",
               "→ **/init**      initialize your agent's memory",
               "→ **/remember**  teach your agent",
             ]
@@ -11496,7 +11496,7 @@ Plan file path: ${planFilePath}`;
         ? [
             "→ **/agents**    list all agents",
             "→ **/resume**    resume a previous conversation",
-            "→ **/memory**    view your agent's memory blocks",
+            "→ **/memory**    view your agent's memory",
             "→ **/init**      initialize your agent's memory",
             "→ **/remember**  teach your agent",
           ]

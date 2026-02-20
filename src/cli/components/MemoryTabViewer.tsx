@@ -160,7 +160,7 @@ export function MemoryTabViewer({
             View your agent's memory
           </Text>
         </Box>
-        <Text dimColor>{"  "}Loading memory blocks...</Text>
+        <Text dimColor>{"  "}Loading memory...</Text>
         <Box marginTop={1}>
           <Text dimColor>{"  "}Esc cancel</Text>
         </Box>
@@ -182,7 +182,7 @@ export function MemoryTabViewer({
             View your agent's memory
           </Text>
         </Box>
-        <Text dimColor>{"  "}No memory blocks attached to this agent.</Text>
+        <Text dimColor>{"  "}No memory attached to this agent.</Text>
         <Box marginTop={1}>
           <Text dimColor>{"  "}Esc cancel</Text>
         </Box>
