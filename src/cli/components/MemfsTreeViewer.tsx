@@ -1,9 +1,16 @@
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { join, relative } from "node:path";
+import { existsSync } from "node:fs";
 import { Box, useInput } from "ink";
 import Link from "ink-link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { getMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
+import { isGitRepo } from "../../agent/memoryGit";
+import {
+  getFileNodes,
+  readFileContent,
+  scanMemoryFilesystem,
+  type TreeNode,
+} from "../../agent/memoryScanner";
+import { generateAndOpenMemoryViewer } from "../../web/generate-memory-viewer";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
 import { Text } from "./Text";
@@ -16,98 +23,11 @@ const DOTTED_LINE = "╌";
 const TREE_VISIBLE_LINES = 15;
 const FULL_VIEW_VISIBLE_LINES = 16;
 
-// Tree structure types
-interface TreeNode {
-  name: string; // Display name (e.g., "git.md" or "dev_workflow/")
-  relativePath: string; // Relative path from memory root
-  fullPath: string; // Full filesystem path
-  isDirectory: boolean;
-  depth: number;
-  isLast: boolean;
-  parentIsLast: boolean[];
-}
-
 interface MemfsTreeViewerProps {
   agentId: string;
+  agentName?: string;
   onClose: () => void;
   conversationId?: string;
-}
-
-/**
- * Scan the memory filesystem directory and build tree nodes
- */
-function scanMemoryFilesystem(memoryRoot: string): TreeNode[] {
-  const nodes: TreeNode[] = [];
-
-  const scanDir = (dir: string, depth: number, parentIsLast: boolean[]) => {
-    let entries: string[];
-    try {
-      entries = readdirSync(dir);
-    } catch {
-      return;
-    }
-
-    // Filter out hidden files and state file
-    const filtered = entries.filter((name) => !name.startsWith("."));
-
-    // Sort: directories first, "system" always first among dirs, then alphabetically
-    const sorted = filtered.sort((a, b) => {
-      const aPath = join(dir, a);
-      const bPath = join(dir, b);
-      let aIsDir = false;
-      let bIsDir = false;
-      try {
-        aIsDir = statSync(aPath).isDirectory();
-      } catch {}
-      try {
-        bIsDir = statSync(bPath).isDirectory();
-      } catch {}
-      if (aIsDir !== bIsDir) return aIsDir ? -1 : 1;
-      // "system" directory comes first (only at root level, depth 0)
-      if (aIsDir && bIsDir && depth === 0) {
-        if (a === "system") return -1;
-        if (b === "system") return 1;
-      }
-      return a.localeCompare(b);
-    });
-
-    sorted.forEach((name, index) => {
-      const fullPath = join(dir, name);
-      let isDir = false;
-      try {
-        isDir = statSync(fullPath).isDirectory();
-      } catch {
-        return; // Skip if we can't stat
-      }
-
-      const relativePath = relative(memoryRoot, fullPath);
-      const isLast = index === sorted.length - 1;
-
-      nodes.push({
-        name: isDir ? `${name}/` : name,
-        relativePath,
-        fullPath,
-        isDirectory: isDir,
-        depth,
-        isLast,
-        parentIsLast: [...parentIsLast],
-      });
-
-      if (isDir) {
-        scanDir(fullPath, depth + 1, [...parentIsLast, isLast]);
-      }
-    });
-  };
-
-  scanDir(memoryRoot, 0, []);
-  return nodes;
-}
-
-/**
- * Get only file nodes (for navigation)
- */
-function getFileNodes(nodes: TreeNode[]): TreeNode[] {
-  return nodes.filter((n) => !n.isDirectory);
 }
 
 /**
@@ -122,19 +42,9 @@ function renderTreePrefix(node: TreeNode): string {
   return prefix;
 }
 
-/**
- * Read file content safely
- */
-function readFileContent(fullPath: string): string {
-  try {
-    return readFileSync(fullPath, "utf-8");
-  } catch {
-    return "(unable to read file)";
-  }
-}
-
 export function MemfsTreeViewer({
   agentId,
+  agentName,
   onClose,
   conversationId,
 }: MemfsTreeViewerProps) {
@@ -148,10 +58,27 @@ export function MemfsTreeViewer({
   const [treeScrollOffset, setTreeScrollOffset] = useState(0);
   const [viewMode, setViewMode] = useState<"split" | "full">("split");
   const [fullViewScrollOffset, setFullViewScrollOffset] = useState(0);
+  const [status, setStatus] = useState<string | null>(null);
+  const statusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Get memory filesystem root
   const memoryRoot = getMemoryFilesystemRoot(agentId);
   const memoryExists = existsSync(memoryRoot);
+  const hasGitRepo = useMemo(() => isGitRepo(agentId), [agentId]);
+
+  function showStatus(msg: string, durationMs: number) {
+    if (statusTimerRef.current) clearTimeout(statusTimerRef.current);
+    setStatus(msg);
+    statusTimerRef.current = setTimeout(() => setStatus(null), durationMs);
+  }
+
+  // Cleanup status timer on unmount
+  useEffect(
+    () => () => {
+      if (statusTimerRef.current) clearTimeout(statusTimerRef.current);
+    },
+    [],
+  );
 
   // Scan filesystem and build tree
   const treeNodes = useMemo(
@@ -179,6 +106,20 @@ export function MemfsTreeViewer({
     // CTRL-C: immediately close
     if (key.ctrl && input === "c") {
       onClose();
+      return;
+    }
+
+    // O: open memory viewer in browser (works in both split and full view)
+    if ((input === "o" || input === "O") && hasGitRepo) {
+      showStatus("Opening in browser...", 10000);
+      generateAndOpenMemoryViewer(agentId, { agentName })
+        .then(() => showStatus("Opened in browser", 3000))
+        .catch((err: unknown) =>
+          showStatus(
+            err instanceof Error ? err.message : "Failed to open viewer",
+            5000,
+          ),
+        );
       return;
     }
 
@@ -349,7 +290,17 @@ export function MemfsTreeViewer({
             {"  "}
             {charCount.toLocaleString()} chars
           </Text>
-          <Text dimColor>{"  "}↑↓ scroll · Esc back</Text>
+          {status ? (
+            <Text dimColor>
+              {"  "}
+              {status}
+            </Text>
+          ) : (
+            <Text dimColor>
+              {"  "}↑↓ scroll{hasGitRepo ? " · O open in browser" : ""} · Esc
+              back
+            </Text>
+          )}
         </Box>
       </Box>
     );
@@ -507,16 +458,24 @@ export function MemfsTreeViewer({
 
       {/* Footer */}
       <Box flexDirection="column" marginTop={1}>
-        <Box>
-          <Text dimColor>{"  "}↑↓ navigate · Enter view · </Text>
-          {!isTmux && (
-            <Link url={adeUrl}>
-              <Text dimColor>Edit in ADE</Text>
-            </Link>
-          )}
-          {isTmux && <Text dimColor>Edit in ADE: {adeUrl}</Text>}
-          <Text dimColor> · Esc close</Text>
-        </Box>
+        {status ? (
+          <Text dimColor>
+            {"  "}
+            {status}
+          </Text>
+        ) : (
+          <Box>
+            <Text dimColor>{"  "}↑↓ navigate · Enter view · </Text>
+            {!isTmux && (
+              <Link url={adeUrl}>
+                <Text dimColor>Edit in ADE</Text>
+              </Link>
+            )}
+            {isTmux && <Text dimColor>Edit in ADE: {adeUrl}</Text>}
+            {hasGitRepo && <Text dimColor> · O open in browser</Text>}
+            <Text dimColor> · Esc close</Text>
+          </Box>
+        )}
       </Box>
     </Box>
   );

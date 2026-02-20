@@ -12564,6 +12564,7 @@ Plan file path: ${planFilePath}`;
               (settingsManager.isMemfsEnabled(agentId) ? (
                 <MemfsTreeViewer
                   agentId={agentId}
+                  agentName={agentState?.name}
                   onClose={closeOverlay}
                   conversationId={conversationId}
                 />
