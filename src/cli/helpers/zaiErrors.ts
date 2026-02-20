@@ -60,7 +60,7 @@ export function formatZaiError(code: number, message: string): string {
     return `Z.ai account issue: ${message}. Check your Z.ai account status.`;
   }
   if (code >= 1200 && code <= 1234) {
-    return `Z.ai API error: ${message}. This is a Z.ai issue, not a Letta problem.`;
+    return `Z.ai API error: ${message}. Try again later or switch providers with /model.`;
   }
   if (code >= 1300 && code <= 1310) {
     return `Z.ai rate limit: ${message}. This is a Z.ai limitation. Try again later or switch providers with /model.`;
