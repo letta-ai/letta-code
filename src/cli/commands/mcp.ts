@@ -9,7 +9,10 @@ import type {
 import { getClient } from "../../backend/api/client";
 import type { Buffers, Line } from "../helpers/accumulator";
 import { formatErrorDetails } from "../helpers/errorFormatter";
-
+import { getMCPManager, MCPManager} from "../../mcp/manager";
+import type { MCPServerConfig } from "../../mcp/manager";
+import * as fs from 'fs/promises';
+import * as path from 'path';
 // tiny helper for unique ids
 function uid(prefix: string) {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -133,6 +136,7 @@ interface McpAddArgs {
   args: string[];
   headers: Record<string, string>;
   authToken: string | null;
+  clientSide: boolean | false;
 }
 
 function parseMcpAddArgs(parts: string[]): McpAddArgs | null {
@@ -144,7 +148,7 @@ function parseMcpAddArgs(parts: string[]): McpAddArgs | null {
   const args: string[] = [];
   const headers: Record<string, string> = {};
   let authToken: string | null = null;
-
+  let clientSide = false;
   let i = 0;
   while (i < parts.length) {
     const part = parts[i];
@@ -177,6 +181,9 @@ function parseMcpAddArgs(parts: string[]): McpAddArgs | null {
     } else if (part === "--auth" || part === "-a") {
       i++;
       authToken = parts[i] || null;
+      i++;
+    } else if (part === '--client-side'){
+      clientSide = true;
       i++;
     } else if (!name) {
       name = part || null;
@@ -216,6 +223,7 @@ function parseMcpAddArgs(parts: string[]): McpAddArgs | null {
     args,
     headers,
     authToken: authToken || null,
+    clientSide,
   };
 }
 
@@ -254,6 +262,121 @@ export async function handleMcpAdd(
   try {
     const client = await getClient();
 
+    if (args.clientSide){
+      if (args.transport !== 'stdio') {
+            updateCommandResult(ctx.buffersRef,ctx.refreshDerived,cmdId,msg,'Client-side execution only supported with stdio transport',false);
+            return;
+      }
+      updateCommandResult(
+            ctx.buffersRef,
+            ctx.refreshDerived,
+            cmdId,
+            msg,
+            `Creating MCP server "${args.name}" (client-side)...`,
+            false,
+            'running',
+      );
+        // stdio
+      if (!args.command) {
+        throw new Error("Command is required for stdio transport");
+      }
+      const server = await client.mcpServers.create({
+        server_name: args.name,
+        config: {
+          mcp_server_type: 'stdio',
+          command: args.command,
+          args: args.args,
+          execution_mode: 'client', 
+        },
+      });
+      if (!server.id) {
+        updateCommandResult(
+          ctx.buffersRef,
+          ctx.refreshDerived,
+          cmdId,
+          msg,
+          `Created MCP server "${args.name}" but server ID not available`,
+          false,
+        );
+        return;
+      }
+      updateCommandResult(
+        ctx.buffersRef,
+        ctx.refreshDerived,
+        cmdId,
+        msg,
+        `Created MCP server "${args.name}" (ID: ${server.id} )\nSpawning MCP server 
+    locally...`,
+        false,
+        'running',
+      );
+      const mcpManager = getMCPManager();
+      const config: MCPServerConfig = {
+        name: args.name,
+        command: args.command!,
+        args: args.args,
+        executionMode: 'client',
+      };
+      await mcpManager.spawnServer(config);
+
+      // 3. Fetch tools from local MCP server
+      updateCommandResult(
+        ctx.buffersRef,
+        ctx.refreshDerived,
+        cmdId,
+        msg,
+        `Created MCP server "${args.name}" (ID:)\nSpawning MCP server 
+    locally...\nFetching tools from server...`,
+        false,
+        'running',
+      );
+
+      const tools = await mcpManager.listTools(args.name);
+
+      // 4. Register tools locally in letta-code
+      await mcpManager.registerTools(args.name, tools);
+
+      // 5. Register each tool with Letta server as client_executable
+      updateCommandResult(
+        ctx.buffersRef,
+        ctx.refreshDerived,
+        cmdId,
+        msg,
+        `Created MCP server "${args.name}" (ID: )\nSpawning MCP server 
+        locally...\nFetching tools from server...\nRegistering ${tools.length} 
+        tool${tools.length === 1 ? '' : 's'} with Letta server...`,
+        false,
+        'running',
+      );
+
+     for (const tool of tools) {
+        await client.tools.create({
+          name: tool.name,
+          description: tool.description,
+          json_schema: tool.inputSchema,
+          source_type: 'client_executable', // NEW: Mark as client-executable
+          source_code: '# Client-side MCP tool',
+          tags: [`mcp_client:${args.name}`], // Track which MCP server
+          default_requires_approval: true, // Force approval
+          });
+      }
+      // 6. Save MCP config locally for persistence
+      const existingConfigs = await loadMCPConfigs();
+      existingConfigs.push(config);
+      await mcpManager.saveConfig(existingConfigs);
+
+      updateCommandResult(
+        ctx.buffersRef,
+        ctx.refreshDerived,
+        cmdId,
+        msg,
+        `Created client-side MCP server "${args.name}" (ID: )\nLoaded 
+    ${tools.length} tool${tools.length === 1 ? '' : 's'} from server\nTools registered 
+    with Letta server as client-executable`,
+        true,
+      );         
+      return;
+    }
     let config:
       | CreateStreamableHTTPMcpServer
       | CreateSseMcpServer
@@ -377,4 +500,13 @@ export function handleMcpUsage(ctx: McpCommandContext, msg: string): void {
       "  /mcp add --transport http notion https://mcp.notion.com/mcp",
     false,
   );
+}
+async function loadMCPConfigs(): Promise<MCPServerConfig[]> {
+  try {
+    const configPath = path.join(process.cwd(), '.letta', 'mcp-servers.json');
+    const content = await fs.readFile(configPath, 'utf-8');
+    return JSON.parse(content);
+  } catch {
+    return [];
+  }
 }

@@ -35,6 +35,7 @@ import {
   type RuntimeContextSnapshot,
   runWithRuntimeContext,
 } from "../runtime-context";
+import { getClient } from "../agent/client";
 import { telemetry } from "../telemetry";
 import { debugLog } from "../utils/debug";
 import {
@@ -42,6 +43,39 @@ import {
   scrubSecretsFromString,
 } from "./secret-substitution";
 import { TOOL_DEFINITIONS, type ToolName } from "./toolDefinitions";
+import type { Tool } from '@letta-ai/letta-client/resources/tools';
+
+interface ToolMetadata {
+  source_type: string;
+  tags: string[];
+}
+const toolMetadataCache = new Map<string, ToolMetadata>();
+
+export async function fetchToolMetadata(agentId: string): Promise<void> {
+  const client = await getClient();
+  const agent = await client.agents.retrieve(agentId, {
+    include: ['agent.tools'],
+  });
+
+  // Cache tool metadata
+  for (const tool of agent.tools || []) {
+    if (!tool.name) continue;
+    toolMetadataCache.set(tool.name, {
+      source_type: tool.source_type || 'python',
+      tags: tool.tags || [],
+    });
+  }
+
+  console.log(`[Tool Manager] Cached metadata for ${toolMetadataCache.size} tools`,);
+}
+
+export function getToolMetadata(toolName: string): ToolMetadata | undefined {
+    return toolMetadataCache.get(toolName);
+}
+
+export function clearToolMetadataCache(): void {
+  toolMetadataCache.clear();
+}
 
 export const TOOL_NAMES = Object.keys(TOOL_DEFINITIONS) as ToolName[];
 

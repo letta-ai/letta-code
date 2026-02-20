@@ -18,6 +18,7 @@ import {
   type ToolReturnContent,
 } from "../tools/manager";
 
+import { getMCPManager } from '../mcp/manager';
 /**
  * Extract displayable text from tool return content (for UI display).
  * Multimodal content returns the text parts concatenated.
@@ -227,6 +228,76 @@ async function executeSingleDecision(
   }
 
   if (decision.type === "approve") {
+
+    const mcpServerName = extractMCPServerName(decision.approval.toolName);
+    if (mcpServerName){
+      const mcpManager = getMCPManager();
+      try{
+        let parsedArgs: Record<string,unknown> = {};
+        if (typeof decision.approval.toolArgs === 'string') {
+          try {
+            parsedArgs = JSON.parse(decision.approval.toolArgs);
+          } catch {
+            parsedArgs = {};
+          }
+        } else {
+          parsedArgs = decision.approval.toolArgs || {};
+        }
+
+        console.log(
+          `[Approval] Executing MCP tool: ${decision.approval.toolName} on server: 
+${mcpServerName}`,
+        );
+
+        const result = await mcpManager.executeTool(
+          mcpServerName,
+          decision.approval.toolName,
+          parsedArgs,
+        );
+        if (onChunk) {
+          onChunk({
+            message_type: 'tool_return_message',
+            id: 'dummy',
+            date: new Date().toISOString(),
+            tool_call_id: decision.approval.toolCallId,
+            tool_return: result,
+            status: 'success',
+          });
+        }
+
+        return {
+          type: 'tool',
+          tool_call_id: decision.approval.toolCallId,
+          tool_return: result,
+          status: 'success',
+        };
+      } catch (e) {
+        const errorMessage =
+          e instanceof Error
+            ? `Error executing MCP tool: ${e.message}`
+            : `Error executing MCP tool: ${String(e)}`;
+
+        console.error('[Approval] MCP tool execution failed:', e);
+
+        if (onChunk) {
+          onChunk({
+            message_type: 'tool_return_message',
+            id: 'dummy',
+            date: new Date().toISOString(),
+            tool_call_id: decision.approval.toolCallId,
+            tool_return: errorMessage,
+            status: 'error',
+          });
+        }
+
+        return {
+          type: 'tool',
+          tool_call_id: decision.approval.toolCallId,
+          tool_return: errorMessage,
+          status: 'error',
+        };                
+      }
+    }
     // If fancy UI already computed the result, use it directly
     if (decision.precomputedResult) {
       return {
@@ -519,4 +590,21 @@ export async function executeAutoAllowedTools(
         stderr: r.stderr,
       } as ToolExecutionResult,
     }));
+}
+function extractMCPServerName(toolName: string): string | null {
+  // Check tool metadata cache
+    const metadata = getToolMetadata(toolName);
+    if (!metadata) {
+      return null;
+    }
+
+    // Look for mcp_client:* tag
+    const mcpTag = metadata.tags?.find((t: string) =>
+      t.startsWith('mcp_client:'),
+    );
+    if (mcpTag) {
+      return mcpTag.split(':')[1]; // Extract server name
+    }
+
+    return null;
 }

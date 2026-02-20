@@ -74,6 +74,8 @@ import { loadTools } from "./tools/manager";
 import { clearPersistedClientToolRules } from "./tools/toolset";
 import { debugLog, debugWarn, isDebugEnabled } from "./utils/debug";
 import { markMilestone } from "./utils/timing";
+import { MCPManager, getMCPManager, setGlobalMCPManager } from './mcp/manager';
+import { fetchToolMetadata } from './tools/manager';
 
 // Stable empty array constants to prevent new references on every render
 // These are used as fallbacks when resumeData is null, avoiding the React
@@ -251,6 +253,34 @@ async function printInfo() {
   );
 
   console.log("");
+
+  const mcpManager = new MCPManager();
+  await mcpManager.loadFromConfig();
+  // Register MCP tools locally (after spawning, before setting global)
+  // Note: Tools are already registered with Letta server from 'mcp add' command
+  await mcpManager.registerAllToolsWithClient();
+  setGlobalMCPManager(mcpManager);
+
+  // Cleanup MCP servers on shutdown
+  const cleanupMCP = async () => {
+    console.log('\n[MCP Manager] Cleaning up...');
+    await mcpManager.shutdown();
+  };
+
+  // Handle various exit signals
+  process.on('SIGINT', async () => {
+    await cleanupMCP();
+    process.exit(0);
+  });
+
+  process.on('SIGTERM', async () => {
+    await cleanupMCP();
+    process.exit(0);
+  });
+
+  process.on('beforeExit', async () => {
+    await cleanupMCP();
+  });
 
   // Show which agent will be resumed
   if (lastAgent) {
@@ -634,6 +664,11 @@ async function main(): Promise<void> {
         // Silently ignore cleanup failures
       }
     });
+  }
+
+  // Fetch tool metadata for MCP routing (after agentId is determined)
+  if (specifiedAgentId) {
+    await fetchToolMetadata(specifiedAgentId);
   }
 
   // Fail if an unknown command/argument is passed (and we're not in headless mode where it might be a prompt)
@@ -2345,6 +2380,7 @@ async function main(): Promise<void> {
       exitOnCtrlC: false, // We handle CTRL-C manually with double-press guard
     },
   );
+
 }
 
 main();
