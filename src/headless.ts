@@ -821,17 +821,12 @@ export async function handleHeadlessCommand(
   }
 
   // Priority 4: Try to resume from project settings (.letta/settings.local.json)
-  // Store local conversation ID for use in conversation resolution below
-  let resolvedLocalConvId: string | null = null;
   if (!agent) {
     await settingsManager.loadLocalProjectSettings();
     const localAgentId = settingsManager.getLocalLastAgentId(process.cwd());
     if (localAgentId) {
       try {
         agent = await client.agents.retrieve(localAgentId);
-        // Store local conversation for downstream resolution
-        const localSession = settingsManager.getLocalLastSession(process.cwd());
-        resolvedLocalConvId = localSession?.conversationId ?? null;
       } catch (_error) {
         // Local LRU agent doesn't exist - log and continue
         console.error(`Unable to locate agent ${localAgentId} in .letta/`);
@@ -1022,22 +1017,16 @@ export async function handleHeadlessCommand(
       isolated_block_labels: isolatedBlockLabels,
     });
     conversationId = conversation.id;
-  } else if (resolvedLocalConvId) {
-    // Resumed from local LRU — restore the local conversation
-    if (resolvedLocalConvId === "default") {
-      conversationId = "default";
-    } else {
-      try {
-        await client.conversations.retrieve(resolvedLocalConvId);
-        conversationId = resolvedLocalConvId;
-      } catch {
-        // Local conversation no longer exists — fall back to default
-        conversationId = "default";
-      }
-    }
   } else {
-    // Default (including --new-agent, --agent, global LRU fallback): use "default" conversation
-    conversationId = "default";
+    // Default for headless: always create a new conversation to avoid
+    // 409 "conversation busy" races (e.g., parent agent calling letta -p).
+    // Use --default or --conv default to explicitly target the agent's
+    // primary conversation.
+    const conversation = await client.conversations.create({
+      agent_id: agent.id,
+      isolated_block_labels: isolatedBlockLabels,
+    });
+    conversationId = conversation.id;
   }
   markMilestone("HEADLESS_CONVERSATION_READY");
 
