@@ -9,7 +9,7 @@ describe("headless shared reminder wiring", () => {
     );
     const source = readFileSync(headlessPath, "utf-8");
 
-    expect(source).toContain('mode: "headless-one-shot"');
+    expect(source).toContain('isSubagent ? "subagent" : "headless-one-shot"');
     expect(source).toContain(
       "sessionContextReminderEnabled: systemInfoReminderEnabled",
     );
@@ -21,7 +21,9 @@ describe("headless shared reminder wiring", () => {
     );
     const source = readFileSync(headlessPath, "utf-8");
 
-    expect(source).toContain('mode: "headless-bidirectional"');
+    expect(source).toContain(
+      'isSubagent ? "subagent" : "headless-bidirectional"',
+    );
     expect(source).toContain("resolvePlanModeReminder: async () => {");
     expect(source).toContain("const { PLAN_MODE_REMINDER } = await import");
   });
@@ -34,6 +36,21 @@ describe("headless shared reminder wiring", () => {
 
     expect(source).toContain("syncReminderStateFromContextTracker(");
     expect(source).toContain("reminderContextTracker");
+  });
+
+  test("subagent mode is wired via LETTA_CODE_AGENT_ROLE check", () => {
+    const headlessPath = fileURLToPath(
+      new URL("../../headless.ts", import.meta.url),
+    );
+    const source = readFileSync(headlessPath, "utf-8");
+
+    expect(source).toContain(
+      'process.env.LETTA_CODE_AGENT_ROLE === "subagent"',
+    );
+    expect(source).toContain('isSubagent ? "subagent" : "headless-one-shot"');
+    expect(source).toContain(
+      'isSubagent ? "subagent" : "headless-bidirectional"',
+    );
   });
 
   test("one-shot approval drain uses shared stream processor", () => {

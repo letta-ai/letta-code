@@ -1,7 +1,8 @@
 export type SharedReminderMode =
   | "interactive"
   | "headless-one-shot"
-  | "headless-bidirectional";
+  | "headless-bidirectional"
+  | "subagent";
 
 export type SharedReminderId =
   | "session-context"
