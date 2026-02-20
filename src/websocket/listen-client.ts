@@ -20,12 +20,12 @@ import { getResumeData } from "../agent/check-approval";
 import { getClient } from "../agent/client";
 import { sendMessageStream } from "../agent/message";
 import { createBuffers } from "../cli/helpers/accumulator";
+import { classifyApprovals } from "../cli/helpers/approvalClassification";
+import { generatePlanFilePath } from "../cli/helpers/planName";
 import { drainStreamWithResume } from "../cli/helpers/stream";
+import { permissionMode } from "../permissions/mode";
 import { settingsManager } from "../settings-manager";
 import { loadTools } from "../tools/manager";
-import { permissionMode } from "../permissions/mode";
-import { generatePlanFilePath } from "../cli/helpers/planName";
-import { classifyApprovals } from "../cli/helpers/approvalClassification";
 
 interface StartListenerOptions {
   connectionId: string;
@@ -86,7 +86,11 @@ interface ModeChangedMessage {
 }
 
 type ServerMessage = PongMessage | IncomingMessage | ModeChangeMessage;
-type ClientMessage = PingMessage | ResultMessage | RunStartedMessage | ModeChangedMessage;
+type ClientMessage =
+  | PingMessage
+  | ResultMessage
+  | RunStartedMessage
+  | ModeChangedMessage;
 
 type ListenerRuntime = {
   socket: WebSocket | null;
@@ -199,7 +203,11 @@ function parseServerMessage(data: WebSocket.RawData): ServerMessage | null {
   try {
     const raw = typeof data === "string" ? data : data.toString();
     const parsed = JSON.parse(raw) as { type?: string };
-    if (parsed.type === "pong" || parsed.type === "message" || parsed.type === "mode_change") {
+    if (
+      parsed.type === "pong" ||
+      parsed.type === "message" ||
+      parsed.type === "mode_change"
+    ) {
       return parsed as ServerMessage;
     }
     return null;
@@ -501,7 +509,7 @@ async function handleIncomingMessage(
     // - null: no conversation (use agent endpoint)
     // - string: specific conversation ID (use conversations endpoint)
     const requestedConversationId = msg.conversationId || undefined;
-    
+
     // For sendMessageStream: "default" means use agent endpoint, else use conversations endpoint
     const conversationId = requestedConversationId ?? "default";
 
