@@ -38,6 +38,7 @@ const RECORD_SEP = "\x1e";
 
 export interface GenerateResult {
   filePath: string;
+  opened: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -444,15 +445,17 @@ export async function generateAndOpenMemoryViewer(
   writeFileSync(filePath, html);
   chmodSync(filePath, 0o600);
 
-  // 4. Open in browser
-  try {
-    const { default: openUrl } = await import("open");
-    await openUrl(filePath, { wait: false });
-  } catch (err) {
-    throw new Error(
-      `Failed to open browser. File saved to: ${filePath}${err instanceof Error ? ` (${err.message})` : ""}`,
-    );
+  // 4. Open in browser (skip inside tmux — `open` launches a broken new
+  //    browser instance instead of reusing the running one)
+  const isTmux = Boolean(process.env.TMUX);
+  if (!isTmux) {
+    try {
+      const { default: openUrl } = await import("open");
+      await openUrl(filePath, { wait: false });
+    } catch {
+      throw new Error(`Could not open browser. Run: open ${filePath}`);
+    }
   }
 
-  return { filePath };
+  return { filePath, opened: !isTmux };
 }

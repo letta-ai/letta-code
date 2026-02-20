@@ -113,7 +113,13 @@ export function MemfsTreeViewer({
     if ((input === "o" || input === "O") && hasGitRepo) {
       showStatus("Opening in browser...", 10000);
       generateAndOpenMemoryViewer(agentId, { agentName })
-        .then(() => showStatus("Opened in browser", 3000))
+        .then((result) => {
+          if (result.opened) {
+            showStatus("Opened in browser", 3000);
+          } else {
+            showStatus(`Run: open ${result.filePath}`, 15000);
+          }
+        })
         .catch((err: unknown) =>
           showStatus(
             err instanceof Error ? err.message : "Failed to open viewer",
