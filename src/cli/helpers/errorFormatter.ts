@@ -472,7 +472,6 @@ export function getRetryStatusMessage(
 const ENDPOINT_TYPE_DISPLAY_NAMES: Record<string, string> = {
   openai: "OpenAI",
   anthropic: "Anthropic",
-  chatgpt: "ChatGPT",
   chatgpt_oauth: "ChatGPT",
   google_ai: "Google AI",
   google_vertex: "Google Vertex",
