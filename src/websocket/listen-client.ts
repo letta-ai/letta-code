@@ -25,6 +25,7 @@ import { generatePlanFilePath } from "../cli/helpers/planName";
 import { drainStreamWithResume } from "../cli/helpers/stream";
 import { permissionMode } from "../permissions/mode";
 import { settingsManager } from "../settings-manager";
+import { isInteractiveApprovalTool } from "../tools/interactivePolicy";
 import { loadTools } from "../tools/manager";
 
 interface StartListenerOptions {
@@ -652,8 +653,10 @@ async function handleIncomingMessage(
 
       // Classify approvals (auto-allow, auto-deny, needs user input)
       // Don't treat "ask" as deny - cloud UI can handle approvals
+      // Interactive tools (AskUserQuestion, EnterPlanMode, ExitPlanMode) always need user input
       const { autoAllowed, autoDenied, needsUserInput } =
         await classifyApprovals(approvals, {
+          alwaysRequiresUserInput: isInteractiveApprovalTool,
           treatAskAsDeny: false, // Let cloud UI handle approvals
           requireArgsForAutoApprove: true,
         });

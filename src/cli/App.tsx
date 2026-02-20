@@ -5136,6 +5136,7 @@ export default function App({
       setStreaming(false);
       resetTrajectoryBases();
       toolResultsInFlightRef.current = false;
+      setIsExecutingTool(false);
       if (!toolsCancelled) {
         appendError(INTERRUPT_MESSAGE, true);
       }
@@ -5215,13 +5216,18 @@ export default function App({
 
         if (abortControllerRef.current) {
           abortControllerRef.current.abort();
+          abortControllerRef.current = null;
         }
+        setIsExecutingTool(false);
+        toolResultsInFlightRef.current = false;
         pendingInterruptRecoveryConversationIdRef.current =
           conversationIdRef.current;
       } catch (e) {
         const errorDetails = formatErrorDetails(e, agentId);
         appendError(`Failed to interrupt stream: ${errorDetails}`);
         setInterruptRequested(false);
+        setIsExecutingTool(false);
+        toolResultsInFlightRef.current = false;
       }
     }
   }, [
