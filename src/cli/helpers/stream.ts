@@ -13,6 +13,7 @@ import {
   markIncompleteToolsAsCancelled,
   onChunk,
 } from "./accumulator";
+import { chunkLog } from "./chunkLog";
 import type { ContextTracker } from "./contextTracker";
 import type { ErrorInfo } from "./streamProcessor";
 import { StreamProcessor } from "./streamProcessor";
@@ -152,6 +153,9 @@ export async function drainStream(
 
       const { shouldOutput, errorInfo, updatedApproval } =
         streamProcessor.processChunk(chunk);
+
+      // Log chunk for feedback diagnostics
+      chunkLog.append(chunk);
 
       // Check abort signal before processing - don't add data after interrupt
       if (abortSignal?.aborted) {
