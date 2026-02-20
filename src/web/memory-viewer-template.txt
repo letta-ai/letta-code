@@ -1313,7 +1313,7 @@ html.dark .warning-badge { background: hsl(42, 30%, 18%); color: hsl(42, 80%, 70
     metaHtml += lcHtml;
     metaHtml += '<div class="file-meta">';
     metaHtml += '<button class="raw-toggle' + (rawMode ? ' active' : '') + '">' + (rawMode ? 'Rendered' : 'Raw') + '</button>';
-    metaHtml += '<div class="file-path">' + escHtml(file.path) + '</div>';
+    // file path omitted - already visible from tree selection
     if (pills) metaHtml += '<div class="meta-row">' + pills + '</div>';
     metaHtml += '</div>';
 
