@@ -515,7 +515,8 @@ async function handleIncomingMessage(
     const requestedConversationId = msg.conversationId || undefined;
 
     // For sendMessageStream: "default" means use agent endpoint, else use conversations endpoint
-    const conversationId = requestedConversationId ?? defaultConversationId ?? "default";
+    const conversationId =
+      requestedConversationId ?? defaultConversationId ?? "default";
 
     if (!agentId) {
       return;

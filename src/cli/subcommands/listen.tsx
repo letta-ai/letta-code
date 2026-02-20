@@ -42,9 +42,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     console.log(
       "  --agent <id>       Bind connection to specific agent (required for CLI usage)",
     );
-    console.log(
-      "  --conversation <id>, --conv <id>, -C <id>",
-    );
+    console.log("  --conversation <id>, --conv <id>, -C <id>");
     console.log(
       "                     Route messages to a specific conversation",
     );
@@ -52,7 +50,9 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     console.log("Examples:");
     console.log('  letta listen --name "george" --agent agent-abc123');
     console.log('  letta listen --name "laptop-work" --agent agent-xyz789');
-    console.log('  letta listen --name "daily-cron" --agent agent-abc123 --conv conv-xyz789\n');
+    console.log(
+      '  letta listen --name "daily-cron" --agent agent-abc123 --conv conv-xyz789\n',
+    );
     console.log(
       "Once connected, this instance will listen for incoming messages from cloud agents.",
     );
