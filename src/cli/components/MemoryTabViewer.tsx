@@ -3,6 +3,7 @@ import { Box, useInput } from "ink";
 import Link from "ink-link";
 import { useEffect, useState } from "react";
 import { getClient } from "../../agent/client";
+import { debugLog } from "../../utils/debug";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
 import { MarkdownDisplay } from "./MarkdownDisplay";
@@ -56,7 +57,7 @@ export function MemoryTabViewer({
         });
         setFreshBlocks(agent.memory?.blocks || []);
       } catch (error) {
-        console.error("Failed to fetch memory blocks:", error);
+        debugLog("memory-tab", "Failed to fetch memory blocks: %O", error);
         // Fall back to passed-in blocks if fetch fails
         setFreshBlocks(blocks);
       } finally {

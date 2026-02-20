@@ -15,6 +15,7 @@ import {
   type AwsProfile,
   parseAwsCredentials,
 } from "../../utils/aws-credentials";
+import { debugLog } from "../../utils/debug";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
 import { Text } from "./Text";
@@ -166,8 +167,7 @@ export function ProviderSelector({
             }
           })
           .catch((err) => {
-            // eslint-disable-next-line no-console
-            console.error("Failed to parse AWS credentials:", err);
+            debugLog("provider", "Failed to parse AWS credentials: %O", err);
             if (mountedRef.current) {
               setAwsProfiles([]);
               setIsLoadingProfiles(false);
