@@ -23,7 +23,6 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import { getVersion } from "../../version";
 import {
   type ApprovalResult,
   executeAutoAllowedTools,
@@ -106,6 +105,7 @@ import {
 import type { ToolsetName, ToolsetPreference } from "../tools/toolset";
 import { formatToolsetName } from "../tools/toolset-labels";
 import { debugLog, debugWarn } from "../utils/debug";
+import { getVersion } from "../version";
 import {
   handleMcpAdd,
   type McpCommandContext,
