@@ -238,6 +238,20 @@ class TelemetryManager {
   }
 
   /**
+   * Get the current message count
+   */
+  getMessageCount(): number {
+    return this.messageCount;
+  }
+
+  /**
+   * Get the current tool call count
+   */
+  getToolCallCount(): number {
+    return this.toolCallCount;
+  }
+
+  /**
    * Track session start
    */
   trackSessionStart() {

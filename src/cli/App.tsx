@@ -57,6 +57,7 @@ import {
   type ModelReasoningEffort,
 } from "../agent/model";
 import { INTERRUPT_RECOVERY_ALERT } from "../agent/promptAssets";
+import { recordSessionEnd } from "../agent/sessionHistory";
 import { SessionStats } from "../agent/stats";
 import {
   INTERRUPTED_BY_USER,
@@ -4956,6 +4957,28 @@ export default function App({
     const stats = sessionStatsRef.current.getSnapshot();
     telemetry.trackSessionEnd(stats, "exit_command");
 
+    // Record session to local history file
+    try {
+      recordSessionEnd(
+        agentId,
+        telemetry.getSessionId(),
+        stats,
+        {
+          project: projectDirectory,
+          model: currentModelLabel ?? "",
+          provider: currentModelProvider ?? "",
+        },
+        undefined,
+        {
+          messageCount: telemetry.getMessageCount(),
+          toolCallCount: telemetry.getToolCallCount(),
+          exitReason: "exit_command",
+        },
+      );
+    } catch {
+      // Non-critical, don't fail the exit
+    }
+
     // Flush telemetry before exit
     await telemetry.flush();
 
@@ -4964,7 +4987,13 @@ export default function App({
     setTimeout(() => {
       process.exit(0);
     }, 100);
-  }, [runEndHooks]);
+  }, [
+    runEndHooks,
+    agentId,
+    projectDirectory,
+    currentModelLabel,
+    currentModelProvider,
+  ]);
 
   // Handler when user presses UP/ESC to load queue into input for editing
   const handleEnterQueueEditMode = useCallback(() => {
@@ -6774,6 +6803,28 @@ export default function App({
             // Track session end explicitly (before exit) with stats
             const stats = sessionStatsRef.current.getSnapshot();
             telemetry.trackSessionEnd(stats, "logout");
+
+            // Record session to local history file
+            try {
+              recordSessionEnd(
+                agentId,
+                telemetry.getSessionId(),
+                stats,
+                {
+                  project: projectDirectory,
+                  model: currentModelLabel ?? "",
+                  provider: currentModelProvider ?? "",
+                },
+                undefined,
+                {
+                  messageCount: telemetry.getMessageCount(),
+                  toolCallCount: telemetry.getToolCallCount(),
+                  exitReason: "logout",
+                },
+              );
+            } catch {
+              // Non-critical, don't fail the exit
+            }
 
             // Flush telemetry before exit
             await telemetry.flush();
