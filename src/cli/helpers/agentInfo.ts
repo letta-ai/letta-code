@@ -88,8 +88,7 @@ export function buildAgentInfo(options: AgentInfoOptions): string {
       ? `\n- **Memory directory (also stored in \`MEMORY_DIR\` env var)**: \`${getMemoryFilesystemRoot(agentInfo.id)}\``
       : "";
 
-    return `${SYSTEM_REMINDER_OPEN}
-This is an automated message providing information about you.
+    return `${SYSTEM_REMINDER_OPEN}This is an automated message providing information about you.
 - **Agent ID (also stored in \`AGENT_ID\` env var)**: ${agentInfo.id}${memoryDirLine}
 - **Agent name**: ${agentInfo.name || "(unnamed)"} (the user can change this with /rename)
 - **Agent description**: ${agentInfo.description || "(no description)"} (the user can change this with /description)

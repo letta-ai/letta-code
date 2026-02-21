@@ -5,8 +5,8 @@ export type SharedReminderMode =
   | "subagent";
 
 export type SharedReminderId =
-  | "agent-info"
   | "session-context"
+  | "agent-info"
   | "skills"
   | "permission-mode"
   | "plan-mode"
@@ -24,6 +24,11 @@ export interface SharedReminderDefinition {
 export const SHARED_REMINDER_CATALOG: ReadonlyArray<SharedReminderDefinition> =
   [
     {
+      id: "session-context",
+      description: "First-turn device/git/cwd context",
+      modes: ["interactive", "headless-one-shot", "headless-bidirectional"],
+    },
+    {
       id: "agent-info",
       description: "Agent identity (ID, name, server, memory dir)",
       modes: [
@@ -32,11 +37,6 @@ export const SHARED_REMINDER_CATALOG: ReadonlyArray<SharedReminderDefinition> =
         "headless-bidirectional",
         "subagent",
       ],
-    },
-    {
-      id: "session-context",
-      description: "First-turn device/git/cwd context",
-      modes: ["interactive", "headless-one-shot", "headless-bidirectional"],
     },
     {
       id: "skills",
