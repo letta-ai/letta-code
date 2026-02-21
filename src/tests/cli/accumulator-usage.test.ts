@@ -106,6 +106,30 @@ describe("accumulator usage statistics", () => {
     expect(tracker.pendingReflectionTrigger).toBe(true);
   });
 
+  test("sets reflection trigger for legacy compaction summary user_message", () => {
+    const buffers = createBuffers("agent-1");
+    const tracker = createContextTracker();
+    const legacySummary = JSON.stringify({
+      type: "system_alert",
+      message:
+        "The following prior messages have been hidden due to the conversation context window being reached.\nThe following is a summary of the previous messages: compact summary",
+    });
+
+    onChunk(
+      buffers,
+      {
+        message_type: "user_message",
+        id: "legacy-compaction-1",
+        content: legacySummary,
+      } as unknown as LettaStreamingResponse,
+      tracker,
+    );
+
+    expect(tracker.pendingCompaction).toBe(true);
+    expect(tracker.pendingSkillsReinject).toBe(true);
+    expect(tracker.pendingReflectionTrigger).toBe(true);
+  });
+
   test("accumulates assistant messages when otid is missing but id is present", () => {
     const buffers = createBuffers();
 
