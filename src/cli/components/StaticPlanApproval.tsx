@@ -1,5 +1,6 @@
 import { Box, useInput } from "ink";
-import { memo, useState } from "react";
+import { memo, useCallback, useState } from "react";
+import { generateAndOpenPlanViewer } from "../../web/generate-plan-viewer";
 import { useProgressIndicator } from "../hooks/useProgressIndicator";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { useTextInputCursor } from "../hooks/useTextInputCursor";
@@ -12,6 +13,9 @@ type Props = {
   onKeepPlanning: (reason: string) => void;
   onCancel: () => void; // For CTRL-C to queue denial (like other approval screens)
   isFocused?: boolean;
+  planContent?: string;
+  planFilePath?: string;
+  agentName?: string;
 };
 
 /**
@@ -32,8 +36,12 @@ export const StaticPlanApproval = memo(
     onKeepPlanning,
     onCancel,
     isFocused = true,
+    planContent,
+    planFilePath,
+    agentName,
   }: Props) => {
     const [selectedOption, setSelectedOption] = useState(0);
+    const [browserStatus, setBrowserStatus] = useState("");
     const {
       text: customReason,
       cursorPos,
@@ -42,6 +50,24 @@ export const StaticPlanApproval = memo(
     } = useTextInputCursor();
     const columns = useTerminalWidth();
     useProgressIndicator();
+
+    const openInBrowser = useCallback(() => {
+      if (!planContent || !planFilePath) return;
+      setBrowserStatus("Opening in browser...");
+      generateAndOpenPlanViewer(planContent, planFilePath, { agentName })
+        .then((result) => {
+          setBrowserStatus(
+            result.opened
+              ? "Opened in browser"
+              : `Run: open ${result.filePath}`,
+          );
+          setTimeout(() => setBrowserStatus(""), 5000);
+        })
+        .catch(() => {
+          setBrowserStatus("Failed to open browser");
+          setTimeout(() => setBrowserStatus(""), 5000);
+        });
+    }, [planContent, planFilePath, agentName]);
 
     const customOptionIndex = 2;
     const maxOptionIndex = customOptionIndex;
@@ -56,6 +82,16 @@ export const StaticPlanApproval = memo(
         // CTRL-C: cancel and queue denial (like other approval screens)
         if (key.ctrl && input === "c") {
           onCancel();
+          return;
+        }
+
+        // O: open plan in browser (only when not typing in custom field)
+        if (
+          (input === "o" || input === "O") &&
+          !isOnCustomOption &&
+          planContent
+        ) {
+          openInBrowser();
           return;
         }
 
@@ -117,11 +153,12 @@ export const StaticPlanApproval = memo(
     );
 
     // Hint text based on state
+    const browserHint = planContent ? " · O open in browser" : "";
     const hintText = isOnCustomOption
       ? customReason
         ? "Enter to submit · Esc to clear"
         : "Type feedback · Esc to cancel"
-      : "Enter to select · Esc to cancel";
+      : `Enter to select${browserHint} · Esc to cancel`;
 
     return (
       <Box flexDirection="column">
@@ -206,7 +243,7 @@ export const StaticPlanApproval = memo(
 
         {/* Hint */}
         <Box marginTop={1}>
-          <Text dimColor>{hintText}</Text>
+          <Text dimColor>{browserStatus || hintText}</Text>
         </Box>
       </Box>
     );

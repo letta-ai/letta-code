@@ -11753,6 +11753,18 @@ Plan file path: ${planFilePath}`;
                                   "project")
                             }
                             showPreview={showApprovalPreview}
+                            planContent={
+                              currentApproval.toolName === "ExitPlanMode"
+                                ? _readPlanFile()
+                                : undefined
+                            }
+                            planFilePath={
+                              currentApproval.toolName === "ExitPlanMode"
+                                ? (permissionMode.getPlanFilePath() ??
+                                  undefined)
+                                : undefined
+                            }
+                            agentName={agentName ?? undefined}
                           />
                         ) : ln.kind === "user" ? (
                           <UserMessage line={ln} prompt={statusLine.prompt} />
@@ -11837,6 +11849,17 @@ Plan file path: ${planFilePath}`;
                         : (currentApprovalContext?.defaultScope ?? "project")
                     }
                     showPreview={showApprovalPreview}
+                    planContent={
+                      currentApproval.toolName === "ExitPlanMode"
+                        ? _readPlanFile()
+                        : undefined
+                    }
+                    planFilePath={
+                      currentApproval.toolName === "ExitPlanMode"
+                        ? (permissionMode.getPlanFilePath() ?? undefined)
+                        : undefined
+                    }
+                    agentName={agentName ?? undefined}
                   />
                 </Box>
               )}
