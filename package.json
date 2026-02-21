@@ -26,6 +26,9 @@
     "url": "https://github.com/letta-ai/letta-code.git"
   },
   "license": "Apache-2.0",
+  "engines": {
+    "node": ">=18"
+  },
   "publishConfig": {
     "access": "public"
   },

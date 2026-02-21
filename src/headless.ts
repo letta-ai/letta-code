@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { parseArgs } from "node:util";
 import type { Letta } from "@letta-ai/letta-client";
 import { APIError } from "@letta-ai/letta-client/core/error";
@@ -1398,7 +1399,7 @@ ${SYSTEM_REMINDER_CLOSE}
           message: `Maximum turns limit reached (${buffers.usage.stepCount}/${maxTurns} steps)`,
           stop_reason: "max_steps",
           session_id: sessionId,
-          uuid: `error-max-turns-${crypto.randomUUID()}`,
+          uuid: `error-max-turns-${randomUUID()}`,
         };
         console.log(JSON.stringify(errorMsg));
       } else {
@@ -1472,7 +1473,7 @@ ${SYSTEM_REMINDER_CLOSE}
               message:
                 "Detected pending approval conflict on send; resolving before retry",
               session_id: sessionId,
-              uuid: `recovery-pre-stream-${crypto.randomUUID()}`,
+              uuid: `recovery-pre-stream-${randomUUID()}`,
             };
             console.log(JSON.stringify(recoveryMsg));
           } else {
@@ -1498,7 +1499,7 @@ ${SYSTEM_REMINDER_CLOSE}
               max_attempts: CONVERSATION_BUSY_MAX_RETRIES,
               delay_ms: CONVERSATION_BUSY_RETRY_DELAY_MS,
               session_id: sessionId,
-              uuid: `retry-conversation-busy-${crypto.randomUUID()}`,
+              uuid: `retry-conversation-busy-${randomUUID()}`,
             };
             console.log(JSON.stringify(retryMsg));
           } else {
@@ -1534,7 +1535,7 @@ ${SYSTEM_REMINDER_CLOSE}
               max_attempts: LLM_API_ERROR_MAX_RETRIES,
               delay_ms: delayMs,
               session_id: sessionId,
-              uuid: `retry-pre-stream-${crypto.randomUUID()}`,
+              uuid: `retry-pre-stream-${randomUUID()}`,
             };
             console.log(JSON.stringify(retryMsg));
           } else {
@@ -1586,7 +1587,7 @@ ${SYSTEM_REMINDER_CLOSE}
               stop_reason: "error",
               run_id: errorInfo.run_id,
               session_id: sessionId,
-              uuid: crypto.randomUUID(),
+              uuid: randomUUID(),
               ...(errorInfo.error_type &&
                 errorInfo.run_id && {
                   api_error: {
@@ -1616,7 +1617,7 @@ ${SYSTEM_REMINDER_CLOSE}
                 "Detected pending approval conflict; auto-denying stale approval and retrying",
               run_id: recoveryRunId ?? undefined,
               session_id: sessionId,
-              uuid: `recovery-${recoveryRunId || crypto.randomUUID()}`,
+              uuid: `recovery-${recoveryRunId || randomUUID()}`,
             };
             console.log(JSON.stringify(recoveryMsg));
             approvalPendingRecovery = true;
@@ -1670,7 +1671,7 @@ ${SYSTEM_REMINDER_CLOSE}
                 type: "stream_event",
                 event: chunk,
                 session_id: sessionId,
-                uuid: uuid || crypto.randomUUID(),
+                uuid: uuid || randomUUID(),
               };
               console.log(JSON.stringify(streamEvent));
             } else {
@@ -1678,7 +1679,7 @@ ${SYSTEM_REMINDER_CLOSE}
                 type: "message",
                 ...chunk,
                 session_id: sessionId,
-                uuid: uuid || crypto.randomUUID(),
+                uuid: uuid || randomUUID(),
               };
               console.log(JSON.stringify(msg));
             }
@@ -1866,7 +1867,7 @@ ${SYSTEM_REMINDER_CLOSE}
               delay_ms: delayMs,
               run_id: lastRunId ?? undefined,
               session_id: sessionId,
-              uuid: `retry-${lastRunId || crypto.randomUUID()}`,
+              uuid: `retry-${lastRunId || randomUUID()}`,
             };
             console.log(JSON.stringify(retryMsg));
           } else {
@@ -1898,7 +1899,7 @@ ${SYSTEM_REMINDER_CLOSE}
               "Tool call ID mismatch; fetching actual pending approvals and resyncing",
             run_id: lastRunId ?? undefined,
             session_id: sessionId,
-            uuid: `recovery-${lastRunId || crypto.randomUUID()}`,
+            uuid: `recovery-${lastRunId || randomUUID()}`,
           };
           console.log(JSON.stringify(recoveryMsg));
         } else {
@@ -1921,7 +1922,7 @@ ${SYSTEM_REMINDER_CLOSE}
               stop_reason: stopReason,
               run_id: lastRunId ?? undefined,
               session_id: sessionId,
-              uuid: `error-${lastRunId || crypto.randomUUID()}`,
+              uuid: `error-${lastRunId || randomUUID()}`,
             };
             console.log(JSON.stringify(errorMsg));
           } else {
@@ -1984,7 +1985,7 @@ ${SYSTEM_REMINDER_CLOSE}
                 delay_ms: delayMs,
                 run_id: lastRunId ?? undefined,
                 session_id: sessionId,
-                uuid: `retry-${lastRunId || crypto.randomUUID()}`,
+                uuid: `retry-${lastRunId || randomUUID()}`,
               };
               console.log(JSON.stringify(retryMsg));
             } else {
@@ -2051,7 +2052,7 @@ ${SYSTEM_REMINDER_CLOSE}
           stop_reason: stopReason,
           run_id: lastRunId ?? undefined,
           session_id: sessionId,
-          uuid: `error-${lastRunId || crypto.randomUUID()}`,
+          uuid: `error-${lastRunId || randomUUID()}`,
         };
         console.log(JSON.stringify(errorMsg));
       } else {
@@ -2073,7 +2074,7 @@ ${SYSTEM_REMINDER_CLOSE}
         stop_reason: "error",
         run_id: lastKnownRunId ?? undefined,
         session_id: sessionId,
-        uuid: `error-${lastKnownRunId || crypto.randomUUID()}`,
+        uuid: `error-${lastKnownRunId || randomUUID()}`,
       };
       console.log(JSON.stringify(errorMsg));
     } else {
@@ -2555,7 +2556,7 @@ async function runBidirectionalMode(
         message: "Invalid JSON input",
         stop_reason: "error",
         session_id: sessionId,
-        uuid: crypto.randomUUID(),
+        uuid: randomUUID(),
       };
       console.log(JSON.stringify(errorMsg));
       continue;
@@ -2586,7 +2587,7 @@ async function runBidirectionalMode(
             },
           },
           session_id: sessionId,
-          uuid: crypto.randomUUID(),
+          uuid: randomUUID(),
         };
         console.log(JSON.stringify(initResponse));
       } else if (subtype === "interrupt") {
@@ -2602,7 +2603,7 @@ async function runBidirectionalMode(
             request_id: requestId ?? "",
           },
           session_id: sessionId,
-          uuid: crypto.randomUUID(),
+          uuid: randomUUID(),
         };
         console.log(JSON.stringify(interruptResponse));
       } else if (subtype === "register_external_tools") {
@@ -2666,7 +2667,7 @@ async function runBidirectionalMode(
             response: { registered: tools.length },
           },
           session_id: sessionId,
-          uuid: crypto.randomUUID(),
+          uuid: randomUUID(),
         };
         console.log(JSON.stringify(registerResponse));
       } else {
@@ -2678,7 +2679,7 @@ async function runBidirectionalMode(
             error: `Unknown control request subtype: ${subtype}`,
           },
           session_id: sessionId,
-          uuid: crypto.randomUUID(),
+          uuid: randomUUID(),
         };
         console.log(JSON.stringify(errorResponse));
       }
@@ -2863,7 +2864,7 @@ async function runBidirectionalMode(
                 message:
                   "Detected pending approval conflict on send; resolving before retry",
                 session_id: sessionId,
-                uuid: `recovery-bidir-${crypto.randomUUID()}`,
+                uuid: `recovery-bidir-${randomUUID()}`,
               };
               console.log(JSON.stringify(recoveryMsg));
               await resolveAllPendingApprovals();
@@ -2888,7 +2889,7 @@ async function runBidirectionalMode(
                 max_attempts: LLM_API_ERROR_MAX_RETRIES,
                 delay_ms: delayMs,
                 session_id: sessionId,
-                uuid: `retry-bidir-${crypto.randomUUID()}`,
+                uuid: `retry-bidir-${randomUUID()}`,
               };
               console.log(JSON.stringify(retryMsg));
 
@@ -2913,7 +2914,7 @@ async function runBidirectionalMode(
                 stop_reason: "error",
                 run_id: errorInfo.run_id,
                 session_id: sessionId,
-                uuid: crypto.randomUUID(),
+                uuid: randomUUID(),
                 ...(errorInfo.error_type &&
                   errorInfo.run_id && {
                     api_error: {
@@ -2944,7 +2945,7 @@ async function runBidirectionalMode(
                 type: "stream_event",
                 event: chunk,
                 session_id: sessionId,
-                uuid: uuid || crypto.randomUUID(),
+                uuid: uuid || randomUUID(),
               };
               console.log(JSON.stringify(streamEvent));
             } else {
@@ -2952,7 +2953,7 @@ async function runBidirectionalMode(
                 type: "message",
                 ...chunk,
                 session_id: sessionId,
-                uuid: uuid || crypto.randomUUID(),
+                uuid: uuid || randomUUID(),
               };
               console.log(JSON.stringify(msg));
             }
@@ -3218,7 +3219,7 @@ async function runBidirectionalMode(
           message: errorDetails,
           stop_reason: "error",
           session_id: sessionId,
-          uuid: crypto.randomUUID(),
+          uuid: randomUUID(),
         };
         console.log(JSON.stringify(errorMsg));
 
@@ -3251,7 +3252,7 @@ async function runBidirectionalMode(
       message: `Unknown message type: ${message.type}`,
       stop_reason: "error",
       session_id: sessionId,
-      uuid: crypto.randomUUID(),
+      uuid: randomUUID(),
     };
     console.log(JSON.stringify(errorMsg));
   }

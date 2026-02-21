@@ -181,6 +181,40 @@ jobs:
         if: ${{ github.event_name != 'push' }}
         run: bun pm pack
 
+  node18-smoke:
+    needs: check
+    name: Node 18 Smoke Test
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.0
+
+      - name: Install dependencies
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bun install
+
+      - name: Build bundle
+        run: bun run build
+
+      - name: Setup Node 18
+        uses: actions/setup-node@v6
+        with:
+          node-version: "18"
+
+      - name: Verify Node version
+        run: node --version
+
+      - name: CLI smoke test (Node 18)
+        run: node ./letta.js --help
+
   headless:
     needs: check
     name: Headless / ${{ matrix.model }}

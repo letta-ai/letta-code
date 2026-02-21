@@ -1,6 +1,7 @@
 // src/settings-manager.ts
 // In-memory settings manager that loads once and provides sync access
 
+import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { HooksConfig } from "./hooks/types";
@@ -441,7 +442,7 @@ class SettingsManager {
     const settings = this.getSettings();
     let deviceId = settings.deviceId;
     if (!deviceId) {
-      deviceId = crypto.randomUUID();
+      deviceId = randomUUID();
       this.updateSettings({ deviceId });
     }
     return deviceId;
