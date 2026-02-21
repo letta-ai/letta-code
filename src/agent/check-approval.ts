@@ -162,11 +162,13 @@ export function prepareMessageHistory(
         .map((m) => m.message_type)
         .lastIndexOf("assistant_message");
       if (lastAssistantIndex >= 0) {
-        const start = Math.max(
-          0,
-          lastAssistantIndex - (BACKFILL_PRIMARY_MESSAGE_LIMIT - 1),
-        );
-        trimmed = convo.slice(start, start + BACKFILL_PRIMARY_MESSAGE_LIMIT);
+        const lastAssistant = convo[lastAssistantIndex];
+        if (lastAssistant) {
+          // Preserve recency: keep the newest tail and prepend the last assistant.
+          const tailLimit = Math.max(BACKFILL_PRIMARY_MESSAGE_LIMIT - 1, 0);
+          const newestTail = tailLimit > 0 ? convo.slice(-tailLimit) : [];
+          trimmed = [lastAssistant, ...newestTail];
+        }
       }
     }
     if (trimmed.length > 0) return trimmed;
