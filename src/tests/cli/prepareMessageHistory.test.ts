@@ -62,6 +62,21 @@ describe("prepareMessageHistory", () => {
         ].includes(m.message_type as string),
       ),
     ).toBe(true);
+    // Preserve recency: keep latest tail and prepend last assistant anchor.
+    expect(out.map((m) => m.id)).toEqual([
+      "a1",
+      "u19",
+      "u20",
+      "u21",
+      "u22",
+      "u23",
+      "u24",
+      "u25",
+      "u26",
+      "u27",
+      "u28",
+      "u29",
+    ]);
   });
 
   test("primaryOnly falls back to reasoning when no primary messages exist", () => {
