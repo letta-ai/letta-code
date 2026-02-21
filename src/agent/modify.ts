@@ -8,6 +8,7 @@ import type {
   OpenAIModelSettings,
 } from "@letta-ai/letta-client/resources/agents/agents";
 import { OPENAI_CODEX_PROVIDER_NAME } from "../providers/openai-codex-provider";
+import { getModelContextWindow } from "./available-models";
 import { getClient } from "./client";
 
 type ModelSettings =
@@ -16,32 +17,14 @@ type ModelSettings =
   | GoogleAIModelSettings
   | Record<string, unknown>;
 
-function hasUpdateArg(
-  updateArgs: Record<string, unknown> | undefined,
-  key: string,
-): boolean {
-  return !!updateArgs && Object.hasOwn(updateArgs, key);
-}
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object"
-    ? (value as Record<string, unknown>)
-    : null;
-}
-
 /**
  * Builds model_settings from updateArgs based on provider type.
- *
- * Selective behavior: only keys explicitly present in updateArgs are applied.
- * Unrelated keys from existing model_settings are preserved.
+ * Always ensures parallel_tool_calls is enabled.
  */
 function buildModelSettings(
   modelHandle: string,
-  existingModelSettings: Record<string, unknown>,
   updateArgs?: Record<string, unknown>,
 ): ModelSettings {
-  const settings: Record<string, unknown> = { ...existingModelSettings };
-
   // Include our custom ChatGPT OAuth provider (chatgpt-plus-pro)
   const isOpenAI =
     modelHandle.startsWith("openai/") ||
@@ -56,191 +39,133 @@ function buildModelSettings(
   const isOpenRouter = modelHandle.startsWith("openrouter/");
   const isBedrock = modelHandle.startsWith("bedrock/");
 
-  const parallelToolCallsProvided =
-    hasUpdateArg(updateArgs, "parallel_tool_calls") &&
-    typeof updateArgs?.parallel_tool_calls === "boolean";
-
-  const applyParallelToolCalls = () => {
-    if (parallelToolCallsProvided) {
-      settings.parallel_tool_calls = updateArgs?.parallel_tool_calls;
-    }
-  };
+  let settings: ModelSettings;
 
   if (isOpenAI || isOpenRouter) {
-    settings.provider_type = "openai";
-    applyParallelToolCalls();
-
-    if (hasUpdateArg(updateArgs, "reasoning_effort")) {
-      const effort = updateArgs?.reasoning_effort;
-      if (
-        effort === "none" ||
-        effort === "minimal" ||
-        effort === "low" ||
-        effort === "medium" ||
-        effort === "high" ||
-        effort === "xhigh"
-      ) {
-        settings.reasoning = {
-          ...(asRecord(settings.reasoning) ?? {}),
-          reasoning_effort: effort as
-            | "none"
-            | "minimal"
-            | "low"
-            | "medium"
-            | "high"
-            | "xhigh",
-        };
-      }
+    const openaiSettings: OpenAIModelSettings = {
+      provider_type: "openai",
+      parallel_tool_calls: true,
+    };
+    if (updateArgs?.reasoning_effort) {
+      openaiSettings.reasoning = {
+        reasoning_effort: updateArgs.reasoning_effort as
+          | "none"
+          | "minimal"
+          | "low"
+          | "medium"
+          | "high"
+          | "xhigh",
+      };
     }
-
-    if (hasUpdateArg(updateArgs, "verbosity")) {
-      const verbosity = updateArgs?.verbosity;
-      if (
-        verbosity === "low" ||
-        verbosity === "medium" ||
-        verbosity === "high"
-      ) {
-        settings.verbosity = verbosity;
-      }
+    const verbosity = updateArgs?.verbosity;
+    if (verbosity === "low" || verbosity === "medium" || verbosity === "high") {
+      // The backend supports verbosity for OpenAI-family providers; the generated
+      // client type may lag this field, so set it via a narrow record cast.
+      (openaiSettings as Record<string, unknown>).verbosity = verbosity;
     }
-
-    if (hasUpdateArg(updateArgs, "max_output_tokens")) {
-      if (typeof updateArgs?.max_output_tokens === "number") {
-        settings.max_output_tokens = updateArgs.max_output_tokens;
-      }
-    }
+    settings = openaiSettings;
   } else if (isAnthropic) {
-    settings.provider_type = "anthropic";
-    applyParallelToolCalls();
-
-    // Map reasoning_effort to Anthropic's effort field
-    if (hasUpdateArg(updateArgs, "reasoning_effort")) {
-      const effort = updateArgs?.reasoning_effort;
-      if (effort === "low" || effort === "medium" || effort === "high") {
-        settings.effort = effort;
-      } else if (effort === "xhigh") {
-        // "max" is valid on the backend but the SDK type hasn't caught up yet
-        settings.effort = "max";
-      }
+    const anthropicSettings: AnthropicModelSettings = {
+      provider_type: "anthropic",
+      parallel_tool_calls: true,
+    };
+    // Map reasoning_effort to Anthropic's effort field (controls token spending via output_config)
+    const effort = updateArgs?.reasoning_effort;
+    if (effort === "low" || effort === "medium" || effort === "high") {
+      anthropicSettings.effort = effort;
+    } else if (effort === "xhigh") {
+      // "max" is valid on the backend but the SDK type hasn't caught up yet
+      (anthropicSettings as Record<string, unknown>).effort = "max";
     }
-
-    const hasEnableReasoner = hasUpdateArg(updateArgs, "enable_reasoner");
-    const hasMaxReasoningTokens = hasUpdateArg(
-      updateArgs,
-      "max_reasoning_tokens",
-    );
-    if (hasEnableReasoner || hasMaxReasoningTokens) {
-      const thinking = {
-        ...(asRecord(settings.thinking) ?? {}),
-      } as Record<string, unknown>;
-      if (
-        hasEnableReasoner &&
-        typeof updateArgs?.enable_reasoner === "boolean"
-      ) {
-        thinking.type = updateArgs.enable_reasoner ? "enabled" : "disabled";
-      }
-      if (typeof updateArgs?.max_reasoning_tokens === "number") {
-        thinking.budget_tokens = updateArgs.max_reasoning_tokens;
-      }
-      if (!thinking.type) {
-        thinking.type = "enabled";
-      }
-      settings.thinking = thinking;
+    // Build thinking config if either enable_reasoner or max_reasoning_tokens is specified
+    if (
+      updateArgs?.enable_reasoner !== undefined ||
+      typeof updateArgs?.max_reasoning_tokens === "number"
+    ) {
+      anthropicSettings.thinking = {
+        type: updateArgs?.enable_reasoner === false ? "disabled" : "enabled",
+        ...(typeof updateArgs?.max_reasoning_tokens === "number" && {
+          budget_tokens: updateArgs.max_reasoning_tokens,
+        }),
+      };
     }
-
-    if (hasUpdateArg(updateArgs, "max_output_tokens")) {
-      if (typeof updateArgs?.max_output_tokens === "number") {
-        settings.max_output_tokens = updateArgs.max_output_tokens;
-      }
-    }
+    settings = anthropicSettings;
   } else if (isZai) {
-    settings.provider_type = "zai";
-    applyParallelToolCalls();
-    if (hasUpdateArg(updateArgs, "max_output_tokens")) {
-      if (typeof updateArgs?.max_output_tokens === "number") {
-        settings.max_output_tokens = updateArgs.max_output_tokens;
-      }
-    }
+    // Zai uses the same model_settings structure as other providers.
+    // Ensure parallel_tool_calls is enabled.
+    settings = {
+      provider_type: "zai",
+      parallel_tool_calls: true,
+    };
   } else if (isGoogleAI) {
-    settings.provider_type = "google_ai";
-    applyParallelToolCalls();
-    if (hasUpdateArg(updateArgs, "thinking_budget")) {
-      settings.thinking_config = {
-        ...(asRecord(settings.thinking_config) ?? {}),
-        thinking_budget: updateArgs?.thinking_budget as number,
+    const googleSettings: GoogleAIModelSettings & { temperature?: number } = {
+      provider_type: "google_ai",
+      parallel_tool_calls: true,
+    };
+    if (updateArgs?.thinking_budget !== undefined) {
+      googleSettings.thinking_config = {
+        thinking_budget: updateArgs.thinking_budget as number,
       };
     }
-    if (hasUpdateArg(updateArgs, "temperature")) {
-      if (typeof updateArgs?.temperature === "number") {
-        settings.temperature = updateArgs.temperature;
-      }
+    if (typeof updateArgs?.temperature === "number") {
+      googleSettings.temperature = updateArgs.temperature as number;
     }
-    if (hasUpdateArg(updateArgs, "max_output_tokens")) {
-      if (typeof updateArgs?.max_output_tokens === "number") {
-        settings.max_output_tokens = updateArgs.max_output_tokens;
-      }
-    }
+    settings = googleSettings;
   } else if (isGoogleVertex) {
-    settings.provider_type = "google_vertex";
-    applyParallelToolCalls();
-    if (hasUpdateArg(updateArgs, "thinking_budget")) {
-      settings.thinking_config = {
-        ...(asRecord(settings.thinking_config) ?? {}),
-        thinking_budget: updateArgs?.thinking_budget as number,
+    // Vertex AI uses the same Google provider on the backend; only the handle differs.
+    const googleVertexSettings: Record<string, unknown> = {
+      provider_type: "google_vertex",
+      parallel_tool_calls: true,
+    };
+    if (updateArgs?.thinking_budget !== undefined) {
+      (googleVertexSettings as Record<string, unknown>).thinking_config = {
+        thinking_budget: updateArgs.thinking_budget as number,
       };
     }
-    if (hasUpdateArg(updateArgs, "temperature")) {
-      if (typeof updateArgs?.temperature === "number") {
-        settings.temperature = updateArgs.temperature;
-      }
+    if (typeof updateArgs?.temperature === "number") {
+      (googleVertexSettings as Record<string, unknown>).temperature =
+        updateArgs.temperature as number;
     }
-    if (hasUpdateArg(updateArgs, "max_output_tokens")) {
-      if (typeof updateArgs?.max_output_tokens === "number") {
-        settings.max_output_tokens = updateArgs.max_output_tokens;
-      }
-    }
+    settings = googleVertexSettings;
   } else if (isBedrock) {
-    settings.provider_type = "bedrock";
-    applyParallelToolCalls();
-
-    if (hasUpdateArg(updateArgs, "reasoning_effort")) {
-      const effort = updateArgs?.reasoning_effort;
-      if (effort === "low" || effort === "medium" || effort === "high") {
-        settings.effort = effort;
-      } else if (effort === "xhigh") {
-        settings.effort = "max";
-      }
+    // AWS Bedrock - supports Anthropic Claude models with thinking config
+    const bedrockSettings: Record<string, unknown> = {
+      provider_type: "bedrock",
+      parallel_tool_calls: true,
+    };
+    // Map reasoning_effort to Anthropic's effort field (Bedrock runs Claude models)
+    const effort = updateArgs?.reasoning_effort;
+    if (effort === "low" || effort === "medium" || effort === "high") {
+      bedrockSettings.effort = effort;
+    } else if (effort === "xhigh") {
+      bedrockSettings.effort = "max";
     }
-
-    const hasEnableReasoner = hasUpdateArg(updateArgs, "enable_reasoner");
-    const hasMaxReasoningTokens = hasUpdateArg(
-      updateArgs,
-      "max_reasoning_tokens",
-    );
-    if (hasEnableReasoner || hasMaxReasoningTokens) {
-      const thinking = {
-        ...(asRecord(settings.thinking) ?? {}),
-      } as Record<string, unknown>;
-      if (
-        hasEnableReasoner &&
-        typeof updateArgs?.enable_reasoner === "boolean"
-      ) {
-        thinking.type = updateArgs.enable_reasoner ? "enabled" : "disabled";
-      }
-      if (typeof updateArgs?.max_reasoning_tokens === "number") {
-        thinking.budget_tokens = updateArgs.max_reasoning_tokens;
-      }
-      if (!thinking.type) {
-        thinking.type = "enabled";
-      }
-      settings.thinking = thinking;
+    // Build thinking config if either enable_reasoner or max_reasoning_tokens is specified
+    if (
+      updateArgs?.enable_reasoner !== undefined ||
+      typeof updateArgs?.max_reasoning_tokens === "number"
+    ) {
+      bedrockSettings.thinking = {
+        type: updateArgs?.enable_reasoner === false ? "disabled" : "enabled",
+        ...(typeof updateArgs?.max_reasoning_tokens === "number" && {
+          budget_tokens: updateArgs.max_reasoning_tokens,
+        }),
+      };
     }
+    settings = bedrockSettings;
+  } else {
+    // For BYOK/unknown providers, return generic settings with parallel_tool_calls
+    settings = {};
+  }
 
-    if (hasUpdateArg(updateArgs, "max_output_tokens")) {
-      if (typeof updateArgs?.max_output_tokens === "number") {
-        settings.max_output_tokens = updateArgs.max_output_tokens;
-      }
-    }
+  // Apply max_output_tokens only when provider_type is present.
+  // Without provider_type the discriminated union rejects the payload (e.g. MiniMax).
+  if (
+    typeof updateArgs?.max_output_tokens === "number" &&
+    "provider_type" in settings
+  ) {
+    (settings as Record<string, unknown>).max_output_tokens =
+      updateArgs.max_output_tokens;
   }
 
   return settings;
@@ -254,6 +179,7 @@ function buildModelSettings(
  * @param agentId - The agent ID
  * @param modelHandle - The model handle (e.g., "anthropic/claude-sonnet-4-5-20250929")
  * @param updateArgs - Additional config args (context_window, reasoning_effort, enable_reasoner, etc.)
+ * @param preserveParallelToolCalls - If true, preserves the parallel_tool_calls setting when updating the model
  * @returns The updated agent state from the server (includes llm_config and model_settings)
  */
 export async function updateAgentLLMConfig(
@@ -263,30 +189,19 @@ export async function updateAgentLLMConfig(
 ): Promise<AgentState> {
   const client = await getClient();
 
-  const currentAgent = await client.agents.retrieve(agentId);
-  const currentModelSettings = asRecord(currentAgent.model_settings) ?? {};
-  const modelSettings = buildModelSettings(
-    modelHandle,
-    currentModelSettings,
-    updateArgs,
-  );
-
+  const modelSettings = buildModelSettings(modelHandle, updateArgs);
+  // First try updateArgs, then fall back to API-cached context window for BYOK models
+  const contextWindow =
+    (updateArgs?.context_window as number | undefined) ??
+    (await getModelContextWindow(modelHandle));
   const hasModelSettings = Object.keys(modelSettings).length > 0;
-  const hasContextWindowArg =
-    hasUpdateArg(updateArgs, "context_window") &&
-    typeof updateArgs?.context_window === "number";
-  const hasMaxOutputTokensArg =
-    hasUpdateArg(updateArgs, "max_output_tokens") &&
-    typeof updateArgs?.max_output_tokens === "number";
 
   await client.agents.update(agentId, {
     model: modelHandle,
     ...(hasModelSettings && { model_settings: modelSettings }),
-    ...(hasContextWindowArg && {
-      context_window_limit: updateArgs.context_window as number,
-    }),
-    ...(hasMaxOutputTokensArg && {
-      max_tokens: updateArgs.max_output_tokens as number,
+    ...(contextWindow && { context_window_limit: contextWindow }),
+    ...(typeof updateArgs?.max_output_tokens === "number" && {
+      max_tokens: updateArgs.max_output_tokens,
     }),
   });
 

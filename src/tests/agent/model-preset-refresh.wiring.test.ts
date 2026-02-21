@@ -14,16 +14,27 @@ describe("model preset refresh wiring", () => {
     expect(source).toContain("getModelInfoForLlmConfig(modelHandle");
   });
 
-  test("modify.ts supports selective parallel_tool_calls updates", () => {
+  test("modify.ts keeps direct updateArgs-driven model update flow", () => {
     const path = fileURLToPath(
       new URL("../../agent/modify.ts", import.meta.url),
     );
     const source = readFileSync(path, "utf-8");
 
-    expect(source).toContain('hasUpdateArg(updateArgs, "parallel_tool_calls")');
-    expect(source).toContain("const settings: Record<string, unknown> = {");
-    expect(source).toContain("...existingModelSettings");
-    expect(source).toContain('hasUpdateArg(updateArgs, "context_window")');
-    expect(source).toContain('hasUpdateArg(updateArgs, "max_output_tokens")');
+    const start = source.indexOf("export async function updateAgentLLMConfig(");
+    const end = source.indexOf("export interface SystemPromptUpdateResult", start);
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(start);
+    const updateSegment = source.slice(start, end);
+
+    expect(updateSegment).toContain(
+      "buildModelSettings(modelHandle, updateArgs)",
+    );
+    expect(updateSegment).toContain("getModelContextWindow(modelHandle)");
+    expect(updateSegment).not.toContain(
+      "const currentAgent = await client.agents.retrieve(",
+    );
+    expect(source).not.toContain(
+      'hasUpdateArg(updateArgs, "parallel_tool_calls")',
+    );
   });
 });
