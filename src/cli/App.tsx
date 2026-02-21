@@ -6224,7 +6224,7 @@ export default function App({
           return { submitted: true };
         }
 
-        // Special handling for /memory command - opens memory viewer
+        // Special handling for /memory command - opens memory viewer overlay
         if (trimmed === "/memory") {
           startOverlayCommand(
             "memory",
@@ -6233,6 +6233,44 @@ export default function App({
             "Memory viewer dismissed",
           );
           setActiveOverlay("memory");
+          return { submitted: true };
+        }
+
+        // /palace - open Memory Palace directly in the browser (skips TUI overlay)
+        if (trimmed === "/palace") {
+          const cmd = commandRunner.start(
+            "/palace",
+            "Opening Memory Palace...",
+          );
+
+          if (!settingsManager.isMemfsEnabled(agentId)) {
+            cmd.finish(
+              "Memory Palace requires memfs. Run /memfs enable first.",
+              false,
+            );
+            return { submitted: true };
+          }
+
+          const { generateAndOpenMemoryViewer } = await import(
+            "../web/generate-memory-viewer"
+          );
+          generateAndOpenMemoryViewer(agentId, {
+            agentName: agentName ?? undefined,
+          })
+            .then((result) => {
+              if (result.opened) {
+                cmd.finish("Opened Memory Palace in browser", true);
+              } else {
+                cmd.finish(`Open manually: ${result.filePath}`, true);
+              }
+            })
+            .catch((err: unknown) => {
+              cmd.finish(
+                `Failed to open: ${err instanceof Error ? err.message : String(err)}`,
+                false,
+              );
+            });
+
           return { submitted: true };
         }
 
