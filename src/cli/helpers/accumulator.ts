@@ -337,11 +337,18 @@ function markAsFinished(b: Buffers, id: string) {
 }
 
 // Helper to mark previous otid's line as finished when transitioning to new otid
-function handleOtidTransition(b: Buffers, newOtid: string | undefined) {
+function handleOtidTransition(
+  b: Buffers,
+  newOtid: string | undefined,
+  updateLastOtid: boolean,
+) {
   // console.log(`[OTID_TRANSITION] Called with newOtid=${newOtid}, lastOtid=${b.lastOtid}`);
 
   // If transitioning to a different otid (including null/undefined), finish only assistant/reasoning lines.
   // Tool calls should finish exclusively when a tool_return arrives (merged by toolCallId).
+  // Finish assistant/reasoning lines when the stream transitions to a different
+  // otid. This ensures we don't leave content stuck in streaming phase when the
+  // backend moves on to tool calls or other message types.
   if (b.lastOtid && b.lastOtid !== newOtid) {
     const prev = b.byId.get(b.lastOtid);
     // console.log(`[OTID_TRANSITION] Found prev line: kind=${prev?.kind}, phase=${(prev as any)?.phase}`);
@@ -351,8 +358,10 @@ function handleOtidTransition(b: Buffers, newOtid: string | undefined) {
     }
   }
 
-  // Update last otid (can be null)
-  b.lastOtid = newOtid ?? null;
+  // Only assistant/reasoning chunks should advance the "current content" otid.
+  if (updateLastOtid) {
+    b.lastOtid = newOtid ?? null;
+  }
   // console.log(`[OTID_TRANSITION] Updated lastOtid to ${b.lastOtid}`);
 }
 
@@ -706,7 +715,7 @@ export function onChunk(
       }
 
       // Handle otid transition (mark previous line as finished)
-      handleOtidTransition(b, id);
+      handleOtidTransition(b, id, true);
 
       const delta = chunk.reasoning;
       const line = ensure(b, id, () => ({
@@ -740,7 +749,7 @@ export function onChunk(
       if (!id) break;
 
       // Handle otid transition (mark previous line as finished)
-      handleOtidTransition(b, id);
+      handleOtidTransition(b, id, true);
 
       const delta = extractTextPart(chunk.content); // NOTE: may be list of parts
       const line = ensure(b, id, () => ({
@@ -769,7 +778,7 @@ export function onChunk(
       if (!id) break;
 
       // Handle otid transition (mark previous line as finished)
-      handleOtidTransition(b, id);
+      handleOtidTransition(b, id, false);
 
       // Extract text content from the user message
       const rawText = extractTextPart(chunk.content);
@@ -795,7 +804,7 @@ export function onChunk(
     case "tool_call_message":
     case "approval_request_message": {
       // Handle otid transition (mark previous line as finished)
-      handleOtidTransition(b, chunk.otid ?? undefined);
+      handleOtidTransition(b, chunk.otid ?? undefined, false);
 
       // Use deprecated tool_call or new tool_calls array
       const toolCall =
@@ -1151,7 +1160,7 @@ export function onChunk(
         if (!id) break;
 
         // Handle otid transition (mark previous line as finished)
-        handleOtidTransition(b, id);
+        handleOtidTransition(b, id, false);
 
         const eventType = eventChunk.event_type || "unknown";
         ensure(b, id, () => ({

@@ -61,6 +61,12 @@ export interface Settings {
   lastAgent: string | null; // DEPRECATED: kept for migration to lastSession
   lastSession?: SessionRef; // DEPRECATED: kept for backwards compat, use sessionsByServer
   tokenStreaming: boolean;
+  /**
+   * How streaming text is rendered in the TUI.
+   * - plain: show token deltas as they arrive
+   * - typewriter-glow: animate reveal + highlight newest letters
+   */
+  tokenStreamingStyle?: "plain" | "typewriter-glow";
   showCompactions?: boolean;
   enableSleeptime: boolean;
   sessionContextEnabled: boolean; // Send device/agent context on first message of each session
@@ -124,6 +130,7 @@ export interface LocalProjectSettings {
 const DEFAULT_SETTINGS: Settings = {
   lastAgent: null,
   tokenStreaming: false,
+  tokenStreamingStyle: "typewriter-glow",
   showCompactions: false,
   enableSleeptime: false,
   conversationSwitchAlertEnabled: false,

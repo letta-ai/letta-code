@@ -161,16 +161,12 @@ export function SlashCommandAutocomplete({
 
   // Manually manage active state to include the "no matches" case
   useLayoutEffect(() => {
-    const queryLength = queryInfo?.query.length ?? 0;
-    const isActive =
-      !hideAutocomplete && (matches.length > 0 || queryLength > 0);
+    // Only treat autocomplete as "active" when there are selectable matches.
+    // If there are no matches, we still render the "No matching commands" hint,
+    // but Enter should submit the input (so hidden/unknown commands can still run).
+    const isActive = !hideAutocomplete && matches.length > 0;
     onActiveChange?.(isActive);
-  }, [
-    hideAutocomplete,
-    matches.length,
-    onActiveChange,
-    queryInfo?.query.length,
-  ]);
+  }, [hideAutocomplete, matches.length, onActiveChange]);
 
   // Don't show if input doesn't start with "/"
   if (!currentInput.startsWith("/")) {

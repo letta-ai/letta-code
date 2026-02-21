@@ -62,6 +62,11 @@ export const MarkdownDisplay: React.FC<MarkdownDisplayProps> = ({
   const lines = text.split("\n");
   const contentBlocks: React.ReactNode[] = [];
 
+  // Collapse excessive vertical whitespace. Ink treats each empty line we emit
+  // as real terminal height; models sometimes produce multiple blank lines
+  // (often whitespace-only) which reads as "CR/LF gaps".
+  let lastWasEmpty = false;
+
   let inCodeBlock = false;
   let codeBlockContent: string[] = [];
 
@@ -161,6 +166,11 @@ export const MarkdownDisplay: React.FC<MarkdownDisplayProps> = ({
   while (index < lines.length) {
     const line = lines[index] as string; // Safe: index < lines.length
     const key = `line-${index}`;
+
+    // Any non-empty line breaks a run of empty lines.
+    if (line.trim() !== "") {
+      lastWasEmpty = false;
+    }
 
     // Handle code blocks
     if (codeBlockRegex.test(line)) {
@@ -325,6 +335,11 @@ export const MarkdownDisplay: React.FC<MarkdownDisplayProps> = ({
 
     // Empty lines
     if (line.trim() === "") {
+      if (lastWasEmpty) {
+        index++;
+        continue;
+      }
+      lastWasEmpty = true;
       if (backgroundColor) {
         // Render a visible space so outer Transform can pad this line
         contentBlocks.push(
