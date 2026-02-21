@@ -1,88 +1,23 @@
 import { describe, expect, test } from "bun:test";
-import { getMemoryFilesystemRoot } from "../agent/memoryFilesystem";
 import { buildSessionContext } from "../cli/helpers/sessionContext";
-import { settingsManager } from "../settings-manager";
 
 describe("session context reminder", () => {
-  test("always includes AGENT_ID env var", () => {
-    const agentId = "agent-test-session-context";
-    const context = buildSessionContext({
-      agentInfo: {
-        id: agentId,
-        name: "Test Agent",
-        description: "Test description",
-        lastRunAt: null,
-      },
-      serverUrl: "https://api.letta.com",
-    });
+  test("includes device information section", () => {
+    const context = buildSessionContext();
 
-    expect(context).toContain(
-      `- **Agent ID (also stored in \`AGENT_ID\` env var)**: ${agentId}`,
-    );
+    expect(context).toContain("## Device Information");
+    expect(context).toContain("**Local time**");
+    expect(context).toContain("**Device type**");
+    expect(context).toContain("**Letta Code version**");
+    expect(context).toContain("**Current working directory**");
   });
 
-  test("does not include MEMORY_DIR env var when memfs is disabled", () => {
-    const agentId = "agent-test-session-context-disabled";
-    const original = settingsManager.isMemfsEnabled.bind(settingsManager);
-    (
-      settingsManager as unknown as {
-        isMemfsEnabled: (id: string) => boolean;
-      }
-    ).isMemfsEnabled = () => false;
+  test("does not include agent information section", () => {
+    const context = buildSessionContext();
 
-    try {
-      const context = buildSessionContext({
-        agentInfo: {
-          id: agentId,
-          name: "Test Agent",
-          description: "Test description",
-          lastRunAt: null,
-        },
-        serverUrl: "https://api.letta.com",
-      });
-
-      expect(context).not.toContain(
-        "Memory directory (also stored in `MEMORY_DIR` env var)",
-      );
-      expect(context).not.toContain(getMemoryFilesystemRoot(agentId));
-    } finally {
-      (
-        settingsManager as unknown as {
-          isMemfsEnabled: (id: string) => boolean;
-        }
-      ).isMemfsEnabled = original;
-    }
-  });
-
-  test("includes MEMORY_DIR env var when memfs is enabled", () => {
-    const agentId = "agent-test-session-context-enabled";
-    const original = settingsManager.isMemfsEnabled.bind(settingsManager);
-    (
-      settingsManager as unknown as {
-        isMemfsEnabled: (id: string) => boolean;
-      }
-    ).isMemfsEnabled = () => true;
-
-    try {
-      const context = buildSessionContext({
-        agentInfo: {
-          id: agentId,
-          name: "Test Agent",
-          description: "Test description",
-          lastRunAt: null,
-        },
-        serverUrl: "https://api.letta.com",
-      });
-
-      expect(context).toContain(
-        `- **Memory directory (also stored in \`MEMORY_DIR\` env var)**: \`${getMemoryFilesystemRoot(agentId)}\``,
-      );
-    } finally {
-      (
-        settingsManager as unknown as {
-          isMemfsEnabled: (id: string) => boolean;
-        }
-      ).isMemfsEnabled = original;
-    }
+    expect(context).not.toContain("## Agent Information");
+    expect(context).not.toContain("Agent ID");
+    expect(context).not.toContain("Agent name");
+    expect(context).not.toContain("Server location");
   });
 });

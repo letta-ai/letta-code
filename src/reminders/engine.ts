@@ -13,6 +13,7 @@ import {
   type ReflectionSettings,
   shouldFireStepCountTrigger,
 } from "../cli/helpers/memoryReminder";
+import { buildAgentMetadata } from "../cli/helpers/agentMetadata";
 import { buildSessionContext } from "../cli/helpers/sessionContext";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "../constants";
 import { permissionMode } from "../permissions/mode";
@@ -58,6 +59,27 @@ type SharedReminderProvider = (
   context: SharedReminderContext,
 ) => Promise<string | null>;
 
+async function buildAgentMetadataReminder(
+  context: SharedReminderContext,
+): Promise<string | null> {
+  if (context.state.hasSentAgentMetadata) {
+    return null;
+  }
+
+  const reminder = buildAgentMetadata({
+    agentInfo: {
+      id: context.agent.id,
+      name: context.agent.name,
+      description: context.agent.description,
+      lastRunAt: context.agent.lastRunAt,
+    },
+    serverUrl: context.agent.serverUrl,
+  });
+
+  context.state.hasSentAgentMetadata = true;
+  return reminder || null;
+}
+
 async function buildSessionContextReminder(
   context: SharedReminderContext,
 ): Promise<string | null> {
@@ -72,15 +94,7 @@ async function buildSessionContextReminder(
     return null;
   }
 
-  const reminder = buildSessionContext({
-    agentInfo: {
-      id: context.agent.id,
-      name: context.agent.name,
-      description: context.agent.description,
-      lastRunAt: context.agent.lastRunAt,
-    },
-    serverUrl: context.agent.serverUrl,
-  });
+  const reminder = buildSessionContext();
 
   context.state.hasSentSessionContext = true;
   return reminder || null;
@@ -347,6 +361,7 @@ export const sharedReminderProviders: Record<
   SharedReminderId,
   SharedReminderProvider
 > = {
+  "agent-metadata": buildAgentMetadataReminder,
   "session-context": buildSessionContextReminder,
   skills: buildSkillsReminder,
   "permission-mode": buildPermissionModeReminder,
