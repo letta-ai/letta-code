@@ -1,25 +1,11 @@
 // src/cli/helpers/sessionContext.ts
 // Generates session context system reminder for the first message of each CLI session
+// Contains device/environment information only. Agent metadata is in agentMetadata.ts.
 
 import { execSync } from "node:child_process";
 import { platform } from "node:os";
-import { getMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
-import { LETTA_CLOUD_API_URL } from "../../auth/oauth";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "../../constants";
-import { settingsManager } from "../../settings-manager";
 import { getVersion } from "../../version";
-
-interface AgentInfo {
-  id: string;
-  name: string | null;
-  description?: string | null;
-  lastRunAt?: string | null;
-}
-
-interface SessionContextOptions {
-  agentInfo: AgentInfo;
-  serverUrl?: string;
-}
 
 /**
  * Get the current local time in a human-readable format
@@ -52,30 +38,6 @@ export function getDeviceType(): string {
     default:
       return p;
   }
-}
-
-/**
- * Format relative time from a date string
- */
-function getRelativeTime(dateStr: string): string {
-  const date = new Date(dateStr);
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffSecs = Math.floor(diffMs / 1000);
-  const diffMins = Math.floor(diffSecs / 60);
-  const diffHours = Math.floor(diffMins / 60);
-  const diffDays = Math.floor(diffHours / 24);
-
-  if (diffDays > 0) {
-    return `${diffDays} day${diffDays === 1 ? "" : "s"} ago`;
-  }
-  if (diffHours > 0) {
-    return `${diffHours} hour${diffHours === 1 ? "" : "s"} ago`;
-  }
-  if (diffMins > 0) {
-    return `${diffMins} minute${diffMins === 1 ? "" : "s"} ago`;
-  }
-  return "just now";
 }
 
 /**
@@ -137,12 +99,12 @@ function getGitInfo(): {
 }
 
 /**
- * Build the full session context system reminder
- * Returns empty string on any failure (graceful degradation)
+ * Build the session context system reminder (device/environment info only).
+ * Agent metadata is handled separately by buildAgentMetadata().
+ * Returns empty string on any failure (graceful degradation).
  */
-export function buildSessionContext(options: SessionContextOptions): string {
+export function buildSessionContext(): string {
   try {
-    const { agentInfo, serverUrl } = options;
     const cwd = process.cwd();
 
     // Gather info with safe fallbacks
@@ -168,43 +130,6 @@ export function buildSessionContext(options: SessionContextOptions): string {
     }
 
     const gitInfo = getGitInfo();
-
-    // Get server URL
-    let actualServerUrl = LETTA_CLOUD_API_URL;
-    try {
-      const settings = settingsManager.getSettings();
-      actualServerUrl =
-        serverUrl ||
-        process.env.LETTA_BASE_URL ||
-        settings.env?.LETTA_BASE_URL ||
-        LETTA_CLOUD_API_URL;
-    } catch {
-      // actualServerUrl stays default
-    }
-
-    // Format last run info
-    let lastRunInfo = "No previous messages";
-    if (agentInfo.lastRunAt) {
-      try {
-        const lastRunDate = new Date(agentInfo.lastRunAt);
-        const localLastRun = lastRunDate.toLocaleString();
-        const relativeTime = getRelativeTime(agentInfo.lastRunAt);
-        lastRunInfo = `${localLastRun} (${relativeTime})`;
-      } catch {
-        lastRunInfo = "(failed to parse last run time)";
-      }
-    }
-
-    const showMemoryDir = (() => {
-      try {
-        return settingsManager.isMemfsEnabled(agentInfo.id);
-      } catch {
-        return false;
-      }
-    })();
-    const memoryDirLine = showMemoryDir
-      ? `\n- **Memory directory (also stored in \`MEMORY_DIR\` env var)**: \`${getMemoryFilesystemRoot(agentInfo.id)}\``
-      : "";
 
     // Build the context
     let context = `${SYSTEM_REMINDER_OPEN}
@@ -247,15 +172,7 @@ ${gitInfo.status}
 `;
     }
 
-    // Add agent info
-    context += `
-## Agent Information (i.e. information about you)
-- **Agent ID (also stored in \`AGENT_ID\` env var)**: ${agentInfo.id}${memoryDirLine}
-- **Agent name**: ${agentInfo.name || "(unnamed)"} (the user can change this with /rename)
-- **Agent description**: ${agentInfo.description || "(no description)"} (the user can change this with /description)
-- **Last message**: ${lastRunInfo}
-- **Server location**: ${actualServerUrl}
-${SYSTEM_REMINDER_CLOSE}`;
+    context += SYSTEM_REMINDER_CLOSE;
 
     return context;
   } catch {
