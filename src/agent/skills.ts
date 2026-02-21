@@ -9,7 +9,7 @@
  */
 
 import { existsSync } from "node:fs";
-import { readdir, readFile, stat } from "node:fs/promises";
+import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseFrontmatter } from "../utils/frontmatter";
@@ -242,31 +242,68 @@ async function findSkillFiles(
   skills: Skill[],
   errors: SkillDiscoveryError[],
   source: SkillSource,
+  visitedRealPaths: Set<string> = new Set(),
 ): Promise<void> {
+  try {
+    const resolvedPath = await realpath(currentPath);
+    if (visitedRealPaths.has(resolvedPath)) {
+      return;
+    }
+    visitedRealPaths.add(resolvedPath);
+  } catch (error) {
+    errors.push({
+      path: currentPath,
+      message: `Failed to resolve directory path: ${error instanceof Error ? error.message : String(error)}`,
+    });
+    return;
+  }
+
   try {
     const entries = await readdir(currentPath, { withFileTypes: true });
 
     for (const entry of entries) {
       const fullPath = join(currentPath, entry.name);
 
-      // Follows symlinks to detect directories and files correctly
-      const entryStat = await stat(fullPath);
-      if (entryStat.isDirectory()) {
-        // Recursively search subdirectories
-        await findSkillFiles(fullPath, rootPath, skills, errors, source);
-      } else if (entry.isFile() && entry.name.toUpperCase() === "SKILL.MD") {
-        // Found a SKILL.MD file
-        try {
-          const skill = await parseSkillFile(fullPath, rootPath, source);
-          if (skill) {
-            skills.push(skill);
-          }
-        } catch (error) {
-          errors.push({
-            path: fullPath,
-            message: error instanceof Error ? error.message : String(error),
-          });
+      try {
+        let isDirectory = entry.isDirectory();
+        let isFile = entry.isFile();
+
+        // Follow symlink targets so linked skills are discoverable.
+        if (entry.isSymbolicLink()) {
+          const entryStat = await stat(fullPath);
+          isDirectory = entryStat.isDirectory();
+          isFile = entryStat.isFile();
         }
+
+        if (isDirectory) {
+          // Recursively search subdirectories.
+          await findSkillFiles(
+            fullPath,
+            rootPath,
+            skills,
+            errors,
+            source,
+            visitedRealPaths,
+          );
+        } else if (isFile && entry.name.toUpperCase() === "SKILL.MD") {
+          // Found a SKILL.MD file
+          try {
+            const skill = await parseSkillFile(fullPath, rootPath, source);
+            if (skill) {
+              skills.push(skill);
+            }
+          } catch (error) {
+            errors.push({
+              path: fullPath,
+              message: error instanceof Error ? error.message : String(error),
+            });
+          }
+        }
+      } catch (error) {
+        errors.push({
+          path: fullPath,
+          message: `Failed to inspect path: ${error instanceof Error ? error.message : String(error)}`,
+        });
       }
     }
   } catch (error) {
