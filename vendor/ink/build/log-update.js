@@ -1,5 +1,6 @@
 import ansiEscapes from 'ansi-escapes';
 import cliCursor from 'cli-cursor';
+import stringWidth from 'string-width';
 
 const create = (stream, { showCursor = false } = {}) => {
     let previousLineCount = 0;
@@ -7,8 +8,17 @@ const create = (stream, { showCursor = false } = {}) => {
     let hasHiddenCursor = false;
 
     const renderWithClearedLineEnds = (output) => {
+        // On some terminals, writing to the last column leaves the cursor in a
+        // deferred-wrap state where CSI K (Erase in Line) erases the character
+        // at the final column instead of being a no-op.  Skip the erase for
+        // lines that already fill the terminal width — there is nothing beyond
+        // them to clean up.
+        const cols = stream.columns || 80;
         const lines = output.split('\n');
-        return lines.map((line) => line + ansiEscapes.eraseEndLine).join('\n');
+        return lines.map((line) => {
+            if (stringWidth(line) >= cols) return line;
+            return line + ansiEscapes.eraseEndLine;
+        }).join('\n');
     };
 
     const render = (str) => {
@@ -60,4 +70,3 @@ const create = (stream, { showCursor = false } = {}) => {
 
 const logUpdate = { create };
 export default logUpdate;
-
