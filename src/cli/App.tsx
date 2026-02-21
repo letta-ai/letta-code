@@ -173,6 +173,10 @@ import { UserMessage } from "./components/UserMessageRich";
 import { WelcomeScreen } from "./components/WelcomeScreen";
 import { AnimationProvider } from "./contexts/AnimationContext";
 import {
+  TokenStreamingProvider,
+  type TokenStreamingStyle,
+} from "./contexts/StreamingTextContext";
+import {
   appendStreamingOutput,
   type Buffers,
   createBuffers,
@@ -902,6 +906,7 @@ export default function App({
   messageHistory = [],
   resumedExistingConversation = false,
   tokenStreaming = false,
+  tokenStreamingStyle,
   showCompactions = false,
   agentProvenance = null,
   releaseNotes = null,
@@ -922,6 +927,7 @@ export default function App({
   messageHistory?: Message[];
   resumedExistingConversation?: boolean; // True if we explicitly resumed via --resume
   tokenStreaming?: boolean;
+  tokenStreamingStyle?: TokenStreamingStyle;
   showCompactions?: boolean;
   agentProvenance?: AgentProvenance | null;
   releaseNotes?: string | null; // Markdown release notes to display above header
@@ -1440,6 +1446,18 @@ export default function App({
   // Token streaming preference (can be toggled at runtime)
   const [tokenStreamingEnabled, setTokenStreamingEnabled] =
     useState(tokenStreaming);
+
+  // Token streaming style (persisted via /stream)
+  const [streamingStyle, setStreamingStyle] = useState<TokenStreamingStyle>(
+    tokenStreamingStyle ?? "typewriter-glow",
+  );
+
+  // The typewriter/glow renderer has some tunable parameters, but we keep them
+  // internal for now (can be surfaced later if needed).
+  const streamingRefreshIntervalMs = 16;
+  const typewriterCharsPerSecond = 300;
+  const glowChars = 6;
+  const glowFadeMs = 140;
 
   // Show compaction messages preference (can be toggled at runtime)
   const [showCompactionsEnabled, _setShowCompactionsEnabled] =
@@ -6870,36 +6888,56 @@ export default function App({
         }
 
         // Special handling for /stream command - toggle and save
-        if (msg.trim() === "/stream") {
-          const newValue = !tokenStreamingEnabled;
+        // Usage:
+        //   /stream
+        //   /stream plain
+        //   /stream typewriter (aka typewriter-glow)
+        if (trimmed === "/stream" || trimmed.startsWith("/stream ")) {
+          const parts = trimmed.split(/\s+/);
+          const sub = (parts[1] || "").toLowerCase();
 
-          // Immediately add command to transcript with "running" phase and loading message
+          let nextEnabled = tokenStreamingEnabled;
+          let nextStyle: TokenStreamingStyle = streamingStyle;
+
+          const usage = "Usage: /stream | /stream plain | /stream typewriter";
+
+          if (!sub) {
+            nextEnabled = !tokenStreamingEnabled;
+          } else if (sub === "plain") {
+            nextEnabled = true;
+            nextStyle = "plain";
+          } else if (sub === "typewriter" || sub === "typewriter-glow") {
+            nextEnabled = true;
+            nextStyle = "typewriter-glow";
+          } else {
+            const cmd = commandRunner.start(trimmed, usage);
+            cmd.finish(usage, false);
+            return { submitted: true };
+          }
+
           const cmd = commandRunner.start(
-            msg.trim(),
-            `${newValue ? "Enabling" : "Disabling"} token streaming...`,
+            trimmed,
+            "Updating streaming settings...",
           );
 
-          // Lock input during async operation
           setCommandRunning(true);
-
           try {
-            setTokenStreamingEnabled(newValue);
+            setTokenStreamingEnabled(nextEnabled);
+            setStreamingStyle(nextStyle);
 
-            // Save to settings
-            const { settingsManager } = await import("../settings-manager");
-            settingsManager.updateSettings({ tokenStreaming: newValue });
+            settingsManager.updateSettings({
+              tokenStreaming: nextEnabled,
+              tokenStreamingStyle: nextStyle,
+            });
 
-            // Update the same command with final result
             cmd.finish(
-              `Token streaming ${newValue ? "enabled" : "disabled"}`,
+              `Token streaming ${nextEnabled ? "enabled" : "disabled"} (style=${nextStyle})`,
               true,
             );
           } catch (error) {
-            // Mark command as failed
             const errorDetails = formatErrorDetails(error, agentId);
             cmd.fail(`Failed: ${errorDetails}`);
           } finally {
-            // Unlock input
             setCommandRunning(false);
           }
           return { submitted: true };
@@ -11587,7 +11625,19 @@ Plan file path: ${planFilePath}`;
     trajectoryTokenDisplayRef.current = trajectoryTokenDisplay;
   }, [trajectoryTokenDisplay]);
 
-  return (
+  const tokenStreamingConfig = useMemo(
+    () => ({
+      enabled: tokenStreamingEnabled,
+      style: streamingStyle,
+      refreshIntervalMs: streamingRefreshIntervalMs,
+      typewriterCharsPerSecond,
+      glowChars,
+      glowFadeMs,
+    }),
+    [tokenStreamingEnabled, streamingStyle],
+  );
+
+  const appBody = (
     <Box key={resumeKey} flexDirection="column">
       <Static
         key={staticRenderEpoch}
@@ -12720,5 +12770,11 @@ Plan file path: ${planFilePath}`;
         )}
       </Box>
     </Box>
+  );
+
+  return (
+    <TokenStreamingProvider config={tokenStreamingConfig}>
+      {appBody}
+    </TokenStreamingProvider>
   );
 }
