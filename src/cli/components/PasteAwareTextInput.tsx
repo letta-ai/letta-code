@@ -117,6 +117,17 @@ function detectOptionWordDirection(sequence: string): WordDirection | null {
   return null;
 }
 
+// biome-ignore lint/suspicious/noControlCharactersInRegex: Terminal escape sequences require ESC control character
+const CTRL_LEFT_PATTERN = /^\u001b\[(?:1;)?5D$/;
+// biome-ignore lint/suspicious/noControlCharactersInRegex: Terminal escape sequences require ESC control character
+const CTRL_RIGHT_PATTERN = /^\u001b\[(?:1;)?5C$/;
+// biome-ignore lint/suspicious/noControlCharactersInRegex: Terminal escape sequences require ESC control character
+const HOME_PATTERN = /^\u001b\[(?:H|1~|7~)$/;
+// biome-ignore lint/suspicious/noControlCharactersInRegex: Terminal escape sequences require ESC control character
+const END_PATTERN = /^\u001b\[(?:F|4~|8~)$/;
+// biome-ignore lint/suspicious/noControlCharactersInRegex: Terminal escape sequences require ESC control character
+const CTRL_DELETE_PATTERN = /^\u001b\[3;5~$/;
+
 export function PasteAwareTextInput({
   value,
   onChange,
@@ -416,7 +427,36 @@ export function PasteAwareTextInput({
       caretOffsetRef.current = wordStart;
     };
 
-    // Forward delete: delete character AFTER cursor
+    const deleteNextWord = () => {
+      const curPos = caretOffsetRef.current;
+      const text = displayValueRef.current;
+
+      if (curPos >= text.length) return;
+
+      let wordEnd = curPos;
+
+      // First skip whitespace (if cursor is in/after whitespace)
+      while (wordEnd < text.length && /\s/.test(text.charAt(wordEnd))) {
+        wordEnd++;
+      }
+
+      // Then skip word characters
+      while (wordEnd < text.length && /\S/.test(text.charAt(wordEnd))) {
+        wordEnd++;
+      }
+
+      if (wordEnd === curPos) return;
+
+      const newDisplay = text.slice(0, curPos) + text.slice(wordEnd);
+      const resolvedActual = resolvePlaceholders(newDisplay);
+
+      setDisplayValue(newDisplay);
+      setActualValue(resolvedActual);
+      onChangeRef.current(newDisplay);
+      setNudgeCursorOffset(curPos);
+      caretOffsetRef.current = curPos;
+    };
+
     const forwardDeleteAtCursor = (cursorPos: number) => {
       if (cursorPos >= displayValueRef.current.length) return;
 
@@ -454,6 +494,17 @@ export function PasteAwareTextInput({
       const nextCaret = at + 1;
       setNudgeCursorOffset(nextCaret);
       caretOffsetRef.current = nextCaret;
+    };
+
+    const moveCursorToInputStart = () => {
+      setNudgeCursorOffset(0);
+      caretOffsetRef.current = 0;
+    };
+
+    const moveCursorToInputEnd = () => {
+      const text = displayValueRef.current;
+      setNudgeCursorOffset(text.length);
+      caretOffsetRef.current = text.length;
     };
 
     const handleRawInput = (payload: unknown) => {
@@ -508,6 +559,12 @@ export function PasteAwareTextInput({
       // With flag 1, arrows come as ESC[1;modifierD which parseKeypress recognizes.
       // Previously we handled ESC[1;modifier:eventD format (with flag 7) here.
 
+      // Ctrl+Delete: ESC[3;5~ - delete word after cursor
+      if (CTRL_DELETE_PATTERN.test(sequence)) {
+        deleteNextWord();
+        return;
+      }
+
       // fn+Delete (forward delete): ESC[3~ - standard ANSI escape sequence
       // With kitty flag 1, modifiers come as ESC[3;modifier~ (no event type).
       // Use caretOffsetRef which is updated synchronously via onCursorOffsetChange
@@ -548,6 +605,25 @@ export function PasteAwareTextInput({
             return;
           }
         }
+      }
+
+      if (CTRL_LEFT_PATTERN.test(sequence)) {
+        moveCursorToPreviousWord();
+        return;
+      }
+      if (CTRL_RIGHT_PATTERN.test(sequence)) {
+        moveCursorToNextWord();
+        return;
+      }
+
+      if (HOME_PATTERN.test(sequence)) {
+        moveCursorToInputStart();
+        return;
+      }
+
+      if (END_PATTERN.test(sequence)) {
+        moveCursorToInputEnd();
+        return;
       }
     };
 
