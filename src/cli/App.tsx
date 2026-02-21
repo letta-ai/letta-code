@@ -184,6 +184,7 @@ import {
 } from "./helpers/accumulator";
 import { classifyApprovals } from "./helpers/approvalClassification";
 import { backfillBuffers } from "./helpers/backfill";
+import { chunkLog } from "./helpers/chunkLog";
 import {
   type ContextWindowOverview,
   renderContextUsage,
@@ -1410,8 +1411,9 @@ export default function App({
     setErrorContext({
       modelDisplayName: currentModelDisplay ?? undefined,
       billingTier: billingTier ?? undefined,
+      modelEndpointType: llmConfig?.model_endpoint_type ?? undefined,
     });
-  }, [currentModelDisplay, billingTier]);
+  }, [currentModelDisplay, billingTier, llmConfig?.model_endpoint_type]);
 
   // Fetch billing tier once on mount
   useEffect(() => {
@@ -1467,6 +1469,14 @@ export default function App({
   const sessionStatsRef = useRef(new SessionStats());
   const sessionStartTimeRef = useRef(Date.now());
   const sessionHooksRanRef = useRef(false);
+
+  // Initialize chunk log for this agent + session (clears buffer, GCs old files).
+  // Re-runs when agentId changes (e.g. agent switch via /agents).
+  useEffect(() => {
+    if (agentId && agentId !== "loading") {
+      chunkLog.init(agentId, telemetry.getSessionId());
+    }
+  }, [agentId]);
 
   const syncTrajectoryTokenBase = useCallback(() => {
     const snapshot = sessionStatsRef.current.getTrajectorySnapshot();
@@ -5140,6 +5150,7 @@ export default function App({
       setStreaming(false);
       resetTrajectoryBases();
       toolResultsInFlightRef.current = false;
+      setIsExecutingTool(false);
       if (!toolsCancelled) {
         appendError(INTERRUPT_MESSAGE, true);
       }
@@ -5219,13 +5230,18 @@ export default function App({
 
         if (abortControllerRef.current) {
           abortControllerRef.current.abort();
+          abortControllerRef.current = null;
         }
+        setIsExecutingTool(false);
+        toolResultsInFlightRef.current = false;
         pendingInterruptRecoveryConversationIdRef.current =
           conversationIdRef.current;
       } catch (e) {
         const errorDetails = formatErrorDetails(e, agentId);
         appendError(`Failed to interrupt stream: ${errorDetails}`);
         setInterruptRequested(false);
+        setIsExecutingTool(false);
+        toolResultsInFlightRef.current = false;
       }
     }
   }, [
@@ -10738,11 +10754,13 @@ ${SYSTEM_REMINDER_CLOSE}
                   };
                 })(),
                 // Agent info
-                agent_name: agentName,
-                agent_description: agentDescription,
-                model: currentModelId,
+                agent_name: agentName ?? undefined,
+                agent_description: agentDescription ?? undefined,
+                model: currentModelId ?? undefined,
                 // Account info
-                billing_tier: billingTier,
+                billing_tier: billingTier ?? undefined,
+                // Recent chunk log for diagnostics
+                recent_chunks: chunkLog.getEntries(),
               }),
             },
           );
@@ -12606,6 +12624,7 @@ Plan file path: ${planFilePath}`;
               (settingsManager.isMemfsEnabled(agentId) ? (
                 <MemfsTreeViewer
                   agentId={agentId}
+                  agentName={agentState?.name}
                   onClose={closeOverlay}
                   conversationId={conversationId}
                 />

@@ -16,12 +16,12 @@ const __dirname = dirname(__filename);
 const pkg = JSON.parse(readFileSync(join(__dirname, "package.json"), "utf-8"));
 const version = pkg.version;
 const useMagick = Bun.env.USE_MAGICK;
-const features = []
+const features = [];
 
 console.log(`📦 Building Letta Code v${version}...`);
 if (useMagick) {
   console.log(`🪄 Using magick variant of imageResize...`);
-  features.push("USE_MAGICK")
+  features.push("USE_MAGICK");
 }
 
 await Bun.build({
@@ -44,6 +44,7 @@ await Bun.build({
     ".md": "text",
     ".mdx": "text",
     ".txt": "text",
+
   },
   features: features,
 });

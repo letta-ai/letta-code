@@ -1767,11 +1767,13 @@ async function main(): Promise<void> {
         // Set agent context for tools that need it (e.g., Skill tool)
         setAgentContext(agent.id, skillsDirectory, resolvedSkillSources);
 
-        // Apply memfs flag if explicitly specified (memfs is opt-in via /memfs enable or --memfs)
+        // Apply memfs flags and auto-enable from server tag when local settings are missing.
         const isSubagent = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
         try {
           const { applyMemfsFlags } = await import("./agent/memoryFilesystem");
-          await applyMemfsFlags(agent.id, memfsFlag, noMemfsFlag);
+          await applyMemfsFlags(agent.id, memfsFlag, noMemfsFlag, {
+            agentTags: agent.tags,
+          });
         } catch (error) {
           console.error(error instanceof Error ? error.message : String(error));
           process.exit(1);
