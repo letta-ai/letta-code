@@ -28,6 +28,13 @@ export interface MemoryFile {
   content: string; // raw markdown body (after frontmatter)
 }
 
+export interface PlanViewerData {
+  agent: { name: string };
+  planContent: string;
+  planFilePath: string;
+  generatedAt: string; // ISO 8601 timestamp
+}
+
 export interface MemoryCommit {
   hash: string;
   shortHash: string;
