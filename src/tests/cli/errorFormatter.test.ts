@@ -182,6 +182,60 @@ describe("formatErrorDetails", () => {
     expect(message).toContain("/model");
   });
 
+  test("uses premium-specific guidance for premium-usage-exceeded", () => {
+    const error = new APIError(
+      429,
+      {
+        error: "Rate limited",
+        reasons: ["premium-usage-exceeded"],
+      },
+      undefined,
+      new Headers(),
+    );
+
+    const message = formatErrorDetails(error);
+
+    expect(message).toContain("Premium model usage limit");
+    expect(message).toContain("Standard or Basic hosted models");
+    expect(message).toContain("/model");
+    expect(message).not.toContain("hosted model usage limit");
+  });
+
+  test("uses standard-specific guidance for standard-usage-exceeded", () => {
+    const error = new APIError(
+      429,
+      {
+        error: "Rate limited",
+        reasons: ["standard-usage-exceeded"],
+      },
+      undefined,
+      new Headers(),
+    );
+
+    const message = formatErrorDetails(error);
+
+    expect(message).toContain("Standard model usage limit");
+    expect(message).toContain("Basic hosted models");
+    expect(message).toContain("/model");
+  });
+
+  test("uses basic-specific guidance for basic-usage-exceeded", () => {
+    const error = new APIError(
+      429,
+      {
+        error: "Rate limited",
+        reasons: ["basic-usage-exceeded"],
+      },
+      undefined,
+      new Headers(),
+    );
+
+    const message = formatErrorDetails(error);
+
+    expect(message).toContain("Basic model usage limit");
+    expect(message).toContain("/model");
+  });
+
   test("formats Z.ai error from APIError with embedded error code", () => {
     const error = new APIError(
       429,
