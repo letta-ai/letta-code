@@ -1763,10 +1763,12 @@ async function main(): Promise<void> {
 
         // Start memfs sync early — awaited in parallel with getResumeData below
         const isSubagent = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
+        const agentId = agent.id;
+        const agentTags = agent.tags ?? undefined;
         const memfsSyncPromise = import("./agent/memoryFilesystem").then(
           ({ applyMemfsFlags }) =>
-            applyMemfsFlags(agent!.id, memfsFlag, noMemfsFlag, {
-              agentTags: agent?.tags ?? undefined,
+            applyMemfsFlags(agentId, memfsFlag, noMemfsFlag, {
+              agentTags,
             }),
         );
 
@@ -1968,9 +1970,7 @@ async function main(): Promise<void> {
         try {
           await memfsSyncPromise;
         } catch (error) {
-          console.error(
-            error instanceof Error ? error.message : String(error),
-          );
+          console.error(error instanceof Error ? error.message : String(error));
           process.exit(1);
         }
 

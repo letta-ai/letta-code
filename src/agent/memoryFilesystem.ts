@@ -235,7 +235,10 @@ export async function applyMemfsFlags(
   if (isEnabled) {
     const { addGitMemoryTag, isGitRepo, cloneMemoryRepo, pullMemory } =
       await import("./memoryGit");
-    await addGitMemoryTag(agentId, options?.agentTags ? { tags: options.agentTags } : undefined);
+    await addGitMemoryTag(
+      agentId,
+      options?.agentTags ? { tags: options.agentTags } : undefined,
+    );
     if (!isGitRepo(agentId)) {
       await cloneMemoryRepo(agentId);
     } else if (options?.pullOnExistingRepo) {
