@@ -7,13 +7,13 @@ import {
   SKILLS_DIR,
   type SkillSource,
 } from "../agent/skills";
+import { buildAgentMetadata } from "../cli/helpers/agentMetadata";
 import {
   buildCompactionMemoryReminder,
   buildMemoryReminder,
   type ReflectionSettings,
   shouldFireStepCountTrigger,
 } from "../cli/helpers/memoryReminder";
-import { buildAgentMetadata } from "../cli/helpers/agentMetadata";
 import { buildSessionContext } from "../cli/helpers/sessionContext";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "../constants";
 import { permissionMode } from "../permissions/mode";

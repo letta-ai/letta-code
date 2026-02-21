@@ -115,12 +115,8 @@ describe("shared reminder parity", () => {
       state: createSharedReminderState(),
     });
 
-    expect(subagent.appliedReminderIds).toEqual(
-      reminderIdsForMode("subagent"),
-    );
+    expect(subagent.appliedReminderIds).toEqual(reminderIdsForMode("subagent"));
     expect(subagent.appliedReminderIds).toEqual(["agent-metadata"]);
-    expect(subagent.parts.map((part) => part.text)).toEqual([
-      "agent-metadata",
-    ]);
+    expect(subagent.parts.map((part) => part.text)).toEqual(["agent-metadata"]);
   });
 });
