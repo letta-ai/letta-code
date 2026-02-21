@@ -1789,8 +1789,12 @@ async function main(): Promise<void> {
         );
         setIsResumingSession(resuming);
 
-        // If resuming and a model or system prompt was specified, apply those changes
-        if (resuming && (model || systemPromptPreset)) {
+        // If resuming, always refresh model settings from presets to keep
+        // preset-derived fields in sync, then apply optional command-line
+        // overrides (model/system prompt).
+        if (resuming) {
+          const { updateAgentLLMConfig } = await import("./agent/modify");
+
           if (model) {
             const { resolveModel, getModelUpdateArgs } = await import(
               "./agent/model"
@@ -1803,11 +1807,47 @@ async function main(): Promise<void> {
 
             // Always apply model update - different model IDs can share the same
             // handle but have different settings (e.g., gpt-5.2-medium vs gpt-5.2-xhigh)
-            const { updateAgentLLMConfig } = await import("./agent/modify");
             const updateArgs = getModelUpdateArgs(model);
             await updateAgentLLMConfig(agent.id, modelHandle, updateArgs);
             // Refresh agent state after model update
             agent = await client.agents.retrieve(agent.id);
+          } else {
+            const { getModelPresetUpdateForAgent } = await import(
+              "./agent/model"
+            );
+            const presetRefresh = getModelPresetUpdateForAgent(agent);
+            if (presetRefresh) {
+              // Resume preset refresh is intentionally scoped for now.
+              // We only force-refresh max_output_tokens + parallel_tool_calls.
+              // Other preset fields available in models.json (for example:
+              // context_window, reasoning_effort, enable_reasoner,
+              // max_reasoning_tokens, verbosity, temperature,
+              // thinking_budget) are intentionally not auto-applied yet.
+              const resumeRefreshUpdateArgs: Record<string, unknown> = {};
+              if (
+                typeof presetRefresh.updateArgs.max_output_tokens === "number"
+              ) {
+                resumeRefreshUpdateArgs.max_output_tokens =
+                  presetRefresh.updateArgs.max_output_tokens;
+              }
+              if (
+                typeof presetRefresh.updateArgs.parallel_tool_calls ===
+                "boolean"
+              ) {
+                resumeRefreshUpdateArgs.parallel_tool_calls =
+                  presetRefresh.updateArgs.parallel_tool_calls;
+              }
+
+              if (Object.keys(resumeRefreshUpdateArgs).length > 0) {
+                await updateAgentLLMConfig(
+                  agent.id,
+                  presetRefresh.modelHandle,
+                  resumeRefreshUpdateArgs,
+                );
+                // Refresh agent state after model update
+                agent = await client.agents.retrieve(agent.id);
+              }
+            }
           }
 
           if (systemPromptPreset) {
