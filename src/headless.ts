@@ -1018,6 +1018,10 @@ export async function handleHeadlessCommand(
       isolated_block_labels: isolatedBlockLabels,
     });
     conversationId = conversation.id;
+  } else if (isSubagent) {
+    // Freshly created subagents have no concurrency risk — use the default
+    // conversation so it's easy to inspect in the ADE.
+    conversationId = "default";
   } else {
     // Default for headless: always create a new conversation to avoid
     // 409 "conversation busy" races (e.g., parent agent calling letta -p).
