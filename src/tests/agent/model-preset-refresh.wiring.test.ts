@@ -21,7 +21,10 @@ describe("model preset refresh wiring", () => {
     const source = readFileSync(path, "utf-8");
 
     const start = source.indexOf("export async function updateAgentLLMConfig(");
-    const end = source.indexOf("export interface SystemPromptUpdateResult", start);
+    const end = source.indexOf(
+      "export interface SystemPromptUpdateResult",
+      start,
+    );
     expect(start).toBeGreaterThanOrEqual(0);
     expect(end).toBeGreaterThan(start);
     const updateSegment = source.slice(start, end);
@@ -35,6 +38,44 @@ describe("model preset refresh wiring", () => {
     );
     expect(source).not.toContain(
       'hasUpdateArg(updateArgs, "parallel_tool_calls")',
+    );
+  });
+
+  test("interactive resume flow refreshes model preset without explicit --model", () => {
+    const path = fileURLToPath(new URL("../../index.ts", import.meta.url));
+    const source = readFileSync(path, "utf-8");
+
+    expect(source).toContain("if (resuming)");
+    expect(source).toContain("getModelPresetUpdateForAgent");
+    expect(source).toContain(
+      "const presetRefresh = getModelPresetUpdateForAgent(agent)",
+    );
+    expect(source).toContain("resumeRefreshUpdateArgs");
+    expect(source).toContain("presetRefresh.updateArgs.max_output_tokens");
+    expect(source).toContain("presetRefresh.updateArgs.parallel_tool_calls");
+    expect(source).toContain("await updateAgentLLMConfig(");
+    expect(source).toContain("presetRefresh.modelHandle");
+    expect(source).not.toContain(
+      "await updateAgentLLMConfig(\n                agent.id,\n                presetRefresh.modelHandle,\n                presetRefresh.updateArgs,",
+    );
+  });
+
+  test("headless resume flow refreshes model preset without explicit --model", () => {
+    const path = fileURLToPath(new URL("../../headless.ts", import.meta.url));
+    const source = readFileSync(path, "utf-8");
+
+    expect(source).toContain("if (isResumingAgent)");
+    expect(source).toContain("getModelPresetUpdateForAgent");
+    expect(source).toContain(
+      "const presetRefresh = getModelPresetUpdateForAgent(agent)",
+    );
+    expect(source).toContain("resumeRefreshUpdateArgs");
+    expect(source).toContain("presetRefresh.updateArgs.max_output_tokens");
+    expect(source).toContain("presetRefresh.updateArgs.parallel_tool_calls");
+    expect(source).toContain("await updateAgentLLMConfig(");
+    expect(source).toContain("presetRefresh.modelHandle");
+    expect(source).not.toContain(
+      "await updateAgentLLMConfig(\n          agent.id,\n          presetRefresh.modelHandle,\n          presetRefresh.updateArgs,",
     );
   });
 });

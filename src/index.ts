@@ -1796,8 +1796,9 @@ async function main(): Promise<void> {
         );
         setIsResumingSession(resuming);
 
-        // If resuming, refresh model settings from presets and apply optional
-        // command-line overrides (model/system prompt).
+        // If resuming, always refresh model settings from presets to keep
+        // preset-derived fields in sync, then apply optional command-line
+        // overrides (model/system prompt).
         if (resuming) {
           const { updateAgentLLMConfig } = await import("./agent/modify");
 
@@ -1823,13 +1824,36 @@ async function main(): Promise<void> {
             );
             const presetRefresh = getModelPresetUpdateForAgent(agent);
             if (presetRefresh) {
-              await updateAgentLLMConfig(
-                agent.id,
-                presetRefresh.modelHandle,
-                presetRefresh.updateArgs,
-              );
-              // Refresh agent state after model update
-              agent = await client.agents.retrieve(agent.id);
+              // Resume preset refresh is intentionally scoped for now.
+              // We only force-refresh max_output_tokens + parallel_tool_calls.
+              // Other preset fields available in models.json (for example:
+              // context_window, reasoning_effort, enable_reasoner,
+              // max_reasoning_tokens, verbosity, temperature,
+              // thinking_budget) are intentionally not auto-applied yet.
+              const resumeRefreshUpdateArgs: Record<string, unknown> = {};
+              if (
+                typeof presetRefresh.updateArgs.max_output_tokens === "number"
+              ) {
+                resumeRefreshUpdateArgs.max_output_tokens =
+                  presetRefresh.updateArgs.max_output_tokens;
+              }
+              if (
+                typeof presetRefresh.updateArgs.parallel_tool_calls ===
+                "boolean"
+              ) {
+                resumeRefreshUpdateArgs.parallel_tool_calls =
+                  presetRefresh.updateArgs.parallel_tool_calls;
+              }
+
+              if (Object.keys(resumeRefreshUpdateArgs).length > 0) {
+                await updateAgentLLMConfig(
+                  agent.id,
+                  presetRefresh.modelHandle,
+                  resumeRefreshUpdateArgs,
+                );
+                // Refresh agent state after model update
+                agent = await client.agents.retrieve(agent.id);
+              }
             }
           }
 

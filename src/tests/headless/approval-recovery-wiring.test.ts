@@ -66,14 +66,4 @@ describe("headless approval recovery wiring", () => {
     const importBlock = source.slice(0, source.indexOf("export "));
     expect(importBlock).toContain("extractConflictDetail");
   });
-
-  test("resume flow refreshes model preset without explicit --model", () => {
-    expect(source).toContain("getModelPresetUpdateForAgent");
-    expect(source).toContain(
-      "const presetRefresh = getModelPresetUpdateForAgent(agent)",
-    );
-    expect(source).toContain("await updateAgentLLMConfig(");
-    expect(source).toContain("presetRefresh.modelHandle");
-    expect(source).toContain("presetRefresh.updateArgs");
-  });
 });
