@@ -3065,6 +3065,20 @@ export default function App({
       initialInput: Array<MessageCreate | ApprovalCreate>,
       options?: { allowReentry?: boolean; submissionGeneration?: number },
     ): Promise<void> => {
+      // Transient pre-stream retries can yield for seconds.
+      // Pin the user's permission mode for the duration of the submission so
+      // auto-approvals (YOLO / bypassPermissions) don't regress after a retry.
+      const pinnedPermissionMode = uiPermissionModeRef.current;
+      const restorePinnedPermissionMode = () => {
+        if (pinnedPermissionMode === "plan") return;
+        if (permissionMode.getMode() !== pinnedPermissionMode) {
+          permissionMode.setMode(pinnedPermissionMode);
+        }
+        if (uiPermissionModeRef.current !== pinnedPermissionMode) {
+          setUiPermissionMode(pinnedPermissionMode);
+        }
+      };
+
       // Reset per-run approval tracking used by streaming UI.
       buffersRef.current.approvalsPending = false;
       if (buffersRef.current.serverToolCalls.size > 0) {
@@ -3457,6 +3471,7 @@ export default function App({
               if (!cancelled) {
                 // Reset interrupted flag so retry stream chunks are processed
                 buffersRef.current.interrupted = false;
+                restorePinnedPermissionMode();
                 continue;
               }
               // User pressed ESC - fall through to error handling
@@ -3505,6 +3520,7 @@ export default function App({
               if (!cancelled) {
                 buffersRef.current.interrupted = false;
                 conversationBusyRetriesRef.current = 0;
+                restorePinnedPermissionMode();
                 continue;
               }
               // User pressed ESC - fall through to error handling
