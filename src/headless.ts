@@ -1047,23 +1047,6 @@ export async function handleHeadlessCommand(
     });
   }
 
-  // Migration (LET-7353): Remove legacy skills/loaded_skills blocks
-  for (const label of ["skills", "loaded_skills"]) {
-    try {
-      const block = await client.agents.blocks.retrieve(label, {
-        agent_id: agent.id,
-      });
-      if (block) {
-        await client.agents.blocks.detach(block.id, {
-          agent_id: agent.id,
-        });
-        await client.blocks.delete(block.id);
-      }
-    } catch {
-      // Block doesn't exist or already removed, skip
-    }
-  }
-
   // Set agent context for tools that need it (e.g., Skill tool, Task tool)
   setAgentContext(agent.id, skillsDirectory, resolvedSkillSources);
 
