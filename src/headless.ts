@@ -1343,7 +1343,7 @@ ${SYSTEM_REMINDER_CLOSE}
   const lastRunAt = (agent as { last_run_completion?: string })
     .last_run_completion;
   const { parts: sharedReminderParts } = await buildSharedReminderParts({
-    mode: "headless-one-shot",
+    mode: isSubagent ? "subagent" : "headless-one-shot",
     agent: {
       id: agent.id,
       name: agent.name,
@@ -2256,6 +2256,7 @@ async function runBidirectionalMode(
   let currentAbortController: AbortController | null = null;
   const reminderContextTracker = createContextTracker();
   const sharedReminderState = createSharedReminderState();
+  const isSubagent = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
 
   // Resolve pending approvals for this conversation before retrying user input.
   const resolveAllPendingApprovals = async () => {
@@ -2793,7 +2794,7 @@ async function runBidirectionalMode(
         const lastRunAt = (agent as { last_run_completion?: string })
           .last_run_completion;
         const { parts: sharedReminderParts } = await buildSharedReminderParts({
-          mode: "headless-bidirectional",
+          mode: isSubagent ? "subagent" : "headless-bidirectional",
           agent: {
             id: agent.id,
             name: agent.name,
