@@ -18,7 +18,7 @@ export interface ToolsetChangeReminder {
 }
 
 export interface SharedReminderState {
-  hasSentAgentMetadata: boolean;
+  hasSentAgentInfo: boolean;
   hasSentSessionContext: boolean;
   hasInjectedSkillsReminder: boolean;
   cachedSkillsReminder: string | null;
@@ -33,7 +33,7 @@ export interface SharedReminderState {
 
 export function createSharedReminderState(): SharedReminderState {
   return {
-    hasSentAgentMetadata: false,
+    hasSentAgentInfo: false,
     hasSentSessionContext: false,
     hasInjectedSkillsReminder: false,
     cachedSkillsReminder: null,

@@ -5,7 +5,7 @@ export type SharedReminderMode =
   | "subagent";
 
 export type SharedReminderId =
-  | "agent-metadata"
+  | "agent-info"
   | "session-context"
   | "skills"
   | "permission-mode"
@@ -24,8 +24,8 @@ export interface SharedReminderDefinition {
 export const SHARED_REMINDER_CATALOG: ReadonlyArray<SharedReminderDefinition> =
   [
     {
-      id: "agent-metadata",
-      description: "Agent identity/metadata (ID, name, server, memory dir)",
+      id: "agent-info",
+      description: "Agent identity (ID, name, server, memory dir)",
       modes: [
         "interactive",
         "headless-one-shot",

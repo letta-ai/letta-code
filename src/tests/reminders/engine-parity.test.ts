@@ -89,7 +89,7 @@ describe("shared reminder parity", () => {
     );
   });
 
-  test("subagent mode produces only agent-metadata reminder", async () => {
+  test("subagent mode produces only agent-info reminder", async () => {
     for (const reminderId of SHARED_REMINDER_IDS) {
       providerMap[reminderId] = async () => reminderId;
     }
@@ -116,7 +116,7 @@ describe("shared reminder parity", () => {
     });
 
     expect(subagent.appliedReminderIds).toEqual(reminderIdsForMode("subagent"));
-    expect(subagent.appliedReminderIds).toEqual(["agent-metadata"]);
-    expect(subagent.parts.map((part) => part.text)).toEqual(["agent-metadata"]);
+    expect(subagent.appliedReminderIds).toEqual(["agent-info"]);
+    expect(subagent.parts.map((part) => part.text)).toEqual(["agent-info"]);
   });
 });

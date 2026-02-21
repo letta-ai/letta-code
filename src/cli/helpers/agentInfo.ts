@@ -1,20 +1,20 @@
-// src/cli/helpers/agentMetadata.ts
-// Generates agent metadata system reminder (agent identity, server, memory dir)
+// src/cli/helpers/agentInfo.ts
+// Generates agent info system reminder (agent identity, server, memory dir)
 
 import { getMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
 import { LETTA_CLOUD_API_URL } from "../../auth/oauth";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "../../constants";
 import { settingsManager } from "../../settings-manager";
 
-export interface AgentMetadataInfo {
+export interface AgentInfo {
   id: string;
   name: string | null;
   description?: string | null;
   lastRunAt?: string | null;
 }
 
-export interface AgentMetadataOptions {
-  agentInfo: AgentMetadataInfo;
+export interface AgentInfoOptions {
+  agentInfo: AgentInfo;
   serverUrl?: string;
 }
 
@@ -43,11 +43,11 @@ function getRelativeTime(dateStr: string): string {
 }
 
 /**
- * Build the agent metadata system reminder.
+ * Build the agent info system reminder.
  * Contains agent identity information (ID, name, description, memory dir, server).
  * Returns empty string on any failure (graceful degradation).
  */
-export function buildAgentMetadata(options: AgentMetadataOptions): string {
+export function buildAgentInfo(options: AgentInfoOptions): string {
   try {
     const { agentInfo, serverUrl } = options;
 

@@ -7,7 +7,7 @@ import {
   SKILLS_DIR,
   type SkillSource,
 } from "../agent/skills";
-import { buildAgentMetadata } from "../cli/helpers/agentMetadata";
+import { buildAgentInfo } from "../cli/helpers/agentInfo";
 import {
   buildCompactionMemoryReminder,
   buildMemoryReminder,
@@ -59,14 +59,14 @@ type SharedReminderProvider = (
   context: SharedReminderContext,
 ) => Promise<string | null>;
 
-async function buildAgentMetadataReminder(
+async function buildAgentInfoReminder(
   context: SharedReminderContext,
 ): Promise<string | null> {
-  if (context.state.hasSentAgentMetadata) {
+  if (context.state.hasSentAgentInfo) {
     return null;
   }
 
-  const reminder = buildAgentMetadata({
+  const reminder = buildAgentInfo({
     agentInfo: {
       id: context.agent.id,
       name: context.agent.name,
@@ -76,7 +76,7 @@ async function buildAgentMetadataReminder(
     serverUrl: context.agent.serverUrl,
   });
 
-  context.state.hasSentAgentMetadata = true;
+  context.state.hasSentAgentInfo = true;
   return reminder || null;
 }
 
@@ -361,7 +361,7 @@ export const sharedReminderProviders: Record<
   SharedReminderId,
   SharedReminderProvider
 > = {
-  "agent-metadata": buildAgentMetadataReminder,
+  "agent-info": buildAgentInfoReminder,
   "session-context": buildSessionContextReminder,
   skills: buildSkillsReminder,
   "permission-mode": buildPermissionModeReminder,

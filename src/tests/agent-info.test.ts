@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { getMemoryFilesystemRoot } from "../agent/memoryFilesystem";
-import { buildAgentMetadata } from "../cli/helpers/agentMetadata";
+import { buildAgentInfo } from "../cli/helpers/agentInfo";
 import { settingsManager } from "../settings-manager";
 
-describe("agent metadata reminder", () => {
+describe("agent info reminder", () => {
   test("always includes AGENT_ID env var", () => {
-    const agentId = "agent-test-agent-metadata";
-    const context = buildAgentMetadata({
+    const agentId = "agent-test-agent-info";
+    const context = buildAgentInfo({
       agentInfo: {
         id: agentId,
         name: "Test Agent",
@@ -22,7 +22,7 @@ describe("agent metadata reminder", () => {
   });
 
   test("does not include MEMORY_DIR env var when memfs is disabled", () => {
-    const agentId = "agent-test-agent-metadata-disabled";
+    const agentId = "agent-test-agent-info-disabled";
     const original = settingsManager.isMemfsEnabled.bind(settingsManager);
     (
       settingsManager as unknown as {
@@ -31,7 +31,7 @@ describe("agent metadata reminder", () => {
     ).isMemfsEnabled = () => false;
 
     try {
-      const context = buildAgentMetadata({
+      const context = buildAgentInfo({
         agentInfo: {
           id: agentId,
           name: "Test Agent",
@@ -55,7 +55,7 @@ describe("agent metadata reminder", () => {
   });
 
   test("includes MEMORY_DIR env var when memfs is enabled", () => {
-    const agentId = "agent-test-agent-metadata-enabled";
+    const agentId = "agent-test-agent-info-enabled";
     const original = settingsManager.isMemfsEnabled.bind(settingsManager);
     (
       settingsManager as unknown as {
@@ -64,7 +64,7 @@ describe("agent metadata reminder", () => {
     ).isMemfsEnabled = () => true;
 
     try {
-      const context = buildAgentMetadata({
+      const context = buildAgentInfo({
         agentInfo: {
           id: agentId,
           name: "Test Agent",
@@ -87,7 +87,7 @@ describe("agent metadata reminder", () => {
   });
 
   test("includes agent name and description", () => {
-    const context = buildAgentMetadata({
+    const context = buildAgentInfo({
       agentInfo: {
         id: "agent-test",
         name: "My Agent",
@@ -102,7 +102,7 @@ describe("agent metadata reminder", () => {
   });
 
   test("includes server location", () => {
-    const context = buildAgentMetadata({
+    const context = buildAgentInfo({
       agentInfo: {
         id: "agent-test",
         name: "Test Agent",
@@ -114,7 +114,7 @@ describe("agent metadata reminder", () => {
   });
 
   test("does not include device information", () => {
-    const context = buildAgentMetadata({
+    const context = buildAgentInfo({
       agentInfo: {
         id: "agent-test",
         name: "Test Agent",
