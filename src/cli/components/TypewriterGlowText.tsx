@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { useAnimation } from "../contexts/AnimationContext.js";
 import { useTokenStreamingConfig } from "../contexts/StreamingTextContext";
 import {
@@ -31,7 +31,7 @@ function renderSlice(
   boldSpans: BoldSpan[],
   dimColor: boolean | undefined,
   color?: string,
-): Array<string | JSX.Element> {
+): Array<string | ReactNode> {
   if (!slice) return [];
 
   const sliceStart = globalStart;
@@ -76,7 +76,7 @@ function renderSlice(
     return n ? [n] : [];
   }
 
-  const out: Array<string | JSX.Element> = [];
+  const out: Array<string | ReactNode> = [];
   let cursor = 0;
   for (const span of merged) {
     const a = Math.max(0, span.start - sliceStart);
