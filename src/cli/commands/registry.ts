@@ -74,6 +74,15 @@ export const commands: Record<string, Command> = {
       return "Opening memory viewer...";
     },
   },
+  "/palace": {
+    desc: "Open the Memory Palace in your browser",
+    order: 16,
+    noArgs: true,
+    handler: () => {
+      // Handled specially in App.tsx - opens browser directly
+      return "Opening Memory Palace...";
+    },
+  },
   "/sleeptime": {
     desc: "Configure reflection reminder trigger settings",
     order: 15.5,
@@ -94,7 +103,7 @@ export const commands: Record<string, Command> = {
   },
   "/search": {
     desc: "Search messages across all agents (/search [query])",
-    order: 16,
+    order: 15.1,
     handler: () => {
       // Handled specially in App.tsx to show message search
       return "Opening message search...";
