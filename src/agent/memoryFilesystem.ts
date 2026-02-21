@@ -222,6 +222,26 @@ export async function applyMemfsFlags(
   if (isEnabled && (memfsFlag || shouldAutoEnableFromTag)) {
     const { detachMemoryTools } = await import("../tools/toolset");
     await detachMemoryTools(agentId);
+
+    // Migration (LET-7353): Remove legacy skills/loaded_skills blocks.
+    // These blocks are no longer used — skills are now injected via system reminders.
+    const { getClient } = await import("./client");
+    const client = await getClient();
+    for (const label of ["skills", "loaded_skills"]) {
+      try {
+        const block = await client.agents.blocks.retrieve(label, {
+          agent_id: agentId,
+        });
+        if (block) {
+          await client.agents.blocks.detach(block.id, {
+            agent_id: agentId,
+          });
+          await client.blocks.delete(block.id);
+        }
+      } catch {
+        // Block doesn't exist or already removed, skip
+      }
+    }
   }
 
   // Keep server-side state aligned with explicit disable.
