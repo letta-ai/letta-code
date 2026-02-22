@@ -21,6 +21,7 @@ import {
 import { getClient } from "./agent/client";
 import { setAgentContext, setConversationId } from "./agent/context";
 import { createAgent } from "./agent/create";
+import { resolveListMessagesRoute } from "./agent/listMessagesRouting";
 import { ISOLATED_BLOCK_LABELS } from "./agent/memory";
 import { getStreamToolContextId, sendMessageStream } from "./agent/message";
 import { getModelUpdateArgs } from "./agent/model";
@@ -2718,32 +2719,27 @@ async function runBidirectionalMode(
         try {
           let items: unknown[];
 
-          // Resolve which conversation to list from.
-          // Priority: explicit request field > session's current conversation.
-          // If the session conversation is "default", fall through to the
-          // agents.messages.list path (which implicitly targets the default conv).
-          const targetConvId = listReq.conversation_id ?? conversationId;
-          const useConvApi = targetConvId !== "default";
+          const route = resolveListMessagesRoute(
+            listReq,
+            conversationId,
+            agent.id,
+          );
+          const cursorOpts = {
+            ...(listReq.before ? { before: listReq.before } : {}),
+            ...(listReq.after ? { after: listReq.after } : {}),
+          };
 
-          if (useConvApi) {
+          if (route.kind === "conversations") {
             const page = await client.conversations.messages.list(
-              targetConvId,
-              {
-                limit,
-                order,
-                ...(listReq.before ? { before: listReq.before } : {}),
-                ...(listReq.after ? { after: listReq.after } : {}),
-              },
+              route.conversationId,
+              { limit, order, ...cursorOpts },
             );
             items = page.getPaginatedItems();
           } else {
-            // Session is on the agent's default conversation
-            const agentId = listReq.agent_id ?? agent.id;
-            const page = await client.agents.messages.list(agentId, {
+            const page = await client.agents.messages.list(route.agentId, {
               limit,
               order,
-              ...(listReq.before ? { before: listReq.before } : {}),
-              ...(listReq.after ? { after: listReq.after } : {}),
+              ...cursorOpts,
             });
             items = page.items;
           }
