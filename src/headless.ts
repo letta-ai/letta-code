@@ -81,6 +81,8 @@ import type {
   ControlRequest,
   ControlResponse,
   ErrorMessage,
+  ListMessagesControlRequest,
+  ListMessagesResponsePayload,
   MessageWire,
   RecoveryMessage,
   ResultMessage,
@@ -2707,6 +2709,77 @@ async function runBidirectionalMode(
           uuid: randomUUID(),
         };
         console.log(JSON.stringify(registerResponse));
+      } else if (subtype === "list_messages") {
+        // Fetch conversation messages and return as control_response
+        const listReq = message.request as ListMessagesControlRequest;
+        const limit = listReq.limit ?? 50;
+        const order = listReq.order ?? "desc";
+
+        try {
+          let items: unknown[];
+
+          if (listReq.conversation_id) {
+            // Explicit conversation — use conversations.messages.list
+            const page = await client.conversations.messages.list(
+              listReq.conversation_id,
+              {
+                limit,
+                order,
+                ...(listReq.before ? { before: listReq.before } : {}),
+                ...(listReq.after ? { after: listReq.after } : {}),
+              },
+            );
+            items = page.getPaginatedItems();
+          } else {
+            // No conversation specified — fall back to agent default conversation
+            const agentId = listReq.agent_id ?? agent.id;
+            const page = await client.agents.messages.list(agentId, {
+              limit,
+              order,
+              ...(listReq.before ? { before: listReq.before } : {}),
+              ...(listReq.after ? { after: listReq.after } : {}),
+            });
+            items = page.items;
+          }
+
+          // Compute cursors from oldest/newest item IDs for the caller
+          const hasMore = items.length >= limit;
+          const oldestId =
+            items.length > 0
+              ? (items[items.length - 1] as { id?: string })?.id
+              : undefined;
+
+          const payload: ListMessagesResponsePayload = {
+            messages: items,
+            next_before: oldestId ?? null,
+            has_more: hasMore,
+          };
+
+          const listResponse: ControlResponse = {
+            type: "control_response",
+            response: {
+              subtype: "success",
+              request_id: requestId ?? "",
+              response: payload as unknown as Record<string, unknown>,
+            },
+            session_id: sessionId,
+            uuid: randomUUID(),
+          };
+          console.log(JSON.stringify(listResponse));
+        } catch (err) {
+          const listErrorResponse: ControlResponse = {
+            type: "control_response",
+            response: {
+              subtype: "error",
+              request_id: requestId ?? "",
+              error:
+                err instanceof Error ? err.message : "list_messages failed",
+            },
+            session_id: sessionId,
+            uuid: randomUUID(),
+          };
+          console.log(JSON.stringify(listErrorResponse));
+        }
       } else {
         const errorResponse: ControlResponse = {
           type: "control_response",
