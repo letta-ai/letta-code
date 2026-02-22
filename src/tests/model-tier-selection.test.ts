@@ -77,14 +77,12 @@ describe("getReasoningTierOptionsForHandle", () => {
       "low",
       "medium",
       "high",
-      "xhigh",
     ]);
     expect(options.map((option) => option.modelId)).toEqual([
       "sonnet-4.6-no-reasoning",
       "sonnet-4.6-low",
       "sonnet-4.6-medium",
       "sonnet",
-      "sonnet-4.6-xhigh",
     ]);
   });
 
@@ -97,14 +95,12 @@ describe("getReasoningTierOptionsForHandle", () => {
       "low",
       "medium",
       "high",
-      "xhigh",
     ]);
     expect(options.map((option) => option.modelId)).toEqual([
       "opus-4.6-no-reasoning",
       "opus-4.6-low",
       "opus-4.6-medium",
       "opus",
-      "opus-4.6-xhigh",
     ]);
   });
 
