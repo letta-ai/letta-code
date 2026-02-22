@@ -2718,10 +2718,16 @@ async function runBidirectionalMode(
         try {
           let items: unknown[];
 
-          if (listReq.conversation_id) {
-            // Explicit conversation — use conversations.messages.list
+          // Resolve which conversation to list from.
+          // Priority: explicit request field > session's current conversation.
+          // If the session conversation is "default", fall through to the
+          // agents.messages.list path (which implicitly targets the default conv).
+          const targetConvId = listReq.conversation_id ?? conversationId;
+          const useConvApi = targetConvId !== "default";
+
+          if (useConvApi) {
             const page = await client.conversations.messages.list(
-              listReq.conversation_id,
+              targetConvId,
               {
                 limit,
                 order,
@@ -2731,7 +2737,7 @@ async function runBidirectionalMode(
             );
             items = page.getPaginatedItems();
           } else {
-            // No conversation specified — fall back to agent default conversation
+            // Session is on the agent's default conversation
             const agentId = listReq.agent_id ?? agent.id;
             const page = await client.agents.messages.list(agentId, {
               limit,
