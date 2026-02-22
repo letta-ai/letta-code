@@ -69,20 +69,6 @@
     }
   },
   {
-    "id": "sonnet-4.6-xhigh",
-    "handle": "anthropic/claude-sonnet-4-6",
-    "label": "Sonnet 4.6",
-    "description": "Sonnet 4.6 (max reasoning)",
-    "updateArgs": {
-      "context_window": 200000,
-      "max_output_tokens": 128000,
-      "reasoning_effort": "xhigh",
-      "enable_reasoner": true,
-      "max_reasoning_tokens": 31999,
-      "parallel_tool_calls": true
-    }
-  },
-  {
     "id": "sonnet-4.5",
     "handle": "anthropic/claude-sonnet-4-5-20250929",
     "label": "Sonnet 4.5",
@@ -158,20 +144,6 @@
       "reasoning_effort": "medium",
       "enable_reasoner": true,
       "max_reasoning_tokens": 12000,
-      "parallel_tool_calls": true
-    }
-  },
-  {
-    "id": "opus-4.6-xhigh",
-    "handle": "anthropic/claude-opus-4-6",
-    "label": "Opus 4.6",
-    "description": "Opus 4.6 (max reasoning)",
-    "updateArgs": {
-      "context_window": 200000,
-      "max_output_tokens": 128000,
-      "reasoning_effort": "xhigh",
-      "enable_reasoner": true,
-      "max_reasoning_tokens": 31999,
       "parallel_tool_calls": true
     }
   },
