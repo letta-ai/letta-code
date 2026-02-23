@@ -453,10 +453,13 @@ export async function getMemoryGitStatus(
  * Add the git-memory-enabled tag to an agent.
  * This triggers the backend to create the git repo.
  */
-export async function addGitMemoryTag(agentId: string): Promise<void> {
+export async function addGitMemoryTag(
+  agentId: string,
+  prefetchedAgent?: { tags?: string[] | null },
+): Promise<void> {
   const client = await getClient();
   try {
-    const agent = await client.agents.retrieve(agentId);
+    const agent = prefetchedAgent ?? (await client.agents.retrieve(agentId));
     const tags = agent.tags || [];
     if (!tags.includes(GIT_MEMORY_ENABLED_TAG)) {
       await client.agents.update(agentId, {

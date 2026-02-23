@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 interface ListenerStatusUIProps {
   agentId: string;
   connectionId: string;
+  conversationId?: string;
   onReady: (callbacks: {
     updateStatus: (status: "idle" | "receiving" | "processing") => void;
     updateRetryStatus: (attempt: number, nextRetryIn: number) => void;
@@ -13,7 +14,7 @@ interface ListenerStatusUIProps {
 }
 
 export function ListenerStatusUI(props: ListenerStatusUIProps) {
-  const { agentId, connectionId, onReady } = props;
+  const { agentId, connectionId, conversationId, onReady } = props;
   const [status, setStatus] = useState<"idle" | "receiving" | "processing">(
     "idle",
   );
@@ -34,7 +35,7 @@ export function ListenerStatusUI(props: ListenerStatusUIProps) {
     });
   }, [onReady]);
 
-  const adeUrl = `https://app.letta.com/agents/${agentId}?deviceId=${connectionId}`;
+  const adeUrl = `https://app.letta.com/agents/${agentId}?deviceId=${connectionId}${conversationId ? `&conversationId=${conversationId}` : ""}`;
 
   const statusText = retryInfo
     ? `Reconnecting (attempt ${retryInfo.attempt}, retry in ${Math.round(retryInfo.nextRetryIn / 1000)}s)`

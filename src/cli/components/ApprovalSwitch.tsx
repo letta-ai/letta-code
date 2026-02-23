@@ -84,6 +84,11 @@ type Props = {
   // External data for FileEdit approvals
   precomputedDiff?: AdvancedDiffSuccess;
   allDiffs?: Map<string, AdvancedDiffSuccess>;
+
+  // Plan viewer data (for ExitPlanMode 'o' key)
+  planContent?: string;
+  planFilePath?: string;
+  agentName?: string;
 };
 
 // Parse bash info from approval args
@@ -217,6 +222,9 @@ export const ApprovalSwitch = memo(
     allDiffs,
     showPreview = true,
     defaultScope = "project",
+    planContent,
+    planFilePath,
+    agentName,
   }: Props) => {
     const toolName = approval.toolName;
 
@@ -229,6 +237,9 @@ export const ApprovalSwitch = memo(
           onKeepPlanning={onPlanKeepPlanning}
           onCancel={onCancel ?? (() => {})}
           isFocused={isFocused}
+          planContent={planContent}
+          planFilePath={planFilePath}
+          agentName={agentName}
         />
       );
     }

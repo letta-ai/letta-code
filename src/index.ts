@@ -12,6 +12,13 @@ import {
 import type { AgentProvenance } from "./agent/create";
 import { getLettaCodeHeaders } from "./agent/http-headers";
 import { ISOLATED_BLOCK_LABELS } from "./agent/memory";
+import {
+  getModelPresetUpdateForAgent,
+  getModelUpdateArgs,
+  getResumeRefreshArgs,
+  resolveModel,
+} from "./agent/model";
+import { updateAgentLLMConfig, updateAgentSystemPrompt } from "./agent/modify";
 import { resolveSkillSourcesSelection } from "./agent/skillSources";
 import { LETTA_CLOUD_API_URL } from "./auth/oauth";
 import { ConversationSelector } from "./cli/components/ConversationSelector";
@@ -118,7 +125,7 @@ BEHAVIOR
   - Use /profile save <name> to bookmark your current agent
 
   Profiles are stored in:
-  - Global: ~/.config/letta/settings.json (available everywhere)
+  - Global: ~/.letta/settings.json (available everywhere)
   - Local: .letta/settings.local.json (pinned to project)
 
   If no credentials are configured, you'll be prompted to authenticate via
@@ -892,7 +899,7 @@ async function main(): Promise<void> {
         "Your credentials may be invalid or the server may be unreachable.",
       );
       console.error(
-        "Delete ~/.config/letta/settings.json then run 'letta' to re-authenticate",
+        "Delete ~/.letta/settings.json then run 'letta' to re-authenticate",
       );
       process.exit(1);
     }
@@ -1074,6 +1081,10 @@ async function main(): Promise<void> {
     const [selectedGlobalAgentId, setSelectedGlobalAgentId] = useState<
       string | null
     >(null);
+    // Cache agent object from Phase 1 validation to avoid redundant re-fetch in Phase 2
+    const [validatedAgent, setValidatedAgent] = useState<AgentState | null>(
+      null,
+    );
     // Track agent and conversation for conversation selector (--resume flag)
     const [resumeAgentId, setResumeAgentId] = useState<string | null>(null);
     const [resumeAgentName, setResumeAgentName] = useState<string | null>(null);
@@ -1384,11 +1395,13 @@ async function main(): Promise<void> {
         }
 
         // Step 1: Check local project LRU (session helpers centralize legacy fallback)
+        // Cache the retrieved agent to avoid redundant re-fetch in init()
         const localAgentId = settingsManager.getLocalLastAgentId(process.cwd());
         let localAgentExists = false;
+        let cachedAgent: AgentState | null = null;
         if (localAgentId) {
           try {
-            await client.agents.retrieve(localAgentId);
+            cachedAgent = await client.agents.retrieve(localAgentId);
             localAgentExists = true;
           } catch {
             setFailedAgentMessage(
@@ -1402,7 +1415,7 @@ async function main(): Promise<void> {
         let globalAgentExists = false;
         if (globalAgentId && globalAgentId !== localAgentId) {
           try {
-            await client.agents.retrieve(globalAgentId);
+            cachedAgent = await client.agents.retrieve(globalAgentId);
             globalAgentExists = true;
           } catch {
             // Global agent doesn't exist either
@@ -1432,6 +1445,9 @@ async function main(): Promise<void> {
         switch (target.action) {
           case "resume":
             setSelectedGlobalAgentId(target.agentId);
+            if (cachedAgent && cachedAgent.id === target.agentId) {
+              setValidatedAgent(cachedAgent);
+            }
             // Don't set selectedConversationId — DEFAULT PATH uses default conv.
             // Conversation restoration is handled by --continue path instead.
             setLoadingState("assembling");
@@ -1552,7 +1568,6 @@ async function main(): Promise<void> {
 
         setLoadingState("initializing");
         const { createAgent } = await import("./agent/create");
-        const { getModelUpdateArgs } = await import("./agent/model");
 
         let agent: AgentState | null = null;
 
@@ -1695,10 +1710,13 @@ async function main(): Promise<void> {
 
         // Priority 4: Try to resume from project settings LRU (.letta/settings.local.json)
         // Note: If LRU retrieval failed in early validation, we already showed selector and returned
-        // This block handles the case where we have a valid resumingAgentId from early validation
+        // Use cached agent from Phase 1 validation when available to avoid redundant API call
         if (!agent && resumingAgentId) {
           try {
-            agent = await client.agents.retrieve(resumingAgentId);
+            agent =
+              validatedAgent && validatedAgent.id === resumingAgentId
+                ? validatedAgent
+                : await client.agents.retrieve(resumingAgentId);
           } catch (error) {
             // Agent disappeared between validation and now - show selector
             console.error(
@@ -1746,38 +1764,19 @@ async function main(): Promise<void> {
         settingsManager.updateLocalProjectSettings({ lastAgent: agent.id });
         settingsManager.updateSettings({ lastAgent: agent.id });
 
-        // Migration (LET-7353): Remove legacy skills/loaded_skills blocks
-        // These blocks are no longer used - skills are now injected via system reminders
-        for (const label of ["skills", "loaded_skills"]) {
-          try {
-            const block = await client.agents.blocks.retrieve(label, {
-              agent_id: agent.id,
-            });
-            if (block) {
-              await client.agents.blocks.detach(block.id, {
-                agent_id: agent.id,
-              });
-              await client.blocks.delete(block.id);
-            }
-          } catch {
-            // Block doesn't exist or already removed, skip
-          }
-        }
-
         // Set agent context for tools that need it (e.g., Skill tool)
         setAgentContext(agent.id, skillsDirectory, resolvedSkillSources);
 
-        // Apply memfs flags and auto-enable from server tag when local settings are missing.
+        // Start memfs sync early — awaited in parallel with getResumeData below
         const isSubagent = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
-        try {
-          const { applyMemfsFlags } = await import("./agent/memoryFilesystem");
-          await applyMemfsFlags(agent.id, memfsFlag, noMemfsFlag, {
-            agentTags: agent.tags,
-          });
-        } catch (error) {
-          console.error(error instanceof Error ? error.message : String(error));
-          process.exit(1);
-        }
+        const agentId = agent.id;
+        const agentTags = agent.tags ?? undefined;
+        const memfsSyncPromise = import("./agent/memoryFilesystem").then(
+          ({ applyMemfsFlags }) =>
+            applyMemfsFlags(agentId, memfsFlag, noMemfsFlag, {
+              agentTags,
+            }),
+        );
 
         // Check if we're resuming an existing agent
         // We're resuming if:
@@ -1796,12 +1795,11 @@ async function main(): Promise<void> {
         );
         setIsResumingSession(resuming);
 
-        // If resuming and a model or system prompt was specified, apply those changes
-        if (resuming && (model || systemPromptPreset)) {
+        // If resuming, always refresh model settings from presets to keep
+        // preset-derived fields in sync, then apply optional command-line
+        // overrides (model/system prompt).
+        if (resuming) {
           if (model) {
-            const { resolveModel, getModelUpdateArgs } = await import(
-              "./agent/model"
-            );
             const modelHandle = resolveModel(model);
             if (!modelHandle) {
               console.error(`Error: Invalid model "${model}"`);
@@ -1810,15 +1808,29 @@ async function main(): Promise<void> {
 
             // Always apply model update - different model IDs can share the same
             // handle but have different settings (e.g., gpt-5.2-medium vs gpt-5.2-xhigh)
-            const { updateAgentLLMConfig } = await import("./agent/modify");
             const updateArgs = getModelUpdateArgs(model);
-            await updateAgentLLMConfig(agent.id, modelHandle, updateArgs);
-            // Refresh agent state after model update
-            agent = await client.agents.retrieve(agent.id);
+            agent = await updateAgentLLMConfig(
+              agent.id,
+              modelHandle,
+              updateArgs,
+            );
+          } else {
+            const presetRefresh = getModelPresetUpdateForAgent(agent);
+            if (presetRefresh) {
+              const { updateArgs: resumeRefreshUpdateArgs, needsUpdate } =
+                getResumeRefreshArgs(presetRefresh.updateArgs, agent);
+
+              if (needsUpdate) {
+                agent = await updateAgentLLMConfig(
+                  agent.id,
+                  presetRefresh.modelHandle,
+                  resumeRefreshUpdateArgs,
+                );
+              }
+            }
           }
 
           if (systemPromptPreset) {
-            const { updateAgentSystemPrompt } = await import("./agent/modify");
             const result = await updateAgentSystemPrompt(
               agent.id,
               systemPromptPreset,
@@ -1851,12 +1863,10 @@ async function main(): Promise<void> {
           setResumedExistingConversation(true);
           try {
             // Load message history and pending approvals from the conversation
-            // Re-fetch agent to get fresh message_ids for accurate pending approval detection
             setLoadingState("checking");
-            const freshAgent = await client.agents.retrieve(agent.id);
             const data = await getResumeData(
               client,
-              freshAgent,
+              agent,
               specifiedConversationId,
             );
             setResumeData(data);
@@ -1890,12 +1900,10 @@ async function main(): Promise<void> {
             // If it no longer exists, fall back to creating new
             try {
               // Load message history and pending approvals from the conversation
-              // Re-fetch agent to get fresh message_ids for accurate pending approval detection
               setLoadingState("checking");
-              const freshAgent = await client.agents.retrieve(agent.id);
               const data = await getResumeData(
                 client,
-                freshAgent,
+                agent,
                 lastSession.conversationId,
               );
               // Only set state after validation succeeds
@@ -1933,10 +1941,9 @@ async function main(): Promise<void> {
           // User selected a specific conversation from the --resume selector
           try {
             setLoadingState("checking");
-            const freshAgent = await client.agents.retrieve(agent.id);
             const data = await getResumeData(
               client,
-              freshAgent,
+              agent,
               selectedConversationId,
             );
             conversationIdToUse = selectedConversationId;
@@ -1963,12 +1970,27 @@ async function main(): Promise<void> {
           // Default (including --new-agent): use the agent's "default" conversation
           conversationIdToUse = "default";
 
-          // Load message history from the default conversation
+          // Load message history and memfs sync in parallel — they're independent
           setLoadingState("checking");
-          const freshAgent = await client.agents.retrieve(agent.id);
-          const data = await getResumeData(client, freshAgent, "default");
+          const [data] = await Promise.all([
+            getResumeData(client, agent, "default"),
+            memfsSyncPromise.catch((error) => {
+              console.error(
+                error instanceof Error ? error.message : String(error),
+              );
+              process.exit(1);
+            }),
+          ]);
           setResumeData(data);
           setResumedExistingConversation(true);
+        }
+
+        // Ensure memfs sync completed (already resolved for default path via Promise.all above)
+        try {
+          await memfsSyncPromise;
+        } catch (error) {
+          console.error(error instanceof Error ? error.message : String(error));
+          process.exit(1);
         }
 
         // Save the session (agent + conversation) to settings
@@ -2011,6 +2033,7 @@ async function main(): Promise<void> {
       fromAfFile,
       loadingState,
       selectedGlobalAgentId,
+      validatedAgent,
       shouldContinue,
       resumeAgentId,
       selectedConversationId,

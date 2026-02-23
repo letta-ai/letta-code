@@ -2,6 +2,7 @@
  * Model resolution and handling utilities
  */
 import modelsData from "../models.json";
+import { OPENAI_CODEX_PROVIDER_NAME } from "../providers/openai-codex-provider";
 
 export const models = modelsData;
 
@@ -184,6 +185,126 @@ export function getModelUpdateArgs(
   if (!modelIdentifier) return undefined;
   const modelInfo = getModelInfo(modelIdentifier);
   return modelInfo?.updateArgs;
+}
+
+type AgentModelSnapshot = {
+  model?: string | null;
+  llm_config?: {
+    model?: string | null;
+    model_endpoint_type?: string | null;
+    reasoning_effort?: string | null;
+    enable_reasoner?: boolean | null;
+  } | null;
+};
+
+/**
+ * Resolve the current model preset + updateArgs for an existing agent.
+ *
+ * Used during startup/resume refresh to re-apply only preset-defined fields
+ * (without requiring an explicit --model flag).
+ */
+export function getModelPresetUpdateForAgent(
+  agent: AgentModelSnapshot,
+): { modelHandle: string; updateArgs: Record<string, unknown> } | null {
+  const directHandle =
+    typeof agent.model === "string" && agent.model.length > 0
+      ? agent.model
+      : null;
+
+  const endpointType = agent.llm_config?.model_endpoint_type;
+  const llmModel = agent.llm_config?.model;
+  const llmDerivedHandle =
+    typeof endpointType === "string" &&
+    endpointType.length > 0 &&
+    typeof llmModel === "string" &&
+    llmModel.length > 0
+      ? `${
+          endpointType === "chatgpt_oauth"
+            ? OPENAI_CODEX_PROVIDER_NAME
+            : endpointType
+        }/${llmModel}`
+      : typeof llmModel === "string" && llmModel.includes("/")
+        ? llmModel
+        : null;
+
+  const modelHandle = directHandle ?? llmDerivedHandle;
+  if (!modelHandle) return null;
+
+  const modelInfo = getModelInfoForLlmConfig(modelHandle, {
+    reasoning_effort: agent.llm_config?.reasoning_effort ?? null,
+    enable_reasoner: agent.llm_config?.enable_reasoner ?? null,
+  });
+
+  const updateArgs =
+    (modelInfo?.updateArgs as Record<string, unknown> | undefined) ??
+    getModelUpdateArgs(modelHandle);
+
+  if (!updateArgs || Object.keys(updateArgs).length === 0) {
+    return null;
+  }
+
+  return {
+    modelHandle: modelInfo?.handle ?? modelHandle,
+    updateArgs,
+  };
+}
+
+/**
+ * Fields synced during resume preset refresh.
+ * This is the single source of truth for which preset fields are
+ * auto-applied on resume and the comparison logic that decides
+ * whether an update is needed.
+ */
+const RESUME_REFRESH_FIELDS = [
+  "max_output_tokens",
+  "parallel_tool_calls",
+] as const;
+
+/**
+ * Build the subset of preset updateArgs that should be synced on resume,
+ * and check whether the agent already has those values.
+ *
+ * Returns `{ updateArgs, needsUpdate }`:
+ *  - `updateArgs` contains only the resume-scoped fields from the preset.
+ *  - `needsUpdate` is false when the agent already matches, so the caller
+ *    can skip the expensive PATCH.
+ */
+export function getResumeRefreshArgs(
+  presetUpdateArgs: Record<string, unknown>,
+  agent: {
+    llm_config?: { max_tokens?: number | null } | null;
+    // Accept the broad AgentState union; we only read parallel_tool_calls.
+    model_settings?: { parallel_tool_calls?: boolean } | null;
+  },
+): { updateArgs: Record<string, unknown>; needsUpdate: boolean } {
+  const updateArgs: Record<string, unknown> = {};
+
+  // Extract only the resume-scoped fields from the full preset
+  for (const field of RESUME_REFRESH_FIELDS) {
+    const value = presetUpdateArgs[field];
+    if (field === "max_output_tokens" && typeof value === "number") {
+      updateArgs[field] = value;
+    } else if (field === "parallel_tool_calls" && typeof value === "boolean") {
+      updateArgs[field] = value;
+    }
+  }
+
+  if (Object.keys(updateArgs).length === 0) {
+    return { updateArgs, needsUpdate: false };
+  }
+
+  // Compare against the agent's current values
+  const currentMaxTokens = agent.llm_config?.max_tokens;
+  const wantMaxTokens = updateArgs.max_output_tokens as number | undefined;
+  const currentParallel = agent.model_settings?.parallel_tool_calls;
+  const wantParallel = updateArgs.parallel_tool_calls as boolean | undefined;
+
+  const maxTokensMatch =
+    wantMaxTokens === undefined || currentMaxTokens === wantMaxTokens;
+  const parallelMatch =
+    wantParallel === undefined || currentParallel === wantParallel;
+
+  return { updateArgs, needsUpdate: !(maxTokensMatch && parallelMatch) };
 }
 
 /**

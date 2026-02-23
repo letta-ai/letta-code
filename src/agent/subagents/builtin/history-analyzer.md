@@ -94,8 +94,8 @@ Key updates:
 ...
 
 Generated-By: Letta Code
-Agent-ID: $LETTA_AGENT_ID
-Parent-Agent-ID: $LETTA_PARENT_AGENT_ID"
+Agent-ID: <ACTUAL_AGENT_ID>
+Parent-Agent-ID: <ACTUAL_PARENT_AGENT_ID>"
 ```
 
 **Commit type** — pick the one that fits:
@@ -107,9 +107,16 @@ Parent-Agent-ID: $LETTA_PARENT_AGENT_ID"
 - `chore(history-analyzer): ingest Claude Code history 2025-09 ⏳`
 - `refactor(history-analyzer): reorganize memory by project domain ⏳`
 
-**Trailers:** Omit `Agent-ID` or `Parent-Agent-ID` if the
-corresponding environment variable is unset (don't write
-the literal variable name).
+**Trailers:** Before writing the commit, resolve the actual
+ID values by running:
+```bash
+echo "AGENT_ID=$LETTA_AGENT_ID"
+echo "PARENT_AGENT_ID=$LETTA_PARENT_AGENT_ID"
+```
+Use the printed values (e.g. `agent-abc123...`) in the
+trailers. If a variable is empty or unset, omit that
+trailer entirely. Never write a literal variable name like
+`$LETTA_AGENT_ID` in the commit message.
 
 ## Important
 

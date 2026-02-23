@@ -54,7 +54,7 @@ function truncateEnd(value: string, maxChars: number): string {
 function getReasoningEffortTag(
   effort: ModelReasoningEffort | null | undefined,
 ): string | null {
-  if (effort === "none") return "no";
+  if (effort === "none") return null;
   if (effort === "xhigh") return "max";
   if (effort === "minimal") return "minimal";
   if (effort === "low") return "low";

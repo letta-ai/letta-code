@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { parseArgs } from "node:util";
 import type { Letta } from "@letta-ai/letta-client";
 import { APIError } from "@letta-ai/letta-client/core/error";
@@ -17,12 +18,20 @@ import {
   parseRetryAfterHeaderMs,
   shouldRetryRunMetadataError,
 } from "./agent/approval-recovery";
+import { handleBootstrapSessionState } from "./agent/bootstrapHandler";
 import { getClient } from "./agent/client";
 import { setAgentContext, setConversationId } from "./agent/context";
 import { createAgent } from "./agent/create";
+import { handleListMessages } from "./agent/listMessagesHandler";
 import { ISOLATED_BLOCK_LABELS } from "./agent/memory";
 import { getStreamToolContextId, sendMessageStream } from "./agent/message";
-import { getModelUpdateArgs } from "./agent/model";
+import {
+  getModelPresetUpdateForAgent,
+  getModelUpdateArgs,
+  getResumeRefreshArgs,
+  resolveModel,
+} from "./agent/model";
+import { updateAgentLLMConfig, updateAgentSystemPrompt } from "./agent/modify";
 import { resolveSkillSourcesSelection } from "./agent/skillSources";
 import type { SkillSource } from "./agent/skills";
 import { SessionStats } from "./agent/stats";
@@ -75,11 +84,13 @@ import {
 } from "./tools/manager";
 import type {
   AutoApprovalMessage,
+  BootstrapSessionStateRequest,
   CanUseToolControlRequest,
   CanUseToolResponse,
   ControlRequest,
   ControlResponse,
   ErrorMessage,
+  ListMessagesControlRequest,
   MessageWire,
   RecoveryMessage,
   ResultMessage,
@@ -283,6 +294,7 @@ export async function handleHeadlessCommand(
 
       memfs: { type: "boolean" },
       "no-memfs": { type: "boolean" },
+      "memfs-startup": { type: "string" }, // "blocking" | "background" | "skip"
       "no-skills": { type: "boolean" },
       "no-bundled-skills": { type: "boolean" },
       "no-system-info-reminder": { type: "boolean" },
@@ -433,6 +445,15 @@ export async function handleHeadlessCommand(
   const skillSourcesRaw = values["skill-sources"] as string | undefined;
   const memfsFlag = values.memfs as boolean | undefined;
   const noMemfsFlag = values["no-memfs"] as boolean | undefined;
+  // Startup policy for the git-backed memory pull on session init.
+  // "blocking" (default): await the pull before proceeding.
+  // "background": fire the pull async, emit init without waiting.
+  // "skip": skip the pull entirely this session.
+  const memfsStartupRaw = values["memfs-startup"] as string | undefined;
+  const memfsStartupPolicy: "blocking" | "background" | "skip" =
+    memfsStartupRaw === "background" || memfsStartupRaw === "skip"
+      ? memfsStartupRaw
+      : "blocking";
   const requestedMemoryPromptMode: "memfs" | "standard" | undefined = memfsFlag
     ? "memfs"
     : noMemfsFlag
@@ -732,8 +753,10 @@ export async function handleHeadlessCommand(
     }
   }
 
-  // Priority 0: --conversation derives agent from conversation ID
-  if (specifiedConversationId) {
+  // Priority 0: --conversation derives agent from conversation ID.
+  // "default" is a virtual agent-scoped conversation (not a retrievable conv-*).
+  // It requires --agent and should not hit conversations.retrieve().
+  if (specifiedConversationId && specifiedConversationId !== "default") {
     try {
       const conversation = await client.conversations.retrieve(
         specifiedConversationId,
@@ -877,27 +900,38 @@ export async function handleHeadlessCommand(
     (!forceNew && !fromAfFile)
   );
 
-  // If resuming and a model or system prompt was specified, apply those changes
-  if (isResumingAgent && (model || systemPromptPreset)) {
+  // If resuming, always refresh model settings from presets to keep
+  // preset-derived fields in sync, then apply optional command-line
+  // overrides (model/system prompt).
+  if (isResumingAgent) {
     if (model) {
-      const { resolveModel } = await import("./agent/model");
       const modelHandle = resolveModel(model);
-      if (!modelHandle) {
+      if (typeof modelHandle !== "string") {
         console.error(`Error: Invalid model "${model}"`);
         process.exit(1);
       }
 
       // Always apply model update - different model IDs can share the same
       // handle but have different settings (e.g., gpt-5.2-medium vs gpt-5.2-xhigh)
-      const { updateAgentLLMConfig } = await import("./agent/modify");
       const updateArgs = getModelUpdateArgs(model);
-      await updateAgentLLMConfig(agent.id, modelHandle, updateArgs);
-      // Refresh agent state after model update
-      agent = await client.agents.retrieve(agent.id);
+      agent = await updateAgentLLMConfig(agent.id, modelHandle, updateArgs);
+    } else {
+      const presetRefresh = getModelPresetUpdateForAgent(agent);
+      if (presetRefresh) {
+        const { updateArgs: resumeRefreshUpdateArgs, needsUpdate } =
+          getResumeRefreshArgs(presetRefresh.updateArgs, agent);
+
+        if (needsUpdate) {
+          agent = await updateAgentLLMConfig(
+            agent.id,
+            presetRefresh.modelHandle,
+            resumeRefreshUpdateArgs,
+          );
+        }
+      }
     }
 
     if (systemPromptPreset) {
-      const { updateAgentSystemPrompt } = await import("./agent/modify");
       const result = await updateAgentSystemPrompt(
         agent.id,
         systemPromptPreset,
@@ -917,25 +951,58 @@ export async function handleHeadlessCommand(
   const isSubagent = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
 
   // Apply memfs flags and auto-enable from server tag when local settings are missing.
-  try {
-    const { applyMemfsFlags } = await import("./agent/memoryFilesystem");
-    const memfsResult = await applyMemfsFlags(
-      agent.id,
-      memfsFlag,
-      noMemfsFlag,
-      { pullOnExistingRepo: true, agentTags: agent.tags },
-    );
-    if (memfsResult.pullSummary?.includes("CONFLICT")) {
+  // Respects memfsStartupPolicy:
+  //   "blocking"  (default) – await the pull; exit on conflict.
+  //   "background"           – fire pull async; session init proceeds immediately.
+  //   "skip"                 – skip the pull this session.
+  if (memfsStartupPolicy === "skip") {
+    // Run enable/disable logic but skip the git pull.
+    try {
+      const { applyMemfsFlags } = await import("./agent/memoryFilesystem");
+      await applyMemfsFlags(agent.id, memfsFlag, noMemfsFlag, {
+        pullOnExistingRepo: false,
+        agentTags: agent.tags,
+      });
+    } catch (error) {
       console.error(
-        "Memory has merge conflicts. Run in interactive mode to resolve.",
+        `Memory flags failed: ${error instanceof Error ? error.message : String(error)}`,
       );
       process.exit(1);
     }
-  } catch (error) {
-    console.error(
-      `Memory git sync failed: ${error instanceof Error ? error.message : String(error)}`,
-    );
-    process.exit(1);
+  } else if (memfsStartupPolicy === "background") {
+    // Fire pull async; don't block session initialisation.
+    const { applyMemfsFlags } = await import("./agent/memoryFilesystem");
+    applyMemfsFlags(agent.id, memfsFlag, noMemfsFlag, {
+      pullOnExistingRepo: true,
+      agentTags: agent.tags,
+    }).catch((error) => {
+      // Log to stderr only — the session is already live.
+      console.error(
+        `[memfs background pull] ${error instanceof Error ? error.message : String(error)}`,
+      );
+    });
+  } else {
+    // "blocking" — original behaviour.
+    try {
+      const { applyMemfsFlags } = await import("./agent/memoryFilesystem");
+      const memfsResult = await applyMemfsFlags(
+        agent.id,
+        memfsFlag,
+        noMemfsFlag,
+        { pullOnExistingRepo: true, agentTags: agent.tags },
+      );
+      if (memfsResult.pullSummary?.includes("CONFLICT")) {
+        console.error(
+          "Memory has merge conflicts. Run in interactive mode to resolve.",
+        );
+        process.exit(1);
+      }
+    } catch (error) {
+      console.error(
+        `Memory git sync failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      process.exit(1);
+    }
   }
 
   try {
@@ -1017,6 +1084,10 @@ export async function handleHeadlessCommand(
       isolated_block_labels: isolatedBlockLabels,
     });
     conversationId = conversation.id;
+  } else if (isSubagent) {
+    // Freshly created subagents have no concurrency risk — use the default
+    // conversation so it's easy to inspect in the ADE.
+    conversationId = "default";
   } else {
     // Default for headless: always create a new conversation to avoid
     // 409 "conversation busy" races (e.g., parent agent calling letta -p).
@@ -1045,23 +1116,6 @@ export async function handleHeadlessCommand(
       agentId: agent.id,
       conversationId,
     });
-  }
-
-  // Migration (LET-7353): Remove legacy skills/loaded_skills blocks
-  for (const label of ["skills", "loaded_skills"]) {
-    try {
-      const block = await client.agents.blocks.retrieve(label, {
-        agent_id: agent.id,
-      });
-      if (block) {
-        await client.agents.blocks.detach(block.id, {
-          agent_id: agent.id,
-        });
-        await client.blocks.delete(block.id);
-      }
-    } catch {
-      // Block doesn't exist or already removed, skip
-    }
   }
 
   // Set agent context for tools that need it (e.g., Skill tool, Task tool)
@@ -1343,7 +1397,7 @@ ${SYSTEM_REMINDER_CLOSE}
   const lastRunAt = (agent as { last_run_completion?: string })
     .last_run_completion;
   const { parts: sharedReminderParts } = await buildSharedReminderParts({
-    mode: "headless-one-shot",
+    mode: isSubagent ? "subagent" : "headless-one-shot",
     agent: {
       id: agent.id,
       name: agent.name,
@@ -1415,7 +1469,7 @@ ${SYSTEM_REMINDER_CLOSE}
           message: `Maximum turns limit reached (${buffers.usage.stepCount}/${maxTurns} steps)`,
           stop_reason: "max_steps",
           session_id: sessionId,
-          uuid: `error-max-turns-${crypto.randomUUID()}`,
+          uuid: `error-max-turns-${randomUUID()}`,
         };
         console.log(JSON.stringify(errorMsg));
       } else {
@@ -1489,7 +1543,7 @@ ${SYSTEM_REMINDER_CLOSE}
               message:
                 "Detected pending approval conflict on send; resolving before retry",
               session_id: sessionId,
-              uuid: `recovery-pre-stream-${crypto.randomUUID()}`,
+              uuid: `recovery-pre-stream-${randomUUID()}`,
             };
             console.log(JSON.stringify(recoveryMsg));
           } else {
@@ -1515,7 +1569,7 @@ ${SYSTEM_REMINDER_CLOSE}
               max_attempts: CONVERSATION_BUSY_MAX_RETRIES,
               delay_ms: CONVERSATION_BUSY_RETRY_DELAY_MS,
               session_id: sessionId,
-              uuid: `retry-conversation-busy-${crypto.randomUUID()}`,
+              uuid: `retry-conversation-busy-${randomUUID()}`,
             };
             console.log(JSON.stringify(retryMsg));
           } else {
@@ -1551,7 +1605,7 @@ ${SYSTEM_REMINDER_CLOSE}
               max_attempts: LLM_API_ERROR_MAX_RETRIES,
               delay_ms: delayMs,
               session_id: sessionId,
-              uuid: `retry-pre-stream-${crypto.randomUUID()}`,
+              uuid: `retry-pre-stream-${randomUUID()}`,
             };
             console.log(JSON.stringify(retryMsg));
           } else {
@@ -1603,7 +1657,7 @@ ${SYSTEM_REMINDER_CLOSE}
               stop_reason: "error",
               run_id: errorInfo.run_id,
               session_id: sessionId,
-              uuid: crypto.randomUUID(),
+              uuid: randomUUID(),
               ...(errorInfo.error_type &&
                 errorInfo.run_id && {
                   api_error: {
@@ -1633,7 +1687,7 @@ ${SYSTEM_REMINDER_CLOSE}
                 "Detected pending approval conflict; auto-denying stale approval and retrying",
               run_id: recoveryRunId ?? undefined,
               session_id: sessionId,
-              uuid: `recovery-${recoveryRunId || crypto.randomUUID()}`,
+              uuid: `recovery-${recoveryRunId || randomUUID()}`,
             };
             console.log(JSON.stringify(recoveryMsg));
             approvalPendingRecovery = true;
@@ -1687,7 +1741,7 @@ ${SYSTEM_REMINDER_CLOSE}
                 type: "stream_event",
                 event: chunk,
                 session_id: sessionId,
-                uuid: uuid || crypto.randomUUID(),
+                uuid: uuid || randomUUID(),
               };
               console.log(JSON.stringify(streamEvent));
             } else {
@@ -1695,7 +1749,7 @@ ${SYSTEM_REMINDER_CLOSE}
                 type: "message",
                 ...chunk,
                 session_id: sessionId,
-                uuid: uuid || crypto.randomUUID(),
+                uuid: uuid || randomUUID(),
               };
               console.log(JSON.stringify(msg));
             }
@@ -1883,7 +1937,7 @@ ${SYSTEM_REMINDER_CLOSE}
               delay_ms: delayMs,
               run_id: lastRunId ?? undefined,
               session_id: sessionId,
-              uuid: `retry-${lastRunId || crypto.randomUUID()}`,
+              uuid: `retry-${lastRunId || randomUUID()}`,
             };
             console.log(JSON.stringify(retryMsg));
           } else {
@@ -1915,7 +1969,7 @@ ${SYSTEM_REMINDER_CLOSE}
               "Tool call ID mismatch; fetching actual pending approvals and resyncing",
             run_id: lastRunId ?? undefined,
             session_id: sessionId,
-            uuid: `recovery-${lastRunId || crypto.randomUUID()}`,
+            uuid: `recovery-${lastRunId || randomUUID()}`,
           };
           console.log(JSON.stringify(recoveryMsg));
         } else {
@@ -1938,7 +1992,7 @@ ${SYSTEM_REMINDER_CLOSE}
               stop_reason: stopReason,
               run_id: lastRunId ?? undefined,
               session_id: sessionId,
-              uuid: `error-${lastRunId || crypto.randomUUID()}`,
+              uuid: `error-${lastRunId || randomUUID()}`,
             };
             console.log(JSON.stringify(errorMsg));
           } else {
@@ -2001,7 +2055,7 @@ ${SYSTEM_REMINDER_CLOSE}
                 delay_ms: delayMs,
                 run_id: lastRunId ?? undefined,
                 session_id: sessionId,
-                uuid: `retry-${lastRunId || crypto.randomUUID()}`,
+                uuid: `retry-${lastRunId || randomUUID()}`,
               };
               console.log(JSON.stringify(retryMsg));
             } else {
@@ -2068,7 +2122,7 @@ ${SYSTEM_REMINDER_CLOSE}
           stop_reason: stopReason,
           run_id: lastRunId ?? undefined,
           session_id: sessionId,
-          uuid: `error-${lastRunId || crypto.randomUUID()}`,
+          uuid: `error-${lastRunId || randomUUID()}`,
         };
         console.log(JSON.stringify(errorMsg));
       } else {
@@ -2090,7 +2144,7 @@ ${SYSTEM_REMINDER_CLOSE}
         stop_reason: "error",
         run_id: lastKnownRunId ?? undefined,
         session_id: sessionId,
-        uuid: `error-${lastKnownRunId || crypto.randomUUID()}`,
+        uuid: `error-${lastKnownRunId || randomUUID()}`,
       };
       console.log(JSON.stringify(errorMsg));
     } else {
@@ -2256,6 +2310,7 @@ async function runBidirectionalMode(
   let currentAbortController: AbortController | null = null;
   const reminderContextTracker = createContextTracker();
   const sharedReminderState = createSharedReminderState();
+  const isSubagent = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
 
   // Resolve pending approvals for this conversation before retrying user input.
   const resolveAllPendingApprovals = async () => {
@@ -2571,7 +2626,7 @@ async function runBidirectionalMode(
         message: "Invalid JSON input",
         stop_reason: "error",
         session_id: sessionId,
-        uuid: crypto.randomUUID(),
+        uuid: randomUUID(),
       };
       console.log(JSON.stringify(errorMsg));
       continue;
@@ -2602,7 +2657,7 @@ async function runBidirectionalMode(
             },
           },
           session_id: sessionId,
-          uuid: crypto.randomUUID(),
+          uuid: randomUUID(),
         };
         console.log(JSON.stringify(initResponse));
       } else if (subtype === "interrupt") {
@@ -2618,7 +2673,7 @@ async function runBidirectionalMode(
             request_id: requestId ?? "",
           },
           session_id: sessionId,
-          uuid: crypto.randomUUID(),
+          uuid: randomUUID(),
         };
         console.log(JSON.stringify(interruptResponse));
       } else if (subtype === "register_external_tools") {
@@ -2682,9 +2737,37 @@ async function runBidirectionalMode(
             response: { registered: tools.length },
           },
           session_id: sessionId,
-          uuid: crypto.randomUUID(),
+          uuid: randomUUID(),
         };
         console.log(JSON.stringify(registerResponse));
+      } else if (subtype === "bootstrap_session_state") {
+        const bootstrapReq = message.request as BootstrapSessionStateRequest;
+        const bootstrapResp = await handleBootstrapSessionState({
+          bootstrapReq,
+          sessionContext: {
+            agentId: agent.id,
+            conversationId,
+            model: agent.llm_config?.model,
+            tools: availableTools,
+            memfsEnabled: settingsManager.isMemfsEnabled(agent.id),
+            sessionId,
+          },
+          requestId: requestId ?? "",
+          client,
+          hasPendingApproval: false, // TODO: wire approval state when available
+        });
+        console.log(JSON.stringify(bootstrapResp));
+      } else if (subtype === "list_messages") {
+        const listReq = message.request as ListMessagesControlRequest;
+        const listResp = await handleListMessages({
+          listReq,
+          sessionConversationId: conversationId,
+          sessionAgentId: agent.id,
+          sessionId,
+          requestId: requestId ?? "",
+          client,
+        });
+        console.log(JSON.stringify(listResp));
       } else {
         const errorResponse: ControlResponse = {
           type: "control_response",
@@ -2694,7 +2777,7 @@ async function runBidirectionalMode(
             error: `Unknown control request subtype: ${subtype}`,
           },
           session_id: sessionId,
-          uuid: crypto.randomUUID(),
+          uuid: randomUUID(),
         };
         console.log(JSON.stringify(errorResponse));
       }
@@ -2793,7 +2876,7 @@ async function runBidirectionalMode(
         const lastRunAt = (agent as { last_run_completion?: string })
           .last_run_completion;
         const { parts: sharedReminderParts } = await buildSharedReminderParts({
-          mode: "headless-bidirectional",
+          mode: isSubagent ? "subagent" : "headless-bidirectional",
           agent: {
             id: agent.id,
             name: agent.name,
@@ -2879,7 +2962,7 @@ async function runBidirectionalMode(
                 message:
                   "Detected pending approval conflict on send; resolving before retry",
                 session_id: sessionId,
-                uuid: `recovery-bidir-${crypto.randomUUID()}`,
+                uuid: `recovery-bidir-${randomUUID()}`,
               };
               console.log(JSON.stringify(recoveryMsg));
               await resolveAllPendingApprovals();
@@ -2904,7 +2987,7 @@ async function runBidirectionalMode(
                 max_attempts: LLM_API_ERROR_MAX_RETRIES,
                 delay_ms: delayMs,
                 session_id: sessionId,
-                uuid: `retry-bidir-${crypto.randomUUID()}`,
+                uuid: `retry-bidir-${randomUUID()}`,
               };
               console.log(JSON.stringify(retryMsg));
 
@@ -2929,7 +3012,7 @@ async function runBidirectionalMode(
                 stop_reason: "error",
                 run_id: errorInfo.run_id,
                 session_id: sessionId,
-                uuid: crypto.randomUUID(),
+                uuid: randomUUID(),
                 ...(errorInfo.error_type &&
                   errorInfo.run_id && {
                     api_error: {
@@ -2960,7 +3043,7 @@ async function runBidirectionalMode(
                 type: "stream_event",
                 event: chunk,
                 session_id: sessionId,
-                uuid: uuid || crypto.randomUUID(),
+                uuid: uuid || randomUUID(),
               };
               console.log(JSON.stringify(streamEvent));
             } else {
@@ -2968,7 +3051,7 @@ async function runBidirectionalMode(
                 type: "message",
                 ...chunk,
                 session_id: sessionId,
-                uuid: uuid || crypto.randomUUID(),
+                uuid: uuid || randomUUID(),
               };
               console.log(JSON.stringify(msg));
             }
@@ -3234,7 +3317,7 @@ async function runBidirectionalMode(
           message: errorDetails,
           stop_reason: "error",
           session_id: sessionId,
-          uuid: crypto.randomUUID(),
+          uuid: randomUUID(),
         };
         console.log(JSON.stringify(errorMsg));
 
@@ -3267,7 +3350,7 @@ async function runBidirectionalMode(
       message: `Unknown message type: ${message.type}`,
       stop_reason: "error",
       session_id: sessionId,
-      uuid: crypto.randomUUID(),
+      uuid: randomUUID(),
     };
     console.log(JSON.stringify(errorMsg));
   }

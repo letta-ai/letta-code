@@ -74,6 +74,15 @@ export const commands: Record<string, Command> = {
       return "Opening memory viewer...";
     },
   },
+  "/palace": {
+    desc: "Open the Memory Palace in your browser",
+    order: 16,
+    noArgs: true,
+    handler: () => {
+      // Handled specially in App.tsx - opens browser directly
+      return "Opening Memory Palace...";
+    },
+  },
   "/sleeptime": {
     desc: "Configure reflection reminder trigger settings",
     order: 15.5,
@@ -94,7 +103,7 @@ export const commands: Record<string, Command> = {
   },
   "/search": {
     desc: "Search messages across all agents (/search [query])",
-    order: 16,
+    order: 15.1,
     handler: () => {
       // Handled specially in App.tsx to show message search
       return "Opening message search...";
@@ -342,6 +351,15 @@ export const commands: Record<string, Command> = {
 
       await updateSettings({ shiftEnterKeybindingInstalled: true });
       return `Installed Shift+Enter keybinding for ${terminalName}\nLocation: ${keybindingsPath}`;
+    },
+  },
+  "/install-github-app": {
+    desc: "Setup Letta Code GitHub Action in this repo",
+    order: 38,
+    noArgs: true,
+    handler: () => {
+      // Handled specially in App.tsx
+      return "Opening GitHub App installer...";
     },
   },
 

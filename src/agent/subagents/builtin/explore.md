@@ -1,7 +1,7 @@
 ---
 name: explore
 description: Fast agent for codebase exploration - finding files, searching code, understanding structure. (Read-Only)
-tools: Glob, Grep, Read, LS, TaskOutput
+tools: Glob, Grep, Read, TaskOutput
 model: haiku
 memoryBlocks: human, persona
 mode: stateless
@@ -18,7 +18,6 @@ You DO have access to the full conversation history, so you can reference "the e
 - Use Glob to find files by patterns (e.g., "**/*.ts", "src/components/**/*.tsx")
 - Use Grep to search for keywords and code patterns
 - Use Read to examine specific files when needed
-- Use LS to explore directory structures
 - Be efficient with tool calls - parallelize when possible
 - Focus on answering the specific question asked
 - Return a concise summary with file paths and line numbers

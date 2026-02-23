@@ -143,6 +143,7 @@ import { FeedbackDialog } from "./components/FeedbackDialog";
 import { HelpDialog } from "./components/HelpDialog";
 import { HooksManager } from "./components/HooksManager";
 import { Input } from "./components/InputRich";
+import { InstallGithubAppFlow } from "./components/InstallGithubAppFlow";
 import { McpConnectFlow } from "./components/McpConnectFlow";
 import { McpSelector } from "./components/McpSelector";
 import { MemfsTreeViewer } from "./components/MemfsTreeViewer";
@@ -1283,6 +1284,7 @@ export default function App({
     | "new"
     | "mcp"
     | "mcp-connect"
+    | "install-github-app"
     | "help"
     | "hooks"
     | "connect"
@@ -3070,6 +3072,20 @@ export default function App({
       initialInput: Array<MessageCreate | ApprovalCreate>,
       options?: { allowReentry?: boolean; submissionGeneration?: number },
     ): Promise<void> => {
+      // Transient pre-stream retries can yield for seconds.
+      // Pin the user's permission mode for the duration of the submission so
+      // auto-approvals (YOLO / bypassPermissions) don't regress after a retry.
+      const pinnedPermissionMode = uiPermissionModeRef.current;
+      const restorePinnedPermissionMode = () => {
+        if (pinnedPermissionMode === "plan") return;
+        if (permissionMode.getMode() !== pinnedPermissionMode) {
+          permissionMode.setMode(pinnedPermissionMode);
+        }
+        if (uiPermissionModeRef.current !== pinnedPermissionMode) {
+          setUiPermissionMode(pinnedPermissionMode);
+        }
+      };
+
       // Reset per-run approval tracking used by streaming UI.
       buffersRef.current.approvalsPending = false;
       if (buffersRef.current.serverToolCalls.size > 0) {
@@ -3462,6 +3478,7 @@ export default function App({
               if (!cancelled) {
                 // Reset interrupted flag so retry stream chunks are processed
                 buffersRef.current.interrupted = false;
+                restorePinnedPermissionMode();
                 continue;
               }
               // User pressed ESC - fall through to error handling
@@ -3510,6 +3527,7 @@ export default function App({
               if (!cancelled) {
                 buffersRef.current.interrupted = false;
                 conversationBusyRetriesRef.current = 0;
+                restorePinnedPermissionMode();
                 continue;
               }
               // User pressed ESC - fall through to error handling
@@ -6144,6 +6162,18 @@ export default function App({
           return { submitted: true };
         }
 
+        // Special handling for /install-github-app command - interactive setup wizard
+        if (trimmed === "/install-github-app") {
+          startOverlayCommand(
+            "install-github-app",
+            "/install-github-app",
+            "Opening GitHub App installer...",
+            "GitHub App installer dismissed",
+          );
+          setActiveOverlay("install-github-app");
+          return { submitted: true };
+        }
+
         // Special handling for /sleeptime command - opens reflection settings
         if (trimmed === "/sleeptime") {
           startOverlayCommand(
@@ -6213,7 +6243,7 @@ export default function App({
           return { submitted: true };
         }
 
-        // Special handling for /memory command - opens memory viewer
+        // Special handling for /memory command - opens memory viewer overlay
         if (trimmed === "/memory") {
           startOverlayCommand(
             "memory",
@@ -6222,6 +6252,44 @@ export default function App({
             "Memory viewer dismissed",
           );
           setActiveOverlay("memory");
+          return { submitted: true };
+        }
+
+        // /palace - open Memory Palace directly in the browser (skips TUI overlay)
+        if (trimmed === "/palace") {
+          const cmd = commandRunner.start(
+            "/palace",
+            "Opening Memory Palace...",
+          );
+
+          if (!settingsManager.isMemfsEnabled(agentId)) {
+            cmd.finish(
+              "Memory Palace requires memfs. Run /memfs enable first.",
+              false,
+            );
+            return { submitted: true };
+          }
+
+          const { generateAndOpenMemoryViewer } = await import(
+            "../web/generate-memory-viewer"
+          );
+          generateAndOpenMemoryViewer(agentId, {
+            agentName: agentName ?? undefined,
+          })
+            .then((result) => {
+              if (result.opened) {
+                cmd.finish("Opened Memory Palace in browser", true);
+              } else {
+                cmd.finish(`Open manually: ${result.filePath}`, true);
+              }
+            })
+            .catch((err: unknown) => {
+              cmd.finish(
+                `Failed to open: ${err instanceof Error ? err.message : String(err)}`,
+                false,
+              );
+            });
+
           return { submitted: true };
         }
 
@@ -11779,6 +11847,18 @@ Plan file path: ${planFilePath}`;
                                   "project")
                             }
                             showPreview={showApprovalPreview}
+                            planContent={
+                              currentApproval.toolName === "ExitPlanMode"
+                                ? _readPlanFile()
+                                : undefined
+                            }
+                            planFilePath={
+                              currentApproval.toolName === "ExitPlanMode"
+                                ? (permissionMode.getPlanFilePath() ??
+                                  undefined)
+                                : undefined
+                            }
+                            agentName={agentName ?? undefined}
                           />
                         ) : ln.kind === "user" ? (
                           <UserMessage line={ln} prompt={statusLine.prompt} />
@@ -11863,6 +11943,17 @@ Plan file path: ${planFilePath}`;
                         : (currentApprovalContext?.defaultScope ?? "project")
                     }
                     showPreview={showApprovalPreview}
+                    planContent={
+                      currentApproval.toolName === "ExitPlanMode"
+                        ? _readPlanFile()
+                        : undefined
+                    }
+                    planFilePath={
+                      currentApproval.toolName === "ExitPlanMode"
+                        ? (permissionMode.getPlanFilePath() ?? undefined)
+                        : undefined
+                    }
+                    agentName={agentName ?? undefined}
                   />
                 </Box>
               )}
@@ -12017,6 +12108,84 @@ Plan file path: ${planFilePath}`;
                 initialSettings={getReflectionSettings()}
                 memfsEnabled={settingsManager.isMemfsEnabled(agentId)}
                 onSave={handleSleeptimeModeSelect}
+                onCancel={closeOverlay}
+              />
+            )}
+
+            {/* GitHub App Installer - setup Letta Code GitHub Action */}
+            {activeOverlay === "install-github-app" && (
+              <InstallGithubAppFlow
+                onComplete={(result) => {
+                  const overlayCommand =
+                    consumeOverlayCommand("install-github-app");
+                  closeOverlay();
+
+                  const cmd =
+                    overlayCommand ??
+                    commandRunner.start(
+                      "/install-github-app",
+                      "Setting up Letta Code GitHub Action...",
+                    );
+
+                  if (!result.committed) {
+                    cmd.finish(
+                      [
+                        `Workflow already up to date for ${result.repo}.`,
+                        result.secretAction === "reused"
+                          ? "Using existing LETTA_API_KEY secret."
+                          : "Updated LETTA_API_KEY secret.",
+                        "No pull request needed.",
+                      ].join("\n"),
+                      true,
+                    );
+                    return;
+                  }
+
+                  const lines: string[] = ["Install GitHub App", "Success", ""];
+                  lines.push("✓ GitHub Actions workflow created!");
+                  lines.push("");
+                  lines.push(
+                    result.secretAction === "reused"
+                      ? "✓ Using existing LETTA_API_KEY secret"
+                      : "✓ API key saved as LETTA_API_KEY secret",
+                  );
+                  if (result.agentId) {
+                    lines.push("");
+                    lines.push(`✓ Agent configured: ${result.agentId}`);
+                  }
+                  lines.push("");
+                  lines.push("Next steps:");
+
+                  if (result.pullRequestUrl) {
+                    lines.push(
+                      result.pullRequestCreateMode === "page-opened"
+                        ? "1. A pre-filled PR page has been created"
+                        : "1. A pull request has been created",
+                    );
+                    lines.push("2. Merge the PR to enable Letta PR assistance");
+                    lines.push(
+                      "3. Mention @letta-code in an issue or PR to test",
+                    );
+                    lines.push("");
+                    lines.push(`PR: ${result.pullRequestUrl}`);
+                    if (result.agentUrl) {
+                      lines.push(`Agent: ${result.agentUrl}`);
+                    }
+                  } else {
+                    lines.push(
+                      "1. Open a PR for the branch created by the installer",
+                    );
+                    lines.push("2. Merge the PR to enable Letta PR assistance");
+                    lines.push(
+                      "3. Mention @letta-code in an issue or PR to test",
+                    );
+                    lines.push("");
+                    lines.push(
+                      "Branch pushed but PR was not opened automatically. Run: gh pr create",
+                    );
+                  }
+                  cmd.finish(lines.join("\n"), true);
+                }}
                 onCancel={closeOverlay}
               />
             )}

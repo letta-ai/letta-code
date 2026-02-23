@@ -88,4 +88,35 @@ describe("shared reminder parity", () => {
       reminderIdsForMode("headless-bidirectional"),
     );
   });
+
+  test("subagent mode produces only agent-info reminder", async () => {
+    for (const reminderId of SHARED_REMINDER_IDS) {
+      providerMap[reminderId] = async () => reminderId;
+    }
+
+    const reflectionSettings: ReflectionSettings = {
+      trigger: "off",
+      behavior: "reminder",
+      stepCount: 25,
+    };
+
+    const subagent = await buildSharedReminderParts({
+      agent: {
+        id: "agent-1",
+        name: "Agent 1",
+        description: "test",
+        lastRunAt: null,
+      },
+      sessionContextReminderEnabled: true,
+      reflectionSettings,
+      skillSources: [] as SkillSource[],
+      resolvePlanModeReminder: () => "plan",
+      mode: "subagent",
+      state: createSharedReminderState(),
+    });
+
+    expect(subagent.appliedReminderIds).toEqual(reminderIdsForMode("subagent"));
+    expect(subagent.appliedReminderIds).toEqual(["agent-info"]);
+    expect(subagent.parts.map((part) => part.text)).toEqual(["agent-info"]);
+  });
 });

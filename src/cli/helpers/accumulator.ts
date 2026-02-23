@@ -451,6 +451,13 @@ function extractTextPart(v: unknown): string {
   return "";
 }
 
+function markCompactionCompleted(ctx?: ContextTracker): void {
+  if (!ctx) return;
+  ctx.pendingCompaction = true;
+  ctx.pendingSkillsReinject = true;
+  ctx.pendingReflectionTrigger = true;
+}
+
 function resolveLineIdForKind(
   b: Buffers,
   canonicalId: string,
@@ -787,6 +794,9 @@ export function onChunk(
           phase: "finished",
           summary: compactionSummary,
         }));
+        // Legacy servers may emit compaction completion as a user_message
+        // system alert instead of summary_message.
+        markCompactionCompleted(ctx);
       }
       // If not a summary, ignore it (user messages aren't rendered during streaming)
       break;
@@ -1131,11 +1141,7 @@ export function onChunk(
         // Set here (not in event_message) because summary_message arrives after
         // compaction completes, guaranteeing the next usage_statistics has the
         // reduced token count.
-        if (ctx) {
-          ctx.pendingCompaction = true;
-          ctx.pendingSkillsReinject = true;
-          ctx.pendingReflectionTrigger = true;
-        }
+        markCompactionCompleted(ctx);
         break;
       }
 

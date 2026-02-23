@@ -47,9 +47,32 @@ const NON_RETRYABLE_PROVIDER_DETAIL_PATTERNS = [
   "context_length_exceeded",
   "invalid_encrypted_content",
 ];
-const NON_RETRYABLE_429_REASONS = ["agents-limit-exceeded"];
+const NON_RETRYABLE_429_REASONS = [
+  "agents-limit-exceeded",
+  "exceeded-quota",
+  "free-usage-exceeded",
+  "premium-usage-exceeded",
+  "standard-usage-exceeded",
+  "basic-usage-exceeded",
+  "not-enough-credits",
+];
+const NON_RETRYABLE_QUOTA_DETAIL_PATTERNS = [
+  "hosted model usage limit",
+  "out of credits",
+];
 const NON_RETRYABLE_4XX_PATTERN = /Error code:\s*4(0[0-8]|1\d|2\d|3\d|4\d|51)/i;
 const RETRYABLE_429_PATTERN = /Error code:\s*429|rate limit|too many requests/i;
+
+function hasNonRetryableQuotaDetail(detail: unknown): boolean {
+  if (typeof detail !== "string") return false;
+  const normalized = detail.toLowerCase();
+  return (
+    NON_RETRYABLE_429_REASONS.some((reason) => normalized.includes(reason)) ||
+    NON_RETRYABLE_QUOTA_DETAIL_PATTERNS.some((pattern) =>
+      normalized.includes(pattern),
+    )
+  );
+}
 
 // ── Classifiers ─────────────────────────────────────────────────────
 
@@ -96,11 +119,13 @@ export function shouldRetryRunMetadataError(
   detail: unknown,
 ): boolean {
   const explicitLlmError = errorType === "llm_error";
+  const nonRetryableQuotaDetail = hasNonRetryableQuotaDetail(detail);
   const retryable429Detail =
     typeof detail === "string" && RETRYABLE_429_PATTERN.test(detail);
   const retryableDetail = isRetryableProviderErrorDetail(detail);
   const nonRetryableDetail = isNonRetryableProviderErrorDetail(detail);
 
+  if (nonRetryableQuotaDetail) return false;
   if (nonRetryableDetail && !retryable429Detail) return false;
   if (explicitLlmError) return true;
   return retryable429Detail || retryableDetail;
@@ -112,14 +137,9 @@ export function shouldRetryPreStreamTransientError(opts: {
   detail: unknown;
 }): boolean {
   const { status, detail } = opts;
+  if (hasNonRetryableQuotaDetail(detail)) return false;
+
   if (status === 429) {
-    // Don't retry non-recoverable 429s (e.g. agent limit reached)
-    if (
-      typeof detail === "string" &&
-      NON_RETRYABLE_429_REASONS.some((r) => detail.includes(r))
-    ) {
-      return false;
-    }
     return true;
   }
   if (status !== undefined && status >= 500) return true;

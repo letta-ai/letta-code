@@ -7,6 +7,7 @@ import {
   SKILLS_DIR,
   type SkillSource,
 } from "../agent/skills";
+import { buildAgentInfo } from "../cli/helpers/agentInfo";
 import {
   buildCompactionMemoryReminder,
   buildMemoryReminder,
@@ -58,6 +59,27 @@ type SharedReminderProvider = (
   context: SharedReminderContext,
 ) => Promise<string | null>;
 
+async function buildAgentInfoReminder(
+  context: SharedReminderContext,
+): Promise<string | null> {
+  if (context.state.hasSentAgentInfo) {
+    return null;
+  }
+
+  const reminder = buildAgentInfo({
+    agentInfo: {
+      id: context.agent.id,
+      name: context.agent.name,
+      description: context.agent.description,
+      lastRunAt: context.agent.lastRunAt,
+    },
+    serverUrl: context.agent.serverUrl,
+  });
+
+  context.state.hasSentAgentInfo = true;
+  return reminder || null;
+}
+
 async function buildSessionContextReminder(
   context: SharedReminderContext,
 ): Promise<string | null> {
@@ -72,15 +94,7 @@ async function buildSessionContextReminder(
     return null;
   }
 
-  const reminder = buildSessionContext({
-    agentInfo: {
-      id: context.agent.id,
-      name: context.agent.name,
-      description: context.agent.description,
-      lastRunAt: context.agent.lastRunAt,
-    },
-    serverUrl: context.agent.serverUrl,
-  });
+  const reminder = buildSessionContext();
 
   context.state.hasSentSessionContext = true;
   return reminder || null;
@@ -347,6 +361,7 @@ export const sharedReminderProviders: Record<
   SharedReminderId,
   SharedReminderProvider
 > = {
+  "agent-info": buildAgentInfoReminder,
   "session-context": buildSessionContextReminder,
   skills: buildSkillsReminder,
   "permission-mode": buildPermissionModeReminder,
