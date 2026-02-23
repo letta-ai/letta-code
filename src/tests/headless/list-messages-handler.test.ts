@@ -74,7 +74,7 @@ describe("handleListMessages — routing (which API is called)", () => {
 
     expect(convListSpy).toHaveBeenCalledTimes(1);
     expect(agentListSpy).toHaveBeenCalledTimes(0);
-    expect(convListSpy.mock.calls[0]![0]).toBe("conv-explicit");
+    expect(convListSpy.mock.calls[0]?.[0]).toBe("conv-explicit");
     expect(resp.response.subtype).toBe("success");
   });
 
@@ -89,7 +89,7 @@ describe("handleListMessages — routing (which API is called)", () => {
       client,
     });
 
-    expect(convListSpy.mock.calls[0]![0]).toBe("conv-override");
+    expect(convListSpy.mock.calls[0]?.[0]).toBe("conv-override");
   });
 
   test("omitted conversation_id + named session conv → calls conversations.messages.list with session conv", async () => {
@@ -108,7 +108,7 @@ describe("handleListMessages — routing (which API is called)", () => {
 
     expect(convListSpy).toHaveBeenCalledTimes(1);
     expect(agentListSpy).toHaveBeenCalledTimes(0);
-    expect(convListSpy.mock.calls[0]![0]).toBe("conv-session-xyz");
+    expect(convListSpy.mock.calls[0]?.[0]).toBe("conv-session-xyz");
     expect(resp.response.subtype).toBe("success");
     if (resp.response.subtype === "success") {
       const payload = resp.response.response as {
@@ -135,7 +135,7 @@ describe("handleListMessages — routing (which API is called)", () => {
 
     expect(agentListSpy).toHaveBeenCalledTimes(1);
     expect(convListSpy).toHaveBeenCalledTimes(0);
-    expect(agentListSpy.mock.calls[0]![0]).toBe("agent-def");
+    expect(agentListSpy.mock.calls[0]?.[0]).toBe("agent-def");
     expect(resp.response.subtype).toBe("success");
   });
 
@@ -150,7 +150,7 @@ describe("handleListMessages — routing (which API is called)", () => {
       client,
     });
 
-    expect(agentListSpy.mock.calls[0]![0]).toBe("agent-override");
+    expect(agentListSpy.mock.calls[0]?.[0]).toBe("agent-override");
   });
 });
 
@@ -175,7 +175,7 @@ describe("handleListMessages — API call arguments", () => {
       client,
     });
 
-    const opts = convListSpy.mock.calls[0]![1] as {
+    const opts = convListSpy.mock.calls[0]?.[1] as {
       limit: number;
       order: string;
     };
@@ -194,7 +194,7 @@ describe("handleListMessages — API call arguments", () => {
       client,
     });
 
-    const opts = agentListSpy.mock.calls[0]![1] as {
+    const opts = agentListSpy.mock.calls[0]?.[1] as {
       limit: number;
       order: string;
     };
@@ -217,7 +217,7 @@ describe("handleListMessages — API call arguments", () => {
       client,
     });
 
-    const opts = convListSpy.mock.calls[0]![1] as { before?: string };
+    const opts = convListSpy.mock.calls[0]?.[1] as { before?: string };
     expect(opts.before).toBe("msg-cursor");
   });
 
@@ -232,7 +232,7 @@ describe("handleListMessages — API call arguments", () => {
       client,
     });
 
-    const opts = agentListSpy.mock.calls[0]![1] as { before?: string };
+    const opts = agentListSpy.mock.calls[0]?.[1] as { before?: string };
     expect(opts.before).toBe("msg-cursor-agents");
   });
 
@@ -247,7 +247,7 @@ describe("handleListMessages — API call arguments", () => {
       client,
     });
 
-    const opts = convListSpy.mock.calls[0]![1] as Record<string, unknown>;
+    const opts = convListSpy.mock.calls[0]?.[1] as Record<string, unknown>;
     expect(opts.before).toBeUndefined();
     expect(opts.after).toBeUndefined();
   });

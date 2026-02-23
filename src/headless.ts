@@ -83,7 +83,6 @@ import type {
   ControlResponse,
   ErrorMessage,
   ListMessagesControlRequest,
-  ListMessagesResponsePayload,
   MessageWire,
   RecoveryMessage,
   ResultMessage,
