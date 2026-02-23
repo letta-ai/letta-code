@@ -4,11 +4,38 @@
  */
 
 import { parseArgs } from "node:util";
-import { render } from "ink";
+import { Box, render, Text } from "ink";
+import TextInput from "ink-text-input";
+import React, { useState } from "react";
 import { getServerUrl } from "../../agent/client";
 import { settingsManager } from "../../settings-manager";
 import { uniqueNameGenerator } from "../commands/listen";
 import { ListenerStatusUI } from "../components/ListenerStatusUI";
+
+/**
+ * Interactive prompt for environment name
+ */
+function PromptEnvName(props: {
+  onSubmit: (envName: string) => void;
+}): React.ReactElement {
+  const [value, setValue] = useState("");
+
+  return (
+    <Box flexDirection="column">
+      <Text>
+        Enter environment name (or press Enter for auto-generated):{" "}
+      </Text>
+      <TextInput
+        value={value}
+        onChange={setValue}
+        onSubmit={(input) => {
+          const finalName = input.trim() || uniqueNameGenerator();
+          props.onSubmit(finalName);
+        }}
+      />
+    </Box>
+  );
+}
 
 export async function runListenSubcommand(argv: string[]): Promise<number> {
   // Parse arguments
@@ -44,8 +71,40 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     return 0;
   }
 
-  // Generate connection name if not provided
-  const connectionName = values.envName || uniqueNameGenerator();
+  // Load local project settings to access saved environment name
+  await settingsManager.loadLocalProjectSettings();
+
+  // Determine connection name
+  let connectionName: string;
+  
+  if (values.envName) {
+    // Explicitly provided - use it and save to local project settings
+    connectionName = values.envName;
+    settingsManager.setListenerEnvName(connectionName);
+  } else {
+    // Not provided - check saved local project settings
+    const savedName = settingsManager.getListenerEnvName();
+    
+    if (savedName) {
+      // Reuse saved name
+      connectionName = savedName;
+    } else {
+      // No saved name - prompt user
+      connectionName = await new Promise<string>((resolve) => {
+        const { unmount } = render(
+          <PromptEnvName
+            onSubmit={(name) => {
+              unmount();
+              resolve(name);
+            }}
+          />,
+        );
+      });
+      
+      // Save to local project settings for future runs
+      settingsManager.setListenerEnvName(connectionName);
+    }
+  }
 
   try {
     // Get device ID

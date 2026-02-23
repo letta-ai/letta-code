@@ -176,8 +176,26 @@ export async function handleListen(
     return;
   }
 
-  // Generate connection name if not provided
-  const connectionName = opts.envName || uniqueNameGenerator();
+  // Determine connection name
+  let connectionName: string;
+  
+  if (opts.envName) {
+    // Explicitly provided - use it and save to local project settings
+    connectionName = opts.envName;
+    settingsManager.setListenerEnvName(connectionName);
+  } else {
+    // Not provided - check saved local project settings
+    const savedName = settingsManager.getListenerEnvName();
+    
+    if (savedName) {
+      // Reuse saved name
+      connectionName = savedName;
+    } else {
+      // No saved name - auto-generate and save it
+      connectionName = uniqueNameGenerator();
+      settingsManager.setListenerEnvName(connectionName);
+    }
+  }
 
   // Start listen flow
   ctx.setCommandRunning(true);
