@@ -103,6 +103,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     const { unmount } = render(
       <ListenerStatusUI
         connectionId={connectionId}
+        envName={connectionName}
         onReady={(callbacks) => {
           updateStatusCallback = callbacks.updateStatus;
           updateRetryStatusCallback = callbacks.updateRetryStatus;

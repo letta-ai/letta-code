@@ -245,7 +245,8 @@ export async function handleListen(
           ctx.refreshDerived,
           cmdId,
           msg,
-          `Connected to Letta Cloud\n${statusText}`,
+          `Environment initialized: ${connectionName}\n${statusText}\n\n` +
+            `Connect to this environment by visiting any agent and clicking the "cloud" button at the bottom left of the messenger input`,
           true,
           "finished",
         );
@@ -256,8 +257,10 @@ export async function handleListen(
           ctx.refreshDerived,
           cmdId,
           msg,
-          `Reconnecting to Letta Cloud...\n` +
-            `Attempt ${attempt}, retrying in ${Math.round(nextRetryIn / 1000)}s`,
+          `Environment initialized: ${connectionName}\n` +
+            `Reconnecting to Letta Cloud...\n` +
+            `Attempt ${attempt}, retrying in ${Math.round(nextRetryIn / 1000)}s\n\n` +
+            `Connect to this environment by visiting any agent and clicking the "cloud" button at the bottom left of the messenger input`,
           true,
           "running",
         );
@@ -268,7 +271,8 @@ export async function handleListen(
           ctx.refreshDerived,
           cmdId,
           msg,
-          `Connected to Letta Cloud\nAwaiting instructions`,
+          `Environment initialized: ${connectionName}\nAwaiting instructions\n\n` +
+            `Connect to this environment by visiting any agent and clicking the "cloud" button at the bottom left of the messenger input`,
           true,
           "finished",
         );

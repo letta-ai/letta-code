@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 
 interface ListenerStatusUIProps {
   connectionId: string;
+  envName: string;
   onReady: (callbacks: {
     updateStatus: (status: "idle" | "receiving" | "processing") => void;
     updateRetryStatus: (attempt: number, nextRetryIn: number) => void;
@@ -12,7 +13,7 @@ interface ListenerStatusUIProps {
 }
 
 export function ListenerStatusUI(props: ListenerStatusUIProps) {
-  const { connectionId, onReady } = props;
+  const { connectionId, envName, onReady } = props;
   const [status, setStatus] = useState<"idle" | "receiving" | "processing">(
     "idle",
   );
@@ -47,11 +48,11 @@ export function ListenerStatusUI(props: ListenerStatusUIProps) {
     <Box flexDirection="column" paddingX={1} paddingY={1}>
       <Box marginBottom={1}>
         <Text bold color="green">
-          Connected to Letta Cloud
+          Environment initialized: {envName}
         </Text>
       </Box>
 
-      <Box>
+      <Box marginBottom={1}>
         {showSpinner && (
           <Text>
             <Text color={retryInfo ? "yellow" : "cyan"}>
@@ -61,6 +62,12 @@ export function ListenerStatusUI(props: ListenerStatusUIProps) {
           </Text>
         )}
         {!showSpinner && <Text dimColor>{statusText}</Text>}
+      </Box>
+
+      <Box>
+        <Text dimColor>
+          Connect to this environment by visiting any agent and clicking the "cloud" button at the bottom left of the messenger input
+        </Text>
       </Box>
     </Box>
   );
