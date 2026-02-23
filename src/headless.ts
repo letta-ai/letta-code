@@ -735,8 +735,10 @@ export async function handleHeadlessCommand(
     }
   }
 
-  // Priority 0: --conversation derives agent from conversation ID
-  if (specifiedConversationId) {
+  // Priority 0: --conversation derives agent from conversation ID.
+  // "default" is a virtual agent-scoped conversation (not a retrievable conv-*).
+  // It requires --agent and should not hit conversations.retrieve().
+  if (specifiedConversationId && specifiedConversationId !== "default") {
     try {
       const conversation = await client.conversations.retrieve(
         specifiedConversationId,
