@@ -143,6 +143,7 @@ import { FeedbackDialog } from "./components/FeedbackDialog";
 import { HelpDialog } from "./components/HelpDialog";
 import { HooksManager } from "./components/HooksManager";
 import { Input } from "./components/InputRich";
+import { InstallGithubAppFlow } from "./components/InstallGithubAppFlow";
 import { McpConnectFlow } from "./components/McpConnectFlow";
 import { McpSelector } from "./components/McpSelector";
 import { MemfsTreeViewer } from "./components/MemfsTreeViewer";
@@ -1278,6 +1279,7 @@ export default function App({
     | "new"
     | "mcp"
     | "mcp-connect"
+    | "install-github-app"
     | "help"
     | "hooks"
     | "connect"
@@ -6152,6 +6154,18 @@ export default function App({
           );
           setModelSelectorOptions({}); // Clear any filters from previous connection
           setActiveOverlay("model");
+          return { submitted: true };
+        }
+
+        // Special handling for /install-github-app command - interactive setup wizard
+        if (trimmed === "/install-github-app") {
+          startOverlayCommand(
+            "install-github-app",
+            "/install-github-app",
+            "Opening GitHub App installer...",
+            "GitHub App installer dismissed",
+          );
+          setActiveOverlay("install-github-app");
           return { submitted: true };
         }
 
@@ -12052,6 +12066,61 @@ Plan file path: ${planFilePath}`;
                 initialSettings={getReflectionSettings()}
                 memfsEnabled={settingsManager.isMemfsEnabled(agentId)}
                 onSave={handleSleeptimeModeSelect}
+                onCancel={closeOverlay}
+              />
+            )}
+
+            {/* GitHub App Installer - setup Letta Code GitHub Action */}
+            {activeOverlay === "install-github-app" && (
+              <InstallGithubAppFlow
+                onComplete={(result) => {
+                  const overlayCommand =
+                    consumeOverlayCommand("install-github-app");
+                  closeOverlay();
+
+                  const cmd =
+                    overlayCommand ??
+                    commandRunner.start(
+                      "/install-github-app",
+                      "Setting up Letta Code GitHub Action...",
+                    );
+
+                  if (!result.committed) {
+                    cmd.finish(
+                      [
+                        `Workflow already up to date for ${result.repo}.`,
+                        result.secretAction === "reused"
+                          ? "Using existing LETTA_API_KEY secret."
+                          : "Updated LETTA_API_KEY secret.",
+                        "No pull request needed.",
+                      ].join("\n"),
+                      true,
+                    );
+                    return;
+                  }
+
+                  const lines = [
+                    "✓ GitHub Actions workflow created.",
+                    `Repository: ${result.repo}`,
+                    `Workflow: ${result.workflowPath}`,
+                    result.secretAction === "reused"
+                      ? "Using existing LETTA_API_KEY secret."
+                      : "LETTA_API_KEY secret set.",
+                  ];
+
+                  if (result.pullRequestUrl) {
+                    lines.push(`Pull request: ${result.pullRequestUrl}`);
+                  } else {
+                    lines.push(
+                      "Branch pushed but PR was not opened automatically. Run: gh pr create",
+                    );
+                  }
+
+                  lines.push(
+                    "Next step: mention @letta-code in an issue or PR.",
+                  );
+                  cmd.finish(lines.join("\n"), true);
+                }}
                 onCancel={closeOverlay}
               />
             )}
