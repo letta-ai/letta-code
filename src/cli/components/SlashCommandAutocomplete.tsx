@@ -2,11 +2,20 @@ import { useEffect, useLayoutEffect, useMemo, useState } from "react";
 import { settingsManager } from "../../settings-manager";
 import { commands } from "../commands/registry";
 import { useAutocompleteNavigation } from "../hooks/useAutocompleteNavigation";
+import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { AutocompleteBox, AutocompleteItem } from "./Autocomplete";
 import { Text } from "./Text";
 import type { AutocompleteProps, CommandMatch } from "./types/autocomplete";
 
 const VISIBLE_COMMANDS = 7; // Number of commands visible at once
+const CMD_COL_WIDTH = 14;
+
+function truncateText(text: string, maxWidth: number): string {
+  if (maxWidth <= 0) return "";
+  if (text.length <= maxWidth) return text;
+  if (maxWidth <= 3) return text.slice(0, maxWidth);
+  return `${text.slice(0, maxWidth - 3)}...`;
+}
 
 // Compute filtered command list (excluding hidden commands), sorted by order
 const _allCommands: CommandMatch[] = Object.entries(commands)
@@ -50,6 +59,7 @@ export function SlashCommandAutocomplete({
   agentId,
   workingDirectory = process.cwd(),
 }: AutocompleteProps) {
+  const columns = useTerminalWidth();
   const [customCommands, setCustomCommands] = useState<CommandMatch[]>([]);
 
   // Load custom commands once on mount
@@ -213,13 +223,23 @@ export function SlashCommandAutocomplete({
     <AutocompleteBox>
       {visibleMatches.map((item, idx) => {
         const actualIndex = startIndex + idx;
+
+        // Keep the footer height stable while navigating by forcing a single-line
+        // representation for each row.
+        const displayCmd = truncateText(item.cmd, CMD_COL_WIDTH).padEnd(
+          CMD_COL_WIDTH,
+        );
+        // 2-char gutter comes from <AutocompleteItem />.
+        const maxDescWidth = Math.max(0, columns - 2 - CMD_COL_WIDTH - 1);
+        const displayDesc = truncateText(item.desc, maxDescWidth);
+
         return (
           <AutocompleteItem
             key={item.cmd}
             selected={actualIndex === selectedIndex}
           >
-            {item.cmd.padEnd(14)}{" "}
-            <Text dimColor={actualIndex !== selectedIndex}>{item.desc}</Text>
+            {displayCmd}{" "}
+            <Text dimColor={actualIndex !== selectedIndex}>{displayDesc}</Text>
           </AutocompleteItem>
         );
       })}

@@ -217,6 +217,8 @@ const InputFooter = memo(function InputFooter({
   agentName,
   currentModel,
   currentReasoningEffort,
+  currentSystemPromptId,
+  currentToolset,
   isOpenAICodexProvider,
   isByokProvider,
   hideFooter,
@@ -234,6 +236,8 @@ const InputFooter = memo(function InputFooter({
   agentName: string | null | undefined;
   currentModel: string | null | undefined;
   currentReasoningEffort?: ModelReasoningEffort | null;
+  currentSystemPromptId?: string | null;
+  currentToolset?: string | null;
   isOpenAICodexProvider: boolean;
   isByokProvider: boolean;
   hideFooter: boolean;
@@ -247,13 +251,50 @@ const InputFooter = memo(function InputFooter({
   const displayAgentName = truncateEnd(agentName || "Unnamed", maxAgentChars);
   const reasoningTag = getReasoningEffortTag(currentReasoningEffort);
   const byokExtraChars = isByokProvider ? 2 : 0; // " ▲"
-  const reservedChars = displayAgentName.length + byokExtraChars + 4;
-  const maxModelChars = Math.max(8, rightColumnWidth - reservedChars);
+
+  const baseReservedChars = displayAgentName.length + byokExtraChars + 4;
   const modelWithReasoning =
     (currentModel ?? "unknown") + (reasoningTag ? ` (${reasoningTag})` : "");
+
+  // Optional suffixes: system prompt id + toolset.
+  const suffixParts: string[] = [];
+  if (currentSystemPromptId) {
+    suffixParts.push(`s:${currentSystemPromptId}`);
+  }
+  if (currentToolset) {
+    suffixParts.push(`t:${currentToolset}`);
+  }
+
+  // Reserve 4 chars per suffix part so the label is visible even on narrow terminals.
+  const minSuffixBudget = suffixParts.length * 4;
+  const maxModelChars = Math.max(
+    8,
+    rightColumnWidth - baseReservedChars - minSuffixBudget,
+  );
   const displayModel = truncateEnd(modelWithReasoning, maxModelChars);
-  const rightTextLength =
+
+  const baseTextLength =
     displayAgentName.length + displayModel.length + byokExtraChars + 3;
+  const maxSuffixChars = Math.max(0, rightColumnWidth - baseTextLength);
+
+  const displaySuffix = (() => {
+    if (suffixParts.length === 0 || maxSuffixChars <= 0) return "";
+
+    let remaining = maxSuffixChars;
+    const out: string[] = [];
+    for (const part of suffixParts) {
+      // Leading space before each part.
+      if (remaining <= 1) break;
+      const budget = remaining - 1;
+      const clipped = truncateEnd(part, budget);
+      if (!clipped) break;
+      out.push(` ${clipped}`);
+      remaining -= 1 + clipped.length;
+    }
+    return out.join("");
+  })();
+
+  const rightTextLength = baseTextLength + displaySuffix.length;
   const rightPrefixSpaces = Math.max(0, rightColumnWidth - rightTextLength);
   const rightLabel = useMemo(() => {
     const parts: string[] = [];
@@ -268,11 +309,17 @@ const InputFooter = memo(function InputFooter({
       );
     }
     parts.push(chalk.dim("]"));
+
+    if (displaySuffix) {
+      parts.push(chalk.dim(displaySuffix));
+    }
+
     return parts.join("");
   }, [
     rightPrefixSpaces,
     displayAgentName,
     displayModel,
+    displaySuffix,
     isByokProvider,
     isOpenAICodexProvider,
   ]);
@@ -365,12 +412,44 @@ const StreamingStatus = memo(function StreamingStatus({
   terminalWidth: number;
   shouldAnimate: boolean;
 }) {
+  // While the user is actively resizing the terminal, Ink can struggle to
+  // clear/redraw rapidly-changing animated output (spinner/shimmer).
+  // Freeze animations briefly during resize to keep output stable.
+  const [isResizing, setIsResizing] = useState(false);
+  const resizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastWidthRef = useRef<number>(terminalWidth);
+
+  useEffect(() => {
+    if (terminalWidth === lastWidthRef.current) return;
+    lastWidthRef.current = terminalWidth;
+
+    setIsResizing(true);
+    if (resizeTimerRef.current) {
+      clearTimeout(resizeTimerRef.current);
+    }
+    resizeTimerRef.current = setTimeout(() => {
+      resizeTimerRef.current = null;
+      setIsResizing(false);
+    }, 750);
+  }, [terminalWidth]);
+
+  useEffect(() => {
+    return () => {
+      if (resizeTimerRef.current) {
+        clearTimeout(resizeTimerRef.current);
+        resizeTimerRef.current = null;
+      }
+    };
+  }, []);
+
+  const animate = shouldAnimate && !isResizing;
+
   const [shimmerOffset, setShimmerOffset] = useState(-3);
   const [elapsedMs, setElapsedMs] = useState(0);
   const streamStartRef = useRef<number | null>(null);
 
   useEffect(() => {
-    if (!streaming || !visible || !shouldAnimate) return;
+    if (!streaming || !visible || !animate) return;
 
     const id = setInterval(() => {
       setShimmerOffset((prev) => {
@@ -383,17 +462,17 @@ const StreamingStatus = memo(function StreamingStatus({
     }, 120); // Speed of shimmer animation
 
     return () => clearInterval(id);
-  }, [streaming, thinkingMessage, visible, agentName, shouldAnimate]);
+  }, [streaming, thinkingMessage, visible, agentName, animate]);
 
   useEffect(() => {
-    if (!shouldAnimate) {
+    if (!animate) {
       setShimmerOffset(-3);
     }
-  }, [shouldAnimate]);
+  }, [animate]);
 
   // Elapsed time tracking
   useEffect(() => {
-    if (streaming && visible) {
+    if (streaming && visible && !isResizing) {
       // Start tracking when streaming begins
       if (streamStartRef.current === null) {
         streamStartRef.current = performance.now();
@@ -408,7 +487,7 @@ const StreamingStatus = memo(function StreamingStatus({
     // Reset when streaming stops
     streamStartRef.current = null;
     setElapsedMs(0);
-  }, [streaming, visible]);
+  }, [streaming, visible, isResizing]);
 
   const estimatedTokens = charsToTokens(tokenCount);
   const totalElapsedMs = elapsedBaseMs + elapsedMs;
@@ -425,7 +504,10 @@ const StreamingStatus = memo(function StreamingStatus({
     return "↑\u0338";
   }, [networkPhase]);
   const showErrorArrow = networkArrow === "↑\u0338";
-  const statusContentWidth = Math.max(0, terminalWidth - 2);
+  // Avoid painting into the terminal's last column; some terminals will soft-wrap
+  // padded Ink rows at the edge which breaks Ink's line-clearing accounting and
+  // leaves duplicate status rows behind during streaming/resizes.
+  const statusContentWidth = Math.max(0, terminalWidth - 3);
   const minMessageWidth = 12;
   const statusHintParts = useMemo(() => {
     const parts: string[] = [];
@@ -469,14 +551,16 @@ const StreamingStatus = memo(function StreamingStatus({
   // Uses chalk.dim to match reasoning text styling
   // Memoized to prevent unnecessary re-renders during shimmer updates
   const statusHintText = useMemo(() => {
-    const hintColor = chalk.hex(colors.subagent.hint);
-    const hintBold = hintColor.bold;
     const suffix = `${statusHintSuffix})`;
     if (interruptRequested) {
-      return hintColor(` (interrupting${suffix}`);
+      return <Text dimColor>{` (interrupting${suffix}`}</Text>;
     }
     return (
-      hintColor(" (") + hintBold("esc") + hintColor(` to interrupt${suffix}`)
+      <Text dimColor>
+        {" ("}
+        <Text bold>esc</Text>
+        {` to interrupt${suffix}`}
+      </Text>
     );
   }, [interruptRequested, statusHintSuffix]);
 
@@ -488,7 +572,7 @@ const StreamingStatus = memo(function StreamingStatus({
     <Box flexDirection="row" marginBottom={1}>
       <Box width={2} flexShrink={0}>
         <Text color={colors.status.processing}>
-          {shouldAnimate ? <Spinner type="layer" /> : "●"}
+          {animate ? <Spinner type="layer" /> : "●"}
         </Text>
       </Box>
       <Box width={statusContentWidth} flexShrink={0} flexDirection="row">
@@ -496,7 +580,7 @@ const StreamingStatus = memo(function StreamingStatus({
           <ShimmerText
             boldPrefix={agentName || undefined}
             message={thinkingMessage}
-            shimmerOffset={shouldAnimate ? shimmerOffset : -3}
+            shimmerOffset={animate ? shimmerOffset : -3}
             wrap="truncate-end"
           />
         </Box>
@@ -541,6 +625,8 @@ export function Input({
   currentModel,
   currentModelProvider,
   currentReasoningEffort,
+  currentSystemPromptId,
+  currentToolset,
   messageQueue,
   onEnterQueueEditMode,
   onEscapeCancel,
@@ -582,6 +668,8 @@ export function Input({
   currentModel?: string | null;
   currentModelProvider?: string | null;
   currentReasoningEffort?: ModelReasoningEffort | null;
+  currentSystemPromptId?: string | null;
+  currentToolset?: string | null;
   messageQueue?: QueuedMessage[];
   onEnterQueueEditMode?: () => void;
   onEscapeCancel?: () => void;
@@ -618,8 +706,48 @@ export function Input({
   // Terminal width is sourced from App.tsx to avoid duplicate resize subscriptions.
   const columns = terminalWidth;
 
+  // During shrink drags, Ink's incremental clear can leave stale rows behind.
+  // The worst offender is the full-width divider line, which wraps as the
+  // terminal shrinks and appears to "spam" into the transcript.
+  // Hide dividers during shrink gestures; restore after the width settles.
+  const [suppressDividers, setSuppressDividers] = useState(false);
+  const resizeDividersTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
+  const lastColumnsRef = useRef(columns);
+
   // Bash mode state (declared early so prompt width can feed into contentWidth)
   const [isBashMode, setIsBashMode] = useState(false);
+
+  useEffect(() => {
+    const prev = lastColumnsRef.current;
+    if (columns === prev) return;
+    lastColumnsRef.current = columns;
+
+    const isShrinking = columns < prev;
+    if (isShrinking) {
+      setSuppressDividers(true);
+    }
+
+    if (resizeDividersTimerRef.current) {
+      clearTimeout(resizeDividersTimerRef.current);
+    }
+    resizeDividersTimerRef.current = setTimeout(() => {
+      resizeDividersTimerRef.current = null;
+      setSuppressDividers(false);
+    }, 250);
+
+    return;
+  }, [columns]);
+
+  useEffect(() => {
+    return () => {
+      if (resizeDividersTimerRef.current) {
+        clearTimeout(resizeDividersTimerRef.current);
+        resizeDividersTimerRef.current = null;
+      }
+    };
+  }, []);
 
   const promptChar = isBashMode ? "!" : statusLinePrompt || ">";
   const promptVisualWidth = stringWidth(promptChar) + 1; // +1 for trailing space
@@ -1266,9 +1394,14 @@ export function Input({
     }
   }, [ralphPending, ralphPendingYolo, ralphActive, currentMode]);
 
-  // Create a horizontal line using box-drawing characters
-  // Memoized since it only changes when terminal width changes
-  const horizontalLine = useMemo(() => "─".repeat(columns), [columns]);
+  // Create a horizontal line using box-drawing characters.
+  // IMPORTANT: never draw into the terminal's last column; some terminals will
+  // soft-wrap at the edge which breaks Ink's clear/redraw accounting during
+  // resize and can leave stacks of stale divider rows behind.
+  const horizontalLine = useMemo(
+    () => "─".repeat(Math.max(0, columns - 1)),
+    [columns],
+  );
 
   const lowerPane = useMemo(() => {
     return (
@@ -1281,12 +1414,14 @@ export function Input({
         {interactionEnabled ? (
           <Box flexDirection="column">
             {/* Top horizontal divider */}
-            <Text
-              dimColor={!isBashMode}
-              color={isBashMode ? colors.bash.border : undefined}
-            >
-              {horizontalLine}
-            </Text>
+            {!suppressDividers && (
+              <Text
+                dimColor={!isBashMode}
+                color={isBashMode ? colors.bash.border : undefined}
+              >
+                {horizontalLine}
+              </Text>
+            )}
 
             {/* Two-column layout for input, matching message components */}
             <Box flexDirection="row">
@@ -1314,52 +1449,65 @@ export function Input({
             </Box>
 
             {/* Bottom horizontal divider */}
-            <Text
-              dimColor={!isBashMode}
-              color={isBashMode ? colors.bash.border : undefined}
-            >
-              {horizontalLine}
-            </Text>
+            {!suppressDividers && (
+              <Text
+                dimColor={!isBashMode}
+                color={isBashMode ? colors.bash.border : undefined}
+              >
+                {horizontalLine}
+              </Text>
+            )}
 
-            <InputAssist
-              currentInput={value}
-              cursorPosition={currentCursorPosition}
-              onFileSelect={handleFileSelect}
-              onCommandSelect={handleCommandSelect}
-              onCommandAutocomplete={handleCommandAutocomplete}
-              onAutocompleteActiveChange={setIsAutocompleteActive}
-              agentId={agentId}
-              agentName={agentName}
-              currentModel={currentModel}
-              currentReasoningEffort={currentReasoningEffort}
-              serverUrl={serverUrl}
-              workingDirectory={process.cwd()}
-              conversationId={conversationId}
-            />
+            {/*
+              During shrink drags Ink's incremental clear is most fragile.
+              Hide the entire footer chrome (assist + footer) until the width
+              settles to avoid "printing" wrapped rows into the transcript.
+            */}
+            {!suppressDividers && (
+              <InputAssist
+                currentInput={value}
+                cursorPosition={currentCursorPosition}
+                onFileSelect={handleFileSelect}
+                onCommandSelect={handleCommandSelect}
+                onCommandAutocomplete={handleCommandAutocomplete}
+                onAutocompleteActiveChange={setIsAutocompleteActive}
+                agentId={agentId}
+                agentName={agentName}
+                currentModel={currentModel}
+                currentReasoningEffort={currentReasoningEffort}
+                serverUrl={serverUrl}
+                workingDirectory={process.cwd()}
+                conversationId={conversationId}
+              />
+            )}
 
-            <InputFooter
-              ctrlCPressed={ctrlCPressed}
-              escapePressed={escapePressed}
-              isBashMode={isBashMode}
-              modeName={modeInfo?.name ?? null}
-              modeColor={modeInfo?.color ?? null}
-              showExitHint={ralphActive || ralphPending}
-              agentName={agentName}
-              currentModel={currentModel}
-              currentReasoningEffort={currentReasoningEffort}
-              isOpenAICodexProvider={
-                currentModelProvider === OPENAI_CODEX_PROVIDER_NAME
-              }
-              isByokProvider={
-                currentModelProvider?.startsWith("lc-") ||
-                currentModelProvider === OPENAI_CODEX_PROVIDER_NAME
-              }
-              hideFooter={hideFooter}
-              rightColumnWidth={footerRightColumnWidth}
-              statusLineText={statusLineText}
-              statusLineRight={statusLineRight}
-              statusLinePadding={statusLinePadding}
-            />
+            {!suppressDividers && (
+              <InputFooter
+                ctrlCPressed={ctrlCPressed}
+                escapePressed={escapePressed}
+                isBashMode={isBashMode}
+                modeName={modeInfo?.name ?? null}
+                modeColor={modeInfo?.color ?? null}
+                showExitHint={ralphActive || ralphPending}
+                agentName={agentName}
+                currentModel={currentModel}
+                currentReasoningEffort={currentReasoningEffort}
+                currentSystemPromptId={currentSystemPromptId}
+                currentToolset={currentToolset}
+                isOpenAICodexProvider={
+                  currentModelProvider === OPENAI_CODEX_PROVIDER_NAME
+                }
+                isByokProvider={
+                  currentModelProvider?.startsWith("lc-") ||
+                  currentModelProvider === OPENAI_CODEX_PROVIDER_NAME
+                }
+                hideFooter={hideFooter}
+                rightColumnWidth={footerRightColumnWidth}
+                statusLineText={statusLineText}
+                statusLineRight={statusLineRight}
+                statusLinePadding={statusLinePadding}
+              />
+            )}
           </Box>
         ) : reserveInputSpace ? (
           <Box height={inputChromeHeight} />
@@ -1403,8 +1551,11 @@ export function Input({
     statusLineText,
     statusLineRight,
     statusLinePadding,
+    currentSystemPromptId,
+    currentToolset,
     promptChar,
     promptVisualWidth,
+    suppressDividers,
   ]);
 
   // If not visible, render nothing but keep component mounted to preserve state
