@@ -48,7 +48,7 @@ export function ListenerStatusUI(props: ListenerStatusUIProps) {
     <Box flexDirection="column" paddingX={1} paddingY={1}>
       <Box marginBottom={1}>
         <Text bold color="green">
-          Environment initialized: {envName}
+          The name of your environment is: {envName}
         </Text>
       </Box>
 
@@ -66,7 +66,7 @@ export function ListenerStatusUI(props: ListenerStatusUIProps) {
 
       <Box>
         <Text dimColor>
-          Connect to this environment by visiting any agent and clicking the "cloud" button at the bottom left of the messenger input
+          Connect to this environment by visiting any agent and clicking the "cloud" button at the bottom left of the messenger input and swapping your environment to {envName}
         </Text>
       </Box>
     </Box>
