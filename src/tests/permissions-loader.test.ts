@@ -202,13 +202,12 @@ test("Save permission to local settings", async () => {
 });
 
 test("User settings paths prefer ~/.letta and keep XDG as legacy fallback", () => {
-  const paths = getUserSettingsPaths({
-    homeDir: "/tmp/home-test",
-    xdgConfigHome: "/tmp/xdg-test",
-  });
+  const homeDir = join("tmp", "home-test");
+  const xdgConfigHome = join("tmp", "xdg-test");
+  const paths = getUserSettingsPaths({ homeDir, xdgConfigHome });
 
-  expect(paths.canonical).toBe("/tmp/home-test/.letta/settings.json");
-  expect(paths.legacy).toBe("/tmp/xdg-test/letta/settings.json");
+  expect(paths.canonical).toBe(join(homeDir, ".letta", "settings.json"));
+  expect(paths.legacy).toBe(join(xdgConfigHome, "letta", "settings.json"));
 });
 
 test("Save permission to deny list", async () => {
