@@ -467,10 +467,8 @@ export async function installGithubApp(
     throw new Error("Repository must be in owner/repo format.");
   }
 
-  if (!reuseExistingSecret && !apiKey) {
-    throw new Error(
-      "LETTA_API_KEY is required when not reusing an existing secret.",
-    );
+  if (!apiKey && (!reuseExistingSecret || agentMode === "create")) {
+    throw new Error("LETTA_API_KEY is required.");
   }
 
   const secretAction: "reused" | "set" = reuseExistingSecret ? "reused" : "set";

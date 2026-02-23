@@ -300,7 +300,7 @@ export const InstallGithubAppFlow = memo(function InstallGithubAppFlow({
           repo,
           workflowPath,
           reuseExistingSecret: useExistingSecret,
-          apiKey: useExistingSecret ? null : key,
+          apiKey: key,
           agentMode: finalAgentMode,
           agentId: finalAgentId,
           agentName: finalAgentName,
