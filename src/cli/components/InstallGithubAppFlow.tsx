@@ -29,7 +29,7 @@ const TextInput =
 type Step =
   | "check-gh"
   | "choose-repo"
-  | "workflow-decision"
+  | "enter-repo"
   | "secret-decision"
   | "api-key"
   | "creating"
@@ -58,39 +58,39 @@ export const InstallGithubAppFlow = memo(function InstallGithubAppFlow({
 
   const [repoInput, setRepoInput] = useState<string>("");
   const [repo, setRepo] = useState<string>("");
+  const [currentRepo, setCurrentRepo] = useState<string | null>(null);
+  const [repoChoiceIndex, setRepoChoiceIndex] = useState<number>(0);
   const [repoError, setRepoError] = useState<string>("");
 
-  const [workflowExists, setWorkflowExists] = useState<boolean>(false);
   const [workflowPath, setWorkflowPath] = useState<string>(
     ".github/workflows/letta.yml",
   );
-  const [workflowChoiceIndex, setWorkflowChoiceIndex] = useState<number>(0);
 
   const [secretExists, setSecretExists] = useState<boolean>(false);
   const [secretChoiceIndex, setSecretChoiceIndex] = useState<number>(0);
   const [apiKeyInput, setApiKeyInput] = useState<string>("");
 
-  const workflowChoices = useMemo(
-    () =>
-      workflowExists
-        ? [
-            {
-              label: "Create .github/workflows/letta-code.yml (recommended)",
-              value: "alternate" as const,
-            },
-            {
-              label: "Replace .github/workflows/letta.yml",
-              value: "replace" as const,
-            },
-          ]
-        : [
-            {
-              label: "Create .github/workflows/letta.yml",
-              value: "default" as const,
-            },
-          ],
-    [workflowExists],
-  );
+  const repoChoices = useMemo(() => {
+    if (currentRepo) {
+      return [
+        {
+          label: `Use current repository: ${currentRepo}`,
+          value: "current" as const,
+        },
+        {
+          label: "Enter a different repository",
+          value: "manual" as const,
+        },
+      ];
+    }
+
+    return [
+      {
+        label: "Enter a repository",
+        value: "manual" as const,
+      },
+    ];
+  }, [currentRepo]);
 
   const secretChoices = useMemo(
     () =>
@@ -156,7 +156,12 @@ export const InstallGithubAppFlow = memo(function InstallGithubAppFlow({
       }
 
       if (preflight.currentRepo) {
+        setCurrentRepo(preflight.currentRepo);
         setRepoInput(preflight.currentRepo);
+        setRepoChoiceIndex(0);
+      } else {
+        setCurrentRepo(null);
+        setRepoChoiceIndex(0);
       }
 
       setStep("choose-repo");
@@ -180,12 +185,16 @@ export const InstallGithubAppFlow = memo(function InstallGithubAppFlow({
     }
 
     if (key.escape) {
-      if (step === "workflow-decision") {
+      if (step === "enter-repo") {
         setStep("choose-repo");
         return;
       }
       if (step === "secret-decision") {
-        setStep("workflow-decision");
+        if (currentRepo) {
+          setStep("choose-repo");
+        } else {
+          setStep("enter-repo");
+        }
         return;
       }
       if (step === "api-key") {
@@ -200,26 +209,23 @@ export const InstallGithubAppFlow = memo(function InstallGithubAppFlow({
       return;
     }
 
-    if (step === "workflow-decision") {
+    if (step === "choose-repo") {
       if (key.upArrow || input === "k") {
-        setWorkflowChoiceIndex((prev) => Math.max(0, prev - 1));
+        setRepoChoiceIndex((prev) => Math.max(0, prev - 1));
       } else if (key.downArrow || input === "j") {
-        setWorkflowChoiceIndex((prev) =>
-          Math.min(workflowChoices.length - 1, prev + 1),
+        setRepoChoiceIndex((prev) =>
+          Math.min(repoChoices.length - 1, prev + 1),
         );
       } else if (key.return) {
-        const selected =
-          workflowChoices[workflowChoiceIndex] ?? workflowChoices[0];
+        const selected = repoChoices[repoChoiceIndex] ?? repoChoices[0];
         if (!selected) return;
 
-        if (selected.value === "replace") {
-          setWorkflowPath(".github/workflows/letta.yml");
-        } else if (selected.value === "alternate") {
-          setWorkflowPath(".github/workflows/letta-code.yml");
+        if (selected.value === "current" && currentRepo) {
+          void handleRepoSubmit(currentRepo);
         } else {
-          setWorkflowPath(".github/workflows/letta.yml");
+          setRepoError("");
+          setStep("enter-repo");
         }
-        setStep("secret-decision");
       }
       return;
     }
@@ -257,12 +263,10 @@ export const InstallGithubAppFlow = memo(function InstallGithubAppFlow({
     try {
       const setup = getRepoSetupState(trimmed);
       setRepo(trimmed);
-      setWorkflowExists(setup.workflowExists);
       setSecretExists(setup.secretExists);
       setWorkflowPath(getDefaultWorkflowPath(setup.workflowExists));
-      setWorkflowChoiceIndex(0);
       setSecretChoiceIndex(0);
-      setStep("workflow-decision");
+      setStep("secret-decision");
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
       setStep("error");
@@ -308,7 +312,44 @@ export const InstallGithubAppFlow = memo(function InstallGithubAppFlow({
         </Text>
         <Box height={1} />
         <Box paddingLeft={2}>
-          <Text>Target GitHub repository (owner/repo):</Text>
+          <Text>Select GitHub repository</Text>
+        </Box>
+        <Box height={1} />
+        <Box flexDirection="column">
+          {repoChoices.map((choice, index) => {
+            const selected = index === repoChoiceIndex;
+            return (
+              <Box key={choice.label}>
+                <Text
+                  color={selected ? colors.selector.itemHighlighted : undefined}
+                >
+                  {selected ? "> " : "  "}
+                  {choice.label}
+                </Text>
+              </Box>
+            );
+          })}
+        </Box>
+        <Box height={1} />
+        <Box paddingLeft={2}>
+          <Text dimColor>↑↓ navigate · Enter continue · Esc cancel</Text>
+        </Box>
+      </Box>
+    );
+  }
+
+  if (step === "enter-repo") {
+    return (
+      <Box flexDirection="column">
+        <Text dimColor>{"> /install-github-app"}</Text>
+        <Text dimColor>{solidLine}</Text>
+        <Box height={1} />
+        <Text bold color={colors.selector.title}>
+          Install GitHub App
+        </Text>
+        <Box height={1} />
+        <Box paddingLeft={2}>
+          <Text>Enter repository (owner/repo):</Text>
         </Box>
         <Box marginTop={1}>
           <Text color={colors.selector.itemHighlighted}>{">"}</Text>
@@ -330,48 +371,7 @@ export const InstallGithubAppFlow = memo(function InstallGithubAppFlow({
         ) : null}
         <Box height={1} />
         <Box paddingLeft={2}>
-          <Text dimColor>Enter continue · Esc cancel</Text>
-        </Box>
-      </Box>
-    );
-  }
-
-  if (step === "workflow-decision") {
-    return (
-      <Box flexDirection="column">
-        <Text dimColor>{"> /install-github-app"}</Text>
-        <Text dimColor>{solidLine}</Text>
-        <Box height={1} />
-        <Text bold color={colors.selector.title}>
-          Install GitHub App
-        </Text>
-        <Box height={1} />
-        <Box paddingLeft={2}>
-          <Text>Repository: {repo}</Text>
-        </Box>
-        <Box height={1} />
-        <Box paddingLeft={2}>
-          <Text>Workflow file setup:</Text>
-        </Box>
-        <Box height={1} />
-        <Box flexDirection="column">
-          {workflowChoices.map((choice, index) => {
-            const selected = index === workflowChoiceIndex;
-            return (
-              <Box key={choice.label}>
-                <Text
-                  color={selected ? colors.selector.itemHighlighted : undefined}
-                >
-                  {selected ? "> " : "  "}
-                  {choice.label}
-                </Text>
-              </Box>
-            );
-          })}
-        </Box>
-        <Box height={1} />
-        <Box paddingLeft={2}>
-          <Text dimColor>↑↓ navigate · Enter select · Esc back</Text>
+          <Text dimColor>Enter continue · Esc back</Text>
         </Box>
       </Box>
     );
