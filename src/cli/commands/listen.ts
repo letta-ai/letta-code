@@ -178,7 +178,7 @@ export async function handleListen(
 
   // Determine connection name
   let connectionName: string;
-  
+
   if (opts.envName) {
     // Explicitly provided - use it and save to local project settings
     connectionName = opts.envName;
@@ -186,7 +186,7 @@ export async function handleListen(
   } else {
     // Not provided - check saved local project settings
     const savedName = settingsManager.getListenerEnvName();
-    
+
     if (savedName) {
       // Reuse saved name
       connectionName = savedName;
@@ -283,7 +283,7 @@ export async function handleListen(
       wsUrl,
       deviceId,
       connectionName,
-      onStatusChange: (status, connId) => {
+      onStatusChange: (status, _connId) => {
         const statusText =
           status === "receiving"
             ? "Receiving message"

@@ -6,7 +6,8 @@
 import { parseArgs } from "node:util";
 import { Box, render, Text } from "ink";
 import TextInput from "ink-text-input";
-import React, { useState } from "react";
+import type React from "react";
+import { useState } from "react";
 import { getServerUrl } from "../../agent/client";
 import { settingsManager } from "../../settings-manager";
 import { uniqueNameGenerator } from "../commands/listen";
@@ -22,9 +23,7 @@ function PromptEnvName(props: {
 
   return (
     <Box flexDirection="column">
-      <Text>
-        Enter environment name (or press Enter for auto-generated):{" "}
-      </Text>
+      <Text>Enter environment name (or press Enter for auto-generated): </Text>
       <TextInput
         value={value}
         onChange={setValue}
@@ -76,7 +75,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
 
   // Determine connection name
   let connectionName: string;
-  
+
   if (values.envName) {
     // Explicitly provided - use it and save to local project settings
     connectionName = values.envName;
@@ -84,7 +83,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
   } else {
     // Not provided - check saved local project settings
     const savedName = settingsManager.getListenerEnvName();
-    
+
     if (savedName) {
       // Reuse saved name
       connectionName = savedName;
@@ -100,7 +99,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
           />,
         );
       });
-      
+
       // Save to local project settings for future runs
       settingsManager.setListenerEnvName(connectionName);
     }
