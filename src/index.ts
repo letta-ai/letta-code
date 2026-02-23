@@ -1846,16 +1846,16 @@ async function main(): Promise<void> {
               const currentParallel = (
                 agent.model_settings as Record<string, unknown> | null
               )?.parallel_tool_calls;
-              const wantParallel = resumeRefreshUpdateArgs.parallel_tool_calls as
-                | boolean
-                | undefined;
+              const wantParallel =
+                resumeRefreshUpdateArgs.parallel_tool_calls as
+                  | boolean
+                  | undefined;
 
               const maxTokensMatch =
                 wantMaxTokens === undefined ||
                 currentMaxTokens === wantMaxTokens;
               const parallelMatch =
-                wantParallel === undefined ||
-                currentParallel === wantParallel;
+                wantParallel === undefined || currentParallel === wantParallel;
 
               if (
                 Object.keys(resumeRefreshUpdateArgs).length > 0 &&
