@@ -534,10 +534,9 @@ export const InstallGithubAppFlow = memo(function InstallGithubAppFlow({
 
   const handleAgentNameSubmit = useCallback(
     (value: string) => {
-      const trimmed = value.trim();
-      if (!trimmed) return;
-      setAgentNameInput(trimmed);
-      proceedFromAgent("create", null, trimmed);
+      const name = value.trim() || "GitHub Action Agent";
+      setAgentNameInput(name);
+      proceedFromAgent("create", null, name);
     },
     [proceedFromAgent],
   );
