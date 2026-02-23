@@ -34,6 +34,10 @@ function runCommand(
   }
 }
 
+function ensureRepoAccess(repo: string): void {
+  runCommand("gh", ["repo", "view", repo, "--json", "nameWithOwner"]);
+}
+
 export interface GhPreflightResult {
   ok: boolean;
   currentRepo: string | null;
@@ -54,6 +58,9 @@ export interface InstallGithubAppOptions {
   workflowPath: string;
   reuseExistingSecret: boolean;
   apiKey: string | null;
+  agentMode: "current" | "existing" | "create";
+  agentId: string | null;
+  agentName: string | null;
   onProgress?: (status: string) => void;
 }
 
@@ -62,8 +69,11 @@ export interface InstallGithubAppResult {
   workflowPath: string;
   branchName: string | null;
   pullRequestUrl: string | null;
+  pullRequestCreateMode: "created" | "page-opened";
   committed: boolean;
   secretAction: "reused" | "set";
+  agentId: string | null;
+  agentUrl: string | null;
 }
 
 function progress(fn: InstallGithubAppOptions["onProgress"], status: string) {
@@ -192,8 +202,10 @@ export function runGhPreflight(cwd: string): GhPreflightResult {
   };
 }
 
-export function generateLettaWorkflowYaml(): string {
-  return [
+export function generateLettaWorkflowYaml(options?: {
+  includeAgentId?: boolean;
+}): string {
+  const lines = [
     "name: Letta Code",
     "on:",
     "  issues:",
@@ -218,25 +230,59 @@ export function generateLettaWorkflowYaml(): string {
     "        with:",
     "          letta_api_key: $" + "{{ secrets.LETTA_API_KEY }}",
     "          github_token: $" + "{{ secrets.GITHUB_TOKEN }}",
-  ].join("\n");
+  ];
+
+  if (options?.includeAgentId) {
+    lines.push("          agent_id: $" + "{{ vars.LETTA_AGENT_ID }}");
+  }
+
+  return lines.join("\n");
 }
 
 export function buildInstallPrBody(workflowPath: string): string {
   return [
-    "## 🤖 Install Letta Code GitHub Action",
+    "## \u{1f916} Add Letta Code GitHub Workflow",
     "",
-    "This PR adds a GitHub Actions workflow that enables Letta Code in this repository.",
+    `This PR adds [\`${workflowPath}\`](${workflowPath}), a GitHub Actions workflow that enables [Letta Code](https://docs.letta.com/letta-code) integration in this repository.`,
     "",
-    "**What’s changing:**",
-    `- Adds or updates \`${workflowPath}\``,
-    "- Enables mention-based assistance via `@letta-code` in issues and PRs",
-    "- Configures Letta Code action invocation in GitHub Actions",
+    "### What is Letta Code?",
     "",
-    "**Security & Privacy:**",
-    "- `LETTA_API_KEY` is stored as a GitHub Actions secret",
-    "- All runs are recorded in GitHub Actions history",
+    "[Letta Code](https://docs.letta.com/letta-code) is a stateful AI coding agent that can help with:",
+    "- Bug fixes and improvements",
+    "- Documentation updates",
+    "- Implementing new features",
+    "- Code reviews and suggestions",
+    "- Writing tests",
+    "- And more!",
     "",
-    "After merge, mention `@letta-code` in an issue or PR to test the integration.",
+    "### How it works",
+    "",
+    "Once this PR is merged, you can interact with Letta Code by mentioning `@letta-code` in a pull request or issue comment.",
+    "",
+    "When triggered, Letta Code will analyze the comment and surrounding context and execute on the request in a GitHub Action. Because Letta agents are **stateful**, every interaction builds on the same persistent memory \u2014 the agent learns your codebase and preferences over time.",
+    "",
+    "### Conversations",
+    "",
+    "Each issue and PR gets its own **conversation** with the same underlying agent:",
+    "- Commenting `@letta-code` on a new issue or PR starts a new conversation",
+    "- Additional comments on the **same issue or PR** continue the existing conversation \u2014 the agent remembers the full thread",
+    '- If the agent opens a PR from an issue (e.g. via "Fixes #N"), follow-up comments on the PR continue the **issue\'s conversation** automatically',
+    "- Use `@letta-code [--new]` to force a fresh conversation while keeping the same agent",
+    "",
+    "You can also specify a particular agent: `@letta-code [--agent agent-xxx]`",
+    "",
+    "View agent runs and conversations at [app.letta.com](https://app.letta.com).",
+    "",
+    "### Important Notes",
+    "",
+    "- **This workflow won't take effect until this PR is merged**",
+    "- **`@letta-code` mentions won't work until after the merge is complete**",
+    "- The workflow runs automatically whenever Letta Code is mentioned in PR or issue comments",
+    "- Letta Code gets access to the entire PR or issue context including files, diffs, and previous comments",
+    "",
+    "There's more information in the [Letta Code Action repo](https://github.com/letta-ai/letta-code-action).",
+    "",
+    "After merging this PR, try mentioning `@letta-code` in a comment on any PR to get started!",
   ].join("\n");
 }
 
@@ -278,10 +324,40 @@ export function setRepositorySecret(
   );
 }
 
+export function setRepositoryVariable(
+  repo: string,
+  name: string,
+  value: string,
+): void {
+  runCommand("gh", ["variable", "set", name, "--repo", repo, "--body", value]);
+}
+
+export async function createLettaAgent(
+  apiKey: string,
+  name: string,
+): Promise<{ id: string; name: string }> {
+  const response = await fetch("https://api.letta.com/v1/agents", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ name }),
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Failed to create agent: ${response.status} ${text}`);
+  }
+
+  const data = (await response.json()) as { id: string; name: string };
+  return { id: data.id, name: data.name };
+}
+
 function cloneRepoToTemp(repo: string): { tempDir: string; repoDir: string } {
   const tempDir = mkdtempSync(join(tmpdir(), "letta-install-github-app-"));
   const repoDir = join(tempDir, "repo");
-  runCommand("gh", ["repo", "clone", repo, repoDir]);
+  runCommand("gh", ["repo", "clone", repo, repoDir, "--", "--depth=1"]);
   return { tempDir, repoDir };
 }
 
@@ -332,32 +408,60 @@ function createPullRequest(
   branchName: string,
   workflowPath: string,
   repoDir: string,
-): string {
-  const title = "chore: add Letta Code GitHub Action workflow";
+): { url: string; mode: "created" | "page-opened" } {
+  const title = "Add Letta Code GitHub Workflow";
   const body = buildInstallPrBody(workflowPath);
   const base = getDefaultBaseBranch(repoDir);
 
-  return runCommand("gh", [
-    "pr",
-    "create",
-    "--repo",
-    repo,
-    "--head",
-    branchName,
-    "--base",
-    base,
-    "--title",
-    title,
-    "--body",
-    body,
-  ]);
+  try {
+    const url = runCommand("gh", [
+      "pr",
+      "create",
+      "--repo",
+      repo,
+      "--head",
+      branchName,
+      "--base",
+      base,
+      "--title",
+      title,
+      "--body",
+      body,
+      "--web",
+    ]);
+    return { url, mode: "page-opened" };
+  } catch {
+    const url = runCommand("gh", [
+      "pr",
+      "create",
+      "--repo",
+      repo,
+      "--head",
+      branchName,
+      "--base",
+      base,
+      "--title",
+      title,
+      "--body",
+      body,
+    ]);
+    return { url, mode: "created" };
+  }
 }
 
 export async function installGithubApp(
   options: InstallGithubAppOptions,
 ): Promise<InstallGithubAppResult> {
-  const { repo, workflowPath, reuseExistingSecret, apiKey, onProgress } =
-    options;
+  const {
+    repo,
+    workflowPath,
+    reuseExistingSecret,
+    apiKey,
+    agentMode,
+    agentId: providedAgentId,
+    agentName,
+    onProgress,
+  } = options;
 
   if (!validateRepoSlug(repo)) {
     throw new Error("Repository must be in owner/repo format.");
@@ -370,22 +474,34 @@ export async function installGithubApp(
   }
 
   const secretAction: "reused" | "set" = reuseExistingSecret ? "reused" : "set";
-  if (!reuseExistingSecret && apiKey) {
-    progress(onProgress, "Setting LETTA_API_KEY secret...");
-    setRepositorySecret(repo, "LETTA_API_KEY", apiKey);
+  let resolvedAgentId: string | null = providedAgentId;
+
+  progress(onProgress, "Getting repository information");
+  ensureRepoAccess(repo);
+
+  // Create agent if needed (requires API key)
+  if (agentMode === "create" && agentName) {
+    const keyForAgent = apiKey;
+    if (!keyForAgent) {
+      throw new Error("LETTA_API_KEY is required to create an agent.");
+    }
+    progress(onProgress, `Creating agent ${agentName}`);
+    const agent = await createLettaAgent(keyForAgent, agentName);
+    resolvedAgentId = agent.id;
   }
 
-  progress(onProgress, "Cloning repository...");
+  progress(onProgress, "Creating branch");
   const { tempDir, repoDir } = cloneRepoToTemp(repo);
 
   try {
-    const workflowContent = generateLettaWorkflowYaml();
+    const workflowContent = generateLettaWorkflowYaml({
+      includeAgentId: resolvedAgentId != null,
+    });
 
-    progress(onProgress, "Creating installation branch...");
     const branchName = createBranchName();
     runGit(["checkout", "-b", branchName], repoDir);
 
-    progress(onProgress, "Writing workflow file...");
+    progress(onProgress, "Creating workflow files");
     const changed = writeWorkflow(repoDir, workflowPath, workflowContent);
 
     if (!changed) {
@@ -395,23 +511,33 @@ export async function installGithubApp(
         workflowPath,
         branchName: null,
         pullRequestUrl: null,
+        pullRequestCreateMode: "created",
         committed: false,
         secretAction,
+        agentId: resolvedAgentId,
+        agentUrl: resolvedAgentId
+          ? `https://app.letta.com/agents/${resolvedAgentId}`
+          : null,
       };
     }
 
-    progress(onProgress, "Committing workflow changes...");
     runGit(["add", workflowPath], repoDir);
-    runGit(
-      ["commit", "-m", "chore: add Letta Code GitHub Action workflow"],
-      repoDir,
-    );
+    runGit(["commit", "-m", "Add Letta Code GitHub Workflow"], repoDir);
 
-    progress(onProgress, "Pushing branch...");
+    if (!reuseExistingSecret && apiKey) {
+      progress(onProgress, "Setting up LETTA_API_KEY secret");
+      setRepositorySecret(repo, "LETTA_API_KEY", apiKey);
+    }
+
+    if (resolvedAgentId) {
+      progress(onProgress, "Configuring agent");
+      setRepositoryVariable(repo, "LETTA_AGENT_ID", resolvedAgentId);
+    }
+
+    progress(onProgress, "Opening pull request page");
     runGit(["push", "-u", "origin", branchName], repoDir);
 
-    progress(onProgress, "Opening pull request...");
-    const pullRequestUrl = createPullRequest(
+    const pullRequest = createPullRequest(
       repo,
       branchName,
       workflowPath,
@@ -422,9 +548,14 @@ export async function installGithubApp(
       repo,
       workflowPath,
       branchName,
-      pullRequestUrl,
+      pullRequestUrl: pullRequest.url,
+      pullRequestCreateMode: pullRequest.mode,
       committed: true,
       secretAction,
+      agentId: resolvedAgentId,
+      agentUrl: resolvedAgentId
+        ? `https://app.letta.com/agents/${resolvedAgentId}`
+        : null,
     };
   } finally {
     rmSync(tempDir, { recursive: true, force: true });

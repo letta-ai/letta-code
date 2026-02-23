@@ -71,14 +71,24 @@ describe("install-github-app helpers", () => {
     expect(yaml).toContain("letta_api_key: $" + "{{ secrets.LETTA_API_KEY }}");
     expect(yaml).toContain("github_token: $" + "{{ secrets.GITHUB_TOKEN }}");
     expect(yaml).toContain("pull-requests: write");
+    expect(yaml).not.toContain("agent_id");
+  });
+
+  test("generateLettaWorkflowYaml includes agent_id when requested", () => {
+    const yaml = generateLettaWorkflowYaml({ includeAgentId: true });
+
+    expect(yaml).toContain("agent_id: $" + "{{ vars.LETTA_AGENT_ID }}");
+    expect(yaml).toContain("uses: letta-ai/letta-code-action@v0");
   });
 
   test("buildInstallPrBody references workflow path and trigger phrase", () => {
     const body = buildInstallPrBody(".github/workflows/letta.yml");
 
-    expect(body).toContain("Install Letta Code GitHub Action");
+    expect(body).toContain("Add Letta Code GitHub Workflow");
     expect(body).toContain(".github/workflows/letta.yml");
     expect(body).toContain("@letta-code");
-    expect(body).toContain("LETTA_API_KEY");
+    expect(body).toContain("stateful");
+    expect(body).toContain("app.letta.com");
+    expect(body).toContain("letta-code-action");
   });
 });

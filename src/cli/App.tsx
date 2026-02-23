@@ -12099,26 +12099,49 @@ Plan file path: ${planFilePath}`;
                     return;
                   }
 
-                  const lines = [
-                    "✓ GitHub Actions workflow created.",
-                    `Repository: ${result.repo}`,
-                    `Workflow: ${result.workflowPath}`,
+                  const lines: string[] = ["Install GitHub App", "Success", ""];
+                  lines.push("✓ GitHub Actions workflow created!");
+                  lines.push("");
+                  lines.push(
                     result.secretAction === "reused"
-                      ? "Using existing LETTA_API_KEY secret."
-                      : "LETTA_API_KEY secret set.",
-                  ];
+                      ? "✓ Using existing LETTA_API_KEY secret"
+                      : "✓ API key saved as LETTA_API_KEY secret",
+                  );
+                  if (result.agentId) {
+                    lines.push("");
+                    lines.push(`✓ Agent configured: ${result.agentId}`);
+                  }
+                  lines.push("");
+                  lines.push("Next steps:");
 
                   if (result.pullRequestUrl) {
-                    lines.push(`Pull request: ${result.pullRequestUrl}`);
+                    lines.push(
+                      result.pullRequestCreateMode === "page-opened"
+                        ? "1. A pre-filled PR page has been created"
+                        : "1. A pull request has been created",
+                    );
+                    lines.push("2. Merge the PR to enable Letta PR assistance");
+                    lines.push(
+                      "3. Mention @letta-code in an issue or PR to test",
+                    );
+                    lines.push("");
+                    lines.push(`PR: ${result.pullRequestUrl}`);
+                    if (result.agentUrl) {
+                      lines.push(`Agent: ${result.agentUrl}`);
+                    }
                   } else {
+                    lines.push(
+                      "1. Open a PR for the branch created by the installer",
+                    );
+                    lines.push("2. Merge the PR to enable Letta PR assistance");
+                    lines.push(
+                      "3. Mention @letta-code in an issue or PR to test",
+                    );
+                    lines.push("");
                     lines.push(
                       "Branch pushed but PR was not opened automatically. Run: gh pr create",
                     );
                   }
-
-                  lines.push(
-                    "Next step: mention @letta-code in an issue or PR.",
-                  );
                   cmd.finish(lines.join("\n"), true);
                 }}
                 onCancel={closeOverlay}
