@@ -21,7 +21,7 @@ import {
 import { getClient } from "./agent/client";
 import { setAgentContext, setConversationId } from "./agent/context";
 import { createAgent } from "./agent/create";
-import { resolveListMessagesRoute } from "./agent/listMessagesRouting";
+import { handleListMessages } from "./agent/listMessagesHandler";
 import { ISOLATED_BLOCK_LABELS } from "./agent/memory";
 import { getStreamToolContextId, sendMessageStream } from "./agent/message";
 import { getModelUpdateArgs } from "./agent/model";
@@ -2711,77 +2711,16 @@ async function runBidirectionalMode(
         };
         console.log(JSON.stringify(registerResponse));
       } else if (subtype === "list_messages") {
-        // Fetch conversation messages and return as control_response
         const listReq = message.request as ListMessagesControlRequest;
-        const limit = listReq.limit ?? 50;
-        const order = listReq.order ?? "desc";
-
-        try {
-          let items: unknown[];
-
-          const route = resolveListMessagesRoute(
-            listReq,
-            conversationId,
-            agent.id,
-          );
-          const cursorOpts = {
-            ...(listReq.before ? { before: listReq.before } : {}),
-            ...(listReq.after ? { after: listReq.after } : {}),
-          };
-
-          if (route.kind === "conversations") {
-            const page = await client.conversations.messages.list(
-              route.conversationId,
-              { limit, order, ...cursorOpts },
-            );
-            items = page.getPaginatedItems();
-          } else {
-            const page = await client.agents.messages.list(route.agentId, {
-              limit,
-              order,
-              ...cursorOpts,
-            });
-            items = page.items;
-          }
-
-          // Compute cursors from oldest/newest item IDs for the caller
-          const hasMore = items.length >= limit;
-          const oldestId =
-            items.length > 0
-              ? (items[items.length - 1] as { id?: string })?.id
-              : undefined;
-
-          const payload: ListMessagesResponsePayload = {
-            messages: items,
-            next_before: oldestId ?? null,
-            has_more: hasMore,
-          };
-
-          const listResponse: ControlResponse = {
-            type: "control_response",
-            response: {
-              subtype: "success",
-              request_id: requestId ?? "",
-              response: payload as unknown as Record<string, unknown>,
-            },
-            session_id: sessionId,
-            uuid: randomUUID(),
-          };
-          console.log(JSON.stringify(listResponse));
-        } catch (err) {
-          const listErrorResponse: ControlResponse = {
-            type: "control_response",
-            response: {
-              subtype: "error",
-              request_id: requestId ?? "",
-              error:
-                err instanceof Error ? err.message : "list_messages failed",
-            },
-            session_id: sessionId,
-            uuid: randomUUID(),
-          };
-          console.log(JSON.stringify(listErrorResponse));
-        }
+        const listResp = await handleListMessages({
+          listReq,
+          sessionConversationId: conversationId,
+          sessionAgentId: agent.id,
+          sessionId,
+          requestId: requestId ?? "",
+          client,
+        });
+        console.log(JSON.stringify(listResp));
       } else {
         const errorResponse: ControlResponse = {
           type: "control_response",
