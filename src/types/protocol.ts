@@ -271,7 +271,54 @@ export type SdkToCliControlRequest =
   | { subtype: "initialize" }
   | { subtype: "interrupt" }
   | RegisterExternalToolsRequest
+  | BootstrapSessionStateRequest
   | ListMessagesControlRequest;
+
+/**
+ * Request to bootstrap session state (SDK → CLI).
+ * Returns resolved session metadata, initial history page, and optional pending
+ * approval snapshot — all in a single round-trip to minimise cold-open latency.
+ */
+export interface BootstrapSessionStateRequest {
+  subtype: "bootstrap_session_state";
+  /** Max messages to include in the initial history page. Defaults to 50. */
+  limit?: number;
+  /** Sort order for initial history page. Defaults to "desc". */
+  order?: "asc" | "desc";
+}
+
+/**
+ * Successful bootstrap_session_state response payload.
+ */
+export interface BootstrapSessionStatePayload {
+  /** Resolved agent ID for this session. */
+  agent_id: string;
+  /** Resolved conversation ID for this session. */
+  conversation_id: string;
+  /** LLM model handle. */
+  model: string | undefined;
+  /** Tool names registered on the agent. */
+  tools: string[];
+  /** Whether memfs (git-backed memory) is enabled. */
+  memfs_enabled: boolean;
+  /** Initial history page (same shape as list_messages response). */
+  messages: unknown[];
+  /** Cursor to fetch older messages (null if none). */
+  next_before: string | null;
+  /** Whether more history pages exist. */
+  has_more: boolean;
+  /** Whether there is a pending approval waiting for a response. */
+  has_pending_approval: boolean;
+  /** Optional wall-clock timings in milliseconds. */
+  timings?: {
+    /** Time to resolve agent + conversation context. */
+    resolve_ms: number;
+    /** Time to fetch the initial message page. */
+    list_messages_ms: number;
+    /** Total bootstrap wall-clock time. */
+    total_ms: number;
+  };
+}
 
 /**
  * Request to list conversation messages (SDK → CLI).

@@ -18,6 +18,7 @@ import {
   parseRetryAfterHeaderMs,
   shouldRetryRunMetadataError,
 } from "./agent/approval-recovery";
+import { handleBootstrapSessionState } from "./agent/bootstrapHandler";
 import { getClient } from "./agent/client";
 import { setAgentContext, setConversationId } from "./agent/context";
 import { createAgent } from "./agent/create";
@@ -77,6 +78,7 @@ import {
 } from "./tools/manager";
 import type {
   AutoApprovalMessage,
+  BootstrapSessionStateRequest,
   CanUseToolControlRequest,
   CanUseToolResponse,
   ControlRequest,
@@ -286,6 +288,7 @@ export async function handleHeadlessCommand(
 
       memfs: { type: "boolean" },
       "no-memfs": { type: "boolean" },
+      "memfs-startup": { type: "string" }, // "blocking" | "background" | "skip"
       "no-skills": { type: "boolean" },
       "no-bundled-skills": { type: "boolean" },
       "no-system-info-reminder": { type: "boolean" },
@@ -436,6 +439,15 @@ export async function handleHeadlessCommand(
   const skillSourcesRaw = values["skill-sources"] as string | undefined;
   const memfsFlag = values.memfs as boolean | undefined;
   const noMemfsFlag = values["no-memfs"] as boolean | undefined;
+  // Startup policy for the git-backed memory pull on session init.
+  // "blocking" (default): await the pull before proceeding.
+  // "background": fire the pull async, emit init without waiting.
+  // "skip": skip the pull entirely this session.
+  const memfsStartupRaw = values["memfs-startup"] as string | undefined;
+  const memfsStartupPolicy: "blocking" | "background" | "skip" =
+    memfsStartupRaw === "background" || memfsStartupRaw === "skip"
+      ? memfsStartupRaw
+      : "blocking";
   const requestedMemoryPromptMode: "memfs" | "standard" | undefined = memfsFlag
     ? "memfs"
     : noMemfsFlag
@@ -955,25 +967,58 @@ export async function handleHeadlessCommand(
   const isSubagent = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
 
   // Apply memfs flags and auto-enable from server tag when local settings are missing.
-  try {
-    const { applyMemfsFlags } = await import("./agent/memoryFilesystem");
-    const memfsResult = await applyMemfsFlags(
-      agent.id,
-      memfsFlag,
-      noMemfsFlag,
-      { pullOnExistingRepo: true, agentTags: agent.tags },
-    );
-    if (memfsResult.pullSummary?.includes("CONFLICT")) {
+  // Respects memfsStartupPolicy:
+  //   "blocking"  (default) – await the pull; exit on conflict.
+  //   "background"           – fire pull async; session init proceeds immediately.
+  //   "skip"                 – skip the pull this session.
+  if (memfsStartupPolicy === "skip") {
+    // Run enable/disable logic but skip the git pull.
+    try {
+      const { applyMemfsFlags } = await import("./agent/memoryFilesystem");
+      await applyMemfsFlags(agent.id, memfsFlag, noMemfsFlag, {
+        pullOnExistingRepo: false,
+        agentTags: agent.tags,
+      });
+    } catch (error) {
       console.error(
-        "Memory has merge conflicts. Run in interactive mode to resolve.",
+        `Memory flags failed: ${error instanceof Error ? error.message : String(error)}`,
       );
       process.exit(1);
     }
-  } catch (error) {
-    console.error(
-      `Memory git sync failed: ${error instanceof Error ? error.message : String(error)}`,
-    );
-    process.exit(1);
+  } else if (memfsStartupPolicy === "background") {
+    // Fire pull async; don't block session initialisation.
+    const { applyMemfsFlags } = await import("./agent/memoryFilesystem");
+    applyMemfsFlags(agent.id, memfsFlag, noMemfsFlag, {
+      pullOnExistingRepo: true,
+      agentTags: agent.tags,
+    }).catch((error) => {
+      // Log to stderr only — the session is already live.
+      console.error(
+        `[memfs background pull] ${error instanceof Error ? error.message : String(error)}`,
+      );
+    });
+  } else {
+    // "blocking" — original behaviour.
+    try {
+      const { applyMemfsFlags } = await import("./agent/memoryFilesystem");
+      const memfsResult = await applyMemfsFlags(
+        agent.id,
+        memfsFlag,
+        noMemfsFlag,
+        { pullOnExistingRepo: true, agentTags: agent.tags },
+      );
+      if (memfsResult.pullSummary?.includes("CONFLICT")) {
+        console.error(
+          "Memory has merge conflicts. Run in interactive mode to resolve.",
+        );
+        process.exit(1);
+      }
+    } catch (error) {
+      console.error(
+        `Memory git sync failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      process.exit(1);
+    }
   }
 
   try {
@@ -2711,6 +2756,23 @@ async function runBidirectionalMode(
           uuid: randomUUID(),
         };
         console.log(JSON.stringify(registerResponse));
+      } else if (subtype === "bootstrap_session_state") {
+        const bootstrapReq = message.request as BootstrapSessionStateRequest;
+        const bootstrapResp = await handleBootstrapSessionState({
+          bootstrapReq,
+          sessionContext: {
+            agentId: agent.id,
+            conversationId,
+            model: agent.llm_config?.model,
+            tools: availableTools,
+            memfsEnabled: settingsManager.isMemfsEnabled(agent.id),
+            sessionId,
+          },
+          requestId: requestId ?? "",
+          client,
+          hasPendingApproval: false, // TODO: wire approval state when available
+        });
+        console.log(JSON.stringify(bootstrapResp));
       } else if (subtype === "list_messages") {
         const listReq = message.request as ListMessagesControlRequest;
         const listResp = await handleListMessages({
