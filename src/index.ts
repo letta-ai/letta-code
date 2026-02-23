@@ -12,6 +12,12 @@ import {
 import type { AgentProvenance } from "./agent/create";
 import { getLettaCodeHeaders } from "./agent/http-headers";
 import { ISOLATED_BLOCK_LABELS } from "./agent/memory";
+import {
+  getModelPresetUpdateForAgent,
+  getModelUpdateArgs,
+  resolveModel,
+} from "./agent/model";
+import { updateAgentLLMConfig, updateAgentSystemPrompt } from "./agent/modify";
 import { resolveSkillSourcesSelection } from "./agent/skillSources";
 import { LETTA_CLOUD_API_URL } from "./auth/oauth";
 import { ConversationSelector } from "./cli/components/ConversationSelector";
@@ -1561,7 +1567,6 @@ async function main(): Promise<void> {
 
         setLoadingState("initializing");
         const { createAgent } = await import("./agent/create");
-        const { getModelUpdateArgs } = await import("./agent/model");
 
         let agent: AgentState | null = null;
 
@@ -1793,12 +1798,7 @@ async function main(): Promise<void> {
         // preset-derived fields in sync, then apply optional command-line
         // overrides (model/system prompt).
         if (resuming) {
-          const { updateAgentLLMConfig } = await import("./agent/modify");
-
           if (model) {
-            const { resolveModel, getModelUpdateArgs } = await import(
-              "./agent/model"
-            );
             const modelHandle = resolveModel(model);
             if (!modelHandle) {
               console.error(`Error: Invalid model "${model}"`);
@@ -1812,9 +1812,6 @@ async function main(): Promise<void> {
             // Refresh agent state after model update
             agent = await client.agents.retrieve(agent.id);
           } else {
-            const { getModelPresetUpdateForAgent } = await import(
-              "./agent/model"
-            );
             const presetRefresh = getModelPresetUpdateForAgent(agent);
             if (presetRefresh) {
               // Resume preset refresh is intentionally scoped for now.
@@ -1851,7 +1848,6 @@ async function main(): Promise<void> {
           }
 
           if (systemPromptPreset) {
-            const { updateAgentSystemPrompt } = await import("./agent/modify");
             const result = await updateAgentSystemPrompt(
               agent.id,
               systemPromptPreset,

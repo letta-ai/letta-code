@@ -25,7 +25,12 @@ import { createAgent } from "./agent/create";
 import { handleListMessages } from "./agent/listMessagesHandler";
 import { ISOLATED_BLOCK_LABELS } from "./agent/memory";
 import { getStreamToolContextId, sendMessageStream } from "./agent/message";
-import { getModelUpdateArgs } from "./agent/model";
+import {
+  getModelPresetUpdateForAgent,
+  getModelUpdateArgs,
+  resolveModel,
+} from "./agent/model";
+import { updateAgentLLMConfig, updateAgentSystemPrompt } from "./agent/modify";
 import { resolveSkillSourcesSelection } from "./agent/skillSources";
 import type { SkillSource } from "./agent/skills";
 import { SessionStats } from "./agent/stats";
@@ -898,10 +903,7 @@ export async function handleHeadlessCommand(
   // preset-derived fields in sync, then apply optional command-line
   // overrides (model/system prompt).
   if (isResumingAgent) {
-    const { updateAgentLLMConfig } = await import("./agent/modify");
-
     if (model) {
-      const { resolveModel } = await import("./agent/model");
       const modelHandle = resolveModel(model);
       if (typeof modelHandle !== "string") {
         console.error(`Error: Invalid model "${model}"`);
@@ -915,7 +917,6 @@ export async function handleHeadlessCommand(
       // Refresh agent state after model update
       agent = await client.agents.retrieve(agent.id);
     } else {
-      const { getModelPresetUpdateForAgent } = await import("./agent/model");
       const presetRefresh = getModelPresetUpdateForAgent(agent);
       if (presetRefresh) {
         // Resume preset refresh is intentionally scoped for now.
@@ -947,7 +948,6 @@ export async function handleHeadlessCommand(
     }
 
     if (systemPromptPreset) {
-      const { updateAgentSystemPrompt } = await import("./agent/modify");
       const result = await updateAgentSystemPrompt(
         agent.id,
         systemPromptPreset,
