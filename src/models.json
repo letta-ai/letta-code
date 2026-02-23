@@ -165,7 +165,6 @@
     "label": "Bedrock Opus 4.5",
     "shortLabel": "Opus 4.5 BR",
     "description": "Anthropic's best model (via AWS Bedrock)",
-    "isFeatured": true,
     "updateArgs": {
       "context_window": 180000,
       "max_output_tokens": 64000,
@@ -178,7 +177,6 @@
     "handle": "anthropic/claude-haiku-4-5-20251001",
     "label": "Haiku 4.5",
     "description": "Anthropic's fastest model",
-    "isFeatured": true,
     "updateArgs": {
       "context_window": 180000,
       "max_output_tokens": 64000,
@@ -478,7 +476,6 @@
     "handle": "openai/gpt-5.2-codex",
     "label": "GPT-5.2-Codex",
     "description": "GPT-5.2 variant (med reasoning) optimized for coding",
-    "isFeatured": true,
     "updateArgs": {
       "reasoning_effort": "medium",
       "verbosity": "medium",
@@ -583,7 +580,6 @@
     "handle": "openai/gpt-5.1-codex",
     "label": "GPT-5.1-Codex",
     "description": "GPT-5.1 variant (med reasoning) optimized for coding",
-    "isFeatured": true,
     "updateArgs": {
       "reasoning_effort": "medium",
       "verbosity": "medium",
@@ -739,7 +735,6 @@
     "handle": "zai/glm-4.7",
     "label": "GLM-4.7",
     "description": "zAI's latest coding model (legacy)",
-    "isFeatured": true,
     "free": true,
     "updateArgs": {
       "context_window": 200000,
@@ -764,7 +759,6 @@
     "handle": "minimax/MiniMax-M2.1",
     "label": "MiniMax 2.1",
     "description": "MiniMax's latest coding model (legacy)",
-    "isFeatured": true,
     "free": true,
     "updateArgs": {
       "context_window": 160000,
@@ -843,7 +837,6 @@
     "handle": "google_ai/gemini-3-pro-preview",
     "label": "Gemini 3 Pro",
     "description": "Google's smartest model",
-    "isFeatured": true,
     "updateArgs": {
       "context_window": 180000,
       "temperature": 1.0,
@@ -855,7 +848,6 @@
     "handle": "google_ai/gemini-3-flash-preview",
     "label": "Gemini 3 Flash",
     "description": "Google's fastest Gemini 3 model",
-    "isFeatured": true,
     "updateArgs": {
       "context_window": 180000,
       "temperature": 1.0,
