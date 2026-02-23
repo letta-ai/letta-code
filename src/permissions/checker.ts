@@ -1,7 +1,7 @@
 // src/permissions/checker.ts
 // Main permission checking logic
 
-import { resolve } from "node:path";
+import { relative, resolve } from "node:path";
 import { getCurrentAgentId } from "../agent/context";
 import { runPermissionRequestHooks } from "../hooks";
 import { canonicalToolName, isShellToolName } from "./canonical";
@@ -107,6 +107,23 @@ function shouldAttachTrace(result: PermissionCheckResult): boolean {
     return false;
   }
   return result.decision === "ask" || result.decision === "deny";
+}
+
+function getPlanPathHints(
+  planFilePath: string | null,
+  workingDirectory: string,
+): { absolutePath: string; applyPatchPath: string } | null {
+  if (!planFilePath) return null;
+
+  const absolutePath = resolve(planFilePath);
+  const relativePath = relative(resolve(workingDirectory), absolutePath);
+  const applyPatchPath =
+    relativePath && relativePath !== "." ? relativePath : absolutePath;
+
+  return {
+    absolutePath,
+    applyPatchPath,
+  };
 }
 
 /**
@@ -308,9 +325,13 @@ function checkPermissionForEngine(
     let reason = `Permission mode: ${currentMode}`;
     if (currentMode === "plan" && modeOverride === "deny") {
       const planFilePath = permissionMode.getPlanFilePath();
+      const planPathHints = getPlanPathHints(planFilePath, workingDirectory);
       reason =
         `Plan mode is active. You can only use read-only tools (Read, Grep, Glob, etc.) and write to the plan file. ` +
-        `Write your plan to: ${planFilePath || "(error: plan file path not configured)"}. ` +
+        `Write your plan to: ${planPathHints?.absolutePath || "(error: plan file path not configured)"}. ` +
+        (planPathHints
+          ? `For ApplyPatch/apply_patch, file directives must be relative to the current working directory; use: ${planPathHints.applyPatchPath}. `
+          : "") +
         `Use ExitPlanMode when your plan is ready for user approval.`;
     }
     traceEvent(trace, "mode-override", reason);

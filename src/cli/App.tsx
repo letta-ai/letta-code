@@ -2,7 +2,7 @@
 
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative, resolve } from "node:path";
 import { APIError, APIUserAbortError } from "@letta-ai/letta-client/core/error";
 import type {
   AgentState,
@@ -608,6 +608,25 @@ function saveLastAgentBeforeExit() {
 }
 
 // Get plan mode system reminder if in plan mode
+function getPlanFileInfoMessage(planFilePath: string | null): string {
+  if (!planFilePath) {
+    return "No plan file path assigned.";
+  }
+
+  const absolutePlanPath = resolve(planFilePath);
+  const relativePlanPath = relative(process.cwd(), absolutePlanPath);
+  const applyPatchPath =
+    relativePlanPath && relativePlanPath !== "."
+      ? relativePlanPath
+      : absolutePlanPath;
+
+  return [
+    `No plan file exists yet. You should create your plan at ${absolutePlanPath} using a write tool (e.g. Write, ApplyPatch, etc. depending on your toolset).`,
+    `If you use Write/Edit, pass the absolute path above.`,
+    `If you use ApplyPatch/apply_patch, patch file directives must use a relative path from the current working directory: ${applyPatchPath}.`,
+  ].join("\n");
+}
+
 function getPlanModeReminder(): string {
   if (permissionMode.getMode() !== "plan") {
     return "";
@@ -620,7 +639,7 @@ function getPlanModeReminder(): string {
       Plan mode is active. The user indicated that they do not want you to execute yet -- you MUST NOT make any edits (with the exception of the plan file mentioned below), run any non-readonly tools (including changing configs or making commits), or otherwise make any changes to the system. This supersedes any other instructions you have received.
 
 ## Plan File Info:
-${planFilePath ? `No plan file exists yet. You should create your plan at ${planFilePath} using a write tool (e.g. Write, ApplyPatch, etc. depending on your toolset).` : "No plan file path assigned."}
+${getPlanFileInfoMessage(planFilePath)}
 
 You should build your plan incrementally by writing to or editing this file. NOTE that this is the only file you are allowed to edit - other than this you are only allowed to take READ-ONLY actions.
 

@@ -328,6 +328,33 @@ test("plan mode - allows ApplyPatch with relative path to plan file", () => {
   expect(result.matchedRule).toBe("plan mode");
 });
 
+test("plan mode deny reason includes apply_patch relative path hint", () => {
+  permissionMode.setMode("plan");
+
+  const permissions: PermissionRules = {
+    allow: [],
+    deny: [],
+    ask: [],
+  };
+
+  const workingDirectory = join(homedir(), "dev", "repo");
+  const planPath = join(homedir(), ".letta", "plans", "zesty-witty-cloud.md");
+  permissionMode.setPlanFilePath(planPath);
+
+  const result = checkPermission(
+    "Bash",
+    { command: "npm install" },
+    permissions,
+    workingDirectory,
+  );
+
+  expect(result.decision).toBe("deny");
+  expect(result.reason).toContain(`Write your plan to: ${planPath}.`);
+  expect(result.reason).toContain(
+    `use: ${relative(workingDirectory, planPath)}.`,
+  );
+});
+
 test("plan mode - denies ApplyPatch when any target is outside plans dir", () => {
   permissionMode.setMode("plan");
 
