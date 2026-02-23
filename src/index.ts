@@ -118,7 +118,7 @@ BEHAVIOR
   - Use /profile save <name> to bookmark your current agent
 
   Profiles are stored in:
-  - Global: ~/.config/letta/settings.json (available everywhere)
+  - Global: ~/.letta/settings.json (available everywhere)
   - Local: .letta/settings.local.json (pinned to project)
 
   If no credentials are configured, you'll be prompted to authenticate via
@@ -892,7 +892,7 @@ async function main(): Promise<void> {
         "Your credentials may be invalid or the server may be unreachable.",
       );
       console.error(
-        "Delete ~/.config/letta/settings.json then run 'letta' to re-authenticate",
+        "Delete ~/.letta/settings.json then run 'letta' to re-authenticate",
       );
       process.exit(1);
     }
