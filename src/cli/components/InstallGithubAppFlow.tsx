@@ -27,13 +27,13 @@ const TextInput =
   RawTextInput as unknown as React.ComponentType<TextInputProps>;
 
 type Step =
-  | "check-gh"
+  | "checking"
   | "choose-repo"
   | "enter-repo"
-  | "secret-decision"
-  | "api-key"
+  | "choose-secret"
+  | "enter-api-key"
   | "creating"
-  | "done"
+  | "success"
   | "error";
 
 interface InstallGithubAppFlowProps {
@@ -41,7 +41,93 @@ interface InstallGithubAppFlowProps {
   onCancel: () => void;
 }
 
+interface ProgressItem {
+  label: string;
+  done: boolean;
+  active: boolean;
+}
+
+const PROGRESS_STEPS = [
+  {
+    key: "Setting LETTA_API_KEY secret",
+    label: "Setting up LETTA_API_KEY secret",
+  },
+  {
+    key: "Cloning repository",
+    label: "Getting repository information",
+  },
+  {
+    key: "Creating installation branch",
+    label: "Creating branch",
+  },
+  {
+    key: "Writing workflow file",
+    label: "Creating workflow files",
+  },
+  {
+    key: "Opening pull request",
+    label: "Opening pull request page",
+  },
+] as const;
+
 const SOLID_LINE = "─";
+
+function buildProgress(
+  currentStatus: string,
+  reuseExistingSecret: boolean,
+): ProgressItem[] {
+  const normalized = currentStatus.toLowerCase();
+
+  const visibleSteps = PROGRESS_STEPS.filter((step) => {
+    if (step.key === "Setting LETTA_API_KEY secret" && reuseExistingSecret) {
+      return false;
+    }
+    return true;
+  });
+
+  const activeIndex = visibleSteps.findIndex((step) =>
+    normalized.includes(step.key.toLowerCase()),
+  );
+
+  return visibleSteps.map((step, index) => {
+    const done = activeIndex > index;
+    const active = activeIndex === index;
+    return {
+      label: step.label,
+      done,
+      active,
+    };
+  });
+}
+
+function renderPanel(
+  solidLine: string,
+  title: string,
+  subtitle: string,
+  body: React.ReactNode,
+) {
+  return (
+    <Box flexDirection="column" width="100%">
+      <Text dimColor>{"> /install-github-app"}</Text>
+      <Text dimColor>{solidLine}</Text>
+      <Box height={1} />
+      <Box
+        borderStyle="round"
+        borderColor={colors.approval.border}
+        width="100%"
+        flexDirection="column"
+        paddingX={1}
+      >
+        <Text bold color={colors.approval.header}>
+          {title}
+        </Text>
+        <Text dimColor>{subtitle}</Text>
+        <Box height={1} />
+        {body}
+      </Box>
+    </Box>
+  );
+}
 
 export const InstallGithubAppFlow = memo(function InstallGithubAppFlow({
   onComplete,
@@ -50,25 +136,28 @@ export const InstallGithubAppFlow = memo(function InstallGithubAppFlow({
   const terminalWidth = useTerminalWidth();
   const solidLine = SOLID_LINE.repeat(Math.max(terminalWidth, 10));
 
-  const [step, setStep] = useState<Step>("check-gh");
+  const [step, setStep] = useState<Step>("checking");
   const [status, setStatus] = useState<string>(
     "Checking GitHub CLI prerequisites...",
   );
   const [errorMessage, setErrorMessage] = useState<string>("");
 
-  const [repoInput, setRepoInput] = useState<string>("");
-  const [repo, setRepo] = useState<string>("");
   const [currentRepo, setCurrentRepo] = useState<string | null>(null);
   const [repoChoiceIndex, setRepoChoiceIndex] = useState<number>(0);
+  const [repoInput, setRepoInput] = useState<string>("");
+  const [repo, setRepo] = useState<string>("");
   const [repoError, setRepoError] = useState<string>("");
-
-  const [workflowPath, setWorkflowPath] = useState<string>(
-    ".github/workflows/letta.yml",
-  );
 
   const [secretExists, setSecretExists] = useState<boolean>(false);
   const [secretChoiceIndex, setSecretChoiceIndex] = useState<number>(0);
   const [apiKeyInput, setApiKeyInput] = useState<string>("");
+  const [reuseExistingSecret, setReuseExistingSecret] =
+    useState<boolean>(false);
+
+  const [workflowPath, setWorkflowPath] = useState<string>(
+    ".github/workflows/letta.yml",
+  );
+  const [result, setResult] = useState<InstallGithubAppResult | null>(null);
 
   const repoChoices = useMemo(() => {
     if (currentRepo) {
@@ -83,13 +172,7 @@ export const InstallGithubAppFlow = memo(function InstallGithubAppFlow({
         },
       ];
     }
-
-    return [
-      {
-        label: "Enter a repository",
-        value: "manual" as const,
-      },
-    ];
+    return [{ label: "Enter a repository", value: "manual" as const }];
   }, [currentRepo]);
 
   const secretChoices = useMemo(
@@ -97,58 +180,83 @@ export const InstallGithubAppFlow = memo(function InstallGithubAppFlow({
       secretExists
         ? [
             {
-              label: "Reuse existing LETTA_API_KEY (recommended)",
+              label: "Using existing LETTA_API_KEY secret (recommended)",
               value: "reuse" as const,
             },
-            { label: "Overwrite LETTA_API_KEY", value: "overwrite" as const },
+            {
+              label: "Set or overwrite LETTA_API_KEY secret",
+              value: "set" as const,
+            },
           ]
-        : [{ label: "Set LETTA_API_KEY", value: "set" as const }],
+        : [{ label: "Set LETTA_API_KEY secret", value: "set" as const }],
     [secretExists],
   );
 
-  const beginInstall = useCallback(
-    async (reuseExistingSecret: boolean) => {
+  const runInstall = useCallback(
+    async (useExistingSecret: boolean, maybeApiKey?: string) => {
       if (!repo) {
         setErrorMessage("Repository not set.");
         setStep("error");
         return;
       }
 
-      if (!reuseExistingSecret && !apiKeyInput.trim()) {
-        setErrorMessage("LETTA_API_KEY is required.");
-        setStep("error");
-        return;
-      }
-
+      setReuseExistingSecret(useExistingSecret);
       setStep("creating");
       setStatus("Preparing setup...");
 
       try {
-        const result = await installGithubApp({
+        const installResult = await installGithubApp({
           repo,
           workflowPath,
-          reuseExistingSecret,
-          apiKey: reuseExistingSecret ? null : apiKeyInput.trim(),
+          reuseExistingSecret: useExistingSecret,
+          apiKey: useExistingSecret ? null : (maybeApiKey ?? null),
           onProgress: (message) => setStatus(message),
         });
-        setStatus("Setup complete.");
-        setStep("done");
-        onComplete(result);
+
+        setResult(installResult);
+        setStep("success");
       } catch (error) {
         setErrorMessage(error instanceof Error ? error.message : String(error));
         setStep("error");
       }
     },
-    [apiKeyInput, onComplete, repo, workflowPath],
+    [repo, workflowPath],
   );
 
-  const runPreflightAndAdvance = useCallback(() => {
+  const resolveRepo = useCallback(async (repoSlug: string) => {
+    const trimmed = repoSlug.trim();
+    if (!validateRepoSlug(trimmed)) {
+      setRepoError("Repository must be in owner/repo format.");
+      return;
+    }
+
+    setRepoError("");
+    setStatus("Inspecting repository setup...");
+
+    try {
+      const setup = getRepoSetupState(trimmed);
+      setRepo(trimmed);
+      setSecretExists(setup.secretExists);
+      setWorkflowPath(getDefaultWorkflowPath(setup.workflowExists));
+      setSecretChoiceIndex(0);
+      setStep("choose-secret");
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+      setStep("error");
+    }
+  }, []);
+
+  useEffect(() => {
+    if (step !== "checking") return;
+
     try {
       const preflight = runGhPreflight(process.cwd());
       if (!preflight.ok) {
         const lines = [preflight.details];
         if (preflight.remediation) {
-          lines.push(`How to fix: ${preflight.remediation}`);
+          lines.push("");
+          lines.push("How to fix:");
+          lines.push(`  ${preflight.remediation}`);
         }
         setErrorMessage(lines.join("\n"));
         setStep("error");
@@ -158,10 +266,6 @@ export const InstallGithubAppFlow = memo(function InstallGithubAppFlow({
       if (preflight.currentRepo) {
         setCurrentRepo(preflight.currentRepo);
         setRepoInput(preflight.currentRepo);
-        setRepoChoiceIndex(0);
-      } else {
-        setCurrentRepo(null);
-        setRepoChoiceIndex(0);
       }
 
       setStep("choose-repo");
@@ -169,14 +273,7 @@ export const InstallGithubAppFlow = memo(function InstallGithubAppFlow({
       setErrorMessage(error instanceof Error ? error.message : String(error));
       setStep("error");
     }
-  }, []);
-
-  // One-time kickoff
-  useEffect(() => {
-    if (step === "check-gh") {
-      runPreflightAndAdvance();
-    }
-  }, [runPreflightAndAdvance, step]);
+  }, [step]);
 
   useInput((input, key) => {
     if (key.ctrl && input === "c") {
@@ -184,12 +281,27 @@ export const InstallGithubAppFlow = memo(function InstallGithubAppFlow({
       return;
     }
 
+    if (step === "success") {
+      if (key.return || key.escape || input.length > 0) {
+        if (result) {
+          onComplete(result);
+        } else {
+          onCancel();
+        }
+      }
+      return;
+    }
+
     if (key.escape) {
+      if (step === "choose-repo") {
+        onCancel();
+        return;
+      }
       if (step === "enter-repo") {
         setStep("choose-repo");
         return;
       }
-      if (step === "secret-decision") {
+      if (step === "choose-secret") {
         if (currentRepo) {
           setStep("choose-repo");
         } else {
@@ -197,12 +309,8 @@ export const InstallGithubAppFlow = memo(function InstallGithubAppFlow({
         }
         return;
       }
-      if (step === "api-key") {
-        setStep("secret-decision");
-        return;
-      }
-      if (step === "error") {
-        onCancel();
+      if (step === "enter-api-key") {
+        setStep("choose-secret");
         return;
       }
       onCancel();
@@ -219,18 +327,16 @@ export const InstallGithubAppFlow = memo(function InstallGithubAppFlow({
       } else if (key.return) {
         const selected = repoChoices[repoChoiceIndex] ?? repoChoices[0];
         if (!selected) return;
-
         if (selected.value === "current" && currentRepo) {
-          void handleRepoSubmit(currentRepo);
+          void resolveRepo(currentRepo);
         } else {
-          setRepoError("");
           setStep("enter-repo");
         }
       }
       return;
     }
 
-    if (step === "secret-decision") {
+    if (step === "choose-secret") {
       if (key.upArrow || input === "k") {
         setSecretChoiceIndex((prev) => Math.max(0, prev - 1));
       } else if (key.downArrow || input === "j") {
@@ -240,81 +346,32 @@ export const InstallGithubAppFlow = memo(function InstallGithubAppFlow({
       } else if (key.return) {
         const selected = secretChoices[secretChoiceIndex] ?? secretChoices[0];
         if (!selected) return;
-
         if (selected.value === "reuse") {
-          void beginInstall(true);
+          void runInstall(true);
         } else {
-          setStep("api-key");
+          setStep("enter-api-key");
         }
       }
     }
   });
 
-  const handleRepoSubmit = async (value: string) => {
-    const trimmed = value.trim();
-    if (!validateRepoSlug(trimmed)) {
-      setRepoError("Repository must be in owner/repo format.");
-      return;
-    }
-
-    setRepoError("");
-    setStatus("Inspecting repository setup...");
-
-    try {
-      const setup = getRepoSetupState(trimmed);
-      setRepo(trimmed);
-      setSecretExists(setup.secretExists);
-      setWorkflowPath(getDefaultWorkflowPath(setup.workflowExists));
-      setSecretChoiceIndex(0);
-      setStep("secret-decision");
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-      setStep("error");
-    }
-  };
-
-  const handleApiKeySubmit = async (value: string) => {
-    const trimmed = value.trim();
-    if (!trimmed) {
-      setErrorMessage("LETTA_API_KEY cannot be empty.");
-      setStep("error");
-      return;
-    }
-    setApiKeyInput(trimmed);
-    await beginInstall(false);
-  };
-
-  if (step === "check-gh") {
-    return (
-      <Box flexDirection="column">
-        <Text dimColor>{"> /install-github-app"}</Text>
-        <Text dimColor>{solidLine}</Text>
-        <Box height={1} />
-        <Text bold color={colors.selector.title}>
-          Install GitHub App
-        </Text>
-        <Box height={1} />
-        <Box paddingLeft={2}>
-          <Text color="yellow">{status}</Text>
-        </Box>
-      </Box>
+  if (step === "checking") {
+    return renderPanel(
+      solidLine,
+      "Install GitHub App",
+      "Checking prerequisites",
+      <Box flexDirection="column" paddingLeft={1}>
+        <Text color="yellow">{status}</Text>
+      </Box>,
     );
   }
 
   if (step === "choose-repo") {
-    return (
-      <Box flexDirection="column">
-        <Text dimColor>{"> /install-github-app"}</Text>
-        <Text dimColor>{solidLine}</Text>
-        <Box height={1} />
-        <Text bold color={colors.selector.title}>
-          Install GitHub App
-        </Text>
-        <Box height={1} />
-        <Box paddingLeft={2}>
-          <Text>Select GitHub repository</Text>
-        </Box>
-        <Box height={1} />
+    return renderPanel(
+      solidLine,
+      "Install GitHub App",
+      "Select GitHub repository",
+      <>
         <Box flexDirection="column">
           {repoChoices.map((choice, index) => {
             const selected = index === repoChoiceIndex;
@@ -331,27 +388,18 @@ export const InstallGithubAppFlow = memo(function InstallGithubAppFlow({
           })}
         </Box>
         <Box height={1} />
-        <Box paddingLeft={2}>
-          <Text dimColor>↑↓ navigate · Enter continue · Esc cancel</Text>
-        </Box>
-      </Box>
+        <Text dimColor>↑/↓ to select · Enter to continue · Esc to cancel</Text>
+      </>,
     );
   }
 
   if (step === "enter-repo") {
-    return (
-      <Box flexDirection="column">
-        <Text dimColor>{"> /install-github-app"}</Text>
-        <Text dimColor>{solidLine}</Text>
-        <Box height={1} />
-        <Text bold color={colors.selector.title}>
-          Install GitHub App
-        </Text>
-        <Box height={1} />
-        <Box paddingLeft={2}>
-          <Text>Enter repository (owner/repo):</Text>
-        </Box>
-        <Box marginTop={1}>
+    return renderPanel(
+      solidLine,
+      "Install GitHub App",
+      "Enter a different repository",
+      <>
+        <Box>
           <Text color={colors.selector.itemHighlighted}>{">"}</Text>
           <Text> </Text>
           <PasteAwareTextInput
@@ -360,42 +408,36 @@ export const InstallGithubAppFlow = memo(function InstallGithubAppFlow({
               setRepoInput(next);
               setRepoError("");
             }}
-            onSubmit={handleRepoSubmit}
+            onSubmit={(value) => {
+              void resolveRepo(value);
+            }}
             placeholder="owner/repo"
           />
         </Box>
         {repoError ? (
-          <Box paddingLeft={2} marginTop={1}>
+          <Box marginTop={1}>
             <Text color="red">{repoError}</Text>
           </Box>
         ) : null}
         <Box height={1} />
-        <Box paddingLeft={2}>
-          <Text dimColor>Enter continue · Esc back</Text>
-        </Box>
-      </Box>
+        <Text dimColor>Enter to continue · Esc to go back</Text>
+      </>,
     );
   }
 
-  if (step === "secret-decision") {
-    return (
-      <Box flexDirection="column">
-        <Text dimColor>{"> /install-github-app"}</Text>
-        <Text dimColor>{solidLine}</Text>
-        <Box height={1} />
-        <Text bold color={colors.selector.title}>
-          Install GitHub App
-        </Text>
-        <Box height={1} />
-        <Box paddingLeft={2}>
-          <Text>Repository: {repo}</Text>
+  if (step === "choose-secret") {
+    return renderPanel(
+      solidLine,
+      "Install GitHub App",
+      "Configure LETTA_API_KEY",
+      <>
+        <Box>
+          <Text dimColor>Repository: </Text>
+          <Text>{repo}</Text>
         </Box>
-        <Box paddingLeft={2}>
-          <Text>Workflow: {workflowPath}</Text>
-        </Box>
-        <Box height={1} />
-        <Box paddingLeft={2}>
-          <Text>LETTA_API_KEY setup:</Text>
+        <Box>
+          <Text dimColor>Workflow: </Text>
+          <Text>{workflowPath}</Text>
         </Box>
         <Box height={1} />
         <Box flexDirection="column">
@@ -414,85 +456,120 @@ export const InstallGithubAppFlow = memo(function InstallGithubAppFlow({
           })}
         </Box>
         <Box height={1} />
-        <Box paddingLeft={2}>
-          <Text dimColor>↑↓ navigate · Enter select · Esc back</Text>
-        </Box>
-      </Box>
+        <Text dimColor>↑/↓ to select · Enter to continue · Esc to go back</Text>
+      </>,
     );
   }
 
-  if (step === "api-key") {
-    return (
-      <Box flexDirection="column">
-        <Text dimColor>{"> /install-github-app"}</Text>
-        <Text dimColor>{solidLine}</Text>
-        <Box height={1} />
-        <Text bold color={colors.selector.title}>
-          Install GitHub App
-        </Text>
-        <Box height={1} />
-        <Box paddingLeft={2}>
-          <Text>Enter LETTA_API_KEY (input is masked):</Text>
-        </Box>
-        <Box marginTop={1}>
+  if (step === "enter-api-key") {
+    return renderPanel(
+      solidLine,
+      "Install GitHub App",
+      "Enter LETTA_API_KEY",
+      <>
+        <Box>
           <Text color={colors.selector.itemHighlighted}>{">"}</Text>
           <Text> </Text>
           <TextInput
             value={apiKeyInput}
             onChange={setApiKeyInput}
-            onSubmit={handleApiKeySubmit}
+            onSubmit={(value) => {
+              const trimmed = value.trim();
+              if (!trimmed) {
+                setErrorMessage("LETTA_API_KEY cannot be empty.");
+                setStep("error");
+                return;
+              }
+              void runInstall(false, trimmed);
+            }}
             placeholder="sk-..."
             mask="*"
           />
         </Box>
         <Box height={1} />
-        <Box paddingLeft={2}>
-          <Text dimColor>Enter continue · Esc back</Text>
-        </Box>
-      </Box>
+        <Text dimColor>Enter to continue · Esc to go back</Text>
+      </>,
     );
   }
 
   if (step === "creating") {
-    return (
+    const progress = buildProgress(status, reuseExistingSecret);
+    return renderPanel(
+      solidLine,
+      "Install GitHub App",
+      "Create GitHub Actions workflow",
       <Box flexDirection="column">
-        <Text dimColor>{"> /install-github-app"}</Text>
-        <Text dimColor>{solidLine}</Text>
-        <Box height={1} />
-        <Text bold color={colors.selector.title}>
-          Install GitHub App
-        </Text>
-        <Box height={1} />
-        <Box paddingLeft={2}>
-          <Text color="yellow">{status}</Text>
-        </Box>
-      </Box>
+        {progress.map((item) => (
+          <Box key={item.label}>
+            {item.done ? (
+              <Text color="green">✓ {item.label}</Text>
+            ) : item.active ? (
+              <Text color="yellow">• {item.label}…</Text>
+            ) : (
+              <Text dimColor> {item.label}</Text>
+            )}
+          </Box>
+        ))}
+      </Box>,
     );
   }
 
-  if (step === "error") {
-    return (
-      <Box flexDirection="column">
-        <Text dimColor>{"> /install-github-app"}</Text>
-        <Text dimColor>{solidLine}</Text>
+  if (step === "success") {
+    const successLines = [
+      "✓ GitHub Actions workflow created!",
+      "",
+      reuseExistingSecret
+        ? "✓ Using existing LETTA_API_KEY secret"
+        : "✓ API key saved as LETTA_API_KEY secret",
+      "",
+      "Next steps:",
+      "1. A pre-filled PR page has been created",
+      "2. Merge the PR to enable Letta Code PR assistance",
+      "3. Mention @letta-code in an issue or PR to test",
+    ];
+
+    return renderPanel(
+      solidLine,
+      "Install GitHub App",
+      "Success",
+      <>
+        {successLines.map((line, idx) => (
+          <Box key={`${idx}-${line}`}>
+            {line.startsWith("✓") ? (
+              <Text color="green">{line}</Text>
+            ) : (
+              <Text dimColor={line === ""}>{line || " "}</Text>
+            )}
+          </Box>
+        ))}
         <Box height={1} />
-        <Text bold color={colors.selector.title}>
-          Install GitHub App
-        </Text>
-        <Box height={1} />
-        <Box paddingLeft={2} flexDirection="column">
-          <Text color="red">Setup failed:</Text>
-          <Text color="red">{errorMessage}</Text>
-        </Box>
-        <Box height={1} />
-        <Box paddingLeft={2}>
-          <Text dimColor>Esc close</Text>
-        </Box>
-      </Box>
+        <Text dimColor>Press any key to exit</Text>
+      </>,
     );
   }
 
-  return null;
+  return renderPanel(
+    solidLine,
+    "Install GitHub App",
+    "Error",
+    <>
+      <Text color="red">
+        Error: {errorMessage.split("\n")[0] || "Unknown error"}
+      </Text>
+      <Box height={1} />
+      {errorMessage
+        .split("\n")
+        .slice(1)
+        .filter((line) => line.trim().length > 0)
+        .map((line, idx) => (
+          <Text key={`${idx}-${line}`} dimColor>
+            {line}
+          </Text>
+        ))}
+      <Box height={1} />
+      <Text dimColor>Esc to close</Text>
+    </>,
+  );
 });
 
 InstallGithubAppFlow.displayName = "InstallGithubAppFlow";
