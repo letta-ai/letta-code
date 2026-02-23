@@ -49,6 +49,7 @@ export interface ListMessagesHandlerClient {
           order: "asc" | "desc";
           before?: string;
           after?: string;
+          conversation_id?: "default";
         },
       ): Promise<AgentsMessagesPage>;
     };
@@ -114,6 +115,7 @@ export async function handleListMessages(
       const page = await client.agents.messages.list(route.agentId, {
         limit,
         order,
+        conversation_id: "default",
         ...cursorOpts,
       });
       items = page.items;
