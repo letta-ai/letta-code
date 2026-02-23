@@ -241,7 +241,7 @@ export function generateLettaWorkflowYaml(options?: {
 
 export function buildInstallPrBody(workflowPath: string): string {
   return [
-    "## \u{1f916} Add Letta Code GitHub Workflow",
+    "## 👾 Add Letta Code GitHub Workflow",
     "",
     `This PR adds [\`${workflowPath}\`](${workflowPath}), a GitHub Actions workflow that enables [Letta Code](https://docs.letta.com/letta-code) integration in this repository.`,
     "",
