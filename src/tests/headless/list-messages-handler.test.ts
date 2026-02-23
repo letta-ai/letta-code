@@ -197,9 +197,11 @@ describe("handleListMessages — API call arguments", () => {
     const opts = agentListSpy.mock.calls[0]?.[1] as {
       limit: number;
       order: string;
+      conversation_id?: string;
     };
     expect(opts.limit).toBe(50);
     expect(opts.order).toBe("desc");
+    expect(opts.conversation_id).toBe("default");
   });
 
   test("forwards before cursor to conversations path", async () => {
@@ -232,8 +234,12 @@ describe("handleListMessages — API call arguments", () => {
       client,
     });
 
-    const opts = agentListSpy.mock.calls[0]?.[1] as { before?: string };
+    const opts = agentListSpy.mock.calls[0]?.[1] as {
+      before?: string;
+      conversation_id?: string;
+    };
     expect(opts.before).toBe("msg-cursor-agents");
+    expect(opts.conversation_id).toBe("default");
   });
 
   test("does not include before/after when absent", async () => {
