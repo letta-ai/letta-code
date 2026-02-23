@@ -37,7 +37,6 @@ type Step =
   | "choose-agent"
   | "enter-agent-name"
   | "enter-agent-id"
-  | "enter-api-key-for-agent"
   | "creating"
   | "success"
   | "error";
@@ -205,7 +204,6 @@ export const InstallGithubAppFlow = memo(function InstallGithubAppFlow({
   );
   const [agentNameInput, setAgentNameInput] = useState<string>("");
   const [agentIdInput, setAgentIdInput] = useState<string>("");
-  const [agentApiKeyInput, setAgentApiKeyInput] = useState<string>("");
 
   // Workflow + result state
   const [workflowPath, setWorkflowPath] = useState<string>(
@@ -272,9 +270,8 @@ export const InstallGithubAppFlow = memo(function InstallGithubAppFlow({
   // Determine what API key we have available
   const availableApiKey = useMemo(() => {
     if (apiKeyInput.trim()) return apiKeyInput.trim();
-    if (agentApiKeyInput.trim()) return agentApiKeyInput.trim();
     return null;
-  }, [apiKeyInput, agentApiKeyInput]);
+  }, [apiKeyInput]);
 
   const runInstall = useCallback(
     async (
@@ -333,7 +330,8 @@ export const InstallGithubAppFlow = memo(function InstallGithubAppFlow({
       setSecretExists(setup.secretExists);
       setWorkflowPath(getDefaultWorkflowPath(setup.workflowExists));
       setSecretChoiceIndex(0);
-      setStep("choose-secret");
+      // Always collect API key first
+      setStep("enter-api-key");
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
       setStep("error");
@@ -378,21 +376,20 @@ export const InstallGithubAppFlow = memo(function InstallGithubAppFlow({
     }
   }, [step]);
 
-  // Determine what step to go to after agent selection
+  // After agent selection, proceed to install — API key is always available at this point
   const proceedFromAgent = useCallback(
     (
       mode: "current" | "existing" | "create",
       agentId: string | null,
       agentName: string | null,
     ) => {
-      // If creating an agent and we don't have an API key yet (reused secret), need to ask
-      if (mode === "create" && !availableApiKey) {
-        setStep("enter-api-key-for-agent");
-        return;
-      }
-
-      const key = availableApiKey;
-      void runInstall(mode, agentId, agentName, reuseExistingSecret, key);
+      void runInstall(
+        mode,
+        agentId,
+        agentName,
+        reuseExistingSecret,
+        availableApiKey,
+      );
     },
     [availableApiKey, reuseExistingSecret, runInstall],
   );
@@ -423,7 +420,7 @@ export const InstallGithubAppFlow = memo(function InstallGithubAppFlow({
         setStep("choose-repo");
         return;
       }
-      if (step === "choose-secret") {
+      if (step === "enter-api-key") {
         if (currentRepo) {
           setStep("choose-repo");
         } else {
@@ -431,8 +428,8 @@ export const InstallGithubAppFlow = memo(function InstallGithubAppFlow({
         }
         return;
       }
-      if (step === "enter-api-key") {
-        setStep("choose-secret");
+      if (step === "choose-secret") {
+        setStep("enter-api-key");
         return;
       }
       if (step === "choose-agent") {
@@ -447,10 +444,7 @@ export const InstallGithubAppFlow = memo(function InstallGithubAppFlow({
         setStep("choose-agent");
         return;
       }
-      if (step === "enter-api-key-for-agent") {
-        setStep("enter-agent-name");
-        return;
-      }
+
       if (step === "error") {
         onCancel();
         return;
@@ -488,13 +482,9 @@ export const InstallGithubAppFlow = memo(function InstallGithubAppFlow({
       } else if (key.return) {
         const selected = secretChoices[secretChoiceIndex] ?? secretChoices[0];
         if (!selected) return;
-        if (selected.value === "reuse") {
-          setReuseExistingSecret(true);
-          setAgentChoiceIndex(0);
-          setStep("choose-agent");
-        } else {
-          setStep("enter-api-key");
-        }
+        setReuseExistingSecret(selected.value === "reuse");
+        setAgentChoiceIndex(0);
+        setStep("choose-agent");
       }
       return;
     }
@@ -523,14 +513,25 @@ export const InstallGithubAppFlow = memo(function InstallGithubAppFlow({
   });
 
   // Handlers for text input steps
-  const handleApiKeySubmit = useCallback((value: string) => {
-    const trimmed = value.trim();
-    if (!trimmed) return;
-    setApiKeyInput(trimmed);
-    setReuseExistingSecret(false);
-    setAgentChoiceIndex(0);
-    setStep("choose-agent");
-  }, []);
+  const handleApiKeySubmit = useCallback(
+    (value: string) => {
+      const trimmed = value.trim();
+      if (!trimmed) return;
+      setApiKeyInput(trimmed);
+
+      if (secretExists) {
+        // Ask whether to reuse or overwrite the existing secret
+        setSecretChoiceIndex(0);
+        setStep("choose-secret");
+      } else {
+        // No existing secret — we'll set it during install
+        setReuseExistingSecret(false);
+        setAgentChoiceIndex(0);
+        setStep("choose-agent");
+      }
+    },
+    [secretExists],
+  );
 
   const handleAgentNameSubmit = useCallback(
     (value: string) => {
@@ -549,23 +550,6 @@ export const InstallGithubAppFlow = memo(function InstallGithubAppFlow({
       proceedFromAgent("existing", trimmed, null);
     },
     [proceedFromAgent],
-  );
-
-  const handleAgentApiKeySubmit = useCallback(
-    (value: string) => {
-      const trimmed = value.trim();
-      if (!trimmed) return;
-      setAgentApiKeyInput(trimmed);
-      // Now we have a key — proceed with install
-      void runInstall(
-        "create",
-        null,
-        agentNameInput,
-        reuseExistingSecret,
-        trimmed,
-      );
-    },
-    [agentNameInput, reuseExistingSecret, runInstall],
   );
 
   // === RENDER ===
@@ -731,32 +715,6 @@ export const InstallGithubAppFlow = memo(function InstallGithubAppFlow({
             onChange={setAgentIdInput}
             onSubmit={handleAgentIdSubmit}
             placeholder="agent-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-          />
-        </Box>
-        <Box height={1} />
-        <Text dimColor>Enter to continue · Esc to go back</Text>
-      </>,
-    );
-  }
-
-  if (step === "enter-api-key-for-agent") {
-    return renderPanel(
-      solidLine,
-      "Install GitHub App",
-      "Enter LETTA_API_KEY for agent setup",
-      <>
-        <Box>
-          <Text dimColor>An API key is needed to create the agent.</Text>
-        </Box>
-        <Box>
-          <Text color={colors.selector.itemHighlighted}>{">"}</Text>
-          <Text> </Text>
-          <TextInput
-            value={agentApiKeyInput}
-            onChange={setAgentApiKeyInput}
-            onSubmit={handleAgentApiKeySubmit}
-            placeholder="sk-..."
-            mask="*"
           />
         </Box>
         <Box height={1} />
