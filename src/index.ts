@@ -1808,9 +1808,11 @@ async function main(): Promise<void> {
             // Always apply model update - different model IDs can share the same
             // handle but have different settings (e.g., gpt-5.2-medium vs gpt-5.2-xhigh)
             const updateArgs = getModelUpdateArgs(model);
-            await updateAgentLLMConfig(agent.id, modelHandle, updateArgs);
-            // Refresh agent state after model update
-            agent = await client.agents.retrieve(agent.id);
+            agent = await updateAgentLLMConfig(
+              agent.id,
+              modelHandle,
+              updateArgs,
+            );
           } else {
             const presetRefresh = getModelPresetUpdateForAgent(agent);
             if (presetRefresh) {
@@ -1835,14 +1837,35 @@ async function main(): Promise<void> {
                   presetRefresh.updateArgs.parallel_tool_calls;
               }
 
-              if (Object.keys(resumeRefreshUpdateArgs).length > 0) {
-                await updateAgentLLMConfig(
+              // Skip the PATCH when the agent already has the target values —
+              // the server-side recompile is expensive even for no-op updates.
+              const currentMaxTokens = agent.llm_config?.max_tokens;
+              const wantMaxTokens = resumeRefreshUpdateArgs.max_output_tokens as
+                | number
+                | undefined;
+              const currentParallel = (
+                agent.model_settings as Record<string, unknown> | null
+              )?.parallel_tool_calls;
+              const wantParallel = resumeRefreshUpdateArgs.parallel_tool_calls as
+                | boolean
+                | undefined;
+
+              const maxTokensMatch =
+                wantMaxTokens === undefined ||
+                currentMaxTokens === wantMaxTokens;
+              const parallelMatch =
+                wantParallel === undefined ||
+                currentParallel === wantParallel;
+
+              if (
+                Object.keys(resumeRefreshUpdateArgs).length > 0 &&
+                !(maxTokensMatch && parallelMatch)
+              ) {
+                agent = await updateAgentLLMConfig(
                   agent.id,
                   presetRefresh.modelHandle,
                   resumeRefreshUpdateArgs,
                 );
-                // Refresh agent state after model update
-                agent = await client.agents.retrieve(agent.id);
               }
             }
           }
