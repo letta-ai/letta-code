@@ -202,6 +202,31 @@ async function runBidirectional(
   });
 }
 
+async function runBidirectionalWithRetry(
+  inputs: string[],
+  extraArgs: string[] = [],
+  timeoutMs = 180000,
+  retryOnTimeouts = 1,
+): Promise<object[]> {
+  let attempt = 0;
+  while (true) {
+    try {
+      return await runBidirectional(inputs, extraArgs, timeoutMs);
+    } catch (error) {
+      const isTimeoutError =
+        error instanceof Error && error.message.includes("Timeout after");
+      if (!isTimeoutError || attempt >= retryOnTimeouts) {
+        throw error;
+      }
+      attempt += 1;
+      // CI API latency can cause occasional long-tail timeouts.
+      console.warn(
+        `[headless-input-format] retrying after timeout (${attempt}/${retryOnTimeouts})`,
+      );
+    }
+  }
+}
+
 describe("input-format stream-json", () => {
   test(
     "initialize control request returns session info",
@@ -299,7 +324,7 @@ describe("input-format stream-json", () => {
     "multi-turn conversation maintains context",
     async () => {
       // Multi-turn test needs 2 sequential LLM calls, so allow more time
-      const objects = (await runBidirectional(
+      const objects = (await runBidirectionalWithRetry(
         [
           JSON.stringify({
             type: "user",
@@ -318,6 +343,7 @@ describe("input-format stream-json", () => {
         ],
         [], // no extra args
         300000, // 300s for 2 sequential LLM calls - CI can be very slow
+        1, // one retry for transient API slowness
       )) as WireMessage[];
 
       // Should have at least two results (one per turn)
