@@ -15,6 +15,7 @@ import { ISOLATED_BLOCK_LABELS } from "./agent/memory";
 import {
   getModelPresetUpdateForAgent,
   getModelUpdateArgs,
+  getResumeRefreshArgs,
   resolveModel,
 } from "./agent/model";
 import { updateAgentLLMConfig, updateAgentSystemPrompt } from "./agent/modify";
@@ -1816,51 +1817,10 @@ async function main(): Promise<void> {
           } else {
             const presetRefresh = getModelPresetUpdateForAgent(agent);
             if (presetRefresh) {
-              // Resume preset refresh is intentionally scoped for now.
-              // We only force-refresh max_output_tokens + parallel_tool_calls.
-              // Other preset fields available in models.json (for example:
-              // context_window, reasoning_effort, enable_reasoner,
-              // max_reasoning_tokens, verbosity, temperature,
-              // thinking_budget) are intentionally not auto-applied yet.
-              const resumeRefreshUpdateArgs: Record<string, unknown> = {};
-              if (
-                typeof presetRefresh.updateArgs.max_output_tokens === "number"
-              ) {
-                resumeRefreshUpdateArgs.max_output_tokens =
-                  presetRefresh.updateArgs.max_output_tokens;
-              }
-              if (
-                typeof presetRefresh.updateArgs.parallel_tool_calls ===
-                "boolean"
-              ) {
-                resumeRefreshUpdateArgs.parallel_tool_calls =
-                  presetRefresh.updateArgs.parallel_tool_calls;
-              }
+              const { updateArgs: resumeRefreshUpdateArgs, needsUpdate } =
+                getResumeRefreshArgs(presetRefresh.updateArgs, agent);
 
-              // Skip the PATCH when the agent already has the target values —
-              // the server-side recompile is expensive even for no-op updates.
-              const currentMaxTokens = agent.llm_config?.max_tokens;
-              const wantMaxTokens = resumeRefreshUpdateArgs.max_output_tokens as
-                | number
-                | undefined;
-              const currentParallel = (
-                agent.model_settings as Record<string, unknown> | null
-              )?.parallel_tool_calls;
-              const wantParallel =
-                resumeRefreshUpdateArgs.parallel_tool_calls as
-                  | boolean
-                  | undefined;
-
-              const maxTokensMatch =
-                wantMaxTokens === undefined ||
-                currentMaxTokens === wantMaxTokens;
-              const parallelMatch =
-                wantParallel === undefined || currentParallel === wantParallel;
-
-              if (
-                Object.keys(resumeRefreshUpdateArgs).length > 0 &&
-                !(maxTokensMatch && parallelMatch)
-              ) {
+              if (needsUpdate) {
                 agent = await updateAgentLLMConfig(
                   agent.id,
                   presetRefresh.modelHandle,
