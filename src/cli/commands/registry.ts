@@ -344,6 +344,15 @@ export const commands: Record<string, Command> = {
       return `Installed Shift+Enter keybinding for ${terminalName}\nLocation: ${keybindingsPath}`;
     },
   },
+  "/install-github-app": {
+    desc: "Setup Letta Code GitHub Action in this repo",
+    order: 38,
+    noArgs: true,
+    handler: () => {
+      // Handled specially in App.tsx
+      return "Opening GitHub App installer...";
+    },
+  },
 
   // === Session management (order 40-49) ===
   "/plan": {
