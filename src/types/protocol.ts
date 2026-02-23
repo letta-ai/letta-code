@@ -270,7 +270,38 @@ export interface ControlRequest {
 export type SdkToCliControlRequest =
   | { subtype: "initialize" }
   | { subtype: "interrupt" }
-  | RegisterExternalToolsRequest;
+  | RegisterExternalToolsRequest
+  | ListMessagesControlRequest;
+
+/**
+ * Request to list conversation messages (SDK → CLI).
+ * Returns paginated messages from a specific conversation.
+ */
+export interface ListMessagesControlRequest {
+  subtype: "list_messages";
+  /** Explicit conversation ID (e.g. "conv-123"). */
+  conversation_id?: string;
+  /** Use the agent's default conversation. */
+  agent_id?: string;
+  /** Cursor: return messages before this message ID. */
+  before?: string;
+  /** Cursor: return messages after this message ID. */
+  after?: string;
+  /** Sort order. Defaults to "desc" (newest first). */
+  order?: "asc" | "desc";
+  /** Max messages to return. Defaults to 50. */
+  limit?: number;
+}
+
+/**
+ * Successful list_messages response payload.
+ */
+export interface ListMessagesResponsePayload {
+  messages: unknown[]; // Raw API Message objects
+  next_before?: string | null;
+  next_after?: string | null;
+  has_more?: boolean;
+}
 
 /**
  * Request to register external tools (SDK → CLI)

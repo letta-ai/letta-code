@@ -21,6 +21,7 @@ import {
 import { getClient } from "./agent/client";
 import { setAgentContext, setConversationId } from "./agent/context";
 import { createAgent } from "./agent/create";
+import { handleListMessages } from "./agent/listMessagesHandler";
 import { ISOLATED_BLOCK_LABELS } from "./agent/memory";
 import { getStreamToolContextId, sendMessageStream } from "./agent/message";
 import { getModelUpdateArgs } from "./agent/model";
@@ -81,6 +82,7 @@ import type {
   ControlRequest,
   ControlResponse,
   ErrorMessage,
+  ListMessagesControlRequest,
   MessageWire,
   RecoveryMessage,
   ResultMessage,
@@ -2707,6 +2709,17 @@ async function runBidirectionalMode(
           uuid: randomUUID(),
         };
         console.log(JSON.stringify(registerResponse));
+      } else if (subtype === "list_messages") {
+        const listReq = message.request as ListMessagesControlRequest;
+        const listResp = await handleListMessages({
+          listReq,
+          sessionConversationId: conversationId,
+          sessionAgentId: agent.id,
+          sessionId,
+          requestId: requestId ?? "",
+          client,
+        });
+        console.log(JSON.stringify(listResp));
       } else {
         const errorResponse: ControlResponse = {
           type: "control_response",
