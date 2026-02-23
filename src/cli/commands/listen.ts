@@ -9,6 +9,31 @@ import { settingsManager } from "../../settings-manager";
 import { getErrorMessage } from "../../utils/error";
 import type { Buffers, Line } from "../helpers/accumulator";
 
+/**
+ * Generate a unique, fun name using AI/Letta-themed words
+ * Format: adjective-noun (e.g., "curious-agent", "quantum-memory")
+ */
+export function uniqueNameGenerator(): string {
+  const adjectives = [
+    'curious', 'helpful', 'clever', 'swift', 'quantum',
+    'neural', 'cosmic', 'electric', 'smart', 'wise',
+    'brave', 'friendly', 'creative', 'focused', 'dynamic',
+    'stellar', 'bright', 'eager', 'sharp', 'calm'
+  ];
+  
+  const nouns = [
+    'agent', 'memory', 'block', 'tool', 'stream',
+    'model', 'prompt', 'token', 'neural', 'vector',
+    'embed', 'query', 'context', 'inference', 'thought',
+    'reason', 'fusion', 'pulse', 'spark', 'nexus'
+  ];
+  
+  const randomAdjective = adjectives[Math.floor(Math.random() * adjectives.length)];
+  const randomNoun = nouns[Math.floor(Math.random() * nouns.length)];
+  
+  return `${randomAdjective}-${randomNoun}`;
+}
+
 // tiny helper for unique ids
 function uid(prefix: string) {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -85,13 +110,12 @@ function updateCommandResult(
 }
 
 interface ListenOptions {
-  name?: string;
-  agentId?: string;
+  envName?: string;
 }
 
 /**
  * Handle /listen command
- * Usage: /listen --name "george" [--agent agent-xyz]
+ * Usage: /listen [--env-name "work-laptop"]
  */
 export async function handleListen(
   ctx: ListenCommandContext,
@@ -104,14 +128,14 @@ export async function handleListen(
       ctx.buffersRef,
       ctx.refreshDerived,
       msg,
-      "Usage: /listen --name <connection-name> [--agent <agent-id>]\n\n" +
+      "Usage: /listen [--env-name <name>]\n\n" +
         "Register this letta-code instance to receive messages from Letta Cloud.\n\n" +
         "Options:\n" +
-        "  --name <name>      Friendly name for this connection (required)\n" +
-        "  --agent <id>       Bind connection to specific agent (defaults to current agent)\n\n" +
+        "  --env-name <name>  Friendly name for this environment (auto-generated if not provided)\n" +
+        "  -h, --help         Show this help message\n\n" +
         "Examples:\n" +
-        '  /listen --name "george"                    # Uses current agent\n' +
-        '  /listen --name "laptop-work" --agent agent-abc123\n\n' +
+        '  /listen                         # Auto-generates fun name like "curious-agent"\n' +
+        '  /listen --env-name "work-laptop" # Uses custom name\n\n' +
         "Once connected, this instance will listen for incoming messages from cloud agents.\n" +
         "Messages will be executed locally using your letta-code environment.",
       true,
@@ -119,37 +143,8 @@ export async function handleListen(
     return;
   }
 
-  // Validate required parameters
-  const connectionName = opts.name;
-  const agentId = opts.agentId;
-
-  if (!connectionName) {
-    addCommandResult(
-      ctx.buffersRef,
-      ctx.refreshDerived,
-      msg,
-      "Error: --name is required\n\n" +
-        'Usage: /listen --name "george"\n\n' +
-        "Provide a friendly name to identify this connection (e.g., your name, device name).",
-      false,
-    );
-    return;
-  }
-
-  if (!agentId) {
-    addCommandResult(
-      ctx.buffersRef,
-      ctx.refreshDerived,
-      msg,
-      "Error: No agent specified\n\n" +
-        "This connection needs a default agent to execute messages.\n" +
-        "If you're seeing this, it means no agent is active in this conversation.\n\n" +
-        "Please start a conversation with an agent first, or specify one explicitly:\n" +
-        '  /listen --name "george" --agent agent-abc123',
-      false,
-    );
-    return;
-  }
+  // Generate connection name if not provided
+  const connectionName = opts.envName || uniqueNameGenerator();
 
   // Start listen flow
   ctx.setCommandRunning(true);
@@ -200,7 +195,6 @@ export async function handleListen(
       body: JSON.stringify({
         deviceId,
         connectionName,
-        agentId: opts.agentId,
       }),
     });
 
@@ -214,10 +208,6 @@ export async function handleListen(
       wsUrl: string;
     };
 
-    // Build agent info message
-    const adeUrl = `https://app.letta.com/agents/${agentId}`;
-    const agentInfo = `Agent: ${agentId}\n→ ${adeUrl}\n\n`;
-
     updateCommandResult(
       ctx.buffersRef,
       ctx.refreshDerived,
@@ -225,8 +215,7 @@ export async function handleListen(
       msg,
       `✓ Registered successfully!\n\n` +
         `Connection ID: ${connectionId}\n` +
-        `Name: "${connectionName}"\n` +
-        agentInfo +
+        `Environment: "${connectionName}"\n` +
         `WebSocket: ${wsUrl}\n\n` +
         `Starting WebSocket connection...`,
       true,
@@ -243,9 +232,7 @@ export async function handleListen(
       wsUrl,
       deviceId,
       connectionName,
-      agentId,
       onStatusChange: (status, connId) => {
-        const adeUrl = `https://app.letta.com/agents/${agentId}?deviceId=${connId}`;
         const statusText =
           status === "receiving"
             ? "Receiving message"
@@ -258,38 +245,30 @@ export async function handleListen(
           ctx.refreshDerived,
           cmdId,
           msg,
-          `Connected to Letta Cloud\n` +
-            `${statusText}\n\n` +
-            `View in ADE → ${adeUrl}`,
+          `Connected to Letta Cloud\n${statusText}`,
           true,
           "finished",
         );
       },
       onRetrying: (attempt, _maxAttempts, nextRetryIn) => {
-        const adeUrl = `https://app.letta.com/agents/${agentId}?deviceId=${connectionId}`;
         updateCommandResult(
           ctx.buffersRef,
           ctx.refreshDerived,
           cmdId,
           msg,
           `Reconnecting to Letta Cloud...\n` +
-            `Attempt ${attempt}, retrying in ${Math.round(nextRetryIn / 1000)}s\n\n` +
-            `View in ADE → ${adeUrl}`,
+            `Attempt ${attempt}, retrying in ${Math.round(nextRetryIn / 1000)}s`,
           true,
           "running",
         );
       },
       onConnected: () => {
-        const adeUrl = `https://app.letta.com/agents/${agentId}?deviceId=${connectionId}`;
-
         updateCommandResult(
           ctx.buffersRef,
           ctx.refreshDerived,
           cmdId,
           msg,
-          `Connected to Letta Cloud\n` +
-            `Awaiting instructions\n\n` +
-            `View in ADE → ${adeUrl}`,
+          `Connected to Letta Cloud\nAwaiting instructions`,
           true,
           "finished",
         );

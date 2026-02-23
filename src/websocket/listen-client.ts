@@ -33,8 +33,6 @@ interface StartListenerOptions {
   wsUrl: string;
   deviceId: string;
   connectionName: string;
-  agentId?: string;
-  defaultConversationId?: string;
   onConnected: () => void;
   onDisconnected: () => void;
   onError: (error: Error) => void;
@@ -381,9 +379,6 @@ async function connectWithRetry(
   const url = new URL(opts.wsUrl);
   url.searchParams.set("deviceId", opts.deviceId);
   url.searchParams.set("connectionName", opts.connectionName);
-  if (opts.agentId) {
-    url.searchParams.set("agentId", opts.agentId);
-  }
 
   const socket = new WebSocket(url.toString(), {
     headers: {
@@ -439,7 +434,6 @@ async function connectWithRetry(
             socket,
             opts.onStatusChange,
             opts.connectionId,
-            opts.defaultConversationId,
           );
           opts.onStatusChange?.("idle", opts.connectionId);
         })
@@ -504,7 +498,6 @@ async function handleIncomingMessage(
     connectionId: string,
   ) => void,
   connectionId?: string,
-  defaultConversationId?: string,
 ): Promise<void> {
   try {
     const agentId = msg.agentId;
@@ -515,8 +508,7 @@ async function handleIncomingMessage(
     const requestedConversationId = msg.conversationId || undefined;
 
     // For sendMessageStream: "default" means use agent endpoint, else use conversations endpoint
-    const conversationId =
-      requestedConversationId ?? defaultConversationId ?? "default";
+    const conversationId = requestedConversationId ?? "default";
 
     if (!agentId) {
       return;

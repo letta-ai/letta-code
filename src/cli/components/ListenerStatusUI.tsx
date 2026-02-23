@@ -3,9 +3,7 @@ import Spinner from "ink-spinner";
 import { useEffect, useState } from "react";
 
 interface ListenerStatusUIProps {
-  agentId: string;
   connectionId: string;
-  conversationId?: string;
   onReady: (callbacks: {
     updateStatus: (status: "idle" | "receiving" | "processing") => void;
     updateRetryStatus: (attempt: number, nextRetryIn: number) => void;
@@ -14,7 +12,7 @@ interface ListenerStatusUIProps {
 }
 
 export function ListenerStatusUI(props: ListenerStatusUIProps) {
-  const { agentId, connectionId, conversationId, onReady } = props;
+  const { connectionId, onReady } = props;
   const [status, setStatus] = useState<"idle" | "receiving" | "processing">(
     "idle",
   );
@@ -35,8 +33,6 @@ export function ListenerStatusUI(props: ListenerStatusUIProps) {
     });
   }, [onReady]);
 
-  const adeUrl = `https://app.letta.com/agents/${agentId}?deviceId=${connectionId}${conversationId ? `&conversationId=${conversationId}` : ""}`;
-
   const statusText = retryInfo
     ? `Reconnecting (attempt ${retryInfo.attempt}, retry in ${Math.round(retryInfo.nextRetryIn / 1000)}s)`
     : status === "receiving"
@@ -55,7 +51,7 @@ export function ListenerStatusUI(props: ListenerStatusUIProps) {
         </Text>
       </Box>
 
-      <Box marginBottom={1}>
+      <Box>
         {showSpinner && (
           <Text>
             <Text color={retryInfo ? "yellow" : "cyan"}>
@@ -65,13 +61,6 @@ export function ListenerStatusUI(props: ListenerStatusUIProps) {
           </Text>
         )}
         {!showSpinner && <Text dimColor>{statusText}</Text>}
-      </Box>
-
-      <Box>
-        <Text dimColor>View in ADE → </Text>
-        <Text color="blue" underline>
-          {adeUrl}
-        </Text>
       </Box>
     </Box>
   );

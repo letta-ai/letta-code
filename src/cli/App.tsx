@@ -6442,17 +6442,11 @@ export default function App({
           for (let i = 1; i < parts.length; i++) {
             const part = parts[i];
             const nextPart = parts[i + 1];
-            if (part === "--name" && nextPart) {
+            if (part === "--env-name" && nextPart) {
               name = nextPart;
-              i++;
-            } else if (part === "--agent" && nextPart) {
-              listenAgentId = nextPart;
               i++;
             }
           }
-
-          // Default to current agent if not specified
-          const targetAgentId = listenAgentId || agentId;
 
           const cmd = commandRunner.start(msg, "Starting listener...");
           const { handleListen, setActiveCommandId: setActiveListenCommandId } =
@@ -6466,7 +6460,7 @@ export default function App({
                 setCommandRunning,
               },
               msg,
-              { name, agentId: targetAgentId },
+              { envName: name },
             );
           } finally {
             setActiveListenCommandId(null);
