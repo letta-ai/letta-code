@@ -250,6 +250,64 @@ export function getModelPresetUpdateForAgent(
 }
 
 /**
+ * Fields synced during resume preset refresh.
+ * This is the single source of truth for which preset fields are
+ * auto-applied on resume and the comparison logic that decides
+ * whether an update is needed.
+ */
+const RESUME_REFRESH_FIELDS = [
+  "max_output_tokens",
+  "parallel_tool_calls",
+] as const;
+
+/**
+ * Build the subset of preset updateArgs that should be synced on resume,
+ * and check whether the agent already has those values.
+ *
+ * Returns `{ updateArgs, needsUpdate }`:
+ *  - `updateArgs` contains only the resume-scoped fields from the preset.
+ *  - `needsUpdate` is false when the agent already matches, so the caller
+ *    can skip the expensive PATCH.
+ */
+export function getResumeRefreshArgs(
+  presetUpdateArgs: Record<string, unknown>,
+  agent: {
+    llm_config?: { max_tokens?: number | null } | null;
+    // Accept the broad AgentState union; we only read parallel_tool_calls.
+    model_settings?: { parallel_tool_calls?: boolean } | null;
+  },
+): { updateArgs: Record<string, unknown>; needsUpdate: boolean } {
+  const updateArgs: Record<string, unknown> = {};
+
+  // Extract only the resume-scoped fields from the full preset
+  for (const field of RESUME_REFRESH_FIELDS) {
+    const value = presetUpdateArgs[field];
+    if (field === "max_output_tokens" && typeof value === "number") {
+      updateArgs[field] = value;
+    } else if (field === "parallel_tool_calls" && typeof value === "boolean") {
+      updateArgs[field] = value;
+    }
+  }
+
+  if (Object.keys(updateArgs).length === 0) {
+    return { updateArgs, needsUpdate: false };
+  }
+
+  // Compare against the agent's current values
+  const currentMaxTokens = agent.llm_config?.max_tokens;
+  const wantMaxTokens = updateArgs.max_output_tokens as number | undefined;
+  const currentParallel = agent.model_settings?.parallel_tool_calls;
+  const wantParallel = updateArgs.parallel_tool_calls as boolean | undefined;
+
+  const maxTokensMatch =
+    wantMaxTokens === undefined || currentMaxTokens === wantMaxTokens;
+  const parallelMatch =
+    wantParallel === undefined || currentParallel === wantParallel;
+
+  return { updateArgs, needsUpdate: !(maxTokensMatch && parallelMatch) };
+}
+
+/**
  * Find a model entry by handle with fuzzy matching support
  * @param handle - The full model handle
  * @returns The model entry if found, null otherwise
