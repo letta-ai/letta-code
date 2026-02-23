@@ -3,6 +3,7 @@ import Link from "ink-link";
 import RawTextInput from "ink-text-input";
 import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { getCurrentAgentId } from "../../agent/context";
+import { settingsManager } from "../../settings-manager";
 import {
   getDefaultWorkflowPath,
   getRepoSetupState,
@@ -191,6 +192,7 @@ export const InstallGithubAppFlow = memo(function InstallGithubAppFlow({
   const [secretExists, setSecretExists] = useState<boolean>(false);
   const [secretChoiceIndex, setSecretChoiceIndex] = useState<number>(0);
   const [apiKeyInput, setApiKeyInput] = useState<string>("");
+  const [envApiKey, setEnvApiKey] = useState<string | null>(null);
   const [reuseExistingSecret, setReuseExistingSecret] =
     useState<boolean>(false);
 
@@ -270,8 +272,9 @@ export const InstallGithubAppFlow = memo(function InstallGithubAppFlow({
   // Determine what API key we have available
   const availableApiKey = useMemo(() => {
     if (apiKeyInput.trim()) return apiKeyInput.trim();
+    if (envApiKey) return envApiKey;
     return null;
-  }, [apiKeyInput]);
+  }, [apiKeyInput, envApiKey]);
 
   const runInstall = useCallback(
     async (
@@ -314,29 +317,44 @@ export const InstallGithubAppFlow = memo(function InstallGithubAppFlow({
     [repo, workflowPath],
   );
 
-  const resolveRepo = useCallback(async (repoSlug: string) => {
-    const trimmed = repoSlug.trim();
-    if (!validateRepoSlug(trimmed)) {
-      setRepoError("Repository must be in owner/repo format.");
-      return;
-    }
+  const resolveRepo = useCallback(
+    async (repoSlug: string) => {
+      const trimmed = repoSlug.trim();
+      if (!validateRepoSlug(trimmed)) {
+        setRepoError("Repository must be in owner/repo format.");
+        return;
+      }
 
-    setRepoError("");
-    setStatus("Inspecting repository setup...");
+      setRepoError("");
+      setStatus("Inspecting repository setup...");
 
-    try {
-      const setup = getRepoSetupState(trimmed);
-      setRepo(trimmed);
-      setSecretExists(setup.secretExists);
-      setWorkflowPath(getDefaultWorkflowPath(setup.workflowExists));
-      setSecretChoiceIndex(0);
-      // Always collect API key first
-      setStep("enter-api-key");
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-      setStep("error");
-    }
-  }, []);
+      try {
+        const setup = getRepoSetupState(trimmed);
+        setRepo(trimmed);
+        setSecretExists(setup.secretExists);
+        setWorkflowPath(getDefaultWorkflowPath(setup.workflowExists));
+        setSecretChoiceIndex(0);
+
+        if (envApiKey) {
+          // Already have API key from environment — skip entry, go to secret/agent choice
+          if (setup.secretExists) {
+            setStep("choose-secret");
+          } else {
+            setReuseExistingSecret(false);
+            setAgentChoiceIndex(0);
+            setStep("choose-agent");
+          }
+        } else {
+          // OAuth user — need to collect API key
+          setStep("enter-api-key");
+        }
+      } catch (error) {
+        setErrorMessage(error instanceof Error ? error.message : String(error));
+        setStep("error");
+      }
+    },
+    [envApiKey],
+  );
 
   // Preflight check
   useEffect(() => {
@@ -359,6 +377,14 @@ export const InstallGithubAppFlow = memo(function InstallGithubAppFlow({
       if (preflight.currentRepo) {
         setCurrentRepo(preflight.currentRepo);
         setRepoInput(preflight.currentRepo);
+      }
+
+      // Check for existing API key in environment
+      const settings = settingsManager.getSettings();
+      const existingKey =
+        process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY || null;
+      if (existingKey) {
+        setEnvApiKey(existingKey);
       }
 
       // Try to get current agent ID
@@ -429,12 +455,27 @@ export const InstallGithubAppFlow = memo(function InstallGithubAppFlow({
         return;
       }
       if (step === "choose-secret") {
-        setStep("enter-api-key");
+        if (envApiKey) {
+          // Skipped API key entry — go back to repo
+          if (currentRepo) {
+            setStep("choose-repo");
+          } else {
+            setStep("enter-repo");
+          }
+        } else {
+          setStep("enter-api-key");
+        }
         return;
       }
       if (step === "choose-agent") {
         if (secretExists) {
           setStep("choose-secret");
+        } else if (envApiKey) {
+          if (currentRepo) {
+            setStep("choose-repo");
+          } else {
+            setStep("enter-repo");
+          }
         } else {
           setStep("enter-api-key");
         }
