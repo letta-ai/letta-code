@@ -66,7 +66,9 @@ export function ListenerStatusUI(props: ListenerStatusUIProps) {
 
       <Box>
         <Text dimColor>
-          Connect to this environment by visiting any agent and clicking the "cloud" button at the bottom left of the messenger input and swapping your environment to {envName}
+          Connect to this environment by visiting any agent and clicking the
+          "cloud" button at the bottom left of the messenger input and swapping
+          your environment to {envName}
         </Text>
       </Box>
     </Box>

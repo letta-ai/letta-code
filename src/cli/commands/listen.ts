@@ -15,22 +15,55 @@ import type { Buffers, Line } from "../helpers/accumulator";
  */
 export function uniqueNameGenerator(): string {
   const adjectives = [
-    'curious', 'helpful', 'clever', 'swift', 'quantum',
-    'neural', 'cosmic', 'electric', 'smart', 'wise',
-    'brave', 'friendly', 'creative', 'focused', 'dynamic',
-    'stellar', 'bright', 'eager', 'sharp', 'calm'
+    "curious",
+    "helpful",
+    "clever",
+    "swift",
+    "quantum",
+    "neural",
+    "cosmic",
+    "electric",
+    "smart",
+    "wise",
+    "brave",
+    "friendly",
+    "creative",
+    "focused",
+    "dynamic",
+    "stellar",
+    "bright",
+    "eager",
+    "sharp",
+    "calm",
   ];
-  
+
   const nouns = [
-    'agent', 'memory', 'block', 'tool', 'stream',
-    'model', 'prompt', 'token', 'neural', 'vector',
-    'embed', 'query', 'context', 'inference', 'thought',
-    'reason', 'fusion', 'pulse', 'spark', 'nexus'
+    "agent",
+    "memory",
+    "block",
+    "tool",
+    "stream",
+    "model",
+    "prompt",
+    "token",
+    "neural",
+    "vector",
+    "embed",
+    "query",
+    "context",
+    "inference",
+    "thought",
+    "reason",
+    "fusion",
+    "pulse",
+    "spark",
+    "nexus",
   ];
-  
-  const randomAdjective = adjectives[Math.floor(Math.random() * adjectives.length)];
+
+  const randomAdjective =
+    adjectives[Math.floor(Math.random() * adjectives.length)];
   const randomNoun = nouns[Math.floor(Math.random() * nouns.length)];
-  
+
   return `${randomAdjective}-${randomNoun}`;
 }
 

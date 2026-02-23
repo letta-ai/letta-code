@@ -7,8 +7,8 @@ import { parseArgs } from "node:util";
 import { render } from "ink";
 import { getServerUrl } from "../../agent/client";
 import { settingsManager } from "../../settings-manager";
-import { ListenerStatusUI } from "../components/ListenerStatusUI";
 import { uniqueNameGenerator } from "../commands/listen";
+import { ListenerStatusUI } from "../components/ListenerStatusUI";
 
 export async function runListenSubcommand(argv: string[]): Promise<number> {
   // Parse arguments
