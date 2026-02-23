@@ -230,6 +230,57 @@ describe("Startup Flow - Integration", () => {
   );
 
   test(
+    "--agent + --conversation default succeeds and stays on default route",
+    async () => {
+      let agentIdForTest = testAgentId;
+      if (!agentIdForTest) {
+        const bootstrapResult = await runCli(
+          [
+            "--new-agent",
+            "-m",
+            "haiku",
+            "-p",
+            "Say OK",
+            "--output-format",
+            "json",
+          ],
+          { timeoutMs: 120000 },
+        );
+        expect(bootstrapResult.exitCode).toBe(0);
+        const bootstrapJsonStart = bootstrapResult.stdout.indexOf("{");
+        const bootstrapOutput = JSON.parse(
+          bootstrapResult.stdout.slice(bootstrapJsonStart),
+        );
+        agentIdForTest = bootstrapOutput.agent_id as string;
+        testAgentId = agentIdForTest;
+      }
+
+      const result = await runCli(
+        [
+          "--agent",
+          agentIdForTest,
+          "--conversation",
+          "default",
+          "-m",
+          "haiku",
+          "-p",
+          "Say OK",
+          "--output-format",
+          "json",
+        ],
+        { timeoutMs: 120000 },
+      );
+
+      expect(result.exitCode).toBe(0);
+      const jsonStart = result.stdout.indexOf("{");
+      const output = JSON.parse(result.stdout.slice(jsonStart));
+      expect(output.agent_id).toBe(agentIdForTest);
+      expect(output.conversation_id).toBe("default");
+    },
+    { timeout: 130000 },
+  );
+
+  test(
     "--new-agent with --init-blocks none creates minimal agent",
     async () => {
       const result = await runCli(
