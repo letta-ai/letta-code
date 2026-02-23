@@ -50,9 +50,9 @@ describe("model preset refresh wiring", () => {
     expect(source).toContain(
       "const presetRefresh = getModelPresetUpdateForAgent(agent)",
     );
-    expect(source).toContain("resumeRefreshUpdateArgs");
-    expect(source).toContain("presetRefresh.updateArgs.max_output_tokens");
-    expect(source).toContain("presetRefresh.updateArgs.parallel_tool_calls");
+    // Field extraction + skip logic is handled by getResumeRefreshArgs helper
+    expect(source).toContain("getResumeRefreshArgs(presetRefresh.updateArgs");
+    expect(source).toContain("needsUpdate");
     expect(source).toContain("await updateAgentLLMConfig(");
     expect(source).toContain("presetRefresh.modelHandle");
     expect(source).not.toContain(
@@ -69,13 +69,26 @@ describe("model preset refresh wiring", () => {
     expect(source).toContain(
       "const presetRefresh = getModelPresetUpdateForAgent(agent)",
     );
-    expect(source).toContain("resumeRefreshUpdateArgs");
-    expect(source).toContain("presetRefresh.updateArgs.max_output_tokens");
-    expect(source).toContain("presetRefresh.updateArgs.parallel_tool_calls");
+    // Field extraction + skip logic is handled by getResumeRefreshArgs helper
+    expect(source).toContain("getResumeRefreshArgs(presetRefresh.updateArgs");
+    expect(source).toContain("needsUpdate");
     expect(source).toContain("await updateAgentLLMConfig(");
     expect(source).toContain("presetRefresh.modelHandle");
     expect(source).not.toContain(
       "await updateAgentLLMConfig(\n          agent.id,\n          presetRefresh.modelHandle,\n          presetRefresh.updateArgs,",
     );
+  });
+
+  test("getResumeRefreshArgs helper owns field extraction and comparison", () => {
+    const path = fileURLToPath(
+      new URL("../../agent/model.ts", import.meta.url),
+    );
+    const source = readFileSync(path, "utf-8");
+
+    expect(source).toContain("export function getResumeRefreshArgs(");
+    expect(source).toContain("RESUME_REFRESH_FIELDS");
+    expect(source).toContain('"max_output_tokens"');
+    expect(source).toContain('"parallel_tool_calls"');
+    expect(source).toContain("needsUpdate");
   });
 });
