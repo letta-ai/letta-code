@@ -15,13 +15,35 @@ type SettingsFile = {
   [key: string]: unknown;
 };
 
+type UserSettingsPathsOptions = {
+  homeDir?: string;
+  xdgConfigHome?: string;
+};
+
+export function getUserSettingsPaths(options: UserSettingsPathsOptions = {}): {
+  canonical: string;
+  legacy: string;
+} {
+  const homeDir = options.homeDir || homedir();
+  const xdgConfigHome =
+    options.xdgConfigHome ||
+    process.env.XDG_CONFIG_HOME ||
+    join(homeDir, ".config");
+
+  return {
+    canonical: join(homeDir, ".letta", "settings.json"),
+    legacy: join(xdgConfigHome, "letta", "settings.json"),
+  };
+}
+
 /**
  * Load permissions from all settings files and merge them hierarchically.
  *
  * Precedence (highest to lowest):
  * 1. Local project settings (.letta/settings.local.json)
  * 2. Project settings (.letta/settings.json)
- * 3. User settings (~/.config/letta/settings.json)
+ * 3. User settings (~/.letta/settings.json)
+ * 4. Legacy user settings (~/.config/letta/settings.json)
  *
  * Rules are merged by concatenating arrays (more specific settings add to broader ones)
  */
@@ -36,13 +58,11 @@ export async function loadPermissions(
   };
 
   // Load in reverse precedence order (lowest to highest)
+  const { canonical: userSettingsPath, legacy: legacyUserSettingsPath } =
+    getUserSettingsPaths();
   const sources = [
-    join(
-      process.env.XDG_CONFIG_HOME || join(homedir(), ".config"),
-      "letta",
-      "settings.json",
-    ), // User
-    join(homedir(), ".letta", "settings.json"), // User Legacy
+    legacyUserSettingsPath, // User legacy
+    userSettingsPath, // User (canonical)
     join(workingDirectory, ".letta", "settings.json"), // Project
     join(workingDirectory, ".letta", "settings.local.json"), // Local
   ];
@@ -115,11 +135,7 @@ export async function savePermissionRule(
   let settingsPath: string;
   switch (scope) {
     case "user":
-      settingsPath = join(
-        process.env.XDG_CONFIG_HOME || join(homedir(), ".config"),
-        "letta",
-        "settings.json",
-      );
+      settingsPath = getUserSettingsPaths().canonical;
       break;
     case "project":
       settingsPath = join(workingDirectory, ".letta", "settings.json");

@@ -2,7 +2,11 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadPermissions, savePermissionRule } from "../permissions/loader";
+import {
+  getUserSettingsPaths,
+  loadPermissions,
+  savePermissionRule,
+} from "../permissions/loader";
 
 let testDir: string;
 
@@ -195,6 +199,16 @@ test("Save permission to local settings", async () => {
   const settings = await file.json();
 
   expect(settings.permissions.allow).toContain("Bash(git push:*)");
+});
+
+test("User settings paths prefer ~/.letta and keep XDG as legacy fallback", () => {
+  const paths = getUserSettingsPaths({
+    homeDir: "/tmp/home-test",
+    xdgConfigHome: "/tmp/xdg-test",
+  });
+
+  expect(paths.canonical).toBe("/tmp/home-test/.letta/settings.json");
+  expect(paths.legacy).toBe("/tmp/xdg-test/letta/settings.json");
 });
 
 test("Save permission to deny list", async () => {
