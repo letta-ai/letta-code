@@ -683,5 +683,42 @@ describe("Hooks Loader", () => {
         "project",
       );
     });
+
+    test("does not double-load global hooks when cwd is HOME", async () => {
+      const globalSettingsDir = join(fakeHome, ".letta");
+      mkdirSync(globalSettingsDir, { recursive: true });
+
+      writeFileSync(
+        join(globalSettingsDir, "settings.json"),
+        JSON.stringify({
+          hooks: {
+            Notification: [
+              {
+                hooks: [
+                  { type: "command", command: "echo home-global-notify" },
+                ],
+              },
+            ],
+          },
+        }),
+      );
+
+      // Re-initialize so global settings are re-read from disk after test writes.
+      await settingsManager.reset();
+      await settingsManager.initialize();
+
+      const hooks = await loadHooks(fakeHome);
+      const notificationHooks = getMatchingHooks(hooks, "Notification");
+
+      expect(notificationHooks).toHaveLength(1);
+      expect(asCommand(notificationHooks[0])?.command).toBe(
+        "echo home-global-notify",
+      );
+
+      // In HOME, project settings path collides with global settings path.
+      // Project hooks should be treated as empty to avoid duplicate merging.
+      const projectHooks = await loadProjectHooks(fakeHome);
+      expect(projectHooks).toEqual({});
+    });
   });
 });
