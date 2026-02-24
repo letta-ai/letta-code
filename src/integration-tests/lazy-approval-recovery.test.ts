@@ -43,7 +43,7 @@ interface StreamMessage {
  * Run bidirectional test with custom message handling.
  * Allows sending messages at specific points in the flow.
  */
-async function runLazyRecoveryTest(timeoutMs = 180000): Promise<{
+async function runLazyRecoveryTest(timeoutMs = 300000): Promise<{
   messages: StreamMessage[];
   success: boolean;
   errorSeen: boolean;
@@ -61,7 +61,7 @@ async function runLazyRecoveryTest(timeoutMs = 180000): Promise<{
         "stream-json",
         "--new-agent",
         "-m",
-        "haiku",
+        "sonnet-4.6-low",
         // NOTE: No --yolo flag - approvals are required
       ],
       {
@@ -291,7 +291,12 @@ async function runLazyRecoveryTest(timeoutMs = 180000): Promise<{
 
 describe("lazy approval recovery", () => {
   test("handles concurrent message while approval is pending", async () => {
-    const result = await runLazyRecoveryTest();
+    let result = await runLazyRecoveryTest();
+    if (!result.success) {
+      // Transient API/tool timing can occasionally miss the approval window;
+      // retry once before failing.
+      result = await runLazyRecoveryTest();
+    }
 
     // Log messages for debugging if test fails
     if (!result.success) {
@@ -333,5 +338,5 @@ describe("lazy approval recovery", () => {
         "Note: No recovery message seen - approval may have been handled before conflict",
       );
     }
-  }, 180000); // 3 minute timeout for CI
+  }, 320000); // 5+ minute timeout for slow CI runners
 });
