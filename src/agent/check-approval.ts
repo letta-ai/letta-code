@@ -58,6 +58,14 @@ export interface ResumeData {
   messageHistory: Message[];
 }
 
+export interface GetResumeDataOptions {
+  /**
+   * Controls whether backfill message history should be fetched.
+   * Defaults to true to preserve existing /resume behavior.
+   */
+  includeMessageHistory?: boolean;
+}
+
 /**
  * Extract approval requests from an approval_request_message.
  * Exported for testing parallel tool call handling.
@@ -327,8 +335,10 @@ export async function getResumeData(
   client: Letta,
   agent: AgentState,
   conversationId?: string,
+  options: GetResumeDataOptions = {},
 ): Promise<ResumeData> {
   try {
+    const includeMessageHistory = options.includeMessageHistory ?? true;
     let inContextMessageIds: string[] | null | undefined;
     let messages: Message[] = [];
 
@@ -352,7 +362,7 @@ export async function getResumeData(
           "check-approval",
           "No in-context messages - no pending approvals",
         );
-        if (isBackfillEnabled()) {
+        if (includeMessageHistory && isBackfillEnabled()) {
           try {
             const backfill = await fetchConversationBackfillMessages(
               client,
@@ -389,7 +399,7 @@ export async function getResumeData(
 
       // Fetch message history separately for backfill (desc then reverse for last N chronological)
       // Wrapped in try/catch so backfill failures don't crash the CLI
-      if (isBackfillEnabled()) {
+      if (includeMessageHistory && isBackfillEnabled()) {
         try {
           messages = await fetchConversationBackfillMessages(
             client,
@@ -473,7 +483,7 @@ export async function getResumeData(
       // This filters to only the default conversation's messages (like the ADE does)
       // Wrapped in try/catch so backfill failures don't crash the CLI (e.g., older servers
       // may not support conversation_id filter)
-      if (isBackfillEnabled()) {
+      if (includeMessageHistory && isBackfillEnabled()) {
         try {
           const messagesPage = await client.agents.messages.list(agent.id, {
             limit: BACKFILL_PAGE_LIMIT,

@@ -15,55 +15,77 @@ async function runCli(
   options: {
     timeoutMs?: number;
     expectExit?: number;
+    retryOnTimeouts?: number;
   } = {},
 ): Promise<{ stdout: string; stderr: string; exitCode: number | null }> {
-  const { timeoutMs = 30000, expectExit } = options;
+  const { timeoutMs = 30000, expectExit, retryOnTimeouts = 1 } = options;
 
-  return new Promise((resolve, reject) => {
-    const proc = spawn("bun", ["run", "dev", ...args], {
-      cwd: projectRoot,
-      // Mark as subagent to prevent polluting user's LRU settings
-      env: { ...process.env, LETTA_CODE_AGENT_ROLE: "subagent" },
-    });
+  const runOnce = () =>
+    new Promise<{ stdout: string; stderr: string; exitCode: number | null }>(
+      (resolve, reject) => {
+        const proc = spawn("bun", ["run", "dev", ...args], {
+          cwd: projectRoot,
+          // Mark as subagent to prevent polluting user's LRU settings
+          env: { ...process.env, LETTA_CODE_AGENT_ROLE: "subagent" },
+        });
 
-    let stdout = "";
-    let stderr = "";
+        let stdout = "";
+        let stderr = "";
 
-    proc.stdout?.on("data", (data) => {
-      stdout += data.toString();
-    });
+        proc.stdout?.on("data", (data) => {
+          stdout += data.toString();
+        });
 
-    proc.stderr?.on("data", (data) => {
-      stderr += data.toString();
-    });
+        proc.stderr?.on("data", (data) => {
+          stderr += data.toString();
+        });
 
-    const timeout = setTimeout(() => {
-      proc.kill();
-      reject(
-        new Error(
-          `Timeout after ${timeoutMs}ms. stdout: ${stdout}, stderr: ${stderr}`,
-        ),
-      );
-    }, timeoutMs);
+        const timeout = setTimeout(() => {
+          proc.kill();
+          reject(
+            new Error(
+              `Timeout after ${timeoutMs}ms. stdout: ${stdout}, stderr: ${stderr}`,
+            ),
+          );
+        }, timeoutMs);
 
-    proc.on("close", (code) => {
-      clearTimeout(timeout);
-      if (expectExit !== undefined && code !== expectExit) {
-        reject(
-          new Error(
-            `Expected exit code ${expectExit}, got ${code}. stdout: ${stdout}, stderr: ${stderr}`,
-          ),
-        );
-      } else {
-        resolve({ stdout, stderr, exitCode: code });
+        proc.on("close", (code) => {
+          clearTimeout(timeout);
+          if (expectExit !== undefined && code !== expectExit) {
+            reject(
+              new Error(
+                `Expected exit code ${expectExit}, got ${code}. stdout: ${stdout}, stderr: ${stderr}`,
+              ),
+            );
+          } else {
+            resolve({ stdout, stderr, exitCode: code });
+          }
+        });
+
+        proc.on("error", (err) => {
+          clearTimeout(timeout);
+          reject(err);
+        });
+      },
+    );
+
+  let attempt = 0;
+  while (true) {
+    try {
+      return await runOnce();
+    } catch (error) {
+      const isTimeoutError =
+        error instanceof Error && error.message.includes("Timeout after");
+      if (!isTimeoutError || attempt >= retryOnTimeouts) {
+        throw error;
       }
-    });
-
-    proc.on("error", (err) => {
-      clearTimeout(timeout);
-      reject(err);
-    });
-  });
+      attempt += 1;
+      // CI API calls can be transiently slow; retry once to reduce flakiness.
+      console.warn(
+        `[startup-flow] retrying after timeout (${attempt}/${retryOnTimeouts}) args=${args.join(" ")}`,
+      );
+    }
+  }
 }
 
 // ============================================================================
@@ -123,13 +145,13 @@ describe("Startup Flow - Integration", () => {
         [
           "--new-agent",
           "-m",
-          "haiku",
+          "sonnet-4.6-low",
           "-p",
           "Say OK and nothing else",
           "--output-format",
           "json",
         ],
-        { timeoutMs: 120000 },
+        { timeoutMs: 180000 },
       );
 
       expect(result.exitCode).toBe(0);
@@ -141,7 +163,7 @@ describe("Startup Flow - Integration", () => {
 
       testAgentId = output.agent_id;
     },
-    { timeout: 130000 },
+    { timeout: 190000 },
   );
 
   test(
@@ -157,13 +179,13 @@ describe("Startup Flow - Integration", () => {
           "--agent",
           testAgentId,
           "-m",
-          "haiku",
+          "sonnet-4.6-low",
           "-p",
           "Say OK",
           "--output-format",
           "json",
         ],
-        { timeoutMs: 120000 },
+        { timeoutMs: 180000 },
       );
 
       expect(result.exitCode).toBe(0);
@@ -171,7 +193,7 @@ describe("Startup Flow - Integration", () => {
       const output = JSON.parse(result.stdout.slice(jsonStart));
       expect(output.agent_id).toBe(testAgentId);
     },
-    { timeout: 130000 },
+    { timeout: 190000 },
   );
 
   test(
@@ -189,13 +211,13 @@ describe("Startup Flow - Integration", () => {
           testAgentId,
           "--new",
           "-m",
-          "haiku",
+          "sonnet-4.6-low",
           "-p",
           "Say CREATED",
           "--output-format",
           "json",
         ],
-        { timeoutMs: 120000 },
+        { timeoutMs: 180000 },
       );
       expect(createResult.exitCode).toBe(0);
       const createJsonStart = createResult.stdout.indexOf("{");
@@ -211,13 +233,13 @@ describe("Startup Flow - Integration", () => {
           "--conversation",
           realConversationId,
           "-m",
-          "haiku",
+          "sonnet-4.6-low",
           "-p",
           "Say OK",
           "--output-format",
           "json",
         ],
-        { timeoutMs: 120000 },
+        { timeoutMs: 180000 },
       );
 
       expect(result.exitCode).toBe(0);
@@ -238,13 +260,13 @@ describe("Startup Flow - Integration", () => {
           [
             "--new-agent",
             "-m",
-            "haiku",
+            "sonnet-4.6-low",
             "-p",
             "Say OK",
             "--output-format",
             "json",
           ],
-          { timeoutMs: 120000 },
+          { timeoutMs: 180000 },
         );
         expect(bootstrapResult.exitCode).toBe(0);
         const bootstrapJsonStart = bootstrapResult.stdout.indexOf("{");
@@ -262,13 +284,13 @@ describe("Startup Flow - Integration", () => {
           "--conversation",
           "default",
           "-m",
-          "haiku",
+          "sonnet-4.6-low",
           "-p",
           "Say OK",
           "--output-format",
           "json",
         ],
-        { timeoutMs: 120000 },
+        { timeoutMs: 180000 },
       );
 
       expect(result.exitCode).toBe(0);
@@ -277,7 +299,7 @@ describe("Startup Flow - Integration", () => {
       expect(output.agent_id).toBe(agentIdForTest);
       expect(output.conversation_id).toBe("default");
     },
-    { timeout: 130000 },
+    { timeout: 190000 },
   );
 
   test(
@@ -289,13 +311,13 @@ describe("Startup Flow - Integration", () => {
           "--init-blocks",
           "none",
           "-m",
-          "haiku",
+          "sonnet-4.6-low",
           "-p",
           "Say OK",
           "--output-format",
           "json",
         ],
-        { timeoutMs: 120000 },
+        { timeoutMs: 180000 },
       );
 
       expect(result.exitCode).toBe(0);
@@ -303,7 +325,7 @@ describe("Startup Flow - Integration", () => {
       const output = JSON.parse(result.stdout.slice(jsonStart));
       expect(output.agent_id).toBeDefined();
     },
-    { timeout: 130000 },
+    { timeout: 190000 },
   );
 });
 

@@ -168,7 +168,7 @@ jobs:
         if: ${{ runner.os == 'Windows' && (github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) }}
         env:
           LETTA_API_KEY: ${{ secrets.LETTA_API_KEY }}
-        run: bun run src/tests/headless-windows.ts --model haiku
+        run: bun run src/tests/headless-windows.ts --model sonnet-4.6-low
 
       - name: Publish dry-run
         if: ${{ github.event_name == 'push' }}
@@ -223,7 +223,7 @@ jobs:
       fail-fast: false
       matrix:
         # Note: gemini-3-flash / glm-4.7 temporarily disabled due to instability
-        model: [gpt-5-minimal, gpt-4.1, sonnet-4.5, gemini-pro, haiku]
+        model: [gpt-5-minimal, gpt-4.1, sonnet-4.5, gemini-pro, sonnet-4.6-low]
     steps:
       - name: Checkout
         uses: actions/checkout@v6
