@@ -54,7 +54,7 @@ interface ProgressItem {
 
 const SOLID_LINE = "─";
 
-function buildProgressSteps(
+export function buildProgressSteps(
   agentMode: "current" | "existing" | "create",
   agentName: string | null,
 ): { key: string; label: string }[] {
@@ -88,7 +88,7 @@ function buildProgressSteps(
   return steps;
 }
 
-function buildProgress(
+export function buildProgress(
   currentStatus: string,
   agentMode: "current" | "existing" | "create",
   agentName: string | null,
