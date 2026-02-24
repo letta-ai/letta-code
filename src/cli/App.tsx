@@ -6458,6 +6458,8 @@ export default function App({
                 buffersRef,
                 refreshDerived,
                 setCommandRunning,
+                agentId,
+                conversationId: conversationIdRef.current,
               },
               msg,
               { envName: name },

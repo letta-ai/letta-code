@@ -28,6 +28,8 @@ export interface ListenCommandContext {
   buffersRef: { current: Buffers };
   refreshDerived: () => void;
   setCommandRunning: (running: boolean) => void;
+  agentId: string | null;
+  conversationId: string | null;
 }
 
 // Helper to add a command result to buffers
@@ -91,26 +93,58 @@ interface ListenOptions {
 /**
  * Handle /listen command
  * Usage: /listen [--env-name "work-laptop"]
+ *        /listen off
  */
 export async function handleListen(
   ctx: ListenCommandContext,
   msg: string,
   opts: ListenOptions = {},
 ): Promise<void> {
+  // Handle /listen off - stop the listener
+  if (msg.trim() === "/listen off") {
+    const { stopListenerClient, isListenerActive } = await import(
+      "../../websocket/listen-client"
+    );
+
+    if (!isListenerActive()) {
+      addCommandResult(
+        ctx.buffersRef,
+        ctx.refreshDerived,
+        msg,
+        "Listen mode is not active.",
+        false,
+      );
+      return;
+    }
+
+    stopListenerClient();
+    addCommandResult(
+      ctx.buffersRef,
+      ctx.refreshDerived,
+      msg,
+      "✓ Listen mode stopped\n\nListener disconnected from Letta Cloud.",
+      true,
+    );
+    return;
+  }
+
   // Show usage if needed
   if (msg.includes("--help") || msg.includes("-h")) {
     addCommandResult(
       ctx.buffersRef,
       ctx.refreshDerived,
       msg,
-      "Usage: /listen [--env-name <name>]\n\n" +
+      "Usage: /listen [--env-name <name>]\n" +
+        "       /listen off\n\n" +
         "Register this letta-code instance to receive messages from Letta Cloud.\n\n" +
         "Options:\n" +
         "  --env-name <name>  Friendly name for this environment (uses hostname if not provided)\n" +
+        "  off                Stop the active listener connection\n" +
         "  -h, --help         Show this help message\n\n" +
         "Examples:\n" +
-        '  /listen                         # Uses hostname as default\n' +
-        '  /listen --env-name "work-laptop" # Uses custom name\n\n' +
+        "  /listen                         # Start listener with hostname\n" +
+        '  /listen --env-name "work-laptop" # Start with custom name\n' +
+        "  /listen off                     # Stop listening\n\n" +
         "Once connected, this instance will listen for incoming messages from cloud agents.\n" +
         "Messages will be executed locally using your letta-code environment.",
       true,
@@ -138,6 +172,17 @@ export async function handleListen(
       settingsManager.setListenerEnvName(connectionName);
     }
   }
+
+  // Helper to build ADE connection URL
+  const buildConnectionUrl = (connId: string): string => {
+    if (!ctx.agentId) return "";
+
+    let url = `https://app.letta.com/agents/${ctx.agentId}?deviceId=${connId}`;
+    if (ctx.conversationId) {
+      url += `&conversationId=${ctx.conversationId}`;
+    }
+    return url;
+  };
 
   // Start listen flow
   ctx.setCommandRunning(true);
@@ -225,7 +270,7 @@ export async function handleListen(
       wsUrl,
       deviceId,
       connectionName,
-      onStatusChange: (status, _connId) => {
+      onStatusChange: (status, connId) => {
         const statusText =
           status === "receiving"
             ? "Receiving message"
@@ -233,18 +278,23 @@ export async function handleListen(
               ? "Processing message"
               : "Awaiting instructions";
 
+        const url = buildConnectionUrl(connId);
+        const urlText = url ? `\n\nConnect to this environment:\n${url}` : "";
+
         updateCommandResult(
           ctx.buffersRef,
           ctx.refreshDerived,
           cmdId,
           msg,
-          `Environment initialized: ${connectionName}\n${statusText}\n\n` +
-            `Connect to this environment by visiting any agent and clicking the "cloud" button at the bottom left of the messenger input`,
+          `Environment initialized: ${connectionName}\n${statusText}${urlText}`,
           true,
           "finished",
         );
       },
-      onRetrying: (attempt, _maxAttempts, nextRetryIn) => {
+      onRetrying: (attempt, _maxAttempts, nextRetryIn, connId) => {
+        const url = buildConnectionUrl(connId);
+        const urlText = url ? `\n\nConnect to this environment:\n${url}` : "";
+
         updateCommandResult(
           ctx.buffersRef,
           ctx.refreshDerived,
@@ -252,20 +302,21 @@ export async function handleListen(
           msg,
           `Environment initialized: ${connectionName}\n` +
             `Reconnecting to Letta Cloud...\n` +
-            `Attempt ${attempt}, retrying in ${Math.round(nextRetryIn / 1000)}s\n\n` +
-            `Connect to this environment by visiting any agent and clicking the "cloud" button at the bottom left of the messenger input`,
+            `Attempt ${attempt}, retrying in ${Math.round(nextRetryIn / 1000)}s${urlText}`,
           true,
           "running",
         );
       },
-      onConnected: () => {
+      onConnected: (connId) => {
+        const url = buildConnectionUrl(connId);
+        const urlText = url ? `\n\nConnect to this environment:\n${url}` : "";
+
         updateCommandResult(
           ctx.buffersRef,
           ctx.refreshDerived,
           cmdId,
           msg,
-          `Environment initialized: ${connectionName}\nAwaiting instructions\n\n` +
-            `Connect to this environment by visiting any agent and clicking the "cloud" button at the bottom left of the messenger input`,
+          `Environment initialized: ${connectionName}\nAwaiting instructions${urlText}`,
           true,
           "finished",
         );

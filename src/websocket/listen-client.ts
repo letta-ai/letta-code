@@ -33,7 +33,7 @@ interface StartListenerOptions {
   wsUrl: string;
   deviceId: string;
   connectionName: string;
-  onConnected: () => void;
+  onConnected: (connectionId: string) => void;
   onDisconnected: () => void;
   onError: (error: Error) => void;
   onStatusChange?: (
@@ -44,6 +44,7 @@ interface StartListenerOptions {
     attempt: number,
     maxAttempts: number,
     nextRetryIn: number,
+    connectionId: string,
   ) => void;
 }
 
@@ -351,7 +352,7 @@ async function connectWithRetry(
       Math.log2(MAX_RETRY_DURATION_MS / INITIAL_RETRY_DELAY_MS),
     );
 
-    opts.onRetrying?.(attempt, maxAttempts, delay);
+    opts.onRetrying?.(attempt, maxAttempts, delay, opts.connectionId);
 
     await new Promise<void>((resolve) => {
       runtime.reconnectTimeout = setTimeout(resolve, delay);
@@ -394,7 +395,7 @@ async function connectWithRetry(
     }
 
     runtime.hasSuccessfulConnection = true;
-    opts.onConnected();
+    opts.onConnected(opts.connectionId);
 
     // Send current mode state to cloud for UI sync
     sendClientMessage(socket, {
@@ -736,6 +737,13 @@ async function handleIncomingMessage(
       console.error("[Listen] Error handling message:", error);
     }
   }
+}
+
+/**
+ * Check if listener is currently active.
+ */
+export function isListenerActive(): boolean {
+  return activeRuntime !== null && activeRuntime.socket !== null;
 }
 
 /**

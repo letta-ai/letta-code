@@ -59,7 +59,9 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     );
     console.log("  -h, --help         Show this help message\n");
     console.log("Examples:");
-    console.log("  letta listen                      # Uses hostname as default");
+    console.log(
+      "  letta listen                      # Uses hostname as default",
+    );
     console.log('  letta listen --env-name "work-laptop"\n');
     console.log(
       "Once connected, this instance will listen for incoming messages from cloud agents.",
