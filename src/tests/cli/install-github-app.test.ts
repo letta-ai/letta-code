@@ -195,11 +195,7 @@ describe("buildProgress", () => {
   });
 
   test("marks prior steps as done and current step as active", () => {
-    const items = buildProgress(
-      "Creating workflow files",
-      "current",
-      null,
-    );
+    const items = buildProgress("Creating workflow files", "current", null);
     const labels = items.map((i) => i.label);
     const workflowIdx = labels.indexOf("Creating workflow files");
 
@@ -219,11 +215,7 @@ describe("buildProgress", () => {
   });
 
   test("marks all prior steps done when on last step", () => {
-    const items = buildProgress(
-      "Opening pull request page",
-      "current",
-      null,
-    );
+    const items = buildProgress("Opening pull request page", "current", null);
     const lastIdx = items.length - 1;
 
     for (let i = 0; i < lastIdx; i++) {
@@ -248,19 +240,15 @@ describe("buildProgress", () => {
       "current",
       null,
     );
-    const secretItem = items.find((i) =>
-      i.label === "Setting up LETTA_API_KEY secret",
+    const secretItem = items.find(
+      (i) => i.label === "Setting up LETTA_API_KEY secret",
     );
 
     expect(secretItem?.active).toBe(true);
   });
 
   test("includes agent creation step in create mode progress", () => {
-    const items = buildProgress(
-      "Creating agent My Bot",
-      "create",
-      "My Bot",
-    );
+    const items = buildProgress("Creating agent My Bot", "create", "My Bot");
     const agentItem = items.find((i) => i.label === "Creating agent My Bot");
 
     expect(agentItem).toBeDefined();
@@ -378,9 +366,7 @@ describe("success screen content", () => {
     const expectedUrl = `https://app.letta.com/agents/${agentId}`;
 
     // This mirrors the logic in installGithubApp
-    const agentUrl = agentId
-      ? `https://app.letta.com/agents/${agentId}`
-      : null;
+    const agentUrl = agentId ? `https://app.letta.com/agents/${agentId}` : null;
 
     expect(agentUrl).toBe(expectedUrl);
     expect(agentUrl).toContain("app.letta.com/agents/");
