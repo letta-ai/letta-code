@@ -3,7 +3,7 @@
 
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import type { HooksConfig } from "./hooks/types";
 import type { PermissionRules } from "./permissions/types";
 import { debugWarn } from "./utils/debug.js";
@@ -567,6 +567,14 @@ class SettingsManager {
   async loadProjectSettings(
     workingDirectory: string = process.cwd(),
   ): Promise<ProjectSettings> {
+    // If cwd is HOME, .letta/settings.json is the global settings file.
+    // Never treat it as project settings or we risk duplicate project/global behavior.
+    if (this.isProjectSettingsPathCollidingWithGlobal(workingDirectory)) {
+      const defaults = { ...DEFAULT_PROJECT_SETTINGS };
+      this.projectSettings.set(workingDirectory, defaults);
+      return defaults;
+    }
+
     // Check cache first
     const cached = this.projectSettings.get(workingDirectory);
     if (cached) {
@@ -624,6 +632,22 @@ class SettingsManager {
     updates: Partial<ProjectSettings>,
     workingDirectory: string = process.cwd(),
   ): void {
+    // If cwd is HOME, project settings path collides with global settings path.
+    // Route overlapping keys to user settings and avoid writing project scope.
+    if (this.isProjectSettingsPathCollidingWithGlobal(workingDirectory)) {
+      const globalUpdates: Partial<Settings> = {};
+      if ("hooks" in updates) {
+        globalUpdates.hooks = updates.hooks;
+      }
+      if ("statusLine" in updates) {
+        globalUpdates.statusLine = updates.statusLine;
+      }
+      if (Object.keys(globalUpdates).length > 0) {
+        this.updateSettings(globalUpdates);
+      }
+      return;
+    }
+
     const current = this.projectSettings.get(workingDirectory);
     if (!current) {
       throw new Error(
@@ -699,6 +723,11 @@ class SettingsManager {
   private async persistProjectSettings(
     workingDirectory: string,
   ): Promise<void> {
+    // Safety guard: never persist project settings into global settings path.
+    if (this.isProjectSettingsPathCollidingWithGlobal(workingDirectory)) {
+      return;
+    }
+
     const settings = this.projectSettings.get(workingDirectory);
     if (!settings) return;
 
@@ -739,6 +768,15 @@ class SettingsManager {
 
   private getProjectSettingsPath(workingDirectory: string): string {
     return join(workingDirectory, ".letta", "settings.json");
+  }
+
+  private isProjectSettingsPathCollidingWithGlobal(
+    workingDirectory: string,
+  ): boolean {
+    return (
+      resolve(this.getProjectSettingsPath(workingDirectory)) ===
+      resolve(this.getSettingsPath())
+    );
   }
 
   private getLocalProjectSettingsPath(workingDirectory: string): string {
