@@ -7136,7 +7136,12 @@ export default function App({
         if (msg.trim().startsWith("/compact")) {
           const parts = msg.trim().split(/\s+/);
           const rawModeArg = parts[1];
-          const validModes = ["all", "sliding_window", "self_compact_all", "self_compact_sliding_window"];
+          const validModes = [
+            "all",
+            "sliding_window",
+            "self_compact_all",
+            "self_compact_sliding_window",
+          ];
 
           if (rawModeArg === "help") {
             const cmd = commandRunner.start(
@@ -7160,7 +7165,12 @@ export default function App({
             return { submitted: true };
           }
 
-          const modeArg = rawModeArg as "all" | "sliding_window" | "self_compact_all" | "self_compact_sliding_window" | undefined;
+          const modeArg = rawModeArg as
+            | "all"
+            | "sliding_window"
+            | "self_compact_all"
+            | "self_compact_sliding_window"
+            | undefined;
 
           // Validate mode if provided
           if (modeArg && !validModes.includes(modeArg)) {
@@ -7200,14 +7210,13 @@ export default function App({
 
             // Build compaction settings if mode was specified
             // On server side, if mode changed, summarize function will use corresponding default prompt for new mode
-            const compactParams =
-              modeArg
-                ? {
-                    compaction_settings: {
-                      mode: modeArg,
-                    },
-                  }
-                : undefined;
+            const compactParams = modeArg
+              ? {
+                  compaction_settings: {
+                    mode: modeArg,
+                  },
+                }
+              : undefined;
 
             // Use agent-level compact API for "default" conversation,
             // otherwise use conversation-level API
