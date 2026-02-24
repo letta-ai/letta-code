@@ -2742,6 +2742,33 @@ async function runBidirectionalMode(
         console.log(JSON.stringify(registerResponse));
       } else if (subtype === "bootstrap_session_state") {
         const bootstrapReq = message.request as BootstrapSessionStateRequest;
+        const { getResumeData } = await import("./agent/check-approval");
+        let hasPendingApproval = false;
+
+        try {
+          // Re-fetch for parity with approval checks elsewhere in headless mode.
+          const freshAgent = await client.agents.retrieve(agent.id);
+          const resume = await getResumeData(
+            client,
+            freshAgent,
+            conversationId,
+            {
+              includeMessageHistory: false,
+            },
+          );
+          hasPendingApproval = (resume.pendingApprovals?.length ?? 0) > 0;
+        } catch (error) {
+          // Keep bootstrap non-fatal if approval probe fails on stale resources.
+          if (
+            !(error instanceof APIError) ||
+            (error.status !== 404 && error.status !== 422)
+          ) {
+            console.warn(
+              `[bootstrap] pending-approval probe failed: ${error instanceof Error ? error.message : String(error)}`,
+            );
+          }
+        }
+
         const bootstrapResp = await handleBootstrapSessionState({
           bootstrapReq,
           sessionContext: {
@@ -2754,7 +2781,7 @@ async function runBidirectionalMode(
           },
           requestId: requestId ?? "",
           client,
-          hasPendingApproval: false, // TODO: wire approval state when available
+          hasPendingApproval,
         });
         console.log(JSON.stringify(bootstrapResp));
       } else if (subtype === "list_messages") {

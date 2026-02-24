@@ -1,6 +1,8 @@
 // src/hooks/loader.ts
 // Loads and matches hooks from settings-manager
 
+import { homedir } from "node:os";
+import { resolve } from "node:path";
 import { settingsManager } from "../settings-manager";
 import { debugLog } from "../utils/debug";
 import {
@@ -24,6 +26,25 @@ export function clearHooksCache(): void {
 }
 
 /**
+ * Check whether project settings path collides with global settings path.
+ *
+ * When cwd is HOME, both resolve to ~/.letta/settings.json. In that case,
+ * treat project hooks as empty so global hooks don't get merged twice.
+ */
+function isProjectSettingsPathCollidingWithGlobal(
+  workingDirectory: string,
+): boolean {
+  const home = process.env.HOME || homedir();
+  const globalSettingsPath = resolve(home, ".letta", "settings.json");
+  const projectSettingsPath = resolve(
+    workingDirectory,
+    ".letta",
+    "settings.json",
+  );
+  return globalSettingsPath === projectSettingsPath;
+}
+
+/**
  * Load global hooks configuration from ~/.letta/settings.json
  * Uses settings-manager cache (loaded at app startup)
  */
@@ -44,6 +65,11 @@ export function loadGlobalHooks(): HooksConfig {
 export async function loadProjectHooks(
   workingDirectory: string = process.cwd(),
 ): Promise<HooksConfig> {
+  // Avoid reading global settings as project settings when cwd is HOME.
+  if (isProjectSettingsPathCollidingWithGlobal(workingDirectory)) {
+    return {};
+  }
+
   try {
     // Ensure project settings are loaded
     try {
@@ -308,12 +334,11 @@ export function areHooksDisabled(
       if (projectDisabled === true) {
         return true;
       }
-    } catch (error) {
+    } catch {
       // Project settings not loaded, skip
       debugLog(
         "hooks",
         "areHooksDisabled: Project settings not loaded, skipping",
-        error,
       );
     }
 
@@ -325,21 +350,19 @@ export function areHooksDisabled(
       if (localDisabled === true) {
         return true;
       }
-    } catch (error) {
+    } catch {
       // Local project settings not loaded, skip
       debugLog(
         "hooks",
         "areHooksDisabled: Local project settings not loaded, skipping",
-        error,
       );
     }
 
     return false;
-  } catch (error) {
+  } catch {
     debugLog(
       "hooks",
       "areHooksDisabled: Failed to check hooks disabled status",
-      error,
     );
     return false;
   }
