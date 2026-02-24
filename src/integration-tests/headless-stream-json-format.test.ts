@@ -29,7 +29,7 @@ async function runHeadlessCommand(
         "stream-json",
         "--yolo",
         "-m",
-        "sonnet-4.6-low",
+        "haiku",
         ...extraArgs,
       ],
       {

@@ -40,7 +40,7 @@ async function runBidirectional(
         "stream-json",
         "--new-agent",
         "-m",
-        "sonnet-4.6-low",
+        "haiku",
         "--yolo",
         ...extraArgs,
       ],

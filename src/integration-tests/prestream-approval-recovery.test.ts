@@ -51,7 +51,7 @@ async function startPendingApprovalSession(
         "--new-agent",
         "--new",
         "-m",
-        "sonnet-4.6-low",
+        "haiku",
       ],
       {
         cwd: process.cwd(),

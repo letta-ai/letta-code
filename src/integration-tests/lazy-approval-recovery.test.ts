@@ -61,7 +61,7 @@ async function runLazyRecoveryTest(timeoutMs = 300000): Promise<{
         "stream-json",
         "--new-agent",
         "-m",
-        "sonnet-4.6-low",
+        "haiku",
         // NOTE: No --yolo flag - approvals are required
       ],
       {
