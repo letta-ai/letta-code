@@ -2,7 +2,7 @@
 name: memory
 description: Restructure memory blocks into focused, scannable, hierarchically-named blocks (use `/` naming)
 tools: Read, Edit, Write, Glob, Grep, Bash, conversation_search
-model: opus
+model: glm-5
 memoryBlocks: none
 mode: stateless
 permissionMode: bypassPermissions

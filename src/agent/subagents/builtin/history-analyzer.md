@@ -3,7 +3,7 @@ name: history-analyzer
 description: Analyze Claude Code or Codex conversation history and directly update agent memory files with insights
 tools: Read, Write, Bash, Glob, Grep
 skills: migrating-from-codex-and-claude-code
-model: sonnet
+model: glm-5
 memoryBlocks: none
 mode: stateless
 permissionMode: bypassPermissions
