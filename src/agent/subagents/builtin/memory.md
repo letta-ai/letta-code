@@ -2,7 +2,7 @@
 name: memory
 description: Decompose and reorganize memory files into focused, single-purpose files using `/` naming
 tools: Read, Edit, Write, Glob, Grep, Bash
-model: opus
+model: sonnet
 memoryBlocks: none
 permissionMode: bypassPermissions
 ---
