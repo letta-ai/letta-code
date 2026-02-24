@@ -339,6 +339,53 @@ describe("Settings Manager - Project Settings", () => {
       "Project settings for",
     );
   });
+
+  test("When cwd is HOME, project settings resolve to defaults (no global collision)", async () => {
+    await settingsManager.initialize();
+
+    // Seed a global statusLine config in ~/.letta/settings.json
+    settingsManager.updateSettings({
+      statusLine: { command: "echo global-status" },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    const projectSettings =
+      await settingsManager.loadProjectSettings(testHomeDir);
+    expect(projectSettings.localSharedBlockIds).toEqual({});
+    expect(projectSettings.statusLine).toBeUndefined();
+  });
+
+  test("When cwd is HOME, project hook/statusLine updates route to global settings", async () => {
+    await settingsManager.initialize();
+
+    // Load project settings for HOME (will be defaults due to collision guard)
+    await settingsManager.loadProjectSettings(testHomeDir);
+
+    settingsManager.updateProjectSettings(
+      {
+        statusLine: { command: "echo routed-status" },
+        hooks: {
+          Notification: [
+            {
+              hooks: [{ type: "command", command: "echo routed-hook" }],
+            },
+          ],
+        },
+      },
+      testHomeDir,
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    const globalSettings = settingsManager.getSettings();
+    expect(globalSettings.statusLine?.command).toBe("echo routed-status");
+    expect(
+      asCommand(globalSettings.hooks?.Notification?.[0]?.hooks[0])?.command,
+    ).toBe("echo routed-hook");
+
+    // Ensure project-only field is not written into global file by this route
+    expect(globalSettings).not.toHaveProperty("localSharedBlockIds");
+  });
 });
 
 // ============================================================================

@@ -33,7 +33,6 @@ type Step =
   | "checking"
   | "choose-repo"
   | "enter-repo"
-  | "choose-secret"
   | "enter-api-key"
   | "choose-agent"
   | "enter-agent-name"
@@ -55,10 +54,9 @@ interface ProgressItem {
 
 const SOLID_LINE = "─";
 
-function buildProgressSteps(
+export function buildProgressSteps(
   agentMode: "current" | "existing" | "create",
   agentName: string | null,
-  reuseExistingSecret: boolean,
 ): { key: string; label: string }[] {
   const steps: { key: string; label: string }[] = [];
   steps.push({
@@ -76,14 +74,11 @@ function buildProgressSteps(
     key: "Creating workflow files",
     label: "Creating workflow files",
   });
-  if (!reuseExistingSecret) {
-    steps.push({
-      key: "Setting up LETTA_API_KEY secret",
-      label: "Setting up LETTA_API_KEY secret",
-    });
-  }
+  steps.push({
+    key: "Setting up LETTA_API_KEY secret",
+    label: "Setting up LETTA_API_KEY secret",
+  });
   if (agentMode !== "create") {
-    // create mode sets variable inline during agent creation step
     steps.push({ key: "Configuring agent", label: "Configuring agent" });
   }
   steps.push({
@@ -93,13 +88,12 @@ function buildProgressSteps(
   return steps;
 }
 
-function buildProgress(
+export function buildProgress(
   currentStatus: string,
   agentMode: "current" | "existing" | "create",
   agentName: string | null,
-  reuseExistingSecret: boolean,
 ): ProgressItem[] {
-  const steps = buildProgressSteps(agentMode, agentName, reuseExistingSecret);
+  const steps = buildProgressSteps(agentMode, agentName);
   const normalized = currentStatus.toLowerCase();
 
   const activeIndex = steps.findIndex((step) =>
@@ -189,12 +183,8 @@ export const InstallGithubAppFlow = memo(function InstallGithubAppFlow({
   const [repoError, setRepoError] = useState<string>("");
 
   // Secret state
-  const [secretExists, setSecretExists] = useState<boolean>(false);
-  const [secretChoiceIndex, setSecretChoiceIndex] = useState<number>(0);
   const [apiKeyInput, setApiKeyInput] = useState<string>("");
   const [envApiKey, setEnvApiKey] = useState<string | null>(null);
-  const [reuseExistingSecret, setReuseExistingSecret] =
-    useState<boolean>(false);
 
   // Agent state
   const [currentAgentId, setCurrentAgentIdState] = useState<string | null>(
@@ -230,23 +220,6 @@ export const InstallGithubAppFlow = memo(function InstallGithubAppFlow({
     return [{ label: "Enter a repository", value: "manual" as const }];
   }, [currentRepo]);
 
-  const secretChoices = useMemo(
-    () =>
-      secretExists
-        ? [
-            {
-              label: "Use existing LETTA_API_KEY secret (recommended)",
-              value: "reuse" as const,
-            },
-            {
-              label: "Set or overwrite LETTA_API_KEY secret",
-              value: "set" as const,
-            },
-          ]
-        : [{ label: "Set LETTA_API_KEY secret", value: "set" as const }],
-    [secretExists],
-  );
-
   const agentChoices = useMemo(() => {
     const choices: {
       label: string;
@@ -281,7 +254,6 @@ export const InstallGithubAppFlow = memo(function InstallGithubAppFlow({
       finalAgentMode: "current" | "existing" | "create",
       finalAgentId: string | null,
       finalAgentName: string | null,
-      useExistingSecret: boolean,
       key: string | null,
     ) => {
       if (!repo) {
@@ -290,7 +262,6 @@ export const InstallGithubAppFlow = memo(function InstallGithubAppFlow({
         return;
       }
 
-      setReuseExistingSecret(useExistingSecret);
       setAgentMode(finalAgentMode);
       setStep("creating");
       setStatus("Preparing setup...");
@@ -299,7 +270,6 @@ export const InstallGithubAppFlow = memo(function InstallGithubAppFlow({
         const installResult = await installGithubApp({
           repo,
           workflowPath,
-          reuseExistingSecret: useExistingSecret,
           apiKey: key,
           agentMode: finalAgentMode,
           agentId: finalAgentId,
@@ -331,21 +301,14 @@ export const InstallGithubAppFlow = memo(function InstallGithubAppFlow({
       try {
         const setup = getRepoSetupState(trimmed);
         setRepo(trimmed);
-        setSecretExists(setup.secretExists);
         setWorkflowPath(getDefaultWorkflowPath(setup.workflowExists));
-        setSecretChoiceIndex(0);
 
         if (envApiKey) {
-          // Already have API key from environment — skip entry, go to secret/agent choice
-          if (setup.secretExists) {
-            setStep("choose-secret");
-          } else {
-            setReuseExistingSecret(false);
-            setAgentChoiceIndex(0);
-            setStep("choose-agent");
-          }
+          // Already have API key from environment — skip to agent choice
+          setAgentChoiceIndex(0);
+          setStep("choose-agent");
         } else {
-          // OAuth user — need to collect API key
+          // Need to collect API key
           setStep("enter-api-key");
         }
       } catch (error) {
@@ -409,15 +372,9 @@ export const InstallGithubAppFlow = memo(function InstallGithubAppFlow({
       agentId: string | null,
       agentName: string | null,
     ) => {
-      void runInstall(
-        mode,
-        agentId,
-        agentName,
-        reuseExistingSecret,
-        availableApiKey,
-      );
+      void runInstall(mode, agentId, agentName, availableApiKey);
     },
-    [availableApiKey, reuseExistingSecret, runInstall],
+    [availableApiKey, runInstall],
   );
 
   useInput((input, key) => {
@@ -454,23 +411,8 @@ export const InstallGithubAppFlow = memo(function InstallGithubAppFlow({
         }
         return;
       }
-      if (step === "choose-secret") {
-        if (envApiKey) {
-          // Skipped API key entry — go back to repo
-          if (currentRepo) {
-            setStep("choose-repo");
-          } else {
-            setStep("enter-repo");
-          }
-        } else {
-          setStep("enter-api-key");
-        }
-        return;
-      }
       if (step === "choose-agent") {
-        if (secretExists) {
-          setStep("choose-secret");
-        } else if (envApiKey) {
+        if (envApiKey) {
           if (currentRepo) {
             setStep("choose-repo");
           } else {
@@ -513,23 +455,6 @@ export const InstallGithubAppFlow = memo(function InstallGithubAppFlow({
       return;
     }
 
-    if (step === "choose-secret") {
-      if (key.upArrow || input === "k") {
-        setSecretChoiceIndex((prev) => Math.max(0, prev - 1));
-      } else if (key.downArrow || input === "j") {
-        setSecretChoiceIndex((prev) =>
-          Math.min(secretChoices.length - 1, prev + 1),
-        );
-      } else if (key.return) {
-        const selected = secretChoices[secretChoiceIndex] ?? secretChoices[0];
-        if (!selected) return;
-        setReuseExistingSecret(selected.value === "reuse");
-        setAgentChoiceIndex(0);
-        setStep("choose-agent");
-      }
-      return;
-    }
-
     if (step === "choose-agent") {
       if (key.upArrow || input === "k") {
         setAgentChoiceIndex((prev) => Math.max(0, prev - 1));
@@ -554,25 +479,13 @@ export const InstallGithubAppFlow = memo(function InstallGithubAppFlow({
   });
 
   // Handlers for text input steps
-  const handleApiKeySubmit = useCallback(
-    (value: string) => {
-      const trimmed = value.trim();
-      if (!trimmed) return;
-      setApiKeyInput(trimmed);
-
-      if (secretExists) {
-        // Ask whether to reuse or overwrite the existing secret
-        setSecretChoiceIndex(0);
-        setStep("choose-secret");
-      } else {
-        // No existing secret — we'll set it during install
-        setReuseExistingSecret(false);
-        setAgentChoiceIndex(0);
-        setStep("choose-agent");
-      }
-    },
-    [secretExists],
-  );
+  const handleApiKeySubmit = useCallback((value: string) => {
+    const trimmed = value.trim();
+    if (!trimmed) return;
+    setApiKeyInput(trimmed);
+    setAgentChoiceIndex(0);
+    setStep("choose-agent");
+  }, []);
 
   const handleAgentNameSubmit = useCallback(
     (value: string) => {
@@ -647,28 +560,6 @@ export const InstallGithubAppFlow = memo(function InstallGithubAppFlow({
         ) : null}
         <Box height={1} />
         <Text dimColor>Enter to continue · Esc to go back</Text>
-      </>,
-    );
-  }
-
-  if (step === "choose-secret") {
-    return renderPanel(
-      solidLine,
-      "Install GitHub App",
-      "Configure LETTA_API_KEY",
-      <>
-        <Box>
-          <Text dimColor>Repository: </Text>
-          <Text>{repo}</Text>
-        </Box>
-        <Box>
-          <Text dimColor>Workflow: </Text>
-          <Text>{workflowPath}</Text>
-        </Box>
-        <Box height={1} />
-        <ChoiceList choices={secretChoices} selectedIndex={secretChoiceIndex} />
-        <Box height={1} />
-        <Text dimColor>↑/↓ to select · Enter to continue · Esc to go back</Text>
       </>,
     );
   }
@@ -769,7 +660,6 @@ export const InstallGithubAppFlow = memo(function InstallGithubAppFlow({
       status,
       agentMode,
       agentNameInput || null,
-      reuseExistingSecret,
     );
     return renderPanel(
       solidLine,
@@ -801,9 +691,7 @@ export const InstallGithubAppFlow = memo(function InstallGithubAppFlow({
     const successLines: string[] = [
       "✓ GitHub Actions workflow created!",
       "",
-      reuseExistingSecret
-        ? "✓ Using existing LETTA_API_KEY secret"
-        : "✓ API key saved as LETTA_API_KEY secret",
+      "✓ API key saved as LETTA_API_KEY secret",
     ];
 
     if (result?.agentId) {

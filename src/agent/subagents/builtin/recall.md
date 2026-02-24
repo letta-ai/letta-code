@@ -2,7 +2,7 @@
 name: recall
 description: Search conversation history to recall past discussions, decisions, and context
 tools: Bash, Read, TaskOutput
-model: opus
+model: haiku
 memoryBlocks: none
 mode: stateless
 ---

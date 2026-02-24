@@ -1,6 +1,8 @@
 // src/hooks/writer.ts
 // Functions to write hooks to settings files via settings-manager
 
+import { homedir } from "node:os";
+import { resolve } from "node:path";
 import { settingsManager } from "../settings-manager";
 import { debugLog } from "../utils/debug";
 import {
@@ -19,6 +21,24 @@ import {
 export type SaveLocation = "user" | "project" | "project-local";
 
 /**
+ * Check whether project settings path collides with global settings path.
+ *
+ * When cwd is HOME, both resolve to ~/.letta/settings.json.
+ */
+function isProjectSettingsPathCollidingWithGlobal(
+  workingDirectory: string,
+): boolean {
+  const home = process.env.HOME || homedir();
+  const globalSettingsPath = resolve(home, ".letta", "settings.json");
+  const projectSettingsPath = resolve(
+    workingDirectory,
+    ".letta",
+    "settings.json",
+  );
+  return globalSettingsPath === projectSettingsPath;
+}
+
+/**
  * Load hooks config from a specific location
  */
 export function loadHooksFromLocation(
@@ -30,6 +50,10 @@ export function loadHooksFromLocation(
       case "user":
         return settingsManager.getSettings().hooks || {};
       case "project":
+        if (isProjectSettingsPathCollidingWithGlobal(workingDirectory)) {
+          // Avoid showing global hooks twice (once as project, once as user)
+          return {};
+        }
         return (
           settingsManager.getProjectSettings(workingDirectory)?.hooks || {}
         );
@@ -60,6 +84,13 @@ export async function saveHooksToLocation(
       settingsManager.updateSettings({ hooks });
       break;
     case "project":
+      // If cwd is HOME, project settings path equals global settings path.
+      // Persist as user settings to avoid duplicate project/global hook views.
+      if (isProjectSettingsPathCollidingWithGlobal(workingDirectory)) {
+        settingsManager.updateSettings({ hooks });
+        break;
+      }
+
       // Load project settings if not already loaded
       try {
         settingsManager.getProjectSettings(workingDirectory);
