@@ -1,27 +1,47 @@
 /**
- * CLI subcommand: letta listen --name "george"
+ * CLI subcommand: letta listen --name \"george\"
  * Register letta-code as a listener to receive messages from Letta Cloud
  */
 
+import { hostname } from "node:os";
 import { parseArgs } from "node:util";
-import { render } from "ink";
+import { Box, render, Text } from "ink";
+import TextInput from "ink-text-input";
+import type React from "react";
+import { useState } from "react";
 import { getServerUrl } from "../../agent/client";
 import { settingsManager } from "../../settings-manager";
 import { ListenerStatusUI } from "../components/ListenerStatusUI";
 
-export async function runListenSubcommand(argv: string[]): Promise<number> {
-  // Preprocess args to support --conv as alias for --conversation
-  const processedArgv = argv.map((arg) =>
-    arg === "--conv" ? "--conversation" : arg,
-  );
+/**
+ * Interactive prompt for environment name
+ */
+function PromptEnvName(props: {
+  onSubmit: (envName: string) => void;
+}): React.ReactElement {
+  const [value, setValue] = useState("");
 
+  return (
+    <Box flexDirection="column">
+      <Text>Enter environment name (or press Enter for hostname): </Text>
+      <TextInput
+        value={value}
+        onChange={setValue}
+        onSubmit={(input) => {
+          const finalName = input.trim() || hostname();
+          props.onSubmit(finalName);
+        }}
+      />
+    </Box>
+  );
+}
+
+export async function runListenSubcommand(argv: string[]): Promise<number> {
   // Parse arguments
   const { values } = parseArgs({
-    args: processedArgv,
+    args: argv,
     options: {
-      name: { type: "string" },
-      agent: { type: "string" },
-      conversation: { type: "string", short: "C" },
+      envName: { type: "string" },
       help: { type: "boolean", short: "h" },
     },
     allowPositionals: false,
@@ -29,30 +49,20 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
 
   // Show help
   if (values.help) {
-    console.log(
-      "Usage: letta listen --name <connection-name> [--agent <agent-id>] [--conversation <id>]\n",
-    );
+    console.log("Usage: letta listen [--env-name <name>]\n");
     console.log(
       "Register this letta-code instance to receive messages from Letta Cloud.\n",
     );
     console.log("Options:");
     console.log(
-      "  --name <name>      Friendly name for this connection (required)",
-    );
-    console.log(
-      "  --agent <id>       Bind connection to specific agent (required for CLI usage)",
-    );
-    console.log("  --conversation <id>, --conv <id>, -C <id>");
-    console.log(
-      "                     Route messages to a specific conversation",
+      "  --env-name <name>  Friendly name for this environment (uses hostname if not provided)",
     );
     console.log("  -h, --help         Show this help message\n");
     console.log("Examples:");
-    console.log('  letta listen --name "george" --agent agent-abc123');
-    console.log('  letta listen --name "laptop-work" --agent agent-xyz789');
     console.log(
-      '  letta listen --name "daily-cron" --agent agent-abc123 --conv conv-xyz789\n',
+      "  letta listen                      # Uses hostname as default",
     );
+    console.log('  letta listen --env-name "work-laptop"\n');
     console.log(
       "Once connected, this instance will listen for incoming messages from cloud agents.",
     );
@@ -62,29 +72,39 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     return 0;
   }
 
-  const connectionName = values.name;
-  const agentId = values.agent;
-  const conversationId = values.conversation as string | undefined;
+  // Load local project settings to access saved environment name
+  await settingsManager.loadLocalProjectSettings();
 
-  if (!connectionName) {
-    console.error("Error: --name is required\n");
-    console.error('Usage: letta listen --name "george" --agent agent-abc123\n');
-    console.error(
-      "Provide a friendly name to identify this connection (e.g., your name, device name).",
-    );
-    return 1;
-  }
+  // Determine connection name
+  let connectionName: string;
 
-  if (!agentId) {
-    console.error("Error: --agent is required\n");
-    console.error('Usage: letta listen --name "george" --agent agent-abc123\n');
-    console.error(
-      "A listener connection needs a default agent to execute messages.",
-    );
-    console.error(
-      "Specify which agent should receive messages from this connection.",
-    );
-    return 1;
+  if (values.envName) {
+    // Explicitly provided - use it and save to local project settings
+    connectionName = values.envName;
+    settingsManager.setListenerEnvName(connectionName);
+  } else {
+    // Not provided - check saved local project settings
+    const savedName = settingsManager.getListenerEnvName();
+
+    if (savedName) {
+      // Reuse saved name
+      connectionName = savedName;
+    } else {
+      // No saved name - prompt user
+      connectionName = await new Promise<string>((resolve) => {
+        const { unmount } = render(
+          <PromptEnvName
+            onSubmit={(name) => {
+              unmount();
+              resolve(name);
+            }}
+          />,
+        );
+      });
+
+      // Save to local project settings for future runs
+      settingsManager.setListenerEnvName(connectionName);
+    }
   }
 
   try {
@@ -115,8 +135,6 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       body: JSON.stringify({
         deviceId,
         connectionName,
-        agentId,
-        ...(conversationId && { conversationId }),
       }),
     });
 
@@ -144,9 +162,8 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
 
     const { unmount } = render(
       <ListenerStatusUI
-        agentId={agentId}
         connectionId={connectionId}
-        conversationId={conversationId}
+        envName={connectionName}
         onReady={(callbacks) => {
           updateStatusCallback = callbacks.updateStatus;
           updateRetryStatusCallback = callbacks.updateRetryStatus;
@@ -165,8 +182,6 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       wsUrl,
       deviceId,
       connectionName,
-      agentId,
-      defaultConversationId: conversationId,
       onStatusChange: (status) => {
         clearRetryStatusCallback?.();
         updateStatusCallback?.(status);

@@ -120,6 +120,7 @@ export interface LocalProjectSettings {
   // Server-indexed settings (agent IDs are server-specific)
   sessionsByServer?: Record<string, SessionRef>; // key = normalized base URL
   pinnedAgentsByServer?: Record<string, string[]>; // key = normalized base URL
+  listenerEnvName?: string; // Saved environment name for listener connections (project-specific)
 }
 
 const DEFAULT_SETTINGS: Settings = {
@@ -1347,6 +1348,54 @@ class SettingsManager {
   unpinProfile(_name: string, _workingDirectory: string = process.cwd()): void {
     // This no longer makes sense with the new model
     console.warn("unpinProfile is deprecated, use unpinLocal(agentId) instead");
+  }
+
+  // =====================================================================
+  // Listener Environment Name Helpers
+  // =====================================================================
+
+  /**
+   * Get saved listener environment name from local project settings (if any).
+   * Returns undefined if not set or settings not loaded.
+   */
+  getListenerEnvName(
+    workingDirectory: string = process.cwd(),
+  ): string | undefined {
+    try {
+      const localSettings = this.getLocalProjectSettings(workingDirectory);
+      return localSettings.listenerEnvName;
+    } catch {
+      // Settings not loaded yet
+      return undefined;
+    }
+  }
+
+  /**
+   * Save listener environment name to local project settings.
+   * Loads settings if not already loaded.
+   */
+  setListenerEnvName(
+    envName: string,
+    workingDirectory: string = process.cwd(),
+  ): void {
+    try {
+      this.updateLocalProjectSettings(
+        { listenerEnvName: envName },
+        workingDirectory,
+      );
+    } catch {
+      // Settings not loaded yet - load and retry
+      this.loadLocalProjectSettings(workingDirectory)
+        .then(() => {
+          this.updateLocalProjectSettings(
+            { listenerEnvName: envName },
+            workingDirectory,
+          );
+        })
+        .catch((error) => {
+          console.error("Failed to save listener environment name:", error);
+        });
+    }
   }
 
   // =====================================================================

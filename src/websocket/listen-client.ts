@@ -33,9 +33,7 @@ interface StartListenerOptions {
   wsUrl: string;
   deviceId: string;
   connectionName: string;
-  agentId?: string;
-  defaultConversationId?: string;
-  onConnected: () => void;
+  onConnected: (connectionId: string) => void;
   onDisconnected: () => void;
   onError: (error: Error) => void;
   onStatusChange?: (
@@ -46,6 +44,7 @@ interface StartListenerOptions {
     attempt: number,
     maxAttempts: number,
     nextRetryIn: number,
+    connectionId: string,
   ) => void;
 }
 
@@ -353,7 +352,7 @@ async function connectWithRetry(
       Math.log2(MAX_RETRY_DURATION_MS / INITIAL_RETRY_DELAY_MS),
     );
 
-    opts.onRetrying?.(attempt, maxAttempts, delay);
+    opts.onRetrying?.(attempt, maxAttempts, delay, opts.connectionId);
 
     await new Promise<void>((resolve) => {
       runtime.reconnectTimeout = setTimeout(resolve, delay);
@@ -381,9 +380,6 @@ async function connectWithRetry(
   const url = new URL(opts.wsUrl);
   url.searchParams.set("deviceId", opts.deviceId);
   url.searchParams.set("connectionName", opts.connectionName);
-  if (opts.agentId) {
-    url.searchParams.set("agentId", opts.agentId);
-  }
 
   const socket = new WebSocket(url.toString(), {
     headers: {
@@ -399,7 +395,7 @@ async function connectWithRetry(
     }
 
     runtime.hasSuccessfulConnection = true;
-    opts.onConnected();
+    opts.onConnected(opts.connectionId);
 
     // Send current mode state to cloud for UI sync
     sendClientMessage(socket, {
@@ -439,7 +435,6 @@ async function connectWithRetry(
             socket,
             opts.onStatusChange,
             opts.connectionId,
-            opts.defaultConversationId,
           );
           opts.onStatusChange?.("idle", opts.connectionId);
         })
@@ -504,7 +499,6 @@ async function handleIncomingMessage(
     connectionId: string,
   ) => void,
   connectionId?: string,
-  defaultConversationId?: string,
 ): Promise<void> {
   try {
     const agentId = msg.agentId;
@@ -515,8 +509,7 @@ async function handleIncomingMessage(
     const requestedConversationId = msg.conversationId || undefined;
 
     // For sendMessageStream: "default" means use agent endpoint, else use conversations endpoint
-    const conversationId =
-      requestedConversationId ?? defaultConversationId ?? "default";
+    const conversationId = requestedConversationId ?? "default";
 
     if (!agentId) {
       return;
@@ -744,6 +737,13 @@ async function handleIncomingMessage(
       console.error("[Listen] Error handling message:", error);
     }
   }
+}
+
+/**
+ * Check if listener is currently active.
+ */
+export function isListenerActive(): boolean {
+  return activeRuntime !== null && activeRuntime.socket !== null;
 }
 
 /**

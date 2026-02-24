@@ -3,9 +3,8 @@ import Spinner from "ink-spinner";
 import { useEffect, useState } from "react";
 
 interface ListenerStatusUIProps {
-  agentId: string;
   connectionId: string;
-  conversationId?: string;
+  envName: string;
   onReady: (callbacks: {
     updateStatus: (status: "idle" | "receiving" | "processing") => void;
     updateRetryStatus: (attempt: number, nextRetryIn: number) => void;
@@ -14,7 +13,7 @@ interface ListenerStatusUIProps {
 }
 
 export function ListenerStatusUI(props: ListenerStatusUIProps) {
-  const { agentId, connectionId, conversationId, onReady } = props;
+  const { connectionId, envName, onReady } = props;
   const [status, setStatus] = useState<"idle" | "receiving" | "processing">(
     "idle",
   );
@@ -35,8 +34,6 @@ export function ListenerStatusUI(props: ListenerStatusUIProps) {
     });
   }, [onReady]);
 
-  const adeUrl = `https://app.letta.com/agents/${agentId}?deviceId=${connectionId}${conversationId ? `&conversationId=${conversationId}` : ""}`;
-
   const statusText = retryInfo
     ? `Reconnecting (attempt ${retryInfo.attempt}, retry in ${Math.round(retryInfo.nextRetryIn / 1000)}s)`
     : status === "receiving"
@@ -51,7 +48,7 @@ export function ListenerStatusUI(props: ListenerStatusUIProps) {
     <Box flexDirection="column" paddingX={1} paddingY={1}>
       <Box marginBottom={1}>
         <Text bold color="green">
-          Connected to Letta Cloud
+          The name of your environment is: {envName}
         </Text>
       </Box>
 
@@ -68,9 +65,10 @@ export function ListenerStatusUI(props: ListenerStatusUIProps) {
       </Box>
 
       <Box>
-        <Text dimColor>View in ADE → </Text>
-        <Text color="blue" underline>
-          {adeUrl}
+        <Text dimColor>
+          Connect to this environment by visiting any agent and clicking the
+          "cloud" button at the bottom left of the messenger input and swapping
+          your environment to {envName}
         </Text>
       </Box>
     </Box>
