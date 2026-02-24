@@ -308,12 +308,11 @@ export function areHooksDisabled(
       if (projectDisabled === true) {
         return true;
       }
-    } catch (error) {
+    } catch {
       // Project settings not loaded, skip
       debugLog(
         "hooks",
         "areHooksDisabled: Project settings not loaded, skipping",
-        error,
       );
     }
 
@@ -325,21 +324,19 @@ export function areHooksDisabled(
       if (localDisabled === true) {
         return true;
       }
-    } catch (error) {
+    } catch {
       // Local project settings not loaded, skip
       debugLog(
         "hooks",
         "areHooksDisabled: Local project settings not loaded, skipping",
-        error,
       );
     }
 
     return false;
-  } catch (error) {
+  } catch {
     debugLog(
       "hooks",
       "areHooksDisabled: Failed to check hooks disabled status",
-      error,
     );
     return false;
   }
