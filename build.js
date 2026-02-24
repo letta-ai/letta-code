@@ -46,6 +46,8 @@ await Bun.build({
     ".txt": "text",
 
   },
+  // Keep native Node.js modules external to avoid bundling issues
+  external: ["ws", "sharp", "@vscode/ripgrep"],
   features: features,
 });
 
