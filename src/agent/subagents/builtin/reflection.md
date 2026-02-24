@@ -145,6 +145,18 @@ Edit files in the **worktree**, not the main memory dir:
 WORK=$WORKTREE_DIR/$BRANCH/system
 ```
 
+**IMPORTANT: `$WORK` already points to the `system/` directory.**
+Paths are relative to `system/`, do NOT include `system/` again:
+```
+Correct: $WORK/human.md           → creates system/human.md
+Correct: $WORK/project/gotchas.md → creates system/project/gotchas.md
+WRONG:   $WORK/system/human.md    → creates system/system/human.md (DUPLICATE!)
+```
+
+The `memory_filesystem` block in the system prompt lists paths
+like `system/human.md` — but when writing to `$WORK`, drop the
+`system/` prefix since `$WORK` already IS system/.
+
 **Before editing, read existing files:**
 ```bash
 ls $WORK/
@@ -152,8 +164,8 @@ ls $WORK/
 
 Then read relevant files:
 ```
-Read({ file_path: "$WORK/human/personal_info.md" })
-Read({ file_path: "$WORK/persona/soul.md" })
+Read({ file_path: "$WORK/human.md" })
+Read({ file_path: "$WORK/persona.md" })
 ```
 
 **Editing rules:**
