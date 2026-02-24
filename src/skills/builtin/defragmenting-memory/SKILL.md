@@ -13,13 +13,11 @@ description: Decomposes and reorganizes agent memory blocks into focused, single
 >
 > **To enable:** Ask the user to run `/memfs enable`, then reload the CLI.
 
-This skill helps you maintain clean, well-organized memory blocks by:
-1. Creating a safety backup of the memfs directory
-2. Using a subagent to decompose and reorganize the memory files in-place
+This skill helps you maintain clean, well-organized memory blocks by spawning a subagent to decompose and reorganize memory files in-place.
 
 The focus is on **decomposition**—splitting large, multi-purpose blocks into focused, single-purpose components—rather than consolidation.
 
-Memory files live at `~/.letta/agents/$LETTA_AGENT_ID/memory/` and are synced to API blocks automatically by **memfs sync** on CLI startup. There is no separate backup/restore step needed.
+Memory files live at `~/.letta/agents/$LETTA_AGENT_ID/memory/` and are synced to API blocks automatically by **memfs sync** on CLI startup.
 
 ## When to Use
 
@@ -32,15 +30,17 @@ Memory files live at `~/.letta/agents/$LETTA_AGENT_ID/memory/` and are synced to
 
 ## Workflow
 
-### Step 1: Safety Backup
+### Step 1: Commit Current State (Safety Net)
 
-Before the subagent edits files, create a timestamped backup of the memfs directory:
+The memory directory is a git repo. Commit the current state so you can rollback if needed:
 
 ```bash
-letta memfs backup --agent $LETTA_AGENT_ID
+cd ~/.letta/agents/$LETTA_AGENT_ID/memory
+git add -A
+git commit -m "chore: pre-defrag snapshot" || echo "No changes to commit"
 ```
 
-⚠️ **CRITICAL**: You MUST complete the backup before proceeding to Step 2. The backup is your safety net.
+⚠️ **CRITICAL**: You MUST commit before proceeding. This is your rollback point.
 
 ### Step 2: Spawn Subagent to Edit Memory Files
 
@@ -154,13 +154,24 @@ The subagent will:
 
 After the subagent finishes, **memfs sync will automatically propagate changes** to API blocks on the next CLI startup. No manual restore step is needed.
 
+### Step 3: Commit Changes
+
+After the subagent finishes, commit the changes:
+
+```bash
+cd ~/.letta/agents/$LETTA_AGENT_ID/memory
+git add -A
+git commit -m "chore: defragment memory blocks"
+git push
+```
+
 ## Example Complete Flow
 
 ```typescript
-// Step 1: Safety backup (MANDATORY)
+// Step 1: Commit current state (MANDATORY)
 Bash({
-  command: "letta memfs backup --agent $LETTA_AGENT_ID",
-  description: "Backup memfs directory before defrag"
+  command: "cd ~/.letta/agents/$LETTA_AGENT_ID/memory && git add -A && git commit -m 'chore: pre-defrag snapshot' || echo 'No changes'",
+  description: "Commit current memory state as rollback point"
 })
 
 // Step 2: Spawn subagent to decompose and reorganize (runs async in background)
@@ -171,20 +182,26 @@ Task({
   prompt: "Decompose and reorganize memory files in ~/.letta/agents/$LETTA_AGENT_ID/memory/system/. These files sync directly to API blocks via memfs. Be aggressive about splitting large multi-section blocks into many smaller, single-purpose blocks using hierarchical / naming. Skip memory_filesystem.md and .sync-state.json. Structure with markdown headers and bullets. Remove redundancy and speculation. Resolve contradictions. Organize logically. Each block should have ONE clear purpose. Report files created, modified, deleted, before/after character counts, and rationale for changes."
 })
 
-// No Step 3 needed — memfs sync handles propagation to API blocks
+// Step 3: After subagent completes, commit and push
 // Check progress with /task <task_id>, restart CLI to sync when done
 ```
 
 ## Rollback
 
-If something goes wrong, restore from the safety backup:
+If something goes wrong, use git to revert:
 
 ```bash
-# Find backups
-letta memfs backups --agent $LETTA_AGENT_ID
+cd ~/.letta/agents/$LETTA_AGENT_ID/memory
 
-# Restore from a specific backup (replace the current memory dir)
-letta memfs restore --agent $LETTA_AGENT_ID --from memory-backup-<TIMESTAMP> --force
+# Option 1: Reset to last commit (discard all uncommitted changes)
+git reset --hard HEAD~1
+
+# Option 2: View history and reset to specific commit
+git log --oneline -5
+git reset --hard <commit-hash>
+
+# Push the rollback
+git push --force
 ```
 
 On next CLI startup, memfs sync will detect the changes and update API blocks accordingly.
@@ -202,7 +219,7 @@ The subagent focuses on decomposing and cleaning up files. It has full tool acce
 - Resolves contradictions with clear, concrete guidance
 - Organizes content logically (general to specific, by importance)
 - Provides detailed before/after reports including decomposition rationale
-- Does NOT run any backup or restore scripts
+- Does NOT run any git commands (parent agent handles that)
 
 The focus is on decomposition—breaking apart large monolithic blocks into focused, specialized components rather than consolidating them together.
 
