@@ -9,64 +9,6 @@ import { settingsManager } from "../../settings-manager";
 import { getErrorMessage } from "../../utils/error";
 import type { Buffers, Line } from "../helpers/accumulator";
 
-/**
- * Generate a unique, fun name using AI/Letta-themed words
- * Format: adjective-noun (e.g., "curious-agent", "quantum-memory")
- */
-export function uniqueNameGenerator(): string {
-  const adjectives = [
-    "curious",
-    "helpful",
-    "clever",
-    "swift",
-    "quantum",
-    "neural",
-    "cosmic",
-    "electric",
-    "smart",
-    "wise",
-    "brave",
-    "friendly",
-    "creative",
-    "focused",
-    "dynamic",
-    "stellar",
-    "bright",
-    "eager",
-    "sharp",
-    "calm",
-  ];
-
-  const nouns = [
-    "agent",
-    "memory",
-    "block",
-    "tool",
-    "stream",
-    "model",
-    "prompt",
-    "token",
-    "neural",
-    "vector",
-    "embed",
-    "query",
-    "context",
-    "inference",
-    "thought",
-    "reason",
-    "fusion",
-    "pulse",
-    "spark",
-    "nexus",
-  ];
-
-  const randomAdjective =
-    adjectives[Math.floor(Math.random() * adjectives.length)];
-  const randomNoun = nouns[Math.floor(Math.random() * nouns.length)];
-
-  return `${randomAdjective}-${randomNoun}`;
-}
-
 // tiny helper for unique ids
 function uid(prefix: string) {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -164,10 +106,10 @@ export async function handleListen(
       "Usage: /listen [--env-name <name>]\n\n" +
         "Register this letta-code instance to receive messages from Letta Cloud.\n\n" +
         "Options:\n" +
-        "  --env-name <name>  Friendly name for this environment (auto-generated if not provided)\n" +
+        "  --env-name <name>  Friendly name for this environment (uses hostname if not provided)\n" +
         "  -h, --help         Show this help message\n\n" +
         "Examples:\n" +
-        '  /listen                         # Auto-generates fun name like "curious-agent"\n' +
+        '  /listen                         # Uses hostname as default\n' +
         '  /listen --env-name "work-laptop" # Uses custom name\n\n' +
         "Once connected, this instance will listen for incoming messages from cloud agents.\n" +
         "Messages will be executed locally using your letta-code environment.",
@@ -191,8 +133,8 @@ export async function handleListen(
       // Reuse saved name
       connectionName = savedName;
     } else {
-      // No saved name - auto-generate and save it
-      connectionName = uniqueNameGenerator();
+      // No saved name - use hostname and save it
+      connectionName = hostname();
       settingsManager.setListenerEnvName(connectionName);
     }
   }

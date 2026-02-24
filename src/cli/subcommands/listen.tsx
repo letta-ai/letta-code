@@ -1,8 +1,9 @@
 /**
- * CLI subcommand: letta listen --name "george"
+ * CLI subcommand: letta listen --name \"george\"
  * Register letta-code as a listener to receive messages from Letta Cloud
  */
 
+import { hostname } from "node:os";
 import { parseArgs } from "node:util";
 import { Box, render, Text } from "ink";
 import TextInput from "ink-text-input";
@@ -10,7 +11,6 @@ import type React from "react";
 import { useState } from "react";
 import { getServerUrl } from "../../agent/client";
 import { settingsManager } from "../../settings-manager";
-import { uniqueNameGenerator } from "../commands/listen";
 import { ListenerStatusUI } from "../components/ListenerStatusUI";
 
 /**
@@ -23,12 +23,12 @@ function PromptEnvName(props: {
 
   return (
     <Box flexDirection="column">
-      <Text>Enter environment name (or press Enter for auto-generated): </Text>
+      <Text>Enter environment name (or press Enter for hostname): </Text>
       <TextInput
         value={value}
         onChange={setValue}
         onSubmit={(input) => {
-          const finalName = input.trim() || uniqueNameGenerator();
+          const finalName = input.trim() || hostname();
           props.onSubmit(finalName);
         }}
       />
@@ -55,11 +55,11 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     );
     console.log("Options:");
     console.log(
-      "  --env-name <name>  Friendly name for this environment (auto-generated if not provided)",
+      "  --env-name <name>  Friendly name for this environment (uses hostname if not provided)",
     );
     console.log("  -h, --help         Show this help message\n");
     console.log("Examples:");
-    console.log("  letta listen");
+    console.log("  letta listen                      # Uses hostname as default");
     console.log('  letta listen --env-name "work-laptop"\n');
     console.log(
       "Once connected, this instance will listen for incoming messages from cloud agents.",
