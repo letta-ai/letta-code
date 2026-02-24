@@ -50,13 +50,11 @@ export interface GhPreflightResult {
 
 export interface RepoSetupState {
   workflowExists: boolean;
-  secretExists: boolean;
 }
 
 export interface InstallGithubAppOptions {
   repo: string;
   workflowPath: string;
-  reuseExistingSecret: boolean;
   apiKey: string | null;
   agentMode: "current" | "existing" | "create";
   agentId: string | null;
@@ -301,8 +299,7 @@ export function getDefaultWorkflowPath(workflowExists: boolean): string {
 
 export function getRepoSetupState(repo: string): RepoSetupState {
   const workflowExists = checkRemoteFileExists(repo, DEFAULT_WORKFLOW_PATH);
-  const secretExists = hasRepositorySecret(repo, "LETTA_API_KEY");
-  return { workflowExists, secretExists };
+  return { workflowExists };
 }
 
 export function hasRepositorySecret(repo: string, secretName: string): boolean {
@@ -455,7 +452,6 @@ export async function installGithubApp(
   const {
     repo,
     workflowPath,
-    reuseExistingSecret,
     apiKey,
     agentMode,
     agentId: providedAgentId,
@@ -467,24 +463,18 @@ export async function installGithubApp(
     throw new Error("Repository must be in owner/repo format.");
   }
 
-  if (!apiKey && (!reuseExistingSecret || agentMode === "create")) {
+  if (!apiKey) {
     throw new Error("LETTA_API_KEY is required.");
   }
-
-  const secretAction: "reused" | "set" = reuseExistingSecret ? "reused" : "set";
   let resolvedAgentId: string | null = providedAgentId;
 
   progress(onProgress, "Getting repository information");
   ensureRepoAccess(repo);
 
-  // Create agent if needed (requires API key)
+  // Create agent if needed
   if (agentMode === "create" && agentName) {
-    const keyForAgent = apiKey;
-    if (!keyForAgent) {
-      throw new Error("LETTA_API_KEY is required to create an agent.");
-    }
     progress(onProgress, `Creating agent ${agentName}`);
-    const agent = await createLettaAgent(keyForAgent, agentName);
+    const agent = await createLettaAgent(apiKey, agentName);
     resolvedAgentId = agent.id;
   }
 
@@ -502,6 +492,15 @@ export async function installGithubApp(
     progress(onProgress, "Creating workflow files");
     const changed = writeWorkflow(repoDir, workflowPath, workflowContent);
 
+    // Always set the secret from the locally-available key
+    progress(onProgress, "Setting up LETTA_API_KEY secret");
+    setRepositorySecret(repo, "LETTA_API_KEY", apiKey);
+
+    if (resolvedAgentId) {
+      progress(onProgress, "Configuring agent");
+      setRepositoryVariable(repo, "LETTA_AGENT_ID", resolvedAgentId);
+    }
+
     if (!changed) {
       progress(onProgress, "Workflow already up to date.");
       return {
@@ -511,7 +510,7 @@ export async function installGithubApp(
         pullRequestUrl: null,
         pullRequestCreateMode: "created",
         committed: false,
-        secretAction,
+        secretAction: "set",
         agentId: resolvedAgentId,
         agentUrl: resolvedAgentId
           ? `https://app.letta.com/agents/${resolvedAgentId}`
@@ -521,16 +520,6 @@ export async function installGithubApp(
 
     runGit(["add", workflowPath], repoDir);
     runGit(["commit", "-m", "Add Letta Code GitHub Workflow"], repoDir);
-
-    if (!reuseExistingSecret && apiKey) {
-      progress(onProgress, "Setting up LETTA_API_KEY secret");
-      setRepositorySecret(repo, "LETTA_API_KEY", apiKey);
-    }
-
-    if (resolvedAgentId) {
-      progress(onProgress, "Configuring agent");
-      setRepositoryVariable(repo, "LETTA_AGENT_ID", resolvedAgentId);
-    }
 
     progress(onProgress, "Opening pull request page");
     runGit(["push", "-u", "origin", branchName], repoDir);
@@ -549,7 +538,7 @@ export async function installGithubApp(
       pullRequestUrl: pullRequest.url,
       pullRequestCreateMode: pullRequest.mode,
       committed: true,
-      secretAction,
+      secretAction: "set",
       agentId: resolvedAgentId,
       agentUrl: resolvedAgentId
         ? `https://app.letta.com/agents/${resolvedAgentId}`
