@@ -5,6 +5,8 @@ import {
   getPreStreamErrorAction,
   isApprovalPendingError,
   isConversationBusyError,
+  isEmptyResponseError,
+  isEmptyResponseRetryable,
   isInvalidToolCallIdsError,
   isNonRetryableProviderErrorDetail,
   isRetryableProviderErrorDetail,
@@ -453,5 +455,92 @@ describe("shouldAttemptApprovalRecovery", () => {
       maxRetries: 3,
     });
     expect(tuiResult).toBe(headlessResult);
+  });
+});
+
+// ── Empty response error detection (LET-7679) ────────────────────────
+
+describe("isEmptyResponseError", () => {
+  test("detects empty content in response", () => {
+    expect(
+      isEmptyResponseError(
+        "LLM provider returned empty content in response (ID: msg_123, model: claude-opus-4-6)",
+      ),
+    ).toBe(true);
+  });
+
+  test("detects empty content in streaming response", () => {
+    expect(
+      isEmptyResponseError(
+        "LLM provider returned empty content in streaming response (model: claude-opus-4-6)",
+      ),
+    ).toBe(true);
+  });
+
+  test("case insensitive", () => {
+    expect(isEmptyResponseError("EMPTY CONTENT IN RESPONSE")).toBe(true);
+  });
+
+  test("returns false for unrelated errors", () => {
+    expect(isEmptyResponseError("Connection error")).toBe(false);
+    expect(isEmptyResponseError("Rate limit exceeded")).toBe(false);
+  });
+
+  test("returns false for non-string input", () => {
+    expect(isEmptyResponseError(null)).toBe(false);
+    expect(isEmptyResponseError(undefined)).toBe(false);
+    expect(isEmptyResponseError(123)).toBe(false);
+  });
+});
+
+describe("isEmptyResponseRetryable", () => {
+  test("true when llm_error and empty response detail and under retry budget", () => {
+    expect(
+      isEmptyResponseRetryable(
+        "llm_error",
+        "LLM provider returned empty content in response",
+        0,
+        2,
+      ),
+    ).toBe(true);
+  });
+
+  test("true at boundary (retries < max)", () => {
+    expect(
+      isEmptyResponseRetryable(
+        "llm_error",
+        "LLM provider returned empty content in streaming response",
+        1,
+        2,
+      ),
+    ).toBe(true);
+  });
+
+  test("false when retry budget exhausted", () => {
+    expect(
+      isEmptyResponseRetryable(
+        "llm_error",
+        "LLM provider returned empty content in response",
+        2,
+        2,
+      ),
+    ).toBe(false);
+  });
+
+  test("false when not llm_error type", () => {
+    expect(
+      isEmptyResponseRetryable(
+        "internal_error",
+        "LLM provider returned empty content in response",
+        0,
+        2,
+      ),
+    ).toBe(false);
+  });
+
+  test("false when not empty response error", () => {
+    expect(
+      isEmptyResponseRetryable("llm_error", "Connection error occurred", 0, 2),
+    ).toBe(false);
   });
 });

@@ -16,6 +16,7 @@ const INVALID_TOOL_CALL_IDS_FRAGMENT = "invalid tool call ids";
 const APPROVAL_PENDING_DETAIL_FRAGMENT = "waiting for approval";
 const CONVERSATION_BUSY_DETAIL_FRAGMENT =
   "another request is currently being processed";
+const EMPTY_RESPONSE_DETAIL_FRAGMENT = "empty content in";
 const RETRYABLE_PROVIDER_DETAIL_PATTERNS = [
   "Anthropic API error",
   "OpenAI API error",
@@ -94,6 +95,16 @@ export function isConversationBusyError(detail: unknown): boolean {
   return detail.toLowerCase().includes(CONVERSATION_BUSY_DETAIL_FRAGMENT);
 }
 
+/**
+ * LLM returned an empty response (no content and no tool calls).
+ * This can happen with models like Opus 4.6 that occasionally return empty content.
+ * These are retryable with a cache-busting system message modification.
+ */
+export function isEmptyResponseError(detail: unknown): boolean {
+  if (typeof detail !== "string") return false;
+  return detail.toLowerCase().includes(EMPTY_RESPONSE_DETAIL_FRAGMENT);
+}
+
 /** Transient provider/network detail that is usually safe to retry. */
 export function isRetryableProviderErrorDetail(detail: unknown): boolean {
   if (typeof detail !== "string") return false;
@@ -129,6 +140,24 @@ export function shouldRetryRunMetadataError(
   if (nonRetryableDetail && !retryable429Detail) return false;
   if (explicitLlmError) return true;
   return retryable429Detail || retryableDetail;
+}
+
+/**
+ * Check if this is an empty response error that should be retried.
+ *
+ * Empty responses from models like Opus 4.6 are retryable. The caller
+ * decides whether to retry with the same input or append a system
+ * reminder nudge (typically on the last attempt).
+ */
+export function isEmptyResponseRetryable(
+  errorType: unknown,
+  detail: unknown,
+  emptyResponseRetries: number,
+  maxEmptyResponseRetries: number,
+): boolean {
+  if (emptyResponseRetries >= maxEmptyResponseRetries) return false;
+  if (errorType !== "llm_error") return false;
+  return isEmptyResponseError(detail);
 }
 
 /** Retry decision for pre-stream send failures before any chunks are yielded. */
