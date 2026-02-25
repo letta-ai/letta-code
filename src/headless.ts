@@ -39,6 +39,8 @@ import type { ParsedCliArgs } from "./cli/args";
 import {
   normalizeConversationShorthandFlags,
   parseCsvListFlag,
+  parseJsonArrayFlag,
+  parsePositiveIntFlag,
   resolveImportFlagAlias,
 } from "./cli/flagUtils";
 import {
@@ -185,13 +187,16 @@ function parseReflectionOverrides(
   }
 
   if (stepCountRaw !== undefined) {
-    const parsed = Number.parseInt(stepCountRaw, 10);
-    if (Number.isNaN(parsed) || parsed <= 0) {
+    try {
+      overrides.stepCount = parsePositiveIntFlag({
+        rawValue: stepCountRaw,
+        flagName: "reflection-step-count",
+      });
+    } catch {
       throw new Error(
         `Invalid --reflection-step-count "${stepCountRaw}". Expected a positive integer.`,
       );
     }
-    overrides.stepCount = parsed;
   }
 
   return overrides;
@@ -451,15 +456,16 @@ export async function handleHeadlessCommand(
 
   // Parse and validate max-turns if provided
   let maxTurns: number | undefined;
-  if (maxTurnsRaw !== undefined) {
-    const parsed = parseInt(maxTurnsRaw, 10);
-    if (Number.isNaN(parsed) || parsed <= 0) {
-      console.error(
-        `Error: --max-turns must be a positive integer, got: ${maxTurnsRaw}`,
-      );
-      process.exit(1);
-    }
-    maxTurns = parsed;
+  try {
+    maxTurns = parsePositiveIntFlag({
+      rawValue: maxTurnsRaw,
+      flagName: "max-turns",
+    });
+  } catch (error) {
+    console.error(
+      `Error: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    process.exit(1);
   }
 
   if (preLoadSkillsRaw && resolvedSkillSources.length === 0) {
@@ -640,10 +646,9 @@ export async function handleHeadlessCommand(
       process.exit(1);
     }
     try {
-      memoryBlocks = JSON.parse(memoryBlocksJson);
-      if (!Array.isArray(memoryBlocks)) {
-        throw new Error("memory-blocks must be a JSON array");
-      }
+      memoryBlocks = parseJsonArrayFlag(memoryBlocksJson, "memory-blocks") as
+        | Array<{ label: string; value: string; description?: string }>
+        | Array<{ blockId: string }>;
       // Validate each block has required fields
       for (const block of memoryBlocks) {
         const hasBlockId =
@@ -662,7 +667,7 @@ export async function handleHeadlessCommand(
       }
     } catch (error) {
       console.error(
-        `Error: Invalid --memory-blocks JSON: ${error instanceof Error ? error.message : String(error)}`,
+        `Error: ${error instanceof Error ? error.message : String(error)}`,
       );
       process.exit(1);
     }

@@ -28,6 +28,7 @@ import {
 import {
   normalizeConversationShorthandFlags,
   parseCsvListFlag,
+  parseJsonArrayFlag,
   resolveImportFlagAlias,
 } from "./cli/flagUtils";
 import {
@@ -646,10 +647,10 @@ async function main(): Promise<void> {
     | undefined;
   if (memoryBlocksJson) {
     try {
-      memoryBlocks = JSON.parse(memoryBlocksJson);
-      if (!Array.isArray(memoryBlocks)) {
-        throw new Error("memory-blocks must be a JSON array");
-      }
+      memoryBlocks = parseJsonArrayFlag(
+        memoryBlocksJson,
+        "memory-blocks",
+      ) as Array<{ label: string; value: string; description?: string }>;
       // Validate each block has required fields
       for (const block of memoryBlocks) {
         if (
@@ -663,7 +664,7 @@ async function main(): Promise<void> {
       }
     } catch (error) {
       console.error(
-        `Error: Invalid --memory-blocks JSON: ${error instanceof Error ? error.message : String(error)}`,
+        `Error: ${error instanceof Error ? error.message : String(error)}`,
       );
       process.exit(1);
     }
