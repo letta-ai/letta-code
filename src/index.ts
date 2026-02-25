@@ -23,6 +23,7 @@ import { LETTA_CLOUD_API_URL } from "./auth/oauth";
 import {
   parseCliArgs,
   preprocessCliArgs,
+  renderCliOptionsHelp,
   type ParsedCliArgs,
 } from "./cli/args";
 import {
@@ -81,45 +82,7 @@ USAGE
   letta blocks ...      Blocks subcommands (JSON-only)
 
 OPTIONS
-  -h, --help            Show this help and exit
-  -v, --version         Print version and exit
-  --info                Show current directory, skills, and pinned agents
-  -c, --continue        Resume last session (agent + conversation) directly
-  -r, --resume          Open agent selector UI after loading
-  --new                 Create new conversation (for concurrent sessions)
-  --new-agent           Create new agent directly (skip profile selection)
-  --init-blocks <list>  Comma-separated memory blocks to initialize when using --new-agent (e.g., "persona,skills")
-  --base-tools <list>   Comma-separated base tools to attach when using --new-agent (e.g., "memory,web_search,fetch_webpage")
-  -a, --agent <id>      Use a specific agent ID
-  -n, --name <name>     Resume agent by name (from pinned agents, case-insensitive)
-  -m, --model <id>      Model ID or handle (e.g., "opus-4.5" or "anthropic/claude-opus-4-5")
-  -s, --system <id>     System prompt ID or subagent name (applies to new or existing agent)
-  --toolset <name>      Toolset mode: "auto", "codex", "default", or "gemini" (manual values override model-based auto-selection)
-  -p, --prompt          Headless prompt mode
-  --output-format <fmt> Output format for headless mode (text, json, stream-json)
-                        Default: text
-  --input-format <fmt>  Input format for headless mode (stream-json)
-                        When set, reads JSON messages from stdin for bidirectional communication
-  --include-partial-messages
-                        Emit stream_event wrappers for each chunk (stream-json only)
-  --from-agent <id>     Inject agent-to-agent system reminder (headless mode)
-  --skills <path>       Custom path to skills directory (default: .skills in current directory)
-  --skill-sources <csv> Skill sources: all,bundled,global,agent,project (default: all)
-  --no-skills           Disable all skill sources
-  --no-bundled-skills   Disable bundled skills only
-  --import <path>       Create agent from an AgentFile (.af) template
-                        Use @author/name to import from the agent registry
-  --memfs               Enable memory filesystem for this agent
-  --no-memfs            Disable memory filesystem for this agent
-  --memfs-startup <m>   Startup memfs pull policy for headless mode: blocking, background, or skip
-  --no-system-info-reminder
-                        Disable first-turn environment reminder (device/git/cwd context)
-  --reflection-trigger <mode>
-                        Sleeptime trigger: off, step-count, compaction-event
-  --reflection-behavior <mode>
-                        Sleeptime behavior: reminder, auto-launch
-  --reflection-step-count <n>
-                        Sleeptime step-count interval (positive integer)
+${renderCliOptionsHelp()}
 
 SUBCOMMANDS (JSON-only)
   letta memfs status --agent <id>

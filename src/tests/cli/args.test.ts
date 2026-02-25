@@ -5,6 +5,7 @@ import {
   getCliFlagsForMode,
   parseCliArgs,
   preprocessCliArgs,
+  renderCliOptionsHelp,
 } from "../../cli/args";
 
 describe("shared CLI arg schema", () => {
@@ -33,6 +34,22 @@ describe("shared CLI arg schema", () => {
     expect(interactiveFlags).not.toContain("memfs-startup");
     expect(headlessFlags).toContain("agent");
     expect(interactiveFlags).toContain("agent");
+  });
+
+  test("rendered OPTIONS help is generated from catalog metadata", () => {
+    const help = renderCliOptionsHelp();
+    expect(help).toContain("-h, --help");
+    expect(help).toContain("-c, --continue");
+    expect(help).toContain("--memfs-startup <m>");
+    expect(help).toContain("Default: text");
+    expect(help).not.toContain("--run");
+
+    for (const [flagName, definition] of Object.entries(
+      CLI_FLAG_CATALOG,
+    ) as Array<[string, { help?: unknown }]>) {
+      if (!definition.help) continue;
+      expect(help).toContain(`--${flagName}`);
+    }
   });
 
   test("normalizes --conv alias to --conversation", () => {
