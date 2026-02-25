@@ -13,7 +13,7 @@ interface ListenerStatusUIProps {
 }
 
 export function ListenerStatusUI(props: ListenerStatusUIProps) {
-  const { connectionId, envName, onReady } = props;
+  const { envName, onReady } = props;
   const [status, setStatus] = useState<"idle" | "receiving" | "processing">(
     "idle",
   );

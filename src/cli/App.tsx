@@ -424,6 +424,20 @@ function getErrorHintForStopReason(
   return ERROR_FEEDBACK_HINT;
 }
 
+/** Extract errorType and httpStatus from a caught exception for telemetry. */
+function extractErrorMeta(e: unknown) {
+  return {
+    errorType: e instanceof Error ? e.constructor.name : "UnknownError",
+    httpStatus:
+      e &&
+      typeof e === "object" &&
+      "status" in e &&
+      typeof e.status === "number"
+        ? e.status
+        : undefined,
+  };
+}
+
 // Interactive slash commands that open overlays immediately (bypass queueing)
 // These commands let users browse/view while the agent is working
 // Any changes made in the overlay will be queued until end_turn
@@ -3017,9 +3031,25 @@ export default function App({
   }, [loadingState, agentId]);
 
   // Helper to append an error to the transcript
-  // Also tracks the error in telemetry so we know an error was shown
+  // Also tracks the error in telemetry so we know an error was shown.
+  // Pass `true` or `{ skip: true }` to suppress telemetry (e.g. hint
+  // lines that follow an already-tracked primary error).
+  // Pass an options object with errorType / context / etc. to enrich the
+  // telemetry event beyond the default "ui_error" / "error_display".
   const appendError = useCallback(
-    (message: string, skipTelemetry = false) => {
+    (
+      message: string,
+      options?:
+        | boolean
+        | {
+            skip?: boolean;
+            errorType?: string;
+            errorMessage?: string;
+            context?: string;
+            httpStatus?: number;
+            runId?: string;
+          },
+    ) => {
       // Defensive: ensure message is always a string (guards against [object Object])
       const text =
         typeof message === "string"
@@ -3037,12 +3067,22 @@ export default function App({
       buffersRef.current.order.push(id);
       refreshDerived();
 
-      // Track error in telemetry (unless explicitly skipped for user-initiated actions)
-      if (!skipTelemetry) {
-        telemetry.trackError("ui_error", text, "error_display", {
-          modelId: currentModelId || undefined,
-          recentChunks: chunkLog.getEntries(),
-        });
+      // Track error in telemetry (unless explicitly skipped)
+      const skip =
+        typeof options === "boolean" ? options : (options?.skip ?? false);
+      if (!skip) {
+        const opts = typeof options === "object" ? options : undefined;
+        telemetry.trackError(
+          opts?.errorType || "ui_error",
+          opts?.errorMessage || text,
+          opts?.context || "error_display",
+          {
+            httpStatus: opts?.httpStatus,
+            modelId: currentModelId || undefined,
+            runId: opts?.runId,
+            recentChunks: chunkLog.getEntries(),
+          },
+        );
       }
     },
     [refreshDerived, currentModelId],
@@ -5115,30 +5155,14 @@ export default function App({
           return;
         }
 
-        // Track error with enhanced context
-        const errorType =
-          e instanceof Error ? e.constructor.name : "UnknownError";
-        const errorMessage = e instanceof Error ? e.message : String(e);
-
-        // Extract HTTP status code if available (API errors often have this)
-        const httpStatus =
-          e &&
-          typeof e === "object" &&
-          "status" in e &&
-          typeof e.status === "number"
-            ? e.status
-            : undefined;
-
-        telemetry.trackError(errorType, errorMessage, "message_stream", {
-          httpStatus,
-          modelId: currentModelId || undefined,
-          runId: currentRunId,
-          recentChunks: chunkLog.getEntries(),
-        });
-
         // Use comprehensive error formatting
         const errorDetails = formatErrorDetails(e, agentIdRef.current);
-        appendError(errorDetails, true); // Skip telemetry - already tracked above with more context
+        appendError(errorDetails, {
+          ...extractErrorMeta(e),
+          errorMessage: e instanceof Error ? e.message : String(e),
+          context: "message_stream",
+          runId: currentRunId,
+        });
         appendError(ERROR_FEEDBACK_HINT, true);
 
         // Restore dequeued message to input on error (Input component will only use if empty)
@@ -5478,7 +5502,10 @@ export default function App({
           conversationIdRef.current;
       } catch (e) {
         const errorDetails = formatErrorDetails(e, agentId);
-        appendError(`Failed to interrupt stream: ${errorDetails}`);
+        appendError(`Failed to interrupt stream: ${errorDetails}`, {
+          ...extractErrorMeta(e),
+          context: "stream_interrupt",
+        });
         setInterruptRequested(false);
         setIsExecutingTool(false);
         toolResultsInFlightRef.current = false;
@@ -9786,7 +9813,10 @@ ${SYSTEM_REMINDER_CLOSE}
                   "Error executing tool:",
                 );
                 if (isToolError) {
-                  appendError(chunk.tool_return);
+                  appendError(chunk.tool_return, {
+                    errorType: "tool_execution_error",
+                    context: "tool_execution",
+                  });
                 }
               }
               // Flush UI so completed tools show up while the batch continues
@@ -9992,7 +10022,10 @@ ${SYSTEM_REMINDER_CLOSE}
         }
       } catch (e) {
         const errorDetails = formatErrorDetails(e, agentId);
-        appendError(errorDetails);
+        appendError(errorDetails, {
+          ...extractErrorMeta(e),
+          context: "approval_send",
+        });
         setStreaming(false);
         setIsExecutingTool(false);
       }
@@ -10229,7 +10262,10 @@ ${SYSTEM_REMINDER_CLOSE}
         }
       } catch (e) {
         const errorDetails = formatErrorDetails(e, agentId);
-        appendError(errorDetails);
+        appendError(errorDetails, {
+          ...extractErrorMeta(e),
+          context: "approval_send",
+        });
         setStreaming(false);
         setIsExecutingTool(false);
       }
@@ -11374,7 +11410,10 @@ ${SYSTEM_REMINDER_CLOSE}
         }
       } catch (e) {
         const errorDetails = formatErrorDetails(e, agentId);
-        appendError(errorDetails);
+        appendError(errorDetails, {
+          ...extractErrorMeta(e),
+          context: "approval_send",
+        });
         setStreaming(false);
       }
     },
