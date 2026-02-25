@@ -4672,9 +4672,7 @@ export default function App({
           // Retry 1: same input unchanged. Retry 2: append system reminder nudging the model.
           if (
             isEmptyResponseRetryable(
-              stopReasonToHandle === "llm_api_error"
-                ? "llm_error"
-                : undefined,
+              stopReasonToHandle === "llm_api_error" ? "llm_error" : undefined,
               detailFromRun,
               emptyResponseRetriesRef.current,
               EMPTY_RESPONSE_MAX_RETRIES,
