@@ -2910,6 +2910,7 @@ export default function App({
       if (!skipTelemetry) {
         telemetry.trackError("ui_error", text, "error_display", {
           modelId: currentModelId || undefined,
+          recentChunks: chunkLog.getEntries(),
         });
       }
     },
@@ -4737,6 +4738,7 @@ export default function App({
             {
               modelId: currentModelId || undefined,
               runId: lastRunId ?? undefined,
+              recentChunks: chunkLog.getEntries(),
             },
           );
 
@@ -4907,6 +4909,7 @@ export default function App({
           httpStatus,
           modelId: currentModelId || undefined,
           runId: currentRunId,
+          recentChunks: chunkLog.getEntries(),
         });
 
         // Use comprehensive error formatting

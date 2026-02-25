@@ -49,6 +49,7 @@ export interface ErrorData {
   http_status?: number;
   model_id?: string;
   run_id?: string;
+  recent_chunks?: Record<string, unknown>[];
 }
 
 export interface UserInputData {
@@ -356,6 +357,7 @@ class TelemetryManager {
       httpStatus?: number;
       modelId?: string;
       runId?: string;
+      recentChunks?: Record<string, unknown>[];
     },
   ) {
     const data: ErrorData = {
@@ -365,6 +367,7 @@ class TelemetryManager {
       http_status: options?.httpStatus,
       model_id: options?.modelId,
       run_id: options?.runId,
+      recent_chunks: options?.recentChunks,
     };
     this.track("error", data);
   }
