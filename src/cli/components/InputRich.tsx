@@ -470,24 +470,32 @@ const StreamingStatus = memo(function StreamingStatus({
     }
   }, [animate]);
 
-  // Elapsed time tracking
+  // Elapsed time tracking: pause updates during resize, but do not reset.
   useEffect(() => {
-    if (streaming && visible && !isResizing) {
-      // Start tracking when streaming begins
-      if (streamStartRef.current === null) {
-        streamStartRef.current = performance.now();
-      }
-      const id = setInterval(() => {
-        if (streamStartRef.current !== null) {
-          setElapsedMs(performance.now() - streamStartRef.current);
-        }
-      }, 1000);
-      return () => clearInterval(id);
+    if (!streaming || !visible || isResizing) {
+      return;
     }
-    // Reset when streaming stops
+
+    if (streamStartRef.current === null) {
+      streamStartRef.current = performance.now();
+    }
+
+    const id = setInterval(() => {
+      if (streamStartRef.current !== null) {
+        setElapsedMs(performance.now() - streamStartRef.current);
+      }
+    }, 1000);
+
+    return () => clearInterval(id);
+  }, [streaming, visible, isResizing]);
+
+  useEffect(() => {
+    if (streaming && visible) {
+      return;
+    }
     streamStartRef.current = null;
     setElapsedMs(0);
-  }, [streaming, visible, isResizing]);
+  }, [streaming, visible]);
 
   const estimatedTokens = charsToTokens(tokenCount);
   const totalElapsedMs = elapsedBaseMs + elapsedMs;

@@ -68,11 +68,8 @@ export const AgentInfoBar = memo(function AgentInfoBar({
 
   const isCloudUser = serverUrl?.includes("api.letta.com");
   const adeConversationUrl =
-    agentId &&
-    agentId !== "loading" &&
-    conversationId &&
-    conversationId !== "default"
-      ? `https://app.letta.com/agents/${agentId}?conversation=${conversationId}`
+    agentId && agentId !== "loading"
+      ? `https://app.letta.com/agents/${agentId}${conversationId && conversationId !== "default" ? `?conversation=${conversationId}` : ""}`
       : "";
   const showBottomBar = agentId && agentId !== "loading";
   const reasoningLabel = formatReasoningLabel(currentReasoningEffort);
