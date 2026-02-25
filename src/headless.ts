@@ -258,7 +258,6 @@ export async function handleHeadlessCommand(
       continue: { type: "boolean", short: "c" },
       resume: { type: "boolean", short: "r" },
       conversation: { type: "string" },
-      default: { type: "boolean" }, // Alias for --conv default
       "new-agent": { type: "boolean" },
       new: { type: "boolean" }, // Deprecated - kept for helpful error message
       agent: { type: "string", short: "a" },
@@ -414,20 +413,8 @@ export async function handleHeadlessCommand(
   let agent: AgentState | null = null;
   let specifiedAgentId = values.agent as string | undefined;
   let specifiedConversationId = values.conversation as string | undefined;
-  const useDefaultConv = values.default as boolean | undefined;
   const shouldContinue = values.continue as boolean | undefined;
   const forceNew = values["new-agent"] as boolean | undefined;
-
-  // Handle --default flag (alias for --conv default)
-  if (useDefaultConv) {
-    if (specifiedConversationId && specifiedConversationId !== "default") {
-      console.error(
-        "Error: --default cannot be used with --conversation (they're mutually exclusive)",
-      );
-      process.exit(1);
-    }
-    specifiedConversationId = "default";
-  }
   const systemPromptPreset = values.system as string | undefined;
   const systemCustom = values["system-custom"] as string | undefined;
   const systemAppend = values["system-append"] as string | undefined;
@@ -541,8 +528,8 @@ export async function handleHeadlessCommand(
     specifiedConversationId = "default";
   }
 
-  // Validate --conv default requires --agent
-  if (specifiedConversationId === "default" && !specifiedAgentId) {
+  // Validate --conv default requires --agent (unless --new-agent will create one)
+  if (specifiedConversationId === "default" && !specifiedAgentId && !forceNew) {
     console.error("Error: --conv default requires --agent <agent-id>");
     console.error("Usage: letta --agent agent-xyz --conv default");
     console.error("   or: letta --conv agent-xyz (shorthand)");
@@ -1091,7 +1078,7 @@ export async function handleHeadlessCommand(
   } else {
     // Default for headless: always create a new conversation to avoid
     // 409 "conversation busy" races (e.g., parent agent calling letta -p).
-    // Use --default or --conv default to explicitly target the agent's
+    // Use --conv default to explicitly target the agent's
     // primary conversation.
     const conversation = await client.conversations.create({
       agent_id: agent.id,
