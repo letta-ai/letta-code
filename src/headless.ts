@@ -39,7 +39,15 @@ import type { ParsedCliArgs } from "./cli/args";
 import {
   normalizeConversationShorthandFlags,
   parseCsvListFlag,
+  resolveImportFlagAlias,
 } from "./cli/flagUtils";
+import {
+  validateConversationDefaultRequiresAgent,
+  validateConversationFlagConflicts,
+  validateImportFlagConflicts,
+  validateNewConversationFlagConflicts,
+  validateRegistryHandleOrThrow,
+} from "./cli/startupFlagValidation";
 import {
   createBuffers,
   type Line,
@@ -401,9 +409,10 @@ export async function handleHeadlessCommand(
       ? "standard"
       : undefined;
   const shouldAutoEnableMemfsForNewAgent = !memfsFlag && !noMemfsFlag;
-  const fromAfFile =
-    (values.import as string | undefined) ??
-    (values["from-af"] as string | undefined);
+  const fromAfFile = resolveImportFlagAlias({
+    importFlagValue: values.import as string | undefined,
+    fromAfFlagValue: values["from-af"] as string | undefined,
+  });
   const preLoadSkillsRaw = values["pre-load-skills"] as string | undefined;
   const systemInfoReminderEnabled =
     systemInfoReminderEnabledOverride ??
@@ -475,8 +484,16 @@ export async function handleHeadlessCommand(
   }
 
   // Validate --conv default requires --agent (unless --new-agent will create one)
-  if (specifiedConversationId === "default" && !specifiedAgentId && !forceNew) {
-    console.error("Error: --conv default requires --agent <agent-id>");
+  try {
+    validateConversationDefaultRequiresAgent({
+      specifiedConversationId,
+      specifiedAgentId,
+      forceNew,
+    });
+  } catch (error) {
+    console.error(
+      error instanceof Error ? `Error: ${error.message}` : String(error),
+    );
     console.error("Usage: letta --agent agent-xyz --conv default");
     console.error("   or: letta --conv agent-xyz (shorthand)");
     process.exit(1);
@@ -502,53 +519,64 @@ export async function handleHeadlessCommand(
     }
   }
 
-  // Validate --conversation flag (mutually exclusive with agent-selection flags)
-  // Exception: --conv default requires --agent
-  if (specifiedConversationId && specifiedConversationId !== "default") {
-    if (specifiedAgentId) {
-      console.error("Error: --conversation cannot be used with --agent");
-      process.exit(1);
-    }
-    if (forceNew) {
-      console.error("Error: --conversation cannot be used with --new-agent");
-      process.exit(1);
-    }
-    if (fromAfFile) {
-      console.error("Error: --conversation cannot be used with --from-af");
-      process.exit(1);
-    }
-    if (shouldContinue) {
-      console.error("Error: --conversation cannot be used with --continue");
-      process.exit(1);
-    }
-  }
+  // Validate shared mutual-exclusion rules for startup flags.
+  try {
+    validateConversationFlagConflicts({
+      specifiedConversationId,
+      checks: [
+        {
+          when: specifiedAgentId,
+          message: "--conversation cannot be used with --agent",
+        },
+        {
+          when: forceNew,
+          message: "--conversation cannot be used with --new-agent",
+        },
+        {
+          when: fromAfFile,
+          message: "--conversation cannot be used with --from-af",
+        },
+        {
+          when: shouldContinue,
+          message: "--conversation cannot be used with --continue",
+        },
+      ],
+    });
 
-  // Validate --new flag (create new conversation)
-  if (forceNewConversation) {
-    if (shouldContinue) {
-      console.error("Error: --new cannot be used with --continue");
-      process.exit(1);
-    }
-    if (specifiedConversationId) {
-      console.error("Error: --new cannot be used with --conversation");
-      process.exit(1);
-    }
+    validateNewConversationFlagConflicts({
+      forceNewConversation,
+      checks: [
+        { when: shouldContinue, message: "--new cannot be used with --continue" },
+        {
+          when: specifiedConversationId,
+          message: "--new cannot be used with --conversation",
+        },
+      ],
+    });
+  } catch (error) {
+    console.error(
+      error instanceof Error ? `Error: ${error.message}` : String(error),
+    );
+    process.exit(1);
   }
 
   // Validate --from-af flag
   // Detect if it's a registry handle (e.g., @author/name) or a local file path
   let isRegistryImport = false;
   if (fromAfFile) {
-    if (specifiedAgentId) {
-      console.error("Error: --from-af cannot be used with --agent");
-      process.exit(1);
-    }
-    if (shouldContinue) {
-      console.error("Error: --from-af cannot be used with --continue");
-      process.exit(1);
-    }
-    if (forceNew) {
-      console.error("Error: --from-af cannot be used with --new");
+    try {
+      validateImportFlagConflicts({
+        importSource: fromAfFile,
+        checks: [
+          { when: specifiedAgentId, message: "--from-af cannot be used with --agent" },
+          { when: shouldContinue, message: "--from-af cannot be used with --continue" },
+          { when: forceNew, message: "--from-af cannot be used with --new" },
+        ],
+      });
+    } catch (error) {
+      console.error(
+        error instanceof Error ? `Error: ${error.message}` : String(error),
+      );
       process.exit(1);
     }
 
@@ -557,9 +585,9 @@ export async function handleHeadlessCommand(
       // Definitely a registry handle
       isRegistryImport = true;
       // Validate handle format
-      const normalized = fromAfFile.slice(1);
-      const parts = normalized.split("/");
-      if (parts.length !== 2 || !parts[0] || !parts[1]) {
+      try {
+        validateRegistryHandleOrThrow(fromAfFile);
+      } catch {
         console.error(
           `Error: Invalid registry handle "${fromAfFile}". Use format: @author/agentname`,
         );

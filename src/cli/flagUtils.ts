@@ -32,3 +32,10 @@ export function normalizeConversationShorthandFlags(options: {
 
   return { specifiedConversationId, specifiedAgentId };
 }
+
+export function resolveImportFlagAlias(options: {
+  importFlagValue: string | undefined;
+  fromAfFlagValue: string | undefined;
+}): string | undefined {
+  return options.importFlagValue ?? options.fromAfFlagValue;
+}

@@ -28,7 +28,15 @@ import {
 import {
   normalizeConversationShorthandFlags,
   parseCsvListFlag,
+  resolveImportFlagAlias,
 } from "./cli/flagUtils";
+import {
+  validateConversationDefaultRequiresAgent,
+  validateConversationFlagConflicts,
+  validateImportFlagConflicts,
+  validateNewConversationFlagConflicts,
+  validateRegistryHandleOrThrow,
+} from "./cli/startupFlagValidation";
 import { ConversationSelector } from "./cli/components/ConversationSelector";
 import { formatErrorDetails } from "./cli/helpers/errorFormatter";
 import type { ApprovalRequest } from "./cli/helpers/stream";
@@ -501,8 +509,16 @@ async function main(): Promise<void> {
   }
 
   // Validate --conv default requires --agent (unless --new-agent will create one)
-  if (specifiedConversationId === "default" && !specifiedAgentId && !forceNew) {
-    console.error("Error: --conv default requires --agent <agent-id>");
+  try {
+    validateConversationDefaultRequiresAgent({
+      specifiedConversationId,
+      specifiedAgentId,
+      forceNew,
+    });
+  } catch (error) {
+    console.error(
+      error instanceof Error ? `Error: ${error.message}` : String(error),
+    );
     console.error("Usage: letta --agent agent-xyz --conv default");
     console.error("   or: letta --conv agent-xyz (shorthand)");
     process.exit(1);
@@ -548,9 +564,10 @@ async function main(): Promise<void> {
       process.exit(1);
     }
   })();
-  const fromAfFile =
-    (values.import as string | undefined) ??
-    (values["from-af"] as string | undefined);
+  const fromAfFile = resolveImportFlagAlias({
+    importFlagValue: values.import as string | undefined,
+    fromAfFlagValue: values["from-af"] as string | undefined,
+  });
   const isHeadless = values.prompt || values.run || !process.stdin.isTTY;
 
   // Fail if an unknown command/argument is passed (and we're not in headless mode where it might be a prompt)
@@ -652,69 +669,74 @@ async function main(): Promise<void> {
     }
   }
 
-  // Validate --conversation flag (mutually exclusive with agent-selection flags)
-  // Exception: --conv default requires --agent
-  if (specifiedConversationId && specifiedConversationId !== "default") {
-    if (specifiedAgentId) {
-      console.error("Error: --conversation cannot be used with --agent");
-      process.exit(1);
-    }
-    if (specifiedAgentName) {
-      console.error("Error: --conversation cannot be used with --name");
-      process.exit(1);
-    }
-    if (forceNew) {
-      console.error("Error: --conversation cannot be used with --new-agent");
-      process.exit(1);
-    }
-    if (fromAfFile) {
-      console.error("Error: --conversation cannot be used with --import");
-      process.exit(1);
-    }
-    if (shouldResume) {
-      console.error("Error: --conversation cannot be used with --resume");
-      process.exit(1);
-    }
-    if (shouldContinue) {
-      console.error("Error: --conversation cannot be used with --continue");
-      process.exit(1);
-    }
-  }
+  // Validate shared mutual-exclusion rules for startup flags.
+  try {
+    validateConversationFlagConflicts({
+      specifiedConversationId,
+      checks: [
+        {
+          when: specifiedAgentId,
+          message: "--conversation cannot be used with --agent",
+        },
+        {
+          when: specifiedAgentName,
+          message: "--conversation cannot be used with --name",
+        },
+        {
+          when: forceNew,
+          message: "--conversation cannot be used with --new-agent",
+        },
+        {
+          when: fromAfFile,
+          message: "--conversation cannot be used with --import",
+        },
+        {
+          when: shouldResume,
+          message: "--conversation cannot be used with --resume",
+        },
+        {
+          when: shouldContinue,
+          message: "--conversation cannot be used with --continue",
+        },
+      ],
+    });
 
-  // Validate --new flag (create new conversation)
-  if (forceNewConversation) {
-    if (shouldContinue) {
-      console.error("Error: --new cannot be used with --continue");
-      process.exit(1);
-    }
-    if (specifiedConversationId) {
-      console.error("Error: --new cannot be used with --conversation");
-      process.exit(1);
-    }
-    if (shouldResume) {
-      console.error("Error: --new cannot be used with --resume");
-      process.exit(1);
-    }
+    validateNewConversationFlagConflicts({
+      forceNewConversation,
+      checks: [
+        { when: shouldContinue, message: "--new cannot be used with --continue" },
+        {
+          when: specifiedConversationId,
+          message: "--new cannot be used with --conversation",
+        },
+        { when: shouldResume, message: "--new cannot be used with --resume" },
+      ],
+    });
+  } catch (error) {
+    console.error(
+      error instanceof Error ? `Error: ${error.message}` : String(error),
+    );
+    process.exit(1);
   }
 
   // Validate --import flag (also accepts legacy --from-af)
   // Detect if it's a registry handle (e.g., @author/name) or a local file path
   let isRegistryImport = false;
   if (fromAfFile) {
-    if (specifiedAgentId) {
-      console.error("Error: --import cannot be used with --agent");
-      process.exit(1);
-    }
-    if (specifiedAgentName) {
-      console.error("Error: --import cannot be used with --name");
-      process.exit(1);
-    }
-    if (shouldResume) {
-      console.error("Error: --import cannot be used with --resume");
-      process.exit(1);
-    }
-    if (forceNew) {
-      console.error("Error: --import cannot be used with --new");
+    try {
+      validateImportFlagConflicts({
+        importSource: fromAfFile,
+        checks: [
+          { when: specifiedAgentId, message: "--import cannot be used with --agent" },
+          { when: specifiedAgentName, message: "--import cannot be used with --name" },
+          { when: shouldResume, message: "--import cannot be used with --resume" },
+          { when: forceNew, message: "--import cannot be used with --new" },
+        ],
+      });
+    } catch (error) {
+      console.error(
+        error instanceof Error ? `Error: ${error.message}` : String(error),
+      );
       process.exit(1);
     }
 
@@ -723,9 +745,9 @@ async function main(): Promise<void> {
       // Definitely a registry handle
       isRegistryImport = true;
       // Validate handle format
-      const normalized = fromAfFile.slice(1);
-      const parts = normalized.split("/");
-      if (parts.length !== 2 || !parts[0] || !parts[1]) {
+      try {
+        validateRegistryHandleOrThrow(fromAfFile);
+      } catch {
         console.error(
           `Error: Invalid registry handle "${fromAfFile}". Use format: letta --import @author/agentname`,
         );

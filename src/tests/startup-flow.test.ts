@@ -186,4 +186,22 @@ describe("Startup Flow - Smoke", () => {
     expect(result.stderr).toContain("Missing LETTA_API_KEY");
     expect(result.stderr).not.toContain("Invalid registry handle");
   });
+
+  test("--max-turns and --pre-load-skills are accepted in headless mode", async () => {
+    const result = await runCli(
+      [
+        "--new-agent",
+        "-p",
+        "Say OK",
+        "--max-turns",
+        "2",
+        "--pre-load-skills",
+        "foo,bar",
+      ],
+      { expectExit: 1 },
+    );
+    expect(result.stderr).toContain("Missing LETTA_API_KEY");
+    expect(result.stderr).not.toContain("Unknown option '--max-turns'");
+    expect(result.stderr).not.toContain("Unknown option '--pre-load-skills'");
+  });
 });
