@@ -3439,6 +3439,20 @@ export default function App({
                 CONVERSATION_BUSY_RETRY_BASE_DELAY_MS *
                 2 ** (conversationBusyRetriesRef.current - 1);
 
+              // Log the conversation-busy error
+              telemetry.trackError(
+                "retry_conversation_busy",
+                errorDetail || "Conversation is busy",
+                "pre_stream_retry",
+                {
+                  httpStatus:
+                    preStreamError instanceof APIError
+                      ? preStreamError.status
+                      : undefined,
+                  modelId: currentModelId || undefined,
+                },
+              );
+
               // Show status message
               const statusId = uid("status");
               buffersRef.current.byId.set(statusId, {
