@@ -151,4 +151,39 @@ describe("Startup Flow - Smoke", () => {
     expect(result.stderr).toContain("Missing LETTA_API_KEY");
     expect(result.stderr).not.toContain("Invalid toolset");
   });
+
+  test("--memfs-startup is accepted for headless startup", async () => {
+    const result = await runCli(
+      ["--new-agent", "-p", "Say OK", "--memfs-startup", "background"],
+      {
+        expectExit: 1,
+      },
+    );
+    expect(result.stderr).toContain("Missing LETTA_API_KEY");
+    expect(result.stderr).not.toContain("Unknown option '--memfs-startup'");
+  });
+
+  test("-c alias for --continue is accepted", async () => {
+    const result = await runCli(["-p", "Say OK", "-c"], {
+      expectExit: 1,
+    });
+    expect(result.stderr).toContain("Missing LETTA_API_KEY");
+    expect(result.stderr).not.toContain("Unknown option '-c'");
+  });
+
+  test("-C alias for --conversation is accepted", async () => {
+    const result = await runCli(["-p", "Say OK", "-C", "conv-123"], {
+      expectExit: 1,
+    });
+    expect(result.stderr).toContain("Missing LETTA_API_KEY");
+    expect(result.stderr).not.toContain("Unknown option '-C'");
+  });
+
+  test("--import handle is accepted in headless mode", async () => {
+    const result = await runCli(["--import", "@author/agent", "-p", "Say OK"], {
+      expectExit: 1,
+    });
+    expect(result.stderr).toContain("Missing LETTA_API_KEY");
+    expect(result.stderr).not.toContain("Invalid registry handle");
+  });
 });

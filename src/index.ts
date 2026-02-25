@@ -1,5 +1,4 @@
 #!/usr/bin/env bun
-import { parseArgs } from "node:util";
 import { APIError } from "@letta-ai/letta-client/core/error";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
@@ -21,6 +20,15 @@ import {
 import { updateAgentLLMConfig, updateAgentSystemPrompt } from "./agent/modify";
 import { resolveSkillSourcesSelection } from "./agent/skillSources";
 import { LETTA_CLOUD_API_URL } from "./auth/oauth";
+import {
+  parseCliArgs,
+  preprocessCliArgs,
+  type ParsedCliArgs,
+} from "./cli/args";
+import {
+  normalizeConversationShorthandFlags,
+  parseCsvListFlag,
+} from "./cli/flagUtils";
 import { ConversationSelector } from "./cli/components/ConversationSelector";
 import { formatErrorDetails } from "./cli/helpers/errorFormatter";
 import type { ApprovalRequest } from "./cli/helpers/stream";
@@ -67,7 +75,7 @@ OPTIONS
   -h, --help            Show this help and exit
   -v, --version         Print version and exit
   --info                Show current directory, skills, and pinned agents
-  --continue            Resume last session (agent + conversation) directly
+  -c, --continue        Resume last session (agent + conversation) directly
   -r, --resume          Open agent selector UI after loading
   --new                 Create new conversation (for concurrent sessions)
   --new-agent           Create new agent directly (skip profile selection)
@@ -94,6 +102,7 @@ OPTIONS
                         Use @author/name to import from the agent registry
   --memfs               Enable memory filesystem for this agent
   --no-memfs            Disable memory filesystem for this agent
+  --memfs-startup <m>   Startup memfs pull policy for headless mode: blocking, background, or skip
   --no-system-info-reminder
                         Disable first-turn environment reminder (device/git/cwd context)
   --reflection-trigger <mode>
@@ -398,69 +407,14 @@ async function main(): Promise<void> {
     }
   });
 
-  // Parse command-line arguments (Bun-idiomatic approach using parseArgs)
-  // Preprocess args to support --conv as alias for --conversation
-  const processedArgs = process.argv.map((arg) =>
-    arg === "--conv" ? "--conversation" : arg,
-  );
+  // Parse command-line arguments from a shared schema used by both TUI and headless flows.
+  // Preprocess args to support --conv as an alias for --conversation.
+  const processedArgs = preprocessCliArgs(process.argv);
 
-  let values: Record<string, unknown>;
-  let positionals: string[];
+  let values: ParsedCliArgs["values"];
+  let positionals: ParsedCliArgs["positionals"];
   try {
-    const parsed = parseArgs({
-      args: processedArgs,
-      options: {
-        help: { type: "boolean", short: "h" },
-        version: { type: "boolean", short: "v" },
-        info: { type: "boolean" },
-        continue: { type: "boolean" }, // Deprecated - kept for error message
-        resume: { type: "boolean", short: "r" }, // Resume last session (or specific conversation with --conversation)
-        conversation: { type: "string", short: "C" }, // Specific conversation ID to resume (--conv alias supported)
-        "new-agent": { type: "boolean" }, // Force create a new agent
-        new: { type: "boolean" }, // Deprecated - kept for helpful error message
-        "init-blocks": { type: "string" },
-        "base-tools": { type: "string" },
-        agent: { type: "string", short: "a" },
-        name: { type: "string", short: "n" },
-        model: { type: "string", short: "m" },
-        embedding: { type: "string" },
-        system: { type: "string", short: "s" },
-        "system-custom": { type: "string" },
-        "system-append": { type: "string" },
-        "memory-blocks": { type: "string" },
-        "block-value": { type: "string", multiple: true },
-        toolset: { type: "string" },
-        prompt: { type: "boolean", short: "p" },
-        run: { type: "boolean" },
-        tools: { type: "string" },
-        allowedTools: { type: "string" },
-        disallowedTools: { type: "string" },
-        "permission-mode": { type: "string" },
-        yolo: { type: "boolean" },
-        "output-format": { type: "string" },
-        "input-format": { type: "string" },
-        "include-partial-messages": { type: "boolean" },
-        "from-agent": { type: "string" },
-        skills: { type: "string" },
-        "skill-sources": { type: "string" },
-        "pre-load-skills": { type: "string" },
-        "from-af": { type: "string" },
-        import: { type: "string" },
-        tags: { type: "string" },
-
-        memfs: { type: "boolean" },
-        "no-memfs": { type: "boolean" },
-        "no-skills": { type: "boolean" },
-        "no-bundled-skills": { type: "boolean" },
-        "no-system-info-reminder": { type: "boolean" },
-        "reflection-trigger": { type: "string" },
-        "reflection-behavior": { type: "string" },
-        "reflection-step-count": { type: "string" },
-        "max-turns": { type: "string" },
-      },
-      strict: true,
-      allowPositionals: true,
-    });
+    const parsed = parseCliArgs(processedArgs, true);
     values = parsed.values;
     positionals = parsed.positionals;
   } catch (error) {
@@ -532,17 +486,18 @@ async function main(): Promise<void> {
   const initBlocksRaw = values["init-blocks"] as string | undefined;
   const baseToolsRaw = values["base-tools"] as string | undefined;
   let specifiedAgentId = (values.agent as string | undefined) ?? null;
-
-  // Handle --conv {agent-id} shorthand: --conv agent-xyz → --agent agent-xyz --conv default
-  if (specifiedConversationId?.startsWith("agent-")) {
-    if (specifiedAgentId && specifiedAgentId !== specifiedConversationId) {
-      console.error(
-        `Error: Conflicting agent IDs: --agent ${specifiedAgentId} vs --conv ${specifiedConversationId}`,
-      );
-      process.exit(1);
-    }
-    specifiedAgentId = specifiedConversationId;
-    specifiedConversationId = "default";
+  try {
+    const normalized = normalizeConversationShorthandFlags({
+      specifiedConversationId,
+      specifiedAgentId,
+    });
+    specifiedConversationId = normalized.specifiedConversationId ?? null;
+    specifiedAgentId = normalized.specifiedAgentId ?? null;
+  } catch (error) {
+    console.error(
+      error instanceof Error ? `Error: ${error.message}` : String(error),
+    );
+    process.exit(1);
   }
 
   // Validate --conv default requires --agent (unless --new-agent will create one)
@@ -613,19 +568,7 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  let initBlocks: string[] | undefined;
-  if (initBlocksRaw !== undefined) {
-    const trimmed = initBlocksRaw.trim();
-    if (!trimmed || trimmed.toLowerCase() === "none") {
-      // Explicitly requested zero blocks
-      initBlocks = [];
-    } else {
-      initBlocks = trimmed
-        .split(",")
-        .map((name) => name.trim())
-        .filter((name) => name.length > 0);
-    }
-  }
+  const initBlocks = parseCsvListFlag(initBlocksRaw);
 
   // --base-tools only makes sense when creating a brand new agent
   if (baseToolsRaw && !forceNew) {
@@ -635,18 +578,7 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  let baseTools: string[] | undefined;
-  if (baseToolsRaw !== undefined) {
-    const trimmed = baseToolsRaw.trim();
-    if (!trimmed || trimmed.toLowerCase() === "none") {
-      baseTools = [];
-    } else {
-      baseTools = trimmed
-        .split(",")
-        .map((name) => name.trim())
-        .filter((name) => name.length > 0);
-    }
-  }
+  const baseTools = parseCsvListFlag(baseToolsRaw);
 
   // Validate toolset if provided
   if (
@@ -988,7 +920,7 @@ async function main(): Promise<void> {
 
     const { handleHeadlessCommand } = await import("./headless");
     await handleHeadlessCommand(
-      processedArgs,
+      { values, positionals },
       specifiedModel,
       skillsDirectory,
       resolvedSkillSources,

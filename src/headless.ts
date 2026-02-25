@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { parseArgs } from "node:util";
 import type { Letta } from "@letta-ai/letta-client";
 import { APIError } from "@letta-ai/letta-client/core/error";
 import type {
@@ -36,6 +35,11 @@ import { updateAgentLLMConfig, updateAgentSystemPrompt } from "./agent/modify";
 import { resolveSkillSourcesSelection } from "./agent/skillSources";
 import type { SkillSource } from "./agent/skills";
 import { SessionStats } from "./agent/stats";
+import type { ParsedCliArgs } from "./cli/args";
+import {
+  normalizeConversationShorthandFlags,
+  parseCsvListFlag,
+} from "./cli/flagUtils";
 import {
   createBuffers,
   type Line,
@@ -248,68 +252,13 @@ async function applyReflectionOverrides(
 }
 
 export async function handleHeadlessCommand(
-  argv: string[],
+  parsedArgs: ParsedCliArgs,
   model?: string,
   skillsDirectoryOverride?: string,
   skillSourcesOverride?: SkillSource[],
   systemInfoReminderEnabledOverride?: boolean,
 ) {
-  // Parse CLI args
-  // Include all flags from index.ts to prevent them from being treated as positionals
-  const { values, positionals } = parseArgs({
-    args: argv,
-    options: {
-      // Flags used in headless mode
-      continue: { type: "boolean", short: "c" },
-      resume: { type: "boolean", short: "r" },
-      conversation: { type: "string" },
-      "new-agent": { type: "boolean" },
-      new: { type: "boolean" }, // Deprecated - kept for helpful error message
-      agent: { type: "string", short: "a" },
-      model: { type: "string", short: "m" },
-      embedding: { type: "string" },
-      system: { type: "string", short: "s" },
-      "system-custom": { type: "string" },
-      "system-append": { type: "string" },
-      "memory-blocks": { type: "string" },
-      "block-value": { type: "string", multiple: true },
-      toolset: { type: "string" },
-      prompt: { type: "boolean", short: "p" },
-      "output-format": { type: "string" },
-      "input-format": { type: "string" },
-      "include-partial-messages": { type: "boolean" },
-      "from-agent": { type: "string" },
-      // Additional flags from index.ts that need to be filtered out
-      help: { type: "boolean", short: "h" },
-      version: { type: "boolean", short: "v" },
-      run: { type: "boolean" },
-      tools: { type: "string" },
-      allowedTools: { type: "string" },
-      disallowedTools: { type: "string" },
-      "permission-mode": { type: "string" },
-      yolo: { type: "boolean" },
-      skills: { type: "string" },
-      "skill-sources": { type: "string" },
-      "pre-load-skills": { type: "string" },
-      "init-blocks": { type: "string" },
-      "base-tools": { type: "string" },
-      "from-af": { type: "string" },
-      tags: { type: "string" },
-
-      memfs: { type: "boolean" },
-      "no-memfs": { type: "boolean" },
-      "memfs-startup": { type: "string" }, // "blocking" | "background" | "skip"
-      "no-skills": { type: "boolean" },
-      "no-bundled-skills": { type: "boolean" },
-      "no-system-info-reminder": { type: "boolean" },
-      "reflection-trigger": { type: "string" },
-      "reflection-behavior": { type: "string" },
-      "reflection-step-count": { type: "string" },
-      "max-turns": { type: "string" }, // Maximum number of agentic turns
-    },
-    strict: false,
-    allowPositionals: true,
-  });
+  const { values, positionals } = parsedArgs;
 
   // Set tool filter if provided (controls which tools are loaded)
   if (values.tools !== undefined) {
@@ -452,7 +401,9 @@ export async function handleHeadlessCommand(
       ? "standard"
       : undefined;
   const shouldAutoEnableMemfsForNewAgent = !memfsFlag && !noMemfsFlag;
-  const fromAfFile = values["from-af"] as string | undefined;
+  const fromAfFile =
+    (values.import as string | undefined) ??
+    (values["from-af"] as string | undefined);
   const preLoadSkillsRaw = values["pre-load-skills"] as string | undefined;
   const systemInfoReminderEnabled =
     systemInfoReminderEnabledOverride ??
@@ -487,19 +438,7 @@ export async function handleHeadlessCommand(
     }
   })();
 
-  // Parse and validate base tools
-  let tags: string[] | undefined;
-  if (tagsRaw !== undefined) {
-    const trimmed = tagsRaw.trim();
-    if (!trimmed || trimmed.toLowerCase() === "none") {
-      tags = [];
-    } else {
-      tags = trimmed
-        .split(",")
-        .map((name) => name.trim())
-        .filter((name) => name.length > 0);
-    }
-  }
+  const tags = parseCsvListFlag(tagsRaw);
 
   // Parse and validate max-turns if provided
   let maxTurns: number | undefined;
@@ -521,16 +460,18 @@ export async function handleHeadlessCommand(
     process.exit(1);
   }
 
-  // Handle --conv {agent-id} shorthand: --conv agent-xyz → --agent agent-xyz --conv default
-  if (specifiedConversationId?.startsWith("agent-")) {
-    if (specifiedAgentId && specifiedAgentId !== specifiedConversationId) {
-      console.error(
-        `Error: Conflicting agent IDs: --agent ${specifiedAgentId} vs --conv ${specifiedConversationId}`,
-      );
-      process.exit(1);
-    }
-    specifiedAgentId = specifiedConversationId;
-    specifiedConversationId = "default";
+  try {
+    const normalized = normalizeConversationShorthandFlags({
+      specifiedConversationId,
+      specifiedAgentId,
+    });
+    specifiedConversationId = normalized.specifiedConversationId ?? undefined;
+    specifiedAgentId = normalized.specifiedAgentId ?? undefined;
+  } catch (error) {
+    console.error(
+      error instanceof Error ? `Error: ${error.message}` : String(error),
+    );
+    process.exit(1);
   }
 
   // Validate --conv default requires --agent (unless --new-agent will create one)
@@ -634,18 +575,7 @@ export async function handleHeadlessCommand(
     process.exit(1);
   }
 
-  let initBlocks: string[] | undefined;
-  if (initBlocksRaw !== undefined) {
-    const trimmed = initBlocksRaw.trim();
-    if (!trimmed || trimmed.toLowerCase() === "none") {
-      initBlocks = [];
-    } else {
-      initBlocks = trimmed
-        .split(",")
-        .map((name) => name.trim())
-        .filter((name) => name.length > 0);
-    }
-  }
+  const initBlocks = parseCsvListFlag(initBlocksRaw);
 
   if (baseToolsRaw && !forceNew) {
     console.error(
@@ -654,18 +584,7 @@ export async function handleHeadlessCommand(
     process.exit(1);
   }
 
-  let baseTools: string[] | undefined;
-  if (baseToolsRaw !== undefined) {
-    const trimmed = baseToolsRaw.trim();
-    if (!trimmed || trimmed.toLowerCase() === "none") {
-      baseTools = [];
-    } else {
-      baseTools = trimmed
-        .split(",")
-        .map((name) => name.trim())
-        .filter((name) => name.length > 0);
-    }
-  }
+  const baseTools = parseCsvListFlag(baseToolsRaw);
 
   // Validate system prompt options (--system and --system-custom are mutually exclusive)
   if (systemPromptPreset && systemCustom) {

@@ -1,0 +1,34 @@
+export function parseCsvListFlag(value: string | undefined): string[] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.toLowerCase() === "none") {
+    return [];
+  }
+
+  return trimmed
+    .split(",")
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+}
+
+export function normalizeConversationShorthandFlags(options: {
+  specifiedConversationId: string | null | undefined;
+  specifiedAgentId: string | null | undefined;
+}) {
+  let { specifiedConversationId, specifiedAgentId } = options;
+
+  if (specifiedConversationId?.startsWith("agent-")) {
+    if (specifiedAgentId && specifiedAgentId !== specifiedConversationId) {
+      throw new Error(
+        `Conflicting agent IDs: --agent ${specifiedAgentId} vs --conv ${specifiedConversationId}`,
+      );
+    }
+    specifiedAgentId = specifiedConversationId;
+    specifiedConversationId = "default";
+  }
+
+  return { specifiedConversationId, specifiedAgentId };
+}
