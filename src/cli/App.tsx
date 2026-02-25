@@ -10566,7 +10566,7 @@ ${SYSTEM_REMINDER_CLOSE}
             compaction_settings: {
               model: existing?.model ?? "",
               ...existing,
-              mode: mode as "all" | "sliding_window",
+              mode: mode as "all" | "sliding_window" | "self_compact_all" | "self_compact_sliding_window",
               ...(defaultPrompt !== undefined ? { prompt: defaultPrompt } : {}),
             },
           });
