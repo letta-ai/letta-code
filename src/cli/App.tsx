@@ -3491,6 +3491,20 @@ export default function App({
                   : null;
               const delayMs = retryAfterMs ?? 1000 * 2 ** (attempt - 1);
 
+              // Log the error that triggered the retry
+              telemetry.trackError(
+                "retry_pre_stream_transient",
+                errorDetail || "Pre-stream transient error",
+                "pre_stream_retry",
+                {
+                  httpStatus:
+                    preStreamError instanceof APIError
+                      ? preStreamError.status
+                      : undefined,
+                  modelId: currentModelId || undefined,
+                },
+              );
+
               const statusId = uid("status");
               buffersRef.current.byId.set(statusId, {
                 kind: "status",
@@ -4674,6 +4688,19 @@ export default function App({
             const attempt = llmApiErrorRetriesRef.current;
             const delayMs = 1000 * 2 ** (attempt - 1); // 1s, 2s, 4s
 
+            // Log the error that triggered the retry
+            telemetry.trackError(
+              "retry_post_stream_error",
+              detailFromRun ||
+                fallbackError ||
+                `Stream stopped: ${stopReasonToHandle}`,
+              "post_stream_retry",
+              {
+                modelId: currentModelId || undefined,
+                runId: lastRunId ?? undefined,
+              },
+            );
+
             // Show subtle grey status message
             const statusId = uid("status");
             const statusLines = [getRetryStatusMessage(detailFromRun)];
@@ -4740,9 +4767,9 @@ export default function App({
             },
           );
 
-          // If we have a client-side stream error (e.g., JSON parse error), show it directly
-          // Fallback error: no run_id available, show whatever error message we have
-          if (fallbackError) {
+          // If we have a client-side stream error with no run_id, show it directly.
+          // When lastRunId is present, prefer the richer server-side error details below.
+          if (fallbackError && !lastRunId) {
             setNetworkPhase("error");
             const errorMsg = lastRunId
               ? `Stream error: ${fallbackError}\n(run_id: ${lastRunId})`
