@@ -3069,7 +3069,7 @@ export default function App({
 
       // Track error in telemetry (unless explicitly skipped)
       const skip =
-        typeof options === "boolean" ? options : options?.skip ?? false;
+        typeof options === "boolean" ? options : (options?.skip ?? false);
       if (!skip) {
         const opts = typeof options === "object" ? options : undefined;
         telemetry.trackError(
