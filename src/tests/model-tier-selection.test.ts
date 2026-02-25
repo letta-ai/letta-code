@@ -106,7 +106,7 @@ describe("getReasoningTierOptionsForHandle", () => {
 
   test("returns empty options for models without reasoning tiers", () => {
     const options = getReasoningTierOptionsForHandle(
-      "anthropic/claude-haiku-4-5-20251001",
+      "anthropic/claude-haiku-4-5",
     );
     expect(options).toEqual([]);
   });

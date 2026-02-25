@@ -13,7 +13,7 @@ describe("getSubagentModelDisplay", () => {
 
   test("formats non-BYOK handles using short labels", () => {
     const display = getSubagentModelDisplay(
-      "anthropic/claude-haiku-4-5-20251001",
+      "anthropic/claude-haiku-4-5",
     );
     expect(display).toEqual({
       label: "Haiku 4.5",
@@ -24,7 +24,7 @@ describe("getSubagentModelDisplay", () => {
 
   test("marks lc-* handles as BYOK", () => {
     const display = getSubagentModelDisplay(
-      "lc-anthropic/claude-haiku-4-5-20251001",
+      "lc-anthropic/claude-haiku-4-5",
     );
     expect(display).toEqual({
       label: "Haiku 4.5",

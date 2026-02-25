@@ -174,7 +174,7 @@
   },
   {
     "id": "haiku",
-    "handle": "anthropic/claude-haiku-4-5-20251001",
+    "handle": "anthropic/claude-haiku-4-5",
     "label": "Haiku 4.5",
     "description": "Anthropic's fastest model",
     "updateArgs": {
