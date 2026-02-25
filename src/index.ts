@@ -1982,7 +1982,7 @@ async function main(): Promise<void> {
             }),
           ]);
           setResumeData(data);
-          setResumedExistingConversation(true);
+          setResumedExistingConversation(data.messageHistory.length > 0);
         }
 
         // Ensure memfs sync completed (already resolved for default path via Promise.all above)
