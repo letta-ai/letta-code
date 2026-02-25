@@ -33,6 +33,7 @@ import {
   fetchRunErrorDetail,
   getPreStreamErrorAction,
   isApprovalPendingError,
+  isEmptyResponseRetryable,
   isInvalidToolCallIdsError,
   parseRetryAfterHeaderMs,
   rebuildInputWithFreshDenials,
@@ -298,6 +299,10 @@ const EAGER_CANCEL = true;
 
 // Maximum retries for transient LLM API errors (matches headless.ts)
 const LLM_API_ERROR_MAX_RETRIES = 3;
+
+// Retry config for empty response errors (Opus 4.6 SADs)
+// Retry 1: same input. Retry 2: with system reminder nudge.
+const EMPTY_RESPONSE_MAX_RETRIES = 2;
 
 // Retry config for 409 "conversation busy" errors (exponential backoff)
 const CONVERSATION_BUSY_MAX_RETRIES = 3; // 2.5s -> 5s -> 10s
@@ -1610,6 +1615,7 @@ export default function App({
 
   // Retry counter for transient LLM API errors (ref for synchronous access in loop)
   const llmApiErrorRetriesRef = useRef(0);
+  const emptyResponseRetriesRef = useRef(0);
 
   // Retry counter for 409 "conversation busy" errors
   const conversationBusyRetriesRef = useRef(0);
@@ -3360,6 +3366,7 @@ export default function App({
       // Reset retry counters for new conversation turns (fresh budget per user message)
       if (!allowReentry) {
         llmApiErrorRetriesRef.current = 0;
+        emptyResponseRetriesRef.current = 0;
         conversationBusyRetriesRef.current = 0;
       }
 
@@ -3954,6 +3961,7 @@ export default function App({
             })();
             closeTrajectorySegment();
             llmApiErrorRetriesRef.current = 0; // Reset retry counter on success
+            emptyResponseRetriesRef.current = 0;
             conversationBusyRetriesRef.current = 0;
             lastDequeuedMessageRef.current = null; // Clear - message was processed successfully
             lastSentInputRef.current = null; // Clear - no recovery needed
@@ -4800,6 +4808,55 @@ export default function App({
             continue;
           }
 
+          // Empty LLM response retry (e.g. Opus 4.6 occasionally returns no content).
+          // Retry 1: same input unchanged. Retry 2: append system reminder nudging the model.
+          if (
+            isEmptyResponseRetryable(
+              stopReasonToHandle === "llm_api_error" ? "llm_error" : undefined,
+              detailFromRun,
+              emptyResponseRetriesRef.current,
+              EMPTY_RESPONSE_MAX_RETRIES,
+            )
+          ) {
+            emptyResponseRetriesRef.current += 1;
+            const attempt = emptyResponseRetriesRef.current;
+            const delayMs = 500 * attempt;
+
+            // Only append a nudge on the last attempt
+            if (attempt >= EMPTY_RESPONSE_MAX_RETRIES) {
+              currentInput = [
+                ...currentInput,
+                {
+                  type: "message" as const,
+                  role: "system" as const,
+                  content: `<system-reminder>The previous response was empty. Please provide a response with either text content or a tool call.</system-reminder>`,
+                },
+              ];
+            }
+
+            const statusId = uid("status");
+            buffersRef.current.byId.set(statusId, {
+              kind: "status",
+              id: statusId,
+              lines: [
+                `Empty LLM response, retrying (attempt ${attempt}/${EMPTY_RESPONSE_MAX_RETRIES})...`,
+              ],
+            });
+            buffersRef.current.order.push(statusId);
+            refreshDerived();
+
+            await new Promise((resolve) => setTimeout(resolve, delayMs));
+
+            buffersRef.current.byId.delete(statusId);
+            buffersRef.current.order = buffersRef.current.order.filter(
+              (id) => id !== statusId,
+            );
+            refreshDerived();
+
+            buffersRef.current.interrupted = false;
+            continue;
+          }
+
           // Check if this is a retriable error (transient LLM API error)
           const retriable = await isRetriableError(
             stopReasonToHandle,
@@ -4870,6 +4927,7 @@ export default function App({
 
           // Reset retry counters on non-retriable error (or max retries exceeded)
           llmApiErrorRetriesRef.current = 0;
+          emptyResponseRetriesRef.current = 0;
           conversationBusyRetriesRef.current = 0;
 
           // Mark incomplete tool calls as finished to prevent stuck blinking UI

@@ -14,6 +14,7 @@ import {
   fetchRunErrorDetail,
   getPreStreamErrorAction,
   isApprovalPendingError,
+  isEmptyResponseRetryable,
   isInvalidToolCallIdsError,
   parseRetryAfterHeaderMs,
   shouldRetryRunMetadataError,
@@ -109,6 +110,10 @@ import {
 // over transient LLM/backend issues without requiring the
 // caller to manually resubmit the prompt.
 const LLM_API_ERROR_MAX_RETRIES = 3;
+
+// Retry config for empty response errors (Opus 4.6 SADs)
+// Retry 1: same input. Retry 2: with system reminder nudge.
+const EMPTY_RESPONSE_MAX_RETRIES = 2;
 
 // Retry config for 409 "conversation busy" errors
 const CONVERSATION_BUSY_MAX_RETRIES = 1; // Only retry once, fail on 2nd 409
@@ -1443,6 +1448,7 @@ ${SYSTEM_REMINDER_CLOSE}
   // Track lastRunId outside the while loop so it's available in catch block
   let lastKnownRunId: string | null = null;
   let llmApiErrorRetries = 0;
+  let emptyResponseRetries = 0;
   let conversationBusyRetries = 0;
   markMilestone("HEADLESS_FIRST_STREAM_START");
   measureSinceMilestone("headless-setup-total", "HEADLESS_CLIENT_READY");
@@ -1792,6 +1798,7 @@ ${SYSTEM_REMINDER_CLOSE}
       if (stopReason === "end_turn") {
         // Reset retry counters on success
         llmApiErrorRetries = 0;
+        emptyResponseRetries = 0;
         conversationBusyRetries = 0;
         break;
       }
@@ -2025,6 +2032,53 @@ ${SYSTEM_REMINDER_CLOSE}
             metaError?.error_type ?? metaError?.error?.error_type;
 
           const detail = metaError?.detail ?? metaError?.error?.detail ?? "";
+
+          // Special handling for empty response errors (Opus 4.6 SADs)
+          // Empty LLM response retry (e.g. Opus 4.6 occasionally returns no content).
+          // Retry 1: same input unchanged. Retry 2: append system reminder nudging the model.
+          if (
+            isEmptyResponseRetryable(
+              errorType,
+              detail,
+              emptyResponseRetries,
+              EMPTY_RESPONSE_MAX_RETRIES,
+            )
+          ) {
+            const attempt = emptyResponseRetries + 1;
+            const delayMs = 500 * attempt;
+
+            emptyResponseRetries = attempt;
+
+            // Only append a nudge on the last attempt
+            if (attempt >= EMPTY_RESPONSE_MAX_RETRIES) {
+              const nudgeMessage: MessageCreate = {
+                role: "system",
+                content: `<system-reminder>The previous response was empty. Please provide a response with either text content or a tool call.</system-reminder>`,
+              };
+              currentInput = [...currentInput, nudgeMessage];
+            }
+
+            if (outputFormat === "stream-json") {
+              const retryMsg: RetryMessage = {
+                type: "retry",
+                reason: "llm_api_error",
+                attempt,
+                max_attempts: EMPTY_RESPONSE_MAX_RETRIES,
+                delay_ms: delayMs,
+                run_id: lastRunId ?? undefined,
+                session_id: sessionId,
+                uuid: `retry-empty-${lastRunId || randomUUID()}`,
+              };
+              console.log(JSON.stringify(retryMsg));
+            } else {
+              console.error(
+                `Empty LLM response, retrying (attempt ${attempt} of ${EMPTY_RESPONSE_MAX_RETRIES})...`,
+              );
+            }
+
+            await new Promise((resolve) => setTimeout(resolve, delayMs));
+            continue;
+          }
 
           if (shouldRetryRunMetadataError(errorType, detail)) {
             const attempt = llmApiErrorRetries + 1;
