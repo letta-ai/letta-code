@@ -13,7 +13,7 @@ interface ListenerStatusUIProps {
 }
 
 export function ListenerStatusUI(props: ListenerStatusUIProps) {
-  const { connectionId, envName, onReady } = props;
+  const { envName, onReady } = props;
   const [status, setStatus] = useState<"idle" | "receiving" | "processing">(
     "idle",
   );
@@ -50,10 +50,6 @@ export function ListenerStatusUI(props: ListenerStatusUIProps) {
         <Text bold color="green">
           The name of your environment is: {envName}
         </Text>
-      </Box>
-
-      <Box marginBottom={1}>
-        <Text dimColor>Connection ID: {connectionId}</Text>
       </Box>
 
       <Box marginBottom={1}>
