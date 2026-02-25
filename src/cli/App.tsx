@@ -4991,29 +4991,16 @@ export default function App({
             "stream_error",
           );
 
-          // Track the error in telemetry
-          telemetry.trackError(
-            fallbackError
-              ? "FallbackError"
-              : stopReasonToHandle || "unknown_stop_reason",
-            fallbackError ||
-              `Stream stopped with reason: ${stopReasonToHandle}`,
-            "message_stream",
-            {
-              modelId: currentModelId || undefined,
-              runId: lastRunId ?? undefined,
-              recentChunks: chunkLog.getEntries(),
-            },
-          );
-
           // If we have a client-side stream error with no run_id, show it directly.
           // When lastRunId is present, prefer the richer server-side error details below.
           if (fallbackError && !lastRunId) {
             setNetworkPhase("error");
-            const errorMsg = lastRunId
-              ? `Stream error: ${fallbackError}\n(run_id: ${lastRunId})`
-              : `Stream error: ${fallbackError}`;
-            appendError(errorMsg, true); // Skip telemetry - already tracked above
+            const errorMsg = `Stream error: ${fallbackError}`;
+            appendError(errorMsg, {
+              errorType: "FallbackError",
+              errorMessage: fallbackError,
+              context: "message_stream",
+            });
             appendError(ERROR_FEEDBACK_HINT, true);
 
             // Restore dequeued message to input on error
@@ -5031,6 +5018,15 @@ export default function App({
             return;
           }
 
+          // Shared telemetry options for the primary error appendError call.
+          // The first appendError in each branch carries the telemetry event;
+          // subsequent hint lines pass `true` to skip duplicate tracking.
+          const errorTelemetryBase = {
+            errorType: stopReasonToHandle || "unknown_stop_reason",
+            context: "message_stream" as const,
+            runId: lastRunId ?? undefined,
+          };
+
           // Fetch error details from the run if available (server-side errors)
           if (lastRunId) {
             try {
@@ -5044,6 +5040,9 @@ export default function App({
                   message?: string;
                   detail?: string;
                 };
+
+                const serverErrorDetail =
+                  errorData.detail || errorData.message || null;
 
                 // Pass structured error data to our formatter
                 const errorObject = {
@@ -5059,7 +5058,12 @@ export default function App({
 
                 // Encrypted content errors are self-explanatory (include /clear advice)
                 // — skip the generic "Something went wrong?" hint
-                appendError(errorDetails, true); // Skip telemetry - already tracked above
+                appendError(errorDetails, {
+                  ...errorTelemetryBase,
+                  errorMessage:
+                    serverErrorDetail ||
+                    `Stream stopped with reason: ${stopReasonToHandle}`,
+                });
 
                 if (!isEncryptedContentError(errorObject)) {
                   // Show appropriate error hint based on stop reason
@@ -5075,7 +5079,10 @@ export default function App({
                 // No error metadata, show generic error with run info
                 appendError(
                   `An error occurred during agent execution\n(run_id: ${lastRunId}, stop_reason: ${stopReason})`,
-                  true, // Skip telemetry - already tracked above
+                  {
+                    ...errorTelemetryBase,
+                    errorMessage: `Stream stopped with reason: ${stopReasonToHandle}`,
+                  },
                 );
 
                 // Show appropriate error hint based on stop reason
@@ -5088,7 +5095,10 @@ export default function App({
               // If we can't fetch error details, show generic error
               appendError(
                 `An error occurred during agent execution\n(run_id: ${lastRunId}, stop_reason: ${stopReason})\n(Unable to fetch additional error details from server)`,
-                true, // Skip telemetry - already tracked above
+                {
+                  ...errorTelemetryBase,
+                  errorMessage: `Stream stopped with reason: ${stopReasonToHandle}`,
+                },
               );
 
               // Show appropriate error hint based on stop reason
@@ -5115,7 +5125,10 @@ export default function App({
             // No run_id available - but this is unusual since errors should have run_ids
             appendError(
               `An error occurred during agent execution\n(stop_reason: ${stopReason})`,
-              true, // Skip telemetry - already tracked above
+              {
+                ...errorTelemetryBase,
+                errorMessage: `Stream stopped with reason: ${stopReasonToHandle}`,
+              },
             );
 
             // Show appropriate error hint based on stop reason
