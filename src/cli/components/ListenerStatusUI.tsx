@@ -53,6 +53,10 @@ export function ListenerStatusUI(props: ListenerStatusUIProps) {
       </Box>
 
       <Box marginBottom={1}>
+        <Text dimColor>Connection ID: {connectionId}</Text>
+      </Box>
+
+      <Box marginBottom={1}>
         {showSpinner && (
           <Text>
             <Text color={retryInfo ? "yellow" : "cyan"}>

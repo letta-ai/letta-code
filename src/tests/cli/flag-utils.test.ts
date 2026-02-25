@@ -41,11 +41,11 @@ describe("flag utils", () => {
   });
 
   test("parseJsonArrayFlag parses arrays and rejects non-arrays", () => {
-    expect(parseJsonArrayFlag('[{"label":"persona"}]', "memory-blocks")).toEqual([
-      { label: "persona" },
-    ]);
-    expect(() => parseJsonArrayFlag('{"label":"persona"}', "memory-blocks")).toThrow(
-      "memory-blocks must be a JSON array",
-    );
+    expect(
+      parseJsonArrayFlag('[{"label":"persona"}]', "memory-blocks"),
+    ).toEqual([{ label: "persona" }]);
+    expect(() =>
+      parseJsonArrayFlag('{"label":"persona"}', "memory-blocks"),
+    ).toThrow("memory-blocks must be a JSON array");
   });
 });

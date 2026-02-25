@@ -54,7 +54,14 @@ describe("shared CLI arg schema", () => {
 
   test("normalizes --conv alias to --conversation", () => {
     const parsed = parseCliArgs(
-      preprocessCliArgs(["node", "script", "--conv", "conv-123", "-p", "hello"]),
+      preprocessCliArgs([
+        "node",
+        "script",
+        "--conv",
+        "conv-123",
+        "-p",
+        "hello",
+      ]),
       true,
     );
     expect(parsed.values.conversation).toBe("conv-123");

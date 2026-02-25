@@ -1,4 +1,6 @@
-export function parseCsvListFlag(value: string | undefined): string[] | undefined {
+export function parseCsvListFlag(
+  value: string | undefined,
+): string[] | undefined {
   if (value === undefined) {
     return undefined;
   }
@@ -50,12 +52,17 @@ export function parsePositiveIntFlag(options: {
   }
   const parsed = Number.parseInt(rawValue, 10);
   if (Number.isNaN(parsed) || parsed <= 0) {
-    throw new Error(`--${flagName} must be a positive integer, got: ${rawValue}`);
+    throw new Error(
+      `--${flagName} must be a positive integer, got: ${rawValue}`,
+    );
   }
   return parsed;
 }
 
-export function parseJsonArrayFlag(rawValue: string, flagName: string): unknown[] {
+export function parseJsonArrayFlag(
+  rawValue: string,
+  flagName: string,
+): unknown[] {
   let parsed: unknown;
   try {
     parsed = JSON.parse(rawValue);

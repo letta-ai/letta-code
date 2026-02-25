@@ -44,13 +44,6 @@ import {
   resolveImportFlagAlias,
 } from "./cli/flagUtils";
 import {
-  validateConversationDefaultRequiresAgent,
-  validateConversationFlagConflicts,
-  validateImportFlagConflicts,
-  validateNewConversationFlagConflicts,
-  validateRegistryHandleOrThrow,
-} from "./cli/startupFlagValidation";
-import {
   createBuffers,
   type Line,
   markIncompleteToolsAsCancelled,
@@ -74,6 +67,13 @@ import {
   type DrainStreamHook,
   drainStreamWithResume,
 } from "./cli/helpers/stream";
+import {
+  validateConversationDefaultRequiresAgent,
+  validateConversationFlagConflicts,
+  validateImportFlagConflicts,
+  validateNewConversationFlagConflicts,
+  validateRegistryHandleOrThrow,
+} from "./cli/startupFlagValidation";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "./constants";
 import {
   mergeQueuedTurnInput,
@@ -552,7 +552,10 @@ export async function handleHeadlessCommand(
     validateNewConversationFlagConflicts({
       forceNewConversation,
       checks: [
-        { when: shouldContinue, message: "--new cannot be used with --continue" },
+        {
+          when: shouldContinue,
+          message: "--new cannot be used with --continue",
+        },
         {
           when: specifiedConversationId,
           message: "--new cannot be used with --conversation",
@@ -574,8 +577,14 @@ export async function handleHeadlessCommand(
       validateImportFlagConflicts({
         importSource: fromAfFile,
         checks: [
-          { when: specifiedAgentId, message: "--from-af cannot be used with --agent" },
-          { when: shouldContinue, message: "--from-af cannot be used with --continue" },
+          {
+            when: specifiedAgentId,
+            message: "--from-af cannot be used with --agent",
+          },
+          {
+            when: shouldContinue,
+            message: "--from-af cannot be used with --continue",
+          },
           { when: forceNew, message: "--from-af cannot be used with --new" },
         ],
       });

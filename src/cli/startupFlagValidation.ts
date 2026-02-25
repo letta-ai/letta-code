@@ -51,11 +51,7 @@ export function validateConversationDefaultRequiresAgent(options: {
   forceNew: boolean | null | undefined;
 }): void {
   const { specifiedConversationId, specifiedAgentId, forceNew } = options;
-  if (
-    specifiedConversationId === "default" &&
-    !specifiedAgentId &&
-    !forceNew
-  ) {
+  if (specifiedConversationId === "default" && !specifiedAgentId && !forceNew) {
     throw new Error("--conv default requires --agent <agent-id>");
   }
 }

@@ -39,7 +39,9 @@ export const CLI_FLAG_CATALOG = {
   continue: {
     parser: { type: "boolean", short: "c" },
     mode: "both",
-    help: { description: "Resume last session (agent + conversation) directly" },
+    help: {
+      description: "Resume last session (agent + conversation) directly",
+    },
   },
   resume: {
     parser: { type: "boolean", short: "r" },
@@ -197,9 +199,7 @@ export const CLI_FLAG_CATALOG = {
     help: {
       argLabel: "<path>",
       description: "Create agent from an AgentFile (.af) template",
-      continuationLines: [
-        "Use @author/name to import from the agent registry",
-      ],
+      continuationLines: ["Use @author/name to import from the agent registry"],
     },
   },
   tags: { parser: { type: "string" }, mode: "headless" },
@@ -273,19 +273,15 @@ const CLI_FLAG_ENTRIES = Object.entries(CLI_FLAG_CATALOG) as Array<
 
 export const CLI_OPTIONS: Record<string, CliFlagParserConfig> =
   Object.fromEntries(
-    CLI_FLAG_ENTRIES.map(([name, definition]) => [
-      name,
-      definition.parser,
-    ]),
+    CLI_FLAG_ENTRIES.map(([name, definition]) => [name, definition.parser]),
   );
 
-export function getCliFlagsForMode(mode: Exclude<CliFlagMode, "both">): string[] {
-  return CLI_FLAG_ENTRIES
-    .filter(
-      ([, definition]) =>
-        definition.mode === "both" || definition.mode === mode,
-    )
-    .map(([name]) => name);
+export function getCliFlagsForMode(
+  mode: Exclude<CliFlagMode, "both">,
+): string[] {
+  return CLI_FLAG_ENTRIES.filter(
+    ([, definition]) => definition.mode === "both" || definition.mode === mode,
+  ).map(([name]) => name);
 }
 
 const HELP_LABEL_WIDTH = 24;
@@ -303,7 +299,10 @@ function formatHelpFlagLabel(
   return `-${short}, ${longName}`;
 }
 
-function formatHelpEntry(flagName: string, definition: CliFlagDefinition): string {
+function formatHelpEntry(
+  flagName: string,
+  definition: CliFlagDefinition,
+): string {
   const help = definition.help;
   if (!help) {
     return "";
@@ -328,8 +327,7 @@ function formatHelpEntry(flagName: string, definition: CliFlagDefinition): strin
 }
 
 export function renderCliOptionsHelp(): string {
-  return CLI_FLAG_ENTRIES
-    .filter(([, definition]) => Boolean(definition.help))
+  return CLI_FLAG_ENTRIES.filter(([, definition]) => Boolean(definition.help))
     .map(([flagName, definition]) => formatHelpEntry(flagName, definition))
     .filter((entry) => entry.length > 0)
     .join("\n");

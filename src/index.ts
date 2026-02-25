@@ -21,17 +21,21 @@ import { updateAgentLLMConfig, updateAgentSystemPrompt } from "./agent/modify";
 import { resolveSkillSourcesSelection } from "./agent/skillSources";
 import { LETTA_CLOUD_API_URL } from "./auth/oauth";
 import {
+  type ParsedCliArgs,
   parseCliArgs,
   preprocessCliArgs,
   renderCliOptionsHelp,
-  type ParsedCliArgs,
 } from "./cli/args";
+import { ConversationSelector } from "./cli/components/ConversationSelector";
 import {
   normalizeConversationShorthandFlags,
   parseCsvListFlag,
   parseJsonArrayFlag,
   resolveImportFlagAlias,
 } from "./cli/flagUtils";
+import { formatErrorDetails } from "./cli/helpers/errorFormatter";
+import type { ApprovalRequest } from "./cli/helpers/stream";
+import { ProfileSelectionInline } from "./cli/profile-selection";
 import {
   validateConversationDefaultRequiresAgent,
   validateConversationFlagConflicts,
@@ -39,10 +43,6 @@ import {
   validateNewConversationFlagConflicts,
   validateRegistryHandleOrThrow,
 } from "./cli/startupFlagValidation";
-import { ConversationSelector } from "./cli/components/ConversationSelector";
-import { formatErrorDetails } from "./cli/helpers/errorFormatter";
-import type { ApprovalRequest } from "./cli/helpers/stream";
-import { ProfileSelectionInline } from "./cli/profile-selection";
 import { runSubcommand } from "./cli/subcommands/router";
 import { permissionMode } from "./permissions/mode";
 import { settingsManager } from "./settings-manager";
@@ -668,7 +668,10 @@ async function main(): Promise<void> {
     validateNewConversationFlagConflicts({
       forceNewConversation,
       checks: [
-        { when: shouldContinue, message: "--new cannot be used with --continue" },
+        {
+          when: shouldContinue,
+          message: "--new cannot be used with --continue",
+        },
         {
           when: specifiedConversationId,
           message: "--new cannot be used with --conversation",
@@ -691,9 +694,18 @@ async function main(): Promise<void> {
       validateImportFlagConflicts({
         importSource: fromAfFile,
         checks: [
-          { when: specifiedAgentId, message: "--import cannot be used with --agent" },
-          { when: specifiedAgentName, message: "--import cannot be used with --name" },
-          { when: shouldResume, message: "--import cannot be used with --resume" },
+          {
+            when: specifiedAgentId,
+            message: "--import cannot be used with --agent",
+          },
+          {
+            when: specifiedAgentName,
+            message: "--import cannot be used with --name",
+          },
+          {
+            when: shouldResume,
+            message: "--import cannot be used with --resume",
+          },
           { when: forceNew, message: "--import cannot be used with --new" },
         ],
       });
