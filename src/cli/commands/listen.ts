@@ -101,7 +101,7 @@ export async function handleListen(
   opts: ListenOptions = {},
 ): Promise<void> {
   // Handle /listen off - stop the listener
-  if (msg.trim() === "/listen off") {
+  if (msg.trim() === "/remote off") {
     const { stopListenerClient, isListenerActive } = await import(
       "../../websocket/listen-client"
     );
@@ -134,17 +134,17 @@ export async function handleListen(
       ctx.buffersRef,
       ctx.refreshDerived,
       msg,
-      "Usage: /listen [--env-name <name>]\n" +
-        "       /listen off\n\n" +
+      "Usage: /remote [--env-name <name>]\n" +
+        "       /remote off\n\n" +
         "Register this letta-code instance to receive messages from Letta Cloud.\n\n" +
         "Options:\n" +
         "  --env-name <name>  Friendly name for this environment (uses hostname if not provided)\n" +
         "  off                Stop the active listener connection\n" +
         "  -h, --help         Show this help message\n\n" +
         "Examples:\n" +
-        "  /listen                         # Start listener with hostname\n" +
-        '  /listen --env-name "work-laptop" # Start with custom name\n' +
-        "  /listen off                     # Stop listening\n\n" +
+        "  /remote                         # Start listener with hostname\n" +
+        '  /remote --env-name "work-laptop" # Start with custom name\n' +
+        "  /remote off                     # Stop listening\n\n" +
         "Once connected, this instance will listen for incoming messages from cloud agents.\n" +
         "Messages will be executed locally using your letta-code environment.",
       true,

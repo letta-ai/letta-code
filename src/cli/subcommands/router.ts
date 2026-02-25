@@ -20,7 +20,7 @@ export async function runSubcommand(argv: string[]): Promise<number | null> {
       return runMessagesSubcommand(rest);
     case "blocks":
       return runBlocksSubcommand(rest);
-    case "listen":
+    case "remote":
       return runListenSubcommand(rest);
     default:
       return null;
