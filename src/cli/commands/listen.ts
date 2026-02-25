@@ -222,7 +222,7 @@ export async function handleListen(
     }
 
     // Call register endpoint
-    const registerUrl = `${serverUrl}/v1/listeners/register`;
+    const registerUrl = `${serverUrl}/v1/environments/register`;
     const registerResponse = await fetch(registerUrl, {
       method: "POST",
       headers: {
