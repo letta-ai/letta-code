@@ -988,7 +988,7 @@ async function main(): Promise<void> {
 
     const { handleHeadlessCommand } = await import("./headless");
     await handleHeadlessCommand(
-      process.argv,
+      processedArgs,
       specifiedModel,
       skillsDirectory,
       resolvedSkillSources,
