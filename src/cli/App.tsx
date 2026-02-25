@@ -6471,7 +6471,7 @@ export default function App({
         }
 
         // Special handling for /listen command - start listener mode
-        if (trimmed === "/listen" || trimmed.startsWith("/listen ")) {
+        if (trimmed === "/remote" || trimmed.startsWith("/remote ")) {
           // Tokenize with quote support: --name "my laptop"
           const parts = Array.from(
             trimmed.matchAll(

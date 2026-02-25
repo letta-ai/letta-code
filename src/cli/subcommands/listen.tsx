@@ -123,7 +123,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
 
     // Register with cloud
     const serverUrl = getServerUrl();
-    const registerUrl = `${serverUrl}/v1/listeners/register`;
+    const registerUrl = `${serverUrl}/v1/environments/register`;
 
     const registerResponse = await fetch(registerUrl, {
       method: "POST",
