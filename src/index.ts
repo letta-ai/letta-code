@@ -416,7 +416,6 @@ async function main(): Promise<void> {
         continue: { type: "boolean" }, // Deprecated - kept for error message
         resume: { type: "boolean", short: "r" }, // Resume last session (or specific conversation with --conversation)
         conversation: { type: "string", short: "C" }, // Specific conversation ID to resume (--conv alias supported)
-        default: { type: "boolean" }, // Alias for --conv default (use agent's default conversation)
         "new-agent": { type: "boolean" }, // Force create a new agent
         new: { type: "boolean" }, // Deprecated - kept for helpful error message
         "init-blocks": { type: "string" },
@@ -525,19 +524,7 @@ async function main(): Promise<void> {
   const shouldResume = (values.resume as boolean | undefined) ?? false;
   let specifiedConversationId =
     (values.conversation as string | undefined) ?? null; // Specific conversation to resume
-  const useDefaultConv = (values.default as boolean | undefined) ?? false; // --default flag
   const forceNew = (values["new-agent"] as boolean | undefined) ?? false;
-
-  // Handle --default flag (alias for --conv default)
-  if (useDefaultConv) {
-    if (specifiedConversationId && specifiedConversationId !== "default") {
-      console.error(
-        "Error: --default cannot be used with --conversation (they're mutually exclusive)",
-      );
-      process.exit(1);
-    }
-    specifiedConversationId = "default";
-  }
 
   // --new: Create a new conversation (for concurrent sessions)
   const forceNewConversation = (values.new as boolean | undefined) ?? false;
@@ -558,8 +545,8 @@ async function main(): Promise<void> {
     specifiedConversationId = "default";
   }
 
-  // Validate --conv default requires --agent
-  if (specifiedConversationId === "default" && !specifiedAgentId) {
+  // Validate --conv default requires --agent (unless --new-agent will create one)
+  if (specifiedConversationId === "default" && !specifiedAgentId && !forceNew) {
     console.error("Error: --conv default requires --agent <agent-id>");
     console.error("Usage: letta --agent agent-xyz --conv default");
     console.error("   or: letta --conv agent-xyz (shorthand)");
