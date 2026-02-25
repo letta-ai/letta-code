@@ -202,19 +202,37 @@ export function ModelSelector({
       );
     }
 
+    // Deduplicate by handle: keep one representative entry per unique handle.
+    // Models with multiple reasoning tiers (e.g., gpt-5.3-codex none/low/med/high/max)
+    // share the same handle — the ModelReasoningSelector handles tier selection after pick.
+    const seen = new Set<string>();
+    const deduped: UiModel[] = [];
+    for (const m of available) {
+      if (seen.has(m.handle)) continue;
+      seen.add(m.handle);
+      deduped.push(pickPreferredStaticModel(m.handle) ?? m);
+    }
+
     // For free tier, put free models first, then others with standard ordering
     if (isFreeTier) {
-      const freeModels = available.filter((m) => m.free);
-      const paidModels = available.filter((m) => !m.free);
+      const freeModels = deduped.filter((m) => m.free);
+      const paidModels = deduped.filter((m) => !m.free);
       const featured = paidModels.filter((m) => m.isFeatured);
       const nonFeatured = paidModels.filter((m) => !m.isFeatured);
       return [...freeModels, ...featured, ...nonFeatured];
     }
 
-    const featured = available.filter((m) => m.isFeatured);
-    const nonFeatured = available.filter((m) => !m.isFeatured);
+    const featured = deduped.filter((m) => m.isFeatured);
+    const nonFeatured = deduped.filter((m) => !m.isFeatured);
     return [...featured, ...nonFeatured];
-  }, [typedModels, availableHandles, filterProvider, searchQuery, isFreeTier]);
+  }, [
+    typedModels,
+    availableHandles,
+    filterProvider,
+    searchQuery,
+    isFreeTier,
+    pickPreferredStaticModel,
+  ]);
 
   // BYOK models: models from chatgpt-plus-pro or lc-* providers
   const isByokHandle = useCallback(
@@ -357,20 +375,34 @@ export function ModelSelector({
   // Filter out letta/letta-free legacy model
   const serverRecommendedModels = useMemo(() => {
     if (!isSelfHosted || availableHandles === undefined) return [];
-    const available = typedModels.filter(
+    let available = typedModels.filter(
       (m) => availableHandles?.has(m.handle) && m.handle !== "letta/letta-free",
     );
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
-      return available.filter(
+      available = available.filter(
         (m) =>
           m.label.toLowerCase().includes(query) ||
           m.description.toLowerCase().includes(query) ||
           m.handle.toLowerCase().includes(query),
       );
     }
-    return available;
-  }, [isSelfHosted, typedModels, availableHandles, searchQuery]);
+    // Deduplicate by handle (same as supportedModels)
+    const seen = new Set<string>();
+    const deduped: UiModel[] = [];
+    for (const m of available) {
+      if (seen.has(m.handle)) continue;
+      seen.add(m.handle);
+      deduped.push(pickPreferredStaticModel(m.handle) ?? m);
+    }
+    return deduped;
+  }, [
+    isSelfHosted,
+    typedModels,
+    availableHandles,
+    searchQuery,
+    pickPreferredStaticModel,
+  ]);
 
   // Server-all models: ALL handles from the server (for self-hosted)
   // Filter out letta/letta-free legacy model
