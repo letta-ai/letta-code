@@ -274,42 +274,24 @@ export async function drainStream(
   markCurrentLineAsFinished(buffers);
   queueMicrotask(refresh);
 
-  // Package the approval request(s) at the end, with validation
-  let approval: ApprovalRequest | null = null;
-  let approvals: ApprovalRequest[] = [];
+  // Package the approval request(s) at the end.
+  // Always extract from streamProcessor regardless of stopReason so that
+  // drainStreamWithResume can carry them across a resume boundary (the
+  // resumed stream uses a fresh streamProcessor that won't have them).
+  const allPending = Array.from(streamProcessor.pendingApprovals.values());
+  const approvals: ApprovalRequest[] = allPending.map((a) => ({
+    toolCallId: a.toolCallId,
+    toolName: a.toolName || "",
+    toolArgs: a.toolArgs || "{}",
+  }));
+  const approval: ApprovalRequest | null = approvals[0] || null;
+  streamProcessor.pendingApprovals.clear();
 
-  if (stopReason === "requires_approval") {
-    // Convert map to array, including ALL tool_call_ids (even incomplete ones)
-    // Incomplete entries will be denied at the business logic layer
-    const allPending = Array.from(streamProcessor.pendingApprovals.values());
-    // console.log(
-    // "[drainStream] All pending approvals before processing:",
-    // JSON.stringify(allPending, null, 2),
-    // );
-
-    // Include ALL tool_call_ids - don't filter out incomplete entries
-    // Missing name/args will be handled by denial logic in App.tsx
-    // Default empty toolArgs to "{}" - empty string causes JSON.parse("") to fail
-    // This happens for tools with no parameters (e.g., EnterPlanMode, ExitPlanMode)
-    approvals = allPending.map((a) => ({
-      toolCallId: a.toolCallId,
-      toolName: a.toolName || "",
-      toolArgs: a.toolArgs || "{}",
-    }));
-
-    if (approvals.length === 0) {
-      debugWarn(
-        "drainStream",
-        "No approvals collected despite requires_approval stop reason",
-      );
-      debugWarn("drainStream", "Pending approvals map:", allPending);
-    } else {
-      // Set legacy singular field for backward compatibility
-      approval = approvals[0] || null;
-    }
-
-    // Clear the map for next turn
-    streamProcessor.pendingApprovals.clear();
+  if (stopReason === "requires_approval" && approvals.length === 0) {
+    debugWarn(
+      "drainStream",
+      "No approvals collected despite requires_approval stop reason",
+    );
   }
 
   const apiDurationMs = performance.now() - startTime;
@@ -372,8 +354,10 @@ export async function drainStreamWithResume(
     abortSignal &&
     !abortSignal.aborted
   ) {
-    // Preserve the original error in case resume fails
+    // Preserve original state in case resume needs to merge or fails
     const originalFallbackError = result.fallbackError;
+    const originalApprovals = result.approvals;
+    const originalApproval = result.approval;
 
     try {
       const client = await getClient();
@@ -413,6 +397,18 @@ export async function drainStreamWithResume(
       // Use the resume result (should have proper stop_reason now)
       // Clear the original stream error since we recovered
       result = resumeResult;
+
+      // The resumed stream uses a fresh streamProcessor that won't have
+      // approval_request_message chunks from before the disconnect (they
+      // had seq_id <= lastSeqId). Carry them over from the original drain.
+      if (
+        result.stopReason === "requires_approval" &&
+        (result.approvals?.length ?? 0) === 0 &&
+        (originalApprovals?.length ?? 0) > 0
+      ) {
+        result.approvals = originalApprovals;
+        result.approval = originalApproval;
+      }
     } catch (_e) {
       // Resume failed - stick with the error stop_reason
       // Restore the original stream error for display
