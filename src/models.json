@@ -226,7 +226,7 @@
     "id": "gpt-5.3-codex-plus-pro-high",
     "handle": "chatgpt-plus-pro/gpt-5.3-codex",
     "label": "GPT-5.3 Codex",
-    "description": "GPT-5.3 Codex (high reasoning) via ChatGPT Plus/Pro",
+    "description": "OpenAI's best coding model (high reasoning)",
     "isFeatured": true,
     "updateArgs": {
       "reasoning_effort": "high",
@@ -410,7 +410,6 @@
     "handle": "openai/gpt-5.2",
     "label": "GPT-5.2",
     "description": "Latest general-purpose GPT (med reasoning)",
-    "isFeatured": true,
     "updateArgs": {
       "reasoning_effort": "medium",
       "verbosity": "medium",
@@ -440,6 +439,72 @@
     "updateArgs": {
       "reasoning_effort": "xhigh",
       "verbosity": "medium",
+      "context_window": 272000,
+      "max_output_tokens": 128000,
+      "parallel_tool_calls": true
+    }
+  },
+  {
+    "id": "gpt-5.3-codex-none",
+    "handle": "openai/gpt-5.3-codex",
+    "label": "GPT-5.3-Codex",
+    "description": "GPT-5.3 variant (no reasoning) optimized for coding",
+    "updateArgs": {
+      "reasoning_effort": "none",
+      "verbosity": "low",
+      "context_window": 272000,
+      "max_output_tokens": 128000,
+      "parallel_tool_calls": true
+    }
+  },
+  {
+    "id": "gpt-5.3-codex-low",
+    "handle": "openai/gpt-5.3-codex",
+    "label": "GPT-5.3-Codex",
+    "description": "GPT-5.3 variant (low reasoning) optimized for coding",
+    "updateArgs": {
+      "reasoning_effort": "low",
+      "verbosity": "low",
+      "context_window": 272000,
+      "max_output_tokens": 128000,
+      "parallel_tool_calls": true
+    }
+  },
+  {
+    "id": "gpt-5.3-codex-medium",
+    "handle": "openai/gpt-5.3-codex",
+    "label": "GPT-5.3-Codex",
+    "description": "GPT-5.3 variant (med reasoning) optimized for coding",
+    "updateArgs": {
+      "reasoning_effort": "medium",
+      "verbosity": "low",
+      "context_window": 272000,
+      "max_output_tokens": 128000,
+      "parallel_tool_calls": true
+    }
+  },
+  {
+    "id": "gpt-5.3-codex-high",
+    "handle": "openai/gpt-5.3-codex",
+    "label": "GPT-5.3-Codex",
+    "description": "OpenAI's best coding model (high reasoning)",
+    "isFeatured": true,
+    "updateArgs": {
+      "reasoning_effort": "high",
+      "verbosity": "low",
+      "context_window": 272000,
+      "max_output_tokens": 128000,
+      "parallel_tool_calls": true
+    }
+  },
+  {
+    "id": "gpt-5.3-codex-xhigh",
+    "handle": "openai/gpt-5.3-codex",
+    "label": "GPT-5.3-Codex",
+    "description": "GPT-5.3 variant (max reasoning) optimized for coding",
+    "updateArgs": {
+      "reasoning_effort": "xhigh",
+      "verbosity": "low",
       "context_window": 272000,
       "max_output_tokens": 128000,
       "parallel_tool_calls": true

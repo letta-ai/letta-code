@@ -48,6 +48,24 @@ describe("getReasoningTierOptionsForHandle", () => {
     ]);
   });
 
+  test("returns ordered reasoning options for gpt-5.3-codex", () => {
+    const options = getReasoningTierOptionsForHandle("openai/gpt-5.3-codex");
+    expect(options.map((option) => option.effort)).toEqual([
+      "none",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+    ]);
+    expect(options.map((option) => option.modelId)).toEqual([
+      "gpt-5.3-codex-none",
+      "gpt-5.3-codex-low",
+      "gpt-5.3-codex-medium",
+      "gpt-5.3-codex-high",
+      "gpt-5.3-codex-xhigh",
+    ]);
+  });
+
   test("returns byok reasoning options for chatgpt-plus-pro gpt-5.3-codex", () => {
     const options = getReasoningTierOptionsForHandle(
       "chatgpt-plus-pro/gpt-5.3-codex",
