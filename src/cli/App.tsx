@@ -1733,15 +1733,123 @@ export default function App({
     null,
   );
   const prevColumnsRef = useRef(rawColumns);
+  const lastResizeColumnsRef = useRef(rawColumns);
+  const lastResizeRowsRef = useRef(terminalRows);
   const lastClearedColumnsRef = useRef(rawColumns);
   const pendingResizeRef = useRef(false);
   const pendingResizeColumnsRef = useRef<number | null>(null);
   const [staticRenderEpoch, setStaticRenderEpoch] = useState(0);
   const resizeClearTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastClearAtRef = useRef(0);
+  const resizeGestureTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
+  const didImmediateShrinkClearRef = useRef(false);
   const isInitialResizeRef = useRef(true);
   const columns = stableColumns;
+  // Keep bottom chrome from ever exceeding the *actual* terminal width.
+  // When widening, we prefer the old behavior (wait until settle), so we use
+  // stableColumns. When shrinking, we must clamp to rawColumns to avoid Ink
+  // wrapping the footer/input chrome and "printing" divider rows into the
+  // transcript while dragging.
+  const chromeColumns = Math.min(rawColumns, stableColumns);
   const debugFlicker = process.env.LETTA_DEBUG_FLICKER === "1";
+
+  // Terminal resize + Ink:
+  // When the terminal shrinks, the *previous* frame reflows (wraps to more
+  // lines) instantly at the emulator level. Ink's incremental redraw then tries
+  // to clear based on the old line count and can leave stale rows behind.
+  //
+  // Fix: on shrink events, clear the screen *synchronously* in the resize event
+  // handler (before React/Ink flushes the next frame) and remount Static output.
+  useEffect(() => {
+    if (
+      typeof process === "undefined" ||
+      !process.stdout ||
+      !("on" in process.stdout) ||
+      !process.stdout.isTTY
+    ) {
+      return;
+    }
+
+    const stdout = process.stdout;
+    const onResize = () => {
+      const nextColumns = stdout.columns ?? lastResizeColumnsRef.current;
+      const nextRows = stdout.rows ?? lastResizeRowsRef.current;
+
+      const prevColumns = lastResizeColumnsRef.current;
+      const prevRows = lastResizeRowsRef.current;
+
+      lastResizeColumnsRef.current = nextColumns;
+      lastResizeRowsRef.current = nextRows;
+
+      // Skip initial mount.
+      if (isInitialResizeRef.current) {
+        return;
+      }
+
+      const shrunk = nextColumns < prevColumns || nextRows < prevRows;
+      if (!shrunk) {
+        // Reset shrink-clear guard once the gesture ends.
+        if (resizeGestureTimeoutRef.current) {
+          clearTimeout(resizeGestureTimeoutRef.current);
+        }
+        resizeGestureTimeoutRef.current = setTimeout(() => {
+          resizeGestureTimeoutRef.current = null;
+          didImmediateShrinkClearRef.current = false;
+        }, RESIZE_SETTLE_MS);
+        return;
+      }
+
+      // During a shrink gesture, do an immediate clear only once.
+      // Clearing on every resize event causes extreme flicker.
+      if (didImmediateShrinkClearRef.current) {
+        if (resizeGestureTimeoutRef.current) {
+          clearTimeout(resizeGestureTimeoutRef.current);
+        }
+        resizeGestureTimeoutRef.current = setTimeout(() => {
+          resizeGestureTimeoutRef.current = null;
+          didImmediateShrinkClearRef.current = false;
+        }, RESIZE_SETTLE_MS);
+        return;
+      }
+
+      if (debugFlicker) {
+        // eslint-disable-next-line no-console
+        console.error(
+          `[debug:flicker:resize-immediate-clear] next=${nextColumns}x${nextRows} prev=${prevColumns}x${prevRows} streaming=${streamingRef.current}`,
+        );
+      }
+
+      // Cancel any debounced clear; we're taking the immediate-clear path.
+      if (resizeClearTimeout.current) {
+        clearTimeout(resizeClearTimeout.current);
+        resizeClearTimeout.current = null;
+      }
+
+      stdout.write(CLEAR_SCREEN_AND_HOME);
+      setStaticRenderEpoch((epoch) => epoch + 1);
+      lastClearedColumnsRef.current = nextColumns;
+      lastClearAtRef.current = Date.now();
+      didImmediateShrinkClearRef.current = true;
+      if (resizeGestureTimeoutRef.current) {
+        clearTimeout(resizeGestureTimeoutRef.current);
+      }
+      resizeGestureTimeoutRef.current = setTimeout(() => {
+        resizeGestureTimeoutRef.current = null;
+        didImmediateShrinkClearRef.current = false;
+      }, RESIZE_SETTLE_MS);
+    };
+
+    stdout.on("resize", onResize);
+    return () => {
+      stdout.off("resize", onResize);
+      if (resizeGestureTimeoutRef.current) {
+        clearTimeout(resizeGestureTimeoutRef.current);
+        resizeGestureTimeoutRef.current = null;
+      }
+    };
+  }, [debugFlicker, streamingRef]);
 
   useEffect(() => {
     if (rawColumns === stableColumns) {
@@ -1901,6 +2009,20 @@ export default function App({
 
     prevColumnsRef.current = rawColumns;
   }, [rawColumns, streaming, scheduleResizeClear]);
+
+  // Reflow Static output for 1-col width changes too.
+  // rawColumns resize handling intentionally ignores 1-col "jitter" to reduce
+  // flicker, but that also means widening by small increments won't remount
+  // Static and existing output won't reflow.
+  //
+  // stableColumns only advances once the width has settled, so it's safe to use
+  // for a low-frequency remount trigger.
+  useEffect(() => {
+    if (isInitialResizeRef.current) return;
+    if (streaming) return;
+    if (stableColumns === lastClearedColumnsRef.current) return;
+    scheduleResizeClear(stableColumns);
+  }, [stableColumns, streaming, scheduleResizeClear]);
 
   useEffect(() => {
     if (streaming) {
@@ -2135,6 +2257,9 @@ export default function App({
   const statusLine = useConfigurableStatusLine({
     modelId: llmConfigRef.current?.model ?? null,
     modelDisplayName: currentModelDisplay,
+    reasoningEffort: currentReasoningEffort,
+    systemPromptId: currentSystemPromptId,
+    toolset: currentToolset,
     currentDirectory: process.cwd(),
     projectDirectory,
     sessionId: conversationId,
@@ -2147,7 +2272,7 @@ export default function App({
     usedContextTokens: contextTrackerRef.current.lastContextTokens,
     permissionMode: uiPermissionMode,
     networkPhase,
-    terminalWidth: columns,
+    terminalWidth: chromeColumns,
     triggerVersion: statusLineTriggerVersion,
   });
 
@@ -2160,7 +2285,7 @@ export default function App({
     previousStreamingForStatusLineRef.current = streaming;
   }, [streaming, triggerStatusLineRefresh]);
 
-  const statusLineRefreshIdentity = `${conversationId}|${currentModelDisplay ?? ""}|${currentModelProvider ?? ""}|${agentName ?? ""}|${columns}|${contextWindowSize ?? ""}`;
+  const statusLineRefreshIdentity = `${conversationId}|${currentModelDisplay ?? ""}|${currentModelProvider ?? ""}|${agentName ?? ""}|${columns}|${contextWindowSize ?? ""}|${currentReasoningEffort ?? ""}|${currentSystemPromptId ?? ""}|${currentToolset ?? ""}`;
 
   // Trigger status line when key session identity/display state changes.
   useEffect(() => {
@@ -6650,6 +6775,9 @@ export default function App({
                   buildStatusLinePayload({
                     modelId: llmConfigRef.current?.model ?? null,
                     modelDisplayName: currentModelDisplay,
+                    reasoningEffort: currentReasoningEffort,
+                    systemPromptId: currentSystemPromptId,
+                    toolset: currentToolset,
                     currentDirectory: wd,
                     projectDirectory,
                     sessionId: conversationIdRef.current,
@@ -6663,7 +6791,7 @@ export default function App({
                       contextTrackerRef.current.lastContextTokens,
                     permissionMode: uiPermissionMode,
                     networkPhase,
-                    terminalWidth: columns,
+                    terminalWidth: chromeColumns,
                   }),
                   { timeout: config.timeout, workingDirectory: wd },
                 );
@@ -12030,6 +12158,8 @@ Plan file path: ${planFilePath}`;
                 currentModel={currentModelDisplay}
                 currentModelProvider={currentModelProvider}
                 currentReasoningEffort={currentReasoningEffort}
+                currentSystemPromptId={currentSystemPromptId}
+                currentToolset={currentToolset}
                 messageQueue={messageQueue}
                 onEnterQueueEditMode={handleEnterQueueEditMode}
                 onEscapeCancel={
@@ -12044,7 +12174,7 @@ Plan file path: ${planFilePath}`;
                 restoredInput={restoredInput}
                 onRestoredInputConsumed={() => setRestoredInput(null)}
                 networkPhase={networkPhase}
-                terminalWidth={columns}
+                terminalWidth={chromeColumns}
                 shouldAnimate={shouldAnimate}
                 statusLineText={statusLine.text || undefined}
                 statusLineRight={statusLine.rightText || undefined}

@@ -21,6 +21,9 @@ import { executeStatusLineCommand } from "../helpers/statusLineRuntime";
 export interface StatusLineInputs {
   modelId?: string | null;
   modelDisplayName?: string | null;
+  reasoningEffort?: string | null;
+  systemPromptId?: string | null;
+  toolset?: string | null;
   currentDirectory: string;
   projectDirectory: string;
   sessionId?: string;
@@ -54,6 +57,9 @@ function toPayloadInput(inputs: StatusLineInputs): StatusLinePayloadBuildInput {
   return {
     modelId: inputs.modelId,
     modelDisplayName: inputs.modelDisplayName,
+    reasoningEffort: inputs.reasoningEffort,
+    systemPromptId: inputs.systemPromptId,
+    toolset: inputs.toolset,
     currentDirectory: inputs.currentDirectory,
     projectDirectory: inputs.projectDirectory,
     sessionId: inputs.sessionId,

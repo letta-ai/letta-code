@@ -42,6 +42,8 @@ export function AutocompleteItem({
     <Text
       color={selected ? colors.command.selected : undefined}
       bold={selected}
+      // Keep each item one visual line tall so navigating doesn't reflow the footer.
+      wrap="truncate-end"
     >
       {"  "}
       {children}

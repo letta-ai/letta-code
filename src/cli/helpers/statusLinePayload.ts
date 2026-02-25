@@ -3,6 +3,9 @@ import { getVersion } from "../../version";
 export interface StatusLinePayloadBuildInput {
   modelId?: string | null;
   modelDisplayName?: string | null;
+  reasoningEffort?: string | null;
+  systemPromptId?: string | null;
+  toolset?: string | null;
   currentDirectory: string;
   projectDirectory: string;
   sessionId?: string;
@@ -32,6 +35,10 @@ export interface StatusLinePayload {
   session_id?: string;
   transcript_path: string | null;
   version: string;
+  // Back-compat fields used by custom statusline scripts.
+  reasoning_effort: string | null;
+  system_prompt_id: string | null;
+  toolset: string | null;
   model: {
     id: string | null;
     display_name: string | null;
@@ -122,6 +129,9 @@ export function buildStatusLinePayload(
     ...(input.sessionId ? { session_id: input.sessionId } : {}),
     transcript_path: null,
     version: getVersion(),
+    reasoning_effort: input.reasoningEffort ?? null,
+    system_prompt_id: input.systemPromptId ?? null,
+    toolset: input.toolset ?? null,
     model: {
       id: input.modelId ?? null,
       display_name: input.modelDisplayName ?? null,
