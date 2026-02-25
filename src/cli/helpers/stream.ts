@@ -223,11 +223,11 @@ export async function drainStream(
       }
     }
 
-    // Only set fallbackError if we don't have a run_id - if we have a run_id,
-    // App.tsx will fetch detailed error info from the server which is better
-    if (!streamProcessor.lastRunId) {
-      fallbackError = errorMessage;
-    }
+    // Always capture the client-side error message. Even when we have a run_id
+    // (and App.tsx can fetch server-side detail), the client-side exception is
+    // valuable for telemetry — e.g. stream disconnections where the server run
+    // is still in-progress and has no error metadata yet.
+    fallbackError = errorMessage;
 
     // Preserve a stop reason already parsed from stream chunks (e.g. llm_api_error)
     // and only fall back to generic "error" when none is available.
