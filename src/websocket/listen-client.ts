@@ -852,6 +852,25 @@ async function handleIncomingMessage(
             reason: string;
           };
 
+      // Emit auto-approval events for auto-allowed tools
+      for (const ac of autoAllowed) {
+        emitToWS(socket, {
+          type: "auto_approval",
+          tool_call: {
+            name: ac.approval.toolName,
+            tool_call_id: ac.approval.toolCallId,
+            arguments: ac.approval.toolArgs,
+          },
+          reason: ac.permission.reason || "auto-approved",
+          matched_rule:
+            "matchedRule" in ac.permission && ac.permission.matchedRule
+              ? ac.permission.matchedRule
+              : "auto-approved",
+          session_id: runtime.sessionId,
+          uuid: `auto-approval-${ac.approval.toolCallId}`,
+        } as AutoApprovalMessage);
+      }
+
       const decisions: Decision[] = [
         ...autoAllowed.map((ac) => ({
           type: "approve" as const,
@@ -917,6 +936,20 @@ async function handleIncomingMessage(
                   }
                 : ac.approval;
               decisions.push({ type: "approve", approval: finalApproval });
+
+              // Emit auto-approval event for WS-callback-approved tool
+              emitToWS(socket, {
+                type: "auto_approval",
+                tool_call: {
+                  name: finalApproval.toolName,
+                  tool_call_id: finalApproval.toolCallId,
+                  arguments: finalApproval.toolArgs,
+                },
+                reason: "Approved via WebSocket",
+                matched_rule: "canUseTool callback",
+                session_id: runtime.sessionId,
+                uuid: `auto-approval-${ac.approval.toolCallId}`,
+              } as AutoApprovalMessage);
             } else {
               decisions.push({
                 type: "deny",
