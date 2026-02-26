@@ -79,6 +79,7 @@ import {
 import type { ApprovalContext } from "../permissions/analyzer";
 import { type PermissionMode, permissionMode } from "../permissions/mode";
 import { OPENAI_CODEX_PROVIDER_NAME } from "../providers/openai-codex-provider";
+import { QueueRuntime } from "../queue/queueRuntime";
 import {
   DEFAULT_COMPLETION_PROMISE,
   type RalphState,
@@ -273,6 +274,7 @@ import {
   alwaysRequiresUserInput,
   isTaskTool,
 } from "./helpers/toolNameMapping.js";
+import { getTuiBlockedReason } from "./helpers/tuiQueueAdapter";
 import { useConfigurableStatusLine } from "./hooks/useConfigurableStatusLine";
 import { useSuspend } from "./hooks/useSuspend/useSuspend.ts";
 import { useSyncedState } from "./hooks/useSyncedState";
@@ -1662,6 +1664,53 @@ export default function App({
     messageQueueRef.current = messageQueue;
   }, [messageQueue]);
 
+  // PRQ4: divergence check — runs after every messageQueue commit, by which time
+  // tuiQueueRef has already been updated (enqueue/consumeItems called synchronously
+  // before setMessageQueue). Warn-only, never throws.
+  useEffect(() => {
+    if ((tuiQueueRef.current?.length ?? 0) !== messageQueue.length) {
+      debugWarn(
+        "queue-lifecycle",
+        `drift: QueueRuntime.length=${tuiQueueRef.current?.length ?? 0} messageQueue.length=${messageQueue.length}`,
+      );
+    }
+  }, [messageQueue]);
+
+  // PRQ4: QueueRuntime mirror — parallel lifecycle tracking alongside existing queue.
+  // Callbacks emit to the debug log only (gated on LETTA_DEBUG=1).
+  // Does NOT drive submit decisions — existing messageQueue state remains authoritative.
+  // Lazy init: useRef(new QueueRuntime(...)) would allocate on every render
+  // (React ignores all but the first, but construction still runs). The ref is
+  // typed QueueRuntime | null; call sites use ?. so the type is enforced and a
+  // missed init would no-op rather than hide behind an unsafe cast.
+  const tuiQueueRef = useRef<QueueRuntime | null>(null);
+  if (!tuiQueueRef.current) {
+    tuiQueueRef.current = new QueueRuntime({
+      callbacks: {
+        onEnqueued: (item, queueLen) =>
+          debugLog(
+            "queue-lifecycle",
+            `enqueued item_id=${item.id} kind=${item.kind} queue_len=${queueLen}`,
+          ),
+        onDequeued: (batch) =>
+          debugLog(
+            "queue-lifecycle",
+            `dequeued batch_id=${batch.batchId} merged_count=${batch.mergedCount} queue_len_after=${batch.queueLenAfter}`,
+          ),
+        onBlocked: (reason, queueLen) =>
+          debugLog(
+            "queue-lifecycle",
+            `blocked reason=${reason} queue_len=${queueLen}`,
+          ),
+        onCleared: (reason, clearedCount) =>
+          debugLog(
+            "queue-lifecycle",
+            `cleared reason=${reason} cleared_count=${clearedCount}`,
+          ),
+      },
+    });
+  }
+
   // Override content parts for queued submissions (to preserve part boundaries)
   const overrideContentPartsRef = useRef<MessageCreate["content"] | null>(null);
 
@@ -1671,6 +1720,20 @@ export default function App({
     // Provide a queue adder that adds to messageQueue and bumps dequeueEpoch
     setMessageQueueAdder((message: QueuedMessage) => {
       setMessageQueue((q) => [...q, message]);
+      // PRQ4: mirror enqueue into QueueRuntime for lifecycle tracking.
+      tuiQueueRef.current?.enqueue(
+        message.kind === "task_notification"
+          ? ({
+              kind: "task_notification",
+              source: "task_notification",
+              text: message.text,
+            } as Parameters<typeof tuiQueueRef.current.enqueue>[0])
+          : ({
+              kind: "message",
+              source: "user",
+              content: message.text,
+            } as Parameters<typeof tuiQueueRef.current.enqueue>[0]),
+      );
       setDequeueEpoch((e) => e + 1);
     });
     return () => setMessageQueueAdder(null);
@@ -1746,6 +1809,9 @@ export default function App({
   const consumeQueuedMessages = useCallback((): QueuedMessage[] | null => {
     if (messageQueueRef.current.length === 0) return null;
     const messages = [...messageQueueRef.current];
+    // PRQ4: items are being submitted into the current turn, so fire onDequeued
+    // (not onCleared) to reflect actual consumption, not an error/cancel drop.
+    tuiQueueRef.current?.consumeItems(messages.length);
     setMessageQueue([]);
     return messages;
   }, []);
@@ -5040,6 +5106,7 @@ export default function App({
               lastDequeuedMessageRef.current = null;
             }
             // Clear any remaining queue on error
+            tuiQueueRef.current?.clear("error"); // PRQ4
             setMessageQueue([]);
 
             setStreaming(false);
@@ -5144,6 +5211,7 @@ export default function App({
                 lastDequeuedMessageRef.current = null;
               }
               // Clear any remaining queue on error
+              tuiQueueRef.current?.clear("error"); // PRQ4
               setMessageQueue([]);
 
               setStreaming(false);
@@ -5175,6 +5243,7 @@ export default function App({
             lastDequeuedMessageRef.current = null;
           }
           // Clear any remaining queue on error
+          tuiQueueRef.current?.clear("error"); // PRQ4
           setMessageQueue([]);
 
           setStreaming(false);
@@ -5215,6 +5284,7 @@ export default function App({
           lastDequeuedMessageRef.current = null;
         }
         // Clear any remaining queue on error
+        tuiQueueRef.current?.clear("error"); // PRQ4
         setMessageQueue([]);
 
         setStreaming(false);
@@ -5290,6 +5360,8 @@ export default function App({
 
   // Handler when user presses UP/ESC to load queue into input for editing
   const handleEnterQueueEditMode = useCallback(() => {
+    // PRQ4: items are discarded (user is editing them), not submitted.
+    tuiQueueRef.current?.clear("stale_generation");
     setMessageQueue([]);
   }, []);
 
@@ -6388,6 +6460,12 @@ export default function App({
 
           return newQueue;
         });
+        // PRQ4: mirror enqueue into QueueRuntime for lifecycle tracking.
+        tuiQueueRef.current?.enqueue({
+          kind: "message",
+          source: "user",
+          content: msg,
+        } as Parameters<typeof tuiQueueRef.current.enqueue>[0]);
         return { submitted: true }; // Clears input
       }
 
@@ -9735,6 +9813,9 @@ ${SYSTEM_REMINDER_CLOSE}
 
       // Store the message before clearing queue - allows restoration on error
       lastDequeuedMessageRef.current = concatenatedMessage;
+      // PRQ4: fire onDequeued before clearing state so QueueRuntime and
+      // messageQueue drop to 0 together (divergence check runs after commit).
+      tuiQueueRef.current?.consumeItems(messageQueue.length);
       setMessageQueue([]);
 
       // Submit the concatenated message using the normal submit flow
@@ -9747,6 +9828,23 @@ ${SYSTEM_REMINDER_CLOSE}
         "queue",
         `Dequeue blocked: streaming=${streaming}, queuedOverlayAction=${!!queuedOverlayAction}, pendingApprovals=${pendingApprovals.length}, commandRunning=${commandRunning}, isExecutingTool=${isExecutingTool}, anySelectorOpen=${anySelectorOpen}, waitingForQueueCancel=${waitingForQueueCancelRef.current}, userCancelled=${userCancelledRef.current}, abortController=${!!abortControllerRef.current}`,
       );
+      // PRQ4: emit queue_blocked on first blocked-reason transition per reason.
+      // tryDequeue deduplicates via lastEmittedBlockedReason — fires onBlocked
+      // only when the reason changes, not on every effect re-run.
+      const blockedReason = getTuiBlockedReason({
+        streaming,
+        isExecutingTool,
+        commandRunning,
+        pendingApprovalsLen: pendingApprovals.length,
+        queuedOverlayAction: !!queuedOverlayAction,
+        anySelectorOpen,
+        waitingForQueueCancel: waitingForQueueCancelRef.current,
+        userCancelled: userCancelledRef.current,
+        abortControllerActive: !!abortControllerRef.current,
+      });
+      if (blockedReason) {
+        tuiQueueRef.current?.tryDequeue(blockedReason);
+      }
     }
   }, [
     streaming,
