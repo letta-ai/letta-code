@@ -227,6 +227,7 @@ import {
 } from "./helpers/pasteRegistry";
 import { generatePlanFilePath } from "./helpers/planName";
 import {
+  buildContentFromQueueBatch,
   buildQueuedContentParts,
   buildQueuedUserText,
   getQueuedNotificationSummaries,
@@ -9768,15 +9769,16 @@ ${SYSTEM_REMINDER_CLOSE}
     onSubmitRef.current = onSubmit;
   }, [onSubmit]);
 
-  // Process queued messages when streaming ends
-  // Task notifications are now added directly to queueDisplay via messageQueueBridge
+  // Process queued messages when streaming ends.
+  // QueueRuntime is authoritative: consumeItems drives the dequeue and fires
+  // onDequeued → setQueueDisplay(prev => prev.slice(n)) to update the UI.
+  // dequeueEpoch is the sole re-trigger: bumped on every enqueue, turn
+  // completion (abortControllerRef clears), and cancel-reset.
   useEffect(() => {
-    // Reference dequeueEpoch to satisfy exhaustive-deps - it's used to force
-    // re-runs when userCancelledRef is reset (refs aren't in deps)
-    // Also triggers when task notifications are added to queue
-    void dequeueEpoch;
+    void dequeueEpoch; // explicit dep to satisfy exhaustive-deps lint
 
-    const hasAnythingQueued = queueDisplay.length > 0;
+    const queueLen = tuiQueueRef.current?.length ?? 0;
+    const hasAnythingQueued = queueLen > 0;
 
     if (
       !streaming &&
@@ -9790,28 +9792,33 @@ ${SYSTEM_REMINDER_CLOSE}
       !userCancelledRef.current && // Don't dequeue if user just cancelled
       !abortControllerRef.current // Don't dequeue while processConversation is still active
     ) {
-      // Concatenate all queued messages into one (better UX when user types multiple
-      // messages quickly - they get combined into one context for the agent)
-      // Task notifications are already in the queue as XML strings
-      const concatenatedMessage = queueDisplay
-        .map((item) => item.text)
+      // consumeItems(n) fires onDequeued → setQueueDisplay(prev => prev.slice(n)).
+      const batch = tuiQueueRef.current?.consumeItems(queueLen);
+      if (!batch) return;
+
+      // Build concatenated text for lastDequeuedMessageRef (error restoration).
+      const concatenatedMessage = batch.items
+        .map((item) => {
+          if (item.kind === "task_notification") return item.text;
+          if (item.kind === "message") {
+            return typeof item.content === "string" ? item.content : "";
+          }
+          return "";
+        })
+        .filter((t) => t.length > 0)
         .join("\n");
-      const queuedContentParts = buildQueuedContentParts(queueDisplay);
+
+      const queuedContentParts = buildContentFromQueueBatch(batch);
 
       debugLog(
         "queue",
-        `Dequeuing ${queueDisplay.length} message(s): "${concatenatedMessage.slice(0, 50)}${concatenatedMessage.length > 50 ? "..." : ""}"`,
+        `Dequeuing ${batch.mergedCount} message(s): "${concatenatedMessage.slice(0, 50)}${concatenatedMessage.length > 50 ? "..." : ""}"`,
       );
 
-      // Store the message before clearing queue - allows restoration on error
+      // Store before submit — allows restoration on error (ESC path).
       lastDequeuedMessageRef.current = concatenatedMessage;
-      // PRQ4: fire onDequeued before clearing state so QueueRuntime and
-      // queueDisplay drop to 0 together (divergence check runs after commit).
-      tuiQueueRef.current?.consumeItems(queueDisplay.length);
-      setQueueDisplay([]);
 
-      // Submit the concatenated message using the normal submit flow
-      // This ensures all setup (reminders, UI updates, etc.) happens correctly
+      // Submit via normal flow — overrideContentPartsRef carries rich content parts.
       overrideContentPartsRef.current = queuedContentParts;
       onSubmitRef.current(concatenatedMessage);
     } else if (hasAnythingQueued) {
@@ -9820,9 +9827,7 @@ ${SYSTEM_REMINDER_CLOSE}
         "queue",
         `Dequeue blocked: streaming=${streaming}, queuedOverlayAction=${!!queuedOverlayAction}, pendingApprovals=${pendingApprovals.length}, commandRunning=${commandRunning}, isExecutingTool=${isExecutingTool}, anySelectorOpen=${anySelectorOpen}, waitingForQueueCancel=${waitingForQueueCancelRef.current}, userCancelled=${userCancelledRef.current}, abortController=${!!abortControllerRef.current}`,
       );
-      // PRQ4: emit queue_blocked on first blocked-reason transition per reason.
-      // tryDequeue deduplicates via lastEmittedBlockedReason — fires onBlocked
-      // only when the reason changes, not on every effect re-run.
+      // Emit queue_blocked on blocked-reason transitions only (dedup via tryDequeue).
       const blockedReason = getTuiBlockedReason({
         streaming,
         isExecutingTool,
@@ -9840,13 +9845,12 @@ ${SYSTEM_REMINDER_CLOSE}
     }
   }, [
     streaming,
-    queueDisplay,
     pendingApprovals,
     commandRunning,
     isExecutingTool,
     anySelectorOpen,
     queuedOverlayAction,
-    dequeueEpoch, // Triggered when userCancelledRef is reset OR task notifications added
+    dequeueEpoch, // Triggered on every enqueue, turn completion, and cancel-reset
   ]);
 
   // Helper to send all approval results when done
