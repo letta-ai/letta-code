@@ -125,29 +125,25 @@ export const AgentInfoBar = memo(function AgentInfoBar({
       <Box>
         <Text color={colors.footer.agentName}>{alienLines[1]}</Text>
         {isCloudUser && adeConversationUrl && !isTmux && (
-          <>
-            <Box width={rightWidth} flexShrink={1}>
-              <Link url={adeConversationUrl}>
-                <Text>Open in ADE ↗</Text>
-              </Link>
-            </Box>
+          <Box flexShrink={1}>
+            <Link url={adeConversationUrl}>
+              <Text>Open in ADE ↗</Text>
+            </Link>
             <Text dimColor>· </Text>
-          </>
+            <Link url="https://app.letta.com/settings/organization/usage">
+              <Text>View usage ↗</Text>
+            </Link>
+          </Box>
         )}
         {isCloudUser && adeConversationUrl && isTmux && (
-          <>
-            <Box width={rightWidth} flexShrink={1}>
-              <Text dimColor wrap="truncate-end">
-                {truncateText(`Open in ADE: ${adeConversationUrl}`, rightWidth)}
-              </Text>
-            </Box>
-            <Text dimColor>· </Text>
-          </>
-        )}
-        {isCloudUser && (
-          <Link url="https://app.letta.com/settings/organization/usage">
-            <Text>View usage ↗</Text>
-          </Link>
+          <Box width={rightWidth} flexShrink={1}>
+            <Text dimColor wrap="truncate-end">
+              {truncateText(
+                `Open in ADE: ${adeConversationUrl} · Usage: https://app.letta.com/settings/organization/usage`,
+                rightWidth,
+              )}
+            </Text>
+          </Box>
         )}
         {!isCloudUser && (
           <Box width={rightWidth} flexShrink={1}>

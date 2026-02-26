@@ -1354,11 +1354,8 @@ export function Input({
   }, [ralphPending, ralphPendingYolo, ralphActive, currentMode]);
 
   // Create a horizontal line using box-drawing characters.
-  // IMPORTANT: never draw into the terminal's last column; some terminals will
-  // soft-wrap at the edge which breaks Ink's clear/redraw accounting during
-  // resize and can leave stacks of stale divider rows behind.
   const horizontalLine = useMemo(
-    () => "─".repeat(Math.max(0, columns - 1)),
+    () => "─".repeat(Math.max(0, columns)),
     [columns],
   );
 
