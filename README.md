@@ -13,6 +13,7 @@ Install the package via [npm](https://docs.npmjs.com/downloading-and-installing-
 ```bash
 npm install -g @letta-ai/letta-code
 ```
+When using Bun, ensure v1.2.20+ (`bun upgrade`) for TUI input to work.
 Navigate to your project directory and run `letta` (see various command-line options [on the docs](https://docs.letta.com/letta-code/commands)). 
 
 Run `/connect` to configure your own LLM API keys (OpenAI, Anthropic, etc.), and use `/model` to swap models.
@@ -57,7 +58,6 @@ Community maintained packages are available for Arch Linux users on the [AUR](ht
 yay -S letta-code # release
 yay -S letta-code-git # nightly
 ```
-
 ---
 
 Made with 💜 in San Francisco
