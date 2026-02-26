@@ -9799,6 +9799,9 @@ ${SYSTEM_REMINDER_CLOSE}
 
       // Store the message before clearing queue - allows restoration on error
       lastDequeuedMessageRef.current = concatenatedMessage;
+      // PRQ4: fire onDequeued before clearing state so QueueRuntime and
+      // messageQueue drop to 0 together (divergence check runs after commit).
+      tuiQueueRef.current.consumeItems(messageQueue.length);
       setMessageQueue([]);
 
       // Submit the concatenated message using the normal submit flow
@@ -9811,6 +9814,23 @@ ${SYSTEM_REMINDER_CLOSE}
         "queue",
         `Dequeue blocked: streaming=${streaming}, queuedOverlayAction=${!!queuedOverlayAction}, pendingApprovals=${pendingApprovals.length}, commandRunning=${commandRunning}, isExecutingTool=${isExecutingTool}, anySelectorOpen=${anySelectorOpen}, waitingForQueueCancel=${waitingForQueueCancelRef.current}, userCancelled=${userCancelledRef.current}, abortController=${!!abortControllerRef.current}`,
       );
+      // PRQ4: emit queue_blocked on first blocked-reason transition per reason.
+      // tryDequeue deduplicates via lastEmittedBlockedReason — fires onBlocked
+      // only when the reason changes, not on every effect re-run.
+      const blockedReason = getTuiBlockedReason({
+        streaming,
+        isExecutingTool,
+        commandRunning,
+        pendingApprovalsLen: pendingApprovals.length,
+        queuedOverlayAction: !!queuedOverlayAction,
+        anySelectorOpen,
+        waitingForQueueCancel: waitingForQueueCancelRef.current,
+        userCancelled: userCancelledRef.current,
+        abortControllerActive: !!abortControllerRef.current,
+      });
+      if (blockedReason) {
+        tuiQueueRef.current.tryDequeue(blockedReason);
+      }
     }
   }, [
     streaming,
