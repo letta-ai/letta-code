@@ -6,8 +6,17 @@ import { Text } from "./Text";
 
 const SOLID_LINE = "─";
 
-type CompactionMode = "all" | "sliding_window" | "self_compact_all" | "self_compact_sliding_window";
-const MODE_OPTIONS: CompactionMode[] = ["all", "sliding_window", "self_compact_all", "self_compact_sliding_window"];
+type CompactionMode =
+  | "all"
+  | "sliding_window"
+  | "self_compact_all"
+  | "self_compact_sliding_window";
+const MODE_OPTIONS: CompactionMode[] = [
+  "all",
+  "sliding_window",
+  "self_compact_all",
+  "self_compact_sliding_window",
+];
 const MODE_LABELS: Record<CompactionMode, string> = {
   all: "All",
   sliding_window: "Sliding Window",
@@ -44,7 +53,12 @@ export function CompactionSelector({
   const solidLine = SOLID_LINE.repeat(Math.max(terminalWidth, 10));
 
   const parsedInitialMode = useMemo((): CompactionMode => {
-    if (initialMode === "all" || initialMode === "sliding_window" || initialMode === "self_compact_all" || initialMode === "self_compact_sliding_window") {
+    if (
+      initialMode === "all" ||
+      initialMode === "sliding_window" ||
+      initialMode === "self_compact_all" ||
+      initialMode === "self_compact_sliding_window"
+    ) {
       return initialMode as CompactionMode;
     }
     return "sliding_window";
@@ -108,9 +122,7 @@ export function CompactionSelector({
       </Box>
 
       <Box height={1} />
-      <Text dimColor>
-        {"  Enter to save · ←→/Tab options · Esc cancel"}
-      </Text>
+      <Text dimColor>{"  Enter to save · ←→/Tab options · Esc cancel"}</Text>
     </Box>
   );
 }

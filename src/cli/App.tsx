@@ -134,6 +134,7 @@ import { ApprovalSwitch } from "./components/ApprovalSwitch";
 import { AssistantMessage } from "./components/AssistantMessageRich";
 import { BashCommandMessage } from "./components/BashCommandMessage";
 import { CommandMessage } from "./components/CommandMessage";
+import { CompactionSelector } from "./components/CompactionSelector";
 import { ConversationSelector } from "./components/ConversationSelector";
 import { colors } from "./components/colors";
 // EnterPlanModeDialog removed - now using InlineEnterPlanModeApproval
@@ -158,7 +159,6 @@ import { ProviderSelector } from "./components/ProviderSelector";
 import { ReasoningMessage } from "./components/ReasoningMessageRich";
 import { formatDuration, formatUsageStats } from "./components/SessionStats";
 import { SkillsDialog } from "./components/SkillsDialog";
-import { CompactionSelector } from "./components/CompactionSelector";
 import { SleeptimeSelector } from "./components/SleeptimeSelector";
 // InlinePlanApproval kept for easy rollback if needed
 // import { InlinePlanApproval } from "./components/InlinePlanApproval";
@@ -10551,14 +10551,15 @@ ${SYSTEM_REMINDER_CLOSE}
             compaction_settings: {
               model: existing?.model ?? "",
               ...existing,
-              mode: mode as "all" | "sliding_window" | "self_compact_all" | "self_compact_sliding_window",
+              mode: mode as
+                | "all"
+                | "sliding_window"
+                | "self_compact_all"
+                | "self_compact_sliding_window",
             },
           });
 
-          cmd.finish(
-            `Updated compaction mode to: ${mode}`,
-            true,
-          );
+          cmd.finish(`Updated compaction mode to: ${mode}`, true);
         } catch (error) {
           const errorDetails = formatErrorDetails(error, agentId);
           cmd.fail(`Failed to save compaction settings: ${errorDetails}`);
@@ -10571,6 +10572,7 @@ ${SYSTEM_REMINDER_CLOSE}
       consumeOverlayCommand,
       isAgentBusy,
       withCommandLock,
+      agentState?.compaction_settings,
     ],
   );
 
