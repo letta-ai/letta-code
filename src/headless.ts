@@ -592,7 +592,10 @@ export async function handleHeadlessCommand(
             when: shouldContinue,
             message: "--import cannot be used with --continue",
           },
-          { when: forceNew, message: "--import cannot be used with --new-agent" },
+          {
+            when: forceNew,
+            message: "--import cannot be used with --new-agent",
+          },
         ],
       });
     } catch (error) {

@@ -704,7 +704,10 @@ async function main(): Promise<void> {
             when: shouldResume,
             message: "--import cannot be used with --resume",
           },
-          { when: forceNew, message: "--import cannot be used with --new-agent" },
+          {
+            when: forceNew,
+            message: "--import cannot be used with --new-agent",
+          },
         ],
       });
     } catch (error) {
