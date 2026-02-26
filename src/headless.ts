@@ -592,7 +592,7 @@ export async function handleHeadlessCommand(
             when: shouldContinue,
             message: "--import cannot be used with --continue",
           },
-          { when: forceNew, message: "--import cannot be used with --new" },
+          { when: forceNew, message: "--import cannot be used with --new-agent" },
         ],
       });
     } catch (error) {
@@ -625,7 +625,7 @@ export async function handleHeadlessCommand(
       process.exit(1);
     }
     if (forceNew) {
-      console.error("Error: --name cannot be used with --new");
+      console.error("Error: --name cannot be used with --new-agent");
       process.exit(1);
     }
   }

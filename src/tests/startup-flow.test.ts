@@ -151,7 +151,17 @@ describe("Startup Flow - Smoke", () => {
     const result = await runCli(["--name", "MyAgent", "--new-agent"], {
       expectExit: 1,
     });
-    expect(result.stderr).toContain("--name cannot be used with --new");
+    expect(result.stderr).toContain("--name cannot be used with --new-agent");
+  });
+
+  test("--new + --name does not conflict (new conversation on named agent)", async () => {
+    const result = await runCli(
+      ["-p", "Say OK", "--new", "--name", "NonExistentAgent999"],
+      { expectExit: 1 },
+    );
+    // Should get past flag validation — error should be about agent lookup, not a conflict
+    expect(result.stderr).not.toContain("cannot be used with");
+    expect(result.stderr).toContain("NonExistentAgent999");
   });
 
   test("--new-agent headless parses and reaches credential check", async () => {

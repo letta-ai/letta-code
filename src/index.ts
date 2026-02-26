@@ -704,7 +704,7 @@ async function main(): Promise<void> {
             when: shouldResume,
             message: "--import cannot be used with --resume",
           },
-          { when: forceNew, message: "--import cannot be used with --new" },
+          { when: forceNew, message: "--import cannot be used with --new-agent" },
         ],
       });
     } catch (error) {
@@ -746,7 +746,7 @@ async function main(): Promise<void> {
       process.exit(1);
     }
     if (forceNew) {
-      console.error("Error: --name cannot be used with --new");
+      console.error("Error: --name cannot be used with --new-agent");
       process.exit(1);
     }
   }
