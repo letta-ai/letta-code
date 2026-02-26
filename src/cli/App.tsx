@@ -12293,8 +12293,6 @@ Plan file path: ${planFilePath}`;
                 currentModel={currentModelDisplay}
                 currentModelProvider={currentModelProvider}
                 currentReasoningEffort={currentReasoningEffort}
-                currentSystemPromptId={currentSystemPromptId}
-                currentToolset={currentToolset}
                 messageQueue={messageQueue}
                 onEnterQueueEditMode={handleEnterQueueEditMode}
                 onEscapeCancel={

@@ -217,8 +217,6 @@ const InputFooter = memo(function InputFooter({
   agentName,
   currentModel,
   currentReasoningEffort,
-  currentSystemPromptId,
-  currentToolset,
   isOpenAICodexProvider,
   isByokProvider,
   hideFooter,
@@ -236,8 +234,6 @@ const InputFooter = memo(function InputFooter({
   agentName: string | null | undefined;
   currentModel: string | null | undefined;
   currentReasoningEffort?: ModelReasoningEffort | null;
-  currentSystemPromptId?: string | null;
-  currentToolset?: string | null;
   isOpenAICodexProvider: boolean;
   isByokProvider: boolean;
   hideFooter: boolean;
@@ -256,45 +252,11 @@ const InputFooter = memo(function InputFooter({
   const modelWithReasoning =
     (currentModel ?? "unknown") + (reasoningTag ? ` (${reasoningTag})` : "");
 
-  // Optional suffixes: system prompt id + toolset.
-  const suffixParts: string[] = [];
-  if (currentSystemPromptId) {
-    suffixParts.push(`s:${currentSystemPromptId}`);
-  }
-  if (currentToolset) {
-    suffixParts.push(`t:${currentToolset}`);
-  }
-
-  // Reserve 4 chars per suffix part so the label is visible even on narrow terminals.
-  const minSuffixBudget = suffixParts.length * 4;
-  const maxModelChars = Math.max(
-    8,
-    rightColumnWidth - baseReservedChars - minSuffixBudget,
-  );
+  const maxModelChars = Math.max(8, rightColumnWidth - baseReservedChars);
   const displayModel = truncateEnd(modelWithReasoning, maxModelChars);
 
-  const baseTextLength =
+  const rightTextLength =
     displayAgentName.length + displayModel.length + byokExtraChars + 3;
-  const maxSuffixChars = Math.max(0, rightColumnWidth - baseTextLength);
-
-  const displaySuffix = (() => {
-    if (suffixParts.length === 0 || maxSuffixChars <= 0) return "";
-
-    let remaining = maxSuffixChars;
-    const out: string[] = [];
-    for (const part of suffixParts) {
-      // Leading space before each part.
-      if (remaining <= 1) break;
-      const budget = remaining - 1;
-      const clipped = truncateEnd(part, budget);
-      if (!clipped) break;
-      out.push(` ${clipped}`);
-      remaining -= 1 + clipped.length;
-    }
-    return out.join("");
-  })();
-
-  const rightTextLength = baseTextLength + displaySuffix.length;
   const rightPrefixSpaces = Math.max(0, rightColumnWidth - rightTextLength);
   const rightLabel = useMemo(() => {
     const parts: string[] = [];
@@ -310,16 +272,11 @@ const InputFooter = memo(function InputFooter({
     }
     parts.push(chalk.dim("]"));
 
-    if (displaySuffix) {
-      parts.push(chalk.dim(displaySuffix));
-    }
-
     return parts.join("");
   }, [
     rightPrefixSpaces,
     displayAgentName,
     displayModel,
-    displaySuffix,
     isByokProvider,
     isOpenAICodexProvider,
   ]);
@@ -559,16 +516,14 @@ const StreamingStatus = memo(function StreamingStatus({
   // Uses chalk.dim to match reasoning text styling
   // Memoized to prevent unnecessary re-renders during shimmer updates
   const statusHintText = useMemo(() => {
+    const hintColor = chalk.hex(colors.subagent.hint);
+    const hintBold = hintColor.bold;
     const suffix = `${statusHintSuffix})`;
     if (interruptRequested) {
-      return <Text dimColor>{` (interrupting${suffix}`}</Text>;
+      return hintColor(` (interrupting${suffix}`);
     }
     return (
-      <Text dimColor>
-        {" ("}
-        <Text bold>esc</Text>
-        {` to interrupt${suffix}`}
-      </Text>
+      hintColor(" (") + hintBold("esc") + hintColor(` to interrupt${suffix}`)
     );
   }, [interruptRequested, statusHintSuffix]);
 
@@ -633,8 +588,6 @@ export function Input({
   currentModel,
   currentModelProvider,
   currentReasoningEffort,
-  currentSystemPromptId,
-  currentToolset,
   messageQueue,
   onEnterQueueEditMode,
   onEscapeCancel,
@@ -676,8 +629,6 @@ export function Input({
   currentModel?: string | null;
   currentModelProvider?: string | null;
   currentReasoningEffort?: ModelReasoningEffort | null;
-  currentSystemPromptId?: string | null;
-  currentToolset?: string | null;
   messageQueue?: QueuedMessage[];
   onEnterQueueEditMode?: () => void;
   onEscapeCancel?: () => void;
@@ -1500,8 +1451,6 @@ export function Input({
                 agentName={agentName}
                 currentModel={currentModel}
                 currentReasoningEffort={currentReasoningEffort}
-                currentSystemPromptId={currentSystemPromptId}
-                currentToolset={currentToolset}
                 isOpenAICodexProvider={
                   currentModelProvider === OPENAI_CODEX_PROVIDER_NAME
                 }
@@ -1559,8 +1508,6 @@ export function Input({
     statusLineText,
     statusLineRight,
     statusLinePadding,
-    currentSystemPromptId,
-    currentToolset,
     promptChar,
     promptVisualWidth,
     suppressDividers,
