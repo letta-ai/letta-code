@@ -7,6 +7,8 @@ import type {
   QueueItemSource,
 } from "../types/protocol";
 
+export type { QueueBlockedReason, QueueClearedReason, QueueItemKind };
+
 // ── Item types ───────────────────────────────────────────────────
 
 type QueueItemBase = {
