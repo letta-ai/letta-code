@@ -19,7 +19,7 @@ import {
 } from "../agent/approval-execution";
 import { getResumeData } from "../agent/check-approval";
 import { getClient } from "../agent/client";
-import { sendMessageStream } from "../agent/message";
+import { getStreamToolContextId, sendMessageStream } from "../agent/message";
 import {
   extractConflictDetail,
   getPreStreamErrorAction,
@@ -765,6 +765,7 @@ async function handleIncomingMessage(
     }
 
     let messagesToSend: Array<MessageCreate | ApprovalCreate> = msg.messages;
+    let turnToolContextId: string | null = null;
 
     const firstMessage = msg.messages[0];
     const isApprovalMessage =
@@ -794,7 +795,11 @@ async function handleIncomingMessage(
         resumeData.pendingApprovals,
       );
       const decisionResults =
-        decisions.length > 0 ? await executeApprovalBatch(decisions) : [];
+        decisions.length > 0
+          ? await executeApprovalBatch(decisions, undefined, {
+              toolContextId: turnToolContextId ?? undefined,
+            })
+          : [];
 
       const rebuiltApprovals: ApprovalResult[] = [];
       let decisionResultIndex = 0;
@@ -836,6 +841,9 @@ async function handleIncomingMessage(
       runtime,
     );
 
+    turnToolContextId = getStreamToolContextId(
+      stream as Stream<LettaStreamingResponse>,
+    );
     let runIdSent = false;
     let runId: string | undefined;
     const runIds: string[] = [];
@@ -1120,7 +1128,11 @@ async function handleIncomingMessage(
       }
 
       // Execute approved/denied tools
-      const executionResults = await executeApprovalBatch(decisions);
+      const executionResults = await executeApprovalBatch(
+        decisions,
+        undefined,
+        { toolContextId: turnToolContextId ?? undefined },
+      );
 
       // Create fresh approval stream for next iteration
       stream = await sendMessageStreamWithRetry(
@@ -1134,6 +1146,9 @@ async function handleIncomingMessage(
         { agentId, streamTokens: true, background: true },
         socket,
         runtime,
+      );
+      turnToolContextId = getStreamToolContextId(
+        stream as Stream<LettaStreamingResponse>,
       );
     }
   } catch (error) {
