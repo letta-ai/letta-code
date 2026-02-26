@@ -22,10 +22,11 @@ You are the experienced manager with persistent memory. Claude Code and Codex ar
 ### Claude Code
 
 ```bash
-claude -p "YOUR PROMPT" --model MODEL
+claude -p "YOUR PROMPT" --model MODEL --no-session-persistence
 ```
 
 - `-p` / `--print`: non-interactive mode, prints response and exits
+- `--no-session-persistence`: **ALWAYS use this flag.** Without it, killed/timed-out sessions leave stale state that causes "stale approval from interrupted session" errors on subsequent runs in the same project directory.
 - `--model MODEL`: alias (`sonnet`, `opus`) or full name (`claude-sonnet-4-6`)
 - `--effort LEVEL`: `low`, `medium`, `high` — controls reasoning depth
 - `--append-system-prompt "..."`: inject additional system instructions
@@ -36,7 +37,7 @@ claude -p "YOUR PROMPT" --model MODEL
 Example — research task with Opus:
 ```bash
 claude -p "Trace the request flow from POST /agents/{id}/messages through to the LLM call. Cite files and line numbers." \
-  --model opus -C /path/to/repo
+  --model opus --no-session-persistence -C /path/to/repo
 ```
 
 ### Codex
@@ -98,7 +99,7 @@ When you dispatch a task, capture the session ID so you can access the full sess
 
 Use `--output-format json` to get structured output including the session ID:
 ```bash
-claude -p "YOUR PROMPT" --model opus --output-format json 2>&1
+claude -p "YOUR PROMPT" --model opus --no-session-persistence --output-format json 2>&1
 ```
 The JSON response includes `session_id`, `cost_usd`, `duration_ms`, `num_turns`, and `result`.
 
