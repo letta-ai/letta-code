@@ -90,7 +90,7 @@ function simulateMessageArrival(
 /** Mirrors the start of the .then() chain callback. */
 function simulateTurnStart(
   q: QueueRuntime,
-  pendingTurnsRef: { value: number },
+  _pendingTurnsRef: { value: number },
   isUserMessage: boolean,
 ): void {
   if (isUserMessage) q.consumeItems(1);
