@@ -1665,26 +1665,9 @@ export default function App({
   // Message queue state for queueing messages during streaming
   const [queueDisplay, setQueueDisplay] = useState<QueuedMessage[]>([]);
 
-  const messageQueueRef = useRef<QueuedMessage[]>([]); // For synchronous access
-  useEffect(() => {
-    messageQueueRef.current = queueDisplay;
-  }, [queueDisplay]);
-
-  // PRQ4: divergence check — runs after every queueDisplay commit, by which time
-  // tuiQueueRef has already been updated (enqueue/consumeItems called synchronously
-  // before setMessageQueue). Warn-only, never throws.
-  useEffect(() => {
-    if ((tuiQueueRef.current?.length ?? 0) !== queueDisplay.length) {
-      debugWarn(
-        "queue-lifecycle",
-        `drift: QueueRuntime.length=${tuiQueueRef.current?.length ?? 0} queueDisplay.length=${queueDisplay.length}`,
-      );
-    }
-  }, [queueDisplay]);
-
-  // QueueRuntime — authoritative queue for lifecycle tracking and (after cutover)
-  // submit decisions. maxItems: Infinity disables soft/hard drop limits to match
-  // the previous unbounded queueDisplay array semantics.
+  // QueueRuntime — authoritative queue. maxItems: Infinity disables drop limits
+  // to match the previous unbounded array semantics. queueDisplay is a derived
+  // UI state maintained by the onEnqueued/onDequeued/onCleared callbacks.
   // Lazy init pattern; typed QueueRuntime | null with ?. at all call sites.
   const tuiQueueRef = useRef<QueueRuntime | null>(null);
   if (!tuiQueueRef.current) {
@@ -5122,7 +5105,7 @@ export default function App({
               lastDequeuedMessageRef.current = null;
             }
             // Clear any remaining queue on error
-            tuiQueueRef.current?.clear("error"); // PRQ4
+            tuiQueueRef.current?.clear("error");
 
             setStreaming(false);
             sendDesktopNotification("Stream error", "error"); // Notify user of error
@@ -5226,7 +5209,7 @@ export default function App({
                 lastDequeuedMessageRef.current = null;
               }
               // Clear any remaining queue on error
-              tuiQueueRef.current?.clear("error"); // PRQ4
+              tuiQueueRef.current?.clear("error");
 
               setStreaming(false);
               sendDesktopNotification();
@@ -5257,7 +5240,7 @@ export default function App({
             lastDequeuedMessageRef.current = null;
           }
           // Clear any remaining queue on error
-          tuiQueueRef.current?.clear("error"); // PRQ4
+          tuiQueueRef.current?.clear("error");
 
           setStreaming(false);
           sendDesktopNotification("Execution error", "error"); // Notify user of error
@@ -5297,7 +5280,7 @@ export default function App({
           lastDequeuedMessageRef.current = null;
         }
         // Clear any remaining queue on error
-        tuiQueueRef.current?.clear("error"); // PRQ4
+        tuiQueueRef.current?.clear("error");
 
         setStreaming(false);
         sendDesktopNotification("Processing error", "error"); // Notify user of error
@@ -5372,7 +5355,6 @@ export default function App({
 
   // Handler when user presses UP/ESC to load queue into input for editing
   const handleEnterQueueEditMode = useCallback(() => {
-    // PRQ4: items are discarded (user is editing them), not submitted.
     tuiQueueRef.current?.clear("stale_generation");
   }, []);
 
