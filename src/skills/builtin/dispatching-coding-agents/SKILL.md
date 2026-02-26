@@ -43,19 +43,19 @@ claude -p "Trace the request flow from POST /agents/{id}/messages through to the
 ### Codex
 
 ```bash
-codex exec "YOUR PROMPT" -m MODEL --full-auto
+codex exec "YOUR PROMPT" -m codex-5.3 --full-auto
 ```
 
 - `exec`: non-interactive mode
-- `-m MODEL`: e.g. `o3`, `gpt-5.2`, `codex-5.3`
+- `-m MODEL`: prefer `codex-5.3` (frontier), also `gpt-5.2`, `o3`
 - `--full-auto`: auto-approve commands in sandbox (equivalent to `-a on-request --sandbox workspace-write`)
 - `-C DIR`: set working directory
 - `--search`: enable web search tool
 
-Example — research task with GPT-5.2:
+Example — research task:
 ```bash
 codex exec "Find all places where system prompt is recompiled. Cite files and line numbers." \
-  -m gpt-5.2 --full-auto -C /path/to/repo
+  -m codex-5.3 --full-auto -C /path/to/repo
 ```
 
 ## Session Resumption
@@ -188,8 +188,8 @@ Run Claude Code and Codex simultaneously on the same question via separate Bash 
 ### Deep investigation — use frontier models
 
 For hard problems, use the strongest available models:
+- Codex: `-m codex-5.3` (preferred — strong reasoning, good with large repos)
 - Claude Code: `--model opus`
-- Codex: `-m codex-5.3` or `-m gpt-5.2`
 
 ### Code review — cross-agent validation
 
@@ -214,7 +214,7 @@ Track observations about model/agent performance in memory. Initial heuristics:
 
 | Agent | Strengths | Weaknesses |
 |-------|-----------|------------|
-| Claude Code (Opus) | Deep code tracing, nuanced analysis, long-context | Slower, more expensive |
-| Claude Code (Sonnet) | Fast, good for straightforward tasks | Less thorough on complex traces |
-| Codex (GPT-5.2) | Strong reasoning, good code search | Different tool ecosystem |
-| Codex (Codex-5.3) | Frontier reasoning for hardest problems | Most expensive |
+| Codex (Codex-5.3) | Frontier reasoning, handles large repos well, reliable with --full-auto | Most expensive |
+| Codex (GPT-5.2) | Strong reasoning, good code search | Slightly less capable than 5.3 |
+| Claude Code (Sonnet) | Fast, actionable output with concrete code samples | Less thorough on edge cases |
+| Claude Code (Opus) | Deep analysis, nuanced reasoning | Can hang on large repos with tool use, needs --dangerously-skip-permissions |
