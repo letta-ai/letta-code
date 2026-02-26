@@ -114,6 +114,19 @@ describe("Startup Flow - Flag Conflicts", () => {
     );
   });
 
+  test("--conversation conflicts with legacy --from-af using canonical --import error text", async () => {
+    const result = await runCli(
+      ["--conversation", "conv-123", "--from-af", "test.af"],
+      { expectExit: 1 },
+    );
+    expect(result.stderr).toContain(
+      "--conversation cannot be used with --import",
+    );
+    expect(result.stderr).not.toContain(
+      "--conversation cannot be used with --from-af",
+    );
+  });
+
   test("--conversation conflicts with --name", async () => {
     const result = await runCli(
       ["--conversation", "conv-123", "--name", "MyAgent"],
@@ -123,6 +136,14 @@ describe("Startup Flow - Flag Conflicts", () => {
       "--conversation cannot be used with --name",
     );
   });
+
+  test("--import conflicts with --name (including legacy --from-af alias)", async () => {
+    const result = await runCli(["--from-af", "test.af", "--name", "MyAgent"], {
+      expectExit: 1,
+    });
+    expect(result.stderr).toContain("--import cannot be used with --name");
+    expect(result.stderr).not.toContain("--from-af cannot be used with --name");
+  });
 });
 
 describe("Startup Flow - Smoke", () => {
@@ -130,7 +151,20 @@ describe("Startup Flow - Smoke", () => {
     const result = await runCli(["--name", "MyAgent", "--new-agent"], {
       expectExit: 1,
     });
-    expect(result.stderr).toContain("--name cannot be used with --new");
+    expect(result.stderr).toContain("--name cannot be used with --new-agent");
+  });
+
+  test("--new + --name does not conflict (new conversation on named agent)", async () => {
+    const result = await runCli(
+      ["-p", "Say OK", "--new", "--name", "NonExistentAgent999"],
+      { expectExit: 1 },
+    );
+    // Should get past flag validation regardless of whether credentials exist.
+    expect(result.stderr).not.toContain("cannot be used with");
+    expect(
+      result.stderr.includes("NonExistentAgent999") ||
+        result.stderr.includes("Missing LETTA_API_KEY"),
+    ).toBe(true);
   });
 
   test("--new-agent headless parses and reaches credential check", async () => {
@@ -150,5 +184,58 @@ describe("Startup Flow - Smoke", () => {
     );
     expect(result.stderr).toContain("Missing LETTA_API_KEY");
     expect(result.stderr).not.toContain("Invalid toolset");
+  });
+
+  test("--memfs-startup is accepted for headless startup", async () => {
+    const result = await runCli(
+      ["--new-agent", "-p", "Say OK", "--memfs-startup", "background"],
+      {
+        expectExit: 1,
+      },
+    );
+    expect(result.stderr).toContain("Missing LETTA_API_KEY");
+    expect(result.stderr).not.toContain("Unknown option '--memfs-startup'");
+  });
+
+  test("-c alias for --continue is accepted", async () => {
+    const result = await runCli(["-p", "Say OK", "-c"], {
+      expectExit: 1,
+    });
+    expect(result.stderr).toContain("Missing LETTA_API_KEY");
+    expect(result.stderr).not.toContain("Unknown option '-c'");
+  });
+
+  test("-C alias for --conversation is accepted", async () => {
+    const result = await runCli(["-p", "Say OK", "-C", "conv-123"], {
+      expectExit: 1,
+    });
+    expect(result.stderr).toContain("Missing LETTA_API_KEY");
+    expect(result.stderr).not.toContain("Unknown option '-C'");
+  });
+
+  test("--import handle is accepted in headless mode", async () => {
+    const result = await runCli(["--import", "@author/agent", "-p", "Say OK"], {
+      expectExit: 1,
+    });
+    expect(result.stderr).toContain("Missing LETTA_API_KEY");
+    expect(result.stderr).not.toContain("Invalid registry handle");
+  });
+
+  test("--max-turns and --pre-load-skills are accepted in headless mode", async () => {
+    const result = await runCli(
+      [
+        "--new-agent",
+        "-p",
+        "Say OK",
+        "--max-turns",
+        "2",
+        "--pre-load-skills",
+        "foo,bar",
+      ],
+      { expectExit: 1 },
+    );
+    expect(result.stderr).toContain("Missing LETTA_API_KEY");
+    expect(result.stderr).not.toContain("Unknown option '--max-turns'");
+    expect(result.stderr).not.toContain("Unknown option '--pre-load-skills'");
   });
 });
