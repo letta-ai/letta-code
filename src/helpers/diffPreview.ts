@@ -8,19 +8,31 @@ import { basename } from "node:path";
 import type { AdvancedDiffResult, AdvancedHunk } from "../cli/helpers/diff";
 import type { DiffHunk, DiffHunkLine, DiffPreview } from "../types/protocol";
 
-function parseHunkLinePrefix(raw: string): DiffHunkLine {
+function parseHunkLinePrefix(raw: string): DiffHunkLine | null {
   if (raw.length === 0) {
     return { type: "context", content: "" };
+  }
+  if (raw[0] === "\\") {
+    // Metadata line (e.g. "\ No newline at end of file"), not a diff row.
+    return null;
   }
   const prefix = raw[0];
   const content = raw.slice(1);
   if (prefix === "+") return { type: "add", content };
   if (prefix === "-") return { type: "remove", content };
-  return { type: "context", content };
+  if (prefix === " ") return { type: "context", content };
+  // Unknown prefix: preserve full line as context rather than dropping first char.
+  return { type: "context", content: raw };
 }
 
 function convertHunk(hunk: AdvancedHunk): DiffHunk {
-  const lines = hunk.lines.map((l) => parseHunkLinePrefix(l.raw));
+  const lines: DiffHunkLine[] = [];
+  for (const line of hunk.lines) {
+    const parsed = parseHunkLinePrefix(line.raw);
+    if (parsed) {
+      lines.push(parsed);
+    }
+  }
 
   let oldLines = 0;
   let newLines = 0;
@@ -74,24 +86,53 @@ export function toDiffPreview(
   }
 }
 
+type DiffDeps = {
+  computeAdvancedDiff: typeof import("../cli/helpers/diff").computeAdvancedDiff;
+  parsePatchToAdvancedDiff: typeof import("../cli/helpers/diff").parsePatchToAdvancedDiff;
+  isFileWriteTool: typeof import("../cli/helpers/toolNameMapping").isFileWriteTool;
+  isFileEditTool: typeof import("../cli/helpers/toolNameMapping").isFileEditTool;
+  isPatchTool: typeof import("../cli/helpers/toolNameMapping").isPatchTool;
+  parsePatchOperations: typeof import("../cli/helpers/formatArgsDisplay").parsePatchOperations;
+};
+
+let cachedDiffDeps: DiffDeps | null = null;
+
+async function getDiffDeps(): Promise<DiffDeps> {
+  if (cachedDiffDeps) return cachedDiffDeps;
+  const [diffMod, toolNameMod, formatMod] = await Promise.all([
+    import("../cli/helpers/diff"),
+    import("../cli/helpers/toolNameMapping"),
+    import("../cli/helpers/formatArgsDisplay"),
+  ]);
+  cachedDiffDeps = {
+    computeAdvancedDiff: diffMod.computeAdvancedDiff,
+    parsePatchToAdvancedDiff: diffMod.parsePatchToAdvancedDiff,
+    isFileWriteTool: toolNameMod.isFileWriteTool,
+    isFileEditTool: toolNameMod.isFileEditTool,
+    isPatchTool: toolNameMod.isPatchTool,
+    parsePatchOperations: formatMod.parsePatchOperations,
+  };
+  return cachedDiffDeps;
+}
+
 /**
  * Compute diff previews for a tool call. Returns an array of DiffPreview
  * (one per file for patch tools, one for Write/Edit tools).
  *
  * Mirrors the diff computation logic in App.tsx:4372-4438.
  */
-export function computeDiffPreviews(
+export async function computeDiffPreviews(
   toolName: string,
   toolArgs: Record<string, unknown>,
-): DiffPreview[] {
-  // Lazy imports to avoid circular deps and keep this file lightweight
-  const { computeAdvancedDiff, parsePatchToAdvancedDiff } =
-    require("../cli/helpers/diff") as typeof import("../cli/helpers/diff");
-  const { isFileWriteTool, isFileEditTool, isPatchTool } =
-    require("../cli/helpers/toolNameMapping") as typeof import("../cli/helpers/toolNameMapping");
-  const { parsePatchOperations } =
-    require("../cli/helpers/formatArgsDisplay") as typeof import("../cli/helpers/formatArgsDisplay");
-
+): Promise<DiffPreview[]> {
+  const {
+    computeAdvancedDiff,
+    parsePatchToAdvancedDiff,
+    isFileWriteTool,
+    isFileEditTool,
+    isPatchTool,
+    parsePatchOperations,
+  } = await getDiffDeps();
   const previews: DiffPreview[] = [];
 
   try {

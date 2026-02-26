@@ -4,7 +4,7 @@ import type {
   AdvancedDiffSuccess,
   AdvancedDiffUnpreviewable,
 } from "../../cli/helpers/diff";
-import { toDiffPreview } from "../../helpers/diffPreview";
+import { computeDiffPreviews, toDiffPreview } from "../../helpers/diffPreview";
 
 describe("toDiffPreview", () => {
   it("converts an AdvancedDiffSuccess to an advanced DiffPreview", () => {
@@ -151,5 +151,66 @@ describe("toDiffPreview", () => {
 
     const result = toDiffPreview(input, "overridden.ts");
     expect(result.fileName).toBe("overridden.ts");
+  });
+
+  it("ignores no-newline metadata lines in advanced hunks", () => {
+    const input: AdvancedDiffSuccess = {
+      mode: "advanced",
+      fileName: "x.txt",
+      oldStr: "old-no-newline",
+      newStr: "new-no-newline",
+      hunks: [
+        {
+          oldStart: 1,
+          newStart: 1,
+          lines: [
+            { raw: "-old-no-newline" },
+            { raw: "\\ No newline at end of file" },
+            { raw: "+new-no-newline" },
+            { raw: "\\ No newline at end of file" },
+          ],
+        },
+      ],
+    };
+
+    const result = toDiffPreview(input);
+    if (result.mode !== "advanced") throw new Error("unreachable");
+
+    const hunk = result.hunks[0];
+    expect(hunk?.oldLines).toBe(1);
+    expect(hunk?.newLines).toBe(1);
+    expect(hunk?.lines).toEqual([
+      { type: "remove", content: "old-no-newline" },
+      { type: "add", content: "new-no-newline" },
+    ]);
+  });
+});
+
+describe("computeDiffPreviews", () => {
+  it("returns one preview for write tool", async () => {
+    const previews = await computeDiffPreviews("write", {
+      file_path: "sample.txt",
+      content: "hello",
+    });
+    expect(previews).toHaveLength(1);
+    expect(previews[0]?.mode).toBe("advanced");
+    expect(previews[0]?.fileName).toBe("sample.txt");
+  });
+
+  it("returns one preview per file for apply_patch", async () => {
+    const patch = [
+      "*** Begin Patch",
+      "*** Update File: a.txt",
+      "@@ -1 +1 @@",
+      "-old",
+      "+new",
+      "*** Add File: b.txt",
+      "+hello",
+      "*** End Patch",
+    ].join("\n");
+
+    const previews = await computeDiffPreviews("apply_patch", { input: patch });
+    expect(previews).toHaveLength(2);
+    expect(previews.map((p) => p.fileName).sort()).toEqual(["a.txt", "b.txt"]);
   });
 });

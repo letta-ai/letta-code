@@ -2567,7 +2567,7 @@ async function runBidirectionalMode(
     const requestId = `perm-${toolCallId}`;
 
     // Compute diff previews for file-modifying tools
-    const diffs = computeDiffPreviews(toolName, toolInput);
+    const diffs = await computeDiffPreviews(toolName, toolInput);
 
     // Build can_use_tool control request (Claude SDK format)
     const canUseToolRequest: CanUseToolControlRequest = {
