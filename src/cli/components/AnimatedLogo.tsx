@@ -2,6 +2,8 @@ import { useSyncExternalStore } from "react";
 import { colors } from "./colors";
 import { Text } from "./Text";
 
+const LOGO_WIDTH = 10;
+
 // Define animation frames - 3D rotation effect with gradient (█ → ▓ → ▒ → ░)
 // Each frame is ~10 chars wide, 5 lines tall - matches login dialog asciiLogo size
 const logoFrames = [
@@ -91,6 +93,17 @@ const logoFrames = [
   █████▓  `,
 ];
 
+function padFrameToFixedWidth(frame: string, width: number): string {
+  return frame
+    .split("\n")
+    .map((line) => line.padEnd(width, " "))
+    .join("\n");
+}
+
+const normalizedLogoFrames = logoFrames.map((frame) =>
+  padFrameToFixedWidth(frame, LOGO_WIDTH),
+);
+
 // Shared module-level ticker for animation sync across all AnimatedLogo instances
 // Single timer, guaranteed sync, no time-jump artifacts
 let tick = 0;
@@ -133,9 +146,9 @@ export function AnimatedLogo({
   animate = true,
 }: AnimatedLogoProps) {
   const tick = useSyncExternalStore(subscribe, getSnapshot);
-  const frame = animate ? tick % logoFrames.length : 0;
+  const frame = animate ? tick % normalizedLogoFrames.length : 0;
 
-  const logoLines = logoFrames[frame]?.split("\n") ?? [];
+  const logoLines = normalizedLogoFrames[frame]?.split("\n") ?? [];
 
   return (
     <>
