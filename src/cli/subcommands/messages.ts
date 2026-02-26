@@ -54,7 +54,7 @@ function parseMode(value: unknown): SearchMode | undefined {
 }
 
 function parseOrder(value: unknown): ListOrder | undefined {
-  if (value === "asc" || value === "desc") {
+  if (typeof value === "string" && (value === "asc" || value === "desc")) {
     return value;
   }
   return undefined;
