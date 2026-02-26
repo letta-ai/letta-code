@@ -70,7 +70,11 @@ export function clearLastSDKDiagnostic(): void {
 
 const sdkLogger = {
   error: (...args: unknown[]) => {
-    captureSDKErrorDiagnostic(args);
+    try {
+      captureSDKErrorDiagnostic(args);
+    } catch {
+      // Diagnostic capture must never disrupt the SDK
+    }
     if (isDebugEnabled()) {
       console.error(...args);
     }
