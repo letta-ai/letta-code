@@ -1,4 +1,5 @@
 import { Box } from "ink";
+import Link from "ink-link";
 import { memo, useMemo } from "react";
 import stringWidth from "string-width";
 import type { ModelReasoningEffort } from "../../agent/model";
@@ -58,6 +59,7 @@ export const AgentInfoBar = memo(function AgentInfoBar({
   conversationId,
 }: AgentInfoBarProps) {
   const columns = useTerminalWidth();
+  const isTmux = Boolean(process.env.TMUX);
   // Check if current agent is pinned
   const isPinned = useMemo(() => {
     if (!agentId) return false;
@@ -122,6 +124,31 @@ export const AgentInfoBar = memo(function AgentInfoBar({
       {/* Alien + Links */}
       <Box>
         <Text color={colors.footer.agentName}>{alienLines[1]}</Text>
+        {isCloudUser && adeConversationUrl && !isTmux && (
+          <>
+            <Box width={rightWidth} flexShrink={1}>
+              <Link url={adeConversationUrl}>
+                <Text>Open in ADE ↗</Text>
+              </Link>
+            </Box>
+            <Text dimColor>· </Text>
+          </>
+        )}
+        {isCloudUser && adeConversationUrl && isTmux && (
+          <>
+            <Box width={rightWidth} flexShrink={1}>
+              <Text dimColor wrap="truncate-end">
+                {truncateText(`Open in ADE: ${adeConversationUrl}`, rightWidth)}
+              </Text>
+            </Box>
+            <Text dimColor>· </Text>
+          </>
+        )}
+        {isCloudUser && (
+          <Link url="https://app.letta.com/settings/organization/usage">
+            <Text>View usage ↗</Text>
+          </Link>
+        )}
         {!isCloudUser && (
           <Box width={rightWidth} flexShrink={1}>
             <Text dimColor wrap="truncate-end">
@@ -130,21 +157,6 @@ export const AgentInfoBar = memo(function AgentInfoBar({
           </Box>
         )}
       </Box>
-
-      {/* Keep usage on its own line to avoid breaking the alien art rows. */}
-      {isCloudUser && (
-        <Box>
-          <Text color={colors.footer.agentName}>{alienLines[3]}</Text>
-          <Box width={rightWidth} flexShrink={1}>
-            <Text dimColor wrap="truncate-end">
-              {truncateText(
-                "Usage: https://app.letta.com/settings/organization/usage",
-                rightWidth,
-              )}
-            </Text>
-          </Box>
-        </Box>
-      )}
 
       {/* Model summary */}
       <Box>
@@ -181,14 +193,6 @@ export const AgentInfoBar = memo(function AgentInfoBar({
           </Box>
         )}
       </Box>
-
-      {/* Full ADE conversation URL (may wrap; kept last so it can't break the art rows) */}
-      {isCloudUser && adeConversationUrl && (
-        <Box>
-          <Text>{alienLines[3]}</Text>
-          <Text dimColor>{`ADE: ${adeConversationUrl}`}</Text>
-        </Box>
-      )}
     </Box>
   );
 });
