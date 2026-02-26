@@ -69,9 +69,6 @@ export async function drainStream(
   onChunkProcessed?: DrainStreamHook,
   contextTracker?: ContextTracker,
 ): Promise<DrainResult> {
-  // Ensure parse diagnostics from prior streams don't leak into this run.
-  clearLastStreamParseDiagnostic();
-
   const startTime = performance.now();
   const requestStartTime = getStreamRequestStartTime(stream) ?? startTime;
   let hasLoggedTTFT = false;
@@ -217,15 +214,9 @@ export async function drainStream(
     // This can happen when the stream ends with incomplete data
     const errorMessage = e instanceof Error ? e.message : String(e);
     const parseDiagnostic = consumeLastStreamParseDiagnostic();
-    const isParseRelated =
-      errorMessage.includes("JSON") ||
-      errorMessage.includes("parse") ||
-      errorMessage.includes("Unexpected token") ||
-      errorMessage.includes("Unexpected end");
-    const errorMessageWithDiagnostic =
-      parseDiagnostic && isParseRelated
-        ? `${errorMessage} [${parseDiagnostic}]`
-        : errorMessage;
+    const errorMessageWithDiagnostic = parseDiagnostic
+      ? `${errorMessage} [${parseDiagnostic}]`
+      : errorMessage;
     debugWarn("drainStream", "Stream error caught:", errorMessage);
 
     // Try to extract run_id from APIError if we don't have one yet
@@ -264,6 +255,11 @@ export async function drainStream(
     if (abortSignal) {
       abortSignal.removeEventListener("abort", abortHandler);
     }
+
+    // Clear SDK parse diagnostics on stream completion so they don't leak
+    // into a future stream. On error paths the catch block already consumed
+    // them; this handles the success path.
+    clearLastStreamParseDiagnostic();
   }
 
   if (!stopReason && streamProcessor.stopReason) {

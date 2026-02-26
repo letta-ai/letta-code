@@ -6,13 +6,11 @@ import { settingsManager } from "../settings-manager";
 import { isDebugEnabled } from "../utils/debug";
 import { createTimingFetch, isTimingsEnabled } from "../utils/timing";
 
-const STREAM_PARSE_DIAGNOSTIC_MAX_AGE_MS = 10_000;
 const STREAM_PARSE_DIAGNOSTIC_MAX_LEN = 400;
 const STREAM_PARSE_DIAGNOSTIC_MAX_LINES = 4;
 
 type StreamParseDiagnostic = {
   lines: string[];
-  capturedAt: number;
 };
 
 let lastStreamParseDiagnostic: StreamParseDiagnostic | null = null;
@@ -57,23 +55,16 @@ function maybeCaptureStreamParseDiagnostic(args: unknown[]): void {
     return;
   }
 
-  const now = Date.now();
   const diagnosticLine = truncateDiagnostic(
     args.map((arg) => safeDiagnosticString(arg)).join(" "),
   );
 
-  const previousDiagnostic =
-    lastStreamParseDiagnostic &&
-    now - lastStreamParseDiagnostic.capturedAt <=
-      STREAM_PARSE_DIAGNOSTIC_MAX_AGE_MS
-      ? lastStreamParseDiagnostic
-      : { lines: [], capturedAt: now };
+  const previous = lastStreamParseDiagnostic ?? { lines: [] };
 
   lastStreamParseDiagnostic = {
-    lines: [...previousDiagnostic.lines, diagnosticLine].slice(
+    lines: [...previous.lines, diagnosticLine].slice(
       -STREAM_PARSE_DIAGNOSTIC_MAX_LINES,
     ),
-    capturedAt: now,
   };
 }
 
@@ -81,15 +72,7 @@ export function consumeLastStreamParseDiagnostic(): string | null {
   const diag = lastStreamParseDiagnostic;
   lastStreamParseDiagnostic = null;
 
-  if (!diag) {
-    return null;
-  }
-
-  if (Date.now() - diag.capturedAt > STREAM_PARSE_DIAGNOSTIC_MAX_AGE_MS) {
-    return null;
-  }
-
-  if (diag.lines.length === 0) {
+  if (!diag || diag.lines.length === 0) {
     return null;
   }
 
