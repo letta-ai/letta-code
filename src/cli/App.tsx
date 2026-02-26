@@ -1668,10 +1668,10 @@ export default function App({
   // tuiQueueRef has already been updated (enqueue/consumeItems called synchronously
   // before setMessageQueue). Warn-only, never throws.
   useEffect(() => {
-    if (tuiQueueRef.current.length !== messageQueue.length) {
+    if ((tuiQueueRef.current?.length ?? 0) !== messageQueue.length) {
       debugWarn(
         "queue-lifecycle",
-        `drift: QueueRuntime.length=${tuiQueueRef.current.length} messageQueue.length=${messageQueue.length}`,
+        `drift: QueueRuntime.length=${tuiQueueRef.current?.length ?? 0} messageQueue.length=${messageQueue.length}`,
       );
     }
   }, [messageQueue]);
@@ -1680,10 +1680,10 @@ export default function App({
   // Callbacks emit to the debug log only (gated on LETTA_DEBUG=1).
   // Does NOT drive submit decisions — existing messageQueue state remains authoritative.
   // Lazy init: useRef(new QueueRuntime(...)) would allocate on every render
-  // (React ignores all but the first, but construction still runs). Using
-  // null-as-unknown-as-QueueRuntime as placeholder keeps the ref typed as
-  // non-null so call sites need no assertions or casts.
-  const tuiQueueRef = useRef<QueueRuntime>(null as unknown as QueueRuntime);
+  // (React ignores all but the first, but construction still runs). The ref is
+  // typed QueueRuntime | null; call sites use ?. so the type is enforced and a
+  // missed init would no-op rather than hide behind an unsafe cast.
+  const tuiQueueRef = useRef<QueueRuntime | null>(null);
   if (!tuiQueueRef.current) {
     tuiQueueRef.current = new QueueRuntime({
       callbacks: {
@@ -1721,7 +1721,7 @@ export default function App({
     setMessageQueueAdder((message: QueuedMessage) => {
       setMessageQueue((q) => [...q, message]);
       // PRQ4: mirror enqueue into QueueRuntime for lifecycle tracking.
-      tuiQueueRef.current.enqueue(
+      tuiQueueRef.current?.enqueue(
         message.kind === "task_notification"
           ? ({
               kind: "task_notification",
@@ -1811,7 +1811,7 @@ export default function App({
     const messages = [...messageQueueRef.current];
     // PRQ4: items are being submitted into the current turn, so fire onDequeued
     // (not onCleared) to reflect actual consumption, not an error/cancel drop.
-    tuiQueueRef.current.consumeItems(messages.length);
+    tuiQueueRef.current?.consumeItems(messages.length);
     setMessageQueue([]);
     return messages;
   }, []);
@@ -5106,7 +5106,7 @@ export default function App({
               lastDequeuedMessageRef.current = null;
             }
             // Clear any remaining queue on error
-            tuiQueueRef.current.clear("error"); // PRQ4
+            tuiQueueRef.current?.clear("error"); // PRQ4
             setMessageQueue([]);
 
             setStreaming(false);
@@ -5211,7 +5211,7 @@ export default function App({
                 lastDequeuedMessageRef.current = null;
               }
               // Clear any remaining queue on error
-              tuiQueueRef.current.clear("error"); // PRQ4
+              tuiQueueRef.current?.clear("error"); // PRQ4
               setMessageQueue([]);
 
               setStreaming(false);
@@ -5243,7 +5243,7 @@ export default function App({
             lastDequeuedMessageRef.current = null;
           }
           // Clear any remaining queue on error
-          tuiQueueRef.current.clear("error"); // PRQ4
+          tuiQueueRef.current?.clear("error"); // PRQ4
           setMessageQueue([]);
 
           setStreaming(false);
@@ -5284,7 +5284,7 @@ export default function App({
           lastDequeuedMessageRef.current = null;
         }
         // Clear any remaining queue on error
-        tuiQueueRef.current.clear("error"); // PRQ4
+        tuiQueueRef.current?.clear("error"); // PRQ4
         setMessageQueue([]);
 
         setStreaming(false);
@@ -5361,7 +5361,7 @@ export default function App({
   // Handler when user presses UP/ESC to load queue into input for editing
   const handleEnterQueueEditMode = useCallback(() => {
     // PRQ4: items are discarded (user is editing them), not submitted.
-    tuiQueueRef.current.clear("stale_generation");
+    tuiQueueRef.current?.clear("stale_generation");
     setMessageQueue([]);
   }, []);
 
@@ -6461,7 +6461,7 @@ export default function App({
           return newQueue;
         });
         // PRQ4: mirror enqueue into QueueRuntime for lifecycle tracking.
-        tuiQueueRef.current.enqueue({
+        tuiQueueRef.current?.enqueue({
           kind: "message",
           source: "user",
           content: msg,
@@ -9815,7 +9815,7 @@ ${SYSTEM_REMINDER_CLOSE}
       lastDequeuedMessageRef.current = concatenatedMessage;
       // PRQ4: fire onDequeued before clearing state so QueueRuntime and
       // messageQueue drop to 0 together (divergence check runs after commit).
-      tuiQueueRef.current.consumeItems(messageQueue.length);
+      tuiQueueRef.current?.consumeItems(messageQueue.length);
       setMessageQueue([]);
 
       // Submit the concatenated message using the normal submit flow
@@ -9843,7 +9843,7 @@ ${SYSTEM_REMINDER_CLOSE}
         abortControllerActive: !!abortControllerRef.current,
       });
       if (blockedReason) {
-        tuiQueueRef.current.tryDequeue(blockedReason);
+        tuiQueueRef.current?.tryDequeue(blockedReason);
       }
     }
   }, [
