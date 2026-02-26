@@ -151,11 +151,11 @@ type ReflectionOverrides = {
 };
 
 function parseReflectionOverrides(
-  values: Record<string, unknown>,
+  values: ParsedCliArgs["values"],
 ): ReflectionOverrides {
-  const triggerRaw = values["reflection-trigger"] as string | undefined;
-  const behaviorRaw = values["reflection-behavior"] as string | undefined;
-  const stepCountRaw = values["reflection-step-count"] as string | undefined;
+  const triggerRaw = values["reflection-trigger"];
+  const behaviorRaw = values["reflection-behavior"];
+  const stepCountRaw = values["reflection-step-count"];
 
   if (!triggerRaw && !behaviorRaw && !stepCountRaw) {
     return {};
@@ -275,11 +275,11 @@ export async function handleHeadlessCommand(
   // Set tool filter if provided (controls which tools are loaded)
   if (values.tools !== undefined) {
     const { toolFilter } = await import("./tools/filter");
-    toolFilter.setEnabledTools(values.tools as string);
+    toolFilter.setEnabledTools(values.tools);
   }
   // Set permission mode if provided (or via --yolo alias)
-  const permissionModeValue = values["permission-mode"] as string | undefined;
-  const yoloMode = values.yolo as boolean | undefined;
+  const permissionModeValue = values["permission-mode"];
+  const yoloMode = values.yolo;
   if (yoloMode || permissionModeValue) {
     const { permissionMode } = await import("./permissions/mode");
     if (yoloMode) {
@@ -307,15 +307,15 @@ export async function handleHeadlessCommand(
   if (values.allowedTools || values.disallowedTools) {
     const { cliPermissions } = await import("./permissions/cli");
     if (values.allowedTools) {
-      cliPermissions.setAllowedTools(values.allowedTools as string);
+      cliPermissions.setAllowedTools(values.allowedTools);
     }
     if (values.disallowedTools) {
-      cliPermissions.setDisallowedTools(values.disallowedTools as string);
+      cliPermissions.setDisallowedTools(values.disallowedTools);
     }
   }
 
   // Check for input-format early - if stream-json, we don't need a prompt
-  const inputFormat = values["input-format"] as string | undefined;
+  const inputFormat = values["input-format"];
   const isBidirectionalMode = inputFormat === "stream-json";
 
   // If headless output is being piped and the downstream closes early (e.g.
@@ -372,38 +372,35 @@ export async function handleHeadlessCommand(
   }
 
   // --new: Create a new conversation (for concurrent sessions)
-  let forceNewConversation = (values.new as boolean | undefined) ?? false;
-  const fromAgentId = values["from-agent"] as string | undefined;
+  let forceNewConversation = values.new ?? false;
+  const fromAgentId = values["from-agent"];
 
   // Resolve agent (same logic as interactive mode)
   let agent: AgentState | null = null;
-  let specifiedAgentId = values.agent as string | undefined;
-  const specifiedAgentName = values.name as string | undefined;
-  let specifiedConversationId = values.conversation as string | undefined;
-  const shouldContinue = values.continue as boolean | undefined;
-  const forceNew = values["new-agent"] as boolean | undefined;
-  const systemPromptPreset = values.system as string | undefined;
-  const systemCustom = values["system-custom"] as string | undefined;
-  const systemAppend = values["system-append"] as string | undefined;
-  const embeddingModel = values.embedding as string | undefined;
-  const memoryBlocksJson = values["memory-blocks"] as string | undefined;
-  const blockValueArgs = values["block-value"] as string[] | undefined;
-  const initBlocksRaw = values["init-blocks"] as string | undefined;
-  const baseToolsRaw = values["base-tools"] as string | undefined;
-  const skillsDirectory =
-    (values.skills as string | undefined) ?? skillsDirectoryOverride;
-  const noSkillsFlag = values["no-skills"] as boolean | undefined;
-  const noBundledSkillsFlag = values["no-bundled-skills"] as
-    | boolean
-    | undefined;
-  const skillSourcesRaw = values["skill-sources"] as string | undefined;
-  const memfsFlag = values.memfs as boolean | undefined;
-  const noMemfsFlag = values["no-memfs"] as boolean | undefined;
+  let specifiedAgentId = values.agent;
+  const specifiedAgentName = values.name;
+  let specifiedConversationId = values.conversation;
+  const shouldContinue = values.continue;
+  const forceNew = values["new-agent"];
+  const systemPromptPreset = values.system;
+  const systemCustom = values["system-custom"];
+  const systemAppend = values["system-append"];
+  const embeddingModel = values.embedding;
+  const memoryBlocksJson = values["memory-blocks"];
+  const blockValueArgs = values["block-value"];
+  const initBlocksRaw = values["init-blocks"];
+  const baseToolsRaw = values["base-tools"];
+  const skillsDirectory = values.skills ?? skillsDirectoryOverride;
+  const noSkillsFlag = values["no-skills"];
+  const noBundledSkillsFlag = values["no-bundled-skills"];
+  const skillSourcesRaw = values["skill-sources"];
+  const memfsFlag = values.memfs;
+  const noMemfsFlag = values["no-memfs"];
   // Startup policy for the git-backed memory pull on session init.
   // "blocking" (default): await the pull before proceeding.
   // "background": fire the pull async, emit init without waiting.
   // "skip": skip the pull entirely this session.
-  const memfsStartupRaw = values["memfs-startup"] as string | undefined;
+  const memfsStartupRaw = values["memfs-startup"];
   const memfsStartupPolicy: "blocking" | "background" | "skip" =
     memfsStartupRaw === "background" || memfsStartupRaw === "skip"
       ? memfsStartupRaw
@@ -415,13 +412,12 @@ export async function handleHeadlessCommand(
       : undefined;
   const shouldAutoEnableMemfsForNewAgent = !memfsFlag && !noMemfsFlag;
   const fromAfFile = resolveImportFlagAlias({
-    importFlagValue: values.import as string | undefined,
-    fromAfFlagValue: values["from-af"] as string | undefined,
+    importFlagValue: values.import,
+    fromAfFlagValue: values["from-af"],
   });
-  const preLoadSkillsRaw = values["pre-load-skills"] as string | undefined;
+  const preLoadSkillsRaw = values["pre-load-skills"];
   const systemInfoReminderEnabled =
-    systemInfoReminderEnabledOverride ??
-    !(values["no-system-info-reminder"] as boolean | undefined);
+    systemInfoReminderEnabledOverride ?? !values["no-system-info-reminder"];
   const reflectionOverrides = (() => {
     try {
       return parseReflectionOverrides(values);
@@ -432,8 +428,8 @@ export async function handleHeadlessCommand(
       process.exit(1);
     }
   })();
-  const maxTurnsRaw = values["max-turns"] as string | undefined;
-  const tagsRaw = values.tags as string | undefined;
+  const maxTurnsRaw = values["max-turns"];
+  const tagsRaw = values.tags;
   const resolvedSkillSources = (() => {
     if (skillSourcesOverride) {
       return skillSourcesOverride;
@@ -1098,8 +1094,7 @@ export async function handleHeadlessCommand(
   setAgentContext(agent.id, skillsDirectory, resolvedSkillSources);
 
   // Validate output format
-  const outputFormat =
-    (values["output-format"] as string | undefined) || "text";
+  const outputFormat = values["output-format"] || "text";
   const includePartialMessages = Boolean(values["include-partial-messages"]);
   if (!["text", "json", "stream-json"].includes(outputFormat)) {
     console.error(
