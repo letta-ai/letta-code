@@ -122,62 +122,34 @@ Session files are stored at:
 ~/.codex/sessions/<year>/<month>/<day>/rollout-*.jsonl
 ```
 
-## Analyzing Session History
+## Session History
 
-After dispatching a task, use the **`history-analyzer`** subagent to deep-dive into the full session and extract insights into memory. It has the `migrating-from-codex-and-claude-code` skill with scripts for parsing both JSONL formats. Always pass in the concrete session file path so it knows exactly what to read.
+Both CLIs persist full session data (tool calls, reasoning, files read) locally. This is richer than the summarized output you get back in Bash.
 
-### End-to-end: Claude Code
+### Where sessions are stored
 
-1. Dispatch with `--output-format json` and parse the session ID:
-```bash
-OUTPUT=$(claude -p "YOUR PROMPT" --model opus --output-format json -C /path/to/repo 2>&1)
-SESSION_ID=$(echo "$OUTPUT" | python3 -c "import sys,json; print(json.loads(sys.stdin.read())['session_id'])")
+**Claude Code:**
 ```
-
-2. Construct the session file path:
-```bash
-ENCODED_PATH=$(echo "/path/to/repo" | sed 's|/|-|g')
-SESSION_FILE="$HOME/.claude/projects/$ENCODED_PATH/$SESSION_ID.jsonl"
+~/.claude/projects/<encoded-path>/<session-id>.jsonl
 ```
+Where `<encoded-path>` is the working directory with `/` replaced by `-` (e.g. `/Users/foo/repos/bar` → `-Users-foo-repos-bar`). Use `--output-format json` to get the `session_id` in structured output.
 
-3. Dispatch history-analyzer with the concrete path:
+**Codex:**
 ```
-Task({
-  subagent_type: "history-analyzer",
-  description: "Analyze Claude Code session",
-  prompt: "Read and analyze this Claude Code session: /Users/me/.claude/projects/-path-to-repo/abc123.jsonl — extract key findings, architectural insights, and code patterns. Update memory with anything worth preserving."
-})
+~/.codex/sessions/<year>/<month>/<day>/rollout-*-<session-id>.jsonl
 ```
+The session ID is printed in the output header: `session id: <uuid>`.
 
-### End-to-end: Codex
+### When to analyze sessions
 
-1. Dispatch and capture the session ID from the output header:
-```bash
-OUTPUT=$(codex exec "YOUR PROMPT" -m gpt-5.2 --full-auto -C /path/to/repo 2>&1)
-SESSION_ID=$(echo "$OUTPUT" | grep "^session id:" | awk '{print $3}')
-```
+**Don't** run history-analyzer after every dispatch — the reflection agent already captures insights from your conversation naturally, and single-session analysis tends to produce overly detailed memory that's better represented by the code itself.
 
-2. Find the session file (Codex stores by date):
-```bash
-SESSION_FILE=$(find ~/.codex/sessions/ -name "*.jsonl" -newer /tmp/before_dispatch | head -1)
-```
+**Do** use `history-analyzer` for its intended purpose: **bulk migration** when bootstrapping memory from months of accumulated Claude Code/Codex history (e.g. during `/init`). For that, see the `migrating-from-codex-and-claude-code` skill.
 
-3. Dispatch history-analyzer with the concrete path:
-```
-Task({
-  subagent_type: "history-analyzer",
-  description: "Analyze Codex session",
-  prompt: "Read and analyze this Codex session: /Users/me/.codex/sessions/2026/02/26/rollout-abc123.jsonl — extract key findings, architectural insights, and code patterns. Update memory with anything worth preserving."
-})
-```
-
-### Recommended workflow
-
-1. Dispatch task to `claude -p` or `codex exec` (capture session ID from output)
-2. Review the summarized output that comes back in your Bash result
-3. If the session produced valuable insights, dispatch `history-analyzer` with the **concrete session file path**
-4. The history-analyzer reads the full session (tool calls, reasoning, files read) and persists learnings to your memory
-5. Your memory accumulates knowledge from all agents, not just your own conversations
+Session files are useful for:
+- **Resuming** a line of investigation (see Session Resumption above)
+- **Reviewing** what an agent actually did (read the JSONL directly)
+- **Bulk migration** during `/init` when you have no existing memory
 
 ## Dispatch Patterns
 
