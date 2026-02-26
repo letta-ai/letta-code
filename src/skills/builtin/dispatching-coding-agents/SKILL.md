@@ -90,19 +90,67 @@ codex fork --last "Try a different approach"
 
 Note: Codex `resume` and `fork` launch interactive sessions, not non-interactive `exec`. For non-interactive follow-ups with Codex, start a fresh `exec` and include relevant context from the previous session in the prompt.
 
-## Accessing History
+## Capturing Session IDs
 
-Use the **`history-analyzer`** Task subagent to find and process past Claude Code and Codex sessions:
+When you dispatch a task, capture the session ID so you can access the full session history later. The Bash output you get back is just the final summary — the full session (intermediate tool calls, files read, reasoning) is stored locally and contains much richer data.
+
+### Claude Code
+
+Use `--output-format json` to get structured output including the session ID:
+```bash
+claude -p "YOUR PROMPT" --model opus --output-format json 2>&1
+```
+The JSON response includes `session_id`, `cost_usd`, `duration_ms`, `num_turns`, and `result`.
+
+Session files are stored at:
+```
+~/.claude/projects/<encoded-path>/<session-id>.jsonl
+```
+Where `<encoded-path>` is the working directory with `/` replaced by `-` (e.g. `/Users/foo/repos/bar` → `-Users-foo-repos-bar`).
+
+### Codex
+
+Codex prints the session ID in its output header:
+```
+session id: 019c9b76-fff4-7f40-a895-a58daa3c74c6
+```
+Extract it with: `grep "^session id:" output | awk '{print $3}'`
+
+Session files are stored at:
+```
+~/.codex/sessions/<year>/<month>/<day>/rollout-*.jsonl
+```
+
+## Analyzing Session History
+
+After dispatching a task, use the **`history-analyzer`** subagent to deep-dive into the full session and extract insights into memory. It has the `migrating-from-codex-and-claude-code` skill with scripts for parsing both JSONL formats.
+
+### Analyze a specific session
 
 ```
 Task({
   subagent_type: "history-analyzer",
-  description: "Analyze past coding sessions",
-  prompt: "Find recent Claude Code and Codex sessions related to [topic]. Summarize key findings and update memory."
+  description: "Analyze dispatched session",
+  prompt: "Read and analyze this Claude Code session file: ~/.claude/projects/<encoded-path>/<session-id>.jsonl — extract key findings, code patterns discovered, and any architectural insights. Update memory with anything worth preserving."
 })
 ```
 
-The history-analyzer knows where session data is stored and can extract insights from past conversations with these agents.
+### Analyze recent sessions for a project
+
+```
+Task({
+  subagent_type: "history-analyzer",
+  description: "Analyze recent coding sessions",
+  prompt: "Find recent Claude Code and Codex sessions in <project-dir>. Summarize key findings and update memory with patterns worth preserving."
+})
+```
+
+### Recommended workflow
+
+1. Dispatch task to `claude -p` or `codex exec` (capture session ID)
+2. Review the summarized output that comes back
+3. If the session produced valuable insights, dispatch `history-analyzer` to read the full session and persist learnings to memory
+4. This way your memory accumulates knowledge from all agents, not just your own conversations
 
 ## Dispatch Patterns
 
