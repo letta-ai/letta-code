@@ -3,8 +3,8 @@ import type { Stream } from "@letta-ai/letta-client/core/streaming";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
 import {
-  clearLastStreamParseDiagnostic,
-  consumeLastStreamParseDiagnostic,
+  clearLastSDKDiagnostic,
+  consumeLastSDKDiagnostic,
   getClient,
 } from "../../agent/client";
 import { getStreamRequestStartTime } from "../../agent/message";
@@ -213,9 +213,9 @@ export async function drainStream(
     // Handle stream errors (e.g., JSON parse errors from SDK, network issues)
     // This can happen when the stream ends with incomplete data
     const errorMessage = e instanceof Error ? e.message : String(e);
-    const parseDiagnostic = consumeLastStreamParseDiagnostic();
-    const errorMessageWithDiagnostic = parseDiagnostic
-      ? `${errorMessage} [${parseDiagnostic}]`
+    const sdkDiagnostic = consumeLastSDKDiagnostic();
+    const errorMessageWithDiagnostic = sdkDiagnostic
+      ? `${errorMessage} [${sdkDiagnostic}]`
       : errorMessage;
     debugWarn("drainStream", "Stream error caught:", errorMessage);
 
@@ -259,7 +259,7 @@ export async function drainStream(
     // Clear SDK parse diagnostics on stream completion so they don't leak
     // into a future stream. On error paths the catch block already consumed
     // them; this handles the success path.
-    clearLastStreamParseDiagnostic();
+    clearLastSDKDiagnostic();
   }
 
   if (!stopReason && streamProcessor.stopReason) {

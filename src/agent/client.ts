@@ -6,14 +6,14 @@ import { settingsManager } from "../settings-manager";
 import { isDebugEnabled } from "../utils/debug";
 import { createTimingFetch, isTimingsEnabled } from "../utils/timing";
 
-const STREAM_PARSE_DIAGNOSTIC_MAX_LEN = 400;
-const STREAM_PARSE_DIAGNOSTIC_MAX_LINES = 4;
+const SDK_DIAGNOSTIC_MAX_LEN = 400;
+const SDK_DIAGNOSTIC_MAX_LINES = 4;
 
-type StreamParseDiagnostic = {
+type SDKDiagnostic = {
   lines: string[];
 };
 
-let lastStreamParseDiagnostic: StreamParseDiagnostic | null = null;
+let lastSDKDiagnostic: SDKDiagnostic | null = null;
 
 function safeDiagnosticString(value: unknown): string {
   if (value === null || value === undefined) {
@@ -34,58 +34,43 @@ function safeDiagnosticString(value: unknown): string {
 function truncateDiagnostic(value: unknown): string {
   const text = safeDiagnosticString(value);
 
-  if (text.length <= STREAM_PARSE_DIAGNOSTIC_MAX_LEN) {
+  if (text.length <= SDK_DIAGNOSTIC_MAX_LEN) {
     return text;
   }
 
-  return `${text.slice(0, STREAM_PARSE_DIAGNOSTIC_MAX_LEN)}...[truncated, was ${text.length}b]`;
+  return `${text.slice(0, SDK_DIAGNOSTIC_MAX_LEN)}...[truncated, was ${text.length}b]`;
 }
 
-function maybeCaptureStreamParseDiagnostic(args: unknown[]): void {
-  const [first] = args;
-  if (typeof first !== "string") {
-    return;
-  }
-
-  const isParseMessageLine = first.includes(
-    "Could not parse message into JSON:",
-  );
-  const isFromChunkLine = first.includes("From chunk:");
-  if (!isParseMessageLine && !isFromChunkLine) {
-    return;
-  }
-
+function captureSDKErrorDiagnostic(args: unknown[]): void {
   const diagnosticLine = truncateDiagnostic(
     args.map((arg) => safeDiagnosticString(arg)).join(" "),
   );
 
-  const previous = lastStreamParseDiagnostic ?? { lines: [] };
+  const previous = lastSDKDiagnostic ?? { lines: [] };
 
-  lastStreamParseDiagnostic = {
-    lines: [...previous.lines, diagnosticLine].slice(
-      -STREAM_PARSE_DIAGNOSTIC_MAX_LINES,
-    ),
+  lastSDKDiagnostic = {
+    lines: [...previous.lines, diagnosticLine].slice(-SDK_DIAGNOSTIC_MAX_LINES),
   };
 }
 
-export function consumeLastStreamParseDiagnostic(): string | null {
-  const diag = lastStreamParseDiagnostic;
-  lastStreamParseDiagnostic = null;
+export function consumeLastSDKDiagnostic(): string | null {
+  const diag = lastSDKDiagnostic;
+  lastSDKDiagnostic = null;
 
   if (!diag || diag.lines.length === 0) {
     return null;
   }
 
-  return `sdk_parse=${diag.lines.join(" || ")}`;
+  return `sdk_error=${diag.lines.join(" || ")}`;
 }
 
-export function clearLastStreamParseDiagnostic(): void {
-  lastStreamParseDiagnostic = null;
+export function clearLastSDKDiagnostic(): void {
+  lastSDKDiagnostic = null;
 }
 
 const sdkLogger = {
   error: (...args: unknown[]) => {
-    maybeCaptureStreamParseDiagnostic(args);
+    captureSDKErrorDiagnostic(args);
     if (isDebugEnabled()) {
       console.error(...args);
     }
