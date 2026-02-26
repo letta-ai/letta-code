@@ -755,11 +755,16 @@ async function handleIncomingMessage(
 
     let runIdSent = false;
     let runId: string | undefined;
+    const runIds: string[] = [];
+    const startTime = performance.now();
+    let turnCount = 0;
     const buffers = createBuffers(agentId);
 
     // Approval loop: continue until end_turn or error
     // eslint-disable-next-line no-constant-condition
     while (true) {
+      turnCount++;
+      runIdSent = false;
       const result = await drainStreamWithResume(
         stream as Stream<LettaStreamingResponse>,
         buffers,
@@ -768,13 +773,16 @@ async function handleIncomingMessage(
         undefined,
         ({ chunk, shouldOutput, errorInfo }) => {
           const maybeRunId = (chunk as { run_id?: unknown }).run_id;
-          if (!runIdSent && typeof maybeRunId === "string") {
-            runIdSent = true;
+          if (typeof maybeRunId === "string") {
             runId = maybeRunId;
-            sendClientMessage(socket, {
-              type: "run_started",
-              runId: maybeRunId,
-            });
+            if (!runIdSent) {
+              runIdSent = true;
+              runIds.push(maybeRunId);
+              sendClientMessage(socket, {
+                type: "run_started",
+                runId: maybeRunId,
+              });
+            }
           }
 
           // Emit in-stream errors
@@ -808,11 +816,28 @@ async function handleIncomingMessage(
 
       // Case 1: Turn ended normally
       if (stopReason === "end_turn") {
-        sendClientMessage(socket, {
-          type: "result",
-          success: true,
-          stopReason: "end_turn",
-        });
+        if (runtime.controlResponseCapable) {
+          emitToWS(socket, {
+            type: "result",
+            subtype: "success",
+            agent_id: agentId,
+            conversation_id: conversationId,
+            duration_ms: performance.now() - startTime,
+            duration_api_ms: 0,
+            num_turns: turnCount,
+            result: null,
+            run_ids: runIds,
+            usage: null,
+            session_id: runtime.sessionId,
+            uuid: `result-${crypto.randomUUID()}`,
+          });
+        } else {
+          sendClientMessage(socket, {
+            type: "result",
+            success: true,
+            stopReason: "end_turn",
+          });
+        }
         break;
       }
 
@@ -826,11 +851,29 @@ async function handleIncomingMessage(
           session_id: runtime.sessionId,
           uuid: `error-${crypto.randomUUID()}`,
         });
-        sendClientMessage(socket, {
-          type: "result",
-          success: false,
-          stopReason,
-        });
+        if (runtime.controlResponseCapable) {
+          emitToWS(socket, {
+            type: "result",
+            subtype: "error",
+            agent_id: agentId,
+            conversation_id: conversationId,
+            duration_ms: performance.now() - startTime,
+            duration_api_ms: 0,
+            num_turns: turnCount,
+            result: null,
+            run_ids: runIds,
+            usage: null,
+            stop_reason: (stopReason as StopReasonType) || "error",
+            session_id: runtime.sessionId,
+            uuid: `result-${crypto.randomUUID()}`,
+          });
+        } else {
+          sendClientMessage(socket, {
+            type: "result",
+            success: false,
+            stopReason,
+          });
+        }
         break;
       }
 
@@ -1021,11 +1064,13 @@ async function handleIncomingMessage(
       session_id: runtime.sessionId,
       uuid: `error-${crypto.randomUUID()}`,
     });
-    sendClientMessage(socket, {
-      type: "result",
-      success: false,
-      stopReason: "error",
-    });
+    if (!runtime.controlResponseCapable) {
+      sendClientMessage(socket, {
+        type: "result",
+        success: false,
+        stopReason: "error",
+      });
+    }
 
     if (process.env.DEBUG) {
       console.error("[Listen] Error handling message:", error);
