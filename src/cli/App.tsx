@@ -10547,27 +10547,11 @@ ${SYSTEM_REMINDER_CLOSE}
           // string which tells the backend to use its default lightweight model.
           const existing = agentState?.compaction_settings;
 
-          // Fetch the default prompt for the new mode
-          let defaultPrompt: string | undefined;
-          try {
-            const serverUrl = getServerUrl();
-            const res = await fetch(
-              `${serverUrl}/v1/compaction/default-prompt?mode=${encodeURIComponent(mode)}`,
-            );
-            if (res.ok) {
-              const data = (await res.json()) as { prompt?: string };
-              defaultPrompt = data.prompt;
-            }
-          } catch {
-            // If fetch fails, skip prompt update — mode still gets saved
-          }
-
           await client.agents.update(agentId, {
             compaction_settings: {
               model: existing?.model ?? "",
               ...existing,
               mode: mode as "all" | "sliding_window" | "self_compact_all" | "self_compact_sliding_window",
-              ...(defaultPrompt !== undefined ? { prompt: defaultPrompt } : {}),
             },
           });
 
