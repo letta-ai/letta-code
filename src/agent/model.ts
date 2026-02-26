@@ -94,9 +94,9 @@ export function getDefaultModel(): string {
  * @returns The model handle to use as default
  */
 export function getDefaultModelForTier(billingTier?: string | null): string {
-  // Free tier gets glm-4.7 (a free model)
+  // Free tier gets minimax-m2.5 (a free model)
   if (billingTier?.toLowerCase() === "free") {
-    const freeDefault = models.find((m) => m.id === "glm-4.7");
+    const freeDefault = models.find((m) => m.id === "minimax-m2.5");
     if (freeDefault) return freeDefault.handle;
   }
   // Everyone else (pro, enterprise, unknown) gets the standard default
