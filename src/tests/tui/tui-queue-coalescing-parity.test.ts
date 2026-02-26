@@ -92,7 +92,8 @@ const MULTILINE_USER = [
   { kind: "user" as const, text: "line one\nline two\nline three" },
 ];
 
-const EMPTY: Array<{ kind: "user" | "task_notification"; text: string }> = [];
+// Intentionally unused — documents the empty-batch case tested inline below
+const _EMPTY: Array<{ kind: "user" | "task_notification"; text: string }> = [];
 
 // ── Tests ─────────────────────────────────────────────────────────
 
@@ -151,7 +152,8 @@ describe("buildContentFromQueueBatch parity with buildQueuedContentParts", () =>
     q.enqueue({ kind: "message", source: "user", content: "x" } as Parameters<
       typeof q.enqueue
     >[0]);
-    const batch = q.consumeItems(1)!;
+    const batch = q.consumeItems(1);
+    if (!batch) throw new Error("expected non-null batch");
     // Override items to empty to test the null-merged → [] return
     const emptyBatch = { ...batch, items: [] };
     expect(buildContentFromQueueBatch(emptyBatch)).toEqual(
