@@ -1664,6 +1664,18 @@ export default function App({
     messageQueueRef.current = messageQueue;
   }, [messageQueue]);
 
+  // PRQ4: divergence check — runs after every messageQueue commit, by which time
+  // tuiQueueRef has already been updated (enqueue/consumeItems called synchronously
+  // before setMessageQueue). Warn-only, never throws.
+  useEffect(() => {
+    if (tuiQueueRef.current.length !== messageQueue.length) {
+      debugWarn(
+        "queue-lifecycle",
+        `drift: QueueRuntime.length=${tuiQueueRef.current.length} messageQueue.length=${messageQueue.length}`,
+      );
+    }
+  }, [messageQueue]);
+
   // PRQ4: QueueRuntime mirror — parallel lifecycle tracking alongside existing queue.
   // Callbacks emit to the debug log only (gated on LETTA_DEBUG=1).
   // Does NOT drive submit decisions — existing messageQueue state remains authoritative.
@@ -1703,6 +1715,20 @@ export default function App({
     // Provide a queue adder that adds to messageQueue and bumps dequeueEpoch
     setMessageQueueAdder((message: QueuedMessage) => {
       setMessageQueue((q) => [...q, message]);
+      // PRQ4: mirror enqueue into QueueRuntime for lifecycle tracking.
+      tuiQueueRef.current.enqueue(
+        message.kind === "task_notification"
+          ? ({
+              kind: "task_notification",
+              source: "task_notification",
+              text: message.text,
+            } as Parameters<typeof tuiQueueRef.current.enqueue>[0])
+          : ({
+              kind: "message",
+              source: "user",
+              content: message.text,
+            } as Parameters<typeof tuiQueueRef.current.enqueue>[0]),
+      );
       setDequeueEpoch((e) => e + 1);
     });
     return () => setMessageQueueAdder(null);
@@ -6420,6 +6446,12 @@ export default function App({
 
           return newQueue;
         });
+        // PRQ4: mirror enqueue into QueueRuntime for lifecycle tracking.
+        tuiQueueRef.current.enqueue({
+          kind: "message",
+          source: "user",
+          content: msg,
+        } as Parameters<typeof tuiQueueRef.current.enqueue>[0]);
         return { submitted: true }; // Clears input
       }
 
