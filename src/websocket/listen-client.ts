@@ -31,6 +31,7 @@ import { generatePlanFilePath } from "../cli/helpers/planName";
 import { drainStreamWithResume } from "../cli/helpers/stream";
 import { computeDiffPreviews } from "../helpers/diffPreview";
 import { permissionMode } from "../permissions/mode";
+import { QueueRuntime } from "../queue/queueRuntime";
 import { settingsManager } from "../settings-manager";
 import { isInteractiveApprovalTool } from "../tools/interactivePolicy";
 import { loadTools } from "../tools/manager";
@@ -42,6 +43,7 @@ import type {
   ErrorMessage,
   MessageWire,
   ResultMessage as ProtocolResultMessage,
+  QueueLifecycleEvent,
   RecoveryMessage,
   RetryMessage,
   StopReasonType,
@@ -140,6 +142,11 @@ type ListenerRuntime = {
   controlResponseCapable: boolean;
   /** Stable session ID for MessageEnvelope-based emissions (scoped to runtime lifecycle). */
   sessionId: string;
+  /** Queue lifecycle tracking — parallel tracking layer, does not affect message processing. */
+  queueRuntime: QueueRuntime;
+  /** Count of turns currently queued or in-flight in the promise chain. Incremented
+   *  synchronously on message arrival (before .then()) to avoid async scheduling races. */
+  pendingTurns: number;
 };
 
 type ApprovalSlot =
@@ -192,7 +199,7 @@ const INITIAL_RETRY_DELAY_MS = 1000; // 1 second
 const MAX_RETRY_DELAY_MS = 30000; // 30 seconds
 
 function createRuntime(): ListenerRuntime {
-  return {
+  const runtime: ListenerRuntime = {
     socket: null,
     heartbeatInterval: null,
     reconnectTimeout: null,
@@ -202,7 +209,63 @@ function createRuntime(): ListenerRuntime {
     pendingApprovalResolvers: new Map(),
     controlResponseCapable: false,
     sessionId: `listen-${crypto.randomUUID()}`,
+    pendingTurns: 0,
+    // queueRuntime assigned below — needs runtime ref in callbacks
+    queueRuntime: null as unknown as QueueRuntime,
   };
+  runtime.queueRuntime = new QueueRuntime({
+    callbacks: {
+      onEnqueued: (item, queueLen) => {
+        if (runtime.socket?.readyState === WebSocket.OPEN) {
+          emitToWS(runtime.socket, {
+            type: "queue_item_enqueued",
+            item_id: item.id,
+            source: item.source,
+            kind: item.kind,
+            queue_len: queueLen,
+            session_id: runtime.sessionId,
+            uuid: `q-enq-${item.id}`,
+          });
+        }
+      },
+      onDequeued: (batch) => {
+        if (runtime.socket?.readyState === WebSocket.OPEN) {
+          emitToWS(runtime.socket, {
+            type: "queue_batch_dequeued",
+            batch_id: batch.batchId,
+            item_ids: batch.items.map((i) => i.id),
+            merged_count: batch.mergedCount,
+            queue_len_after: batch.queueLenAfter,
+            session_id: runtime.sessionId,
+            uuid: `q-deq-${batch.batchId}`,
+          });
+        }
+      },
+      onBlocked: (reason, queueLen) => {
+        if (runtime.socket?.readyState === WebSocket.OPEN) {
+          emitToWS(runtime.socket, {
+            type: "queue_blocked",
+            reason,
+            queue_len: queueLen,
+            session_id: runtime.sessionId,
+            uuid: `q-blk-${crypto.randomUUID()}`,
+          });
+        }
+      },
+      onCleared: (reason, clearedCount) => {
+        if (runtime.socket?.readyState === WebSocket.OPEN) {
+          emitToWS(runtime.socket, {
+            type: "queue_cleared",
+            reason,
+            cleared_count: clearedCount,
+            session_id: runtime.sessionId,
+            uuid: `q-clr-${crypto.randomUUID()}`,
+          });
+        }
+      },
+    },
+  });
+  return runtime;
 }
 
 function clearRuntimeTimers(runtime: ListenerRuntime): void {
@@ -303,13 +366,14 @@ function sendControlMessageOverWebSocket(
 
 // ── Typed protocol event adapter ────────────────────────────────
 
-type WsProtocolEvent =
+export type WsProtocolEvent =
   | MessageWire
   | AutoApprovalMessage
   | ErrorMessage
   | RetryMessage
   | RecoveryMessage
-  | ProtocolResultMessage;
+  | ProtocolResultMessage
+  | QueueLifecycleEvent;
 
 /**
  * Single adapter for all outbound typed protocol events.
@@ -672,21 +736,59 @@ async function connectWithRetry(
 
     // Handle incoming messages (queued for sequential processing)
     if (parsed.type === "message") {
+      // Queue lifecycle tracking: only enqueue if first payload is a
+      // MessageCreate (has `content`). ApprovalCreate payloads (legacy
+      // approval path) do not represent user-initiated messages.
+      const firstPayload = parsed.messages.at(0);
+      const isUserMessage =
+        firstPayload !== undefined && "content" in firstPayload;
+      if (isUserMessage) {
+        runtime.queueRuntime.enqueue({
+          kind: "message",
+          source: "user",
+          content: (firstPayload as MessageCreate).content,
+        } as Parameters<typeof runtime.queueRuntime.enqueue>[0]);
+        // Emit blocked on state transition when turns are already queued.
+        // pendingTurns is incremented synchronously (below) before .then(),
+        // so a second arrival always sees the correct count.
+        if (runtime.pendingTurns > 0) {
+          runtime.queueRuntime.tryDequeue("runtime_busy");
+        }
+      }
+      // Increment synchronously before chaining to avoid scheduling races
+      runtime.pendingTurns++;
+
       runtime.messageQueue = runtime.messageQueue
         .then(async () => {
           if (runtime !== activeRuntime || runtime.intentionallyClosed) {
+            runtime.pendingTurns--;
             return;
           }
 
-          opts.onStatusChange?.("receiving", opts.connectionId);
-          await handleIncomingMessage(
-            parsed,
-            socket,
-            runtime,
-            opts.onStatusChange,
-            opts.connectionId,
-          );
-          opts.onStatusChange?.("idle", opts.connectionId);
+          // Signal dequeue for exactly this one turn (one message per chain cb)
+          if (isUserMessage) {
+            runtime.queueRuntime.consumeItems(1);
+          }
+
+          // onStatusChange("receiving") is inside try so that any throw
+          // still reaches the finally and decrements pendingTurns.
+          try {
+            opts.onStatusChange?.("receiving", opts.connectionId);
+            await handleIncomingMessage(
+              parsed,
+              socket,
+              runtime,
+              opts.onStatusChange,
+              opts.connectionId,
+            );
+            opts.onStatusChange?.("idle", opts.connectionId);
+          } finally {
+            runtime.pendingTurns--;
+            // Reset blocked state only when queue is fully drained
+            if (runtime.pendingTurns === 0) {
+              runtime.queueRuntime.resetBlockedState();
+            }
+          }
         })
         .catch((error: unknown) => {
           if (process.env.DEBUG) {
@@ -701,6 +803,10 @@ async function connectWithRetry(
     if (runtime !== activeRuntime) {
       return;
     }
+
+    // Single authoritative queue_cleared emission for all close paths
+    // (intentional and unintentional). Must fire before early returns.
+    runtime.queueRuntime.clear("shutdown");
 
     if (process.env.DEBUG) {
       console.log(
