@@ -186,7 +186,7 @@
   {
     "id": "gpt-5.3-codex-plus-pro-none",
     "handle": "chatgpt-plus-pro/gpt-5.3-codex",
-    "label": "GPT-5.3 Codex",
+    "label": "GPT-5.3 Codex (ChatGPT)",
     "description": "GPT-5.3 Codex (no reasoning) via ChatGPT Plus/Pro",
     "updateArgs": {
       "reasoning_effort": "none",
@@ -199,7 +199,7 @@
   {
     "id": "gpt-5.3-codex-plus-pro-low",
     "handle": "chatgpt-plus-pro/gpt-5.3-codex",
-    "label": "GPT-5.3 Codex",
+    "label": "GPT-5.3 Codex (ChatGPT)",
     "description": "GPT-5.3 Codex (low reasoning) via ChatGPT Plus/Pro",
     "updateArgs": {
       "reasoning_effort": "low",
@@ -212,7 +212,7 @@
   {
     "id": "gpt-5.3-codex-plus-pro-medium",
     "handle": "chatgpt-plus-pro/gpt-5.3-codex",
-    "label": "GPT-5.3 Codex",
+    "label": "GPT-5.3 Codex (ChatGPT)",
     "description": "GPT-5.3 Codex (med reasoning) via ChatGPT Plus/Pro",
     "updateArgs": {
       "reasoning_effort": "medium",
@@ -225,8 +225,8 @@
   {
     "id": "gpt-5.3-codex-plus-pro-high",
     "handle": "chatgpt-plus-pro/gpt-5.3-codex",
-    "label": "GPT-5.3 Codex",
-    "description": "OpenAI's best coding model (high reasoning)",
+    "label": "GPT-5.3 Codex (ChatGPT)",
+    "description": "OpenAI's best coding model (high reasoning) via ChatGPT Plus/Pro",
     "isFeatured": true,
     "updateArgs": {
       "reasoning_effort": "high",
@@ -239,7 +239,7 @@
   {
     "id": "gpt-5.3-codex-plus-pro-xhigh",
     "handle": "chatgpt-plus-pro/gpt-5.3-codex",
-    "label": "GPT-5.3 Codex",
+    "label": "GPT-5.3 Codex (ChatGPT)",
     "description": "GPT-5.3 Codex (max reasoning) via ChatGPT Plus/Pro",
     "updateArgs": {
       "reasoning_effort": "xhigh",
