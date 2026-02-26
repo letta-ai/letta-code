@@ -2,7 +2,6 @@ import { describe, expect, test } from "bun:test";
 import {
   type DequeuedBatch,
   type MessageQueueItem,
-  type QueueCallbacks,
   type QueueItem,
   QueueRuntime,
 } from "../../queue/queueRuntime";
