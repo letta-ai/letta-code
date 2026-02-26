@@ -1679,8 +1679,13 @@ export default function App({
   // PRQ4: QueueRuntime mirror — parallel lifecycle tracking alongside existing queue.
   // Callbacks emit to the debug log only (gated on LETTA_DEBUG=1).
   // Does NOT drive submit decisions — existing messageQueue state remains authoritative.
-  const tuiQueueRef = useRef<QueueRuntime>(
-    new QueueRuntime({
+  // Lazy init: useRef(new QueueRuntime(...)) would allocate on every render
+  // (React ignores all but the first, but construction still runs). Using
+  // null-as-unknown-as-QueueRuntime as placeholder keeps the ref typed as
+  // non-null so call sites need no assertions or casts.
+  const tuiQueueRef = useRef<QueueRuntime>(null as unknown as QueueRuntime);
+  if (!tuiQueueRef.current) {
+    tuiQueueRef.current = new QueueRuntime({
       callbacks: {
         onEnqueued: (item, queueLen) =>
           debugLog(
@@ -1703,8 +1708,8 @@ export default function App({
             `cleared reason=${reason} cleared_count=${clearedCount}`,
           ),
       },
-    }),
-  );
+    });
+  }
 
   // Override content parts for queued submissions (to preserve part boundaries)
   const overrideContentPartsRef = useRef<MessageCreate["content"] | null>(null);
