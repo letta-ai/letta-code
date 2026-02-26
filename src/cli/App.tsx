@@ -79,7 +79,11 @@ import {
 import type { ApprovalContext } from "../permissions/analyzer";
 import { type PermissionMode, permissionMode } from "../permissions/mode";
 import { OPENAI_CODEX_PROVIDER_NAME } from "../providers/openai-codex-provider";
-import { QueueRuntime } from "../queue/queueRuntime";
+import {
+  type MessageQueueItem,
+  QueueRuntime,
+  type TaskNotificationQueueItem,
+} from "../queue/queueRuntime";
 import {
   DEFAULT_COMPLETION_PROMISE,
   type RalphState,
@@ -1812,15 +1816,20 @@ export default function App({
     [],
   );
 
-  // Consume queued messages for appending to tool results (clears queue)
+  // Consume queued messages for appending to tool results (clears queue).
+  // consumeItems fires onDequeued → setQueueDisplay(prev => prev.slice(n))
+  // so no direct setQueueDisplay call is needed here.
   const consumeQueuedMessages = useCallback((): QueuedMessage[] | null => {
-    if (messageQueueRef.current.length === 0) return null;
-    const messages = [...messageQueueRef.current];
-    // PRQ4: items are being submitted into the current turn, so fire onDequeued
-    // (not onCleared) to reflect actual consumption, not an error/cancel drop.
-    tuiQueueRef.current?.consumeItems(messages.length);
-    setQueueDisplay([]);
-    return messages;
+    const len = tuiQueueRef.current?.length ?? 0;
+    if (len === 0) return null;
+    const batch = tuiQueueRef.current?.consumeItems(len);
+    if (!batch) return null;
+    return batch.items
+      .filter(
+        (item): item is MessageQueueItem | TaskNotificationQueueItem =>
+          item.kind === "message" || item.kind === "task_notification",
+      )
+      .map(toQueuedMsg);
   }, []);
 
   // Helper to wrap async handlers that need to close overlay and lock input
