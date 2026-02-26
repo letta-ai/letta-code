@@ -516,16 +516,14 @@ const StreamingStatus = memo(function StreamingStatus({
   // Uses chalk.dim to match reasoning text styling
   // Memoized to prevent unnecessary re-renders during shimmer updates
   const statusHintText = useMemo(() => {
+    const hintColor = chalk.hex(colors.subagent.hint);
+    const hintBold = hintColor.bold;
     const suffix = `${statusHintSuffix})`;
     if (interruptRequested) {
-      return <Text dimColor>{` (interrupting${suffix}`}</Text>;
+      return hintColor(` (interrupting${suffix}`);
     }
     return (
-      <Text dimColor>
-        {" ("}
-        <Text bold>esc</Text>
-        {` to interrupt${suffix}`}
-      </Text>
+      hintColor(" (") + hintBold("esc") + hintColor(` to interrupt${suffix}`)
     );
   }, [interruptRequested, statusHintSuffix]);
 

@@ -1,3 +1,4 @@
+import chalk from "chalk";
 import { memo } from "react";
 import { colors } from "./colors.js";
 import { Text } from "./Text";
@@ -83,13 +84,17 @@ export const ShimmerText = memo(function ShimmerText({
   pushRegion(shimmer, start, colors.status.processingShimmer);
   pushRegion(after, end, color);
 
-  return (
-    <Text wrap={wrap}>
-      {segments.map((seg) => (
-        <Text key={seg.key} color={seg.color} bold={seg.bold}>
-          {seg.text}
-        </Text>
-      ))}
-    </Text>
-  );
+  // Use chalk for ALL styling (color + bold) instead of <Text> style props.
+  // Ink's <Text bold={false}> doesn't emit SGR 22 to reset bold, and mixing
+  // chalk.bold inside <Text color> gets overwritten by Ink's ANSI handling.
+  // A single pre-formatted chalk string avoids both issues.
+  const formatted = segments
+    .map((seg) => {
+      let styled = chalk.hex(seg.color || color)(seg.text);
+      if (seg.bold) styled = chalk.bold(styled);
+      return styled;
+    })
+    .join("");
+
+  return <Text wrap={wrap}>{formatted}</Text>;
 });
