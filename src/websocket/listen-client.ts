@@ -3,6 +3,7 @@
  * Connects to Letta Cloud and receives messages to execute locally
  */
 
+import { APIError } from "@letta-ai/letta-client/core/error";
 import type { Stream } from "@letta-ai/letta-client/core/streaming";
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type {
@@ -19,6 +20,11 @@ import {
 import { getResumeData } from "../agent/check-approval";
 import { getClient } from "../agent/client";
 import { sendMessageStream } from "../agent/message";
+import {
+  extractConflictDetail,
+  getPreStreamErrorAction,
+  parseRetryAfterHeaderMs,
+} from "../agent/turn-recovery-policy";
 import { createBuffers } from "../cli/helpers/accumulator";
 import { classifyApprovals } from "../cli/helpers/approvalClassification";
 import { generatePlanFilePath } from "../cli/helpers/planName";
@@ -312,6 +318,81 @@ type WsProtocolEvent =
 function emitToWS(socket: WebSocket, event: WsProtocolEvent): void {
   if (socket.readyState === WebSocket.OPEN) {
     socket.send(JSON.stringify(event));
+  }
+}
+
+const LLM_API_ERROR_MAX_RETRIES = 3;
+
+/**
+ * Wrap sendMessageStream with pre-stream error handling (retry/recovery).
+ * Mirrors headless bidirectional mode's pre-stream error handling.
+ */
+async function sendMessageStreamWithRetry(
+  conversationId: string,
+  messages: Parameters<typeof sendMessageStream>[1],
+  opts: Parameters<typeof sendMessageStream>[2],
+  socket: WebSocket,
+  runtime: ListenerRuntime,
+): Promise<Awaited<ReturnType<typeof sendMessageStream>>> {
+  let transientRetries = 0;
+
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    try {
+      return await sendMessageStream(conversationId, messages, opts);
+    } catch (preStreamError) {
+      const errorDetail = extractConflictDetail(preStreamError);
+      const action = getPreStreamErrorAction(errorDetail, 0, 0, {
+        status:
+          preStreamError instanceof APIError
+            ? preStreamError.status
+            : undefined,
+        transientRetries,
+        maxTransientRetries: LLM_API_ERROR_MAX_RETRIES,
+      });
+
+      if (action === "resolve_approval_pending") {
+        emitToWS(socket, {
+          type: "recovery",
+          recovery_type: "approval_pending",
+          message:
+            "Detected pending approval conflict on send; resolving before retry",
+          session_id: runtime.sessionId,
+          uuid: `recovery-${crypto.randomUUID()}`,
+        } as RecoveryMessage);
+        // For listener, we can't auto-resolve approvals like headless does.
+        // Fall through to rethrow — the cloud will resend with the approval.
+        throw preStreamError;
+      }
+
+      if (action === "retry_transient") {
+        const attempt = transientRetries + 1;
+        const retryAfterMs =
+          preStreamError instanceof APIError
+            ? parseRetryAfterHeaderMs(
+                preStreamError.headers?.get("retry-after"),
+              )
+            : null;
+        const delayMs = retryAfterMs ?? 1000 * 2 ** (attempt - 1);
+        transientRetries = attempt;
+
+        emitToWS(socket, {
+          type: "retry",
+          reason: "llm_api_error",
+          attempt,
+          max_attempts: LLM_API_ERROR_MAX_RETRIES,
+          delay_ms: delayMs,
+          session_id: runtime.sessionId,
+          uuid: `retry-${crypto.randomUUID()}`,
+        } as RetryMessage);
+
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        continue;
+      }
+
+      // retry_conversation_busy disabled (0/0 budget) and rethrow
+      throw preStreamError;
+    }
   }
 }
 
@@ -747,11 +828,13 @@ async function handleIncomingMessage(
       ];
     }
 
-    let stream = await sendMessageStream(conversationId, messagesToSend, {
-      agentId,
-      streamTokens: true,
-      background: true,
-    });
+    let stream = await sendMessageStreamWithRetry(
+      conversationId,
+      messagesToSend,
+      { agentId, streamTokens: true, background: true },
+      socket,
+      runtime,
+    );
 
     let runIdSent = false;
     let runId: string | undefined;
@@ -1040,7 +1123,7 @@ async function handleIncomingMessage(
       const executionResults = await executeApprovalBatch(decisions);
 
       // Create fresh approval stream for next iteration
-      stream = await sendMessageStream(
+      stream = await sendMessageStreamWithRetry(
         conversationId,
         [
           {
@@ -1048,11 +1131,9 @@ async function handleIncomingMessage(
             approvals: executionResults,
           },
         ],
-        {
-          agentId,
-          streamTokens: true,
-          background: true,
-        },
+        { agentId, streamTokens: true, background: true },
+        socket,
+        runtime,
       );
     }
   } catch (error) {
