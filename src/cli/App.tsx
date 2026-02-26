@@ -231,6 +231,7 @@ import {
   buildQueuedUserText,
   getQueuedNotificationSummaries,
 } from "./helpers/queuedMessageParts";
+import { resolveReasoningTabToggleCommand } from "./helpers/reasoningTabToggle";
 import { safeJsonParseOr } from "./helpers/safeJsonParse";
 import { getDeviceType, getLocalTime } from "./helpers/sessionContext";
 import {
@@ -1491,9 +1492,6 @@ export default function App({
   const [reasoningTabCycleEnabled, setReasoningTabCycleEnabled] = useState(
     initialReasoningTabCycleEnabled,
   );
-  useEffect(() => {
-    setReasoningTabCycleEnabled(initialReasoningTabCycleEnabled);
-  }, [initialReasoningTabCycleEnabled]);
 
   // Show compaction messages preference (can be toggled at runtime)
   const [showCompactionsEnabled, _setShowCompactionsEnabled] =
@@ -7361,8 +7359,13 @@ export default function App({
 
         // Special handling for /reasoning-tab command - opt-in toggle for Tab tier cycling
         if (trimmed === "/reasoning-tab" || trimmed.startsWith("/reasoning-tab ")) {
-          const rawArg = trimmed.slice("/reasoning-tab".length).trim();
-          const arg = rawArg.toLowerCase();
+          const resolution = resolveReasoningTabToggleCommand(
+            trimmed,
+            reasoningTabCycleEnabled,
+          );
+          if (!resolution) {
+            return { submitted: false };
+          }
           const cmd = commandRunner.start(
             trimmed,
             "Updating reasoning Tab shortcut...",
@@ -7371,49 +7374,22 @@ export default function App({
           setCommandRunning(true);
 
           try {
-            if (!arg || arg === "status") {
-              const statusText = reasoningTabCycleEnabled
-                ? "enabled"
-                : "disabled";
-              cmd.finish(
-                `Reasoning Tab shortcut is ${statusText}. ${reasoningTabCycleEnabled ? "Tab now cycles reasoning tiers." : "Use /reasoning-tab on to enable it."}`,
-                true,
-              );
+            if (resolution.kind === "status") {
+              cmd.finish(resolution.message, true);
               return { submitted: true };
             }
 
-            const enableArgs = new Set(["on", "enable", "enabled", "true", "1"]);
-            const disableArgs = new Set([
-              "off",
-              "disable",
-              "disabled",
-              "false",
-              "0",
-            ]);
-
-            let nextValue: boolean | null = null;
-            if (enableArgs.has(arg)) {
-              nextValue = true;
-            } else if (disableArgs.has(arg)) {
-              nextValue = false;
-            }
-
-            if (nextValue === null) {
-              cmd.fail(
-                "Usage: /reasoning-tab [on|off|status] (default is off)",
-              );
+            if (resolution.kind === "invalid") {
+              cmd.fail(resolution.message);
               return { submitted: true };
             }
 
-            setReasoningTabCycleEnabled(nextValue);
+            setReasoningTabCycleEnabled(resolution.enabled);
             settingsManager.updateSettings({
-              reasoningTabCycleEnabled: nextValue,
+              reasoningTabCycleEnabled: resolution.enabled,
             });
 
-            cmd.finish(
-              `Reasoning Tab shortcut ${nextValue ? "enabled" : "disabled"}.`,
-              true,
-            );
+            cmd.finish(resolution.message, true);
           } catch (error) {
             const errorDetails = formatErrorDetails(error, agentId);
             cmd.fail(`Failed: ${errorDetails}`);
