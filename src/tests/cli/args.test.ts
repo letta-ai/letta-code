@@ -16,7 +16,14 @@ describe("shared CLI arg schema", () => {
     const validModes = new Set(["interactive", "headless", "both"]);
     const validTypes = new Set(["boolean", "string"]);
 
-    for (const [flagName, definition] of Object.entries(CLI_FLAG_CATALOG)) {
+    for (const [flagName, definition] of Object.entries(
+      CLI_FLAG_CATALOG,
+    ) as Array<
+      [
+        keyof typeof CLI_FLAG_CATALOG,
+        (typeof CLI_FLAG_CATALOG)[keyof typeof CLI_FLAG_CATALOG],
+      ]
+    >) {
       expect(validModes.has(definition.mode)).toBe(true);
       expect(validTypes.has(definition.parser.type)).toBe(true);
       expect(CLI_OPTIONS[flagName]).toEqual(definition.parser);

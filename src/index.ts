@@ -443,19 +443,18 @@ async function main(): Promise<void> {
   }
 
   // --continue: Resume last session (agent + conversation) automatically
-  const shouldContinue = (values.continue as boolean | undefined) ?? false;
+  const shouldContinue = values.continue ?? false;
   // --resume: Open agent selector UI after loading
-  const shouldResume = (values.resume as boolean | undefined) ?? false;
-  let specifiedConversationId =
-    (values.conversation as string | undefined) ?? null; // Specific conversation to resume
-  const forceNew = (values["new-agent"] as boolean | undefined) ?? false;
+  const shouldResume = values.resume ?? false;
+  let specifiedConversationId = values.conversation ?? null; // Specific conversation to resume
+  const forceNew = values["new-agent"] ?? false;
 
   // --new: Create a new conversation (for concurrent sessions)
-  const forceNewConversation = (values.new as boolean | undefined) ?? false;
+  const forceNewConversation = values.new ?? false;
 
-  const initBlocksRaw = values["init-blocks"] as string | undefined;
-  const baseToolsRaw = values["base-tools"] as string | undefined;
-  let specifiedAgentId = (values.agent as string | undefined) ?? null;
+  const initBlocksRaw = values["init-blocks"];
+  const baseToolsRaw = values["base-tools"];
+  let specifiedAgentId = values.agent ?? null;
   try {
     const normalized = normalizeConversationShorthandFlags({
       specifiedConversationId,
@@ -486,32 +485,26 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const specifiedAgentName = (values.name as string | undefined) ?? null;
-  const specifiedModel = (values.model as string | undefined) ?? undefined;
-  const systemPromptPreset = (values.system as string | undefined) ?? undefined;
-  const systemCustom =
-    (values["system-custom"] as string | undefined) ?? undefined;
+  const specifiedAgentName = values.name ?? null;
+  const specifiedModel = values.model ?? undefined;
+  const systemPromptPreset = values.system ?? undefined;
+  const systemCustom = values["system-custom"] ?? undefined;
   // Note: systemAppend is also parsed but only used in headless mode (headless.ts handles it)
-  const memoryBlocksJson =
-    (values["memory-blocks"] as string | undefined) ?? undefined;
-  const specifiedToolset = (values.toolset as string | undefined) ?? undefined;
-  const skillsDirectory = (values.skills as string | undefined) ?? undefined;
-  const memfsFlag = values.memfs as boolean | undefined;
-  const noMemfsFlag = values["no-memfs"] as boolean | undefined;
+  const memoryBlocksJson = values["memory-blocks"] ?? undefined;
+  const specifiedToolset = values.toolset ?? undefined;
+  const skillsDirectory = values.skills ?? undefined;
+  const memfsFlag = values.memfs;
+  const noMemfsFlag = values["no-memfs"];
   const requestedMemoryPromptMode: "memfs" | "standard" | undefined = memfsFlag
     ? "memfs"
     : noMemfsFlag
       ? "standard"
       : undefined;
   const shouldAutoEnableMemfsForNewAgent = !memfsFlag && !noMemfsFlag;
-  const noSkillsFlag = values["no-skills"] as boolean | undefined;
-  const noBundledSkillsFlag = values["no-bundled-skills"] as
-    | boolean
-    | undefined;
-  const skillSourcesRaw = values["skill-sources"] as string | undefined;
-  const noSystemInfoReminderFlag = values["no-system-info-reminder"] as
-    | boolean
-    | undefined;
+  const noSkillsFlag = values["no-skills"];
+  const noBundledSkillsFlag = values["no-bundled-skills"];
+  const skillSourcesRaw = values["skill-sources"];
+  const noSystemInfoReminderFlag = values["no-system-info-reminder"];
   const resolvedSkillSources = (() => {
     try {
       return resolveSkillSourcesSelection({
@@ -527,8 +520,8 @@ async function main(): Promise<void> {
     }
   })();
   const fromAfFile = resolveImportFlagAlias({
-    importFlagValue: values.import as string | undefined,
-    fromAfFlagValue: values["from-af"] as string | undefined,
+    importFlagValue: values.import,
+    fromAfFlagValue: values["from-af"],
   });
   const isHeadless = values.prompt || values.run || !process.stdin.isTTY;
 
@@ -865,23 +858,23 @@ async function main(): Promise<void> {
   // Set tool filter if provided (controls which tools are loaded)
   if (values.tools !== undefined) {
     const { toolFilter } = await import("./tools/filter");
-    toolFilter.setEnabledTools(values.tools as string);
+    toolFilter.setEnabledTools(values.tools);
   }
 
   // Set CLI permission overrides if provided
   if (values.allowedTools || values.disallowedTools) {
     const { cliPermissions } = await import("./permissions/cli");
     if (values.allowedTools) {
-      cliPermissions.setAllowedTools(values.allowedTools as string);
+      cliPermissions.setAllowedTools(values.allowedTools);
     }
     if (values.disallowedTools) {
-      cliPermissions.setDisallowedTools(values.disallowedTools as string);
+      cliPermissions.setDisallowedTools(values.disallowedTools);
     }
   }
 
   // Set permission mode if provided (or via --yolo alias)
-  const permissionModeValue = values["permission-mode"] as string | undefined;
-  const yoloMode = values.yolo as boolean | undefined;
+  const permissionModeValue = values["permission-mode"];
+  const yoloMode = values.yolo;
 
   if (yoloMode || permissionModeValue) {
     if (yoloMode) {

@@ -271,14 +271,34 @@ export const CLI_FLAG_CATALOG = {
   "max-turns": { parser: { type: "string" }, mode: "headless" },
 } as const satisfies Record<string, CliFlagDefinition>;
 
+type CliFlagCatalog = typeof CLI_FLAG_CATALOG;
+
+type CliCatalogOptionDescriptors = {
+  [K in keyof CliFlagCatalog]: CliFlagCatalog[K]["parser"];
+};
+
+type CliParsedValueForDescriptor<Descriptor extends CliFlagParserConfig> =
+  Descriptor["type"] extends "boolean"
+    ? Descriptor["multiple"] extends true
+      ? boolean[]
+      : boolean
+    : Descriptor["multiple"] extends true
+      ? string[]
+      : string;
+
+export type CliParsedValues = {
+  [K in keyof CliCatalogOptionDescriptors]?: CliParsedValueForDescriptor<
+    CliCatalogOptionDescriptors[K]
+  >;
+};
+
 const CLI_FLAG_ENTRIES = Object.entries(CLI_FLAG_CATALOG) as Array<
-  [string, CliFlagDefinition]
+  [keyof CliFlagCatalog, CliFlagDefinition]
 >;
 
-export const CLI_OPTIONS: Record<string, CliFlagParserConfig> =
-  Object.fromEntries(
-    CLI_FLAG_ENTRIES.map(([name, definition]) => [name, definition.parser]),
-  );
+export const CLI_OPTIONS = Object.fromEntries(
+  CLI_FLAG_ENTRIES.map(([name, definition]) => [name, definition.parser]),
+) as CliCatalogOptionDescriptors;
 // Column width for left-aligned flag labels in generated --help output.
 const HELP_LABEL_WIDTH = 24;
 
@@ -334,12 +354,16 @@ export function preprocessCliArgs(args: string[]): string[] {
 }
 
 export function parseCliArgs(args: string[], strict: boolean) {
-  return parseArgs({
+  const parsed = parseArgs({
     args,
     options: CLI_OPTIONS,
     strict,
     allowPositionals: true,
   });
+  return {
+    ...parsed,
+    values: parsed.values as CliParsedValues,
+  };
 }
 
 export type ParsedCliArgs = ReturnType<typeof parseCliArgs>;
