@@ -1,22 +1,20 @@
 /**
- * Integration-level tests for PRQ3: queue lifecycle event emission in
- * headless bidirectional mode.
+ * Tests for PRQ3: queue lifecycle event emission in headless bidirectional mode.
  *
- * These tests drive the internal helpers (parseUserLine, maybeEnqueueLine,
- * QueueRuntime wiring) directly rather than spawning a full headless process,
- * since the production code path is inside runBidirectionalMode which requires
- * a live agent/server connection.
- *
- * The key invariants verified:
- *  - Only user/task lines produce queue events (not control lines)
- *  - Idle path: enqueued → dequeued, no blocked
- *  - Busy path: enqueued → blocked(runtime_busy) → dequeued next turn
- *  - consumeItems(n) fires onDequeued with exact coalesced count
- *  - Error/shutdown exit paths emit queue_cleared
- *  - resetBlockedState re-enables blocked emission after turn completes
+ * Invariants verified:
+ *  - parseUserLine: correctly classifies lines
+ *  - blocked events fire directly at arrival time (not via QueueRuntime),
+ *    once per turn, on first user/task arrival while turnInProgress
+ *  - enqueued + dequeued events fire together at coalescing-loop time
+ *    (not at arrival), eliminating orphans from external-tool drop
+ *  - external-tool drop scenario: blocked fires at arrival, no enqueued
+ *    event for the dropped item
+ *  - exit paths emit queue_cleared
+ *  - control lines produce no events
  */
 
 import { describe, expect, test } from "bun:test";
+import type { BidirectionalQueuedInput } from "../../headless";
 import type {
   DequeuedBatch,
   QueueBlockedReason,
@@ -25,7 +23,7 @@ import type {
 } from "../../queue/queueRuntime";
 import { QueueRuntime } from "../../queue/queueRuntime";
 
-// ── Helpers mirroring headless parseUserLine logic ────────────────
+// ── Helpers mirroring production logic ───────────────────────────
 
 type ParsedLine =
   | { kind: "message"; content: string }
@@ -98,23 +96,44 @@ function buildRuntime(): { q: QueueRuntime; rec: Recorded } {
   return { q, rec };
 }
 
-function enqueueLine(q: QueueRuntime, raw: string, busy: boolean): void {
-  const parsed = parseUserLine(raw);
-  if (!parsed) return;
-  if (parsed.kind === "task_notification") {
+/** Mirrors enqueueForTracking() from headless. */
+function enqueueForTracking(
+  q: QueueRuntime,
+  input: BidirectionalQueuedInput,
+): void {
+  if (input.kind === "task_notification") {
     q.enqueue({
       kind: "task_notification",
       source: "task_notification",
-      text: parsed.content,
+      text: input.text,
     } as Parameters<typeof q.enqueue>[0]);
   } else {
     q.enqueue({
       kind: "message",
       source: "user",
-      content: parsed.content,
+      content: input.content,
     } as Parameters<typeof q.enqueue>[0]);
   }
-  if (busy) q.tryDequeue("runtime_busy");
+}
+
+/** Mirrors maybeNotifyBlocked(): emits queue_blocked directly on first busy arrival. */
+type BlockedState = { emitted: boolean };
+
+function maybeNotifyBlocked(
+  raw: string,
+  turnInProgress: boolean,
+  state: BlockedState,
+  blocked: Array<{ reason: string; queueLen: number }>,
+  lineQueue: string[],
+): void {
+  if (!turnInProgress || state.emitted) return;
+  if (!parseUserLine(raw)) return;
+  state.emitted = true;
+  const queueLen = Math.max(
+    1,
+    lineQueue.filter((l) => parseUserLine(l) !== null).length,
+  );
+  blocked.push({ reason: "runtime_busy", queueLen });
 }
 
 // ── Tests ─────────────────────────────────────────────────────────
@@ -123,143 +142,161 @@ describe("parseUserLine", () => {
   test("returns null for control_response", () => {
     expect(parseUserLine(makeControlLine())).toBeNull();
   });
-
   test("returns null for empty/whitespace", () => {
     expect(parseUserLine("")).toBeNull();
     expect(parseUserLine("   ")).toBeNull();
   });
-
   test("returns null for malformed JSON", () => {
     expect(parseUserLine("{not json")).toBeNull();
   });
-
   test("returns message for user line", () => {
-    const result = parseUserLine(makeUserLine("hello"));
-    expect(result?.kind).toBe("message");
-    expect(result?.content).toBe("hello");
+    const r = parseUserLine(makeUserLine("hello"));
+    expect(r?.kind).toBe("message");
+    expect(r?.content).toBe("hello");
   });
-
   test("returns task_notification for task line", () => {
-    const result = parseUserLine(makeTaskLine("<notif/>"));
-    expect(result?.kind).toBe("task_notification");
-    expect(result?.content).toBe("<notif/>");
+    const r = parseUserLine(makeTaskLine("<notif/>"));
+    expect(r?.kind).toBe("task_notification");
+    expect(r?.content).toBe("<notif/>");
   });
 });
 
-describe("idle path — single message", () => {
-  test("enqueued fires, then consumeItems(1) fires dequeued, no blocked", () => {
+describe("idle path — enqueued + dequeued fire together at coalescing time", () => {
+  test("no enqueued at arrival, enqueued+dequeued together in coalescing loop", () => {
     const { q, rec } = buildRuntime();
-    enqueueLine(q, makeUserLine("hello"), false); // agent idle
-    expect(rec.enqueued).toHaveLength(1);
-    expect(rec.blocked).toHaveLength(0);
+    // Simulate: line arrives while idle → no enqueue at arrival
+    const lineQueue: string[] = [];
+    const blocked: Array<{ reason: string; queueLen: number }> = [];
+    const bstate: BlockedState = { emitted: false };
+    const raw = makeUserLine("hello");
+    lineQueue.push(raw);
+    maybeNotifyBlocked(raw, false /* idle */, bstate, blocked, lineQueue);
+    expect(rec.enqueued).toHaveLength(0); // not yet
+    expect(blocked).toHaveLength(0); // idle: no blocked
 
-    q.consumeItems(1); // coalescing loop consumed 1 item
+    // Coalescing loop consumes the item
+    const input: BidirectionalQueuedInput = { kind: "user", content: "hello" };
+    enqueueForTracking(q, input);
+    q.consumeItems(1);
+
+    expect(rec.enqueued).toHaveLength(1);
     expect(rec.dequeued).toHaveLength(1);
     expect(rec.dequeued.at(0)?.mergedCount).toBe(1);
     expect(rec.dequeued.at(0)?.queueLenAfter).toBe(0);
+  });
+});
+
+describe("busy path — blocked fires at arrival, enqueued+dequeued at next turn", () => {
+  test("blocked fires on first user arrival during turn; enqueued fires at coalescing", () => {
+    const { q, rec } = buildRuntime();
+    const lineQueue: string[] = [];
+    const blocked: Array<{ reason: string; queueLen: number }> = [];
+    const bstate: BlockedState = { emitted: false };
+
+    // Turn 1 in progress
+    const raw = makeUserLine("msg-during-turn");
+    lineQueue.push(raw);
+    maybeNotifyBlocked(raw, true /* busy */, bstate, blocked, lineQueue);
+    expect(blocked).toHaveLength(1);
+    expect(blocked.at(0)?.reason).toBe("runtime_busy");
+    expect(rec.enqueued).toHaveLength(0); // NOT enqueued yet at arrival
+
+    // Second arrival — no new blocked (dedup)
+    const raw2 = makeUserLine("msg2");
+    lineQueue.push(raw2);
+    maybeNotifyBlocked(raw2, true, bstate, blocked, lineQueue);
+    expect(blocked).toHaveLength(1); // still 1
+
+    // Turn ends, bstate resets
+    bstate.emitted = false;
+
+    // Turn 2 coalescing loop consumes both
+    for (const input of [
+      { kind: "user" as const, content: "msg-during-turn" },
+      { kind: "user" as const, content: "msg2" },
+    ]) {
+      enqueueForTracking(q, input);
+    }
+    q.consumeItems(2);
+
+    expect(rec.enqueued).toHaveLength(2);
+    expect(rec.dequeued).toHaveLength(1);
+    expect(rec.dequeued.at(0)?.mergedCount).toBe(2);
+    expect(rec.dequeued.at(0)?.queueLenAfter).toBe(0);
+  });
+});
+
+describe("external-tool drop scenario — no orphaned items", () => {
+  test("blocked fires at arrival, dropped line never enters QueueRuntime", () => {
+    const { q, rec } = buildRuntime();
+    const lineQueue: string[] = [];
+    const blocked: Array<{ reason: string; queueLen: number }> = [];
+    const bstate: BlockedState = { emitted: false };
+
+    // User line arrives during turn (external-tool wait in progress)
+    const raw = makeUserLine("user-msg-during-ext-tool");
+    lineQueue.push(raw);
+    maybeNotifyBlocked(raw, true, bstate, blocked, lineQueue);
+    expect(blocked).toHaveLength(1); // blocked fires on arrival
+
+    // External-tool wait loop DROPS the line (not deferred back, just consumed)
+    lineQueue.shift(); // simulates getNextLine() consuming without deferring
+
+    // QueueRuntime should have NO items (arrival never enqueued)
+    expect(q.length).toBe(0);
+    expect(rec.enqueued).toHaveLength(0);
+
+    // consumeItems(0) — nothing was in the coalescing loop (no user items)
+    const result = q.consumeItems(0);
+    expect(result).toBeNull();
+    expect(rec.dequeued).toHaveLength(0); // no dequeue event
+  });
+});
+
+describe("control line barrier", () => {
+  test("control line produces no events", () => {
+    const { q, rec } = buildRuntime();
+    const lineQueue: string[] = [];
+    const blocked: Array<{ reason: string; queueLen: number }> = [];
+    const bstate: BlockedState = { emitted: false };
+
+    maybeNotifyBlocked(makeControlLine(), true, bstate, blocked, lineQueue);
+    expect(blocked).toHaveLength(0);
+    expect(rec.enqueued).toHaveLength(0);
     expect(q.length).toBe(0);
   });
 });
 
-describe("busy path — message during turn", () => {
-  test("enqueued + blocked(runtime_busy) when agent is processing", () => {
+describe("coalesced batch — task + user", () => {
+  test("enqueueForTracking + consumeItems(2) fires correct batch", () => {
     const { q, rec } = buildRuntime();
-    enqueueLine(q, makeUserLine("msg1"), false); // first: idle
-    q.consumeItems(1); // turn 1 dequeued
-
-    enqueueLine(q, makeUserLine("msg2"), true); // second: busy
-    expect(rec.enqueued).toHaveLength(2);
-    expect(rec.blocked).toHaveLength(1);
-    expect(rec.blocked.at(0)?.reason).toBe("runtime_busy");
-    expect(rec.blocked.at(0)?.queueLen).toBe(1);
-
-    // Turn 2 starts: consumeItems(1) fires dequeued
-    q.consumeItems(1);
-    expect(rec.dequeued).toHaveLength(2);
-    expect(rec.dequeued.at(1)?.mergedCount).toBe(1);
-    expect(rec.dequeued.at(1)?.queueLenAfter).toBe(0);
-  });
-
-  test("blocked fires only once for same reason until resetBlockedState", () => {
-    const { q, rec } = buildRuntime();
-    enqueueLine(q, makeUserLine("a"), true);
-    enqueueLine(q, makeUserLine("b"), true); // same reason — no second blocked
-    expect(rec.blocked).toHaveLength(1);
-
-    q.resetBlockedState();
-    enqueueLine(q, makeUserLine("c"), true); // after reset — fires again
-    expect(rec.blocked).toHaveLength(2);
-  });
-});
-
-describe("coalescing — task + user in same turn", () => {
-  test("consumeItems(2) emits dequeued with mergedCount=2", () => {
-    const { q, rec } = buildRuntime();
-    enqueueLine(q, makeTaskLine("<notif/>"), false);
-    enqueueLine(q, makeUserLine("follow-up"), false);
-    // coalescing loop consumed both
+    const inputs: BidirectionalQueuedInput[] = [
+      { kind: "task_notification", text: "<notif/>" },
+      { kind: "user", content: "follow-up" },
+    ];
+    for (const input of inputs) enqueueForTracking(q, input);
     q.consumeItems(2);
-    expect(rec.dequeued).toHaveLength(1);
     expect(rec.dequeued.at(0)?.mergedCount).toBe(2);
     expect(rec.dequeued.at(0)?.items.at(0)?.kind).toBe("task_notification");
     expect(rec.dequeued.at(0)?.items.at(1)?.kind).toBe("message");
   });
 });
 
-describe("control line barrier", () => {
-  test("control line produces no queue event", () => {
-    const { q, rec } = buildRuntime();
-    enqueueLine(q, makeControlLine(), false);
-    expect(rec.enqueued).toHaveLength(0);
-    expect(rec.blocked).toHaveLength(0);
-    expect(q.length).toBe(0);
-  });
-
-  test("user line after control line still enqueues (next turn pass)", () => {
-    const { q, rec } = buildRuntime();
-    // lineQueue: [control_response, user_msg]
-    // coalescing loop stops at control_response, so only user_msg is from next pass
-    enqueueLine(q, makeControlLine(), false); // not enqueued
-    enqueueLine(q, makeUserLine("after-control"), false); // enqueued
-    expect(rec.enqueued).toHaveLength(1);
-    expect(rec.enqueued.at(0)?.item.kind).toBe("message");
-
-    // When this turn processes just the user_msg, consumeItems(1)
-    q.consumeItems(1);
-    expect(rec.dequeued.at(0)?.mergedCount).toBe(1);
-  });
-});
-
-describe("resetBlockedState after turn", () => {
-  test("resets after turn so next arrival correctly emits blocked", () => {
-    const { q, rec } = buildRuntime();
-    enqueueLine(q, makeUserLine("a"), true); // blocked
-    q.consumeItems(1);
-    q.resetBlockedState(); // turn finished
-
-    enqueueLine(q, makeUserLine("b"), true); // should emit blocked again
-    expect(rec.blocked).toHaveLength(2);
-  });
-});
-
 describe("exit paths", () => {
   test("clear(shutdown) emits queue_cleared and drains", () => {
     const { q, rec } = buildRuntime();
-    enqueueLine(q, makeUserLine("pending"), false);
+    enqueueForTracking(q, { kind: "user", content: "pending" });
     q.clear("shutdown");
-    expect(rec.cleared).toHaveLength(1);
     expect(rec.cleared.at(0)?.reason).toBe("shutdown");
     expect(rec.cleared.at(0)?.count).toBe(1);
     expect(q.length).toBe(0);
   });
-
   test("clear(error) emits queue_cleared", () => {
     const { q, rec } = buildRuntime();
-    enqueueLine(q, makeUserLine("pending"), false);
+    enqueueForTracking(q, { kind: "user", content: "pending" });
     q.clear("error");
     expect(rec.cleared.at(0)?.reason).toBe("error");
   });
-
   test("clear on empty queue fires with count=0", () => {
     const { q, rec } = buildRuntime();
     q.clear("shutdown");
