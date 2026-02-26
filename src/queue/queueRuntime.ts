@@ -256,6 +256,41 @@ export class QueueRuntime {
     return result;
   }
 
+  /**
+   * Caller-controlled dequeue: removes exactly the first `n` items (or all
+   * available if fewer exist) without applying the coalescable/barrier policy.
+   * Used when the caller has already decided how many items to consume (e.g.
+   * headless coalescing loop, listen one-message-per-turn).
+   * Returns null if queue is empty or n <= 0.
+   */
+  consumeItems(n: number): DequeuedBatch | null {
+    if (this.store.length === 0 || n <= 0) return null;
+    const count = Math.min(n, this.store.length);
+    const batch = this.store.splice(0, count);
+    if (this.store.length === 0) {
+      this.blockedEmittedForNonEmpty = false;
+    }
+    const result: DequeuedBatch = {
+      batchId: `batch-${++this.nextBatchId}`,
+      items: batch,
+      mergedCount: count,
+      queueLenAfter: this.store.length,
+    };
+    this.safeCallback("onDequeued", result);
+    return result;
+  }
+
+  /**
+   * Reset blocked-reason tracking after a turn completes (unblocked transition).
+   * Call when the consumer becomes idle so the next arrival can re-emit
+   * onBlocked correctly. Should only be called when the queue is actually
+   * idle (i.e. pendingTurns === 0 in listen, turnInProgress === false in headless).
+   */
+  resetBlockedState(): void {
+    this.lastEmittedBlockedReason = null;
+    this.blockedEmittedForNonEmpty = false;
+  }
+
   // ── Clear ──────────────────────────────────────────────────────
 
   /** Remove all items and fire onCleared. */

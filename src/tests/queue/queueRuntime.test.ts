@@ -425,3 +425,96 @@ describe("IDs and accessors", () => {
     expect(q.length).toBe(2); // unchanged
   });
 });
+
+// ── consumeItems ──────────────────────────────────────────────────
+
+describe("consumeItems", () => {
+  test("removes exactly n items and fires onDequeued with correct batch", () => {
+    const batches: DequeuedBatch[] = [];
+    const q = new QueueRuntime({
+      callbacks: { onDequeued: (b) => batches.push(b) },
+    });
+    q.enqueue(makeMsg("a"));
+    q.enqueue(makeMsg("b"));
+    q.enqueue(makeMsg("c"));
+    const result = q.consumeItems(2);
+    expect(result).not.toBeNull();
+    expect(result?.mergedCount).toBe(2);
+    expect(result?.queueLenAfter).toBe(1);
+    expect(q.length).toBe(1);
+    expect(batches).toHaveLength(1);
+    expect(batches.at(0)?.mergedCount).toBe(2);
+  });
+
+  test("consumes all when n exceeds queue length", () => {
+    const q = new QueueRuntime();
+    q.enqueue(makeMsg("a"));
+    const result = q.consumeItems(100);
+    expect(result?.mergedCount).toBe(1);
+    expect(q.length).toBe(0);
+  });
+
+  test("returns null on empty queue", () => {
+    const q = new QueueRuntime();
+    expect(q.consumeItems(1)).toBeNull();
+  });
+
+  test("returns null for n <= 0", () => {
+    const q = new QueueRuntime();
+    q.enqueue(makeMsg());
+    expect(q.consumeItems(0)).toBeNull();
+    expect(q.length).toBe(1); // unchanged
+  });
+
+  test("respects barrier items — does not skip them", () => {
+    // consumeItems(2) with [approval_result, message] should consume both
+    // since it ignores the barrier policy
+    const q = new QueueRuntime();
+    q.enqueue(makeApproval());
+    q.enqueue(makeMsg("a"));
+    const result = q.consumeItems(2);
+    expect(result?.mergedCount).toBe(2);
+    expect(q.length).toBe(0);
+  });
+
+  test("resets blockedEmittedForNonEmpty when queue drains", () => {
+    const blocked: string[] = [];
+    const q = new QueueRuntime({
+      callbacks: { onBlocked: (r) => blocked.push(r) },
+    });
+    q.enqueue(makeMsg("a"));
+    q.tryDequeue("runtime_busy"); // emits blocked
+    q.consumeItems(1); // drains queue
+    q.enqueue(makeMsg("b"));
+    q.tryDequeue("runtime_busy"); // should emit blocked again (epoch reset on drain)
+    expect(blocked).toHaveLength(2);
+  });
+});
+
+// ── resetBlockedState ─────────────────────────────────────────────
+
+describe("resetBlockedState", () => {
+  test("allows same reason to re-emit onBlocked after reset", () => {
+    const blocked: string[] = [];
+    const q = new QueueRuntime({
+      callbacks: { onBlocked: (r) => blocked.push(r) },
+    });
+    q.enqueue(makeMsg());
+    q.tryDequeue("runtime_busy"); // first blocked emit
+    q.tryDequeue("runtime_busy"); // same reason — no second emit
+    q.resetBlockedState();
+    q.tryDequeue("runtime_busy"); // after reset — emits again
+    expect(blocked).toHaveLength(2);
+    expect(blocked).toEqual(["runtime_busy", "runtime_busy"]);
+  });
+
+  test("does not fire onBlocked on empty queue after reset", () => {
+    const blocked: string[] = [];
+    const q = new QueueRuntime({
+      callbacks: { onBlocked: (r) => blocked.push(r) },
+    });
+    q.resetBlockedState(); // no-op on empty
+    q.tryDequeue("runtime_busy");
+    expect(blocked).toHaveLength(0);
+  });
+});
