@@ -624,8 +624,8 @@ async function handleIncomingMessage(
   connectionId?: string,
 ): Promise<void> {
   try {
-    // Latch capability: once seen, always use blocking path
-    if (msg.supportsControlResponse) {
+    // Latch capability: once seen, always use blocking path (strict check to avoid truthy strings)
+    if (msg.supportsControlResponse === true) {
       runtime.controlResponseCapable = true;
     }
 
