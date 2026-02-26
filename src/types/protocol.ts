@@ -369,6 +369,26 @@ export interface ExternalToolDefinition {
   parameters: Record<string, unknown>; // JSON Schema
 }
 
+// --- Diff preview types (wire-safe, no CLI imports) ---
+
+export interface DiffHunkLine {
+  type: "context" | "add" | "remove";
+  content: string;
+}
+
+export interface DiffHunk {
+  oldStart: number;
+  oldLines: number;
+  newStart: number;
+  newLines: number;
+  lines: DiffHunkLine[];
+}
+
+export type DiffPreview =
+  | { mode: "advanced"; fileName: string; hunks: DiffHunk[] }
+  | { mode: "fallback"; fileName: string; reason: string }
+  | { mode: "unpreviewable"; fileName: string; reason: string };
+
 // CLI → SDK request subtypes
 export interface CanUseToolControlRequest {
   subtype: "can_use_tool";
@@ -379,6 +399,8 @@ export interface CanUseToolControlRequest {
   permission_suggestions: unknown[];
   /** TODO: Not implemented - path that triggered the permission check */
   blocked_path: string | null;
+  /** Pre-computed diff previews for file-modifying tools (Write/Edit/Patch) */
+  diffs?: DiffPreview[];
 }
 
 /**
