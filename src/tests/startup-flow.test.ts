@@ -159,9 +159,12 @@ describe("Startup Flow - Smoke", () => {
       ["-p", "Say OK", "--new", "--name", "NonExistentAgent999"],
       { expectExit: 1 },
     );
-    // Should get past flag validation — error should be about agent lookup, not a conflict
+    // Should get past flag validation regardless of whether credentials exist.
     expect(result.stderr).not.toContain("cannot be used with");
-    expect(result.stderr).toContain("NonExistentAgent999");
+    expect(
+      result.stderr.includes("NonExistentAgent999") ||
+        result.stderr.includes("Missing LETTA_API_KEY"),
+    ).toBe(true);
   });
 
   test("--new-agent headless parses and reaches credential check", async () => {

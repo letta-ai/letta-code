@@ -917,9 +917,16 @@ async function main(): Promise<void> {
     await loadTools(modelForTools);
     markMilestone("TOOLS_LOADED");
 
+    // Keep headless startup in sync with interactive name resolution.
+    // If --name resolved to an agent ID, pass that through as --agent.
+    const headlessValues =
+      specifiedAgentId && values.agent !== specifiedAgentId
+        ? { ...values, agent: specifiedAgentId }
+        : values;
+
     const { handleHeadlessCommand } = await import("./headless");
     await handleHeadlessCommand(
-      { values, positionals },
+      { values: headlessValues, positionals },
       specifiedModel,
       skillsDirectory,
       resolvedSkillSources,
