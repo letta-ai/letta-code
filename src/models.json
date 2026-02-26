@@ -227,7 +227,6 @@
     "handle": "chatgpt-plus-pro/gpt-5.3-codex",
     "label": "GPT-5.3 Codex (ChatGPT)",
     "description": "OpenAI's best coding model (high reasoning) via ChatGPT Plus/Pro",
-    "isFeatured": true,
     "updateArgs": {
       "reasoning_effort": "high",
       "verbosity": "low",
