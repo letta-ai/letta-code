@@ -29,9 +29,15 @@ import { settingsManager } from "../settings-manager";
 import { isInteractiveApprovalTool } from "../tools/interactivePolicy";
 import { loadTools } from "../tools/manager";
 import type {
+  AutoApprovalMessage,
   CanUseToolResponse,
   ControlRequest,
   ControlResponseBody,
+  ErrorMessage,
+  MessageWire,
+  ResultMessage as ProtocolResultMessage,
+  RecoveryMessage,
+  RetryMessage,
 } from "../types/protocol";
 
 interface StartListenerOptions {
@@ -125,6 +131,8 @@ type ListenerRuntime = {
   pendingApprovalResolvers: Map<string, PendingApprovalResolver>;
   /** Latched once supportsControlResponse is seen on any message. */
   controlResponseCapable: boolean;
+  /** Stable session ID for MessageEnvelope-based emissions (scoped to runtime lifecycle). */
+  sessionId: string;
 };
 
 type ApprovalSlot =
@@ -186,6 +194,7 @@ function createRuntime(): ListenerRuntime {
     messageQueue: Promise.resolve(),
     pendingApprovalResolvers: new Map(),
     controlResponseCapable: false,
+    sessionId: `listen-${crypto.randomUUID()}`,
   };
 }
 
@@ -283,6 +292,26 @@ function sendControlMessageOverWebSocket(
   // Central hook for protocol-only outbound WS messages so future
   // filtering/mutation can be added without touching approval flow.
   socket.send(JSON.stringify(payload));
+}
+
+// ── Typed protocol event adapter ────────────────────────────────
+
+type WsProtocolEvent =
+  | MessageWire
+  | AutoApprovalMessage
+  | ErrorMessage
+  | RetryMessage
+  | RecoveryMessage
+  | ProtocolResultMessage;
+
+/**
+ * Single adapter for all outbound typed protocol events.
+ * Passthrough for now — provides a seam for future filtering/versioning/redacting.
+ */
+function emitToWS(socket: WebSocket, event: WsProtocolEvent): void {
+  if (socket.readyState === WebSocket.OPEN) {
+    socket.send(JSON.stringify(event));
+  }
 }
 
 export function resolvePendingApprovalResolver(
