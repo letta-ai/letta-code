@@ -1804,6 +1804,9 @@ export default function App({
   const consumeQueuedMessages = useCallback((): QueuedMessage[] | null => {
     if (messageQueueRef.current.length === 0) return null;
     const messages = [...messageQueueRef.current];
+    // PRQ4: items are being submitted into the current turn, so fire onDequeued
+    // (not onCleared) to reflect actual consumption, not an error/cancel drop.
+    tuiQueueRef.current.consumeItems(messages.length);
     setMessageQueue([]);
     return messages;
   }, []);
@@ -5098,6 +5101,7 @@ export default function App({
               lastDequeuedMessageRef.current = null;
             }
             // Clear any remaining queue on error
+            tuiQueueRef.current.clear("error"); // PRQ4
             setMessageQueue([]);
 
             setStreaming(false);
@@ -5202,6 +5206,7 @@ export default function App({
                 lastDequeuedMessageRef.current = null;
               }
               // Clear any remaining queue on error
+              tuiQueueRef.current.clear("error"); // PRQ4
               setMessageQueue([]);
 
               setStreaming(false);
@@ -5233,6 +5238,7 @@ export default function App({
             lastDequeuedMessageRef.current = null;
           }
           // Clear any remaining queue on error
+          tuiQueueRef.current.clear("error"); // PRQ4
           setMessageQueue([]);
 
           setStreaming(false);
@@ -5273,6 +5279,7 @@ export default function App({
           lastDequeuedMessageRef.current = null;
         }
         // Clear any remaining queue on error
+        tuiQueueRef.current.clear("error"); // PRQ4
         setMessageQueue([]);
 
         setStreaming(false);
@@ -5348,6 +5355,8 @@ export default function App({
 
   // Handler when user presses UP/ESC to load queue into input for editing
   const handleEnterQueueEditMode = useCallback(() => {
+    // PRQ4: items are discarded (user is editing them), not submitted.
+    tuiQueueRef.current.clear("stale_generation");
     setMessageQueue([]);
   }, []);
 
