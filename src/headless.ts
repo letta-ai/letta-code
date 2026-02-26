@@ -74,6 +74,7 @@ import {
 } from "./cli/startupFlagValidation";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "./constants";
 import { computeDiffPreviews } from "./helpers/diffPreview";
+import { QueueRuntime } from "./queue/queueRuntime";
 import {
   mergeQueuedTurnInput,
   type QueuedTurnInput,
@@ -106,6 +107,7 @@ import type {
   ErrorMessage,
   ListMessagesControlRequest,
   MessageWire,
+  QueueLifecycleEvent,
   RecoveryMessage,
   ResultMessage,
   RetryMessage,
@@ -2478,6 +2480,116 @@ async function runBidirectionalMode(
   const lineQueue: string[] = [];
   let lineResolver: ((line: string | null) => void) | null = null;
 
+  // ── Queue lifecycle tracking (stream-json only) ────────────────
+  // Bidirectional mode always runs under stream-json input format, so queue
+  // events are always emitted here. emitQueueEvent is a no-op guard retained
+  // for clarity and future-proofing against non-stream-json callers.
+  const emitQueueEvent = (e: QueueLifecycleEvent): void => {
+    console.log(JSON.stringify(e));
+  };
+
+  let turnInProgress = false;
+
+  const msgQueueRuntime = new QueueRuntime({
+    callbacks: {
+      onEnqueued: (item, queueLen) =>
+        emitQueueEvent({
+          type: "queue_item_enqueued",
+          item_id: item.id,
+          source: item.source,
+          kind: item.kind,
+          queue_len: queueLen,
+          session_id: sessionId,
+          uuid: `q-enq-${item.id}`,
+        }),
+      onDequeued: (batch) =>
+        emitQueueEvent({
+          type: "queue_batch_dequeued",
+          batch_id: batch.batchId,
+          item_ids: batch.items.map((i) => i.id),
+          merged_count: batch.mergedCount,
+          queue_len_after: batch.queueLenAfter,
+          session_id: sessionId,
+          uuid: `q-deq-${batch.batchId}`,
+        }),
+      onCleared: (reason, clearedCount) =>
+        emitQueueEvent({
+          type: "queue_cleared",
+          reason,
+          cleared_count: clearedCount,
+          session_id: sessionId,
+          uuid: `q-clr-${randomUUID()}`,
+        }),
+    },
+  });
+
+  /**
+   * Parses a raw JSON line and returns the queue item payload if it is a
+   * user message or task_notification. Returns null for control lines
+   * (control_request, control_response, etc.) and malformed JSON.
+   */
+  function parseUserLine(raw: string): {
+    kind: "message" | "task_notification";
+    content: string;
+  } | null {
+    if (!raw.trim()) return null;
+    try {
+      const parsed: {
+        type?: string;
+        message?: { content?: string };
+        _queuedKind?: string;
+      } = JSON.parse(raw);
+      if (parsed.type !== "user" || parsed.message?.content === undefined)
+        return null;
+      const kind =
+        parsed._queuedKind === "task_notification"
+          ? "task_notification"
+          : "message";
+      return { kind, content: parsed.message.content };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Emit queue_blocked on the FIRST user/task line arrival during an active
+   * turn. Does NOT enqueue to msgQueueRuntime — that happens later, at the
+   * coalescing loop where consumption is certain (avoids orphaned items from
+   * the external-tool wait loop which drops non-matching lines silently).
+   */
+  let blockedEmittedThisTurn = false;
+  function maybeNotifyBlocked(raw: string): void {
+    if (!turnInProgress || blockedEmittedThisTurn) return;
+    if (!parseUserLine(raw)) return;
+    blockedEmittedThisTurn = true;
+    // queue_len: count user/task items currently in lineQueue (best-effort)
+    const queueLen = lineQueue.filter((l) => parseUserLine(l) !== null).length;
+    emitQueueEvent({
+      type: "queue_blocked",
+      reason: "runtime_busy",
+      queue_len: Math.max(1, queueLen),
+      session_id: sessionId,
+      uuid: `q-blk-${randomUUID()}`,
+    });
+  }
+
+  /** Enqueue a BidirectionalQueuedInput into msgQueueRuntime for lifecycle tracking. */
+  function enqueueForTracking(input: BidirectionalQueuedInput): void {
+    if (input.kind === "task_notification") {
+      msgQueueRuntime.enqueue({
+        kind: "task_notification",
+        source: "task_notification",
+        text: input.text,
+      } as Parameters<typeof msgQueueRuntime.enqueue>[0]);
+    } else {
+      msgQueueRuntime.enqueue({
+        kind: "message",
+        source: "user",
+        content: input.content,
+      } as Parameters<typeof msgQueueRuntime.enqueue>[0]);
+    }
+  }
+
   const serializeQueuedMessageAsUserLine = (queuedMessage: QueuedMessage) =>
     JSON.stringify({
       type: "user",
@@ -2492,6 +2604,7 @@ async function runBidirectionalMode(
   // used by user input so bidirectional mode inherits TUI-style queue behavior.
   setMessageQueueAdder((queuedMessage) => {
     const syntheticUserLine = serializeQueuedMessageAsUserLine(queuedMessage);
+    maybeNotifyBlocked(syntheticUserLine);
     if (lineResolver) {
       const resolve = lineResolver;
       lineResolver = null;
@@ -2503,6 +2616,7 @@ async function runBidirectionalMode(
 
   // Feed lines into queue or resolver
   rl.on("line", (line) => {
+    maybeNotifyBlocked(line);
     if (lineResolver) {
       const resolve = lineResolver;
       lineResolver = null;
@@ -2514,6 +2628,7 @@ async function runBidirectionalMode(
 
   rl.on("close", () => {
     setMessageQueueAdder(null);
+    msgQueueRuntime.clear("shutdown");
     if (lineResolver) {
       const resolve = lineResolver;
       lineResolver = null;
@@ -2904,6 +3019,18 @@ async function runBidirectionalMode(
         break;
       }
 
+      // Enqueue consumed items into msgQueueRuntime for lifecycle tracking.
+      // Done here (not at arrival) to avoid orphaned items from the external-
+      // tool wait loop, which consumes non-matching lines via getNextLine()
+      // without deferring them back to lineQueue.
+      for (const input of queuedInputs) {
+        enqueueForTracking(input);
+      }
+      // Signal dequeue for exactly the items we just enqueued. consumeItems(n)
+      // bypasses QueueRuntime's internal coalescing policy so the count matches
+      // what the coalescing loop actually yielded.
+      msgQueueRuntime.consumeItems(queuedInputs.length);
+
       const userContent = mergeBidirectionalQueuedInput(queuedInputs);
       if (userContent === null) {
         continue;
@@ -2912,6 +3039,7 @@ async function runBidirectionalMode(
       // Create abort controller for this operation
       currentAbortController = new AbortController();
 
+      turnInProgress = true;
       try {
         const buffers = createBuffers(agent.id);
         const startTime = performance.now();
@@ -3390,6 +3518,8 @@ async function runBidirectionalMode(
         };
         console.log(JSON.stringify(errorResultMsg));
       } finally {
+        turnInProgress = false;
+        blockedEmittedThisTurn = false;
         currentAbortController = null;
       }
       continue;

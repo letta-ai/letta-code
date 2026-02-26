@@ -3,7 +3,92 @@ import Letta from "@letta-ai/letta-client";
 import packageJson from "../../package.json";
 import { LETTA_CLOUD_API_URL, refreshAccessToken } from "../auth/oauth";
 import { settingsManager } from "../settings-manager";
+import { isDebugEnabled } from "../utils/debug";
 import { createTimingFetch, isTimingsEnabled } from "../utils/timing";
+
+const SDK_DIAGNOSTIC_MAX_LEN = 400;
+const SDK_DIAGNOSTIC_MAX_LINES = 4;
+
+type SDKDiagnostic = {
+  lines: string[];
+};
+
+let lastSDKDiagnostic: SDKDiagnostic | null = null;
+
+function safeDiagnosticString(value: unknown): string {
+  if (value === null || value === undefined) {
+    return "";
+  }
+
+  if (typeof value === "string") {
+    return value;
+  }
+
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function truncateDiagnostic(value: unknown): string {
+  const text = safeDiagnosticString(value);
+
+  if (text.length <= SDK_DIAGNOSTIC_MAX_LEN) {
+    return text;
+  }
+
+  return `${text.slice(0, SDK_DIAGNOSTIC_MAX_LEN)}...[truncated, was ${text.length}b]`;
+}
+
+function captureSDKErrorDiagnostic(args: unknown[]): void {
+  const diagnosticLine = truncateDiagnostic(
+    args.map((arg) => safeDiagnosticString(arg)).join(" "),
+  );
+
+  const previous = lastSDKDiagnostic ?? { lines: [] };
+
+  lastSDKDiagnostic = {
+    lines: [...previous.lines, diagnosticLine].slice(-SDK_DIAGNOSTIC_MAX_LINES),
+  };
+}
+
+export function consumeLastSDKDiagnostic(): string | null {
+  const diag = lastSDKDiagnostic;
+  lastSDKDiagnostic = null;
+
+  if (!diag || diag.lines.length === 0) {
+    return null;
+  }
+
+  return `sdk_error=${diag.lines.join(" || ")}`;
+}
+
+export function clearLastSDKDiagnostic(): void {
+  lastSDKDiagnostic = null;
+}
+
+const sdkLogger = {
+  error: (...args: unknown[]) => {
+    try {
+      captureSDKErrorDiagnostic(args);
+    } catch {
+      // Diagnostic capture must never disrupt the SDK
+    }
+    if (isDebugEnabled()) {
+      console.error(...args);
+    }
+  },
+  warn: (...args: unknown[]) => {
+    console.warn(...args);
+  },
+  info: (...args: unknown[]) => {
+    console.info(...args);
+  },
+  debug: (...args: unknown[]) => {
+    console.debug(...args);
+  },
+};
 
 /**
  * Get the current Letta server URL from environment or settings.
@@ -81,6 +166,7 @@ export async function getClient() {
   return new Letta({
     apiKey,
     baseURL,
+    logger: sdkLogger,
     defaultHeaders: {
       "X-Letta-Source": "letta-code",
       "User-Agent": `letta-code/${packageJson.version}`,
