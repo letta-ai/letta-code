@@ -10530,11 +10530,13 @@ ${SYSTEM_REMINDER_CLOSE}
               ? { reasoning_effort: rawEffort as ModelReasoningEffort }
               : {}),
           });
-          // Refresh agentState so model_settings (canonical reasoning effort source) is current
+          // Refresh agentState so model_settings (canonical reasoning effort source) is current.
+          // Include `model` so currentModelLabel (and the status bar) updates immediately.
           setAgentState((prev) =>
             prev
               ? {
                   ...prev,
+                  model: updatedAgent.model,
                   llm_config: updatedAgent.llm_config,
                   model_settings: updatedAgent.model_settings,
                 }
@@ -11216,11 +11218,13 @@ ${SYSTEM_REMINDER_CLOSE}
             ...updatedAgent.llm_config,
             reasoning_effort: desired.effort as ModelReasoningEffort,
           });
-          // Refresh agentState so model_settings (canonical reasoning effort source) is current
+          // Refresh agentState so model_settings (canonical reasoning effort source) is current.
+          // Include `model` so currentModelLabel (and the status bar) updates immediately.
           setAgentState((prev) =>
             prev
               ? {
                   ...prev,
+                  model: updatedAgent.model,
                   llm_config: updatedAgent.llm_config,
                   model_settings: updatedAgent.model_settings,
                 }
