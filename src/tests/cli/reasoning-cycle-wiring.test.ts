@@ -45,4 +45,30 @@ describe("reasoning tier cycle wiring", () => {
 
     expect(callbackBlocks.length).toBeGreaterThanOrEqual(2);
   });
+
+  test("tab-based reasoning cycling is opt-in only", () => {
+    const appPath = fileURLToPath(
+      new URL("../../cli/App.tsx", import.meta.url),
+    );
+    const indexPath = fileURLToPath(new URL("../../index.ts", import.meta.url));
+    const settingsPath = fileURLToPath(
+      new URL("../../settings-manager.ts", import.meta.url),
+    );
+
+    const appSource = readFileSync(appPath, "utf-8");
+    const indexSource = readFileSync(indexPath, "utf-8");
+    const settingsSource = readFileSync(settingsPath, "utf-8");
+
+    expect(settingsSource).toContain("reasoningTabCycleEnabled: boolean;");
+    expect(settingsSource).toContain("reasoningTabCycleEnabled: false,");
+    expect(indexSource).toContain(
+      "reasoningTabCycleEnabled: settings.reasoningTabCycleEnabled === true,",
+    );
+    expect(appSource).toContain(
+      'if (trimmed === "/reasoning-tab" || trimmed.startsWith("/reasoning-tab ")) {',
+    );
+    expect(appSource).toMatch(
+      /onCycleReasoningEffort=\{\s*reasoningTabCycleEnabled\s*\?\s*handleCycleReasoningEffort\s*:\s*undefined\s*\}/,
+    );
+  });
 });

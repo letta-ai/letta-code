@@ -479,6 +479,7 @@ const NON_STATE_COMMANDS = new Set([
   "/export",
   "/download",
   "/statusline",
+  "/reasoning-tab",
 ]);
 
 // Check if a command is interactive (opens overlay, should not be queued)
@@ -925,6 +926,7 @@ export default function App({
   messageHistory = [],
   resumedExistingConversation = false,
   tokenStreaming = false,
+  reasoningTabCycleEnabled: initialReasoningTabCycleEnabled = false,
   showCompactions = false,
   agentProvenance = null,
   releaseNotes = null,
@@ -945,6 +947,7 @@ export default function App({
   messageHistory?: Message[];
   resumedExistingConversation?: boolean; // True if we explicitly resumed via --resume
   tokenStreaming?: boolean;
+  reasoningTabCycleEnabled?: boolean;
   showCompactions?: boolean;
   agentProvenance?: AgentProvenance | null;
   releaseNotes?: string | null; // Markdown release notes to display above header
@@ -1483,6 +1486,14 @@ export default function App({
   // Token streaming preference (can be toggled at runtime)
   const [tokenStreamingEnabled, setTokenStreamingEnabled] =
     useState(tokenStreaming);
+
+  // Reasoning tier Tab cycling preference (opt-in only, persisted globally)
+  const [reasoningTabCycleEnabled, setReasoningTabCycleEnabled] = useState(
+    initialReasoningTabCycleEnabled,
+  );
+  useEffect(() => {
+    setReasoningTabCycleEnabled(initialReasoningTabCycleEnabled);
+  }, [initialReasoningTabCycleEnabled]);
 
   // Show compaction messages preference (can be toggled at runtime)
   const [showCompactionsEnabled, _setShowCompactionsEnabled] =
@@ -7348,6 +7359,71 @@ export default function App({
           return { submitted: true };
         }
 
+        // Special handling for /reasoning-tab command - opt-in toggle for Tab tier cycling
+        if (trimmed === "/reasoning-tab" || trimmed.startsWith("/reasoning-tab ")) {
+          const rawArg = trimmed.slice("/reasoning-tab".length).trim();
+          const arg = rawArg.toLowerCase();
+          const cmd = commandRunner.start(
+            trimmed,
+            "Updating reasoning Tab shortcut...",
+          );
+
+          setCommandRunning(true);
+
+          try {
+            if (!arg || arg === "status") {
+              const statusText = reasoningTabCycleEnabled
+                ? "enabled"
+                : "disabled";
+              cmd.finish(
+                `Reasoning Tab shortcut is ${statusText}. ${reasoningTabCycleEnabled ? "Tab now cycles reasoning tiers." : "Use /reasoning-tab on to enable it."}`,
+                true,
+              );
+              return { submitted: true };
+            }
+
+            const enableArgs = new Set(["on", "enable", "enabled", "true", "1"]);
+            const disableArgs = new Set([
+              "off",
+              "disable",
+              "disabled",
+              "false",
+              "0",
+            ]);
+
+            let nextValue: boolean | null = null;
+            if (enableArgs.has(arg)) {
+              nextValue = true;
+            } else if (disableArgs.has(arg)) {
+              nextValue = false;
+            }
+
+            if (nextValue === null) {
+              cmd.fail(
+                "Usage: /reasoning-tab [on|off|status] (default is off)",
+              );
+              return { submitted: true };
+            }
+
+            setReasoningTabCycleEnabled(nextValue);
+            settingsManager.updateSettings({
+              reasoningTabCycleEnabled: nextValue,
+            });
+
+            cmd.finish(
+              `Reasoning Tab shortcut ${nextValue ? "enabled" : "disabled"}.`,
+              true,
+            );
+          } catch (error) {
+            const errorDetails = formatErrorDetails(error, agentId);
+            cmd.fail(`Failed: ${errorDetails}`);
+          } finally {
+            setCommandRunning(false);
+          }
+
+          return { submitted: true };
+        }
+
         // Special handling for /new command - start new conversation
         if (msg.trim() === "/new") {
           const cmd = commandRunner.start(
@@ -12406,7 +12482,11 @@ Plan file path: ${planFilePath}`;
                 }
                 permissionMode={uiPermissionMode}
                 onPermissionModeChange={handlePermissionModeChange}
-                onCycleReasoningEffort={handleCycleReasoningEffort}
+                onCycleReasoningEffort={
+                  reasoningTabCycleEnabled
+                    ? handleCycleReasoningEffort
+                    : undefined
+                }
                 onExit={handleExit}
                 onInterrupt={handleInterrupt}
                 interruptRequested={interruptRequested}

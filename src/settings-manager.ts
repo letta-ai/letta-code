@@ -62,6 +62,7 @@ export interface Settings {
   lastAgent: string | null; // DEPRECATED: kept for migration to lastSession
   lastSession?: SessionRef; // DEPRECATED: kept for backwards compat, use sessionsByServer
   tokenStreaming: boolean;
+  reasoningTabCycleEnabled: boolean; // Tab cycles reasoning tiers only when explicitly enabled
   showCompactions?: boolean;
   enableSleeptime: boolean;
   sessionContextEnabled: boolean; // Send device/agent context on first message of each session
@@ -126,6 +127,7 @@ export interface LocalProjectSettings {
 const DEFAULT_SETTINGS: Settings = {
   lastAgent: null,
   tokenStreaming: false,
+  reasoningTabCycleEnabled: false,
   showCompactions: false,
   enableSleeptime: false,
   conversationSwitchAlertEnabled: false,
