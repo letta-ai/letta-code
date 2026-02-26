@@ -38,6 +38,7 @@ import type {
   ResultMessage as ProtocolResultMessage,
   RecoveryMessage,
   RetryMessage,
+  StopReasonType,
 } from "../types/protocol";
 
 interface StartListenerOptions {
@@ -753,6 +754,7 @@ async function handleIncomingMessage(
     });
 
     let runIdSent = false;
+    let runId: string | undefined;
     const buffers = createBuffers(agentId);
 
     // Approval loop: continue until end_turn or error
@@ -764,13 +766,26 @@ async function handleIncomingMessage(
         () => {},
         undefined,
         undefined,
-        ({ chunk, shouldOutput }) => {
+        ({ chunk, shouldOutput, errorInfo }) => {
           const maybeRunId = (chunk as { run_id?: unknown }).run_id;
           if (!runIdSent && typeof maybeRunId === "string") {
             runIdSent = true;
+            runId = maybeRunId;
             sendClientMessage(socket, {
               type: "run_started",
               runId: maybeRunId,
+            });
+          }
+
+          // Emit in-stream errors
+          if (errorInfo) {
+            emitToWS(socket, {
+              type: "error",
+              message: errorInfo.message || "Stream error",
+              stop_reason: (errorInfo.error_type as StopReasonType) || "error",
+              run_id: runId || errorInfo.run_id,
+              session_id: runtime.sessionId,
+              uuid: `error-${crypto.randomUUID()}`,
             });
           }
 
@@ -803,6 +818,14 @@ async function handleIncomingMessage(
 
       // Case 2: Error or cancelled
       if (stopReason !== "requires_approval") {
+        emitToWS(socket, {
+          type: "error",
+          message: `Unexpected stop reason: ${stopReason}`,
+          stop_reason: (stopReason as StopReasonType) || "error",
+          run_id: runId,
+          session_id: runtime.sessionId,
+          uuid: `error-${crypto.randomUUID()}`,
+        });
         sendClientMessage(socket, {
           type: "result",
           success: false,
@@ -990,6 +1013,14 @@ async function handleIncomingMessage(
       );
     }
   } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    emitToWS(socket, {
+      type: "error",
+      message: errorMessage,
+      stop_reason: "error",
+      session_id: runtime.sessionId,
+      uuid: `error-${crypto.randomUUID()}`,
+    });
     sendClientMessage(socket, {
       type: "result",
       success: false,
