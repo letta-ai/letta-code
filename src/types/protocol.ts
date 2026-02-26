@@ -11,6 +11,7 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type {
   AssistantMessage as LettaAssistantMessage,
+  Message as LettaMessage,
   ReasoningMessage as LettaReasoningMessage,
   LettaStreamingResponse,
   ToolCallMessage as LettaToolCallMessage,
@@ -23,6 +24,7 @@ import type { ToolReturnMessage as LettaToolReturnMessage } from "@letta-ai/lett
 // Re-export letta-client types that consumers may need
 export type {
   LettaStreamingResponse,
+  LettaMessage,
   ToolCall,
   StopReasonType,
   MessageCreate,
@@ -623,6 +625,84 @@ export interface UserInput {
 }
 
 // ═══════════════════════════════════════════════════════════════
+// STATIC TRANSCRIPT SYNC
+// Emitted by the WS listen client when a remote consumer (SDK,
+// desktop app) connects or reconnects mid-session. Together they
+// allow the consumer to reconstruct the full session state without
+// polling. See listen-client.ts for the emit sequence.
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Emitted once during the static sync phase (before sync_complete).
+ * Carries committed message history for the current conversation.
+ *
+ * V1: always a single page (is_final: true). Pagination via multiple
+ * chunks (is_final: false on all but the last) is reserved for future use.
+ */
+export interface TranscriptBackfillMessage extends MessageEnvelope {
+  type: "transcript_backfill";
+  /** Committed conversation messages in chronological order. */
+  messages: LettaMessage[];
+  /**
+   * True when this is the only or last backfill chunk for this sync.
+   * Future pagination will emit multiple chunks with is_final: false
+   * on all but the last.
+   */
+  is_final: boolean;
+}
+
+/**
+ * Emitted during the static sync phase when there are items in the
+ * turn queue at connect time. Gives the consumer a point-in-time
+ * snapshot of queue contents without requiring live queue events.
+ *
+ * Omitted entirely when the queue is empty at sync time.
+ */
+export interface QueueSnapshotMessage extends MessageEnvelope {
+  type: "queue_snapshot";
+  /** Items currently in the queue, in enqueue order. */
+  items: Array<{
+    item_id: string;
+    kind: QueueItemKind;
+    source: QueueItemSource;
+  }>;
+}
+
+/**
+ * Marks the end of the initial static sync phase.
+ * All transcript_backfill and queue_snapshot messages are guaranteed
+ * to precede this event. After sync_complete, the consumer receives
+ * live queue lifecycle events (queue_item_enqueued, etc.) and message
+ * stream events in real time.
+ *
+ * had_pending_turn: true means a turn was already in-flight when the
+ * consumer connected; message chunks for that turn will follow.
+ */
+export interface SyncCompleteMessage extends MessageEnvelope {
+  type: "sync_complete";
+  had_pending_turn: boolean;
+}
+
+/**
+ * Post-sync supplemental backfill. Emitted AFTER sync_complete when
+ * context (agent_id / conversation_id) was not available at connect
+ * time but became known from the first inbound message.
+ *
+ * Distinct from transcript_backfill (which is only emitted during the
+ * static phase) so clients can handle it without breaking the
+ * sync_complete contract. The client should replace its (empty)
+ * transcript with the messages provided here.
+ *
+ * Emitted at most once per connection (guarded by supplementSent flag
+ * in the listener runtime).
+ */
+export interface TranscriptSupplementMessage extends MessageEnvelope {
+  type: "transcript_supplement";
+  /** Committed conversation messages in chronological order. */
+  messages: LettaMessage[];
+}
+
+// ═══════════════════════════════════════════════════════════════
 // UNION TYPE
 // ═══════════════════════════════════════════════════════════════
 
@@ -640,4 +720,8 @@ export type WireMessage =
   | ResultMessage
   | ControlResponse
   | ControlRequest // CLI → SDK control requests (e.g., can_use_tool)
-  | QueueLifecycleEvent;
+  | QueueLifecycleEvent
+  | TranscriptBackfillMessage
+  | QueueSnapshotMessage
+  | SyncCompleteMessage
+  | TranscriptSupplementMessage;

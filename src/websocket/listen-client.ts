@@ -44,9 +44,13 @@ import type {
   MessageWire,
   ResultMessage as ProtocolResultMessage,
   QueueLifecycleEvent,
+  QueueSnapshotMessage,
   RecoveryMessage,
   RetryMessage,
   StopReasonType,
+  SyncCompleteMessage,
+  TranscriptBackfillMessage,
+  TranscriptSupplementMessage,
 } from "../types/protocol";
 
 interface StartListenerOptions {
@@ -373,7 +377,11 @@ export type WsProtocolEvent =
   | RetryMessage
   | RecoveryMessage
   | ProtocolResultMessage
-  | QueueLifecycleEvent;
+  | QueueLifecycleEvent
+  | TranscriptBackfillMessage
+  | QueueSnapshotMessage
+  | SyncCompleteMessage
+  | TranscriptSupplementMessage;
 
 /**
  * Single adapter for all outbound typed protocol events.
