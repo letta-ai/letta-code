@@ -1128,6 +1128,103 @@ describe("Settings Manager - Managed Keys Preservation", () => {
     expect(raw.lastAgent).toBe("agent-abc");
   });
 
+  test("External updates to managed keys are preserved when this process didn't change them", async () => {
+    const { writeFile, readFile, mkdir } = await import("../utils/fs.js");
+    const settingsDir = join(testHomeDir, ".letta");
+    const settingsPath = join(settingsDir, "settings.json");
+    await mkdir(settingsDir, { recursive: true });
+
+    await writeFile(
+      settingsPath,
+      JSON.stringify({
+        tokenStreaming: true,
+        pinnedAgents: ["agent-a"],
+        pinnedAgentsByServer: {
+          "api.letta.com": ["agent-a"],
+        },
+      }),
+    );
+
+    await settingsManager.initialize();
+
+    // Simulate another process appending a new global pin while this process
+    // is still running with stale in-memory settings.
+    const externallyUpdated = JSON.parse(
+      await readFile(settingsPath),
+    ) as Record<string, unknown>;
+
+    const pinnedByServer = (externallyUpdated.pinnedAgentsByServer as Record<
+      string,
+      string[]
+    >) || { "api.letta.com": [] };
+    pinnedByServer["api.letta.com"] = [
+      ...(pinnedByServer["api.letta.com"] || []),
+      "agent-b",
+    ];
+    externallyUpdated.pinnedAgentsByServer = pinnedByServer;
+
+    const pinned = (externallyUpdated.pinnedAgents as string[]) || [];
+    externallyUpdated.pinnedAgents = [...pinned, "agent-b"];
+
+    await writeFile(settingsPath, JSON.stringify(externallyUpdated));
+
+    // Trigger an unrelated write from this process.
+    settingsManager.updateSettings({ lastAgent: "agent-current" });
+    await settingsManager.flush();
+
+    const raw = JSON.parse(await readFile(settingsPath)) as Record<
+      string,
+      unknown
+    >;
+    expect(raw.lastAgent).toBe("agent-current");
+    expect((raw.pinnedAgents as string[]) || []).toContain("agent-b");
+    expect(
+      (raw.pinnedAgentsByServer as Record<string, string[]>)?.[
+        "api.letta.com"
+      ] || [],
+    ).toContain("agent-b");
+  });
+
+  test("External deletion of managed keys is preserved when this process didn't change them", async () => {
+    const { writeFile, readFile, mkdir } = await import("../utils/fs.js");
+    const settingsDir = join(testHomeDir, ".letta");
+    const settingsPath = join(settingsDir, "settings.json");
+    await mkdir(settingsDir, { recursive: true });
+
+    await writeFile(
+      settingsPath,
+      JSON.stringify({
+        tokenStreaming: true,
+        pinnedAgents: ["agent-a"],
+        pinnedAgentsByServer: {
+          "api.letta.com": ["agent-a"],
+        },
+      }),
+    );
+
+    await settingsManager.initialize();
+
+    // Simulate another process removing managed pin keys.
+    const externallyUpdated = JSON.parse(
+      await readFile(settingsPath),
+    ) as Record<string, unknown>;
+    delete externallyUpdated.pinnedAgents;
+    delete externallyUpdated.pinnedAgentsByServer;
+    await writeFile(settingsPath, JSON.stringify(externallyUpdated));
+
+    // Trigger an unrelated write from this process.
+    settingsManager.updateSettings({ lastAgent: "agent-current" });
+    await settingsManager.flush();
+
+    const raw = JSON.parse(await readFile(settingsPath)) as Record<
+      string,
+      unknown
+    >;
+    expect(raw.lastAgent).toBe("agent-current");
+    expect("pinnedAgents" in raw).toBe(false);
+    expect("pinnedAgentsByServer" in raw).toBe(false);
+  });
+
   test("No-keychain fallback persists refreshToken and LETTA_API_KEY to file", async () => {
     // On machines with a keychain, tokens go to the keychain, not the file.
     // On machines without a keychain, tokens must fall back to the file.
