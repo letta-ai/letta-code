@@ -3,6 +3,7 @@
  * Connects to Letta Cloud and receives messages to execute locally
  */
 
+import { APIError } from "@letta-ai/letta-client/core/error";
 import type { Stream } from "@letta-ai/letta-client/core/streaming";
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type {
@@ -18,7 +19,12 @@ import {
 } from "../agent/approval-execution";
 import { getResumeData } from "../agent/check-approval";
 import { getClient } from "../agent/client";
-import { sendMessageStream } from "../agent/message";
+import { getStreamToolContextId, sendMessageStream } from "../agent/message";
+import {
+  extractConflictDetail,
+  getPreStreamErrorAction,
+  parseRetryAfterHeaderMs,
+} from "../agent/turn-recovery-policy";
 import { createBuffers } from "../cli/helpers/accumulator";
 import { classifyApprovals } from "../cli/helpers/approvalClassification";
 import { generatePlanFilePath } from "../cli/helpers/planName";
@@ -29,9 +35,16 @@ import { settingsManager } from "../settings-manager";
 import { isInteractiveApprovalTool } from "../tools/interactivePolicy";
 import { loadTools } from "../tools/manager";
 import type {
+  AutoApprovalMessage,
   CanUseToolResponse,
   ControlRequest,
   ControlResponseBody,
+  ErrorMessage,
+  MessageWire,
+  ResultMessage as ProtocolResultMessage,
+  RecoveryMessage,
+  RetryMessage,
+  StopReasonType,
 } from "../types/protocol";
 
 interface StartListenerOptions {
@@ -125,6 +138,8 @@ type ListenerRuntime = {
   pendingApprovalResolvers: Map<string, PendingApprovalResolver>;
   /** Latched once supportsControlResponse is seen on any message. */
   controlResponseCapable: boolean;
+  /** Stable session ID for MessageEnvelope-based emissions (scoped to runtime lifecycle). */
+  sessionId: string;
 };
 
 type ApprovalSlot =
@@ -186,6 +201,7 @@ function createRuntime(): ListenerRuntime {
     messageQueue: Promise.resolve(),
     pendingApprovalResolvers: new Map(),
     controlResponseCapable: false,
+    sessionId: `listen-${crypto.randomUUID()}`,
   };
 }
 
@@ -283,6 +299,119 @@ function sendControlMessageOverWebSocket(
   // Central hook for protocol-only outbound WS messages so future
   // filtering/mutation can be added without touching approval flow.
   socket.send(JSON.stringify(payload));
+}
+
+// ── Typed protocol event adapter ────────────────────────────────
+
+type WsProtocolEvent =
+  | MessageWire
+  | AutoApprovalMessage
+  | ErrorMessage
+  | RetryMessage
+  | RecoveryMessage
+  | ProtocolResultMessage;
+
+/**
+ * Single adapter for all outbound typed protocol events.
+ * Passthrough for now — provides a seam for future filtering/versioning/redacting.
+ */
+function emitToWS(socket: WebSocket, event: WsProtocolEvent): void {
+  if (socket.readyState === WebSocket.OPEN) {
+    socket.send(JSON.stringify(event));
+  }
+}
+
+const LLM_API_ERROR_MAX_RETRIES = 3;
+
+/**
+ * Wrap sendMessageStream with pre-stream error handling (retry/recovery).
+ * Mirrors headless bidirectional mode's pre-stream error handling.
+ */
+async function sendMessageStreamWithRetry(
+  conversationId: string,
+  messages: Parameters<typeof sendMessageStream>[1],
+  opts: Parameters<typeof sendMessageStream>[2],
+  socket: WebSocket,
+  runtime: ListenerRuntime,
+): Promise<Awaited<ReturnType<typeof sendMessageStream>>> {
+  let transientRetries = 0;
+  let conversationBusyRetries = 0;
+  const MAX_CONVERSATION_BUSY_RETRIES = 1;
+
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    try {
+      return await sendMessageStream(conversationId, messages, opts);
+    } catch (preStreamError) {
+      const errorDetail = extractConflictDetail(preStreamError);
+      const action = getPreStreamErrorAction(
+        errorDetail,
+        conversationBusyRetries,
+        MAX_CONVERSATION_BUSY_RETRIES,
+        {
+          status:
+            preStreamError instanceof APIError
+              ? preStreamError.status
+              : undefined,
+          transientRetries,
+          maxTransientRetries: LLM_API_ERROR_MAX_RETRIES,
+        },
+      );
+
+      if (action === "resolve_approval_pending") {
+        // Listener can't auto-resolve pending approvals like headless does.
+        // Rethrow — the cloud will resend with the approval.
+        throw preStreamError;
+      }
+
+      if (action === "retry_transient") {
+        const attempt = transientRetries + 1;
+        const retryAfterMs =
+          preStreamError instanceof APIError
+            ? parseRetryAfterHeaderMs(
+                preStreamError.headers?.get("retry-after"),
+              )
+            : null;
+        const delayMs = retryAfterMs ?? 1000 * 2 ** (attempt - 1);
+        transientRetries = attempt;
+
+        emitToWS(socket, {
+          type: "retry",
+          reason: "llm_api_error",
+          attempt,
+          max_attempts: LLM_API_ERROR_MAX_RETRIES,
+          delay_ms: delayMs,
+          session_id: runtime.sessionId,
+          uuid: `retry-${crypto.randomUUID()}`,
+        } as RetryMessage);
+
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        continue;
+      }
+
+      if (action === "retry_conversation_busy") {
+        const attempt = conversationBusyRetries + 1;
+        const delayMs = 2500;
+        conversationBusyRetries = attempt;
+
+        emitToWS(socket, {
+          type: "retry",
+          reason: "error",
+          attempt,
+          max_attempts: MAX_CONVERSATION_BUSY_RETRIES,
+          delay_ms: delayMs,
+          session_id: runtime.sessionId,
+          uuid: `retry-${crypto.randomUUID()}`,
+        } as RetryMessage);
+
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        continue;
+      }
+
+      // rethrow unrecoverable errors
+      throw preStreamError;
+    }
+  }
 }
 
 export function resolvePendingApprovalResolver(
@@ -623,21 +752,19 @@ async function handleIncomingMessage(
   ) => void,
   connectionId?: string,
 ): Promise<void> {
+  // Hoist identifiers and tracking state so they're available in catch for error-result
+  const agentId = msg.agentId;
+  const requestedConversationId = msg.conversationId || undefined;
+  const conversationId = requestedConversationId ?? "default";
+  const msgStartTime = performance.now();
+  let msgTurnCount = 0;
+  const msgRunIds: string[] = [];
+
   try {
     // Latch capability: once seen, always use blocking path (strict check to avoid truthy strings)
     if (msg.supportsControlResponse === true) {
       runtime.controlResponseCapable = true;
     }
-
-    const agentId = msg.agentId;
-    // requestedConversationId can be:
-    // - undefined: no conversation (use agent endpoint)
-    // - null: no conversation (use agent endpoint)
-    // - string: specific conversation ID (use conversations endpoint)
-    const requestedConversationId = msg.conversationId || undefined;
-
-    // For sendMessageStream: "default" means use agent endpoint, else use conversations endpoint
-    const conversationId = requestedConversationId ?? "default";
 
     if (!agentId) {
       return;
@@ -654,6 +781,7 @@ async function handleIncomingMessage(
     }
 
     let messagesToSend: Array<MessageCreate | ApprovalCreate> = msg.messages;
+    let turnToolContextId: string | null = null;
 
     const firstMessage = msg.messages[0];
     const isApprovalMessage =
@@ -683,7 +811,11 @@ async function handleIncomingMessage(
         resumeData.pendingApprovals,
       );
       const decisionResults =
-        decisions.length > 0 ? await executeApprovalBatch(decisions) : [];
+        decisions.length > 0
+          ? await executeApprovalBatch(decisions, undefined, {
+              toolContextId: turnToolContextId ?? undefined,
+            })
+          : [];
 
       const rebuiltApprovals: ApprovalResult[] = [];
       let decisionResultIndex = 0;
@@ -717,33 +849,72 @@ async function handleIncomingMessage(
       ];
     }
 
-    let stream = await sendMessageStream(conversationId, messagesToSend, {
-      agentId,
-      streamTokens: true,
-      background: true,
-    });
+    let stream = await sendMessageStreamWithRetry(
+      conversationId,
+      messagesToSend,
+      { agentId, streamTokens: true, background: true },
+      socket,
+      runtime,
+    );
 
+    turnToolContextId = getStreamToolContextId(
+      stream as Stream<LettaStreamingResponse>,
+    );
     let runIdSent = false;
+    let runId: string | undefined;
     const buffers = createBuffers(agentId);
 
     // Approval loop: continue until end_turn or error
     // eslint-disable-next-line no-constant-condition
     while (true) {
+      msgTurnCount++;
+      runIdSent = false;
       const result = await drainStreamWithResume(
         stream as Stream<LettaStreamingResponse>,
         buffers,
         () => {},
         undefined,
         undefined,
-        ({ chunk }) => {
+        ({ chunk, shouldOutput, errorInfo }) => {
           const maybeRunId = (chunk as { run_id?: unknown }).run_id;
-          if (!runIdSent && typeof maybeRunId === "string") {
-            runIdSent = true;
-            sendClientMessage(socket, {
-              type: "run_started",
-              runId: maybeRunId,
+          if (typeof maybeRunId === "string") {
+            runId = maybeRunId;
+            if (!runIdSent) {
+              runIdSent = true;
+              msgRunIds.push(maybeRunId);
+              sendClientMessage(socket, {
+                type: "run_started",
+                runId: maybeRunId,
+              });
+            }
+          }
+
+          // Emit in-stream errors
+          if (errorInfo) {
+            emitToWS(socket, {
+              type: "error",
+              message: errorInfo.message || "Stream error",
+              stop_reason: (errorInfo.error_type as StopReasonType) || "error",
+              run_id: runId || errorInfo.run_id,
+              session_id: runtime.sessionId,
+              uuid: `error-${crypto.randomUUID()}`,
             });
           }
+
+          // Emit chunk as MessageWire for protocol consumers
+          if (shouldOutput) {
+            const chunkWithIds = chunk as typeof chunk & {
+              otid?: string;
+              id?: string;
+            };
+            emitToWS(socket, {
+              ...chunk,
+              type: "message",
+              session_id: runtime.sessionId,
+              uuid: chunkWithIds.otid || chunkWithIds.id || crypto.randomUUID(),
+            } as MessageWire);
+          }
+
           return undefined;
         },
       );
@@ -753,21 +924,64 @@ async function handleIncomingMessage(
 
       // Case 1: Turn ended normally
       if (stopReason === "end_turn") {
-        sendClientMessage(socket, {
-          type: "result",
-          success: true,
-          stopReason: "end_turn",
-        });
+        if (runtime.controlResponseCapable) {
+          emitToWS(socket, {
+            type: "result",
+            subtype: "success",
+            agent_id: agentId,
+            conversation_id: conversationId,
+            duration_ms: performance.now() - msgStartTime,
+            duration_api_ms: 0,
+            num_turns: msgTurnCount,
+            result: null,
+            run_ids: msgRunIds,
+            usage: null,
+            session_id: runtime.sessionId,
+            uuid: `result-${crypto.randomUUID()}`,
+          });
+        } else {
+          sendClientMessage(socket, {
+            type: "result",
+            success: true,
+            stopReason: "end_turn",
+          });
+        }
         break;
       }
 
       // Case 2: Error or cancelled
       if (stopReason !== "requires_approval") {
-        sendClientMessage(socket, {
-          type: "result",
-          success: false,
-          stopReason,
+        emitToWS(socket, {
+          type: "error",
+          message: `Unexpected stop reason: ${stopReason}`,
+          stop_reason: (stopReason as StopReasonType) || "error",
+          run_id: runId,
+          session_id: runtime.sessionId,
+          uuid: `error-${crypto.randomUUID()}`,
         });
+        if (runtime.controlResponseCapable) {
+          emitToWS(socket, {
+            type: "result",
+            subtype: "error",
+            agent_id: agentId,
+            conversation_id: conversationId,
+            duration_ms: performance.now() - msgStartTime,
+            duration_api_ms: 0,
+            num_turns: msgTurnCount,
+            result: null,
+            run_ids: msgRunIds,
+            usage: null,
+            stop_reason: (stopReason as StopReasonType) || "error",
+            session_id: runtime.sessionId,
+            uuid: `result-${crypto.randomUUID()}`,
+          });
+        } else {
+          sendClientMessage(socket, {
+            type: "result",
+            success: false,
+            stopReason,
+          });
+        }
         break;
       }
 
@@ -811,6 +1025,25 @@ async function handleIncomingMessage(
             };
             reason: string;
           };
+
+      // Emit auto-approval events for auto-allowed tools
+      for (const ac of autoAllowed) {
+        emitToWS(socket, {
+          type: "auto_approval",
+          tool_call: {
+            name: ac.approval.toolName,
+            tool_call_id: ac.approval.toolCallId,
+            arguments: ac.approval.toolArgs,
+          },
+          reason: ac.permission.reason || "auto-approved",
+          matched_rule:
+            "matchedRule" in ac.permission && ac.permission.matchedRule
+              ? ac.permission.matchedRule
+              : "auto-approved",
+          session_id: runtime.sessionId,
+          uuid: `auto-approval-${ac.approval.toolCallId}`,
+        } as AutoApprovalMessage);
+      }
 
       const decisions: Decision[] = [
         ...autoAllowed.map((ac) => ({
@@ -877,6 +1110,20 @@ async function handleIncomingMessage(
                   }
                 : ac.approval;
               decisions.push({ type: "approve", approval: finalApproval });
+
+              // Emit auto-approval event for WS-callback-approved tool
+              emitToWS(socket, {
+                type: "auto_approval",
+                tool_call: {
+                  name: finalApproval.toolName,
+                  tool_call_id: finalApproval.toolCallId,
+                  arguments: finalApproval.toolArgs,
+                },
+                reason: "Approved via WebSocket",
+                matched_rule: "canUseTool callback",
+                session_id: runtime.sessionId,
+                uuid: `auto-approval-${ac.approval.toolCallId}`,
+              } as AutoApprovalMessage);
             } else {
               decisions.push({
                 type: "deny",
@@ -898,10 +1145,14 @@ async function handleIncomingMessage(
       }
 
       // Execute approved/denied tools
-      const executionResults = await executeApprovalBatch(decisions);
+      const executionResults = await executeApprovalBatch(
+        decisions,
+        undefined,
+        { toolContextId: turnToolContextId ?? undefined },
+      );
 
       // Create fresh approval stream for next iteration
-      stream = await sendMessageStream(
+      stream = await sendMessageStreamWithRetry(
         conversationId,
         [
           {
@@ -909,19 +1160,46 @@ async function handleIncomingMessage(
             approvals: executionResults,
           },
         ],
-        {
-          agentId,
-          streamTokens: true,
-          background: true,
-        },
+        { agentId, streamTokens: true, background: true },
+        socket,
+        runtime,
+      );
+      turnToolContextId = getStreamToolContextId(
+        stream as Stream<LettaStreamingResponse>,
       );
     }
   } catch (error) {
-    sendClientMessage(socket, {
-      type: "result",
-      success: false,
-      stopReason: "error",
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    emitToWS(socket, {
+      type: "error",
+      message: errorMessage,
+      stop_reason: "error",
+      session_id: runtime.sessionId,
+      uuid: `error-${crypto.randomUUID()}`,
     });
+    if (runtime.controlResponseCapable) {
+      emitToWS(socket, {
+        type: "result",
+        subtype: "error",
+        agent_id: agentId || "",
+        conversation_id: conversationId,
+        duration_ms: performance.now() - msgStartTime,
+        duration_api_ms: 0,
+        num_turns: msgTurnCount,
+        result: null,
+        run_ids: msgRunIds,
+        usage: null,
+        stop_reason: "error",
+        session_id: runtime.sessionId,
+        uuid: `result-${crypto.randomUUID()}`,
+      });
+    } else {
+      sendClientMessage(socket, {
+        type: "result",
+        success: false,
+        stopReason: "error",
+      });
+    }
 
     if (process.env.DEBUG) {
       console.error("[Listen] Error handling message:", error);
@@ -952,4 +1230,5 @@ export function stopListenerClient(): void {
 export const __listenClientTestUtils = {
   createRuntime,
   stopRuntime,
+  emitToWS,
 };

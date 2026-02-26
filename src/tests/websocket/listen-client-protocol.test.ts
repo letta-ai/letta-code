@@ -376,3 +376,139 @@ describe("listen-client capability-gated approval flow", () => {
     rejectPendingApprovalResolvers(runtime, "test cleanup");
   });
 });
+
+describe("listen-client emitToWS adapter", () => {
+  test("sends event when socket is OPEN", () => {
+    const socket = new MockSocket(WebSocket.OPEN);
+    const event = {
+      type: "error" as const,
+      message: "test error",
+      stop_reason: "error" as const,
+      session_id: "listen-test",
+      uuid: "test-uuid",
+    };
+
+    __listenClientTestUtils.emitToWS(socket as unknown as WebSocket, event);
+
+    expect(socket.sentPayloads).toHaveLength(1);
+    const sent = JSON.parse(socket.sentPayloads[0] as string);
+    expect(sent.type).toBe("error");
+    expect(sent.message).toBe("test error");
+    expect(sent.session_id).toBe("listen-test");
+  });
+
+  test("does not send when socket is CLOSED", () => {
+    const socket = new MockSocket(WebSocket.CLOSED);
+    const event = {
+      type: "error" as const,
+      message: "test error",
+      stop_reason: "error" as const,
+      session_id: "listen-test",
+      uuid: "test-uuid",
+    };
+
+    __listenClientTestUtils.emitToWS(socket as unknown as WebSocket, event);
+
+    expect(socket.sentPayloads).toHaveLength(0);
+  });
+
+  test("emits RecoveryMessage with recovery_type", () => {
+    const socket = new MockSocket(WebSocket.OPEN);
+    const event: Parameters<typeof __listenClientTestUtils.emitToWS>[1] = {
+      type: "recovery",
+      recovery_type: "approval_pending",
+      message: "Detected pending approval conflict",
+      session_id: "listen-abc",
+      uuid: "recovery-123",
+    };
+
+    __listenClientTestUtils.emitToWS(socket as unknown as WebSocket, event);
+
+    expect(socket.sentPayloads).toHaveLength(1);
+    const sent = JSON.parse(socket.sentPayloads[0] as string);
+    expect(sent.type).toBe("recovery");
+    expect(sent.recovery_type).toBe("approval_pending");
+    expect(sent.session_id).toBe("listen-abc");
+  });
+
+  test("emits AutoApprovalMessage with tool_call shape", () => {
+    const socket = new MockSocket(WebSocket.OPEN);
+    const event = {
+      type: "auto_approval" as const,
+      tool_call: {
+        name: "Write",
+        tool_call_id: "call-123",
+        arguments: '{"file_path": "/test.ts"}',
+      },
+      reason: "auto-approved",
+      matched_rule: "auto-approved",
+      session_id: "listen-test",
+      uuid: "auto-approval-call-123",
+    };
+
+    __listenClientTestUtils.emitToWS(socket as unknown as WebSocket, event);
+
+    expect(socket.sentPayloads).toHaveLength(1);
+    const sent = JSON.parse(socket.sentPayloads[0] as string);
+    expect(sent.type).toBe("auto_approval");
+    expect(sent.tool_call.name).toBe("Write");
+    expect(sent.tool_call.tool_call_id).toBe("call-123");
+  });
+
+  test("emits RetryMessage with attempt/delay details", () => {
+    const socket = new MockSocket(WebSocket.OPEN);
+    const event = {
+      type: "retry" as const,
+      reason: "llm_api_error" as const,
+      attempt: 1,
+      max_attempts: 3,
+      delay_ms: 1000,
+      session_id: "listen-test",
+      uuid: "retry-123",
+    };
+
+    __listenClientTestUtils.emitToWS(socket as unknown as WebSocket, event);
+
+    expect(socket.sentPayloads).toHaveLength(1);
+    const sent = JSON.parse(socket.sentPayloads[0] as string);
+    expect(sent.type).toBe("retry");
+    expect(sent.attempt).toBe(1);
+    expect(sent.max_attempts).toBe(3);
+    expect(sent.delay_ms).toBe(1000);
+  });
+
+  test("emits rich ResultMessage with full metadata", () => {
+    const socket = new MockSocket(WebSocket.OPEN);
+    const event = {
+      type: "result" as const,
+      subtype: "success" as const,
+      agent_id: "agent-123",
+      conversation_id: "conv-456",
+      duration_ms: 1500,
+      duration_api_ms: 0,
+      num_turns: 2,
+      result: null,
+      run_ids: ["run-1", "run-2"],
+      usage: null,
+      session_id: "listen-test",
+      uuid: "result-123",
+    };
+
+    __listenClientTestUtils.emitToWS(socket as unknown as WebSocket, event);
+
+    expect(socket.sentPayloads).toHaveLength(1);
+    const sent = JSON.parse(socket.sentPayloads[0] as string);
+    expect(sent.type).toBe("result");
+    expect(sent.subtype).toBe("success");
+    expect(sent.agent_id).toBe("agent-123");
+    expect(sent.num_turns).toBe(2);
+    expect(sent.run_ids).toEqual(["run-1", "run-2"]);
+  });
+
+  test("runtime sessionId is stable and uses listen- prefix", () => {
+    const runtime = __listenClientTestUtils.createRuntime();
+    expect(runtime.sessionId).toMatch(/^listen-/);
+    // Verify it's a UUID format after the prefix
+    expect(runtime.sessionId.length).toBeGreaterThan(10);
+  });
+});
