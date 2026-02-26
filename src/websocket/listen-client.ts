@@ -1197,4 +1197,5 @@ export function stopListenerClient(): void {
 export const __listenClientTestUtils = {
   createRuntime,
   stopRuntime,
+  emitToWS,
 };
