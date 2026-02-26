@@ -54,6 +54,7 @@ import {
 import { getStreamToolContextId, sendMessageStream } from "../agent/message";
 import {
   getModelInfo,
+  getModelInfoForLlmConfig,
   getModelShortName,
   type ModelReasoningEffort,
 } from "../agent/model";
@@ -1403,14 +1404,33 @@ export default function App({
   const agentName = agentState?.name ?? null;
   const [agentDescription, setAgentDescription] = useState<string | null>(null);
   const [agentLastRunAt, setAgentLastRunAt] = useState<string | null>(null);
+  // Prefer agent.model (canonical handle) over reconstructing from llm_config fields,
+  // which may not faithfully reproduce the original handle (e.g. "openai/gpt-5" vs "openai/gpt-5.3-codex").
   const currentModelLabel =
-    llmConfig?.model_endpoint_type && llmConfig?.model
+    agentState?.model ||
+    (llmConfig?.model_endpoint_type && llmConfig?.model
       ? `${llmConfig.model_endpoint_type}/${llmConfig.model}`
-      : (llmConfig?.model ?? null);
-  const currentModelDisplay = currentModelLabel
-    ? (getModelShortName(currentModelLabel) ??
-      currentModelLabel.split("/").pop())
-    : null;
+      : (llmConfig?.model ?? null)) ||
+    null;
+  // Use tier-aware resolution so the display matches the agent's reasoning effort
+  // (e.g. "GPT-5.3-Codex" not just "GPT-5" for the first match).
+  const currentModelDisplay = useMemo(() => {
+    if (!currentModelLabel) return null;
+    const info = getModelInfoForLlmConfig(currentModelLabel, {
+      reasoning_effort: llmConfig?.reasoning_effort ?? null,
+      enable_reasoner:
+        (llmConfig as { enable_reasoner?: boolean | null })?.enable_reasoner ??
+        null,
+    });
+    if (info) {
+      return (info as { shortLabel?: string }).shortLabel ?? info.label;
+    }
+    return (
+      getModelShortName(currentModelLabel) ??
+      currentModelLabel.split("/").pop() ??
+      null
+    );
+  }, [currentModelLabel, llmConfig]);
   const currentModelProvider = llmConfig?.provider_name ?? null;
   // Derive reasoning effort from model_settings (canonical) with llm_config as legacy fallback.
   // Some providers may omit explicit effort for default tiers (e.g., Sonnet 4.6 high),
