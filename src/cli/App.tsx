@@ -231,6 +231,7 @@ import {
   buildQueuedUserText,
   getQueuedNotificationSummaries,
 } from "./helpers/queuedMessageParts";
+import { resolveReasoningTabToggleCommand } from "./helpers/reasoningTabToggle";
 import { safeJsonParseOr } from "./helpers/safeJsonParse";
 import { getDeviceType, getLocalTime } from "./helpers/sessionContext";
 import {
@@ -479,6 +480,7 @@ const NON_STATE_COMMANDS = new Set([
   "/export",
   "/download",
   "/statusline",
+  "/reasoning-tab",
 ]);
 
 // Check if a command is interactive (opens overlay, should not be queued)
@@ -925,6 +927,7 @@ export default function App({
   messageHistory = [],
   resumedExistingConversation = false,
   tokenStreaming = false,
+  reasoningTabCycleEnabled: initialReasoningTabCycleEnabled = false,
   showCompactions = false,
   agentProvenance = null,
   releaseNotes = null,
@@ -945,6 +948,7 @@ export default function App({
   messageHistory?: Message[];
   resumedExistingConversation?: boolean; // True if we explicitly resumed via --resume
   tokenStreaming?: boolean;
+  reasoningTabCycleEnabled?: boolean;
   showCompactions?: boolean;
   agentProvenance?: AgentProvenance | null;
   releaseNotes?: string | null; // Markdown release notes to display above header
@@ -1483,6 +1487,11 @@ export default function App({
   // Token streaming preference (can be toggled at runtime)
   const [tokenStreamingEnabled, setTokenStreamingEnabled] =
     useState(tokenStreaming);
+
+  // Reasoning tier Tab cycling preference (opt-in only, persisted globally)
+  const [reasoningTabCycleEnabled, setReasoningTabCycleEnabled] = useState(
+    initialReasoningTabCycleEnabled,
+  );
 
   // Show compaction messages preference (can be toggled at runtime)
   const [showCompactionsEnabled, _setShowCompactionsEnabled] =
@@ -7348,6 +7357,52 @@ export default function App({
           return { submitted: true };
         }
 
+        // Special handling for /reasoning-tab command - opt-in toggle for Tab tier cycling
+        if (
+          trimmed === "/reasoning-tab" ||
+          trimmed.startsWith("/reasoning-tab ")
+        ) {
+          const resolution = resolveReasoningTabToggleCommand(
+            trimmed,
+            reasoningTabCycleEnabled,
+          );
+          if (!resolution) {
+            return { submitted: false };
+          }
+          const cmd = commandRunner.start(
+            trimmed,
+            "Updating reasoning Tab shortcut...",
+          );
+
+          setCommandRunning(true);
+
+          try {
+            if (resolution.kind === "status") {
+              cmd.finish(resolution.message, true);
+              return { submitted: true };
+            }
+
+            if (resolution.kind === "invalid") {
+              cmd.fail(resolution.message);
+              return { submitted: true };
+            }
+
+            setReasoningTabCycleEnabled(resolution.enabled);
+            settingsManager.updateSettings({
+              reasoningTabCycleEnabled: resolution.enabled,
+            });
+
+            cmd.finish(resolution.message, true);
+          } catch (error) {
+            const errorDetails = formatErrorDetails(error, agentId);
+            cmd.fail(`Failed: ${errorDetails}`);
+          } finally {
+            setCommandRunning(false);
+          }
+
+          return { submitted: true };
+        }
+
         // Special handling for /new command - start new conversation
         if (msg.trim() === "/new") {
           const cmd = commandRunner.start(
@@ -12406,7 +12461,11 @@ Plan file path: ${planFilePath}`;
                 }
                 permissionMode={uiPermissionMode}
                 onPermissionModeChange={handlePermissionModeChange}
-                onCycleReasoningEffort={handleCycleReasoningEffort}
+                onCycleReasoningEffort={
+                  reasoningTabCycleEnabled
+                    ? handleCycleReasoningEffort
+                    : undefined
+                }
                 onExit={handleExit}
                 onInterrupt={handleInterrupt}
                 interruptRequested={interruptRequested}

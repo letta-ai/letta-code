@@ -288,6 +288,15 @@ export const commands: Record<string, Command> = {
       return "Managing status line...";
     },
   },
+  "/reasoning-tab": {
+    desc: "Toggle Tab shortcut for reasoning tiers (/reasoning-tab on|off|status)",
+    args: "[on|off|status]",
+    order: 36.6,
+    handler: () => {
+      // Handled specially in App.tsx
+      return "Managing reasoning Tab shortcut...";
+    },
+  },
   "/terminal": {
     desc: "Setup terminal shortcuts [--revert]",
     order: 37,
