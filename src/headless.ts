@@ -61,6 +61,7 @@ import {
   drainStreamWithResume,
 } from "./cli/helpers/stream";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "./constants";
+import { computeDiffPreviews } from "./helpers/diffPreview";
 import {
   mergeQueuedTurnInput,
   type QueuedTurnInput,
@@ -2565,6 +2566,9 @@ async function runBidirectionalMode(
   }> {
     const requestId = `perm-${toolCallId}`;
 
+    // Compute diff previews for file-modifying tools
+    const diffs = computeDiffPreviews(toolName, toolInput);
+
     // Build can_use_tool control request (Claude SDK format)
     const canUseToolRequest: CanUseToolControlRequest = {
       subtype: "can_use_tool",
@@ -2573,6 +2577,7 @@ async function runBidirectionalMode(
       tool_call_id: toolCallId, // Letta-specific
       permission_suggestions: [], // TODO: not implemented
       blocked_path: null, // TODO: not implemented
+      ...(diffs.length > 0 ? { diffs } : {}),
     };
 
     const controlRequest: ControlRequest = {
