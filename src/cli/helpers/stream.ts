@@ -2,7 +2,7 @@ import { APIError } from "@letta-ai/letta-client/core/error";
 import type { Stream } from "@letta-ai/letta-client/core/streaming";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
-import { getClient } from "../../agent/client";
+import { consumeLastStreamParseDiagnostic, getClient } from "../../agent/client";
 import { getStreamRequestStartTime } from "../../agent/message";
 import { telemetry } from "../../telemetry";
 import { debugWarn } from "../../utils/debug";
@@ -209,6 +209,10 @@ export async function drainStream(
     // Handle stream errors (e.g., JSON parse errors from SDK, network issues)
     // This can happen when the stream ends with incomplete data
     const errorMessage = e instanceof Error ? e.message : String(e);
+    const parseDiagnostic = consumeLastStreamParseDiagnostic();
+    const errorMessageWithDiagnostic = parseDiagnostic
+      ? `${errorMessage} [${parseDiagnostic}]`
+      : errorMessage;
     debugWarn("drainStream", "Stream error caught:", errorMessage);
 
     // Try to extract run_id from APIError if we don't have one yet
@@ -228,7 +232,7 @@ export async function drainStream(
     // (and App.tsx can fetch server-side detail), the client-side exception is
     // valuable for telemetry — e.g. stream disconnections where the server run
     // is still in-progress and has no error metadata yet.
-    fallbackError = errorMessage;
+    fallbackError = errorMessageWithDiagnostic;
 
     // Preserve a stop reason already parsed from stream chunks (e.g. llm_api_error)
     // and only fall back to generic "error" when none is available.

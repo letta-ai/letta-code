@@ -5,6 +5,83 @@ import { LETTA_CLOUD_API_URL, refreshAccessToken } from "../auth/oauth";
 import { settingsManager } from "../settings-manager";
 import { createTimingFetch, isTimingsEnabled } from "../utils/timing";
 
+const STREAM_PARSE_DIAGNOSTIC_MAX_AGE_MS = 10_000;
+const STREAM_PARSE_DIAGNOSTIC_MAX_LEN = 400;
+
+type StreamParseDiagnostic = {
+  message?: string;
+  rawChunk?: string;
+  capturedAt: number;
+};
+
+let lastStreamParseDiagnostic: StreamParseDiagnostic | null = null;
+
+function truncateDiagnostic(value: unknown): string {
+  const text =
+    typeof value === "string"
+      ? value
+      : value != null
+        ? JSON.stringify(value)
+        : "";
+
+  if (text.length <= STREAM_PARSE_DIAGNOSTIC_MAX_LEN) {
+    return text;
+  }
+
+  return `${text.slice(0, STREAM_PARSE_DIAGNOSTIC_MAX_LEN)}...[truncated, was ${text.length}b]`;
+}
+
+function maybeCaptureStreamParseDiagnostic(args: unknown[]): void {
+  const [first, second] = args;
+  if (typeof first !== "string") {
+    return;
+  }
+
+  const now = Date.now();
+
+  if (first.includes("Could not parse message into JSON:")) {
+    const next: StreamParseDiagnostic = {
+      ...(lastStreamParseDiagnostic ?? {}),
+      message: truncateDiagnostic(second),
+      capturedAt: now,
+    };
+    lastStreamParseDiagnostic = next;
+    return;
+  }
+
+  if (first.includes("From chunk:")) {
+    const next: StreamParseDiagnostic = {
+      ...(lastStreamParseDiagnostic ?? {}),
+      rawChunk: truncateDiagnostic(second),
+      capturedAt: now,
+    };
+    lastStreamParseDiagnostic = next;
+  }
+}
+
+export function consumeLastStreamParseDiagnostic(): string | null {
+  const diag = lastStreamParseDiagnostic;
+  lastStreamParseDiagnostic = null;
+
+  if (!diag) {
+    return null;
+  }
+
+  if (Date.now() - diag.capturedAt > STREAM_PARSE_DIAGNOSTIC_MAX_AGE_MS) {
+    return null;
+  }
+
+  const parts: string[] = [];
+  if (diag.message) {
+    parts.push(`sdk_parse_message=${diag.message}`);
+  }
+  if (diag.rawChunk) {
+    parts.push(`sdk_parse_chunk=${diag.rawChunk}`);
+  }
+
+  return parts.length > 0 ? parts.join(" | ") : null;
+}
+
 /**
  * Get the current Letta server URL from environment or settings.
  * Used for cache keys and API operations.
@@ -78,9 +155,26 @@ export async function getClient() {
   // Note: ChatGPT OAuth token refresh is handled by the Letta backend
   // when using the chatgpt_oauth provider type
 
+  const sdkLogger = {
+    error: (...args: unknown[]) => {
+      maybeCaptureStreamParseDiagnostic(args);
+      console.error(...args);
+    },
+    warn: (...args: unknown[]) => {
+      console.warn(...args);
+    },
+    info: (...args: unknown[]) => {
+      console.info(...args);
+    },
+    debug: (...args: unknown[]) => {
+      console.debug(...args);
+    },
+  };
+
   return new Letta({
     apiKey,
     baseURL,
+    logger: sdkLogger,
     defaultHeaders: {
       "X-Letta-Source": "letta-code",
       "User-Agent": `letta-code/${packageJson.version}`,
