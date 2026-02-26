@@ -639,4 +639,5 @@ export type WireMessage =
   | RecoveryMessage
   | ResultMessage
   | ControlResponse
-  | ControlRequest; // CLI → SDK control requests (e.g., can_use_tool)
+  | ControlRequest // CLI → SDK control requests (e.g., can_use_tool)
+  | QueueLifecycleEvent;

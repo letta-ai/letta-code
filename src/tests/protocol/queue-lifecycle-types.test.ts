@@ -11,6 +11,7 @@ import type {
   QueueItemKind,
   QueueItemSource,
   QueueLifecycleEvent,
+  WireMessage,
 } from "../../types/protocol";
 
 /**
@@ -41,23 +42,23 @@ describe("QueueItemEnqueuedEvent wire shape", () => {
   });
 
   test("source covers all item origins", () => {
-    const sources: QueueItemSource[] = [
-      "user",
-      "task_notification",
-      "subagent",
-      "system",
-    ];
-    expect(sources).toHaveLength(4);
+    const sources: Record<QueueItemSource, true> = {
+      user: true,
+      task_notification: true,
+      subagent: true,
+      system: true,
+    } satisfies Record<QueueItemSource, true>;
+    expect(Object.keys(sources)).toHaveLength(4);
   });
 
   test("kind covers all content types", () => {
-    const kinds: QueueItemKind[] = [
-      "message",
-      "task_notification",
-      "approval_result",
-      "overlay_action",
-    ];
-    expect(kinds).toHaveLength(4);
+    const kinds: Record<QueueItemKind, true> = {
+      message: true,
+      task_notification: true,
+      approval_result: true,
+      overlay_action: true,
+    } satisfies Record<QueueItemKind, true>;
+    expect(Object.keys(kinds)).toHaveLength(4);
   });
 });
 
@@ -112,15 +113,15 @@ describe("QueueBlockedEvent wire shape", () => {
   });
 
   test("reason covers all blocked states", () => {
-    const reasons: QueueBlockedReason[] = [
-      "streaming",
-      "pending_approvals",
-      "overlay_open",
-      "command_running",
-      "interrupt_in_progress",
-      "runtime_busy",
-    ];
-    expect(reasons).toHaveLength(6);
+    const reasons: Record<QueueBlockedReason, true> = {
+      streaming: true,
+      pending_approvals: true,
+      overlay_open: true,
+      command_running: true,
+      interrupt_in_progress: true,
+      runtime_busy: true,
+    } satisfies Record<QueueBlockedReason, true>;
+    expect(Object.keys(reasons)).toHaveLength(6);
   });
 });
 
@@ -140,14 +141,14 @@ describe("QueueClearedEvent wire shape", () => {
   });
 
   test("reason covers all terminal conditions", () => {
-    const reasons: QueueClearedReason[] = [
-      "processed",
-      "error",
-      "cancelled",
-      "shutdown",
-      "stale_generation",
-    ];
-    expect(reasons).toHaveLength(5);
+    const reasons: Record<QueueClearedReason, true> = {
+      processed: true,
+      error: true,
+      cancelled: true,
+      shutdown: true,
+      stale_generation: true,
+    } satisfies Record<QueueClearedReason, true>;
+    expect(Object.keys(reasons)).toHaveLength(5);
   });
 });
 
@@ -169,11 +170,11 @@ describe("QueueItemDroppedEvent wire shape", () => {
   });
 
   test("reason covers all drop causes", () => {
-    const reasons: QueueItemDroppedReason[] = [
-      "buffer_limit",
-      "stale_generation",
-    ];
-    expect(reasons).toHaveLength(2);
+    const reasons: Record<QueueItemDroppedReason, true> = {
+      buffer_limit: true,
+      stale_generation: true,
+    } satisfies Record<QueueItemDroppedReason, true>;
+    expect(Object.keys(reasons)).toHaveLength(2);
   });
 });
 
@@ -249,5 +250,21 @@ describe("QueueLifecycleEvent union", () => {
     expect(parsed.type).toBe("queue_item_enqueued");
     expect(parsed.session_id).toBe("listen-abc123");
     expect(parsed.uuid).toBe("enqueue-i1");
+  });
+
+  test("QueueLifecycleEvent is assignable to WireMessage", () => {
+    // Compile-time check: if QueueLifecycleEvent is removed from WireMessage,
+    // this assignment fails and the test won't compile.
+    const event: QueueLifecycleEvent = {
+      type: "queue_item_enqueued",
+      item_id: "i1",
+      source: "user",
+      kind: "message",
+      queue_len: 1,
+      session_id: "s",
+      uuid: "u",
+    };
+    const wire: WireMessage = event;
+    expect(wire.type).toBe("queue_item_enqueued");
   });
 });
