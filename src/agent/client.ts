@@ -7,22 +7,33 @@ import { createTimingFetch, isTimingsEnabled } from "../utils/timing";
 
 const STREAM_PARSE_DIAGNOSTIC_MAX_AGE_MS = 10_000;
 const STREAM_PARSE_DIAGNOSTIC_MAX_LEN = 400;
+const STREAM_PARSE_DIAGNOSTIC_MAX_LINES = 4;
 
 type StreamParseDiagnostic = {
-  message?: string;
-  rawChunk?: string;
+  lines: string[];
   capturedAt: number;
 };
 
 let lastStreamParseDiagnostic: StreamParseDiagnostic | null = null;
 
+function safeDiagnosticString(value: unknown): string {
+  if (value === null || value === undefined) {
+    return "";
+  }
+
+  if (typeof value === "string") {
+    return value;
+  }
+
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
 function truncateDiagnostic(value: unknown): string {
-  const text =
-    typeof value === "string"
-      ? value
-      : value != null
-        ? JSON.stringify(value)
-        : "";
+  const text = safeDiagnosticString(value);
 
   if (text.length <= STREAM_PARSE_DIAGNOSTIC_MAX_LEN) {
     return text;
@@ -32,31 +43,37 @@ function truncateDiagnostic(value: unknown): string {
 }
 
 function maybeCaptureStreamParseDiagnostic(args: unknown[]): void {
-  const [first, second] = args;
+  const [first] = args;
   if (typeof first !== "string") {
     return;
   }
 
-  const now = Date.now();
-
-  if (first.includes("Could not parse message into JSON:")) {
-    const next: StreamParseDiagnostic = {
-      ...(lastStreamParseDiagnostic ?? {}),
-      message: truncateDiagnostic(second),
-      capturedAt: now,
-    };
-    lastStreamParseDiagnostic = next;
+  const isParseMessageLine = first.includes(
+    "Could not parse message into JSON:",
+  );
+  const isFromChunkLine = first.includes("From chunk:");
+  if (!isParseMessageLine && !isFromChunkLine) {
     return;
   }
 
-  if (first.includes("From chunk:")) {
-    const next: StreamParseDiagnostic = {
-      ...(lastStreamParseDiagnostic ?? {}),
-      rawChunk: truncateDiagnostic(second),
-      capturedAt: now,
-    };
-    lastStreamParseDiagnostic = next;
-  }
+  const now = Date.now();
+  const diagnosticLine = truncateDiagnostic(
+    args.map((arg) => safeDiagnosticString(arg)).join(" "),
+  );
+
+  const previousDiagnostic =
+    lastStreamParseDiagnostic &&
+    now - lastStreamParseDiagnostic.capturedAt <=
+      STREAM_PARSE_DIAGNOSTIC_MAX_AGE_MS
+      ? lastStreamParseDiagnostic
+      : { lines: [], capturedAt: now };
+
+  lastStreamParseDiagnostic = {
+    lines: [...previousDiagnostic.lines, diagnosticLine].slice(
+      -STREAM_PARSE_DIAGNOSTIC_MAX_LINES,
+    ),
+    capturedAt: now,
+  };
 }
 
 export function consumeLastStreamParseDiagnostic(): string | null {
@@ -71,16 +88,35 @@ export function consumeLastStreamParseDiagnostic(): string | null {
     return null;
   }
 
-  const parts: string[] = [];
-  if (diag.message) {
-    parts.push(`sdk_parse_message=${diag.message}`);
-  }
-  if (diag.rawChunk) {
-    parts.push(`sdk_parse_chunk=${diag.rawChunk}`);
+  if (diag.lines.length === 0) {
+    return null;
   }
 
-  return parts.length > 0 ? parts.join(" | ") : null;
+  return `sdk_parse=${diag.lines.join(" || ")}`;
 }
+
+function isDebugEnabled(): boolean {
+  const debug = process.env.LETTA_DEBUG;
+  return debug === "1" || debug === "true";
+}
+
+const sdkLogger = {
+  error: (...args: unknown[]) => {
+    maybeCaptureStreamParseDiagnostic(args);
+    if (isDebugEnabled()) {
+      console.error(...args);
+    }
+  },
+  warn: (...args: unknown[]) => {
+    console.warn(...args);
+  },
+  info: (...args: unknown[]) => {
+    console.info(...args);
+  },
+  debug: (...args: unknown[]) => {
+    console.debug(...args);
+  },
+};
 
 /**
  * Get the current Letta server URL from environment or settings.
@@ -154,22 +190,6 @@ export async function getClient() {
 
   // Note: ChatGPT OAuth token refresh is handled by the Letta backend
   // when using the chatgpt_oauth provider type
-
-  const sdkLogger = {
-    error: (...args: unknown[]) => {
-      maybeCaptureStreamParseDiagnostic(args);
-      console.error(...args);
-    },
-    warn: (...args: unknown[]) => {
-      console.warn(...args);
-    },
-    info: (...args: unknown[]) => {
-      console.info(...args);
-    },
-    debug: (...args: unknown[]) => {
-      console.debug(...args);
-    },
-  };
 
   return new Letta({
     apiKey,

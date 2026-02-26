@@ -2,7 +2,10 @@ import { APIError } from "@letta-ai/letta-client/core/error";
 import type { Stream } from "@letta-ai/letta-client/core/streaming";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
-import { consumeLastStreamParseDiagnostic, getClient } from "../../agent/client";
+import {
+  consumeLastStreamParseDiagnostic,
+  getClient,
+} from "../../agent/client";
 import { getStreamRequestStartTime } from "../../agent/message";
 import { telemetry } from "../../telemetry";
 import { debugWarn } from "../../utils/debug";
