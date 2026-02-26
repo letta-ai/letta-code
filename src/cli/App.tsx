@@ -3553,6 +3553,17 @@ export default function App({
             );
             turnToolContextId = getStreamToolContextId(stream);
           } catch (preStreamError) {
+            debugLog(
+              "stream",
+              "Pre-stream error: %s (status=%s)",
+              preStreamError instanceof Error
+                ? preStreamError.message
+                : String(preStreamError),
+              preStreamError instanceof APIError
+                ? preStreamError.status
+                : "none",
+            );
+
             // Extract error detail using shared helper (handles nested/direct/message shapes)
             const errorDetail = extractConflictDetail(preStreamError);
 
