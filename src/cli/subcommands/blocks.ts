@@ -27,6 +27,26 @@ function getAgentId(agentFromArgs?: string, agentIdFromArgs?: string): string {
   return agentFromArgs || agentIdFromArgs || process.env.LETTA_AGENT_ID || "";
 }
 
+const BLOCKS_OPTIONS = {
+  help: { type: "boolean", short: "h" },
+  agent: { type: "string" },
+  "agent-id": { type: "string" },
+  limit: { type: "string" },
+  "block-id": { type: "string" },
+  label: { type: "string" },
+  override: { type: "boolean" },
+  "read-only": { type: "boolean" },
+} as const;
+
+function parseBlocksArgs(argv: string[]) {
+  return parseArgs({
+    args: argv,
+    options: BLOCKS_OPTIONS,
+    strict: true,
+    allowPositionals: true,
+  });
+}
+
 type CopyBlockResult = {
   sourceBlock: Awaited<
     ReturnType<Awaited<ReturnType<typeof getClient>>["blocks"]["retrieve"]>
@@ -253,23 +273,9 @@ async function attachBlock(
 }
 
 export async function runBlocksSubcommand(argv: string[]): Promise<number> {
-  let parsed: ReturnType<typeof parseArgs>;
+  let parsed: ReturnType<typeof parseBlocksArgs>;
   try {
-    parsed = parseArgs({
-      args: argv,
-      options: {
-        help: { type: "boolean", short: "h" },
-        agent: { type: "string" },
-        "agent-id": { type: "string" },
-        limit: { type: "string" },
-        "block-id": { type: "string" },
-        label: { type: "string" },
-        override: { type: "boolean" },
-        "read-only": { type: "boolean" },
-      },
-      strict: true,
-      allowPositionals: true,
-    });
+    parsed = parseBlocksArgs(argv);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error(`Error: ${message}`);
@@ -306,8 +312,8 @@ export async function runBlocksSubcommand(argv: string[]): Promise<number> {
         return 1;
       }
       const agentId = getAgentId(
-        parsed.values.agent as string | undefined,
-        parsed.values["agent-id"] as string | undefined,
+        parsed.values.agent,
+        parsed.values["agent-id"],
       );
       const result = await copyBlock(client, blockId, {
         labelOverride:
@@ -328,8 +334,8 @@ export async function runBlocksSubcommand(argv: string[]): Promise<number> {
         return 1;
       }
       const agentId = getAgentId(
-        parsed.values.agent as string | undefined,
-        parsed.values["agent-id"] as string | undefined,
+        parsed.values.agent,
+        parsed.values["agent-id"],
       );
       const result = await attachBlock(client, blockId, {
         readOnly: parsed.values["read-only"] === true,
