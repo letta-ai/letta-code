@@ -335,6 +335,8 @@ async function sendMessageStreamWithRetry(
   runtime: ListenerRuntime,
 ): Promise<Awaited<ReturnType<typeof sendMessageStream>>> {
   let transientRetries = 0;
+  let conversationBusyRetries = 0;
+  const MAX_CONVERSATION_BUSY_RETRIES = 3;
 
   // eslint-disable-next-line no-constant-condition
   while (true) {
@@ -342,26 +344,23 @@ async function sendMessageStreamWithRetry(
       return await sendMessageStream(conversationId, messages, opts);
     } catch (preStreamError) {
       const errorDetail = extractConflictDetail(preStreamError);
-      const action = getPreStreamErrorAction(errorDetail, 0, 0, {
-        status:
-          preStreamError instanceof APIError
-            ? preStreamError.status
-            : undefined,
-        transientRetries,
-        maxTransientRetries: LLM_API_ERROR_MAX_RETRIES,
-      });
+      const action = getPreStreamErrorAction(
+        errorDetail,
+        conversationBusyRetries,
+        MAX_CONVERSATION_BUSY_RETRIES,
+        {
+          status:
+            preStreamError instanceof APIError
+              ? preStreamError.status
+              : undefined,
+          transientRetries,
+          maxTransientRetries: LLM_API_ERROR_MAX_RETRIES,
+        },
+      );
 
       if (action === "resolve_approval_pending") {
-        emitToWS(socket, {
-          type: "recovery",
-          recovery_type: "approval_pending",
-          message:
-            "Detected pending approval conflict on send; resolving before retry",
-          session_id: runtime.sessionId,
-          uuid: `recovery-${crypto.randomUUID()}`,
-        } as RecoveryMessage);
-        // For listener, we can't auto-resolve approvals like headless does.
-        // Fall through to rethrow — the cloud will resend with the approval.
+        // Listener can't auto-resolve pending approvals like headless does.
+        // Rethrow — the cloud will resend with the approval.
         throw preStreamError;
       }
 
@@ -390,7 +389,26 @@ async function sendMessageStreamWithRetry(
         continue;
       }
 
-      // retry_conversation_busy disabled (0/0 budget) and rethrow
+      if (action === "retry_conversation_busy") {
+        const attempt = conversationBusyRetries + 1;
+        const delayMs = 2500;
+        conversationBusyRetries = attempt;
+
+        emitToWS(socket, {
+          type: "retry",
+          reason: "error",
+          attempt,
+          max_attempts: MAX_CONVERSATION_BUSY_RETRIES,
+          delay_ms: delayMs,
+          session_id: runtime.sessionId,
+          uuid: `retry-${crypto.randomUUID()}`,
+        } as RetryMessage);
+
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        continue;
+      }
+
+      // rethrow unrecoverable errors
       throw preStreamError;
     }
   }
@@ -734,21 +752,19 @@ async function handleIncomingMessage(
   ) => void,
   connectionId?: string,
 ): Promise<void> {
+  // Hoist identifiers and tracking state so they're available in catch for error-result
+  const agentId = msg.agentId;
+  const requestedConversationId = msg.conversationId || undefined;
+  const conversationId = requestedConversationId ?? "default";
+  const msgStartTime = performance.now();
+  let msgTurnCount = 0;
+  const msgRunIds: string[] = [];
+
   try {
     // Latch capability: once seen, always use blocking path (strict check to avoid truthy strings)
     if (msg.supportsControlResponse === true) {
       runtime.controlResponseCapable = true;
     }
-
-    const agentId = msg.agentId;
-    // requestedConversationId can be:
-    // - undefined: no conversation (use agent endpoint)
-    // - null: no conversation (use agent endpoint)
-    // - string: specific conversation ID (use conversations endpoint)
-    const requestedConversationId = msg.conversationId || undefined;
-
-    // For sendMessageStream: "default" means use agent endpoint, else use conversations endpoint
-    const conversationId = requestedConversationId ?? "default";
 
     if (!agentId) {
       return;
@@ -846,15 +862,12 @@ async function handleIncomingMessage(
     );
     let runIdSent = false;
     let runId: string | undefined;
-    const runIds: string[] = [];
-    const startTime = performance.now();
-    let turnCount = 0;
     const buffers = createBuffers(agentId);
 
     // Approval loop: continue until end_turn or error
     // eslint-disable-next-line no-constant-condition
     while (true) {
-      turnCount++;
+      msgTurnCount++;
       runIdSent = false;
       const result = await drainStreamWithResume(
         stream as Stream<LettaStreamingResponse>,
@@ -868,7 +881,7 @@ async function handleIncomingMessage(
             runId = maybeRunId;
             if (!runIdSent) {
               runIdSent = true;
-              runIds.push(maybeRunId);
+              msgRunIds.push(maybeRunId);
               sendClientMessage(socket, {
                 type: "run_started",
                 runId: maybeRunId,
@@ -890,11 +903,15 @@ async function handleIncomingMessage(
 
           // Emit chunk as MessageWire for protocol consumers
           if (shouldOutput) {
+            const chunkWithIds = chunk as typeof chunk & {
+              otid?: string;
+              id?: string;
+            };
             emitToWS(socket, {
               ...chunk,
               type: "message",
               session_id: runtime.sessionId,
-              uuid: `msg-${crypto.randomUUID()}`,
+              uuid: chunkWithIds.otid || chunkWithIds.id || crypto.randomUUID(),
             } as MessageWire);
           }
 
@@ -913,11 +930,11 @@ async function handleIncomingMessage(
             subtype: "success",
             agent_id: agentId,
             conversation_id: conversationId,
-            duration_ms: performance.now() - startTime,
+            duration_ms: performance.now() - msgStartTime,
             duration_api_ms: 0,
-            num_turns: turnCount,
+            num_turns: msgTurnCount,
             result: null,
-            run_ids: runIds,
+            run_ids: msgRunIds,
             usage: null,
             session_id: runtime.sessionId,
             uuid: `result-${crypto.randomUUID()}`,
@@ -948,11 +965,11 @@ async function handleIncomingMessage(
             subtype: "error",
             agent_id: agentId,
             conversation_id: conversationId,
-            duration_ms: performance.now() - startTime,
+            duration_ms: performance.now() - msgStartTime,
             duration_api_ms: 0,
-            num_turns: turnCount,
+            num_turns: msgTurnCount,
             result: null,
-            run_ids: runIds,
+            run_ids: msgRunIds,
             usage: null,
             stop_reason: (stopReason as StopReasonType) || "error",
             session_id: runtime.sessionId,
@@ -1160,7 +1177,23 @@ async function handleIncomingMessage(
       session_id: runtime.sessionId,
       uuid: `error-${crypto.randomUUID()}`,
     });
-    if (!runtime.controlResponseCapable) {
+    if (runtime.controlResponseCapable) {
+      emitToWS(socket, {
+        type: "result",
+        subtype: "error",
+        agent_id: agentId || "",
+        conversation_id: conversationId,
+        duration_ms: performance.now() - msgStartTime,
+        duration_api_ms: 0,
+        num_turns: msgTurnCount,
+        result: null,
+        run_ids: msgRunIds,
+        usage: null,
+        stop_reason: "error",
+        session_id: runtime.sessionId,
+        uuid: `result-${crypto.randomUUID()}`,
+      });
+    } else {
       sendClientMessage(socket, {
         type: "result",
         success: false,
