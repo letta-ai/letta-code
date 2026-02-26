@@ -79,6 +79,7 @@ import {
 import type { ApprovalContext } from "../permissions/analyzer";
 import { type PermissionMode, permissionMode } from "../permissions/mode";
 import { OPENAI_CODEX_PROVIDER_NAME } from "../providers/openai-codex-provider";
+import { QueueRuntime } from "../queue/queueRuntime";
 import {
   DEFAULT_COMPLETION_PROMISE,
   type RalphState,
@@ -273,6 +274,7 @@ import {
   alwaysRequiresUserInput,
   isTaskTool,
 } from "./helpers/toolNameMapping.js";
+import { getTuiBlockedReason } from "./helpers/tuiQueueAdapter";
 import { useConfigurableStatusLine } from "./hooks/useConfigurableStatusLine";
 import { useSuspend } from "./hooks/useSuspend/useSuspend.ts";
 import { useSyncedState } from "./hooks/useSyncedState";
@@ -1661,6 +1663,36 @@ export default function App({
   useEffect(() => {
     messageQueueRef.current = messageQueue;
   }, [messageQueue]);
+
+  // PRQ4: QueueRuntime mirror — parallel lifecycle tracking alongside existing queue.
+  // Callbacks emit to the debug log only (gated on LETTA_DEBUG=1).
+  // Does NOT drive submit decisions — existing messageQueue state remains authoritative.
+  const tuiQueueRef = useRef<QueueRuntime>(
+    new QueueRuntime({
+      callbacks: {
+        onEnqueued: (item, queueLen) =>
+          debugLog(
+            "queue-lifecycle",
+            `enqueued item_id=${item.id} kind=${item.kind} queue_len=${queueLen}`,
+          ),
+        onDequeued: (batch) =>
+          debugLog(
+            "queue-lifecycle",
+            `dequeued batch_id=${batch.batchId} merged_count=${batch.mergedCount} queue_len_after=${batch.queueLenAfter}`,
+          ),
+        onBlocked: (reason, queueLen) =>
+          debugLog(
+            "queue-lifecycle",
+            `blocked reason=${reason} queue_len=${queueLen}`,
+          ),
+        onCleared: (reason, clearedCount) =>
+          debugLog(
+            "queue-lifecycle",
+            `cleared reason=${reason} cleared_count=${clearedCount}`,
+          ),
+      },
+    }),
+  );
 
   // Override content parts for queued submissions (to preserve part boundaries)
   const overrideContentPartsRef = useRef<MessageCreate["content"] | null>(null);
