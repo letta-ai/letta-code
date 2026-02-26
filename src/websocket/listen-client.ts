@@ -27,6 +27,7 @@ import { permissionMode } from "../permissions/mode";
 import { settingsManager } from "../settings-manager";
 import { isInteractiveApprovalTool } from "../tools/interactivePolicy";
 import { loadTools } from "../tools/manager";
+import type { ControlRequest, ControlResponseBody } from "../types/protocol";
 
 interface StartListenerOptions {
   connectionId: string;
@@ -79,6 +80,11 @@ interface ModeChangeMessage {
   mode: "default" | "acceptEdits" | "plan" | "bypassPermissions";
 }
 
+interface WsControlResponse {
+  type: "control_response";
+  response: ControlResponseBody;
+}
+
 interface ModeChangedMessage {
   type: "mode_changed";
   mode: "default" | "acceptEdits" | "plan" | "bypassPermissions";
@@ -86,12 +92,21 @@ interface ModeChangedMessage {
   error?: string;
 }
 
-type ServerMessage = PongMessage | IncomingMessage | ModeChangeMessage;
+type ServerMessage =
+  | PongMessage
+  | IncomingMessage
+  | ModeChangeMessage
+  | WsControlResponse;
 type ClientMessage =
   | PingMessage
   | ResultMessage
   | RunStartedMessage
   | ModeChangedMessage;
+
+type PendingApprovalResolver = {
+  resolve: (response: ControlResponseBody) => void;
+  reject: (reason: Error) => void;
+};
 
 type ListenerRuntime = {
   socket: WebSocket | null;
@@ -100,6 +115,7 @@ type ListenerRuntime = {
   intentionallyClosed: boolean;
   hasSuccessfulConnection: boolean;
   messageQueue: Promise<void>;
+  pendingApprovalResolvers: Map<string, PendingApprovalResolver>;
 };
 
 type ApprovalSlot =
@@ -159,6 +175,7 @@ function createRuntime(): ListenerRuntime {
     intentionallyClosed: false,
     hasSuccessfulConnection: false,
     messageQueue: Promise.resolve(),
+    pendingApprovalResolvers: new Map(),
   };
 }
 
@@ -179,6 +196,7 @@ function stopRuntime(
 ): void {
   runtime.intentionallyClosed = true;
   clearRuntimeTimers(runtime);
+  rejectPendingApprovalResolvers(runtime, "Listener runtime stopped");
 
   if (!runtime.socket) {
     return;
@@ -200,14 +218,39 @@ function stopRuntime(
   }
 }
 
-function parseServerMessage(data: WebSocket.RawData): ServerMessage | null {
+function isValidControlResponseBody(
+  value: unknown,
+): value is ControlResponseBody {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const maybeResponse = value as {
+    subtype?: unknown;
+    request_id?: unknown;
+  };
+  return (
+    typeof maybeResponse.subtype === "string" &&
+    typeof maybeResponse.request_id === "string"
+  );
+}
+
+export function parseServerMessage(
+  data: WebSocket.RawData,
+): ServerMessage | null {
   try {
     const raw = typeof data === "string" ? data : data.toString();
-    const parsed = JSON.parse(raw) as { type?: string };
+    const parsed = JSON.parse(raw) as { type?: string; response?: unknown };
     if (
       parsed.type === "pong" ||
       parsed.type === "message" ||
       parsed.type === "mode_change"
+    ) {
+      return parsed as ServerMessage;
+    }
+    if (
+      parsed.type === "control_response" &&
+      isValidControlResponseBody(parsed.response)
     ) {
       return parsed as ServerMessage;
     }
@@ -221,6 +264,65 @@ function sendClientMessage(socket: WebSocket, payload: ClientMessage): void {
   if (socket.readyState === WebSocket.OPEN) {
     socket.send(JSON.stringify(payload));
   }
+}
+
+function sendControlMessageOverWebSocket(
+  socket: WebSocket,
+  payload: ControlRequest,
+): void {
+  // Central hook for protocol-only outbound WS messages so future
+  // filtering/mutation can be added without touching approval flow.
+  socket.send(JSON.stringify(payload));
+}
+
+export function resolvePendingApprovalResolver(
+  runtime: ListenerRuntime,
+  response: ControlResponseBody,
+): boolean {
+  const requestId = response.request_id;
+  if (typeof requestId !== "string" || requestId.length === 0) {
+    return false;
+  }
+
+  const pending = runtime.pendingApprovalResolvers.get(requestId);
+  if (!pending) {
+    return false;
+  }
+
+  runtime.pendingApprovalResolvers.delete(requestId);
+  pending.resolve(response);
+  return true;
+}
+
+export function rejectPendingApprovalResolvers(
+  runtime: ListenerRuntime,
+  reason: string,
+): void {
+  for (const [, pending] of runtime.pendingApprovalResolvers) {
+    pending.reject(new Error(reason));
+  }
+  runtime.pendingApprovalResolvers.clear();
+}
+
+export function requestApprovalOverWS(
+  runtime: ListenerRuntime,
+  socket: WebSocket,
+  requestId: string,
+  controlRequest: ControlRequest,
+): Promise<ControlResponseBody> {
+  if (socket.readyState !== WebSocket.OPEN) {
+    return Promise.reject(new Error("WebSocket not open"));
+  }
+
+  return new Promise<ControlResponseBody>((resolve, reject) => {
+    runtime.pendingApprovalResolvers.set(requestId, { resolve, reject });
+    try {
+      sendControlMessageOverWebSocket(socket, controlRequest);
+    } catch (error) {
+      runtime.pendingApprovalResolvers.delete(requestId);
+      reject(error instanceof Error ? error : new Error(String(error)));
+    }
+  });
 }
 
 function buildApprovalExecutionPlan(
@@ -415,6 +517,14 @@ async function connectWithRetry(
       return;
     }
 
+    if (parsed.type === "control_response") {
+      if (runtime !== activeRuntime || runtime.intentionallyClosed) {
+        return;
+      }
+      resolvePendingApprovalResolver(runtime, parsed.response);
+      return;
+    }
+
     // Handle mode change messages immediately (not queued)
     if (parsed.type === "mode_change") {
       handleModeChange(parsed, socket);
@@ -460,6 +570,7 @@ async function connectWithRetry(
 
     clearRuntimeTimers(runtime);
     runtime.socket = null;
+    rejectPendingApprovalResolvers(runtime, "WebSocket disconnected");
 
     if (runtime.intentionallyClosed) {
       opts.onDisconnected();
@@ -758,3 +869,8 @@ export function stopListenerClient(): void {
   activeRuntime = null;
   stopRuntime(runtime, true);
 }
+
+export const __listenClientTestUtils = {
+  createRuntime,
+  stopRuntime,
+};
