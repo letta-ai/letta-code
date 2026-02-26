@@ -266,7 +266,10 @@ export async function handleListen(
     );
 
     // Helper to start client with given connection details
-    const startClient = async (connId: string, wsUrlValue: string): Promise<void> => {
+    const startClient = async (
+      connId: string,
+      wsUrlValue: string,
+    ): Promise<void> => {
       await startListenerClient({
         connectionId: connId,
         wsUrl: wsUrlValue,
@@ -330,7 +333,7 @@ export async function handleListen(
             ctx.refreshDerived,
             cmdId,
             msg,
-            `Environment expired, re-registering \"${connectionName}\"...`,
+            `Environment expired, re-registering "${connectionName}"...`,
             true,
             "running",
           );
@@ -351,7 +354,9 @@ export async function handleListen(
             });
 
             if (!reregisterResponse.ok) {
-              const error = (await reregisterResponse.json()) as { message?: string };
+              const error = (await reregisterResponse.json()) as {
+                message?: string;
+              };
               throw new Error(error.message || "Re-registration failed");
             }
 
@@ -361,7 +366,10 @@ export async function handleListen(
             };
 
             // Restart client with new connectionId
-            await startClient(reregisterData.connectionId, reregisterData.wsUrl);
+            await startClient(
+              reregisterData.connectionId,
+              reregisterData.wsUrl,
+            );
           } catch (error) {
             updateCommandResult(
               ctx.buffersRef,
@@ -381,7 +389,8 @@ export async function handleListen(
             ctx.refreshDerived,
             cmdId,
             msg,
-            `✗ Listener disconnected\n\n` + `Connection to Letta Cloud was lost.`,
+            `✗ Listener disconnected\n\n` +
+              `Connection to Letta Cloud was lost.`,
             false,
             "finished",
           );
