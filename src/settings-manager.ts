@@ -194,6 +194,17 @@ class SettingsManager {
   // preventing stale in-memory values from clobbering external updates.
   private dirtyKeys = new Set<string>();
 
+  // Mark keys as managed AND dirty (i.e. this process owns the value and it
+  // should be written back on persist). The only call-site that should add to
+  // managedKeys *without* calling this helper is the disk-load path in
+  // initialize(), where we want to track the key but preserve external edits.
+  private markDirty(...keys: string[]): void {
+    for (const key of keys) {
+      this.managedKeys.add(key);
+      this.dirtyKeys.add(key);
+    }
+  }
+
   /**
    * Initialize the settings manager (loads from disk)
    * Should be called once at app startup
@@ -209,8 +220,7 @@ class SettingsManager {
         // Create default settings file
         this.settings = { ...DEFAULT_SETTINGS };
         for (const key of Object.keys(DEFAULT_SETTINGS)) {
-          this.managedKeys.add(key);
-          this.dirtyKeys.add(key);
+          this.markDirty(key);
         }
         await this.persistSettings();
       } else {
@@ -240,8 +250,7 @@ class SettingsManager {
       console.error("Error loading settings, using defaults:", error);
       this.settings = { ...DEFAULT_SETTINGS };
       for (const key of Object.keys(DEFAULT_SETTINGS)) {
-        this.managedKeys.add(key);
-        this.dirtyKeys.add(key);
+        this.markDirty(key);
       }
       this.initialized = true;
 
@@ -312,10 +321,7 @@ class SettingsManager {
             }
 
             this.settings = updatedSettings;
-            this.managedKeys.add("refreshToken");
-            this.managedKeys.add("env");
-            this.dirtyKeys.add("refreshToken");
-            this.dirtyKeys.add("env");
+            this.markDirty("refreshToken", "env");
             await this.persistSettings();
 
             debugWarn("settings", "Successfully migrated tokens to secrets");
@@ -381,7 +387,7 @@ class SettingsManager {
 
     if (agents.length > 0) {
       this.settings = { ...this.settings, agents };
-      this.managedKeys.add("agents");
+      this.markDirty("agents");
       // Persist the migration (async, fire-and-forget)
       this.persistSettings().catch((error) => {
         console.warn("Failed to persist agents array migration:", error);
@@ -487,12 +493,10 @@ class SettingsManager {
     };
 
     for (const key of Object.keys(otherUpdates)) {
-      this.managedKeys.add(key);
-      this.dirtyKeys.add(key);
+      this.markDirty(key);
     }
     if (updatedEnv) {
-      this.managedKeys.add("env");
-      this.dirtyKeys.add("env");
+      this.markDirty("env");
     }
 
     // Handle secure tokens in keychain
@@ -552,8 +556,7 @@ class SettingsManager {
 
       if (secureTokens.refreshToken) {
         fallbackSettings.refreshToken = secureTokens.refreshToken;
-        this.managedKeys.add("refreshToken");
-        this.dirtyKeys.add("refreshToken");
+        this.markDirty("refreshToken");
       }
 
       if (secureTokens.apiKey) {
@@ -561,8 +564,7 @@ class SettingsManager {
           ...fallbackSettings.env,
           LETTA_API_KEY: secureTokens.apiKey,
         };
-        this.managedKeys.add("env");
-        this.dirtyKeys.add("env");
+        this.markDirty("env");
       }
 
       this.settings = fallbackSettings;
@@ -1583,8 +1585,7 @@ class SettingsManager {
     const settings = this.getSettings();
     const { oauthState: _, ...rest } = settings;
     this.settings = { ...DEFAULT_SETTINGS, ...rest };
-    this.managedKeys.add("oauthState");
-    this.dirtyKeys.add("oauthState");
+    this.markDirty("oauthState");
     this.persistSettings().catch((error) => {
       console.error(
         "Failed to persist settings after clearing OAuth state:",
@@ -1699,10 +1700,7 @@ class SettingsManager {
         }
 
         this.settings = updatedSettings;
-        this.dirtyKeys.add("refreshToken");
-        this.dirtyKeys.add("tokenExpiresAt");
-        this.dirtyKeys.add("deviceId");
-        this.dirtyKeys.add("env");
+        this.markDirty("refreshToken", "tokenExpiresAt", "deviceId", "env");
         await this.persistSettings();
       }
 
