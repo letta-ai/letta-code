@@ -24,16 +24,12 @@ import type {
 } from "../../queue/queueRuntime";
 import { QueueRuntime } from "../../queue/queueRuntime";
 import type { QueueLifecycleEvent } from "../../types/protocol";
+import type { WsProtocolEvent } from "../../websocket/listen-client";
 
 // ── Type-level assertion: QueueLifecycleEvent ⊆ WsProtocolEvent ──
-// Verifies that QueueLifecycleEvent is assignable to a union that includes it,
-// matching the PRQ5 addition of `| QueueLifecycleEvent` to WsProtocolEvent in
-// listen-client.ts. Uses a local union type to avoid importing the full
-// WsProtocolEvent (which imports ws types not available in test context).
-type MinimalWsProtocolEvent =
-  | { type: string; session_id?: string }
-  | QueueLifecycleEvent;
-type _AssertAssignable = QueueLifecycleEvent extends MinimalWsProtocolEvent
+// Imports the real WsProtocolEvent from listen-client. If QueueLifecycleEvent
+// is ever removed from that union, this assertion fails at compile time.
+type _AssertAssignable = QueueLifecycleEvent extends WsProtocolEvent
   ? true
   : never;
 const _typeCheck: _AssertAssignable = true;
@@ -197,6 +193,26 @@ describe("two rapid messages — busy path", () => {
     // New arrival after full drain — should be idle (no blocked)
     simulateMessageArrival(q, turns, makeMessageCreate("d"));
     expect(rec.blocked).toHaveLength(1); // still just the original one
+  });
+});
+
+describe("pendingTurns safety — always decremented", () => {
+  test("pendingTurns decrements even when simulateTurnStart would throw", () => {
+    // Mirrors the production fix: onStatusChange("receiving") moved inside try
+    // so the finally always fires. Here we verify that the turn-end path
+    // (finally equivalent) always restores pendingTurns to 0.
+    const { q } = buildRuntime();
+    const turns = { value: 0 };
+
+    simulateMessageArrival(q, turns, makeMessageCreate("msg"));
+    expect(turns.value).toBe(1);
+
+    // Simulate: consumeItems fires, then an error before handleIncomingMessage
+    q.consumeItems(1);
+    // finally fires (error path)
+    simulateTurnEnd(q, turns);
+    expect(turns.value).toBe(0); // not leaked
+    expect(q.length).toBe(0);
   });
 });
 

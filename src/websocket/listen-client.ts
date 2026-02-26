@@ -366,7 +366,7 @@ function sendControlMessageOverWebSocket(
 
 // ── Typed protocol event adapter ────────────────────────────────
 
-type WsProtocolEvent =
+export type WsProtocolEvent =
   | MessageWire
   | AutoApprovalMessage
   | ErrorMessage
@@ -770,8 +770,10 @@ async function connectWithRetry(
             runtime.queueRuntime.consumeItems(1);
           }
 
-          opts.onStatusChange?.("receiving", opts.connectionId);
+          // onStatusChange("receiving") is inside try so that any throw
+          // still reaches the finally and decrements pendingTurns.
           try {
+            opts.onStatusChange?.("receiving", opts.connectionId);
             await handleIncomingMessage(
               parsed,
               socket,
@@ -779,6 +781,7 @@ async function connectWithRetry(
               opts.onStatusChange,
               opts.connectionId,
             );
+            opts.onStatusChange?.("idle", opts.connectionId);
           } finally {
             runtime.pendingTurns--;
             // Reset blocked state only when queue is fully drained
@@ -786,7 +789,6 @@ async function connectWithRetry(
               runtime.queueRuntime.resetBlockedState();
             }
           }
-          opts.onStatusChange?.("idle", opts.connectionId);
         })
         .catch((error: unknown) => {
           if (process.env.DEBUG) {
