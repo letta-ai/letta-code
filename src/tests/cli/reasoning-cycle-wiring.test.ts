@@ -64,8 +64,8 @@ describe("reasoning tier cycle wiring", () => {
     expect(indexSource).toContain(
       "reasoningTabCycleEnabled: settings.reasoningTabCycleEnabled === true,",
     );
-    expect(appSource).toContain(
-      'if (trimmed === "/reasoning-tab" || trimmed.startsWith("/reasoning-tab ")) {',
+    expect(appSource).toMatch(
+      /if\s*\(\s*trimmed\s*===\s*"\/reasoning-tab"\s*\|\|\s*trimmed\.startsWith\("\/reasoning-tab "\)\s*\)\s*\{/,
     );
     expect(appSource).toMatch(
       /onCycleReasoningEffort=\{\s*reasoningTabCycleEnabled\s*\?\s*handleCycleReasoningEffort\s*:\s*undefined\s*\}/,

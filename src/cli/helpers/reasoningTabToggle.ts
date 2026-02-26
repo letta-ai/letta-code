@@ -13,10 +13,7 @@ export function resolveReasoningTabToggleCommand(
   currentlyEnabled: boolean,
 ): ReasoningTabToggleResolution | null {
   const trimmed = trimmedInput.trim();
-  if (
-    trimmed !== "/reasoning-tab" &&
-    !trimmed.startsWith("/reasoning-tab ")
-  ) {
+  if (trimmed !== "/reasoning-tab" && !trimmed.startsWith("/reasoning-tab ")) {
     return null;
   }
 
@@ -48,4 +45,3 @@ export function resolveReasoningTabToggleCommand(
 
   return { kind: "invalid", message: USAGE };
 }
-

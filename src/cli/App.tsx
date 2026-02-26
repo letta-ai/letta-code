@@ -7358,7 +7358,10 @@ export default function App({
         }
 
         // Special handling for /reasoning-tab command - opt-in toggle for Tab tier cycling
-        if (trimmed === "/reasoning-tab" || trimmed.startsWith("/reasoning-tab ")) {
+        if (
+          trimmed === "/reasoning-tab" ||
+          trimmed.startsWith("/reasoning-tab ")
+        ) {
           const resolution = resolveReasoningTabToggleCommand(
             trimmed,
             reasoningTabCycleEnabled,

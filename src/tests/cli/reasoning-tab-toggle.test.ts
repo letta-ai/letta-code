@@ -47,12 +47,11 @@ describe("reasoning tab toggle command parsing", () => {
   });
 
   test("returns usage for invalid arg", () => {
-    expect(resolveReasoningTabToggleCommand("/reasoning-tab maybe", true)).toEqual(
-      {
-        kind: "invalid",
-        message: "Usage: /reasoning-tab [on|off|status] (default is off)",
-      },
-    );
+    expect(
+      resolveReasoningTabToggleCommand("/reasoning-tab maybe", true),
+    ).toEqual({
+      kind: "invalid",
+      message: "Usage: /reasoning-tab [on|off|status] (default is off)",
+    });
   });
 });
-
