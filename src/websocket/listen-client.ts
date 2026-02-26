@@ -764,7 +764,7 @@ async function handleIncomingMessage(
         () => {},
         undefined,
         undefined,
-        ({ chunk }) => {
+        ({ chunk, shouldOutput }) => {
           const maybeRunId = (chunk as { run_id?: unknown }).run_id;
           if (!runIdSent && typeof maybeRunId === "string") {
             runIdSent = true;
@@ -773,6 +773,17 @@ async function handleIncomingMessage(
               runId: maybeRunId,
             });
           }
+
+          // Emit chunk as MessageWire for protocol consumers
+          if (shouldOutput) {
+            emitToWS(socket, {
+              ...chunk,
+              type: "message",
+              session_id: runtime.sessionId,
+              uuid: `msg-${crypto.randomUUID()}`,
+            } as MessageWire);
+          }
+
           return undefined;
         },
       );
