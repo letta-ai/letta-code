@@ -336,7 +336,7 @@ async function sendMessageStreamWithRetry(
 ): Promise<Awaited<ReturnType<typeof sendMessageStream>>> {
   let transientRetries = 0;
   let conversationBusyRetries = 0;
-  const MAX_CONVERSATION_BUSY_RETRIES = 3;
+  const MAX_CONVERSATION_BUSY_RETRIES = 1;
 
   // eslint-disable-next-line no-constant-condition
   while (true) {
