@@ -2,6 +2,7 @@ import { parseArgs } from "node:util";
 import { getClient } from "../../agent/client";
 
 type SearchMode = "vector" | "fts" | "hybrid";
+type ListOrder = "asc" | "desc";
 
 function printUsage(): void {
   console.log(
@@ -52,32 +53,45 @@ function parseMode(value: unknown): SearchMode | undefined {
   return undefined;
 }
 
+function parseOrder(value: unknown): ListOrder | undefined {
+  if (typeof value === "string" && (value === "asc" || value === "desc")) {
+    return value;
+  }
+  return undefined;
+}
+
 function getAgentId(agentFromArgs?: string, agentIdFromArgs?: string): string {
   return agentFromArgs || agentIdFromArgs || process.env.LETTA_AGENT_ID || "";
 }
 
+const MESSAGES_OPTIONS = {
+  help: { type: "boolean", short: "h" },
+  query: { type: "string" },
+  mode: { type: "string" },
+  "start-date": { type: "string" },
+  "end-date": { type: "string" },
+  limit: { type: "string" },
+  "all-agents": { type: "boolean" },
+  agent: { type: "string" },
+  "agent-id": { type: "string" },
+  after: { type: "string" },
+  before: { type: "string" },
+  order: { type: "string" },
+} as const;
+
+function parseMessagesArgs(argv: string[]) {
+  return parseArgs({
+    args: argv,
+    options: MESSAGES_OPTIONS,
+    strict: true,
+    allowPositionals: true,
+  });
+}
+
 export async function runMessagesSubcommand(argv: string[]): Promise<number> {
-  let parsed: ReturnType<typeof parseArgs>;
+  let parsed: ReturnType<typeof parseMessagesArgs>;
   try {
-    parsed = parseArgs({
-      args: argv,
-      options: {
-        help: { type: "boolean", short: "h" },
-        query: { type: "string" },
-        mode: { type: "string" },
-        "start-date": { type: "string" },
-        "end-date": { type: "string" },
-        limit: { type: "string" },
-        "all-agents": { type: "boolean" },
-        agent: { type: "string" },
-        "agent-id": { type: "string" },
-        after: { type: "string" },
-        before: { type: "string" },
-        order: { type: "string" },
-      },
-      strict: true,
-      allowPositionals: true,
-    });
+    parsed = parseMessagesArgs(argv);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error(`Error: ${message}`);
@@ -103,8 +117,8 @@ export async function runMessagesSubcommand(argv: string[]): Promise<number> {
 
       const allAgents = parsed.values["all-agents"] ?? false;
       const agentId = getAgentId(
-        parsed.values.agent as string | undefined,
-        parsed.values["agent-id"] as string | undefined,
+        parsed.values.agent,
+        parsed.values["agent-id"],
       );
       if (!allAgents && !agentId) {
         console.error(
@@ -117,8 +131,8 @@ export async function runMessagesSubcommand(argv: string[]): Promise<number> {
         query,
         agent_id: allAgents ? undefined : agentId,
         search_mode: parseMode(parsed.values.mode) ?? "hybrid",
-        start_date: parsed.values["start-date"] as string | undefined,
-        end_date: parsed.values["end-date"] as string | undefined,
+        start_date: parsed.values["start-date"],
+        end_date: parsed.values["end-date"],
         limit: parseLimit(parsed.values.limit, 10),
       });
 
@@ -128,8 +142,8 @@ export async function runMessagesSubcommand(argv: string[]): Promise<number> {
 
     if (action === "list") {
       const agentId = getAgentId(
-        parsed.values.agent as string | undefined,
-        parsed.values["agent-id"] as string | undefined,
+        parsed.values.agent,
+        parsed.values["agent-id"],
       );
       if (!agentId) {
         console.error(
@@ -138,11 +152,18 @@ export async function runMessagesSubcommand(argv: string[]): Promise<number> {
         return 1;
       }
 
+      const orderRaw = parsed.values.order;
+      const order = parseOrder(orderRaw);
+      if (orderRaw !== undefined && !order) {
+        console.error(`Invalid --order "${orderRaw}". Use "asc" or "desc".`);
+        return 1;
+      }
+
       const response = await client.agents.messages.list(agentId, {
         limit: parseLimit(parsed.values.limit, 20),
-        after: parsed.values.after as string | undefined,
-        before: parsed.values.before as string | undefined,
-        order: parsed.values.order as "asc" | "desc" | undefined,
+        after: parsed.values.after,
+        before: parsed.values.before,
+        order,
       });
 
       const messages = response.items ?? [];
@@ -151,11 +172,9 @@ export async function runMessagesSubcommand(argv: string[]): Promise<number> {
 
       let filtered = messages;
       if (startDate || endDate) {
-        const startTime = startDate
-          ? new Date(startDate as string).getTime()
-          : 0;
+        const startTime = startDate ? new Date(startDate).getTime() : 0;
         const endTime = endDate
-          ? new Date(endDate as string).getTime()
+          ? new Date(endDate).getTime()
           : Number.POSITIVE_INFINITY;
         filtered = messages.filter((msg) => {
           if (!("date" in msg) || !msg.date) return true;

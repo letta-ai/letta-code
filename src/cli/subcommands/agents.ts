@@ -38,23 +38,29 @@ function parseTags(value: unknown): string[] | undefined {
   return tags.length > 0 ? tags : undefined;
 }
 
+const AGENTS_OPTIONS = {
+  help: { type: "boolean", short: "h" },
+  name: { type: "string" },
+  query: { type: "string" },
+  tags: { type: "string" },
+  "match-all-tags": { type: "boolean" },
+  "include-blocks": { type: "boolean" },
+  limit: { type: "string" },
+} as const;
+
+function parseAgentsArgs(argv: string[]) {
+  return parseArgs({
+    args: argv,
+    options: AGENTS_OPTIONS,
+    strict: true,
+    allowPositionals: true,
+  });
+}
+
 export async function runAgentsSubcommand(argv: string[]): Promise<number> {
-  let parsed: ReturnType<typeof parseArgs>;
+  let parsed: ReturnType<typeof parseAgentsArgs>;
   try {
-    parsed = parseArgs({
-      args: argv,
-      options: {
-        help: { type: "boolean", short: "h" },
-        name: { type: "string" },
-        query: { type: "string" },
-        tags: { type: "string" },
-        "match-all-tags": { type: "boolean" },
-        "include-blocks": { type: "boolean" },
-        limit: { type: "string" },
-      },
-      strict: true,
-      allowPositionals: true,
-    });
+    parsed = parseAgentsArgs(argv);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error(`Error: ${message}`);

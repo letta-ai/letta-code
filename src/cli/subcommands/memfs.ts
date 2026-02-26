@@ -40,6 +40,24 @@ function getAgentId(agentFromArgs?: string, agentIdFromArgs?: string): string {
   return agentFromArgs || agentIdFromArgs || process.env.LETTA_AGENT_ID || "";
 }
 
+const MEMFS_OPTIONS = {
+  help: { type: "boolean", short: "h" },
+  agent: { type: "string" },
+  "agent-id": { type: "string" },
+  from: { type: "string" },
+  force: { type: "boolean" },
+  out: { type: "string" },
+} as const;
+
+function parseMemfsArgs(argv: string[]) {
+  return parseArgs({
+    args: argv,
+    options: MEMFS_OPTIONS,
+    strict: true,
+    allowPositionals: true,
+  });
+}
+
 function getMemoryRoot(agentId: string): string {
   return join(homedir(), ".letta", "agents", agentId, "memory");
 }
@@ -97,21 +115,9 @@ function resolveBackupPath(agentId: string, from: string): string {
 }
 
 export async function runMemfsSubcommand(argv: string[]): Promise<number> {
-  let parsed: ReturnType<typeof parseArgs>;
+  let parsed: ReturnType<typeof parseMemfsArgs>;
   try {
-    parsed = parseArgs({
-      args: argv,
-      options: {
-        help: { type: "boolean", short: "h" },
-        agent: { type: "string" },
-        "agent-id": { type: "string" },
-        from: { type: "string" },
-        force: { type: "boolean" },
-        out: { type: "string" },
-      },
-      strict: true,
-      allowPositionals: true,
-    });
+    parsed = parseMemfsArgs(argv);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error(`Error: ${message}`);
@@ -126,10 +132,7 @@ export async function runMemfsSubcommand(argv: string[]): Promise<number> {
     return 0;
   }
 
-  const agentId = getAgentId(
-    parsed.values.agent as string | undefined,
-    parsed.values["agent-id"] as string | undefined,
-  );
+  const agentId = getAgentId(parsed.values.agent, parsed.values["agent-id"]);
 
   if (!agentId) {
     console.error(
@@ -204,7 +207,7 @@ export async function runMemfsSubcommand(argv: string[]): Promise<number> {
     }
 
     if (action === "restore") {
-      const from = parsed.values.from as string | undefined;
+      const from = parsed.values.from;
       if (!from) {
         console.error("Missing --from <backup>.");
         return 1;
@@ -231,7 +234,7 @@ export async function runMemfsSubcommand(argv: string[]): Promise<number> {
     }
 
     if (action === "export") {
-      const out = parsed.values.out as string | undefined;
+      const out = parsed.values.out;
       if (!out) {
         console.error("Missing --out <dir>.");
         return 1;
