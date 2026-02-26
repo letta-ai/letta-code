@@ -146,18 +146,22 @@ describe("bounded buffer — hard ceiling", () => {
   });
 
   test("hard ceiling applies to coalescable items too", () => {
-    const q = new QueueRuntime({ maxItems: 2, hardMaxItems: 2 });
-    q.enqueue(makeMsg("a"));
-    q.enqueue(makeMsg("b"));
-    // Both slots filled; next soft-drop would free one, but hardMaxItems == maxItems,
-    // so hard ceiling triggers before soft drop for barrier kinds.
-    // For coalescable: hard ceiling fires after soft drop, which brings length back.
-    // Let's confirm hard ceiling for a barrier-only queue:
-    const q2 = new QueueRuntime({ maxItems: 1, hardMaxItems: 2 });
-    q2.enqueue(makeApproval());
-    q2.enqueue(makeApproval()); // soft barrier overflow to 2
-    const rejected = q2.enqueue(makeApproval()); // hard ceiling
+    // maxItems == hardMaxItems: soft drop would normally kick in for coalescable,
+    // but hard ceiling fires first since there's no room even after a drop.
+    // With hardMaxItems=2 and maxItems=2: soft limit drops oldest coalescable,
+    // so length stays at 2 — enqueue succeeds. To force coalescable rejection,
+    // use hardMaxItems=1 (maxItems clamped to 1 as well).
+    const dropped: string[] = [];
+    const q = new QueueRuntime({
+      maxItems: 1,
+      hardMaxItems: 1,
+      callbacks: { onDropped: (_item, reason) => dropped.push(reason) },
+    });
+    q.enqueue(makeMsg("a")); // length 1 = at hard ceiling
+    const rejected = q.enqueue(makeMsg("b")); // hard ceiling — coalescable rejected
     expect(rejected).toBeNull();
+    expect(dropped).toEqual(["buffer_limit"]);
+    expect(q.length).toBe(1); // unchanged
   });
 });
 

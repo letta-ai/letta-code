@@ -118,8 +118,13 @@ export class QueueRuntime {
   private blockedEmittedForNonEmpty = false;
 
   constructor(options: QueueRuntimeOptions = {}) {
-    this.maxItems = options.maxItems ?? 100;
-    this.hardMaxItems = options.hardMaxItems ?? this.maxItems * 3;
+    const maxItems = Math.max(1, Math.floor(options.maxItems ?? 100) || 100);
+    const hardMaxItems = Math.max(
+      maxItems,
+      Math.floor(options.hardMaxItems ?? maxItems * 3) || maxItems * 3,
+    );
+    this.maxItems = maxItems;
+    this.hardMaxItems = hardMaxItems;
     this.callbacks = options.callbacks ?? {};
   }
 
@@ -273,11 +278,11 @@ export class QueueRuntime {
   }
 
   get items(): readonly QueueItem[] {
-    return this.store;
+    return this.store.slice();
   }
 
   peek(): readonly QueueItem[] {
-    return this.store;
+    return this.store.slice();
   }
 
   // ── Internals ──────────────────────────────────────────────────
