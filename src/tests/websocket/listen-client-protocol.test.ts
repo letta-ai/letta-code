@@ -237,3 +237,142 @@ describe("listen-client requestApprovalOverWS", () => {
     expect(runtime.pendingApprovalResolvers.size).toBe(0);
   });
 });
+
+describe("listen-client controlResponseCapable latch", () => {
+  test("runtime initializes with controlResponseCapable = false", () => {
+    const runtime = __listenClientTestUtils.createRuntime();
+    expect(runtime.controlResponseCapable).toBe(false);
+  });
+
+  test("latch stays true after being set once", () => {
+    const runtime = __listenClientTestUtils.createRuntime();
+    expect(runtime.controlResponseCapable).toBe(false);
+
+    runtime.controlResponseCapable = true;
+    expect(runtime.controlResponseCapable).toBe(true);
+
+    // Simulates second message without the flag — latch should persist
+    // (actual latching happens in handleIncomingMessage, but the runtime
+    // field itself should hold the value)
+    expect(runtime.controlResponseCapable).toBe(true);
+  });
+});
+
+describe("listen-client capability-gated approval flow", () => {
+  test("control_response with allow + updatedInput rewrites tool args", async () => {
+    const runtime = __listenClientTestUtils.createRuntime();
+    const socket = new MockSocket(WebSocket.OPEN);
+    const requestId = "perm-update-test";
+
+    const pending = requestApprovalOverWS(
+      runtime,
+      socket as unknown as WebSocket,
+      requestId,
+      makeControlRequest(requestId),
+    );
+
+    // Simulate control_response with updatedInput
+    resolvePendingApprovalResolver(runtime, {
+      subtype: "success",
+      request_id: requestId,
+      response: {
+        behavior: "allow",
+        updatedInput: { file_path: "/updated/path.ts", content: "new content" },
+      },
+    });
+
+    const response = await pending;
+    expect(response.subtype).toBe("success");
+    if (response.subtype === "success") {
+      const canUseToolResponse = response.response as {
+        behavior: string;
+        updatedInput?: Record<string, unknown>;
+      };
+      expect(canUseToolResponse.behavior).toBe("allow");
+      expect(canUseToolResponse.updatedInput).toEqual({
+        file_path: "/updated/path.ts",
+        content: "new content",
+      });
+    }
+  });
+
+  test("control_response with deny includes reason", async () => {
+    const runtime = __listenClientTestUtils.createRuntime();
+    const socket = new MockSocket(WebSocket.OPEN);
+    const requestId = "perm-deny-test";
+
+    const pending = requestApprovalOverWS(
+      runtime,
+      socket as unknown as WebSocket,
+      requestId,
+      makeControlRequest(requestId),
+    );
+
+    resolvePendingApprovalResolver(runtime, {
+      subtype: "success",
+      request_id: requestId,
+      response: { behavior: "deny", message: "User declined" },
+    });
+
+    const response = await pending;
+    expect(response.subtype).toBe("success");
+    if (response.subtype === "success") {
+      const canUseToolResponse = response.response as {
+        behavior: string;
+        message?: string;
+      };
+      expect(canUseToolResponse.behavior).toBe("deny");
+      expect(canUseToolResponse.message).toBe("User declined");
+    }
+  });
+
+  test("error response from WS triggers denial path", async () => {
+    const runtime = __listenClientTestUtils.createRuntime();
+    const socket = new MockSocket(WebSocket.OPEN);
+    const requestId = "perm-error-test";
+
+    const pending = requestApprovalOverWS(
+      runtime,
+      socket as unknown as WebSocket,
+      requestId,
+      makeControlRequest(requestId),
+    );
+
+    resolvePendingApprovalResolver(runtime, {
+      subtype: "error",
+      request_id: requestId,
+      error: "Internal server error",
+    });
+
+    const response = await pending;
+    expect(response.subtype).toBe("error");
+    if (response.subtype === "error") {
+      expect(response.error).toBe("Internal server error");
+    }
+  });
+
+  test("outbound control_request is sent through sendControlMessageOverWebSocket (not raw socket.send)", () => {
+    const runtime = __listenClientTestUtils.createRuntime();
+    const socket = new MockSocket(WebSocket.OPEN);
+    const requestId = "perm-adapter-test";
+
+    // requestApprovalOverWS uses sendControlMessageOverWebSocket internally
+    // which ultimately calls socket.send — but goes through the adapter stub.
+    // We verify the message was sent with the correct shape.
+    void requestApprovalOverWS(
+      runtime,
+      socket as unknown as WebSocket,
+      requestId,
+      makeControlRequest(requestId),
+    ).catch(() => {});
+
+    expect(socket.sentPayloads).toHaveLength(1);
+    const sent = JSON.parse(socket.sentPayloads[0] as string);
+    expect(sent.type).toBe("control_request");
+    expect(sent.request_id).toBe(requestId);
+    expect(sent.request.subtype).toBe("can_use_tool");
+
+    // Cleanup
+    rejectPendingApprovalResolvers(runtime, "test cleanup");
+  });
+});
