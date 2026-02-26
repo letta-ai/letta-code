@@ -4,6 +4,7 @@ import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/ag
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
 import { getClient } from "../../agent/client";
 import { getStreamRequestStartTime } from "../../agent/message";
+import { telemetry } from "../../telemetry";
 import { debugWarn } from "../../utils/debug";
 import { formatDuration, logTiming } from "../../utils/timing";
 
@@ -359,6 +360,16 @@ export async function drainStreamWithResume(
     const originalApprovals = result.approvals;
     const originalApproval = result.approval;
 
+    // Log that we're attempting a stream resume
+    telemetry.trackError(
+      "stream_resume_attempt",
+      originalFallbackError || "Stream error (no client-side detail)",
+      "stream_resume",
+      {
+        runId: result.lastRunId,
+      },
+    );
+
     try {
       const client = await getClient();
 
@@ -409,10 +420,45 @@ export async function drainStreamWithResume(
         result.approvals = originalApprovals;
         result.approval = originalApproval;
       }
-    } catch (_e) {
+    } catch (resumeError) {
       // Resume failed - stick with the error stop_reason
       // Restore the original stream error for display
       result.fallbackError = originalFallbackError;
+
+      const resumeErrorMsg =
+        resumeError instanceof Error
+          ? resumeError.message
+          : String(resumeError);
+      telemetry.trackError(
+        "stream_resume_failed",
+        resumeErrorMsg,
+        "stream_resume",
+        {
+          runId: result.lastRunId ?? undefined,
+        },
+      );
+    }
+  }
+
+  // Log when stream errored but resume was NOT attempted, with reasons why
+  if (result.stopReason === "error") {
+    const skipReasons: string[] = [];
+    if (!result.lastRunId) skipReasons.push("no_run_id");
+    if (result.lastSeqId === null || result.lastSeqId === undefined)
+      skipReasons.push("no_seq_id");
+    if (!abortSignal) skipReasons.push("no_abort_signal");
+    if (abortSignal?.aborted) skipReasons.push("user_aborted");
+
+    // Only log if we actually skipped for a reason (i.e., we didn't enter the resume branch above)
+    if (skipReasons.length > 0) {
+      telemetry.trackError(
+        "stream_resume_skipped",
+        `${result.fallbackError || "Stream error (no client-side detail)"} [skip: ${skipReasons.join(", ")}]`,
+        "stream_resume",
+        {
+          runId: result.lastRunId ?? undefined,
+        },
+      );
     }
   }
 
