@@ -3,40 +3,12 @@ export interface FlagConflictCheck {
   message: string;
 }
 
-export function validateConversationFlagConflicts(options: {
-  specifiedConversationId: string | null | undefined;
+export function validateFlagConflicts(options: {
+  guard: unknown;
   checks: FlagConflictCheck[];
 }): void {
-  const { specifiedConversationId, checks } = options;
-  if (!specifiedConversationId || specifiedConversationId === "default") {
-    return;
-  }
-  const firstConflict = checks.find((check) => Boolean(check.when));
-  if (firstConflict) {
-    throw new Error(firstConflict.message);
-  }
-}
-
-export function validateNewConversationFlagConflicts(options: {
-  forceNewConversation: boolean | null | undefined;
-  checks: FlagConflictCheck[];
-}): void {
-  const { forceNewConversation, checks } = options;
-  if (!forceNewConversation) {
-    return;
-  }
-  const firstConflict = checks.find((check) => Boolean(check.when));
-  if (firstConflict) {
-    throw new Error(firstConflict.message);
-  }
-}
-
-export function validateImportFlagConflicts(options: {
-  importSource: string | null | undefined;
-  checks: FlagConflictCheck[];
-}): void {
-  const { importSource, checks } = options;
-  if (!importSource) {
+  const { guard, checks } = options;
+  if (!guard) {
     return;
   }
   const firstConflict = checks.find((check) => Boolean(check.when));

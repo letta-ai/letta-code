@@ -114,6 +114,19 @@ describe("Startup Flow - Flag Conflicts", () => {
     );
   });
 
+  test("--conversation conflicts with legacy --from-af using canonical --import error text", async () => {
+    const result = await runCli(
+      ["--conversation", "conv-123", "--from-af", "test.af"],
+      { expectExit: 1 },
+    );
+    expect(result.stderr).toContain(
+      "--conversation cannot be used with --import",
+    );
+    expect(result.stderr).not.toContain(
+      "--conversation cannot be used with --from-af",
+    );
+  });
+
   test("--conversation conflicts with --name", async () => {
     const result = await runCli(
       ["--conversation", "conv-123", "--name", "MyAgent"],
@@ -122,6 +135,14 @@ describe("Startup Flow - Flag Conflicts", () => {
     expect(result.stderr).toContain(
       "--conversation cannot be used with --name",
     );
+  });
+
+  test("--import conflicts with --name (including legacy --from-af alias)", async () => {
+    const result = await runCli(["--from-af", "test.af", "--name", "MyAgent"], {
+      expectExit: 1,
+    });
+    expect(result.stderr).toContain("--import cannot be used with --name");
+    expect(result.stderr).not.toContain("--from-af cannot be used with --name");
   });
 });
 

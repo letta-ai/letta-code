@@ -1,9 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   validateConversationDefaultRequiresAgent,
-  validateConversationFlagConflicts,
-  validateImportFlagConflicts,
-  validateNewConversationFlagConflicts,
+  validateFlagConflicts,
   validateRegistryHandleOrThrow,
 } from "../../cli/startupFlagValidation";
 
@@ -28,8 +26,8 @@ describe("startup flag validation helpers", () => {
 
   test("conflict helpers throw the first matching conflict", () => {
     expect(() =>
-      validateConversationFlagConflicts({
-        specifiedConversationId: "conv-1",
+      validateFlagConflicts({
+        guard: true,
         checks: [
           { when: true, message: "conversation conflict" },
           { when: true, message: "should not hit second" },
@@ -38,15 +36,15 @@ describe("startup flag validation helpers", () => {
     ).toThrow("conversation conflict");
 
     expect(() =>
-      validateNewConversationFlagConflicts({
-        forceNewConversation: true,
+      validateFlagConflicts({
+        guard: true,
         checks: [{ when: true, message: "new conflict" }],
       }),
     ).toThrow("new conflict");
 
     expect(() =>
-      validateImportFlagConflicts({
-        importSource: "@author/agent",
+      validateFlagConflicts({
+        guard: "@author/agent",
         checks: [{ when: true, message: "import conflict" }],
       }),
     ).toThrow("import conflict");

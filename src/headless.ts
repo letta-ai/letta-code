@@ -69,9 +69,7 @@ import {
 } from "./cli/helpers/stream";
 import {
   validateConversationDefaultRequiresAgent,
-  validateConversationFlagConflicts,
-  validateImportFlagConflicts,
-  validateNewConversationFlagConflicts,
+  validateFlagConflicts,
   validateRegistryHandleOrThrow,
 } from "./cli/startupFlagValidation";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "./constants";
@@ -379,6 +377,7 @@ export async function handleHeadlessCommand(
   // Resolve agent (same logic as interactive mode)
   let agent: AgentState | null = null;
   let specifiedAgentId = values.agent as string | undefined;
+  const specifiedAgentName = values.name as string | undefined;
   let specifiedConversationId = values.conversation as string | undefined;
   const shouldContinue = values.continue as boolean | undefined;
   const forceNew = values["new-agent"] as boolean | undefined;
@@ -527,12 +526,16 @@ export async function handleHeadlessCommand(
 
   // Validate shared mutual-exclusion rules for startup flags.
   try {
-    validateConversationFlagConflicts({
-      specifiedConversationId,
+    validateFlagConflicts({
+      guard: specifiedConversationId && specifiedConversationId !== "default",
       checks: [
         {
           when: specifiedAgentId,
           message: "--conversation cannot be used with --agent",
+        },
+        {
+          when: specifiedAgentName,
+          message: "--conversation cannot be used with --name",
         },
         {
           when: forceNew,
@@ -540,7 +543,7 @@ export async function handleHeadlessCommand(
         },
         {
           when: fromAfFile,
-          message: "--conversation cannot be used with --from-af",
+          message: "--conversation cannot be used with --import",
         },
         {
           when: shouldContinue,
@@ -549,8 +552,8 @@ export async function handleHeadlessCommand(
       ],
     });
 
-    validateNewConversationFlagConflicts({
-      forceNewConversation,
+    validateFlagConflicts({
+      guard: forceNewConversation,
       checks: [
         {
           when: shouldContinue,
@@ -569,23 +572,27 @@ export async function handleHeadlessCommand(
     process.exit(1);
   }
 
-  // Validate --from-af flag
+  // Validate --import flag (also accepts legacy --from-af)
   // Detect if it's a registry handle (e.g., @author/name) or a local file path
   let isRegistryImport = false;
   if (fromAfFile) {
     try {
-      validateImportFlagConflicts({
-        importSource: fromAfFile,
+      validateFlagConflicts({
+        guard: fromAfFile,
         checks: [
           {
             when: specifiedAgentId,
-            message: "--from-af cannot be used with --agent",
+            message: "--import cannot be used with --agent",
+          },
+          {
+            when: specifiedAgentName,
+            message: "--import cannot be used with --name",
           },
           {
             when: shouldContinue,
-            message: "--from-af cannot be used with --continue",
+            message: "--import cannot be used with --continue",
           },
-          { when: forceNew, message: "--from-af cannot be used with --new" },
+          { when: forceNew, message: "--import cannot be used with --new" },
         ],
       });
     } catch (error) {
@@ -604,10 +611,22 @@ export async function handleHeadlessCommand(
         validateRegistryHandleOrThrow(fromAfFile);
       } catch {
         console.error(
-          `Error: Invalid registry handle "${fromAfFile}". Use format: @author/agentname`,
+          `Error: Invalid registry handle "${fromAfFile}". Use format: letta --import @author/agentname`,
         );
         process.exit(1);
       }
+    }
+  }
+
+  // Validate --name flag
+  if (specifiedAgentName) {
+    if (specifiedAgentId) {
+      console.error("Error: --name cannot be used with --agent");
+      process.exit(1);
+    }
+    if (forceNew) {
+      console.error("Error: --name cannot be used with --new");
+      process.exit(1);
     }
   }
 

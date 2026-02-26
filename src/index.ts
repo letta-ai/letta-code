@@ -38,9 +38,7 @@ import type { ApprovalRequest } from "./cli/helpers/stream";
 import { ProfileSelectionInline } from "./cli/profile-selection";
 import {
   validateConversationDefaultRequiresAgent,
-  validateConversationFlagConflicts,
-  validateImportFlagConflicts,
-  validateNewConversationFlagConflicts,
+  validateFlagConflicts,
   validateRegistryHandleOrThrow,
 } from "./cli/startupFlagValidation";
 import { runSubcommand } from "./cli/subcommands/router";
@@ -635,8 +633,8 @@ async function main(): Promise<void> {
 
   // Validate shared mutual-exclusion rules for startup flags.
   try {
-    validateConversationFlagConflicts({
-      specifiedConversationId,
+    validateFlagConflicts({
+      guard: specifiedConversationId && specifiedConversationId !== "default",
       checks: [
         {
           when: specifiedAgentId,
@@ -665,8 +663,8 @@ async function main(): Promise<void> {
       ],
     });
 
-    validateNewConversationFlagConflicts({
-      forceNewConversation,
+    validateFlagConflicts({
+      guard: forceNewConversation,
       checks: [
         {
           when: shouldContinue,
@@ -691,8 +689,8 @@ async function main(): Promise<void> {
   let isRegistryImport = false;
   if (fromAfFile) {
     try {
-      validateImportFlagConflicts({
-        importSource: fromAfFile,
+      validateFlagConflicts({
+        guard: fromAfFile,
         checks: [
           {
             when: specifiedAgentId,

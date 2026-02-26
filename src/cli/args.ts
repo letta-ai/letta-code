@@ -131,6 +131,8 @@ export const CLI_FLAG_CATALOG = {
     mode: "headless",
     help: { description: "Headless prompt mode" },
   },
+  // Advanced/internal flags intentionally hidden from --help output.
+  // They remain in the shared catalog for strict parsing parity.
   run: { parser: { type: "boolean" }, mode: "headless" },
   tools: { parser: { type: "string" }, mode: "both" },
   allowedTools: { parser: { type: "string" }, mode: "both" },
@@ -192,6 +194,7 @@ export const CLI_FLAG_CATALOG = {
     },
   },
   "pre-load-skills": { parser: { type: "string" }, mode: "headless" },
+  // Legacy alias retained for backward compatibility; use --import in docs/errors.
   "from-af": { parser: { type: "string" }, mode: "both" },
   import: {
     parser: { type: "string" },
@@ -202,6 +205,7 @@ export const CLI_FLAG_CATALOG = {
       continuationLines: ["Use @author/name to import from the agent registry"],
     },
   },
+  // Internal headless metadata tag assignment (not part of primary user help).
   tags: { parser: { type: "string" }, mode: "headless" },
   memfs: {
     parser: { type: "boolean" },
@@ -275,15 +279,7 @@ export const CLI_OPTIONS: Record<string, CliFlagParserConfig> =
   Object.fromEntries(
     CLI_FLAG_ENTRIES.map(([name, definition]) => [name, definition.parser]),
   );
-
-export function getCliFlagsForMode(
-  mode: Exclude<CliFlagMode, "both">,
-): string[] {
-  return CLI_FLAG_ENTRIES.filter(
-    ([, definition]) => definition.mode === "both" || definition.mode === mode,
-  ).map(([name]) => name);
-}
-
+// Column width for left-aligned flag labels in generated --help output.
 const HELP_LABEL_WIDTH = 24;
 
 function formatHelpFlagLabel(

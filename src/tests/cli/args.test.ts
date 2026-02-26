@@ -2,7 +2,6 @@ import { describe, expect, test } from "bun:test";
 import {
   CLI_FLAG_CATALOG,
   CLI_OPTIONS,
-  getCliFlagsForMode,
   parseCliArgs,
   preprocessCliArgs,
   renderCliOptionsHelp,
@@ -25,8 +24,15 @@ describe("shared CLI arg schema", () => {
   });
 
   test("mode lookups include shared flags and exclude opposite-mode-only flags", () => {
-    const headlessFlags = getCliFlagsForMode("headless");
-    const interactiveFlags = getCliFlagsForMode("interactive");
+    const getFlagsForMode = (mode: "headless" | "interactive") =>
+      Object.entries(CLI_FLAG_CATALOG)
+        .filter(
+          ([, definition]) =>
+            definition.mode === "both" || definition.mode === mode,
+        )
+        .map(([name]) => name);
+    const headlessFlags = getFlagsForMode("headless");
+    const interactiveFlags = getFlagsForMode("interactive");
 
     expect(headlessFlags).toContain("memfs-startup");
     expect(headlessFlags).not.toContain("resume");
