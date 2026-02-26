@@ -103,7 +103,8 @@ describe("busy submit — blocked on streaming", () => {
       userCancelled: false,
       abortControllerActive: false,
     });
-    q.tryDequeue(reason!);
+    expect(reason).not.toBeNull();
+    q.tryDequeue(reason as NonNullable<typeof reason>);
     expect(rec.blocked).toHaveLength(1);
     expect(rec.blocked.at(0)?.reason).toBe("streaming");
     expect(rec.blocked.at(0)?.queueLen).toBe(1);
@@ -164,7 +165,8 @@ describe("priority: interrupt_in_progress beats streaming", () => {
     });
     const { q, rec } = buildRuntime();
     enqueueUserMsg(q);
-    q.tryDequeue(reason!);
+    expect(reason).not.toBeNull();
+    q.tryDequeue(reason as NonNullable<typeof reason>);
     expect(rec.blocked.at(0)?.reason).toBe("interrupt_in_progress");
   });
 });
