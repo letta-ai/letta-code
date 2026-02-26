@@ -255,6 +255,137 @@ export interface ResultMessage extends MessageEnvelope {
 }
 
 // ═══════════════════════════════════════════════════════════════
+// QUEUE LIFECYCLE
+// Events emitted by the shared queue runtime. Each describes a
+// discrete state transition in the turn queue. Consumers (TUI,
+// headless bidir JSON, WS listen) emit these through their
+// respective output channels.
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Source that produced the queue item.
+ * - user: Submitted via Enter in TUI or stdin in headless
+ * - task_notification: Background subagent completion
+ * - subagent: Direct subagent result
+ * - system: Approval results, overlay actions, system reminders
+ */
+export type QueueItemSource =
+  | "user"
+  | "task_notification"
+  | "subagent"
+  | "system";
+
+/**
+ * Kind of content carried by the queue item.
+ * - message: User or system text to send to the agent
+ * - task_notification: Background task completed notification
+ * - approval_result: Tool approval/denial result
+ * - overlay_action: Plan mode, AskUserQuestion, etc.
+ */
+export type QueueItemKind =
+  | "message"
+  | "task_notification"
+  | "approval_result"
+  | "overlay_action";
+
+/**
+ * Emitted synchronously when an item enters the queue.
+ * A queue item is a discrete, submitted unit of work (post-Enter for user
+ * messages, or a delivered notification/result for system sources).
+ */
+export interface QueueItemEnqueuedEvent extends MessageEnvelope {
+  type: "queue_item_enqueued";
+  item_id: string;
+  source: QueueItemSource;
+  kind: QueueItemKind;
+  queue_len: number;
+}
+
+/**
+ * Emitted exactly once when the runtime dequeues a batch for submission.
+ * Contiguous coalescable items (user + task messages) are merged into one batch.
+ */
+export interface QueueBatchDequeuedEvent extends MessageEnvelope {
+  type: "queue_batch_dequeued";
+  batch_id: string;
+  item_ids: string[];
+  merged_count: number;
+  queue_len_after: number;
+}
+
+/**
+ * Why the queue cannot dequeue right now.
+ * - streaming: Agent turn is actively streaming
+ * - pending_approvals: Waiting for HITL approval decisions
+ * - overlay_open: Plan mode, AskUserQuestion, or other overlay is active
+ * - command_running: Slash command is executing
+ * - interrupt_in_progress: User interrupt (Esc) is being processed
+ * - runtime_busy: Generic busy state (e.g., listen-client turn in flight)
+ */
+export type QueueBlockedReason =
+  | "streaming"
+  | "pending_approvals"
+  | "overlay_open"
+  | "command_running"
+  | "interrupt_in_progress"
+  | "runtime_busy";
+
+/**
+ * Emitted only on blocked-reason state transitions (not on every dequeue
+ * check while blocked). The runtime tracks lastEmittedBlockedReason and
+ * fires this only when the reason changes or transitions from unblocked.
+ */
+export interface QueueBlockedEvent extends MessageEnvelope {
+  type: "queue_blocked";
+  reason: QueueBlockedReason;
+  queue_len: number;
+}
+
+/**
+ * Why the queue was cleared.
+ */
+export type QueueClearedReason =
+  | "processed"
+  | "error"
+  | "cancelled"
+  | "shutdown"
+  | "stale_generation";
+
+/**
+ * Emitted when the queue is flushed due to a terminal condition.
+ */
+export interface QueueClearedEvent extends MessageEnvelope {
+  type: "queue_cleared";
+  reason: QueueClearedReason;
+  cleared_count: number;
+}
+
+/**
+ * Why an item was dropped without processing.
+ */
+export type QueueItemDroppedReason = "buffer_limit" | "stale_generation";
+
+/**
+ * Emitted when an item is dropped from the queue without being processed.
+ */
+export interface QueueItemDroppedEvent extends MessageEnvelope {
+  type: "queue_item_dropped";
+  item_id: string;
+  reason: QueueItemDroppedReason;
+  queue_len: number;
+}
+
+/**
+ * Union of all queue lifecycle events.
+ */
+export type QueueLifecycleEvent =
+  | QueueItemEnqueuedEvent
+  | QueueBatchDequeuedEvent
+  | QueueBlockedEvent
+  | QueueClearedEvent
+  | QueueItemDroppedEvent;
+
+// ═══════════════════════════════════════════════════════════════
 // CONTROL PROTOCOL
 // Bidirectional: SDK → CLI and CLI → SDK both use control_request/response
 // ═══════════════════════════════════════════════════════════════
