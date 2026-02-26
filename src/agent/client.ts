@@ -3,6 +3,7 @@ import Letta from "@letta-ai/letta-client";
 import packageJson from "../../package.json";
 import { LETTA_CLOUD_API_URL, refreshAccessToken } from "../auth/oauth";
 import { settingsManager } from "../settings-manager";
+import { isDebugEnabled } from "../utils/debug";
 import { createTimingFetch, isTimingsEnabled } from "../utils/timing";
 
 const STREAM_PARSE_DIAGNOSTIC_MAX_AGE_MS = 10_000;
@@ -95,9 +96,8 @@ export function consumeLastStreamParseDiagnostic(): string | null {
   return `sdk_parse=${diag.lines.join(" || ")}`;
 }
 
-function isDebugEnabled(): boolean {
-  const debug = process.env.LETTA_DEBUG;
-  return debug === "1" || debug === "true";
+export function clearLastStreamParseDiagnostic(): void {
+  lastStreamParseDiagnostic = null;
 }
 
 const sdkLogger = {
