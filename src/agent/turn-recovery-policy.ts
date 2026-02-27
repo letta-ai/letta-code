@@ -60,6 +60,7 @@ const NON_RETRYABLE_429_REASONS = [
 const NON_RETRYABLE_QUOTA_DETAIL_PATTERNS = [
   "hosted model usage limit",
   "out of credits",
+  "usage_limit_reached",
 ];
 const NON_RETRYABLE_4XX_PATTERN = /Error code:\s*4(0[0-8]|1\d|2\d|3\d|4\d|51)/i;
 const RETRYABLE_429_PATTERN = /Error code:\s*429|rate limit|too many requests/i;

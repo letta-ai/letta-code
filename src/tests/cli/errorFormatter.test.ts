@@ -4,7 +4,10 @@ import {
   clearErrorContext,
   setErrorContext,
 } from "../../cli/helpers/errorContext";
-import { formatErrorDetails } from "../../cli/helpers/errorFormatter";
+import {
+  checkChatGptUsageLimitError,
+  formatErrorDetails,
+} from "../../cli/helpers/errorFormatter";
 
 describe("formatErrorDetails", () => {
   beforeEach(() => {
@@ -234,6 +237,91 @@ describe("formatErrorDetails", () => {
 
     expect(message).toContain("Basic model usage limit");
     expect(message).toContain("/model");
+  });
+
+  describe("ChatGPT usage_limit_reached", () => {
+    const chatGptRateLimitDetail =
+      'RATE_LIMIT_EXCEEDED: ChatGPT rate limit exceeded: {"error":{"type":"usage_limit_reached","message":"The usage limit has been reached","plan_type":"team","resets_at":1772074086,"eligible_promo":null,"resets_in_seconds":3032}}';
+
+    test("pretty-prints with reset time and plan type", () => {
+      const result = checkChatGptUsageLimitError(chatGptRateLimitDetail);
+
+      expect(result).toBeDefined();
+      expect(result).toContain("ChatGPT usage limit reached");
+      expect(result).toContain("team plan");
+      expect(result).toContain("Resets at");
+      expect(result).toContain("/model");
+      expect(result).toContain("/connect");
+      // Should NOT contain raw JSON
+      expect(result).not.toContain('"type"');
+      expect(result).not.toContain("RATE_LIMIT_EXCEEDED");
+    });
+
+    test("handles error with only resets_at (no resets_in_seconds)", () => {
+      const futureTimestamp = Math.floor(Date.now() / 1000) + 3600; // 1 hour from now
+      const detail = `RATE_LIMIT_EXCEEDED: ChatGPT rate limit exceeded: {"error":{"type":"usage_limit_reached","message":"The usage limit has been reached","plan_type":"plus","resets_at":${futureTimestamp}}}`;
+
+      const result = checkChatGptUsageLimitError(detail);
+
+      expect(result).toBeDefined();
+      expect(result).toContain("ChatGPT usage limit reached");
+      expect(result).toContain("plus plan");
+      expect(result).toContain("Resets at");
+    });
+
+    test("handles error with no reset info gracefully", () => {
+      const detail =
+        'RATE_LIMIT_EXCEEDED: ChatGPT rate limit exceeded: {"error":{"type":"usage_limit_reached","message":"The usage limit has been reached"}}';
+
+      const result = checkChatGptUsageLimitError(detail);
+
+      expect(result).toBeDefined();
+      expect(result).toContain("ChatGPT usage limit reached");
+      expect(result).toContain("Try again later");
+      expect(result).toContain("/model");
+    });
+
+    test("handles malformed JSON gracefully", () => {
+      const detail =
+        "RATE_LIMIT_EXCEEDED: ChatGPT rate limit exceeded: usage_limit_reached {broken json";
+
+      const result = checkChatGptUsageLimitError(detail);
+
+      expect(result).toBeDefined();
+      expect(result).toContain("ChatGPT usage limit reached");
+    });
+
+    test("returns undefined for non-matching errors", () => {
+      const result = checkChatGptUsageLimitError(
+        "ChatGPT API error: some other error",
+      );
+      expect(result).toBeUndefined();
+    });
+
+    test("formats correctly via formatErrorDetails from run metadata object", () => {
+      // Shape constructed in App.tsx from run.metadata.error
+      const errorObject = {
+        error: {
+          error: {
+            message_type: "error_message",
+            run_id: "run-abc123",
+            error_type: "llm_error",
+            message: "An error occurred during agent execution.",
+            detail: chatGptRateLimitDetail,
+          },
+          run_id: "run-abc123",
+        },
+      };
+
+      const result = formatErrorDetails(errorObject);
+
+      expect(result).toContain("ChatGPT usage limit reached");
+      expect(result).toContain("team plan");
+      expect(result).toContain("/model");
+      // Should NOT contain the raw detail
+      expect(result).not.toContain("RATE_LIMIT_EXCEEDED");
+      expect(result).not.toContain("[usage_limit_reached]");
+    });
   });
 
   test("formats Z.ai error from APIError with embedded error code", () => {
