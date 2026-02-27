@@ -52,7 +52,7 @@ export class StreamProcessor {
     }
 
     // Track seq_id (drainStream line 122-124)
-    if ("seq_id" in chunk && chunk.seq_id) {
+    if ("seq_id" in chunk && chunk.seq_id != null) {
       this.lastSeqId = chunk.seq_id;
     }
 

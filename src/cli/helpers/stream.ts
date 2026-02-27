@@ -364,7 +364,6 @@ export async function drainStreamWithResume(
   if (
     result.stopReason === "error" &&
     result.lastRunId &&
-    result.lastSeqId !== null &&
     abortSignal &&
     !abortSignal.aborted
   ) {
@@ -400,7 +399,9 @@ export async function drainStreamWithResume(
       const resumeStream = await client.runs.messages.stream(
         result.lastRunId,
         {
-          starting_after: result.lastSeqId,
+          // If lastSeqId is null the stream failed before any seq_id-bearing
+          // chunk arrived; use 0 to replay the run from the beginning.
+          starting_after: result.lastSeqId ?? 0,
           batch_size: 1000, // Fetch buffered chunks quickly
         },
         // { maxRetries: 0 },
@@ -457,8 +458,6 @@ export async function drainStreamWithResume(
   if (result.stopReason === "error") {
     const skipReasons: string[] = [];
     if (!result.lastRunId) skipReasons.push("no_run_id");
-    if (result.lastSeqId === null || result.lastSeqId === undefined)
-      skipReasons.push("no_seq_id");
     if (!abortSignal) skipReasons.push("no_abort_signal");
     if (abortSignal?.aborted) skipReasons.push("user_aborted");
 
