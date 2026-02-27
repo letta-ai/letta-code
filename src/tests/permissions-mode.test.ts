@@ -483,6 +483,24 @@ test("plan mode - allows read-only Bash commands", () => {
   );
   expect(chainedResult.decision).toBe("allow");
 
+  // absolute path reads should be allowed in plan mode
+  const absolutePathResult = checkPermission(
+    "Bash",
+    { command: "ls -la /Users/test/.letta/plans" },
+    permissions,
+    "/Users/test/project",
+  );
+  expect(absolutePathResult.decision).toBe("allow");
+
+  // traversal reads should be allowed in plan mode
+  const traversalResult = checkPermission(
+    "Bash",
+    { command: "cat ../../README.md" },
+    permissions,
+    "/Users/test/project",
+  );
+  expect(traversalResult.decision).toBe("allow");
+
   // cd && dangerous command should still be denied
   const cdDangerousResult = checkPermission(
     "Bash",
@@ -491,6 +509,35 @@ test("plan mode - allows read-only Bash commands", () => {
     "/Users/test/project",
   );
   expect(cdDangerousResult.decision).toBe("deny");
+
+  // quoted pipes in regex patterns should be allowed
+  const quotedPipeResult = checkPermission(
+    "Bash",
+    { command: 'rg -n "foo|bar|baz" src/permissions' },
+    permissions,
+    "/Users/test/project",
+  );
+  expect(quotedPipeResult.decision).toBe("allow");
+});
+
+test("plan mode - allows TaskOutput", () => {
+  permissionMode.setMode("plan");
+
+  const permissions: PermissionRules = {
+    allow: [],
+    deny: [],
+    ask: [],
+  };
+
+  const result = checkPermission(
+    "TaskOutput",
+    { task_id: "task_123", block: false },
+    permissions,
+    "/Users/test/project",
+  );
+
+  expect(result.decision).toBe("allow");
+  expect(result.matchedRule).toBe("plan mode");
 });
 
 test("plan mode - denies WebFetch", () => {
