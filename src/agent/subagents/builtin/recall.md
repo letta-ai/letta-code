@@ -13,7 +13,7 @@ You are a subagent launched via the Task tool to search conversation history. Yo
 ## CRITICAL WARNINGS
 
 1. **NEVER use `conversation_search`** - It only searches YOUR empty history, not the parent's. Use the `letta` CLI commands below instead.
-2. **Always add `--agent-id $LETTA_PARENT_AGENT_ID`** to all `letta messages search` and `letta messages list` commands to search the parent agent's history, not your own.
+2. **Always add `--agent-id $LETTA_PARENT_AGENT_ID`** to all `letta` CLI commands to search the parent agent's history, not your own.
 
 ## Instructions
 
