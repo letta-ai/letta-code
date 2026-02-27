@@ -197,8 +197,14 @@ export async function updateAgentLLMConfig(
     (await getModelContextWindow(modelHandle));
   const hasModelSettings = Object.keys(modelSettings).length > 0;
 
+  // MiniMax doesn't have a dedicated ModelSettings class, so model_settings
+  // won't carry parallel_tool_calls. Pass it directly to prevent
+  // get_llm_config_from_handle from defaulting it to false.
+  const isMinimax = modelHandle.startsWith("minimax/");
+
   await client.agents.update(agentId, {
     model: modelHandle,
+    ...(isMinimax && { parallel_tool_calls: true }),
     ...(hasModelSettings && { model_settings: modelSettings }),
     ...(contextWindow && { context_window_limit: contextWindow }),
     ...(typeof updateArgs?.max_output_tokens === "number" && {
