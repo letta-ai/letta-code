@@ -7,6 +7,15 @@ description: Comprehensive guide for initializing or reorganizing agent memory. 
 
 The user has requested that you initialize or reorganize your memory. Your memory is a filesystem — files under `system/` are rendered in-context every turn, while all file metadata is always visible in the filesystem tree. Files outside `system/` (e.g. `reference/`, `history/`) are accessible via tools when needed.
 
+## Autonomous Mode
+
+If you are running as a background subagent (you cannot use AskUserQuestion):
+- Default to standard research depth (~5-20 tool calls)
+- Detect user identity from git logs (`git shortlog -sn`, `git log --format="%an <%ae>"`)
+- Skip historical session analysis
+- Use reasonable defaults for all preferences
+- Any specific overrides will be provided in your initial prompt
+
 ## Your Goal: Explode Into 15-25 Hierarchical Files
 
 Your goal is to **explode** memory into a **deeply hierarchical structure of 15-25 small, focused files**.

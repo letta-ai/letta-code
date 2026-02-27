@@ -901,6 +901,15 @@ function hasActiveReflectionSubagent(): boolean {
   );
 }
 
+function hasActiveInitSubagent(): boolean {
+  const snapshot = getSubagentSnapshot();
+  return snapshot.agents.some(
+    (agent) =>
+      agent.type.toLowerCase() === "init" &&
+      (agent.status === "pending" || agent.status === "running"),
+  );
+}
+
 function buildTextParts(
   ...parts: Array<string | undefined | null>
 ): Array<{ type: "text"; text: string }> {
@@ -9052,20 +9061,17 @@ export default function App({
           return { submitted: true };
         }
 
-        // Special handling for /init command - initialize agent memory
+        // Special handling for /init command - spawn background subagent
         if (trimmed === "/init") {
           const cmd = commandRunner.start(msg, "Gathering project context...");
 
-          // Check for pending approvals before sending
-          const approvalCheck = await checkPendingApprovalsForSlashCommand();
-          if (approvalCheck.blocked) {
+          // Guard: prevent concurrent /init runs
+          if (hasActiveInitSubagent()) {
             cmd.fail(
-              "Pending approval(s). Resolve approvals before running /init.",
+              "Memory initialization is already running in the background.",
             );
-            return { submitted: false }; // Keep /init in input box, user handles approval first
+            return { submitted: true };
           }
-
-          setCommandRunning(true);
 
           try {
             // Gather git context if available
@@ -9126,14 +9132,7 @@ ${recentCommits}
               // execSync import failed, skip git context
             }
 
-            // Mark command as finished before sending message
-            cmd.finish(
-              "Assimilating project context and defragmenting memories...",
-              true,
-            );
-
-            // Send trigger message instructing agent to load the initializing-memory skill
-            // Only include memfs path if memfs is enabled for this agent
+            // Build memfs section if memfs is enabled for this agent
             const memfsSection = settingsManager.isMemfsEnabled(agentId)
               ? `
 ## Memory Filesystem Location
@@ -9149,38 +9148,28 @@ Use \`$MEMORY_DIR\` when working with memory files during initialization.
 `
               : "";
 
-            const initMessage = `${SYSTEM_REMINDER_OPEN}
-The user has requested memory initialization via /init.
+            // Build the prompt for the background subagent
+            const initPrompt = `Initialize memory for this project.
 ${memfsSection}
-## 1. Invoke the initializing-memory skill
+${gitContext}`;
 
-Use the \`Skill\` tool with \`skill: "initializing-memory"\` to load the comprehensive instructions for memory initialization.
+            // Spawn background subagent — command completes immediately
+            const { spawnBackgroundSubagentTask } = await import(
+              "../tools/impl/Task"
+            );
+            spawnBackgroundSubagentTask({
+              subagentType: "init",
+              prompt: initPrompt,
+              description: "Initialize agent memory",
+            });
 
-If the skill fails to invoke, proceed with your best judgment based on these guidelines:
-- Ask upfront questions (research depth, identity, related repos, workflow style)
-- Research the project based on chosen depth
-- Create/update memory blocks incrementally
-- Reflect and verify completeness
-
-## 2. Follow the skill instructions
-
-Once invoked, follow the instructions from the \`initializing-memory\` skill to complete the initialization.
-${gitContext}
-${SYSTEM_REMINDER_CLOSE}`;
-
-            // Process conversation with the init prompt
-            await processConversation([
-              {
-                type: "message",
-                role: "user",
-                content: buildTextParts(initMessage),
-              },
-            ]);
+            cmd.finish(
+              "Memory initialization started in background. You'll be notified when it's done.",
+              true,
+            );
           } catch (error) {
             const errorDetails = formatErrorDetails(error, agentId);
-            cmd.fail(`Failed: ${errorDetails}`);
-          } finally {
-            setCommandRunning(false);
+            cmd.fail(`Failed to start memory initialization: ${errorDetails}`);
           }
           return { submitted: true };
         }
