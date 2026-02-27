@@ -1750,7 +1750,14 @@ export default function App({
             "queue-lifecycle",
             `dequeued batch_id=${batch.batchId} merged_count=${batch.mergedCount} queue_len_after=${batch.queueLenAfter}`,
           );
-          setQueueDisplay((prev) => prev.slice(batch.mergedCount));
+          // queueDisplay only tracks displayable items. If non-display barrier
+          // kinds are ever consumed, avoid over-trimming by counting only
+          // message/task_notification entries in the batch.
+          const displayConsumedCount = batch.items.filter(
+            (item) =>
+              item.kind === "message" || item.kind === "task_notification",
+          ).length;
+          setQueueDisplay((prev) => prev.slice(displayConsumedCount));
         },
         onBlocked: (reason, queueLen) =>
           debugLog(
@@ -6502,6 +6509,7 @@ export default function App({
     async (message?: string): Promise<{ submitted: boolean }> => {
       const msg = message?.trim() ?? "";
       const overrideContentParts = overrideContentPartsRef.current;
+      const hasOverrideContent = overrideContentParts !== null;
       if (overrideContentParts) {
         overrideContentPartsRef.current = null;
       }
@@ -6512,7 +6520,7 @@ export default function App({
         taskNotifications.length > 0 && userTextForInput.length === 0;
 
       // Handle profile load confirmation (Enter to continue)
-      if (profileConfirmPending && !msg) {
+      if (profileConfirmPending && !msg && !hasOverrideContent) {
         // User pressed Enter with empty input - proceed with loading
         const { name, agentId: targetAgentId, cmdId } = profileConfirmPending;
         const cmd = commandRunner.getHandle(cmdId, `/profile load ${name}`);
@@ -6534,7 +6542,7 @@ export default function App({
         // Continue processing the new message
       }
 
-      if (!msg) return { submitted: false };
+      if (!msg && !hasOverrideContent) return { submitted: false };
 
       // If the user just cycled reasoning tiers, flush the final choice before
       // sending the next message so the upcoming run uses the selected tier.
