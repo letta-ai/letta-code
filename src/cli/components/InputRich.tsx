@@ -234,6 +234,7 @@ const InputFooter = memo(function InputFooter({
   statusLineText,
   statusLineRight,
   statusLinePadding,
+  footerNotification,
 }: {
   ctrlCPressed: boolean;
   escapePressed: boolean;
@@ -252,6 +253,7 @@ const InputFooter = memo(function InputFooter({
   statusLineText?: string;
   statusLineRight?: string;
   statusLinePadding?: number;
+  footerNotification?: string | null;
 }) {
   const hideFooterContent = hideFooter;
   const maxAgentChars = Math.max(10, Math.floor(rightColumnWidth * 0.45));
@@ -327,6 +329,10 @@ const InputFooter = memo(function InputFooter({
               {" "}
               (shift+tab to {showExitHint ? "exit" : "cycle"})
             </Text>
+          </Text>
+        ) : footerNotification ? (
+          <Text color={colors.status.processingShimmer}>
+            {footerNotification}
           </Text>
         ) : (
           <Text dimColor>Press / for commands</Text>
@@ -621,6 +627,7 @@ export function Input({
   statusLinePadding = 0,
   statusLinePrompt,
   onCycleReasoningEffort,
+  footerNotification,
 }: {
   visible?: boolean;
   streaming: boolean;
@@ -662,6 +669,7 @@ export function Input({
   statusLinePadding?: number;
   statusLinePrompt?: string;
   onCycleReasoningEffort?: () => void;
+  footerNotification?: string | null;
 }) {
   const [value, setValue] = useState("");
   const [escapePressed, setEscapePressed] = useState(false);
@@ -1484,6 +1492,7 @@ export function Input({
                 statusLineText={statusLineText}
                 statusLineRight={statusLineRight}
                 statusLinePadding={statusLinePadding}
+                footerNotification={footerNotification}
               />
             )}
           </Box>
@@ -1530,6 +1539,7 @@ export function Input({
     statusLineText,
     statusLineRight,
     statusLinePadding,
+    footerNotification,
     promptChar,
     promptVisualWidth,
     suppressDividers,
