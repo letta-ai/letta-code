@@ -430,6 +430,74 @@ test("plan mode - denies non-read-only Bash", () => {
   expect(result.matchedRule).toBe("plan mode");
 });
 
+test("plan mode - allows Bash heredoc write to plan file", () => {
+  permissionMode.setMode("plan");
+
+  const permissions: PermissionRules = {
+    allow: [],
+    deny: [],
+    ask: [],
+  };
+
+  const planPath = join(homedir(), ".letta", "plans", "unit-test-plan.md");
+  const command = `cat > ${planPath} <<'EOF'\n# Plan\n- step 1\nEOF`;
+
+  const result = checkPermission(
+    "Bash",
+    { command },
+    permissions,
+    "/Users/test/project",
+  );
+
+  expect(result.decision).toBe("allow");
+  expect(result.matchedRule).toBe("plan mode");
+});
+
+test("plan mode - denies Bash heredoc write outside plans dir", () => {
+  permissionMode.setMode("plan");
+
+  const permissions: PermissionRules = {
+    allow: [],
+    deny: [],
+    ask: [],
+  };
+
+  const command = "cat > /tmp/not-a-plan.md <<'EOF'\n# Plan\nEOF";
+
+  const result = checkPermission(
+    "Bash",
+    { command },
+    permissions,
+    "/Users/test/project",
+  );
+
+  expect(result.decision).toBe("deny");
+  expect(result.matchedRule).toBe("plan mode");
+});
+
+test("plan mode - denies Bash heredoc write when extra commands follow", () => {
+  permissionMode.setMode("plan");
+
+  const permissions: PermissionRules = {
+    allow: [],
+    deny: [],
+    ask: [],
+  };
+
+  const planPath = join(homedir(), ".letta", "plans", "unit-test-plan.md");
+  const command = `cat > ${planPath} <<'EOF'\n# Plan\nEOF\necho 'extra command'`;
+
+  const result = checkPermission(
+    "Bash",
+    { command },
+    permissions,
+    "/Users/test/project",
+  );
+
+  expect(result.decision).toBe("deny");
+  expect(result.matchedRule).toBe("plan mode");
+});
+
 test("plan mode - allows read-only Bash commands", () => {
   permissionMode.setMode("plan");
 
@@ -502,6 +570,18 @@ test("plan mode - allows read-only Bash commands", () => {
     "/Users/test/project",
   );
   expect(chainedResult.decision).toBe("allow");
+
+  // quoted pipes in regex patterns should be treated as literals and allowed
+  const quotedPipeResult = checkPermission(
+    "Bash",
+    {
+      command:
+        'rg -n "memfs|memory filesystem|memory_filesystem|skills/|SKILL.md|git-backed|sync" letta tests -S',
+    },
+    permissions,
+    "/Users/test/project",
+  );
+  expect(quotedPipeResult.decision).toBe("allow");
 
   // cd && dangerous command should still be denied
   const cdDangerousResult = checkPermission(

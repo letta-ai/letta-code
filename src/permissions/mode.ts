@@ -5,6 +5,7 @@ import { homedir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
 
 import { isReadOnlyShellCommand } from "./readOnlyShell";
+import { unwrapShellLauncherCommand } from "./shell-command-normalization";
 
 export type PermissionMode =
   | "default"
@@ -94,6 +95,87 @@ function extractApplyPatchPaths(input: string): string[] {
   }
 
   return paths;
+}
+
+function stripMatchingQuotes(value: string): string {
+  const trimmed = value.trim();
+  if (trimmed.length < 2) {
+    return trimmed;
+  }
+
+  const first = trimmed[0];
+  const last = trimmed[trimmed.length - 1];
+  if ((first === '"' || first === "'") && last === first) {
+    return trimmed.slice(1, -1);
+  }
+  return trimmed;
+}
+
+/**
+ * Detect commands that are exclusively a heredoc write to a file:
+ *   cat > /path/to/file <<'EOF'\n...\nEOF
+ *   cat <<'EOF' > /path/to/file\n...\nEOF
+ *
+ * Returns the target file path when recognized, otherwise null.
+ */
+function extractPlanFileWritePathFromShellCommand(
+  command: string | string[] | undefined,
+): string | null {
+  if (!command) {
+    return null;
+  }
+
+  const commandString =
+    typeof command === "string" ? command : (command.join(" ") ?? "");
+  const normalizedCommand = unwrapShellLauncherCommand(commandString).trim();
+  if (!normalizedCommand) {
+    return null;
+  }
+
+  const lines = normalizedCommand.split(/\r?\n/);
+  const firstLine = lines[0]?.trim() ?? "";
+  if (!firstLine) {
+    return null;
+  }
+
+  const firstLineMatch = firstLine.match(
+    /^cat\s+(?:>\s*(?<path1>"[^"]+"|'[^']+'|\S+)\s+<<-?\s*(?<delim1>"[^"]+"|'[^']+'|\S+)|<<-?\s*(?<delim2>"[^"]+"|'[^']+'|\S+)\s+>\s*(?<path2>"[^"]+"|'[^']+'|\S+))\s*$/,
+  );
+  if (!firstLineMatch?.groups) {
+    return null;
+  }
+
+  const rawPath = firstLineMatch.groups.path1 || firstLineMatch.groups.path2;
+  const rawDelim = firstLineMatch.groups.delim1 || firstLineMatch.groups.delim2;
+
+  if (!rawPath || !rawDelim) {
+    return null;
+  }
+
+  const delimiter = stripMatchingQuotes(rawDelim);
+  if (!delimiter) {
+    return null;
+  }
+
+  // Find heredoc terminator line and ensure nothing non-whitespace follows it.
+  let terminatorLine = -1;
+  for (let i = 1; i < lines.length; i += 1) {
+    if ((lines[i] ?? "") === delimiter) {
+      terminatorLine = i;
+      break;
+    }
+  }
+  if (terminatorLine === -1) {
+    return null;
+  }
+
+  for (let i = terminatorLine + 1; i < lines.length; i += 1) {
+    if ((lines[i] ?? "").trim().length > 0) {
+      return null;
+    }
+  }
+
+  return stripMatchingQuotes(rawPath);
 }
 
 /**
@@ -333,6 +415,22 @@ class PermissionModeManager {
             isReadOnlyShellCommand(command, { allowExternalPaths: true })
           ) {
             return "allow";
+          }
+
+          // Special case: allow shell heredoc writes when they ONLY target
+          // a markdown file in ~/.letta/plans/.
+          const planWritePath =
+            extractPlanFileWritePathFromShellCommand(command);
+          if (planWritePath) {
+            const plansDir = join(homedir(), ".letta", "plans");
+            const resolvedPath = resolvePlanTargetPath(
+              planWritePath,
+              workingDirectory,
+            );
+
+            if (resolvedPath && isPathInPlansDir(resolvedPath, plansDir)) {
+              return "allow";
+            }
           }
         }
 
