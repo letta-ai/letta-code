@@ -14,6 +14,75 @@ function extractReasonList(value: unknown): string[] {
     .map((reason) => reason.toLowerCase());
 }
 
+interface CloudflareEdgeErrorInfo {
+  code?: string;
+  statusText?: string;
+  host?: string;
+  rayId?: string;
+}
+
+const CLOUDFLARE_EDGE_5XX_MARKER_PATTERN =
+  /(^|\s)(502|52[0-6])\s*<!doctype html|error code\s*(502|52[0-6])/i;
+const CLOUDFLARE_EDGE_5XX_TITLE_PATTERN = /\|\s*(502|52[0-6])\s*:/i;
+
+export function isCloudflareEdge52xHtmlError(text: string): boolean {
+  const normalized = text.toLowerCase();
+  const hasCloudflare = normalized.includes("cloudflare");
+  const hasHtml =
+    normalized.includes("<!doctype html") ||
+    normalized.includes("<html") ||
+    normalized.includes("error code");
+  const has52xCode =
+    CLOUDFLARE_EDGE_5XX_MARKER_PATTERN.test(text) ||
+    CLOUDFLARE_EDGE_5XX_TITLE_PATTERN.test(text);
+
+  return hasCloudflare && hasHtml && has52xCode;
+}
+
+function parseCloudflareEdgeError(
+  text: string,
+): CloudflareEdgeErrorInfo | undefined {
+  if (!isCloudflareEdge52xHtmlError(text)) return undefined;
+
+  const code =
+    text.match(/^\s*(502|52[0-6])\s*<!doctype html/i)?.[1] ??
+    text.match(/error code\s*(502|52[0-6])/i)?.[1] ??
+    text.match(/\|\s*(502|52[0-6])\s*:/i)?.[1];
+
+  const statusText =
+    text
+      .match(/<title>[^<|]*\|\s*(?:502|52[0-6])\s*:\s*([^<]+)/i)?.[1]
+      ?.trim() ??
+    text.match(/<span\s+class="inline-block">([^<]+)<\/span>/i)?.[1]?.trim();
+
+  const host =
+    text.match(/utm_campaign=([a-z0-9.-]+)/i)?.[1] ??
+    text.match(/<span[^>]*truncate[^>]*>([a-z0-9.-]+)<\/span>/i)?.[1];
+
+  const rayId =
+    text.match(
+      /Cloudflare Ray ID:\s*(?:<strong[^>]*>)?([a-z0-9]+)(?:<\/strong>)?/i,
+    )?.[1] ?? text.match(/Cloudflare Ray ID:\s*([a-z0-9]+)/i)?.[1];
+
+  if (!code && !statusText && !host && !rayId) return undefined;
+
+  return { code, statusText, host, rayId };
+}
+
+export function checkCloudflareEdgeError(text: string): string | undefined {
+  const info = parseCloudflareEdgeError(text);
+  if (!info) return undefined;
+
+  const codeLabel = info.code ? `Cloudflare ${info.code}` : "Cloudflare";
+  const statusSegment = info.statusText
+    ? `: ${info.statusText}`
+    : " upstream error";
+  const hostSegment = info.host ? ` for ${info.host}` : "";
+  const raySegment = info.rayId ? ` (Ray ID: ${info.rayId})` : "";
+
+  return `${codeLabel}${statusSegment}${hostSegment}${raySegment}. This is usually a temporary edge/origin outage. Please retry in a moment.`;
+}
+
 function getErrorReasons(e: APIError): string[] {
   const reasons = new Set<string>();
 
@@ -87,6 +156,62 @@ function getRateLimitResetMs(e: APIError): number | undefined {
       }
     }
   }
+  return undefined;
+}
+
+/**
+ * Walk an error object to find and format Cloudflare HTML 52x pages.
+ */
+function findAndFormatCloudflareEdgeError(e: unknown): string | undefined {
+  if (typeof e === "string") return checkCloudflareEdgeError(e);
+
+  if (typeof e !== "object" || e === null) return undefined;
+
+  if (e instanceof Error) {
+    const msg = checkCloudflareEdgeError(e.message);
+    if (msg) return msg;
+  }
+
+  const obj = e as Record<string, unknown>;
+
+  if (typeof obj.detail === "string") {
+    const msg = checkCloudflareEdgeError(obj.detail);
+    if (msg) return msg;
+  }
+
+  if (typeof obj.message === "string") {
+    const msg = checkCloudflareEdgeError(obj.message);
+    if (msg) return msg;
+  }
+
+  if (obj.error && typeof obj.error === "object") {
+    const errObj = obj.error as Record<string, unknown>;
+
+    if (typeof errObj.detail === "string") {
+      const msg = checkCloudflareEdgeError(errObj.detail);
+      if (msg) return msg;
+    }
+
+    if (typeof errObj.message === "string") {
+      const msg = checkCloudflareEdgeError(errObj.message);
+      if (msg) return msg;
+    }
+
+    if (errObj.error && typeof errObj.error === "object") {
+      const inner = errObj.error as Record<string, unknown>;
+
+      if (typeof inner.detail === "string") {
+        const msg = checkCloudflareEdgeError(inner.detail);
+        if (msg) return msg;
+      }
+
+      if (typeof inner.message === "string") {
+        const msg = checkCloudflareEdgeError(inner.message);
+        if (msg) return msg;
+      }
+    }
+  }
+
   return undefined;
 }
 
@@ -400,6 +525,9 @@ export function formatErrorDetails(
   const chatGptUsageLimitMsg = findAndFormatChatGptUsageLimit(e);
   if (chatGptUsageLimitMsg) return chatGptUsageLimitMsg;
 
+  const cloudflareEdgeMsg = findAndFormatCloudflareEdgeError(e);
+  if (cloudflareEdgeMsg) return cloudflareEdgeMsg;
+
   // Check for Z.ai provider errors (wrapped in generic "OpenAI" messages)
   const errorText =
     e instanceof APIError
@@ -561,6 +689,12 @@ export function getRetryStatusMessage(
   errorDetail: string | null | undefined,
 ): string {
   if (!errorDetail) return DEFAULT_RETRY_MESSAGE;
+
+  const cloudflareInfo = parseCloudflareEdgeError(errorDetail);
+  if (cloudflareInfo) {
+    const codeSegment = cloudflareInfo.code ? ` ${cloudflareInfo.code}` : "";
+    return `Cloudflare${codeSegment} upstream outage, retrying...`;
+  }
 
   if (checkZaiError(errorDetail)) return "Z.ai API error, retrying...";
 

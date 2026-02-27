@@ -8,6 +8,7 @@
 
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
+import { isCloudflareEdge52xHtmlError } from "../cli/helpers/errorFormatter";
 import { isZaiNonRetryableError } from "../cli/helpers/zaiErrors";
 
 // ── Error fragment constants ────────────────────────────────────────
@@ -64,6 +65,10 @@ const NON_RETRYABLE_QUOTA_DETAIL_PATTERNS = [
 ];
 const NON_RETRYABLE_4XX_PATTERN = /Error code:\s*4(0[0-8]|1\d|2\d|3\d|4\d|51)/i;
 const RETRYABLE_429_PATTERN = /Error code:\s*429|rate limit|too many requests/i;
+function isCloudflareEdge52xDetail(detail: unknown): boolean {
+  if (typeof detail !== "string") return false;
+  return isCloudflareEdge52xHtmlError(detail);
+}
 
 function hasNonRetryableQuotaDetail(detail: unknown): boolean {
   if (typeof detail !== "string") return false;
@@ -108,6 +113,7 @@ export function isEmptyResponseError(detail: unknown): boolean {
 
 /** Transient provider/network detail that is usually safe to retry. */
 export function isRetryableProviderErrorDetail(detail: unknown): boolean {
+  if (isCloudflareEdge52xDetail(detail)) return true;
   if (typeof detail !== "string") return false;
   return RETRYABLE_PROVIDER_DETAIL_PATTERNS.some((pattern) =>
     detail.includes(pattern),

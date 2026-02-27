@@ -6,6 +6,7 @@ import {
 } from "../../cli/helpers/errorContext";
 import {
   checkChatGptUsageLimitError,
+  checkCloudflareEdgeError,
   formatErrorDetails,
 } from "../../cli/helpers/errorFormatter";
 
@@ -340,5 +341,76 @@ describe("formatErrorDetails", () => {
     expect(message).toContain("Z.ai rate limit");
     expect(message).toContain("High concurrency usage exceeds limits");
     expect(message).not.toContain("OpenAI");
+  });
+
+  describe("Cloudflare HTML 52x errors", () => {
+    const cloudflare521Html = `521 <!DOCTYPE html>
+<html lang="en-US">
+<head>
+<title>api.letta.com | 521: Web server is down</title>
+</head>
+<body>
+<span class="inline-block">Web server is down</span>
+<a href="https://www.cloudflare.com/5xx-error-landing?utm_source=errorcode_521&utm_campaign=api.letta.com">cloudflare.com</a>
+Cloudflare Ray ID: <strong>9d431b5f6f656c08</strong>
+</body>
+</html>`;
+
+    test("formats Cloudflare HTML into a concise friendly message", () => {
+      const result = checkCloudflareEdgeError(cloudflare521Html);
+
+      expect(result).toBeDefined();
+      expect(result).toContain("Cloudflare 521");
+      expect(result).toContain("Web server is down");
+      expect(result).toContain("api.letta.com");
+      expect(result).toContain("Ray ID: 9d431b5f6f656c08");
+      expect(result).toContain("retry");
+      expect(result).not.toContain("<!DOCTYPE html>");
+    });
+
+    test("formats via formatErrorDetails for run metadata nested detail", () => {
+      const errorObject = {
+        error: {
+          error: {
+            detail: cloudflare521Html,
+          },
+        },
+      };
+
+      const result = formatErrorDetails(errorObject);
+
+      expect(result).toContain("Cloudflare 521");
+      expect(result).toContain("Web server is down");
+      expect(result).not.toContain("<html");
+    });
+
+    test("returns undefined for non-cloudflare html", () => {
+      const result = checkCloudflareEdgeError(
+        "<!DOCTYPE html><html><head><title>Example</title></head><body>hello</body></html>",
+      );
+      expect(result).toBeUndefined();
+    });
+
+    test("formats Cloudflare 502 bad gateway pages", () => {
+      const cloudflare502Html = `502 <!DOCTYPE html>
+<html>
+<head>
+<title>letta.com | 502: Bad gateway</title>
+</head>
+<body>
+<span class="code-label">Error code 502</span>
+Cloudflare Ray ID: <strong>9d43b2d6dab269e2</strong>
+<a href="https://www.cloudflare.com/5xx-error-landing?utm_source=errorcode_502&utm_campaign=api.letta.com">cloudflare.com</a>
+</body>
+</html>`;
+
+      const result = checkCloudflareEdgeError(cloudflare502Html);
+
+      expect(result).toBeDefined();
+      expect(result).toContain("Cloudflare 502");
+      expect(result).toContain("Bad gateway");
+      expect(result).toContain("api.letta.com");
+      expect(result).toContain("Ray ID: 9d43b2d6dab269e2");
+    });
   });
 });
