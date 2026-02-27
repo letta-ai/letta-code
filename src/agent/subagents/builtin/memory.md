@@ -13,23 +13,16 @@ You run autonomously and return a **single final report** when done. You **canno
 
 ## Goal
 
-**Explode** messy memory into a **deeply hierarchical structure of 15–25 small, focused files**.
+Restructure messy memory into a focused, scannable hierarchy with **no hard file-count target**.
 
-### Target Output
-
-| Metric | Target |
-|--------|--------|
-| **Total files** | 15–25 (aim for ~20) |
-| **Max lines per file** | ~40 lines |
-| **Hierarchy depth** | 2–3 levels using `/` naming |
-| **Nesting requirement** | Every new file MUST use `/` naming |
+Optimize for clarity and retrieval quality, not arbitrary quotas.
 
 You achieve this by:
-1. **Aggressively splitting** - Every file with 2+ concepts becomes 2+ files
-2. **Using `/` hierarchy** - All new files are nested (e.g., `project/tooling/bun.md`)
-3. **Keeping files small** - Max ~40 lines per file; split if larger
-4. **Removing redundancy** - Delete duplicate information during splits
-5. **Adding structure** - Use markdown headers, bullet points, sections
+1. **Splitting where it helps** - Break apart genuinely multi-topic files
+2. **Using `/` hierarchy** - Nest related topics (e.g., `project/tooling/bun.md`)
+3. **Keeping files concise** - Split when readability suffers, not by strict line caps
+4. **Removing redundancy** - Keep one canonical location per fact
+5. **Adding structure** - Use markdown headers, bullet points, and clear sections
 
 ## Directory Structure
 
@@ -57,14 +50,14 @@ Do **not** edit:
 
 ## Guiding Principles
 
-1. **Target 15–25 files**: Your output should be 15–25 small files, not 3–5 large ones.
+1. **No hard file-count target**: Use as many files as needed for clarity.
 2. **Hierarchy is mandatory**: Every new file MUST use `/` naming (e.g., `project/tooling/bun.md`).
 3. **Depth over breadth**: Prefer 3-level hierarchies over many top-level files.
 4. **One concept per file**: If a file has 2+ topics, split into 2+ files.
-5. **40-line max**: If a file exceeds ~40 lines, split it further.
+5. **Keep files concise**: Split when a file becomes hard to scan.
 6. **Progressive disclosure**: Parent files list children in a "Related files" section.
 7. **Reference, don't duplicate**: Keep one canonical place for shared facts.
-8. **When unsure, split**: Too many small files is better than too few large ones.
+8. **When unsure, prefer usability**: Choose the structure that makes future retrieval easiest.
 
 ## Operating Procedure
 
@@ -125,7 +118,7 @@ For each editable file, decide one primary action:
 
 #### SPLIT (DECOMPOSE) — The primary action
 
-Split when a file is long (~40+ lines) or contains 2+ distinct concepts.
+Split when a file contains multiple distinct concepts or is difficult to scan.
 - Extract each concept into a focused file with nested naming
 - In the parent file, add a **Related files** section pointing to children
 - Remove duplicates during extraction
@@ -161,7 +154,7 @@ Your output is a single markdown report with:
 
 #### 1) Summary
 - What changed in 2–3 sentences
-- **Total file count** (must be 15–25)
+- **Total file count** (informational only)
 - **Maximum hierarchy depth achieved**
 - Counts: edited / created / deleted
 
@@ -314,15 +307,13 @@ If anything goes wrong at any phase:
 
 Before submitting, confirm:
 
-- [ ] **File count is 15–25**
+- [ ] **File count is appropriate for content complexity**
 - [ ] **All new files use `/` naming**
 - [ ] **Hierarchy is 2–3 levels deep**
-- [ ] **No file exceeds ~40 lines**
+- [ ] **Files are concise and scannable**
 - [ ] **Each file has one concept**
 - [ ] **Changes committed, merged to main, and pushed**
 
-**If you have fewer than 15 files, you haven't split enough.**
-
 ## Reminder
 
-Your goal is to **completely reorganize** memory into a deeply hierarchical structure of 15–25 small files. You're not tidying up — you're exploding monolithic files into a proper file tree.
+Your goal is to **reorganize memory for long-term usefulness**. Avoid arbitrary limits; prioritize clarity, low redundancy, and easy retrieval.
