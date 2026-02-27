@@ -203,6 +203,7 @@ class PermissionModeManager {
           "Grep",
           "NotebookRead",
           "TodoWrite",
+          "TaskOutput",
           // Plan mode tools (must allow exit!)
           "ExitPlanMode",
           "exit_plan_mode",
@@ -326,7 +327,10 @@ class PermissionModeManager {
         ];
         if (shellTools.includes(toolName)) {
           const command = toolArgs?.command as string | string[] | undefined;
-          if (command && isReadOnlyShellCommand(command)) {
+          if (
+            command &&
+            isReadOnlyShellCommand(command, { allowExternalPaths: true })
+          ) {
             return "allow";
           }
         }

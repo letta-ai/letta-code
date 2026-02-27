@@ -112,11 +112,117 @@ const SAFE_GH_COMMANDS: Record<string, Set<string> | null> = {
 };
 
 // Operators that are always dangerous (file redirects, command substitution)
-// Note: &&, ||, ; are handled by splitting and checking each segment
-const DANGEROUS_OPERATOR_PATTERN = /(>>|>|\$\(|`)/;
+// Segment separators are split quote-aware by splitShellSegments().
+const DANGEROUS_REDIRECT_OPERATORS = [">>", ">"];
+
+type ReadOnlyShellOptions = {
+  /**
+   * When true, treat absolute paths and `..` traversal as read-only.
+   * Default false keeps path sandboxing for generic auto-approval.
+   */
+  allowExternalPaths?: boolean;
+};
+
+/**
+ * Split a shell command into segments on unquoted separators: |, &&, ||, ;
+ * Returns null if dangerous operators are found:
+ * - redirects (>, >>) outside quotes
+ * - command substitution ($(), backticks) outside single quotes
+ */
+function splitShellSegments(input: string): string[] | null {
+  const segments: string[] = [];
+  let current = "";
+  let i = 0;
+  let quote: "single" | "double" | null = null;
+
+  while (i < input.length) {
+    const ch = input[i];
+
+    if (quote === "single") {
+      current += ch;
+      if (ch === "'") {
+        quote = null;
+      }
+      i += 1;
+      continue;
+    }
+
+    if (quote === "double") {
+      if (ch === "\\" && i + 1 < input.length) {
+        current += input.slice(i, i + 2);
+        i += 2;
+        continue;
+      }
+
+      // Command substitution still evaluates inside double quotes.
+      if (ch === "`" || input.startsWith("$(", i)) {
+        return null;
+      }
+
+      current += ch;
+      if (ch === '"') {
+        quote = null;
+      }
+      i += 1;
+      continue;
+    }
+
+    if (ch === "'") {
+      quote = "single";
+      current += ch;
+      i += 1;
+      continue;
+    }
+    if (ch === '"') {
+      quote = "double";
+      current += ch;
+      i += 1;
+      continue;
+    }
+
+    if (DANGEROUS_REDIRECT_OPERATORS.some((op) => input.startsWith(op, i))) {
+      return null;
+    }
+    if (ch === "`" || input.startsWith("$(", i)) {
+      return null;
+    }
+
+    if (input.startsWith("&&", i)) {
+      segments.push(current);
+      current = "";
+      i += 2;
+      continue;
+    }
+    if (input.startsWith("||", i)) {
+      segments.push(current);
+      current = "";
+      i += 2;
+      continue;
+    }
+    if (ch === ";") {
+      segments.push(current);
+      current = "";
+      i += 1;
+      continue;
+    }
+    if (ch === "|") {
+      segments.push(current);
+      current = "";
+      i += 1;
+      continue;
+    }
+
+    current += ch;
+    i += 1;
+  }
+
+  segments.push(current);
+  return segments.map((segment) => segment.trim()).filter(Boolean);
+}
 
 export function isReadOnlyShellCommand(
   command: string | string[] | undefined | null,
+  options: ReadOnlyShellOptions = {},
 ): boolean {
   if (!command) {
     return false;
@@ -133,9 +239,9 @@ export function isReadOnlyShellCommand(
       if (!nested) {
         return false;
       }
-      return isReadOnlyShellCommand(nested);
+      return isReadOnlyShellCommand(nested, options);
     }
-    return isReadOnlyShellCommand(joined);
+    return isReadOnlyShellCommand(joined, options);
   }
 
   const trimmed = command.trim();
@@ -143,23 +249,13 @@ export function isReadOnlyShellCommand(
     return false;
   }
 
-  if (DANGEROUS_OPERATOR_PATTERN.test(trimmed)) {
-    return false;
-  }
-
-  // Split on command separators: |, &&, ||, ;
-  // Each segment must be safe for the whole command to be safe
-  const segments = trimmed
-    .split(/\||&&|\|\||;/)
-    .map((segment) => segment.trim())
-    .filter(Boolean);
-
-  if (segments.length === 0) {
+  const segments = splitShellSegments(trimmed);
+  if (!segments || segments.length === 0) {
     return false;
   }
 
   for (const segment of segments) {
-    if (!isSafeSegment(segment)) {
+    if (!isSafeSegment(segment, options)) {
       return false;
     }
   }
@@ -167,7 +263,11 @@ export function isReadOnlyShellCommand(
   return true;
 }
 
-function isSafeSegment(segment: string): boolean {
+function isSafeSegment(
+  segment: string,
+  options: ReadOnlyShellOptions,
+): boolean {
+  const { allowExternalPaths = false } = options;
   const tokens = tokenize(segment);
   if (tokens.length === 0) {
     return false;
@@ -182,10 +282,14 @@ function isSafeSegment(segment: string): boolean {
     if (!nested) {
       return false;
     }
-    return isReadOnlyShellCommand(stripQuotes(nested));
+    return isReadOnlyShellCommand(stripQuotes(nested), options);
   }
 
   if (ALWAYS_SAFE_COMMANDS.has(command)) {
+    if (allowExternalPaths) {
+      return true;
+    }
+
     // `cd` is read-only, but it should still respect path restrictions so
     // `cd / && cat relative/path` cannot bypass path checks on later segments.
     if (command === "cd") {

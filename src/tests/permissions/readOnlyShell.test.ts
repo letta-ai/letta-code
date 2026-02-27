@@ -6,6 +6,33 @@ import {
 } from "../../permissions/readOnlyShell";
 
 describe("isReadOnlyShellCommand", () => {
+  describe("path restrictions", () => {
+    test("blocks external paths by default", () => {
+      expect(isReadOnlyShellCommand("cat /etc/passwd")).toBe(false);
+      expect(isReadOnlyShellCommand("head -n 20 ../../../.ssh/id_rsa")).toBe(
+        false,
+      );
+    });
+
+    test("allows external paths when explicitly enabled", () => {
+      expect(
+        isReadOnlyShellCommand("cat /etc/passwd", {
+          allowExternalPaths: true,
+        }),
+      ).toBe(true);
+      expect(
+        isReadOnlyShellCommand("head -n 20 ../../../.ssh/id_rsa", {
+          allowExternalPaths: true,
+        }),
+      ).toBe(true);
+      expect(
+        isReadOnlyShellCommand("cd / && cat etc/passwd", {
+          allowExternalPaths: true,
+        }),
+      ).toBe(true);
+    });
+  });
+
   describe("always safe commands", () => {
     test("allows cat", () => {
       expect(isReadOnlyShellCommand("cat file.txt")).toBe(true);
@@ -166,6 +193,12 @@ describe("isReadOnlyShellCommand", () => {
       expect(isReadOnlyShellCommand("ls -la | grep txt | wc -l")).toBe(true);
     });
 
+    test("allows pipe characters inside quoted args", () => {
+      expect(isReadOnlyShellCommand('rg -n "foo|bar|baz" apps/core')).toBe(
+        true,
+      );
+    });
+
     test("blocks pipes with unsafe commands", () => {
       expect(isReadOnlyShellCommand("cat file | rm")).toBe(false);
       expect(isReadOnlyShellCommand("echo test | bash")).toBe(false);
@@ -187,6 +220,13 @@ describe("isReadOnlyShellCommand", () => {
     test("blocks command substitution", () => {
       expect(isReadOnlyShellCommand("echo $(rm file)")).toBe(false);
       expect(isReadOnlyShellCommand("echo `rm file`")).toBe(false);
+      expect(isReadOnlyShellCommand('echo "$(rm file)"')).toBe(false);
+      expect(isReadOnlyShellCommand('echo "`rm file`"')).toBe(false);
+    });
+
+    test("allows literal redirect text inside quotes", () => {
+      expect(isReadOnlyShellCommand('echo "a > b"')).toBe(true);
+      expect(isReadOnlyShellCommand("echo 'a >> b'")).toBe(true);
     });
   });
 
