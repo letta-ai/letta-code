@@ -2,7 +2,7 @@
 
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { APIError, APIUserAbortError } from "@letta-ai/letta-client/core/error";
 import type {
   AgentState,
@@ -672,13 +672,16 @@ function getPlanModeReminder(): string {
   }
 
   const planFilePath = permissionMode.getPlanFilePath();
+  const applyPatchRelativePath = planFilePath
+    ? relative(process.cwd(), planFilePath).replace(/\\/g, "/")
+    : null;
 
   // Generate dynamic reminder with plan file path
   return `${SYSTEM_REMINDER_OPEN}
       Plan mode is active. The user indicated that they do not want you to execute yet -- you MUST NOT make any edits (with the exception of the plan file mentioned below), run any non-readonly tools (including changing configs or making commits), or otherwise make any changes to the system. This supersedes any other instructions you have received.
 
 ## Plan File Info:
-${planFilePath ? `No plan file exists yet. You should create your plan at ${planFilePath} using a write tool (e.g. Write, ApplyPatch, etc. depending on your toolset).` : "No plan file path assigned."}
+${planFilePath ? `No plan file exists yet. You should create your plan at ${planFilePath} using a write tool (e.g. Write, ApplyPatch, etc. depending on your toolset).\n${applyPatchRelativePath ? `If using apply_patch, use this exact relative patch path: ${applyPatchRelativePath}.` : ""}` : "No plan file path assigned."}
 
 You should build your plan incrementally by writing to or editing this file. NOTE that this is the only file you are allowed to edit - other than this you are only allowed to take READ-ONLY actions.
 
@@ -12030,6 +12033,10 @@ ${SYSTEM_REMINDER_CLOSE}
 
     // Generate plan file path
     const planFilePath = generatePlanFilePath();
+    const applyPatchRelativePath = relative(
+      process.cwd(),
+      planFilePath,
+    ).replace(/\\/g, "/");
 
     // Toggle plan mode on and store plan file path
     permissionMode.setMode("plan");
@@ -12049,7 +12056,8 @@ In plan mode, you should:
 
 Remember: DO NOT write or edit any files yet. This is a read-only exploration and planning phase.
 
-Plan file path: ${planFilePath}`;
+Plan file path: ${planFilePath}
+If using apply_patch, use this exact relative patch path: ${applyPatchRelativePath}`;
 
     const precomputedResult: ToolExecutionResult = {
       toolReturn,
