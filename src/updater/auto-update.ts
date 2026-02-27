@@ -323,6 +323,32 @@ async function performUpdate(): Promise<{
       }
     }
 
+    // npm race condition retry: covers TAR_ENTRY_ERROR (parallel extraction races),
+    // uv_cwd (npm CWD deleted during atomic package swap), and spawn sh ENOENT
+    // (sharp postinstall CWD missing). All are transient npm parallelism issues.
+    const isNpmRaceCondition =
+      pm === "npm" &&
+      (errorMsg.includes("TAR_ENTRY_ERROR") ||
+        errorMsg.includes("uv_cwd") ||
+        (errorMsg.includes("spawn sh") && errorMsg.includes("ENOENT")));
+
+    if (isNpmRaceCondition) {
+      debugLog("npm race condition detected, cleaning up and retrying...");
+      if (globalPath) {
+        await cleanupOrphanedDirs(globalPath);
+      }
+      try {
+        await execFileAsync(pm, installArgs, { timeout: 60000 });
+        debugLog("Update succeeded after race condition retry");
+        return { success: true };
+      } catch (retryError) {
+        const retryMsg =
+          retryError instanceof Error ? retryError.message : String(retryError);
+        debugLog("Update failed after race condition retry:", retryMsg);
+        return { success: false, error: retryMsg };
+      }
+    }
+
     debugLog("Update failed:", error);
     return { success: false, error: errorMsg };
   }
