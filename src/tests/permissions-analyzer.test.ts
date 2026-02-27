@@ -203,6 +203,30 @@ test("Unknown command suggests exact match", () => {
   expect(context.allowPersistence).toBe(true);
 });
 
+test("Wrapped shell launcher suggests unwrapped read-only wildcard rule", () => {
+  const context = analyzeApprovalContext(
+    "Bash",
+    {
+      command: "bash -lc \"sed -n '150,360p' src/permissions/mode.ts\"",
+    },
+    "/Users/test/project",
+  );
+
+  expect(context.recommendedRule).toBe("Bash(sed -n:*)");
+  expect(context.approveAlwaysText).toContain("sed -n");
+});
+
+test("Read-only rg command suggests wildcard rule", () => {
+  const context = analyzeApprovalContext(
+    "Bash",
+    { command: "rg -n analyzeBashApproval src/permissions/analyzer.ts" },
+    "/Users/test/project",
+  );
+
+  expect(context.recommendedRule).toBe("Bash(rg:*)");
+  expect(context.safetyLevel).toBe("safe");
+});
+
 test("Skill script in bundled skill suggests bundled-scope message", () => {
   if (process.platform === "win32") return;
 
