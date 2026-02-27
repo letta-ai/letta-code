@@ -210,6 +210,7 @@ import {
 import { setErrorContext } from "./helpers/errorContext";
 import {
   formatErrorDetails,
+  formatTelemetryErrorMessage,
   getRetryStatusMessage,
   isEncryptedContentError,
 } from "./helpers/errorFormatter";
@@ -362,6 +363,7 @@ function deriveReasoningEffort(
       )
         return re;
     }
+
     // Anthropic/Bedrock: effort field
     if (
       modelSettings.provider_type === "anthropic" ||
@@ -3896,7 +3898,9 @@ export default function App({
               // Log the conversation-busy error
               telemetry.trackError(
                 "retry_conversation_busy",
-                errorDetail || "Conversation is busy",
+                formatTelemetryErrorMessage(
+                  errorDetail || "Conversation is busy",
+                ),
                 "pre_stream_retry",
                 {
                   httpStatus:
@@ -3962,7 +3966,9 @@ export default function App({
               // Log the error that triggered the retry
               telemetry.trackError(
                 "retry_pre_stream_transient",
-                errorDetail || "Pre-stream transient error",
+                formatTelemetryErrorMessage(
+                  errorDetail || "Pre-stream transient error",
+                ),
                 "pre_stream_retry",
                 {
                   httpStatus:
@@ -5207,9 +5213,11 @@ export default function App({
             // Log the error that triggered the retry
             telemetry.trackError(
               "retry_post_stream_error",
-              detailFromRun ||
-                fallbackError ||
-                `Stream stopped: ${stopReasonToHandle}`,
+              formatTelemetryErrorMessage(
+                detailFromRun ||
+                  fallbackError ||
+                  `Stream stopped: ${stopReasonToHandle}`,
+              ),
               "post_stream_retry",
               {
                 modelId: currentModelId || undefined,
@@ -5339,9 +5347,10 @@ export default function App({
                 // — skip the generic "Something went wrong?" hint
                 appendError(errorDetails, {
                   ...errorTelemetryBase,
-                  errorMessage:
+                  errorMessage: formatTelemetryErrorMessage(
                     serverErrorDetail ||
-                    `Stream stopped with reason: ${stopReasonToHandle}`,
+                      `Stream stopped with reason: ${stopReasonToHandle}`,
+                  ),
                 });
 
                 if (!isEncryptedContentError(errorObject)) {

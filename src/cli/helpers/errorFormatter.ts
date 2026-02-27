@@ -83,6 +83,18 @@ export function checkCloudflareEdgeError(text: string): string | undefined {
   return `${codeLabel}${statusSegment}${hostSegment}${raySegment}. This is usually a temporary edge/origin outage. Please retry in a moment.`;
 }
 
+/**
+ * Normalize raw provider error payloads before sending to telemetry.
+ * Keeps telemetry concise by collapsing Cloudflare HTML pages into a
+ * single readable line while preserving non-Cloudflare messages as-is.
+ */
+export function formatTelemetryErrorMessage(
+  message: string | null | undefined,
+): string {
+  if (!message) return "Unknown error";
+  return checkCloudflareEdgeError(message) ?? message;
+}
+
 function getErrorReasons(e: APIError): string[] {
   const reasons = new Set<string>();
 
