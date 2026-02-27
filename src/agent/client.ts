@@ -157,6 +157,7 @@ export async function getClient() {
     console.error(
       "Run 'letta' to configure authentication, or set LETTA_API_KEY to your API key",
     );
+    console.error(new Error("getClient() called without credentials").stack);
     process.exit(1);
   }
 
