@@ -9,8 +9,10 @@ describe("permission mode cycle order", () => {
     );
     const source = readFileSync(inputRichPath, "utf-8");
 
-    expect(source).toContain('const modes: PermissionMode[] = [');
-    expect(source).toContain('"default",\n        "plan",\n        "acceptEdits",');
+    expect(source).toContain("const modes: PermissionMode[] = [");
+    expect(source).toContain(
+      '"default",\n        "plan",\n        "acceptEdits",',
+    );
     expect(source).toContain('"acceptEdits",\n        "bypassPermissions",');
   });
 });
