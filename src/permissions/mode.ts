@@ -203,6 +203,7 @@ class PermissionModeManager {
           "Grep",
           "NotebookRead",
           "TodoWrite",
+          "TaskOutput",
           // Plan mode tools (must allow exit!)
           "ExitPlanMode",
           "exit_plan_mode",

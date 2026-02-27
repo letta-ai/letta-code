@@ -192,15 +192,6 @@ function isSafeSegment(segment: string): boolean {
       return !tokens.slice(1).some((t) => hasAbsoluteOrTraversalPathArg(t));
     }
 
-    // For other "always safe" commands, ensure they don't read sensitive files
-    // outside the allowed directories.
-    const hasExternalPath = tokens
-      .slice(1)
-      .some((t) => hasAbsoluteOrTraversalPathArg(t));
-
-    if (hasExternalPath) {
-      return false;
-    }
     return true;
   }
 
