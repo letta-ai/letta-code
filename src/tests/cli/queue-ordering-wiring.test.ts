@@ -37,6 +37,40 @@ describe("queue ordering wiring", () => {
     expect(segment).toContain("queuedOverlayAction,");
   });
 
+  test("queue display trim uses displayable-item count, not mergedCount", () => {
+    const source = readAppSource();
+    const start = source.indexOf("onDequeued: (batch) => {");
+    const end = source.indexOf("onBlocked: (reason, queueLen) =>");
+
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+
+    const segment = source.slice(start, end);
+    expect(segment).toContain("const displayConsumedCount =");
+    expect(segment).toContain('item.kind === "message"');
+    expect(segment).toContain('item.kind === "task_notification"');
+    expect(segment).toContain("prev.slice(displayConsumedCount)");
+  });
+
+  test("onSubmit allows override-only queued submissions", () => {
+    const source = readAppSource();
+    const start = source.indexOf("const onSubmit = useCallback(");
+    const end = source.indexOf(
+      "// Process queued overlay actions when streaming ends",
+    );
+
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+
+    const segment = source.slice(start, end);
+    expect(segment).toContain(
+      "if (!msg && !hasOverrideContent) return { submitted: false };",
+    );
+    expect(segment).toContain(
+      "if (profileConfirmPending && !msg && !hasOverrideContent)",
+    );
+  });
+
   test("queued overlay effect only runs when idle and clears action before processing", () => {
     const source = readAppSource();
     const start = source.indexOf(
