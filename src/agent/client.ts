@@ -155,7 +155,7 @@ export async function getClient() {
   if (!apiKey && baseURL === LETTA_CLOUD_API_URL) {
     console.error("Missing LETTA_API_KEY");
     console.error(
-      "Run 'letta setup' to configure authentication or set your LETTA_API_KEY environment variable",
+      "Run 'letta' to configure authentication, or set LETTA_API_KEY to your API key",
     );
     process.exit(1);
   }
