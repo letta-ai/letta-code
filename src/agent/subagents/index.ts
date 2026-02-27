@@ -24,6 +24,7 @@ import historyAnalyzerAgentMd from "./builtin/history-analyzer.md";
 import memoryAgentMd from "./builtin/memory.md";
 
 import recallAgentMd from "./builtin/recall.md";
+import gitHistoryAgentMd from "./builtin/git-history.md";
 import reflectionAgentMd from "./builtin/reflection.md";
 
 const BUILTIN_SOURCES = [
@@ -33,6 +34,7 @@ const BUILTIN_SOURCES = [
   memoryAgentMd,
   recallAgentMd,
   reflectionAgentMd,
+  gitHistoryAgentMd,
 ];
 
 // Re-export for convenience
