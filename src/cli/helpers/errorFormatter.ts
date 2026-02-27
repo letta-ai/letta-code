@@ -21,9 +21,9 @@ interface CloudflareEdgeErrorInfo {
   rayId?: string;
 }
 
-const CLOUDFLARE_EDGE_52X_MARKER_PATTERN =
-  /(^|\s)(52[0-6])\s*<!doctype html|error code\s*(52[0-6])/i;
-const CLOUDFLARE_EDGE_52X_TITLE_PATTERN = /\|\s*(52[0-6])\s*:/i;
+const CLOUDFLARE_EDGE_5XX_MARKER_PATTERN =
+  /(^|\s)(502|52[0-6])\s*<!doctype html|error code\s*(502|52[0-6])/i;
+const CLOUDFLARE_EDGE_5XX_TITLE_PATTERN = /\|\s*(502|52[0-6])\s*:/i;
 
 export function isCloudflareEdge52xHtmlError(text: string): boolean {
   const normalized = text.toLowerCase();
@@ -33,8 +33,8 @@ export function isCloudflareEdge52xHtmlError(text: string): boolean {
     normalized.includes("<html") ||
     normalized.includes("error code");
   const has52xCode =
-    CLOUDFLARE_EDGE_52X_MARKER_PATTERN.test(text) ||
-    CLOUDFLARE_EDGE_52X_TITLE_PATTERN.test(text);
+    CLOUDFLARE_EDGE_5XX_MARKER_PATTERN.test(text) ||
+    CLOUDFLARE_EDGE_5XX_TITLE_PATTERN.test(text);
 
   return hasCloudflare && hasHtml && has52xCode;
 }
@@ -45,12 +45,14 @@ function parseCloudflareEdgeError(
   if (!isCloudflareEdge52xHtmlError(text)) return undefined;
 
   const code =
-    text.match(/^\s*(52[0-6])\s*<!doctype html/i)?.[1] ??
-    text.match(/error code\s*(52[0-6])/i)?.[1] ??
-    text.match(/\|\s*(52[0-6])\s*:/i)?.[1];
+    text.match(/^\s*(502|52[0-6])\s*<!doctype html/i)?.[1] ??
+    text.match(/error code\s*(502|52[0-6])/i)?.[1] ??
+    text.match(/\|\s*(502|52[0-6])\s*:/i)?.[1];
 
   const statusText =
-    text.match(/<title>[^<|]*\|\s*52[0-6]\s*:\s*([^<]+)/i)?.[1]?.trim() ??
+    text
+      .match(/<title>[^<|]*\|\s*(?:502|52[0-6])\s*:\s*([^<]+)/i)?.[1]
+      ?.trim() ??
     text.match(/<span\s+class="inline-block">([^<]+)<\/span>/i)?.[1]?.trim();
 
   const host =

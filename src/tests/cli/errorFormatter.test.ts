@@ -390,5 +390,27 @@ Cloudflare Ray ID: <strong>9d431b5f6f656c08</strong>
       );
       expect(result).toBeUndefined();
     });
+
+    test("formats Cloudflare 502 bad gateway pages", () => {
+      const cloudflare502Html = `502 <!DOCTYPE html>
+<html>
+<head>
+<title>letta.com | 502: Bad gateway</title>
+</head>
+<body>
+<span class="code-label">Error code 502</span>
+Cloudflare Ray ID: <strong>9d43b2d6dab269e2</strong>
+<a href="https://www.cloudflare.com/5xx-error-landing?utm_source=errorcode_502&utm_campaign=api.letta.com">cloudflare.com</a>
+</body>
+</html>`;
+
+      const result = checkCloudflareEdgeError(cloudflare502Html);
+
+      expect(result).toBeDefined();
+      expect(result).toContain("Cloudflare 502");
+      expect(result).toContain("Bad gateway");
+      expect(result).toContain("api.letta.com");
+      expect(result).toContain("Ray ID: 9d43b2d6dab269e2");
+    });
   });
 });
