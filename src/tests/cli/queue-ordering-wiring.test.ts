@@ -11,7 +11,7 @@ describe("queue ordering wiring", () => {
   test("dequeue effect keeps all sensitive safety gates", () => {
     const source = readAppSource();
     const start = source.indexOf(
-      "// Process queued messages when streaming ends",
+      "// Process queued messages when streaming ends.",
     );
     const end = source.indexOf(
       "// Helper to send all approval results when done",
@@ -30,7 +30,9 @@ describe("queue ordering wiring", () => {
     expect(segment).toContain("!userCancelledRef.current");
     expect(segment).toContain("!abortControllerRef.current");
     expect(segment).toContain("queuedOverlayAction=");
-    expect(segment).toContain("setMessageQueue([]);");
+    // Queue is now drained via QueueRuntime.consumeItems; setQueueDisplay is
+    // updated automatically via the onDequeued callback — no direct setState here.
+    expect(segment).toContain("tuiQueueRef.current?.consumeItems(queueLen)");
     expect(segment).toContain("onSubmitRef.current(concatenatedMessage);");
     expect(segment).toContain("queuedOverlayAction,");
   });

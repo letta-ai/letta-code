@@ -161,17 +161,26 @@ function parseOsc8Line(line: string, keyPrefix: string): ReactNode[] {
   return parts;
 }
 
+function formatModeLabel(modeName: string, modeGlyph?: string | null): string {
+  if (modeGlyph === "⚡︎") {
+    return `${modeGlyph}${modeName}`;
+  }
+  return `${modeGlyph ?? "⏵⏵"} ${modeName}`;
+}
+
 function StatusLineContent({
   text,
   padding,
   modeName,
   modeColor,
+  modeGlyph,
   showExitHint,
 }: {
   text: string;
   padding: number;
   modeName: string | null;
   modeColor: string | null;
+  modeGlyph?: string | null;
   showExitHint: boolean;
 }) {
   const lines = text.split("\n");
@@ -192,7 +201,7 @@ function StatusLineContent({
       {modeName && modeColor && (
         <>
           {"\n"}
-          <Text color={modeColor}>⏵⏵ {modeName}</Text>
+          <Text color={modeColor}>{formatModeLabel(modeName, modeGlyph)}</Text>
           <Text color={modeColor} dimColor>
             {" "}
             (shift+tab to {showExitHint ? "exit" : "cycle"})
@@ -213,6 +222,7 @@ const InputFooter = memo(function InputFooter({
   isBashMode,
   modeName,
   modeColor,
+  modeGlyph,
   showExitHint,
   agentName,
   currentModel,
@@ -230,6 +240,7 @@ const InputFooter = memo(function InputFooter({
   isBashMode: boolean;
   modeName: string | null;
   modeColor: string | null;
+  modeGlyph?: string | null;
   showExitHint: boolean;
   agentName: string | null | undefined;
   currentModel: string | null | undefined;
@@ -304,11 +315,14 @@ const InputFooter = memo(function InputFooter({
             padding={statusLinePadding ?? 0}
             modeName={modeName}
             modeColor={modeColor}
+            modeGlyph={modeGlyph}
             showExitHint={showExitHint}
           />
         ) : modeName && modeColor ? (
           <Text>
-            <Text color={modeColor}>⏵⏵ {modeName}</Text>
+            <Text color={modeColor}>
+              {formatModeLabel(modeName, modeGlyph)}
+            </Text>
             <Text color={modeColor} dimColor>
               {" "}
               (shift+tab to {showExitHint ? "exit" : "cycle"})
@@ -1302,7 +1316,11 @@ export function Input({
 
   // Get display name and color for permission mode (ralph modes take precedence)
   // Memoized to prevent unnecessary footer re-renders
-  const modeInfo = useMemo(() => {
+  const modeInfo = useMemo<{
+    name: string;
+    color: string;
+    glyph?: string;
+  } | null>(() => {
     // Check ralph pending first (waiting for task input)
     if (ralphPending) {
       if (ralphPendingYolo) {
@@ -1342,11 +1360,16 @@ export function Input({
       case "acceptEdits":
         return { name: "accept edits", color: colors.status.processing };
       case "plan":
-        return { name: "plan (read-only) mode", color: colors.status.success };
+        return {
+          name: "plan (read-only) mode",
+          color: colors.status.success,
+          glyph: "⏸",
+        };
       case "bypassPermissions":
         return {
           name: "yolo (allow all) mode",
           color: colors.status.error,
+          glyph: "⚡︎",
         };
       default:
         return null;
@@ -1354,11 +1377,8 @@ export function Input({
   }, [ralphPending, ralphPendingYolo, ralphActive, currentMode]);
 
   // Create a horizontal line using box-drawing characters.
-  // IMPORTANT: never draw into the terminal's last column; some terminals will
-  // soft-wrap at the edge which breaks Ink's clear/redraw accounting during
-  // resize and can leave stacks of stale divider rows behind.
   const horizontalLine = useMemo(
-    () => "─".repeat(Math.max(0, columns - 1)),
+    () => "─".repeat(Math.max(0, columns)),
     [columns],
   );
 
@@ -1447,6 +1467,7 @@ export function Input({
                 isBashMode={isBashMode}
                 modeName={modeInfo?.name ?? null}
                 modeColor={modeInfo?.color ?? null}
+                modeGlyph={modeInfo?.glyph ?? null}
                 showExitHint={ralphActive || ralphPending}
                 agentName={agentName}
                 currentModel={currentModel}
@@ -1496,6 +1517,7 @@ export function Input({
     escapePressed,
     modeInfo?.name,
     modeInfo?.color,
+    modeInfo?.glyph,
     ralphActive,
     ralphPending,
     currentModel,
