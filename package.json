@@ -70,7 +70,7 @@
     "test:update-chain:manual": "bun run src/tests/update-chain-smoke.ts --mode manual",
     "test:update-chain:startup": "bun run src/tests/update-chain-smoke.ts --mode startup",
     "prepublishOnly": "bun run build",
-    "postinstall": "node scripts/postinstall-patches.js"
+    "postinstall": "node scripts/postinstall-patches.js || echo letta: vendor patches skipped"
   },
   "lint-staged": {
     "*.{ts,tsx,js,jsx,json}": [
