@@ -59,7 +59,6 @@ describe("approval recovery wiring", () => {
     const segment = source.slice(start, end);
 
     expect(segment).toContain("getClient()");
-    expect(segment).toContain("client.agents.messages.cancel");
     expect(segment).toContain("client.conversations.cancel");
   });
 });

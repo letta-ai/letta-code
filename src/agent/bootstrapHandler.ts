@@ -28,10 +28,6 @@ export interface BootstrapMessagesPage {
   getPaginatedItems(): unknown[];
 }
 
-export interface BootstrapAgentsPage {
-  items: unknown[];
-}
-
 export interface BootstrapHandlerClient {
   conversations: {
     messages: {
@@ -44,20 +40,6 @@ export interface BootstrapHandlerClient {
           after?: string;
         },
       ): Promise<BootstrapMessagesPage>;
-    };
-  };
-  agents: {
-    messages: {
-      list(
-        agentId: string,
-        opts: {
-          limit: number;
-          order: "asc" | "desc";
-          before?: string;
-          after?: string;
-          conversation_id?: "default";
-        },
-      ): Promise<BootstrapAgentsPage>;
     };
   };
 }
@@ -115,22 +97,11 @@ export async function handleBootstrapSessionState(
     );
 
     const listStart = Date.now();
-    let items: unknown[];
-
-    if (route.kind === "conversations") {
-      const page = await client.conversations.messages.list(
-        route.conversationId,
-        { limit, order },
-      );
-      items = page.getPaginatedItems();
-    } else {
-      const page = await client.agents.messages.list(route.agentId, {
-        limit,
-        order,
-        conversation_id: "default",
-      });
-      items = page.items;
-    }
+    const page = await client.conversations.messages.list(
+      route.conversationId,
+      { limit, order },
+    );
+    const items = page.getPaginatedItems();
     const listEnd = Date.now();
 
     const hasMore = items.length >= limit;

@@ -2,12 +2,12 @@
  * Handler-level tests for bootstrap_session_state using mock Letta clients.
  *
  * Verifies:
- * 1. Correct routing (conversations vs agents path based on session conversationId)
+ * 1. Correct routing (all paths use conversations.messages.list)
  * 2. Response payload shape (agent_id, conversation_id, model, tools, messages, etc.)
  * 3. Pagination fields (next_before, has_more)
  * 4. Timing fields presence
  * 5. Error path — client throws → error envelope returned
- * 6. Default conversation uses agents.messages.list with conversation_id: "default"
+ * 6. Default conversation passes agent ID to conversations.messages.list
  * 7. Explicit conversation uses conversations.messages.list
  *
  * No network. No CLI subprocess. No process.stdout.
@@ -23,19 +23,12 @@ import { handleBootstrapSessionState } from "../../agent/bootstrapHandler";
 // Mock factory
 // ─────────────────────────────────────────────────────────────────────────────
 
-function makeClient(
-  convMessages: unknown[] = [],
-  agentMessages: unknown[] = [],
-): {
+function makeClient(convMessages: unknown[] = []): {
   client: BootstrapHandlerClient;
   convListSpy: ReturnType<typeof mock>;
-  agentListSpy: ReturnType<typeof mock>;
 } {
   const convListSpy = mock(async () => ({
     getPaginatedItems: () => convMessages,
-  }));
-  const agentListSpy = mock(async () => ({
-    items: agentMessages,
   }));
 
   const client: BootstrapHandlerClient = {
@@ -44,14 +37,9 @@ function makeClient(
         list: convListSpy as unknown as BootstrapHandlerClient["conversations"]["messages"]["list"],
       },
     },
-    agents: {
-      messages: {
-        list: agentListSpy as unknown as BootstrapHandlerClient["agents"]["messages"]["list"],
-      },
-    },
   };
 
-  return { client, convListSpy, agentListSpy };
+  return { client, convListSpy };
 }
 
 const BASE_CTX: BootstrapHandlerSessionContext = {
@@ -68,11 +56,10 @@ const BASE_CTX: BootstrapHandlerSessionContext = {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("bootstrap_session_state routing", () => {
-  test("default conversation uses agents.messages.list", async () => {
-    const { client, agentListSpy, convListSpy } = makeClient(
-      [],
-      [{ id: "msg-1", type: "user_message" }],
-    );
+  test("default conversation passes agent ID to conversations.messages.list", async () => {
+    const { client, convListSpy } = makeClient([
+      { id: "msg-1", type: "user_message" },
+    ]);
 
     await handleBootstrapSessionState({
       bootstrapReq: { subtype: "bootstrap_session_state" },
@@ -81,19 +68,15 @@ describe("bootstrap_session_state routing", () => {
       client,
     });
 
-    expect(agentListSpy).toHaveBeenCalledTimes(1);
-    expect(convListSpy).toHaveBeenCalledTimes(0);
+    expect(convListSpy).toHaveBeenCalledTimes(1);
 
-    // Verify conversation_id: "default" param is passed
-    const callArgs = (agentListSpy.mock.calls[0] as unknown[])[1] as Record<
-      string,
-      unknown
-    >;
-    expect(callArgs.conversation_id).toBe("default");
+    // Verify agent ID is passed as the conversation_id
+    const callArgs = (convListSpy.mock.calls[0] as unknown[])[0];
+    expect(callArgs).toBe("agent-test-123");
   });
 
   test("named conversation uses conversations.messages.list", async () => {
-    const { client, convListSpy, agentListSpy } = makeClient([
+    const { client, convListSpy } = makeClient([
       { id: "msg-1", type: "user_message" },
     ]);
 
@@ -105,7 +88,6 @@ describe("bootstrap_session_state routing", () => {
     });
 
     expect(convListSpy).toHaveBeenCalledTimes(1);
-    expect(agentListSpy).toHaveBeenCalledTimes(0);
 
     const callArgs = (convListSpy.mock.calls[0] as unknown[])[0];
     expect(callArgs).toBe("conv-abc-123");
@@ -123,7 +105,7 @@ describe("bootstrap_session_state response shape", () => {
       { id: "msg-2", type: "user_message" },
       { id: "msg-1", type: "user_message" },
     ];
-    const { client } = makeClient([], messages);
+    const { client } = makeClient(messages);
 
     const resp = await handleBootstrapSessionState({
       bootstrapReq: { subtype: "bootstrap_session_state" },
@@ -210,7 +192,7 @@ describe("bootstrap_session_state pagination", () => {
       id: `msg-${i}`,
       type: "user_message",
     }));
-    const { client } = makeClient([], messages);
+    const { client } = makeClient(messages);
 
     const resp = await handleBootstrapSessionState({
       bootstrapReq: { subtype: "bootstrap_session_state", limit: 50 },
@@ -228,7 +210,7 @@ describe("bootstrap_session_state pagination", () => {
     const messages = Array.from({ length: limit }, (_, i) => ({
       id: `msg-${i}`,
     }));
-    const { client } = makeClient([], messages);
+    const { client } = makeClient(messages);
 
     const resp = await handleBootstrapSessionState({
       bootstrapReq: { subtype: "bootstrap_session_state", limit },
@@ -247,7 +229,7 @@ describe("bootstrap_session_state pagination", () => {
       { id: "msg-middle" },
       { id: "msg-oldest" },
     ];
-    const { client } = makeClient([], messages);
+    const { client } = makeClient(messages);
 
     const resp = await handleBootstrapSessionState({
       bootstrapReq: { subtype: "bootstrap_session_state" },
@@ -262,7 +244,7 @@ describe("bootstrap_session_state pagination", () => {
   });
 
   test("next_before is null when no messages", async () => {
-    const { client } = makeClient([], []);
+    const { client } = makeClient([]);
     const resp = await handleBootstrapSessionState({
       bootstrapReq: { subtype: "bootstrap_session_state" },
       sessionContext: BASE_CTX,
@@ -283,13 +265,6 @@ describe("bootstrap_session_state error handling", () => {
   test("client error returns error envelope", async () => {
     const throwingClient: BootstrapHandlerClient = {
       conversations: {
-        messages: {
-          list: async () => {
-            throw new Error("Network timeout");
-          },
-        },
-      },
-      agents: {
         messages: {
           list: async () => {
             throw new Error("Network timeout");

@@ -104,10 +104,10 @@ describe("getResumeData", () => {
       in_context_message_ids: ["msg-last"],
     }));
     const conversationsList = mock(async () => ({
-      getPaginatedItems: () => [],
-    }));
-    const agentsList = mock(async () => ({
-      items: [makeUserMessage("msg-a"), makeUserMessage("msg-b")],
+      getPaginatedItems: () => [
+        makeUserMessage("msg-a"),
+        makeUserMessage("msg-b"),
+      ],
     }));
     const messagesRetrieve = mock(async () => [makeUserMessage()]);
 
@@ -116,14 +116,13 @@ describe("getResumeData", () => {
         retrieve: conversationsRetrieve,
         messages: { list: conversationsList },
       },
-      agents: { messages: { list: agentsList } },
       messages: { retrieve: messagesRetrieve },
     } as unknown as Letta;
 
     const resume = await getResumeData(client, makeAgent(), "default");
 
     expect(messagesRetrieve).toHaveBeenCalledTimes(1);
-    expect(agentsList).toHaveBeenCalledTimes(1);
+    expect(conversationsList).toHaveBeenCalledTimes(1);
     expect(resume.pendingApprovals).toHaveLength(0);
     expect(resume.messageHistory.length).toBeGreaterThan(0);
   });
