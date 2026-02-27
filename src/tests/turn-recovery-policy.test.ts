@@ -221,6 +221,16 @@ describe("provider detail retry helpers", () => {
     );
   });
 
+  test("Cloudflare 521 HTML is retryable", () => {
+    const detail =
+      "521 <!DOCTYPE html><html><head><title>api.letta.com | 521: Web server is down</title></head><body>Cloudflare Ray ID: 9d431b5f6f656c08</body></html>";
+
+    expect(shouldRetryRunMetadataError("llm_error", detail)).toBe(true);
+    expect(
+      shouldRetryPreStreamTransientError({ status: undefined, detail }),
+    ).toBe(true);
+  });
+
   test("pre-stream transient classifier handles status and detail", () => {
     expect(
       shouldRetryPreStreamTransientError({
