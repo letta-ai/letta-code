@@ -3218,6 +3218,13 @@ export default function App({
     };
 
     const syncConversationModel = async () => {
+      // "default" is a virtual sentinel for the agent's primary message history,
+      // not a real conversation object — skip the API call.
+      if (conversationId === "default") {
+        applyAgentModelLocally();
+        return;
+      }
+
       try {
         const client = await getClient();
         const conversation =
