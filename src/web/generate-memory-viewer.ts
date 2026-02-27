@@ -445,10 +445,13 @@ export async function generateAndOpenMemoryViewer(
   writeFileSync(filePath, html);
   chmodSync(filePath, 0o600);
 
-  // 4. Open in browser (skip inside tmux — `open` launches a broken new
-  //    browser instance instead of reusing the running one)
-  const isTmux = Boolean(process.env.TMUX);
-  if (!isTmux) {
+  // 4. Open in browser (skip inside tmux or SSH — `open` either launches a
+  //    broken browser instance or fails entirely on remote machines)
+  const skipOpen =
+    Boolean(process.env.TMUX) ||
+    Boolean(process.env.SSH_CONNECTION) ||
+    Boolean(process.env.SSH_TTY);
+  if (!skipOpen) {
     try {
       const { default: openUrl } = await import("open");
       await openUrl(filePath, { wait: false });
@@ -457,5 +460,5 @@ export async function generateAndOpenMemoryViewer(
     }
   }
 
-  return { filePath, opened: !isTmux };
+  return { filePath, opened: !skipOpen };
 }
