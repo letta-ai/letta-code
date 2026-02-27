@@ -252,6 +252,15 @@ export const commands: Record<string, Command> = {
       return "Fetching context usage...";
     },
   },
+  "/health": {
+    desc: "Check memory health",
+    order: 33.8,
+    noArgs: true,
+    handler: () => {
+      // Handled specially in App.tsx to display memory health
+      return "Checking memory health...";
+    },
+  },
   "/feedback": {
     desc: "Send feedback to the Letta team",
     order: 34,
