@@ -7,6 +7,7 @@ import type {
   GoogleAIModelSettings,
   OpenAIModelSettings,
 } from "@letta-ai/letta-client/resources/agents/agents";
+import type { Conversation } from "@letta-ai/letta-client/resources/conversations/conversations";
 import { OPENAI_CODEX_PROVIDER_NAME } from "../providers/openai-codex-provider";
 import { getModelContextWindow } from "./available-models";
 import { getClient } from "./client";
@@ -207,6 +208,34 @@ export async function updateAgentLLMConfig(
 
   const finalAgent = await client.agents.retrieve(agentId);
   return finalAgent;
+}
+
+/**
+ * Updates a conversation's model and model settings.
+ *
+ * Uses conversation-scoped model overrides so different conversations can
+ * run with different models without mutating the agent's default model.
+ *
+ * @param conversationId - The conversation ID (or "default")
+ * @param modelHandle - The model handle (e.g., "anthropic/claude-sonnet-4-5-20250929")
+ * @param updateArgs - Additional config args (reasoning_effort, enable_reasoner, etc.)
+ * @returns The updated conversation from the server
+ */
+export async function updateConversationLLMConfig(
+  conversationId: string,
+  modelHandle: string,
+  updateArgs?: Record<string, unknown>,
+): Promise<Conversation> {
+  const client = await getClient();
+
+  const modelSettings = buildModelSettings(modelHandle, updateArgs);
+  const hasModelSettings = Object.keys(modelSettings).length > 0;
+  const payload = {
+    model: modelHandle,
+    ...(hasModelSettings && { model_settings: modelSettings }),
+  } as unknown as Parameters<typeof client.conversations.update>[1];
+
+  return client.conversations.update(conversationId, payload);
 }
 
 export interface SystemPromptUpdateResult {
