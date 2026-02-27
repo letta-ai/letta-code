@@ -10912,19 +10912,27 @@ ${SYSTEM_REMINDER_CLOSE}
             phase: "running",
           });
 
-          const { updateConversationLLMConfig } = await import(
-            "../agent/modify"
-          );
-          const updatedConversation = await updateConversationLLMConfig(
-            conversationIdRef.current,
-            modelHandle,
-            model.updateArgs,
-          );
-          const conversationModelSettings = (
-            updatedConversation as {
-              model_settings?: AgentState["model_settings"] | null;
-            }
-          ).model_settings;
+          // "default" is a virtual sentinel, not a real conversation object —
+          // skip the API call and fall through with undefined model_settings.
+          let conversationModelSettings:
+            | AgentState["model_settings"]
+            | null
+            | undefined;
+          if (conversationIdRef.current !== "default") {
+            const { updateConversationLLMConfig } = await import(
+              "../agent/modify"
+            );
+            const updatedConversation = await updateConversationLLMConfig(
+              conversationIdRef.current,
+              modelHandle,
+              model.updateArgs,
+            );
+            conversationModelSettings = (
+              updatedConversation as {
+                model_settings?: AgentState["model_settings"] | null;
+              }
+            ).model_settings;
+          }
 
           // The API may not echo reasoning_effort back, so populate it from
           // model.updateArgs as a reliable fallback.
@@ -11610,21 +11618,29 @@ ${SYSTEM_REMINDER_CLOSE}
         const cmd = commandRunner.start("/reasoning", "Setting reasoning...");
 
         try {
-          const { updateConversationLLMConfig } = await import(
-            "../agent/modify"
-          );
-          const updatedConversation = await updateConversationLLMConfig(
-            conversationIdRef.current,
-            desired.modelHandle,
-            {
-              reasoning_effort: desired.effort,
-            },
-          );
-          const conversationModelSettings = (
-            updatedConversation as {
-              model_settings?: AgentState["model_settings"] | null;
-            }
-          ).model_settings;
+          // "default" is a virtual sentinel, not a real conversation object —
+          // skip the API call and fall through with undefined model_settings.
+          let conversationModelSettings:
+            | AgentState["model_settings"]
+            | null
+            | undefined;
+          if (conversationIdRef.current !== "default") {
+            const { updateConversationLLMConfig } = await import(
+              "../agent/modify"
+            );
+            const updatedConversation = await updateConversationLLMConfig(
+              conversationIdRef.current,
+              desired.modelHandle,
+              {
+                reasoning_effort: desired.effort,
+              },
+            );
+            conversationModelSettings = (
+              updatedConversation as {
+                model_settings?: AgentState["model_settings"] | null;
+              }
+            ).model_settings;
+          }
           const resolvedReasoningEffort =
             deriveReasoningEffort(
               conversationModelSettings,
