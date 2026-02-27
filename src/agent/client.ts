@@ -15,6 +15,12 @@ type SDKDiagnostic = {
 
 let lastSDKDiagnostic: SDKDiagnostic | null = null;
 
+// In-process cache of the last successfully obtained API key (not from a
+// static env var). Populated on first successful keychain read and updated
+// whenever the OAuth refresh obtains a new token. Used as a fallback so
+// transient keychain failures don't crash the process mid-session.
+let _cachedApiKey: string | undefined;
+
 function safeDiagnosticString(value: unknown): string {
   if (value === null || value === undefined) {
     return "";
@@ -108,6 +114,18 @@ export async function getClient() {
 
   let apiKey = process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
 
+  if (!process.env.LETTA_API_KEY) {
+    if (apiKey) {
+      // Keep the in-process cache current on every successful keychain read.
+      _cachedApiKey = apiKey;
+    } else if (_cachedApiKey) {
+      // Keychain returned null (e.g. delete-then-set race during token
+      // rotation, or a transient keychain failure). Fall back to the last
+      // key we successfully obtained so the process doesn't crash mid-session.
+      apiKey = _cachedApiKey;
+    }
+  }
+
   // Check if token is expired and refresh if needed
   if (
     !process.env.LETTA_API_KEY &&
@@ -117,8 +135,10 @@ export async function getClient() {
     const now = Date.now();
     const expiresAt = settings.tokenExpiresAt;
 
-    // Refresh if token expires within 5 minutes
-    if (expiresAt - now < 5 * 60 * 1000) {
+    // Refresh if token expires within 5 minutes, or if the access token is
+    // missing entirely (e.g. transient keychain read failure during the
+    // delete-then-set window of a concurrent refresh).
+    if (!apiKey || expiresAt - now < 5 * 60 * 1000) {
       try {
         // Get or generate device ID (should always exist, but fallback just in case)
         const deviceId = settingsManager.getOrCreateDeviceId();
@@ -138,6 +158,7 @@ export async function getClient() {
         });
 
         apiKey = tokens.access_token;
+        _cachedApiKey = tokens.access_token;
       } catch (error) {
         console.error("Failed to refresh access token:", error);
         console.error("Please run 'letta login' to re-authenticate");
