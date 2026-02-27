@@ -4,6 +4,7 @@
 import { resolve } from "node:path";
 import { minimatch } from "minimatch";
 import { canonicalToolName } from "./canonical";
+import { normalizeBashRulePayload } from "./shell-command-normalization";
 
 export interface MatcherOptions {
   canonicalizeToolNames?: boolean;
@@ -259,6 +260,8 @@ export function matchesBashPattern(
   const rawCommand = queryMatch[2];
   // Extract actual command by stripping cd prefixes from compound commands
   const command = extractActualCommand(rawCommand);
+  const normalizedRawCommand = normalizeBashRulePayload(rawCommand);
+  const normalizedCommand = normalizeBashRulePayload(command);
 
   // Extract the command pattern from permission rule
   // Format: "Tool(command pattern)" or "Tool()"
@@ -276,18 +279,24 @@ export function matchesBashPattern(
   if (toolForMatch(patternMatch[1], options) !== "Bash") {
     return false;
   }
-  const commandPattern = patternMatch[2];
+  const commandPattern = normalizeBashRulePayload(patternMatch[2]);
 
   // Check for wildcard suffix
   if (commandPattern.endsWith(":*")) {
     // Prefix match: command must start with pattern (minus :*)
     const prefix = commandPattern.slice(0, -2);
     // Try matching against both raw and extracted command
-    return command.startsWith(prefix) || rawCommand.startsWith(prefix);
+    return (
+      normalizedCommand.startsWith(prefix) ||
+      normalizedRawCommand.startsWith(prefix)
+    );
   }
 
   // Exact match (try both raw and extracted)
-  return command === commandPattern || rawCommand === commandPattern;
+  return (
+    normalizedCommand === commandPattern ||
+    normalizedRawCommand === commandPattern
+  );
 }
 
 /**

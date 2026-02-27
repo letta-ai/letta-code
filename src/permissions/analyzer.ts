@@ -4,6 +4,8 @@
 import { homedir } from "node:os";
 import { dirname, relative, resolve, win32 } from "node:path";
 import { canonicalToolName, isFileToolName } from "./canonical";
+import { isReadOnlyShellCommand } from "./readOnlyShell";
+import { unwrapShellLauncherCommand } from "./shell-command-normalization";
 
 export interface ApprovalContext {
   // What rule should be saved if user clicks "approve always"
@@ -282,7 +284,45 @@ const SAFE_READONLY_COMMANDS = [
   "file",
   "stat",
   "curl",
+  "rg",
+  "ag",
+  "ack",
+  "fgrep",
+  "egrep",
+  "jq",
+  "yq",
+  "tree",
+  "less",
+  "more",
 ];
+
+function getReadOnlyRulePrefix(parts: string[]): string | null {
+  const baseCommand = parts[0] || "";
+  if (!baseCommand) {
+    return null;
+  }
+
+  if (baseCommand === "sed") {
+    const hasInPlace = parts.some(
+      (part) => part === "-i" || part.startsWith("-i") || part === "--in-place",
+    );
+    if (hasInPlace) {
+      return null;
+    }
+
+    if (parts[1] === "-n") {
+      return "sed -n";
+    }
+
+    return "sed";
+  }
+
+  if (SAFE_READONLY_COMMANDS.includes(baseCommand)) {
+    return baseCommand;
+  }
+
+  return null;
+}
 
 // Commands that should never be auto-approved
 const DANGEROUS_COMMANDS = [
@@ -451,12 +491,16 @@ function analyzeBashApproval(
   command: string,
   workingDir: string,
 ): ApprovalContext {
-  const parts = command.trim().split(/\s+/);
+  const normalizedCommand = unwrapShellLauncherCommand(command);
+  const parts = normalizedCommand.trim().split(/\s+/);
   const baseCommand = parts[0] || "";
   const firstArg = parts[1] || "";
 
   // Check if command contains ANY dangerous commands (including in pipelines)
-  if (containsDangerousCommand(command)) {
+  if (
+    containsDangerousCommand(command) ||
+    containsDangerousCommand(normalizedCommand)
+  ) {
     return {
       recommendedRule: "",
       ruleDescription: "",
@@ -469,9 +513,9 @@ function analyzeBashApproval(
 
   // Check for dangerous flags
   if (
-    command.includes("--force") ||
-    command.includes("-f") ||
-    command.includes("--hard")
+    normalizedCommand.includes("--force") ||
+    normalizedCommand.includes("-f") ||
+    normalizedCommand.includes("--hard")
   ) {
     return {
       recommendedRule: "",
@@ -483,11 +527,11 @@ function analyzeBashApproval(
     };
   }
 
-  const skillScript = detectSkillScript(command, workingDir);
+  const skillScript = detectSkillScript(normalizedCommand, workingDir);
   if (skillScript) {
     const { source, skillName, skillRootPath } = skillScript;
     return {
-      recommendedRule: buildSkillScriptRule(command, skillRootPath),
+      recommendedRule: buildSkillScriptRule(normalizedCommand, skillRootPath),
       ruleDescription: `scripts in ${source} skill '${skillName}'`,
       approveAlwaysText: getSkillApprovalText(source, skillName),
       defaultScope: "project",
@@ -571,11 +615,18 @@ function analyzeBashApproval(
   }
 
   // Safe read-only commands
-  if (baseCommand && SAFE_READONLY_COMMANDS.includes(baseCommand)) {
+  const readOnlyRulePrefix = getReadOnlyRulePrefix(parts);
+  if (
+    readOnlyRulePrefix &&
+    (isReadOnlyShellCommand(normalizedCommand, {
+      allowExternalPaths: true,
+    }) ||
+      readOnlyRulePrefix === "curl")
+  ) {
     return {
-      recommendedRule: `Bash(${baseCommand}:*)`,
-      ruleDescription: `'${baseCommand}' commands`,
-      approveAlwaysText: `Yes, and don't ask again for '${baseCommand}' commands in this project`,
+      recommendedRule: `Bash(${readOnlyRulePrefix}:*)`,
+      ruleDescription: `'${readOnlyRulePrefix}' commands`,
+      approveAlwaysText: `Yes, and don't ask again for '${readOnlyRulePrefix}' commands in this project`,
       defaultScope: "project",
       allowPersistence: true,
       safetyLevel: "safe",
@@ -586,13 +637,15 @@ function analyzeBashApproval(
   // For pipes (|), the FIRST command is the main one
   // For && and ;, we skip cd prefixes and use the actual command
   if (
-    command.includes("&&") ||
-    command.includes("|") ||
-    command.includes(";")
+    normalizedCommand.includes("&&") ||
+    normalizedCommand.includes("|") ||
+    normalizedCommand.includes(";")
   ) {
     // First, strip everything after the first pipe - the piped-to command is secondary
     // e.g., "curl --version | head -1" -> analyze "curl --version"
-    const beforePipe = (command.split("|")[0] ?? command).trim();
+    const beforePipe = (
+      normalizedCommand.split("|")[0] ?? normalizedCommand
+    ).trim();
 
     // Now split on && and ; to handle cd prefixes
     const segments = beforePipe.split(/\s*(?:&&|;)\s*/);
@@ -661,11 +714,18 @@ function analyzeBashApproval(
       }
 
       // Check if this segment is a safe read-only command
-      if (segmentBase && SAFE_READONLY_COMMANDS.includes(segmentBase)) {
+      const readOnlySegmentPrefix = getReadOnlyRulePrefix(segmentParts);
+      if (
+        readOnlySegmentPrefix &&
+        (isReadOnlyShellCommand(segment.trim(), {
+          allowExternalPaths: true,
+        }) ||
+          readOnlySegmentPrefix === "curl")
+      ) {
         return {
-          recommendedRule: `Bash(${segmentBase}:*)`,
-          ruleDescription: `'${segmentBase}' commands`,
-          approveAlwaysText: `Yes, and don't ask again for '${segmentBase}' commands in this project`,
+          recommendedRule: `Bash(${readOnlySegmentPrefix}:*)`,
+          ruleDescription: `'${readOnlySegmentPrefix}' commands`,
+          approveAlwaysText: `Yes, and don't ask again for '${readOnlySegmentPrefix}' commands in this project`,
           defaultScope: "project",
           allowPersistence: true,
           safetyLevel: "safe",
@@ -676,10 +736,12 @@ function analyzeBashApproval(
 
   // Default: allow this specific command only
   const displayCommand =
-    command.length > 40 ? `${command.slice(0, 40)}...` : command;
+    normalizedCommand.length > 40
+      ? `${normalizedCommand.slice(0, 40)}...`
+      : normalizedCommand;
 
   return {
-    recommendedRule: `Bash(${command})`,
+    recommendedRule: `Bash(${normalizedCommand})`,
     ruleDescription: `'${displayCommand}'`,
     approveAlwaysText: `Yes, and don't ask again for '${displayCommand}' in this project`,
     defaultScope: "project",
