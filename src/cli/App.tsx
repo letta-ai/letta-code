@@ -1050,6 +1050,21 @@ export default function App({
   const setUiPermissionMode = useCallback((mode: PermissionMode) => {
     uiPermissionModeRef.current = mode;
     _setUiPermissionMode(mode);
+
+    // Keep the permissionMode singleton in sync *immediately*.
+    //
+    // We also have a useEffect sync (below) as a safety net, but relying on it
+    // introduces a render/effect window where the UI can show YOLO while the
+    // singleton still reports an older mode. That window is enough to break
+    // plan-mode restoration (plan remembers the singleton's mode-at-entry).
+    if (permissionMode.getMode() !== mode) {
+      // If entering plan mode via UI state, ensure a plan file path is set.
+      if (mode === "plan" && !permissionMode.getPlanFilePath()) {
+        const planPath = generatePlanFilePath();
+        permissionMode.setPlanFilePath(planPath);
+      }
+      permissionMode.setMode(mode);
+    }
   }, []);
 
   const statusLineTriggerVersionRef = useRef(0);
