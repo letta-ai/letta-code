@@ -7689,11 +7689,16 @@ export default function App({
         }
 
         // Special handling for /compact command - summarize conversation history
-        // Supports: /compact, /compact all, /compact sliding_window
+        // Supports: /compact, /compact all, /compact sliding_window, /compact self_compact_all, /compact self_compact_sliding_window
         if (msg.trim().startsWith("/compact")) {
           const parts = msg.trim().split(/\s+/);
           const rawModeArg = parts[1];
-          const validModes = ["all", "sliding_window"];
+          const validModes = [
+            "all",
+            "sliding_window",
+            "self_compact_all",
+            "self_compact_sliding_window",
+          ];
 
           if (rawModeArg === "help") {
             const cmd = commandRunner.start(
@@ -7709,13 +7714,20 @@ export default function App({
               "  /compact                   — compact with default mode",
               "  /compact all               — compact all messages",
               "  /compact sliding_window    — compact with sliding window",
+              "  /compact self_compact_all  — compact with self compact all",
+              "  /compact self_compact_sliding_window  — compact with self compact sliding window",
               "  /compact help              — show this help",
             ].join("\n");
             cmd.finish(output, true);
             return { submitted: true };
           }
 
-          const modeArg = rawModeArg as "all" | "sliding_window" | undefined;
+          const modeArg = rawModeArg as
+            | "all"
+            | "sliding_window"
+            | "self_compact_all"
+            | "self_compact_sliding_window"
+            | undefined;
 
           // Validate mode if provided
           if (modeArg && !validModes.includes(modeArg)) {
@@ -7753,23 +7765,15 @@ export default function App({
 
             const client = await getClient();
 
-            // Compute model handle from llmConfig
-            const modelHandle =
-              llmConfig?.model_endpoint_type && llmConfig?.model
-                ? `${llmConfig.model_endpoint_type}/${llmConfig.model}`
-                : llmConfig?.model || null;
-
             // Build compaction settings if mode was specified
-            // Pass mode-specific prompt to override any agent defaults
-            const compactParams =
-              modeArg && modelHandle
-                ? {
-                    compaction_settings: {
-                      mode: modeArg,
-                      model: modelHandle,
-                    },
-                  }
-                : undefined;
+            // On server side, if mode changed, summarize function will use corresponding default prompt for new mode
+            const compactParams = modeArg
+              ? {
+                  compaction_settings: {
+                    mode: modeArg,
+                  },
+                }
+              : undefined;
 
             // Use agent-level compact API for "default" conversation,
             // otherwise use conversation-level API

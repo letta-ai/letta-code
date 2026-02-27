@@ -448,7 +448,7 @@ export const commands: Record<string, Command> = {
   },
   "/compact": {
     desc: "Summarize conversation history (compaction) with optional mode",
-    args: "[all|sliding_window]",
+    args: "[all|sliding_window|self_compact_all|self_compact_sliding_window]",
     handler: () => {
       // Handled specially in App.tsx to access client and agent ID
       return "Compacting conversation...";
