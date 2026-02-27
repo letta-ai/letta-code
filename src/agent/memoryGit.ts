@@ -92,7 +92,15 @@ async function runGit(
     : [];
   const allArgs = [...authArgs, ...args];
 
-  debugLog("memfs-git", `git ${args.join(" ")} (in ${cwd})`);
+  // Redact credential helper values to avoid leaking tokens in debug logs.
+  const loggableArgs =
+    args[0] === "config" &&
+    typeof args[1] === "string" &&
+    args[1].includes("credential") &&
+    args[1].includes(".helper")
+      ? [args[0], args[1], "<redacted>"]
+      : args;
+  debugLog("memfs-git", `git ${loggableArgs.join(" ")} (in ${cwd})`);
 
   const result = await execFile("git", allArgs, {
     cwd,
