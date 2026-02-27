@@ -296,6 +296,9 @@ function getTierUsageLimitMessage(reasons: string[]): string | undefined {
   return undefined;
 }
 
+const CHATGPT_USAGE_LIMIT_HINT =
+  "Switch models with /model, or connect your own provider keys with /connect.";
+
 /**
  * Check if a string contains a ChatGPT usage_limit_reached error with optional
  * reset timing, and return a friendly message.
@@ -309,7 +312,7 @@ export function checkChatGptUsageLimitError(text: string): string | undefined {
   // Try to extract the embedded JSON object
   const jsonStart = text.indexOf("{");
   if (jsonStart < 0) {
-    return `ChatGPT usage limit reached. Switch models with /model, or connect your own provider keys with /connect.`;
+    return `ChatGPT usage limit reached. ${CHATGPT_USAGE_LIMIT_HINT}`;
   }
 
   try {
@@ -335,10 +338,10 @@ export function checkChatGptUsageLimitError(text: string): string | undefined {
       }
     }
 
-    return `ChatGPT usage limit reached${planInfo}. ${resetInfo}.\nSwitch models with /model, or connect your own provider keys with /connect.`;
+    return `ChatGPT usage limit reached${planInfo}. ${resetInfo}.\n${CHATGPT_USAGE_LIMIT_HINT}`;
   } catch {
     // JSON parse failed — return generic message
-    return `ChatGPT usage limit reached. Switch models with /model, or connect your own provider keys with /connect.`;
+    return `ChatGPT usage limit reached. ${CHATGPT_USAGE_LIMIT_HINT}`;
   }
 }
 
