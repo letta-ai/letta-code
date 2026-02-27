@@ -146,8 +146,7 @@ function extractPlanFileWritePathFromShellCommand(
   }
 
   const rawPath = firstLineMatch.groups.path1 || firstLineMatch.groups.path2;
-  const rawDelim =
-    firstLineMatch.groups.delim1 || firstLineMatch.groups.delim2;
+  const rawDelim = firstLineMatch.groups.delim1 || firstLineMatch.groups.delim2;
 
   if (!rawPath || !rawDelim) {
     return null;
@@ -420,7 +419,8 @@ class PermissionModeManager {
 
           // Special case: allow shell heredoc writes when they ONLY target
           // a markdown file in ~/.letta/plans/.
-          const planWritePath = extractPlanFileWritePathFromShellCommand(command);
+          const planWritePath =
+            extractPlanFileWritePathFromShellCommand(command);
           if (planWritePath) {
             const plansDir = join(homedir(), ".letta", "plans");
             const resolvedPath = resolvePlanTargetPath(
