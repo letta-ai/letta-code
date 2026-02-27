@@ -4,6 +4,7 @@ import {
   isFileToolName,
   isShellToolName,
 } from "./canonical";
+import { normalizeBashRulePayload } from "./shell-command-normalization";
 
 function splitRule(rule: string): { tool: string; payload: string | null } {
   const match = rule.trim().match(/^([^(]+)(?:\(([\s\S]*)\))?$/);
@@ -26,7 +27,7 @@ export function normalizePermissionRule(rule: string): string {
   }
 
   if (isShellToolName(canonicalTool)) {
-    return `Bash(${payload.trim()})`;
+    return `Bash(${normalizeBashRulePayload(payload)})`;
   }
 
   if (isFileToolName(canonicalTool)) {

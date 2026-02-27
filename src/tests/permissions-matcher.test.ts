@@ -257,6 +257,24 @@ test("Bash pattern: skill-scoped prefix does not match other skills", () => {
   ).toBe(false);
 });
 
+test("Bash pattern: exact rules match wrapped shell launchers", () => {
+  expect(
+    matchesBashPattern(
+      `Bash(bash -lc "sed -n '150,360p' src/permissions/mode.ts")`,
+      "Bash(sed -n '150,360p' src/permissions/mode.ts)",
+    ),
+  ).toBe(true);
+});
+
+test("Bash pattern: wildcard rules match wrapped shell launchers", () => {
+  expect(
+    matchesBashPattern(
+      `Bash(sh -c "rg -n 'analyzeBashApproval' src/permissions")`,
+      "Bash(rg:*)",
+    ),
+  ).toBe(true);
+});
+
 // ============================================================================
 // Tool Pattern Matching Tests
 // ============================================================================

@@ -235,6 +235,35 @@ test("Save permission doesn't create duplicates", async () => {
   ).toHaveLength(1);
 });
 
+test("Save permission dedupes wrapped shell launcher variants", async () => {
+  const projectDir = join(testDir, "project");
+  await savePermissionRule(
+    `Bash(bash -lc "sed -n '150,360p' src/permissions/mode.ts")`,
+    "allow",
+    "project",
+    projectDir,
+  );
+  await savePermissionRule(
+    "Bash(sed -n '150,360p' src/permissions/mode.ts)",
+    "allow",
+    "project",
+    projectDir,
+  );
+
+  const settingsPath = join(projectDir, ".letta", "settings.json");
+  const file = Bun.file(settingsPath);
+  const settings = await file.json();
+
+  expect(settings.permissions.allow).toContain(
+    "Bash(sed -n '150,360p' src/permissions/mode.ts)",
+  );
+  expect(
+    settings.permissions.allow.filter(
+      (r: string) => r === "Bash(sed -n '150,360p' src/permissions/mode.ts)",
+    ),
+  ).toHaveLength(1);
+});
+
 test("Save permission preserves existing rules", async () => {
   const projectDir = join(testDir, "project");
 

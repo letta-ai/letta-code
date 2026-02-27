@@ -203,7 +203,6 @@ class PermissionModeManager {
           "Grep",
           "NotebookRead",
           "TodoWrite",
-          "TaskOutput",
           // Plan mode tools (must allow exit!)
           "ExitPlanMode",
           "exit_plan_mode",
@@ -214,11 +213,13 @@ class PermissionModeManager {
           "list_dir",
           "grep_files",
           "update_plan",
+          "task_output",
           // Codex toolset (PascalCase)
           "ReadFile",
           "ListDir",
           "GrepFiles",
           "UpdatePlan",
+          "TaskOutput",
           // Gemini toolset (snake_case)
           "read_file_gemini",
           "glob_gemini",
