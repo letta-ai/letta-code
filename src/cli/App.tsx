@@ -10886,19 +10886,34 @@ ${SYSTEM_REMINDER_CLOSE}
             phase: "running",
           });
 
-          const { updateConversationLLMConfig } = await import(
-            "../agent/modify"
-          );
-          const updatedConversation = await updateConversationLLMConfig(
-            conversationIdRef.current,
-            modelHandle,
-            model.updateArgs,
-          );
-          const conversationModelSettings = (
-            updatedConversation as {
-              model_settings?: AgentState["model_settings"] | null;
-            }
-          ).model_settings;
+          const { updateConversationLLMConfig, updateAgentLLMConfig } =
+            await import("../agent/modify");
+
+          // "default" is a virtual sentinel, not a real conversation —
+          // fall back to updating the agent-level model directly.
+          let conversationModelSettings:
+            | AgentState["model_settings"]
+            | null
+            | undefined;
+          if (conversationIdRef.current === "default") {
+            const updatedAgent = await updateAgentLLMConfig(
+              agentId,
+              modelHandle,
+              model.updateArgs,
+            );
+            conversationModelSettings = updatedAgent.model_settings;
+          } else {
+            const updatedConversation = await updateConversationLLMConfig(
+              conversationIdRef.current,
+              modelHandle,
+              model.updateArgs,
+            );
+            conversationModelSettings = (
+              updatedConversation as {
+                model_settings?: AgentState["model_settings"] | null;
+              }
+            ).model_settings;
+          }
 
           // The API may not echo reasoning_effort back, so populate it from
           // model.updateArgs as a reliable fallback.
@@ -10911,7 +10926,9 @@ ${SYSTEM_REMINDER_CLOSE}
                   llmConfigRef.current,
                 ) ?? null);
 
-          setHasConversationModelOverride(true);
+          setHasConversationModelOverride(
+            conversationIdRef.current !== "default",
+          );
           setLlmConfig({
             ...(llmConfigRef.current ?? ({} as LlmConfig)),
             ...mapHandleToLlmConfigPatch(modelHandle),
