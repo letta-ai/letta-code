@@ -111,9 +111,107 @@ const SAFE_GH_COMMANDS: Record<string, Set<string> | null> = {
   status: null, // top-level command, no action needed
 };
 
-// Operators that are always dangerous (file redirects, command substitution)
-// Note: &&, ||, ; are handled by splitting and checking each segment
-const DANGEROUS_OPERATOR_PATTERN = /(>>|>|\$\(|`)/;
+/**
+ * Split a shell command into segments on unquoted separators: |, &&, ||, ;
+ * Returns null if dangerous operators are found:
+ * - redirects (>, >>) outside quotes
+ * - command substitution ($(), backticks) outside single quotes
+ */
+function splitShellSegments(input: string): string[] | null {
+  const segments: string[] = [];
+  let current = "";
+  let i = 0;
+  let quote: "single" | "double" | null = null;
+
+  while (i < input.length) {
+    const ch = input[i];
+
+    if (!ch) {
+      i += 1;
+      continue;
+    }
+
+    if (quote === "single") {
+      current += ch;
+      if (ch === "'") {
+        quote = null;
+      }
+      i += 1;
+      continue;
+    }
+
+    if (quote === "double") {
+      if (ch === "\\" && i + 1 < input.length) {
+        current += input.slice(i, i + 2);
+        i += 2;
+        continue;
+      }
+
+      // Command substitution still evaluates inside double quotes.
+      if (ch === "`" || input.startsWith("$(", i)) {
+        return null;
+      }
+
+      current += ch;
+      if (ch === '"') {
+        quote = null;
+      }
+      i += 1;
+      continue;
+    }
+
+    if (ch === "'") {
+      quote = "single";
+      current += ch;
+      i += 1;
+      continue;
+    }
+    if (ch === '"') {
+      quote = "double";
+      current += ch;
+      i += 1;
+      continue;
+    }
+
+    if (input.startsWith(">>", i) || ch === ">") {
+      return null;
+    }
+    if (ch === "`" || input.startsWith("$(", i)) {
+      return null;
+    }
+
+    if (input.startsWith("&&", i)) {
+      segments.push(current);
+      current = "";
+      i += 2;
+      continue;
+    }
+    if (input.startsWith("||", i)) {
+      segments.push(current);
+      current = "";
+      i += 2;
+      continue;
+    }
+    if (ch === ";") {
+      segments.push(current);
+      current = "";
+      i += 1;
+      continue;
+    }
+    if (ch === "|") {
+      segments.push(current);
+      current = "";
+      i += 1;
+      continue;
+    }
+
+    current += ch;
+    i += 1;
+  }
+
+  segments.push(current);
+  return segments.map((segment) => segment.trim()).filter(Boolean);
+}
 
 export interface ReadOnlyShellOptions {
   /**
@@ -152,18 +250,8 @@ export function isReadOnlyShellCommand(
     return false;
   }
 
-  if (DANGEROUS_OPERATOR_PATTERN.test(trimmed)) {
-    return false;
-  }
-
-  // Split on command separators: |, &&, ||, ;
-  // Each segment must be safe for the whole command to be safe
-  const segments = trimmed
-    .split(/\||&&|\|\||;/)
-    .map((segment) => segment.trim())
-    .filter(Boolean);
-
-  if (segments.length === 0) {
+  const segments = splitShellSegments(trimmed);
+  if (!segments || segments.length === 0) {
     return false;
   }
 

@@ -182,6 +182,15 @@ describe("isReadOnlyShellCommand", () => {
       expect(isReadOnlyShellCommand("ls -la | grep txt | wc -l")).toBe(true);
     });
 
+    test("allows pipe characters inside quoted args", () => {
+      expect(
+        isReadOnlyShellCommand(
+          'rg -n "memfs|memory filesystem|memory_filesystem|skills/|SKILL.md|git-backed|sync" letta tests -S',
+        ),
+      ).toBe(true);
+      expect(isReadOnlyShellCommand("grep 'foo|bar|baz' file.txt")).toBe(true);
+    });
+
     test("blocks pipes with unsafe commands", () => {
       expect(isReadOnlyShellCommand("cat file | rm")).toBe(false);
       expect(isReadOnlyShellCommand("echo test | bash")).toBe(false);
@@ -203,6 +212,13 @@ describe("isReadOnlyShellCommand", () => {
     test("blocks command substitution", () => {
       expect(isReadOnlyShellCommand("echo $(rm file)")).toBe(false);
       expect(isReadOnlyShellCommand("echo `rm file`")).toBe(false);
+      expect(isReadOnlyShellCommand('echo "$(rm file)"')).toBe(false);
+      expect(isReadOnlyShellCommand('echo "`rm file`"')).toBe(false);
+    });
+
+    test("allows literal redirects inside quotes", () => {
+      expect(isReadOnlyShellCommand('echo "a > b"')).toBe(true);
+      expect(isReadOnlyShellCommand("echo 'a >> b'")).toBe(true);
     });
   });
 

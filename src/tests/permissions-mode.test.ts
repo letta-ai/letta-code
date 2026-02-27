@@ -503,6 +503,18 @@ test("plan mode - allows read-only Bash commands", () => {
   );
   expect(chainedResult.decision).toBe("allow");
 
+  // quoted pipes in regex patterns should be treated as literals and allowed
+  const quotedPipeResult = checkPermission(
+    "Bash",
+    {
+      command:
+        'rg -n "memfs|memory filesystem|memory_filesystem|skills/|SKILL.md|git-backed|sync" letta tests -S',
+    },
+    permissions,
+    "/Users/test/project",
+  );
+  expect(quotedPipeResult.decision).toBe("allow");
+
   // cd && dangerous command should still be denied
   const cdDangerousResult = checkPermission(
     "Bash",
