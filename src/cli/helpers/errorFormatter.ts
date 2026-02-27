@@ -21,9 +21,11 @@ interface CloudflareEdgeErrorInfo {
   rayId?: string;
 }
 
-function parseCloudflareEdgeError(
-  text: string,
-): CloudflareEdgeErrorInfo | undefined {
+const CLOUDFLARE_EDGE_52X_MARKER_PATTERN =
+  /(^|\s)(52[0-6])\s*<!doctype html|error code\s*(52[0-6])/i;
+const CLOUDFLARE_EDGE_52X_TITLE_PATTERN = /\|\s*(52[0-6])\s*:/i;
+
+export function isCloudflareEdge52xHtmlError(text: string): boolean {
   const normalized = text.toLowerCase();
   const hasCloudflare = normalized.includes("cloudflare");
   const hasHtml =
@@ -31,11 +33,16 @@ function parseCloudflareEdgeError(
     normalized.includes("<html") ||
     normalized.includes("error code");
   const has52xCode =
-    /(^|\s)(52[0-6])\s*<!doctype html/i.test(text) ||
-    /error code\s*(52[0-6])/i.test(text) ||
-    /\|\s*(52[0-6])\s*:/i.test(text);
+    CLOUDFLARE_EDGE_52X_MARKER_PATTERN.test(text) ||
+    CLOUDFLARE_EDGE_52X_TITLE_PATTERN.test(text);
 
-  if (!hasCloudflare || !hasHtml || !has52xCode) return undefined;
+  return hasCloudflare && hasHtml && has52xCode;
+}
+
+function parseCloudflareEdgeError(
+  text: string,
+): CloudflareEdgeErrorInfo | undefined {
+  if (!isCloudflareEdge52xHtmlError(text)) return undefined;
 
   const code =
     text.match(/^\s*(52[0-6])\s*<!doctype html/i)?.[1] ??
@@ -688,9 +695,6 @@ export function getRetryStatusMessage(
   }
 
   if (checkZaiError(errorDetail)) return "Z.ai API error, retrying...";
-
-  if (errorDetail.includes("usage_limit_reached"))
-    return "ChatGPT usage limit reached, waiting...";
 
   if (errorDetail.includes("Anthropic API is overloaded"))
     return "Anthropic API is overloaded, retrying...";
