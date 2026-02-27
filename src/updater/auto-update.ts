@@ -357,6 +357,23 @@ async function performUpdate(): Promise<{
 export interface AutoUpdateResult {
   /** Whether an ENOTEMPTY error persisted after cleanup and retry */
   enotemptyFailed?: boolean;
+  /** Latest version available (set when a significant update was applied) */
+  latestVersion?: string;
+  /** True when the binary was updated and the user should restart */
+  updateApplied?: boolean;
+}
+
+/**
+ * Returns true when `latest` is at least one minor version ahead of `current`.
+ * Used to gate the in-app "restart to update" notification — patch-only bumps
+ * are applied silently without interrupting the user.
+ */
+function isSignificantUpdate(current: string, latest: string): boolean {
+  const [cMajor = 0, cMinor = 0] = current.split(".").map(Number);
+  const [lMajor = 0, lMinor = 0] = latest.split(".").map(Number);
+  if (lMajor > cMajor) return true;
+  if (lMajor === cMajor && lMinor > cMinor) return true;
+  return false;
 }
 
 export async function checkAndAutoUpdate(): Promise<
@@ -383,6 +400,13 @@ export async function checkAndAutoUpdate(): Promise<
     const updateResult = await performUpdate();
     if (updateResult.enotemptyFailed) {
       return { enotemptyFailed: true };
+    }
+    if (
+      updateResult.success &&
+      result.latestVersion &&
+      isSignificantUpdate(result.currentVersion, result.latestVersion)
+    ) {
+      return { updateApplied: true, latestVersion: result.latestVersion };
     }
   }
 }
@@ -427,8 +451,9 @@ export async function manualUpdate(): Promise<{
     };
   }
 
+  const installCmd = buildInstallCommand(detectPackageManager());
   return {
     success: false,
-    message: `Update failed: ${updateResult.error}`,
+    message: `Update failed: ${updateResult.error}\n\nTo update manually: ${installCmd}`,
   };
 }

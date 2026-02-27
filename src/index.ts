@@ -365,7 +365,7 @@ async function main(): Promise<void> {
 
   // Check for updates on startup (non-blocking)
   const { checkAndAutoUpdate } = await import("./updater/auto-update");
-  startStartupAutoUpdateCheck(checkAndAutoUpdate);
+  const autoUpdatePromise = startStartupAutoUpdateCheck(checkAndAutoUpdate);
 
   // Clean up old overflow files (non-blocking, 24h retention)
   const { cleanupOldOverflowFiles } = await import("./tools/impl/overflow");
@@ -1031,6 +1031,20 @@ async function main(): Promise<void> {
 
     // Release notes to display (checked once on mount)
     const [releaseNotes, setReleaseNotes] = useState<string | null>(null);
+
+    // Update notification: set when auto-update applied a significant new version
+    const [updateNotification, setUpdateNotification] = useState<string | null>(
+      null,
+    );
+    useEffect(() => {
+      autoUpdatePromise
+        .then((result) => {
+          if (result?.latestVersion) {
+            setUpdateNotification(result.latestVersion);
+          }
+        })
+        .catch(() => {});
+    }, []);
 
     // Auto-install Shift+Enter keybinding for VS Code/Cursor/Windsurf (silent, no prompt)
     useEffect(() => {
@@ -2067,6 +2081,7 @@ async function main(): Promise<void> {
       showCompactions: settings.showCompactions,
       agentProvenance,
       releaseNotes,
+      updateNotification,
       sessionContextReminderEnabled: !noSystemInfoReminderFlag,
     });
   }
