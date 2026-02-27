@@ -103,6 +103,9 @@ function collectFiles(memoryRoot: string): MemoryFile[] {
         isSystem:
           n.relativePath.startsWith("system/") ||
           n.relativePath.startsWith("system\\"),
+        isSkill:
+          n.relativePath.startsWith("skills/") ||
+          n.relativePath.startsWith("skills\\"),
         frontmatter,
         content: body,
       };
