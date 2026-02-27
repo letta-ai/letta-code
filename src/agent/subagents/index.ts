@@ -22,7 +22,7 @@ import exploreAgentMd from "./builtin/explore.md";
 import generalPurposeAgentMd from "./builtin/general-purpose.md";
 import historyAnalyzerAgentMd from "./builtin/history-analyzer.md";
 import memoryAgentMd from "./builtin/memory.md";
-import planAgentMd from "./builtin/plan.md";
+
 import recallAgentMd from "./builtin/recall.md";
 import reflectionAgentMd from "./builtin/reflection.md";
 
@@ -31,7 +31,6 @@ const BUILTIN_SOURCES = [
   generalPurposeAgentMd,
   historyAnalyzerAgentMd,
   memoryAgentMd,
-  planAgentMd,
   recallAgentMd,
   reflectionAgentMd,
 ];

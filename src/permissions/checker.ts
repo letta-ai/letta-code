@@ -678,8 +678,6 @@ function matchesPattern(
 const READ_ONLY_SUBAGENT_TYPES = new Set([
   "explore", // Codebase exploration - Glob, Grep, Read, LS, TaskOutput
   "Explore",
-  "plan", // Planning agent - Glob, Grep, Read, LS, TaskOutput
-  "Plan",
   "recall", // Conversation history search - Skill, Bash, Read, TaskOutput
   "Recall",
   "reflection", // Memory reflection - reads history, writes to agent's own memory files
