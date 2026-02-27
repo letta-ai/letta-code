@@ -211,6 +211,16 @@ describe("provider detail retry helpers", () => {
     ).toBe(false);
   });
 
+  test("ChatGPT usage_limit_reached is non-retryable", () => {
+    const detail =
+      'RATE_LIMIT_EXCEEDED: ChatGPT rate limit exceeded: {"error":{"type":"usage_limit_reached","message":"The usage limit has been reached","plan_type":"team","resets_at":1772074086,"resets_in_seconds":3032}}';
+
+    expect(shouldRetryRunMetadataError("llm_error", detail)).toBe(false);
+    expect(shouldRetryPreStreamTransientError({ status: 429, detail })).toBe(
+      false,
+    );
+  });
+
   test("pre-stream transient classifier handles status and detail", () => {
     expect(
       shouldRetryPreStreamTransientError({

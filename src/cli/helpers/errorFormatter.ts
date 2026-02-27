@@ -180,6 +180,93 @@ function getTierUsageLimitMessage(reasons: string[]): string | undefined {
   return undefined;
 }
 
+const CHATGPT_USAGE_LIMIT_HINT =
+  "Switch models with /model, or connect your own provider keys with /connect.";
+
+/**
+ * Check if a string contains a ChatGPT usage_limit_reached error with optional
+ * reset timing, and return a friendly message.
+ *
+ * ChatGPT wraps the error as embedded JSON inside a detail string like:
+ *   RATE_LIMIT_EXCEEDED: ChatGPT rate limit exceeded: {"error":{"type":"usage_limit_reached",...}}
+ */
+export function checkChatGptUsageLimitError(text: string): string | undefined {
+  if (!text.includes("usage_limit_reached")) return undefined;
+
+  // Try to extract the embedded JSON object
+  const jsonStart = text.indexOf("{");
+  if (jsonStart < 0) {
+    return `ChatGPT usage limit reached. ${CHATGPT_USAGE_LIMIT_HINT}`;
+  }
+
+  try {
+    const parsed = JSON.parse(text.slice(jsonStart));
+    const errorObj = parsed.error || parsed;
+    if (errorObj.type !== "usage_limit_reached") return undefined;
+
+    // Extract plan type
+    const planType = errorObj.plan_type;
+    const planInfo = planType ? ` (${planType} plan)` : "";
+
+    // Extract reset timing — prefer resets_in_seconds, fall back to resets_at
+    let resetInfo = "Try again later";
+    if (
+      typeof errorObj.resets_in_seconds === "number" &&
+      errorObj.resets_in_seconds > 0
+    ) {
+      resetInfo = formatResetTime(errorObj.resets_in_seconds * 1000);
+    } else if (typeof errorObj.resets_at === "number") {
+      const resetMs = errorObj.resets_at * 1000 - Date.now();
+      if (resetMs > 0) {
+        resetInfo = formatResetTime(resetMs);
+      }
+    }
+
+    return `ChatGPT usage limit reached${planInfo}. ${resetInfo}.\n${CHATGPT_USAGE_LIMIT_HINT}`;
+  } catch {
+    // JSON parse failed — return generic message
+    return `ChatGPT usage limit reached. ${CHATGPT_USAGE_LIMIT_HINT}`;
+  }
+}
+
+/**
+ * Walk an error object to find a ChatGPT usage_limit_reached detail string
+ * and format it. Handles APIError, nested run-metadata objects, and strings.
+ */
+function findAndFormatChatGptUsageLimit(e: unknown): string | undefined {
+  // Direct string
+  if (typeof e === "string") return checkChatGptUsageLimitError(e);
+
+  if (typeof e !== "object" || e === null) return undefined;
+
+  // APIError or Error — check .message
+  if (e instanceof Error) {
+    const msg = checkChatGptUsageLimitError(e.message);
+    if (msg) return msg;
+  }
+
+  const obj = e as Record<string, unknown>;
+
+  // Check e.error.error.detail (run-metadata shape)
+  if (obj.error && typeof obj.error === "object") {
+    const errObj = obj.error as Record<string, unknown>;
+    if (errObj.error && typeof errObj.error === "object") {
+      const inner = errObj.error as Record<string, unknown>;
+      if (typeof inner.detail === "string") {
+        const msg = checkChatGptUsageLimitError(inner.detail);
+        if (msg) return msg;
+      }
+    }
+    // Check e.error.detail
+    if (typeof errObj.detail === "string") {
+      const msg = checkChatGptUsageLimitError(errObj.detail);
+      if (msg) return msg;
+    }
+  }
+
+  return undefined;
+}
+
 const ENCRYPTED_CONTENT_HINT = [
   "",
   "This occurs when the conversation contains messages with encrypted",
@@ -306,6 +393,12 @@ export function formatErrorDetails(
   // Check for OpenAI encrypted content org mismatch before anything else
   const encryptedContentMsg = checkEncryptedContentError(e);
   if (encryptedContentMsg) return encryptedContentMsg;
+
+  // Check for ChatGPT usage limit errors — walk nested error objects like
+  // checkEncryptedContentError does, since these arrive both as APIError
+  // and as plain run-metadata objects ({error: {error: {detail: "..."}}})
+  const chatGptUsageLimitMsg = findAndFormatChatGptUsageLimit(e);
+  if (chatGptUsageLimitMsg) return chatGptUsageLimitMsg;
 
   // Check for Z.ai provider errors (wrapped in generic "OpenAI" messages)
   const errorText =
