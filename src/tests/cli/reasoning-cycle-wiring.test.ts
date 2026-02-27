@@ -45,4 +45,26 @@ describe("reasoning tier cycle wiring", () => {
 
     expect(callbackBlocks.length).toBeGreaterThanOrEqual(2);
   });
+
+  test("flush uses conversation-scoped reasoning updates", () => {
+    const appPath = fileURLToPath(
+      new URL("../../cli/App.tsx", import.meta.url),
+    );
+    const source = readFileSync(appPath, "utf-8");
+
+    const start = source.indexOf(
+      "const flushPendingReasoningEffort = useCallback(",
+    );
+    const end = source.indexOf(
+      "const handleCycleReasoningEffort = useCallback(",
+      start,
+    );
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(start);
+
+    const segment = source.slice(start, end);
+    expect(segment).toContain("updateConversationLLMConfig(");
+    expect(segment).toContain("conversationIdRef.current");
+    expect(segment).not.toContain("updateAgentLLMConfig(");
+  });
 });

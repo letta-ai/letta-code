@@ -409,6 +409,32 @@ function inferReasoningEffortFromModelPreset(
   return null;
 }
 
+function buildModelHandleFromLlmConfig(
+  llmConfig: LlmConfig | null | undefined,
+): string | null {
+  if (!llmConfig) return null;
+  if (llmConfig.model_endpoint_type && llmConfig.model) {
+    return `${llmConfig.model_endpoint_type}/${llmConfig.model}`;
+  }
+  return llmConfig.model ?? null;
+}
+
+function mapHandleToLlmConfigPatch(modelHandle: string): Partial<LlmConfig> {
+  const [provider, ...modelParts] = modelHandle.split("/");
+  const modelName = modelParts.join("/");
+  if (!provider || !modelName) {
+    return {
+      model: modelHandle,
+    };
+  }
+  const endpointType =
+    provider === OPENAI_CODEX_PROVIDER_NAME ? "chatgpt_oauth" : provider;
+  return {
+    model: modelName,
+    model_endpoint_type: endpointType as LlmConfig["model_endpoint_type"],
+  };
+}
+
 // Helper to get appropriate error hint based on stop reason and current model
 function getErrorHintForStopReason(
   stopReason: StopReasonType | null,
@@ -1389,10 +1415,16 @@ export default function App({
   const [currentToolsetPreference, setCurrentToolsetPreference] =
     useState<ToolsetPreference>("auto");
   const [llmConfig, setLlmConfig] = useState<LlmConfig | null>(null);
+  const [hasConversationModelOverride, setHasConversationModelOverride] =
+    useState(false);
   const llmConfigRef = useRef(llmConfig);
   useEffect(() => {
     llmConfigRef.current = llmConfig;
   }, [llmConfig]);
+  const hasConversationModelOverrideRef = useRef(hasConversationModelOverride);
+  useEffect(() => {
+    hasConversationModelOverrideRef.current = hasConversationModelOverride;
+  }, [hasConversationModelOverride]);
   const agentStateRef = useRef(agentState);
   useEffect(() => {
     agentStateRef.current = agentState;
@@ -1406,9 +1438,10 @@ export default function App({
   const agentName = agentState?.name ?? null;
   const [agentDescription, setAgentDescription] = useState<string | null>(null);
   const [agentLastRunAt, setAgentLastRunAt] = useState<string | null>(null);
-  // Prefer agent.model (canonical handle) over reconstructing from llm_config fields,
-  // which may not faithfully reproduce the original handle (e.g. "openai/gpt-5" vs "openai/gpt-5.3-codex").
+  // Prefer the currently-active model handle, then fall back to agent.model
+  // (canonical handle) and finally llm_config reconstruction.
   const currentModelLabel =
+    currentModelHandle ||
     agentState?.model ||
     (llmConfig?.model_endpoint_type && llmConfig?.model
       ? `${llmConfig.model_endpoint_type}/${llmConfig.model}`
@@ -1437,8 +1470,11 @@ export default function App({
   // Derive reasoning effort from model_settings (canonical) with llm_config as legacy fallback.
   // Some providers may omit explicit effort for default tiers (e.g., Sonnet 4.6 high),
   // so fall back to the selected model preset when needed.
+  const effectiveModelSettings = hasConversationModelOverride
+    ? undefined
+    : agentState?.model_settings;
   const currentReasoningEffort: ModelReasoningEffort | null =
-    deriveReasoningEffort(agentState?.model_settings, llmConfig) ??
+    deriveReasoningEffort(effectiveModelSettings, llmConfig) ??
     inferReasoningEffortFromModelPreset(currentModelId, currentModelLabel);
 
   // Billing tier for conditional UI and error context (fetched once on mount)
@@ -3116,6 +3152,113 @@ export default function App({
     }
   }, [loadingState, agentId]);
 
+  // Keep effective model state in sync with the active conversation override.
+  useEffect(() => {
+    if (
+      loadingState !== "ready" ||
+      !agentId ||
+      agentId === "loading" ||
+      !agentState
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const applyAgentModelLocally = () => {
+      const agentModelHandle =
+        agentState.model ??
+        buildModelHandleFromLlmConfig(agentState.llm_config);
+      setHasConversationModelOverride(false);
+      setLlmConfig(agentState.llm_config);
+      setCurrentModelHandle(agentModelHandle ?? null);
+
+      const modelInfo = getModelInfoForLlmConfig(
+        agentModelHandle || "",
+        agentState.llm_config as unknown as {
+          reasoning_effort?: string | null;
+          enable_reasoner?: boolean | null;
+        },
+      );
+      setCurrentModelId(modelInfo?.id ?? (agentModelHandle || null));
+    };
+
+    const syncConversationModel = async () => {
+      try {
+        const client = await getClient();
+        const conversation =
+          await client.conversations.retrieve(conversationId);
+        if (cancelled) return;
+
+        const conversationModel = (conversation as { model?: string | null })
+          .model;
+        const conversationModelSettings = (
+          conversation as {
+            model_settings?: AgentState["model_settings"] | null;
+          }
+        ).model_settings;
+        const hasOverride =
+          conversationModel !== undefined && conversationModel !== null
+            ? true
+            : conversationModelSettings !== undefined &&
+              conversationModelSettings !== null;
+
+        if (!hasOverride) {
+          applyAgentModelLocally();
+          return;
+        }
+
+        const agentModelHandle =
+          agentState.model ??
+          buildModelHandleFromLlmConfig(agentState.llm_config);
+        const effectiveModelHandle = conversationModel ?? agentModelHandle;
+        if (!effectiveModelHandle) {
+          applyAgentModelLocally();
+          return;
+        }
+
+        const reasoningEffort = deriveReasoningEffort(
+          conversationModelSettings,
+          agentState.llm_config,
+        );
+
+        setHasConversationModelOverride(true);
+        setCurrentModelHandle(effectiveModelHandle);
+        const modelInfo = getModelInfoForLlmConfig(effectiveModelHandle, {
+          reasoning_effort: reasoningEffort,
+          enable_reasoner:
+            (
+              agentState.llm_config as {
+                enable_reasoner?: boolean | null;
+              }
+            ).enable_reasoner ?? null,
+        });
+        setCurrentModelId(modelInfo?.id ?? effectiveModelHandle);
+        setLlmConfig({
+          ...agentState.llm_config,
+          ...mapHandleToLlmConfigPatch(effectiveModelHandle),
+          ...(typeof reasoningEffort === "string"
+            ? { reasoning_effort: reasoningEffort }
+            : {}),
+        });
+      } catch (error) {
+        if (cancelled) return;
+        debugLog(
+          "conversation-model",
+          "Failed to sync conversation model override: %O",
+          error,
+        );
+        applyAgentModelLocally();
+      }
+    };
+
+    void syncConversationModel();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [agentId, agentState, conversationId, loadingState]);
+
   // Helper to append an error to the transcript
   // Also tracks the error in telemetry so we know an error was shown.
   // Pass `true` or `{ skip: true }` to suppress telemetry (e.g. hint
@@ -3974,34 +4117,32 @@ export default function App({
                 currentEffort !== agentEffort ||
                 currentEnableReasoner !== agentEnableReasoner
               ) {
-                // Model has changed - update local state
-                setLlmConfig(agent.llm_config);
+                if (!hasConversationModelOverrideRef.current) {
+                  // Model has changed at the agent level - update local state.
+                  setLlmConfig(agent.llm_config);
 
-                // Derive model ID from llm_config for ModelSelector
-                // Try to find matching model by handle in models.json
-                const { getModelInfoForLlmConfig } = await import(
-                  "../agent/model"
-                );
-                const agentModelHandle =
-                  agent.llm_config.model_endpoint_type && agent.llm_config.model
-                    ? `${agent.llm_config.model_endpoint_type}/${agent.llm_config.model}`
-                    : agent.llm_config.model;
+                  // Derive model ID from llm_config for ModelSelector.
+                  const agentModelHandle = buildModelHandleFromLlmConfig(
+                    agent.llm_config,
+                  );
 
-                const modelInfo = getModelInfoForLlmConfig(
-                  agentModelHandle || "",
-                  agent.llm_config as unknown as {
-                    reasoning_effort?: string | null;
-                    enable_reasoner?: boolean | null;
-                  },
-                );
-                if (modelInfo) {
-                  setCurrentModelId(modelInfo.id);
-                } else {
-                  // Model not in models.json (e.g., BYOK model) - use handle as ID
-                  setCurrentModelId(agentModelHandle || null);
+                  const modelInfo = getModelInfoForLlmConfig(
+                    agentModelHandle || "",
+                    agent.llm_config as unknown as {
+                      reasoning_effort?: string | null;
+                      enable_reasoner?: boolean | null;
+                    },
+                  );
+                  if (modelInfo) {
+                    setCurrentModelId(modelInfo.id);
+                  } else {
+                    // Model not in models.json (e.g., BYOK model) - use handle as ID
+                    setCurrentModelId(agentModelHandle || null);
+                  }
+                  setCurrentModelHandle(agentModelHandle || null);
                 }
 
-                // Also update agent state if other fields changed
+                // Always keep base agent state fresh.
                 setAgentState(agent);
                 setAgentDescription(agent.description ?? null);
                 const lastRunCompletion = (
@@ -5663,6 +5804,7 @@ export default function App({
   const reasoningCycleLastConfirmedAgentStateRef = useRef<AgentState | null>(
     null,
   );
+  const reasoningCyclePatchedAgentStateRef = useRef(false);
 
   const resetPendingReasoningCycle = useCallback(() => {
     if (reasoningCycleTimerRef.current) {
@@ -5672,6 +5814,7 @@ export default function App({
     reasoningCycleDesiredRef.current = null;
     reasoningCycleLastConfirmedRef.current = null;
     reasoningCycleLastConfirmedAgentStateRef.current = null;
+    reasoningCyclePatchedAgentStateRef.current = false;
   }, []);
 
   const handleAgentSelect = useCallback(
@@ -10613,33 +10756,42 @@ ${SYSTEM_REMINDER_CLOSE}
             phase: "running",
           });
 
-          const { updateAgentLLMConfig } = await import("../agent/modify");
-          const updatedAgent = await updateAgentLLMConfig(
-            agentId,
+          const { updateConversationLLMConfig } = await import(
+            "../agent/modify"
+          );
+          const updatedConversation = await updateConversationLLMConfig(
+            conversationIdRef.current,
             modelHandle,
             model.updateArgs,
           );
-          // The API may not echo reasoning_effort back in llm_config or model_settings.effort,
-          // so populate it from model.updateArgs as a reliable fallback.
+          const conversationModelSettings = (
+            updatedConversation as {
+              model_settings?: AgentState["model_settings"] | null;
+            }
+          ).model_settings;
+
+          // The API may not echo reasoning_effort back, so populate it from
+          // model.updateArgs as a reliable fallback.
           const rawEffort = modelUpdateArgs?.reasoning_effort;
+          const resolvedReasoningEffort =
+            typeof rawEffort === "string"
+              ? rawEffort
+              : (deriveReasoningEffort(
+                  conversationModelSettings,
+                  llmConfigRef.current,
+                ) ?? null);
+
+          setHasConversationModelOverride(true);
           setLlmConfig({
-            ...updatedAgent.llm_config,
-            ...(typeof rawEffort === "string"
-              ? { reasoning_effort: rawEffort as ModelReasoningEffort }
+            ...(llmConfigRef.current ?? ({} as LlmConfig)),
+            ...mapHandleToLlmConfigPatch(modelHandle),
+            ...(typeof resolvedReasoningEffort === "string"
+              ? {
+                  reasoning_effort:
+                    resolvedReasoningEffort as ModelReasoningEffort,
+                }
               : {}),
           });
-          // Refresh agentState so model_settings (canonical reasoning effort source) is current.
-          // Include `model` so currentModelLabel (and the status bar) updates immediately.
-          setAgentState((prev) =>
-            prev
-              ? {
-                  ...prev,
-                  model: updatedAgent.model,
-                  llm_config: updatedAgent.llm_config,
-                  model_settings: updatedAgent.model_settings,
-                }
-              : updatedAgent,
-          );
           setCurrentModelId(modelId);
 
           // Reset context token tracking since different models have different tokenizers
@@ -11302,38 +11454,42 @@ ${SYSTEM_REMINDER_CLOSE}
         const cmd = commandRunner.start("/reasoning", "Setting reasoning...");
 
         try {
-          const { updateAgentLLMConfig } = await import("../agent/modify");
-          const updatedAgent = await updateAgentLLMConfig(
-            agentId,
+          const { updateConversationLLMConfig } = await import(
+            "../agent/modify"
+          );
+          const updatedConversation = await updateConversationLLMConfig(
+            conversationIdRef.current,
             desired.modelHandle,
             {
               reasoning_effort: desired.effort,
             },
           );
+          const conversationModelSettings = (
+            updatedConversation as {
+              model_settings?: AgentState["model_settings"] | null;
+            }
+          ).model_settings;
+          const resolvedReasoningEffort =
+            deriveReasoningEffort(
+              conversationModelSettings,
+              llmConfigRef.current,
+            ) ?? desired.effort;
 
-          // The API may not echo reasoning_effort back; populate from desired.effort.
+          setHasConversationModelOverride(true);
+          // The API may not echo reasoning_effort back; preserve explicit desired effort.
           setLlmConfig({
-            ...updatedAgent.llm_config,
-            reasoning_effort: desired.effort as ModelReasoningEffort,
+            ...(llmConfigRef.current ?? ({} as LlmConfig)),
+            ...mapHandleToLlmConfigPatch(desired.modelHandle),
+            reasoning_effort: resolvedReasoningEffort as ModelReasoningEffort,
           });
-          // Refresh agentState so model_settings (canonical reasoning effort source) is current.
-          // Include `model` so currentModelLabel (and the status bar) updates immediately.
-          setAgentState((prev) =>
-            prev
-              ? {
-                  ...prev,
-                  model: updatedAgent.model,
-                  llm_config: updatedAgent.llm_config,
-                  model_settings: updatedAgent.model_settings,
-                }
-              : updatedAgent,
-          );
           setCurrentModelId(desired.modelId);
+          setCurrentModelHandle(desired.modelHandle);
 
           // Clear pending state.
           reasoningCycleDesiredRef.current = null;
           reasoningCycleLastConfirmedRef.current = null;
           reasoningCycleLastConfirmedAgentStateRef.current = null;
+          reasoningCyclePatchedAgentStateRef.current = false;
 
           const display =
             desired.effort === "medium"
@@ -11353,10 +11509,14 @@ ${SYSTEM_REMINDER_CLOSE}
             reasoningCycleLastConfirmedRef.current = null;
             setLlmConfig(prev);
             // Also revert the agentState optimistic patch
-            if (reasoningCycleLastConfirmedAgentStateRef.current) {
+            if (
+              reasoningCyclePatchedAgentStateRef.current &&
+              reasoningCycleLastConfirmedAgentStateRef.current
+            ) {
               setAgentState(reasoningCycleLastConfirmedAgentStateRef.current);
               reasoningCycleLastConfirmedAgentStateRef.current = null;
             }
+            reasoningCyclePatchedAgentStateRef.current = false;
 
             const { getModelInfo } = await import("../agent/model");
             const modelHandle =
@@ -11396,10 +11556,12 @@ ${SYSTEM_REMINDER_CLOSE}
           : current?.model;
       if (!modelHandle) return;
 
-      // Derive current effort from agentState.model_settings (canonical) with llmConfig fallback
+      // Derive current effort from effective model settings (conversation override aware)
+      const modelSettingsForEffort = hasConversationModelOverrideRef.current
+        ? undefined
+        : agentStateRef.current?.model_settings;
       const currentEffort =
-        deriveReasoningEffort(agentStateRef.current?.model_settings, current) ??
-        "none";
+        deriveReasoningEffort(modelSettingsForEffort, current) ?? "none";
 
       const { models } = await import("../agent/model");
       const tiers = models
@@ -11434,54 +11596,61 @@ ${SYSTEM_REMINDER_CLOSE}
       if (!reasoningCycleLastConfirmedRef.current) {
         reasoningCycleLastConfirmedRef.current = current ?? null;
         reasoningCycleLastConfirmedAgentStateRef.current =
-          agentStateRef.current ?? null;
+          hasConversationModelOverrideRef.current
+            ? null
+            : (agentStateRef.current ?? null);
       }
 
       // Optimistic UI update (footer changes immediately).
       setLlmConfig((prev) =>
         prev ? ({ ...prev, reasoning_effort: next.effort } as LlmConfig) : prev,
       );
-      // Also patch agentState.model_settings for OpenAI/Anthropic/Bedrock so the footer
-      // (which prefers model_settings) reflects the change without waiting for the server.
-      setAgentState((prev) => {
-        if (!prev) return prev ?? null;
-        const ms = prev.model_settings;
-        if (!ms || !("provider_type" in ms)) return prev;
-        if (ms.provider_type === "openai") {
-          return {
-            ...prev,
-            model_settings: {
-              ...ms,
-              reasoning: {
-                ...(ms as { reasoning?: Record<string, unknown> }).reasoning,
-                reasoning_effort: next.effort as
-                  | "none"
-                  | "minimal"
-                  | "low"
-                  | "medium"
-                  | "high"
-                  | "xhigh",
+      // Patch agentState.model_settings only when operating on agent defaults.
+      if (!hasConversationModelOverrideRef.current) {
+        reasoningCyclePatchedAgentStateRef.current = true;
+        setAgentState((prev) => {
+          if (!prev) return prev ?? null;
+          const ms = prev.model_settings;
+          if (!ms || !("provider_type" in ms)) return prev;
+          if (ms.provider_type === "openai") {
+            return {
+              ...prev,
+              model_settings: {
+                ...ms,
+                reasoning: {
+                  ...(ms as { reasoning?: Record<string, unknown> }).reasoning,
+                  reasoning_effort: next.effort as
+                    | "none"
+                    | "minimal"
+                    | "low"
+                    | "medium"
+                    | "high"
+                    | "xhigh",
+                },
               },
-            },
-          } as AgentState;
-        }
-        if (
-          ms.provider_type === "anthropic" ||
-          ms.provider_type === "bedrock"
-        ) {
-          // Map "xhigh" → "max": footer derivation only recognizes "max" for Anthropic effort.
-          // Cast needed: "max" is valid on the backend but not yet in the SDK type.
-          const anthropicEffort = next.effort === "xhigh" ? "max" : next.effort;
-          return {
-            ...prev,
-            model_settings: {
-              ...ms,
-              effort: anthropicEffort as "low" | "medium" | "high" | "max",
-            },
-          } as AgentState;
-        }
-        return prev;
-      });
+            } as AgentState;
+          }
+          if (
+            ms.provider_type === "anthropic" ||
+            ms.provider_type === "bedrock"
+          ) {
+            // Map "xhigh" → "max": footer derivation only recognizes "max" for Anthropic effort.
+            // Cast needed: "max" is valid on the backend but not yet in the SDK type.
+            const anthropicEffort =
+              next.effort === "xhigh" ? "max" : next.effort;
+            return {
+              ...prev,
+              model_settings: {
+                ...ms,
+                effort: anthropicEffort as "low" | "medium" | "high" | "max",
+              },
+            } as AgentState;
+          }
+          return prev;
+        });
+      } else {
+        reasoningCyclePatchedAgentStateRef.current = false;
+      }
       setCurrentModelId(next.id);
 
       // Debounce the server update.
