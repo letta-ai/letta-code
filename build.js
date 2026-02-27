@@ -46,8 +46,10 @@ await Bun.build({
     ".txt": "text",
 
   },
-  // Keep native Node.js modules external to avoid bundling issues
-  external: ["ws", "sharp", "@vscode/ripgrep"],
+  // Keep most native Node.js modules external to avoid bundling issues
+  // But don't make `sharp` external, causes issues with global Bun-based installs
+  // ref: #745, #1200
+  external: ["ws", "@vscode/ripgrep"],
   features: features,
 });
 
