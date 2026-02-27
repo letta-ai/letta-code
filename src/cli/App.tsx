@@ -7736,12 +7736,16 @@ export default function App({
           try {
             const client = await getClient();
 
-            // Reset all messages on the agent (destructive operation)
-            await client.agents.messages.reset(agentId, {
-              add_default_initial_messages: false,
-            });
+            // Reset all messages on the agent only when in the default conversation.
+            // For named conversations, clearing just means starting a new conversation —
+            // there is no reason to wipe the agent's entire message history.
+            if (conversationIdRef.current === "default") {
+              await client.agents.messages.reset(agentId, {
+                add_default_initial_messages: false,
+              });
+            }
 
-            // Also create a new conversation since messages were cleared
+            // Create a new conversation
             const conversation = await client.conversations.create({
               agent_id: agentId,
               isolated_block_labels: [...ISOLATED_BLOCK_LABELS],
