@@ -1,3 +1,4 @@
+import { relative } from "node:path";
 import { generatePlanFilePath } from "../../cli/helpers/planName";
 import { permissionMode } from "../../permissions/mode";
 
@@ -26,6 +27,10 @@ export async function enter_plan_mode(
   }
 
   const planFilePath = permissionMode.getPlanFilePath();
+  const cwd = process.env.USER_CWD || process.cwd();
+  const applyPatchRelativePath = planFilePath
+    ? relative(cwd, planFilePath).replace(/\\/g, "/")
+    : null;
 
   return {
     message: `Entered plan mode. You should now focus on exploring the codebase and designing an implementation approach.
@@ -40,6 +45,7 @@ In plan mode, you should:
 
 Remember: DO NOT write or edit any files yet. This is a read-only exploration and planning phase.
 
-Plan file path: ${planFilePath}`,
+Plan file path: ${planFilePath}
+${applyPatchRelativePath ? `If using apply_patch, use this exact relative patch path: ${applyPatchRelativePath}` : ""}`,
   };
 }

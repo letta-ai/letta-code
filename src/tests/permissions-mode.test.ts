@@ -279,6 +279,35 @@ test("plan mode - denies Write", () => {
   expect(result.reason).toContain("Plan mode is active");
 });
 
+test("plan mode deny reason includes exact apply_patch relative path hint", () => {
+  permissionMode.setMode("plan");
+  const workingDirectory = join(homedir(), "dev", "repo");
+  const planPath = join(homedir(), ".letta", "plans", "unit-test-plan.md");
+  const expectedRelativePath = relative(workingDirectory, planPath).replace(
+    /\\/g,
+    "/",
+  );
+  permissionMode.setPlanFilePath(planPath);
+
+  const permissions: PermissionRules = {
+    allow: [],
+    deny: [],
+    ask: [],
+  };
+
+  const result = checkPermission(
+    "Write",
+    { file_path: "/tmp/test.txt" },
+    permissions,
+    workingDirectory,
+  );
+
+  expect(result.decision).toBe("deny");
+  expect(result.reason).toContain(
+    `If using apply_patch, use this exact relative path in patch headers: ${expectedRelativePath}.`,
+  );
+});
+
 test("plan mode - allows Write to plan markdown file", () => {
   permissionMode.setMode("plan");
 
