@@ -479,22 +479,24 @@ export async function getResumeData(
       }
       const retrievedMessages = await client.messages.retrieve(lastInContextId);
 
-      // Fetch message history for backfill using conversation_id=default
-      // This filters to only the default conversation's messages (like the ADE does)
+      // Fetch message history for backfill using the agent ID as conversation_id
+      // (the server accepts agent-* IDs for default conversation messages)
       // Wrapped in try/catch so backfill failures don't crash the CLI (e.g., older servers
-      // may not support conversation_id filter)
+      // may not support this pattern)
       if (includeMessageHistory && isBackfillEnabled()) {
         try {
-          const messagesPage = await client.agents.messages.list(agent.id, {
-            limit: BACKFILL_PAGE_LIMIT,
-            order: "desc",
-            conversation_id: "default", // Key: filter to default conversation only
-          });
-          messages = sortChronological(messagesPage.items);
+          const messagesPage = await client.conversations.messages.list(
+            agent.id,
+            {
+              limit: BACKFILL_PAGE_LIMIT,
+              order: "desc",
+            },
+          );
+          messages = sortChronological(messagesPage.getPaginatedItems());
 
           if (process.env.DEBUG) {
             console.log(
-              `[DEBUG] agents.messages.list(conversation_id=default) returned ${messages.length} messages`,
+              `[DEBUG] conversations.messages.list(${agent.id}) returned ${messages.length} messages`,
             );
           }
         } catch (backfillError) {

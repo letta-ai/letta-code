@@ -32,11 +32,12 @@ export function getStreamToolContextId(
 
 /**
  * Send a message to a conversation and return a streaming response.
- * Uses the conversations API for proper message isolation per session.
+ * Uses the conversations API for all conversations.
  *
  * For the "default" conversation (agent's primary message history without
  * an explicit conversation object), pass conversationId="default" and
- * provide agentId in opts. This uses the agents messages API instead.
+ * provide agentId in opts. The server accepts agent IDs as the
+ * conversation_id path parameter for agent-direct messaging.
  */
 export async function sendMessageStream(
   conversationId: string,
@@ -58,48 +59,35 @@ export async function sendMessageStream(
   await waitForToolsetReady();
   const { clientTools, contextId } = captureToolExecutionContext();
 
-  let stream: Stream<LettaStreamingResponse>;
+  // For "default" conversation, pass the agent ID to the conversations endpoint.
+  // The server accepts agent-* IDs for agent-direct messaging.
+  const resolvedConversationId =
+    conversationId === "default" ? opts.agentId : conversationId;
+
+  if (!resolvedConversationId) {
+    throw new Error(
+      "agentId is required in opts when using default conversation",
+    );
+  }
 
   if (process.env.DEBUG) {
     console.log(
-      `[DEBUG] sendMessageStream: conversationId=${conversationId}, useAgentsRoute=${conversationId === "default"}`,
+      `[DEBUG] sendMessageStream: conversationId=${conversationId}, resolved=${resolvedConversationId}`,
     );
   }
 
-  if (conversationId === "default") {
-    // Use agents route for default conversation (agent's primary message history)
-    if (!opts.agentId) {
-      throw new Error(
-        "agentId is required in opts when using default conversation",
-      );
-    }
-    stream = await client.agents.messages.create(
-      opts.agentId,
-      {
-        messages: messages,
-        streaming: true,
-        stream_tokens: opts.streamTokens ?? true,
-        background: opts.background ?? true,
-        client_tools: clientTools,
-        include_compaction_messages: true,
-      },
-      requestOptions,
-    );
-  } else {
-    // Use conversations route for explicit conversations
-    stream = await client.conversations.messages.create(
-      conversationId,
-      {
-        messages: messages,
-        streaming: true,
-        stream_tokens: opts.streamTokens ?? true,
-        background: opts.background ?? true,
-        client_tools: clientTools,
-        include_compaction_messages: true,
-      },
-      requestOptions,
-    );
-  }
+  const stream = await client.conversations.messages.create(
+    resolvedConversationId,
+    {
+      messages: messages,
+      streaming: true,
+      stream_tokens: opts.streamTokens ?? true,
+      background: opts.background ?? true,
+      client_tools: clientTools,
+      include_compaction_messages: true,
+    },
+    requestOptions,
+  );
 
   if (requestStartTime !== undefined) {
     streamRequestStartTimes.set(stream as object, requestStartTime);
