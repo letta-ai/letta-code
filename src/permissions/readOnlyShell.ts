@@ -112,8 +112,96 @@ const SAFE_GH_COMMANDS: Record<string, Set<string> | null> = {
 };
 
 // Operators that are always dangerous (file redirects, command substitution)
-// Note: &&, ||, ; are handled by splitting and checking each segment
-const DANGEROUS_OPERATOR_PATTERN = /(>>|>|\$\(|`)/;
+// These are checked only outside of quoted strings by hasDangerousOperator().
+const DANGEROUS_OPERATORS = [">>", ">", "$(", "`"];
+
+/**
+ * Split a command string on unquoted shell operators (|, &&, ||, ;).
+ * Returns null if a dangerous operator (>, >>, $(...), backtick) is found
+ * outside of quotes — this replaces the old DANGEROUS_OPERATOR_PATTERN regex
+ * which couldn't distinguish operators inside quoted strings.
+ */
+function splitShellSegments(input: string): string[] | null {
+  const segments: string[] = [];
+  let current = "";
+  let i = 0;
+
+  while (i < input.length) {
+    const ch = input[i];
+
+    // Skip over single-quoted strings (no escaping inside single quotes)
+    if (ch === "'") {
+      const end = input.indexOf("'", i + 1);
+      if (end === -1) {
+        // Unterminated quote — take rest of string as-is
+        current += input.slice(i);
+        i = input.length;
+      } else {
+        current += input.slice(i, end + 1);
+        i = end + 1;
+      }
+      continue;
+    }
+
+    // Skip over double-quoted strings (with backslash escaping)
+    if (ch === '"') {
+      let j = i + 1;
+      while (j < input.length) {
+        if (input[j] === "\\" && j + 1 < input.length) {
+          j += 2; // skip escaped char
+        } else if (input[j] === '"') {
+          break;
+        } else {
+          j++;
+        }
+      }
+      current += input.slice(i, j + 1);
+      i = j + 1;
+      continue;
+    }
+
+    // Check for dangerous operators outside quotes
+    for (const op of DANGEROUS_OPERATORS) {
+      if (input.startsWith(op, i)) {
+        return null; // dangerous operator found
+      }
+    }
+
+    // Check for segment separators: &&, ||, ;, |
+    if (input.startsWith("&&", i)) {
+      segments.push(current);
+      current = "";
+      i += 2;
+      continue;
+    }
+    if (input.startsWith("||", i)) {
+      segments.push(current);
+      current = "";
+      i += 2;
+      continue;
+    }
+    if (ch === ";") {
+      segments.push(current);
+      current = "";
+      i += 1;
+      continue;
+    }
+    if (ch === "|") {
+      segments.push(current);
+      current = "";
+      i += 1;
+      continue;
+    }
+
+    current += ch;
+    i++;
+  }
+
+  segments.push(current);
+  return segments
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
 
 export function isReadOnlyShellCommand(
   command: string | string[] | undefined | null,
@@ -143,18 +231,10 @@ export function isReadOnlyShellCommand(
     return false;
   }
 
-  if (DANGEROUS_OPERATOR_PATTERN.test(trimmed)) {
-    return false;
-  }
-
-  // Split on command separators: |, &&, ||, ;
-  // Each segment must be safe for the whole command to be safe
-  const segments = trimmed
-    .split(/\||&&|\|\||;/)
-    .map((segment) => segment.trim())
-    .filter(Boolean);
-
-  if (segments.length === 0) {
+  // Quote-aware split: returns null if dangerous operators (>, >>, $( , `)
+  // appear outside of quoted strings.
+  const segments = splitShellSegments(trimmed);
+  if (!segments || segments.length === 0) {
     return false;
   }
 
