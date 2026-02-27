@@ -50,9 +50,12 @@ export async function generateAndOpenPlanViewer(
   writeFileSync(filePath, html);
   chmodSync(filePath, 0o600);
 
-  // Open in browser (skip inside tmux)
-  const isTmux = Boolean(process.env.TMUX);
-  if (!isTmux) {
+  // Open in browser (skip inside tmux or SSH)
+  const skipOpen =
+    Boolean(process.env.TMUX) ||
+    Boolean(process.env.SSH_CONNECTION) ||
+    Boolean(process.env.SSH_TTY);
+  if (!skipOpen) {
     try {
       const { default: openUrl } = await import("open");
       await openUrl(filePath, { wait: false });
@@ -61,5 +64,5 @@ export async function generateAndOpenPlanViewer(
     }
   }
 
-  return { filePath, opened: !isTmux };
+  return { filePath, opened: !skipOpen };
 }
