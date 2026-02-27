@@ -908,6 +908,36 @@ function hasActiveInitSubagent(): boolean {
   );
 }
 
+function buildMemoryInitRuntimePrompt(args: {
+  agentId: string;
+  workingDirectory: string;
+  memoryDir: string;
+  gitContext: string;
+}): string {
+  return `
+The user ran /init for the current project.
+
+Runtime context:
+- parent_agent_id: ${args.agentId}
+- working_directory: ${args.workingDirectory}
+- memory_dir: ${args.memoryDir}
+
+Git/project context:
+${args.gitContext}
+
+Task:
+Initialize or reorganize the parent agent's filesystem-backed memory for this project.
+
+Instructions:
+- Use the pre-loaded initializing-memory skill as your operating guide
+- Inspect existing memory before editing
+- Base your decisions on the current repository and current memory contents
+- Do not ask follow-up questions
+- Make reasonable assumptions and report them
+- If the memory filesystem is unavailable or unsafe to modify, stop and explain why
+`.trim();
+}
+
 function buildTextParts(
   ...parts: Array<string | undefined | null>
 ): Array<{ type: "text"; text: string }> {
@@ -9082,26 +9112,12 @@ ${recentCommits}
               // execSync import failed, skip git context
             }
 
-            // Build memfs section if memfs is enabled for this agent
-            const memfsSection = settingsManager.isMemfsEnabled(agentId)
-              ? `
-## Memory Filesystem Location
-
-Your memory blocks are synchronized with the filesystem at:
-\`${getMemoryFilesystemRoot(agentId)}\`
-
-Environment variables available in Letta Code:
-- \`AGENT_ID=${agentId}\`
-- \`MEMORY_DIR=${getMemoryFilesystemRoot(agentId)}\`
-
-Use \`$MEMORY_DIR\` when working with memory files during initialization.
-`
-              : "";
-
-            // Build the prompt for the background subagent
-            const initPrompt = `Initialize memory for this project.
-${memfsSection}
-${gitContext}`;
+            const initPrompt = buildMemoryInitRuntimePrompt({
+              agentId,
+              workingDirectory: process.cwd(),
+              memoryDir: getMemoryFilesystemRoot(agentId),
+              gitContext,
+            });
 
             // Spawn background subagent — command completes immediately
             const { spawnBackgroundSubagentTask } = await import(

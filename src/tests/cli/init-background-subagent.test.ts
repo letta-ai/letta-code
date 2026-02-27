@@ -10,6 +10,7 @@ describe("init background subagent wiring", () => {
     const appSource = readFileSync(appPath, "utf-8");
 
     expect(appSource).toContain("hasActiveInitSubagent()");
+    expect(appSource).toContain("buildMemoryInitRuntimePrompt({");
     expect(appSource).toContain("spawnBackgroundSubagentTask({");
     expect(appSource).toContain('subagentType: "init"');
     expect(appSource).toContain(
