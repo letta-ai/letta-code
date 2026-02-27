@@ -757,7 +757,7 @@ describe.skipIf(isWindows)("Hooks Integration Tests", () => {
       });
 
       const result = await runSubagentStopHooks(
-        "plan",
+        "explore",
         "subagent-abc",
         false,
         "Task failed",
