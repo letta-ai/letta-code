@@ -3,12 +3,16 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 describe("init background subagent wiring", () => {
-  test("App.tsx spawns a background init subagent with guard", () => {
-    const appPath = fileURLToPath(
-      new URL("../../cli/App.tsx", import.meta.url),
+  const readSource = (relativePath: string) =>
+    readFileSync(
+      fileURLToPath(new URL(relativePath, import.meta.url)),
+      "utf-8",
     );
-    const appSource = readFileSync(appPath, "utf-8");
 
+  test("App.tsx branches on MemFS: background subagent vs legacy processConversation", () => {
+    const appSource = readSource("../../cli/App.tsx");
+
+    // MemFS path — background subagent
     expect(appSource).toContain("hasActiveInitSubagent()");
     expect(appSource).toContain("buildMemoryInitRuntimePrompt({");
     expect(appSource).toContain("spawnBackgroundSubagentTask({");
@@ -16,13 +20,29 @@ describe("init background subagent wiring", () => {
     expect(appSource).toContain(
       "Memory initialization started in background.",
     );
+
+    // Legacy non-MemFS path — primary agent
+    expect(appSource).toContain("buildLegacyInitMessage({");
+    expect(appSource).toContain("processConversation(");
+  });
+
+  test("initCommand.ts exports all helpers", () => {
+    const helperSource = readSource("../../cli/helpers/initCommand.ts");
+
+    expect(helperSource).toContain(
+      "export function hasActiveInitSubagent()",
+    );
+    expect(helperSource).toContain("export function gatherGitContext()");
+    expect(helperSource).toContain(
+      "export function buildMemoryInitRuntimePrompt(",
+    );
+    expect(helperSource).toContain(
+      "export function buildLegacyInitMessage(",
+    );
   });
 
   test("init.md exists as a builtin subagent", () => {
-    const initMdPath = fileURLToPath(
-      new URL("../../agent/subagents/builtin/init.md", import.meta.url),
-    );
-    const content = readFileSync(initMdPath, "utf-8");
+    const content = readSource("../../agent/subagents/builtin/init.md");
 
     expect(content).toContain("name: init");
     expect(content).toContain("skills: initializing-memory");
@@ -30,10 +50,7 @@ describe("init background subagent wiring", () => {
   });
 
   test("init subagent is registered in BUILTIN_SOURCES", () => {
-    const indexPath = fileURLToPath(
-      new URL("../../agent/subagents/index.ts", import.meta.url),
-    );
-    const indexSource = readFileSync(indexPath, "utf-8");
+    const indexSource = readSource("../../agent/subagents/index.ts");
 
     expect(indexSource).toContain(
       'import initAgentMd from "./builtin/init.md"',

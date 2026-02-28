@@ -265,6 +265,12 @@ import {
   subscribe as subscribeToSubagents,
 } from "./helpers/subagentState";
 import {
+  buildLegacyInitMessage,
+  buildMemoryInitRuntimePrompt,
+  gatherGitContext,
+  hasActiveInitSubagent,
+} from "./helpers/initCommand";
+import {
   flushEligibleLinesBeforeReentry,
   shouldClearCompletedSubagentsOnTurnStart,
 } from "./helpers/subagentTurnStart";
@@ -899,45 +905,6 @@ function hasActiveReflectionSubagent(): boolean {
       agent.type.toLowerCase() === "reflection" &&
       (agent.status === "pending" || agent.status === "running"),
   );
-}
-
-function hasActiveInitSubagent(): boolean {
-  const snapshot = getSubagentSnapshot();
-  return snapshot.agents.some(
-    (agent) =>
-      agent.type.toLowerCase() === "init" &&
-      (agent.status === "pending" || agent.status === "running"),
-  );
-}
-
-function buildMemoryInitRuntimePrompt(args: {
-  agentId: string;
-  workingDirectory: string;
-  memoryDir: string;
-  gitContext: string;
-}): string {
-  return `
-The user ran /init for the current project.
-
-Runtime context:
-- parent_agent_id: ${args.agentId}
-- working_directory: ${args.workingDirectory}
-- memory_dir: ${args.memoryDir}
-
-Git/project context:
-${args.gitContext}
-
-Task:
-Initialize or reorganize the parent agent's filesystem-backed memory for this project.
-
-Instructions:
-- Use the pre-loaded initializing-memory skill as your operating guide
-- Inspect existing memory before editing
-- Base your decisions on the current repository and current memory contents
-- Do not ask follow-up questions
-- Make reasonable assumptions and report them
-- If the memory filesystem is unavailable or unsafe to modify, stop and explain why
-`.trim();
 }
 
 function buildTextParts(
@@ -9091,101 +9058,83 @@ export default function App({
           return { submitted: true };
         }
 
-        // Special handling for /init command - spawn background subagent
+        // Special handling for /init command
         if (trimmed === "/init") {
           const cmd = commandRunner.start(msg, "Gathering project context...");
+          const gitContext = gatherGitContext();
 
-          // Guard: prevent concurrent /init runs
-          if (hasActiveInitSubagent()) {
-            cmd.fail(
-              "Memory initialization is already running in the background.",
-            );
-            return { submitted: true };
-          }
-
-          try {
-            // Gather git context if available
-            let gitContext = "";
-            try {
-              const { execSync } = await import("node:child_process");
-              const cwd = process.cwd();
-
-              // Check if we're in a git repo
-              try {
-                execSync("git rev-parse --git-dir", {
-                  cwd,
-                  stdio: "pipe",
-                });
-
-                // Gather git info
-                const branch = execSync("git branch --show-current", {
-                  cwd,
-                  encoding: "utf-8",
-                }).trim();
-                const mainBranch = execSync(
-                  "git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@' || echo 'main'",
-                  { cwd, encoding: "utf-8", shell: "/bin/bash" },
-                ).trim();
-                const status = execSync("git status --short", {
-                  cwd,
-                  encoding: "utf-8",
-                }).trim();
-                const recentCommits = execSync(
-                  "git log --oneline -10 2>/dev/null || echo 'No commits yet'",
-                  { cwd, encoding: "utf-8" },
-                ).trim();
-
-                gitContext = `
-## Current Project Context
-
-**Working directory**: ${cwd}
-
-### Git Status
-- **Current branch**: ${branch}
-- **Main branch**: ${mainBranch}
-- **Status**:
-${status || "(clean working tree)"}
-
-### Recent Commits
-${recentCommits}
-`;
-              } catch {
-                // Not a git repo, just include working directory
-                gitContext = `
-## Current Project Context
-
-**Working directory**: ${cwd}
-**Git**: Not a git repository
-`;
-              }
-            } catch {
-              // execSync import failed, skip git context
+          if (settingsManager.isMemfsEnabled(agentId)) {
+            // MemFS path: background subagent
+            if (hasActiveInitSubagent()) {
+              cmd.fail(
+                "Memory initialization is already running in the background.",
+              );
+              return { submitted: true };
             }
 
-            const initPrompt = buildMemoryInitRuntimePrompt({
-              agentId,
-              workingDirectory: process.cwd(),
-              memoryDir: getMemoryFilesystemRoot(agentId),
-              gitContext,
-            });
+            try {
+              const initPrompt = buildMemoryInitRuntimePrompt({
+                agentId,
+                workingDirectory: process.cwd(),
+                memoryDir: getMemoryFilesystemRoot(agentId),
+                gitContext,
+              });
 
-            // Spawn background subagent — command completes immediately
-            const { spawnBackgroundSubagentTask } = await import(
-              "../tools/impl/Task"
-            );
-            spawnBackgroundSubagentTask({
-              subagentType: "init",
-              prompt: initPrompt,
-              description: "Initialize agent memory",
-            });
+              const { spawnBackgroundSubagentTask } = await import(
+                "../tools/impl/Task"
+              );
+              spawnBackgroundSubagentTask({
+                subagentType: "init",
+                prompt: initPrompt,
+                description: "Initialize agent memory",
+              });
 
-            cmd.finish(
-              "Memory initialization started in background. You'll be notified when it's done.",
-              true,
-            );
-          } catch (error) {
-            const errorDetails = formatErrorDetails(error, agentId);
-            cmd.fail(`Failed to start memory initialization: ${errorDetails}`);
+              cmd.finish(
+                "Memory initialization started in background. You'll be notified when it's done.",
+                true,
+              );
+            } catch (error) {
+              const errorDetails = formatErrorDetails(error, agentId);
+              cmd.fail(
+                `Failed to start memory initialization: ${errorDetails}`,
+              );
+            }
+          } else {
+            // Legacy path: primary agent processConversation
+            const approvalCheck =
+              await checkPendingApprovalsForSlashCommand();
+            if (approvalCheck.blocked) {
+              cmd.fail(
+                "Pending approval(s). Resolve approvals before running /init.",
+              );
+              return { submitted: false };
+            }
+
+            setCommandRunning(true);
+            try {
+              cmd.finish(
+                "Assimilating project context and defragmenting memories...",
+                true,
+              );
+
+              const initMessage = buildLegacyInitMessage({
+                gitContext,
+                memfsSection: "",
+              });
+
+              await processConversation([
+                {
+                  type: "message",
+                  role: "user",
+                  content: buildTextParts(initMessage),
+                },
+              ]);
+            } catch (error) {
+              const errorDetails = formatErrorDetails(error, agentId);
+              cmd.fail(`Failed: ${errorDetails}`);
+            } finally {
+              setCommandRunning(false);
+            }
           }
           return { submitted: true };
         }
