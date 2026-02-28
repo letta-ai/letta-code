@@ -142,6 +142,7 @@ import { ApprovalSwitch } from "./components/ApprovalSwitch";
 import { AssistantMessage } from "./components/AssistantMessageRich";
 import { BashCommandMessage } from "./components/BashCommandMessage";
 import { CommandMessage } from "./components/CommandMessage";
+import { CompactionSelector } from "./components/CompactionSelector";
 import { ConversationSelector } from "./components/ConversationSelector";
 import { colors } from "./components/colors";
 // EnterPlanModeDialog removed - now using InlineEnterPlanModeApproval
@@ -1352,6 +1353,7 @@ export default function App({
   type ActiveOverlay =
     | "model"
     | "sleeptime"
+    | "compaction"
     | "toolset"
     | "system"
     | "agent"
@@ -1421,6 +1423,11 @@ export default function App({
     | {
         type: "set_sleeptime";
         settings: ReflectionSettings;
+        commandId?: string;
+      }
+    | {
+        type: "set_compaction";
+        mode: string;
         commandId?: string;
       }
     | {
@@ -6808,6 +6815,18 @@ export default function App({
           return { submitted: true };
         }
 
+        // Special handling for /compaction command - opens compaction mode settings
+        if (trimmed === "/compaction") {
+          startOverlayCommand(
+            "compaction",
+            "/compaction",
+            "Opening compaction settings...",
+            "Compaction settings dismissed",
+          );
+          setActiveOverlay("compaction");
+          return { submitted: true };
+        }
+
         // Special handling for /toolset command - opens selector
         if (trimmed === "/toolset") {
           startOverlayCommand(
@@ -11213,6 +11232,78 @@ ${SYSTEM_REMINDER_CLOSE}
     ],
   );
 
+  const handleCompactionModeSelect = useCallback(
+    async (mode: string, commandId?: string | null) => {
+      const overlayCommand = commandId
+        ? commandRunner.getHandle(commandId, "/compaction")
+        : consumeOverlayCommand("compaction");
+
+      if (isAgentBusy()) {
+        setActiveOverlay(null);
+        const cmd =
+          overlayCommand ??
+          commandRunner.start(
+            "/compaction",
+            "Compaction settings update queued – will apply after current task completes",
+          );
+        cmd.update({
+          output:
+            "Compaction settings update queued – will apply after current task completes",
+          phase: "running",
+        });
+        setQueuedOverlayAction({
+          type: "set_compaction",
+          mode,
+          commandId: cmd.id,
+        });
+        return;
+      }
+
+      await withCommandLock(async () => {
+        const cmd =
+          overlayCommand ??
+          commandRunner.start("/compaction", "Saving compaction settings...");
+        cmd.update({
+          output: "Saving compaction settings...",
+          phase: "running",
+        });
+
+        try {
+          const client = await getClient();
+          // Spread existing compaction_settings to preserve model/other fields,
+          // only override the mode. If no existing settings, use empty model
+          // string which tells the backend to use its default lightweight model.
+          const existing = agentState?.compaction_settings;
+
+          await client.agents.update(agentId, {
+            compaction_settings: {
+              model: existing?.model ?? "",
+              ...existing,
+              mode: mode as
+                | "all"
+                | "sliding_window"
+                | "self_compact_all"
+                | "self_compact_sliding_window",
+            },
+          });
+
+          cmd.finish(`Updated compaction mode to: ${mode}`, true);
+        } catch (error) {
+          const errorDetails = formatErrorDetails(error, agentId);
+          cmd.fail(`Failed to save compaction settings: ${errorDetails}`);
+        }
+      });
+    },
+    [
+      agentId,
+      commandRunner,
+      consumeOverlayCommand,
+      isAgentBusy,
+      withCommandLock,
+      agentState?.compaction_settings,
+    ],
+  );
+
   const handleToolsetSelect = useCallback(
     async (toolsetId: ToolsetPreference, commandId?: string | null) => {
       const overlayCommand = commandId
@@ -11346,6 +11437,8 @@ ${SYSTEM_REMINDER_CLOSE}
         handleModelSelect(action.modelId, action.commandId);
       } else if (action.type === "set_sleeptime") {
         handleSleeptimeModeSelect(action.settings, action.commandId);
+      } else if (action.type === "set_compaction") {
+        handleCompactionModeSelect(action.mode, action.commandId);
       } else if (action.type === "switch_conversation") {
         const cmd = action.commandId
           ? commandRunner.getHandle(action.commandId, "/resume")
@@ -11426,6 +11519,7 @@ ${SYSTEM_REMINDER_CLOSE}
     handleAgentSelect,
     handleModelSelect,
     handleSleeptimeModeSelect,
+    handleCompactionModeSelect,
     handleToolsetSelect,
     handleSystemPromptSelect,
     agentId,
@@ -12836,6 +12930,14 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
                 initialSettings={getReflectionSettings()}
                 memfsEnabled={settingsManager.isMemfsEnabled(agentId)}
                 onSave={handleSleeptimeModeSelect}
+                onCancel={closeOverlay}
+              />
+            )}
+
+            {activeOverlay === "compaction" && (
+              <CompactionSelector
+                initialMode={agentState?.compaction_settings?.mode}
+                onSave={handleCompactionModeSelect}
                 onCancel={closeOverlay}
               />
             )}

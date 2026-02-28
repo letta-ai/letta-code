@@ -92,6 +92,15 @@ export const commands: Record<string, Command> = {
       return "Opening sleeptime settings...";
     },
   },
+  "/compaction": {
+    desc: "Configure compaction mode settings",
+    order: 15.6,
+    noArgs: true,
+    handler: () => {
+      // Handled specially in App.tsx to open compaction settings
+      return "Opening compaction settings...";
+    },
+  },
   "/memfs": {
     desc: "Manage filesystem-backed memory (/memfs [enable|disable|sync|reset])",
     args: "[enable|disable|sync|reset]",
