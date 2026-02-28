@@ -112,7 +112,7 @@ import {
 } from "../tools/manager";
 import type { ToolsetName, ToolsetPreference } from "../tools/toolset";
 import { formatToolsetName } from "../tools/toolset-labels";
-import { debugLog, debugWarn } from "../utils/debug";
+import { debugLog, debugLogFile, debugWarn } from "../utils/debug";
 import { getVersion } from "../version";
 import {
   handleMcpAdd,
@@ -1587,6 +1587,7 @@ export default function App({
   useEffect(() => {
     if (agentId && agentId !== "loading") {
       chunkLog.init(agentId, telemetry.getSessionId());
+      debugLogFile.init(agentId, telemetry.getSessionId());
     }
   }, [agentId]);
 
@@ -11522,6 +11523,8 @@ ${SYSTEM_REMINDER_CLOSE}
                 billing_tier: billingTier ?? undefined,
                 // Recent chunk log for diagnostics
                 recent_chunks: chunkLog.getEntries(),
+                // Debug log tail for diagnostics
+                debug_log_tail: debugLogFile.getTail(),
               }),
             },
           );
