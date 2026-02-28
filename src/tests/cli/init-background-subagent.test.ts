@@ -36,7 +36,7 @@ describe("init background subagent wiring", () => {
     expect(appSource).toContain('subagentType: "init"');
     expect(appSource).toContain("silentCompletion: true");
     expect(appSource).toContain("appendTaskNotificationEvents(");
-    expect(appSource).toContain("Memory initialization started in background.");
+    expect(appSource).toContain("Learning about you and your codebase");
 
     // Legacy non-MemFS path — primary agent
     expect(appSource).toContain("buildLegacyInitMessage({");

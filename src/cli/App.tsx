@@ -9100,14 +9100,14 @@ export default function App({
                 silentCompletion: true,
                 onComplete: ({ success, error }) => {
                   const msg = success
-                    ? "Memory initialization completed"
+                    ? "Built a memory palace of you. Visit it with /palace."
                     : `Memory initialization failed: ${error}`;
                   appendTaskNotificationEvents([msg]);
                 },
               });
 
               cmd.finish(
-                "Memory initialization started in background. You'll be notified when it's done.",
+                "Learning about you and your codebase in the background. You'll be notified when ready.",
                 true,
               );
 
