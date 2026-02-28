@@ -6,10 +6,7 @@
  */
 
 import { execSync } from "node:child_process";
-import {
-  SYSTEM_REMINDER_CLOSE,
-  SYSTEM_REMINDER_OPEN,
-} from "../../constants";
+import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "../../constants";
 import { getSnapshot as getSubagentSnapshot } from "./subagentState";
 
 // ── Guard ──────────────────────────────────────────────────
