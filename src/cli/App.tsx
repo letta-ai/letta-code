@@ -9097,6 +9097,13 @@ export default function App({
                 subagentType: "init",
                 prompt: initPrompt,
                 description: "Initializing memory",
+                silentCompletion: true,
+                onComplete: ({ success, error }) => {
+                  const msg = success
+                    ? "Memory initialization completed"
+                    : `Memory initialization failed: ${error}`;
+                  appendTaskNotificationEvents([msg]);
+                },
               });
 
               cmd.finish(
