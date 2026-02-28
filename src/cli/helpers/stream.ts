@@ -13,6 +13,7 @@ import {
 import {
   getStreamRequestContext,
   getStreamRequestStartTime,
+  type StreamRequestContext,
 } from "../../agent/message";
 import { telemetry } from "../../telemetry";
 import { debugWarn } from "../../utils/debug";
@@ -65,10 +66,6 @@ type DrainResult = {
   apiDurationMs: number; // time spent in API call
   fallbackError?: string | null; // Error message for when we can't fetch details from server (no run_id)
 };
-
-type StreamRequestContext = NonNullable<
-  ReturnType<typeof getStreamRequestContext>
->;
 
 type RunsListResponse =
   | Run[]

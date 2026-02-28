@@ -17,7 +17,7 @@ import { getClient } from "./client";
 
 const streamRequestStartTimes = new WeakMap<object, number>();
 const streamToolContextIds = new WeakMap<object, string>();
-type StreamRequestContext = {
+export type StreamRequestContext = {
   conversationId: string;
   resolvedConversationId: string;
   agentId: string | null;
