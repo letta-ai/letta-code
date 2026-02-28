@@ -1,5 +1,6 @@
 import { getLettaCodeHeaders } from "../agent/http-headers";
 import { settingsManager } from "../settings-manager";
+import { debugLogFile } from "../utils/debug";
 import { getVersion } from "../version";
 
 export interface TelemetryEvent {
@@ -50,6 +51,7 @@ export interface ErrorData {
   model_id?: string;
   run_id?: string;
   recent_chunks?: Record<string, unknown>[];
+  debug_log_tail?: string;
 }
 
 export interface UserInputData {
@@ -382,6 +384,7 @@ class TelemetryManager {
       model_id: options?.modelId,
       run_id: options?.runId,
       recent_chunks: options?.recentChunks,
+      debug_log_tail: debugLogFile.getTail(),
     };
     this.track("error", data);
   }
