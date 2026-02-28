@@ -514,8 +514,10 @@ function getQueueItemContent(item: QueueItem): unknown {
   return item.kind === "message" ? item.content : item.text;
 }
 
-function buildStateResponse(runtime: ListenerRuntime): StateResponseMessage {
-  const stateSeq = runtime.eventSeqCounter + 1;
+function buildStateResponse(
+  runtime: ListenerRuntime,
+  stateSeq: number,
+): StateResponseMessage {
   const queueItems = runtime.queueRuntime.items.map((item) => ({
     id: item.id,
     kind: item.kind,
@@ -545,6 +547,7 @@ function buildStateResponse(runtime: ListenerRuntime): StateResponseMessage {
     snapshot_id: `snapshot-${crypto.randomUUID()}`,
     generated_at: new Date().toISOString(),
     state_seq: stateSeq,
+    event_seq: stateSeq,
     mode: permissionMode.getMode(),
     is_processing: runtime.isProcessing,
     last_stop_reason: runtime.lastStopReason,
@@ -572,15 +575,26 @@ function sendClientMessage(
   if (socket.readyState === WebSocket.OPEN) {
     let outbound = payload as unknown as Record<string, unknown>;
     if (payload.type !== "ping") {
-      const eventSeq = nextEventSeq(runtime);
-      if (eventSeq !== null) {
+      const hasEventSeq = typeof outbound.event_seq === "number";
+      if (!hasEventSeq) {
+        const eventSeq = nextEventSeq(runtime);
+        if (eventSeq !== null) {
+          outbound = {
+            ...outbound,
+            event_seq: eventSeq,
+            session_id:
+              typeof outbound.session_id === "string"
+                ? outbound.session_id
+                : runtime?.sessionId,
+          };
+        }
+      } else if (
+        typeof outbound.session_id !== "string" &&
+        runtime?.sessionId
+      ) {
         outbound = {
           ...outbound,
-          event_seq: eventSeq,
-          session_id:
-            typeof outbound.session_id === "string"
-              ? outbound.session_id
-              : runtime?.sessionId,
+          session_id: runtime.sessionId,
         };
       }
     }
@@ -1261,8 +1275,26 @@ async function connectWithRetry(
         return;
       }
 
-      const stateResponse = buildStateResponse(runtime);
-      sendClientMessage(socket, stateResponse, runtime);
+      // Serialize snapshot generation with the same message queue used for
+      // message processing so reconnect snapshots cannot race in-flight turns.
+      runtime.messageQueue = runtime.messageQueue
+        .then(async () => {
+          if (runtime !== activeRuntime || runtime.intentionallyClosed) {
+            return;
+          }
+
+          const stateSeq = nextEventSeq(runtime);
+          if (stateSeq === null) {
+            return;
+          }
+          const stateResponse = buildStateResponse(runtime, stateSeq);
+          sendClientMessage(socket, stateResponse, runtime);
+        })
+        .catch((error: unknown) => {
+          if (process.env.DEBUG) {
+            console.error("[Listen] Error handling queued get_state:", error);
+          }
+        });
       return;
     }
 
@@ -1473,7 +1505,7 @@ async function handleIncomingMessage(
   runtime.activeAgentId = agentId ?? null;
   runtime.activeConversationId = conversationId;
   runtime.activeRunId = null;
-  runtime.activeRunStartedAt = new Date().toISOString();
+  runtime.activeRunStartedAt = null;
 
   try {
     // Latch capability: once seen, always use blocking path (strict check to avoid truthy strings)
@@ -1596,7 +1628,10 @@ async function handleIncomingMessage(
           const maybeRunId = (chunk as { run_id?: unknown }).run_id;
           if (typeof maybeRunId === "string") {
             runId = maybeRunId;
-            runtime.activeRunId = maybeRunId;
+            if (runtime.activeRunId !== maybeRunId) {
+              runtime.activeRunId = maybeRunId;
+              runtime.activeRunStartedAt = new Date().toISOString();
+            }
             if (!runIdSent) {
               runIdSent = true;
               msgRunIds.push(maybeRunId);
@@ -1789,9 +1824,10 @@ async function handleIncomingMessage(
 
       // Handle tools that need user input
       if (needsUserInput.length > 0) {
+        runtime.lastStopReason = "requires_approval";
+
         if (!runtime.controlResponseCapable) {
           // Legacy path: break out, let cloud re-enter with ApprovalCreate
-          runtime.lastStopReason = "requires_approval";
           runtime.isProcessing = false;
           clearActiveRunState(runtime);
 
