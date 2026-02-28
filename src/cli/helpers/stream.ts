@@ -87,6 +87,14 @@ type RunsListClient = {
 
 const FALLBACK_RUN_DISCOVERY_TIMEOUT_MS = 5000;
 
+function hasPaginatedItems(
+  response: RunsListResponse,
+): response is { getPaginatedItems: () => Run[] } {
+  return (
+    !Array.isArray(response) && typeof response.getPaginatedItems === "function"
+  );
+}
+
 function parseRunCreatedAtMs(run: Run): number {
   if (!run.created_at) return 0;
   const parsed = Date.parse(run.created_at);
@@ -129,18 +137,8 @@ function withTimeout<T>(
 
 function toRunsArray(listResponse: RunsListResponse): Run[] {
   if (Array.isArray(listResponse)) return listResponse;
-  if (
-    listResponse &&
-    typeof listResponse === "object" &&
-    "getPaginatedItems" in listResponse &&
-    typeof (listResponse as { getPaginatedItems?: unknown })
-      .getPaginatedItems === "function"
-  ) {
-    return (
-      (
-        listResponse as { getPaginatedItems: () => Run[] }
-      ).getPaginatedItems() ?? []
-    );
+  if (hasPaginatedItems(listResponse)) {
+    return listResponse.getPaginatedItems() ?? [];
   }
   return [];
 }
@@ -160,12 +158,12 @@ export async function discoverFallbackRunIdForResume(
     conversation_id?: string | null;
     agent_id?: string | null;
   }): Promise<Run[]> => {
-    const response = (await client.runs.list({
+    const response = await client.runs.list({
       ...query,
       statuses,
       order: "desc",
       limit: 1,
-    })) as RunsListResponse;
+    });
     return toRunsArray(response).filter((run) => {
       if (!run.id) return false;
       if (run.status !== "running") return false;
@@ -493,7 +491,14 @@ export async function drainStreamWithResume(
 ): Promise<DrainResult> {
   const overallStartTime = performance.now();
   const streamRequestContext = getStreamRequestContext(stream);
-  const client = await getClient();
+
+  let _client: Awaited<ReturnType<typeof getClient>> | undefined;
+  const lazyClient = async () => {
+    if (!_client) {
+      _client = await getClient();
+    }
+    return _client;
+  };
 
   // Attempt initial drain
   let result = await drainStream(
@@ -518,6 +523,7 @@ export async function drainStreamWithResume(
     !abortSignal.aborted
   ) {
     try {
+      const client = await lazyClient();
       runIdToResume = await discoverFallbackRunIdWithTimeout(
         client,
         streamRequestContext,
@@ -569,6 +575,8 @@ export async function drainStreamWithResume(
     );
 
     try {
+      const client = await lazyClient();
+
       // Reset interrupted flag so resumed chunks can be processed by onChunk.
       // Without this, tool_return_message for server-side tools (web_search, fetch_webpage)
       // would be silently ignored, showing "Interrupted by user" even on successful resume.

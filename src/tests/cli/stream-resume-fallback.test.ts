@@ -2,6 +2,24 @@ import { describe, expect, test } from "bun:test";
 import type { Run } from "@letta-ai/letta-client/resources/agents/messages";
 import { discoverFallbackRunIdForResume } from "../../cli/helpers/stream";
 
+type RunsListClient = {
+  runs: {
+    list: (query: {
+      conversation_id?: string | null;
+      agent_id?: string | null;
+      statuses?: string[] | null;
+      order?: string | null;
+      limit?: number | null;
+    }) => Promise<Run[] | { getPaginatedItems?: () => Run[] }>;
+  };
+};
+
+function makeRunsListClient(
+  runsList: RunsListClient["runs"]["list"],
+): RunsListClient {
+  return { runs: { list: runsList } };
+}
+
 function run(id: string, createdAt: string): Run {
   return {
     id,
@@ -29,19 +47,7 @@ describe("discoverFallbackRunIdForResume", () => {
     };
 
     const candidate = await discoverFallbackRunIdForResume(
-      {
-        runs: {
-          list: runsList,
-          retrieve: async () => {
-            throw new Error("not used");
-          },
-          messages: {
-            stream: async () => {
-              throw new Error("not used");
-            },
-          },
-        },
-      } as never,
+      makeRunsListClient(runsList),
       {
         conversationId: "conv-123",
         resolvedConversationId: "conv-123",
@@ -76,19 +82,7 @@ describe("discoverFallbackRunIdForResume", () => {
     };
 
     const candidate = await discoverFallbackRunIdForResume(
-      {
-        runs: {
-          list: runsList,
-          retrieve: async () => {
-            throw new Error("not used");
-          },
-          messages: {
-            stream: async () => {
-              throw new Error("not used");
-            },
-          },
-        },
-      } as never,
+      makeRunsListClient(runsList),
       {
         conversationId: "default",
         resolvedConversationId: "agent-test",
@@ -111,19 +105,7 @@ describe("discoverFallbackRunIdForResume", () => {
     ];
 
     const candidate = await discoverFallbackRunIdForResume(
-      {
-        runs: {
-          list: runsList,
-          retrieve: async () => {
-            throw new Error("not used");
-          },
-          messages: {
-            stream: async () => {
-              throw new Error("not used");
-            },
-          },
-        },
-      } as never,
+      makeRunsListClient(runsList),
       {
         conversationId: "conv-abc",
         resolvedConversationId: "conv-abc",
@@ -152,19 +134,7 @@ describe("discoverFallbackRunIdForResume", () => {
     };
 
     const candidate = await discoverFallbackRunIdForResume(
-      {
-        runs: {
-          list: runsList,
-          retrieve: async () => {
-            throw new Error("not used");
-          },
-          messages: {
-            stream: async () => {
-              throw new Error("not used");
-            },
-          },
-        },
-      } as never,
+      makeRunsListClient(runsList),
       {
         conversationId: "conv-created",
         resolvedConversationId: "conv-created",
