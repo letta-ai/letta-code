@@ -268,6 +268,7 @@ import {
   buildMemoryInitRuntimePrompt,
   gatherGitContext,
   hasActiveInitSubagent,
+  initSubagentDescription,
 } from "./helpers/initCommand";
 import {
   flushEligibleLinesBeforeReentry,
@@ -9011,11 +9012,22 @@ export default function App({
         // Special handling for /init command
         if (trimmed === "/init") {
           const cmd = commandRunner.start(msg, "Gathering project context...");
+
+          // Check for pending approvals before either path
+          const approvalCheck =
+            await checkPendingApprovalsForSlashCommand();
+          if (approvalCheck.blocked) {
+            cmd.fail(
+              "Pending approval(s). Resolve approvals before running /init.",
+            );
+            return { submitted: false };
+          }
+
           const gitContext = gatherGitContext();
 
           if (settingsManager.isMemfsEnabled(agentId)) {
             // MemFS path: background subagent
-            if (hasActiveInitSubagent()) {
+            if (hasActiveInitSubagent(agentId)) {
               cmd.fail(
                 "Memory initialization is already running in the background.",
               );
@@ -9036,7 +9048,7 @@ export default function App({
               spawnBackgroundSubagentTask({
                 subagentType: "init",
                 prompt: initPrompt,
-                description: "Initialize agent memory",
+                description: initSubagentDescription(agentId),
               });
 
               cmd.finish(
@@ -9051,15 +9063,6 @@ export default function App({
             }
           } else {
             // Legacy path: primary agent processConversation
-            const approvalCheck =
-              await checkPendingApprovalsForSlashCommand();
-            if (approvalCheck.blocked) {
-              cmd.fail(
-                "Pending approval(s). Resolve approvals before running /init.",
-              );
-              return { submitted: false };
-            }
-
             setCommandRunning(true);
             try {
               cmd.finish(

@@ -9,14 +9,32 @@ describe("init background subagent wiring", () => {
       "utf-8",
     );
 
+  test("App.tsx checks pending approvals before either branch", () => {
+    const appSource = readSource("../../cli/App.tsx");
+
+    // The approval check must appear before the MemFS branch
+    const approvalIdx = appSource.indexOf(
+      "checkPendingApprovalsForSlashCommand",
+      appSource.indexOf('trimmed === "/init"'),
+    );
+    const memfsBranchIdx = appSource.indexOf(
+      "isMemfsEnabled",
+      appSource.indexOf('trimmed === "/init"'),
+    );
+    expect(approvalIdx).toBeGreaterThan(-1);
+    expect(memfsBranchIdx).toBeGreaterThan(-1);
+    expect(approvalIdx).toBeLessThan(memfsBranchIdx);
+  });
+
   test("App.tsx branches on MemFS: background subagent vs legacy processConversation", () => {
     const appSource = readSource("../../cli/App.tsx");
 
     // MemFS path — background subagent
-    expect(appSource).toContain("hasActiveInitSubagent()");
+    expect(appSource).toContain("hasActiveInitSubagent(agentId)");
     expect(appSource).toContain("buildMemoryInitRuntimePrompt({");
     expect(appSource).toContain("spawnBackgroundSubagentTask({");
     expect(appSource).toContain('subagentType: "init"');
+    expect(appSource).toContain("initSubagentDescription(agentId)");
     expect(appSource).toContain(
       "Memory initialization started in background.",
     );
@@ -30,7 +48,10 @@ describe("init background subagent wiring", () => {
     const helperSource = readSource("../../cli/helpers/initCommand.ts");
 
     expect(helperSource).toContain(
-      "export function hasActiveInitSubagent()",
+      "export function hasActiveInitSubagent(",
+    );
+    expect(helperSource).toContain(
+      "export function initSubagentDescription(",
     );
     expect(helperSource).toContain("export function gatherGitContext()");
     expect(helperSource).toContain(
@@ -39,6 +60,14 @@ describe("init background subagent wiring", () => {
     expect(helperSource).toContain(
       "export function buildLegacyInitMessage(",
     );
+  });
+
+  test("hasActiveInitSubagent scopes by agentId via description tag", () => {
+    const helperSource = readSource("../../cli/helpers/initCommand.ts");
+
+    // Guard filters on agentId tag in description
+    expect(helperSource).toContain("agentId: string");
+    expect(helperSource).toContain("agent.description.includes(tag)");
   });
 
   test("init.md exists as a builtin subagent", () => {

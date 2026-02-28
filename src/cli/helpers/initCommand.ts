@@ -14,12 +14,19 @@ import { getSnapshot as getSubagentSnapshot } from "./subagentState";
 
 // ── Guard ──────────────────────────────────────────────────
 
-export function hasActiveInitSubagent(): boolean {
+/** Description prefix used when spawning init subagents, including the agent ID for scoping. */
+export function initSubagentDescription(agentId: string): string {
+  return `Initialize agent memory [${agentId}]`;
+}
+
+export function hasActiveInitSubagent(agentId: string): boolean {
   const snapshot = getSubagentSnapshot();
+  const tag = `[${agentId}]`;
   return snapshot.agents.some(
     (agent) =>
       agent.type.toLowerCase() === "init" &&
-      (agent.status === "pending" || agent.status === "running"),
+      (agent.status === "pending" || agent.status === "running") &&
+      agent.description.includes(tag),
   );
 }
 
