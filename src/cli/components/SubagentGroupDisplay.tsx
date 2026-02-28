@@ -340,8 +340,12 @@ export const SubagentGroupDisplay = memo(() => {
     }
   });
 
+  // Hide background subagents entirely — they use silentCompletion +
+  // onComplete to show a simple user-facing notification via EventMessage.
+  const visible = agents.filter((a) => !a.isBackground);
+
   // Don't render if no agents
-  if (agents.length === 0) {
+  if (visible.length === 0) {
     return null;
   }
 
@@ -349,24 +353,24 @@ export const SubagentGroupDisplay = memo(() => {
   // This ensures consistent behavior - when we disable animation, we also simplify the view
   const condensed = !shouldAnimate;
 
-  const allCompleted = agents.every(
+  const allCompleted = visible.every(
     (a) => a.status === "completed" || a.status === "error",
   );
-  const hasErrors = agents.some((a) => a.status === "error");
+  const hasErrors = visible.some((a) => a.status === "error");
 
   return (
     <Box flexDirection="column" marginTop={1}>
       <GroupHeader
-        count={agents.length}
+        count={visible.length}
         allCompleted={allCompleted}
         hasErrors={hasErrors}
         expanded={expanded}
       />
-      {agents.map((agent, index) => (
+      {visible.map((agent, index) => (
         <AgentRow
           key={agent.id}
           agent={agent}
-          isLast={index === agents.length - 1}
+          isLast={index === visible.length - 1}
           expanded={expanded}
           condensed={condensed}
         />
