@@ -9358,6 +9358,13 @@ ${SYSTEM_REMINDER_CLOSE}
             subagentType: "reflection",
             prompt: AUTO_REFLECTION_PROMPT,
             description: AUTO_REFLECTION_DESCRIPTION,
+            silentCompletion: true,
+            onComplete: ({ success, error }) => {
+              const msg = success
+                ? "Memory updated from recent conversation."
+                : `Memory reflection failed: ${error}`;
+              appendTaskNotificationEvents([msg]);
+            },
           });
           debugLog(
             "memory",
