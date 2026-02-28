@@ -30,11 +30,10 @@ describe("init background subagent wiring", () => {
     const appSource = readSource("../../cli/App.tsx");
 
     // MemFS path — background subagent
-    expect(appSource).toContain("hasActiveInitSubagent(agentId)");
+    expect(appSource).toContain("hasActiveInitSubagent()");
     expect(appSource).toContain("buildMemoryInitRuntimePrompt({");
     expect(appSource).toContain("spawnBackgroundSubagentTask({");
     expect(appSource).toContain('subagentType: "init"');
-    expect(appSource).toContain("initSubagentDescription(agentId)");
     expect(appSource).toContain("Memory initialization started in background.");
 
     // Legacy non-MemFS path — primary agent
@@ -46,20 +45,11 @@ describe("init background subagent wiring", () => {
     const helperSource = readSource("../../cli/helpers/initCommand.ts");
 
     expect(helperSource).toContain("export function hasActiveInitSubagent(");
-    expect(helperSource).toContain("export function initSubagentDescription(");
     expect(helperSource).toContain("export function gatherGitContext()");
     expect(helperSource).toContain(
       "export function buildMemoryInitRuntimePrompt(",
     );
     expect(helperSource).toContain("export function buildLegacyInitMessage(");
-  });
-
-  test("hasActiveInitSubagent scopes by agentId via description tag", () => {
-    const helperSource = readSource("../../cli/helpers/initCommand.ts");
-
-    // Guard filters on agentId tag in description
-    expect(helperSource).toContain("agentId: string");
-    expect(helperSource).toContain("agent.description.includes(tag)");
   });
 
   test("init.md exists as a builtin subagent", () => {

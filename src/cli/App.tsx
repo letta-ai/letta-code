@@ -221,7 +221,6 @@ import {
   buildMemoryInitRuntimePrompt,
   gatherGitContext,
   hasActiveInitSubagent,
-  initSubagentDescription,
 } from "./helpers/initCommand";
 import {
   getReflectionSettings,
@@ -9076,7 +9075,7 @@ export default function App({
 
           if (settingsManager.isMemfsEnabled(agentId)) {
             // MemFS path: background subagent
-            if (hasActiveInitSubagent(agentId)) {
+            if (hasActiveInitSubagent()) {
               cmd.fail(
                 "Memory initialization is already running in the background.",
               );
@@ -9097,7 +9096,7 @@ export default function App({
               spawnBackgroundSubagentTask({
                 subagentType: "init",
                 prompt: initPrompt,
-                description: initSubagentDescription(agentId),
+                description: "Initializing memory",
               });
 
               cmd.finish(
