@@ -142,6 +142,45 @@ describe("spawnBackgroundSubagentTask", () => {
     expect(outputContent).toContain("[Task completed]");
   });
 
+  test("silentCompletion skips message queue notification", async () => {
+    const spawnSubagentImpl = mock(async () => ({
+      agentId: "agent-silent",
+      conversationId: "default",
+      report: "init done",
+      success: true,
+      totalTokens: 30,
+    }));
+
+    const launched = spawnBackgroundSubagentTask({
+      subagentType: "init",
+      prompt: "Init memory",
+      description: "Initializing memory",
+      silentCompletion: true,
+      deps: {
+        spawnSubagentImpl,
+        addToMessageQueueImpl,
+        formatTaskNotificationImpl,
+        runSubagentStopHooksImpl,
+        generateSubagentIdImpl,
+        registerSubagentImpl,
+        completeSubagentImpl,
+        getSubagentSnapshotImpl,
+      },
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const task = backgroundTasks.get(launched.taskId);
+    expect(task?.status).toBe("completed");
+    expect(task?.output[0]).toContain("init done");
+    expect(completeSubagentImpl).toHaveBeenCalledTimes(1);
+    // No notification queued
+    expect(queueMessages.length).toBe(0);
+    expect(formatTaskNotificationImpl).not.toHaveBeenCalled();
+    // Hooks still run
+    expect(runSubagentStopHooksImpl).toHaveBeenCalledTimes(1);
+  });
+
   test("marks background task failed and emits notification on error", async () => {
     const spawnSubagentImpl = mock(async () => {
       throw new Error("subagent exploded");
