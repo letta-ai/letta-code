@@ -37,6 +37,7 @@ import { isInteractiveApprovalTool } from "../tools/interactivePolicy";
 import { loadTools } from "../tools/manager";
 import type {
   AutoApprovalMessage,
+  CancelAckMessage,
   CanUseToolResponse,
   ControlRequest,
   ControlResponseBody,
@@ -146,6 +147,12 @@ interface GetStateMessage {
   type: "get_state";
 }
 
+interface CancelRunMessage {
+  type: "cancel_run";
+  request_id?: string;
+  run_id?: string | null;
+}
+
 interface RecoverPendingApprovalsMessage {
   type: "recover_pending_approvals";
   agentId?: string;
@@ -203,6 +210,7 @@ type ServerMessage =
   | ModeChangeMessage
   | GetStatusMessage
   | GetStateMessage
+  | CancelRunMessage
   | RecoverPendingApprovalsMessage
   | WsControlResponse;
 type ClientMessage =
@@ -242,6 +250,10 @@ type ListenerRuntime = {
   activeConversationId: string | null;
   activeRunId: string | null;
   activeRunStartedAt: string | null;
+  /** Abort controller for the currently active message turn. */
+  activeAbortController: AbortController | null;
+  /** True when a cancel_run request has been issued for the active turn. */
+  cancelRequested: boolean;
   /** Queue lifecycle tracking — parallel tracking layer, does not affect message processing. */
   queueRuntime: QueueRuntime;
   /** Count of turns currently queued or in-flight in the promise chain. Incremented
@@ -320,6 +332,8 @@ function createRuntime(): ListenerRuntime {
     activeConversationId: null,
     activeRunId: null,
     activeRunStartedAt: null,
+    activeAbortController: null,
+    cancelRequested: false,
     isRecoveringApprovals: false,
     pendingTurns: 0,
     // queueRuntime assigned below — needs runtime ref in callbacks
@@ -413,6 +427,7 @@ function clearActiveRunState(runtime: ListenerRuntime): void {
   runtime.activeConversationId = null;
   runtime.activeRunId = null;
   runtime.activeRunStartedAt = null;
+  runtime.activeAbortController = null;
 }
 
 function stopRuntime(
@@ -420,6 +435,13 @@ function stopRuntime(
   suppressCallbacks: boolean,
 ): void {
   runtime.intentionallyClosed = true;
+  runtime.cancelRequested = true;
+  if (
+    runtime.activeAbortController &&
+    !runtime.activeAbortController.signal.aborted
+  ) {
+    runtime.activeAbortController.abort();
+  }
   clearRuntimeTimers(runtime);
   rejectPendingApprovalResolvers(runtime, "Listener runtime stopped");
 
@@ -473,6 +495,7 @@ export function parseServerMessage(
       parsed.type === "mode_change" ||
       parsed.type === "get_status" ||
       parsed.type === "get_state" ||
+      parsed.type === "cancel_run" ||
       parsed.type === "recover_pending_approvals"
     ) {
       return parsed as ServerMessage;
@@ -576,6 +599,27 @@ function sendStateSnapshot(socket: WebSocket, runtime: ListenerRuntime): void {
   sendClientMessage(socket, stateResponse, runtime);
 }
 
+function emitCancelAck(
+  socket: WebSocket,
+  runtime: ListenerRuntime,
+  params: {
+    requestId: string;
+    accepted: boolean;
+    reason?: string;
+    runId?: string | null;
+  },
+): void {
+  emitToWS(socket, {
+    type: "cancel_ack",
+    request_id: params.requestId,
+    accepted: params.accepted,
+    reason: params.reason,
+    run_id: params.runId ?? runtime.activeRunId,
+    session_id: runtime.sessionId,
+    uuid: `cancel-ack-${params.requestId}`,
+  } as CancelAckMessage);
+}
+
 function sendClientMessage(
   socket: WebSocket,
   payload: ClientMessage,
@@ -637,6 +681,7 @@ function sendControlMessageOverWebSocket(
 export type WsProtocolEvent =
   | MessageWire
   | AutoApprovalMessage
+  | CancelAckMessage
   | ErrorMessage
   | RetryMessage
   | RecoveryMessage
@@ -684,6 +729,7 @@ async function sendMessageStreamWithRetry(
   opts: Parameters<typeof sendMessageStream>[2],
   socket: WebSocket,
   runtime: ListenerRuntime,
+  abortSignal?: AbortSignal,
 ): Promise<Awaited<ReturnType<typeof sendMessageStream>>> {
   let transientRetries = 0;
   let conversationBusyRetries = 0;
@@ -691,9 +737,24 @@ async function sendMessageStreamWithRetry(
 
   // eslint-disable-next-line no-constant-condition
   while (true) {
+    if (abortSignal?.aborted) {
+      throw new Error("Cancelled by user");
+    }
+
     try {
-      return await sendMessageStream(conversationId, messages, opts);
+      return await sendMessageStream(
+        conversationId,
+        messages,
+        opts,
+        abortSignal
+          ? { maxRetries: 0, signal: abortSignal }
+          : { maxRetries: 0 },
+      );
     } catch (preStreamError) {
+      if (abortSignal?.aborted) {
+        throw new Error("Cancelled by user");
+      }
+
       const errorDetail = extractConflictDetail(preStreamError);
       const action = getPreStreamErrorAction(
         errorDetail,
@@ -737,6 +798,9 @@ async function sendMessageStreamWithRetry(
         } as RetryMessage);
 
         await new Promise((resolve) => setTimeout(resolve, delayMs));
+        if (abortSignal?.aborted) {
+          throw new Error("Cancelled by user");
+        }
         continue;
       }
 
@@ -756,6 +820,9 @@ async function sendMessageStreamWithRetry(
         } as RetryMessage);
 
         await new Promise((resolve) => setTimeout(resolve, delayMs));
+        if (abortSignal?.aborted) {
+          throw new Error("Cancelled by user");
+        }
         continue;
       }
 
@@ -1279,6 +1346,48 @@ async function connectWithRetry(
       return;
     }
 
+    if (parsed.type === "cancel_run") {
+      if (runtime !== activeRuntime || runtime.intentionallyClosed) {
+        return;
+      }
+
+      const requestId =
+        typeof parsed.request_id === "string" && parsed.request_id.length > 0
+          ? parsed.request_id
+          : `cancel-${crypto.randomUUID()}`;
+      const requestedRunId =
+        typeof parsed.run_id === "string" ? parsed.run_id : runtime.activeRunId;
+      const hasPendingApprovals = runtime.pendingApprovalResolvers.size > 0;
+      const hasActiveTurn = runtime.isProcessing;
+
+      if (!hasActiveTurn && !hasPendingApprovals) {
+        emitCancelAck(socket, runtime, {
+          requestId,
+          accepted: false,
+          reason: "no_active_turn",
+          runId: requestedRunId,
+        });
+        return;
+      }
+
+      runtime.cancelRequested = true;
+      if (
+        runtime.activeAbortController &&
+        !runtime.activeAbortController.signal.aborted
+      ) {
+        runtime.activeAbortController.abort();
+      }
+      if (hasPendingApprovals) {
+        rejectPendingApprovalResolvers(runtime, "Cancelled by user");
+      }
+      emitCancelAck(socket, runtime, {
+        requestId,
+        accepted: true,
+        runId: requestedRunId,
+      });
+      return;
+    }
+
     if (parsed.type === "get_state") {
       if (runtime !== activeRuntime || runtime.intentionallyClosed) {
         return;
@@ -1514,6 +1623,8 @@ async function handleIncomingMessage(
   const msgRunIds: string[] = [];
 
   runtime.isProcessing = true;
+  runtime.cancelRequested = false;
+  runtime.activeAbortController = new AbortController();
   runtime.activeAgentId = agentId ?? null;
   runtime.activeConversationId = conversationId;
   runtime.activeRunId = null;
@@ -1616,6 +1727,7 @@ async function handleIncomingMessage(
       { agentId, streamTokens: true, background: true },
       socket,
       runtime,
+      runtime.activeAbortController.signal,
     );
 
     turnToolContextId = getStreamToolContextId(
@@ -1634,7 +1746,7 @@ async function handleIncomingMessage(
         stream as Stream<LettaStreamingResponse>,
         buffers,
         () => {},
-        undefined,
+        runtime.activeAbortController.signal,
         undefined,
         ({ chunk, shouldOutput, errorInfo }) => {
           const maybeRunId = (chunk as { run_id?: unknown }).run_id;
@@ -1717,7 +1829,39 @@ async function handleIncomingMessage(
         break;
       }
 
-      // Case 2: Error or cancelled
+      // Case 2: Explicit cancellation
+      if (stopReason === "cancelled") {
+        runtime.lastStopReason = "cancelled";
+        runtime.isProcessing = false;
+        clearActiveRunState(runtime);
+
+        if (runtime.controlResponseCapable) {
+          emitToWS(socket, {
+            type: "result",
+            subtype: "interrupted",
+            agent_id: agentId,
+            conversation_id: conversationId,
+            duration_ms: performance.now() - msgStartTime,
+            duration_api_ms: 0,
+            num_turns: msgTurnCount,
+            result: null,
+            run_ids: msgRunIds,
+            usage: null,
+            stop_reason: "cancelled",
+            session_id: runtime.sessionId,
+            uuid: `result-${crypto.randomUUID()}`,
+          });
+        } else {
+          sendClientMessage(socket, {
+            type: "result",
+            success: false,
+            stopReason: "cancelled",
+          });
+        }
+        break;
+      }
+
+      // Case 3: Error
       if (stopReason !== "requires_approval") {
         runtime.lastStopReason = stopReason;
         runtime.isProcessing = false;
@@ -1757,7 +1901,7 @@ async function handleIncomingMessage(
         break;
       }
 
-      // Case 3: Requires approval - classify and handle based on permission mode
+      // Case 4: Requires approval - classify and handle based on permission mode
       if (approvals.length === 0) {
         // Unexpected: requires_approval but no approvals
         runtime.lastStopReason = "error";
@@ -1929,7 +2073,10 @@ async function handleIncomingMessage(
       const executionResults = await executeApprovalBatch(
         decisions,
         undefined,
-        { toolContextId: turnToolContextId ?? undefined },
+        {
+          toolContextId: turnToolContextId ?? undefined,
+          abortSignal: runtime.activeAbortController.signal,
+        },
       );
 
       // Create fresh approval stream for next iteration
@@ -1944,12 +2091,44 @@ async function handleIncomingMessage(
         { agentId, streamTokens: true, background: true },
         socket,
         runtime,
+        runtime.activeAbortController.signal,
       );
       turnToolContextId = getStreamToolContextId(
         stream as Stream<LettaStreamingResponse>,
       );
     }
   } catch (error) {
+    if (runtime.cancelRequested) {
+      runtime.lastStopReason = "cancelled";
+      runtime.isProcessing = false;
+      clearActiveRunState(runtime);
+
+      if (runtime.controlResponseCapable) {
+        emitToWS(socket, {
+          type: "result",
+          subtype: "interrupted",
+          agent_id: agentId || "",
+          conversation_id: conversationId,
+          duration_ms: performance.now() - msgStartTime,
+          duration_api_ms: 0,
+          num_turns: msgTurnCount,
+          result: null,
+          run_ids: msgRunIds,
+          usage: null,
+          stop_reason: "cancelled",
+          session_id: runtime.sessionId,
+          uuid: `result-${crypto.randomUUID()}`,
+        });
+      } else {
+        sendClientMessage(socket, {
+          type: "result",
+          success: false,
+          stopReason: "cancelled",
+        });
+      }
+      return;
+    }
+
     runtime.lastStopReason = "error";
     runtime.isProcessing = false;
     clearActiveRunState(runtime);
@@ -1989,6 +2168,9 @@ async function handleIncomingMessage(
     if (process.env.DEBUG) {
       console.error("[Listen] Error handling message:", error);
     }
+  } finally {
+    runtime.activeAbortController = null;
+    runtime.cancelRequested = false;
   }
 }
 

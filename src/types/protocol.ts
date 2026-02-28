@@ -224,6 +224,17 @@ export interface RecoveryMessage extends MessageEnvelope {
   run_id?: string;
 }
 
+/**
+ * Acknowledges a cancel request received over the device websocket control path.
+ */
+export interface CancelAckMessage extends MessageEnvelope {
+  type: "cancel_ack";
+  request_id: string;
+  accepted: boolean;
+  run_id?: string | null;
+  reason?: string;
+}
+
 // ═══════════════════════════════════════════════════════════════
 // RESULT
 // ═══════════════════════════════════════════════════════════════
@@ -729,6 +740,7 @@ export type WireMessage =
   | ContentMessage
   | StreamEvent
   | AutoApprovalMessage
+  | CancelAckMessage
   | ErrorMessage
   | RetryMessage
   | RecoveryMessage
