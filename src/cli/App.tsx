@@ -9105,9 +9105,12 @@ export default function App({
                 true,
               );
 
-              // Drain the /init command-IO reminder so it doesn't bleed
-              // into the primary agent's context on the next turn —
-              // the background subagent is handling it, not the primary.
+              // TODO: Remove this hack once commandRunner supports a
+              // "silent" finish that skips the reminder callback.
+              // Currently cmd.finish() always enqueues a command-IO
+              // reminder, which leaks the /init context into the
+              // primary agent's next turn and causes it to invoke the
+              // initializing-memory skill itself.
               const reminders =
                 sharedReminderStateRef.current.pendingCommandIoReminders;
               const idx = reminders.findIndex((r) => r.input === "/init");
