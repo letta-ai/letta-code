@@ -35,9 +35,7 @@ describe("init background subagent wiring", () => {
     expect(appSource).toContain("spawnBackgroundSubagentTask({");
     expect(appSource).toContain('subagentType: "init"');
     expect(appSource).toContain("initSubagentDescription(agentId)");
-    expect(appSource).toContain(
-      "Memory initialization started in background.",
-    );
+    expect(appSource).toContain("Memory initialization started in background.");
 
     // Legacy non-MemFS path — primary agent
     expect(appSource).toContain("buildLegacyInitMessage({");
@@ -47,19 +45,13 @@ describe("init background subagent wiring", () => {
   test("initCommand.ts exports all helpers", () => {
     const helperSource = readSource("../../cli/helpers/initCommand.ts");
 
-    expect(helperSource).toContain(
-      "export function hasActiveInitSubagent(",
-    );
-    expect(helperSource).toContain(
-      "export function initSubagentDescription(",
-    );
+    expect(helperSource).toContain("export function hasActiveInitSubagent(");
+    expect(helperSource).toContain("export function initSubagentDescription(");
     expect(helperSource).toContain("export function gatherGitContext()");
     expect(helperSource).toContain(
       "export function buildMemoryInitRuntimePrompt(",
     );
-    expect(helperSource).toContain(
-      "export function buildLegacyInitMessage(",
-    );
+    expect(helperSource).toContain("export function buildLegacyInitMessage(");
   });
 
   test("hasActiveInitSubagent scopes by agentId via description tag", () => {
