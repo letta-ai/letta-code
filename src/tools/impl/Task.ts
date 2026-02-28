@@ -67,6 +67,11 @@ export interface SpawnBackgroundSubagentTaskArgs {
   existingConversationId?: string;
   maxTurns?: number;
   /**
+   * When true, skip injecting the completion notification into the primary
+   * agent's message queue and hide from SubagentGroupDisplay.
+   */
+  silentCompletion?: boolean;
+  /**
    * Optional dependency overrides for tests.
    * Production callers should not provide this.
    */
@@ -191,6 +196,7 @@ export function spawnBackgroundSubagentTask(
     existingAgentId,
     existingConversationId,
     maxTurns,
+    silentCompletion,
     deps,
   } = args;
 
@@ -208,7 +214,14 @@ export function spawnBackgroundSubagentTask(
     deps?.getSubagentSnapshotImpl ?? getSubagentSnapshot;
 
   const subagentId = generateSubagentIdFn();
-  registerSubagentFn(subagentId, subagentType, description, toolCallId, true);
+  registerSubagentFn(
+    subagentId,
+    subagentType,
+    description,
+    toolCallId,
+    true,
+    silentCompletion,
+  );
 
   const taskId = getNextTaskId();
   const outputFile = createBackgroundOutputFile(taskId);
