@@ -217,6 +217,12 @@ import {
 import { formatCompact } from "./helpers/format";
 import { parsePatchOperations } from "./helpers/formatArgsDisplay";
 import {
+  buildLegacyInitMessage,
+  buildMemoryInitRuntimePrompt,
+  gatherGitContext,
+  hasActiveInitSubagent,
+} from "./helpers/initCommand";
+import {
   getReflectionSettings,
   parseMemoryPreference,
   type ReflectionSettings,
@@ -9052,135 +9058,104 @@ export default function App({
           return { submitted: true };
         }
 
-        // Special handling for /init command - initialize agent memory
+        // Special handling for /init command
         if (trimmed === "/init") {
           const cmd = commandRunner.start(msg, "Gathering project context...");
 
-          // Check for pending approvals before sending
+          // Check for pending approvals before either path
           const approvalCheck = await checkPendingApprovalsForSlashCommand();
           if (approvalCheck.blocked) {
             cmd.fail(
               "Pending approval(s). Resolve approvals before running /init.",
             );
-            return { submitted: false }; // Keep /init in input box, user handles approval first
+            return { submitted: false };
           }
 
-          setCommandRunning(true);
+          const gitContext = gatherGitContext();
 
-          try {
-            // Gather git context if available
-            let gitContext = "";
-            try {
-              const { execSync } = await import("node:child_process");
-              const cwd = process.cwd();
-
-              // Check if we're in a git repo
-              try {
-                execSync("git rev-parse --git-dir", {
-                  cwd,
-                  stdio: "pipe",
-                });
-
-                // Gather git info
-                const branch = execSync("git branch --show-current", {
-                  cwd,
-                  encoding: "utf-8",
-                }).trim();
-                const mainBranch = execSync(
-                  "git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@' || echo 'main'",
-                  { cwd, encoding: "utf-8", shell: "/bin/bash" },
-                ).trim();
-                const status = execSync("git status --short", {
-                  cwd,
-                  encoding: "utf-8",
-                }).trim();
-                const recentCommits = execSync(
-                  "git log --oneline -10 2>/dev/null || echo 'No commits yet'",
-                  { cwd, encoding: "utf-8" },
-                ).trim();
-
-                gitContext = `
-## Current Project Context
-
-**Working directory**: ${cwd}
-
-### Git Status
-- **Current branch**: ${branch}
-- **Main branch**: ${mainBranch}
-- **Status**:
-${status || "(clean working tree)"}
-
-### Recent Commits
-${recentCommits}
-`;
-              } catch {
-                // Not a git repo, just include working directory
-                gitContext = `
-## Current Project Context
-
-**Working directory**: ${cwd}
-**Git**: Not a git repository
-`;
-              }
-            } catch {
-              // execSync import failed, skip git context
+          if (settingsManager.isMemfsEnabled(agentId)) {
+            // MemFS path: background subagent
+            if (hasActiveInitSubagent()) {
+              cmd.fail(
+                "Memory initialization is already running in the background.",
+              );
+              return { submitted: true };
             }
 
-            // Mark command as finished before sending message
-            cmd.finish(
-              "Assimilating project context and defragmenting memories...",
-              true,
-            );
+            try {
+              const initPrompt = buildMemoryInitRuntimePrompt({
+                agentId,
+                workingDirectory: process.cwd(),
+                memoryDir: getMemoryFilesystemRoot(agentId),
+                gitContext,
+              });
 
-            // Send trigger message instructing agent to load the initializing-memory skill
-            // Only include memfs path if memfs is enabled for this agent
-            const memfsSection = settingsManager.isMemfsEnabled(agentId)
-              ? `
-## Memory Filesystem Location
+              const { spawnBackgroundSubagentTask } = await import(
+                "../tools/impl/Task"
+              );
+              spawnBackgroundSubagentTask({
+                subagentType: "init",
+                prompt: initPrompt,
+                description: "Initializing memory",
+                silentCompletion: true,
+                onComplete: ({ success, error }) => {
+                  const msg = success
+                    ? "Built a memory palace of you. Visit it with /palace."
+                    : `Memory initialization failed: ${error}`;
+                  appendTaskNotificationEvents([msg]);
+                },
+              });
 
-Your memory blocks are synchronized with the filesystem at:
-\`${getMemoryFilesystemRoot(agentId)}\`
+              cmd.finish(
+                "Learning about you and your codebase in the background. You'll be notified when ready.",
+                true,
+              );
 
-Environment variables available in Letta Code:
-- \`AGENT_ID=${agentId}\`
-- \`MEMORY_DIR=${getMemoryFilesystemRoot(agentId)}\`
+              // TODO: Remove this hack once commandRunner supports a
+              // "silent" finish that skips the reminder callback.
+              // Currently cmd.finish() always enqueues a command-IO
+              // reminder, which leaks the /init context into the
+              // primary agent's next turn and causes it to invoke the
+              // initializing-memory skill itself.
+              const reminders =
+                sharedReminderStateRef.current.pendingCommandIoReminders;
+              const idx = reminders.findIndex((r) => r.input === "/init");
+              if (idx !== -1) {
+                reminders.splice(idx, 1);
+              }
+            } catch (error) {
+              const errorDetails = formatErrorDetails(error, agentId);
+              cmd.fail(
+                `Failed to start memory initialization: ${errorDetails}`,
+              );
+            }
+          } else {
+            // Legacy path: primary agent processConversation
+            setCommandRunning(true);
+            try {
+              cmd.finish(
+                "Assimilating project context and defragmenting memories...",
+                true,
+              );
 
-Use \`$MEMORY_DIR\` when working with memory files during initialization.
-`
-              : "";
+              const initMessage = buildLegacyInitMessage({
+                gitContext,
+                memfsSection: "",
+              });
 
-            const initMessage = `${SYSTEM_REMINDER_OPEN}
-The user has requested memory initialization via /init.
-${memfsSection}
-## 1. Invoke the initializing-memory skill
-
-Use the \`Skill\` tool with \`skill: "initializing-memory"\` to load the comprehensive instructions for memory initialization.
-
-If the skill fails to invoke, proceed with your best judgment based on these guidelines:
-- Ask upfront questions (research depth, identity, related repos, workflow style)
-- Research the project based on chosen depth
-- Create/update memory blocks incrementally
-- Reflect and verify completeness
-
-## 2. Follow the skill instructions
-
-Once invoked, follow the instructions from the \`initializing-memory\` skill to complete the initialization.
-${gitContext}
-${SYSTEM_REMINDER_CLOSE}`;
-
-            // Process conversation with the init prompt
-            await processConversation([
-              {
-                type: "message",
-                role: "user",
-                content: buildTextParts(initMessage),
-              },
-            ]);
-          } catch (error) {
-            const errorDetails = formatErrorDetails(error, agentId);
-            cmd.fail(`Failed: ${errorDetails}`);
-          } finally {
-            setCommandRunning(false);
+              await processConversation([
+                {
+                  type: "message",
+                  role: "user",
+                  content: buildTextParts(initMessage),
+                },
+              ]);
+            } catch (error) {
+              const errorDetails = formatErrorDetails(error, agentId);
+              cmd.fail(`Failed: ${errorDetails}`);
+            } finally {
+              setCommandRunning(false);
+            }
           }
           return { submitted: true };
         }
