@@ -689,11 +689,7 @@ async function recoverPendingApprovals(
   socket: WebSocket,
   msg: RecoverPendingApprovalsMessage,
 ): Promise<void> {
-  if (
-    runtime.isProcessing ||
-    runtime.pendingTurns > 0 ||
-    runtime.isRecoveringApprovals
-  ) {
+  if (runtime.isProcessing || runtime.isRecoveringApprovals) {
     return;
   }
 
@@ -1073,17 +1069,42 @@ async function connectWithRetry(
       // Recovery requests are only sent by the modern cloud listener protocol.
       runtime.controlResponseCapable = true;
 
-      void recoverPendingApprovals(runtime, socket, parsed).catch((error) => {
-        const errorMessage =
-          error instanceof Error ? error.message : String(error);
-        emitToWS(socket, {
-          type: "error",
-          message: `Pending approval recovery failed: ${errorMessage}`,
-          stop_reason: "error",
-          session_id: runtime.sessionId,
-          uuid: `error-${crypto.randomUUID()}`,
+      // Serialize recovery with normal message handling to avoid concurrent
+      // handleIncomingMessage execution when user messages arrive concurrently.
+      runtime.pendingTurns++;
+      runtime.messageQueue = runtime.messageQueue
+        .then(async () => {
+          try {
+            if (runtime !== activeRuntime || runtime.intentionallyClosed) {
+              return;
+            }
+
+            await recoverPendingApprovals(runtime, socket, parsed);
+          } catch (error) {
+            const errorMessage =
+              error instanceof Error ? error.message : String(error);
+            emitToWS(socket, {
+              type: "error",
+              message: `Pending approval recovery failed: ${errorMessage}`,
+              stop_reason: "error",
+              session_id: runtime.sessionId,
+              uuid: `error-${crypto.randomUUID()}`,
+            });
+          } finally {
+            runtime.pendingTurns--;
+            if (runtime.pendingTurns === 0) {
+              runtime.queueRuntime.resetBlockedState();
+            }
+          }
+        })
+        .catch((error: unknown) => {
+          if (process.env.DEBUG) {
+            console.error(
+              "[Listen] Error handling queued pending approval recovery:",
+              error,
+            );
+          }
         });
-      });
       return;
     }
 
