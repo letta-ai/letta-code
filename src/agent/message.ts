@@ -62,7 +62,9 @@ export async function sendMessageStream(
   } = { streamTokens: true, background: true },
   // Disable SDK retries by default - state management happens outside the stream,
   // so retries would violate idempotency and create race conditions
-  requestOptions: { maxRetries?: number } = { maxRetries: 0 },
+  requestOptions: { maxRetries?: number; signal?: AbortSignal } = {
+    maxRetries: 0,
+  },
 ): Promise<Stream<LettaStreamingResponse>> {
   const requestStartTime = isTimingsEnabled() ? performance.now() : undefined;
   const requestStartedAtMs = Date.now();

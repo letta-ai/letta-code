@@ -328,7 +328,7 @@ export class QueueRuntime {
     return {
       ...input,
       id: `q-${++this.nextId}`,
-      enqueuedAt: performance.now(),
+      enqueuedAt: Date.now(),
     } as QueueItem;
   }
 
