@@ -790,7 +790,8 @@
     "isFeatured": true,
     "free": true,
     "updateArgs": {
-      "context_window": 200000,
+      "context_window": 180000,
+      "max_output_tokens": 16000,
       "parallel_tool_calls": true
     }
   },
@@ -801,7 +802,8 @@
     "description": "zAI's latest coding model (legacy)",
     "free": true,
     "updateArgs": {
-      "context_window": 200000,
+      "context_window": 180000,
+      "max_output_tokens": 16000,
       "parallel_tool_calls": true
     }
   },
