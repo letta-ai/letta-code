@@ -72,6 +72,12 @@ interface StartListenerOptions {
     nextRetryIn: number,
     connectionId: string,
   ) => void;
+  /** Debug hook: called for every WS frame sent or received. */
+  onWsEvent?: (
+    direction: "send" | "recv",
+    label: "client" | "protocol" | "control" | "lifecycle",
+    event: unknown,
+  ) => void;
 }
 
 interface PingMessage {
@@ -177,6 +183,8 @@ type ListenerRuntime = {
   /** Count of turns currently queued or in-flight in the promise chain. Incremented
    *  synchronously on message arrival (before .then()) to avoid async scheduling races. */
   pendingTurns: number;
+  /** Optional debug hook for WS event logging. */
+  onWsEvent?: StartListenerOptions["onWsEvent"];
 };
 
 type ApprovalSlot =
@@ -383,8 +391,22 @@ export function parseServerMessage(
   }
 }
 
+/** Fire onWsEvent without risking transport disruption. */
+function safeEmitWsEvent(
+  direction: "send" | "recv",
+  label: "client" | "protocol" | "control" | "lifecycle",
+  event: unknown,
+): void {
+  try {
+    activeRuntime?.onWsEvent?.(direction, label, event);
+  } catch {
+    // Debug hook must never break transport flow.
+  }
+}
+
 function sendClientMessage(socket: WebSocket, payload: ClientMessage): void {
   if (socket.readyState === WebSocket.OPEN) {
+    safeEmitWsEvent("send", "client", payload);
     socket.send(JSON.stringify(payload));
   }
 }
@@ -395,6 +417,7 @@ function sendControlMessageOverWebSocket(
 ): void {
   // Central hook for protocol-only outbound WS messages so future
   // filtering/mutation can be added without touching approval flow.
+  safeEmitWsEvent("send", "control", payload);
   socket.send(JSON.stringify(payload));
 }
 
@@ -419,6 +442,7 @@ export type WsProtocolEvent =
  */
 function emitToWS(socket: WebSocket, event: WsProtocolEvent): void {
   if (socket.readyState === WebSocket.OPEN) {
+    safeEmitWsEvent("send", "protocol", event);
     socket.send(JSON.stringify(event));
   }
 }
@@ -661,6 +685,7 @@ export async function startListenerClient(
   }
 
   const runtime = createRuntime();
+  runtime.onWsEvent = opts.onWsEvent;
   activeRuntime = runtime;
 
   await connectWithRetry(runtime, opts);
@@ -737,6 +762,7 @@ async function connectWithRetry(
       return;
     }
 
+    safeEmitWsEvent("recv", "lifecycle", { type: "_ws_open" });
     runtime.hasSuccessfulConnection = true;
     opts.onConnected(opts.connectionId);
 
@@ -753,7 +779,17 @@ async function connectWithRetry(
   });
 
   socket.on("message", (data: WebSocket.RawData) => {
+    const raw = data.toString();
     const parsed = parseServerMessage(data);
+    if (parsed) {
+      safeEmitWsEvent("recv", "client", parsed);
+    } else {
+      // Log unparseable frames so protocol drift is visible in debug mode
+      safeEmitWsEvent("recv", "lifecycle", {
+        type: "_ws_unparseable",
+        raw,
+      });
+    }
     if (process.env.DEBUG) {
       console.log(
         `[Listen] Received message: ${JSON.stringify(parsed, null, 2)}`,
@@ -877,6 +913,12 @@ async function connectWithRetry(
       return;
     }
 
+    safeEmitWsEvent("recv", "lifecycle", {
+      type: "_ws_close",
+      code,
+      reason: reason.toString(),
+    });
+
     // Single authoritative queue_cleared emission for all close paths
     // (intentional and unintentional). Must fire before early returns.
     runtime.queueRuntime.clear("shutdown");
@@ -925,6 +967,10 @@ async function connectWithRetry(
   });
 
   socket.on("error", (error: Error) => {
+    safeEmitWsEvent("recv", "lifecycle", {
+      type: "_ws_error",
+      message: error.message,
+    });
     if (process.env.DEBUG) {
       console.error("[Listen] WebSocket error:", error);
     }

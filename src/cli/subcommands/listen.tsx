@@ -36,6 +36,26 @@ function PromptEnvName(props: {
   );
 }
 
+function formatTimestamp(): string {
+  const now = new Date();
+  const h = String(now.getHours()).padStart(2, "0");
+  const m = String(now.getMinutes()).padStart(2, "0");
+  const s = String(now.getSeconds()).padStart(2, "0");
+  const ms = String(now.getMilliseconds()).padStart(3, "0");
+  return `${h}:${m}:${s}.${ms}`;
+}
+
+function debugWsLogger(
+  direction: "send" | "recv",
+  label: "client" | "protocol" | "control" | "lifecycle",
+  event: unknown,
+): void {
+  const arrow = direction === "send" ? "\u2192 send" : "\u2190 recv";
+  const tag = label === "client" ? "" : ` (${label})`;
+  const json = JSON.stringify(event);
+  console.log(`[${formatTimestamp()}] ${arrow}${tag}  ${json}`);
+}
+
 export async function runListenSubcommand(argv: string[]): Promise<number> {
   // Parse arguments
   const { values } = parseArgs({
@@ -43,13 +63,16 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     options: {
       envName: { type: "string" },
       help: { type: "boolean", short: "h" },
+      debug: { type: "boolean" },
     },
     allowPositionals: false,
   });
 
+  const debugMode = !!values.debug;
+
   // Show help
   if (values.help) {
-    console.log("Usage: letta listen [--env-name <name>]\n");
+    console.log("Usage: letta remote [--env-name <name>] [--debug]\n");
     console.log(
       "Register this letta-code instance to receive messages from Letta Cloud.\n",
     );
@@ -57,12 +80,16 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     console.log(
       "  --env-name <name>  Friendly name for this environment (uses hostname if not provided)",
     );
+    console.log(
+      "  --debug            Plain-text mode: log all WebSocket events instead of interactive UI",
+    );
     console.log("  -h, --help         Show this help message\n");
     console.log("Examples:");
     console.log(
-      "  letta listen                      # Uses hostname as default",
+      "  letta remote                      # Uses hostname as default",
     );
-    console.log('  letta listen --env-name "work-laptop"\n');
+    console.log('  letta remote --env-name "work-laptop"');
+    console.log("  letta remote --debug              # Log all WS events\n");
     console.log(
       "Once connected, this instance will listen for incoming messages from cloud agents.",
     );
@@ -89,6 +116,10 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     if (savedName) {
       // Reuse saved name
       connectionName = savedName;
+    } else if (debugMode) {
+      // In debug mode, default to hostname without prompting
+      connectionName = hostname();
+      settingsManager.setListenerEnvName(connectionName);
     } else {
       // No saved name - prompt user
       connectionName = await new Promise<string>((resolve) => {
@@ -125,6 +156,12 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     const serverUrl = getServerUrl();
     const registerUrl = `${serverUrl}/v1/environments/register`;
 
+    if (debugMode) {
+      console.log(`[${formatTimestamp()}] Registering with ${registerUrl}`);
+      console.log(`[${formatTimestamp()}]   deviceId: ${deviceId}`);
+      console.log(`[${formatTimestamp()}]   connectionName: ${connectionName}`);
+    }
+
     const registerResponse = await fetch(registerUrl, {
       method: "POST",
       headers: {
@@ -149,62 +186,103 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       wsUrl: string;
     };
 
-    // Clear screen and render Ink UI
-    console.clear();
-
-    let updateStatusCallback:
-      | ((status: "idle" | "receiving" | "processing") => void)
-      | null = null;
-    let updateRetryStatusCallback:
-      | ((attempt: number, nextRetryIn: number) => void)
-      | null = null;
-    let clearRetryStatusCallback: (() => void) | null = null;
-
-    const { unmount } = render(
-      <ListenerStatusUI
-        connectionId={connectionId}
-        envName={connectionName}
-        onReady={(callbacks) => {
-          updateStatusCallback = callbacks.updateStatus;
-          updateRetryStatusCallback = callbacks.updateRetryStatus;
-          clearRetryStatusCallback = callbacks.clearRetryStatus;
-        }}
-      />,
-    );
+    if (debugMode) {
+      console.log(`[${formatTimestamp()}] Registered successfully`);
+      console.log(`[${formatTimestamp()}]   connectionId: ${connectionId}`);
+      console.log(`[${formatTimestamp()}]   wsUrl: ${wsUrl}`);
+      console.log(`[${formatTimestamp()}] Connecting WebSocket...`);
+      console.log("");
+    }
 
     // Import and start WebSocket client
     const { startListenerClient } = await import(
       "../../websocket/listen-client"
     );
 
-    await startListenerClient({
-      connectionId,
-      wsUrl,
-      deviceId,
-      connectionName,
-      onStatusChange: (status) => {
-        clearRetryStatusCallback?.();
-        updateStatusCallback?.(status);
-      },
-      onConnected: () => {
-        clearRetryStatusCallback?.();
-        updateStatusCallback?.("idle");
-      },
-      onRetrying: (attempt, _maxAttempts, nextRetryIn) => {
-        updateRetryStatusCallback?.(attempt, nextRetryIn);
-      },
-      onDisconnected: () => {
-        unmount();
-        console.log("\n✗ Listener disconnected");
-        console.log("Connection to Letta Cloud was lost.\n");
-        process.exit(1);
-      },
-      onError: (error: Error) => {
-        unmount();
-        console.error(`\n✗ Listener error: ${error.message}\n`);
-        process.exit(1);
-      },
-    });
+    if (debugMode) {
+      // Debug mode: plain-text event logging, no Ink UI
+      await startListenerClient({
+        connectionId,
+        wsUrl,
+        deviceId,
+        connectionName,
+        onWsEvent: debugWsLogger,
+        onStatusChange: (status) => {
+          console.log(`[${formatTimestamp()}] status: ${status}`);
+        },
+        onConnected: () => {
+          console.log(
+            `[${formatTimestamp()}] Connected. Awaiting instructions.`,
+          );
+          console.log("");
+        },
+        onRetrying: (attempt, _maxAttempts, nextRetryIn) => {
+          console.log(
+            `[${formatTimestamp()}] Reconnecting (attempt ${attempt}, retry in ${Math.round(nextRetryIn / 1000)}s)`,
+          );
+        },
+        onDisconnected: () => {
+          console.log(`[${formatTimestamp()}] Disconnected.`);
+          process.exit(1);
+        },
+        onError: (error: Error) => {
+          console.error(`[${formatTimestamp()}] Error: ${error.message}`);
+          process.exit(1);
+        },
+      });
+    } else {
+      // Normal mode: interactive Ink UI
+      console.clear();
+
+      let updateStatusCallback:
+        | ((status: "idle" | "receiving" | "processing") => void)
+        | null = null;
+      let updateRetryStatusCallback:
+        | ((attempt: number, nextRetryIn: number) => void)
+        | null = null;
+      let clearRetryStatusCallback: (() => void) | null = null;
+
+      const { unmount } = render(
+        <ListenerStatusUI
+          connectionId={connectionId}
+          envName={connectionName}
+          onReady={(callbacks) => {
+            updateStatusCallback = callbacks.updateStatus;
+            updateRetryStatusCallback = callbacks.updateRetryStatus;
+            clearRetryStatusCallback = callbacks.clearRetryStatus;
+          }}
+        />,
+      );
+
+      await startListenerClient({
+        connectionId,
+        wsUrl,
+        deviceId,
+        connectionName,
+        onStatusChange: (status) => {
+          clearRetryStatusCallback?.();
+          updateStatusCallback?.(status);
+        },
+        onConnected: () => {
+          clearRetryStatusCallback?.();
+          updateStatusCallback?.("idle");
+        },
+        onRetrying: (attempt, _maxAttempts, nextRetryIn) => {
+          updateRetryStatusCallback?.(attempt, nextRetryIn);
+        },
+        onDisconnected: () => {
+          unmount();
+          console.log("\n\u2717 Listener disconnected");
+          console.log("Connection to Letta Cloud was lost.\n");
+          process.exit(1);
+        },
+        onError: (error: Error) => {
+          unmount();
+          console.error(`\n\u2717 Listener error: ${error.message}\n`);
+          process.exit(1);
+        },
+      });
+    }
 
     // Keep process alive
     return new Promise<number>(() => {
