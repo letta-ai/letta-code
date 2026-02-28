@@ -9104,6 +9104,16 @@ export default function App({
                 "Memory initialization started in background. You'll be notified when it's done.",
                 true,
               );
+
+              // Drain the /init command-IO reminder so it doesn't bleed
+              // into the primary agent's context on the next turn —
+              // the background subagent is handling it, not the primary.
+              const reminders =
+                sharedReminderStateRef.current.pendingCommandIoReminders;
+              const idx = reminders.findIndex((r) => r.input === "/init");
+              if (idx !== -1) {
+                reminders.splice(idx, 1);
+              }
             } catch (error) {
               const errorDetails = formatErrorDetails(error, agentId);
               cmd.fail(
