@@ -9361,8 +9361,8 @@ ${SYSTEM_REMINDER_CLOSE}
             silentCompletion: true,
             onComplete: ({ success, error }) => {
               const msg = success
-                ? "Memory updated from recent conversation."
-                : `Memory reflection failed: ${error}`;
+                ? "Reflected on /palace, the halls remember more now."
+                : `Tried to reflect, but got lost in the palace: ${error}`;
               appendTaskNotificationEvents([msg]);
             },
           });
