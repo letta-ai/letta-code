@@ -567,6 +567,15 @@ function buildStateResponse(
   };
 }
 
+function sendStateSnapshot(socket: WebSocket, runtime: ListenerRuntime): void {
+  const stateSeq = nextEventSeq(runtime);
+  if (stateSeq === null) {
+    return;
+  }
+  const stateResponse = buildStateResponse(runtime, stateSeq);
+  sendClientMessage(socket, stateResponse, runtime);
+}
+
 function sendClientMessage(
   socket: WebSocket,
   payload: ClientMessage,
@@ -1275,6 +1284,14 @@ async function connectWithRetry(
         return;
       }
 
+      // If we're blocked on an approval callback, don't queue behind the
+      // pending turn; respond immediately so refreshed clients can render the
+      // approval card needed to unblock execution.
+      if (runtime.pendingApprovalResolvers.size > 0) {
+        sendStateSnapshot(socket, runtime);
+        return;
+      }
+
       // Serialize snapshot generation with the same message queue used for
       // message processing so reconnect snapshots cannot race in-flight turns.
       runtime.messageQueue = runtime.messageQueue
@@ -1283,12 +1300,7 @@ async function connectWithRetry(
             return;
           }
 
-          const stateSeq = nextEventSeq(runtime);
-          if (stateSeq === null) {
-            return;
-          }
-          const stateResponse = buildStateResponse(runtime, stateSeq);
-          sendClientMessage(socket, stateResponse, runtime);
+          sendStateSnapshot(socket, runtime);
         })
         .catch((error: unknown) => {
           if (process.env.DEBUG) {
