@@ -19,7 +19,7 @@ describe("discoverFallbackRunIdForResume", () => {
     }): Promise<Run[]> => {
       if (query.conversation_id === "conv-123") {
         return [
-          run("run-old", "2026-02-27T10:00:00.000Z"),
+          run("run-mid", "2026-02-27T10:01:05.000Z"),
           run("run-new", "2026-02-27T10:01:10.000Z"),
         ];
       }

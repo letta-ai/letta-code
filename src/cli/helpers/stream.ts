@@ -76,10 +76,58 @@ type RunsListResponse =
       getPaginatedItems?: () => Run[];
     };
 
+type RunsListClient = {
+  runs: {
+    list: (query: {
+      conversation_id?: string | null;
+      agent_id?: string | null;
+      statuses?: string[] | null;
+      order?: string | null;
+      limit?: number | null;
+    }) => Promise<RunsListResponse>;
+  };
+};
+
+const FALLBACK_RUN_DISCOVERY_TIMEOUT_MS = 5000;
+
 function parseRunCreatedAtMs(run: Run): number {
   if (!run.created_at) return 0;
   const parsed = Date.parse(run.created_at);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+async function discoverFallbackRunIdWithTimeout(
+  client: RunsListClient,
+  ctx: StreamRequestContext,
+): Promise<string | null> {
+  return withTimeout(
+    discoverFallbackRunIdForResume(client, ctx),
+    FALLBACK_RUN_DISCOVERY_TIMEOUT_MS,
+    `Fallback run discovery timed out after ${FALLBACK_RUN_DISCOVERY_TIMEOUT_MS}ms`,
+  );
+}
+
+function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  timeoutMessage: string,
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(timeoutMessage)),
+      timeoutMs,
+    );
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
 }
 
 function toRunsArray(listResponse: RunsListResponse): Run[] {
@@ -105,7 +153,7 @@ function toRunsArray(listResponse: RunsListResponse): Run[] {
  * any run_id-bearing chunk arrived.
  */
 export async function discoverFallbackRunIdForResume(
-  client: Awaited<ReturnType<typeof getClient>>,
+  client: RunsListClient,
   ctx: StreamRequestContext,
 ): Promise<string | null> {
   const statuses = ["created", "running"];
@@ -121,31 +169,42 @@ export async function discoverFallbackRunIdForResume(
       order: "desc",
       limit: 20,
     })) as RunsListResponse;
-    return toRunsArray(response).filter((run) => {
-      if (!run.id) return false;
-      return parseRunCreatedAtMs(run) >= requestStartedAtMs;
-    });
+    return toRunsArray(response)
+      .filter((run) => {
+        if (!run.id) return false;
+        // Best-effort temporal filter: only consider runs created after
+        // this send request started. In rare concurrent-send races within
+        // the same conversation, this heuristic can still pick a neighbor run.
+        return parseRunCreatedAtMs(run) >= requestStartedAtMs;
+      })
+      .sort((a, b) => parseRunCreatedAtMs(b) - parseRunCreatedAtMs(a));
   };
 
-  // Prefer conversation-scoped lookup for named conversations.
-  if (ctx.conversationId !== "default") {
-    const byConversation = await listCandidates({
-      conversation_id: ctx.resolvedConversationId,
-    });
-    if (byConversation[0]?.id) return byConversation[0].id;
+  const lookupQueries: Array<{
+    conversation_id?: string | null;
+    agent_id?: string | null;
+  }> = [];
+
+  if (ctx.conversationId === "default") {
+    // Default conversation routes through resolvedConversationId (typically agent ID).
+    lookupQueries.push({ conversation_id: ctx.resolvedConversationId });
+  } else {
+    // Named conversation: first use the explicit conversation id.
+    lookupQueries.push({ conversation_id: ctx.conversationId });
+
+    // Keep resolved route as backup only when it differs.
+    if (ctx.resolvedConversationId !== ctx.conversationId) {
+      lookupQueries.push({ conversation_id: ctx.resolvedConversationId });
+    }
   }
 
-  // For default conversation, resolvedConversationId is typically the agent id
-  // used for the send route. Keep this as a second lookup path for robustness.
-  const byResolvedConversation = await listCandidates({
-    conversation_id: ctx.resolvedConversationId,
-  });
-  if (byResolvedConversation[0]?.id) return byResolvedConversation[0].id;
-
-  // Final fallback: agent-scoped lookup.
   if (ctx.agentId) {
-    const byAgent = await listCandidates({ agent_id: ctx.agentId });
-    if (byAgent[0]?.id) return byAgent[0].id;
+    lookupQueries.push({ agent_id: ctx.agentId });
+  }
+
+  for (const query of lookupQueries) {
+    const candidates = await listCandidates(query);
+    if (candidates[0]?.id) return candidates[0].id;
   }
 
   return null;
@@ -464,7 +523,7 @@ export async function drainStreamWithResume(
   ) {
     try {
       client = await getClient();
-      runIdToResume = await discoverFallbackRunIdForResume(
+      runIdToResume = await discoverFallbackRunIdWithTimeout(
         client,
         streamRequestContext,
       );

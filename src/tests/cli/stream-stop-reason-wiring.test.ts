@@ -49,7 +49,7 @@ describe("drainStream stop reason wiring", () => {
       "const streamRequestContext = getStreamRequestContext(stream);",
     );
     expect(source).toContain(
-      "runIdToResume = await discoverFallbackRunIdForResume(",
+      "runIdToResume = await discoverFallbackRunIdWithTimeout(",
     );
   });
 });
