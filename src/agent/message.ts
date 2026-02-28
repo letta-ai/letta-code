@@ -17,6 +17,13 @@ import { getClient } from "./client";
 
 const streamRequestStartTimes = new WeakMap<object, number>();
 const streamToolContextIds = new WeakMap<object, string>();
+export type StreamRequestContext = {
+  conversationId: string;
+  resolvedConversationId: string;
+  agentId: string | null;
+  requestStartedAtMs: number;
+};
+const streamRequestContexts = new WeakMap<object, StreamRequestContext>();
 
 export function getStreamRequestStartTime(
   stream: Stream<LettaStreamingResponse>,
@@ -28,6 +35,12 @@ export function getStreamToolContextId(
   stream: Stream<LettaStreamingResponse>,
 ): string | null {
   return streamToolContextIds.get(stream as object) ?? null;
+}
+
+export function getStreamRequestContext(
+  stream: Stream<LettaStreamingResponse>,
+): StreamRequestContext | undefined {
+  return streamRequestContexts.get(stream as object);
 }
 
 /**
@@ -52,6 +65,7 @@ export async function sendMessageStream(
   requestOptions: { maxRetries?: number } = { maxRetries: 0 },
 ): Promise<Stream<LettaStreamingResponse>> {
   const requestStartTime = isTimingsEnabled() ? performance.now() : undefined;
+  const requestStartedAtMs = Date.now();
   const client = await getClient();
 
   // Wait for any in-progress toolset switch to complete before reading tools
@@ -93,6 +107,12 @@ export async function sendMessageStream(
     streamRequestStartTimes.set(stream as object, requestStartTime);
   }
   streamToolContextIds.set(stream as object, contextId);
+  streamRequestContexts.set(stream as object, {
+    conversationId,
+    resolvedConversationId,
+    agentId: opts.agentId ?? null,
+    requestStartedAtMs,
+  });
 
   return stream;
 }

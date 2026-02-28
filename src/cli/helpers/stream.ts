@@ -1,13 +1,20 @@
 import { APIError } from "@letta-ai/letta-client/core/error";
 import type { Stream } from "@letta-ai/letta-client/core/streaming";
-import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
+import type {
+  LettaStreamingResponse,
+  Run,
+} from "@letta-ai/letta-client/resources/agents/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
 import {
   clearLastSDKDiagnostic,
   consumeLastSDKDiagnostic,
   getClient,
 } from "../../agent/client";
-import { getStreamRequestStartTime } from "../../agent/message";
+import {
+  getStreamRequestContext,
+  getStreamRequestStartTime,
+  type StreamRequestContext,
+} from "../../agent/message";
 import { telemetry } from "../../telemetry";
 import { debugWarn } from "../../utils/debug";
 import { formatDuration, logTiming } from "../../utils/timing";
@@ -59,6 +66,143 @@ type DrainResult = {
   apiDurationMs: number; // time spent in API call
   fallbackError?: string | null; // Error message for when we can't fetch details from server (no run_id)
 };
+
+type RunsListResponse =
+  | Run[]
+  | {
+      getPaginatedItems?: () => Run[];
+    };
+
+type RunsListClient = {
+  runs: {
+    list: (query: {
+      conversation_id?: string | null;
+      agent_id?: string | null;
+      statuses?: string[] | null;
+      order?: string | null;
+      limit?: number | null;
+    }) => Promise<RunsListResponse>;
+  };
+};
+
+const FALLBACK_RUN_DISCOVERY_TIMEOUT_MS = 5000;
+
+function hasPaginatedItems(
+  response: RunsListResponse,
+): response is { getPaginatedItems: () => Run[] } {
+  return (
+    !Array.isArray(response) && typeof response.getPaginatedItems === "function"
+  );
+}
+
+function parseRunCreatedAtMs(run: Run): number {
+  if (!run.created_at) return 0;
+  const parsed = Date.parse(run.created_at);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+async function discoverFallbackRunIdWithTimeout(
+  client: RunsListClient,
+  ctx: StreamRequestContext,
+): Promise<string | null> {
+  return withTimeout(
+    discoverFallbackRunIdForResume(client, ctx),
+    FALLBACK_RUN_DISCOVERY_TIMEOUT_MS,
+    `Fallback run discovery timed out after ${FALLBACK_RUN_DISCOVERY_TIMEOUT_MS}ms`,
+  );
+}
+
+function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  timeoutMessage: string,
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(timeoutMessage)),
+      timeoutMs,
+    );
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
+function toRunsArray(listResponse: RunsListResponse): Run[] {
+  if (Array.isArray(listResponse)) return listResponse;
+  if (hasPaginatedItems(listResponse)) {
+    return listResponse.getPaginatedItems() ?? [];
+  }
+  return [];
+}
+
+/**
+ * Attempt to discover a run ID to resume when the initial stream failed before
+ * any run_id-bearing chunk arrived.
+ */
+export async function discoverFallbackRunIdForResume(
+  client: RunsListClient,
+  ctx: StreamRequestContext,
+): Promise<string | null> {
+  const statuses = ["running"];
+  const requestStartedAtMs = ctx.requestStartedAtMs;
+
+  const listCandidates = async (query: {
+    conversation_id?: string | null;
+    agent_id?: string | null;
+  }): Promise<Run[]> => {
+    const response = await client.runs.list({
+      ...query,
+      statuses,
+      order: "desc",
+      limit: 1,
+    });
+    return toRunsArray(response).filter((run) => {
+      if (!run.id) return false;
+      if (run.status !== "running") return false;
+      // Best-effort temporal filter: only consider runs created after
+      // this send request started. In rare concurrent-send races within
+      // the same conversation, this heuristic can still pick a neighbor run.
+      return parseRunCreatedAtMs(run) >= requestStartedAtMs;
+    });
+  };
+
+  const lookupQueries: Array<{
+    conversation_id?: string | null;
+    agent_id?: string | null;
+  }> = [];
+
+  if (ctx.conversationId === "default") {
+    // Default conversation routes through resolvedConversationId (typically agent ID).
+    lookupQueries.push({ conversation_id: ctx.resolvedConversationId });
+  } else {
+    // Named conversation: first use the explicit conversation id.
+    lookupQueries.push({ conversation_id: ctx.conversationId });
+
+    // Keep resolved route as backup only when it differs.
+    if (ctx.resolvedConversationId !== ctx.conversationId) {
+      lookupQueries.push({ conversation_id: ctx.resolvedConversationId });
+    }
+  }
+
+  if (ctx.agentId) {
+    lookupQueries.push({ agent_id: ctx.agentId });
+  }
+
+  for (const query of lookupQueries) {
+    const candidates = await listCandidates(query);
+    if (candidates[0]?.id) return candidates[0].id;
+  }
+
+  return null;
+}
 
 export async function drainStream(
   stream: Stream<LettaStreamingResponse>,
@@ -346,6 +490,15 @@ export async function drainStreamWithResume(
   contextTracker?: ContextTracker,
 ): Promise<DrainResult> {
   const overallStartTime = performance.now();
+  const streamRequestContext = getStreamRequestContext(stream);
+
+  let _client: Awaited<ReturnType<typeof getClient>> | undefined;
+  const lazyClient = async () => {
+    if (!_client) {
+      _client = await getClient();
+    }
+    return _client;
+  };
 
   // Attempt initial drain
   let result = await drainStream(
@@ -358,12 +511,51 @@ export async function drainStreamWithResume(
     contextTracker,
   );
 
+  let runIdToResume = result.lastRunId ?? null;
+
+  // If the stream failed before exposing run_id, try to discover the latest
+  // running/created run for this conversation that was created after send start.
+  if (
+    result.stopReason === "error" &&
+    !runIdToResume &&
+    streamRequestContext &&
+    abortSignal &&
+    !abortSignal.aborted
+  ) {
+    try {
+      const client = await lazyClient();
+      runIdToResume = await discoverFallbackRunIdWithTimeout(
+        client,
+        streamRequestContext,
+      );
+      if (runIdToResume) {
+        result.lastRunId = runIdToResume;
+      }
+    } catch (lookupError) {
+      const lookupErrorMsg =
+        lookupError instanceof Error
+          ? lookupError.message
+          : String(lookupError);
+      telemetry.trackError(
+        "stream_resume_lookup_failed",
+        lookupErrorMsg,
+        "stream_resume",
+      );
+
+      debugWarn(
+        "drainStreamWithResume",
+        "Fallback run_id lookup failed:",
+        lookupError,
+      );
+    }
+  }
+
   // If stream ended without proper stop_reason and we have resume info, try once to reconnect
   // Only resume if we have an abortSignal AND it's not aborted (explicit check prevents
   // undefined abortSignal from accidentally allowing resume after user cancellation)
   if (
     result.stopReason === "error" &&
-    result.lastRunId &&
+    runIdToResume &&
     abortSignal &&
     !abortSignal.aborted
   ) {
@@ -378,12 +570,12 @@ export async function drainStreamWithResume(
       originalFallbackError || "Stream error (no client-side detail)",
       "stream_resume",
       {
-        runId: result.lastRunId,
+        runId: result.lastRunId ?? undefined,
       },
     );
 
     try {
-      const client = await getClient();
+      const client = await lazyClient();
 
       // Reset interrupted flag so resumed chunks can be processed by onChunk.
       // Without this, tool_return_message for server-side tools (web_search, fetch_webpage)
@@ -397,7 +589,7 @@ export async function drainStreamWithResume(
       // TODO: Re-enable once issues are resolved - disabled retries were causing problems
       // Disable SDK retries - state management happens outside, retries would create race conditions
       const resumeStream = await client.runs.messages.stream(
-        result.lastRunId,
+        runIdToResume,
         {
           // If lastSeqId is null the stream failed before any seq_id-bearing
           // chunk arrived; use 0 to replay the run from the beginning.
