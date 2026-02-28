@@ -74,7 +74,7 @@ Git Safety Protocol:
    - Create the commit with a message ending with:
    👾 Generated with [Letta Code](https://letta.com)
 
-   Co-Authored-By: Letta <noreply@letta.com>
+   Co-Authored-By: Letta Code <noreply@letta.com>
    - Run git status after the commit completes to verify success.
    Note: git status depends on the commit completing, so run it sequentially after the commit.
 4. If the commit fails due to pre-commit hook: fix the issue and create a NEW commit
@@ -93,7 +93,7 @@ git commit -m "$(cat <<'EOF'
 
    👾 Generated with [Letta Code](https://letta.com)
 
-   Co-Authored-By: Letta <noreply@letta.com>
+   Co-Authored-By: Letta Code <noreply@letta.com>
    EOF
    )"
 </example>

@@ -57,7 +57,7 @@ This handles the user's settings correctly.
 
 🤖 Generated with [Letta Code](https://letta.com)
 
-Co-Authored-By: Letta <noreply@letta.com>
+Co-Authored-By: Letta Code <noreply@letta.com>
 EOF
 )"`,
     });
@@ -101,7 +101,7 @@ fix: handle user's preferences correctly
 
 🤖 Generated with [Letta Code](https://letta.com)
 
-Co-Authored-By: Letta <noreply@letta.com>
+Co-Authored-By: Letta Code <noreply@letta.com>
 EOF`,
     });
     expect(result.status).toBe("success");
