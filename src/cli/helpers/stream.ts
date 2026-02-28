@@ -1,13 +1,19 @@
 import { APIError } from "@letta-ai/letta-client/core/error";
 import type { Stream } from "@letta-ai/letta-client/core/streaming";
-import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
+import type {
+  LettaStreamingResponse,
+  Run,
+} from "@letta-ai/letta-client/resources/agents/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
 import {
   clearLastSDKDiagnostic,
   consumeLastSDKDiagnostic,
   getClient,
 } from "../../agent/client";
-import { getStreamRequestStartTime } from "../../agent/message";
+import {
+  getStreamRequestContext,
+  getStreamRequestStartTime,
+} from "../../agent/message";
 import { telemetry } from "../../telemetry";
 import { debugWarn } from "../../utils/debug";
 import { formatDuration, logTiming } from "../../utils/timing";
@@ -59,6 +65,91 @@ type DrainResult = {
   apiDurationMs: number; // time spent in API call
   fallbackError?: string | null; // Error message for when we can't fetch details from server (no run_id)
 };
+
+type StreamRequestContext = NonNullable<
+  ReturnType<typeof getStreamRequestContext>
+>;
+
+type RunsListResponse =
+  | Run[]
+  | {
+      getPaginatedItems?: () => Run[];
+    };
+
+function parseRunCreatedAtMs(run: Run): number {
+  if (!run.created_at) return 0;
+  const parsed = Date.parse(run.created_at);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function toRunsArray(listResponse: RunsListResponse): Run[] {
+  if (Array.isArray(listResponse)) return listResponse;
+  if (
+    listResponse &&
+    typeof listResponse === "object" &&
+    "getPaginatedItems" in listResponse &&
+    typeof (listResponse as { getPaginatedItems?: unknown })
+      .getPaginatedItems === "function"
+  ) {
+    return (
+      (
+        listResponse as { getPaginatedItems: () => Run[] }
+      ).getPaginatedItems() ?? []
+    );
+  }
+  return [];
+}
+
+/**
+ * Attempt to discover a run ID to resume when the initial stream failed before
+ * any run_id-bearing chunk arrived.
+ */
+export async function discoverFallbackRunIdForResume(
+  client: Awaited<ReturnType<typeof getClient>>,
+  ctx: StreamRequestContext,
+): Promise<string | null> {
+  const statuses = ["created", "running"];
+  const requestStartedAtMs = ctx.requestStartedAtMs;
+
+  const listCandidates = async (query: {
+    conversation_id?: string | null;
+    agent_id?: string | null;
+  }): Promise<Run[]> => {
+    const response = (await client.runs.list({
+      ...query,
+      statuses,
+      order: "desc",
+      limit: 20,
+    })) as RunsListResponse;
+    return toRunsArray(response).filter((run) => {
+      if (!run.id) return false;
+      return parseRunCreatedAtMs(run) >= requestStartedAtMs;
+    });
+  };
+
+  // Prefer conversation-scoped lookup for named conversations.
+  if (ctx.conversationId !== "default") {
+    const byConversation = await listCandidates({
+      conversation_id: ctx.resolvedConversationId,
+    });
+    if (byConversation[0]?.id) return byConversation[0].id;
+  }
+
+  // For default conversation, resolvedConversationId is typically the agent id
+  // used for the send route. Keep this as a second lookup path for robustness.
+  const byResolvedConversation = await listCandidates({
+    conversation_id: ctx.resolvedConversationId,
+  });
+  if (byResolvedConversation[0]?.id) return byResolvedConversation[0].id;
+
+  // Final fallback: agent-scoped lookup.
+  if (ctx.agentId) {
+    const byAgent = await listCandidates({ agent_id: ctx.agentId });
+    if (byAgent[0]?.id) return byAgent[0].id;
+  }
+
+  return null;
+}
 
 export async function drainStream(
   stream: Stream<LettaStreamingResponse>,
@@ -346,6 +437,7 @@ export async function drainStreamWithResume(
   contextTracker?: ContextTracker,
 ): Promise<DrainResult> {
   const overallStartTime = performance.now();
+  const streamRequestContext = getStreamRequestContext(stream);
 
   // Attempt initial drain
   let result = await drainStream(
@@ -358,12 +450,42 @@ export async function drainStreamWithResume(
     contextTracker,
   );
 
+  let runIdToResume = result.lastRunId ?? null;
+  let client: Awaited<ReturnType<typeof getClient>> | null = null;
+
+  // If the stream failed before exposing run_id, try to discover the latest
+  // running/created run for this conversation that was created after send start.
+  if (
+    result.stopReason === "error" &&
+    !runIdToResume &&
+    streamRequestContext &&
+    abortSignal &&
+    !abortSignal.aborted
+  ) {
+    try {
+      client = await getClient();
+      runIdToResume = await discoverFallbackRunIdForResume(
+        client,
+        streamRequestContext,
+      );
+      if (runIdToResume) {
+        result.lastRunId = runIdToResume;
+      }
+    } catch (lookupError) {
+      debugWarn(
+        "drainStreamWithResume",
+        "Fallback run_id lookup failed:",
+        lookupError,
+      );
+    }
+  }
+
   // If stream ended without proper stop_reason and we have resume info, try once to reconnect
   // Only resume if we have an abortSignal AND it's not aborted (explicit check prevents
   // undefined abortSignal from accidentally allowing resume after user cancellation)
   if (
     result.stopReason === "error" &&
-    result.lastRunId &&
+    runIdToResume &&
     abortSignal &&
     !abortSignal.aborted
   ) {
@@ -378,12 +500,12 @@ export async function drainStreamWithResume(
       originalFallbackError || "Stream error (no client-side detail)",
       "stream_resume",
       {
-        runId: result.lastRunId,
+        runId: result.lastRunId ?? undefined,
       },
     );
 
     try {
-      const client = await getClient();
+      client = client ?? (await getClient());
 
       // Reset interrupted flag so resumed chunks can be processed by onChunk.
       // Without this, tool_return_message for server-side tools (web_search, fetch_webpage)
@@ -397,7 +519,7 @@ export async function drainStreamWithResume(
       // TODO: Re-enable once issues are resolved - disabled retries were causing problems
       // Disable SDK retries - state management happens outside, retries would create race conditions
       const resumeStream = await client.runs.messages.stream(
-        result.lastRunId,
+        runIdToResume,
         {
           // If lastSeqId is null the stream failed before any seq_id-bearing
           // chunk arrived; use 0 to replay the run from the beginning.
