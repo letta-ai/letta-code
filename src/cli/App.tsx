@@ -216,6 +216,13 @@ import {
 import { formatCompact } from "./helpers/format";
 import { parsePatchOperations } from "./helpers/formatArgsDisplay";
 import {
+  buildLegacyInitMessage,
+  buildMemoryInitRuntimePrompt,
+  gatherGitContext,
+  hasActiveInitSubagent,
+  initSubagentDescription,
+} from "./helpers/initCommand";
+import {
   getReflectionSettings,
   parseMemoryPreference,
   type ReflectionSettings,
@@ -263,13 +270,6 @@ import {
   interruptActiveSubagents,
   subscribe as subscribeToSubagents,
 } from "./helpers/subagentState";
-import {
-  buildLegacyInitMessage,
-  buildMemoryInitRuntimePrompt,
-  gatherGitContext,
-  hasActiveInitSubagent,
-  initSubagentDescription,
-} from "./helpers/initCommand";
 import {
   flushEligibleLinesBeforeReentry,
   shouldClearCompletedSubagentsOnTurnStart,
@@ -9014,8 +9014,7 @@ export default function App({
           const cmd = commandRunner.start(msg, "Gathering project context...");
 
           // Check for pending approvals before either path
-          const approvalCheck =
-            await checkPendingApprovalsForSlashCommand();
+          const approvalCheck = await checkPendingApprovalsForSlashCommand();
           if (approvalCheck.blocked) {
             cmd.fail(
               "Pending approval(s). Resolve approvals before running /init.",
