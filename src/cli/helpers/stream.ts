@@ -497,6 +497,7 @@ export async function drainStreamWithResume(
 ): Promise<DrainResult> {
   const overallStartTime = performance.now();
   const streamRequestContext = getStreamRequestContext(stream);
+  const client = await getClient();
 
   // Attempt initial drain
   let result = await drainStream(
@@ -510,7 +511,6 @@ export async function drainStreamWithResume(
   );
 
   let runIdToResume = result.lastRunId ?? null;
-  let client: Awaited<ReturnType<typeof getClient>> | null = null;
 
   // If the stream failed before exposing run_id, try to discover the latest
   // running/created run for this conversation that was created after send start.
@@ -522,7 +522,6 @@ export async function drainStreamWithResume(
     !abortSignal.aborted
   ) {
     try {
-      client = await getClient();
       runIdToResume = await discoverFallbackRunIdWithTimeout(
         client,
         streamRequestContext,
@@ -531,6 +530,16 @@ export async function drainStreamWithResume(
         result.lastRunId = runIdToResume;
       }
     } catch (lookupError) {
+      const lookupErrorMsg =
+        lookupError instanceof Error
+          ? lookupError.message
+          : String(lookupError);
+      telemetry.trackError(
+        "stream_resume_lookup_failed",
+        lookupErrorMsg,
+        "stream_resume",
+      );
+
       debugWarn(
         "drainStreamWithResume",
         "Fallback run_id lookup failed:",
@@ -564,8 +573,6 @@ export async function drainStreamWithResume(
     );
 
     try {
-      client = client ?? (await getClient());
-
       // Reset interrupted flag so resumed chunks can be processed by onChunk.
       // Without this, tool_return_message for server-side tools (web_search, fetch_webpage)
       // would be silently ignored, showing "Interrupted by user" even on successful resume.

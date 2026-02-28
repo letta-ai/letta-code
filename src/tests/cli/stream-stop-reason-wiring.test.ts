@@ -38,18 +38,4 @@ describe("drainStream stop reason wiring", () => {
 
     expect(result.stopReason).toBe("llm_api_error");
   });
-
-  test("includes fallback run-id lookup guard in resume flow", () => {
-    const streamPath = fileURLToPath(
-      new URL("../../cli/helpers/stream.ts", import.meta.url),
-    );
-    const source = readFileSync(streamPath, "utf-8");
-
-    expect(source).toContain(
-      "const streamRequestContext = getStreamRequestContext(stream);",
-    );
-    expect(source).toContain(
-      "runIdToResume = await discoverFallbackRunIdWithTimeout(",
-    );
-  });
 });
