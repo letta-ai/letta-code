@@ -1517,7 +1517,7 @@ async function handleIncomingMessage(
   runtime.activeAgentId = agentId ?? null;
   runtime.activeConversationId = conversationId;
   runtime.activeRunId = null;
-  runtime.activeRunStartedAt = null;
+  runtime.activeRunStartedAt = new Date().toISOString();
 
   try {
     // Latch capability: once seen, always use blocking path (strict check to avoid truthy strings)
@@ -1642,7 +1642,6 @@ async function handleIncomingMessage(
             runId = maybeRunId;
             if (runtime.activeRunId !== maybeRunId) {
               runtime.activeRunId = maybeRunId;
-              runtime.activeRunStartedAt = new Date().toISOString();
             }
             if (!runIdSent) {
               runIdSent = true;
