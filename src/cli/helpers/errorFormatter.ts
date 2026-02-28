@@ -699,14 +699,11 @@ const DEFAULT_RETRY_MESSAGE =
  */
 export function getRetryStatusMessage(
   errorDetail: string | null | undefined,
-): string {
+): string | null {
   if (!errorDetail) return DEFAULT_RETRY_MESSAGE;
 
-  const cloudflareInfo = parseCloudflareEdgeError(errorDetail);
-  if (cloudflareInfo) {
-    const codeSegment = cloudflareInfo.code ? ` ${cloudflareInfo.code}` : "";
-    return `Cloudflare${codeSegment} upstream outage, retrying...`;
-  }
+  // Cloudflare edge errors are transient and retried silently — no status line
+  if (parseCloudflareEdgeError(errorDetail)) return null;
 
   if (checkZaiError(errorDetail)) return "Z.ai API error, retrying...";
 

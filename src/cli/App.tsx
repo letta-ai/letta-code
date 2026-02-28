@@ -4007,14 +4007,18 @@ export default function App({
                 },
               );
 
-              const statusId = uid("status");
-              buffersRef.current.byId.set(statusId, {
-                kind: "status",
-                id: statusId,
-                lines: [getRetryStatusMessage(errorDetail)],
-              });
-              buffersRef.current.order.push(statusId);
-              refreshDerived();
+              const retryStatusMsg = getRetryStatusMessage(errorDetail);
+              const retryStatusId =
+                retryStatusMsg != null ? uid("status") : null;
+              if (retryStatusId && retryStatusMsg) {
+                buffersRef.current.byId.set(retryStatusId, {
+                  kind: "status",
+                  id: retryStatusId,
+                  lines: [retryStatusMsg],
+                });
+                buffersRef.current.order.push(retryStatusId);
+                refreshDerived();
+              }
 
               let cancelled = false;
               const startTime = Date.now();
@@ -4029,11 +4033,13 @@ export default function App({
                 await new Promise((resolve) => setTimeout(resolve, 100));
               }
 
-              buffersRef.current.byId.delete(statusId);
-              buffersRef.current.order = buffersRef.current.order.filter(
-                (id) => id !== statusId,
-              );
-              refreshDerived();
+              if (retryStatusId) {
+                buffersRef.current.byId.delete(retryStatusId);
+                buffersRef.current.order = buffersRef.current.order.filter(
+                  (id) => id !== retryStatusId,
+                );
+                refreshDerived();
+              }
 
               if (!cancelled) {
                 buffersRef.current.interrupted = false;
@@ -5253,16 +5259,18 @@ export default function App({
               },
             );
 
-            // Show subtle grey status message
-            const statusId = uid("status");
-            const statusLines = [getRetryStatusMessage(detailFromRun)];
-            buffersRef.current.byId.set(statusId, {
-              kind: "status",
-              id: statusId,
-              lines: statusLines,
-            });
-            buffersRef.current.order.push(statusId);
-            refreshDerived();
+            // Show subtle grey status message (skip for silently-retried errors)
+            const retryStatusMsg = getRetryStatusMessage(detailFromRun);
+            const retryStatusId = retryStatusMsg != null ? uid("status") : null;
+            if (retryStatusId && retryStatusMsg) {
+              buffersRef.current.byId.set(retryStatusId, {
+                kind: "status",
+                id: retryStatusId,
+                lines: [retryStatusMsg],
+              });
+              buffersRef.current.order.push(retryStatusId);
+              refreshDerived();
+            }
 
             // Wait before retry (check abort signal periodically for ESC cancellation)
             let cancelled = false;
@@ -5279,11 +5287,13 @@ export default function App({
             }
 
             // Remove status message
-            buffersRef.current.byId.delete(statusId);
-            buffersRef.current.order = buffersRef.current.order.filter(
-              (id) => id !== statusId,
-            );
-            refreshDerived();
+            if (retryStatusId) {
+              buffersRef.current.byId.delete(retryStatusId);
+              buffersRef.current.order = buffersRef.current.order.filter(
+                (id) => id !== retryStatusId,
+              );
+              refreshDerived();
+            }
 
             if (!cancelled) {
               // Reset interrupted flag so retry stream chunks are processed
