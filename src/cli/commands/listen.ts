@@ -237,14 +237,27 @@ export async function handleListen(
     });
 
     if (!registerResponse.ok) {
-      const error = (await registerResponse.json()) as { message?: string };
-      throw new Error(error.message || "Registration failed");
+      let errorMessage = `Registration failed (HTTP ${registerResponse.status})`;
+      try {
+        const error = (await registerResponse.json()) as { message?: string };
+        if (error.message) errorMessage = error.message;
+      } catch {
+        // Response body is not JSON (e.g. HTML error page from proxy)
+        const text = await registerResponse.text().catch(() => "");
+        if (text) errorMessage += `: ${text.slice(0, 200)}`;
+      }
+      throw new Error(errorMessage);
     }
 
-    const { connectionId, wsUrl } = (await registerResponse.json()) as {
-      connectionId: string;
-      wsUrl: string;
-    };
+    let registerBody: { connectionId: string; wsUrl: string };
+    try {
+      registerBody = (await registerResponse.json()) as typeof registerBody;
+    } catch {
+      throw new Error(
+        "Registration endpoint returned non-JSON response — is the server running?",
+      );
+    }
+    const { connectionId, wsUrl } = registerBody;
 
     updateCommandResult(
       ctx.buffersRef,
@@ -354,16 +367,28 @@ export async function handleListen(
             });
 
             if (!reregisterResponse.ok) {
-              const error = (await reregisterResponse.json()) as {
-                message?: string;
-              };
-              throw new Error(error.message || "Re-registration failed");
+              let errorMessage = `Re-registration failed (HTTP ${reregisterResponse.status})`;
+              try {
+                const error = (await reregisterResponse.json()) as {
+                  message?: string;
+                };
+                if (error.message) errorMessage = error.message;
+              } catch {
+                const text = await reregisterResponse.text().catch(() => "");
+                if (text) errorMessage += `: ${text.slice(0, 200)}`;
+              }
+              throw new Error(errorMessage);
             }
 
-            const reregisterData = (await reregisterResponse.json()) as {
-              connectionId: string;
-              wsUrl: string;
-            };
+            let reregisterData: { connectionId: string; wsUrl: string };
+            try {
+              reregisterData =
+                (await reregisterResponse.json()) as typeof reregisterData;
+            } catch {
+              throw new Error(
+                "Re-registration endpoint returned non-JSON response — is the server running?",
+              );
+            }
 
             // Restart client with new connectionId
             await startClient(
