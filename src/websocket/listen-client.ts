@@ -31,7 +31,7 @@ import { generatePlanFilePath } from "../cli/helpers/planName";
 import { drainStreamWithResume } from "../cli/helpers/stream";
 import { computeDiffPreviews } from "../helpers/diffPreview";
 import { permissionMode } from "../permissions/mode";
-import { QueueRuntime } from "../queue/queueRuntime";
+import { type QueueItem, QueueRuntime } from "../queue/queueRuntime";
 import { settingsManager } from "../settings-manager";
 import { isInteractiveApprovalTool } from "../tools/interactivePolicy";
 import { loadTools } from "../tools/manager";
@@ -108,11 +108,15 @@ interface ResultMessage {
   type: "result";
   success: boolean;
   stopReason?: string;
+  event_seq?: number;
+  session_id?: string;
 }
 
 interface RunStartedMessage {
   type: "run_started";
   runId: string;
+  event_seq?: number;
+  session_id?: string;
 }
 
 interface ModeChangeMessage {
@@ -130,10 +134,16 @@ interface ModeChangedMessage {
   mode: "default" | "acceptEdits" | "plan" | "bypassPermissions";
   success: boolean;
   error?: string;
+  event_seq?: number;
+  session_id?: string;
 }
 
 interface GetStatusMessage {
   type: "get_status";
+}
+
+interface GetStateMessage {
+  type: "get_state";
 }
 
 interface RecoverPendingApprovalsMessage {
@@ -147,6 +157,43 @@ interface StatusResponseMessage {
   currentMode: "default" | "acceptEdits" | "plan" | "bypassPermissions";
   lastStopReason: string | null;
   isProcessing: boolean;
+  event_seq?: number;
+  session_id?: string;
+}
+
+interface StateResponseMessage {
+  type: "state_response";
+  schema_version: 1;
+  session_id: string;
+  snapshot_id: string;
+  generated_at: string;
+  state_seq: number;
+  mode: "default" | "acceptEdits" | "plan" | "bypassPermissions";
+  is_processing: boolean;
+  last_stop_reason: string | null;
+  control_response_capable: boolean;
+  active_run: {
+    run_id: string | null;
+    agent_id: string | null;
+    conversation_id: string | null;
+    started_at: string | null;
+  };
+  pending_control_requests: Array<{
+    request_id: string;
+    request: ControlRequest["request"];
+  }>;
+  queue: {
+    queue_len: number;
+    pending_turns: number;
+    items: Array<{
+      id: string;
+      kind: string;
+      source: string;
+      content: unknown;
+      enqueued_at: string;
+    }>;
+  };
+  event_seq?: number;
 }
 
 type ServerMessage =
@@ -155,6 +202,7 @@ type ServerMessage =
   | IncomingMessage
   | ModeChangeMessage
   | GetStatusMessage
+  | GetStateMessage
   | RecoverPendingApprovalsMessage
   | WsControlResponse;
 type ClientMessage =
@@ -162,11 +210,13 @@ type ClientMessage =
   | ResultMessage
   | RunStartedMessage
   | ModeChangedMessage
-  | StatusResponseMessage;
+  | StatusResponseMessage
+  | StateResponseMessage;
 
 type PendingApprovalResolver = {
   resolve: (response: ControlResponseBody) => void;
   reject: (reason: Error) => void;
+  controlRequest?: ControlRequest;
 };
 
 type ListenerRuntime = {
@@ -181,10 +231,17 @@ type ListenerRuntime = {
   controlResponseCapable: boolean;
   /** Stable session ID for MessageEnvelope-based emissions (scoped to runtime lifecycle). */
   sessionId: string;
+  /** Monotonic event sequence for all outbound status/protocol events. */
+  eventSeqCounter: number;
   /** Last stop reason from completed run */
   lastStopReason: string | null;
   /** Whether currently processing a message */
   isProcessing: boolean;
+  /** Active run metadata for reconnect snapshot state. */
+  activeAgentId: string | null;
+  activeConversationId: string | null;
+  activeRunId: string | null;
+  activeRunStartedAt: string | null;
   /** Queue lifecycle tracking — parallel tracking layer, does not affect message processing. */
   queueRuntime: QueueRuntime;
   /** Count of turns currently queued or in-flight in the promise chain. Incremented
@@ -256,8 +313,13 @@ function createRuntime(): ListenerRuntime {
     pendingApprovalResolvers: new Map(),
     controlResponseCapable: false,
     sessionId: `listen-${crypto.randomUUID()}`,
+    eventSeqCounter: 0,
     lastStopReason: null,
     isProcessing: false,
+    activeAgentId: null,
+    activeConversationId: null,
+    activeRunId: null,
+    activeRunStartedAt: null,
     isRecoveringApprovals: false,
     pendingTurns: 0,
     // queueRuntime assigned below — needs runtime ref in callbacks
@@ -267,11 +329,15 @@ function createRuntime(): ListenerRuntime {
     callbacks: {
       onEnqueued: (item, queueLen) => {
         if (runtime.socket?.readyState === WebSocket.OPEN) {
+          const content = item.kind === "message" ? item.content : item.text;
           emitToWS(runtime.socket, {
             type: "queue_item_enqueued",
+            id: item.id,
             item_id: item.id,
             source: item.source,
             kind: item.kind,
+            content,
+            enqueued_at: new Date(item.enqueuedAt).toISOString(),
             queue_len: queueLen,
             session_id: runtime.sessionId,
             uuid: `q-enq-${item.id}`,
@@ -313,6 +379,19 @@ function createRuntime(): ListenerRuntime {
           });
         }
       },
+      onDropped: (item, reason, queueLen) => {
+        if (runtime.socket?.readyState === WebSocket.OPEN) {
+          emitToWS(runtime.socket, {
+            type: "queue_item_dropped",
+            id: item.id,
+            item_id: item.id,
+            reason,
+            queue_len: queueLen,
+            session_id: runtime.sessionId,
+            uuid: `q-drp-${item.id}`,
+          });
+        }
+      },
     },
   });
   return runtime;
@@ -327,6 +406,13 @@ function clearRuntimeTimers(runtime: ListenerRuntime): void {
     clearInterval(runtime.heartbeatInterval);
     runtime.heartbeatInterval = null;
   }
+}
+
+function clearActiveRunState(runtime: ListenerRuntime): void {
+  runtime.activeAgentId = null;
+  runtime.activeConversationId = null;
+  runtime.activeRunId = null;
+  runtime.activeRunStartedAt = null;
 }
 
 function stopRuntime(
@@ -386,6 +472,7 @@ export function parseServerMessage(
       parsed.type === "message" ||
       parsed.type === "mode_change" ||
       parsed.type === "get_status" ||
+      parsed.type === "get_state" ||
       parsed.type === "recover_pending_approvals"
     ) {
       return parsed as ServerMessage;
@@ -415,21 +502,111 @@ function safeEmitWsEvent(
   }
 }
 
-function sendClientMessage(socket: WebSocket, payload: ClientMessage): void {
+function nextEventSeq(runtime: ListenerRuntime | null): number | null {
+  if (!runtime) {
+    return null;
+  }
+  runtime.eventSeqCounter += 1;
+  return runtime.eventSeqCounter;
+}
+
+function getQueueItemContent(item: QueueItem): unknown {
+  return item.kind === "message" ? item.content : item.text;
+}
+
+function buildStateResponse(runtime: ListenerRuntime): StateResponseMessage {
+  const stateSeq = runtime.eventSeqCounter + 1;
+  const queueItems = runtime.queueRuntime.items.map((item) => ({
+    id: item.id,
+    kind: item.kind,
+    source: item.source,
+    content: getQueueItemContent(item),
+    enqueued_at: new Date(item.enqueuedAt).toISOString(),
+  }));
+
+  const pendingControlRequests = Array.from(
+    runtime.pendingApprovalResolvers.entries(),
+  ).flatMap(([requestId, pending]) => {
+    if (!pending.controlRequest) {
+      return [];
+    }
+    return [
+      {
+        request_id: requestId,
+        request: pending.controlRequest.request,
+      },
+    ];
+  });
+
+  return {
+    type: "state_response",
+    schema_version: 1,
+    session_id: runtime.sessionId,
+    snapshot_id: `snapshot-${crypto.randomUUID()}`,
+    generated_at: new Date().toISOString(),
+    state_seq: stateSeq,
+    mode: permissionMode.getMode(),
+    is_processing: runtime.isProcessing,
+    last_stop_reason: runtime.lastStopReason,
+    control_response_capable: runtime.controlResponseCapable,
+    active_run: {
+      run_id: runtime.activeRunId,
+      agent_id: runtime.activeAgentId,
+      conversation_id: runtime.activeConversationId,
+      started_at: runtime.activeRunStartedAt,
+    },
+    pending_control_requests: pendingControlRequests,
+    queue: {
+      queue_len: runtime.queueRuntime.length,
+      pending_turns: runtime.pendingTurns,
+      items: queueItems,
+    },
+  };
+}
+
+function sendClientMessage(
+  socket: WebSocket,
+  payload: ClientMessage,
+  runtime: ListenerRuntime | null = activeRuntime,
+): void {
   if (socket.readyState === WebSocket.OPEN) {
-    safeEmitWsEvent("send", "client", payload);
-    socket.send(JSON.stringify(payload));
+    let outbound = payload as unknown as Record<string, unknown>;
+    if (payload.type !== "ping") {
+      const eventSeq = nextEventSeq(runtime);
+      if (eventSeq !== null) {
+        outbound = {
+          ...outbound,
+          event_seq: eventSeq,
+          session_id:
+            typeof outbound.session_id === "string"
+              ? outbound.session_id
+              : runtime?.sessionId,
+        };
+      }
+    }
+    safeEmitWsEvent("send", "client", outbound);
+    socket.send(JSON.stringify(outbound));
   }
 }
 
 function sendControlMessageOverWebSocket(
   socket: WebSocket,
   payload: ControlRequest,
+  runtime: ListenerRuntime | null = activeRuntime,
 ): void {
   // Central hook for protocol-only outbound WS messages so future
   // filtering/mutation can be added without touching approval flow.
-  safeEmitWsEvent("send", "control", payload);
-  socket.send(JSON.stringify(payload));
+  const eventSeq = nextEventSeq(runtime);
+  const outbound =
+    eventSeq === null
+      ? payload
+      : {
+          ...payload,
+          event_seq: eventSeq,
+          session_id: runtime?.sessionId,
+        };
+  safeEmitWsEvent("send", "control", outbound);
+  socket.send(JSON.stringify(outbound));
 }
 
 // ── Typed protocol event adapter ────────────────────────────────
@@ -453,8 +630,22 @@ export type WsProtocolEvent =
  */
 function emitToWS(socket: WebSocket, event: WsProtocolEvent): void {
   if (socket.readyState === WebSocket.OPEN) {
-    safeEmitWsEvent("send", "protocol", event);
-    socket.send(JSON.stringify(event));
+    const runtime = activeRuntime;
+    const eventSeq = nextEventSeq(runtime);
+    const eventRecord = event as unknown as Record<string, unknown>;
+    const outbound =
+      eventSeq === null
+        ? eventRecord
+        : {
+            ...eventRecord,
+            event_seq: eventSeq,
+            session_id:
+              typeof eventRecord.session_id === "string"
+                ? eventRecord.session_id
+                : runtime?.sessionId,
+          };
+    safeEmitWsEvent("send", "protocol", outbound);
+    socket.send(JSON.stringify(outbound));
   }
 }
 
@@ -591,7 +782,11 @@ export function requestApprovalOverWS(
   }
 
   return new Promise<ControlResponseBody>((resolve, reject) => {
-    runtime.pendingApprovalResolvers.set(requestId, { resolve, reject });
+    runtime.pendingApprovalResolvers.set(requestId, {
+      resolve,
+      reject,
+      controlRequest,
+    });
     try {
       sendControlMessageOverWebSocket(socket, controlRequest);
     } catch (error) {
@@ -1061,6 +1256,16 @@ async function connectWithRetry(
       return;
     }
 
+    if (parsed.type === "get_state") {
+      if (runtime !== activeRuntime || runtime.intentionallyClosed) {
+        return;
+      }
+
+      const stateResponse = buildStateResponse(runtime);
+      sendClientMessage(socket, stateResponse, runtime);
+      return;
+    }
+
     if (parsed.type === "recover_pending_approvals") {
       if (runtime !== activeRuntime || runtime.intentionallyClosed) {
         return;
@@ -1265,6 +1470,10 @@ async function handleIncomingMessage(
   const msgRunIds: string[] = [];
 
   runtime.isProcessing = true;
+  runtime.activeAgentId = agentId ?? null;
+  runtime.activeConversationId = conversationId;
+  runtime.activeRunId = null;
+  runtime.activeRunStartedAt = new Date().toISOString();
 
   try {
     // Latch capability: once seen, always use blocking path (strict check to avoid truthy strings)
@@ -1274,6 +1483,7 @@ async function handleIncomingMessage(
 
     if (!agentId) {
       runtime.isProcessing = false;
+      clearActiveRunState(runtime);
       return;
     }
 
@@ -1386,6 +1596,7 @@ async function handleIncomingMessage(
           const maybeRunId = (chunk as { run_id?: unknown }).run_id;
           if (typeof maybeRunId === "string") {
             runId = maybeRunId;
+            runtime.activeRunId = maybeRunId;
             if (!runIdSent) {
               runIdSent = true;
               msgRunIds.push(maybeRunId);
@@ -1433,6 +1644,7 @@ async function handleIncomingMessage(
       if (stopReason === "end_turn") {
         runtime.lastStopReason = "end_turn";
         runtime.isProcessing = false;
+        clearActiveRunState(runtime);
 
         if (runtime.controlResponseCapable) {
           emitToWS(socket, {
@@ -1463,6 +1675,7 @@ async function handleIncomingMessage(
       if (stopReason !== "requires_approval") {
         runtime.lastStopReason = stopReason;
         runtime.isProcessing = false;
+        clearActiveRunState(runtime);
 
         emitToWS(socket, {
           type: "error",
@@ -1503,6 +1716,7 @@ async function handleIncomingMessage(
         // Unexpected: requires_approval but no approvals
         runtime.lastStopReason = "error";
         runtime.isProcessing = false;
+        clearActiveRunState(runtime);
 
         sendClientMessage(socket, {
           type: "result",
@@ -1579,6 +1793,7 @@ async function handleIncomingMessage(
           // Legacy path: break out, let cloud re-enter with ApprovalCreate
           runtime.lastStopReason = "requires_approval";
           runtime.isProcessing = false;
+          clearActiveRunState(runtime);
 
           sendClientMessage(socket, {
             type: "result",
@@ -1690,6 +1905,7 @@ async function handleIncomingMessage(
   } catch (error) {
     runtime.lastStopReason = "error";
     runtime.isProcessing = false;
+    clearActiveRunState(runtime);
 
     const errorMessage = error instanceof Error ? error.message : String(error);
     emitToWS(socket, {

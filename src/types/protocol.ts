@@ -73,6 +73,8 @@ export type SystemPromptConfig = string | SystemPromptPresetConfig;
 export interface MessageEnvelope {
   session_id: string;
   uuid: string;
+  /** Monotonic per-session event sequence. Optional for backward compatibility. */
+  event_seq?: number;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -297,9 +299,16 @@ export type QueueItemKind =
  */
 export interface QueueItemEnqueuedEvent extends MessageEnvelope {
   type: "queue_item_enqueued";
+  /** Stable queue item identifier. Preferred field. */
+  id?: string;
+  /** @deprecated Use `id`. */
   item_id: string;
   source: QueueItemSource;
   kind: QueueItemKind;
+  /** Full queue item content; renderers may truncate for display. */
+  content?: MessageCreate["content"] | string;
+  /** ISO8601 UTC enqueue timestamp. */
+  enqueued_at?: string;
   queue_len: number;
 }
 
@@ -372,6 +381,9 @@ export type QueueItemDroppedReason = "buffer_limit" | "stale_generation";
  */
 export interface QueueItemDroppedEvent extends MessageEnvelope {
   type: "queue_item_dropped";
+  /** Stable queue item identifier. Preferred field. */
+  id?: string;
+  /** @deprecated Use `id`. */
   item_id: string;
   reason: QueueItemDroppedReason;
   queue_len: number;
@@ -662,6 +674,9 @@ export interface QueueSnapshotMessage extends MessageEnvelope {
   type: "queue_snapshot";
   /** Items currently in the queue, in enqueue order. */
   items: Array<{
+    /** Stable queue item identifier. Preferred field. */
+    id?: string;
+    /** @deprecated Use `id`. */
     item_id: string;
     kind: QueueItemKind;
     source: QueueItemSource;
