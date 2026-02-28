@@ -156,7 +156,7 @@ export async function discoverFallbackRunIdForResume(
   client: RunsListClient,
   ctx: StreamRequestContext,
 ): Promise<string | null> {
-  const statuses = ["created", "running"];
+  const statuses = ["running"];
   const requestStartedAtMs = ctx.requestStartedAtMs;
 
   const listCandidates = async (query: {
@@ -167,17 +167,16 @@ export async function discoverFallbackRunIdForResume(
       ...query,
       statuses,
       order: "desc",
-      limit: 20,
+      limit: 1,
     })) as RunsListResponse;
-    return toRunsArray(response)
-      .filter((run) => {
-        if (!run.id) return false;
-        // Best-effort temporal filter: only consider runs created after
-        // this send request started. In rare concurrent-send races within
-        // the same conversation, this heuristic can still pick a neighbor run.
-        return parseRunCreatedAtMs(run) >= requestStartedAtMs;
-      })
-      .sort((a, b) => parseRunCreatedAtMs(b) - parseRunCreatedAtMs(a));
+    return toRunsArray(response).filter((run) => {
+      if (!run.id) return false;
+      if (run.status !== "running") return false;
+      // Best-effort temporal filter: only consider runs created after
+      // this send request started. In rare concurrent-send races within
+      // the same conversation, this heuristic can still pick a neighbor run.
+      return parseRunCreatedAtMs(run) >= requestStartedAtMs;
+    });
   };
 
   const lookupQueries: Array<{
