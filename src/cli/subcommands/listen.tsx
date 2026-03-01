@@ -176,15 +176,27 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     });
 
     if (!registerResponse.ok) {
-      const error = (await registerResponse.json()) as { message?: string };
-      console.error(`Registration failed: ${error.message || "Unknown error"}`);
+      let errorMessage = `Registration failed (HTTP ${registerResponse.status})`;
+      try {
+        const error = (await registerResponse.json()) as { message?: string };
+        if (error.message) errorMessage = error.message;
+      } catch {
+        const text = await registerResponse.text().catch(() => "");
+        if (text) errorMessage += `: ${text.slice(0, 200)}`;
+      }
+      console.error(errorMessage);
       return 1;
     }
 
-    const { connectionId, wsUrl } = (await registerResponse.json()) as {
-      connectionId: string;
-      wsUrl: string;
-    };
+    let registerBody: { connectionId: string; wsUrl: string };
+    try {
+      registerBody = (await registerResponse.json()) as typeof registerBody;
+    } catch {
+      throw new Error(
+        "Registration endpoint returned non-JSON response — is the server running?",
+      );
+    }
+    const { connectionId, wsUrl } = registerBody;
 
     if (debugMode) {
       console.log(`[${formatTimestamp()}] Registered successfully`);
