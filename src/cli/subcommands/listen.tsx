@@ -11,6 +11,7 @@ import type React from "react";
 import { useState } from "react";
 import { getServerUrl } from "../../agent/client";
 import { settingsManager } from "../../settings-manager";
+import { RemoteSessionLog } from "../../websocket/listen-log";
 import { registerWithCloud } from "../../websocket/listen-register";
 import { ListenerStatusUI } from "../components/ListenerStatusUI";
 
@@ -44,17 +45,6 @@ function formatTimestamp(): string {
   const s = String(now.getSeconds()).padStart(2, "0");
   const ms = String(now.getMilliseconds()).padStart(3, "0");
   return `${h}:${m}:${s}.${ms}`;
-}
-
-function debugWsLogger(
-  direction: "send" | "recv",
-  label: "client" | "protocol" | "control" | "lifecycle",
-  event: unknown,
-): void {
-  const arrow = direction === "send" ? "\u2192 send" : "\u2190 recv";
-  const tag = label === "client" ? "" : ` (${label})`;
-  const json = JSON.stringify(event);
-  console.log(`[${formatTimestamp()}] ${arrow}${tag}  ${json}`);
 }
 
 export async function runListenSubcommand(argv: string[]): Promise<number> {
@@ -139,6 +129,11 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     }
   }
 
+  // Session log (always written to ~/.letta/logs/remote/)
+  const sessionLog = new RemoteSessionLog();
+  sessionLog.init();
+  console.log(`Log file: ${sessionLog.path}`);
+
   try {
     // Get device ID
     const deviceId = settingsManager.getOrCreateDeviceId();
@@ -153,6 +148,10 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       return 1;
     }
 
+    sessionLog.log(`Session started (debug=${debugMode})`);
+    sessionLog.log(`deviceId: ${deviceId}`);
+    sessionLog.log(`connectionName: ${connectionName}`);
+
     // Register with cloud
     const serverUrl = getServerUrl();
 
@@ -163,6 +162,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       console.log(`[${formatTimestamp()}]   deviceId: ${deviceId}`);
       console.log(`[${formatTimestamp()}]   connectionName: ${connectionName}`);
     }
+    sessionLog.log(`Registering with ${serverUrl}/v1/environments/register`);
 
     const { connectionId, wsUrl } = await registerWithCloud({
       serverUrl,
@@ -170,6 +170,9 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       deviceId,
       connectionName,
     });
+
+    sessionLog.log(`Registered: connectionId=${connectionId}`);
+    sessionLog.log(`wsUrl: ${wsUrl}`);
 
     if (debugMode) {
       console.log(`[${formatTimestamp()}] Registered successfully`);
@@ -184,6 +187,21 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       "../../websocket/listen-client"
     );
 
+    // WS event logger: always writes to file, console only in --debug
+    const wsEventLogger = (
+      direction: "send" | "recv",
+      label: "client" | "protocol" | "control" | "lifecycle",
+      event: unknown,
+    ): void => {
+      sessionLog.wsEvent(direction, label, event);
+      if (debugMode) {
+        const arrow = direction === "send" ? "\u2192 send" : "\u2190 recv";
+        const tag = label === "client" ? "" : ` (${label})`;
+        const json = JSON.stringify(event);
+        console.log(`[${formatTimestamp()}] ${arrow}${tag}  ${json}`);
+      }
+    };
+
     if (debugMode) {
       // Debug mode: plain-text event logging, no Ink UI
       await startListenerClient({
@@ -191,26 +209,33 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
         wsUrl,
         deviceId,
         connectionName,
-        onWsEvent: debugWsLogger,
+        onWsEvent: wsEventLogger,
         onStatusChange: (status) => {
+          sessionLog.log(`status: ${status}`);
           console.log(`[${formatTimestamp()}] status: ${status}`);
         },
         onConnected: () => {
+          sessionLog.log("Connected. Awaiting instructions.");
           console.log(
             `[${formatTimestamp()}] Connected. Awaiting instructions.`,
           );
           console.log("");
         },
         onRetrying: (attempt, _maxAttempts, nextRetryIn) => {
+          sessionLog.log(
+            `Reconnecting (attempt ${attempt}, retry in ${Math.round(nextRetryIn / 1000)}s)`,
+          );
           console.log(
             `[${formatTimestamp()}] Reconnecting (attempt ${attempt}, retry in ${Math.round(nextRetryIn / 1000)}s)`,
           );
         },
         onDisconnected: () => {
+          sessionLog.log("Disconnected.");
           console.log(`[${formatTimestamp()}] Disconnected.`);
           process.exit(1);
         },
         onError: (error: Error) => {
+          sessionLog.log(`Error: ${error.message}`);
           console.error(`[${formatTimestamp()}] Error: ${error.message}`);
           process.exit(1);
         },
@@ -244,24 +269,32 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
         wsUrl,
         deviceId,
         connectionName,
+        onWsEvent: wsEventLogger,
         onStatusChange: (status) => {
+          sessionLog.log(`status: ${status}`);
           clearRetryStatusCallback?.();
           updateStatusCallback?.(status);
         },
         onConnected: () => {
+          sessionLog.log("Connected. Awaiting instructions.");
           clearRetryStatusCallback?.();
           updateStatusCallback?.("idle");
         },
         onRetrying: (attempt, _maxAttempts, nextRetryIn) => {
+          sessionLog.log(
+            `Reconnecting (attempt ${attempt}, retry in ${Math.round(nextRetryIn / 1000)}s)`,
+          );
           updateRetryStatusCallback?.(attempt, nextRetryIn);
         },
         onDisconnected: () => {
+          sessionLog.log("Disconnected.");
           unmount();
           console.log("\n\u2717 Listener disconnected");
           console.log("Connection to Letta Cloud was lost.\n");
           process.exit(1);
         },
         onError: (error: Error) => {
+          sessionLog.log(`Error: ${error.message}`);
           unmount();
           console.error(`\n\u2717 Listener error: ${error.message}\n`);
           process.exit(1);
@@ -274,9 +307,9 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       // Never resolves - runs until Ctrl+C
     });
   } catch (error) {
-    console.error(
-      `Failed to start listener: ${error instanceof Error ? error.message : String(error)}`,
-    );
+    const msg = error instanceof Error ? error.message : String(error);
+    sessionLog.log(`FATAL: ${msg}`);
+    console.error(`Failed to start listener: ${msg}`);
     return 1;
   }
 }
