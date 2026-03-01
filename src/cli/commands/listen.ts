@@ -7,6 +7,7 @@ import { hostname } from "node:os";
 import { getServerUrl } from "../../agent/client";
 import { settingsManager } from "../../settings-manager";
 import { getErrorMessage } from "../../utils/error";
+import { registerWithCloud } from "../../websocket/listen-register";
 import type { Buffers, Line } from "../helpers/accumulator";
 
 // tiny helper for unique ids
@@ -221,43 +222,13 @@ export async function handleListen(
       throw new Error("Missing LETTA_API_KEY");
     }
 
-    // Call register endpoint
-    const registerUrl = `${serverUrl}/v1/environments/register`;
-    const registerResponse = await fetch(registerUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-        "X-Letta-Source": "letta-code",
-      },
-      body: JSON.stringify({
-        deviceId,
-        connectionName,
-      }),
+    // Register with cloud
+    const { connectionId, wsUrl } = await registerWithCloud({
+      serverUrl,
+      apiKey,
+      deviceId,
+      connectionName,
     });
-
-    if (!registerResponse.ok) {
-      let errorMessage = `Registration failed (HTTP ${registerResponse.status})`;
-      try {
-        const error = (await registerResponse.json()) as { message?: string };
-        if (error.message) errorMessage = error.message;
-      } catch {
-        // Response body is not JSON (e.g. HTML error page from proxy)
-        const text = await registerResponse.text().catch(() => "");
-        if (text) errorMessage += `: ${text.slice(0, 200)}`;
-      }
-      throw new Error(errorMessage);
-    }
-
-    let registerBody: { connectionId: string; wsUrl: string };
-    try {
-      registerBody = (await registerResponse.json()) as typeof registerBody;
-    } catch {
-      throw new Error(
-        "Registration endpoint returned non-JSON response — is the server running?",
-      );
-    }
-    const { connectionId, wsUrl } = registerBody;
 
     updateCommandResult(
       ctx.buffersRef,
@@ -352,48 +323,17 @@ export async function handleListen(
           );
 
           try {
-            // Re-register to get new connectionId
-            const reregisterResponse = await fetch(registerUrl, {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                Authorization: `Bearer ${apiKey}`,
-                "X-Letta-Source": "letta-code",
-              },
-              body: JSON.stringify({
-                deviceId,
-                connectionName,
-              }),
+            const reregisterResult = await registerWithCloud({
+              serverUrl,
+              apiKey,
+              deviceId,
+              connectionName,
             });
-
-            if (!reregisterResponse.ok) {
-              let errorMessage = `Re-registration failed (HTTP ${reregisterResponse.status})`;
-              try {
-                const error = (await reregisterResponse.json()) as {
-                  message?: string;
-                };
-                if (error.message) errorMessage = error.message;
-              } catch {
-                const text = await reregisterResponse.text().catch(() => "");
-                if (text) errorMessage += `: ${text.slice(0, 200)}`;
-              }
-              throw new Error(errorMessage);
-            }
-
-            let reregisterData: { connectionId: string; wsUrl: string };
-            try {
-              reregisterData =
-                (await reregisterResponse.json()) as typeof reregisterData;
-            } catch {
-              throw new Error(
-                "Re-registration endpoint returned non-JSON response — is the server running?",
-              );
-            }
 
             // Restart client with new connectionId
             await startClient(
-              reregisterData.connectionId,
-              reregisterData.wsUrl,
+              reregisterResult.connectionId,
+              reregisterResult.wsUrl,
             );
           } catch (error) {
             updateCommandResult(

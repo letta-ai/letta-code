@@ -11,6 +11,7 @@ import type React from "react";
 import { useState } from "react";
 import { getServerUrl } from "../../agent/client";
 import { settingsManager } from "../../settings-manager";
+import { registerWithCloud } from "../../websocket/listen-register";
 import { ListenerStatusUI } from "../components/ListenerStatusUI";
 
 /**
@@ -154,49 +155,21 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
 
     // Register with cloud
     const serverUrl = getServerUrl();
-    const registerUrl = `${serverUrl}/v1/environments/register`;
 
     if (debugMode) {
-      console.log(`[${formatTimestamp()}] Registering with ${registerUrl}`);
+      console.log(
+        `[${formatTimestamp()}] Registering with ${serverUrl}/v1/environments/register`,
+      );
       console.log(`[${formatTimestamp()}]   deviceId: ${deviceId}`);
       console.log(`[${formatTimestamp()}]   connectionName: ${connectionName}`);
     }
 
-    const registerResponse = await fetch(registerUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-        "X-Letta-Source": "letta-code",
-      },
-      body: JSON.stringify({
-        deviceId,
-        connectionName,
-      }),
+    const { connectionId, wsUrl } = await registerWithCloud({
+      serverUrl,
+      apiKey,
+      deviceId,
+      connectionName,
     });
-
-    if (!registerResponse.ok) {
-      let errorMessage = `Registration failed (HTTP ${registerResponse.status})`;
-      try {
-        const error = (await registerResponse.json()) as { message?: string };
-        if (error.message) errorMessage = error.message;
-      } catch {
-        const text = await registerResponse.text().catch(() => "");
-        if (text) errorMessage += `: ${text.slice(0, 200)}`;
-      }
-      console.error(errorMessage);
-      return 1;
-    }
-
-    let registerBody: { connectionId: string; wsUrl: string };
-    try {
-      registerBody = (await registerResponse.json()) as typeof registerBody;
-    } catch {
-      throw new Error(
-        "Registration endpoint returned non-JSON response — is the server running?",
-      );
-    }
-    const { connectionId, wsUrl } = registerBody;
 
     if (debugMode) {
       console.log(`[${formatTimestamp()}] Registered successfully`);
