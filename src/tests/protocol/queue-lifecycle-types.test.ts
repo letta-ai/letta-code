@@ -25,6 +25,7 @@ describe("QueueItemEnqueuedEvent wire shape", () => {
     const event: QueueItemEnqueuedEvent = {
       type: "queue_item_enqueued",
       item_id: "item-1",
+      client_message_id: "cm-item-1",
       source: "user",
       kind: "message",
       queue_len: 1,
@@ -184,6 +185,7 @@ describe("QueueLifecycleEvent union", () => {
       {
         type: "queue_item_enqueued",
         item_id: "i1",
+        client_message_id: "cm-i1",
         source: "user",
         kind: "message",
         queue_len: 1,
@@ -237,6 +239,7 @@ describe("QueueLifecycleEvent union", () => {
     const event: QueueLifecycleEvent = {
       type: "queue_item_enqueued",
       item_id: "i1",
+      client_message_id: "cm-i1",
       source: "task_notification",
       kind: "task_notification",
       queue_len: 2,
@@ -258,6 +261,7 @@ describe("QueueLifecycleEvent union", () => {
     const event: QueueLifecycleEvent = {
       type: "queue_item_enqueued",
       item_id: "i1",
+      client_message_id: "cm-i1",
       source: "user",
       kind: "message",
       queue_len: 1,

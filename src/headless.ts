@@ -2496,6 +2496,7 @@ async function runBidirectionalMode(
         emitQueueEvent({
           type: "queue_item_enqueued",
           item_id: item.id,
+          client_message_id: item.clientMessageId ?? `cm-${item.id}`,
           source: item.source,
           kind: item.kind,
           queue_len: queueLen,

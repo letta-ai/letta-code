@@ -314,6 +314,8 @@ export interface QueueItemEnqueuedEvent extends MessageEnvelope {
   id?: string;
   /** @deprecated Use `id`. */
   item_id: string;
+  /** Correlates this queue item back to the originating client submit payload. */
+  client_message_id: string;
   source: QueueItemSource;
   kind: QueueItemKind;
   /** Full queue item content; renderers may truncate for display. */

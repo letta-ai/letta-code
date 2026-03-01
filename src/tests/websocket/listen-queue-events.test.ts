@@ -67,29 +67,49 @@ function simulateMessageArrival(
   q: QueueRuntime,
   pendingTurnsRef: { value: number },
   payload: MessageCreate | ApprovalCreate,
-): boolean {
+): { isUserMessage: boolean; queueItemId?: string } {
   const isUserMessage = "content" in payload;
+  let queueItemId: string | undefined;
   if (isUserMessage) {
-    q.enqueue({
+    const enqueued = q.enqueue({
       kind: "message",
       source: "user",
       content: (payload as MessageCreate).content,
     } as Parameters<typeof q.enqueue>[0]);
+    queueItemId = enqueued?.id;
     if (pendingTurnsRef.value > 0) {
       q.tryDequeue("runtime_busy");
     }
   }
   pendingTurnsRef.value++; // synchronous before .then()
-  return isUserMessage;
+  return { isUserMessage, queueItemId };
 }
 
 /** Mirrors the start of the .then() chain callback. */
 function simulateTurnStart(
   q: QueueRuntime,
   _pendingTurnsRef: { value: number },
-  isUserMessage: boolean,
+  arrival: { isUserMessage: boolean; queueItemId?: string },
+  skipIds: Set<string>,
 ): void {
-  if (isUserMessage) q.consumeItems(1);
+  if (!arrival.isUserMessage || !arrival.queueItemId) {
+    return;
+  }
+
+  if (skipIds.has(arrival.queueItemId)) {
+    skipIds.delete(arrival.queueItemId);
+    return;
+  }
+
+  const batch = q.tryDequeue(null);
+  if (!batch) {
+    return;
+  }
+  for (const item of batch.items) {
+    if (item.id !== arrival.queueItemId) {
+      skipIds.add(item.id);
+    }
+  }
 }
 
 /** Mirrors the finally block. */
@@ -116,13 +136,14 @@ describe("single message — idle path", () => {
   test("enqueued → dequeued, no blocked, real queue_len values", () => {
     const { q, rec } = buildRuntime();
     const turns = { value: 0 };
+    const skipIds = new Set<string>();
 
-    const isUser = simulateMessageArrival(q, turns, makeMessageCreate());
+    const firstArrival = simulateMessageArrival(q, turns, makeMessageCreate());
     expect(rec.enqueued).toHaveLength(1);
     expect(rec.enqueued.at(0)?.queueLen).toBe(1);
     expect(rec.blocked).toHaveLength(0);
 
-    simulateTurnStart(q, turns, isUser);
+    simulateTurnStart(q, turns, firstArrival, skipIds);
     expect(rec.dequeued).toHaveLength(1);
     expect(rec.dequeued.at(0)?.mergedCount).toBe(1);
     expect(rec.dequeued.at(0)?.queueLenAfter).toBe(0);
@@ -137,9 +158,10 @@ describe("two rapid messages — busy path", () => {
   test("second arrival gets blocked(runtime_busy) due to sync pendingTurns", () => {
     const { q, rec } = buildRuntime();
     const turns = { value: 0 };
+    const skipIds = new Set<string>();
 
     // First message arrives
-    const isUser1 = simulateMessageArrival(
+    const arrival1 = simulateMessageArrival(
       q,
       turns,
       makeMessageCreate("first"),
@@ -148,7 +170,7 @@ describe("two rapid messages — busy path", () => {
     expect(rec.blocked).toHaveLength(0); // was 0 at arrival
 
     // Second message arrives BEFORE first turn's .then() runs
-    const isUser2 = simulateMessageArrival(
+    const arrival2 = simulateMessageArrival(
       q,
       turns,
       makeMessageCreate("second"),
@@ -159,17 +181,16 @@ describe("two rapid messages — busy path", () => {
     expect(rec.blocked.at(0)?.queueLen).toBe(2); // both enqueued
 
     // First turn runs
-    simulateTurnStart(q, turns, isUser1);
+    simulateTurnStart(q, turns, arrival1, skipIds);
     expect(rec.dequeued).toHaveLength(1);
-    expect(rec.dequeued.at(0)?.mergedCount).toBe(1);
+    expect(rec.dequeued.at(0)?.mergedCount).toBe(2);
+    expect(rec.dequeued.at(0)?.queueLenAfter).toBe(0);
     simulateTurnEnd(q, turns);
     expect(turns.value).toBe(1); // second still pending
 
-    // Second turn runs
-    simulateTurnStart(q, turns, isUser2);
-    expect(rec.dequeued).toHaveLength(2);
-    expect(rec.dequeued.at(1)?.mergedCount).toBe(1);
-    expect(rec.dequeued.at(1)?.queueLenAfter).toBe(0);
+    // Second callback no-ops (item already consumed in coalesced batch).
+    simulateTurnStart(q, turns, arrival2, skipIds);
+    expect(rec.dequeued).toHaveLength(1);
     simulateTurnEnd(q, turns);
     expect(turns.value).toBe(0);
   });
@@ -177,15 +198,21 @@ describe("two rapid messages — busy path", () => {
   test("blocked fires only once for same reason; resets when fully drained", () => {
     const { q, rec } = buildRuntime();
     const turns = { value: 0 };
+    const skipIds = new Set<string>();
 
-    simulateMessageArrival(q, turns, makeMessageCreate("a"));
-    simulateMessageArrival(q, turns, makeMessageCreate("b")); // blocked
-    simulateMessageArrival(q, turns, makeMessageCreate("c")); // same reason — no extra blocked
+    const arrivalA = simulateMessageArrival(q, turns, makeMessageCreate("a"));
+    const arrivalB = simulateMessageArrival(q, turns, makeMessageCreate("b")); // blocked
+    const arrivalC = simulateMessageArrival(q, turns, makeMessageCreate("c")); // same reason — no extra blocked
     expect(rec.blocked).toHaveLength(1);
 
     // Drain all three
+    const queuedArrivals = [arrivalA, arrivalB, arrivalC];
     for (let i = 0; i < 3; i++) {
-      simulateTurnStart(q, turns, true);
+      const queuedArrival = queuedArrivals[i];
+      if (!queuedArrival) {
+        continue;
+      }
+      simulateTurnStart(q, turns, queuedArrival, skipIds);
       simulateTurnEnd(q, turns);
     }
     expect(turns.value).toBe(0);
@@ -203,12 +230,13 @@ describe("pendingTurns safety — always decremented", () => {
     // (finally equivalent) always restores pendingTurns to 0.
     const { q } = buildRuntime();
     const turns = { value: 0 };
+    const skipIds = new Set<string>();
 
-    simulateMessageArrival(q, turns, makeMessageCreate("msg"));
+    const arrival = simulateMessageArrival(q, turns, makeMessageCreate("msg"));
     expect(turns.value).toBe(1);
 
     // Simulate: consumeItems fires, then an error before handleIncomingMessage
-    q.consumeItems(1);
+    simulateTurnStart(q, turns, arrival, skipIds);
     // finally fires (error path)
     simulateTurnEnd(q, turns);
     expect(turns.value).toBe(0); // not leaked
@@ -220,14 +248,15 @@ describe("ApprovalCreate payloads", () => {
   test("ApprovalCreate is not enqueued (no content field)", () => {
     const { q, rec } = buildRuntime();
     const turns = { value: 0 };
+    const skipIds = new Set<string>();
 
-    const isUser = simulateMessageArrival(q, turns, makeApprovalCreate());
-    expect(isUser).toBe(false);
+    const arrival = simulateMessageArrival(q, turns, makeApprovalCreate());
+    expect(arrival.isUserMessage).toBe(false);
     expect(rec.enqueued).toHaveLength(0);
     expect(turns.value).toBe(1); // pendingTurns still increments
 
     // No consumeItems called in .then()
-    simulateTurnStart(q, turns, isUser);
+    simulateTurnStart(q, turns, arrival, skipIds);
     expect(rec.dequeued).toHaveLength(0);
     simulateTurnEnd(q, turns);
     expect(turns.value).toBe(0);
@@ -257,18 +286,27 @@ describe("per-turn error — no queue_cleared", () => {
   test("turn error only decrements pendingTurns; remaining turns still dequeue", () => {
     const { q, rec } = buildRuntime();
     const turns = { value: 0 };
+    const skipIds = new Set<string>();
 
-    simulateMessageArrival(q, turns, makeMessageCreate("first"));
-    simulateMessageArrival(q, turns, makeMessageCreate("second"));
+    const arrival1 = simulateMessageArrival(
+      q,
+      turns,
+      makeMessageCreate("first"),
+    );
+    const arrival2 = simulateMessageArrival(
+      q,
+      turns,
+      makeMessageCreate("second"),
+    );
 
     // First turn: simulate error — finally still runs
-    simulateTurnStart(q, turns, true);
+    simulateTurnStart(q, turns, arrival1, skipIds);
     simulateTurnEnd(q, turns); // error path still hits finally
     expect(rec.cleared).toHaveLength(0); // no queue_cleared
 
-    // Second turn still runs
-    simulateTurnStart(q, turns, true);
-    expect(rec.dequeued).toHaveLength(2);
+    // Second callback no-ops; first turn already consumed coalesced batch.
+    simulateTurnStart(q, turns, arrival2, skipIds);
+    expect(rec.dequeued).toHaveLength(1);
     simulateTurnEnd(q, turns);
     expect(turns.value).toBe(0);
     expect(rec.cleared).toHaveLength(0); // still no queue_cleared

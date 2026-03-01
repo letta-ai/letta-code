@@ -14,6 +14,8 @@ export type { QueueBlockedReason, QueueClearedReason, QueueItemKind };
 type QueueItemBase = {
   /** Stable monotonic ID assigned on enqueue. */
   id: string;
+  /** Optional client-side message correlation ID from submit payloads. */
+  clientMessageId?: string;
   source: QueueItemSource;
   enqueuedAt: number;
 };

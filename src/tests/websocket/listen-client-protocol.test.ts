@@ -377,6 +377,79 @@ describe("listen-client capability-gated approval flow", () => {
   });
 });
 
+describe("listen-client approval recovery batch correlation", () => {
+  test("resolves the original batch id from pending tool call ids", () => {
+    const runtime = __listenClientTestUtils.createRuntime();
+    __listenClientTestUtils.rememberPendingApprovalBatchIds(
+      runtime,
+      [{ toolCallId: "tool-1" }, { toolCallId: "tool-2" }],
+      "batch-123",
+    );
+
+    expect(
+      __listenClientTestUtils.resolvePendingApprovalBatchId(runtime, [
+        { toolCallId: "tool-1" },
+        { toolCallId: "tool-2" },
+      ]),
+    ).toBe("batch-123");
+  });
+
+  test("returns null when pending approvals map to multiple batches", () => {
+    const runtime = __listenClientTestUtils.createRuntime();
+    __listenClientTestUtils.rememberPendingApprovalBatchIds(
+      runtime,
+      [{ toolCallId: "tool-a" }],
+      "batch-a",
+    );
+    __listenClientTestUtils.rememberPendingApprovalBatchIds(
+      runtime,
+      [{ toolCallId: "tool-b" }],
+      "batch-b",
+    );
+
+    expect(
+      __listenClientTestUtils.resolvePendingApprovalBatchId(runtime, [
+        { toolCallId: "tool-a" },
+        { toolCallId: "tool-b" },
+      ]),
+    ).toBeNull();
+  });
+
+  test("returns null when one pending approval mapping is missing", () => {
+    const runtime = __listenClientTestUtils.createRuntime();
+    __listenClientTestUtils.rememberPendingApprovalBatchIds(
+      runtime,
+      [{ toolCallId: "tool-a" }],
+      "batch-a",
+    );
+
+    expect(
+      __listenClientTestUtils.resolvePendingApprovalBatchId(runtime, [
+        { toolCallId: "tool-a" },
+        { toolCallId: "tool-missing" },
+      ]),
+    ).toBeNull();
+  });
+
+  test("clears correlation after approvals are executed", () => {
+    const runtime = __listenClientTestUtils.createRuntime();
+    __listenClientTestUtils.rememberPendingApprovalBatchIds(
+      runtime,
+      [{ toolCallId: "tool-x" }],
+      "batch-x",
+    );
+    __listenClientTestUtils.clearPendingApprovalBatchIds(runtime, [
+      { toolCallId: "tool-x" },
+    ]);
+
+    expect(
+      __listenClientTestUtils.resolvePendingApprovalBatchId(runtime, [
+        { toolCallId: "tool-x" },
+      ]),
+    ).toBeNull();
+  });
+});
+
 describe("listen-client emitToWS adapter", () => {
   test("sends event when socket is OPEN", () => {
     const socket = new MockSocket(WebSocket.OPEN);
