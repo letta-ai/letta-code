@@ -3343,6 +3343,72 @@ export default function App({
     };
   }, [agentId, agentState, conversationId, loadingState]);
 
+  const maybeCarryOverActiveConversationModel = useCallback(
+    async (targetConversationId: string) => {
+      if (!hasConversationModelOverrideRef.current) {
+        return;
+      }
+
+      const currentLlmConfig = llmConfigRef.current;
+      const rawModelHandle = buildModelHandleFromLlmConfig(currentLlmConfig);
+      if (!rawModelHandle) {
+        return;
+      }
+
+      // Keep provider naming aligned with model handles used by /model.
+      const [provider, ...modelParts] = rawModelHandle.split("/");
+      const modelHandle =
+        provider === "chatgpt_oauth" && modelParts.length > 0
+          ? `${OPENAI_CODEX_PROVIDER_NAME}/${modelParts.join("/")}`
+          : rawModelHandle;
+
+      const modelInfo = getModelInfoForLlmConfig(modelHandle, {
+        reasoning_effort: currentLlmConfig?.reasoning_effort ?? null,
+        enable_reasoner:
+          (currentLlmConfig as { enable_reasoner?: boolean | null } | null)
+            ?.enable_reasoner ?? null,
+      });
+
+      const updateArgs: Record<string, unknown> = {
+        ...((modelInfo?.updateArgs as Record<string, unknown> | undefined) ??
+          {}),
+      };
+      const reasoningEffort = currentLlmConfig?.reasoning_effort;
+      if (
+        typeof reasoningEffort === "string" &&
+        updateArgs.reasoning_effort === undefined
+      ) {
+        updateArgs.reasoning_effort = reasoningEffort;
+      }
+      const enableReasoner = (
+        currentLlmConfig as { enable_reasoner?: boolean | null } | null
+      )?.enable_reasoner;
+      if (
+        typeof enableReasoner === "boolean" &&
+        updateArgs.enable_reasoner === undefined
+      ) {
+        updateArgs.enable_reasoner = enableReasoner;
+      }
+
+      try {
+        const { updateConversationLLMConfig } = await import("../agent/modify");
+        await updateConversationLLMConfig(
+          targetConversationId,
+          modelHandle,
+          Object.keys(updateArgs).length > 0 ? updateArgs : undefined,
+        );
+      } catch (error) {
+        debugWarn(
+          "conversation-model",
+          `Failed to carry over active model to new conversation: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+    },
+    [],
+  );
+
   // Helper to append an error to the transcript
   // Also tracks the error in telemetry so we know an error was shown.
   // Pass `true` or `{ skip: true }` to suppress telemetry (e.g. hint
@@ -7709,6 +7775,8 @@ export default function App({
               isolated_block_labels: [...ISOLATED_BLOCK_LABELS],
             });
 
+            await maybeCarryOverActiveConversationModel(conversation.id);
+
             // Update conversationId state
             setConversationId(conversation.id);
 
@@ -7795,6 +7863,8 @@ export default function App({
               agent_id: agentId,
               isolated_block_labels: [...ISOLATED_BLOCK_LABELS],
             });
+
+            await maybeCarryOverActiveConversationModel(conversation.id);
             setConversationId(conversation.id);
 
             pendingConversationSwitchRef.current = {
@@ -10089,6 +10159,7 @@ ${SYSTEM_REMINDER_CLOSE}
       resetTrajectoryBases,
       sessionContextReminderEnabled,
       appendTaskNotificationEvents,
+      maybeCarryOverActiveConversationModel,
     ],
   );
 
@@ -13347,6 +13418,10 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
                       agent_id: agentId,
                       isolated_block_labels: [...ISOLATED_BLOCK_LABELS],
                     });
+
+                    await maybeCarryOverActiveConversationModel(
+                      conversation.id,
+                    );
                     setConversationId(conversation.id);
                     settingsManager.setLocalLastSession(
                       { agentId, conversationId: conversation.id },

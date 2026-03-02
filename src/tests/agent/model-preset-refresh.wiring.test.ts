@@ -89,6 +89,55 @@ describe("model preset refresh wiring", () => {
     expect(segment).not.toContain("updateAgentLLMConfig(");
   });
 
+  test("App defines helper to carry over active conversation model", () => {
+    const path = fileURLToPath(new URL("../../cli/App.tsx", import.meta.url));
+    const source = readFileSync(path, "utf-8");
+
+    const start = source.indexOf(
+      "const maybeCarryOverActiveConversationModel = useCallback(",
+    );
+    const end = source.indexOf(
+      "// Helper to append an error to the transcript",
+      start,
+    );
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(start);
+    const segment = source.slice(start, end);
+
+    expect(segment).toContain("hasConversationModelOverrideRef.current");
+    expect(segment).toContain("buildModelHandleFromLlmConfig");
+    expect(segment).toContain("getModelInfoForLlmConfig(");
+    expect(segment).toContain("updateConversationLLMConfig(");
+    expect(segment).toContain(
+      "Failed to carry over active model to new conversation",
+    );
+  });
+
+  test("new conversation flows reapply active conversation model before switching", () => {
+    const path = fileURLToPath(new URL("../../cli/App.tsx", import.meta.url));
+    const source = readFileSync(path, "utf-8");
+
+    const carryOverCalls =
+      source.match(
+        /await maybeCarryOverActiveConversationModel\(\s*conversation\.id,?\s*\);/g,
+      ) ?? [];
+    expect(carryOverCalls.length).toBeGreaterThanOrEqual(3);
+
+    const newCmdAnchor = source.indexOf('if (msg.trim() === "/new")');
+    expect(newCmdAnchor).toBeGreaterThanOrEqual(0);
+    const newCmdWindow = source.slice(newCmdAnchor, newCmdAnchor + 1800);
+    expect(newCmdWindow).toContain(
+      "await maybeCarryOverActiveConversationModel(conversation.id);",
+    );
+
+    const clearAnchor = source.indexOf('if (msg.trim() === "/clear")');
+    expect(clearAnchor).toBeGreaterThanOrEqual(0);
+    const clearWindow = source.slice(clearAnchor, clearAnchor + 2000);
+    expect(clearWindow).toContain(
+      "await maybeCarryOverActiveConversationModel(conversation.id);",
+    );
+  });
+
   test("interactive resume flow refreshes model preset without explicit --model", () => {
     const path = fileURLToPath(new URL("../../index.ts", import.meta.url));
     const source = readFileSync(path, "utf-8");
