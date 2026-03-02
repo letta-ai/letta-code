@@ -9,8 +9,6 @@ import { settingsManager } from "../../settings-manager";
 import { getErrorMessage } from "../../utils/error";
 import { registerWithCloud } from "../../websocket/listen-register";
 import type { Buffers, Line } from "../helpers/accumulator";
-import { getVersion } from "../../version";
-import {debugLog} from "../../utils/debug.ts";
 
 // tiny helper for unique ids
 function uid(prefix: string) {

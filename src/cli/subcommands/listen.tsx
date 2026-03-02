@@ -14,7 +14,6 @@ import { settingsManager } from "../../settings-manager";
 import { RemoteSessionLog } from "../../websocket/listen-log";
 import { registerWithCloud } from "../../websocket/listen-register";
 import { ListenerStatusUI } from "../components/ListenerStatusUI";
-import {getVersion} from "../../version.ts";
 
 /**
  * Interactive prompt for environment name
