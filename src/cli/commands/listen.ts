@@ -325,31 +325,11 @@ export async function handleListen(
           );
 
           try {
-<<<<<<< Updated upstream
             const reregisterResult = await registerWithCloud({
               serverUrl,
               apiKey,
               deviceId,
               connectionName,
-=======
-            // Re-register to get new connectionId
-            const reregisterResponse = await fetch(registerUrl, {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                Authorization: `Bearer ${apiKey}`,
-                "X-Letta-Source": "letta-code",
-              },
-              body: JSON.stringify({
-                deviceId,
-                connectionName,
-                metadata: {
-                  lettaCodeVersion: getVersion(),
-                  os: process.platform,
-                  nodeVersion: process.version,
-                },
-              }),
->>>>>>> Stashed changes
             });
 
             // Restart client with new connectionId
