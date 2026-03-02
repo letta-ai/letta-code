@@ -3,6 +3,7 @@ import { runBlocksSubcommand } from "./blocks";
 import { runListenSubcommand } from "./listen.tsx";
 import { runMemfsSubcommand } from "./memfs";
 import { runMessagesSubcommand } from "./messages";
+import { runServeSubcommand } from "./serve";
 
 export async function runSubcommand(argv: string[]): Promise<number | null> {
   const [command, ...rest] = argv;
@@ -22,6 +23,8 @@ export async function runSubcommand(argv: string[]): Promise<number | null> {
       return runBlocksSubcommand(rest);
     case "remote":
       return runListenSubcommand(rest);
+    case "serve":
+      return runServeSubcommand(rest);
     default:
       return null;
   }
