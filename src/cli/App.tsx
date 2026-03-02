@@ -9321,7 +9321,6 @@ ${SYSTEM_REMINDER_CLOSE}
         pendingInitAgentId === agentId &&
         !isSystemOnly
       ) {
-        autoInitPendingAgentIdRef.current = null;
         try {
           const fired = await fireAutoInit(agentId, ({ success, error }) => {
             const msg = success
@@ -9330,10 +9329,12 @@ ${SYSTEM_REMINDER_CLOSE}
             appendTaskNotificationEvents([msg]);
           });
           if (fired) {
+            autoInitPendingAgentIdRef.current = null;
             sharedReminderStateRef.current.pendingAutoInitReminder = true;
           }
         } catch {
-          // Non-blocking: swallow spawn/import failures so the user's message still goes through
+          // Non-blocking: swallow spawn/import failures so the user's message still goes through.
+          // Leave ref intact so auto-init retries on the next user message.
         }
       }
 
