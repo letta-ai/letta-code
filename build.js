@@ -68,7 +68,12 @@ content = content.replace(
   `globalThis.Bun.secrets`,
 );
 
-const withShebang = `#!/usr/bin/env node
+// Polyglot shebang: prefers Bun if available, falls back to Node.
+// This is safe on all Unix platforms — the runtime check happens at invocation.
+// Windows ignores shebangs (npm/bun create their own .cmd wrappers).
+const shebang = `#!/bin/sh
+":" //#; exec /usr/bin/env sh -c 'command -v bun >/dev/null && exec bun "$0" "$@" || exec node "$0" "$@"' "$0" "$@"`;
+const withShebang = `${shebang}
 ${content}`;
 await Bun.write(outputPath, withShebang);
 
