@@ -14,9 +14,10 @@ describe("auto-init wiring", () => {
     expect(helperSource).toContain("export async function fireAutoInit(");
   });
 
-  test("App.tsx contains autoInitPendingAgentIdRef", () => {
+  test("App.tsx uses a Set to track multiple pending agent IDs", () => {
     const appSource = readSource("../../cli/App.tsx");
-    expect(appSource).toContain("autoInitPendingAgentIdRef");
+    expect(appSource).toContain("autoInitPendingAgentIdsRef");
+    expect(appSource).toContain("new Set()");
   });
 
   test("App.tsx uses agentProvenance?.isNew for startup path", () => {
@@ -24,9 +25,11 @@ describe("auto-init wiring", () => {
     expect(appSource).toContain("agentProvenance?.isNew");
   });
 
-  test("App.tsx checks pendingInitAgentId === agentId as agent ID match guard", () => {
+  test("App.tsx checks .has(agentId) as agent ID match guard in onSubmit", () => {
     const appSource = readSource("../../cli/App.tsx");
-    expect(appSource).toContain("pendingInitAgentId === agentId");
+    expect(appSource).toContain(
+      "autoInitPendingAgentIdsRef.current.has(agentId)",
+    );
   });
 
   test("auto-init-onboarding is registered in catalog and engine", () => {
@@ -70,24 +73,39 @@ describe("auto-init lifecycle guards", () => {
     expect(guardIdx).toBeLessThan(assignIdx);
   });
 
-  test("onSubmit only clears pending ref after confirmed launch (fired === true)", () => {
+  test("onSubmit only removes from pending set after confirmed launch (fired === true)", () => {
     const appSource = readSource("../../cli/App.tsx");
 
-    // Find the auto-init block in onSubmit
+    // Find the auto-init block in onSubmit — starts with the .has() check
     const blockStart = appSource.indexOf(
-      "const pendingInitAgentId = autoInitPendingAgentIdRef.current",
+      "autoInitPendingAgentIdsRef.current.has(agentId)",
     );
     expect(blockStart).toBeGreaterThan(-1);
 
     // Extract enough of the block to cover the clearing logic
     const block = appSource.slice(blockStart, blockStart + 600);
 
-    // The ref must be cleared AFTER checking `fired`, not before fireAutoInit
+    // The delete must happen AFTER checking `fired`, not before fireAutoInit
     const firedCheck = block.indexOf("if (fired)");
-    const refClear = block.indexOf("autoInitPendingAgentIdRef.current = null");
+    const setDelete = block.indexOf(
+      "autoInitPendingAgentIdsRef.current.delete(agentId)",
+    );
     expect(firedCheck).toBeGreaterThan(-1);
-    expect(refClear).toBeGreaterThan(-1);
-    expect(refClear).toBeGreaterThan(firedCheck);
+    expect(setDelete).toBeGreaterThan(-1);
+    expect(setDelete).toBeGreaterThan(firedCheck);
+  });
+
+  test("manual /init clears pending auto-init for current agent", () => {
+    const appSource = readSource("../../cli/App.tsx");
+
+    // The /init handler must delete the current agent from the pending set
+    const initHandlerIdx = appSource.indexOf('trimmed === "/init"');
+    expect(initHandlerIdx).toBeGreaterThan(-1);
+
+    const afterInit = appSource.slice(initHandlerIdx, initHandlerIdx + 400);
+    expect(afterInit).toContain(
+      "autoInitPendingAgentIdsRef.current.delete(agentId)",
+    );
   });
 
   test("fireAutoInit returns false (not throw) when init subagent is active", () => {

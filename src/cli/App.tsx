@@ -1041,8 +1041,9 @@ export default function App({
     import("./helpers/conversationSwitchAlert").ConversationSwitchContext | null
   >(null);
 
-  // Pending auto-init for newly created agents — consumed on first user message
-  const autoInitPendingAgentIdRef = useRef<string | null>(null);
+  // Pending auto-init for newly created agents — consumed on first user message.
+  // A Set so multiple agents created before any message is sent are all tracked.
+  const autoInitPendingAgentIdsRef = useRef<Set<string>>(new Set());
   // Tracks whether we've already consumed the startup agentProvenance.isNew flag,
   // so agent switches later in the session don't re-queue auto-init.
   const startupAutoInitConsumedRef = useRef(false);
@@ -6213,7 +6214,7 @@ export default function App({
 
         // Queue auto-init for first message if memfs is enabled
         if (settingsManager.isMemfsEnabled(agent.id)) {
-          autoInitPendingAgentIdRef.current = agent.id;
+          autoInitPendingAgentIdsRef.current.add(agent.id);
         }
 
         // Update project settings with new agent
@@ -9164,6 +9165,9 @@ export default function App({
 
         // Special handling for /init command
         if (trimmed === "/init") {
+          // Manual /init supersedes pending auto-init for this agent
+          autoInitPendingAgentIdsRef.current.delete(agentId);
+
           const cmd = commandRunner.start(msg, "Gathering project context...");
 
           // Check for pending approvals before either path
@@ -9365,14 +9369,9 @@ export default function App({
       }
 
       // Auto-init: fire background init on first message for newly created agents.
-      // Only clear the pending ref after a confirmed launch so that a blocked
-      // attempt (e.g. another /init subagent in flight) preserves the flag for retry.
-      const pendingInitAgentId = autoInitPendingAgentIdRef.current;
-      if (
-        pendingInitAgentId &&
-        pendingInitAgentId === agentId &&
-        !isSystemOnly
-      ) {
+      // Only remove from the pending set after a confirmed launch so that a blocked
+      // attempt (e.g. another /init subagent in flight) preserves the entry for retry.
+      if (autoInitPendingAgentIdsRef.current.has(agentId) && !isSystemOnly) {
         try {
           const fired = await fireAutoInit(agentId, ({ success, error }) => {
             const msg = success
@@ -9381,7 +9380,7 @@ export default function App({
             appendTaskNotificationEvents([msg]);
           });
           if (fired) {
-            autoInitPendingAgentIdRef.current = null;
+            autoInitPendingAgentIdsRef.current.delete(agentId);
             sharedReminderStateRef.current.pendingAutoInitReminder = true;
           }
         } catch {
@@ -12517,7 +12516,7 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
     ) {
       startupAutoInitConsumedRef.current = true;
       if (settingsManager.isMemfsEnabled(agentId)) {
-        autoInitPendingAgentIdRef.current = agentId;
+        autoInitPendingAgentIdsRef.current.add(agentId);
       }
     }
   }, [loadingState, agentProvenance, agentId]);
