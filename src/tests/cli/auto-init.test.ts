@@ -14,9 +14,11 @@ describe("auto-init onboarding wiring", () => {
     expect(helperSource).toContain("export async function fireAutoInit(");
   });
 
-  test("App.tsx contains autoInitPendingAgentIdRef", () => {
+  test("App.tsx accepts needsAutoInit prop and seeds ref from it", () => {
     const appSource = readSource("../../cli/App.tsx");
+    expect(appSource).toContain("needsAutoInit");
     expect(appSource).toContain("autoInitPendingAgentIdRef");
+    expect(appSource).toContain("needsAutoInit ? initialAgentId : null");
   });
 
   test("App.tsx contains pendingAutoInitReminder", () => {
@@ -32,6 +34,12 @@ describe("auto-init onboarding wiring", () => {
   test("App.tsx checks pendingInitAgentId === agentId (agent ID match guard)", () => {
     const appSource = readSource("../../cli/App.tsx");
     expect(appSource).toContain("pendingInitAgentId === agentId");
+  });
+
+  test("index.ts sets needsAutoInit when creating new agent with memfs", () => {
+    const indexSource = readSource("../../index.ts");
+    expect(indexSource).toContain("setNeedsAutoInit(true)");
+    expect(indexSource).toContain("needsAutoInit");
   });
 
   test("auto-init-onboarding is in catalog", () => {

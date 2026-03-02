@@ -1011,6 +1011,8 @@ async function main(): Promise<void> {
     >(null);
     // Track when user explicitly requested new agent from selector (not via --new flag)
     const [userRequestedNewAgent, setUserRequestedNewAgent] = useState(false);
+    // Track whether the newly created agent needs auto-init on first message
+    const [needsAutoInit, setNeedsAutoInit] = useState(false);
     // Message to show when LRU/selected agent failed to load
     const [failedAgentMessage, setFailedAgentMessage] = useState<string | null>(
       null,
@@ -1638,6 +1640,11 @@ async function main(): Promise<void> {
             );
             await enableMemfsIfCloud(agent.id);
           }
+
+          // Queue auto-init if memfs was enabled for this new agent
+          if (settingsManager.isMemfsEnabled(agent.id)) {
+            setNeedsAutoInit(true);
+          }
         }
 
         // Priority 4: Try to resume from project settings LRU (.letta/settings.local.json)
@@ -2083,6 +2090,7 @@ async function main(): Promise<void> {
       releaseNotes,
       updateNotification,
       sessionContextReminderEnabled: !noSystemInfoReminderFlag,
+      needsAutoInit,
     });
   }
 

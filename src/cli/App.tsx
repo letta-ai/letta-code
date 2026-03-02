@@ -978,6 +978,7 @@ export default function App({
   releaseNotes = null,
   updateNotification = null,
   sessionContextReminderEnabled = true,
+  needsAutoInit = false,
 }: {
   agentId: string;
   agentState?: AgentState | null;
@@ -1000,6 +1001,7 @@ export default function App({
   releaseNotes?: string | null; // Markdown release notes to display above header
   updateNotification?: string | null; // Latest version when a significant auto-update was applied
   sessionContextReminderEnabled?: boolean;
+  needsAutoInit?: boolean; // True when agent was just created with memfs — triggers auto-init on first message
 }) {
   // Warm the model-access cache in the background so /model is fast on first open.
   useEffect(() => {
@@ -1040,8 +1042,11 @@ export default function App({
     import("./helpers/conversationSwitchAlert").ConversationSwitchContext | null
   >(null);
 
-  // Pending auto-init: stores agent ID that needs background init on first message
-  const autoInitPendingAgentIdRef = useRef<string | null>(null);
+  // Pending auto-init: stores agent ID that needs background init on first message.
+  // Seeded from needsAutoInit prop (--new-agent) or set by handleCreateNewAgent (UI dialog).
+  const autoInitPendingAgentIdRef = useRef<string | null>(
+    needsAutoInit ? initialAgentId : null,
+  );
 
   // Track previous prop values to detect actual prop changes (not internal state changes)
   const prevInitialAgentIdRef = useRef(initialAgentId);
