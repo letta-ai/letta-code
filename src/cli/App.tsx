@@ -9205,7 +9205,7 @@ export default function App({
                 onComplete: ({ success, error }) => {
                   const msg = success
                     ? "Built a memory palace of you. Visit it with /palace."
-                    : `Memory initialization failed: ${error}`;
+                    : `Memory initialization failed: ${error || "Unknown error"}`;
                   appendTaskNotificationEvents([msg]);
                 },
               });
@@ -9377,7 +9377,7 @@ export default function App({
           const fired = await fireAutoInit(agentId, ({ success, error }) => {
             const msg = success
               ? "Built a memory palace of you. Visit it with /palace."
-              : `Memory initialization failed: ${error}`;
+              : `Memory initialization failed: ${error || "Unknown error"}`;
             appendTaskNotificationEvents([msg]);
           });
           if (fired) {
@@ -12505,7 +12505,9 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
   // Queue auto-init for startup-created agents (--new-agent, --import, profile selector "new").
   // The consumed ref ensures this fires at most once per app lifetime, so later
   // agent switches (which change agentId but leave agentProvenance stale) don't
-  // accidentally re-queue auto-init for an existing agent.
+  // accidentally re-queue auto-init for an existing agent. This also means if
+  // the user switches away from the startup agent and back, auto-init won't
+  // re-queue — that's intentional (init is a one-shot at creation time).
   useEffect(() => {
     if (
       loadingState === "ready" &&
