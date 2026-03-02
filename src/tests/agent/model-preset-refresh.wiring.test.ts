@@ -64,9 +64,11 @@ describe("model preset refresh wiring", () => {
     expect(updateSegment).toContain(
       "Parameters<typeof client.conversations.update>[1]",
     );
-    expect(updateSegment).toContain(
-      "client.conversations.update(conversationId, payload)",
-    );
+    expect(updateSegment).toContain("client.conversations.update(");
+    expect(updateSegment).toContain("conversationId,");
+    expect(updateSegment).toContain("payload,");
+    expect(updateSegment).toContain("if (!updatedConversationModel)");
+    expect(updateSegment).toContain("client.conversations.retrieve(");
     expect(updateSegment).toContain("model: modelHandle");
     expect(updateSegment).not.toContain("client.agents.update(");
   });
