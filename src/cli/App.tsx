@@ -219,6 +219,7 @@ import { parsePatchOperations } from "./helpers/formatArgsDisplay";
 import {
   buildLegacyInitMessage,
   buildMemoryInitRuntimePrompt,
+  fireAutoInit,
   gatherGitContext,
   hasActiveInitSubagent,
 } from "./helpers/initCommand";
@@ -1038,6 +1039,9 @@ export default function App({
   const pendingConversationSwitchRef = useRef<
     import("./helpers/conversationSwitchAlert").ConversationSwitchContext | null
   >(null);
+
+  // Pending auto-init: stores agent ID that needs background init on first message
+  const autoInitPendingAgentIdRef = useRef<string | null>(null);
 
   // Track previous prop values to detect actual prop changes (not internal state changes)
   const prevInitialAgentIdRef = useRef(initialAgentId);
@@ -6131,6 +6135,11 @@ export default function App({
         );
         await enableMemfsIfCloud(agent.id);
 
+        // Only queue auto-init if memfs was actually enabled
+        if (settingsManager.isMemfsEnabled(agent.id)) {
+          autoInitPendingAgentIdRef.current = agent.id;
+        }
+
         // Update project settings with new agent
         await updateProjectSettings({ lastAgent: agent.id });
 
@@ -6149,10 +6158,13 @@ export default function App({
 
         // Build success message with hints
         const agentUrl = `https://app.letta.com/projects/default-project/agents/${agent.id}`;
+        const memfsTip = settingsManager.isMemfsEnabled(agent.id)
+          ? "Memory will be auto-initialized on your first message."
+          : "Tip: use /init to initialize your agent's memory system!";
         const successOutput = [
           `Created **${agent.name || agent.id}** (use /pin to save)`,
           `⎿  ${agentUrl}`,
-          `⎿  Tip: use /init to initialize your agent's memory system!`,
+          `⎿  ${memfsTip}`,
         ].join("\n");
         cmd.finish(successOutput, true);
         const successItem: StaticItem = {
@@ -9300,6 +9312,29 @@ ${SYSTEM_REMINDER_CLOSE}
         }
         // Clear the cache after building the prefix
         bashCommandCacheRef.current = [];
+      }
+
+      // Auto-init: fire background init if this agent was just created with memfs
+      const pendingInitAgentId = autoInitPendingAgentIdRef.current;
+      if (
+        pendingInitAgentId &&
+        pendingInitAgentId === agentId &&
+        !isSystemOnly
+      ) {
+        autoInitPendingAgentIdRef.current = null;
+        try {
+          const fired = await fireAutoInit(agentId, ({ success, error }) => {
+            const msg = success
+              ? "Built a memory palace of you. Visit it with /palace."
+              : `Memory initialization failed: ${error}`;
+            appendTaskNotificationEvents([msg]);
+          });
+          if (fired) {
+            sharedReminderStateRef.current.pendingAutoInitReminder = true;
+          }
+        } catch {
+          // Non-blocking: swallow spawn/import failures so the user's message still goes through
+        }
       }
 
       const reflectionSettings = getReflectionSettings();

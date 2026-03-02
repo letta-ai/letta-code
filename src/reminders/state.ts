@@ -29,6 +29,7 @@ export interface SharedReminderState {
   pendingReflectionTrigger: boolean;
   pendingCommandIoReminders: CommandIoReminder[];
   pendingToolsetChangeReminders: ToolsetChangeReminder[];
+  pendingAutoInitReminder: boolean;
 }
 
 export function createSharedReminderState(): SharedReminderState {
@@ -44,6 +45,7 @@ export function createSharedReminderState(): SharedReminderState {
     pendingReflectionTrigger: false,
     pendingCommandIoReminders: [],
     pendingToolsetChangeReminders: [],
+    pendingAutoInitReminder: false,
   };
 }
 

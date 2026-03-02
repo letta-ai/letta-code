@@ -357,6 +357,23 @@ ${SYSTEM_REMINDER_CLOSE}
 `;
 }
 
+async function buildAutoInitOnboardingReminder(
+  context: SharedReminderContext,
+): Promise<string | null> {
+  if (!context.state.pendingAutoInitReminder) {
+    return null;
+  }
+
+  context.state.pendingAutoInitReminder = false;
+
+  return `${SYSTEM_REMINDER_OPEN}
+Background onboarding: a memory initialization subagent is running in the background for this new agent.
+Respond to the user's message normally. Do NOT run /init yourself — it is already in progress.
+${SYSTEM_REMINDER_CLOSE}
+
+`;
+}
+
 export const sharedReminderProviders: Record<
   SharedReminderId,
   SharedReminderProvider
@@ -370,6 +387,7 @@ export const sharedReminderProviders: Record<
   "reflection-compaction": buildReflectionCompactionReminder,
   "command-io": buildCommandIoReminder,
   "toolset-change": buildToolsetChangeReminder,
+  "auto-init-onboarding": buildAutoInitOnboardingReminder,
 };
 
 export function assertSharedReminderCoverage(): void {
