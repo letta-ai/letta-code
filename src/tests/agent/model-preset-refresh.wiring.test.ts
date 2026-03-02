@@ -119,7 +119,7 @@ describe("model preset refresh wiring", () => {
 
     const carryOverCalls =
       source.match(
-        /await maybeCarryOverActiveConversationModel\(conversation\.id\);/g,
+        /await maybeCarryOverActiveConversationModel\(\s*conversation\.id,?\s*\);/g,
       ) ?? [];
     expect(carryOverCalls.length).toBeGreaterThanOrEqual(3);
 
