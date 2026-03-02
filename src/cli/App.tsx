@@ -1471,6 +1471,36 @@ export default function App({
   useEffect(() => {
     hasConversationModelOverrideRef.current = hasConversationModelOverride;
   }, [hasConversationModelOverride]);
+  const recentConversationModelOverrideRef = useRef<{
+    conversationId: string;
+    updatedAtMs: number;
+  } | null>(null);
+  const markRecentConversationModelOverride = useCallback(
+    (targetConversationId: string) => {
+      if (targetConversationId === "default") {
+        return;
+      }
+      recentConversationModelOverrideRef.current = {
+        conversationId: targetConversationId,
+        updatedAtMs: Date.now(),
+      };
+    },
+    [],
+  );
+  const hasFreshConversationModelOverride = useCallback(
+    (targetConversationId: string): boolean => {
+      if (targetConversationId === "default") {
+        return false;
+      }
+      const recent = recentConversationModelOverrideRef.current;
+      if (!recent || recent.conversationId !== targetConversationId) {
+        return false;
+      }
+      return Date.now() - recent.updatedAtMs < 10_000;
+    },
+    [],
+  );
+  const modelSyncGenerationRef = useRef(0);
   const agentStateRef = useRef(agentState);
   useEffect(() => {
     agentStateRef.current = agentState;
@@ -3241,8 +3271,18 @@ export default function App({
     }
 
     let cancelled = false;
+    const syncGeneration = ++modelSyncGenerationRef.current;
+    const isStaleSync = () =>
+      cancelled || syncGeneration !== modelSyncGenerationRef.current;
 
     const applyAgentModelLocally = () => {
+      if (hasFreshConversationModelOverride(conversationId)) {
+        debugLog(
+          "conversation-model",
+          "Skipping local agent model apply due to fresh conversation override",
+        );
+        return;
+      }
       const agentModelHandle =
         agentState.model ??
         buildModelHandleFromLlmConfig(agentState.llm_config);
@@ -3264,6 +3304,7 @@ export default function App({
       // "default" is a virtual sentinel for the agent's primary message history,
       // not a real conversation object — skip the API call.
       if (conversationId === "default") {
+        recentConversationModelOverrideRef.current = null;
         applyAgentModelLocally();
         return;
       }
@@ -3272,7 +3313,7 @@ export default function App({
         const client = await getClient();
         const conversation =
           await client.conversations.retrieve(conversationId);
-        if (cancelled) return;
+        if (isStaleSync()) return;
 
         const conversationModel = (conversation as { model?: string | null })
           .model;
@@ -3286,6 +3327,10 @@ export default function App({
             ? true
             : conversationModelSettings !== undefined &&
               conversationModelSettings !== null;
+
+        if (hasOverride) {
+          recentConversationModelOverrideRef.current = null;
+        }
 
         if (!hasOverride) {
           applyAgentModelLocally();
@@ -3326,7 +3371,7 @@ export default function App({
             : {}),
         });
       } catch (error) {
-        if (cancelled) return;
+        if (isStaleSync()) return;
         debugLog(
           "conversation-model",
           "Failed to sync conversation model override: %O",
@@ -3341,7 +3386,13 @@ export default function App({
     return () => {
       cancelled = true;
     };
-  }, [agentId, agentState, conversationId, loadingState]);
+  }, [
+    agentId,
+    agentState,
+    conversationId,
+    loadingState,
+    hasFreshConversationModelOverride,
+  ]);
 
   // Helper to append an error to the transcript
   // Also tracks the error in telemetry so we know an error was shown.
@@ -10943,12 +10994,13 @@ ${SYSTEM_REMINDER_CLOSE}
             | AgentState["model_settings"]
             | null
             | undefined;
-          if (conversationIdRef.current !== "default") {
+          const targetConversationId = conversationIdRef.current;
+          if (targetConversationId !== "default") {
             const { updateConversationLLMConfig } = await import(
               "../agent/modify"
             );
             const updatedConversation = await updateConversationLLMConfig(
-              conversationIdRef.current,
+              targetConversationId,
               modelHandle,
               model.updateArgs,
             );
@@ -10957,6 +11009,7 @@ ${SYSTEM_REMINDER_CLOSE}
                 model_settings?: AgentState["model_settings"] | null;
               }
             ).model_settings;
+            markRecentConversationModelOverride(targetConversationId);
           }
 
           // The API may not echo reasoning_effort back, so populate it from
@@ -11067,6 +11120,7 @@ ${SYSTEM_REMINDER_CLOSE}
       consumeOverlayCommand,
       currentToolset,
       isAgentBusy,
+      markRecentConversationModelOverride,
       maybeRecordToolsetChangeReminder,
       resetPendingReasoningCycle,
       withCommandLock,
@@ -11726,12 +11780,13 @@ ${SYSTEM_REMINDER_CLOSE}
             | AgentState["model_settings"]
             | null
             | undefined;
-          if (conversationIdRef.current !== "default") {
+          const targetConversationId = conversationIdRef.current;
+          if (targetConversationId !== "default") {
             const { updateConversationLLMConfig } = await import(
               "../agent/modify"
             );
             const updatedConversation = await updateConversationLLMConfig(
-              conversationIdRef.current,
+              targetConversationId,
               desired.modelHandle,
               {
                 reasoning_effort: desired.effort,
@@ -11742,6 +11797,7 @@ ${SYSTEM_REMINDER_CLOSE}
                 model_settings?: AgentState["model_settings"] | null;
               }
             ).model_settings;
+            markRecentConversationModelOverride(targetConversationId);
           }
           const resolvedReasoningEffort =
             deriveReasoningEffort(
@@ -11809,7 +11865,13 @@ ${SYSTEM_REMINDER_CLOSE}
     } finally {
       reasoningCycleInFlightRef.current = false;
     }
-  }, [agentId, commandRunner, isAgentBusy, withCommandLock]);
+  }, [
+    agentId,
+    commandRunner,
+    isAgentBusy,
+    markRecentConversationModelOverride,
+    withCommandLock,
+  ]);
 
   const handleCycleReasoningEffort = useCallback(() => {
     void (async () => {

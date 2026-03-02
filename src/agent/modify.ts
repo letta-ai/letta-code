@@ -240,8 +240,30 @@ export async function updateConversationLLMConfig(
     model: modelHandle,
     ...(hasModelSettings && { model_settings: modelSettings }),
   } as unknown as Parameters<typeof client.conversations.update>[1];
+  const updatedConversation = await client.conversations.update(
+    conversationId,
+    payload,
+  );
+  const updatedConversationModel = (
+    updatedConversation as { model?: string | null }
+  ).model;
 
-  return client.conversations.update(conversationId, payload);
+  if (!updatedConversationModel) {
+    try {
+      const fallbackConversation =
+        await client.conversations.retrieve(conversationId);
+      const fallbackConversationModel = (
+        fallbackConversation as { model?: string | null }
+      ).model;
+      if (fallbackConversationModel) {
+        return fallbackConversation;
+      }
+    } catch {
+      // Best-effort fallback only; return the update response if retrieve fails.
+    }
+  }
+
+  return updatedConversation;
 }
 
 export interface SystemPromptUpdateResult {
