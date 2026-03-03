@@ -4,7 +4,7 @@
 import { homedir } from "node:os";
 import { dirname, relative, resolve, win32 } from "node:path";
 import { canonicalToolName, isFileToolName } from "./canonical";
-import { isReadOnlyShellCommand } from "./readOnlyShell";
+import { isReadOnlyShellCommand, SAFE_GH_COMMANDS } from "./readOnlyShell";
 import { unwrapShellLauncherCommand } from "./shell-command-normalization";
 
 export interface ApprovalContext {
@@ -259,6 +259,57 @@ function analyzeEditApproval(
     defaultScope: "project",
     allowPersistence: true,
     safetyLevel: "safe",
+  };
+}
+
+/**
+ * Build an approval context for a `gh <category> <action>` invocation.
+ * Generalizes the rule to `Bash(gh <category> <action>:*)` so that future
+ * calls with different PR numbers or flags are covered by the same rule.
+ */
+function analyzeGhApproval(category: string, action: string): ApprovalContext {
+  if (!category) {
+    // bare `gh` with no subcommand - fall back to a generic rule
+    return {
+      recommendedRule: "Bash(gh:*)",
+      ruleDescription: "'gh' commands",
+      approveAlwaysText:
+        "Yes, and don't ask again for 'gh' commands in this project",
+      defaultScope: "project",
+      allowPersistence: true,
+      safetyLevel: "moderate",
+    };
+  }
+
+  // undefined when category not in map, null when all actions allowed
+  const allowedActions: Set<string> | null | undefined =
+    SAFE_GH_COMMANDS[category];
+  const categoryInMap = allowedActions !== undefined;
+
+  // Determine if this specific action is read-only
+  const isReadOnly =
+    categoryInMap &&
+    (allowedActions === null ||
+      (action.length > 0 && allowedActions.has(action)));
+
+  // `gh api` can mutate (POST/PATCH/DELETE), so always treat as moderate
+  const safetyLevel =
+    category === "api" ? "moderate" : isReadOnly ? "safe" : "moderate";
+
+  // Build the command prefix: include action when we know it (avoids
+  // over-broad "gh pr:*" rules that cover mutations like `gh pr create`)
+  const ruleCmd =
+    action.length > 0 && allowedActions !== null
+      ? `gh ${category} ${action}`
+      : `gh ${category}`;
+
+  return {
+    recommendedRule: `Bash(${ruleCmd}:*)`,
+    ruleDescription: `'${ruleCmd}' commands`,
+    approveAlwaysText: `Yes, and don't ask again for '${ruleCmd}' commands in this project`,
+    defaultScope: "project",
+    allowPersistence: true,
+    safetyLevel,
   };
 }
 
@@ -582,6 +633,11 @@ function analyzeBashApproval(
     }
   }
 
+  // gh CLI commands - generalize to category+action prefix rules
+  if (baseCommand === "gh") {
+    return analyzeGhApproval(firstArg, parts[2] || "");
+  }
+
   // Package manager commands
   if (baseCommand && ["npm", "bun", "yarn", "pnpm"].includes(baseCommand)) {
     const subcommand = firstArg;
@@ -681,6 +737,11 @@ function analyzeBashApproval(
               : "moderate",
           };
         }
+      }
+
+      // Check if this segment is a gh CLI command
+      if (segmentBase === "gh") {
+        return analyzeGhApproval(segmentArg, segmentParts[2] || "");
       }
 
       // Check if this segment is npm/bun/yarn/pnpm
