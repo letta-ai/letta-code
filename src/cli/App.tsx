@@ -276,7 +276,10 @@ import {
   flushEligibleLinesBeforeReentry,
   shouldClearCompletedSubagentsOnTurnStart,
 } from "./helpers/subagentTurnStart";
-import { extractTaskNotificationsForDisplay } from "./helpers/taskNotifications";
+import {
+  appendTaskNotificationEventsToBuffer,
+  extractTaskNotificationsForDisplay,
+} from "./helpers/taskNotifications";
 import {
   getRandomPastTenseVerb,
   getRandomThinkingVerb,
@@ -1894,23 +1897,19 @@ export default function App({
     );
   }, [isExecutingTool]);
 
+  // Ref indirection: refreshDerived is declared later in the component but
+  // appendTaskNotificationEvents needs to call it. Using a ref avoids a
+  // forward-declaration error while keeping the deps array empty.
+  const refreshDerivedRef = useRef<(() => void) | null>(null);
+
   const appendTaskNotificationEvents = useCallback(
-    (summaries: string[]): boolean => {
-      if (summaries.length === 0) return false;
-      for (const summary of summaries) {
-        const eventId = uid("event");
-        buffersRef.current.byId.set(eventId, {
-          kind: "event",
-          id: eventId,
-          eventType: "task_notification",
-          eventData: {},
-          phase: "finished",
-          summary,
-        });
-        buffersRef.current.order.push(eventId);
-      }
-      return true;
-    },
+    (summaries: string[]): boolean =>
+      appendTaskNotificationEventsToBuffer(
+        summaries,
+        buffersRef.current,
+        () => uid("event"),
+        () => refreshDerivedRef.current?.(),
+      ),
     [],
   );
 
@@ -2702,6 +2701,7 @@ export default function App({
     setLines(newLines);
     commitEligibleLines(b);
   }, [commitEligibleLines]);
+  refreshDerivedRef.current = refreshDerived;
 
   const recordCommandReminder = useCallback((event: CommandFinishedEvent) => {
     const input = event.input.trim();
