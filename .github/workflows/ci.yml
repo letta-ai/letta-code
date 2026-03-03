@@ -181,9 +181,9 @@ jobs:
         if: ${{ github.event_name != 'push' }}
         run: bun pm pack
 
-  node18-smoke:
+  node20-smoke:
     needs: check
-    name: Node 18 Smoke Test
+    name: Node 20 Smoke Test
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -204,15 +204,15 @@ jobs:
       - name: Build bundle
         run: bun run build
 
-      - name: Setup Node 18
+      - name: Setup Node 20
         uses: actions/setup-node@v6
         with:
-          node-version: "18"
+          node-version: "20"
 
       - name: Verify Node version
         run: node --version
 
-      - name: CLI smoke test (Node 18)
+      - name: CLI smoke test (Node 20)
         run: node ./letta.js --help
 
   headless:
