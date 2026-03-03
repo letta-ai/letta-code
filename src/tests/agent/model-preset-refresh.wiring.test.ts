@@ -71,7 +71,7 @@ describe("model preset refresh wiring", () => {
     expect(updateSegment).not.toContain("client.agents.update(");
   });
 
-  test("/model handler updates conversation model (not agent model)", () => {
+  test("/model handler updates conversation model and falls back to agent for default", () => {
     const path = fileURLToPath(new URL("../../cli/App.tsx", import.meta.url));
     const source = readFileSync(path, "utf-8");
 
@@ -86,7 +86,10 @@ describe("model preset refresh wiring", () => {
 
     expect(segment).toContain("updateConversationLLMConfig(");
     expect(segment).toContain("conversationIdRef.current");
-    expect(segment).not.toContain("updateAgentLLMConfig(");
+    // For the "default" virtual conversation (no real conversation object),
+    // the handler falls back to updating the agent directly.
+    expect(segment).toContain("updateAgentLLMConfig(");
+    expect(segment).toContain('conversationIdRef.current !== "default"');
   });
 
   test("App defines helper to carry over active conversation model", () => {
