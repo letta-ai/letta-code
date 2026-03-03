@@ -298,8 +298,11 @@ async function buildCommandIoReminder(
   const commandBlocks = recent.map((entry) => {
     const status = entry.success ? "success" : "error";
     const safeInput = escapeXml(truncate(entry.input, MAX_COMMAND_INPUT_CHARS));
+    const outputText = entry.agentHint
+      ? `${entry.output || "(no output)"} ${entry.agentHint}`
+      : entry.output || "(no output)";
     const safeOutput = escapeXml(
-      truncate(entry.output || "(no output)", MAX_COMMAND_OUTPUT_CHARS),
+      truncate(outputText, MAX_COMMAND_OUTPUT_CHARS),
     );
     return `<user-command>
 <user-command-input>${safeInput}</user-command-input>

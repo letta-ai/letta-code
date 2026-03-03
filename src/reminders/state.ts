@@ -7,6 +7,8 @@ export interface CommandIoReminder {
   input: string;
   output: string;
   success: boolean;
+  /** Extra context appended only in the agent-facing reminder, not shown in the UI. */
+  agentHint?: string;
 }
 
 export interface ToolsetChangeReminder {
