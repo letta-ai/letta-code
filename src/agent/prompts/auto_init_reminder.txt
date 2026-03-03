@@ -1,0 +1,3 @@
+<system-reminder>
+A background agent is initializing this agent's memory system. Briefly let the user know that memory is being set up in the background, then respond to their message normally.
+</system-reminder>

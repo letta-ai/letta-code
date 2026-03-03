@@ -256,14 +256,13 @@ async function buildReflectionCompactionReminder(
   return buildCompactionMemoryReminder(context.agent.id);
 }
 
-async function buildAutoInitOnboardingReminder(
+async function buildAutoInitReminder(
   context: SharedReminderContext,
 ): Promise<string | null> {
   if (!context.state.pendingAutoInitReminder) return null;
   context.state.pendingAutoInitReminder = false;
-  return `${SYSTEM_REMINDER_OPEN}
-A background agent is initializing this agent's memory system. Briefly let the user know that memory is being set up in the background, then respond to their message normally.
-${SYSTEM_REMINDER_CLOSE}\n\n`;
+  const { AUTO_INIT_REMINDER } = await import("../agent/promptAssets.js");
+  return AUTO_INIT_REMINDER;
 }
 
 const MAX_COMMAND_REMINDERS_PER_TURN = 10;
@@ -380,7 +379,7 @@ export const sharedReminderProviders: Record<
   "reflection-compaction": buildReflectionCompactionReminder,
   "command-io": buildCommandIoReminder,
   "toolset-change": buildToolsetChangeReminder,
-  "auto-init-onboarding": buildAutoInitOnboardingReminder,
+  "auto-init": buildAutoInitReminder,
 };
 
 export function assertSharedReminderCoverage(): void {

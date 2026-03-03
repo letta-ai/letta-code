@@ -14,7 +14,7 @@ export type SharedReminderId =
   | "reflection-compaction"
   | "command-io"
   | "toolset-change"
-  | "auto-init-onboarding";
+  | "auto-init";
 
 export interface SharedReminderDefinition {
   id: SharedReminderId;
@@ -76,7 +76,7 @@ export const SHARED_REMINDER_CATALOG: ReadonlyArray<SharedReminderDefinition> =
       modes: ["interactive"],
     },
     {
-      id: "auto-init-onboarding",
+      id: "auto-init",
       description: "Auto-init background onboarding notification",
       modes: ["interactive"],
     },

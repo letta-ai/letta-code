@@ -32,13 +32,13 @@ describe("auto-init wiring", () => {
     );
   });
 
-  test("auto-init-onboarding is registered in catalog and engine", () => {
+  test("auto-init is registered in catalog and engine", () => {
     const catalogSource = readSource("../../reminders/catalog.ts");
     const engineSource = readSource("../../reminders/engine.ts");
 
-    expect(catalogSource).toContain('"auto-init-onboarding"');
-    expect(engineSource).toContain('"auto-init-onboarding"');
-    expect(engineSource).toContain("buildAutoInitOnboardingReminder");
+    expect(catalogSource).toContain('"auto-init"');
+    expect(engineSource).toContain('"auto-init"');
+    expect(engineSource).toContain("buildAutoInitReminder");
   });
 
   test("pendingAutoInitReminder is in state interface and factory", () => {
