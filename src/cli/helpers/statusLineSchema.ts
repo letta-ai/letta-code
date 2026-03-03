@@ -21,6 +21,7 @@ export const STATUSLINE_NATIVE_FIELDS: StatusLineFieldSpec[] = [
   { path: "permission_mode" },
   { path: "network_phase" },
   { path: "terminal_width" },
+  { path: "background_agents" },
 ];
 
 export const STATUSLINE_DERIVED_FIELDS: StatusLineFieldSpec[] = [
