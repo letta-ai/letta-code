@@ -19,6 +19,11 @@ export interface StatusLinePayloadBuildInput {
   permissionMode?: string;
   networkPhase?: "upload" | "download" | "error" | null;
   terminalWidth?: number;
+  backgroundAgents?: Array<{
+    type: string;
+    status: string;
+    duration_ms: number;
+  }>;
 }
 
 /**
@@ -76,6 +81,11 @@ export interface StatusLinePayload {
   permission_mode: string | null;
   network_phase: "upload" | "download" | "error" | null;
   terminal_width: number | null;
+  background_agents: Array<{
+    type: string;
+    status: string;
+    duration_ms: number;
+  }>;
 }
 
 export function calculateContextPercentages(
@@ -162,5 +172,10 @@ export function buildStatusLinePayload(
     permission_mode: input.permissionMode ?? null,
     network_phase: input.networkPhase ?? null,
     terminal_width: input.terminalWidth ?? null,
+    background_agents: (input.backgroundAgents ?? []).map((a) => ({
+      type: a.type,
+      status: a.status,
+      duration_ms: a.duration_ms,
+    })),
   };
 }

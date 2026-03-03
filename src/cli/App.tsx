@@ -265,6 +265,7 @@ import {
 import {
   clearCompletedSubagents,
   clearSubagentsByIds,
+  getActiveBackgroundAgents,
   getSubagentByToolCallId,
   getSnapshot as getSubagentSnapshot,
   hasActiveSubagents,
@@ -2492,6 +2493,11 @@ export default function App({
     permissionMode: uiPermissionMode,
     networkPhase,
     terminalWidth: chromeColumns,
+    backgroundAgents: getActiveBackgroundAgents().map((a) => ({
+      type: a.type,
+      status: a.status,
+      duration_ms: Date.now() - a.startTime,
+    })),
     triggerVersion: statusLineTriggerVersion,
   });
 
