@@ -7103,8 +7103,8 @@ export default function App({
           return { submitted: true };
         }
 
-        // /connect codex - direct OAuth flow (kept for backwards compatibility)
-        if (msg.trim().startsWith("/connect codex")) {
+        // /connect <provider> - direct CLI-style provider flow
+        if (msg.trim().startsWith("/connect ")) {
           const cmd = commandRunner.start(msg, "Starting connection...");
           const {
             handleConnect,
@@ -13147,7 +13147,7 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
                           setActiveOverlay("model");
                         },
                       },
-                      "/connect codex",
+                      "/connect chatgpt",
                     );
                   } finally {
                     setActiveConnectCommandId(null);

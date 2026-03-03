@@ -1,51 +1,40 @@
 // src/cli/commands/connect.ts
-// Command handlers for OAuth connection management
+// Command handlers for provider connection management in TUI slash commands
 
 import {
-  exchangeCodeForTokens,
-  extractAccountIdFromToken,
-  OPENAI_OAUTH_CONFIG,
-  startLocalOAuthServer,
-  startOpenAIOAuth,
-} from "../../auth/openai-oauth";
-import {
+  checkProviderApiKey,
+  createOrUpdateProvider,
   getProviderByName,
   removeProviderByName,
 } from "../../providers/byok-providers";
 import {
-  createOrUpdateMinimaxProvider,
-  getMinimaxProvider,
-  MINIMAX_PROVIDER_NAME,
-  removeMinimaxProvider,
-} from "../../providers/minimax-provider";
-import {
-  createOrUpdateOpenAICodexProvider,
+  deleteOpenAICodexProvider,
   getOpenAICodexProvider,
+  listProviders,
   OPENAI_CODEX_PROVIDER_NAME,
   removeOpenAICodexProvider,
 } from "../../providers/openai-codex-provider";
-import {
-  createOrUpdateOpenrouterProvider,
-  getOpenrouterProvider,
-  OPENROUTER_PROVIDER_NAME,
-  removeOpenrouterProvider,
-} from "../../providers/openrouter-provider";
-import {
-  createOrUpdateZaiProvider,
-  getZaiProvider,
-  removeZaiProvider,
-  ZAI_PROVIDER_NAME,
-} from "../../providers/zai-provider";
-import { settingsManager } from "../../settings-manager";
 import { getErrorMessage } from "../../utils/error";
 import type { Buffers, Line } from "../helpers/accumulator";
+import {
+  isConnectApiKeyProvider,
+  isConnectBedrockProvider,
+  isConnectOAuthProvider,
+  listConnectProvidersForHelp,
+  listConnectProviderTokens,
+  type ResolvedConnectProvider,
+  resolveConnectProvider,
+} from "./connect-normalize";
+import {
+  isChatGPTOAuthConnected,
+  runChatGPTOAuthConnectFlow,
+} from "./connect-oauth-core";
 
 // tiny helper for unique ids
 function uid(prefix: string) {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-// Helper type for command result
 type CommandLine = Extract<Line, { kind: "command" }>;
 
 let activeCommandId: string | null = null;
@@ -54,15 +43,13 @@ export function setActiveCommandId(id: string | null): void {
   activeCommandId = id;
 }
 
-// Context passed to connect handlers
 export interface ConnectCommandContext {
   buffersRef: { current: Buffers };
   refreshDerived: () => void;
   setCommandRunning: (running: boolean) => void;
-  onCodexConnected?: () => void; // Callback to show model selector after successful connection
+  onCodexConnected?: () => void;
 }
 
-// Helper to add a command result to buffers
 function addCommandResult(
   buffersRef: { current: Buffers },
   refreshDerived: () => void,
@@ -91,7 +78,6 @@ function addCommandResult(
   return cmdId;
 }
 
-// Helper to update an existing command result
 function updateCommandResult(
   buffersRef: { current: Buffers },
   refreshDerived: () => void,
@@ -116,104 +102,129 @@ function updateCommandResult(
   refreshDerived();
 }
 
-/**
- * Handle /connect command
- * Usage: /connect codex
- *
- * Flow:
- * 1. User runs `/connect codex` - starts local server and opens browser for authorization
- * 2. User authorizes in browser, gets redirected back to local server
- * 3. Server automatically exchanges code for tokens and API key
- * 4. Provider is created and user sees success message
- */
-export async function handleConnect(
-  ctx: ConnectCommandContext,
-  msg: string,
-): Promise<void> {
-  const parts = msg.trim().split(/\s+/);
-  const provider = parts[1]?.toLowerCase();
-
-  // Validate provider argument
-  if (!provider) {
-    addCommandResult(
-      ctx.buffersRef,
-      ctx.refreshDerived,
-      msg,
-      "Usage: /connect <provider> [options]\n\nAvailable providers:\n  \u2022 codex               - Connect via OAuth to authenticate with ChatGPT Plus/Pro\n  \u2022 zai <api_key>       - Connect to zAI with your API key\n  \u2022 minimax <api_key>   - Connect to MiniMax with your API key\n  \u2022 openrouter <api_key> - Connect to OpenRouter with your API key\n  \u2022 bedrock <method>    - Connect to AWS Bedrock (iam/profile/default)",
-      false,
-    );
-    return;
-  }
-
-  if (
-    provider !== "codex" &&
-    provider !== "zai" &&
-    provider !== "minimax" &&
-    provider !== "openrouter" &&
-    provider !== "bedrock"
-  ) {
-    addCommandResult(
-      ctx.buffersRef,
-      ctx.refreshDerived,
-      msg,
-      `Error: Unknown provider "${provider}"\n\nAvailable providers: codex, zai, minimax, openrouter, bedrock\nUsage: /connect <provider> [options]`,
-      false,
-    );
-    return;
-  }
-
-  // Zai is handled separately in App.tsx, but add a fallback just in case
-  if (provider === "zai") {
-    await handleConnectZai(ctx, msg);
-    return;
-  }
-
-  // MiniMax is handled separately in App.tsx, but add a fallback just in case
-  if (provider === "minimax") {
-    await handleConnectMinimax(ctx, msg);
-    return;
-  }
-
-  // OpenRouter is handled here
-  if (provider === "openrouter") {
-    await handleConnectOpenrouter(ctx, msg);
-    return;
-  }
-
-  // Bedrock is handled here
-  if (provider === "bedrock") {
-    await handleConnectBedrock(ctx, msg);
-    return;
-  }
-
-  // Handle /connect codex
-  await handleConnectCodex(ctx, msg);
+function parseArgs(msg: string): string[] {
+  return msg.trim().split(/\s+/).filter(Boolean);
 }
 
-/**
- * Handle /connect codex - ChatGPT OAuth with local server
- */
-async function handleConnectCodex(
+function formatConnectUsage(): string {
+  return [
+    "Usage: /connect <provider> [options]",
+    "",
+    "Available providers:",
+    `  • ${listConnectProvidersForHelp().join("\n  • ")}`,
+    "",
+    "Examples:",
+    "  /connect chatgpt",
+    "  /connect codex",
+    "  /connect anthropic <api_key>",
+    "  /connect openai <api_key>",
+    "  /connect bedrock iam --access-key <id> --secret-key <key> --region <region>",
+    "  /connect bedrock profile --profile <name> --region <region>",
+  ].join("\n");
+}
+
+function formatUnknownProviderError(provider: string): string {
+  return [
+    `Error: Unknown provider "${provider}"`,
+    "",
+    `Available providers: ${listConnectProviderTokens().join(", ")}`,
+    "Usage: /connect <provider> [options]",
+  ].join("\n");
+}
+
+function parseBedrockFlags(args: string[]): {
+  method: string | null;
+  accessKey: string;
+  secretKey: string;
+  region: string;
+  profile: string;
+  error?: string;
+} {
+  let method: string | null = null;
+  const values: Record<string, string> = {};
+
+  for (let i = 0; i < args.length; i += 1) {
+    const token = args[i] ?? "";
+    if (!token.startsWith("--") && !method) {
+      method = token.toLowerCase();
+      continue;
+    }
+
+    if (!token.startsWith("--")) {
+      return {
+        method,
+        accessKey: "",
+        secretKey: "",
+        region: "",
+        profile: "",
+        error: `Unexpected argument: ${token}`,
+      };
+    }
+
+    const key = token.slice(2);
+    const value = args[i + 1];
+    if (!value || value.startsWith("--")) {
+      return {
+        method,
+        accessKey: "",
+        secretKey: "",
+        region: "",
+        profile: "",
+        error: `Missing value for --${key}`,
+      };
+    }
+    values[key] = value;
+    i += 1;
+  }
+
+  return {
+    method,
+    accessKey: values["access-key"] ?? "",
+    secretKey: values["secret-key"] ?? values["api-key"] ?? "",
+    region: values.region ?? "",
+    profile: values.profile ?? "",
+  };
+}
+
+function formatBedrockUsage(): string {
+  return [
+    "Usage: /connect bedrock <method> [options]",
+    "",
+    "Methods:",
+    "  iam     --access-key <id> --secret-key <key> --region <region>",
+    "  profile --profile <name> --region <region>",
+    "",
+    "Examples:",
+    "  /connect bedrock iam --access-key AKIA... --secret-key ... --region us-east-1",
+    "  /connect bedrock profile --profile default --region us-east-1",
+  ].join("\n");
+}
+
+function formatApiKeyUsage(provider: ResolvedConnectProvider): string {
+  return [
+    `Usage: /connect ${provider.canonical} <api_key>`,
+    "",
+    `Connect to ${provider.byokProvider.displayName} by providing your API key.`,
+  ].join("\n");
+}
+
+async function handleConnectChatGPT(
   ctx: ConnectCommandContext,
   msg: string,
 ): Promise<void> {
-  // Check if already connected (provider exists on backend)
-  const existingProvider = await getOpenAICodexProvider();
+  const existingProvider = await isChatGPTOAuthConnected();
   if (existingProvider) {
     addCommandResult(
       ctx.buffersRef,
       ctx.refreshDerived,
       msg,
-      "Already connected to ChatGPT via OAuth.\n\nUse /disconnect codex to remove the current connection first.",
+      "Already connected to ChatGPT via OAuth.\n\nUse /disconnect chatgpt (or /disconnect codex) to remove the current connection first.",
       false,
     );
     return;
   }
 
-  // Start the OAuth flow
   ctx.setCommandRunning(true);
-
-  // Show initial status
   const cmdId = addCommandResult(
     ctx.buffersRef,
     ctx.refreshDerived,
@@ -224,165 +235,41 @@ async function handleConnectCodex(
   );
 
   try {
-    // 1. Start OAuth flow - generate PKCE and authorization URL
-    updateCommandResult(
-      ctx.buffersRef,
-      ctx.refreshDerived,
-      cmdId,
-      msg,
-      "Starting OAuth flow...\nA browser window will open for authorization.",
-      true,
-      "running",
-    );
-
-    const { authorizationUrl, state, codeVerifier, redirectUri } =
-      await startOpenAIOAuth(OPENAI_OAUTH_CONFIG.defaultPort);
-
-    // 3. Store state for validation
-    settingsManager.storeOAuthState(state, codeVerifier, redirectUri, "openai");
-
-    // 4. Start local server to receive callback
-    updateCommandResult(
-      ctx.buffersRef,
-      ctx.refreshDerived,
-      cmdId,
-      msg,
-      `Starting local OAuth server on port ${OPENAI_OAUTH_CONFIG.defaultPort}...\n\n` +
-        `Opening browser for authorization...\n` +
-        `If the browser doesn't open automatically, visit:\n\n` +
-        `${authorizationUrl}`,
-      true,
-      "running",
-    );
-
-    // Start the server and wait for callback
-    const serverPromise = startLocalOAuthServer(
-      state,
-      OPENAI_OAUTH_CONFIG.defaultPort,
-    );
-
-    // 5. Try to open browser
-    try {
-      const { default: open } = await import("open");
-      const subprocess = await open(authorizationUrl, { wait: false });
-      // Handle errors from the spawned process (e.g., xdg-open not found in containers)
-      subprocess.on("error", () => {
-        // Silently ignore - user can still manually visit the URL
-      });
-    } catch {
-      // If auto-open fails, user can still manually visit the URL
-    }
-
-    // 6. Wait for callback
-    updateCommandResult(
-      ctx.buffersRef,
-      ctx.refreshDerived,
-      cmdId,
-      msg,
-      `Waiting for authorization...\n\n` +
-        `Please complete the sign-in process in your browser.\n` +
-        `The page will redirect automatically when done.\n\n` +
-        `If needed, visit:\n${authorizationUrl}`,
-      true,
-      "running",
-    );
-
-    const { result, server } = await serverPromise;
-
-    // Close the server
-    server.close();
-
-    // 7. Exchange code for tokens
-    updateCommandResult(
-      ctx.buffersRef,
-      ctx.refreshDerived,
-      cmdId,
-      msg,
-      "Authorization received! Exchanging code for tokens...",
-      true,
-      "running",
-    );
-
-    const tokens = await exchangeCodeForTokens(
-      result.code,
-      codeVerifier,
-      redirectUri,
-    );
-
-    // 8. Extract account ID from JWT
-    updateCommandResult(
-      ctx.buffersRef,
-      ctx.refreshDerived,
-      cmdId,
-      msg,
-      "Extracting account information...",
-      true,
-      "running",
-    );
-
-    let accountId: string;
-    try {
-      accountId = extractAccountIdFromToken(tokens.access_token);
-    } catch (error) {
-      throw new Error(
-        `Failed to extract account ID from token. This may indicate an incompatible account type. Error: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-
-    // 9. Create or update provider in Letta with OAuth config
-    // Backend handles request transformation to ChatGPT backend API
-    updateCommandResult(
-      ctx.buffersRef,
-      ctx.refreshDerived,
-      cmdId,
-      msg,
-      "Creating ChatGPT OAuth provider...",
-      true,
-      "running",
-    );
-
-    await createOrUpdateOpenAICodexProvider({
-      access_token: tokens.access_token,
-      id_token: tokens.id_token,
-      refresh_token: tokens.refresh_token,
-      account_id: accountId,
-      expires_at: Date.now() + tokens.expires_in * 1000,
+    await runChatGPTOAuthConnectFlow({
+      onStatus: (status) =>
+        updateCommandResult(
+          ctx.buffersRef,
+          ctx.refreshDerived,
+          cmdId,
+          msg,
+          status,
+          true,
+          "running",
+        ),
     });
 
-    // 10. Clear OAuth state
-    settingsManager.clearOAuthState();
-
-    // 11. Success!
     updateCommandResult(
       ctx.buffersRef,
       ctx.refreshDerived,
       cmdId,
       msg,
-      `\u2713 Successfully connected to ChatGPT!\n\n` +
+      `✓ Successfully connected to ChatGPT!\n\n` +
         `Provider '${OPENAI_CODEX_PROVIDER_NAME}' created/updated in Letta.\n` +
-        `Your ChatGPT Plus/Pro subscription is now linked.`,
+        "Your ChatGPT Plus/Pro subscription is now linked.",
       true,
       "finished",
     );
 
-    // 12. Show model selector to let user switch to a ChatGPT Plus/Pro model
     if (ctx.onCodexConnected) {
-      // Small delay to let the success message render first
       setTimeout(() => ctx.onCodexConnected?.(), 500);
     }
   } catch (error) {
-    // Clear any partial state
-    settingsManager.clearOAuthState();
-
-    const errorMessage = getErrorMessage(error);
-    const displayMessage = `\u2717 Failed to connect: ${errorMessage}`;
-
     updateCommandResult(
       ctx.buffersRef,
       ctx.refreshDerived,
       cmdId,
       msg,
-      displayMessage,
+      `✗ Failed to connect: ${getErrorMessage(error)}`,
       false,
       "finished",
     );
@@ -391,32 +278,17 @@ async function handleConnectCodex(
   }
 }
 
-/**
- * Handle /disconnect minimax
- */
-async function handleDisconnectMinimax(
+async function handleConnectApiKeyProvider(
   ctx: ConnectCommandContext,
   msg: string,
+  provider: ResolvedConnectProvider,
+  apiKey: string,
 ): Promise<void> {
-  // Check if MiniMax provider exists
-  const existing = await getMinimaxProvider();
-  if (!existing) {
-    addCommandResult(
-      ctx.buffersRef,
-      ctx.refreshDerived,
-      msg,
-      "Not currently connected to MiniMax.\n\nUse /connect minimax <api_key> to connect.",
-      false,
-    );
-    return;
-  }
-
-  // Show running status
   const cmdId = addCommandResult(
     ctx.buffersRef,
     ctx.refreshDerived,
     msg,
-    "Disconnecting from MiniMax...",
+    `Validating ${provider.byokProvider.displayName} API key...`,
     true,
     "running",
   );
@@ -424,16 +296,31 @@ async function handleDisconnectMinimax(
   ctx.setCommandRunning(true);
 
   try {
-    // Remove provider from Letta
-    await removeMinimaxProvider();
+    await checkProviderApiKey(provider.byokProvider.providerType, apiKey);
 
     updateCommandResult(
       ctx.buffersRef,
       ctx.refreshDerived,
       cmdId,
       msg,
-      `\u2713 Disconnected from MiniMax.\n\n` +
-        `Provider '${MINIMAX_PROVIDER_NAME}' removed from Letta.`,
+      `Saving ${provider.byokProvider.displayName} provider...`,
+      true,
+      "running",
+    );
+
+    await createOrUpdateProvider(
+      provider.byokProvider.providerType,
+      provider.byokProvider.providerName,
+      apiKey,
+    );
+
+    updateCommandResult(
+      ctx.buffersRef,
+      ctx.refreshDerived,
+      cmdId,
+      msg,
+      `✓ Successfully connected to ${provider.byokProvider.displayName}!\n\n` +
+        `Provider '${provider.byokProvider.providerName}' created/updated in Letta.`,
       true,
       "finished",
     );
@@ -443,7 +330,7 @@ async function handleDisconnectMinimax(
       ctx.refreshDerived,
       cmdId,
       msg,
-      `\u2717 Failed to disconnect from MiniMax: ${getErrorMessage(error)}`,
+      `✗ Failed to connect ${provider.byokProvider.displayName}: ${getErrorMessage(error)}`,
       false,
       "finished",
     );
@@ -452,34 +339,66 @@ async function handleDisconnectMinimax(
   }
 }
 
-const BEDROCK_PROVIDER_NAME = "lc-bedrock";
-
-/**
- * Handle /disconnect bedrock
- */
-async function handleDisconnectBedrock(
+async function handleConnectBedrock(
   ctx: ConnectCommandContext,
   msg: string,
+  provider: ResolvedConnectProvider,
+  args: string[],
 ): Promise<void> {
-  // Check if Bedrock provider exists
-  const existing = await getProviderByName(BEDROCK_PROVIDER_NAME);
-  if (!existing) {
+  const parsed = parseBedrockFlags(args);
+  if (parsed.error) {
     addCommandResult(
       ctx.buffersRef,
       ctx.refreshDerived,
       msg,
-      'Not currently connected to AWS Bedrock.\n\nUse /connect and select "AWS Bedrock" to connect.',
+      `${parsed.error}\n\n${formatBedrockUsage()}`,
       false,
     );
     return;
   }
 
-  // Show running status
+  const method = (parsed.method ?? "").toLowerCase();
+  if (!method || (method !== "iam" && method !== "profile")) {
+    addCommandResult(
+      ctx.buffersRef,
+      ctx.refreshDerived,
+      msg,
+      `Invalid bedrock method: ${parsed.method || "(missing)"}\n\n${formatBedrockUsage()}`,
+      false,
+    );
+    return;
+  }
+
+  if (
+    method === "iam" &&
+    (!parsed.accessKey || !parsed.secretKey || !parsed.region)
+  ) {
+    addCommandResult(
+      ctx.buffersRef,
+      ctx.refreshDerived,
+      msg,
+      `Missing required IAM fields.\n\n${formatBedrockUsage()}`,
+      false,
+    );
+    return;
+  }
+
+  if (method === "profile" && (!parsed.profile || !parsed.region)) {
+    addCommandResult(
+      ctx.buffersRef,
+      ctx.refreshDerived,
+      msg,
+      `Missing required profile fields.\n\n${formatBedrockUsage()}`,
+      false,
+    );
+    return;
+  }
+
   const cmdId = addCommandResult(
     ctx.buffersRef,
     ctx.refreshDerived,
     msg,
-    "Disconnecting from AWS Bedrock...",
+    "Validating AWS Bedrock credentials...",
     true,
     "running",
   );
@@ -487,16 +406,40 @@ async function handleDisconnectBedrock(
   ctx.setCommandRunning(true);
 
   try {
-    // Remove provider from Letta
-    await removeProviderByName(BEDROCK_PROVIDER_NAME);
+    await checkProviderApiKey(
+      provider.byokProvider.providerType,
+      method === "iam" ? parsed.secretKey : "",
+      method === "iam" ? parsed.accessKey : undefined,
+      parsed.region,
+      method === "profile" ? parsed.profile : undefined,
+    );
 
     updateCommandResult(
       ctx.buffersRef,
       ctx.refreshDerived,
       cmdId,
       msg,
-      `\u2713 Disconnected from AWS Bedrock.\n\n` +
-        `Provider '${BEDROCK_PROVIDER_NAME}' removed from Letta.`,
+      "Saving AWS Bedrock provider...",
+      true,
+      "running",
+    );
+
+    await createOrUpdateProvider(
+      provider.byokProvider.providerType,
+      provider.byokProvider.providerName,
+      method === "iam" ? parsed.secretKey : "",
+      method === "iam" ? parsed.accessKey : undefined,
+      parsed.region,
+      method === "profile" ? parsed.profile : undefined,
+    );
+
+    updateCommandResult(
+      ctx.buffersRef,
+      ctx.refreshDerived,
+      cmdId,
+      msg,
+      `✓ Successfully connected to ${provider.byokProvider.displayName}!\n\n` +
+        `Provider '${provider.byokProvider.providerName}' created/updated in Letta.`,
       true,
       "finished",
     );
@@ -506,7 +449,7 @@ async function handleDisconnectBedrock(
       ctx.refreshDerived,
       cmdId,
       msg,
-      `\u2717 Failed to disconnect from Bedrock: ${getErrorMessage(error)}`,
+      `✗ Failed to connect AWS Bedrock: ${getErrorMessage(error)}`,
       false,
       "finished",
     );
@@ -515,210 +458,93 @@ async function handleDisconnectBedrock(
   }
 }
 
-/**
- * Handle /connect minimax command
- * Usage: /connect minimax <api_key>
- *
- * Creates the minimax-coding-plan provider with the provided API key
- */
-export async function handleConnectMinimax(
+export async function handleConnect(
   ctx: ConnectCommandContext,
   msg: string,
 ): Promise<void> {
-  const parts = msg.trim().split(/\s+/);
-  // Join all remaining parts in case the API key got split
-  const apiKey = parts.slice(2).join("");
+  const parts = parseArgs(msg);
+  const providerToken = parts[1];
 
-  // If no API key provided, show usage
-  if (!apiKey || apiKey.length === 0) {
+  if (!providerToken) {
     addCommandResult(
       ctx.buffersRef,
       ctx.refreshDerived,
       msg,
-      "Usage: /connect minimax <api_key>\n\n" +
-        "Connect to MiniMax by providing your API key.\n\n" +
-        "Example: /connect minimax <api_key>...",
+      formatConnectUsage(),
       false,
     );
     return;
   }
 
-  // Show running status
-  const cmdId = addCommandResult(
-    ctx.buffersRef,
-    ctx.refreshDerived,
-    msg,
-    "Creating MiniMax coding plan provider...",
-    true,
-    "running",
-  );
-
-  ctx.setCommandRunning(true);
-
-  try {
-    // Create or update the MiniMax provider with the API key
-    await createOrUpdateMinimaxProvider(apiKey);
-
-    updateCommandResult(
-      ctx.buffersRef,
-      ctx.refreshDerived,
-      cmdId,
-      msg,
-      `\u2713 Successfully connected to MiniMax!\n\n` +
-        `Provider '${MINIMAX_PROVIDER_NAME}' created in Letta.\n\n` +
-        `The models are populated in /model \u2192 "All Available Models"`,
-      true,
-      "finished",
-    );
-  } catch (error) {
-    updateCommandResult(
-      ctx.buffersRef,
-      ctx.refreshDerived,
-      cmdId,
-      msg,
-      `\u2717 Failed to create MiniMax provider: ${getErrorMessage(error)}`,
-      false,
-      "finished",
-    );
-  } finally {
-    ctx.setCommandRunning(false);
-  }
-}
-
-/**
- * Handle /connect bedrock command
- * Redirects users to use the interactive /connect UI
- */
-export async function handleConnectBedrock(
-  ctx: ConnectCommandContext,
-  msg: string,
-): Promise<void> {
-  addCommandResult(
-    ctx.buffersRef,
-    ctx.refreshDerived,
-    msg,
-    'To connect AWS Bedrock, use /connect and select "AWS Bedrock" from the list.\n\n' +
-      "The interactive UI will guide you through:\n" +
-      "  • Choosing an authentication method (IAM, Profile, or Default)\n" +
-      "  • Entering your credentials\n" +
-      "  • Validating the connection",
-    false,
-  );
-}
-
-/**
- * Handle /disconnect command
- * Usage: /disconnect <provider>
- */
-export async function handleDisconnect(
-  ctx: ConnectCommandContext,
-  msg: string,
-): Promise<void> {
-  const parts = msg.trim().split(/\s+/);
-  const provider = parts[1]?.toLowerCase();
-
-  // /disconnect help
-  if (provider === "help") {
-    addCommandResult(
-      ctx.buffersRef,
-      ctx.refreshDerived,
-      msg,
-      [
-        "/disconnect help",
-        "",
-        "Disconnect an existing account.",
-        "",
-        "USAGE",
-        "  /disconnect <provider>   — disconnect a provider",
-        "  /disconnect help         — show this help",
-        "",
-        "PROVIDERS",
-        "  codex, claude, zai, minimax, openrouter, bedrock",
-      ].join("\n"),
-      true,
-    );
-    return;
-  }
-
-  // If no provider specified, show usage
+  const provider = resolveConnectProvider(providerToken);
   if (!provider) {
     addCommandResult(
       ctx.buffersRef,
       ctx.refreshDerived,
       msg,
-      "Usage: /disconnect <provider>",
+      formatUnknownProviderError(providerToken),
       false,
     );
     return;
   }
 
-  // Handle /disconnect zai
-  if (provider === "zai") {
-    await handleDisconnectZai(ctx, msg);
+  if (isConnectOAuthProvider(provider)) {
+    await handleConnectChatGPT(ctx, msg);
     return;
   }
 
-  // Handle /disconnect minimax
-  if (provider === "minimax") {
-    await handleDisconnectMinimax(ctx, msg);
+  if (isConnectBedrockProvider(provider)) {
+    await handleConnectBedrock(ctx, msg, provider, parts.slice(2));
     return;
   }
 
-  // Handle /disconnect openrouter
-  if (provider === "openrouter") {
-    await handleDisconnectOpenrouter(ctx, msg);
-    return;
+  if (isConnectApiKeyProvider(provider)) {
+    const apiKey = parts.slice(2).join("");
+    if (!apiKey) {
+      addCommandResult(
+        ctx.buffersRef,
+        ctx.refreshDerived,
+        msg,
+        formatApiKeyUsage(provider),
+        false,
+      );
+      return;
+    }
+    await handleConnectApiKeyProvider(ctx, msg, provider, apiKey);
   }
-
-  // Handle /disconnect bedrock
-  if (provider === "bedrock") {
-    await handleDisconnectBedrock(ctx, msg);
-    return;
-  }
-
-  // Handle /disconnect codex
-  if (provider === "codex") {
-    await handleDisconnectCodex(ctx, msg);
-    return;
-  }
-
-  // Handle /disconnect claude (legacy - for users who connected before)
-  if (provider === "claude") {
-    await handleDisconnectClaude(ctx, msg);
-    return;
-  }
-
-  // Unknown provider
-  addCommandResult(
-    ctx.buffersRef,
-    ctx.refreshDerived,
-    msg,
-    `Unknown provider: "${provider}". Run /disconnect help for usage.`,
-    false,
-  );
 }
 
-/**
- * Handle /disconnect codex
- */
-async function handleDisconnectCodex(
+function formatDisconnectHelp(): string {
+  return [
+    "/disconnect help",
+    "",
+    "Disconnect an existing account.",
+    "",
+    "USAGE",
+    "  /disconnect <provider>   — disconnect a provider",
+    "  /disconnect help         — show this help",
+    "",
+    "PROVIDERS",
+    `  ${listConnectProvidersForHelp().join(", ")}, claude (legacy)`,
+  ].join("\n");
+}
+
+async function handleDisconnectChatGPT(
   ctx: ConnectCommandContext,
   msg: string,
 ): Promise<void> {
-  // Check if provider exists on backend
   const existingProvider = await getOpenAICodexProvider();
   if (!existingProvider) {
     addCommandResult(
       ctx.buffersRef,
       ctx.refreshDerived,
       msg,
-      "Not currently connected to ChatGPT via OAuth.\n\nUse /connect codex to authenticate.",
+      "Not currently connected to ChatGPT via OAuth.\n\nUse /connect chatgpt (or /connect codex) to authenticate.",
       false,
     );
     return;
   }
 
-  // Show running status
   const cmdId = addCommandResult(
     ctx.buffersRef,
     ctx.refreshDerived,
@@ -729,17 +555,14 @@ async function handleDisconnectCodex(
   );
 
   ctx.setCommandRunning(true);
-
   try {
-    // Remove provider from Letta backend
     await removeOpenAICodexProvider();
-
     updateCommandResult(
       ctx.buffersRef,
       ctx.refreshDerived,
       cmdId,
       msg,
-      `\u2713 Disconnected from ChatGPT OAuth.\n\n` +
+      `✓ Disconnected from ChatGPT OAuth.\n\n` +
         `Provider '${OPENAI_CODEX_PROVIDER_NAME}' removed from Letta.`,
       true,
       "finished",
@@ -750,7 +573,7 @@ async function handleDisconnectCodex(
       ctx.refreshDerived,
       cmdId,
       msg,
-      `\u2717 Failed to disconnect from ChatGPT: ${getErrorMessage(error)}`,
+      `✗ Failed to disconnect from ChatGPT: ${getErrorMessage(error)}`,
       false,
       "finished",
     );
@@ -759,18 +582,66 @@ async function handleDisconnectCodex(
   }
 }
 
-/**
- * Handle /disconnect claude (legacy provider removal)
- * This allows users who connected Claude before it was replaced with Codex
- * to remove the old claude-pro-max provider
- */
+async function handleDisconnectByokProvider(
+  ctx: ConnectCommandContext,
+  msg: string,
+  provider: ResolvedConnectProvider,
+): Promise<void> {
+  const existing = await getProviderByName(provider.byokProvider.providerName);
+  if (!existing) {
+    addCommandResult(
+      ctx.buffersRef,
+      ctx.refreshDerived,
+      msg,
+      `Not currently connected to ${provider.byokProvider.displayName}.\n\nUse /connect ${provider.canonical} to connect.`,
+      false,
+    );
+    return;
+  }
+
+  const cmdId = addCommandResult(
+    ctx.buffersRef,
+    ctx.refreshDerived,
+    msg,
+    `Disconnecting from ${provider.byokProvider.displayName}...`,
+    true,
+    "running",
+  );
+
+  ctx.setCommandRunning(true);
+  try {
+    await removeProviderByName(provider.byokProvider.providerName);
+    updateCommandResult(
+      ctx.buffersRef,
+      ctx.refreshDerived,
+      cmdId,
+      msg,
+      `✓ Disconnected from ${provider.byokProvider.displayName}.\n\n` +
+        `Provider '${provider.byokProvider.providerName}' removed from Letta.`,
+      true,
+      "finished",
+    );
+  } catch (error) {
+    updateCommandResult(
+      ctx.buffersRef,
+      ctx.refreshDerived,
+      cmdId,
+      msg,
+      `✗ Failed to disconnect from ${provider.byokProvider.displayName}: ${getErrorMessage(error)}`,
+      false,
+      "finished",
+    );
+  } finally {
+    ctx.setCommandRunning(false);
+  }
+}
+
 async function handleDisconnectClaude(
   ctx: ConnectCommandContext,
   msg: string,
 ): Promise<void> {
   const CLAUDE_PROVIDER_NAME = "claude-pro-max";
 
-  // Show running status
   const cmdId = addCommandResult(
     ctx.buffersRef,
     ctx.refreshDerived,
@@ -783,13 +654,9 @@ async function handleDisconnectClaude(
   ctx.setCommandRunning(true);
 
   try {
-    // Check if claude-pro-max provider exists
-    const { listProviders } = await import(
-      "../../providers/openai-codex-provider"
-    );
     const providers = await listProviders();
     const claudeProvider = providers.find(
-      (p) => p.name === CLAUDE_PROVIDER_NAME,
+      (provider) => provider.name === CLAUDE_PROVIDER_NAME,
     );
 
     if (!claudeProvider) {
@@ -805,7 +672,6 @@ async function handleDisconnectClaude(
       return;
     }
 
-    // Remove provider from Letta
     updateCommandResult(
       ctx.buffersRef,
       ctx.refreshDerived,
@@ -816,9 +682,6 @@ async function handleDisconnectClaude(
       "running",
     );
 
-    const { deleteOpenAICodexProvider } = await import(
-      "../../providers/openai-codex-provider"
-    );
     await deleteOpenAICodexProvider(claudeProvider.id);
 
     updateCommandResult(
@@ -826,9 +689,9 @@ async function handleDisconnectClaude(
       ctx.refreshDerived,
       cmdId,
       msg,
-      `✓ Disconnected from Claude.\n\n` +
+      "✓ Disconnected from Claude.\n\n" +
         `Provider '${CLAUDE_PROVIDER_NAME}' has been removed from Letta.\n\n` +
-        `Note: /connect claude has been replaced with /connect codex for OpenAI ChatGPT Plus/Pro.`,
+        "Note: /connect claude has been replaced by /connect chatgpt (alias: /connect codex).",
       true,
       "finished",
     );
@@ -847,265 +710,56 @@ async function handleDisconnectClaude(
   }
 }
 
-/**
- * Handle /disconnect zai
- */
-async function handleDisconnectZai(
+export async function handleDisconnect(
   ctx: ConnectCommandContext,
   msg: string,
 ): Promise<void> {
-  // Check if Zai provider exists
-  const existing = await getZaiProvider();
-  if (!existing) {
+  const parts = parseArgs(msg);
+  const providerToken = parts[1]?.toLowerCase();
+
+  if (providerToken === "help") {
     addCommandResult(
       ctx.buffersRef,
       ctx.refreshDerived,
       msg,
-      "Not currently connected to Zai.\n\nUse /connect zai <api_key> to connect.",
+      formatDisconnectHelp(),
+      true,
+    );
+    return;
+  }
+
+  if (!providerToken) {
+    addCommandResult(
+      ctx.buffersRef,
+      ctx.refreshDerived,
+      msg,
+      "Usage: /disconnect <provider>",
       false,
     );
     return;
   }
 
-  // Show running status
-  const cmdId = addCommandResult(
-    ctx.buffersRef,
-    ctx.refreshDerived,
-    msg,
-    "Disconnecting from Zai...",
-    true,
-    "running",
-  );
-
-  ctx.setCommandRunning(true);
-
-  try {
-    // Remove provider from Letta
-    await removeZaiProvider();
-
-    updateCommandResult(
-      ctx.buffersRef,
-      ctx.refreshDerived,
-      cmdId,
-      msg,
-      `\u2713 Disconnected from Zai.\n\n` +
-        `Provider '${ZAI_PROVIDER_NAME}' removed from Letta.`,
-      true,
-      "finished",
-    );
-  } catch (error) {
-    updateCommandResult(
-      ctx.buffersRef,
-      ctx.refreshDerived,
-      cmdId,
-      msg,
-      `\u2717 Failed to disconnect from Zai: ${getErrorMessage(error)}`,
-      false,
-      "finished",
-    );
-  } finally {
-    ctx.setCommandRunning(false);
+  if (providerToken === "claude") {
+    await handleDisconnectClaude(ctx, msg);
+    return;
   }
-}
 
-/**
- * Handle /connect zai command
- * Usage: /connect zai <api_key>
- *
- * Creates the zai-coding-plan provider with the provided API key
- */
-export async function handleConnectZai(
-  ctx: ConnectCommandContext,
-  msg: string,
-): Promise<void> {
-  const parts = msg.trim().split(/\s+/);
-  // Join all remaining parts in case the API key got split
-  const apiKey = parts.slice(2).join("");
-
-  // If no API key provided, show usage
-  if (!apiKey || apiKey.length === 0) {
+  const provider = resolveConnectProvider(providerToken);
+  if (!provider) {
     addCommandResult(
       ctx.buffersRef,
       ctx.refreshDerived,
       msg,
-      "Usage: /connect zai <api_key>\n\n" +
-        "Connect to Zai by providing your API key.\n\n" +
-        "Example: /connect zai <api_key>...",
+      `Unknown provider: "${providerToken}". Run /disconnect help for usage.`,
       false,
     );
     return;
   }
 
-  // Show running status
-  const cmdId = addCommandResult(
-    ctx.buffersRef,
-    ctx.refreshDerived,
-    msg,
-    "Creating Zai coding plan provider...",
-    true,
-    "running",
-  );
-
-  ctx.setCommandRunning(true);
-
-  try {
-    // Create or update the Zai provider with the API key
-    await createOrUpdateZaiProvider(apiKey);
-
-    updateCommandResult(
-      ctx.buffersRef,
-      ctx.refreshDerived,
-      cmdId,
-      msg,
-      `\u2713 Successfully connected to Zai!\n\n` +
-        `Provider '${ZAI_PROVIDER_NAME}' created in Letta.\n\n` +
-        `The models are populated in /model \u2192 "All Available Models"`,
-      true,
-      "finished",
-    );
-  } catch (error) {
-    updateCommandResult(
-      ctx.buffersRef,
-      ctx.refreshDerived,
-      cmdId,
-      msg,
-      `\u2717 Failed to create Zai provider: ${getErrorMessage(error)}`,
-      false,
-      "finished",
-    );
-  } finally {
-    ctx.setCommandRunning(false);
-  }
-}
-
-/**
- * Handle /connect openrouter command
- * Usage: /connect openrouter <api_key>
- *
- * Creates the lc-openrouter provider with the provided API key
- */
-export async function handleConnectOpenrouter(
-  ctx: ConnectCommandContext,
-  msg: string,
-): Promise<void> {
-  const parts = msg.trim().split(/\s+/);
-  // Join all remaining parts in case the API key got split
-  const apiKey = parts.slice(2).join("");
-
-  // If no API key provided, show usage
-  if (!apiKey || apiKey.length === 0) {
-    addCommandResult(
-      ctx.buffersRef,
-      ctx.refreshDerived,
-      msg,
-      "Usage: /connect openrouter <api_key>\n\n" +
-        "Connect to OpenRouter by providing your API key.\n\n" +
-        "Get your API key at https://openrouter.ai/keys\n\n" +
-        "Example: /connect openrouter sk-or-v1-...",
-      false,
-    );
+  if (isConnectOAuthProvider(provider)) {
+    await handleDisconnectChatGPT(ctx, msg);
     return;
   }
 
-  // Show running status
-  const cmdId = addCommandResult(
-    ctx.buffersRef,
-    ctx.refreshDerived,
-    msg,
-    "Creating OpenRouter provider...",
-    true,
-    "running",
-  );
-
-  ctx.setCommandRunning(true);
-
-  try {
-    // Create or update the OpenRouter provider with the API key
-    await createOrUpdateOpenrouterProvider(apiKey);
-
-    updateCommandResult(
-      ctx.buffersRef,
-      ctx.refreshDerived,
-      cmdId,
-      msg,
-      `\u2713 Successfully connected to OpenRouter!\n\n` +
-        `Provider '${OPENROUTER_PROVIDER_NAME}' created in Letta.\n\n` +
-        `The models are populated in /model \u2192 "All Available Models"`,
-      true,
-      "finished",
-    );
-  } catch (error) {
-    updateCommandResult(
-      ctx.buffersRef,
-      ctx.refreshDerived,
-      cmdId,
-      msg,
-      `\u2717 Failed to create OpenRouter provider: ${getErrorMessage(error)}`,
-      false,
-      "finished",
-    );
-  } finally {
-    ctx.setCommandRunning(false);
-  }
-}
-
-/**
- * Handle /disconnect openrouter
- */
-async function handleDisconnectOpenrouter(
-  ctx: ConnectCommandContext,
-  msg: string,
-): Promise<void> {
-  // Check if OpenRouter provider exists
-  const existing = await getOpenrouterProvider();
-  if (!existing) {
-    addCommandResult(
-      ctx.buffersRef,
-      ctx.refreshDerived,
-      msg,
-      "Not currently connected to OpenRouter.\n\nUse /connect openrouter <api_key> to connect.",
-      false,
-    );
-    return;
-  }
-
-  // Show running status
-  const cmdId = addCommandResult(
-    ctx.buffersRef,
-    ctx.refreshDerived,
-    msg,
-    "Disconnecting from OpenRouter...",
-    true,
-    "running",
-  );
-
-  ctx.setCommandRunning(true);
-
-  try {
-    // Remove provider from Letta
-    await removeOpenrouterProvider();
-
-    updateCommandResult(
-      ctx.buffersRef,
-      ctx.refreshDerived,
-      cmdId,
-      msg,
-      `\u2713 Disconnected from OpenRouter.\n\n` +
-        `Provider '${OPENROUTER_PROVIDER_NAME}' removed from Letta.`,
-      true,
-      "finished",
-    );
-  } catch (error) {
-    updateCommandResult(
-      ctx.buffersRef,
-      ctx.refreshDerived,
-      cmdId,
-      msg,
-      `\u2717 Failed to disconnect from OpenRouter: ${getErrorMessage(error)}`,
-      false,
-      "finished",
-    );
-  } finally {
-    ctx.setCommandRunning(false);
-  }
+  await handleDisconnectByokProvider(ctx, msg, provider);
 }
