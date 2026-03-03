@@ -47,9 +47,14 @@ describe("registerWithCloud", () => {
       "letta-code",
     );
     const body = JSON.parse(init.body as string);
-    expect(body).toEqual({
+    expect(body).toMatchObject({
       deviceId: "device-123",
       connectionName: "test-machine",
+      metadata: {
+        lettaCodeVersion: expect.any(String),
+        os: expect.any(String),
+        nodeVersion: expect.any(String),
+      },
     });
   });
 

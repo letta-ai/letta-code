@@ -2,6 +2,7 @@
  * Shared registration helper for letta remote / /remote command.
  * Owns the HTTP request contract and error handling; callers own UX strings and logging.
  */
+import { getVersion } from "../version.ts";
 
 export interface RegisterResult {
   connectionId: string;
@@ -34,6 +35,11 @@ export async function registerWithCloud(
     body: JSON.stringify({
       deviceId: opts.deviceId,
       connectionName: opts.connectionName,
+      metadata: {
+        lettaCodeVersion: getVersion(),
+        os: process.platform,
+        nodeVersion: process.version,
+      },
     }),
   });
 
