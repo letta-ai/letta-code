@@ -3269,8 +3269,12 @@ export default function App({
     const syncConversationModel = async () => {
       // "default" is a virtual sentinel for the agent's primary message history,
       // not a real conversation object — skip the API call.
+      // If the user just switched models via /model, honour the local override
+      // until the next agent state refresh brings back the updated model.
       if (conversationId === "default") {
-        applyAgentModelLocally();
+        if (!hasConversationModelOverrideRef.current) {
+          applyAgentModelLocally();
+        }
         return;
       }
 
@@ -11014,8 +11018,10 @@ ${SYSTEM_REMINDER_CLOSE}
             phase: "running",
           });
 
-          // "default" is a virtual sentinel, not a real conversation object —
-          // skip the API call and fall through with undefined model_settings.
+          // Persist model change to the backend.
+          // For real conversations, update the conversation-scoped override.
+          // For "default" (virtual sentinel with no real conversation object),
+          // update the agent itself so the model sticks across messages.
           let conversationModelSettings:
             | AgentState["model_settings"]
             | null
@@ -11034,6 +11040,14 @@ ${SYSTEM_REMINDER_CLOSE}
                 model_settings?: AgentState["model_settings"] | null;
               }
             ).model_settings;
+          } else {
+            const { updateAgentLLMConfig } = await import("../agent/modify");
+            const updatedAgent = await updateAgentLLMConfig(
+              agentId,
+              modelHandle,
+              model.updateArgs,
+            );
+            conversationModelSettings = updatedAgent.model_settings;
           }
 
           // The API may not echo reasoning_effort back, so populate it from
