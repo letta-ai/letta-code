@@ -267,6 +267,7 @@ import {
   clearSubagentsByIds,
   getSubagentByToolCallId,
   getSnapshot as getSubagentSnapshot,
+  getSubagents,
   hasActiveSubagents,
   interruptActiveSubagents,
   subscribe as subscribeToSubagents,
@@ -2492,6 +2493,17 @@ export default function App({
     permissionMode: uiPermissionMode,
     networkPhase,
     terminalWidth: chromeColumns,
+    backgroundAgents: getSubagents()
+      .filter(
+        (a) =>
+          a.silent === true &&
+          (a.status === "pending" || a.status === "running"),
+      )
+      .map((a) => ({
+        type: a.type,
+        status: a.status,
+        duration_ms: Date.now() - a.startTime,
+      })),
     triggerVersion: statusLineTriggerVersion,
   });
 
