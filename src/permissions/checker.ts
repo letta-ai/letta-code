@@ -419,6 +419,35 @@ function checkPermissionForEngine(
     }
   }
 
+  // Bash: auto-allow if all absolute paths in the command are within the
+  // working directory. Commands with no absolute paths (e.g. `ls`, `git status`,
+  // `mkdir foo`) are also allowed — they run in the process cwd which is
+  // already set to workingDirectory by the caller.
+  if (queryTool === "Bash" || queryTool === "shell" || queryTool === "shell_command") {
+    const command = extractShellCommand(toolArgs);
+    const cmdStr = Array.isArray(command)
+      ? command.join(" ")
+      : (command ?? "");
+    const absPaths = cmdStr.match(/\/[^\s"'`]+/g) ?? [];
+    const allWithin = absPaths.every((p) =>
+      isWithinAllowedDirectories(p, permissions, workingDirectory),
+    );
+    if (allWithin) {
+      traceEvent(
+        trace,
+        "working-directory-auto-allow",
+        `Bash within working directory: ${cmdStr.slice(0, 80)}`,
+      );
+      return {
+        result: {
+          decision: "allow",
+          reason: "Bash within working directory",
+        },
+        trace,
+      };
+    }
+  }
+
   if (sessionRules.allow) {
     for (const pattern of sessionRules.allow) {
       const matched = matchesPattern(
