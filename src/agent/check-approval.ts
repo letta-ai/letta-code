@@ -344,7 +344,10 @@ export async function getResumeData(
 
     // Use conversations API for explicit conversations,
     // use agents API for "default" or no conversationId (agent's primary message history)
-    const useConversationsApi = conversationId && conversationId !== "default" && !conversationId.startsWith("agent-");
+    const useConversationsApi =
+      conversationId &&
+      conversationId !== "default" &&
+      !conversationId.startsWith("agent-");
 
     if (conversationId?.startsWith("agent-")) {
       debugWarn(
