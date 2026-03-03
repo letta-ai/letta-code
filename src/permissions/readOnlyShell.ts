@@ -100,7 +100,7 @@ const SAFE_LETTA_COMMANDS: Record<string, Set<string>> = {
 
 // gh CLI read-only commands: category -> allowed actions
 // null means any action is allowed for that category
-const SAFE_GH_COMMANDS: Record<string, Set<string> | null> = {
+export const SAFE_GH_COMMANDS: Record<string, Set<string> | null> = {
   pr: new Set(["list", "status", "checks", "diff", "view"]),
   issue: new Set(["list", "status", "view"]),
   repo: new Set(["list", "view", "gitignore", "license"]),

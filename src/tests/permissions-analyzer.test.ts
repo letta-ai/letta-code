@@ -609,3 +609,133 @@ test("run_shell_command is analyzed as Bash", () => {
 
   expect(context.recommendedRule).toBe("Bash(curl:*)");
 });
+
+// ============================================================================
+// gh CLI approval tests
+// ============================================================================
+
+test("gh pr view suggests safe project-scoped rule", () => {
+  const context = analyzeApprovalContext(
+    "Bash",
+    { command: "gh pr view 471 --json title,body,files,additions,deletions" },
+    "/Users/test/project",
+  );
+
+  expect(context.recommendedRule).toBe("Bash(gh pr view:*)");
+  expect(context.safetyLevel).toBe("safe");
+  expect(context.defaultScope).toBe("project");
+  expect(context.allowPersistence).toBe(true);
+  expect(context.approveAlwaysText).toContain("gh pr view");
+});
+
+test("gh pr diff suggests safe project-scoped rule", () => {
+  const context = analyzeApprovalContext(
+    "Bash",
+    { command: "gh pr diff 471" },
+    "/Users/test/project",
+  );
+
+  expect(context.recommendedRule).toBe("Bash(gh pr diff:*)");
+  expect(context.safetyLevel).toBe("safe");
+});
+
+test("gh pr list suggests safe rule", () => {
+  const context = analyzeApprovalContext(
+    "Bash",
+    { command: "gh pr list --state open" },
+    "/Users/test/project",
+  );
+
+  expect(context.recommendedRule).toBe("Bash(gh pr list:*)");
+  expect(context.safetyLevel).toBe("safe");
+});
+
+test("gh pr checks suggests safe rule", () => {
+  const context = analyzeApprovalContext(
+    "Bash",
+    { command: "gh pr checks 471" },
+    "/Users/test/project",
+  );
+
+  expect(context.recommendedRule).toBe("Bash(gh pr checks:*)");
+  expect(context.safetyLevel).toBe("safe");
+});
+
+test("gh issue view suggests safe rule", () => {
+  const context = analyzeApprovalContext(
+    "Bash",
+    { command: "gh issue view 123" },
+    "/Users/test/project",
+  );
+
+  expect(context.recommendedRule).toBe("Bash(gh issue view:*)");
+  expect(context.safetyLevel).toBe("safe");
+});
+
+test("gh issue list suggests safe rule", () => {
+  const context = analyzeApprovalContext(
+    "Bash",
+    { command: "gh issue list --state open" },
+    "/Users/test/project",
+  );
+
+  expect(context.recommendedRule).toBe("Bash(gh issue list:*)");
+  expect(context.safetyLevel).toBe("safe");
+});
+
+test("gh run view suggests safe rule", () => {
+  const context = analyzeApprovalContext(
+    "Bash",
+    { command: "gh run view 1234567890" },
+    "/Users/test/project",
+  );
+
+  expect(context.recommendedRule).toBe("Bash(gh run view:*)");
+  expect(context.safetyLevel).toBe("safe");
+});
+
+test("gh search issues suggests safe rule", () => {
+  const context = analyzeApprovalContext(
+    "Bash",
+    { command: "gh search issues --repo letta-ai/letta-code foo" },
+    "/Users/test/project",
+  );
+
+  // search category has null allowedActions - use "gh search" prefix (no action)
+  expect(context.recommendedRule).toBe("Bash(gh search:*)");
+  expect(context.safetyLevel).toBe("safe");
+});
+
+test("gh api suggests moderate rule (can mutate)", () => {
+  const context = analyzeApprovalContext(
+    "Bash",
+    { command: "gh api repos/letta-ai/letta-code/pulls/471/comments" },
+    "/Users/test/project",
+  );
+
+  // api category has null allowedActions - use "gh api" prefix (no action)
+  expect(context.recommendedRule).toBe("Bash(gh api:*)");
+  expect(context.safetyLevel).toBe("moderate");
+});
+
+test("gh pr create suggests moderate rule", () => {
+  const context = analyzeApprovalContext(
+    "Bash",
+    { command: "gh pr create --title 'fix: something' --body 'desc'" },
+    "/Users/test/project",
+  );
+
+  expect(context.recommendedRule).toBe("Bash(gh pr create:*)");
+  expect(context.safetyLevel).toBe("moderate");
+});
+
+test("gh pr view in compound command suggests safe rule", () => {
+  const context = analyzeApprovalContext(
+    "Bash",
+    { command: "cd /Users/cameron/repo && gh pr view 471 --json title,body" },
+    "/Users/test/project",
+  );
+
+  expect(context.recommendedRule).toBe("Bash(gh pr view:*)");
+  expect(context.safetyLevel).toBe("safe");
+});
