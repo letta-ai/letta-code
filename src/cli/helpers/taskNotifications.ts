@@ -106,6 +106,47 @@ export function extractTaskNotificationsForDisplay(message: string): {
   return { notifications, cleanedText };
 }
 
+// ============================================================================
+// Buffer Helpers
+// ============================================================================
+
+/**
+ * Append task-notification events to a transcript buffer and flush.
+ *
+ * This is the pure-function core of App.tsx's `appendTaskNotificationEvents`
+ * useCallback. Extracting it here makes the behavioral contract testable:
+ * buffer writes MUST be followed by a flush so that notifications from
+ * background subagent onComplete callbacks (which run outside React's render
+ * cycle) appear immediately instead of waiting for the next unrelated render.
+ */
+export type NotificationBuffer = Pick<
+  import("./accumulator").Buffers,
+  "byId" | "order"
+>;
+
+export function appendTaskNotificationEventsToBuffer(
+  summaries: string[],
+  buffer: NotificationBuffer,
+  generateId: () => string,
+  flush?: () => void,
+): boolean {
+  if (summaries.length === 0) return false;
+  for (const summary of summaries) {
+    const eventId = generateId();
+    buffer.byId.set(eventId, {
+      kind: "event",
+      id: eventId,
+      eventType: "task_notification",
+      eventData: {},
+      phase: "finished",
+      summary,
+    });
+    buffer.order.push(eventId);
+  }
+  flush?.();
+  return true;
+}
+
 /**
  * Format multiple notifications as XML string.
  * @deprecated Use formatTaskNotification and queue individually
