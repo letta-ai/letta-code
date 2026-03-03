@@ -28,7 +28,7 @@ async function copyToResolved(srcRel, targetSpecifier) {
       let buildDir;
       try {
         // Prefer import.meta.resolve when available
-        const inkEntryUrl = await import.meta.resolve("ink");
+        const inkEntryUrl = import.meta.resolve("ink");
         const inkEntryPath = fileURLToPath(inkEntryUrl); // .../node_modules/ink/build/index.js
         buildDir = dirname(inkEntryPath); // .../node_modules/ink/build
       } catch {}
@@ -49,7 +49,7 @@ async function copyToResolved(srcRel, targetSpecifier) {
     } else if (targetSpecifier.startsWith("ink-text-input/")) {
       // Resolve root of installed ink-text-input in a Node 18+ compatible way
       try {
-        const entryUrl = await import.meta.resolve("ink-text-input");
+        const entryUrl = import.meta.resolve("ink-text-input");
         dest = fileURLToPath(entryUrl); // .../node_modules/ink-text-input/build/index.js
       } catch {
         try {
