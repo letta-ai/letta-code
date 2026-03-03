@@ -148,14 +148,70 @@
     }
   },
   {
+    "id": "opus-4.6-xhigh",
+    "handle": "anthropic/claude-opus-4-6",
+    "label": "Opus 4.6",
+    "description": "Opus 4.6 (max reasoning)",
+    "updateArgs": {
+      "context_window": 200000,
+      "max_output_tokens": 128000,
+      "reasoning_effort": "xhigh",
+      "enable_reasoner": true,
+      "parallel_tool_calls": true
+    }
+  },
+  {
     "id": "opus-4.5",
     "handle": "anthropic/claude-opus-4-5-20251101",
     "label": "Opus 4.5",
-    "description": "Anthropic's (legacy) best model",
+    "description": "Anthropic's (legacy) best model (high reasoning)",
     "updateArgs": {
       "context_window": 180000,
       "max_output_tokens": 64000,
+      "reasoning_effort": "high",
+      "enable_reasoner": true,
       "max_reasoning_tokens": 31999,
+      "parallel_tool_calls": true
+    }
+  },
+  {
+    "id": "opus-4.5-no-reasoning",
+    "handle": "anthropic/claude-opus-4-5-20251101",
+    "label": "Opus 4.5",
+    "description": "Opus 4.5 with no reasoning (faster)",
+    "updateArgs": {
+      "context_window": 180000,
+      "max_output_tokens": 64000,
+      "reasoning_effort": "none",
+      "enable_reasoner": false,
+      "parallel_tool_calls": true
+    }
+  },
+  {
+    "id": "opus-4.5-low",
+    "handle": "anthropic/claude-opus-4-5-20251101",
+    "label": "Opus 4.5",
+    "description": "Opus 4.5 (low reasoning)",
+    "updateArgs": {
+      "context_window": 180000,
+      "max_output_tokens": 64000,
+      "reasoning_effort": "low",
+      "enable_reasoner": true,
+      "max_reasoning_tokens": 4000,
+      "parallel_tool_calls": true
+    }
+  },
+  {
+    "id": "opus-4.5-medium",
+    "handle": "anthropic/claude-opus-4-5-20251101",
+    "label": "Opus 4.5",
+    "description": "Opus 4.5 (med reasoning)",
+    "updateArgs": {
+      "context_window": 180000,
+      "max_output_tokens": 64000,
+      "reasoning_effort": "medium",
+      "enable_reasoner": true,
+      "max_reasoning_tokens": 12000,
       "parallel_tool_calls": true
     }
   },

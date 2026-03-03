@@ -113,12 +113,32 @@ describe("getReasoningTierOptionsForHandle", () => {
       "low",
       "medium",
       "high",
+      "xhigh",
     ]);
     expect(options.map((option) => option.modelId)).toEqual([
       "opus-4.6-no-reasoning",
       "opus-4.6-low",
       "opus-4.6-medium",
       "opus",
+      "opus-4.6-xhigh",
+    ]);
+  });
+
+  test("returns reasoning options for anthropic opus 4.5", () => {
+    const options = getReasoningTierOptionsForHandle(
+      "anthropic/claude-opus-4-5-20251101",
+    );
+    expect(options.map((option) => option.effort)).toEqual([
+      "none",
+      "low",
+      "medium",
+      "high",
+    ]);
+    expect(options.map((option) => option.modelId)).toEqual([
+      "opus-4.5-no-reasoning",
+      "opus-4.5-low",
+      "opus-4.5-medium",
+      "opus-4.5",
     ]);
   });
 
