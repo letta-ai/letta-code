@@ -78,6 +78,7 @@ USAGE
   letta agents ...      Agents subcommands (JSON-only)
   letta messages ...    Messages subcommands (JSON-only)
   letta blocks ...      Blocks subcommands (JSON-only)
+  letta connect ...     Connect providers from terminal
 
 OPTIONS
 ${renderCliOptionsHelp()}
@@ -96,6 +97,7 @@ SUBCOMMANDS (JSON-only)
   letta blocks list --agent <id>
   letta blocks copy --block-id <id> [--label <label>] [--agent <id>] [--override]
   letta blocks attach --block-id <id> [--agent <id>] [--read-only] [--override]
+  letta connect <provider> [options]
 
 BEHAVIOR
   On startup, Letta Code checks for saved profiles:
