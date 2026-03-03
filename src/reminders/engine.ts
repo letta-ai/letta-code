@@ -298,11 +298,8 @@ async function buildCommandIoReminder(
   const commandBlocks = recent.map((entry) => {
     const status = entry.success ? "success" : "error";
     const safeInput = escapeXml(truncate(entry.input, MAX_COMMAND_INPUT_CHARS));
-    const outputText = entry.agentHint
-      ? `${entry.output || "(no output)"} ${entry.agentHint}`
-      : entry.output || "(no output)";
     const safeOutput = escapeXml(
-      truncate(outputText, MAX_COMMAND_OUTPUT_CHARS),
+      truncate(entry.output || "(no output)", MAX_COMMAND_OUTPUT_CHARS),
     );
     return `<user-command>
 <user-command-input>${safeInput}</user-command-input>
@@ -311,13 +308,20 @@ async function buildCommandIoReminder(
 </user-command>`;
   });
 
+  const agentHints = recent
+    .filter((entry) => entry.agentHint)
+    .map((entry) => `- ${entry.agentHint}`);
+
   const droppedLine =
     dropped > 0 ? `\nOmitted ${dropped} older command event(s).` : "";
+
+  const hintsBlock =
+    agentHints.length > 0 ? `\n\n${agentHints.join("\n")}` : "";
 
   return `${SYSTEM_REMINDER_OPEN}
 The following slash commands were executed in the Letta Code harness since your last user message.
 Treat these as execution context from the CLI, not new user requests.${droppedLine}
-${commandBlocks.join("\n")}
+${commandBlocks.join("\n")}${hintsBlock}
 ${SYSTEM_REMINDER_CLOSE}
 
 `;
