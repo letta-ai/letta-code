@@ -15,6 +15,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
 import stringWidth from "string-width";
 import type { ModelReasoningEffort } from "../../agent/model";
@@ -30,6 +31,12 @@ import { ralphMode } from "../../ralph/mode";
 import { settingsManager } from "../../settings-manager";
 import { charsToTokens, formatCompact } from "../helpers/format";
 import type { QueuedMessage } from "../helpers/messageQueueBridge";
+import {
+  getActiveBackgroundAgents,
+  getSnapshot as getSubagentSnapshot,
+  subscribe as subscribeToSubagents,
+} from "../helpers/subagentState.js";
+import { BlinkDot } from "./BlinkDot.js";
 import { colors } from "./colors";
 import { InputAssist } from "./InputAssist";
 import { PasteAwareTextInput } from "./PasteAwareTextInput";
@@ -256,6 +263,34 @@ const InputFooter = memo(function InputFooter({
   footerNotification?: string | null;
 }) {
   const hideFooterContent = hideFooter;
+
+  // Subscribe to subagent state for background agent indicators
+  useSyncExternalStore(subscribeToSubagents, getSubagentSnapshot);
+  const backgroundAgents = getActiveBackgroundAgents();
+
+  // Tick counter for elapsed time display (only active when background agents exist)
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    if (backgroundAgents.length === 0) return;
+    const t = setInterval(() => setTick((v) => v + 1), 1000);
+    return () => clearInterval(t);
+  }, [backgroundAgents.length]);
+
+  // Build background agent display text (no useMemo — must recalculate each tick for elapsed time)
+  const bgAgentText =
+    backgroundAgents.length === 0
+      ? ""
+      : backgroundAgents
+          .map((a) => {
+            const elapsedS = Math.round((Date.now() - a.startTime) / 1000);
+            return `${a.type.toLowerCase()} (${elapsedS}s)`;
+          })
+          .join(" · ");
+
+  // Width of the background agent indicator: "· " + text + " │ "
+  const bgIndicatorWidth =
+    backgroundAgents.length > 0 ? 2 + stringWidth(bgAgentText) + 3 : 0;
+
   const maxAgentChars = Math.max(10, Math.floor(rightColumnWidth * 0.45));
   const displayAgentName = truncateEnd(agentName || "Unnamed", maxAgentChars);
   const reasoningTag = getReasoningEffortTag(currentReasoningEffort);
@@ -271,9 +306,10 @@ const InputFooter = memo(function InputFooter({
   const rightTextLength =
     displayAgentName.length + displayModel.length + byokExtraChars + 3;
   const rightPrefixSpaces = Math.max(0, rightColumnWidth - rightTextLength);
-  const rightLabel = useMemo(() => {
+
+  // Agent label without leading spaces (used by both default and bg-agent cases)
+  const rightLabelCore = useMemo(() => {
     const parts: string[] = [];
-    parts.push(" ".repeat(rightPrefixSpaces));
     parts.push(chalk.hex(colors.footer.agentName)(displayAgentName));
     parts.push(chalk.dim(" ["));
     parts.push(chalk.dim(displayModel));
@@ -284,15 +320,13 @@ const InputFooter = memo(function InputFooter({
       );
     }
     parts.push(chalk.dim("]"));
-
     return parts.join("");
-  }, [
-    rightPrefixSpaces,
-    displayAgentName,
-    displayModel,
-    isByokProvider,
-    isOpenAICodexProvider,
-  ]);
+  }, [displayAgentName, displayModel, isByokProvider, isOpenAICodexProvider]);
+
+  const rightLabel = useMemo(
+    () => " ".repeat(rightPrefixSpaces) + rightLabelCore,
+    [rightPrefixSpaces, rightLabelCore],
+  );
 
   return (
     <Box flexDirection="row" marginBottom={1}>
@@ -358,6 +392,13 @@ const InputFooter = memo(function InputFooter({
               {parseOsc8Line(line, `r${i}`)}
             </Text>
           ))
+        ) : backgroundAgents.length > 0 ? (
+          <Text>
+            {" ".repeat(Math.max(0, rightPrefixSpaces - bgIndicatorWidth))}
+            <BlinkDot color={colors.tool.pending} symbol="·" />
+            <Text dimColor>{` ${bgAgentText} │ `}</Text>
+            {rightLabelCore}
+          </Text>
         ) : (
           <Text>{rightLabel}</Text>
         )}
