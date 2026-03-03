@@ -316,13 +316,11 @@ const InputFooter = memo(function InputFooter({
 
   const rightTextLength =
     displayAgentName.length + displayModel.length + byokExtraChars + 3;
-  const rightPrefixSpaces = Math.max(
-    0,
-    rightColumnWidth - rightTextLength - bgIndicatorWidth,
-  );
-  const rightLabel = useMemo(() => {
+  const rightPrefixSpaces = Math.max(0, rightColumnWidth - rightTextLength);
+
+  // Agent label without leading spaces (used by both default and bg-agent cases)
+  const rightLabelCore = useMemo(() => {
     const parts: string[] = [];
-    parts.push(" ".repeat(rightPrefixSpaces));
     parts.push(chalk.hex(colors.footer.agentName)(displayAgentName));
     parts.push(chalk.dim(" ["));
     parts.push(chalk.dim(displayModel));
@@ -333,15 +331,13 @@ const InputFooter = memo(function InputFooter({
       );
     }
     parts.push(chalk.dim("]"));
-
     return parts.join("");
-  }, [
-    rightPrefixSpaces,
-    displayAgentName,
-    displayModel,
-    isByokProvider,
-    isOpenAICodexProvider,
-  ]);
+  }, [displayAgentName, displayModel, isByokProvider, isOpenAICodexProvider]);
+
+  const rightLabel = useMemo(
+    () => " ".repeat(rightPrefixSpaces) + rightLabelCore,
+    [rightPrefixSpaces, rightLabelCore],
+  );
 
   return (
     <Box flexDirection="row" marginBottom={1}>
@@ -409,9 +405,10 @@ const InputFooter = memo(function InputFooter({
           ))
         ) : backgroundAgents.length > 0 ? (
           <Text>
+            {" ".repeat(Math.max(0, rightPrefixSpaces - bgIndicatorWidth))}
             <BlinkDot color={colors.tool.pending} symbol="·" />
             <Text dimColor>{` ${bgAgentText} │ `}</Text>
-            <Text>{rightLabel}</Text>
+            {rightLabelCore}
           </Text>
         ) : (
           <Text>{rightLabel}</Text>
