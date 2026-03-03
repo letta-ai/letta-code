@@ -119,9 +119,14 @@ export function extractTaskNotificationsForDisplay(message: string): {
  * background subagent onComplete callbacks (which run outside React's render
  * cycle) appear immediately instead of waiting for the next unrelated render.
  */
+export type NotificationBuffer = Pick<
+  import("./accumulator").Buffers,
+  "byId" | "order"
+>;
+
 export function appendTaskNotificationEventsToBuffer(
   summaries: string[],
-  buffer: { byId: Map<string, unknown>; order: string[] },
+  buffer: NotificationBuffer,
   generateId: () => string,
   flush?: () => void,
 ): boolean {
