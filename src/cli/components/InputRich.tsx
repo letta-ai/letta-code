@@ -32,6 +32,7 @@ import { settingsManager } from "../../settings-manager";
 import { charsToTokens, formatCompact } from "../helpers/format";
 import type { QueuedMessage } from "../helpers/messageQueueBridge";
 import {
+  getActiveBackgroundAgents,
   getSnapshot as getSubagentSnapshot,
   subscribe as subscribeToSubagents,
 } from "../helpers/subagentState.js";
@@ -264,19 +265,8 @@ const InputFooter = memo(function InputFooter({
   const hideFooterContent = hideFooter;
 
   // Subscribe to subagent state for background agent indicators
-  const subagentState = useSyncExternalStore(
-    subscribeToSubagents,
-    getSubagentSnapshot,
-  );
-  const backgroundAgents = useMemo(
-    () =>
-      subagentState.agents.filter(
-        (a) =>
-          a.silent === true &&
-          (a.status === "pending" || a.status === "running"),
-      ),
-    [subagentState.agents],
-  );
+  useSyncExternalStore(subscribeToSubagents, getSubagentSnapshot);
+  const backgroundAgents = getActiveBackgroundAgents();
 
   // Tick counter for elapsed time display (only active when background agents exist)
   const [, setTick] = useState(0);
@@ -286,19 +276,18 @@ const InputFooter = memo(function InputFooter({
     return () => clearInterval(t);
   }, [backgroundAgents.length]);
 
-  // Build background agent display text
-  const bgAgentText = useMemo(() => {
-    if (backgroundAgents.length === 0) return "";
-    return backgroundAgents
-      .map((a) => {
-        const elapsedS = Math.round((Date.now() - a.startTime) / 1000);
-        return `${a.type.toLowerCase()} (${elapsedS}s)`;
-      })
-      .join(" · ");
-  }, [backgroundAgents]);
+  // Build background agent display text (no useMemo — must recalculate each tick for elapsed time)
+  const bgAgentText =
+    backgroundAgents.length === 0
+      ? ""
+      : backgroundAgents
+          .map((a) => {
+            const elapsedS = Math.round((Date.now() - a.startTime) / 1000);
+            return `${a.type.toLowerCase()} (${elapsedS}s)`;
+          })
+          .join(" · ");
 
-  // Width of the background agent indicator: "● " + text + " │ "
-  // The dot takes 1 char, then space, text, space, │, space
+  // Width of the background agent indicator: "· " + text + " │ "
   const bgIndicatorWidth =
     backgroundAgents.length > 0 ? 2 + stringWidth(bgAgentText) + 3 : 0;
 

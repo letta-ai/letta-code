@@ -226,6 +226,16 @@ export function getSubagents(): SubagentState[] {
 }
 
 /**
+ * Get silent background agents that are still pending or running
+ */
+export function getActiveBackgroundAgents(): SubagentState[] {
+  return Array.from(store.agents.values()).filter(
+    (a) =>
+      a.silent === true && (a.status === "pending" || a.status === "running"),
+  );
+}
+
+/**
  * Get subagents grouped by type
  */
 export function getGroupedSubagents(): Map<string, SubagentState[]> {
