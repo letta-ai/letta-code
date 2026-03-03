@@ -1041,8 +1041,8 @@ export function Input({
       // Cycle through permission modes
       const modes: PermissionMode[] = [
         "default",
-        "acceptEdits",
         "plan",
+        "acceptEdits",
         "bypassPermissions",
       ];
       const currentIndex = modes.indexOf(currentMode);
