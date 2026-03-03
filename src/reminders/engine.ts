@@ -262,7 +262,7 @@ async function buildAutoInitOnboardingReminder(
   if (!context.state.pendingAutoInitReminder) return null;
   context.state.pendingAutoInitReminder = false;
   return `${SYSTEM_REMINDER_OPEN}
-A background process is initializing this agent's memory system. Respond to the user normally. Do NOT run /init yourself — it's already handled.
+A background agent is initializing this agent's memory system. Briefly let the user know that memory is being set up in the background, then respond to their message normally. Do NOT run /init yourself — it's already handled.
 ${SYSTEM_REMINDER_CLOSE}\n\n`;
 }
 
