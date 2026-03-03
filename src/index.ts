@@ -4,6 +4,7 @@ import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents"
 import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
 import { getResumeData, type ResumeData } from "./agent/check-approval";
 import { getClient } from "./agent/client";
+import { debugLog } from "./utils/debug";
 import {
   setAgentContext,
   setConversationId as setContextConversationId,
@@ -629,7 +630,7 @@ async function main(): Promise<void> {
   // Validate shared mutual-exclusion rules for startup flags.
   try {
     validateFlagConflicts({
-      guard: specifiedConversationId && specifiedConversationId !== "default",
+      guard: specifiedConversationId && specifiedConversationId !== "default" && !specifiedConversationId.startsWith("agent-"),
       checks: [
         {
           when: specifiedAgentId,
@@ -1193,6 +1194,7 @@ async function main(): Promise<void> {
 
           // For explicit conversations, derive agent from conversation
           try {
+            debugLog("conversations", `retrieve(${specifiedConversationId}) [TUI conv→agent lookup]`);
             const conversation = await client.conversations.retrieve(
               specifiedConversationId,
             );
