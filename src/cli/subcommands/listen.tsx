@@ -187,6 +187,22 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       "../../websocket/listen-client"
     );
 
+    // Re-register helper for when the server closes with 1008 (environment not found)
+    const reregister = async (): Promise<{
+      connectionId: string;
+      wsUrl: string;
+    }> => {
+      sessionLog.log("Environment expired, re-registering...");
+      const result = await registerWithCloud({
+        serverUrl,
+        apiKey,
+        deviceId,
+        connectionName,
+      });
+      sessionLog.log(`Re-registered: connectionId=${result.connectionId}`);
+      return result;
+    };
+
     // WS event logger: always writes to file, console only in --debug
     const wsEventLogger = (
       direction: "send" | "recv",
@@ -204,42 +220,65 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
 
     if (debugMode) {
       // Debug mode: plain-text event logging, no Ink UI
-      await startListenerClient({
-        connectionId,
-        wsUrl,
-        deviceId,
-        connectionName,
-        onWsEvent: wsEventLogger,
-        onStatusChange: (status) => {
-          sessionLog.log(`status: ${status}`);
-          console.log(`[${formatTimestamp()}] status: ${status}`);
-        },
-        onConnected: () => {
-          sessionLog.log("Connected. Awaiting instructions.");
-          console.log(
-            `[${formatTimestamp()}] Connected. Awaiting instructions.`,
-          );
-          console.log("");
-        },
-        onRetrying: (attempt, _maxAttempts, nextRetryIn) => {
-          sessionLog.log(
-            `Reconnecting (attempt ${attempt}, retry in ${Math.round(nextRetryIn / 1000)}s)`,
-          );
-          console.log(
-            `[${formatTimestamp()}] Reconnecting (attempt ${attempt}, retry in ${Math.round(nextRetryIn / 1000)}s)`,
-          );
-        },
-        onDisconnected: () => {
-          sessionLog.log("Disconnected.");
-          console.log(`[${formatTimestamp()}] Disconnected.`);
-          process.exit(1);
-        },
-        onError: (error: Error) => {
-          sessionLog.log(`Error: ${error.message}`);
-          console.error(`[${formatTimestamp()}] Error: ${error.message}`);
-          process.exit(1);
-        },
-      });
+      const startDebugClient = async (
+        connId: string,
+        url: string,
+      ): Promise<void> => {
+        await startListenerClient({
+          connectionId: connId,
+          wsUrl: url,
+          deviceId,
+          connectionName,
+          onWsEvent: wsEventLogger,
+          onStatusChange: (status) => {
+            sessionLog.log(`status: ${status}`);
+            console.log(`[${formatTimestamp()}] status: ${status}`);
+          },
+          onConnected: () => {
+            sessionLog.log("Connected. Awaiting instructions.");
+            console.log(
+              `[${formatTimestamp()}] Connected. Awaiting instructions.`,
+            );
+            console.log("");
+          },
+          onRetrying: (attempt, _maxAttempts, nextRetryIn) => {
+            sessionLog.log(
+              `Reconnecting (attempt ${attempt}, retry in ${Math.round(nextRetryIn / 1000)}s)`,
+            );
+            console.log(
+              `[${formatTimestamp()}] Reconnecting (attempt ${attempt}, retry in ${Math.round(nextRetryIn / 1000)}s)`,
+            );
+          },
+          onNeedsReregister: async () => {
+            console.log(
+              `[${formatTimestamp()}] Environment expired, re-registering...`,
+            );
+            try {
+              const result = await reregister();
+              await startDebugClient(result.connectionId, result.wsUrl);
+            } catch (error) {
+              const msg =
+                error instanceof Error ? error.message : String(error);
+              sessionLog.log(`Re-registration failed: ${msg}`);
+              console.error(
+                `[${formatTimestamp()}] Re-registration failed: ${msg}`,
+              );
+              process.exit(1);
+            }
+          },
+          onDisconnected: () => {
+            sessionLog.log("Disconnected.");
+            console.log(`[${formatTimestamp()}] Disconnected.`);
+            process.exit(1);
+          },
+          onError: (error: Error) => {
+            sessionLog.log(`Error: ${error.message}`);
+            console.error(`[${formatTimestamp()}] Error: ${error.message}`);
+            process.exit(1);
+          },
+        });
+      };
+      await startDebugClient(connectionId, wsUrl);
     } else {
       // Normal mode: interactive Ink UI
       console.clear();
@@ -264,42 +303,62 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
         />,
       );
 
-      await startListenerClient({
-        connectionId,
-        wsUrl,
-        deviceId,
-        connectionName,
-        onWsEvent: wsEventLogger,
-        onStatusChange: (status) => {
-          sessionLog.log(`status: ${status}`);
-          clearRetryStatusCallback?.();
-          updateStatusCallback?.(status);
-        },
-        onConnected: () => {
-          sessionLog.log("Connected. Awaiting instructions.");
-          clearRetryStatusCallback?.();
-          updateStatusCallback?.("idle");
-        },
-        onRetrying: (attempt, _maxAttempts, nextRetryIn) => {
-          sessionLog.log(
-            `Reconnecting (attempt ${attempt}, retry in ${Math.round(nextRetryIn / 1000)}s)`,
-          );
-          updateRetryStatusCallback?.(attempt, nextRetryIn);
-        },
-        onDisconnected: () => {
-          sessionLog.log("Disconnected.");
-          unmount();
-          console.log("\n\u2717 Listener disconnected");
-          console.log("Connection to Letta Cloud was lost.\n");
-          process.exit(1);
-        },
-        onError: (error: Error) => {
-          sessionLog.log(`Error: ${error.message}`);
-          unmount();
-          console.error(`\n\u2717 Listener error: ${error.message}\n`);
-          process.exit(1);
-        },
-      });
+      const startNormalClient = async (
+        connId: string,
+        url: string,
+      ): Promise<void> => {
+        await startListenerClient({
+          connectionId: connId,
+          wsUrl: url,
+          deviceId,
+          connectionName,
+          onWsEvent: wsEventLogger,
+          onStatusChange: (status) => {
+            sessionLog.log(`status: ${status}`);
+            clearRetryStatusCallback?.();
+            updateStatusCallback?.(status);
+          },
+          onConnected: () => {
+            sessionLog.log("Connected. Awaiting instructions.");
+            clearRetryStatusCallback?.();
+            updateStatusCallback?.("idle");
+          },
+          onRetrying: (attempt, _maxAttempts, nextRetryIn) => {
+            sessionLog.log(
+              `Reconnecting (attempt ${attempt}, retry in ${Math.round(nextRetryIn / 1000)}s)`,
+            );
+            updateRetryStatusCallback?.(attempt, nextRetryIn);
+          },
+          onNeedsReregister: async () => {
+            sessionLog.log("Environment expired, re-registering...");
+            try {
+              const result = await reregister();
+              await startNormalClient(result.connectionId, result.wsUrl);
+            } catch (error) {
+              const msg =
+                error instanceof Error ? error.message : String(error);
+              sessionLog.log(`Re-registration failed: ${msg}`);
+              unmount();
+              console.error(`\n\u2717 Re-registration failed: ${msg}\n`);
+              process.exit(1);
+            }
+          },
+          onDisconnected: () => {
+            sessionLog.log("Disconnected.");
+            unmount();
+            console.log("\n\u2717 Listener disconnected");
+            console.log("Connection to Letta Cloud was lost.\n");
+            process.exit(1);
+          },
+          onError: (error: Error) => {
+            sessionLog.log(`Error: ${error.message}`);
+            unmount();
+            console.error(`\n\u2717 Listener error: ${error.message}\n`);
+            process.exit(1);
+          },
+        });
+      };
+      await startNormalClient(connectionId, wsUrl);
     }
 
     // Keep process alive
