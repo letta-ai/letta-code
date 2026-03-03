@@ -3280,6 +3280,10 @@ export default function App({
 
       try {
         const client = await getClient();
+        debugLog(
+          "conversations",
+          `retrieve(${conversationId}) [syncConversationModel]`,
+        );
         const conversation =
           await client.conversations.retrieve(conversationId);
         if (cancelled) return;
@@ -6154,7 +6158,9 @@ export default function App({
         // Build success message
         const agentLabel = agent.name || targetAgentId;
         const isSpecificConv =
-          opts?.conversationId && opts.conversationId !== "default";
+          opts?.conversationId &&
+          opts.conversationId !== "default" &&
+          !opts?.conversationId.startsWith("agent-");
         const successOutput = isSpecificConv
           ? [
               `Switched to **${agentLabel}**`,
@@ -8695,7 +8701,7 @@ export default function App({
 
             // Build export parameters (include conversation_id if in specific conversation)
             const exportParams: { conversation_id?: string } = {};
-            if (conversationId !== "default") {
+            if (conversationId !== "default" && conversationId !== agentId) {
               exportParams.conversation_id = conversationId;
             }
 
@@ -12914,15 +12920,16 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
                         : `letta --agent ${agentId}`}
                     </Text>
                     {/* Only show conversation hint if not on default (default is resumed automatically) */}
-                    {conversationId !== "default" && (
-                      <>
-                        <Box height={1} />
-                        <Text dimColor>Resume this conversation with:</Text>
-                        <Text color={colors.link.url}>
-                          {`letta --conv ${conversationId}`}
-                        </Text>
-                      </>
-                    )}
+                    {conversationId !== "default" &&
+                      conversationId !== agentId && (
+                        <>
+                          <Box height={1} />
+                          <Text dimColor>Resume this conversation with:</Text>
+                          <Text color={colors.link.url}>
+                            {`letta --conv ${conversationId}`}
+                          </Text>
+                        </>
+                      )}
                   </Box>
                 );
               })()}

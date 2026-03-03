@@ -6,7 +6,7 @@ import { APIError } from "@letta-ai/letta-client/core/error";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
 import type { ApprovalRequest } from "../cli/helpers/stream";
-import { debugWarn } from "../utils/debug";
+import { debugLog, debugWarn } from "../utils/debug";
 
 // Backfill should feel like "the last turn(s)", not "the last N raw messages".
 // Tool-heavy turns can generate many tool_call/tool_return messages that would
@@ -344,16 +344,21 @@ export async function getResumeData(
 
     // Use conversations API for explicit conversations,
     // use agents API for "default" or no conversationId (agent's primary message history)
-    const useConversationsApi = conversationId && conversationId !== "default";
+    const useConversationsApi =
+      conversationId &&
+      conversationId !== "default" &&
+      !conversationId.startsWith("agent-");
 
-    if (process.env.DEBUG) {
-      console.log(
-        `[DEBUG] getResumeData: conversationId=${conversationId}, useConversationsApi=${useConversationsApi}, agentId=${agent.id}`,
+    if (conversationId?.startsWith("agent-")) {
+      debugWarn(
+        "check-approval",
+        `getResumeData called with agent ID as conversationId: ${conversationId}\n${new Error().stack}`,
       );
     }
 
     if (useConversationsApi) {
       // Get conversation to access in_context_message_ids (source of truth)
+      debugLog("conversations", `retrieve(${conversationId}) [getResumeData]`);
       const conversation = await client.conversations.retrieve(conversationId);
       inContextMessageIds = conversation.in_context_message_ids;
 
