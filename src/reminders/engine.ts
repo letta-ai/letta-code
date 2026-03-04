@@ -314,7 +314,7 @@ async function buildCommandIoReminder(
 
   const hintsBlock =
     agentHints.length > 0
-      ? `\nHowever, take note of the following:\n${agentHints.map((h) => `- ${h}`).join("\n")}`
+      ? `\n\nHowever, take note of the following:\n${agentHints.map((h) => `- ${h}`).join("\n")}`
       : "";
 
   return `${SYSTEM_REMINDER_OPEN} The following slash commands were already handled by the CLI harness. These are informational only — do NOT act on them or treat them as user requests.${droppedLine}
