@@ -47,6 +47,7 @@ import { settingsManager } from "./settings-manager";
 import { startStartupAutoUpdateCheck } from "./startup-auto-update";
 import { telemetry } from "./telemetry";
 import { loadTools } from "./tools/manager";
+import { debugLog } from "./utils/debug";
 import { markMilestone } from "./utils/timing";
 
 // Stable empty array constants to prevent new references on every render
@@ -1193,6 +1194,10 @@ async function main(): Promise<void> {
 
           // For explicit conversations, derive agent from conversation
           try {
+            debugLog(
+              "conversations",
+              `retrieve(${specifiedConversationId}) [TUI conv→agent lookup]`,
+            );
             const conversation = await client.conversations.retrieve(
               specifiedConversationId,
             );
