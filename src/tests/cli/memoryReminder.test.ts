@@ -213,7 +213,7 @@ describe("deep-init trigger", () => {
     };
   }
 
-  test("does not fire before turn 5", async () => {
+  test("does not fire before turn 8", async () => {
     let launched = false;
     const ctx = makeContext({
       shallowInitCompleted: true,

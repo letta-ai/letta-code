@@ -1732,6 +1732,17 @@ export default function App({
   const initProgressByAgentRef = useRef(
     new Map<string, { shallowCompleted: boolean; deepFired: boolean }>(),
   );
+  const updateInitProgress = (
+    forAgentId: string,
+    update: Partial<{ shallowCompleted: boolean; deepFired: boolean }>,
+  ) => {
+    const progress = initProgressByAgentRef.current.get(forAgentId) ?? {
+      shallowCompleted: false,
+      deepFired: false,
+    };
+    Object.assign(progress, update);
+    initProgressByAgentRef.current.set(forAgentId, progress);
+  };
 
   // Track if we've set the conversation summary for this new conversation
   // Initialized to true for resumed conversations (they already have context)
@@ -9240,11 +9251,7 @@ export default function App({
                 silentCompletion: true,
                 onComplete: ({ success, error }) => {
                   if (success) {
-                    const progress = initProgressByAgentRef.current.get(
-                      agentId,
-                    ) ?? { shallowCompleted: false, deepFired: false };
-                    progress.deepFired = true;
-                    initProgressByAgentRef.current.set(agentId, progress);
+                    updateInitProgress(agentId, { deepFired: true });
                   }
                   const msg = success
                     ? "Built a memory palace of you. Visit it with /palace."
@@ -9415,12 +9422,7 @@ export default function App({
         try {
           const fired = await fireAutoInit(agentId, ({ success, error }) => {
             if (success) {
-              const progress = initProgressByAgentRef.current.get(agentId) ?? {
-                shallowCompleted: false,
-                deepFired: false,
-              };
-              progress.shallowCompleted = true;
-              initProgressByAgentRef.current.set(agentId, progress);
+              updateInitProgress(agentId, { shallowCompleted: true });
             }
             const msg = success
               ? "Built a memory palace of you. Visit it with /palace."
@@ -9629,12 +9631,7 @@ ${SYSTEM_REMINDER_CLOSE}
       }
       // Write back deepInitFired in case the engine set it during this cycle.
       if (sharedReminderStateRef.current.deepInitFired) {
-        const progress = initProgressByAgentRef.current.get(agentId) ?? {
-          shallowCompleted: false,
-          deepFired: false,
-        };
-        progress.deepFired = true;
-        initProgressByAgentRef.current.set(agentId, progress);
+        updateInitProgress(agentId, { deepFired: true });
       }
 
       // Build conversation switch alert if a switch is pending (behind feature flag)

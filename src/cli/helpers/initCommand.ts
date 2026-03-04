@@ -150,6 +150,7 @@ export async function fireAutoInit(
     workingDirectory: process.cwd(),
     memoryDir: getMemoryFilesystemRoot(agentId),
     gitContext,
+    depth: "shallow",
   });
 
   const { spawnBackgroundSubagentTask } = await import("../../tools/impl/Task");
