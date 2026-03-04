@@ -9229,9 +9229,6 @@ export default function App({
               return { submitted: true };
             }
 
-            // Only clear pending auto-init once we know manual /init will proceed
-            autoInitPendingAgentIdsRef.current.delete(agentId);
-
             try {
               const initPrompt = buildMemoryInitRuntimePrompt({
                 agentId,
@@ -9259,6 +9256,9 @@ export default function App({
                   appendTaskNotificationEvents([msg]);
                 },
               });
+
+              // Clear pending auto-init only after spawn succeeded
+              autoInitPendingAgentIdsRef.current.delete(agentId);
 
               cmd.finish(
                 "Learning about you and your codebase in the background. You'll be notified when ready.",
@@ -9580,6 +9580,9 @@ ${SYSTEM_REMINDER_CLOSE}
             description: "Deep memory initialization",
             silentCompletion: true,
             onComplete: ({ success, error }) => {
+              if (success) {
+                updateInitProgress(agentId, { deepFired: true });
+              }
               const msg = success
                 ? "Built a memory palace of you. Visit it with /palace."
                 : `Deep memory initialization failed: ${error || "Unknown error"}`;
@@ -9629,11 +9632,6 @@ ${SYSTEM_REMINDER_CLOSE}
       for (const part of sharedReminderParts) {
         reminderParts.push(part);
       }
-      // Write back deepInitFired in case the engine set it during this cycle.
-      if (sharedReminderStateRef.current.deepInitFired) {
-        updateInitProgress(agentId, { deepFired: true });
-      }
-
       // Build conversation switch alert if a switch is pending (behind feature flag)
       let conversationSwitchAlert = "";
       if (

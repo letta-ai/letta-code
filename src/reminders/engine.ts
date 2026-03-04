@@ -277,10 +277,9 @@ async function maybeLaunchDeepInit(
   if (!memfsEnabled) return null;
 
   if (context.maybeLaunchDeepInitSubagent) {
-    const launched = await context.maybeLaunchDeepInitSubagent();
-    if (launched) {
-      context.state.deepInitFired = true;
-    }
+    // Don't latch deepInitFired here — it's set in the onComplete callback
+    // only on success, so a failed deep init allows automatic retry.
+    await context.maybeLaunchDeepInitSubagent();
   }
   return null;
 }
