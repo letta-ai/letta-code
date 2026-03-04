@@ -256,6 +256,15 @@ async function buildReflectionCompactionReminder(
   return buildCompactionMemoryReminder(context.agent.id);
 }
 
+async function buildAutoInitReminder(
+  context: SharedReminderContext,
+): Promise<string | null> {
+  if (!context.state.pendingAutoInitReminder) return null;
+  context.state.pendingAutoInitReminder = false;
+  const { AUTO_INIT_REMINDER } = await import("../agent/promptAssets.js");
+  return AUTO_INIT_REMINDER;
+}
+
 const MAX_COMMAND_REMINDERS_PER_TURN = 10;
 const MAX_TOOLSET_REMINDERS_PER_TURN = 5;
 const MAX_COMMAND_INPUT_CHARS = 2000;
@@ -372,6 +381,7 @@ export const sharedReminderProviders: Record<
   "reflection-compaction": buildReflectionCompactionReminder,
   "command-io": buildCommandIoReminder,
   "toolset-change": buildToolsetChangeReminder,
+  "auto-init": buildAutoInitReminder,
 };
 
 export function assertSharedReminderCoverage(): void {

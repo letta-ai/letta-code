@@ -13,7 +13,8 @@ export type SharedReminderId =
   | "reflection-step-count"
   | "reflection-compaction"
   | "command-io"
-  | "toolset-change";
+  | "toolset-change"
+  | "auto-init";
 
 export interface SharedReminderDefinition {
   id: SharedReminderId;
@@ -72,6 +73,11 @@ export const SHARED_REMINDER_CATALOG: ReadonlyArray<SharedReminderDefinition> =
     {
       id: "toolset-change",
       description: "Client-side toolset change context",
+      modes: ["interactive"],
+    },
+    {
+      id: "auto-init",
+      description: "Auto-init background onboarding notification",
       modes: ["interactive"],
     },
   ];

@@ -1,6 +1,7 @@
 // Additional system prompts for /system command
 
 import approvalRecoveryAlert from "./prompts/approval_recovery_alert.txt";
+import autoInitReminder from "./prompts/auto_init_reminder.txt";
 import anthropicPrompt from "./prompts/claude.md";
 import codexPrompt from "./prompts/codex.md";
 import geminiPrompt from "./prompts/gemini.md";
@@ -38,6 +39,7 @@ export const REMEMBER_PROMPT = rememberPrompt;
 export const MEMORY_CHECK_REMINDER = memoryCheckReminder;
 export const MEMORY_REFLECTION_REMINDER = memoryReflectionReminder;
 export const APPROVAL_RECOVERY_PROMPT = approvalRecoveryAlert;
+export const AUTO_INIT_REMINDER = autoInitReminder;
 export const INTERRUPT_RECOVERY_ALERT = interruptRecoveryAlert;
 
 export const MEMORY_PROMPTS: Record<string, string> = {

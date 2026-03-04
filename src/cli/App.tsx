@@ -220,6 +220,7 @@ import { parsePatchOperations } from "./helpers/formatArgsDisplay";
 import {
   buildLegacyInitMessage,
   buildMemoryInitRuntimePrompt,
+  fireAutoInit,
   gatherGitContext,
   hasActiveInitSubagent,
 } from "./helpers/initCommand";
@@ -1046,6 +1047,13 @@ export default function App({
   const pendingConversationSwitchRef = useRef<
     import("./helpers/conversationSwitchAlert").ConversationSwitchContext | null
   >(null);
+
+  // Pending auto-init for newly created agents — consumed on first user message.
+  // A Set so multiple agents created before any message is sent are all tracked.
+  const autoInitPendingAgentIdsRef = useRef<Set<string>>(new Set());
+  // Tracks whether we've already consumed the startup agentProvenance.isNew flag,
+  // so agent switches later in the session don't re-queue auto-init.
+  const startupAutoInitConsumedRef = useRef(false);
 
   // Track previous prop values to detect actual prop changes (not internal state changes)
   const prevInitialAgentIdRef = useRef(initialAgentId);
@@ -6228,6 +6236,11 @@ export default function App({
         );
         await enableMemfsIfCloud(agent.id);
 
+        // Queue auto-init for first message if memfs is enabled
+        if (settingsManager.isMemfsEnabled(agent.id)) {
+          autoInitPendingAgentIdsRef.current.add(agent.id);
+        }
+
         // Update project settings with new agent
         await updateProjectSettings({ lastAgent: agent.id });
 
@@ -6246,10 +6259,13 @@ export default function App({
 
         // Build success message with hints
         const agentUrl = `https://app.letta.com/projects/default-project/agents/${agent.id}`;
+        const memfsTip = settingsManager.isMemfsEnabled(agent.id)
+          ? "Memory will be auto-initialized on your first message."
+          : "Tip: use /init to initialize your agent's memory system!";
         const successOutput = [
           `Created **${agent.name || agent.id}** (use /pin to save)`,
           `⎿  ${agentUrl}`,
-          `⎿  Tip: use /init to initialize your agent's memory system!`,
+          `⎿  ${memfsTip}`,
         ].join("\n");
         cmd.finish(successOutput, true);
         const successItem: StaticItem = {
@@ -9176,6 +9192,9 @@ export default function App({
 
         // Special handling for /init command
         if (trimmed === "/init") {
+          // Manual /init supersedes pending auto-init for this agent
+          autoInitPendingAgentIdsRef.current.delete(agentId);
+
           const cmd = commandRunner.start(msg, "Gathering project context...");
 
           // Check for pending approvals before either path
@@ -9217,7 +9236,7 @@ export default function App({
                 onComplete: ({ success, error }) => {
                   const msg = success
                     ? "Built a memory palace of you. Visit it with /palace."
-                    : `Memory initialization failed: ${error}`;
+                    : `Memory initialization failed: ${error || "Unknown error"}`;
                   appendTaskNotificationEvents([msg]);
                 },
               });
@@ -9373,6 +9392,26 @@ export default function App({
             registryCmd.finish(result.output, result.success);
           }
           return { submitted: true }; // Don't send commands to Letta agent
+        }
+      }
+
+      // Auto-init: fire background init on first message for newly created agents.
+      // Only remove from the pending set after a confirmed launch so that a blocked
+      // attempt (e.g. another /init subagent in flight) preserves the entry for retry.
+      if (autoInitPendingAgentIdsRef.current.has(agentId) && !isSystemOnly) {
+        try {
+          const fired = await fireAutoInit(agentId, ({ success, error }) => {
+            const msg = success
+              ? "Built a memory palace of you. Visit it with /palace."
+              : `Memory initialization failed: ${error || "Unknown error"}`;
+            appendTaskNotificationEvents([msg]);
+          });
+          if (fired) {
+            autoInitPendingAgentIdsRef.current.delete(agentId);
+            sharedReminderStateRef.current.pendingAutoInitReminder = true;
+          }
+        } catch {
+          // Non-blocking: swallow failures so the user's message still goes through
         }
       }
 
@@ -12498,6 +12537,26 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
       return estimatedLiveHeight < resumeThreshold;
     });
   }, [estimatedLiveHeight, terminalRows]);
+
+  // Queue auto-init for startup-created agents (--new-agent, --import, profile selector "new").
+  // The consumed ref ensures this fires at most once per app lifetime, so later
+  // agent switches (which change agentId but leave agentProvenance stale) don't
+  // accidentally re-queue auto-init for an existing agent. This also means if
+  // the user switches away from the startup agent and back, auto-init won't
+  // re-queue — that's intentional (init is a one-shot at creation time).
+  useEffect(() => {
+    if (
+      loadingState === "ready" &&
+      agentProvenance?.isNew &&
+      agentId &&
+      !startupAutoInitConsumedRef.current
+    ) {
+      startupAutoInitConsumedRef.current = true;
+      if (settingsManager.isMemfsEnabled(agentId)) {
+        autoInitPendingAgentIdsRef.current.add(agentId);
+      }
+    }
+  }, [loadingState, agentProvenance, agentId]);
 
   // Commit welcome snapshot once when ready for fresh sessions (no history)
   // Wait for agentProvenance to be available for new agents (continueSession=false)

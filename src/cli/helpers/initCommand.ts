@@ -6,7 +6,9 @@
  */
 
 import { execSync } from "node:child_process";
+import { getMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "../../constants";
+import { settingsManager } from "../../settings-manager";
 import { getSnapshot as getSubagentSnapshot } from "./subagentState";
 
 // ── Guard ──────────────────────────────────────────────────
@@ -105,6 +107,37 @@ Instructions:
 - Make reasonable assumptions and report them
 - If the memory filesystem is unavailable or unsafe to modify, stop and explain why
 `.trim();
+}
+
+/**
+ * Fire auto-init for a newly created agent.
+ * Returns true if init was spawned, false if skipped (guard / memfs disabled).
+ */
+export async function fireAutoInit(
+  agentId: string,
+  onComplete: (result: { success: boolean; error?: string }) => void,
+): Promise<boolean> {
+  if (hasActiveInitSubagent()) return false;
+  if (!settingsManager.isMemfsEnabled(agentId)) return false;
+
+  const gitContext = gatherGitContext();
+  const initPrompt = buildMemoryInitRuntimePrompt({
+    agentId,
+    workingDirectory: process.cwd(),
+    memoryDir: getMemoryFilesystemRoot(agentId),
+    gitContext,
+  });
+
+  const { spawnBackgroundSubagentTask } = await import("../../tools/impl/Task");
+  spawnBackgroundSubagentTask({
+    subagentType: "init",
+    prompt: initPrompt,
+    description: "Initializing memory",
+    silentCompletion: true,
+    onComplete,
+  });
+
+  return true;
 }
 
 /** Message for the primary agent via processConversation (legacy non-MemFS path). */

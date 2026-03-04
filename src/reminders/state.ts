@@ -29,6 +29,7 @@ export interface SharedReminderState {
   turnCount: number;
   pendingSkillsReinject: boolean;
   pendingReflectionTrigger: boolean;
+  pendingAutoInitReminder: boolean;
   pendingCommandIoReminders: CommandIoReminder[];
   pendingToolsetChangeReminders: ToolsetChangeReminder[];
 }
@@ -44,6 +45,7 @@ export function createSharedReminderState(): SharedReminderState {
     turnCount: 0,
     pendingSkillsReinject: false,
     pendingReflectionTrigger: false,
+    pendingAutoInitReminder: false,
     pendingCommandIoReminders: [],
     pendingToolsetChangeReminders: [],
   };
