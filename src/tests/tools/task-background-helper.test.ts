@@ -232,7 +232,7 @@ describe("waitForBackgroundSubagentLink", () => {
 
     setTimeout(() => {
       updateSubagent("subagent-link-1", {
-        agentURL: "https://app.letta.com/agents/agent-123",
+        agentURL: "https://app.letta.com/chat/agent-123",
       });
     }, 20);
 

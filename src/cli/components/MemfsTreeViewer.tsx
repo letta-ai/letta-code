@@ -11,6 +11,7 @@ import {
   type TreeNode,
 } from "../../agent/memoryScanner";
 import { generateAndOpenMemoryViewer } from "../../web/generate-memory-viewer";
+import { buildChatUrl } from "../helpers/appUrls";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
 import { Text } from "./Text";
@@ -51,7 +52,7 @@ export function MemfsTreeViewer({
   const terminalWidth = useTerminalWidth();
   const solidLine = SOLID_LINE.repeat(Math.max(terminalWidth, 10));
   const isTmux = Boolean(process.env.TMUX);
-  const adeUrl = `https://app.letta.com/agents/${agentId}?view=memory${conversationId && conversationId !== "default" ? `&conversation=${conversationId}` : ""}`;
+  const adeUrl = buildChatUrl(agentId, { view: "memory", conversationId });
 
   // State
   const [selectedIndex, setSelectedIndex] = useState(0);

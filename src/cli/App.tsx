@@ -193,6 +193,7 @@ import {
   toLines,
 } from "./helpers/accumulator";
 import { classifyApprovals } from "./helpers/approvalClassification";
+import { buildChatUrl } from "./helpers/appUrls";
 import { backfillBuffers } from "./helpers/backfill";
 import { chunkLog } from "./helpers/chunkLog";
 import {
@@ -6275,7 +6276,7 @@ export default function App({
         });
 
         // Build success message with hints
-        const agentUrl = `https://app.letta.com/projects/default-project/agents/${agent.id}`;
+        const agentUrl = buildChatUrl(agent.id);
         const memfsTip = settingsManager.isMemfsEnabled(agent.id)
           ? "Memory will be auto-initialized on your first message."
           : "Tip: use /init to initialize your agent's memory system!";
@@ -6964,10 +6965,9 @@ export default function App({
 
         // Special handling for /ade command - open agent in browser
         if (trimmed === "/ade") {
-          const adeUrl =
-            conversationIdRef.current === "default"
-              ? `https://app.letta.com/agents/${agentId}`
-              : `https://app.letta.com/agents/${agentId}?conversation=${conversationIdRef.current}`;
+          const adeUrl = buildChatUrl(agentId, {
+            conversationId: conversationIdRef.current,
+          });
 
           const cmd = commandRunner.start("/ade", "Opening ADE...");
 

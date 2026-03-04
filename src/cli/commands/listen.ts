@@ -9,6 +9,7 @@ import { settingsManager } from "../../settings-manager";
 import { getErrorMessage } from "../../utils/error";
 import { registerWithCloud } from "../../websocket/listen-register";
 import type { Buffers, Line } from "../helpers/accumulator";
+import { buildChatUrl } from "../helpers/appUrls";
 
 // tiny helper for unique ids
 function uid(prefix: string) {
@@ -179,11 +180,10 @@ export async function handleListen(
   const buildConnectionUrl = (connId: string): string => {
     if (!ctx.agentId) return "";
 
-    let url = `https://app.letta.com/agents/${ctx.agentId}?deviceId=${connId}`;
-    if (ctx.conversationId) {
-      url += `&conversationId=${ctx.conversationId}`;
-    }
-    return url;
+    return buildChatUrl(ctx.agentId, {
+      deviceId: connId,
+      conversationId: ctx.conversationId ?? undefined,
+    });
   };
 
   // Start listen flow

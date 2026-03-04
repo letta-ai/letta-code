@@ -4,6 +4,7 @@ import Link from "ink-link";
 import { useEffect, useState } from "react";
 import { getClient } from "../../agent/client";
 import { debugLog } from "../../utils/debug";
+import { buildChatUrl } from "../helpers/appUrls";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
 import { MarkdownDisplay } from "./MarkdownDisplay";
@@ -40,7 +41,7 @@ export function MemoryTabViewer({
   const terminalWidth = useTerminalWidth();
   const solidLine = SOLID_LINE.repeat(Math.max(terminalWidth, 10));
   const isTmux = Boolean(process.env.TMUX);
-  const adeUrl = `https://app.letta.com/agents/${agentId}?view=memory${conversationId && conversationId !== "default" ? `&conversation=${conversationId}` : ""}`;
+  const adeUrl = buildChatUrl(agentId, { view: "memory", conversationId });
 
   const [selectedTabIndex, setSelectedTabIndex] = useState(0);
   const [scrollOffset, setScrollOffset] = useState(0);
