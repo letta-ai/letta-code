@@ -9192,9 +9192,6 @@ export default function App({
 
         // Special handling for /init command
         if (trimmed === "/init") {
-          // Manual /init supersedes pending auto-init for this agent
-          autoInitPendingAgentIdsRef.current.delete(agentId);
-
           const cmd = commandRunner.start(msg, "Gathering project context...");
 
           // Check for pending approvals before either path
@@ -9217,6 +9214,9 @@ export default function App({
               return { submitted: true };
             }
 
+            // Only clear pending auto-init once we know manual /init will proceed
+            autoInitPendingAgentIdsRef.current.delete(agentId);
+
             try {
               const initPrompt = buildMemoryInitRuntimePrompt({
                 agentId,
@@ -9235,8 +9235,11 @@ export default function App({
                 description: "Initializing memory",
                 silentCompletion: true,
                 onComplete: ({ success, error }) => {
-                  // Manual /init runs deep — prevent the turn-5 trigger from re-running
-                  sharedReminderStateRef.current.deepInitFired = true;
+                  // Manual /init runs deep — prevent the turn-5 trigger from re-running.
+                  // Only mutate state if the user hasn't switched agents since launch.
+                  if (agentIdRef.current === agentId) {
+                    sharedReminderStateRef.current.deepInitFired = true;
+                  }
                   const msg = success
                     ? "Built a memory palace of you. Visit it with /palace."
                     : `Memory initialization failed: ${error || "Unknown error"}`;
@@ -9269,6 +9272,7 @@ export default function App({
             }
           } else {
             // Legacy path: primary agent processConversation
+            autoInitPendingAgentIdsRef.current.delete(agentId);
             setCommandRunning(true);
             try {
               cmd.finish(
@@ -9404,6 +9408,10 @@ export default function App({
       if (autoInitPendingAgentIdsRef.current.has(agentId) && !isSystemOnly) {
         try {
           const fired = await fireAutoInit(agentId, ({ success, error }) => {
+            // Only mutate state if the user hasn't switched agents since launch.
+            if (success && agentIdRef.current === agentId) {
+              sharedReminderStateRef.current.shallowInitCompleted = true;
+            }
             const msg = success
               ? "Built a memory palace of you. Visit it with /palace."
               : `Memory initialization failed: ${error || "Unknown error"}`;
@@ -9562,7 +9570,7 @@ ${SYSTEM_REMINDER_CLOSE}
             onComplete: ({ success, error }) => {
               const msg = success
                 ? "Built a memory palace of you. Visit it with /palace."
-                : `Deep memory initialization failed: ${error}`;
+                : `Deep memory initialization failed: ${error || "Unknown error"}`;
               appendTaskNotificationEvents([msg]);
             },
           });

@@ -277,8 +277,10 @@ async function maybeLaunchDeepInit(
   if (!memfsEnabled) return null;
 
   if (context.maybeLaunchDeepInitSubagent) {
-    context.state.deepInitFired = true;
-    await context.maybeLaunchDeepInitSubagent();
+    const launched = await context.maybeLaunchDeepInitSubagent();
+    if (launched) {
+      context.state.deepInitFired = true;
+    }
   }
   return null;
 }

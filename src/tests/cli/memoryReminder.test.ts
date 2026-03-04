@@ -290,4 +290,14 @@ describe("deep-init trigger", () => {
     expect(result).toBeNull();
     expect(launched).toBe(false);
   });
+
+  test("does not latch deepInitFired when launch returns false", async () => {
+    const ctx = makeContext({
+      shallowInitCompleted: true,
+      turnCount: 5,
+      callback: async () => false,
+    });
+    await deepInitProvider(ctx);
+    expect(ctx.state.deepInitFired).toBe(false);
+  });
 });
