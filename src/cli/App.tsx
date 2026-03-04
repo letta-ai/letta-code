@@ -328,8 +328,8 @@ const LLM_API_ERROR_MAX_RETRIES = 3;
 const EMPTY_RESPONSE_MAX_RETRIES = 2;
 
 // Retry config for 409 "conversation busy" errors (exponential backoff)
-const CONVERSATION_BUSY_MAX_RETRIES = 3; // 2.5s -> 5s -> 10s
-const CONVERSATION_BUSY_RETRY_BASE_DELAY_MS = 2500; // 2.5 seconds
+const CONVERSATION_BUSY_MAX_RETRIES = 3; // 10s -> 20s -> 40s
+const CONVERSATION_BUSY_RETRY_BASE_DELAY_MS = 10000; // 10 seconds
 
 // Message shown when user interrupts the stream
 const INTERRUPT_MESSAGE =
