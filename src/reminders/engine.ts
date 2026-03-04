@@ -266,9 +266,14 @@ async function buildAutoInitReminder(
   return AUTO_INIT_REMINDER;
 }
 
+// Disabled: deep init at turn 8 + reflection at turn 10 is too chaotic.
+// Re-enable once both subagent prompts are tuned to coexist.
+const DEEP_INIT_AUTO_LAUNCH_ENABLED = false;
+
 async function maybeLaunchDeepInit(
   context: SharedReminderContext,
 ): Promise<string | null> {
+  if (!DEEP_INIT_AUTO_LAUNCH_ENABLED) return null;
   if (!context.state.shallowInitCompleted) return null;
   if (context.state.deepInitFired) return null;
   if (context.state.turnCount < 8) return null;

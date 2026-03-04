@@ -228,7 +228,10 @@ describe("deep-init trigger", () => {
     expect(launched).toBe(false);
   });
 
-  test("fires at turn 8 when shallowInitCompleted is true", async () => {
+  // Deep init auto-launch is currently disabled (reflection + deep init
+  // at similar turn counts is too chaotic). This test documents the
+  // disabled behavior; re-enable when subagent prompts are tuned.
+  test("is currently disabled — does not launch even when conditions are met", async () => {
     let launched = false;
     const ctx = makeContext({
       shallowInitCompleted: true,
@@ -240,10 +243,7 @@ describe("deep-init trigger", () => {
     });
     const result = await deepInitProvider(ctx);
     expect(result).toBeNull();
-    expect(launched).toBe(true);
-    // deepInitFired is NOT set by the engine — it's set in the onComplete
-    // callback on success, so a failed deep init allows retry.
-    expect(ctx.state.deepInitFired).toBe(false);
+    expect(launched).toBe(false);
   });
 
   test("does not re-fire once deepInitFired is true", async () => {
