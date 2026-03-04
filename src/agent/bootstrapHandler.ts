@@ -36,6 +36,7 @@ export interface BootstrapHandlerClient {
         opts: {
           limit: number;
           order: "asc" | "desc";
+          agent_id?: string;
           before?: string;
           after?: string;
         },
@@ -99,7 +100,7 @@ export async function handleBootstrapSessionState(
     const listStart = Date.now();
     const page = await client.conversations.messages.list(
       route.conversationId,
-      { limit, order },
+      { limit, order, ...(route.agentId ? { agent_id: route.agentId } : {}) },
     );
     const items = page.getPaginatedItems();
     const listEnd = Date.now();

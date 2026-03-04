@@ -49,8 +49,7 @@ export function getStreamRequestContext(
  *
  * For the "default" conversation (agent's primary message history without
  * an explicit conversation object), pass conversationId="default" and
- * provide agentId in opts. The server accepts agent IDs as the
- * conversation_id path parameter for agent-direct messaging.
+ * provide agentId in opts. The agent id is sent in the request body.
  */
 export async function sendMessageStream(
   conversationId: string,
@@ -75,33 +74,34 @@ export async function sendMessageStream(
   await waitForToolsetReady();
   const { clientTools, contextId } = captureToolExecutionContext();
 
-  // For "default" conversation, pass the agent ID to the conversations endpoint.
-  // The server accepts agent-* IDs for agent-direct messaging.
-  const resolvedConversationId =
-    conversationId === "default" ? opts.agentId : conversationId;
-
-  if (!resolvedConversationId) {
+  const isDefaultConversation = conversationId === "default";
+  if (isDefaultConversation && !opts.agentId) {
     throw new Error(
       "agentId is required in opts when using default conversation",
     );
   }
 
+  const resolvedConversationId = conversationId;
+
+  const requestBody = {
+    messages,
+    streaming: true,
+    stream_tokens: opts.streamTokens ?? true,
+    background: opts.background ?? true,
+    client_tools: clientTools,
+    include_compaction_messages: true,
+    ...(isDefaultConversation ? { agent_id: opts.agentId } : {}),
+  };
+
   if (process.env.DEBUG) {
     console.log(
-      `[DEBUG] sendMessageStream: conversationId=${conversationId}, resolved=${resolvedConversationId}`,
+      `[DEBUG] sendMessageStream: conversationId=${conversationId}, agentId=${opts.agentId ?? "(none)"}`,
     );
   }
 
   const stream = await client.conversations.messages.create(
     resolvedConversationId,
-    {
-      messages: messages,
-      streaming: true,
-      stream_tokens: opts.streamTokens ?? true,
-      background: opts.background ?? true,
-      client_tools: clientTools,
-      include_compaction_messages: true,
-    },
+    requestBody,
     requestOptions,
   );
 

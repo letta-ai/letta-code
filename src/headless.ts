@@ -114,7 +114,6 @@ import type {
   StreamEvent,
   SystemInitMessage,
 } from "./types/protocol";
-import { debugLog } from "./utils/debug";
 import {
   markMilestone,
   measureSinceMilestone,
@@ -527,10 +526,7 @@ export async function handleHeadlessCommand(
   // Validate shared mutual-exclusion rules for startup flags.
   try {
     validateFlagConflicts({
-      guard:
-        specifiedConversationId &&
-        specifiedConversationId !== "default" &&
-        !specifiedConversationId.startsWith("agent-"),
+      guard: specifiedConversationId && specifiedConversationId !== "default",
       checks: [
         {
           when: specifiedAgentId,
@@ -734,16 +730,8 @@ export async function handleHeadlessCommand(
   // Priority 0: --conversation derives agent from conversation ID.
   // "default" is a virtual agent-scoped conversation (not a retrievable conv-*).
   // It requires --agent and should not hit conversations.retrieve().
-  if (
-    specifiedConversationId &&
-    specifiedConversationId !== "default" &&
-    !specifiedConversationId.startsWith("agent-")
-  ) {
+  if (specifiedConversationId && specifiedConversationId !== "default") {
     try {
-      debugLog(
-        "conversations",
-        `retrieve(${specifiedConversationId}) [headless conv→agent lookup]`,
-      );
       const conversation = await client.conversations.retrieve(
         specifiedConversationId,
       );
@@ -1019,10 +1007,6 @@ export async function handleHeadlessCommand(
     } else {
       // User specified an explicit conversation to resume - validate it exists
       try {
-        debugLog(
-          "conversations",
-          `retrieve(${specifiedConversationId}) [headless --conv validate]`,
-        );
         await client.conversations.retrieve(specifiedConversationId);
         conversationId = specifiedConversationId;
       } catch {
@@ -1046,10 +1030,6 @@ export async function handleHeadlessCommand(
       } else {
         // Verify the conversation still exists
         try {
-          debugLog(
-            "conversations",
-            `retrieve(${lastSession.conversationId}) [headless lastSession resume]`,
-          );
           await client.conversations.retrieve(lastSession.conversationId);
           conversationId = lastSession.conversationId;
         } catch {

@@ -192,28 +192,29 @@ describe("list_messages routing — resolveListMessagesRoute", () => {
 
   /**
    * Case C: no conversation_id in request, session is on the default conversation.
-   * Resolves to conversations API with agent ID as the conversation_id
-   * (server accepts agent-* IDs for agent-direct messaging).
+   * Keeps conversation_id="default" and passes agent_id separately.
    */
-  test("C — omitted conversation_id + session default → conversations API with session agentId", () => {
+  test("C — omitted conversation_id + session default → conversations API with default + session agentId", () => {
     const route = resolveListMessagesRoute(
       {}, // no conversation_id
       "default", // session is on default conversation
       SESSION_AGENT,
     );
     expect(route.kind).toBe("conversations");
-    expect(route.conversationId).toBe(SESSION_AGENT);
+    expect(route.conversationId).toBe("default");
+    expect(route.agentId).toBe(SESSION_AGENT);
   });
 
-  test("C — explicit agent_id in request + session default → uses request agentId", () => {
+  test("C — explicit agent_id in request + session default → uses request agentId query", () => {
     const route = resolveListMessagesRoute(
       { agent_id: "agent-override-id" },
       "default",
       SESSION_AGENT,
     );
     expect(route.kind).toBe("conversations");
+    expect(route.conversationId).toBe("default");
     // Request's agent_id takes priority over session agent when on default conv
-    expect(route.conversationId).toBe("agent-override-id");
+    expect(route.agentId).toBe("agent-override-id");
   });
 
   test("C — no conversation_id, no agent_id, session default → falls back to session agentId", () => {
@@ -223,7 +224,8 @@ describe("list_messages routing — resolveListMessagesRoute", () => {
       "agent-session-fallback",
     );
     expect(route.kind).toBe("conversations");
-    expect(route.conversationId).toBe("agent-session-fallback");
+    expect(route.conversationId).toBe("default");
+    expect(route.agentId).toBe("agent-session-fallback");
   });
 
   /**
