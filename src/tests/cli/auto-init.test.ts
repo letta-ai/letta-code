@@ -83,7 +83,7 @@ describe("auto-init lifecycle guards", () => {
     expect(blockStart).toBeGreaterThan(-1);
 
     // Extract enough of the block to cover the clearing logic
-    const block = appSource.slice(blockStart, blockStart + 600);
+    const block = appSource.slice(blockStart, blockStart + 1200);
 
     // The delete must happen AFTER checking `fired`, not before fireAutoInit
     const firedCheck = block.indexOf("if (fired)");

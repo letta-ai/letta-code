@@ -1728,6 +1728,10 @@ export default function App({
   const [showExitStats, setShowExitStats] = useState(false);
 
   const sharedReminderStateRef = useRef(createSharedReminderState());
+  // Per-agent init progression — survives agent/conversation switches unlike SharedReminderState.
+  const initProgressByAgentRef = useRef(
+    new Map<string, { shallowCompleted: boolean; deepFired: boolean }>(),
+  );
 
   // Track if we've set the conversation summary for this new conversation
   // Initialized to true for resumed conversations (they already have context)
@@ -9235,10 +9239,12 @@ export default function App({
                 description: "Initializing memory",
                 silentCompletion: true,
                 onComplete: ({ success, error }) => {
-                  // Manual /init runs deep — prevent the turn-5 trigger from re-running.
-                  // Only mutate state if the user hasn't switched agents since launch.
-                  if (agentIdRef.current === agentId) {
-                    sharedReminderStateRef.current.deepInitFired = true;
+                  if (success) {
+                    const progress = initProgressByAgentRef.current.get(
+                      agentId,
+                    ) ?? { shallowCompleted: false, deepFired: false };
+                    progress.deepFired = true;
+                    initProgressByAgentRef.current.set(agentId, progress);
                   }
                   const msg = success
                     ? "Built a memory palace of you. Visit it with /palace."
@@ -9408,9 +9414,13 @@ export default function App({
       if (autoInitPendingAgentIdsRef.current.has(agentId) && !isSystemOnly) {
         try {
           const fired = await fireAutoInit(agentId, ({ success, error }) => {
-            // Only mutate state if the user hasn't switched agents since launch.
-            if (success && agentIdRef.current === agentId) {
-              sharedReminderStateRef.current.shallowInitCompleted = true;
+            if (success) {
+              const progress = initProgressByAgentRef.current.get(agentId) ?? {
+                shallowCompleted: false,
+                deepFired: false,
+              };
+              progress.shallowCompleted = true;
+              initProgressByAgentRef.current.set(agentId, progress);
             }
             const msg = success
               ? "Built a memory palace of you. Visit it with /palace."
@@ -9590,6 +9600,13 @@ ${SYSTEM_REMINDER_CLOSE}
         sharedReminderStateRef.current,
         contextTrackerRef.current,
       );
+      // Hydrate init progression from the per-agent map into the shared state
+      // so the deep-init provider sees the correct flags for the current agent.
+      const initProgress = initProgressByAgentRef.current.get(agentId);
+      sharedReminderStateRef.current.shallowInitCompleted =
+        initProgress?.shallowCompleted ?? false;
+      sharedReminderStateRef.current.deepInitFired =
+        initProgress?.deepFired ?? false;
       const { getSkillSources } = await import("../agent/context");
       const { parts: sharedReminderParts } = await buildSharedReminderParts({
         mode: "interactive",
@@ -9609,6 +9626,15 @@ ${SYSTEM_REMINDER_CLOSE}
       });
       for (const part of sharedReminderParts) {
         reminderParts.push(part);
+      }
+      // Write back deepInitFired in case the engine set it during this cycle.
+      if (sharedReminderStateRef.current.deepInitFired) {
+        const progress = initProgressByAgentRef.current.get(agentId) ?? {
+          shallowCompleted: false,
+          deepFired: false,
+        };
+        progress.deepFired = true;
+        initProgressByAgentRef.current.set(agentId, progress);
       }
 
       // Build conversation switch alert if a switch is pending (behind feature flag)
