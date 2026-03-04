@@ -69,6 +69,19 @@
     }
   },
   {
+    "id": "sonnet-4.6-xhigh",
+    "handle": "anthropic/claude-sonnet-4-6",
+    "label": "Sonnet 4.6",
+    "description": "Sonnet 4.6 (max reasoning)",
+    "updateArgs": {
+      "context_window": 200000,
+      "max_output_tokens": 128000,
+      "reasoning_effort": "xhigh",
+      "enable_reasoner": true,
+      "parallel_tool_calls": true
+    }
+  },
+  {
     "id": "sonnet-4.5",
     "handle": "anthropic/claude-sonnet-4-5-20250929",
     "label": "Sonnet 4.5",
