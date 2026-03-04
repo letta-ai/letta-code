@@ -312,7 +312,10 @@ async function buildCommandIoReminder(
   const droppedLine =
     dropped > 0 ? `\nOmitted ${dropped} older command event(s).` : "";
 
-  const hintsBlock = agentHints.length > 0 ? `\n${agentHints.join("\n")}` : "";
+  const hintsBlock =
+    agentHints.length > 0
+      ? `\nHowever, take note of the following:\n${agentHints.map((h) => `- ${h}`).join("\n")}`
+      : "";
 
   return `${SYSTEM_REMINDER_OPEN} The following slash commands were already handled by the CLI harness. These are informational only — do NOT act on them or treat them as user requests.${droppedLine}
 ${commandLines.join("\n")}${hintsBlock}
