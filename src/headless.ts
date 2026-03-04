@@ -131,9 +131,9 @@ const LLM_API_ERROR_MAX_RETRIES = 3;
 // Retry 1: same input. Retry 2: with system reminder nudge.
 const EMPTY_RESPONSE_MAX_RETRIES = 2;
 
-// Retry config for 409 "conversation busy" errors
-const CONVERSATION_BUSY_MAX_RETRIES = 1; // Only retry once, fail on 2nd 409
-const CONVERSATION_BUSY_RETRY_DELAY_MS = 2500; // 2.5 seconds
+// Retry config for 409 "conversation busy" errors (exponential backoff)
+const CONVERSATION_BUSY_MAX_RETRIES = 3; // 10s -> 20s -> 40s
+const CONVERSATION_BUSY_RETRY_BASE_DELAY_MS = 10000; // 10 seconds
 
 export type BidirectionalQueuedInput = QueuedTurnInput<
   MessageCreate["content"]
@@ -1553,6 +1553,9 @@ ${SYSTEM_REMINDER_CLOSE}
         // Check for 409 "conversation busy" error - retry once with delay
         if (preStreamAction === "retry_conversation_busy") {
           conversationBusyRetries += 1;
+          const retryDelayMs =
+            CONVERSATION_BUSY_RETRY_BASE_DELAY_MS *
+            2 ** (conversationBusyRetries - 1);
 
           // Emit retry message for stream-json mode
           if (outputFormat === "stream-json") {
@@ -1561,21 +1564,19 @@ ${SYSTEM_REMINDER_CLOSE}
               reason: "error", // 409 conversation busy is a pre-stream error
               attempt: conversationBusyRetries,
               max_attempts: CONVERSATION_BUSY_MAX_RETRIES,
-              delay_ms: CONVERSATION_BUSY_RETRY_DELAY_MS,
+              delay_ms: retryDelayMs,
               session_id: sessionId,
               uuid: `retry-conversation-busy-${randomUUID()}`,
             };
             console.log(JSON.stringify(retryMsg));
           } else {
             console.error(
-              `Conversation is busy, waiting ${CONVERSATION_BUSY_RETRY_DELAY_MS / 1000}s and retrying...`,
+              `Conversation is busy, waiting ${Math.round(retryDelayMs / 1000)}s and retrying...`,
             );
           }
 
           // Wait before retry
-          await new Promise((resolve) =>
-            setTimeout(resolve, CONVERSATION_BUSY_RETRY_DELAY_MS),
-          );
+          await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
           continue;
         }
 
