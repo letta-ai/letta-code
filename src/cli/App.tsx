@@ -1728,6 +1728,21 @@ export default function App({
   const [showExitStats, setShowExitStats] = useState(false);
 
   const sharedReminderStateRef = useRef(createSharedReminderState());
+  // Per-agent init progression — survives agent/conversation switches unlike SharedReminderState.
+  const initProgressByAgentRef = useRef(
+    new Map<string, { shallowCompleted: boolean; deepFired: boolean }>(),
+  );
+  const updateInitProgress = (
+    forAgentId: string,
+    update: Partial<{ shallowCompleted: boolean; deepFired: boolean }>,
+  ) => {
+    const progress = initProgressByAgentRef.current.get(forAgentId) ?? {
+      shallowCompleted: false,
+      deepFired: false,
+    };
+    Object.assign(progress, update);
+    initProgressByAgentRef.current.set(forAgentId, progress);
+  };
 
   // Track if we've set the conversation summary for this new conversation
   // Initialized to true for resumed conversations (they already have context)
@@ -9198,9 +9213,6 @@ export default function App({
 
         // Special handling for /init command
         if (trimmed === "/init") {
-          // Manual /init supersedes pending auto-init for this agent
-          autoInitPendingAgentIdsRef.current.delete(agentId);
-
           const cmd = commandRunner.start(msg, "Gathering project context...");
 
           // Check for pending approvals before either path
@@ -9229,6 +9241,7 @@ export default function App({
                 workingDirectory: process.cwd(),
                 memoryDir: getMemoryFilesystemRoot(agentId),
                 gitContext,
+                depth: "deep",
               });
 
               const { spawnBackgroundSubagentTask } = await import(
@@ -9240,12 +9253,18 @@ export default function App({
                 description: "Initializing memory",
                 silentCompletion: true,
                 onComplete: ({ success, error }) => {
+                  if (success) {
+                    updateInitProgress(agentId, { deepFired: true });
+                  }
                   const msg = success
                     ? "Built a memory palace of you. Visit it with /palace."
                     : `Memory initialization failed: ${error || "Unknown error"}`;
                   appendTaskNotificationEvents([msg]);
                 },
               });
+
+              // Clear pending auto-init only after spawn succeeded
+              autoInitPendingAgentIdsRef.current.delete(agentId);
 
               cmd.finish(
                 "Learning about you and your codebase in the background. You'll be notified when ready.",
@@ -9272,6 +9291,7 @@ export default function App({
             }
           } else {
             // Legacy path: primary agent processConversation
+            autoInitPendingAgentIdsRef.current.delete(agentId);
             setCommandRunning(true);
             try {
               cmd.finish(
@@ -9407,6 +9427,9 @@ export default function App({
       if (autoInitPendingAgentIdsRef.current.has(agentId) && !isSystemOnly) {
         try {
           const fired = await fireAutoInit(agentId, ({ success, error }) => {
+            if (success) {
+              updateInitProgress(agentId, { shallowCompleted: true });
+            }
             const msg = success
               ? "Built a memory palace of you. Visit it with /palace."
               : `Memory initialization failed: ${error || "Unknown error"}`;
@@ -9542,10 +9565,59 @@ ${SYSTEM_REMINDER_CLOSE}
           return false;
         }
       };
+      const maybeLaunchDeepInitSubagent = async () => {
+        if (!memfsEnabledForAgent) return false;
+        if (hasActiveInitSubagent()) return false;
+        try {
+          const gitContext = gatherGitContext();
+          const initPrompt = buildMemoryInitRuntimePrompt({
+            agentId,
+            workingDirectory: process.cwd(),
+            memoryDir: getMemoryFilesystemRoot(agentId),
+            gitContext,
+            depth: "deep",
+          });
+          const { spawnBackgroundSubagentTask } = await import(
+            "../tools/impl/Task"
+          );
+          spawnBackgroundSubagentTask({
+            subagentType: "init",
+            prompt: initPrompt,
+            description: "Deep memory initialization",
+            silentCompletion: true,
+            onComplete: ({ success, error }) => {
+              if (success) {
+                updateInitProgress(agentId, { deepFired: true });
+              }
+              const msg = success
+                ? "Built a memory palace of you. Visit it with /palace."
+                : `Deep memory initialization failed: ${error || "Unknown error"}`;
+              appendTaskNotificationEvents([msg]);
+            },
+          });
+          debugLog("memory", "Auto-launched deep init subagent");
+          return true;
+        } catch (error) {
+          debugWarn(
+            "memory",
+            `Failed to auto-launch deep init subagent: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+          return false;
+        }
+      };
       syncReminderStateFromContextTracker(
         sharedReminderStateRef.current,
         contextTrackerRef.current,
       );
+      // Hydrate init progression from the per-agent map into the shared state
+      // so the deep-init provider sees the correct flags for the current agent.
+      const initProgress = initProgressByAgentRef.current.get(agentId);
+      sharedReminderStateRef.current.shallowInitCompleted =
+        initProgress?.shallowCompleted ?? false;
+      sharedReminderStateRef.current.deepInitFired =
+        initProgress?.deepFired ?? false;
       const { getSkillSources } = await import("../agent/context");
       const { parts: sharedReminderParts } = await buildSharedReminderParts({
         mode: "interactive",
@@ -9561,11 +9633,11 @@ ${SYSTEM_REMINDER_CLOSE}
         skillSources: getSkillSources(),
         resolvePlanModeReminder: getPlanModeReminder,
         maybeLaunchReflectionSubagent,
+        maybeLaunchDeepInitSubagent,
       });
       for (const part of sharedReminderParts) {
         reminderParts.push(part);
       }
-
       // Build conversation switch alert if a switch is pending (behind feature flag)
       let conversationSwitchAlert = "";
       if (

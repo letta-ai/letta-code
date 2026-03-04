@@ -76,6 +76,25 @@ ${recentCommits}
   }
 }
 
+// ── Depth instructions ────────────────────────────────────
+
+const SHALLOW_INSTRUCTIONS = `
+Shallow init — fast project basics only (~5 tool calls max):
+- Only read: CLAUDE.md, AGENTS.md, package.json/pyproject.toml/Cargo.toml, README.md (first 100 lines), top-level directory listing
+- Detect user identity from the git context provided above (already in the prompt — no extra calls)
+- Run one git call: git log --format="%an <%ae>" | sort -u | head -5
+- Write exactly 4 files: project/overview.md, project/commands.md, project/conventions.md, human/identity.md
+- Skip: deep directory exploration, architecture mapping, config analysis, historical sessions, persona files, reflection/checkpoint phase
+`.trim();
+
+const DEEP_INSTRUCTIONS = `
+Deep init — full exploration (follow the initializing-memory skill fully):
+- Read all existing memory files first — do NOT recreate what already exists
+- Then follow the full initializing-memory skill as your operating guide
+- Expand and deepen existing shallow files, add new ones to reach 15-25 target
+- If shallow init already ran, build on its output rather than starting over
+`.trim();
+
 // ── Prompt builders ────────────────────────────────────────
 
 /** Prompt for the background init subagent (MemFS path). */
@@ -84,7 +103,9 @@ export function buildMemoryInitRuntimePrompt(args: {
   workingDirectory: string;
   memoryDir: string;
   gitContext: string;
+  depth?: "shallow" | "deep";
 }): string {
+  const depth = args.depth ?? "deep";
   return `
 The user ran /init for the current project.
 
@@ -92,12 +113,15 @@ Runtime context:
 - parent_agent_id: ${args.agentId}
 - working_directory: ${args.workingDirectory}
 - memory_dir: ${args.memoryDir}
+- research_depth: ${depth}
 
 Git/project context:
 ${args.gitContext}
 
 Task:
 Initialize or reorganize the parent agent's filesystem-backed memory for this project.
+
+${depth === "shallow" ? SHALLOW_INSTRUCTIONS : DEEP_INSTRUCTIONS}
 
 Instructions:
 - Use the pre-loaded initializing-memory skill as your operating guide
@@ -126,6 +150,7 @@ export async function fireAutoInit(
     workingDirectory: process.cwd(),
     memoryDir: getMemoryFilesystemRoot(agentId),
     gitContext,
+    depth: "shallow",
   });
 
   const { spawnBackgroundSubagentTask } = await import("../../tools/impl/Task");

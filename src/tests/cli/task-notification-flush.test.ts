@@ -144,12 +144,14 @@ describe("background onComplete → flush wiring in App.tsx", () => {
     expect(onCompleteIdx).toBeGreaterThan(-1);
 
     // The appendTaskNotificationEvents call must be within the onComplete body
-    // (before the next closing of spawnBackgroundSubagentTask)
+    // (before the closing of spawnBackgroundSubagentTask).
+    // Use "});" with leading whitespace to match the spawn call's closing,
+    // not inner statements like updateInitProgress(...});
     const callIdx = source.indexOf(
       "appendTaskNotificationEvents(",
       onCompleteIdx,
     );
-    const blockEnd = source.indexOf("});", onCompleteIdx);
+    const blockEnd = source.indexOf("              });", onCompleteIdx);
     expect(callIdx).toBeGreaterThan(onCompleteIdx);
     expect(callIdx).toBeLessThan(blockEnd);
   });

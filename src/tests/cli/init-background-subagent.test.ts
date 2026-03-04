@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { buildMemoryInitRuntimePrompt } from "../../cli/helpers/initCommand";
 
 describe("init background subagent wiring", () => {
   const readSource = (relativePath: string) =>
@@ -69,5 +70,45 @@ describe("init background subagent wiring", () => {
       'import initAgentMd from "./builtin/init.md"',
     );
     expect(indexSource).toContain("initAgentMd");
+  });
+
+  const baseArgs = {
+    agentId: "test-agent",
+    workingDirectory: "/tmp/test",
+    memoryDir: "/tmp/test/.memory",
+    gitContext: "## Git context\nsome git info",
+  };
+
+  test('buildMemoryInitRuntimePrompt includes "research_depth: shallow" when depth is "shallow"', () => {
+    const prompt = buildMemoryInitRuntimePrompt({
+      ...baseArgs,
+      depth: "shallow",
+    });
+    expect(prompt).toContain("research_depth: shallow");
+    expect(prompt).toContain("Shallow init");
+    expect(prompt).not.toContain("Deep init");
+  });
+
+  test('buildMemoryInitRuntimePrompt includes "research_depth: deep" when depth is "deep"', () => {
+    const prompt = buildMemoryInitRuntimePrompt({
+      ...baseArgs,
+      depth: "deep",
+    });
+    expect(prompt).toContain("research_depth: deep");
+    expect(prompt).toContain("Deep init");
+    expect(prompt).not.toContain("Shallow init");
+  });
+
+  test('buildMemoryInitRuntimePrompt defaults to "deep" when depth is omitted', () => {
+    const prompt = buildMemoryInitRuntimePrompt(baseArgs);
+    expect(prompt).toContain("research_depth: deep");
+    expect(prompt).toContain("Deep init");
+  });
+
+  test("App.tsx contains maybeLaunchDeepInitSubagent", () => {
+    const appSource = readSource("../../cli/App.tsx");
+    expect(appSource).toContain("maybeLaunchDeepInitSubagent");
+    expect(appSource).toContain("Deep memory initialization");
+    expect(appSource).toContain('depth: "deep"');
   });
 });

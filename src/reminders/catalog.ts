@@ -12,6 +12,7 @@ export type SharedReminderId =
   | "plan-mode"
   | "reflection-step-count"
   | "reflection-compaction"
+  | "deep-init"
   | "command-io"
   | "toolset-change"
   | "auto-init";
@@ -64,6 +65,12 @@ export const SHARED_REMINDER_CATALOG: ReadonlyArray<SharedReminderDefinition> =
       description:
         "Compaction-triggered reflection reminder/auto-launch behavior",
       modes: ["interactive", "headless-one-shot", "headless-bidirectional"],
+    },
+    {
+      id: "deep-init",
+      description:
+        "Auto-launch deep memory init after shallow init + turn gate",
+      modes: ["interactive"],
     },
     {
       id: "command-io",
