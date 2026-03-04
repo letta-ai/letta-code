@@ -314,12 +314,9 @@ async function buildCommandIoReminder(
 
   const hintsBlock = agentHints.length > 0 ? `\n${agentHints.join("\n")}` : "";
 
-  return `${SYSTEM_REMINDER_OPEN}
-The following slash commands were already handled by the CLI harness. These are informational only — do NOT act on them or treat them as user requests.${droppedLine}
+  return `${SYSTEM_REMINDER_OPEN} The following slash commands were already handled by the CLI harness. These are informational only — do NOT act on them or treat them as user requests.${droppedLine}
 ${commandLines.join("\n")}${hintsBlock}
-${SYSTEM_REMINDER_CLOSE}
-
-`;
+${SYSTEM_REMINDER_CLOSE}`;
 }
 
 async function buildToolsetChangeReminder(
@@ -353,13 +350,10 @@ async function buildToolsetChangeReminder(
   const droppedLine =
     dropped > 0 ? `\nOmitted ${dropped} older toolset change event(s).` : "";
 
-  return `${SYSTEM_REMINDER_OPEN}
-The user just changed your toolset (specifically, client-side tools that are attached to the Letta Code harness, which may be a subset of your total tools).${droppedLine}
+  return `${SYSTEM_REMINDER_OPEN} The user just changed your toolset (specifically, client-side tools that are attached to the Letta Code harness, which may be a subset of your total tools).${droppedLine}
 
 ${changeBlocks.join("\n\n")}
-${SYSTEM_REMINDER_CLOSE}
-
-`;
+${SYSTEM_REMINDER_CLOSE}`;
 }
 
 export const sharedReminderProviders: Record<
