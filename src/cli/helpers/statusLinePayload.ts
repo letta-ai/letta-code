@@ -9,7 +9,9 @@ export interface StatusLinePayloadBuildInput {
   currentDirectory: string;
   projectDirectory: string;
   sessionId?: string;
+  agentId?: string | null;
   agentName?: string | null;
+  lastRunId?: string | null;
   totalDurationMs?: number;
   totalApiDurationMs?: number;
   totalInputTokens?: number;
@@ -38,6 +40,7 @@ export interface StatusLinePayload {
     project_dir: string;
   };
   session_id?: string;
+  last_run_id: string | null;
   transcript_path: string | null;
   version: string;
   // Back-compat fields used by custom statusline scripts.
@@ -76,6 +79,7 @@ export interface StatusLinePayload {
     mode: string | null;
   } | null;
   agent: {
+    id: string | null;
     name: string | null;
   };
   permission_mode: string | null;
@@ -137,6 +141,7 @@ export function buildStatusLinePayload(
       project_dir: input.projectDirectory,
     },
     ...(input.sessionId ? { session_id: input.sessionId } : {}),
+    last_run_id: input.lastRunId ?? null,
     transcript_path: null,
     version: getVersion(),
     reasoning_effort: input.reasoningEffort ?? null,
@@ -167,6 +172,7 @@ export function buildStatusLinePayload(
     exceeds_200k_tokens: usedContextTokens > 200_000,
     vim: null,
     agent: {
+      id: input.agentId ?? null,
       name: input.agentName ?? null,
     },
     permission_mode: input.permissionMode ?? null,

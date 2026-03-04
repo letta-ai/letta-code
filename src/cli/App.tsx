@@ -1037,6 +1037,9 @@ export default function App({
     conversationIdRef.current = conversationId;
   }, [conversationId]);
 
+  // Track the most recent run ID from streaming (for statusline display)
+  const lastRunIdRef = useRef<string | null>(null);
+
   const resumeKey = useSuspend();
 
   // Pending conversation switch context — consumed on first message after a switch
@@ -2482,7 +2485,9 @@ export default function App({
     currentDirectory: process.cwd(),
     projectDirectory,
     sessionId: conversationId,
+    agentId,
     agentName,
+    lastRunId: lastRunIdRef.current,
     totalDurationMs: sessionStatsSnapshot.totalWallMs,
     totalApiDurationMs: sessionStatsSnapshot.totalApiMs,
     totalInputTokens: sessionStatsSnapshot.usage.promptTokens,
@@ -4368,6 +4373,8 @@ export default function App({
 
           // Update currentRunId for error reporting in catch block
           currentRunId = lastRunId ?? undefined;
+          // Expose to statusline
+          if (lastRunId) lastRunIdRef.current = lastRunId;
 
           // Track API duration and trajectory deltas
           sessionStatsRef.current.endTurn(apiDurationMs);
@@ -7355,7 +7362,9 @@ export default function App({
                     currentDirectory: wd,
                     projectDirectory,
                     sessionId: conversationIdRef.current,
+                    agentId,
                     agentName,
+                    lastRunId: lastRunIdRef.current,
                     totalDurationMs: stats.totalWallMs,
                     totalApiDurationMs: stats.totalApiMs,
                     totalInputTokens: stats.usage.promptTokens,

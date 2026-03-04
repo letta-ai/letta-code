@@ -27,7 +27,9 @@ export interface StatusLineInputs {
   currentDirectory: string;
   projectDirectory: string;
   sessionId?: string;
+  agentId?: string | null;
   agentName?: string | null;
+  lastRunId?: string | null;
   totalDurationMs?: number;
   totalApiDurationMs?: number;
   totalInputTokens?: number;
@@ -68,7 +70,9 @@ function toPayloadInput(inputs: StatusLineInputs): StatusLinePayloadBuildInput {
     currentDirectory: inputs.currentDirectory,
     projectDirectory: inputs.projectDirectory,
     sessionId: inputs.sessionId,
+    agentId: inputs.agentId,
     agentName: inputs.agentName,
+    lastRunId: inputs.lastRunId,
     totalDurationMs: inputs.totalDurationMs,
     totalApiDurationMs: inputs.totalApiDurationMs,
     totalInputTokens: inputs.totalInputTokens,
