@@ -159,7 +159,8 @@ export async function runMessagesSubcommand(argv: string[]): Promise<number> {
         return 1;
       }
 
-      const response = await client.conversations.messages.list(agentId, {
+      const response = await client.conversations.messages.list("default", {
+        agent_id: agentId,
         limit: parseLimit(parsed.values.limit, 20),
         after: parsed.values.after,
         before: parsed.values.before,

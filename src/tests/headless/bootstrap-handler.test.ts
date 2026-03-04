@@ -7,7 +7,7 @@
  * 3. Pagination fields (next_before, has_more)
  * 4. Timing fields presence
  * 5. Error path — client throws → error envelope returned
- * 6. Default conversation passes agent ID to conversations.messages.list
+ * 6. Default conversation passes conversation_id="default" with agent_id query
  * 7. Explicit conversation uses conversations.messages.list
  *
  * No network. No CLI subprocess. No process.stdout.
@@ -56,7 +56,7 @@ const BASE_CTX: BootstrapHandlerSessionContext = {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("bootstrap_session_state routing", () => {
-  test("default conversation passes agent ID to conversations.messages.list", async () => {
+  test("default conversation passes default + agent_id to conversations.messages.list", async () => {
     const { client, convListSpy } = makeClient([
       { id: "msg-1", type: "user_message" },
     ]);
@@ -70,9 +70,11 @@ describe("bootstrap_session_state routing", () => {
 
     expect(convListSpy).toHaveBeenCalledTimes(1);
 
-    // Verify agent ID is passed as the conversation_id
-    const callArgs = (convListSpy.mock.calls[0] as unknown[])[0];
-    expect(callArgs).toBe("agent-test-123");
+    const callArgs = convListSpy.mock.calls[0] as unknown[];
+    expect(callArgs[0]).toBe("default");
+    expect((callArgs[1] as { agent_id?: string }).agent_id).toBe(
+      "agent-test-123",
+    );
   });
 
   test("named conversation uses conversations.messages.list", async () => {

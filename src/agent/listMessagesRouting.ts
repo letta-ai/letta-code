@@ -4,9 +4,8 @@
  * Extracted from headless.ts so it can be tested in isolation without
  * spinning up a real Letta client.
  *
- * All paths now use the conversations endpoint. For the default conversation,
- * the agent ID is passed as the conversation_id (the server accepts agent-*
- * IDs for agent-direct messaging).
+ * All paths use the conversations endpoint. For the default conversation,
+ * conversation_id stays "default" and agent_id is passed as query param.
  */
 
 import type { ListMessagesControlRequest } from "../types/protocol";
@@ -14,6 +13,7 @@ import type { ListMessagesControlRequest } from "../types/protocol";
 export type ListMessagesRoute = {
   kind: "conversations";
   conversationId: string;
+  agentId?: string;
 };
 
 /**
@@ -35,8 +35,8 @@ export function resolveListMessagesRoute(
     return { kind: "conversations", conversationId: targetConvId };
   }
 
-  // Default conversation: pass the agent ID to the conversations endpoint.
-  // The server accepts agent-* IDs for agent-direct messaging.
+  // Default conversation: keep conversation_id as "default" and
+  // pass the agent ID as a query parameter.
   const agentId = listReq.agent_id ?? sessionAgentId;
-  return { kind: "conversations", conversationId: agentId };
+  return { kind: "conversations", conversationId: "default", agentId };
 }

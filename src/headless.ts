@@ -527,10 +527,7 @@ export async function handleHeadlessCommand(
   // Validate shared mutual-exclusion rules for startup flags.
   try {
     validateFlagConflicts({
-      guard:
-        specifiedConversationId &&
-        specifiedConversationId !== "default" &&
-        !specifiedConversationId.startsWith("agent-"),
+      guard: specifiedConversationId && specifiedConversationId !== "default",
       checks: [
         {
           when: specifiedAgentId,
@@ -734,11 +731,7 @@ export async function handleHeadlessCommand(
   // Priority 0: --conversation derives agent from conversation ID.
   // "default" is a virtual agent-scoped conversation (not a retrievable conv-*).
   // It requires --agent and should not hit conversations.retrieve().
-  if (
-    specifiedConversationId &&
-    specifiedConversationId !== "default" &&
-    !specifiedConversationId.startsWith("agent-")
-  ) {
+  if (specifiedConversationId && specifiedConversationId !== "default") {
     try {
       debugLog(
         "conversations",

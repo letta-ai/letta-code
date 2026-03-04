@@ -85,7 +85,7 @@ describe("discoverFallbackRunIdForResume", () => {
       makeRunsListClient(runsList),
       {
         conversationId: "default",
-        resolvedConversationId: "agent-test",
+        resolvedConversationId: "default",
         agentId: "agent-test",
         requestStartedAtMs: Date.parse("2026-02-27T11:00:00.000Z"),
       },
@@ -93,7 +93,7 @@ describe("discoverFallbackRunIdForResume", () => {
 
     expect(candidate).toBe("run-agent-fallback");
     expect(calls).toEqual([
-      { conversation_id: "agent-test", agent_id: undefined },
+      { conversation_id: "default", agent_id: undefined },
       { conversation_id: undefined, agent_id: "agent-test" },
     ]);
   });

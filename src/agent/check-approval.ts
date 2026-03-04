@@ -6,7 +6,7 @@ import { APIError } from "@letta-ai/letta-client/core/error";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
 import type { ApprovalRequest } from "../cli/helpers/stream";
-import { debugLog, debugWarn } from "../utils/debug";
+import { debugWarn } from "../utils/debug";
 
 // Backfill should feel like "the last turn(s)", not "the last N raw messages".
 // Tool-heavy turns can generate many tool_call/tool_return messages that would
@@ -344,21 +344,10 @@ export async function getResumeData(
 
     // Use conversations API for explicit conversations,
     // use agents API for "default" or no conversationId (agent's primary message history)
-    const useConversationsApi =
-      conversationId &&
-      conversationId !== "default" &&
-      !conversationId.startsWith("agent-");
-
-    if (conversationId?.startsWith("agent-")) {
-      debugWarn(
-        "check-approval",
-        `getResumeData called with agent ID as conversationId: ${conversationId}\n${new Error().stack}`,
-      );
-    }
+    const useConversationsApi = conversationId && conversationId !== "default";
 
     if (useConversationsApi) {
       // Get conversation to access in_context_message_ids (source of truth)
-      debugLog("conversations", `retrieve(${conversationId}) [getResumeData]`);
       const conversation = await client.conversations.retrieve(conversationId);
       inContextMessageIds = conversation.in_context_message_ids;
 
@@ -484,15 +473,16 @@ export async function getResumeData(
       }
       const retrievedMessages = await client.messages.retrieve(lastInContextId);
 
-      // Fetch message history for backfill using the agent ID as conversation_id
-      // (the server accepts agent-* IDs for default conversation messages)
+      // Fetch message history for backfill through the default conversation route.
+      // For default conversation, pass agent_id as query parameter.
       // Wrapped in try/catch so backfill failures don't crash the CLI (e.g., older servers
       // may not support this pattern)
       if (includeMessageHistory && isBackfillEnabled()) {
         try {
           const messagesPage = await client.conversations.messages.list(
-            agent.id,
+            "default",
             {
+              agent_id: agent.id,
               limit: BACKFILL_PAGE_LIMIT,
               order: "desc",
             },
@@ -501,7 +491,7 @@ export async function getResumeData(
 
           if (process.env.DEBUG) {
             console.log(
-              `[DEBUG] conversations.messages.list(${agent.id}) returned ${messages.length} messages`,
+              `[DEBUG] conversations.messages.list(default, agent_id=${agent.id}) returned ${messages.length} messages`,
             );
           }
         } catch (backfillError) {

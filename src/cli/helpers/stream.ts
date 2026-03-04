@@ -180,7 +180,7 @@ export async function discoverFallbackRunIdForResume(
   }> = [];
 
   if (ctx.conversationId === "default") {
-    // Default conversation routes through resolvedConversationId (typically agent ID).
+    // Default conversation lookup by conversation id first.
     lookupQueries.push({ conversation_id: ctx.resolvedConversationId });
   } else {
     // Named conversation: first use the explicit conversation id.

@@ -177,9 +177,7 @@ export const AgentInfoBar = memo(function AgentInfoBar({
       {/* Phantom alien row + Conversation ID */}
       <Box>
         <Text>{alienLines[3]}</Text>
-        {conversationId &&
-        conversationId !== "default" &&
-        !conversationId.startsWith("agent-") ? (
+        {conversationId && conversationId !== "default" ? (
           <Box width={rightWidth} flexShrink={1}>
             <Text dimColor wrap="truncate-end">
               {truncateText(conversationId, rightWidth)}

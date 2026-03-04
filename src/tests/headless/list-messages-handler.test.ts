@@ -105,7 +105,7 @@ describe("handleListMessages — routing (which API is called)", () => {
     }
   });
 
-  test("omitted conversation_id + session on default → calls conversations.messages.list with agent ID", async () => {
+  test("omitted conversation_id + session on default → calls conversations.messages.list with default + agent_id", async () => {
     const { client, convListSpy } = makeClient([{ id: "msg-default-1" }]);
 
     const resp = await handleListMessages({
@@ -117,11 +117,13 @@ describe("handleListMessages — routing (which API is called)", () => {
     });
 
     expect(convListSpy).toHaveBeenCalledTimes(1);
-    expect(convListSpy.mock.calls[0]?.[0]).toBe("agent-def");
+    expect(convListSpy.mock.calls[0]?.[0]).toBe("default");
+    const opts = convListSpy.mock.calls[0]?.[1] as { agent_id?: string };
+    expect(opts.agent_id).toBe("agent-def");
     expect(resp.response.subtype).toBe("success");
   });
 
-  test("explicit agent_id + session default → conversations path uses request agent_id", async () => {
+  test("explicit agent_id + session default → conversations path uses request agent_id query", async () => {
     const { client, convListSpy } = makeClient([]);
 
     await handleListMessages({
@@ -132,7 +134,9 @@ describe("handleListMessages — routing (which API is called)", () => {
       client,
     });
 
-    expect(convListSpy.mock.calls[0]?.[0]).toBe("agent-override");
+    expect(convListSpy.mock.calls[0]?.[0]).toBe("default");
+    const opts = convListSpy.mock.calls[0]?.[1] as { agent_id?: string };
+    expect(opts.agent_id).toBe("agent-override");
   });
 });
 
@@ -176,12 +180,13 @@ describe("handleListMessages — API call arguments", () => {
       client,
     });
 
-    // Default conversation resolves to agent ID
-    expect(convListSpy.mock.calls[0]?.[0]).toBe("agent-1");
+    expect(convListSpy.mock.calls[0]?.[0]).toBe("default");
     const opts = convListSpy.mock.calls[0]?.[1] as {
+      agent_id?: string;
       limit: number;
       order: string;
     };
+    expect(opts.agent_id).toBe("agent-1");
     expect(opts.limit).toBe(50);
     expect(opts.order).toBe("desc");
   });
@@ -216,8 +221,12 @@ describe("handleListMessages — API call arguments", () => {
       client,
     });
 
-    expect(convListSpy.mock.calls[0]?.[0]).toBe("agent-1");
-    const opts = convListSpy.mock.calls[0]?.[1] as { before?: string };
+    expect(convListSpy.mock.calls[0]?.[0]).toBe("default");
+    const opts = convListSpy.mock.calls[0]?.[1] as {
+      agent_id?: string;
+      before?: string;
+    };
+    expect(opts.agent_id).toBe("agent-1");
     expect(opts.before).toBe("msg-cursor-agents");
   });
 

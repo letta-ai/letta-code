@@ -30,6 +30,7 @@ export interface ListMessagesHandlerClient {
         opts: {
           limit: number;
           order: "asc" | "desc";
+          agent_id?: string;
           before?: string;
           after?: string;
         },
@@ -87,7 +88,12 @@ export async function handleListMessages(
 
     const page = await client.conversations.messages.list(
       route.conversationId,
-      { limit, order, ...cursorOpts },
+      {
+        limit,
+        order,
+        ...(route.agentId ? { agent_id: route.agentId } : {}),
+        ...cursorOpts,
+      },
     );
     const items = page.getPaginatedItems();
 

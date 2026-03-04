@@ -5819,11 +5819,12 @@ export default function App({
       // causing CONFLICT on the next user message.
       getClient()
         .then((client) => {
-          const cancelId =
-            conversationIdRef.current === "default"
-              ? agentIdRef.current
-              : conversationIdRef.current;
-          return client.conversations.cancel(cancelId);
+          if (conversationIdRef.current === "default") {
+            return client.conversations.cancel("default", {
+              agent_id: agentIdRef.current,
+            });
+          }
+          return client.conversations.cancel(conversationIdRef.current);
         })
         .catch(() => {
           // Silently ignore - cancellation already happened client-side
@@ -5938,11 +5939,12 @@ export default function App({
       // Don't wait for it or show errors since user already got feedback
       getClient()
         .then((client) => {
-          const cancelId =
-            conversationIdRef.current === "default"
-              ? agentIdRef.current
-              : conversationIdRef.current;
-          return client.conversations.cancel(cancelId);
+          if (conversationIdRef.current === "default") {
+            return client.conversations.cancel("default", {
+              agent_id: agentIdRef.current,
+            });
+          }
+          return client.conversations.cancel(conversationIdRef.current);
         })
         .catch(() => {
           // Silently ignore - cancellation already happened client-side
@@ -5962,11 +5964,13 @@ export default function App({
       setInterruptRequested(true);
       try {
         const client = await getClient();
-        const cancelId =
-          conversationIdRef.current === "default"
-            ? agentIdRef.current
-            : conversationIdRef.current;
-        await client.conversations.cancel(cancelId);
+        if (conversationIdRef.current === "default") {
+          await client.conversations.cancel("default", {
+            agent_id: agentIdRef.current,
+          });
+        } else {
+          await client.conversations.cancel(conversationIdRef.current);
+        }
 
         if (abortControllerRef.current) {
           abortControllerRef.current.abort();
@@ -6174,9 +6178,7 @@ export default function App({
         // Build success message
         const agentLabel = agent.name || targetAgentId;
         const isSpecificConv =
-          opts?.conversationId &&
-          opts.conversationId !== "default" &&
-          !opts?.conversationId.startsWith("agent-");
+          opts?.conversationId && opts.conversationId !== "default";
         const successOutput = isSpecificConv
           ? [
               `Switched to **${agentLabel}**`,
@@ -8047,13 +8049,17 @@ export default function App({
                 }
               : undefined;
 
-            const compactId =
-              conversationIdRef.current === "default"
-                ? agentId
-                : conversationIdRef.current;
+            const compactConversationId = conversationIdRef.current;
+            const compactBody =
+              compactConversationId === "default"
+                ? {
+                    agent_id: agentId,
+                    ...(compactParams ?? {}),
+                  }
+                : compactParams;
             const result = await client.conversations.messages.compact(
-              compactId,
-              compactParams,
+              compactConversationId,
+              compactBody,
             );
 
             // Format success message with before/after counts and summary

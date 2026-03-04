@@ -630,10 +630,7 @@ async function main(): Promise<void> {
   // Validate shared mutual-exclusion rules for startup flags.
   try {
     validateFlagConflicts({
-      guard:
-        specifiedConversationId &&
-        specifiedConversationId !== "default" &&
-        !specifiedConversationId.startsWith("agent-"),
+      guard: specifiedConversationId && specifiedConversationId !== "default",
       checks: [
         {
           when: specifiedAgentId,
