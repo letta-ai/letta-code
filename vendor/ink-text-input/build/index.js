@@ -42,6 +42,13 @@ function isControlSequence(input, key) {
     return false;
 }
 
+function findLineStart(text, cursorPos) {
+    for (let i = cursorPos - 1; i >= 0; i--) {
+        if (text.charAt(i) === '\n') return i + 1;
+    }
+    return 0;
+}
+
 function TextInput({ value: originalValue, placeholder = '', focus = true, mask, highlightPastedText = false, showCursor = true, onChange, onSubmit, externalCursorOffset, onCursorOffsetChange }) {
     const [state, setState] = useState({ cursorOffset: (originalValue || '').length, cursorWidth: 0, killBuffer: '' });
     const { cursorOffset, cursorWidth, killBuffer } = state;
@@ -145,11 +152,14 @@ function TextInput({ value: originalValue, placeholder = '', focus = true, mask,
             }
         }
         else if (key.ctrl && input === 'u') {
-            // CTRL-U: kill from beginning to cursor
+            // CTRL-U: kill from start of current line to cursor (line-aware; Cmd+Backspace on macOS)
             if (cursorOffset > 0) {
-                nextKillBuffer = originalValue.slice(0, cursorOffset);
-                nextValue = originalValue.slice(cursorOffset);
-                nextCursorOffset = 0;
+                const lineStart = findLineStart(originalValue, cursorOffset);
+                if (lineStart < cursorOffset) {
+                    nextKillBuffer = originalValue.slice(lineStart, cursorOffset);
+                    nextValue = originalValue.slice(0, lineStart) + originalValue.slice(cursorOffset);
+                    nextCursorOffset = lineStart;
+                }
             }
         }
         else if (key.ctrl && input === 'y') {

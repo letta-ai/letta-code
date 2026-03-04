@@ -57,24 +57,32 @@ function sanitizeForDisplay(text: string): string {
   return text.replace(/\r\n|\r|\n/g, "↵");
 }
 
-/** Find the boundary of the previous word for option+left navigation */
+/** Find the boundary of the previous word for option+left navigation.
+ * Stops at newlines so Option+Backspace deletes only to the start of the current line. */
 function findPreviousWordBoundary(text: string, cursorPos: number): number {
   if (cursorPos === 0) return 0;
 
-  // Move back one position if we're at the end of a word
   let pos = cursorPos - 1;
 
-  // Skip whitespace backwards
-  while (pos > 0 && /\s/.test(text.charAt(pos))) {
+  // Skip whitespace backwards (but stop at newline)
+  while (pos > 0 && /\s/.test(text.charAt(pos)) && text.charAt(pos) !== "\n") {
     pos--;
   }
 
-  // Skip word characters backwards
+  // If we hit a newline, position after it (start of current line)
+  if (pos >= 0 && text.charAt(pos) === "\n") {
+    return pos + 1;
+  }
+
+  // Skip word characters backwards (stop at newline)
   while (pos > 0 && /\S/.test(text.charAt(pos))) {
     pos--;
+    if (text.charAt(pos) === "\n") {
+      return pos + 1;
+    }
   }
 
-  // If we stopped at whitespace, move forward one
+  // If we stopped at whitespace (including newline), move forward one
   if (pos > 0 && /\s/.test(text.charAt(pos))) {
     pos++;
   }
