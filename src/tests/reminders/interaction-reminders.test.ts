@@ -49,7 +49,7 @@ describe("interaction reminders", () => {
     expect(reminder).toContain('/model && echo "<unsafe>"');
     expect(reminder).toContain("Models dialog dismissed <ok>");
     expect(reminder).toContain("(success)");
-    expect(reminder).toContain(">");
+    expect(reminder).toContain("- ");
     expect(state.pendingCommandIoReminders).toHaveLength(0);
   });
 

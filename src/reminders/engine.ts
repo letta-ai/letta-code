@@ -302,7 +302,7 @@ async function buildCommandIoReminder(
       entry.output || "(no output)",
       MAX_COMMAND_OUTPUT_CHARS,
     );
-    return `> ${safeInput} → ${safeOutput} (${status})`;
+    return `- ${safeInput} → ${safeOutput} (${status})`;
   });
 
   const agentHints = recent
