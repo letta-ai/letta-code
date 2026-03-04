@@ -2712,6 +2712,7 @@ export default function App({
       input,
       output: event.output,
       success: event.success,
+      agentHint: event.agentHint,
     });
   }, []);
 
@@ -8160,6 +8161,7 @@ export default function App({
             await client.agents.update(agentId, { name: newValue });
             updateAgentName(newValue);
 
+            cmd.agentHint = `Your name is now "${newValue}" — acknowledge this and save your new name to memory.`;
             cmd.finish(`Agent renamed to "${newValue}"`, true);
           } catch (error) {
             const errorDetails = formatErrorDetails(error, agentId);
@@ -13838,6 +13840,9 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
                       settingsManager.pinGlobal(agentId);
                     }
 
+                    if (newName && newName !== agentName) {
+                      cmd.agentHint = `Your name is now "${newName}" — acknowledge this and save your new name to memory.`;
+                    }
                     cmd.finish(
                       `Pinned "${newName || agentName || agentId.slice(0, 12)}" ${scopeText}.`,
                       true,

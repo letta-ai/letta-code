@@ -22,6 +22,8 @@ export type CommandHandle = {
     preformatted?: boolean,
   ) => void;
   fail: (output: string) => void;
+  /** Extra context included only in the agent-facing reminder, not shown in the UI. */
+  agentHint?: string;
 };
 
 export type CommandFinishedEvent = {
@@ -31,6 +33,8 @@ export type CommandFinishedEvent = {
   success: boolean;
   dimOutput?: boolean;
   preformatted?: boolean;
+  /** Extra context included only in the agent-facing reminder, not shown in the UI. */
+  agentHint?: string;
 };
 
 type CreateId = (prefix: string) => string;
@@ -69,6 +73,14 @@ export function createCommandRunner({
   onCommandFinished,
 }: RunnerDeps) {
   function getHandle(id: string, input: string): CommandHandle {
+    const handle: CommandHandle = {
+      id,
+      input,
+      update: null!,
+      finish: null!,
+      fail: null!,
+    };
+
     const update = (updateData: CommandUpdate) => {
       const previous = buffersRef.current.byId.get(id);
       const wasFinished =
@@ -90,13 +102,16 @@ export function createCommandRunner({
           success: next.success !== false,
           dimOutput: next.dimOutput,
           preformatted: next.preformatted,
+          agentHint: handle.agentHint,
         });
       }
 
       refreshDerived();
     };
 
-    const finish = (
+    handle.update = update;
+
+    handle.finish = (
       finalOutput: string,
       success = true,
       dimOutput?: boolean,
@@ -110,14 +125,14 @@ export function createCommandRunner({
         preformatted,
       });
 
-    const fail = (finalOutput: string) =>
+    handle.fail = (finalOutput: string) =>
       update({
         output: finalOutput,
         phase: "finished",
         success: false,
       });
 
-    return { id, input, update, finish, fail };
+    return handle;
   }
 
   function start(input: string, output: string): CommandHandle {

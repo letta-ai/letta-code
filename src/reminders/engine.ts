@@ -308,13 +308,20 @@ async function buildCommandIoReminder(
 </user-command>`;
   });
 
+  const agentHints = recent
+    .filter((entry) => entry.agentHint)
+    .map((entry) => `- ${entry.agentHint}`);
+
   const droppedLine =
     dropped > 0 ? `\nOmitted ${dropped} older command event(s).` : "";
+
+  const hintsBlock =
+    agentHints.length > 0 ? `\n\n${agentHints.join("\n")}` : "";
 
   return `${SYSTEM_REMINDER_OPEN}
 The following slash commands were executed in the Letta Code harness since your last user message.
 Treat these as execution context from the CLI, not new user requests.${droppedLine}
-${commandBlocks.join("\n")}
+${commandBlocks.join("\n")}${hintsBlock}
 ${SYSTEM_REMINDER_CLOSE}
 
 `;
