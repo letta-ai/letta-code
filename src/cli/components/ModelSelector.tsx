@@ -54,6 +54,27 @@ type UiModel = {
   updateArgs?: Record<string, unknown>;
 };
 
+const API_GATED_MODEL_HANDLES = new Set(["letta/auto", "letta/auto-fast"]);
+
+export function filterModelsByAvailabilityForSelector<
+  T extends { handle: string },
+>(
+  typedModels: T[],
+  availableHandles: Set<string> | null,
+  allApiHandles: string[],
+): T[] {
+  if (availableHandles === null) {
+    return typedModels.filter((m) => {
+      if (!API_GATED_MODEL_HANDLES.has(m.handle)) {
+        return true;
+      }
+      return allApiHandles.includes(m.handle);
+    });
+  }
+
+  return typedModels.filter((m) => availableHandles.has(m.handle));
+}
+
 interface ModelSelectorProps {
   currentModelId?: string;
   onSelect: (modelId: string) => void;
@@ -181,10 +202,11 @@ export function ModelSelector({
   const isFreeTier = billingTier?.toLowerCase() === "free";
   const supportedModels = useMemo(() => {
     if (availableHandles === undefined) return [];
-    let available =
-      availableHandles === null
-        ? typedModels // fallback
-        : typedModels.filter((m) => availableHandles.has(m.handle));
+    let available = filterModelsByAvailabilityForSelector(
+      typedModels,
+      availableHandles,
+      allApiHandles,
+    );
     // Apply provider filter if specified
     if (filterProvider) {
       available = available.filter((m) =>
@@ -228,6 +250,7 @@ export function ModelSelector({
   }, [
     typedModels,
     availableHandles,
+    allApiHandles,
     filterProvider,
     searchQuery,
     isFreeTier,
