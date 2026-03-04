@@ -6,6 +6,7 @@ import type { ModelReasoningEffort } from "../../agent/model";
 import { DEFAULT_AGENT_NAME } from "../../constants";
 import { settingsManager } from "../../settings-manager";
 import { getVersion } from "../../version";
+import { buildAppUrl, buildChatUrl } from "../helpers/appUrls";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
 import { Text } from "./Text";
@@ -71,7 +72,7 @@ export const AgentInfoBar = memo(function AgentInfoBar({
   const isCloudUser = serverUrl?.includes("api.letta.com");
   const adeConversationUrl =
     agentId && agentId !== "loading"
-      ? `https://app.letta.com/agents/${agentId}${conversationId && conversationId !== "default" ? `?conversation=${conversationId}` : ""}`
+      ? buildChatUrl(agentId, { conversationId })
       : "";
   const showBottomBar = agentId && agentId !== "loading";
   const reasoningLabel = formatReasoningLabel(currentReasoningEffort);
@@ -130,7 +131,7 @@ export const AgentInfoBar = memo(function AgentInfoBar({
               <Text>Open in ADE ↗</Text>
             </Link>
             <Text dimColor>· </Text>
-            <Link url="https://app.letta.com/settings/organization/usage">
+            <Link url={buildAppUrl("/settings/organization/usage")}>
               <Text>View usage ↗</Text>
             </Link>
           </Box>
@@ -139,7 +140,7 @@ export const AgentInfoBar = memo(function AgentInfoBar({
           <Box width={rightWidth} flexShrink={1}>
             <Text dimColor wrap="truncate-end">
               {truncateText(
-                `Open in ADE: ${adeConversationUrl} · Usage: https://app.letta.com/settings/organization/usage`,
+                `Open in ADE: ${adeConversationUrl} · Usage: ${buildAppUrl("/settings/organization/usage")}`,
                 rightWidth,
               )}
             </Text>

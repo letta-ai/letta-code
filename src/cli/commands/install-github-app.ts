@@ -9,6 +9,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { buildChatUrl } from "../helpers/appUrls";
 
 const DEFAULT_WORKFLOW_PATH = ".github/workflows/letta.yml";
 const ALTERNATE_WORKFLOW_PATH = ".github/workflows/letta-code.yml";
@@ -512,9 +513,7 @@ export async function installGithubApp(
         committed: false,
         secretAction: "set",
         agentId: resolvedAgentId,
-        agentUrl: resolvedAgentId
-          ? `https://app.letta.com/agents/${resolvedAgentId}`
-          : null,
+        agentUrl: resolvedAgentId ? buildChatUrl(resolvedAgentId) : null,
       };
     }
 
@@ -540,9 +539,7 @@ export async function installGithubApp(
       committed: true,
       secretAction: "set",
       agentId: resolvedAgentId,
-      agentUrl: resolvedAgentId
-        ? `https://app.letta.com/agents/${resolvedAgentId}`
-        : null,
+      agentUrl: resolvedAgentId ? buildChatUrl(resolvedAgentId) : null,
     };
   } finally {
     rmSync(tempDir, { recursive: true, force: true });

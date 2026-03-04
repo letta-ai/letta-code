@@ -1,10 +1,10 @@
 import { APIError } from "@letta-ai/letta-client/core/error";
+import { buildAppUrl, buildChatUrl } from "./appUrls";
 import { getErrorContext } from "./errorContext";
 import { checkZaiError } from "./zaiErrors";
 
-const LETTA_USAGE_URL = "https://app.letta.com/settings/organization/usage";
-const LETTA_AGENTS_URL =
-  "https://app.letta.com/projects/default-project/agents";
+const LETTA_USAGE_URL = buildAppUrl("/settings/organization/usage");
+const LETTA_AGENTS_URL = buildAppUrl("/projects/default-project/agents");
 
 function extractReasonList(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
@@ -756,6 +756,6 @@ function createAgentLink(
   agentId: string,
   conversationId?: string,
 ): string {
-  const url = `https://app.letta.com/agents/${agentId}${conversationId && conversationId !== "default" ? `?conversation=${conversationId}` : ""}`;
+  const url = buildChatUrl(agentId, { conversationId });
   return `View agent: \x1b]8;;${url}\x1b\\${agentId}\x1b]8;;\x1b\\ (run: ${runId})`;
 }

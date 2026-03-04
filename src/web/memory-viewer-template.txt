@@ -952,7 +952,7 @@ html.dark .warning-badge { background: hsl(42, 30%, 18%); color: hsl(42, 80%, 70
     } else {
       adeBase = 'https://app.letta.com';
     }
-    agentIdEl.href = adeBase + '/agents/' + encodeURIComponent(agentId);
+    agentIdEl.href = adeBase + '/chat/' + encodeURIComponent(agentId);
     agentIdEl.target = '_blank';
   }
   document.getElementById('generated-at').textContent = 'Generated ' + new Date(DATA.generatedAt).toLocaleString();

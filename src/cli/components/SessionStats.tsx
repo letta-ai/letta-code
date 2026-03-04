@@ -1,4 +1,5 @@
 import type { SessionStatsSnapshot } from "../../agent/stats";
+import { buildAppUrl } from "../helpers/appUrls";
 import { formatCompact } from "../helpers/format";
 
 export function formatDuration(ms: number): string {
@@ -66,7 +67,7 @@ export function formatUsageStats({
 
     outputLines.push(
       `Plan: [${balance.billing_tier}]`,
-      "https://app.letta.com/settings/organization/usage",
+      buildAppUrl("/settings/organization/usage"),
       "",
       `Available credits:     ◎${formatNumber(totalCredits)} ($${toDollars(totalCredits)})`,
       `Monthly credits:       ◎${formatNumber(monthlyCredits)} ($${toDollars(monthlyCredits)})`,
