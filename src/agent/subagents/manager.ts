@@ -515,6 +515,7 @@ function buildSubagentArgs(
   } else {
     // Create new agent (original behavior)
     args.push("--new-agent", "--system", type);
+    args.push("--tags", `type:${type}`);
     if (model) {
       args.push("--model", model);
     }
