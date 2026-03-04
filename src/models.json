@@ -1,5 +1,19 @@
 [
   {
+    "id": "auto",
+    "handle": "letta/auto",
+    "label": "Auto",
+    "description": "Automatically select the best model",
+    "isFeatured": true
+  },
+  {
+    "id": "auto-fast",
+    "handle": "letta/auto-fast",
+    "label": "Auto Fast",
+    "description": "Automatically select the best fast model",
+    "isFeatured": true
+  },
+  {
     "id": "sonnet",
     "handle": "anthropic/claude-sonnet-4-6",
     "label": "Sonnet 4.6",
