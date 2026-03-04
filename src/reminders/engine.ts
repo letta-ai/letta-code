@@ -279,11 +279,7 @@ async function maybeLaunchDeepInit(
   if (context.maybeLaunchDeepInitSubagent) {
     // Don't latch deepInitFired here — it's set in the onComplete callback
     // only on success, so a failed deep init allows automatic retry.
-    const launched = await context.maybeLaunchDeepInitSubagent();
-    if (launched) {
-      const { DEEP_INIT_REMINDER } = await import("../agent/promptAssets.js");
-      return DEEP_INIT_REMINDER;
-    }
+    await context.maybeLaunchDeepInitSubagent();
   }
   return null;
 }

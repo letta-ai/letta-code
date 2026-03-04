@@ -239,21 +239,11 @@ describe("deep-init trigger", () => {
       },
     });
     const result = await deepInitProvider(ctx);
-    expect(result).toContain("deep memory initialization");
+    expect(result).toBeNull();
     expect(launched).toBe(true);
     // deepInitFired is NOT set by the engine — it's set in the onComplete
     // callback on success, so a failed deep init allows retry.
     expect(ctx.state.deepInitFired).toBe(false);
-  });
-
-  test("returns null when callback returns false (launch failed)", async () => {
-    const ctx = makeContext({
-      shallowInitCompleted: true,
-      turnCount: 8,
-      callback: async () => false,
-    });
-    const result = await deepInitProvider(ctx);
-    expect(result).toBeNull();
   });
 
   test("does not re-fire once deepInitFired is true", async () => {

@@ -1,3 +1,0 @@
-<system-reminder>
-A background agent is performing deep memory initialization — expanding on the initial project basics with detailed architecture, conventions, and workflow knowledge. This happens automatically and requires no action. Briefly let the user know, then respond to their message normally.
-</system-reminder>
