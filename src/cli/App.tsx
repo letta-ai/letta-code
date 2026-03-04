@@ -9223,6 +9223,7 @@ export default function App({
                 workingDirectory: process.cwd(),
                 memoryDir: getMemoryFilesystemRoot(agentId),
                 gitContext,
+                depth: "deep",
               });
 
               const { spawnBackgroundSubagentTask } = await import(
@@ -9234,6 +9235,8 @@ export default function App({
                 description: "Initializing memory",
                 silentCompletion: true,
                 onComplete: ({ success, error }) => {
+                  // Manual /init runs deep — prevent the turn-5 trigger from re-running
+                  sharedReminderStateRef.current.deepInitFired = true;
                   const msg = success
                     ? "Built a memory palace of you. Visit it with /palace."
                     : `Memory initialization failed: ${error || "Unknown error"}`;
@@ -9536,6 +9539,45 @@ ${SYSTEM_REMINDER_CLOSE}
           return false;
         }
       };
+      const maybeLaunchDeepInitSubagent = async () => {
+        if (!memfsEnabledForAgent) return false;
+        if (hasActiveInitSubagent()) return false;
+        try {
+          const gitContext = gatherGitContext();
+          const initPrompt = buildMemoryInitRuntimePrompt({
+            agentId,
+            workingDirectory: process.cwd(),
+            memoryDir: getMemoryFilesystemRoot(agentId),
+            gitContext,
+            depth: "deep",
+          });
+          const { spawnBackgroundSubagentTask } = await import(
+            "../tools/impl/Task"
+          );
+          spawnBackgroundSubagentTask({
+            subagentType: "init",
+            prompt: initPrompt,
+            description: "Deep memory initialization",
+            silentCompletion: true,
+            onComplete: ({ success, error }) => {
+              const msg = success
+                ? "Built a memory palace of you. Visit it with /palace."
+                : `Deep memory initialization failed: ${error}`;
+              appendTaskNotificationEvents([msg]);
+            },
+          });
+          debugLog("memory", "Auto-launched deep init subagent");
+          return true;
+        } catch (error) {
+          debugWarn(
+            "memory",
+            `Failed to auto-launch deep init subagent: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+          return false;
+        }
+      };
       syncReminderStateFromContextTracker(
         sharedReminderStateRef.current,
         contextTrackerRef.current,
@@ -9555,6 +9597,7 @@ ${SYSTEM_REMINDER_CLOSE}
         skillSources: getSkillSources(),
         resolvePlanModeReminder: getPlanModeReminder,
         maybeLaunchReflectionSubagent,
+        maybeLaunchDeepInitSubagent,
       });
       for (const part of sharedReminderParts) {
         reminderParts.push(part);

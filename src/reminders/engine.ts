@@ -46,6 +46,7 @@ export interface SharedReminderContext {
   maybeLaunchReflectionSubagent?: (
     triggerSource: ReflectionTriggerSource,
   ) => Promise<boolean>;
+  maybeLaunchDeepInitSubagent?: () => Promise<boolean>;
 }
 
 export type ReminderTextPart = { type: "text"; text: string };
@@ -265,6 +266,23 @@ async function buildAutoInitReminder(
   return AUTO_INIT_REMINDER;
 }
 
+async function maybeLaunchDeepInit(
+  context: SharedReminderContext,
+): Promise<string | null> {
+  if (!context.state.shallowInitCompleted) return null;
+  if (context.state.deepInitFired) return null;
+  if (context.state.turnCount < 5) return null;
+
+  const memfsEnabled = settingsManager.isMemfsEnabled(context.agent.id);
+  if (!memfsEnabled) return null;
+
+  if (context.maybeLaunchDeepInitSubagent) {
+    context.state.deepInitFired = true;
+    await context.maybeLaunchDeepInitSubagent();
+  }
+  return null;
+}
+
 const MAX_COMMAND_REMINDERS_PER_TURN = 10;
 const MAX_TOOLSET_REMINDERS_PER_TURN = 5;
 const MAX_COMMAND_INPUT_CHARS = 2000;
@@ -379,6 +397,7 @@ export const sharedReminderProviders: Record<
   "plan-mode": buildPlanModeReminder,
   "reflection-step-count": buildReflectionStepReminder,
   "reflection-compaction": buildReflectionCompactionReminder,
+  "deep-init": maybeLaunchDeepInit,
   "command-io": buildCommandIoReminder,
   "toolset-change": buildToolsetChangeReminder,
   "auto-init": buildAutoInitReminder,

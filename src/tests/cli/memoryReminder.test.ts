@@ -10,6 +10,11 @@ import {
   reflectionSettingsToLegacyMode,
   shouldFireStepCountTrigger,
 } from "../../cli/helpers/memoryReminder";
+import {
+  type SharedReminderContext,
+  sharedReminderProviders,
+} from "../../reminders/engine";
+import { createSharedReminderState } from "../../reminders/state";
 import { settingsManager } from "../../settings-manager";
 
 const originalGetLocalProjectSettings = settingsManager.getLocalProjectSettings;
@@ -168,5 +173,121 @@ describe("memoryReminder", () => {
         stepCount: 5,
       }),
     ).toBe(false);
+  });
+});
+
+describe("deep-init trigger", () => {
+  const deepInitProvider = sharedReminderProviders["deep-init"];
+
+  function makeContext(
+    overrides: Partial<{
+      shallowInitCompleted: boolean;
+      deepInitFired: boolean;
+      turnCount: number;
+      memfsEnabled: boolean;
+      callback: (() => Promise<boolean>) | undefined;
+    }> = {},
+  ): SharedReminderContext {
+    const state = createSharedReminderState();
+    state.shallowInitCompleted = overrides.shallowInitCompleted ?? false;
+    state.deepInitFired = overrides.deepInitFired ?? false;
+    state.turnCount = overrides.turnCount ?? 0;
+
+    const memfsEnabled = overrides.memfsEnabled ?? true;
+    (settingsManager as typeof settingsManager).isMemfsEnabled = (() =>
+      memfsEnabled) as typeof settingsManager.isMemfsEnabled;
+
+    return {
+      mode: "interactive",
+      agent: { id: "test-agent", name: "test" },
+      state,
+      sessionContextReminderEnabled: false,
+      reflectionSettings: {
+        trigger: "step-count",
+        behavior: "auto-launch",
+        stepCount: 25,
+      },
+      skillSources: [],
+      resolvePlanModeReminder: async () => "",
+      maybeLaunchDeepInitSubagent: overrides.callback,
+    };
+  }
+
+  test("does not fire before turn 5", async () => {
+    let launched = false;
+    const ctx = makeContext({
+      shallowInitCompleted: true,
+      turnCount: 4,
+      callback: async () => {
+        launched = true;
+        return true;
+      },
+    });
+    const result = await deepInitProvider(ctx);
+    expect(result).toBeNull();
+    expect(launched).toBe(false);
+  });
+
+  test("fires at turn 5 when shallowInitCompleted is true", async () => {
+    let launched = false;
+    const ctx = makeContext({
+      shallowInitCompleted: true,
+      turnCount: 5,
+      callback: async () => {
+        launched = true;
+        return true;
+      },
+    });
+    const result = await deepInitProvider(ctx);
+    expect(result).toBeNull();
+    expect(launched).toBe(true);
+    expect(ctx.state.deepInitFired).toBe(true);
+  });
+
+  test("does not re-fire once deepInitFired is true", async () => {
+    let launched = false;
+    const ctx = makeContext({
+      shallowInitCompleted: true,
+      deepInitFired: true,
+      turnCount: 10,
+      callback: async () => {
+        launched = true;
+        return true;
+      },
+    });
+    const result = await deepInitProvider(ctx);
+    expect(result).toBeNull();
+    expect(launched).toBe(false);
+  });
+
+  test("does not fire when shallowInitCompleted is false", async () => {
+    let launched = false;
+    const ctx = makeContext({
+      shallowInitCompleted: false,
+      turnCount: 10,
+      callback: async () => {
+        launched = true;
+        return true;
+      },
+    });
+    const result = await deepInitProvider(ctx);
+    expect(result).toBeNull();
+    expect(launched).toBe(false);
+  });
+
+  test("does not fire when memfs is disabled", async () => {
+    let launched = false;
+    const ctx = makeContext({
+      shallowInitCompleted: true,
+      turnCount: 5,
+      memfsEnabled: false,
+      callback: async () => {
+        launched = true;
+        return true;
+      },
+    });
+    const result = await deepInitProvider(ctx);
+    expect(result).toBeNull();
+    expect(launched).toBe(false);
   });
 });
