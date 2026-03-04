@@ -217,7 +217,7 @@ describe("deep-init trigger", () => {
     let launched = false;
     const ctx = makeContext({
       shallowInitCompleted: true,
-      turnCount: 4,
+      turnCount: 7,
       callback: async () => {
         launched = true;
         return true;
@@ -228,11 +228,11 @@ describe("deep-init trigger", () => {
     expect(launched).toBe(false);
   });
 
-  test("fires at turn 5 when shallowInitCompleted is true", async () => {
+  test("fires at turn 8 when shallowInitCompleted is true", async () => {
     let launched = false;
     const ctx = makeContext({
       shallowInitCompleted: true,
-      turnCount: 5,
+      turnCount: 8,
       callback: async () => {
         launched = true;
         return true;
@@ -279,7 +279,7 @@ describe("deep-init trigger", () => {
     let launched = false;
     const ctx = makeContext({
       shallowInitCompleted: true,
-      turnCount: 5,
+      turnCount: 8,
       memfsEnabled: false,
       callback: async () => {
         launched = true;
@@ -294,7 +294,7 @@ describe("deep-init trigger", () => {
   test("does not latch deepInitFired when launch returns false", async () => {
     const ctx = makeContext({
       shallowInitCompleted: true,
-      turnCount: 5,
+      turnCount: 8,
       callback: async () => false,
     });
     await deepInitProvider(ctx);

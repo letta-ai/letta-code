@@ -271,7 +271,7 @@ async function maybeLaunchDeepInit(
 ): Promise<string | null> {
   if (!context.state.shallowInitCompleted) return null;
   if (context.state.deepInitFired) return null;
-  if (context.state.turnCount < 5) return null;
+  if (context.state.turnCount < 8) return null;
 
   const memfsEnabled = settingsManager.isMemfsEnabled(context.agent.id);
   if (!memfsEnabled) return null;
