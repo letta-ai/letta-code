@@ -1,5 +1,5 @@
 /**
- * CLI subcommand: letta listen --name \"george\"
+ * CLI subcommand: letta server --name \"george\"
  * Register letta-code as a listener to receive messages from Letta Cloud
  */
 
@@ -63,7 +63,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
 
   // Show help
   if (values.help) {
-    console.log("Usage: letta remote [--env-name <name>] [--debug]\n");
+    console.log("Usage: letta server [--env-name <name>] [--debug]\n");
     console.log(
       "Register this letta-code instance to receive messages from Letta Cloud.\n",
     );
@@ -77,10 +77,10 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     console.log("  -h, --help         Show this help message\n");
     console.log("Examples:");
     console.log(
-      "  letta remote                      # Uses hostname as default",
+      "  letta server                      # Uses hostname as default",
     );
-    console.log('  letta remote --env-name "work-laptop"');
-    console.log("  letta remote --debug              # Log all WS events\n");
+    console.log('  letta server --env-name "work-laptop"');
+    console.log("  letta server --debug              # Log all WS events\n");
     console.log(
       "Once connected, this instance will listen for incoming messages from cloud agents.",
     );

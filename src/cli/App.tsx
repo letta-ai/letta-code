@@ -7209,8 +7209,13 @@ export default function App({
           return { submitted: true };
         }
 
-        // Special handling for /listen command - start listener mode
-        if (trimmed === "/remote" || trimmed.startsWith("/remote ")) {
+        // Special handling for /server command (alias: /remote)
+        if (
+          trimmed === "/server" ||
+          trimmed.startsWith("/server ") ||
+          trimmed === "/remote" ||
+          trimmed.startsWith("/remote ")
+        ) {
           // Tokenize with quote support: --name "my laptop"
           const parts = Array.from(
             trimmed.matchAll(
