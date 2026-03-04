@@ -1,5 +1,5 @@
 /**
- * Always-on file logger for letta remote sessions.
+ * Always-on file logger for letta server sessions.
  * Writes to ~/.letta/logs/remote/{timestamp}.log regardless of --debug mode.
  * Debug mode additionally prints to console; this file always captures the log.
  */

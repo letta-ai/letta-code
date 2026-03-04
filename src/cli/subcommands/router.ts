@@ -21,7 +21,8 @@ export async function runSubcommand(argv: string[]): Promise<number | null> {
       return runMessagesSubcommand(rest);
     case "blocks":
       return runBlocksSubcommand(rest);
-    case "remote":
+    case "server":
+    case "remote": // alias
       return runListenSubcommand(rest);
     case "connect":
       return runConnectSubcommand(rest);

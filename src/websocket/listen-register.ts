@@ -1,5 +1,5 @@
 /**
- * Shared registration helper for letta remote / /remote command.
+ * Shared registration helper for letta server / /server command.
  * Owns the HTTP request contract and error handling; callers own UX strings and logging.
  */
 import { getVersion } from "../version.ts";

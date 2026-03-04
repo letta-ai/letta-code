@@ -1,6 +1,6 @@
 /**
- * Listen mode - Register letta-code as a listener to receive messages from Letta Cloud
- * Usage: letta listen --name "george"
+ * Server mode - Register letta-code as a listener to receive messages from Letta Cloud
+ * Usage: letta server --name "george"
  */
 
 import { hostname } from "node:os";
@@ -135,17 +135,18 @@ export async function handleListen(
       ctx.buffersRef,
       ctx.refreshDerived,
       msg,
-      "Usage: /remote [--env-name <name>]\n" +
-        "       /remote off\n\n" +
-        "Register this letta-code instance to receive messages from Letta Cloud.\n\n" +
+      "Usage: /server [--env-name <name>]\n" +
+        "       /server off\n\n" +
+        "Register this letta-code instance to receive messages from Letta Cloud.\n" +
+        "Alias: /remote\n\n" +
         "Options:\n" +
         "  --env-name <name>  Friendly name for this environment (uses hostname if not provided)\n" +
         "  off                Stop the active listener connection\n" +
         "  -h, --help         Show this help message\n\n" +
         "Examples:\n" +
-        "  /remote                         # Start listener with hostname\n" +
-        '  /remote --env-name "work-laptop" # Start with custom name\n' +
-        "  /remote off                     # Stop listening\n\n" +
+        "  /server                         # Start listener with hostname\n" +
+        '  /server --env-name "work-laptop" # Start with custom name\n' +
+        "  /server off                     # Stop listening\n\n" +
         "Once connected, this instance will listen for incoming messages from cloud agents.\n" +
         "Messages will be executed locally using your letta-code environment.",
       true,
