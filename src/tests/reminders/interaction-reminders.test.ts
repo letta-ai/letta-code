@@ -35,7 +35,7 @@ function baseContext(
 }
 
 describe("interaction reminders", () => {
-  test("command-io provider renders escaped command input/output and drains queue", async () => {
+  test("command-io provider renders command input/output in plain text and drains queue", async () => {
     const state = createSharedReminderState();
     enqueueCommandIoReminder(state, {
       input: '/model && echo "<unsafe>"',
@@ -46,10 +46,10 @@ describe("interaction reminders", () => {
     const reminder = await sharedReminderProviders["command-io"](
       baseContext(state),
     );
-    expect(reminder).toContain("<user-command-input>");
-    expect(reminder).toContain("&lt;unsafe&gt;");
-    expect(reminder).toContain("<user-command-output>");
-    expect(reminder).toContain("&lt;ok&gt;");
+    expect(reminder).toContain('/model && echo "<unsafe>"');
+    expect(reminder).toContain("Models dialog dismissed <ok>");
+    expect(reminder).toContain("(success)");
+    expect(reminder).toContain("- ");
     expect(state.pendingCommandIoReminders).toHaveLength(0);
   });
 
