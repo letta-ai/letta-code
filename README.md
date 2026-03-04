@@ -45,7 +45,7 @@ Over time, the agent will update its memory as it learns. To actively guide your
 ```bash
 > /remember [optional instructions on what to remember]
 ```
-Letta Code works with skills (reusable modules that teach your agent new capabilities in a `.skills` directory), but additionally supports [skill learning](https://www.letta.com/blog/skill-learning). You can ask your agent to learn a skill from it's current trajectory with the command: 
+Letta Code works with skills (reusable modules that teach your agent new capabilities in a `.skills` directory), but additionally supports [skill learning](https://www.letta.com/blog/skill-learning). You can ask your agent to learn a skill from its current trajectory with the command: 
 ```bash
 > /skill [optional instructions on what skill to learn]
 ```
