@@ -1,0 +1,20 @@
+{
+  "type": "object",
+  "properties": {
+    "notebook_path": {
+      "type": "string",
+      "description": "Path to the .ipynb notebook file."
+    },
+    "cell_index": {
+      "type": "number",
+      "description": "The index of the code cell to execute (0-based)."
+    },
+    "timeout": {
+      "type": "number",
+      "description": "Execution timeout in seconds. Defaults to 30."
+    }
+  },
+  "required": ["notebook_path", "cell_index"],
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

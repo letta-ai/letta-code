@@ -1,0 +1,24 @@
+{
+  "type": "object",
+  "properties": {
+    "notebook_path": {
+      "type": "string",
+      "description": "Path to the .ipynb notebook file."
+    },
+    "cell_index": {
+      "type": "number",
+      "description": "The index of the cell to edit (0-based)."
+    },
+    "old_string": {
+      "type": "string",
+      "description": "The text to find and replace within the cell. If empty, the entire cell content is replaced with new_string."
+    },
+    "new_string": {
+      "type": "string",
+      "description": "The replacement text."
+    }
+  },
+  "required": ["notebook_path", "cell_index", "new_string"],
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

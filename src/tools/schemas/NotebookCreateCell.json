@@ -1,0 +1,25 @@
+{
+  "type": "object",
+  "properties": {
+    "notebook_path": {
+      "type": "string",
+      "description": "Path to the .ipynb notebook file."
+    },
+    "source": {
+      "type": "string",
+      "description": "The cell content (code or markdown)."
+    },
+    "cell_type": {
+      "type": "string",
+      "enum": ["code", "markdown", "raw"],
+      "description": "Cell type. Defaults to 'code'."
+    },
+    "cell_index": {
+      "type": "number",
+      "description": "Position to insert at (0-based). If omitted, appends to end of notebook."
+    }
+  },
+  "required": ["notebook_path", "source"],
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

@@ -101,6 +101,64 @@ export const commands: Record<string, Command> = {
       return "Opening compaction settings...";
     },
   },
+  "/group": {
+    desc: "Manage shared memory groups (/group join|leave|list|members <name>)",
+    args: "<join|leave|list|members> [group_name]",
+    order: 16.5,
+    handler: async (args: string[]) => {
+      const subcommand = args[0]?.toLowerCase();
+      const groupName = args[1];
+
+      if (!subcommand || subcommand === "list") {
+        const { getAgentGroups } = await import("../../agent/sharedMemory.js");
+        const agentId = process.env.LETTA_AGENT_ID || "default";
+        const groups = await getAgentGroups(agentId);
+        if (groups.length === 0) return "Not connected to any shared memory groups.";
+        return `Connected groups: ${groups.join(", ")}`;
+      }
+
+      if (!groupName && subcommand !== "list") {
+        return "Usage: /group <join|leave|members> <group_name>";
+      }
+
+      const name = groupName || "";
+
+      if (subcommand === "join") {
+        const { joinGroup } = await import("../../agent/sharedMemory.js");
+        const agentId = process.env.LETTA_AGENT_ID || "default";
+        const members = await joinGroup(agentId, name);
+        return `Joined group '${name}' (${members.length} member(s)).`;
+      }
+
+      if (subcommand === "leave") {
+        const { leaveGroup } = await import("../../agent/sharedMemory.js");
+        const agentId = process.env.LETTA_AGENT_ID || "default";
+        await leaveGroup(agentId, name);
+        return `Left group '${name}'.`;
+      }
+
+      if (subcommand === "members") {
+        const { listGroupMembers } = await import("../../agent/sharedMemory.js");
+        const members = await listGroupMembers(name);
+        if (members.length === 0) return `Group '${name}' has no members.`;
+        return `Members of '${name}': ${members.join(", ")}`;
+      }
+
+      return "Usage: /group <join|leave|list|members> <group_name>";
+    },
+  },
+  "/shared-memory": {
+    desc: "View shared memory from connected groups",
+    order: 16.6,
+    noArgs: true,
+    handler: async () => {
+      const { renderSharedMemory } = await import("../../agent/sharedMemory.js");
+      const agentId = process.env.LETTA_AGENT_ID || "default";
+      const rendered = await renderSharedMemory(agentId);
+      if (!rendered) return "Not connected to any shared memory groups. Use /group join <name> first.";
+      return rendered;
+    },
+  },
   "/memfs": {
     desc: "Manage filesystem-backed memory (/memfs [enable|disable|sync|reset])",
     args: "[enable|disable|sync|reset]",

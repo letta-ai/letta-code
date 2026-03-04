@@ -105,6 +105,15 @@ export const GEMINI_DEFAULT_TOOLS: ToolName[] = [
   "Task",
 ];
 
+// Notebook toolset — added to existing toolsets when .ipynb files are present
+export const NOTEBOOK_TOOLS: ToolName[] = [
+  "NotebookRead",
+  "NotebookEditCell",
+  "NotebookCreateCell",
+  "NotebookDeleteCell",
+  "NotebookExecuteCell",
+];
+
 // PascalCase toolsets (codex-2 and gemini-2) for consistency with Skill tool naming
 export const OPENAI_PASCAL_TOOLS: ToolName[] = [
   // Additional Letta Code tools
@@ -199,6 +208,12 @@ const TOOL_PERMISSIONS: Record<ToolName, { requiresApproval: boolean }> = {
   WriteFileGemini: { requiresApproval: true },
   WriteTodos: { requiresApproval: false },
   ReadManyFiles: { requiresApproval: false },
+  // Notebook toolset
+  NotebookRead: { requiresApproval: false },
+  NotebookEditCell: { requiresApproval: true },
+  NotebookCreateCell: { requiresApproval: true },
+  NotebookDeleteCell: { requiresApproval: true },
+  NotebookExecuteCell: { requiresApproval: true },
 };
 
 interface JsonSchema {

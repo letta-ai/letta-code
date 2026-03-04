@@ -1,5 +1,11 @@
 import ApplyPatchDescription from "./descriptions/ApplyPatch.md";
 import AskUserQuestionDescription from "./descriptions/AskUserQuestion.md";
+// Notebook toolset
+import NotebookCreateCellDescription from "./descriptions/NotebookCreateCell.md";
+import NotebookDeleteCellDescription from "./descriptions/NotebookDeleteCell.md";
+import NotebookEditCellDescription from "./descriptions/NotebookEditCell.md";
+import NotebookExecuteCellDescription from "./descriptions/NotebookExecuteCell.md";
+import NotebookReadDescription from "./descriptions/NotebookRead.md";
 import BashDescription from "./descriptions/Bash.md";
 import BashOutputDescription from "./descriptions/BashOutput.md";
 import EditDescription from "./descriptions/Edit.md";
@@ -37,6 +43,12 @@ import WriteFileGeminiDescription from "./descriptions/WriteFileGemini.md";
 import WriteTodosGeminiDescription from "./descriptions/WriteTodosGemini.md";
 import { apply_patch } from "./impl/ApplyPatch";
 import { ask_user_question } from "./impl/AskUserQuestion";
+// Notebook toolset
+import { notebook_create_cell } from "./impl/NotebookCreateCell";
+import { notebook_delete_cell } from "./impl/NotebookDeleteCell";
+import { notebook_edit_cell } from "./impl/NotebookEditCell";
+import { notebook_execute_cell } from "./impl/NotebookExecuteCell";
+import { notebook_read } from "./impl/NotebookRead";
 import { bash } from "./impl/Bash";
 import { bash_output } from "./impl/BashOutput";
 import { edit } from "./impl/Edit";
@@ -74,6 +86,12 @@ import { write_file_gemini } from "./impl/WriteFileGemini";
 import { write_todos } from "./impl/WriteTodosGemini";
 import ApplyPatchSchema from "./schemas/ApplyPatch.json";
 import AskUserQuestionSchema from "./schemas/AskUserQuestion.json";
+// Notebook toolset
+import NotebookCreateCellSchema from "./schemas/NotebookCreateCell.json";
+import NotebookDeleteCellSchema from "./schemas/NotebookDeleteCell.json";
+import NotebookEditCellSchema from "./schemas/NotebookEditCell.json";
+import NotebookExecuteCellSchema from "./schemas/NotebookExecuteCell.json";
+import NotebookReadSchema from "./schemas/NotebookRead.json";
 import BashSchema from "./schemas/Bash.json";
 import BashOutputSchema from "./schemas/BashOutput.json";
 import EditSchema from "./schemas/Edit.json";
@@ -387,6 +405,32 @@ const toolDefinitions = {
     schema: ReadManyFilesGeminiSchema,
     description: ReadManyFilesGeminiDescription.trim(),
     impl: read_many_files as unknown as ToolImplementation,
+  },
+  // Notebook toolset
+  NotebookRead: {
+    schema: NotebookReadSchema,
+    description: NotebookReadDescription.trim(),
+    impl: notebook_read as unknown as ToolImplementation,
+  },
+  NotebookEditCell: {
+    schema: NotebookEditCellSchema,
+    description: NotebookEditCellDescription.trim(),
+    impl: notebook_edit_cell as unknown as ToolImplementation,
+  },
+  NotebookCreateCell: {
+    schema: NotebookCreateCellSchema,
+    description: NotebookCreateCellDescription.trim(),
+    impl: notebook_create_cell as unknown as ToolImplementation,
+  },
+  NotebookDeleteCell: {
+    schema: NotebookDeleteCellSchema,
+    description: NotebookDeleteCellDescription.trim(),
+    impl: notebook_delete_cell as unknown as ToolImplementation,
+  },
+  NotebookExecuteCell: {
+    schema: NotebookExecuteCellSchema,
+    description: NotebookExecuteCellDescription.trim(),
+    impl: notebook_execute_cell as unknown as ToolImplementation,
   },
 } as const satisfies Record<string, ToolAssets>;
 
