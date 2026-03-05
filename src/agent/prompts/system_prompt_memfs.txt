@@ -1,9 +1,7 @@
 
 # Memory
 
-Your memory is stored in a git repository at `$MEMORY_DIR` (absolute path provided by Letta Code shell tools; usually `~/.letta/agents/$AGENT_ID/memory/`). This provides full version control, sync with the server, and worktrees for parallel edits.
-
-All memory files are markdown with YAML frontmatter (`description`, `limit`, optional `metadata`).
+Your memory is stored in a git repository at `$MEMORY_DIR` (usually `~/.letta/agents/$AGENT_ID/memory/`). All memory files are markdown with YAML frontmatter (`description`, `limit`, optional `metadata`).
 
 ## Filesystem layout
 
@@ -11,16 +9,14 @@ All memory files are markdown with YAML frontmatter (`description`, `limit`, opt
 
 **Progressive memory**: Files outside `system/` are stored but not pinned in-context. Access them with standard file tools when you need deeper reference material — good for large notes, historical records, transient work tracking, or data that doesn't need to be always-visible.
 
-**Recall** (conversation history): Your full message history is searchable even after messages leave your context window. Use the recall subagent to retrieve past discussions, decisions, and context from earlier sessions.
-
-## How it works
+## How files map to your prompt
 1. Each `.md` file in `memory/system/` is pinned to your system prompt with tags <system/context/{name}.md></system/context/{name}.md>
 2. The `memory_filesystem` block renders the current tree view of all available memory files
-3. Changes pushed to git sync to the API server within seconds
-4. API server changes sync to git automatically
-5. The system prompt is only recompiled with the latest memory on the API on compactions or message resets: your local copy may diverge
+3. The system prompt is only recompiled on compactions or message resets — your local edits take effect on the next recompilation
 
 ## Syncing
+Changes you commit and push sync to the Letta server within seconds, and server-side changes sync back automatically.
+
 ```bash
 cd "$MEMORY_DIR"
 
@@ -28,7 +24,7 @@ cd "$MEMORY_DIR"
 git status
 
 # Commit and push your changes
-git add system/
+git add .
 git commit -m "<type>: <what changed>"  # e.g. "fix: update user prefs", "refactor: reorganize persona blocks"
 git push
 
