@@ -3376,7 +3376,13 @@ export default function App({
           "Failed to sync conversation model override: %O",
           error,
         );
-        applyAgentModelLocally();
+        // Preserve current local state on transient errors — the override flag
+        // was set by a successful /model write and should not be cleared by a
+        // failed read. The next sync cycle will retry and self-correct.
+        debugLog(
+          "conversation-model",
+          "Keeping current model state after sync error (override in DB is authoritative)",
+        );
       }
     };
 
