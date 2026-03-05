@@ -787,9 +787,15 @@ export async function loadSpecificTools(toolNames: string[]): Promise<void> {
  * Acquires the toolset switch lock during loading to prevent message sends from
  * reading stale tools. Callers should use waitForToolsetReady() before sending messages.
  *
+ * @param modelIdentifier - Optional model identifier to select the appropriate toolset
+ * @param options - Optional configuration
+ * @param options.exclude - Tool names to exclude from the loaded toolset
  * @returns Promise that resolves when all tools are loaded
  */
-export async function loadTools(modelIdentifier?: string): Promise<void> {
+export async function loadTools(
+  modelIdentifier?: string,
+  options?: { exclude?: ToolName[] },
+): Promise<void> {
   // Acquire lock to signal that a switch is in progress
   acquireSwitchLock();
 
@@ -821,6 +827,12 @@ export async function loadTools(modelIdentifier?: string): Promise<void> {
     } else {
       // When user explicitly sets --tools, respect that and allow any tool name
       baseToolNames = TOOL_NAMES;
+    }
+
+    // Apply exclusions (e.g. remove interactive-only tools in headless mode)
+    if (options?.exclude && options.exclude.length > 0) {
+      const excludeSet = new Set(options.exclude);
+      baseToolNames = baseToolNames.filter((name) => !excludeSet.has(name));
     }
 
     // Build new registry in a temporary map (all async work happens above)

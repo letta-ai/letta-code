@@ -910,7 +910,8 @@ async function main(): Promise<void> {
       specifiedModel,
       specifiedToolset as "auto" | "codex" | "default" | "gemini" | undefined,
     );
-    await loadTools(modelForTools);
+    // Exclude interactive-only tools that can't function without a live user session
+    await loadTools(modelForTools, { exclude: ["AskUserQuestion"] });
     markMilestone("TOOLS_LOADED");
 
     // Keep headless startup in sync with interactive name resolution.
