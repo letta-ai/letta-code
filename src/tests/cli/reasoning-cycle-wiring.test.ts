@@ -46,7 +46,7 @@ describe("reasoning tier cycle wiring", () => {
     expect(callbackBlocks.length).toBeGreaterThanOrEqual(2);
   });
 
-  test("flush uses conversation-scoped reasoning updates", () => {
+  test("flush uses conversation-scoped reasoning updates (default updates agent)", () => {
     const appPath = fileURLToPath(
       new URL("../../cli/App.tsx", import.meta.url),
     );
@@ -64,8 +64,9 @@ describe("reasoning tier cycle wiring", () => {
 
     const segment = source.slice(start, end);
     expect(segment).toContain("updateConversationLLMConfig(");
+    expect(segment).toContain("updateAgentLLMConfig(");
     expect(segment).toContain("conversationIdRef.current");
-    expect(segment).not.toContain("updateAgentLLMConfig(");
+    expect(segment).toContain('conversationIdRef.current === "default"');
   });
 
   test("tab-based reasoning cycling is opt-in only", () => {

@@ -1477,16 +1477,25 @@ export default function App({
   const [currentToolsetPreference, setCurrentToolsetPreference] =
     useState<ToolsetPreference>("auto");
   const [llmConfig, setLlmConfig] = useState<LlmConfig | null>(null);
-  const [hasConversationModelOverride, setHasConversationModelOverride] =
-    useState(false);
+  // Keep state + ref synchronized so async callbacks (e.g. syncAgentState) never
+  // read a stale value and accidentally clobber conversation-scoped overrides.
+  const [
+    hasConversationModelOverride,
+    setHasConversationModelOverride,
+    hasConversationModelOverrideRef,
+  ] = useSyncedState(false);
   const llmConfigRef = useRef(llmConfig);
   useEffect(() => {
     llmConfigRef.current = llmConfig;
   }, [llmConfig]);
-  const hasConversationModelOverrideRef = useRef(hasConversationModelOverride);
-  useEffect(() => {
-    hasConversationModelOverrideRef.current = hasConversationModelOverride;
-  }, [hasConversationModelOverride]);
+
+  // Cache the conversation's model_settings when a conversation-scoped override is active.
+  // On resume, llm_config may omit reasoning_effort even when the conversation model_settings
+  // includes it; this snapshot prevents the footer reasoning tag from missing.
+  const [
+    conversationOverrideModelSettings,
+    setConversationOverrideModelSettings,
+  ] = useState<AgentState["model_settings"] | null>(null);
   const agentStateRef = useRef(agentState);
   useEffect(() => {
     agentStateRef.current = agentState;
@@ -1509,12 +1518,22 @@ export default function App({
       ? `${llmConfig.model_endpoint_type}/${llmConfig.model}`
       : (llmConfig?.model ?? null)) ||
     null;
+
+  // Derive reasoning effort from model_settings (canonical) with llm_config as legacy fallback.
+  // When a conversation override is active, the server may still return an agent llm_config
+  // with reasoning_effort="none"; prefer the conversation model_settings snapshot.
+  const effectiveModelSettings = hasConversationModelOverride
+    ? conversationOverrideModelSettings
+    : agentState?.model_settings;
+  const derivedReasoningEffort: ModelReasoningEffort | null =
+    deriveReasoningEffort(effectiveModelSettings, llmConfig);
+
   // Use tier-aware resolution so the display matches the agent's reasoning effort
   // (e.g. "GPT-5.3-Codex" not just "GPT-5" for the first match).
   const currentModelDisplay = useMemo(() => {
     if (!currentModelLabel) return null;
     const info = getModelInfoForLlmConfig(currentModelLabel, {
-      reasoning_effort: llmConfig?.reasoning_effort ?? null,
+      reasoning_effort: derivedReasoningEffort ?? null,
       enable_reasoner:
         (llmConfig as { enable_reasoner?: boolean | null })?.enable_reasoner ??
         null,
@@ -1527,16 +1546,10 @@ export default function App({
       currentModelLabel.split("/").pop() ??
       null
     );
-  }, [currentModelLabel, llmConfig]);
+  }, [currentModelLabel, derivedReasoningEffort, llmConfig]);
   const currentModelProvider = llmConfig?.provider_name ?? null;
-  // Derive reasoning effort from model_settings (canonical) with llm_config as legacy fallback.
-  // Some providers may omit explicit effort for default tiers (e.g., Sonnet 4.6 high),
-  // so fall back to the selected model preset when needed.
-  const effectiveModelSettings = hasConversationModelOverride
-    ? undefined
-    : agentState?.model_settings;
   const currentReasoningEffort: ModelReasoningEffort | null =
-    deriveReasoningEffort(effectiveModelSettings, llmConfig) ??
+    derivedReasoningEffort ??
     inferReasoningEffortFromModelPreset(currentModelId, currentModelLabel);
 
   // Billing tier for conditional UI and error context (fetched once on mount)
@@ -3266,6 +3279,7 @@ export default function App({
   }, [loadingState, agentId]);
 
   // Keep effective model state in sync with the active conversation override.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: ref.current is intentionally read dynamically
   useEffect(() => {
     if (
       loadingState !== "ready" ||
@@ -3283,6 +3297,7 @@ export default function App({
         agentState.model ??
         buildModelHandleFromLlmConfig(agentState.llm_config);
       setHasConversationModelOverride(false);
+      setConversationOverrideModelSettings(null);
       setLlmConfig(agentState.llm_config);
       setCurrentModelHandle(agentModelHandle ?? null);
 
@@ -3351,6 +3366,7 @@ export default function App({
         );
 
         setHasConversationModelOverride(true);
+        setConversationOverrideModelSettings(conversationModelSettings ?? null);
         setCurrentModelHandle(effectiveModelHandle);
         const modelInfo = getModelInfoForLlmConfig(effectiveModelHandle, {
           reasoning_effort: reasoningEffort,
@@ -3391,8 +3407,15 @@ export default function App({
     return () => {
       cancelled = true;
     };
-  }, [agentId, agentState, conversationId, loadingState]);
+  }, [
+    agentId,
+    agentState,
+    conversationId,
+    loadingState,
+    setHasConversationModelOverride,
+  ]);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: refs are stable objects, .current is read dynamically
   const maybeCarryOverActiveConversationModel = useCallback(
     async (targetConversationId: string) => {
       if (!hasConversationModelOverrideRef.current) {
@@ -3663,6 +3686,7 @@ export default function App({
   // removed. Git-backed memory uses standard git merge conflict resolution via the agent.
 
   // Core streaming function - iterative loop that processes conversation turns
+  // biome-ignore lint/correctness/useExhaustiveDependencies: refs read .current dynamically, complex callback with intentional deps
   const processConversation = useCallback(
     async (
       initialInput: Array<MessageCreate | ApprovalCreate>,
@@ -5841,12 +5865,14 @@ export default function App({
       // causing CONFLICT on the next user message.
       getClient()
         .then((client) => {
-          if (conversationIdRef.current === "default") {
-            return client.conversations.cancel("default", {
-              agent_id: agentIdRef.current,
-            });
+          const cancelConversationId =
+            conversationIdRef.current === "default"
+              ? agentIdRef.current
+              : conversationIdRef.current;
+          if (!cancelConversationId || cancelConversationId === "loading") {
+            return;
           }
-          return client.conversations.cancel(conversationIdRef.current);
+          return client.conversations.cancel(cancelConversationId);
         })
         .catch(() => {
           // Silently ignore - cancellation already happened client-side
@@ -5961,12 +5987,14 @@ export default function App({
       // Don't wait for it or show errors since user already got feedback
       getClient()
         .then((client) => {
-          if (conversationIdRef.current === "default") {
-            return client.conversations.cancel("default", {
-              agent_id: agentIdRef.current,
-            });
+          const cancelConversationId =
+            conversationIdRef.current === "default"
+              ? agentIdRef.current
+              : conversationIdRef.current;
+          if (!cancelConversationId || cancelConversationId === "loading") {
+            return;
           }
-          return client.conversations.cancel(conversationIdRef.current);
+          return client.conversations.cancel(cancelConversationId);
         })
         .catch(() => {
           // Silently ignore - cancellation already happened client-side
@@ -5986,13 +6014,14 @@ export default function App({
       setInterruptRequested(true);
       try {
         const client = await getClient();
-        if (conversationIdRef.current === "default") {
-          await client.conversations.cancel("default", {
-            agent_id: agentIdRef.current,
-          });
-        } else {
-          await client.conversations.cancel(conversationIdRef.current);
+        const cancelConversationId =
+          conversationIdRef.current === "default"
+            ? agentIdRef.current
+            : conversationIdRef.current;
+        if (!cancelConversationId || cancelConversationId === "loading") {
+          return;
         }
+        await client.conversations.cancel(cancelConversationId);
 
         if (abortControllerRef.current) {
           abortControllerRef.current.abort();
@@ -11163,15 +11192,24 @@ ${SYSTEM_REMINDER_CLOSE}
             phase: "running",
           });
 
-          // Persist model change to the backend.
-          // For real conversations, update the conversation-scoped override.
-          // For "default" (virtual sentinel with no real conversation object),
-          // update the agent itself so the model sticks across messages.
+          // "default" is a virtual sentinel for the agent's primary history, not a
+          // real conversation object. When active, model changes must update the agent
+          // itself (otherwise the next agent sync will snap back).
+          const isDefaultConversation = conversationIdRef.current === "default";
           let conversationModelSettings:
             | AgentState["model_settings"]
             | null
             | undefined;
-          if (conversationIdRef.current !== "default") {
+          let updatedAgent: AgentState | null = null;
+          if (isDefaultConversation) {
+            const { updateAgentLLMConfig } = await import("../agent/modify");
+            updatedAgent = await updateAgentLLMConfig(
+              agentIdRef.current,
+              modelHandle,
+              model.updateArgs,
+            );
+            conversationModelSettings = updatedAgent?.model_settings;
+          } else {
             const { updateConversationLLMConfig } = await import(
               "../agent/modify"
             );
@@ -11185,14 +11223,6 @@ ${SYSTEM_REMINDER_CLOSE}
                 model_settings?: AgentState["model_settings"] | null;
               }
             ).model_settings;
-          } else {
-            const { updateAgentLLMConfig } = await import("../agent/modify");
-            const updatedAgent = await updateAgentLLMConfig(
-              agentId,
-              modelHandle,
-              model.updateArgs,
-            );
-            conversationModelSettings = updatedAgent.model_settings;
           }
 
           // The API may not echo reasoning_effort back, so populate it from
@@ -11206,9 +11236,23 @@ ${SYSTEM_REMINDER_CLOSE}
                   llmConfigRef.current,
                 ) ?? null);
 
-          setHasConversationModelOverride(true);
+          if (isDefaultConversation) {
+            setHasConversationModelOverride(false);
+            setConversationOverrideModelSettings(null);
+            if (updatedAgent) {
+              setAgentState(updatedAgent);
+            }
+          } else {
+            setHasConversationModelOverride(true);
+            setConversationOverrideModelSettings(
+              conversationModelSettings ?? null,
+            );
+          }
+
           setLlmConfig({
-            ...(llmConfigRef.current ?? ({} as LlmConfig)),
+            ...(updatedAgent?.llm_config ??
+              llmConfigRef.current ??
+              ({} as LlmConfig)),
             ...mapHandleToLlmConfigPatch(modelHandle),
             ...(typeof resolvedReasoningEffort === "string"
               ? {
@@ -11306,6 +11350,7 @@ ${SYSTEM_REMINDER_CLOSE}
       maybeRecordToolsetChangeReminder,
       resetPendingReasoningCycle,
       withCommandLock,
+      setHasConversationModelOverride,
     ],
   );
 
@@ -11956,13 +12001,25 @@ ${SYSTEM_REMINDER_CLOSE}
         const cmd = commandRunner.start("/reasoning", "Setting reasoning...");
 
         try {
-          // "default" is a virtual sentinel, not a real conversation object —
-          // skip the API call and fall through with undefined model_settings.
+          // "default" is a virtual sentinel for the agent's primary history. When
+          // active, reasoning tier changes must update the agent itself so the next
+          // agent sync doesn't snap back.
+          const isDefaultConversation = conversationIdRef.current === "default";
           let conversationModelSettings:
             | AgentState["model_settings"]
             | null
             | undefined;
-          if (conversationIdRef.current !== "default") {
+          let updatedAgent: AgentState | null = null;
+          if (isDefaultConversation) {
+            const { updateAgentLLMConfig } = await import("../agent/modify");
+            updatedAgent = await updateAgentLLMConfig(
+              agentIdRef.current,
+              desired.modelHandle,
+              {
+                reasoning_effort: desired.effort,
+              },
+            );
+          } else {
             const { updateConversationLLMConfig } = await import(
               "../agent/modify"
             );
@@ -11981,14 +12038,30 @@ ${SYSTEM_REMINDER_CLOSE}
           }
           const resolvedReasoningEffort =
             deriveReasoningEffort(
-              conversationModelSettings,
+              isDefaultConversation
+                ? (updatedAgent?.model_settings ?? null)
+                : conversationModelSettings,
               llmConfigRef.current,
             ) ?? desired.effort;
 
-          setHasConversationModelOverride(true);
+          if (isDefaultConversation) {
+            setHasConversationModelOverride(false);
+            setConversationOverrideModelSettings(null);
+            if (updatedAgent) {
+              setAgentState(updatedAgent);
+            }
+          } else {
+            setHasConversationModelOverride(true);
+            setConversationOverrideModelSettings(
+              conversationModelSettings ?? null,
+            );
+          }
+
           // The API may not echo reasoning_effort back; preserve explicit desired effort.
           setLlmConfig({
-            ...(llmConfigRef.current ?? ({} as LlmConfig)),
+            ...(updatedAgent?.llm_config ??
+              llmConfigRef.current ??
+              ({} as LlmConfig)),
             ...mapHandleToLlmConfigPatch(desired.modelHandle),
             reasoning_effort: resolvedReasoningEffort as ModelReasoningEffort,
           });
@@ -12045,8 +12118,15 @@ ${SYSTEM_REMINDER_CLOSE}
     } finally {
       reasoningCycleInFlightRef.current = false;
     }
-  }, [agentId, commandRunner, isAgentBusy, withCommandLock]);
+  }, [
+    agentId,
+    commandRunner,
+    isAgentBusy,
+    withCommandLock,
+    setHasConversationModelOverride,
+  ]);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: refs are stable objects, .current is read dynamically
   const handleCycleReasoningEffort = useCallback(() => {
     void (async () => {
       if (!agentId) return;

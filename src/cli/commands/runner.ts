@@ -76,9 +76,15 @@ export function createCommandRunner({
     const handle: CommandHandle = {
       id,
       input,
-      update: null!,
-      finish: null!,
-      fail: null!,
+      // Placeholders are overwritten below before the handle is returned.
+      update: (_update: CommandUpdate) => {},
+      finish: (
+        _output: string,
+        _success?: boolean,
+        _dimOutput?: boolean,
+        _preformatted?: boolean,
+      ) => {},
+      fail: (_output: string) => {},
     };
 
     const update = (updateData: CommandUpdate) => {
