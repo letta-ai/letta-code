@@ -492,7 +492,6 @@ async function main(): Promise<void> {
   const specifiedModel = values.model ?? undefined;
   const systemPromptPreset = values.system ?? undefined;
   const systemCustom = values["system-custom"] ?? undefined;
-  // Note: systemAppend is also parsed but only used in headless mode (headless.ts handles it)
   const memoryBlocksJson = values["memory-blocks"] ?? undefined;
   const specifiedToolset = values.toolset ?? undefined;
   const skillsDirectory = values.skills ?? undefined;

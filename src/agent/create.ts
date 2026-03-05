@@ -143,8 +143,6 @@ export interface CreateAgentOptions {
   systemPromptPreset?: string;
   /** Raw system prompt string (mutually exclusive with systemPromptPreset) */
   systemPromptCustom?: string;
-  /** Additional text to append to the resolved system prompt */
-  systemPromptAppend?: string;
   /** Which managed memory prompt mode to apply */
   memoryPromptMode?: MemoryPromptMode;
   /** Block labels to initialize (from default blocks) */
@@ -357,7 +355,6 @@ export async function createAgent(
   // 1. If systemPromptCustom is provided, use it as-is
   // 2. Otherwise, resolve systemPromptPreset to content
   // 3. Reconcile to the selected managed memory mode
-  // 4. If systemPromptAppend is provided, append it to the result
   let systemPromptContent: string;
   if (options.systemPromptCustom) {
     systemPromptContent = options.systemPromptCustom;
@@ -369,11 +366,6 @@ export async function createAgent(
     systemPromptContent,
     options.memoryPromptMode ?? "standard",
   );
-
-  // Append additional instructions if provided
-  if (options.systemPromptAppend) {
-    systemPromptContent = `${systemPromptContent}\n\n${options.systemPromptAppend}`;
-  }
 
   // Create agent with inline memory blocks (LET-7101: single API call instead of N+1)
   // - memory_blocks: new blocks to create inline
