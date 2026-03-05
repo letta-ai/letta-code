@@ -1,5 +1,6 @@
 import { memo } from "react";
 import type { AdvancedDiffSuccess } from "../helpers/diff";
+import type { PlanExitDecision } from "../helpers/planExitApproval";
 import type { ApprovalRequest } from "../helpers/stream";
 import {
   isFileEditTool,
@@ -15,7 +16,6 @@ import { InlineGenericApproval } from "./InlineGenericApproval";
 import { InlineQuestionApproval } from "./InlineQuestionApproval";
 import { InlineTaskApproval } from "./InlineTaskApproval";
 import { StaticPlanApproval } from "./StaticPlanApproval";
-import type { PlanExitDecision } from "../helpers/planExitApproval";
 
 // Types for parsed tool data
 type BashInfo = {

@@ -13,7 +13,9 @@ function normalizeModeBeforePlan(
   return modeBeforePlan;
 }
 
-export function formatPermissionModeForPlanReturnLabel(mode: PermissionMode): string {
+export function formatPermissionModeForPlanReturnLabel(
+  mode: PermissionMode,
+): string {
   switch (mode) {
     case "bypassPermissions":
       return "yolo";

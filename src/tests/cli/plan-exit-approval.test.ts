@@ -10,10 +10,14 @@ describe("plan exit approval", () => {
     const defaultChoices = getPlanExitChoices("default").map((c) => c.decision);
     expect(defaultChoices).toEqual(["restore", "autoAccept", "custom"]);
 
-    const acceptChoices = getPlanExitChoices("acceptEdits").map((c) => c.decision);
+    const acceptChoices = getPlanExitChoices("acceptEdits").map(
+      (c) => c.decision,
+    );
     expect(acceptChoices).toEqual(["restore", "manual", "custom"]);
 
-    const yoloChoices = getPlanExitChoices("bypassPermissions").map((c) => c.decision);
+    const yoloChoices = getPlanExitChoices("bypassPermissions").map(
+      (c) => c.decision,
+    );
     expect(yoloChoices).toEqual(["restore", "manual", "autoAccept", "custom"]);
   });
 

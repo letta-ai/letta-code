@@ -19,7 +19,9 @@ describe("permission mode retry wiring", () => {
     expect(end).toBeGreaterThan(start);
 
     const segment = source.slice(start, end);
-    expect(segment).toContain("const modeBeforePlan = uiPermissionModeRef.current");
+    expect(segment).toContain(
+      "const modeBeforePlan = uiPermissionModeRef.current",
+    );
     expect(segment).toContain("permissionMode.setMode(modeBeforePlan);");
     expect(segment).toContain('permissionMode.setMode("plan")');
   });

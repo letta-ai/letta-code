@@ -79,7 +79,6 @@ import {
 } from "../hooks";
 import type { ApprovalContext } from "../permissions/analyzer";
 import { type PermissionMode, permissionMode } from "../permissions/mode";
-import { resolvePlanExitMode, type PlanExitDecision } from "./helpers/planExitApproval";
 import { OPENAI_CODEX_PROVIDER_NAME } from "../providers/openai-codex-provider";
 import {
   type MessageQueueItem,
@@ -241,6 +240,10 @@ import {
   clearPlaceholdersInText,
   resolvePlaceholders,
 } from "./helpers/pasteRegistry";
+import {
+  type PlanExitDecision,
+  resolvePlanExitMode,
+} from "./helpers/planExitApproval";
 import { generatePlanFilePath } from "./helpers/planName";
 import {
   buildContentFromQueueBatch,
@@ -12519,7 +12522,10 @@ ${SYSTEM_REMINDER_CLOSE}
     // Toggle plan mode on and store plan file path
     // Ensure plan mode remembers the permission mode the UI was showing.
     const modeBeforePlan = uiPermissionModeRef.current;
-    if (modeBeforePlan !== "plan" && permissionMode.getMode() !== modeBeforePlan) {
+    if (
+      modeBeforePlan !== "plan" &&
+      permissionMode.getMode() !== modeBeforePlan
+    ) {
       permissionMode.setMode(modeBeforePlan);
     }
     permissionMode.setMode("plan");
