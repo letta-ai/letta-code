@@ -10,9 +10,9 @@ import { DEFAULT_AGENT_NAME } from "../constants";
 import { settingsManager } from "../settings-manager";
 import { getModelContextWindow } from "./available-models";
 import { getClient, getServerUrl } from "./client";
+import { composeSystemPrompt, type MemoryMode } from "./composeSystemPrompt";
 import { getLettaCodeHeaders } from "./http-headers";
 import { getDefaultMemoryBlocks } from "./memory";
-import { type MemoryPromptMode, reconcileMemoryPrompt } from "./memoryPrompt";
 import {
   formatAvailableModels,
   getDefaultModel,
@@ -20,7 +20,6 @@ import {
   resolveModel,
 } from "./model";
 import { updateAgentLLMConfig } from "./modify";
-import { resolveSystemPrompt } from "./promptAssets";
 import { SLEEPTIME_MEMORY_PERSONA } from "./prompts/sleeptime";
 
 /**
@@ -146,7 +145,7 @@ export interface CreateAgentOptions {
   /** Additional text to append to the resolved system prompt */
   systemPromptAppend?: string;
   /** Which managed memory prompt mode to apply */
-  memoryPromptMode?: MemoryPromptMode;
+  memoryPromptMode?: MemoryMode;
   /** Block labels to initialize (from default blocks) */
   initBlocks?: string[];
   /** Base tools to include */
@@ -353,27 +352,13 @@ export async function createAgent(
     (modelUpdateArgs?.context_window as number | undefined) ??
     (await getModelContextWindow(modelHandle));
 
-  // Resolve system prompt content:
-  // 1. If systemPromptCustom is provided, use it as-is
-  // 2. Otherwise, resolve systemPromptPreset to content
-  // 3. Reconcile to the selected managed memory mode
-  // 4. If systemPromptAppend is provided, append it to the result
-  let systemPromptContent: string;
-  if (options.systemPromptCustom) {
-    systemPromptContent = options.systemPromptCustom;
-  } else {
-    systemPromptContent = await resolveSystemPrompt(options.systemPromptPreset);
-  }
-
-  systemPromptContent = reconcileMemoryPrompt(
-    systemPromptContent,
-    options.memoryPromptMode ?? "standard",
-  );
-
-  // Append additional instructions if provided
-  if (options.systemPromptAppend) {
-    systemPromptContent = `${systemPromptContent}\n\n${options.systemPromptAppend}`;
-  }
+  // Resolve system prompt content: base + memory addon + optional append
+  const systemPromptContent = await composeSystemPrompt({
+    preset: options.systemPromptPreset,
+    customPrompt: options.systemPromptCustom,
+    memoryMode: options.memoryPromptMode ?? "standard",
+    append: options.systemPromptAppend,
+  });
 
   // Create agent with inline memory blocks (LET-7101: single API call instead of N+1)
   // - memory_blocks: new blocks to create inline

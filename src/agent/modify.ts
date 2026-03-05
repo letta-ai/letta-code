@@ -301,25 +301,17 @@ export async function updateAgentSystemPrompt(
   systemPromptId: string,
 ): Promise<UpdateSystemPromptResult> {
   try {
-    const { resolveSystemPrompt } = await import("./promptAssets");
-    const { detectMemoryPromptDrift, reconcileMemoryPrompt } = await import(
-      "./memoryPrompt"
-    );
+    const { composeSystemPrompt } = await import("./composeSystemPrompt");
     const { settingsManager } = await import("../settings-manager");
 
     const client = await getClient();
-    const currentAgent = await client.agents.retrieve(agentId);
-    const baseContent = await resolveSystemPrompt(systemPromptId);
-
-    const settingIndicatesMemfs = settingsManager.isMemfsEnabled(agentId);
-    const promptIndicatesMemfs = detectMemoryPromptDrift(
-      currentAgent.system || "",
-      "standard",
-    ).some((drift) => drift.code === "memfs_language_with_standard_mode");
-
-    const memoryMode =
-      settingIndicatesMemfs || promptIndicatesMemfs ? "memfs" : "standard";
-    const systemPromptContent = reconcileMemoryPrompt(baseContent, memoryMode);
+    const memoryMode = settingsManager.isMemfsEnabled(agentId)
+      ? "memfs"
+      : "standard";
+    const systemPromptContent = await composeSystemPrompt({
+      preset: systemPromptId,
+      memoryMode,
+    });
 
     const updateResult = await updateAgentSystemPromptRaw(
       agentId,
@@ -367,9 +359,9 @@ export async function updateAgentSystemPromptMemfs(
   try {
     const client = await getClient();
     const agent = await client.agents.retrieve(agentId);
-    const { reconcileMemoryPrompt } = await import("./memoryPrompt");
+    const { recomposeMemoryAddon } = await import("./composeSystemPrompt");
 
-    const nextSystemPrompt = reconcileMemoryPrompt(
+    const nextSystemPrompt = recomposeMemoryAddon(
       agent.system || "",
       enableMemfs ? "memfs" : "standard",
     );

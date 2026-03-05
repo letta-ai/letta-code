@@ -3155,14 +3155,11 @@ export default function App({
           try {
             const agentSystem = (agent as { system?: unknown }).system;
             if (typeof agentSystem === "string") {
+              const { stripMemoryAddon } = await import(
+                "../agent/composeSystemPrompt"
+              );
               const normalize = (s: string) => {
-                // Match prompt presets even if memfs addon is enabled/disabled.
-                // The memfs addon is appended to the stored agent.system prompt.
-                const withoutMemfs = s.replace(
-                  /\n## Memory Filesystem[\s\S]*?(?=\n# |$)/,
-                  "",
-                );
-                return withoutMemfs.replace(/\r\n/g, "\n").trim();
+                return stripMemoryAddon(s).replace(/\r\n/g, "\n").trim();
               };
               const sysNorm = normalize(agentSystem);
               const { SYSTEM_PROMPTS, SYSTEM_PROMPT } = await import(
