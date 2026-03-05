@@ -15,6 +15,7 @@ import { InlineGenericApproval } from "./InlineGenericApproval";
 import { InlineQuestionApproval } from "./InlineQuestionApproval";
 import { InlineTaskApproval } from "./InlineTaskApproval";
 import { StaticPlanApproval } from "./StaticPlanApproval";
+import type { PlanExitDecision } from "../helpers/planExitApproval";
 
 // Types for parsed tool data
 type BashInfo = {
@@ -71,7 +72,7 @@ type Props = {
   defaultScope?: "project" | "session";
 
   // Special handlers for ExitPlanMode
-  onPlanApprove?: (acceptEdits: boolean) => void;
+  onPlanApprove?: (decision: PlanExitDecision) => void;
   onPlanKeepPlanning?: (reason: string) => void;
 
   // Special handlers for AskUserQuestion
@@ -232,8 +233,9 @@ export const ApprovalSwitch = memo(
     if (toolName === "ExitPlanMode" && onPlanApprove && onPlanKeepPlanning) {
       return (
         <StaticPlanApproval
-          onApprove={() => onPlanApprove(false)}
-          onApproveAndAcceptEdits={() => onPlanApprove(true)}
+          onApproveRestore={() => onPlanApprove("restore")}
+          onApproveManual={() => onPlanApprove("manual")}
+          onApproveAndAcceptEdits={() => onPlanApprove("autoAccept")}
           onKeepPlanning={onPlanKeepPlanning}
           onCancel={onCancel ?? (() => {})}
           isFocused={isFocused}

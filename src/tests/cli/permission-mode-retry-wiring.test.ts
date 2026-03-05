@@ -8,6 +8,22 @@ function readAppSource(): string {
 }
 
 describe("permission mode retry wiring", () => {
+  test("enter plan mode approval syncs singleton before switching to plan", () => {
+    const source = readAppSource();
+
+    const start = source.indexOf(
+      "const handleEnterPlanModeApprove = useCallback(async () => {",
+    );
+    const end = source.indexOf("const handleEnterPlanModeReject = useCallback");
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+
+    const segment = source.slice(start, end);
+    expect(segment).toContain("const modeBeforePlan = uiPermissionModeRef.current");
+    expect(segment).toContain("permissionMode.setMode(modeBeforePlan);");
+    expect(segment).toContain('permissionMode.setMode("plan")');
+  });
+
   test("setUiPermissionMode syncs singleton mode immediately", () => {
     const source = readAppSource();
 
