@@ -2,14 +2,14 @@
   {
     "id": "auto",
     "handle": "letta/auto",
-    "label": "Auto",
+    "label": "Auto (Beta)",
     "description": "Automatically select the best model",
     "isFeatured": true
   },
   {
     "id": "auto-fast",
     "handle": "letta/auto-fast",
-    "label": "Auto Fast",
+    "label": "Auto Fast (Beta)",
     "description": "Automatically select the best fast model",
     "isFeatured": true
   },
