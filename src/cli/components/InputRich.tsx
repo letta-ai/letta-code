@@ -29,6 +29,7 @@ import { permissionMode } from "../../permissions/mode";
 import { OPENAI_CODEX_PROVIDER_NAME } from "../../providers/openai-codex-provider";
 import { ralphMode } from "../../ralph/mode";
 import { settingsManager } from "../../settings-manager";
+import { buildChatUrl } from "../helpers/appUrls.js";
 import { charsToTokens, formatCompact } from "../helpers/format";
 import type { QueuedMessage } from "../helpers/messageQueueBridge";
 import {
@@ -283,7 +284,13 @@ const InputFooter = memo(function InputFooter({
       : backgroundAgents
           .map((a) => {
             const elapsedS = Math.round((Date.now() - a.startTime) / 1000);
-            return `${a.type.toLowerCase()} (${elapsedS}s)`;
+            const agentId = a.agentURL?.match(/\/agents\/([^/]+)/)?.[1];
+            const chatUrl = agentId ? buildChatUrl(agentId) : null;
+            const typeLabel = a.type.toLowerCase();
+            const linkedType = chatUrl
+              ? `\x1b]8;;${chatUrl}\x1b\\${typeLabel}\x1b]8;;\x1b\\`
+              : typeLabel;
+            return `${linkedType} (${elapsedS}s)`;
           })
           .join(" · ");
 
