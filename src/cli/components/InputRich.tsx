@@ -29,6 +29,7 @@ import { permissionMode } from "../../permissions/mode";
 import { OPENAI_CODEX_PROVIDER_NAME } from "../../providers/openai-codex-provider";
 import { ralphMode } from "../../ralph/mode";
 import { settingsManager } from "../../settings-manager";
+import { buildChatUrl } from "../helpers/appUrls.js";
 import { charsToTokens, formatCompact } from "../helpers/format";
 import type { QueuedMessage } from "../helpers/messageQueueBridge";
 import {
@@ -43,7 +44,6 @@ import { PasteAwareTextInput } from "./PasteAwareTextInput";
 import { QueuedMessages } from "./QueuedMessages";
 import { ShimmerText } from "./ShimmerText";
 import { Text } from "./Text";
-import { buildChatUrl } from "../helpers/appUrls.js";
 
 // Type assertion for ink-spinner compatibility
 const Spinner = SpinnerLib as ComponentType<{ type?: string }>;
