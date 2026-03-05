@@ -125,6 +125,18 @@ interface RunStartedMessage {
   session_id?: string;
 }
 
+interface RunRequestErrorMessage {
+  type: "run_request_error";
+  error: {
+    status?: number;
+    body?: Record<string, unknown>;
+    message?: string;
+  };
+  batch_id?: string;
+  event_seq?: number;
+  session_id?: string;
+}
+
 interface ModeChangeMessage {
   type: "mode_change";
   mode: "default" | "acceptEdits" | "plan" | "bypassPermissions";
@@ -223,6 +235,7 @@ type ClientMessage =
   | PingMessage
   | ResultMessage
   | RunStartedMessage
+  | RunRequestErrorMessage
   | ModeChangedMessage
   | StatusResponseMessage
   | StateResponseMessage;
@@ -2875,6 +2888,25 @@ async function handleIncomingMessage(
     runtime.lastStopReason = "error";
     runtime.isProcessing = false;
     clearActiveRunState(runtime);
+
+    // If no run_started was ever sent, the initial POST failed (e.g. 429, 402).
+    // Emit run_request_error so the web UI can correlate with the optimistic run.
+    if (msgRunIds.length === 0) {
+      const errorPayload: RunRequestErrorMessage["error"] = {
+        message: error instanceof Error ? error.message : String(error),
+      };
+      if (error instanceof APIError) {
+        errorPayload.status = error.status;
+        if (error.error && typeof error.error === "object") {
+          errorPayload.body = error.error as Record<string, unknown>;
+        }
+      }
+      sendClientMessage(socket, {
+        type: "run_request_error",
+        error: errorPayload,
+        batch_id: dequeuedBatchId,
+      });
+    }
 
     const errorMessage = error instanceof Error ? error.message : String(error);
     emitToWS(socket, {
