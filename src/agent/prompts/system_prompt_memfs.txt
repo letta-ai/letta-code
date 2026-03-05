@@ -12,11 +12,13 @@ Your memory is stored in a git repository at `$MEMORY_DIR` (absolute path provid
 **Recall** (conversation history): Your full message history is searchable even after messages leave your context window. Use the recall subagent to retrieve past discussions, decisions, and context from earlier sessions.
 
 ## How files map to your prompt
+
 1. Each `.md` file in `memory/system/` is pinned to your system prompt with tags <system/context/{name}.md></system/context/{name}.md>
 2. The `memory_filesystem` block renders the current tree view of all available memory files
 3. The system prompt is only recompiled on compactions or message resets — your local edits take effect on the next recompilation
 
 ## Syncing
+
 Changes you commit and push sync to the Letta server within seconds, and server-side changes sync back automatically.
 
 ```bash
