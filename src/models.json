@@ -599,7 +599,7 @@
     "updateArgs": {
       "reasoning_effort": "none",
       "verbosity": "medium",
-      "context_window": 1050000,
+      "context_window": 272000,
       "max_output_tokens": 128000,
       "parallel_tool_calls": true
     }
@@ -612,7 +612,7 @@
     "updateArgs": {
       "reasoning_effort": "low",
       "verbosity": "medium",
-      "context_window": 1050000,
+      "context_window": 272000,
       "max_output_tokens": 128000,
       "parallel_tool_calls": true
     }
@@ -625,7 +625,7 @@
     "updateArgs": {
       "reasoning_effort": "medium",
       "verbosity": "medium",
-      "context_window": 1050000,
+      "context_window": 272000,
       "max_output_tokens": 128000,
       "parallel_tool_calls": true
     }
@@ -639,7 +639,7 @@
     "updateArgs": {
       "reasoning_effort": "high",
       "verbosity": "medium",
-      "context_window": 1050000,
+      "context_window": 272000,
       "max_output_tokens": 128000,
       "parallel_tool_calls": true
     }
@@ -652,7 +652,7 @@
     "updateArgs": {
       "reasoning_effort": "xhigh",
       "verbosity": "medium",
-      "context_window": 1050000,
+      "context_window": 272000,
       "max_output_tokens": 128000,
       "parallel_tool_calls": true
     }
