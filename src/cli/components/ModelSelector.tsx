@@ -28,19 +28,17 @@ type ModelCategory =
 // BYOK provider prefixes (ChatGPT OAuth + lc-* providers from /connect)
 const BYOK_PROVIDER_PREFIXES = ["chatgpt-plus-pro/", "lc-"];
 
-// Get tab order based on billing tier (free = BYOK first, paid = BYOK last)
-// For self-hosted servers, only show server-specific tabs
-function getModelCategories(
-  billingTier?: string,
+// Get tab order for model categories.
+// For self-hosted servers, only show server-specific tabs.
+// For Letta-hosted, keep ordering consistent across billing tiers.
+export function getModelCategories(
+  _billingTier?: string,
   isSelfHosted?: boolean,
 ): ModelCategory[] {
   if (isSelfHosted) {
     return ["server-recommended", "server-all"];
   }
-  const isFreeTier = billingTier?.toLowerCase() === "free";
-  return isFreeTier
-    ? ["byok", "byok-all", "supported", "all"]
-    : ["supported", "all", "byok", "byok-all"];
+  return ["supported", "all", "byok", "byok-all"];
 }
 
 type UiModel = {
@@ -83,7 +81,7 @@ interface ModelSelectorProps {
   filterProvider?: string;
   /** Force refresh the models list on mount */
   forceRefresh?: boolean;
-  /** User's billing tier - affects tab ordering (free = BYOK first) */
+  /** User's billing tier (kept for compatibility and future gating logic) */
   billingTier?: string;
   /** Whether connected to a self-hosted server (not api.letta.com) */
   isSelfHosted?: boolean;
@@ -102,7 +100,6 @@ export function ModelSelector({
   const solidLine = SOLID_LINE.repeat(Math.max(terminalWidth, 10));
   const typedModels = models as UiModel[];
 
-  // Tab order depends on billing tier (free = BYOK first)
   // For self-hosted, only show server-specific tabs
   const modelCategories = useMemo(
     () => getModelCategories(billingTier, isSelfHosted),
@@ -198,8 +195,6 @@ export function ModelSelector({
   // Supported models: models.json entries that are available
   // Featured models first, then non-featured, preserving JSON order within each group
   // If filterProvider is set, only show models from that provider
-  // For free tier, free models go first
-  const isFreeTier = billingTier?.toLowerCase() === "free";
   const supportedModels = useMemo(() => {
     if (availableHandles === undefined) return [];
     let available = filterModelsByAvailabilityForSelector(
@@ -235,15 +230,6 @@ export function ModelSelector({
       deduped.push(pickPreferredStaticModel(m.handle) ?? m);
     }
 
-    // For free tier, put free models first, then others with standard ordering
-    if (isFreeTier) {
-      const freeModels = deduped.filter((m) => m.free);
-      const paidModels = deduped.filter((m) => !m.free);
-      const featured = paidModels.filter((m) => m.isFeatured);
-      const nonFeatured = paidModels.filter((m) => !m.isFeatured);
-      return [...freeModels, ...featured, ...nonFeatured];
-    }
-
     const featured = deduped.filter((m) => m.isFeatured);
     const nonFeatured = deduped.filter((m) => !m.isFeatured);
     return [...featured, ...nonFeatured];
@@ -253,7 +239,6 @@ export function ModelSelector({
     allApiHandles,
     filterProvider,
     searchQuery,
-    isFreeTier,
     pickPreferredStaticModel,
   ]);
 

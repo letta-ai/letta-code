@@ -1597,7 +1597,7 @@ async function main(): Promise<void> {
           // Determine effective model:
           // 1. Use selectedServerModel if user picked from self-hosted picker
           // 2. Use model if --model flag was passed
-          // 3. Otherwise, use billing-tier-aware default (free tier gets glm-4.7)
+          // 3. Otherwise, use billing-tier-aware default (free tier gets GLM-5)
           let effectiveModel = selectedServerModel || model;
           if (!effectiveModel && !selfHostedBaseUrl) {
             // On Letta API without explicit model - check billing tier for appropriate default
