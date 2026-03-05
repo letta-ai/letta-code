@@ -105,6 +105,22 @@ describe("shared CLI arg schema", () => {
     expect(parsed.values["block-value"]).toEqual(["persona=hello"]);
   });
 
+  test("rejects removed system-append flag in strict mode", () => {
+    expect(() =>
+      parseCliArgs(
+        preprocessCliArgs([
+          "node",
+          "script",
+          "-p",
+          "hello",
+          "--system-append",
+          "extra instructions",
+        ]),
+        true,
+      ),
+    ).toThrow();
+  });
+
   test("treats --import argument as a flag value, not prompt text", () => {
     const parsed = parseCliArgs(
       preprocessCliArgs([

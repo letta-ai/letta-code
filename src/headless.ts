@@ -387,7 +387,6 @@ export async function handleHeadlessCommand(
   const forceNew = values["new-agent"];
   const systemPromptPreset = values.system;
   const systemCustom = values["system-custom"];
-  const systemAppend = values["system-append"];
   const embeddingModel = values.embedding;
   const memoryBlocksJson = values["memory-blocks"];
   const blockValueArgs = values["block-value"];
@@ -804,7 +803,6 @@ export async function handleHeadlessCommand(
       parallelToolCalls: true,
       systemPromptPreset,
       systemPromptCustom: systemCustom,
-      systemPromptAppend: systemAppend,
       memoryPromptMode: requestedMemoryPromptMode,
       initBlocks,
       baseTools,
