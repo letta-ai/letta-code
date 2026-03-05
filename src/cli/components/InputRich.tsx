@@ -43,6 +43,7 @@ import { PasteAwareTextInput } from "./PasteAwareTextInput";
 import { QueuedMessages } from "./QueuedMessages";
 import { ShimmerText } from "./ShimmerText";
 import { Text } from "./Text";
+import { buildChatUrl } from "../helpers/appUrls.js";
 
 // Type assertion for ink-spinner compatibility
 const Spinner = SpinnerLib as ComponentType<{ type?: string }>;
@@ -283,7 +284,10 @@ const InputFooter = memo(function InputFooter({
       : backgroundAgents
           .map((a) => {
             const elapsedS = Math.round((Date.now() - a.startTime) / 1000);
-            return `${a.type.toLowerCase()} (${elapsedS}s)`;
+            const agentId = a.agentURL?.match(/\/agents\/([^/]+)/)?.[1];
+            const chatUrl = agentId ? buildChatUrl(agentId) : null;
+            const base = `${a.type.toLowerCase()} (${elapsedS}s)`;
+            return chatUrl ? `${base} ${chatUrl}` : base;
           })
           .join(" · ");
 
