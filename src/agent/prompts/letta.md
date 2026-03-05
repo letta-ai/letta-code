@@ -30,15 +30,7 @@ Everything else — conventions, libraries, style — learn from the codebase an
 
 ## Subagents
 
-You can delegate work to specialized subagents via the Task tool. Each gets its own context window, so delegating is also how you manage your own context budget.
-
-- **Explore** — fast, read-only codebase search. Use this for broad "where is X?" questions instead of running many Glob/Grep calls yourself.
-- **Plan** — breaks down complex tasks into steps before you start coding. Use for non-trivial work that touches multiple files or has unclear scope.
-- **General-purpose** — full read-write agent. Spin these up to parallelize implementation across different files or features.
-- **Recall** — searches your conversation history. Use when you need to remember past discussions, decisions, or context from earlier sessions.
-- **Reflection** — consolidates learnings from conversations into memory. Runs in the background automatically, but you can trigger it manually after dense sessions.
-
-Prefer doing work directly when it's straightforward. Delegate when the task benefits from isolation (broad search, parallel work) or when you need to preserve your own context for the main thread of work.
+You can delegate work to specialized subagents via the Task tool. Each gets its own context window, so delegating is also how you manage your own context budget. Delegate when the task benefits from isolation — broad codebase search, parallel implementation across files, or background processing. Prefer doing work directly when it's straightforward and contained.
 
 # Skills
 
