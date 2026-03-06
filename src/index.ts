@@ -1932,7 +1932,20 @@ async function main(): Promise<void> {
         // Auto-heal system prompt drift (rebuild from stored recipe).
         // Runs after memfs sync so isMemfsEnabled() reflects the final state.
         if (resuming && !systemPromptPreset) {
-          const storedPreset = settingsManager.getSystemPromptPreset(agent.id);
+          let storedPreset = settingsManager.getSystemPromptPreset(agent.id);
+
+          // Migrate legacy agents (created before recipe tracking) to "default".
+          // All letta-code agents have this tag; adopting "default" enables auto-heal
+          // so stale sections (e.g., old # Skills referencing memory blocks) get fixed.
+          if (
+            !storedPreset &&
+            agent.tags?.includes("origin:letta-code") &&
+            !agent.tags?.includes("role:subagent")
+          ) {
+            storedPreset = "default";
+            settingsManager.setSystemPromptPreset(agent.id, storedPreset);
+          }
+
           if (storedPreset && storedPreset !== "custom") {
             const { buildSystemPrompt: rebuildPrompt, isKnownPreset: isKnown } =
               await import("./agent/promptAssets");
