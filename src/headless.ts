@@ -991,15 +991,14 @@ export async function handleHeadlessCommand(
   if (isResumingAgent && !systemPromptPreset) {
     let storedPreset = settingsManager.getSystemPromptPreset(agent.id);
 
-    // Migrate legacy agents (created before recipe tracking) to "default".
-    // All letta-code agents have this tag; adopting "default" enables auto-heal
-    // so stale sections (e.g., old # Skills referencing memory blocks) get fixed.
+    // Adopt legacy agents (created before recipe tracking) as "custom"
+    // so their prompts are left untouched by auto-heal.
     if (
       !storedPreset &&
       agent.tags?.includes("origin:letta-code") &&
       !agent.tags?.includes("role:subagent")
     ) {
-      storedPreset = "default";
+      storedPreset = "custom";
       settingsManager.setSystemPromptPreset(agent.id, storedPreset);
     }
 
