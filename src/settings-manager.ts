@@ -209,6 +209,13 @@ class SettingsManager {
   }
 
   /**
+   * Whether the settings manager has been initialized.
+   */
+  get isReady(): boolean {
+    return this.initialized;
+  }
+
+  /**
    * Initialize the settings manager (loads from disk)
    * Should be called once at app startup
    */

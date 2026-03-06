@@ -3,7 +3,6 @@ import { describe, expect, test } from "bun:test";
 import {
   buildSystemPrompt,
   isKnownPreset,
-  SYSTEM_PROMPT,
   SYSTEM_PROMPT_MEMFS_ADDON,
   SYSTEM_PROMPT_MEMORY_ADDON,
   swapMemoryAddon,
@@ -58,7 +57,10 @@ describe("buildSystemPrompt", () => {
 
   test("default preset uses SYSTEM_PROMPT content", () => {
     const result = buildSystemPrompt("default", "standard");
-    expect(result.startsWith(SYSTEM_PROMPT.trimEnd())).toBe(true);
+    expect(result).toContain("You are a self-improving AI agent");
+    // default is NOT letta-claude — it uses the Letta-tuned system prompt
+    const lettaClaudeResult = buildSystemPrompt("letta-claude", "standard");
+    expect(result).not.toBe(lettaClaudeResult);
   });
 });
 

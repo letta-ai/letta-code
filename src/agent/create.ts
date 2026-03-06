@@ -456,8 +456,9 @@ export async function createAgent(
     }
   }
 
-  // Persist system prompt preset — only for non-subagents and known presets or custom
-  if (!isSubagent) {
+  // Persist system prompt preset — only for non-subagents and known presets or custom.
+  // Guarded by isReady since settings may not be initialized in direct/test callers.
+  if (!isSubagent && settingsManager.isReady) {
     if (options.systemPromptCustom) {
       settingsManager.setSystemPromptPreset(fullAgent.id, "custom");
     } else if (isKnownPreset(options.systemPromptPreset ?? "default")) {

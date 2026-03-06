@@ -311,9 +311,10 @@ export async function updateAgentSystemPrompt(
     const { settingsManager } = await import("../settings-manager");
 
     const client = await getClient();
-    const memoryMode = settingsManager.isMemfsEnabled(agentId)
-      ? "memfs"
-      : "standard";
+    const memoryMode =
+      settingsManager.isReady && settingsManager.isMemfsEnabled(agentId)
+        ? "memfs"
+        : "standard";
 
     const systemPromptContent = await resolveAndBuildSystemPrompt(
       systemPromptId,
@@ -333,10 +334,12 @@ export async function updateAgentSystemPrompt(
     }
 
     // Persist preset for known presets; clear stale preset for subagent/unknown
-    if (isKnownPreset(systemPromptId)) {
-      settingsManager.setSystemPromptPreset(agentId, systemPromptId);
-    } else {
-      settingsManager.clearSystemPromptPreset(agentId);
+    if (settingsManager.isReady) {
+      if (isKnownPreset(systemPromptId)) {
+        settingsManager.setSystemPromptPreset(agentId, systemPromptId);
+      } else {
+        settingsManager.clearSystemPromptPreset(agentId);
+      }
     }
 
     // Re-fetch agent to get updated state
@@ -377,7 +380,9 @@ export async function updateAgentSystemPromptMemfs(
     );
 
     const newMode = enableMemfs ? "memfs" : "standard";
-    const storedPreset = settingsManager.getSystemPromptPreset(agentId);
+    const storedPreset = settingsManager.isReady
+      ? settingsManager.getSystemPromptPreset(agentId)
+      : undefined;
 
     let nextSystemPrompt: string;
     if (storedPreset && isKnownPreset(storedPreset)) {
