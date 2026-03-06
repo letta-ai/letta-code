@@ -921,6 +921,9 @@ export async function handleHeadlessCommand(
 
   const isSubagent = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
 
+  // Captured so prompt logic below can await it when needed.
+  let memfsBgPromise: Promise<unknown> | undefined;
+
   // Apply memfs flags and auto-enable from server tag when local settings are missing.
   // Respects memfsStartupPolicy:
   //   "blocking"  (default) – await the pull; exit on conflict.
@@ -943,7 +946,7 @@ export async function handleHeadlessCommand(
   } else if (memfsStartupPolicy === "background") {
     // Fire pull async; don't block session initialisation.
     const { applyMemfsFlags } = await import("./agent/memoryFilesystem");
-    applyMemfsFlags(agent.id, memfsFlag, noMemfsFlag, {
+    memfsBgPromise = applyMemfsFlags(agent.id, memfsFlag, noMemfsFlag, {
       pullOnExistingRepo: true,
       agentTags: agent.tags,
     }).catch((error) => {
@@ -974,6 +977,11 @@ export async function handleHeadlessCommand(
       );
       process.exit(1);
     }
+  }
+
+  // Ensure background memfs sync settles before prompt logic reads isMemfsEnabled().
+  if (memfsBgPromise && isResumingAgent) {
+    await memfsBgPromise;
   }
 
   // Apply --system flag after memfs sync so isMemfsEnabled() is up to date.

@@ -1558,24 +1558,6 @@ async function main(): Promise<void> {
         if (!agent && agentIdArg) {
           try {
             agent = await client.agents.retrieve(agentIdArg);
-
-            // Apply --system flag to existing agent if provided
-            if (systemPromptPreset) {
-              const { updateAgentSystemPrompt } = await import(
-                "./agent/modify"
-              );
-              const result = await updateAgentSystemPrompt(
-                agent.id,
-                systemPromptPreset,
-              );
-              if (!result.success || !result.agent) {
-                console.error(
-                  `Failed to update system prompt: ${result.message}`,
-                );
-                process.exit(1);
-              }
-              agent = result.agent;
-            }
           } catch (error) {
             console.error(
               `Agent ${agentIdArg} not found (error: ${JSON.stringify(error)})`,
