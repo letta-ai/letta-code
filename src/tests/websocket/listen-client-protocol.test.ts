@@ -640,3 +640,44 @@ describe("listen-client post-stop approval recovery policy", () => {
     expect(shouldRecover).toBe(false);
   });
 });
+
+describe("listen-client tool_return wire normalization", () => {
+  test("normalizes legacy top-level tool return fields to canonical tool_returns[]", () => {
+    const normalized = __listenClientTestUtils.normalizeToolReturnWireMessage({
+      message_type: "tool_return_message",
+      id: "message-1",
+      run_id: "run-1",
+      tool_call_id: "call-1",
+      status: "error",
+      tool_return: [{ type: "text", text: "Interrupted by user" }],
+    });
+
+    expect(normalized).toEqual({
+      message_type: "tool_return_message",
+      id: "message-1",
+      run_id: "run-1",
+      tool_returns: [
+        {
+          tool_call_id: "call-1",
+          status: "error",
+          tool_return: "Interrupted by user",
+        },
+      ],
+    });
+    expect(normalized).not.toHaveProperty("tool_call_id");
+    expect(normalized).not.toHaveProperty("status");
+    expect(normalized).not.toHaveProperty("tool_return");
+  });
+
+  test("returns null for tool_return_message when no canonical status is available", () => {
+    const normalized = __listenClientTestUtils.normalizeToolReturnWireMessage({
+      message_type: "tool_return_message",
+      id: "message-2",
+      run_id: "run-2",
+      tool_call_id: "call-2",
+      tool_return: "maybe done",
+    });
+
+    expect(normalized).toBeNull();
+  });
+});

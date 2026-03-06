@@ -920,6 +920,15 @@ interface InterruptToolReturn {
   stderr?: string[];
 }
 
+function asToolReturnStatus(
+  value: unknown,
+): "success" | "error" | null {
+  if (value === "success" || value === "error") {
+    return value;
+  }
+  return null;
+}
+
 function normalizeToolReturnValue(value: unknown): string {
   if (typeof value === "string") {
     return value;
@@ -963,6 +972,93 @@ function normalizeToolReturnValue(value: unknown): string {
   } catch {
     return String(value);
   }
+}
+
+function extractCanonicalToolReturnsFromWire(
+  payload: Record<string, unknown>,
+): InterruptToolReturn[] {
+  const fromArray: InterruptToolReturn[] = [];
+  const toolReturnsValue = payload.tool_returns;
+  if (Array.isArray(toolReturnsValue)) {
+    for (const raw of toolReturnsValue) {
+      if (!raw || typeof raw !== "object") {
+        continue;
+      }
+      const rec = raw as Record<string, unknown>;
+      const toolCallId =
+        typeof rec.tool_call_id === "string" ? rec.tool_call_id : null;
+      const status = asToolReturnStatus(rec.status);
+      if (!toolCallId || !status) {
+        continue;
+      }
+      const stdout = Array.isArray(rec.stdout)
+        ? rec.stdout.filter((entry): entry is string => typeof entry === "string")
+        : undefined;
+      const stderr = Array.isArray(rec.stderr)
+        ? rec.stderr.filter((entry): entry is string => typeof entry === "string")
+        : undefined;
+      fromArray.push({
+        tool_call_id: toolCallId,
+        status,
+        tool_return: normalizeToolReturnValue(rec.tool_return),
+        ...(stdout ? { stdout } : {}),
+        ...(stderr ? { stderr } : {}),
+      });
+    }
+  }
+  if (fromArray.length > 0) {
+    return fromArray;
+  }
+
+  const topLevelToolCallId =
+    typeof payload.tool_call_id === "string" ? payload.tool_call_id : null;
+  const topLevelStatus = asToolReturnStatus(payload.status);
+  if (!topLevelToolCallId || !topLevelStatus) {
+    return [];
+  }
+  const stdout = Array.isArray(payload.stdout)
+    ? payload.stdout.filter((entry): entry is string => typeof entry === "string")
+    : undefined;
+  const stderr = Array.isArray(payload.stderr)
+    ? payload.stderr.filter((entry): entry is string => typeof entry === "string")
+    : undefined;
+  return [
+    {
+      tool_call_id: topLevelToolCallId,
+      status: topLevelStatus,
+      tool_return: normalizeToolReturnValue(payload.tool_return),
+      ...(stdout ? { stdout } : {}),
+      ...(stderr ? { stderr } : {}),
+    },
+  ];
+}
+
+function normalizeToolReturnWireMessage(
+  chunk: Record<string, unknown>,
+): Record<string, unknown> | null {
+  if (chunk.message_type !== "tool_return_message") {
+    return chunk;
+  }
+
+  const canonicalToolReturns = extractCanonicalToolReturnsFromWire(chunk);
+  if (canonicalToolReturns.length === 0) {
+    return null;
+  }
+
+  const {
+    tool_call_id: _toolCallId,
+    status: _status,
+    tool_return: _toolReturn,
+    stdout: _stdout,
+    stderr: _stderr,
+    ...rest
+  } = chunk;
+
+  return {
+    ...rest,
+    message_type: "tool_return_message",
+    tool_returns: canonicalToolReturns,
+  };
 }
 
 function extractInterruptToolReturns(
@@ -1061,12 +1157,15 @@ function emitInterruptToolReturnMessage(
       id: `message-${crypto.randomUUID()}`,
       date: new Date().toISOString(),
       run_id: resolvedRunId,
-      tool_call_id: toolReturn.tool_call_id,
-      tool_return: toolReturn.tool_return,
-      status: toolReturn.status,
-      ...(toolReturn.stdout ? { stdout: toolReturn.stdout } : {}),
-      ...(toolReturn.stderr ? { stderr: toolReturn.stderr } : {}),
-      tool_returns: [toolReturn],
+      tool_returns: [
+        {
+          tool_call_id: toolReturn.tool_call_id,
+          status: toolReturn.status,
+          tool_return: toolReturn.tool_return,
+          ...(toolReturn.stdout ? { stdout: toolReturn.stdout } : {}),
+          ...(toolReturn.stderr ? { stderr: toolReturn.stderr } : {}),
+        },
+      ],
       session_id: runtime.sessionId,
       uuid: `${uuidPrefix}-${crypto.randomUUID()}`,
     } as unknown as MessageWire);
@@ -2508,12 +2607,17 @@ async function handleIncomingMessage(
               otid?: string;
               id?: string;
             };
-            emitToWS(socket, {
-              ...chunk,
-              type: "message",
-              session_id: runtime.sessionId,
-              uuid: chunkWithIds.otid || chunkWithIds.id || crypto.randomUUID(),
-            } as MessageWire);
+            const normalizedChunk = normalizeToolReturnWireMessage(
+              chunk as unknown as Record<string, unknown>,
+            );
+            if (normalizedChunk) {
+              emitToWS(socket, {
+                ...normalizedChunk,
+                type: "message",
+                session_id: runtime.sessionId,
+                uuid: chunkWithIds.otid || chunkWithIds.id || crypto.randomUUID(),
+              } as unknown as MessageWire);
+            }
           }
 
           return undefined;
@@ -3109,5 +3213,6 @@ export const __listenClientTestUtils = {
   extractInterruptToolReturns,
   emitInterruptToolReturnMessage,
   getInterruptApprovalsForEmission,
+  normalizeToolReturnWireMessage,
   shouldAttemptPostStopApprovalRecovery,
 };

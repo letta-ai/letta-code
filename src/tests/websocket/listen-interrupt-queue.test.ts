@@ -231,16 +231,26 @@ describe("extractInterruptToolReturns", () => {
     expect(toolReturnFrames).toHaveLength(2);
     expect(toolReturnFrames[0]).toMatchObject({
       run_id: "run-1",
-      tool_call_id: "call-a",
-      status: "success",
-      tool_returns: [{ tool_call_id: "call-a", status: "success" }],
+      tool_returns: [
+        { tool_call_id: "call-a", status: "success", tool_return: "704" },
+      ],
     });
     expect(toolReturnFrames[1]).toMatchObject({
       run_id: "run-1",
-      tool_call_id: "call-b",
-      status: "error",
-      tool_returns: [{ tool_call_id: "call-b", status: "error" }],
+      tool_returns: [
+        {
+          tool_call_id: "call-b",
+          status: "error",
+          tool_return: "User interrupted the stream",
+        },
+      ],
     });
+    expect(toolReturnFrames[0]).not.toHaveProperty("tool_call_id");
+    expect(toolReturnFrames[0]).not.toHaveProperty("status");
+    expect(toolReturnFrames[0]).not.toHaveProperty("tool_return");
+    expect(toolReturnFrames[1]).not.toHaveProperty("tool_call_id");
+    expect(toolReturnFrames[1]).not.toHaveProperty("status");
+    expect(toolReturnFrames[1]).not.toHaveProperty("tool_return");
   });
 });
 
