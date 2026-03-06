@@ -42,7 +42,7 @@ export type {
  * Use this to select a built-in system prompt with optional appended text.
  *
  * Available presets (validated at runtime by CLI):
- * - 'default' - Alias for letta-claude
+ * - 'default' - Letta-tuned system prompt
  * - 'letta-claude' - Full Letta Code prompt (Claude-optimized)
  * - 'letta-codex' - Full Letta Code prompt (Codex-optimized)
  * - 'letta-gemini' - Full Letta Code prompt (Gemini-optimized)
