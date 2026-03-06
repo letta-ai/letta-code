@@ -436,7 +436,7 @@ const InputFooter = memo(function InputFooter({
               color={colors.bgSubagent.spinner}
               width={2}
               marginRight={0}
-              pulseIntervalMs={500}
+              pulseIntervalMs={400}
             />
             {bgAgentParts.map((part, i) => (
               <Text key={`bg-agent-${part}`}>
