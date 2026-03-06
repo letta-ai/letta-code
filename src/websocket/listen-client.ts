@@ -18,6 +18,7 @@ import {
   executeApprovalBatch,
 } from "../agent/approval-execution";
 import { fetchRunErrorDetail } from "../agent/approval-recovery";
+import { normalizeApprovalResultsForPersistence } from "../agent/approval-result-normalization";
 import { getResumeData } from "../agent/check-approval";
 import { getClient } from "../agent/client";
 import { getStreamToolContextId, sendMessageStream } from "../agent/message";
@@ -34,6 +35,7 @@ import { createBuffers } from "../cli/helpers/accumulator";
 import { classifyApprovals } from "../cli/helpers/approvalClassification";
 import { generatePlanFilePath } from "../cli/helpers/planName";
 import { drainStreamWithResume } from "../cli/helpers/stream";
+import { INTERRUPTED_BY_USER } from "../constants";
 import { computeDiffPreviews } from "../helpers/diffPreview";
 import { permissionMode } from "../permissions/mode";
 import { type QueueItem, QueueRuntime } from "../queue/queueRuntime";
@@ -907,6 +909,7 @@ function shouldAttemptPostStopApprovalRecovery(params: {
 
 interface InterruptPopulateInput {
   lastExecutionResults: ApprovalResult[] | null;
+  lastExecutingToolCallIds: string[];
   lastNeedsUserInputToolCallIds: string[];
   agentId: string;
   conversationId: string;
@@ -920,9 +923,47 @@ interface InterruptToolReturn {
   stderr?: string[];
 }
 
+function asToolReturnStatus(value: unknown): "success" | "error" | null {
+  if (value === "success" || value === "error") {
+    return value;
+  }
+  return null;
+}
+
 function normalizeToolReturnValue(value: unknown): string {
   if (typeof value === "string") {
     return value;
+  }
+  if (Array.isArray(value)) {
+    const textParts = value
+      .filter(
+        (
+          part,
+        ): part is {
+          type: string;
+          text: string;
+        } =>
+          !!part &&
+          typeof part === "object" &&
+          "type" in part &&
+          part.type === "text" &&
+          "text" in part &&
+          typeof part.text === "string",
+      )
+      .map((part) => part.text);
+    if (textParts.length > 0) {
+      return textParts.join("\n");
+    }
+  }
+  if (
+    value &&
+    typeof value === "object" &&
+    "type" in value &&
+    value.type === "text" &&
+    "text" in value &&
+    typeof value.text === "string"
+  ) {
+    return value.text;
   }
   if (value === null || value === undefined) {
     return "";
@@ -932,6 +973,116 @@ function normalizeToolReturnValue(value: unknown): string {
   } catch {
     return String(value);
   }
+}
+
+function normalizeInterruptedApprovalsForQueue(
+  approvals: ApprovalResult[] | null,
+  interruptedToolCallIds: string[],
+): ApprovalResult[] | null {
+  if (!approvals || approvals.length === 0) {
+    return approvals;
+  }
+
+  return normalizeApprovalResultsForPersistence(approvals, {
+    interruptedToolCallIds,
+    // Temporary fallback guard while all producers migrate to structured IDs.
+    allowInterruptTextFallback: true,
+  });
+}
+
+function extractCanonicalToolReturnsFromWire(
+  payload: Record<string, unknown>,
+): InterruptToolReturn[] {
+  const fromArray: InterruptToolReturn[] = [];
+  const toolReturnsValue = payload.tool_returns;
+  if (Array.isArray(toolReturnsValue)) {
+    for (const raw of toolReturnsValue) {
+      if (!raw || typeof raw !== "object") {
+        continue;
+      }
+      const rec = raw as Record<string, unknown>;
+      const toolCallId =
+        typeof rec.tool_call_id === "string" ? rec.tool_call_id : null;
+      const status = asToolReturnStatus(rec.status);
+      if (!toolCallId || !status) {
+        continue;
+      }
+      const stdout = Array.isArray(rec.stdout)
+        ? rec.stdout.filter(
+            (entry): entry is string => typeof entry === "string",
+          )
+        : undefined;
+      const stderr = Array.isArray(rec.stderr)
+        ? rec.stderr.filter(
+            (entry): entry is string => typeof entry === "string",
+          )
+        : undefined;
+      fromArray.push({
+        tool_call_id: toolCallId,
+        status,
+        tool_return: normalizeToolReturnValue(rec.tool_return),
+        ...(stdout ? { stdout } : {}),
+        ...(stderr ? { stderr } : {}),
+      });
+    }
+  }
+  if (fromArray.length > 0) {
+    return fromArray;
+  }
+
+  const topLevelToolCallId =
+    typeof payload.tool_call_id === "string" ? payload.tool_call_id : null;
+  const topLevelStatus = asToolReturnStatus(payload.status);
+  if (!topLevelToolCallId || !topLevelStatus) {
+    return [];
+  }
+  const stdout = Array.isArray(payload.stdout)
+    ? payload.stdout.filter(
+        (entry): entry is string => typeof entry === "string",
+      )
+    : undefined;
+  const stderr = Array.isArray(payload.stderr)
+    ? payload.stderr.filter(
+        (entry): entry is string => typeof entry === "string",
+      )
+    : undefined;
+  return [
+    {
+      tool_call_id: topLevelToolCallId,
+      status: topLevelStatus,
+      tool_return: normalizeToolReturnValue(payload.tool_return),
+      ...(stdout ? { stdout } : {}),
+      ...(stderr ? { stderr } : {}),
+    },
+  ];
+}
+
+function normalizeToolReturnWireMessage(
+  chunk: Record<string, unknown>,
+): Record<string, unknown> | null {
+  if (chunk.message_type !== "tool_return_message") {
+    return chunk;
+  }
+
+  const canonicalToolReturns = extractCanonicalToolReturnsFromWire(chunk);
+  if (canonicalToolReturns.length === 0) {
+    return null;
+  }
+
+  const {
+    tool_call_id: _toolCallId,
+    status: _status,
+    tool_return: _toolReturn,
+    stdout: _stdout,
+    stderr: _stderr,
+    ...rest
+  } = chunk;
+
+  return {
+    ...rest,
+    message_type: "tool_return_message",
+    tool_returns: canonicalToolReturns,
+  };
 }
 
 function extractInterruptToolReturns(
@@ -1030,12 +1181,15 @@ function emitInterruptToolReturnMessage(
       id: `message-${crypto.randomUUID()}`,
       date: new Date().toISOString(),
       run_id: resolvedRunId,
-      tool_call_id: toolReturn.tool_call_id,
-      tool_return: toolReturn.tool_return,
-      status: toolReturn.status,
-      ...(toolReturn.stdout ? { stdout: toolReturn.stdout } : {}),
-      ...(toolReturn.stderr ? { stderr: toolReturn.stderr } : {}),
-      tool_returns: [toolReturn],
+      tool_returns: [
+        {
+          tool_call_id: toolReturn.tool_call_id,
+          status: toolReturn.status,
+          tool_return: toolReturn.tool_return,
+          ...(toolReturn.stdout ? { stdout: toolReturn.stdout } : {}),
+          ...(toolReturn.stderr ? { stderr: toolReturn.stderr } : {}),
+        },
+      ],
       session_id: runtime.sessionId,
       uuid: `${uuidPrefix}-${crypto.randomUUID()}`,
     } as unknown as MessageWire);
@@ -1092,7 +1246,31 @@ function populateInterruptQueue(
 
   if (input.lastExecutionResults && input.lastExecutionResults.length > 0) {
     // Path A: execution happened before cancel — queue actual results
-    runtime.pendingInterruptedResults = input.lastExecutionResults;
+    // Guard parity: interrupted tool returns must persist as status=error.
+    runtime.pendingInterruptedResults = normalizeInterruptedApprovalsForQueue(
+      input.lastExecutionResults,
+      input.lastExecutingToolCallIds,
+    );
+    runtime.pendingInterruptedContext = {
+      agentId: input.agentId,
+      conversationId: input.conversationId,
+      continuationEpoch: runtime.continuationEpoch,
+    };
+    return true;
+  }
+
+  // Path A.5: execution was in-flight (approved tools started) but no
+  // terminal results were captured before cancel. Match App/headless parity by
+  // queuing explicit tool errors, not synthetic approval denials.
+  if (input.lastExecutingToolCallIds.length > 0) {
+    runtime.pendingInterruptedResults = input.lastExecutingToolCallIds.map(
+      (toolCallId) => ({
+        type: "tool" as const,
+        tool_call_id: toolCallId,
+        tool_return: INTERRUPTED_BY_USER,
+        status: "error" as const,
+      }),
+    );
     runtime.pendingInterruptedContext = {
       agentId: input.agentId,
       conversationId: input.conversationId,
@@ -2288,6 +2466,7 @@ async function handleIncomingMessage(
   // Track last approval-loop state for cancel-time queueing (Phase 1.2).
   // Hoisted before try so the cancel catch block can access them.
   let lastExecutionResults: ApprovalResult[] | null = null;
+  let lastExecutingToolCallIds: string[] = [];
   let lastNeedsUserInputToolCallIds: string[] = [];
 
   runtime.isProcessing = true;
@@ -2477,12 +2656,18 @@ async function handleIncomingMessage(
               otid?: string;
               id?: string;
             };
-            emitToWS(socket, {
-              ...chunk,
-              type: "message",
-              session_id: runtime.sessionId,
-              uuid: chunkWithIds.otid || chunkWithIds.id || crypto.randomUUID(),
-            } as MessageWire);
+            const normalizedChunk = normalizeToolReturnWireMessage(
+              chunk as unknown as Record<string, unknown>,
+            );
+            if (normalizedChunk) {
+              emitToWS(socket, {
+                ...normalizedChunk,
+                type: "message",
+                session_id: runtime.sessionId,
+                uuid:
+                  chunkWithIds.otid || chunkWithIds.id || crypto.randomUUID(),
+              } as unknown as MessageWire);
+            }
           }
 
           return undefined;
@@ -2875,6 +3060,15 @@ async function handleIncomingMessage(
         }
       }
 
+      // Snapshot executing tool_call_ids before execution starts so cancel can
+      // preserve tool-error parity even if execution aborts mid-await.
+      lastExecutingToolCallIds = decisions
+        .filter(
+          (decision): decision is Extract<Decision, { type: "approve" }> =>
+            decision.type === "approve",
+        )
+        .map((decision) => decision.approval.toolCallId);
+
       // Execute approved/denied tools
       const executionResults = await executeApprovalBatch(
         decisions,
@@ -2922,6 +3116,7 @@ async function handleIncomingMessage(
       // cancel during the subsequent stream drain won't queue already-sent
       // results (Path A) or re-deny already-resolved tool calls (Path B).
       lastExecutionResults = null;
+      lastExecutingToolCallIds = [];
       lastNeedsUserInputToolCallIds = [];
 
       turnToolContextId = getStreamToolContextId(
@@ -2933,6 +3128,7 @@ async function handleIncomingMessage(
       // Queue interrupted tool-call resolutions for the next message turn.
       populateInterruptQueue(runtime, {
         lastExecutionResults,
+        lastExecutingToolCallIds,
         lastNeedsUserInputToolCallIds,
         agentId: agentId || "",
         conversationId,
@@ -3078,5 +3274,6 @@ export const __listenClientTestUtils = {
   extractInterruptToolReturns,
   emitInterruptToolReturnMessage,
   getInterruptApprovalsForEmission,
+  normalizeToolReturnWireMessage,
   shouldAttemptPostStopApprovalRecovery,
 };

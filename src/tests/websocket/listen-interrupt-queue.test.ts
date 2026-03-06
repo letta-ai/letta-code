@@ -178,6 +178,29 @@ describe("extractInterruptToolReturns", () => {
     ]);
   });
 
+  test("converts multimodal tool_return content into displayable text", () => {
+    const results: ApprovalResult[] = [
+      {
+        type: "tool",
+        tool_call_id: "call-multimodal",
+        status: "error",
+        tool_return: [
+          { type: "text", text: "Interrupted by user" },
+          { type: "image", image_url: "https://example.com/image.png" },
+        ],
+      } as ApprovalResult,
+    ];
+
+    const mapped = extractInterruptToolReturns(results);
+    expect(mapped).toEqual([
+      {
+        tool_call_id: "call-multimodal",
+        status: "error",
+        tool_return: "Interrupted by user",
+      },
+    ]);
+  });
+
   test("emitInterruptToolReturnMessage emits deterministic per-tool terminal messages", () => {
     const runtime = createRuntime();
     const socket = new MockSocket(WebSocket.OPEN) as unknown as WebSocket;
@@ -208,16 +231,26 @@ describe("extractInterruptToolReturns", () => {
     expect(toolReturnFrames).toHaveLength(2);
     expect(toolReturnFrames[0]).toMatchObject({
       run_id: "run-1",
-      tool_call_id: "call-a",
-      status: "success",
-      tool_returns: [{ tool_call_id: "call-a", status: "success" }],
+      tool_returns: [
+        { tool_call_id: "call-a", status: "success", tool_return: "704" },
+      ],
     });
     expect(toolReturnFrames[1]).toMatchObject({
       run_id: "run-1",
-      tool_call_id: "call-b",
-      status: "error",
-      tool_returns: [{ tool_call_id: "call-b", status: "error" }],
+      tool_returns: [
+        {
+          tool_call_id: "call-b",
+          status: "error",
+          tool_return: "User interrupted the stream",
+        },
+      ],
     });
+    expect(toolReturnFrames[0]).not.toHaveProperty("tool_call_id");
+    expect(toolReturnFrames[0]).not.toHaveProperty("status");
+    expect(toolReturnFrames[0]).not.toHaveProperty("tool_return");
+    expect(toolReturnFrames[1]).not.toHaveProperty("tool_call_id");
+    expect(toolReturnFrames[1]).not.toHaveProperty("status");
+    expect(toolReturnFrames[1]).not.toHaveProperty("tool_return");
   });
 });
 
@@ -305,13 +338,14 @@ describe("Path A: cancel during tool execution → next turn consumes actual res
     // Cancel fires: populateInterruptQueue (Path A — has execution results)
     const populated = populateInterruptQueue(runtime, {
       lastExecutionResults: executionResults,
+      lastExecutingToolCallIds: [],
       lastNeedsUserInputToolCallIds: ["call-1", "call-2"],
       agentId,
       conversationId,
     });
 
     expect(populated).toBe(true);
-    expect(runtime.pendingInterruptedResults).toBe(executionResults);
+    expect(runtime.pendingInterruptedResults).toEqual(executionResults);
     expect(runtime.pendingInterruptedContext).toMatchObject({
       agentId,
       conversationId,
@@ -323,7 +357,7 @@ describe("Path A: cancel during tool execution → next turn consumes actual res
 
     expect(consumed).not.toBeNull();
     expect(consumed?.type).toBe("approval");
-    expect(consumed?.approvals).toBe(executionResults);
+    expect(consumed?.approvals).toEqual(executionResults);
     expect(consumed?.approvals).toHaveLength(2);
 
     // Queue is atomically cleared after consumption
@@ -342,6 +376,7 @@ describe("Path A: cancel during tool execution → next turn consumes actual res
 
     const populated = populateInterruptQueue(runtime, {
       lastExecutionResults: executionResults,
+      lastExecutingToolCallIds: [],
       lastNeedsUserInputToolCallIds: ["call-1"],
       agentId: "agent-1",
       conversationId: "conv-1",
@@ -353,9 +388,85 @@ describe("Path A: cancel during tool execution → next turn consumes actual res
       approve: true, // Path A preserves actual approval state
     });
   });
+
+  test("normalizes interrupted tool results to error via structured tool_call_id", () => {
+    const runtime = createRuntime();
+    const executionResults: ApprovalResult[] = [
+      {
+        type: "tool",
+        tool_call_id: "call-1",
+        status: "success",
+        tool_return: "result text does not matter when ID is interrupted",
+      } as unknown as ApprovalResult,
+    ];
+
+    const populated = populateInterruptQueue(runtime, {
+      lastExecutionResults: executionResults,
+      lastExecutingToolCallIds: ["call-1"],
+      lastNeedsUserInputToolCallIds: [],
+      agentId: "agent-1",
+      conversationId: "conv-1",
+    });
+
+    expect(populated).toBe(true);
+    expect(runtime.pendingInterruptedResults?.[0]).toMatchObject({
+      type: "tool",
+      tool_call_id: "call-1",
+      status: "error",
+    });
+  });
+
+  test("keeps legacy text fallback for interrupted tool return normalization", () => {
+    const runtime = createRuntime();
+    const executionResults: ApprovalResult[] = [
+      {
+        type: "tool",
+        tool_call_id: "call-legacy",
+        status: "success",
+        tool_return: [{ type: "text", text: "Interrupted by user" }],
+      } as unknown as ApprovalResult,
+    ];
+
+    const populated = populateInterruptQueue(runtime, {
+      lastExecutionResults: executionResults,
+      lastExecutingToolCallIds: [],
+      lastNeedsUserInputToolCallIds: [],
+      agentId: "agent-1",
+      conversationId: "conv-1",
+    });
+
+    expect(populated).toBe(true);
+    expect(runtime.pendingInterruptedResults?.[0]).toMatchObject({
+      type: "tool",
+      tool_call_id: "call-legacy",
+      status: "error",
+    });
+  });
 });
 
 describe("Path B: cancel during approval wait → next turn consumes synthesized denials", () => {
+  test("prefers synthesized tool-error results when execution was already in-flight", () => {
+    const runtime = createRuntime();
+
+    const populated = populateInterruptQueue(runtime, {
+      lastExecutionResults: null,
+      lastExecutingToolCallIds: ["call-running-1"],
+      lastNeedsUserInputToolCallIds: ["call-running-1"],
+      agentId: "agent-1",
+      conversationId: "conv-1",
+    });
+
+    expect(populated).toBe(true);
+    expect(runtime.pendingInterruptedResults).toEqual([
+      {
+        type: "tool",
+        tool_call_id: "call-running-1",
+        tool_return: "Interrupted by user",
+        status: "error",
+      },
+    ]);
+  });
+
   test("full sequence: populate from batch map IDs → consume synthesized denials", () => {
     const runtime = createRuntime();
     const agentId = "agent-abc";
@@ -371,6 +482,7 @@ describe("Path B: cancel during approval wait → next turn consumes synthesized
     // Cancel fires during approval wait: no execution results
     const populated = populateInterruptQueue(runtime, {
       lastExecutionResults: null,
+      lastExecutingToolCallIds: [],
       lastNeedsUserInputToolCallIds: [],
       agentId,
       conversationId,
@@ -409,6 +521,7 @@ describe("Path B: cancel during approval wait → next turn consumes synthesized
     // No batch map entries, but we have the snapshot IDs
     const populated = populateInterruptQueue(runtime, {
       lastExecutionResults: null,
+      lastExecutingToolCallIds: [],
       lastNeedsUserInputToolCallIds: ["call-a", "call-b"],
       agentId: "agent-1",
       conversationId: "conv-1",
@@ -427,6 +540,7 @@ describe("Path B: cancel during approval wait → next turn consumes synthesized
 
     const populated = populateInterruptQueue(runtime, {
       lastExecutionResults: null,
+      lastExecutingToolCallIds: [],
       lastNeedsUserInputToolCallIds: [],
       agentId: "agent-1",
       conversationId: "conv-1",
@@ -453,6 +567,7 @@ describe("post-cancel next turn: queue consumed exactly once (no error loop)", (
           reason: "cancelled",
         },
       ],
+      lastExecutingToolCallIds: [],
       lastNeedsUserInputToolCallIds: [],
       agentId,
       conversationId: convId,
@@ -476,6 +591,7 @@ describe("post-cancel next turn: queue consumed exactly once (no error loop)", (
       lastExecutionResults: [
         { type: "approval", tool_call_id: "call-1", approve: true },
       ],
+      lastExecutingToolCallIds: [],
       lastNeedsUserInputToolCallIds: [],
       agentId,
       conversationId: convId,
@@ -496,6 +612,7 @@ describe("idempotency: first cancel populates, second is no-op", () => {
       lastExecutionResults: [
         { type: "approval", tool_call_id: "call-first", approve: true },
       ],
+      lastExecutingToolCallIds: [],
       lastNeedsUserInputToolCallIds: [],
       agentId: "agent-1",
       conversationId: "conv-1",
@@ -511,6 +628,7 @@ describe("idempotency: first cancel populates, second is no-op", () => {
           reason: "x",
         },
       ],
+      lastExecutingToolCallIds: [],
       lastNeedsUserInputToolCallIds: [],
       agentId: "agent-1",
       conversationId: "conv-1",
@@ -530,6 +648,7 @@ describe("idempotency: first cancel populates, second is no-op", () => {
       lastExecutionResults: [
         { type: "approval", tool_call_id: "call-1", approve: true },
       ],
+      lastExecutingToolCallIds: [],
       lastNeedsUserInputToolCallIds: [],
       agentId: "agent-1",
       conversationId: "conv-1",
@@ -543,6 +662,7 @@ describe("idempotency: first cancel populates, second is no-op", () => {
       lastExecutionResults: [
         { type: "approval", tool_call_id: "call-2", approve: true },
       ],
+      lastExecutingToolCallIds: [],
       lastNeedsUserInputToolCallIds: [],
       agentId: "agent-1",
       conversationId: "conv-1",
@@ -564,6 +684,7 @@ describe("epoch guard: stale context discarded on consume", () => {
       lastExecutionResults: [
         { type: "approval", tool_call_id: "call-1", approve: true },
       ],
+      lastExecutingToolCallIds: [],
       lastNeedsUserInputToolCallIds: [],
       agentId: "agent-1",
       conversationId: "conv-1",
@@ -587,6 +708,7 @@ describe("epoch guard: stale context discarded on consume", () => {
       lastExecutionResults: [
         { type: "approval", tool_call_id: "call-1", approve: true },
       ],
+      lastExecutingToolCallIds: [],
       lastNeedsUserInputToolCallIds: [],
       agentId: "agent-old",
       conversationId: "conv-1",
@@ -605,6 +727,7 @@ describe("epoch guard: stale context discarded on consume", () => {
       lastExecutionResults: [
         { type: "approval", tool_call_id: "call-1", approve: true },
       ],
+      lastExecutingToolCallIds: [],
       lastNeedsUserInputToolCallIds: [],
       agentId: "agent-1",
       conversationId: "conv-old",
@@ -623,6 +746,7 @@ describe("stale Path-B IDs: clearing after successful send prevents re-denial", 
     // Also batch map should be cleared by clearPendingApprovalBatchIds
     const populated = populateInterruptQueue(runtime, {
       lastExecutionResults: null,
+      lastExecutingToolCallIds: [],
       lastNeedsUserInputToolCallIds: [], // cleared after send
       agentId: "agent-1",
       conversationId: "conv-1",
@@ -640,6 +764,7 @@ describe("stale Path-B IDs: clearing after successful send prevents re-denial", 
 
     const populated = populateInterruptQueue(runtime, {
       lastExecutionResults: null,
+      lastExecutingToolCallIds: [],
       lastNeedsUserInputToolCallIds: [], // cleared from previous send
       agentId: "agent-1",
       conversationId: "conv-1",
@@ -716,6 +841,7 @@ describe("consume clears pendingApprovalBatchByToolCallId", () => {
       lastExecutionResults: [
         { type: "approval", tool_call_id: "call-1", approve: true },
       ],
+      lastExecutingToolCallIds: [],
       lastNeedsUserInputToolCallIds: [],
       agentId: "agent-1",
       conversationId: "conv-1",
@@ -734,6 +860,7 @@ describe("consume clears pendingApprovalBatchByToolCallId", () => {
       lastExecutionResults: [
         { type: "approval", tool_call_id: "call-1", approve: true },
       ],
+      lastExecutingToolCallIds: [],
       lastNeedsUserInputToolCallIds: [],
       agentId: "agent-old",
       conversationId: "conv-old",
