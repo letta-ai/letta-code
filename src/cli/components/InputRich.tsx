@@ -450,7 +450,9 @@ const InputFooter = memo(function InputFooter({
                 )}
                 {part.chatUrl ? (
                   <Link url={part.chatUrl} fallback={false}>
-                    <Text color={colors.bgSubagent.label}>{part.typeLabel}</Text>
+                    <Text color={colors.bgSubagent.label}>
+                      {part.typeLabel}
+                    </Text>
                   </Link>
                 ) : (
                   <Text color={colors.bgSubagent.label}>{part.typeLabel}</Text>
