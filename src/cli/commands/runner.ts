@@ -77,61 +77,53 @@ export function createCommandRunner({
     const handle: CommandHandle = {
       id,
       input,
-      update: null!,
-      finish: null!,
-      fail: null!,
+      update: (updateData: CommandUpdate) => {
+        const previous = buffersRef.current.byId.get(id);
+        const wasFinished =
+          previous?.kind === "command" && previous.phase === "finished";
+
+        upsertCommandLine(buffersRef.current, id, input, updateData);
+        if (!buffersRef.current.order.includes(id)) {
+          buffersRef.current.order.push(id);
+        }
+
+        const next = buffersRef.current.byId.get(id);
+        const becameFinished =
+          !wasFinished && next?.kind === "command" && next.phase === "finished";
+        if (becameFinished) {
+          onCommandFinished?.({
+            id,
+            input: next.input,
+            output: next.output,
+            success: next.success !== false,
+            dimOutput: next.dimOutput,
+            preformatted: next.preformatted,
+            agentHint: handle.agentHint,
+          });
+        }
+
+        refreshDerived();
+      },
+      finish: (
+        finalOutput: string,
+        success = true,
+        dimOutput?: boolean,
+        preformatted?: boolean,
+      ) =>
+        handle.update({
+          output: finalOutput,
+          phase: "finished",
+          success,
+          dimOutput,
+          preformatted,
+        }),
+      fail: (finalOutput: string) =>
+        handle.update({
+          output: finalOutput,
+          phase: "finished",
+          success: false,
+        }),
     };
-
-    const update = (updateData: CommandUpdate) => {
-      const previous = buffersRef.current.byId.get(id);
-      const wasFinished =
-        previous?.kind === "command" && previous.phase === "finished";
-
-      upsertCommandLine(buffersRef.current, id, input, updateData);
-      if (!buffersRef.current.order.includes(id)) {
-        buffersRef.current.order.push(id);
-      }
-
-      const next = buffersRef.current.byId.get(id);
-      const becameFinished =
-        !wasFinished && next?.kind === "command" && next.phase === "finished";
-      if (becameFinished) {
-        onCommandFinished?.({
-          id,
-          input: next.input,
-          output: next.output,
-          success: next.success !== false,
-          dimOutput: next.dimOutput,
-          preformatted: next.preformatted,
-          agentHint: handle.agentHint,
-        });
-      }
-
-      refreshDerived();
-    };
-
-    handle.update = update;
-
-    handle.finish = (
-      finalOutput: string,
-      success = true,
-      dimOutput?: boolean,
-      preformatted?: boolean,
-    ) =>
-      update({
-        output: finalOutput,
-        phase: "finished",
-        success,
-        dimOutput,
-        preformatted,
-      });
-
-    handle.fail = (finalOutput: string) =>
-      update({
-        output: finalOutput,
-        phase: "finished",
-        success: false,
-      });
 
     return handle;
   }

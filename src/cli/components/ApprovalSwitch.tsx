@@ -1,5 +1,6 @@
 import { memo } from "react";
 import type { AdvancedDiffSuccess } from "../helpers/diff";
+import type { PlanExitDecision } from "../helpers/planExitApproval";
 import type { ApprovalRequest } from "../helpers/stream";
 import {
   isFileEditTool,
@@ -71,7 +72,7 @@ type Props = {
   defaultScope?: "project" | "session";
 
   // Special handlers for ExitPlanMode
-  onPlanApprove?: (acceptEdits: boolean) => void;
+  onPlanApprove?: (decision: PlanExitDecision) => void;
   onPlanKeepPlanning?: (reason: string) => void;
 
   // Special handlers for AskUserQuestion
@@ -232,8 +233,9 @@ export const ApprovalSwitch = memo(
     if (toolName === "ExitPlanMode" && onPlanApprove && onPlanKeepPlanning) {
       return (
         <StaticPlanApproval
-          onApprove={() => onPlanApprove(false)}
-          onApproveAndAcceptEdits={() => onPlanApprove(true)}
+          onApproveRestore={() => onPlanApprove("restore")}
+          onApproveManual={() => onPlanApprove("manual")}
+          onApproveAndAcceptEdits={() => onPlanApprove("autoAccept")}
           onKeepPlanning={onPlanKeepPlanning}
           onCancel={onCancel ?? (() => {})}
           isFocused={isFocused}

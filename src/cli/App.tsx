@@ -240,6 +240,10 @@ import {
   clearPlaceholdersInText,
   resolvePlaceholders,
 } from "./helpers/pasteRegistry";
+import {
+  type PlanExitDecision,
+  resolvePlanExitMode,
+} from "./helpers/planExitApproval";
 import { generatePlanFilePath } from "./helpers/planName";
 import {
   buildContentFromQueueBatch,
@@ -9239,6 +9243,15 @@ export default function App({
           // Generate plan file path and enter plan mode
           const planPath = generatePlanFilePath();
           permissionMode.setPlanFilePath(planPath);
+
+          // Ensure plan mode remembers the permission mode the UI was showing.
+          const modeBeforePlan = uiPermissionModeRef.current;
+          if (
+            modeBeforePlan !== "plan" &&
+            permissionMode.getMode() !== modeBeforePlan
+          ) {
+            permissionMode.setMode(modeBeforePlan);
+          }
           permissionMode.setMode("plan");
           setUiPermissionMode("plan");
 
@@ -12260,7 +12273,7 @@ ${SYSTEM_REMINDER_CLOSE}
   }, [agentId, flushPendingReasoningEffort]);
 
   const handlePlanApprove = useCallback(
-    async (acceptEdits: boolean = false) => {
+    async (decision: PlanExitDecision = "restore") => {
       const currentIndex = approvalResults.length;
       const approval = pendingApprovals[currentIndex];
       if (!approval) return;
@@ -12272,9 +12285,10 @@ ${SYSTEM_REMINDER_CLOSE}
       lastPlanFilePathRef.current = planFilePath;
 
       // Exit plan mode
-      const restoreMode = acceptEdits
-        ? "acceptEdits"
-        : (permissionMode.getModeBeforePlan() ?? "default");
+      const restoreMode = resolvePlanExitMode(
+        decision,
+        permissionMode.getModeBeforePlan(),
+      );
       permissionMode.setMode(restoreMode);
       setUiPermissionMode(restoreMode);
 
@@ -12506,6 +12520,14 @@ ${SYSTEM_REMINDER_CLOSE}
     ).replace(/\\/g, "/");
 
     // Toggle plan mode on and store plan file path
+    // Ensure plan mode remembers the permission mode the UI was showing.
+    const modeBeforePlan = uiPermissionModeRef.current;
+    if (
+      modeBeforePlan !== "plan" &&
+      permissionMode.getMode() !== modeBeforePlan
+    ) {
+      permissionMode.setMode(modeBeforePlan);
+    }
     permissionMode.setMode("plan");
     permissionMode.setPlanFilePath(planFilePath);
     setUiPermissionMode("plan");
