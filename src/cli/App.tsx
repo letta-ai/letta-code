@@ -3686,7 +3686,7 @@ export default function App({
   // removed. Git-backed memory uses standard git merge conflict resolution via the agent.
 
   // Core streaming function - iterative loop that processes conversation turns
-  // biome-ignore lint/correctness/useExhaustiveDependencies: refs read .current dynamically, complex callback with intentional deps
+  // biome-ignore lint/correctness/useExhaustiveDependencies: blanket suppression — this callback has ~16 omitted deps (refs, stable functions, etc.). Refs are safe (read .current dynamically), but the blanket ignore also hides any genuinely missing reactive deps. If stale-closure bugs appear in processConversation, audit the dep array here first.
   const processConversation = useCallback(
     async (
       initialInput: Array<MessageCreate | ApprovalCreate>,
@@ -6733,7 +6733,7 @@ export default function App({
     queueApprovalResults,
   ]);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: refs read .current dynamically, complex callback with intentional deps
+  // biome-ignore lint/correctness/useExhaustiveDependencies: blanket suppression — same caveat as processConversation above. Omitted deps are mostly refs and stable callbacks, but this hides any genuinely missing reactive deps too.
   const onSubmit = useCallback(
     async (message?: string): Promise<{ submitted: boolean }> => {
       const msg = message?.trim() ?? "";
