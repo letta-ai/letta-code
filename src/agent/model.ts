@@ -282,7 +282,10 @@ export function getResumeRefreshArgs(
   // Extract only the resume-scoped fields from the full preset
   for (const field of RESUME_REFRESH_FIELDS) {
     const value = presetUpdateArgs[field];
-    if (field === "max_output_tokens" && typeof value === "number") {
+    if (
+      field === "max_output_tokens" &&
+      (typeof value === "number" || value === null)
+    ) {
       updateArgs[field] = value;
     } else if (field === "parallel_tool_calls" && typeof value === "boolean") {
       updateArgs[field] = value;
@@ -295,7 +298,10 @@ export function getResumeRefreshArgs(
 
   // Compare against the agent's current values
   const currentMaxTokens = agent.llm_config?.max_tokens;
-  const wantMaxTokens = updateArgs.max_output_tokens as number | undefined;
+  const wantMaxTokens = updateArgs.max_output_tokens as
+    | number
+    | null
+    | undefined;
   const currentParallel = agent.model_settings?.parallel_tool_calls;
   const wantParallel = updateArgs.parallel_tool_calls as boolean | undefined;
 

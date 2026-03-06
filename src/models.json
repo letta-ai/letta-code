@@ -470,7 +470,7 @@
       "reasoning_effort": "none",
       "verbosity": "medium",
       "context_window": 272000,
-      "max_output_tokens": 128000,
+      "max_output_tokens": null,
       "parallel_tool_calls": true
     }
   },
@@ -483,7 +483,7 @@
       "reasoning_effort": "low",
       "verbosity": "medium",
       "context_window": 272000,
-      "max_output_tokens": 128000,
+      "max_output_tokens": null,
       "parallel_tool_calls": true
     }
   },
@@ -496,7 +496,7 @@
       "reasoning_effort": "medium",
       "verbosity": "medium",
       "context_window": 272000,
-      "max_output_tokens": 128000,
+      "max_output_tokens": null,
       "parallel_tool_calls": true
     }
   },
@@ -509,7 +509,7 @@
       "reasoning_effort": "high",
       "verbosity": "medium",
       "context_window": 272000,
-      "max_output_tokens": 128000,
+      "max_output_tokens": null,
       "parallel_tool_calls": true
     }
   },
@@ -522,7 +522,7 @@
       "reasoning_effort": "xhigh",
       "verbosity": "medium",
       "context_window": 272000,
-      "max_output_tokens": 128000,
+      "max_output_tokens": null,
       "parallel_tool_calls": true
     }
   },
@@ -535,7 +535,7 @@
       "reasoning_effort": "none",
       "verbosity": "medium",
       "context_window": 272000,
-      "max_output_tokens": 128000,
+      "max_output_tokens": null,
       "parallel_tool_calls": true
     }
   },
@@ -548,7 +548,7 @@
       "reasoning_effort": "low",
       "verbosity": "medium",
       "context_window": 272000,
-      "max_output_tokens": 128000,
+      "max_output_tokens": null,
       "parallel_tool_calls": true
     }
   },
@@ -561,7 +561,7 @@
       "reasoning_effort": "medium",
       "verbosity": "medium",
       "context_window": 272000,
-      "max_output_tokens": 128000,
+      "max_output_tokens": null,
       "parallel_tool_calls": true
     }
   },
@@ -574,7 +574,7 @@
       "reasoning_effort": "high",
       "verbosity": "medium",
       "context_window": 272000,
-      "max_output_tokens": 128000,
+      "max_output_tokens": null,
       "parallel_tool_calls": true
     }
   },
@@ -587,7 +587,7 @@
       "reasoning_effort": "xhigh",
       "verbosity": "medium",
       "context_window": 272000,
-      "max_output_tokens": 128000,
+      "max_output_tokens": null,
       "parallel_tool_calls": true
     }
   },
@@ -600,7 +600,7 @@
       "reasoning_effort": "none",
       "verbosity": "medium",
       "context_window": 272000,
-      "max_output_tokens": 128000,
+      "max_output_tokens": null,
       "parallel_tool_calls": true
     }
   },
@@ -613,7 +613,7 @@
       "reasoning_effort": "low",
       "verbosity": "medium",
       "context_window": 272000,
-      "max_output_tokens": 128000,
+      "max_output_tokens": null,
       "parallel_tool_calls": true
     }
   },
@@ -626,7 +626,7 @@
       "reasoning_effort": "medium",
       "verbosity": "medium",
       "context_window": 272000,
-      "max_output_tokens": 128000,
+      "max_output_tokens": null,
       "parallel_tool_calls": true
     }
   },
@@ -640,7 +640,7 @@
       "reasoning_effort": "high",
       "verbosity": "medium",
       "context_window": 272000,
-      "max_output_tokens": 128000,
+      "max_output_tokens": null,
       "parallel_tool_calls": true
     }
   },
@@ -653,7 +653,7 @@
       "reasoning_effort": "xhigh",
       "verbosity": "medium",
       "context_window": 272000,
-      "max_output_tokens": 128000,
+      "max_output_tokens": null,
       "parallel_tool_calls": true
     }
   },
@@ -666,7 +666,7 @@
       "reasoning_effort": "none",
       "verbosity": "medium",
       "context_window": 272000,
-      "max_output_tokens": 128000,
+      "max_output_tokens": null,
       "parallel_tool_calls": true
     }
   },
@@ -679,7 +679,7 @@
       "reasoning_effort": "low",
       "verbosity": "medium",
       "context_window": 272000,
-      "max_output_tokens": 128000,
+      "max_output_tokens": null,
       "parallel_tool_calls": true
     }
   },
@@ -692,7 +692,7 @@
       "reasoning_effort": "medium",
       "verbosity": "medium",
       "context_window": 272000,
-      "max_output_tokens": 128000,
+      "max_output_tokens": null,
       "parallel_tool_calls": true
     }
   },
@@ -706,7 +706,7 @@
       "reasoning_effort": "high",
       "verbosity": "medium",
       "context_window": 272000,
-      "max_output_tokens": 128000,
+      "max_output_tokens": null,
       "parallel_tool_calls": true
     }
   },
@@ -719,7 +719,7 @@
       "reasoning_effort": "xhigh",
       "verbosity": "medium",
       "context_window": 272000,
-      "max_output_tokens": 128000,
+      "max_output_tokens": null,
       "parallel_tool_calls": true
     }
   },
@@ -1074,42 +1074,60 @@
     "handle": "google_ai/gemini-2.5-flash",
     "label": "Gemini 2.5 Flash",
     "description": "Google's fastest model",
-    "updateArgs": { "context_window": 180000, "parallel_tool_calls": true }
+    "updateArgs": {
+      "context_window": 180000,
+      "parallel_tool_calls": true
+    }
   },
   {
     "id": "gemini-pro",
     "handle": "google_ai/gemini-2.5-pro",
     "label": "Gemini 2.5 Pro",
     "description": "Google's last generation flagship model",
-    "updateArgs": { "context_window": 180000, "parallel_tool_calls": true }
+    "updateArgs": {
+      "context_window": 180000,
+      "parallel_tool_calls": true
+    }
   },
   {
     "id": "gpt-4.1",
     "handle": "openai/gpt-4.1",
     "label": "GPT-4.1",
     "description": "OpenAI's most recent non-reasoner model",
-    "updateArgs": { "context_window": 1047576, "parallel_tool_calls": true }
+    "updateArgs": {
+      "context_window": 1047576,
+      "parallel_tool_calls": true
+    }
   },
   {
     "id": "gpt-4.1-mini",
     "handle": "openai/gpt-4.1-mini-2025-04-14",
     "label": "GPT-4.1-Mini",
     "description": "OpenAI's most recent non-reasoner model (mini version)",
-    "updateArgs": { "context_window": 1047576, "parallel_tool_calls": true }
+    "updateArgs": {
+      "context_window": 1047576,
+      "parallel_tool_calls": true
+    }
   },
   {
     "id": "gpt-4.1-nano",
     "handle": "openai/gpt-4.1-nano-2025-04-14",
     "label": "GPT-4.1-Nano",
     "description": "OpenAI's most recent non-reasoner model (nano version)",
-    "updateArgs": { "context_window": 1047576, "parallel_tool_calls": true }
+    "updateArgs": {
+      "context_window": 1047576,
+      "parallel_tool_calls": true
+    }
   },
   {
     "id": "o4-mini",
     "handle": "openai/o4-mini",
     "label": "o4-mini",
     "description": "OpenAI's latest o-series reasoning model",
-    "updateArgs": { "context_window": 180000, "parallel_tool_calls": true }
+    "updateArgs": {
+      "context_window": 180000,
+      "parallel_tool_calls": true
+    }
   },
   {
     "id": "gemini-3-vertex",

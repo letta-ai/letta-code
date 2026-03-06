@@ -161,8 +161,11 @@ function buildModelSettings(
 
   // Apply max_output_tokens only when provider_type is present.
   // Without provider_type the discriminated union rejects the payload (e.g. MiniMax).
+  // Pass null through so the server can explicitly unset max_output_tokens
+  // (prevents stale values lingering from a previous model).
   if (
-    typeof updateArgs?.max_output_tokens === "number" &&
+    (typeof updateArgs?.max_output_tokens === "number" ||
+      updateArgs?.max_output_tokens === null) &&
     "provider_type" in settings
   ) {
     (settings as Record<string, unknown>).max_output_tokens =
@@ -207,7 +210,8 @@ export async function updateAgentLLMConfig(
     ...(isMinimax && { parallel_tool_calls: true }),
     ...(hasModelSettings && { model_settings: modelSettings }),
     ...(contextWindow && { context_window_limit: contextWindow }),
-    ...(typeof updateArgs?.max_output_tokens === "number" && {
+    ...((typeof updateArgs?.max_output_tokens === "number" ||
+      updateArgs?.max_output_tokens === null) && {
       max_tokens: updateArgs.max_output_tokens,
     }),
   });
