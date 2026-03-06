@@ -1538,6 +1538,12 @@ async function main(): Promise<void> {
             blocks: [],
           });
 
+          // Mark imported agents as "custom" to prevent legacy auto-migration
+          // from overwriting their system prompt on resume.
+          if (settingsManager.isReady) {
+            settingsManager.setSystemPromptPreset(agent.id, "custom");
+          }
+
           // Display extracted skills summary
           if (result.skills && result.skills.length > 0) {
             const { getAgentSkillsDir } = await import("./agent/skills");
@@ -1767,6 +1773,17 @@ async function main(): Promise<void> {
           }
 
           if (systemPromptPreset) {
+            // Await memfs sync first so isMemfsEnabled() reflects the final state
+            // before updateAgentSystemPrompt reads it to pick the memory addon.
+            try {
+              await memfsSyncPromise;
+            } catch (error) {
+              console.error(
+                error instanceof Error ? error.message : String(error),
+              );
+              process.exit(1);
+            }
+
             const result = await updateAgentSystemPrompt(
               agent.id,
               systemPromptPreset,

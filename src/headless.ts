@@ -772,6 +772,12 @@ export async function handleHeadlessCommand(
 
     agent = result.agent;
 
+    // Mark imported agents as "custom" to prevent legacy auto-migration
+    // from overwriting their system prompt on resume.
+    if (settingsManager.isReady) {
+      settingsManager.setSystemPromptPreset(agent.id, "custom");
+    }
+
     // Display extracted skills summary
     if (result.skills && result.skills.length > 0) {
       const { getAgentSkillsDir } = await import("./agent/skills");
@@ -907,18 +913,6 @@ export async function handleHeadlessCommand(
         }
       }
     }
-
-    if (systemPromptPreset) {
-      const result = await updateAgentSystemPrompt(
-        agent.id,
-        systemPromptPreset,
-      );
-      if (!result.success || !result.agent) {
-        console.error(`Failed to update system prompt: ${result.message}`);
-        process.exit(1);
-      }
-      agent = result.agent;
-    }
   }
 
   // Determine which conversation to use
@@ -980,6 +974,16 @@ export async function handleHeadlessCommand(
       );
       process.exit(1);
     }
+  }
+
+  // Apply --system flag after memfs sync so isMemfsEnabled() is up to date.
+  if (isResumingAgent && systemPromptPreset) {
+    const result = await updateAgentSystemPrompt(agent.id, systemPromptPreset);
+    if (!result.success || !result.agent) {
+      console.error(`Failed to update system prompt: ${result.message}`);
+      process.exit(1);
+    }
+    agent = result.agent;
   }
 
   // Auto-heal system prompt drift (rebuild from stored recipe).
