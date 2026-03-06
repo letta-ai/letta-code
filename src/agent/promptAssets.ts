@@ -221,23 +221,19 @@ export function swapMemoryAddon(
   mode: MemoryPromptMode,
 ): string {
   let result = systemPrompt;
-  // Strip all existing addons (handle duplicates via while-loop)
+  // Strip all existing addons (replaceAll handles duplicates)
   for (const addon of [
     SYSTEM_PROMPT_MEMORY_ADDON.trim(),
     SYSTEM_PROMPT_MEMFS_ADDON.trim(),
   ]) {
-    while (result.includes(addon)) {
-      result = result.replace(addon, "");
-    }
+    result = result.replaceAll(addon, "");
   }
   // Strip orphan memfs tail fragment (from old drift bugs)
   const tailAnchor = "# See what changed";
   const tailStart = SYSTEM_PROMPT_MEMFS_ADDON.indexOf(tailAnchor);
   if (tailStart !== -1) {
     const orphanTail = SYSTEM_PROMPT_MEMFS_ADDON.slice(tailStart).trim();
-    while (result.includes(orphanTail)) {
-      result = result.replace(orphanTail, "");
-    }
+    result = result.replaceAll(orphanTail, "");
   }
   // Strip legacy/variant memory sections by markdown heading parsing
   // (handles edited or older ## Memory / ## Memory Filesystem sections)
@@ -281,6 +277,23 @@ export async function validateSystemPromptPreset(
   throw new Error(
     `Invalid system prompt "${id}". Must be one of: ${validPresets.join(", ")}.`,
   );
+}
+
+/**
+ * Resolve a prompt ID and build the full system prompt with memory addon.
+ * Known presets are rebuilt deterministically; unknown IDs (subagent names)
+ * are resolved async and have the addon swapped in.
+ */
+export async function resolveAndBuildSystemPrompt(
+  promptId: string | undefined,
+  memoryMode: MemoryPromptMode,
+): Promise<string> {
+  const id = promptId ?? "default";
+  if (isKnownPreset(id)) {
+    return buildSystemPrompt(id, memoryMode);
+  }
+  const resolved = await resolveSystemPrompt(id);
+  return swapMemoryAddon(resolved, memoryMode);
 }
 
 /**

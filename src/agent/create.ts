@@ -20,10 +20,9 @@ import {
 } from "./model";
 import { updateAgentLLMConfig } from "./modify";
 import {
-  buildSystemPrompt,
   isKnownPreset,
   type MemoryPromptMode,
-  resolveSystemPrompt,
+  resolveAndBuildSystemPrompt,
   swapMemoryAddon,
 } from "./promptAssets";
 import { SLEEPTIME_MEMORY_PERSONA } from "./prompts/sleeptime";
@@ -356,24 +355,11 @@ export async function createAgent(
     (modelUpdateArgs?.context_window as number | undefined) ??
     (await getModelContextWindow(modelHandle));
 
-  // Resolve system prompt content:
-  // 1. Custom raw prompt — append memory addon
-  // 2. Known preset — deterministic build
-  // 3. Subagent name or unknown — resolve async + swap addon
-  let systemPromptContent: string;
+  // Resolve system prompt content
   const memMode: MemoryPromptMode = options.memoryPromptMode ?? "standard";
-
-  if (options.systemPromptCustom) {
-    systemPromptContent = swapMemoryAddon(options.systemPromptCustom, memMode);
-  } else if (isKnownPreset(options.systemPromptPreset ?? "default")) {
-    systemPromptContent = buildSystemPrompt(
-      options.systemPromptPreset ?? "default",
-      memMode,
-    );
-  } else {
-    const resolved = await resolveSystemPrompt(options.systemPromptPreset);
-    systemPromptContent = swapMemoryAddon(resolved, memMode);
-  }
+  const systemPromptContent = options.systemPromptCustom
+    ? swapMemoryAddon(options.systemPromptCustom, memMode)
+    : await resolveAndBuildSystemPrompt(options.systemPromptPreset, memMode);
 
   // Create agent with inline memory blocks (LET-7101: single API call instead of N+1)
   // - memory_blocks: new blocks to create inline

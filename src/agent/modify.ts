@@ -305,12 +305,9 @@ export async function updateAgentSystemPrompt(
   systemPromptId: string,
 ): Promise<UpdateSystemPromptResult> {
   try {
-    const {
-      resolveSystemPrompt,
-      isKnownPreset,
-      buildSystemPrompt,
-      swapMemoryAddon,
-    } = await import("./promptAssets");
+    const { isKnownPreset, resolveAndBuildSystemPrompt } = await import(
+      "./promptAssets"
+    );
     const { settingsManager } = await import("../settings-manager");
 
     const client = await getClient();
@@ -318,13 +315,10 @@ export async function updateAgentSystemPrompt(
       ? "memfs"
       : "standard";
 
-    let systemPromptContent: string;
-    if (isKnownPreset(systemPromptId)) {
-      systemPromptContent = buildSystemPrompt(systemPromptId, memoryMode);
-    } else {
-      const resolved = await resolveSystemPrompt(systemPromptId);
-      systemPromptContent = swapMemoryAddon(resolved, memoryMode);
-    }
+    const systemPromptContent = await resolveAndBuildSystemPrompt(
+      systemPromptId,
+      memoryMode,
+    );
 
     const updateResult = await updateAgentSystemPromptRaw(
       agentId,
