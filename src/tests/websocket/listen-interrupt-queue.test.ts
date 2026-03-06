@@ -388,6 +388,33 @@ describe("Path A: cancel during tool execution → next turn consumes actual res
       approve: true, // Path A preserves actual approval state
     });
   });
+
+  test("normalizes interrupted tool returns to error before queueing", () => {
+    const runtime = createRuntime();
+    const executionResults: ApprovalResult[] = [
+      {
+        type: "tool",
+        tool_call_id: "call-1",
+        status: "success",
+        tool_return: [{ type: "text", text: "Interrupted by user" }],
+      } as unknown as ApprovalResult,
+    ];
+
+    const populated = populateInterruptQueue(runtime, {
+      lastExecutionResults: executionResults,
+      lastExecutingToolCallIds: [],
+      lastNeedsUserInputToolCallIds: [],
+      agentId: "agent-1",
+      conversationId: "conv-1",
+    });
+
+    expect(populated).toBe(true);
+    expect(runtime.pendingInterruptedResults?.[0]).toMatchObject({
+      type: "tool",
+      tool_call_id: "call-1",
+      status: "error",
+    });
+  });
 });
 
 describe("Path B: cancel during approval wait → next turn consumes synthesized denials", () => {

@@ -974,6 +974,37 @@ function normalizeToolReturnValue(value: unknown): string {
   }
 }
 
+function coerceInterruptedToolStatusesInPlace(
+  approvals: ApprovalResult[] | null,
+): void {
+  if (!approvals || approvals.length === 0) {
+    return;
+  }
+
+  for (const approval of approvals) {
+    if (
+      !approval ||
+      typeof approval !== "object" ||
+      !("type" in approval) ||
+      approval.type !== "tool"
+    ) {
+      continue;
+    }
+
+    const toolReturnText = normalizeToolReturnValue(
+      "tool_return" in approval ? approval.tool_return : "",
+    ).trim();
+
+    if (
+      toolReturnText === INTERRUPTED_BY_USER &&
+      "status" in approval &&
+      approval.status !== "error"
+    ) {
+      approval.status = "error";
+    }
+  }
+}
+
 function extractCanonicalToolReturnsFromWire(
   payload: Record<string, unknown>,
 ): InterruptToolReturn[] {
@@ -1230,6 +1261,8 @@ function populateInterruptQueue(
 
   if (input.lastExecutionResults && input.lastExecutionResults.length > 0) {
     // Path A: execution happened before cancel — queue actual results
+    // Guard parity: interrupted tool returns must persist as status=error.
+    coerceInterruptedToolStatusesInPlace(input.lastExecutionResults);
     runtime.pendingInterruptedResults = input.lastExecutionResults;
     runtime.pendingInterruptedContext = {
       agentId: input.agentId,
