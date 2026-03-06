@@ -1,0 +1,23 @@
+#!/bin/bash
+set -euo pipefail
+
+apt-get update
+apt-get install -y curl git
+
+# Install Node.js (required to run the letta CLI)
+curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+apt-get install -y nodejs
+
+# Install bun (required to build from source)
+curl -fsSL https://bun.sh/install | bash
+export BUN_INSTALL="$HOME/.bun"
+export PATH="$BUN_INSTALL/bin:$PATH"
+
+# Clone and build letta-code from source (main branch)
+git clone --depth 1 {% if branch %}--branch {{ branch }}{% endif %} https://github.com/letta-ai/letta-code.git /tmp/letta-code
+cd /tmp/letta-code
+bun install
+bun run build
+
+# Install globally so `letta` is on PATH
+npm install -g /tmp/letta-code
