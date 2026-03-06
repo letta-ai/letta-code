@@ -343,6 +343,11 @@ const InputFooter = memo(function InputFooter({
     return parts.join("");
   }, [displayAgentName, displayModel, isByokProvider, isOpenAICodexProvider]);
 
+  const rightLabel = useMemo(
+    () => " ".repeat(rightPrefixSpaces) + rightLabelCore,
+    [rightPrefixSpaces, rightLabelCore],
+  );
+
   return (
     <Box flexDirection="row" marginBottom={1}>
       <Box flexGrow={1} paddingRight={1}>
@@ -434,7 +439,7 @@ const InputFooter = memo(function InputFooter({
             {rightLabelCore}
           </Text>
         ) : (
-          <Text>{rightLabelCore}</Text>
+          <Text>{rightLabel}</Text>
         )}
       </Box>
     </Box>
