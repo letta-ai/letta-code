@@ -68,8 +68,8 @@ export const SYSTEM_PROMPTS: SystemPromptOption[] = [
   {
     id: "default",
     label: "Default",
-    description: "Alias for letta-claude",
-    content: lettaAnthropicPrompt,
+    description: "Letta-tuned system prompt",
+    content: systemPrompt,
     isDefault: true,
     isFeatured: true,
   },
