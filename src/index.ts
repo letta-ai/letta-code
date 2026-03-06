@@ -576,22 +576,18 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // Validate system prompt preset if provided (can be a system prompt ID or subagent name)
+  // Validate system prompt preset if provided.
+  // User-facing CLI only accepts known preset IDs (not subagent names).
+  // Subagent names are accepted only for internal subagent launches
+  // (LETTA_CODE_AGENT_ROLE=subagent), which go through headless.ts.
   if (systemPromptPreset) {
     const { SYSTEM_PROMPTS } = await import("./agent/promptAssets");
-    const { getAllSubagentConfigs } = await import("./agent/subagents");
 
     const validSystemPrompts = SYSTEM_PROMPTS.map((p) => p.id);
-    const subagentConfigs = await getAllSubagentConfigs();
-    const validSubagentNames = Object.keys(subagentConfigs);
 
-    const isValidSystemPrompt = validSystemPrompts.includes(systemPromptPreset);
-    const isValidSubagent = validSubagentNames.includes(systemPromptPreset);
-
-    if (!isValidSystemPrompt && !isValidSubagent) {
-      const allValid = [...validSystemPrompts, ...validSubagentNames];
+    if (!validSystemPrompts.includes(systemPromptPreset)) {
       console.error(
-        `Error: Invalid system prompt "${systemPromptPreset}". Must be one of: ${allValid.join(", ")}.`,
+        `Error: Invalid system prompt "${systemPromptPreset}". Must be one of: ${validSystemPrompts.join(", ")}.`,
       );
       process.exit(1);
     }
