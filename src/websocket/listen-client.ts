@@ -308,6 +308,16 @@ type ListenerRuntime = {
   } | null;
   /** Monotonic epoch for queued continuation validity checks. */
   continuationEpoch: number;
+  /**
+   * Tool call ids currently executing in the active approval loop turn.
+   * Used for eager cancel-time interrupt capture parity with App/headless.
+   */
+  activeExecutingToolCallIds: string[];
+  /**
+   * Structured interrupted tool_call_ids carried with queued interrupt approvals.
+   * Threaded into the next send for persistence normalization.
+   */
+  pendingInterruptedToolCallIds: string[] | null;
 };
 
 type ApprovalSlot =
@@ -384,6 +394,8 @@ function createRuntime(): ListenerRuntime {
     pendingInterruptedResults: null,
     pendingInterruptedContext: null,
     continuationEpoch: 0,
+    activeExecutingToolCallIds: [],
+    pendingInterruptedToolCallIds: null,
     coalescedSkipQueueItemIds: new Set<string>(),
     pendingTurns: 0,
     // queueRuntime assigned below — needs runtime ref in callbacks
@@ -561,6 +573,8 @@ function stopRuntime(
   // Clear interrupted queue on true teardown to prevent cross-session leakage.
   runtime.pendingInterruptedResults = null;
   runtime.pendingInterruptedContext = null;
+  runtime.pendingInterruptedToolCallIds = null;
+  runtime.activeExecutingToolCallIds = [];
   runtime.continuationEpoch++;
 
   if (!runtime.socket) {
@@ -1270,6 +1284,7 @@ function populateInterruptQueue(
       conversationId: input.conversationId,
       continuationEpoch: runtime.continuationEpoch,
     };
+    runtime.pendingInterruptedToolCallIds = [...input.lastExecutingToolCallIds];
     return true;
   }
 
@@ -1290,6 +1305,7 @@ function populateInterruptQueue(
       conversationId: input.conversationId,
       continuationEpoch: runtime.continuationEpoch,
     };
+    runtime.pendingInterruptedToolCallIds = [...input.lastExecutingToolCallIds];
     return true;
   }
 
@@ -1312,6 +1328,7 @@ function populateInterruptQueue(
       conversationId: input.conversationId,
       continuationEpoch: runtime.continuationEpoch,
     };
+    runtime.pendingInterruptedToolCallIds = null;
     return true;
   }
 
@@ -1336,7 +1353,10 @@ function consumeInterruptQueue(
   runtime: ListenerRuntime,
   agentId: string,
   conversationId: string,
-): { type: "approval"; approvals: ApprovalResult[] } | null {
+): {
+  approvalMessage: { type: "approval"; approvals: ApprovalResult[] };
+  interruptedToolCallIds: string[];
+} | null {
   if (
     !runtime.pendingInterruptedResults ||
     runtime.pendingInterruptedResults.length === 0
@@ -1345,7 +1365,10 @@ function consumeInterruptQueue(
   }
 
   const ctx = runtime.pendingInterruptedContext;
-  let result: { type: "approval"; approvals: ApprovalResult[] } | null = null;
+  let result: {
+    approvalMessage: { type: "approval"; approvals: ApprovalResult[] };
+    interruptedToolCallIds: string[];
+  } | null = null;
 
   if (
     ctx &&
@@ -1354,8 +1377,13 @@ function consumeInterruptQueue(
     ctx.continuationEpoch === runtime.continuationEpoch
   ) {
     result = {
-      type: "approval",
-      approvals: runtime.pendingInterruptedResults,
+      approvalMessage: {
+        type: "approval",
+        approvals: runtime.pendingInterruptedResults,
+      },
+      interruptedToolCallIds: runtime.pendingInterruptedToolCallIds
+        ? [...runtime.pendingInterruptedToolCallIds]
+        : [],
     };
   }
 
@@ -1363,6 +1391,7 @@ function consumeInterruptQueue(
   // Stale results for wrong context are discarded, not retried.
   runtime.pendingInterruptedResults = null;
   runtime.pendingInterruptedContext = null;
+  runtime.pendingInterruptedToolCallIds = null;
   runtime.pendingApprovalBatchByToolCallId.clear();
 
   return result;
@@ -2155,6 +2184,30 @@ async function connectWithRetry(
       }
 
       runtime.cancelRequested = true;
+      // Eager interrupt capture parity with App/headless:
+      // if tool execution is currently in-flight, queue explicit interrupted
+      // tool results immediately at cancel time (before async catch paths).
+      if (
+        runtime.activeExecutingToolCallIds.length > 0 &&
+        (!runtime.pendingInterruptedResults ||
+          runtime.pendingInterruptedResults.length === 0)
+      ) {
+        runtime.pendingInterruptedResults =
+          runtime.activeExecutingToolCallIds.map((toolCallId) => ({
+            type: "tool",
+            tool_call_id: toolCallId,
+            tool_return: INTERRUPTED_BY_USER,
+            status: "error",
+          }));
+        runtime.pendingInterruptedContext = {
+          agentId: runtime.activeAgentId || "",
+          conversationId: runtime.activeConversationId || "default",
+          continuationEpoch: runtime.continuationEpoch,
+        };
+        runtime.pendingInterruptedToolCallIds = [
+          ...runtime.activeExecutingToolCallIds,
+        ];
+      }
       if (
         runtime.activeAbortController &&
         !runtime.activeAbortController.signal.aborted
@@ -2490,6 +2543,7 @@ async function handleIncomingMessage(
   runtime.activeConversationId = conversationId;
   runtime.activeRunId = null;
   runtime.activeRunStartedAt = new Date().toISOString();
+  runtime.activeExecutingToolCallIds = [];
 
   try {
     // Latch capability: once seen, always use blocking path (strict check to avoid truthy strings)
@@ -2515,6 +2569,7 @@ async function handleIncomingMessage(
 
     let messagesToSend: Array<MessageCreate | ApprovalCreate> = [];
     let turnToolContextId: string | null = null;
+    let queuedInterruptedToolCallIds: string[] = [];
 
     // Prepend queued interrupted results from a prior cancelled turn.
     const consumed = consumeInterruptQueue(
@@ -2523,7 +2578,8 @@ async function handleIncomingMessage(
       conversationId,
     );
     if (consumed) {
-      messagesToSend.push(consumed);
+      messagesToSend.push(consumed.approvalMessage);
+      queuedInterruptedToolCallIds = consumed.interruptedToolCallIds;
     }
 
     messagesToSend.push(...msg.messages);
@@ -2604,11 +2660,23 @@ async function handleIncomingMessage(
     }
 
     let currentInput = messagesToSend;
+    const sendOptions: Parameters<typeof sendMessageStream>[2] = {
+      agentId,
+      streamTokens: true,
+      background: true,
+      ...(queuedInterruptedToolCallIds.length > 0
+        ? {
+            approvalNormalization: {
+              interruptedToolCallIds: queuedInterruptedToolCallIds,
+            },
+          }
+        : {}),
+    };
 
     let stream = await sendMessageStreamWithRetry(
       conversationId,
       currentInput,
-      { agentId, streamTokens: true, background: true },
+      sendOptions,
       socket,
       runtime,
       runtime.activeAbortController.signal,
@@ -2802,7 +2870,7 @@ async function handleIncomingMessage(
           stream = await sendMessageStreamWithRetry(
             conversationId,
             currentInput,
-            { agentId, streamTokens: true, background: true },
+            sendOptions,
             socket,
             runtime,
             runtime.activeAbortController.signal,
@@ -3082,6 +3150,7 @@ async function handleIncomingMessage(
             decision.type === "approve",
         )
         .map((decision) => decision.approval.toolCallId);
+      runtime.activeExecutingToolCallIds = [...lastExecutingToolCallIds];
 
       // Execute approved/denied tools
       const executionResults = await executeApprovalBatch(
@@ -3126,7 +3195,7 @@ async function handleIncomingMessage(
       stream = await sendMessageStreamWithRetry(
         conversationId,
         currentInput,
-        { agentId, streamTokens: true, background: true },
+        sendOptions,
         socket,
         runtime,
         runtime.activeAbortController.signal,
@@ -3138,6 +3207,7 @@ async function handleIncomingMessage(
       lastExecutionResults = null;
       lastExecutingToolCallIds = [];
       lastNeedsUserInputToolCallIds = [];
+      runtime.activeExecutingToolCallIds = [];
 
       turnToolContextId = getStreamToolContextId(
         stream as Stream<LettaStreamingResponse>,
@@ -3258,6 +3328,7 @@ async function handleIncomingMessage(
   } finally {
     runtime.activeAbortController = null;
     runtime.cancelRequested = false;
+    runtime.activeExecutingToolCallIds = [];
   }
 }
 

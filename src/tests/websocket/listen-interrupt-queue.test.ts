@@ -62,12 +62,14 @@ describe("ListenerRuntime interrupt queue fields", () => {
     const runtime = createRuntime();
     expect(runtime.pendingInterruptedResults).toBeNull();
     expect(runtime.pendingInterruptedContext).toBeNull();
+    expect(runtime.pendingInterruptedToolCallIds).toBeNull();
+    expect(runtime.activeExecutingToolCallIds).toEqual([]);
     expect(runtime.continuationEpoch).toBe(0);
   });
 });
 
 describe("stopRuntime teardown", () => {
-  test("clears pendingInterruptedResults, context, and batch map", () => {
+  test("clears pendingInterruptedResults, context, ids, and batch map", () => {
     const runtime = createRuntime();
     runtime.socket = new MockSocket(WebSocket.OPEN) as unknown as WebSocket;
 
@@ -84,12 +86,16 @@ describe("stopRuntime teardown", () => {
       conversationId: "conv-1",
       continuationEpoch: 0,
     };
+    runtime.pendingInterruptedToolCallIds = ["call-1"];
+    runtime.activeExecutingToolCallIds = ["call-1"];
     runtime.pendingApprovalBatchByToolCallId.set("call-1", "batch-1");
 
     stopRuntime(runtime, true);
 
     expect(runtime.pendingInterruptedResults).toBeNull();
     expect(runtime.pendingInterruptedContext).toBeNull();
+    expect(runtime.pendingInterruptedToolCallIds).toBeNull();
+    expect(runtime.activeExecutingToolCallIds).toEqual([]);
     expect(runtime.pendingApprovalBatchByToolCallId.size).toBe(0);
   });
 
@@ -356,9 +362,10 @@ describe("Path A: cancel during tool execution → next turn consumes actual res
     const consumed = consumeInterruptQueue(runtime, agentId, conversationId);
 
     expect(consumed).not.toBeNull();
-    expect(consumed?.type).toBe("approval");
-    expect(consumed?.approvals).toEqual(executionResults);
-    expect(consumed?.approvals).toHaveLength(2);
+    expect(consumed?.approvalMessage.type).toBe("approval");
+    expect(consumed?.approvalMessage.approvals).toEqual(executionResults);
+    expect(consumed?.approvalMessage.approvals).toHaveLength(2);
+    expect(consumed?.interruptedToolCallIds).toEqual([]);
 
     // Queue is atomically cleared after consumption
     expect(runtime.pendingInterruptedResults).toBeNull();
@@ -414,6 +421,7 @@ describe("Path A: cancel during tool execution → next turn consumes actual res
       tool_call_id: "call-1",
       status: "error",
     });
+    expect(runtime.pendingInterruptedToolCallIds).toEqual(["call-1"]);
   });
 
   test("keeps legacy text fallback for interrupted tool return normalization", () => {
@@ -465,6 +473,7 @@ describe("Path B: cancel during approval wait → next turn consumes synthesized
         status: "error",
       },
     ]);
+    expect(runtime.pendingInterruptedToolCallIds).toEqual(["call-running-1"]);
   });
 
   test("full sequence: populate from batch map IDs → consume synthesized denials", () => {
@@ -509,7 +518,7 @@ describe("Path B: cancel during approval wait → next turn consumes synthesized
     // Next user message: consume
     const consumed = consumeInterruptQueue(runtime, agentId, conversationId);
     expect(consumed).not.toBeNull();
-    expect(consumed?.approvals).toHaveLength(2);
+    expect(consumed?.approvalMessage.approvals).toHaveLength(2);
 
     // Queue cleared
     expect(runtime.pendingInterruptedResults).toBeNull();
