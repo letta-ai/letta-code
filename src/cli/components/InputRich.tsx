@@ -267,9 +267,7 @@ const InputFooter = memo(function InputFooter({
 
   // Subscribe to subagent state for background agent indicators
   useSyncExternalStore(subscribeToSubagents, getSubagentSnapshot);
-  const backgroundAgents = [
-    ...getActiveBackgroundAgents(),
-  ];
+  const backgroundAgents = [...getActiveBackgroundAgents()];
 
   // Tick counter for elapsed time display (only active when background agents exist)
   const [, setTick] = useState(0);
@@ -314,7 +312,12 @@ const InputFooter = memo(function InputFooter({
       ? 2 +
         bgAgentParts.reduce(
           (acc, p, i) =>
-            acc + (i > 0 ? 3 : 0) + p.typeLabel.length + 1 + p.elapsed.length + 2,
+            acc +
+            (i > 0 ? 3 : 0) +
+            p.typeLabel.length +
+            1 +
+            p.elapsed.length +
+            2,
           0,
         ) +
         3
@@ -392,7 +395,9 @@ const InputFooter = memo(function InputFooter({
           statusLineRight && !hideFooterContent ? "flex-end" : undefined
         }
         width={
-          statusLineRight && !hideFooterContent ? undefined : effectiveRightWidth
+          statusLineRight && !hideFooterContent
+            ? undefined
+            : effectiveRightWidth
         }
         flexShrink={0}
       >
@@ -407,10 +412,14 @@ const InputFooter = memo(function InputFooter({
         ) : backgroundAgents.length > 0 ? (
           <Text>
             <BlinkDot color={colors.tool.pending} symbol="·" />
-            <Text dimColor>{" "}</Text>
+            <Text dimColor> </Text>
             {bgAgentParts.map((part, i) => (
-              <Text>
-                {i > 0 && <Text dimColor>{" · "}</Text>}
+              <Text key={`bg-agent-${part}`}>
+                {i > 0 && (
+                  <Text key={`bg-agent-indicator-${part}`} dimColor>
+                    {" · "}
+                  </Text>
+                )}
                 {part.chatUrl ? (
                   <Link url={part.chatUrl}>
                     <Text dimColor>{part.typeLabel}</Text>
@@ -418,9 +427,7 @@ const InputFooter = memo(function InputFooter({
                 ) : (
                   <Text dimColor>{part.typeLabel}</Text>
                 )}
-                <Text dimColor>
-                  {" "}({part.elapsed})
-                </Text>
+                <Text dimColor> ({part.elapsed})</Text>
               </Text>
             ))}
             <Text dimColor>{" │ "}</Text>
