@@ -1766,34 +1766,6 @@ async function main(): Promise<void> {
             }
           }
 
-          // Auto-heal system prompt drift (rebuild from stored recipe)
-          if (!systemPromptPreset) {
-            const storedPreset = settingsManager.getSystemPromptPreset(
-              agent.id,
-            );
-            if (storedPreset && storedPreset !== "custom") {
-              const {
-                buildSystemPrompt: rebuildPrompt,
-                isKnownPreset: isKnown,
-              } = await import("./agent/promptAssets");
-              if (isKnown(storedPreset)) {
-                const memoryMode = settingsManager.isMemfsEnabled(agent.id)
-                  ? "memfs"
-                  : "standard";
-                const expected = rebuildPrompt(storedPreset, memoryMode);
-                if (agent.system !== expected) {
-                  const client = await getClient();
-                  await client.agents.update(agent.id, { system: expected });
-                  agent = await client.agents.retrieve(agent.id);
-                }
-              } else {
-                console.warn(
-                  `[system-prompt] Stored preset "${storedPreset}" not found in SYSTEM_PROMPTS; skipping auto-heal`,
-                );
-              }
-            }
-          }
-
           if (systemPromptPreset) {
             const result = await updateAgentSystemPrompt(
               agent.id,
@@ -1955,6 +1927,29 @@ async function main(): Promise<void> {
         } catch (error) {
           console.error(error instanceof Error ? error.message : String(error));
           process.exit(1);
+        }
+
+        // Auto-heal system prompt drift (rebuild from stored recipe).
+        // Runs after memfs sync so isMemfsEnabled() reflects the final state.
+        if (resuming && !systemPromptPreset) {
+          const storedPreset = settingsManager.getSystemPromptPreset(agent.id);
+          if (storedPreset && storedPreset !== "custom") {
+            const { buildSystemPrompt: rebuildPrompt, isKnownPreset: isKnown } =
+              await import("./agent/promptAssets");
+            if (isKnown(storedPreset)) {
+              const memoryMode = settingsManager.isMemfsEnabled(agent.id)
+                ? "memfs"
+                : "standard";
+              const expected = rebuildPrompt(storedPreset, memoryMode);
+              if (agent.system !== expected) {
+                const client = await getClient();
+                await client.agents.update(agent.id, { system: expected });
+                agent = await client.agents.retrieve(agent.id);
+              }
+            } else {
+              settingsManager.clearSystemPromptPreset(agent.id);
+            }
+          }
         }
 
         // Save the session (agent + conversation) to settings

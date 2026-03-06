@@ -338,9 +338,11 @@ export async function updateAgentSystemPrompt(
       };
     }
 
-    // Persist preset only for known presets
+    // Persist preset for known presets; clear stale preset for subagent/unknown
     if (isKnownPreset(systemPromptId)) {
       settingsManager.setSystemPromptPreset(agentId, systemPromptId);
+    } else {
+      settingsManager.clearSystemPromptPreset(agentId);
     }
 
     // Re-fetch agent to get updated state

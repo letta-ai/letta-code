@@ -116,6 +116,73 @@ export const SYSTEM_PROMPTS: SystemPromptOption[] = [
 
 export type MemoryPromptMode = "standard" | "memfs";
 
+// --- Heading-aware section stripping (for legacy/custom prompts) ---
+
+interface Heading {
+  level: number;
+  title: string;
+  startOffset: number;
+}
+
+function scanHeadingsOutsideFences(text: string): Heading[] {
+  const lines = text.split("\n");
+  const headings: Heading[] = [];
+  let inFence = false;
+  let fenceToken = "";
+  let offset = 0;
+
+  for (const line of lines) {
+    const trimmed = line.trimStart();
+    const fenceMatch = trimmed.match(/^(```+|~~~+)/);
+    if (fenceMatch) {
+      const token = fenceMatch[1] ?? fenceMatch[0] ?? "";
+      const tokenChar = token.startsWith("`") ? "`" : "~";
+      if (!inFence) {
+        inFence = true;
+        fenceToken = tokenChar;
+      } else if (fenceToken === tokenChar) {
+        inFence = false;
+        fenceToken = "";
+      }
+    }
+
+    if (!inFence) {
+      const headingMatch = line.match(/^\s*(#{1,6})\s+(.+?)\s*$/);
+      if (headingMatch) {
+        const hashes = headingMatch[1] ?? "";
+        const rawTitle = headingMatch[2] ?? "";
+        if (hashes && rawTitle) {
+          const level = hashes.length;
+          const title = rawTitle.replace(/\s+#*$/, "").trim();
+          headings.push({ level, title, startOffset: offset });
+        }
+      }
+    }
+
+    offset += line.length + 1;
+  }
+
+  return headings;
+}
+
+function stripHeadingSections(
+  text: string,
+  shouldStrip: (heading: Heading) => boolean,
+): string {
+  let current = text;
+  while (true) {
+    const headings = scanHeadingsOutsideFences(current);
+    const target = headings.find(shouldStrip);
+    if (!target) return current;
+
+    const nextHeading = headings.find(
+      (h) => h.startOffset > target.startOffset && h.level <= target.level,
+    );
+    const end = nextHeading ? nextHeading.startOffset : current.length;
+    current = `${current.slice(0, target.startOffset)}${current.slice(end)}`;
+  }
+}
+
 /**
  * Check if a preset ID exists in SYSTEM_PROMPTS.
  */
@@ -172,6 +239,12 @@ export function swapMemoryAddon(
       result = result.replace(orphanTail, "");
     }
   }
+  // Strip legacy/variant memory sections by markdown heading parsing
+  // (handles edited or older ## Memory / ## Memory Filesystem sections)
+  result = stripHeadingSections(result, (h) => h.title === "Memory");
+  result = stripHeadingSections(result, (h) =>
+    h.title.startsWith("Memory Filesystem"),
+  );
   // Compact blank lines and append target addon
   result = result.replace(/\n{3,}/g, "\n\n").trimEnd();
   const target =

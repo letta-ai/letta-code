@@ -116,6 +116,29 @@ describe("swapMemoryAddon", () => {
     expect(result).not.toContain("# See what changed");
   });
 
+  test("strips legacy heading-based ## Memory section", () => {
+    const legacy =
+      "You are a test agent.\n\n## Memory\nLegacy memory instructions here.\n\nSome other details.";
+
+    const result = swapMemoryAddon(legacy, "memfs");
+
+    expect(result).toContain("## Memory Filesystem");
+    expect(result).not.toContain("Legacy memory instructions");
+    expect(countOccurrences(result, "## Memory Filesystem")).toBe(1);
+  });
+
+  test("strips legacy heading-based ## Memory Filesystem section", () => {
+    const legacy =
+      "You are a test agent.\n\n## Memory Filesystem\nOld memfs instructions.";
+
+    const result = swapMemoryAddon(legacy, "standard");
+
+    expect(result).toContain(
+      "Your memory consists of core memory (composed of memory blocks)",
+    );
+    expect(result).not.toContain("Old memfs instructions");
+  });
+
   test("is idempotent", () => {
     const base = "You are a test agent.";
     const once = swapMemoryAddon(base, "memfs");

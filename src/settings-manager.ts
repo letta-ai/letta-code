@@ -1567,6 +1567,14 @@ class SettingsManager {
   }
 
   /**
+   * Clear the stored system prompt preset for an agent (e.g., after switching to a subagent prompt).
+   */
+  clearSystemPromptPreset(agentId: string): void {
+    // Setting to empty string triggers the cleanup `if (!updated.systemPromptPreset) delete ...`
+    this.upsertAgentSettings(agentId, { systemPromptPreset: "" });
+  }
+
+  /**
    * Check if local .letta directory exists (indicates existing project)
    */
   hasLocalLettaDir(workingDirectory: string = process.cwd()): boolean {
