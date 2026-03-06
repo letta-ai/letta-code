@@ -2,6 +2,7 @@
  * Utilities for sending messages to an agent via conversations
  **/
 
+import type { Letta } from "@letta-ai/letta-client/client";
 import type { Stream } from "@letta-ai/letta-client/core/streaming";
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type {
@@ -96,7 +97,7 @@ export async function sendMessageStream(
   opts: SendMessageStreamOptions = { streamTokens: true, background: true },
   // Disable SDK retries by default - state management happens outside the stream,
   // so retries would violate idempotency and create race conditions
-  requestOptions: { maxRetries?: number; signal?: AbortSignal } = {
+  requestOptions: Letta.RequestOptions = {
     maxRetries: 0,
   },
 ): Promise<Stream<LettaStreamingResponse>> {
@@ -126,7 +127,13 @@ export async function sendMessageStream(
   const stream = await client.conversations.messages.create(
     resolvedConversationId,
     requestBody,
-    requestOptions,
+    {
+      ...requestOptions,
+      headers: {
+        ...((requestOptions.headers as Record<string, string>) ?? {}),
+        "X-Experimental-OpenAI-Responses-Websocket": "true",
+      },
+    },
   );
 
   if (requestStartTime !== undefined) {
