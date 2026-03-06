@@ -71,7 +71,7 @@ describe("model preset refresh wiring", () => {
     expect(updateSegment).not.toContain("client.agents.update(");
   });
 
-  test("/model handler updates conversation model and falls back to agent for default", () => {
+  test("/model handler updates conversation model (default updates agent)", () => {
     const path = fileURLToPath(new URL("../../cli/App.tsx", import.meta.url));
     const source = readFileSync(path, "utf-8");
 
@@ -85,11 +85,9 @@ describe("model preset refresh wiring", () => {
     const segment = source.slice(start, end);
 
     expect(segment).toContain("updateConversationLLMConfig(");
-    expect(segment).toContain("conversationIdRef.current");
-    // For the "default" virtual conversation (no real conversation object),
-    // the handler falls back to updating the agent directly.
     expect(segment).toContain("updateAgentLLMConfig(");
-    expect(segment).toContain('conversationIdRef.current !== "default"');
+    expect(segment).toContain("conversationIdRef.current");
+    expect(segment).toContain('conversationIdRef.current === "default"');
   });
 
   test("App defines helper to carry over active conversation model", () => {
@@ -113,6 +111,28 @@ describe("model preset refresh wiring", () => {
     expect(segment).toContain("updateConversationLLMConfig(");
     expect(segment).toContain(
       "Failed to carry over active model to new conversation",
+    );
+  });
+
+  test("conversation model override flag is synced for async callbacks", () => {
+    const path = fileURLToPath(new URL("../../cli/App.tsx", import.meta.url));
+    const source = readFileSync(path, "utf-8");
+
+    // The override flag must be safe to read inside async callbacks (e.g. the
+    // first streamed chunk sync) without waiting for a render/effect.
+    expect(source).toMatch(
+      /\[\s*hasConversationModelOverride,\s*setHasConversationModelOverride,\s*hasConversationModelOverrideRef,\s*\]\s*=\s*useSyncedState\(false\)/,
+    );
+  });
+
+  test("reasoning tier prefers conversation override model_settings", () => {
+    const path = fileURLToPath(new URL("../../cli/App.tsx", import.meta.url));
+    const source = readFileSync(path, "utf-8");
+
+    // When a conversation override is active, prefer the conversation model_settings
+    // snapshot when deriving reasoning effort (not the base agent llm_config).
+    expect(source).toMatch(
+      /const effectiveModelSettings = hasConversationModelOverride\s*\?\s*conversationOverrideModelSettings\s*:\s*agentState\?\.model_settings;/,
     );
   });
 

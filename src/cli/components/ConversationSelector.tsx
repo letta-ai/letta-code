@@ -243,9 +243,9 @@ export function ConversationSelector({
         if (!afterCursor) {
           try {
             const defaultMessages = await client.conversations.messages.list(
-              "default",
+              // Default conversation is represented by the agent id at the conversations endpoint.
+              agentId,
               {
-                agent_id: agentId,
                 limit: 20,
                 order: "desc",
               },
