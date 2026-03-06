@@ -159,13 +159,12 @@ function buildModelSettings(
     settings = {};
   }
 
-  // Apply max_output_tokens only when provider_type is present.
-  // Without provider_type the discriminated union rejects the payload (e.g. MiniMax).
-  // Pass null through so the server can explicitly unset max_output_tokens
-  // (prevents stale values lingering from a previous model).
+  // Apply max_output_tokens only when provider_type is present and the value
+  // is a concrete number.  Null means "unset" and should only be forwarded via
+  // the top-level max_tokens field — some providers (e.g. OpenAI) reject null
+  // inside their typed model_settings.
   if (
-    (typeof updateArgs?.max_output_tokens === "number" ||
-      updateArgs?.max_output_tokens === null) &&
+    typeof updateArgs?.max_output_tokens === "number" &&
     "provider_type" in settings
   ) {
     (settings as Record<string, unknown>).max_output_tokens =
