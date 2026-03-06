@@ -261,6 +261,51 @@ describe("listen-client controlResponseCapable latch", () => {
   });
 });
 
+describe("listen-client state_response pending interrupt snapshot", () => {
+  test("includes queued interrupted tool returns for refresh hydration", () => {
+    const runtime = __listenClientTestUtils.createRuntime();
+
+    __listenClientTestUtils.populateInterruptQueue(runtime, {
+      lastExecutionResults: null,
+      lastExecutingToolCallIds: ["call-running-1"],
+      lastNeedsUserInputToolCallIds: [],
+      agentId: "agent-1",
+      conversationId: "conv-1",
+    });
+
+    const snapshot = __listenClientTestUtils.buildStateResponse(runtime, 17);
+
+    expect(snapshot.pending_interrupt).toEqual({
+      agent_id: "agent-1",
+      conversation_id: "conv-1",
+      interrupted_tool_call_ids: ["call-running-1"],
+      tool_returns: [
+        {
+          tool_call_id: "call-running-1",
+          status: "error",
+          tool_return: INTERRUPTED_BY_USER,
+        },
+      ],
+    });
+  });
+
+  test("does not expose pending approval denials as interrupted tool state", () => {
+    const runtime = __listenClientTestUtils.createRuntime();
+
+    __listenClientTestUtils.populateInterruptQueue(runtime, {
+      lastExecutionResults: null,
+      lastExecutingToolCallIds: [],
+      lastNeedsUserInputToolCallIds: ["call-awaiting-approval"],
+      agentId: "agent-1",
+      conversationId: "conv-1",
+    });
+
+    const snapshot = __listenClientTestUtils.buildStateResponse(runtime, 18);
+
+    expect(snapshot.pending_interrupt).toBeNull();
+  });
+});
+
 describe("listen-client capability-gated approval flow", () => {
   test("control_response with allow + updatedInput rewrites tool args", async () => {
     const runtime = __listenClientTestUtils.createRuntime();
