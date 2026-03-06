@@ -658,9 +658,6 @@ export async function handleHeadlessCommand(
     process.exit(1);
   }
 
-  // Note: system prompt validation happens in index.ts before dispatching here.
-  // No need to re-validate — index.ts already calls validateSystemPromptPreset.
-
   // Parse memory blocks JSON if provided
   // Supports two formats:
   // - CreateBlock: { label: string, value: string, description?: string }
