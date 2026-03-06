@@ -585,3 +585,58 @@ describe("listen-client emitToWS adapter", () => {
     expect(runtime.sessionId.length).toBeGreaterThan(10);
   });
 });
+
+describe("listen-client post-stop approval recovery policy", () => {
+  test("retries when run detail indicates invalid tool call IDs", () => {
+    const shouldRecover =
+      __listenClientTestUtils.shouldAttemptPostStopApprovalRecovery({
+        stopReason: "error",
+        runIdsSeen: 1,
+        retries: 0,
+        runErrorDetail:
+          "Invalid tool call IDs: expected [toolu_abc], got [toolu_def]",
+        latestErrorText: null,
+      });
+
+    expect(shouldRecover).toBe(true);
+  });
+
+  test("retries when run detail indicates approval pending", () => {
+    const shouldRecover =
+      __listenClientTestUtils.shouldAttemptPostStopApprovalRecovery({
+        stopReason: "error",
+        runIdsSeen: 1,
+        retries: 0,
+        runErrorDetail: "Conversation is waiting for approval",
+        latestErrorText: null,
+      });
+
+    expect(shouldRecover).toBe(true);
+  });
+
+  test("retries on generic no-run error heuristic", () => {
+    const shouldRecover =
+      __listenClientTestUtils.shouldAttemptPostStopApprovalRecovery({
+        stopReason: "error",
+        runIdsSeen: 0,
+        retries: 0,
+        runErrorDetail: null,
+        latestErrorText: null,
+      });
+
+    expect(shouldRecover).toBe(true);
+  });
+
+  test("does not retry once retry budget is exhausted", () => {
+    const shouldRecover =
+      __listenClientTestUtils.shouldAttemptPostStopApprovalRecovery({
+        stopReason: "error",
+        runIdsSeen: 0,
+        retries: 2,
+        runErrorDetail: null,
+        latestErrorText: null,
+      });
+
+    expect(shouldRecover).toBe(false);
+  });
+});
