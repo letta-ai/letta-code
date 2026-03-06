@@ -212,6 +212,12 @@ interface StateResponseMessage {
     request_id: string;
     request: ControlRequest["request"];
   }>;
+  pending_interrupt: {
+    agent_id: string;
+    conversation_id: string;
+    interrupted_tool_call_ids: string[];
+    tool_returns: InterruptToolReturn[];
+  } | null;
   queue: {
     queue_len: number;
     pending_turns: number;
@@ -747,6 +753,7 @@ function buildStateResponse(
       started_at: runtime.activeRunStartedAt,
     },
     pending_control_requests: pendingControlRequests,
+    pending_interrupt: buildPendingInterruptState(runtime),
     queue: {
       queue_len: runtime.queueRuntime.length,
       pending_turns: runtime.pendingTurns,
@@ -942,6 +949,38 @@ function asToolReturnStatus(value: unknown): "success" | "error" | null {
     return value;
   }
   return null;
+}
+
+function buildPendingInterruptState(
+  runtime: ListenerRuntime,
+): StateResponseMessage["pending_interrupt"] {
+  const context = runtime.pendingInterruptedContext;
+  const approvals = runtime.pendingInterruptedResults;
+  const interruptedToolCallIds = runtime.pendingInterruptedToolCallIds;
+  if (
+    !context ||
+    !approvals ||
+    approvals.length === 0 ||
+    !interruptedToolCallIds ||
+    interruptedToolCallIds.length === 0
+  ) {
+    return null;
+  }
+
+  const interruptedSet = new Set(interruptedToolCallIds);
+  const toolReturns = extractInterruptToolReturns(approvals).filter(
+    (toolReturn) => interruptedSet.has(toolReturn.tool_call_id),
+  );
+  if (toolReturns.length === 0) {
+    return null;
+  }
+
+  return {
+    agent_id: context.agentId,
+    conversation_id: context.conversationId,
+    interrupted_tool_call_ids: [...interruptedToolCallIds],
+    tool_returns: toolReturns,
+  };
 }
 
 function normalizeToolReturnValue(value: unknown): string {
@@ -3381,6 +3420,7 @@ export function stopListenerClient(): void {
 export const __listenClientTestUtils = {
   createRuntime,
   stopRuntime,
+  buildStateResponse,
   emitToWS,
   rememberPendingApprovalBatchIds,
   resolvePendingApprovalBatchId,
