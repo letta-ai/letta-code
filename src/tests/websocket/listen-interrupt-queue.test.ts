@@ -338,6 +338,7 @@ describe("Path A: cancel during tool execution → next turn consumes actual res
     // Cancel fires: populateInterruptQueue (Path A — has execution results)
     const populated = populateInterruptQueue(runtime, {
       lastExecutionResults: executionResults,
+      lastExecutingToolCallIds: [],
       lastNeedsUserInputToolCallIds: ["call-1", "call-2"],
       agentId,
       conversationId,
@@ -375,6 +376,7 @@ describe("Path A: cancel during tool execution → next turn consumes actual res
 
     const populated = populateInterruptQueue(runtime, {
       lastExecutionResults: executionResults,
+      lastExecutingToolCallIds: [],
       lastNeedsUserInputToolCallIds: ["call-1"],
       agentId: "agent-1",
       conversationId: "conv-1",
@@ -389,6 +391,28 @@ describe("Path A: cancel during tool execution → next turn consumes actual res
 });
 
 describe("Path B: cancel during approval wait → next turn consumes synthesized denials", () => {
+  test("prefers synthesized tool-error results when execution was already in-flight", () => {
+    const runtime = createRuntime();
+
+    const populated = populateInterruptQueue(runtime, {
+      lastExecutionResults: null,
+      lastExecutingToolCallIds: ["call-running-1"],
+      lastNeedsUserInputToolCallIds: ["call-running-1"],
+      agentId: "agent-1",
+      conversationId: "conv-1",
+    });
+
+    expect(populated).toBe(true);
+    expect(runtime.pendingInterruptedResults).toEqual([
+      {
+        type: "tool",
+        tool_call_id: "call-running-1",
+        tool_return: "Interrupted by user",
+        status: "error",
+      },
+    ]);
+  });
+
   test("full sequence: populate from batch map IDs → consume synthesized denials", () => {
     const runtime = createRuntime();
     const agentId = "agent-abc";
@@ -404,6 +428,7 @@ describe("Path B: cancel during approval wait → next turn consumes synthesized
     // Cancel fires during approval wait: no execution results
     const populated = populateInterruptQueue(runtime, {
       lastExecutionResults: null,
+      lastExecutingToolCallIds: [],
       lastNeedsUserInputToolCallIds: [],
       agentId,
       conversationId,
@@ -442,6 +467,7 @@ describe("Path B: cancel during approval wait → next turn consumes synthesized
     // No batch map entries, but we have the snapshot IDs
     const populated = populateInterruptQueue(runtime, {
       lastExecutionResults: null,
+      lastExecutingToolCallIds: [],
       lastNeedsUserInputToolCallIds: ["call-a", "call-b"],
       agentId: "agent-1",
       conversationId: "conv-1",
@@ -460,6 +486,7 @@ describe("Path B: cancel during approval wait → next turn consumes synthesized
 
     const populated = populateInterruptQueue(runtime, {
       lastExecutionResults: null,
+      lastExecutingToolCallIds: [],
       lastNeedsUserInputToolCallIds: [],
       agentId: "agent-1",
       conversationId: "conv-1",
@@ -486,6 +513,7 @@ describe("post-cancel next turn: queue consumed exactly once (no error loop)", (
           reason: "cancelled",
         },
       ],
+      lastExecutingToolCallIds: [],
       lastNeedsUserInputToolCallIds: [],
       agentId,
       conversationId: convId,
@@ -509,6 +537,7 @@ describe("post-cancel next turn: queue consumed exactly once (no error loop)", (
       lastExecutionResults: [
         { type: "approval", tool_call_id: "call-1", approve: true },
       ],
+      lastExecutingToolCallIds: [],
       lastNeedsUserInputToolCallIds: [],
       agentId,
       conversationId: convId,
@@ -529,6 +558,7 @@ describe("idempotency: first cancel populates, second is no-op", () => {
       lastExecutionResults: [
         { type: "approval", tool_call_id: "call-first", approve: true },
       ],
+      lastExecutingToolCallIds: [],
       lastNeedsUserInputToolCallIds: [],
       agentId: "agent-1",
       conversationId: "conv-1",
@@ -544,6 +574,7 @@ describe("idempotency: first cancel populates, second is no-op", () => {
           reason: "x",
         },
       ],
+      lastExecutingToolCallIds: [],
       lastNeedsUserInputToolCallIds: [],
       agentId: "agent-1",
       conversationId: "conv-1",
@@ -563,6 +594,7 @@ describe("idempotency: first cancel populates, second is no-op", () => {
       lastExecutionResults: [
         { type: "approval", tool_call_id: "call-1", approve: true },
       ],
+      lastExecutingToolCallIds: [],
       lastNeedsUserInputToolCallIds: [],
       agentId: "agent-1",
       conversationId: "conv-1",
@@ -576,6 +608,7 @@ describe("idempotency: first cancel populates, second is no-op", () => {
       lastExecutionResults: [
         { type: "approval", tool_call_id: "call-2", approve: true },
       ],
+      lastExecutingToolCallIds: [],
       lastNeedsUserInputToolCallIds: [],
       agentId: "agent-1",
       conversationId: "conv-1",
@@ -597,6 +630,7 @@ describe("epoch guard: stale context discarded on consume", () => {
       lastExecutionResults: [
         { type: "approval", tool_call_id: "call-1", approve: true },
       ],
+      lastExecutingToolCallIds: [],
       lastNeedsUserInputToolCallIds: [],
       agentId: "agent-1",
       conversationId: "conv-1",
@@ -620,6 +654,7 @@ describe("epoch guard: stale context discarded on consume", () => {
       lastExecutionResults: [
         { type: "approval", tool_call_id: "call-1", approve: true },
       ],
+      lastExecutingToolCallIds: [],
       lastNeedsUserInputToolCallIds: [],
       agentId: "agent-old",
       conversationId: "conv-1",
@@ -638,6 +673,7 @@ describe("epoch guard: stale context discarded on consume", () => {
       lastExecutionResults: [
         { type: "approval", tool_call_id: "call-1", approve: true },
       ],
+      lastExecutingToolCallIds: [],
       lastNeedsUserInputToolCallIds: [],
       agentId: "agent-1",
       conversationId: "conv-old",
@@ -656,6 +692,7 @@ describe("stale Path-B IDs: clearing after successful send prevents re-denial", 
     // Also batch map should be cleared by clearPendingApprovalBatchIds
     const populated = populateInterruptQueue(runtime, {
       lastExecutionResults: null,
+      lastExecutingToolCallIds: [],
       lastNeedsUserInputToolCallIds: [], // cleared after send
       agentId: "agent-1",
       conversationId: "conv-1",
@@ -673,6 +710,7 @@ describe("stale Path-B IDs: clearing after successful send prevents re-denial", 
 
     const populated = populateInterruptQueue(runtime, {
       lastExecutionResults: null,
+      lastExecutingToolCallIds: [],
       lastNeedsUserInputToolCallIds: [], // cleared from previous send
       agentId: "agent-1",
       conversationId: "conv-1",
@@ -749,6 +787,7 @@ describe("consume clears pendingApprovalBatchByToolCallId", () => {
       lastExecutionResults: [
         { type: "approval", tool_call_id: "call-1", approve: true },
       ],
+      lastExecutingToolCallIds: [],
       lastNeedsUserInputToolCallIds: [],
       agentId: "agent-1",
       conversationId: "conv-1",
@@ -767,6 +806,7 @@ describe("consume clears pendingApprovalBatchByToolCallId", () => {
       lastExecutionResults: [
         { type: "approval", tool_call_id: "call-1", approve: true },
       ],
+      lastExecutingToolCallIds: [],
       lastNeedsUserInputToolCallIds: [],
       agentId: "agent-old",
       conversationId: "conv-old",

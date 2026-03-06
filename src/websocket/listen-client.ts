@@ -34,6 +34,7 @@ import { createBuffers } from "../cli/helpers/accumulator";
 import { classifyApprovals } from "../cli/helpers/approvalClassification";
 import { generatePlanFilePath } from "../cli/helpers/planName";
 import { drainStreamWithResume } from "../cli/helpers/stream";
+import { INTERRUPTED_BY_USER } from "../constants";
 import { computeDiffPreviews } from "../helpers/diffPreview";
 import { permissionMode } from "../permissions/mode";
 import { type QueueItem, QueueRuntime } from "../queue/queueRuntime";
@@ -907,6 +908,7 @@ function shouldAttemptPostStopApprovalRecovery(params: {
 
 interface InterruptPopulateInput {
   lastExecutionResults: ApprovalResult[] | null;
+  lastExecutingToolCallIds: string[];
   lastNeedsUserInputToolCallIds: string[];
   agentId: string;
   conversationId: string;
@@ -920,9 +922,7 @@ interface InterruptToolReturn {
   stderr?: string[];
 }
 
-function asToolReturnStatus(
-  value: unknown,
-): "success" | "error" | null {
+function asToolReturnStatus(value: unknown): "success" | "error" | null {
   if (value === "success" || value === "error") {
     return value;
   }
@@ -992,10 +992,14 @@ function extractCanonicalToolReturnsFromWire(
         continue;
       }
       const stdout = Array.isArray(rec.stdout)
-        ? rec.stdout.filter((entry): entry is string => typeof entry === "string")
+        ? rec.stdout.filter(
+            (entry): entry is string => typeof entry === "string",
+          )
         : undefined;
       const stderr = Array.isArray(rec.stderr)
-        ? rec.stderr.filter((entry): entry is string => typeof entry === "string")
+        ? rec.stderr.filter(
+            (entry): entry is string => typeof entry === "string",
+          )
         : undefined;
       fromArray.push({
         tool_call_id: toolCallId,
@@ -1017,10 +1021,14 @@ function extractCanonicalToolReturnsFromWire(
     return [];
   }
   const stdout = Array.isArray(payload.stdout)
-    ? payload.stdout.filter((entry): entry is string => typeof entry === "string")
+    ? payload.stdout.filter(
+        (entry): entry is string => typeof entry === "string",
+      )
     : undefined;
   const stderr = Array.isArray(payload.stderr)
-    ? payload.stderr.filter((entry): entry is string => typeof entry === "string")
+    ? payload.stderr.filter(
+        (entry): entry is string => typeof entry === "string",
+      )
     : undefined;
   return [
     {
@@ -1223,6 +1231,26 @@ function populateInterruptQueue(
   if (input.lastExecutionResults && input.lastExecutionResults.length > 0) {
     // Path A: execution happened before cancel — queue actual results
     runtime.pendingInterruptedResults = input.lastExecutionResults;
+    runtime.pendingInterruptedContext = {
+      agentId: input.agentId,
+      conversationId: input.conversationId,
+      continuationEpoch: runtime.continuationEpoch,
+    };
+    return true;
+  }
+
+  // Path A.5: execution was in-flight (approved tools started) but no
+  // terminal results were captured before cancel. Match App/headless parity by
+  // queuing explicit tool errors, not synthetic approval denials.
+  if (input.lastExecutingToolCallIds.length > 0) {
+    runtime.pendingInterruptedResults = input.lastExecutingToolCallIds.map(
+      (toolCallId) => ({
+        type: "tool" as const,
+        tool_call_id: toolCallId,
+        tool_return: INTERRUPTED_BY_USER,
+        status: "error" as const,
+      }),
+    );
     runtime.pendingInterruptedContext = {
       agentId: input.agentId,
       conversationId: input.conversationId,
@@ -2418,6 +2446,7 @@ async function handleIncomingMessage(
   // Track last approval-loop state for cancel-time queueing (Phase 1.2).
   // Hoisted before try so the cancel catch block can access them.
   let lastExecutionResults: ApprovalResult[] | null = null;
+  let lastExecutingToolCallIds: string[] = [];
   let lastNeedsUserInputToolCallIds: string[] = [];
 
   runtime.isProcessing = true;
@@ -2615,7 +2644,8 @@ async function handleIncomingMessage(
                 ...normalizedChunk,
                 type: "message",
                 session_id: runtime.sessionId,
-                uuid: chunkWithIds.otid || chunkWithIds.id || crypto.randomUUID(),
+                uuid:
+                  chunkWithIds.otid || chunkWithIds.id || crypto.randomUUID(),
               } as unknown as MessageWire);
             }
           }
@@ -3010,6 +3040,15 @@ async function handleIncomingMessage(
         }
       }
 
+      // Snapshot executing tool_call_ids before execution starts so cancel can
+      // preserve tool-error parity even if execution aborts mid-await.
+      lastExecutingToolCallIds = decisions
+        .filter(
+          (decision): decision is Extract<Decision, { type: "approve" }> =>
+            decision.type === "approve",
+        )
+        .map((decision) => decision.approval.toolCallId);
+
       // Execute approved/denied tools
       const executionResults = await executeApprovalBatch(
         decisions,
@@ -3057,6 +3096,7 @@ async function handleIncomingMessage(
       // cancel during the subsequent stream drain won't queue already-sent
       // results (Path A) or re-deny already-resolved tool calls (Path B).
       lastExecutionResults = null;
+      lastExecutingToolCallIds = [];
       lastNeedsUserInputToolCallIds = [];
 
       turnToolContextId = getStreamToolContextId(
@@ -3068,6 +3108,7 @@ async function handleIncomingMessage(
       // Queue interrupted tool-call resolutions for the next message turn.
       populateInterruptQueue(runtime, {
         lastExecutionResults,
+        lastExecutingToolCallIds,
         lastNeedsUserInputToolCallIds,
         agentId: agentId || "",
         conversationId,
