@@ -96,7 +96,11 @@ export async function sendMessageStream(
   opts: SendMessageStreamOptions = { streamTokens: true, background: true },
   // Disable SDK retries by default - state management happens outside the stream,
   // so retries would violate idempotency and create race conditions
-  requestOptions: { maxRetries?: number; signal?: AbortSignal } = {
+  requestOptions: {
+    maxRetries?: number;
+    signal?: AbortSignal;
+    headers?: Record<string, string>;
+  } = {
     maxRetries: 0,
   },
 ): Promise<Stream<LettaStreamingResponse>> {
@@ -123,10 +127,21 @@ export async function sendMessageStream(
     );
   }
 
+  const extraHeaders: Record<string, string> = {};
+  if (process.env.LETTA_RESPONSES_WS === "1") {
+    extraHeaders["X-Experimental-OpenAI-Responses-Websocket"] = "true";
+  }
+
   const stream = await client.conversations.messages.create(
     resolvedConversationId,
     requestBody,
-    requestOptions,
+    {
+      ...requestOptions,
+      headers: {
+        ...((requestOptions.headers as Record<string, string>) ?? {}),
+        ...extraHeaders,
+      },
+    },
   );
 
   if (requestStartTime !== undefined) {
