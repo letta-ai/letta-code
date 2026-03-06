@@ -641,6 +641,64 @@ describe("listen-client post-stop approval recovery policy", () => {
   });
 });
 
+describe("listen-client interrupt persistence normalization", () => {
+  test("forces interrupted in-flight tool results to status=error when cancelRequested", () => {
+    const runtime = __listenClientTestUtils.createRuntime();
+    runtime.cancelRequested = true;
+
+    const normalized =
+      __listenClientTestUtils.normalizeExecutionResultsForInterruptParity(
+        runtime,
+        [
+          {
+            type: "tool",
+            tool_call_id: "tool-1",
+            tool_return: "Interrupted by user",
+            status: "success",
+          },
+        ],
+        ["tool-1"],
+      );
+
+    expect(normalized).toEqual([
+      {
+        type: "tool",
+        tool_call_id: "tool-1",
+        tool_return: "Interrupted by user",
+        status: "error",
+      },
+    ]);
+  });
+
+  test("leaves tool status unchanged when not in cancel flow", () => {
+    const runtime = __listenClientTestUtils.createRuntime();
+    runtime.cancelRequested = false;
+
+    const normalized =
+      __listenClientTestUtils.normalizeExecutionResultsForInterruptParity(
+        runtime,
+        [
+          {
+            type: "tool",
+            tool_call_id: "tool-1",
+            tool_return: "Interrupted by user",
+            status: "success",
+          },
+        ],
+        ["tool-1"],
+      );
+
+    expect(normalized).toEqual([
+      {
+        type: "tool",
+        tool_call_id: "tool-1",
+        tool_return: "Interrupted by user",
+        status: "success",
+      },
+    ]);
+  });
+});
+
 describe("listen-client tool_return wire normalization", () => {
   test("normalizes legacy top-level tool return fields to canonical tool_returns[]", () => {
     const normalized = __listenClientTestUtils.normalizeToolReturnWireMessage({

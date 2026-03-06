@@ -990,6 +990,20 @@ function normalizeInterruptedApprovalsForQueue(
   });
 }
 
+function normalizeExecutionResultsForInterruptParity(
+  runtime: ListenerRuntime,
+  executionResults: ApprovalResult[],
+  executingToolCallIds: string[],
+): ApprovalResult[] {
+  if (!runtime.cancelRequested || executionResults.length === 0) {
+    return executionResults;
+  }
+
+  return normalizeApprovalResultsForPersistence(executionResults, {
+    interruptedToolCallIds: executingToolCallIds,
+  });
+}
+
 function extractCanonicalToolReturnsFromWire(
   payload: Record<string, unknown>,
 ): InterruptToolReturn[] {
@@ -3078,13 +3092,19 @@ async function handleIncomingMessage(
           abortSignal: runtime.activeAbortController.signal,
         },
       );
-      lastExecutionResults = executionResults;
+      const persistedExecutionResults =
+        normalizeExecutionResultsForInterruptParity(
+          runtime,
+          executionResults,
+          lastExecutingToolCallIds,
+        );
+      lastExecutionResults = persistedExecutionResults;
       // WS-first parity: publish tool-return terminal outcomes immediately on
       // normal approval execution, before continuation stream send.
       emitInterruptToolReturnMessage(
         socket,
         runtime,
-        executionResults,
+        persistedExecutionResults,
         runtime.activeRunId ||
           runId ||
           msgRunIds[msgRunIds.length - 1] ||
@@ -3100,7 +3120,7 @@ async function handleIncomingMessage(
       currentInput = [
         {
           type: "approval",
-          approvals: executionResults,
+          approvals: persistedExecutionResults,
         },
       ];
       stream = await sendMessageStreamWithRetry(
@@ -3275,5 +3295,6 @@ export const __listenClientTestUtils = {
   emitInterruptToolReturnMessage,
   getInterruptApprovalsForEmission,
   normalizeToolReturnWireMessage,
+  normalizeExecutionResultsForInterruptParity,
   shouldAttemptPostStopApprovalRecovery,
 };
