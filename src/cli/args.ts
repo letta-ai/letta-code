@@ -106,8 +106,7 @@ export const CLI_FLAG_CATALOG = {
     mode: "both",
     help: {
       argLabel: "<id>",
-      description:
-        "System prompt ID or subagent name (applies to new or existing agent)",
+      description: "System prompt preset ID (applies to new or existing agent)",
     },
   },
   "system-custom": { parser: { type: "string" }, mode: "both" },
