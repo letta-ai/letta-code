@@ -662,28 +662,17 @@ export async function handleHeadlessCommand(
   // Internal subagent launches (LETTA_CODE_AGENT_ROLE=subagent) may use subagent names.
   // All other callers only accept known preset IDs.
   if (systemPromptPreset) {
-    const { SYSTEM_PROMPTS } = await import("./agent/promptAssets");
-    const validPresets = SYSTEM_PROMPTS.map((p) => p.id);
-    const isSubagentProcess = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
-
-    if (!validPresets.includes(systemPromptPreset)) {
-      if (isSubagentProcess) {
-        // Subagent launch — verify it's a real subagent name
-        const { getAllSubagentConfigs } = await import("./agent/subagents");
-        const subagentConfigs = await getAllSubagentConfigs();
-        if (!subagentConfigs[systemPromptPreset]) {
-          const allValid = [...validPresets, ...Object.keys(subagentConfigs)];
-          console.error(
-            `Error: Invalid system prompt "${systemPromptPreset}". Must be one of: ${allValid.join(", ")}.`,
-          );
-          process.exit(1);
-        }
-      } else {
-        console.error(
-          `Error: Invalid system prompt "${systemPromptPreset}". Must be one of: ${validPresets.join(", ")}.`,
-        );
-        process.exit(1);
-      }
+    const { validateSystemPromptPreset } = await import("./agent/promptAssets");
+    const allowSubagentNames = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
+    try {
+      await validateSystemPromptPreset(systemPromptPreset, {
+        allowSubagentNames,
+      });
+    } catch (err) {
+      console.error(
+        `Error: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      process.exit(1);
     }
   }
 

@@ -115,6 +115,37 @@ export const SYSTEM_PROMPTS: SystemPromptOption[] = [
 ];
 
 /**
+ * Validate a system prompt preset ID.
+ *
+ * Known preset IDs are always accepted. Subagent names are only accepted
+ * when `allowSubagentNames` is true (internal subagent launches).
+ *
+ * @throws Error with a descriptive message listing valid options
+ */
+export async function validateSystemPromptPreset(
+  id: string,
+  opts?: { allowSubagentNames?: boolean },
+): Promise<void> {
+  const validPresets = SYSTEM_PROMPTS.map((p) => p.id);
+  if (validPresets.includes(id)) return;
+
+  if (opts?.allowSubagentNames) {
+    const { getAllSubagentConfigs } = await import("./subagents");
+    const subagentConfigs = await getAllSubagentConfigs();
+    if (subagentConfigs[id]) return;
+
+    const allValid = [...validPresets, ...Object.keys(subagentConfigs)];
+    throw new Error(
+      `Invalid system prompt "${id}". Must be one of: ${allValid.join(", ")}.`,
+    );
+  }
+
+  throw new Error(
+    `Invalid system prompt "${id}". Must be one of: ${validPresets.join(", ")}.`,
+  );
+}
+
+/**
  * Resolve a system prompt ID to its content.
  *
  * Resolution order:
