@@ -12,7 +12,9 @@ import { existsSync } from "node:fs";
 import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { settingsManager } from "../settings-manager";
 import { parseFrontmatter } from "../utils/frontmatter";
+import { getMemoryRepoDir } from "./memoryGit";
 import { ALL_SKILL_SOURCES } from "./skillSources";
 
 /**
@@ -113,6 +115,33 @@ export function getAgentSkillsDir(agentId: string): string {
 }
 
 /**
+ * Get the agent-scoped skills directory inside MemFS for a specific agent.
+ * @param agentId - The Letta agent ID (e.g., "agent-abc123")
+ * @returns Path like ~/.letta/agents/agent-abc123/memory/skills/
+ */
+export function getAgentMemfsSkillsDir(agentId: string): string {
+  return join(getMemoryRepoDir(agentId), "skills");
+}
+
+/**
+ * Get the effective agent-scoped skills directory.
+ *
+ * When MemFS is enabled for the agent, store agent-scoped skills in the
+ * memory repository under memory/skills/. Otherwise, fall back to the legacy
+ * agent skills directory under ~/.letta/agents/{agentId}/skills/.
+ */
+export function getEffectiveAgentSkillsDir(agentId: string): string {
+  try {
+    if (settingsManager.isMemfsEnabled(agentId)) {
+      return getAgentMemfsSkillsDir(agentId);
+    }
+  } catch {
+    // Settings may not be initialized in some test contexts; default to legacy.
+  }
+  return getAgentSkillsDir(agentId);
+}
+
+/**
  * Parse a bundled skill from its embedded content
  */
 /**
@@ -202,7 +231,7 @@ export async function discoverSkills(
 
   // 3. Add agent skills if agentId provided (override global)
   if (agentId && includeSource("agent")) {
-    const agentSkillsDir = getAgentSkillsDir(agentId);
+    const agentSkillsDir = getEffectiveAgentSkillsDir(agentId);
     const agentResult = await discoverSkillsFromDir(agentSkillsDir, "agent");
     allErrors.push(...agentResult.errors);
     for (const skill of agentResult.skills) {

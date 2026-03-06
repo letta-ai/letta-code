@@ -800,6 +800,7 @@ html.dark .warning-badge { background: hsl(42, 30%, 18%); color: hsl(42, 80%, 70
     <div class="tab active" data-tab="context">Context</div>
     <div class="tab" data-tab="core" id="tab-core-label">Core Memory</div>
     <div class="tab" data-tab="external" id="tab-external-label">External Memory</div>
+    <div class="tab" data-tab="skills" id="tab-skills-label">Skills</div>
     <div class="tab" data-tab="history">History</div>
   </nav>
 
@@ -827,6 +828,15 @@ html.dark .warning-badge { background: hsl(42, 30%, 18%); color: hsl(42, 80%, 70
       <div class="files-layout">
         <div class="panel tree-panel" id="tree-panel-external"></div>
         <div class="panel file-panel" id="file-panel-external">
+          <div class="empty">Select a file from the tree</div>
+        </div>
+      </div>
+    </section>
+
+    <section id="tab-skills" style="display:none">
+      <div class="files-layout">
+        <div class="panel tree-panel" id="tree-panel-skills"></div>
+        <div class="panel file-panel" id="file-panel-skills">
           <div class="empty">Select a file from the tree</div>
         </div>
       </div>
@@ -1135,6 +1145,7 @@ html.dark .warning-badge { background: hsl(42, 30%, 18%); color: hsl(42, 80%, 70
     document.getElementById('tab-context').style.display = name === 'context' ? '' : 'none';
     document.getElementById('tab-core').style.display = name === 'core' ? '' : 'none';
     document.getElementById('tab-external').style.display = name === 'external' ? '' : 'none';
+    document.getElementById('tab-skills').style.display = name === 'skills' ? '' : 'none';
     document.getElementById('tab-history').style.display = name === 'history' ? '' : 'none';
     location.hash = name;
   }
@@ -1160,7 +1171,8 @@ html.dark .warning-badge { background: hsl(42, 30%, 18%); color: hsl(42, 80%, 70
 
   var allFiles = DATA.files || [];
   var coreFiles = allFiles.filter(function(f) { return f.isSystem; });
-  var externalFiles = allFiles.filter(function(f) { return !f.isSystem; });
+  var skillsFiles = allFiles.filter(function(f) { return f.isSkill; });
+  var externalFiles = allFiles.filter(function(f) { return !f.isSystem && !f.isSkill; });
 
   // Strip system/ prefix for core files display
   var coreFilesStripped = coreFiles.map(function(f) {
@@ -1168,17 +1180,27 @@ html.dark .warning-badge { background: hsl(42, 30%, 18%); color: hsl(42, 80%, 70
     return { path: stripped, origPath: f.path, isSystem: f.isSystem, frontmatter: f.frontmatter, content: f.content };
   });
 
+  // Strip skills/ prefix for skills files display
+  var skillsFilesStripped = skillsFiles.map(function(f) {
+    var stripped = String(f.path).replace(/^skills[\\/]/, '');
+    return { path: stripped, origPath: f.path, isSystem: f.isSystem, isSkill: f.isSkill, frontmatter: f.frontmatter, content: f.content };
+  });
+
   var coreTreeRoot = buildTree(coreFilesStripped);
+  var skillsTreeRoot = buildTree(skillsFilesStripped);
   var externalTreeRoot = buildTree(externalFiles);
 
   var treePanelCore = document.getElementById('tree-panel-core');
   var filePanelCore = document.getElementById('file-panel-core');
   var treePanelExternal = document.getElementById('tree-panel-external');
   var filePanelExternal = document.getElementById('file-panel-external');
+  var treePanelSkills = document.getElementById('tree-panel-skills');
+  var filePanelSkills = document.getElementById('file-panel-skills');
 
   // Set tab counts
   document.getElementById('tab-core-label').textContent = 'Core Memory (' + coreFiles.length + ')';
   document.getElementById('tab-external-label').textContent = 'External Memory (' + externalFiles.length + ')';
+  document.getElementById('tab-skills-label').textContent = 'Skills (' + skillsFiles.length + ')';
   var fileMap = Object.create(null);
   (DATA.files || []).forEach(function(f) { fileMap[f.path] = f; });
 
@@ -1231,6 +1253,7 @@ html.dark .warning-badge { background: hsl(42, 30%, 18%); color: hsl(42, 80%, 70
 
   treePanelCore.innerHTML = '<div class="tree-desc">Memory stored in-context</div>' + renderTree(coreTreeRoot, 0, '');
   treePanelExternal.innerHTML = '<div class="tree-desc">Memory stored out-of-context</div>' + (externalFiles.length > 0 ? renderTree(externalTreeRoot, 0, '') : '<div class="empty" style="padding:16px">No external memory files</div>');
+  treePanelSkills.innerHTML = '<div class="tree-desc">Agent skills stored in memory</div>' + (skillsFiles.length > 0 ? renderTree(skillsTreeRoot, 0, '') : '<div class="empty" style="padding:16px">No skills</div>');
 
   // Collapsible directory toggling (both tree panels)
   function attachTreeHandlers(treePanel, filePanel) {
@@ -1250,6 +1273,7 @@ html.dark .warning-badge { background: hsl(42, 30%, 18%); color: hsl(42, 80%, 70
   }
   attachTreeHandlers(treePanelCore, filePanelCore);
   attachTreeHandlers(treePanelExternal, filePanelExternal);
+  attachTreeHandlers(treePanelSkills, filePanelSkills);
 
   // Build per-file last-commit index from commit data
   var fileLastCommit = Object.create(null);
@@ -1347,11 +1371,14 @@ html.dark .warning-badge { background: hsl(42, 30%, 18%); color: hsl(42, 80%, 70
   }
   attachFileClickHandler(treePanelCore, filePanelCore);
   attachFileClickHandler(treePanelExternal, filePanelExternal);
+  attachFileClickHandler(treePanelSkills, filePanelSkills);
 
   var firstCore = treePanelCore.querySelector('.tree-item.file[data-path]');
   if (firstCore) firstCore.click();
   var firstExternal = treePanelExternal.querySelector('.tree-item.file[data-path]');
   if (firstExternal) firstExternal.click();
+  var firstSkills = treePanelSkills.querySelector('.tree-item.file[data-path]');
+  if (firstSkills) firstSkills.click();
 
   // History
   var commits = DATA.commits || [];
@@ -1400,9 +1427,11 @@ html.dark .warning-badge { background: hsl(42, 30%, 18%); color: hsl(42, 80%, 70
 
   function navigateToFile(filePath) {
     if (fileMap[filePath]) {
-      var isCore = fileMap[filePath].isSystem;
-      var tp = isCore ? treePanelCore : treePanelExternal;
-      activateTab(isCore ? 'core' : 'external');
+      var file = fileMap[filePath];
+      var isCore = file.isSystem;
+      var isSkills = file.isSkill;
+      var tp = isCore ? treePanelCore : (isSkills ? treePanelSkills : treePanelExternal);
+      activateTab(isCore ? 'core' : (isSkills ? 'skills' : 'external'));
       var treeItem = tp.querySelector('.tree-item.file[data-path="' + filePath + '"]');
       if (treeItem) {
         var parent = treeItem.parentElement;
@@ -1620,6 +1649,7 @@ html.dark .warning-badge { background: hsl(42, 30%, 18%); color: hsl(42, 80%, 70
   var hash = String(location.hash || '').replace('#', '');
   if (hash === 'context') activateTab('context');
   else if (hash === 'history') activateTab('history');
+  else if (hash === 'skills') activateTab('skills');
   else if (hash === 'external') activateTab('external');
 })();
 </script>
