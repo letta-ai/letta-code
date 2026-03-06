@@ -267,7 +267,7 @@ const InputFooter = memo(function InputFooter({
 
   // Subscribe to subagent state for background agent indicators
   useSyncExternalStore(subscribeToSubagents, getSubagentSnapshot);
-  const backgroundAgents = getActiveBackgroundAgents();
+  const backgroundAgents = [...getActiveBackgroundAgents()];
 
   // Tick counter for elapsed time display (only active when background agents exist)
   const [, setTick] = useState(0);
@@ -277,26 +277,18 @@ const InputFooter = memo(function InputFooter({
     return () => clearInterval(t);
   }, [backgroundAgents.length]);
 
-  // Build background agent display text (no useMemo — must recalculate each tick for elapsed time)
-  const bgAgentText =
-    backgroundAgents.length === 0
-      ? ""
-      : backgroundAgents
-          .map((a) => {
-            const elapsedS = Math.round((Date.now() - a.startTime) / 1000);
-            const agentId = a.agentURL?.match(/\/agents\/([^/]+)/)?.[1];
-            const chatUrl = agentId ? buildChatUrl(agentId) : null;
-            const typeLabel = a.type.toLowerCase();
-            const linkedType = chatUrl
-              ? `\x1b]8;;${chatUrl}\x1b\\${typeLabel}\x1b]8;;\x1b\\`
-              : typeLabel;
-            return `${linkedType} (${elapsedS}s)`;
-          })
-          .join(" · ");
-
-  // Width of the background agent indicator: "· " + text + " │ "
-  const bgIndicatorWidth =
-    backgroundAgents.length > 0 ? 2 + stringWidth(bgAgentText) + 3 : 0;
+  // Background agent display parts for the footer indicator
+  const bgAgentParts = backgroundAgents.map((a) => {
+    const elapsedS = Math.round((Date.now() - a.startTime) / 1000);
+    const agentId =
+      a.agentURL?.match(/\/(?:agents|chat)\/([^/?#]+)/)?.[1] ?? null;
+    return {
+      id: a.id,
+      typeLabel: a.type.toLowerCase(),
+      chatUrl: agentId ? buildChatUrl(agentId) : null,
+      elapsed: `${elapsedS}s`,
+    };
+  });
 
   const maxAgentChars = Math.max(10, Math.floor(rightColumnWidth * 0.45));
   const displayAgentName = truncateEnd(agentName || "Unnamed", maxAgentChars);
@@ -309,10 +301,31 @@ const InputFooter = memo(function InputFooter({
 
   const maxModelChars = Math.max(8, rightColumnWidth - baseReservedChars);
   const displayModel = truncateEnd(modelWithReasoning, maxModelChars);
-
   const rightTextLength =
     displayAgentName.length + displayModel.length + byokExtraChars + 3;
   const rightPrefixSpaces = Math.max(0, rightColumnWidth - rightTextLength);
+
+  // When bg agents are active, widen the right column to fit the indicator + label
+  // "· " (2) + parts text + " │ " (3)
+  const bgIndicatorWidth =
+    backgroundAgents.length > 0
+      ? 2 +
+        bgAgentParts.reduce(
+          (acc, p, i) =>
+            acc +
+            (i > 0 ? 3 : 0) +
+            p.typeLabel.length +
+            1 +
+            p.elapsed.length +
+            2,
+          0,
+        ) +
+        3
+      : 0;
+  const effectiveRightWidth =
+    backgroundAgents.length > 0
+      ? Math.max(rightColumnWidth, bgIndicatorWidth + rightTextLength)
+      : rightColumnWidth;
 
   // Agent label without leading spaces (used by both default and bg-agent cases)
   const rightLabelCore = useMemo(() => {
@@ -387,7 +400,9 @@ const InputFooter = memo(function InputFooter({
           statusLineRight && !hideFooterContent ? "flex-end" : undefined
         }
         width={
-          statusLineRight && !hideFooterContent ? undefined : rightColumnWidth
+          statusLineRight && !hideFooterContent
+            ? undefined
+            : effectiveRightWidth
         }
         flexShrink={0}
       >
@@ -401,9 +416,26 @@ const InputFooter = memo(function InputFooter({
           ))
         ) : backgroundAgents.length > 0 ? (
           <Text>
-            {" ".repeat(Math.max(0, rightPrefixSpaces - bgIndicatorWidth))}
             <BlinkDot color={colors.tool.pending} symbol="·" />
-            <Text dimColor>{` ${bgAgentText} │ `}</Text>
+            <Text dimColor> </Text>
+            {bgAgentParts.map((part, i) => (
+              <Text key={`bg-agent-${part}`}>
+                {i > 0 && (
+                  <Text key={`bg-agent-indicator-${part}`} dimColor>
+                    {" · "}
+                  </Text>
+                )}
+                {part.chatUrl ? (
+                  <Link url={part.chatUrl}>
+                    <Text dimColor>{part.typeLabel}</Text>
+                  </Link>
+                ) : (
+                  <Text dimColor>{part.typeLabel}</Text>
+                )}
+                <Text dimColor> ({part.elapsed})</Text>
+              </Text>
+            ))}
+            <Text dimColor>{" │ "}</Text>
             {rightLabelCore}
           </Text>
         ) : (
