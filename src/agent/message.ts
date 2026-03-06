@@ -128,7 +128,7 @@ export async function sendMessageStream(
   }
 
   const extraHeaders: Record<string, string> = {};
-  if (process.env.LETTA_EXPERIMENTAL_OPENAI_RESPONSES_WS === "1") {
+  if (process.env.LETTA_RESPONSES_WS === "1") {
     extraHeaders["X-Experimental-OpenAI-Responses-Websocket"] = "true";
   }
 
