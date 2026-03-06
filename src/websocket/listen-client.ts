@@ -924,6 +924,37 @@ function normalizeToolReturnValue(value: unknown): string {
   if (typeof value === "string") {
     return value;
   }
+  if (Array.isArray(value)) {
+    const textParts = value
+      .filter(
+        (
+          part,
+        ): part is {
+          type: string;
+          text: string;
+        } =>
+          !!part &&
+          typeof part === "object" &&
+          "type" in part &&
+          part.type === "text" &&
+          "text" in part &&
+          typeof part.text === "string",
+      )
+      .map((part) => part.text);
+    if (textParts.length > 0) {
+      return textParts.join("\n");
+    }
+  }
+  if (
+    value &&
+    typeof value === "object" &&
+    "type" in value &&
+    value.type === "text" &&
+    "text" in value &&
+    typeof value.text === "string"
+  ) {
+    return value.text;
+  }
   if (value === null || value === undefined) {
     return "";
   }
