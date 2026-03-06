@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import WebSocket from "ws";
+import { buildConversationMessagesCreateRequestBody } from "../../agent/message";
+import { INTERRUPTED_BY_USER } from "../../constants";
 import type { ControlRequest, ControlResponseBody } from "../../types/protocol";
 import {
   __listenClientTestUtils,
@@ -696,6 +699,63 @@ describe("listen-client interrupt persistence normalization", () => {
         status: "success",
       },
     ]);
+  });
+});
+
+describe("listen-client interrupt persistence request body", () => {
+  test("post-interrupt next-turn payload keeps interrupted tool returns as status=error", () => {
+    const runtime = __listenClientTestUtils.createRuntime();
+    const consumedAgentId = "agent-1";
+    const consumedConversationId = "default";
+
+    __listenClientTestUtils.populateInterruptQueue(runtime, {
+      lastExecutionResults: null,
+      lastExecutingToolCallIds: ["call-running-1"],
+      lastNeedsUserInputToolCallIds: [],
+      agentId: consumedAgentId,
+      conversationId: consumedConversationId,
+    });
+
+    const consumed = __listenClientTestUtils.consumeInterruptQueue(
+      runtime,
+      consumedAgentId,
+      consumedConversationId,
+    );
+
+    expect(consumed).not.toBeNull();
+    if (!consumed) {
+      throw new Error("Expected queued interrupt approvals to be consumed");
+    }
+
+    const requestBody = buildConversationMessagesCreateRequestBody(
+      consumedConversationId,
+      [
+        consumed.approvalMessage,
+        {
+          type: "message",
+          role: "user",
+          content: "next user message after interrupt",
+        },
+      ],
+      {
+        agentId: consumedAgentId,
+        streamTokens: true,
+        background: true,
+        approvalNormalization: {
+          interruptedToolCallIds: consumed.interruptedToolCallIds,
+        },
+      },
+      [],
+    );
+
+    const approvalMessage = requestBody.messages[0] as ApprovalCreate;
+    expect(approvalMessage.type).toBe("approval");
+    expect(approvalMessage.approvals?.[0]).toMatchObject({
+      type: "tool",
+      tool_call_id: "call-running-1",
+      tool_return: INTERRUPTED_BY_USER,
+      status: "error",
+    });
   });
 });
 

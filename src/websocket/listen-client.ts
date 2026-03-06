@@ -2570,6 +2570,7 @@ async function handleIncomingMessage(
     let messagesToSend: Array<MessageCreate | ApprovalCreate> = [];
     let turnToolContextId: string | null = null;
     let queuedInterruptedToolCallIds: string[] = [];
+    let shouldClearSubmittedApprovalTracking = false;
 
     // Prepend queued interrupted results from a prior cancelled turn.
     const consumed = consumeInterruptQueue(
@@ -2611,12 +2612,29 @@ async function handleIncomingMessage(
         approvalMessage,
         resumeData.pendingApprovals,
       );
+      lastExecutingToolCallIds = decisions
+        .filter(
+          (
+            decision,
+          ): decision is Extract<ApprovalDecision, { type: "approve" }> =>
+            decision.type === "approve",
+        )
+        .map((decision) => decision.approval.toolCallId);
+      runtime.activeExecutingToolCallIds = [...lastExecutingToolCallIds];
+
       const decisionResults =
         decisions.length > 0
           ? await executeApprovalBatch(decisions, undefined, {
               toolContextId: turnToolContextId ?? undefined,
+              abortSignal: runtime.activeAbortController.signal,
             })
           : [];
+      const persistedDecisionResults =
+        normalizeExecutionResultsForInterruptParity(
+          runtime,
+          decisionResults,
+          lastExecutingToolCallIds,
+        );
 
       const rebuiltApprovals: ApprovalResult[] = [];
       let decisionResultIndex = 0;
@@ -2627,7 +2645,7 @@ async function handleIncomingMessage(
           continue;
         }
 
-        const next = decisionResults[decisionResultIndex];
+        const next = persistedDecisionResults[decisionResultIndex];
         if (next) {
           rebuiltApprovals.push(next);
           decisionResultIndex++;
@@ -2642,6 +2660,8 @@ async function handleIncomingMessage(
         });
       }
 
+      lastExecutionResults = rebuiltApprovals;
+      shouldClearSubmittedApprovalTracking = true;
       messagesToSend = [
         {
           type: "approval",
@@ -2681,6 +2701,12 @@ async function handleIncomingMessage(
       runtime,
       runtime.activeAbortController.signal,
     );
+    if (shouldClearSubmittedApprovalTracking) {
+      lastExecutionResults = null;
+      lastExecutingToolCallIds = [];
+      lastNeedsUserInputToolCallIds = [];
+      runtime.activeExecutingToolCallIds = [];
+    }
 
     turnToolContextId = getStreamToolContextId(
       stream as Stream<LettaStreamingResponse>,

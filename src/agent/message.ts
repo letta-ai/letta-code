@@ -9,6 +9,7 @@ import type {
   LettaStreamingResponse,
 } from "@letta-ai/letta-client/resources/agents/messages";
 import {
+  type ClientTool,
   captureToolExecutionContext,
   waitForToolsetReady,
 } from "../tools/manager";
@@ -47,6 +48,40 @@ export function getStreamRequestContext(
   return streamRequestContexts.get(stream as object);
 }
 
+export type SendMessageStreamOptions = {
+  streamTokens?: boolean;
+  background?: boolean;
+  agentId?: string; // Required when conversationId is "default"
+  approvalNormalization?: ApprovalNormalizationOptions;
+};
+
+export function buildConversationMessagesCreateRequestBody(
+  conversationId: string,
+  messages: Array<MessageCreate | ApprovalCreate>,
+  opts: SendMessageStreamOptions = { streamTokens: true, background: true },
+  clientTools: ClientTool[],
+) {
+  const isDefaultConversation = conversationId === "default";
+  if (isDefaultConversation && !opts.agentId) {
+    throw new Error(
+      "agentId is required in opts when using default conversation",
+    );
+  }
+
+  return {
+    messages: normalizeOutgoingApprovalMessages(
+      messages,
+      opts.approvalNormalization,
+    ),
+    streaming: true,
+    stream_tokens: opts.streamTokens ?? true,
+    background: opts.background ?? true,
+    client_tools: clientTools,
+    include_compaction_messages: true,
+    ...(isDefaultConversation ? { agent_id: opts.agentId } : {}),
+  };
+}
+
 /**
  * Send a message to a conversation and return a streaming response.
  * Uses the conversations API for all conversations.
@@ -58,12 +93,7 @@ export function getStreamRequestContext(
 export async function sendMessageStream(
   conversationId: string,
   messages: Array<MessageCreate | ApprovalCreate>,
-  opts: {
-    streamTokens?: boolean;
-    background?: boolean;
-    agentId?: string; // Required when conversationId is "default"
-    approvalNormalization?: ApprovalNormalizationOptions;
-  } = { streamTokens: true, background: true },
+  opts: SendMessageStreamOptions = { streamTokens: true, background: true },
   // Disable SDK retries by default - state management happens outside the stream,
   // so retries would violate idempotency and create race conditions
   requestOptions: { maxRetries?: number; signal?: AbortSignal } = {
@@ -79,28 +109,13 @@ export async function sendMessageStream(
   await waitForToolsetReady();
   const { clientTools, contextId } = captureToolExecutionContext();
 
-  const isDefaultConversation = conversationId === "default";
-  if (isDefaultConversation && !opts.agentId) {
-    throw new Error(
-      "agentId is required in opts when using default conversation",
-    );
-  }
-
   const resolvedConversationId = conversationId;
-  const normalizedMessages = normalizeOutgoingApprovalMessages(
+  const requestBody = buildConversationMessagesCreateRequestBody(
+    conversationId,
     messages,
-    opts.approvalNormalization,
+    opts,
+    clientTools,
   );
-
-  const requestBody = {
-    messages: normalizedMessages,
-    streaming: true,
-    stream_tokens: opts.streamTokens ?? true,
-    background: opts.background ?? true,
-    client_tools: clientTools,
-    include_compaction_messages: true,
-    ...(isDefaultConversation ? { agent_id: opts.agentId } : {}),
-  };
 
   if (process.env.DEBUG) {
     console.log(
