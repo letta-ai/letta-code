@@ -178,6 +178,29 @@ describe("extractInterruptToolReturns", () => {
     ]);
   });
 
+  test("converts multimodal tool_return content into displayable text", () => {
+    const results: ApprovalResult[] = [
+      {
+        type: "tool",
+        tool_call_id: "call-multimodal",
+        status: "error",
+        tool_return: [
+          { type: "text", text: "Interrupted by user" },
+          { type: "image", image_url: "https://example.com/image.png" },
+        ],
+      } as ApprovalResult,
+    ];
+
+    const mapped = extractInterruptToolReturns(results);
+    expect(mapped).toEqual([
+      {
+        tool_call_id: "call-multimodal",
+        status: "error",
+        tool_return: "Interrupted by user",
+      },
+    ]);
+  });
+
   test("emitInterruptToolReturnMessage emits deterministic per-tool terminal messages", () => {
     const runtime = createRuntime();
     const socket = new MockSocket(WebSocket.OPEN) as unknown as WebSocket;
