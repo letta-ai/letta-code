@@ -1,5 +1,10 @@
 import { Box, useInput } from "ink";
 import { memo, useMemo, useState } from "react";
+import { permissionMode } from "../../permissions/mode";
+import {
+  getPlanExitChoices,
+  type PlanExitChoice,
+} from "../helpers/planExitApproval";
 import { useProgressIndicator } from "../hooks/useProgressIndicator";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { useTextInputCursor } from "../hooks/useTextInputCursor";
@@ -9,7 +14,8 @@ import { Text } from "./Text";
 
 type Props = {
   plan: string;
-  onApprove: () => void;
+  onApproveRestore: () => void;
+  onApproveManual: () => void;
   onApproveAndAcceptEdits: () => void;
   onKeepPlanning: (reason: string) => void;
   isFocused?: boolean;
@@ -30,7 +36,8 @@ const DOTTED_LINE = "╌";
 export const InlinePlanApproval = memo(
   ({
     plan,
-    onApprove,
+    onApproveRestore,
+    onApproveManual,
     onApproveAndAcceptEdits,
     onKeepPlanning,
     isFocused = true,
@@ -45,8 +52,10 @@ export const InlinePlanApproval = memo(
     const columns = useTerminalWidth();
     useProgressIndicator();
 
-    const customOptionIndex = 2;
-    const maxOptionIndex = customOptionIndex;
+    const modeBeforePlan = permissionMode.getModeBeforePlan() ?? "default";
+    const options: PlanExitChoice[] = getPlanExitChoices(modeBeforePlan);
+    const customOptionIndex = options.findIndex((o) => o.decision === "custom");
+    const maxOptionIndex = Math.max(0, options.length - 1);
     const isOnCustomOption = selectedOption === customOptionIndex;
     const customOptionPlaceholder =
       "Type here to tell Letta Code what to change";
@@ -93,15 +102,29 @@ export const InlinePlanApproval = memo(
 
         // When on regular options
         if (key.return) {
-          if (selectedOption === 0) {
-            onApproveAndAcceptEdits();
-          } else if (selectedOption === 1) {
-            onApprove();
-          }
+          const choice = options[selectedOption];
+          if (!choice) return;
+          if (choice.decision === "restore") onApproveRestore();
+          if (choice.decision === "manual") onApproveManual();
+          if (choice.decision === "autoAccept") onApproveAndAcceptEdits();
           return;
         }
         if (key.escape) {
           onKeepPlanning("User cancelled");
+          return;
+        }
+
+        if (/^[1-9]$/.test(input)) {
+          const idx = Number(input) - 1;
+          const choice = options[idx];
+          if (!choice) return;
+          if (choice.decision === "custom") {
+            setSelectedOption(idx);
+            return;
+          }
+          if (choice.decision === "restore") onApproveRestore();
+          if (choice.decision === "manual") onApproveManual();
+          if (choice.decision === "autoAccept") onApproveAndAcceptEdits();
         }
       },
       { isActive: isFocused },
@@ -159,76 +182,41 @@ export const InlinePlanApproval = memo(
 
         {/* Options */}
         <Box marginTop={1} flexDirection="column">
-          {/* Option 1: Yes, and auto-accept edits */}
-          <Box flexDirection="row">
-            <Box width={5} flexShrink={0}>
-              <Text
-                color={
-                  selectedOption === 0 ? colors.approval.header : undefined
-                }
-              >
-                {selectedOption === 0 ? "❯" : " "} 1.
-              </Text>
-            </Box>
-            <Box flexGrow={1} width={Math.max(0, columns - 5)}>
-              <Text
-                wrap="wrap"
-                color={
-                  selectedOption === 0 ? colors.approval.header : undefined
-                }
-              >
-                Yes, and auto-accept edits
-              </Text>
-            </Box>
-          </Box>
+          {options.map((opt, idx) => {
+            const isSelected = selectedOption === idx;
+            const color = isSelected ? colors.approval.header : undefined;
+            const isCustom = opt.decision === "custom";
 
-          {/* Option 2: Yes, and manually approve edits */}
-          <Box flexDirection="row">
-            <Box width={5} flexShrink={0}>
-              <Text
-                color={
-                  selectedOption === 1 ? colors.approval.header : undefined
-                }
-              >
-                {selectedOption === 1 ? "❯" : " "} 2.
-              </Text>
-            </Box>
-            <Box flexGrow={1} width={Math.max(0, columns - 5)}>
-              <Text
-                wrap="wrap"
-                color={
-                  selectedOption === 1 ? colors.approval.header : undefined
-                }
-              >
-                Yes, and manually approve edits
-              </Text>
-            </Box>
-          </Box>
-
-          {/* Option 3: Custom input */}
-          <Box flexDirection="row">
-            <Box width={5} flexShrink={0}>
-              <Text
-                color={isOnCustomOption ? colors.approval.header : undefined}
-              >
-                {isOnCustomOption ? "❯" : " "} 3.
-              </Text>
-            </Box>
-            <Box flexGrow={1} width={Math.max(0, columns - 5)}>
-              {customReason ? (
-                <Text wrap="wrap">
-                  {customReason.slice(0, cursorPos)}
-                  {isOnCustomOption && "█"}
-                  {customReason.slice(cursorPos)}
-                </Text>
-              ) : (
-                <Text wrap="wrap" dimColor>
-                  {customOptionPlaceholder}
-                  {isOnCustomOption && "█"}
-                </Text>
-              )}
-            </Box>
-          </Box>
+            return (
+              <Box key={`${opt.decision}-${idx}`} flexDirection="row">
+                <Box width={5} flexShrink={0}>
+                  <Text color={color}>
+                    {isSelected ? "❯" : " "} {idx + 1}.
+                  </Text>
+                </Box>
+                <Box flexGrow={1} width={Math.max(0, columns - 5)}>
+                  {isCustom ? (
+                    customReason ? (
+                      <Text wrap="wrap">
+                        {customReason.slice(0, cursorPos)}
+                        {isSelected && "█"}
+                        {customReason.slice(cursorPos)}
+                      </Text>
+                    ) : (
+                      <Text wrap="wrap" dimColor>
+                        {customOptionPlaceholder}
+                        {isSelected && "█"}
+                      </Text>
+                    )
+                  ) : (
+                    <Text wrap="wrap" color={color}>
+                      {opt.label}
+                    </Text>
+                  )}
+                </Box>
+              </Box>
+            );
+          })}
         </Box>
 
         {/* Hint */}

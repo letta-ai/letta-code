@@ -28,6 +28,22 @@ export function formatPermissionModeForPlanReturnLabel(
   }
 }
 
+export function getPlanExitRestoreLabel(
+  modeBeforePlan: PermissionMode | null | undefined,
+): string {
+  const prev = normalizeModeBeforePlan(modeBeforePlan);
+
+  switch (prev) {
+    case "bypassPermissions":
+      return "Yes, and return to yolo mode";
+    case "acceptEdits":
+      return "Yes, and return to auto-accept edits";
+    case "default":
+    case "plan":
+      return "Yes, and return to manual approvals";
+  }
+}
+
 /**
  * Build the list of choices shown when approving ExitPlanMode.
  *
@@ -39,12 +55,11 @@ export function getPlanExitChoices(
   modeBeforePlan: PermissionMode | null | undefined,
 ): PlanExitChoice[] {
   const prev = normalizeModeBeforePlan(modeBeforePlan);
-  const prevLabel = formatPermissionModeForPlanReturnLabel(prev);
 
   const choices: PlanExitChoice[] = [
     {
       decision: "restore",
-      label: `Yes, and return to previous mode (${prevLabel})`,
+      label: getPlanExitRestoreLabel(prev),
     },
   ];
 

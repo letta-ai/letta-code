@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import {
   getPlanExitChoices,
+  getPlanExitRestoreLabel,
   resolvePlanExitMode,
 } from "../../cli/helpers/planExitApproval";
 
@@ -19,6 +20,21 @@ describe("plan exit approval", () => {
       (c) => c.decision,
     );
     expect(yoloChoices).toEqual(["restore", "manual", "autoAccept", "custom"]);
+  });
+
+  test("restore labels are explicit about the mode being restored", () => {
+    expect(getPlanExitRestoreLabel("bypassPermissions")).toBe(
+      "Yes, and return to yolo mode",
+    );
+    expect(getPlanExitRestoreLabel("acceptEdits")).toBe(
+      "Yes, and return to auto-accept edits",
+    );
+    expect(getPlanExitRestoreLabel("default")).toBe(
+      "Yes, and return to manual approvals",
+    );
+    expect(getPlanExitChoices("bypassPermissions")[0]?.label).toBe(
+      "Yes, and return to yolo mode",
+    );
   });
 
   test("exit mode resolution", () => {
