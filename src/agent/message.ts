@@ -13,10 +13,6 @@ import {
   waitForToolsetReady,
 } from "../tools/manager";
 import { isTimingsEnabled } from "../utils/timing";
-import {
-  type ApprovalNormalizationOptions,
-  normalizeOutgoingApprovalMessages,
-} from "./approval-result-normalization";
 import { getClient } from "./client";
 
 const streamRequestStartTimes = new WeakMap<object, number>();
@@ -62,7 +58,6 @@ export async function sendMessageStream(
     streamTokens?: boolean;
     background?: boolean;
     agentId?: string; // Required when conversationId is "default"
-    approvalNormalization?: ApprovalNormalizationOptions;
   } = { streamTokens: true, background: true },
   // Disable SDK retries by default - state management happens outside the stream,
   // so retries would violate idempotency and create race conditions
@@ -87,13 +82,9 @@ export async function sendMessageStream(
   }
 
   const resolvedConversationId = conversationId;
-  const normalizedMessages = normalizeOutgoingApprovalMessages(
-    messages,
-    opts.approvalNormalization,
-  );
 
   const requestBody = {
-    messages: normalizedMessages,
+    messages,
     streaming: true,
     stream_tokens: opts.streamTokens ?? true,
     background: opts.background ?? true,
