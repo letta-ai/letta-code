@@ -1,3 +1,4 @@
+import { getServerUrl } from "../agent/client";
 import { getLettaCodeHeaders } from "../agent/http-headers";
 import { settingsManager } from "../settings-manager";
 import { debugLogFile } from "../utils/debug";
@@ -72,6 +73,7 @@ class TelemetryManager {
   private toolCallCount = 0;
   private sessionEndTracked = false;
   private flushInterval: NodeJS.Timeout | null = null;
+  private serverVersion: string | null = null;
   private readonly FLUSH_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
   private readonly MAX_BATCH_SIZE = 100;
   private sessionStatsGetter?: () => {
@@ -124,6 +126,9 @@ class TelemetryManager {
     this.deviceId = settingsManager.getOrCreateDeviceId();
 
     this.trackSessionStart();
+
+    // Fetch server version for diagnostics (best-effort, non-blocking)
+    this.fetchServerVersion().catch(() => {});
 
     // Set up periodic flushing
     this.flushInterval = setInterval(() => {
@@ -207,6 +212,34 @@ class TelemetryManager {
    */
   setCurrentAgentId(agentId: string | null) {
     this.currentAgentId = agentId;
+  }
+
+  /**
+   * Fetch and cache server version from /v1/health (fire-and-forget, best-effort)
+   */
+  async fetchServerVersion(): Promise<void> {
+    try {
+      const baseURL = getServerUrl();
+      const settings = await settingsManager.getSettingsWithSecureTokens();
+      const apiKey =
+        process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY || "";
+      const res = await fetch(`${baseURL}/v1/health`, {
+        headers: { Authorization: `Bearer ${apiKey}` },
+        signal: AbortSignal.timeout(3000),
+      });
+      if (res.ok) {
+        const data = (await res.json()) as { version?: string };
+        if (data.version) {
+          this.serverVersion = data.version;
+        }
+      }
+    } catch {
+      // Best-effort — don't let this affect startup
+    }
+  }
+
+  getServerVersion(): string | null {
+    return this.serverVersion;
   }
 
   /**
@@ -438,6 +471,7 @@ class TelemetryManager {
           },
           body: JSON.stringify({
             service: "letta-code",
+            server_version: this.serverVersion || undefined,
             events: eventsToSend,
           }),
         },
