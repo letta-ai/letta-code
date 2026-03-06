@@ -73,18 +73,13 @@ export function createCommandRunner({
   onCommandFinished,
 }: RunnerDeps) {
   function getHandle(id: string, input: string): CommandHandle {
+    // biome-ignore lint/style/noNonNullAssertion: forward-reference pattern — overwritten synchronously below. null! preferred over no-ops to crash loudly if invariant breaks.
     const handle: CommandHandle = {
       id,
       input,
-      // Placeholders are overwritten below before the handle is returned.
-      update: (_update: CommandUpdate) => {},
-      finish: (
-        _output: string,
-        _success?: boolean,
-        _dimOutput?: boolean,
-        _preformatted?: boolean,
-      ) => {},
-      fail: (_output: string) => {},
+      update: null!,
+      finish: null!,
+      fail: null!,
     };
 
     const update = (updateData: CommandUpdate) => {
