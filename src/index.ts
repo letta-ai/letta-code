@@ -577,11 +577,15 @@ async function main(): Promise<void> {
   }
 
   // Validate system prompt preset if provided.
-  // User-facing CLI only accepts known preset IDs (not subagent names).
+  // Known preset IDs are always accepted. Subagent names are only accepted
+  // for internal subagent launches (LETTA_CODE_AGENT_ROLE=subagent).
   if (systemPromptPreset) {
     const { validateSystemPromptPreset } = await import("./agent/promptAssets");
+    const allowSubagentNames = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
     try {
-      await validateSystemPromptPreset(systemPromptPreset);
+      await validateSystemPromptPreset(systemPromptPreset, {
+        allowSubagentNames,
+      });
     } catch (err) {
       console.error(
         `Error: ${err instanceof Error ? err.message : String(err)}`,

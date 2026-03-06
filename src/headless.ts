@@ -658,23 +658,8 @@ export async function handleHeadlessCommand(
     process.exit(1);
   }
 
-  // Validate system prompt preset if provided.
-  // Internal subagent launches (LETTA_CODE_AGENT_ROLE=subagent) may use subagent names.
-  // All other callers only accept known preset IDs.
-  if (systemPromptPreset) {
-    const { validateSystemPromptPreset } = await import("./agent/promptAssets");
-    const allowSubagentNames = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
-    try {
-      await validateSystemPromptPreset(systemPromptPreset, {
-        allowSubagentNames,
-      });
-    } catch (err) {
-      console.error(
-        `Error: ${err instanceof Error ? err.message : String(err)}`,
-      );
-      process.exit(1);
-    }
-  }
+  // Note: system prompt validation happens in index.ts before dispatching here.
+  // No need to re-validate — index.ts already calls validateSystemPromptPreset.
 
   // Parse memory blocks JSON if provided
   // Supports two formats:
