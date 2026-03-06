@@ -37,7 +37,7 @@ import {
   getSnapshot as getSubagentSnapshot,
   subscribe as subscribeToSubagents,
 } from "../helpers/subagentState.js";
-import { BlinkDot } from "./BlinkDot.js";
+import { BlinkingSpinner } from "./BlinkingSpinner.js";
 import { colors } from "./colors";
 import { InputAssist } from "./InputAssist";
 import { PasteAwareTextInput } from "./PasteAwareTextInput";
@@ -267,7 +267,23 @@ const InputFooter = memo(function InputFooter({
 
   // Subscribe to subagent state for background agent indicators
   useSyncExternalStore(subscribeToSubagents, getSubagentSnapshot);
-  const backgroundAgents = [...getActiveBackgroundAgents()];
+  const backgroundAgents = [
+    ...getActiveBackgroundAgents(),
+    // DEBUG: hardcoded agent for local footer testing
+    {
+      id: "debug-bg-agent",
+      type: "Reflection",
+      description: "Debug background agent",
+      status: "running" as const,
+      agentURL: "https://app.letta.com/chat/agent-debug-link",
+      toolCalls: [],
+      totalTokens: 0,
+      durationMs: 0,
+      startTime: Date.now() - 12_000,
+      isBackground: true,
+      silent: true,
+    },
+  ];
 
   // Tick counter for elapsed time display (only active when background agents exist)
   const [, setTick] = useState(0);
@@ -306,10 +322,10 @@ const InputFooter = memo(function InputFooter({
   const rightPrefixSpaces = Math.max(0, rightColumnWidth - rightTextLength);
 
   // When bg agents are active, widen the right column to fit the indicator + label
-  // "· " (2) + parts text + " │ " (3)
+  // spinner slot (3) + parts text + " │ " (3)
   const bgIndicatorWidth =
     backgroundAgents.length > 0
-      ? 2 +
+      ? 3 +
         bgAgentParts.reduce(
           (acc, p, i) =>
             acc +
@@ -416,21 +432,30 @@ const InputFooter = memo(function InputFooter({
           ))
         ) : backgroundAgents.length > 0 ? (
           <Text>
-            <BlinkDot color={colors.tool.pending} symbol="·" />
-            <Text dimColor> </Text>
+            <BlinkingSpinner
+              color={colors.bgSubagent.spinner}
+              width={2}
+              marginRight={0}
+              pulseIntervalMs={400}
+            />
             {bgAgentParts.map((part, i) => (
               <Text key={`bg-agent-${part}`}>
                 {i > 0 && (
-                  <Text key={`bg-agent-indicator-${part}`} dimColor>
+                  <Text
+                    key={`bg-agent-indicator-${part}`}
+                    color={colors.bgSubagent.label}
+                  >
                     {" · "}
                   </Text>
                 )}
                 {part.chatUrl ? (
-                  <Link url={part.chatUrl}>
-                    <Text dimColor>{part.typeLabel}</Text>
+                  <Link url={part.chatUrl} fallback={false}>
+                    <Text color={colors.bgSubagent.label}>
+                      {part.typeLabel}
+                    </Text>
                   </Link>
                 ) : (
-                  <Text dimColor>{part.typeLabel}</Text>
+                  <Text color={colors.bgSubagent.label}>{part.typeLabel}</Text>
                 )}
                 <Text dimColor> ({part.elapsed})</Text>
               </Text>

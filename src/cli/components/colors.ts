@@ -161,6 +161,12 @@ const _colors = {
     hint: "#808080", // Grey to match Ink's dimColor
   },
 
+  // Background subagent
+  bgSubagent: {
+    label: "#87af87",
+    spinner: "#5faf5f",
+  },
+
   // Info/modal views
   info: {
     border: brandColors.primaryAccent,
