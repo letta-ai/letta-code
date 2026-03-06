@@ -345,7 +345,7 @@ describe("Path A: cancel during tool execution → next turn consumes actual res
     });
 
     expect(populated).toBe(true);
-    expect(runtime.pendingInterruptedResults).toBe(executionResults);
+    expect(runtime.pendingInterruptedResults).toEqual(executionResults);
     expect(runtime.pendingInterruptedContext).toMatchObject({
       agentId,
       conversationId,
@@ -357,7 +357,7 @@ describe("Path A: cancel during tool execution → next turn consumes actual res
 
     expect(consumed).not.toBeNull();
     expect(consumed?.type).toBe("approval");
-    expect(consumed?.approvals).toBe(executionResults);
+    expect(consumed?.approvals).toEqual(executionResults);
     expect(consumed?.approvals).toHaveLength(2);
 
     // Queue is atomically cleared after consumption
@@ -389,12 +389,39 @@ describe("Path A: cancel during tool execution → next turn consumes actual res
     });
   });
 
-  test("normalizes interrupted tool returns to error before queueing", () => {
+  test("normalizes interrupted tool results to error via structured tool_call_id", () => {
     const runtime = createRuntime();
     const executionResults: ApprovalResult[] = [
       {
         type: "tool",
         tool_call_id: "call-1",
+        status: "success",
+        tool_return: "result text does not matter when ID is interrupted",
+      } as unknown as ApprovalResult,
+    ];
+
+    const populated = populateInterruptQueue(runtime, {
+      lastExecutionResults: executionResults,
+      lastExecutingToolCallIds: ["call-1"],
+      lastNeedsUserInputToolCallIds: [],
+      agentId: "agent-1",
+      conversationId: "conv-1",
+    });
+
+    expect(populated).toBe(true);
+    expect(runtime.pendingInterruptedResults?.[0]).toMatchObject({
+      type: "tool",
+      tool_call_id: "call-1",
+      status: "error",
+    });
+  });
+
+  test("keeps legacy text fallback for interrupted tool return normalization", () => {
+    const runtime = createRuntime();
+    const executionResults: ApprovalResult[] = [
+      {
+        type: "tool",
+        tool_call_id: "call-legacy",
         status: "success",
         tool_return: [{ type: "text", text: "Interrupted by user" }],
       } as unknown as ApprovalResult,
@@ -411,7 +438,7 @@ describe("Path A: cancel during tool execution → next turn consumes actual res
     expect(populated).toBe(true);
     expect(runtime.pendingInterruptedResults?.[0]).toMatchObject({
       type: "tool",
-      tool_call_id: "call-1",
+      tool_call_id: "call-legacy",
       status: "error",
     });
   });

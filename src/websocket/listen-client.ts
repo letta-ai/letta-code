@@ -18,6 +18,7 @@ import {
   executeApprovalBatch,
 } from "../agent/approval-execution";
 import { fetchRunErrorDetail } from "../agent/approval-recovery";
+import { normalizeApprovalResultsForPersistence } from "../agent/approval-result-normalization";
 import { getResumeData } from "../agent/check-approval";
 import { getClient } from "../agent/client";
 import { getStreamToolContextId, sendMessageStream } from "../agent/message";
@@ -974,35 +975,19 @@ function normalizeToolReturnValue(value: unknown): string {
   }
 }
 
-function coerceInterruptedToolStatusesInPlace(
+function normalizeInterruptedApprovalsForQueue(
   approvals: ApprovalResult[] | null,
-): void {
+  interruptedToolCallIds: string[],
+): ApprovalResult[] | null {
   if (!approvals || approvals.length === 0) {
-    return;
+    return approvals;
   }
 
-  for (const approval of approvals) {
-    if (
-      !approval ||
-      typeof approval !== "object" ||
-      !("type" in approval) ||
-      approval.type !== "tool"
-    ) {
-      continue;
-    }
-
-    const toolReturnText = normalizeToolReturnValue(
-      "tool_return" in approval ? approval.tool_return : "",
-    ).trim();
-
-    if (
-      toolReturnText === INTERRUPTED_BY_USER &&
-      "status" in approval &&
-      approval.status !== "error"
-    ) {
-      approval.status = "error";
-    }
-  }
+  return normalizeApprovalResultsForPersistence(approvals, {
+    interruptedToolCallIds,
+    // Temporary fallback guard while all producers migrate to structured IDs.
+    allowInterruptTextFallback: true,
+  });
 }
 
 function extractCanonicalToolReturnsFromWire(
@@ -1262,8 +1247,10 @@ function populateInterruptQueue(
   if (input.lastExecutionResults && input.lastExecutionResults.length > 0) {
     // Path A: execution happened before cancel — queue actual results
     // Guard parity: interrupted tool returns must persist as status=error.
-    coerceInterruptedToolStatusesInPlace(input.lastExecutionResults);
-    runtime.pendingInterruptedResults = input.lastExecutionResults;
+    runtime.pendingInterruptedResults = normalizeInterruptedApprovalsForQueue(
+      input.lastExecutionResults,
+      input.lastExecutingToolCallIds,
+    );
     runtime.pendingInterruptedContext = {
       agentId: input.agentId,
       conversationId: input.conversationId,
