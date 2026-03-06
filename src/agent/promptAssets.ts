@@ -114,6 +114,71 @@ export const SYSTEM_PROMPTS: SystemPromptOption[] = [
   },
 ];
 
+export type MemoryPromptMode = "standard" | "memfs";
+
+/**
+ * Check if a preset ID exists in SYSTEM_PROMPTS.
+ */
+export function isKnownPreset(id: string): boolean {
+  return SYSTEM_PROMPTS.some((p) => p.id === id);
+}
+
+/**
+ * Deterministic rebuild of a system prompt from a known preset + memory mode.
+ * Throws on unknown preset (prevents stale/renamed presets from silently rewriting prompts).
+ */
+export function buildSystemPrompt(
+  presetId: string,
+  memoryMode: MemoryPromptMode,
+): string {
+  const preset = SYSTEM_PROMPTS.find((p) => p.id === presetId);
+  if (!preset) {
+    throw new Error(
+      `Unknown preset "${presetId}" — cannot rebuild system prompt`,
+    );
+  }
+  const addon =
+    memoryMode === "memfs"
+      ? SYSTEM_PROMPT_MEMFS_ADDON
+      : SYSTEM_PROMPT_MEMORY_ADDON;
+  return `${preset.content.trimEnd()}\n\n${addon.trimStart()}`.trim();
+}
+
+/**
+ * Swap the memory addon on a custom/subagent/legacy prompt.
+ * Strips all existing addons (handles duplicates) and orphan memfs tail fragments,
+ * then appends the target addon.
+ */
+export function swapMemoryAddon(
+  systemPrompt: string,
+  mode: MemoryPromptMode,
+): string {
+  let result = systemPrompt;
+  // Strip all existing addons (handle duplicates via while-loop)
+  for (const addon of [
+    SYSTEM_PROMPT_MEMORY_ADDON.trim(),
+    SYSTEM_PROMPT_MEMFS_ADDON.trim(),
+  ]) {
+    while (result.includes(addon)) {
+      result = result.replace(addon, "");
+    }
+  }
+  // Strip orphan memfs tail fragment (from old drift bugs)
+  const tailAnchor = "# See what changed";
+  const tailStart = SYSTEM_PROMPT_MEMFS_ADDON.indexOf(tailAnchor);
+  if (tailStart !== -1) {
+    const orphanTail = SYSTEM_PROMPT_MEMFS_ADDON.slice(tailStart).trim();
+    while (result.includes(orphanTail)) {
+      result = result.replace(orphanTail, "");
+    }
+  }
+  // Compact blank lines and append target addon
+  result = result.replace(/\n{3,}/g, "\n\n").trimEnd();
+  const target =
+    mode === "memfs" ? SYSTEM_PROMPT_MEMFS_ADDON : SYSTEM_PROMPT_MEMORY_ADDON;
+  return `${result}\n\n${target.trimStart()}`.trim();
+}
+
 /**
  * Validate a system prompt preset ID.
  *

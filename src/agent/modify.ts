@@ -305,25 +305,26 @@ export async function updateAgentSystemPrompt(
   systemPromptId: string,
 ): Promise<UpdateSystemPromptResult> {
   try {
-    const { resolveSystemPrompt } = await import("./promptAssets");
-    const { detectMemoryPromptDrift, reconcileMemoryPrompt } = await import(
-      "./memoryPrompt"
-    );
+    const {
+      resolveSystemPrompt,
+      isKnownPreset,
+      buildSystemPrompt,
+      swapMemoryAddon,
+    } = await import("./promptAssets");
     const { settingsManager } = await import("../settings-manager");
 
     const client = await getClient();
-    const currentAgent = await client.agents.retrieve(agentId);
-    const baseContent = await resolveSystemPrompt(systemPromptId);
+    const memoryMode = settingsManager.isMemfsEnabled(agentId)
+      ? "memfs"
+      : "standard";
 
-    const settingIndicatesMemfs = settingsManager.isMemfsEnabled(agentId);
-    const promptIndicatesMemfs = detectMemoryPromptDrift(
-      currentAgent.system || "",
-      "standard",
-    ).some((drift) => drift.code === "memfs_language_with_standard_mode");
-
-    const memoryMode =
-      settingIndicatesMemfs || promptIndicatesMemfs ? "memfs" : "standard";
-    const systemPromptContent = reconcileMemoryPrompt(baseContent, memoryMode);
+    let systemPromptContent: string;
+    if (isKnownPreset(systemPromptId)) {
+      systemPromptContent = buildSystemPrompt(systemPromptId, memoryMode);
+    } else {
+      const resolved = await resolveSystemPrompt(systemPromptId);
+      systemPromptContent = swapMemoryAddon(resolved, memoryMode);
+    }
 
     const updateResult = await updateAgentSystemPromptRaw(
       agentId,
@@ -335,6 +336,11 @@ export async function updateAgentSystemPrompt(
         message: updateResult.message,
         agent: null,
       };
+    }
+
+    // Persist preset only for known presets
+    if (isKnownPreset(systemPromptId)) {
+      settingsManager.setSystemPromptPreset(agentId, systemPromptId);
     }
 
     // Re-fetch agent to get updated state
@@ -369,15 +375,24 @@ export async function updateAgentSystemPromptMemfs(
   enableMemfs: boolean,
 ): Promise<SystemPromptUpdateResult> {
   try {
-    const client = await getClient();
-    const agent = await client.agents.retrieve(agentId);
-    const { reconcileMemoryPrompt } = await import("./memoryPrompt");
-
-    const nextSystemPrompt = reconcileMemoryPrompt(
-      agent.system || "",
-      enableMemfs ? "memfs" : "standard",
+    const { settingsManager } = await import("../settings-manager");
+    const { isKnownPreset, buildSystemPrompt, swapMemoryAddon } = await import(
+      "./promptAssets"
     );
 
+    const newMode = enableMemfs ? "memfs" : "standard";
+    const storedPreset = settingsManager.getSystemPromptPreset(agentId);
+
+    let nextSystemPrompt: string;
+    if (storedPreset && isKnownPreset(storedPreset)) {
+      nextSystemPrompt = buildSystemPrompt(storedPreset, newMode);
+    } else {
+      const client = await getClient();
+      const agent = await client.agents.retrieve(agentId);
+      nextSystemPrompt = swapMemoryAddon(agent.system || "", newMode);
+    }
+
+    const client = await getClient();
     await client.agents.update(agentId, {
       system: nextSystemPrompt,
     });
