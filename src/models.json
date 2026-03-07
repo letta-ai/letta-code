@@ -658,6 +658,71 @@
     }
   },
   {
+    "id": "gpt-5.4-fast-none",
+    "handle": "openai/gpt-5.4-fast",
+    "label": "GPT-5.4 Fast",
+    "description": "GPT-5.4 with priority service tier (no reasoning)",
+    "updateArgs": {
+      "reasoning_effort": "none",
+      "verbosity": "medium",
+      "context_window": 272000,
+      "max_output_tokens": null,
+      "parallel_tool_calls": true
+    }
+  },
+  {
+    "id": "gpt-5.4-fast-low",
+    "handle": "openai/gpt-5.4-fast",
+    "label": "GPT-5.4 Fast",
+    "description": "GPT-5.4 with priority service tier (low reasoning)",
+    "updateArgs": {
+      "reasoning_effort": "low",
+      "verbosity": "medium",
+      "context_window": 272000,
+      "max_output_tokens": null,
+      "parallel_tool_calls": true
+    }
+  },
+  {
+    "id": "gpt-5.4-fast-medium",
+    "handle": "openai/gpt-5.4-fast",
+    "label": "GPT-5.4 Fast",
+    "description": "GPT-5.4 with priority service tier (med reasoning)",
+    "updateArgs": {
+      "reasoning_effort": "medium",
+      "verbosity": "medium",
+      "context_window": 272000,
+      "max_output_tokens": null,
+      "parallel_tool_calls": true
+    }
+  },
+  {
+    "id": "gpt-5.4-fast-high",
+    "handle": "openai/gpt-5.4-fast",
+    "label": "GPT-5.4 Fast",
+    "description": "GPT-5.4 with priority service tier (high reasoning)",
+    "updateArgs": {
+      "reasoning_effort": "high",
+      "verbosity": "medium",
+      "context_window": 272000,
+      "max_output_tokens": null,
+      "parallel_tool_calls": true
+    }
+  },
+  {
+    "id": "gpt-5.4-fast-xhigh",
+    "handle": "openai/gpt-5.4-fast",
+    "label": "GPT-5.4 Fast",
+    "description": "GPT-5.4 with priority service tier (max reasoning)",
+    "updateArgs": {
+      "reasoning_effort": "xhigh",
+      "verbosity": "medium",
+      "context_window": 272000,
+      "max_output_tokens": null,
+      "parallel_tool_calls": true
+    }
+  },
+  {
     "id": "gpt-5.3-codex-none",
     "handle": "openai/gpt-5.3-codex",
     "label": "GPT-5.3-Codex",
