@@ -11888,6 +11888,7 @@ ${SYSTEM_REMINDER_CLOSE}
                 model: currentModelId ?? undefined,
                 // Account info
                 billing_tier: billingTier ?? undefined,
+                server_version: telemetry.getServerVersion() ?? undefined,
                 // Recent chunk log for diagnostics
                 recent_chunks: chunkLog.getEntries(),
                 // Debug log tail for diagnostics
