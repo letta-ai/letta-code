@@ -267,6 +267,71 @@
     }
   },
   {
+    "id": "gpt-5.4-plus-pro-none",
+    "handle": "chatgpt-plus-pro/gpt-5.4",
+    "label": "GPT-5.4 (ChatGPT)",
+    "description": "GPT-5.4 (no reasoning) via ChatGPT Plus/Pro",
+    "updateArgs": {
+      "reasoning_effort": "none",
+      "verbosity": "low",
+      "context_window": 272000,
+      "max_output_tokens": 128000,
+      "parallel_tool_calls": true
+    }
+  },
+  {
+    "id": "gpt-5.4-plus-pro-low",
+    "handle": "chatgpt-plus-pro/gpt-5.4",
+    "label": "GPT-5.4 (ChatGPT)",
+    "description": "GPT-5.4 (low reasoning) via ChatGPT Plus/Pro",
+    "updateArgs": {
+      "reasoning_effort": "low",
+      "verbosity": "low",
+      "context_window": 272000,
+      "max_output_tokens": 128000,
+      "parallel_tool_calls": true
+    }
+  },
+  {
+    "id": "gpt-5.4-plus-pro-medium",
+    "handle": "chatgpt-plus-pro/gpt-5.4",
+    "label": "GPT-5.4 (ChatGPT)",
+    "description": "GPT-5.4 (med reasoning) via ChatGPT Plus/Pro",
+    "updateArgs": {
+      "reasoning_effort": "medium",
+      "verbosity": "low",
+      "context_window": 272000,
+      "max_output_tokens": 128000,
+      "parallel_tool_calls": true
+    }
+  },
+  {
+    "id": "gpt-5.4-plus-pro-high",
+    "handle": "chatgpt-plus-pro/gpt-5.4",
+    "label": "GPT-5.4 (ChatGPT)",
+    "description": "OpenAI's most capable model (high reasoning) via ChatGPT Plus/Pro",
+    "updateArgs": {
+      "reasoning_effort": "high",
+      "verbosity": "low",
+      "context_window": 272000,
+      "max_output_tokens": 128000,
+      "parallel_tool_calls": true
+    }
+  },
+  {
+    "id": "gpt-5.4-plus-pro-xhigh",
+    "handle": "chatgpt-plus-pro/gpt-5.4",
+    "label": "GPT-5.4 (ChatGPT)",
+    "description": "GPT-5.4 (max reasoning) via ChatGPT Plus/Pro",
+    "updateArgs": {
+      "reasoning_effort": "xhigh",
+      "verbosity": "low",
+      "context_window": 272000,
+      "max_output_tokens": 128000,
+      "parallel_tool_calls": true
+    }
+  },
+  {
     "id": "gpt-5.3-codex-plus-pro-none",
     "handle": "chatgpt-plus-pro/gpt-5.3-codex",
     "label": "GPT-5.3 Codex (ChatGPT)",
@@ -719,6 +784,111 @@
       "verbosity": "medium",
       "context_window": 272000,
       "max_output_tokens": null,
+      "parallel_tool_calls": true
+    }
+  },
+  {
+    "id": "gpt-5.4-none",
+    "handle": "openai/gpt-5.4",
+    "label": "GPT-5.4",
+    "description": "OpenAI's most capable model (no reasoning)",
+    "updateArgs": {
+      "reasoning_effort": "none",
+      "verbosity": "medium",
+      "context_window": 272000,
+      "max_output_tokens": 128000,
+      "parallel_tool_calls": true
+    }
+  },
+  {
+    "id": "gpt-5.4-low",
+    "handle": "openai/gpt-5.4",
+    "label": "GPT-5.4",
+    "description": "OpenAI's most capable model (low reasoning)",
+    "updateArgs": {
+      "reasoning_effort": "low",
+      "verbosity": "medium",
+      "context_window": 272000,
+      "max_output_tokens": 128000,
+      "parallel_tool_calls": true
+    }
+  },
+  {
+    "id": "gpt-5.4-medium",
+    "handle": "openai/gpt-5.4",
+    "label": "GPT-5.4",
+    "description": "OpenAI's most capable model (med reasoning)",
+    "updateArgs": {
+      "reasoning_effort": "medium",
+      "verbosity": "medium",
+      "context_window": 272000,
+      "max_output_tokens": 128000,
+      "parallel_tool_calls": true
+    }
+  },
+  {
+    "id": "gpt-5.4-high",
+    "handle": "openai/gpt-5.4",
+    "label": "GPT-5.4",
+    "description": "OpenAI's most capable model (high reasoning)",
+    "isFeatured": true,
+    "updateArgs": {
+      "reasoning_effort": "high",
+      "verbosity": "medium",
+      "context_window": 272000,
+      "max_output_tokens": 128000,
+      "parallel_tool_calls": true
+    }
+  },
+  {
+    "id": "gpt-5.4-xhigh",
+    "handle": "openai/gpt-5.4",
+    "label": "GPT-5.4",
+    "description": "OpenAI's most capable model (max reasoning)",
+    "updateArgs": {
+      "reasoning_effort": "xhigh",
+      "verbosity": "medium",
+      "context_window": 272000,
+      "max_output_tokens": 128000,
+      "parallel_tool_calls": true
+    }
+  },
+  {
+    "id": "gpt-5.4-pro-medium",
+    "handle": "openai/gpt-5.4-pro",
+    "label": "GPT-5.4 Pro",
+    "description": "GPT-5.4 Pro — max performance variant (med reasoning)",
+    "updateArgs": {
+      "reasoning_effort": "medium",
+      "verbosity": "medium",
+      "context_window": 272000,
+      "max_output_tokens": 128000,
+      "parallel_tool_calls": true
+    }
+  },
+  {
+    "id": "gpt-5.4-pro-high",
+    "handle": "openai/gpt-5.4-pro",
+    "label": "GPT-5.4 Pro",
+    "description": "GPT-5.4 Pro — max performance variant (high reasoning)",
+    "updateArgs": {
+      "reasoning_effort": "high",
+      "verbosity": "medium",
+      "context_window": 272000,
+      "max_output_tokens": 128000,
+      "parallel_tool_calls": true
+    }
+  },
+  {
+    "id": "gpt-5.4-pro-xhigh",
+    "handle": "openai/gpt-5.4-pro",
+    "label": "GPT-5.4 Pro",
+    "description": "GPT-5.4 Pro — max performance variant (max reasoning)",
+    "updateArgs": {
+      "reasoning_effort": "xhigh",
+      "verbosity": "medium",
+      "context_window": 272000,
+      "max_output_tokens": 128000,
       "parallel_tool_calls": true
     }
   },
