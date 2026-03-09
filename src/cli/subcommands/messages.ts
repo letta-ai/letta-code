@@ -159,12 +159,12 @@ export async function runMessagesSubcommand(argv: string[]): Promise<number> {
         return 1;
       }
 
-      // Default conversation is represented by the agent id at the conversations endpoint.
-      const response = await client.conversations.messages.list(agentId, {
+      const response = await client.conversations.messages.list("default", {
         limit: parseLimit(parsed.values.limit, 20),
         after: parsed.values.after,
         before: parsed.values.before,
         order,
+        agent_id: agentId,
       });
 
       const messages = response.getPaginatedItems() ?? [];
