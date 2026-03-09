@@ -32,6 +32,7 @@ import {
   extractConflictDetail,
   fetchRunErrorDetail,
   getPreStreamErrorAction,
+  getRetryDelayMs,
   isApprovalPendingError,
   isEmptyResponseRetryable,
   isInvalidToolCallIdsError,
@@ -231,6 +232,7 @@ import {
   type ReflectionSettings,
   reflectionSettingsToLegacyMode,
 } from "./helpers/memoryReminder";
+import { handleMemorySubagentCompletion } from "./helpers/memorySubagentCompletion";
 import {
   type QueuedMessage,
   setMessageQueueAdder,
@@ -331,7 +333,6 @@ const EMPTY_RESPONSE_MAX_RETRIES = 2;
 
 // Retry config for 409 "conversation busy" errors (exponential backoff)
 const CONVERSATION_BUSY_MAX_RETRIES = 3; // 10s -> 20s -> 40s
-const CONVERSATION_BUSY_RETRY_BASE_DELAY_MS = 10000; // 10 seconds
 
 // Message shown when user interrupts the stream
 const INTERRUPT_MESSAGE =
@@ -1746,6 +1747,10 @@ export default function App({
   const initProgressByAgentRef = useRef(
     new Map<string, { shallowCompleted: boolean; deepFired: boolean }>(),
   );
+  const systemPromptRecompileByAgentRef = useRef(
+    new Map<string, Promise<void>>(),
+  );
+  const queuedSystemPromptRecompileByAgentRef = useRef(new Set<string>());
   const updateInitProgress = (
     forAgentId: string,
     update: Partial<{ shallowCompleted: boolean; deepFired: boolean }>,
@@ -4072,9 +4077,10 @@ export default function App({
             // Check for 409 "conversation busy" error - retry with exponential backoff
             if (preStreamAction === "retry_conversation_busy") {
               conversationBusyRetriesRef.current += 1;
-              const retryDelayMs =
-                CONVERSATION_BUSY_RETRY_BASE_DELAY_MS *
-                2 ** (conversationBusyRetriesRef.current - 1);
+              const retryDelayMs = getRetryDelayMs({
+                category: "conversation_busy",
+                attempt: conversationBusyRetriesRef.current,
+              });
 
               // Log the conversation-busy error
               telemetry.trackError(
@@ -4142,7 +4148,12 @@ export default function App({
                       preStreamError.headers?.get("retry-after"),
                     )
                   : null;
-              const delayMs = retryAfterMs ?? 1000 * 2 ** (attempt - 1);
+              const delayMs = getRetryDelayMs({
+                category: "transient_provider",
+                attempt,
+                detail: errorDetail,
+                retryAfterMs,
+              });
 
               // Log the error that triggered the retry
               telemetry.trackError(
@@ -5348,7 +5359,10 @@ export default function App({
           ) {
             emptyResponseRetriesRef.current += 1;
             const attempt = emptyResponseRetriesRef.current;
-            const delayMs = 500 * attempt;
+            const delayMs = getRetryDelayMs({
+              category: "empty_response",
+              attempt,
+            });
 
             // Only append a nudge on the last attempt
             if (attempt >= EMPTY_RESPONSE_MAX_RETRIES) {
@@ -5397,7 +5411,11 @@ export default function App({
           ) {
             llmApiErrorRetriesRef.current += 1;
             const attempt = llmApiErrorRetriesRef.current;
-            const delayMs = 1000 * 2 ** (attempt - 1); // 1s, 2s, 4s
+            const delayMs = getRetryDelayMs({
+              category: "transient_provider",
+              attempt,
+              detail: detailFromRun ?? fallbackError,
+            });
 
             // Log the error that triggered the retry
             telemetry.trackError(
@@ -9292,13 +9310,24 @@ export default function App({
                 prompt: initPrompt,
                 description: "Initializing memory",
                 silentCompletion: true,
-                onComplete: ({ success, error }) => {
-                  if (success) {
-                    updateInitProgress(agentId, { deepFired: true });
-                  }
-                  const msg = success
-                    ? "Built a memory palace of you. Visit it with /palace."
-                    : `Memory initialization failed: ${error || "Unknown error"}`;
+                onComplete: async ({ success, error }) => {
+                  const msg = await handleMemorySubagentCompletion(
+                    {
+                      agentId,
+                      subagentType: "init",
+                      initDepth: "deep",
+                      success,
+                      error,
+                    },
+                    {
+                      recompileByAgent: systemPromptRecompileByAgentRef.current,
+                      recompileQueuedByAgent:
+                        queuedSystemPromptRecompileByAgentRef.current,
+                      updateInitProgress,
+                      logRecompileFailure: (message) =>
+                        debugWarn("memory", message),
+                    },
+                  );
                   appendTaskNotificationEvents([msg]);
                 },
               });
@@ -9466,15 +9495,29 @@ export default function App({
       // attempt (e.g. another /init subagent in flight) preserves the entry for retry.
       if (autoInitPendingAgentIdsRef.current.has(agentId) && !isSystemOnly) {
         try {
-          const fired = await fireAutoInit(agentId, ({ success, error }) => {
-            if (success) {
-              updateInitProgress(agentId, { shallowCompleted: true });
-            }
-            const msg = success
-              ? "Built a memory palace of you. Visit it with /palace."
-              : `Memory initialization failed: ${error || "Unknown error"}`;
-            appendTaskNotificationEvents([msg]);
-          });
+          const fired = await fireAutoInit(
+            agentId,
+            async ({ success, error }) => {
+              const msg = await handleMemorySubagentCompletion(
+                {
+                  agentId,
+                  subagentType: "init",
+                  initDepth: "shallow",
+                  success,
+                  error,
+                },
+                {
+                  recompileByAgent: systemPromptRecompileByAgentRef.current,
+                  recompileQueuedByAgent:
+                    queuedSystemPromptRecompileByAgentRef.current,
+                  updateInitProgress,
+                  logRecompileFailure: (message) =>
+                    debugWarn("memory", message),
+                },
+              );
+              appendTaskNotificationEvents([msg]);
+            },
+          );
           if (fired) {
             autoInitPendingAgentIdsRef.current.delete(agentId);
             sharedReminderStateRef.current.pendingAutoInitReminder = true;
@@ -9583,10 +9626,23 @@ ${SYSTEM_REMINDER_CLOSE}
             prompt: AUTO_REFLECTION_PROMPT,
             description: AUTO_REFLECTION_DESCRIPTION,
             silentCompletion: true,
-            onComplete: ({ success, error }) => {
-              const msg = success
-                ? "Reflected on /palace, the halls remember more now."
-                : `Tried to reflect, but got lost in the palace: ${error}`;
+            onComplete: async ({ success, error }) => {
+              const msg = await handleMemorySubagentCompletion(
+                {
+                  agentId,
+                  subagentType: "reflection",
+                  success,
+                  error,
+                },
+                {
+                  recompileByAgent: systemPromptRecompileByAgentRef.current,
+                  recompileQueuedByAgent:
+                    queuedSystemPromptRecompileByAgentRef.current,
+                  updateInitProgress,
+                  logRecompileFailure: (message) =>
+                    debugWarn("memory", message),
+                },
+              );
               appendTaskNotificationEvents([msg]);
             },
           });
@@ -9625,13 +9681,24 @@ ${SYSTEM_REMINDER_CLOSE}
             prompt: initPrompt,
             description: "Deep memory initialization",
             silentCompletion: true,
-            onComplete: ({ success, error }) => {
-              if (success) {
-                updateInitProgress(agentId, { deepFired: true });
-              }
-              const msg = success
-                ? "Built a memory palace of you. Visit it with /palace."
-                : `Deep memory initialization failed: ${error || "Unknown error"}`;
+            onComplete: async ({ success, error }) => {
+              const msg = await handleMemorySubagentCompletion(
+                {
+                  agentId,
+                  subagentType: "init",
+                  initDepth: "deep",
+                  success,
+                  error,
+                },
+                {
+                  recompileByAgent: systemPromptRecompileByAgentRef.current,
+                  recompileQueuedByAgent:
+                    queuedSystemPromptRecompileByAgentRef.current,
+                  updateInitProgress,
+                  logRecompileFailure: (message) =>
+                    debugWarn("memory", message),
+                },
+              );
               appendTaskNotificationEvents([msg]);
             },
           });
@@ -11888,6 +11955,7 @@ ${SYSTEM_REMINDER_CLOSE}
                 model: currentModelId ?? undefined,
                 // Account info
                 billing_tier: billingTier ?? undefined,
+                server_version: telemetry.getServerVersion() ?? undefined,
                 // Recent chunk log for diagnostics
                 recent_chunks: chunkLog.getEntries(),
                 // Debug log tail for diagnostics

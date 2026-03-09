@@ -75,9 +75,13 @@ export interface SpawnBackgroundSubagentTaskArgs {
   silentCompletion?: boolean;
   /**
    * Called after the subagent finishes (success or failure).
-   * Runs regardless of `silentCompletion`.
+   * Runs regardless of `silentCompletion` and is awaited before
+   * completion notifications/hooks continue.
    */
-  onComplete?: (result: { success: boolean; error?: string }) => void;
+  onComplete?: (result: {
+    success: boolean;
+    error?: string;
+  }) => void | Promise<void>;
   /**
    * Optional dependency overrides for tests.
    * Production callers should not provide this.
@@ -248,6 +252,9 @@ export function spawnBackgroundSubagentTask(
   backgroundTasks.set(taskId, bgTask);
   writeTaskTranscriptStart(outputFile, description, subagentType);
 
+  // Intentionally fire-and-forget: background tasks own their lifecycle and
+  // capture failures in task state/transcripts instead of surfacing a promise
+  // back to the caller.
   spawnSubagentFn(
     subagentType,
     prompt,
@@ -258,7 +265,7 @@ export function spawnBackgroundSubagentTask(
     existingConversationId,
     maxTurns,
   )
-    .then((result) => {
+    .then(async (result) => {
       bgTask.status = result.success ? "completed" : "failed";
       if (result.error) {
         bgTask.error = result.error;
@@ -276,7 +283,13 @@ export function spawnBackgroundSubagentTask(
         totalTokens: result.totalTokens,
       });
 
-      onComplete?.({ success: result.success, error: result.error });
+      try {
+        await onComplete?.({ success: result.success, error: result.error });
+      } catch (error) {
+        const errorMessage =
+          error instanceof Error ? error.message : String(error);
+        appendToOutputFile(outputFile, `[onComplete error] ${errorMessage}\n`);
+      }
 
       if (!silentCompletion) {
         const subagentSnapshot = getSubagentSnapshotFn();
@@ -325,7 +338,7 @@ export function spawnBackgroundSubagentTask(
         // Silently ignore hook errors
       });
     })
-    .catch((error) => {
+    .catch(async (error) => {
       const errorMessage =
         error instanceof Error ? error.message : String(error);
       bgTask.status = "failed";
@@ -333,7 +346,18 @@ export function spawnBackgroundSubagentTask(
       appendToOutputFile(outputFile, `[error] ${errorMessage}\n`);
       completeSubagentFn(subagentId, { success: false, error: errorMessage });
 
-      onComplete?.({ success: false, error: errorMessage });
+      try {
+        await onComplete?.({ success: false, error: errorMessage });
+      } catch (onCompleteError) {
+        const callbackMessage =
+          onCompleteError instanceof Error
+            ? onCompleteError.message
+            : String(onCompleteError);
+        appendToOutputFile(
+          outputFile,
+          `[onComplete error] ${callbackMessage}\n`,
+        );
+      }
 
       if (!silentCompletion) {
         const subagentSnapshot = getSubagentSnapshotFn();

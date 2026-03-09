@@ -181,6 +181,99 @@ describe("spawnBackgroundSubagentTask", () => {
     expect(runSubagentStopHooksImpl).toHaveBeenCalledTimes(1);
   });
 
+  test("awaits async onComplete before queue notification and hooks", async () => {
+    const callOrder: string[] = [];
+    const spawnSubagentImpl = mock(async () => ({
+      agentId: "agent-ordered",
+      conversationId: "default",
+      report: "reflection done",
+      success: true,
+      totalTokens: 22,
+    }));
+    const addToMessageQueueOrdered = mock(
+      (_msg: { kind: "user" | "task_notification"; text: string }) => {
+        callOrder.push("queue");
+      },
+    );
+    const runSubagentStopHooksOrdered = mock(async () => {
+      callOrder.push("hooks");
+      return {
+        blocked: false,
+        errored: false,
+        feedback: [],
+        results: [],
+      };
+    });
+    const onComplete = mock(async () => {
+      callOrder.push("onComplete:start");
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      callOrder.push("onComplete:end");
+    });
+
+    spawnBackgroundSubagentTask({
+      subagentType: "reflection",
+      prompt: "Reflect",
+      description: "Reflect on memory",
+      onComplete,
+      deps: {
+        spawnSubagentImpl,
+        addToMessageQueueImpl: addToMessageQueueOrdered,
+        formatTaskNotificationImpl,
+        runSubagentStopHooksImpl: runSubagentStopHooksOrdered,
+        generateSubagentIdImpl,
+        registerSubagentImpl,
+        completeSubagentImpl,
+        getSubagentSnapshotImpl,
+      },
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 60));
+
+    expect(callOrder).toEqual([
+      "onComplete:start",
+      "onComplete:end",
+      "queue",
+      "hooks",
+    ]);
+  });
+
+  test("continues queue notification and hooks when onComplete throws", async () => {
+    const spawnSubagentImpl = mock(async () => ({
+      agentId: "agent-oncomplete-error",
+      conversationId: "default",
+      report: "reflection done",
+      success: true,
+      totalTokens: 19,
+    }));
+    const onComplete = mock(async () => {
+      throw new Error("callback exploded");
+    });
+
+    const launched = spawnBackgroundSubagentTask({
+      subagentType: "reflection",
+      prompt: "Reflect",
+      description: "Reflect on memory",
+      onComplete,
+      deps: {
+        spawnSubagentImpl,
+        addToMessageQueueImpl,
+        formatTaskNotificationImpl,
+        runSubagentStopHooksImpl,
+        generateSubagentIdImpl,
+        registerSubagentImpl,
+        completeSubagentImpl,
+        getSubagentSnapshotImpl,
+      },
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(queueMessages).toHaveLength(1);
+    expect(runSubagentStopHooksImpl).toHaveBeenCalledTimes(1);
+    const outputContent = readFileSync(launched.outputFile, "utf-8");
+    expect(outputContent).toContain("[onComplete error] callback exploded");
+  });
+
   test("marks background task failed and emits notification on error", async () => {
     const spawnSubagentImpl = mock(async () => {
       throw new Error("subagent exploded");

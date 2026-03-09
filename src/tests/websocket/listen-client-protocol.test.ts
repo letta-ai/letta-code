@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import WebSocket from "ws";
+import { buildConversationMessagesCreateRequestBody } from "../../agent/message";
+import { INTERRUPTED_BY_USER } from "../../constants";
 import type { ControlRequest, ControlResponseBody } from "../../types/protocol";
 import {
   __listenClientTestUtils,
@@ -238,23 +241,56 @@ describe("listen-client requestApprovalOverWS", () => {
   });
 });
 
-describe("listen-client controlResponseCapable latch", () => {
-  test("runtime initializes with controlResponseCapable = false", () => {
+describe("listen-client state_response control protocol", () => {
+  test("always advertises control_response capability", () => {
     const runtime = __listenClientTestUtils.createRuntime();
-    expect(runtime.controlResponseCapable).toBe(false);
+    const snapshot = __listenClientTestUtils.buildStateResponse(runtime, 1);
+    expect(snapshot.control_response_capable).toBe(true);
+  });
+});
+
+describe("listen-client state_response pending interrupt snapshot", () => {
+  test("includes queued interrupted tool returns for refresh hydration", () => {
+    const runtime = __listenClientTestUtils.createRuntime();
+
+    __listenClientTestUtils.populateInterruptQueue(runtime, {
+      lastExecutionResults: null,
+      lastExecutingToolCallIds: ["call-running-1"],
+      lastNeedsUserInputToolCallIds: [],
+      agentId: "agent-1",
+      conversationId: "conv-1",
+    });
+
+    const snapshot = __listenClientTestUtils.buildStateResponse(runtime, 17);
+
+    expect(snapshot.pending_interrupt).toEqual({
+      agent_id: "agent-1",
+      conversation_id: "conv-1",
+      interrupted_tool_call_ids: ["call-running-1"],
+      tool_returns: [
+        {
+          tool_call_id: "call-running-1",
+          status: "error",
+          tool_return: INTERRUPTED_BY_USER,
+        },
+      ],
+    });
   });
 
-  test("latch stays true after being set once", () => {
+  test("does not expose pending approval denials as interrupted tool state", () => {
     const runtime = __listenClientTestUtils.createRuntime();
-    expect(runtime.controlResponseCapable).toBe(false);
 
-    runtime.controlResponseCapable = true;
-    expect(runtime.controlResponseCapable).toBe(true);
+    __listenClientTestUtils.populateInterruptQueue(runtime, {
+      lastExecutionResults: null,
+      lastExecutingToolCallIds: [],
+      lastNeedsUserInputToolCallIds: ["call-awaiting-approval"],
+      agentId: "agent-1",
+      conversationId: "conv-1",
+    });
 
-    // Simulates second message without the flag — latch should persist
-    // (actual latching happens in handleIncomingMessage, but the runtime
-    // field itself should hold the value)
-    expect(runtime.controlResponseCapable).toBe(true);
+    const snapshot = __listenClientTestUtils.buildStateResponse(runtime, 18);
+
+    expect(snapshot.pending_interrupt).toBeNull();
   });
 });
 
@@ -638,5 +674,161 @@ describe("listen-client post-stop approval recovery policy", () => {
       });
 
     expect(shouldRecover).toBe(false);
+  });
+});
+
+describe("listen-client interrupt persistence normalization", () => {
+  test("forces interrupted in-flight tool results to status=error when cancelRequested", () => {
+    const runtime = __listenClientTestUtils.createRuntime();
+    runtime.cancelRequested = true;
+
+    const normalized =
+      __listenClientTestUtils.normalizeExecutionResultsForInterruptParity(
+        runtime,
+        [
+          {
+            type: "tool",
+            tool_call_id: "tool-1",
+            tool_return: "Interrupted by user",
+            status: "success",
+          },
+        ],
+        ["tool-1"],
+      );
+
+    expect(normalized).toEqual([
+      {
+        type: "tool",
+        tool_call_id: "tool-1",
+        tool_return: "Interrupted by user",
+        status: "error",
+      },
+    ]);
+  });
+
+  test("leaves tool status unchanged when not in cancel flow", () => {
+    const runtime = __listenClientTestUtils.createRuntime();
+    runtime.cancelRequested = false;
+
+    const normalized =
+      __listenClientTestUtils.normalizeExecutionResultsForInterruptParity(
+        runtime,
+        [
+          {
+            type: "tool",
+            tool_call_id: "tool-1",
+            tool_return: "Interrupted by user",
+            status: "success",
+          },
+        ],
+        ["tool-1"],
+      );
+
+    expect(normalized).toEqual([
+      {
+        type: "tool",
+        tool_call_id: "tool-1",
+        tool_return: "Interrupted by user",
+        status: "success",
+      },
+    ]);
+  });
+});
+
+describe("listen-client interrupt persistence request body", () => {
+  test("post-interrupt next-turn payload keeps interrupted tool returns as status=error", () => {
+    const runtime = __listenClientTestUtils.createRuntime();
+    const consumedAgentId = "agent-1";
+    const consumedConversationId = "default";
+
+    __listenClientTestUtils.populateInterruptQueue(runtime, {
+      lastExecutionResults: null,
+      lastExecutingToolCallIds: ["call-running-1"],
+      lastNeedsUserInputToolCallIds: [],
+      agentId: consumedAgentId,
+      conversationId: consumedConversationId,
+    });
+
+    const consumed = __listenClientTestUtils.consumeInterruptQueue(
+      runtime,
+      consumedAgentId,
+      consumedConversationId,
+    );
+
+    expect(consumed).not.toBeNull();
+    if (!consumed) {
+      throw new Error("Expected queued interrupt approvals to be consumed");
+    }
+
+    const requestBody = buildConversationMessagesCreateRequestBody(
+      consumedConversationId,
+      [
+        consumed.approvalMessage,
+        {
+          type: "message",
+          role: "user",
+          content: "next user message after interrupt",
+        },
+      ],
+      {
+        agentId: consumedAgentId,
+        streamTokens: true,
+        background: true,
+        approvalNormalization: {
+          interruptedToolCallIds: consumed.interruptedToolCallIds,
+        },
+      },
+      [],
+    );
+
+    const approvalMessage = requestBody.messages[0] as ApprovalCreate;
+    expect(approvalMessage.type).toBe("approval");
+    expect(approvalMessage.approvals?.[0]).toMatchObject({
+      type: "tool",
+      tool_call_id: "call-running-1",
+      tool_return: INTERRUPTED_BY_USER,
+      status: "error",
+    });
+  });
+});
+
+describe("listen-client tool_return wire normalization", () => {
+  test("normalizes legacy top-level tool return fields to canonical tool_returns[]", () => {
+    const normalized = __listenClientTestUtils.normalizeToolReturnWireMessage({
+      message_type: "tool_return_message",
+      id: "message-1",
+      run_id: "run-1",
+      tool_call_id: "call-1",
+      status: "error",
+      tool_return: [{ type: "text", text: "Interrupted by user" }],
+    });
+
+    expect(normalized).toEqual({
+      message_type: "tool_return_message",
+      id: "message-1",
+      run_id: "run-1",
+      tool_returns: [
+        {
+          tool_call_id: "call-1",
+          status: "error",
+          tool_return: "Interrupted by user",
+        },
+      ],
+    });
+    expect(normalized).not.toHaveProperty("tool_call_id");
+    expect(normalized).not.toHaveProperty("status");
+    expect(normalized).not.toHaveProperty("tool_return");
+  });
+
+  test("returns null for tool_return_message when no canonical status is available", () => {
+    const normalized = __listenClientTestUtils.normalizeToolReturnWireMessage({
+      message_type: "tool_return_message",
+      id: "message-2",
+      run_id: "run-2",
+      tool_call_id: "call-2",
+      tool_return: "maybe done",
+    });
+
+    expect(normalized).toBeNull();
   });
 });

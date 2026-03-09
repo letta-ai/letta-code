@@ -143,17 +143,9 @@ describe("background onComplete → flush wiring in App.tsx", () => {
     const onCompleteIdx = source.indexOf("onComplete:", initBlock);
     expect(onCompleteIdx).toBeGreaterThan(-1);
 
-    // The appendTaskNotificationEvents call must be within the onComplete body
-    // (before the closing of spawnBackgroundSubagentTask).
-    // Use "});" with leading whitespace to match the spawn call's closing,
-    // not inner statements like updateInitProgress(...});
-    const callIdx = source.indexOf(
-      "appendTaskNotificationEvents(",
-      onCompleteIdx,
-    );
-    const blockEnd = source.indexOf("              });", onCompleteIdx);
-    expect(callIdx).toBeGreaterThan(onCompleteIdx);
-    expect(callIdx).toBeLessThan(blockEnd);
+    const onCompleteWindow = source.slice(onCompleteIdx, onCompleteIdx + 900);
+    expect(onCompleteWindow).toContain("await handleMemorySubagentCompletion(");
+    expect(onCompleteWindow).toContain("appendTaskNotificationEvents(");
   });
 
   test("reflection onComplete calls appendTaskNotificationEvents", () => {
@@ -165,12 +157,8 @@ describe("background onComplete → flush wiring in App.tsx", () => {
     const onCompleteIdx = source.indexOf("onComplete:", reflectionBlock);
     expect(onCompleteIdx).toBeGreaterThan(-1);
 
-    const callIdx = source.indexOf(
-      "appendTaskNotificationEvents(",
-      onCompleteIdx,
-    );
-    const blockEnd = source.indexOf("});", onCompleteIdx);
-    expect(callIdx).toBeGreaterThan(onCompleteIdx);
-    expect(callIdx).toBeLessThan(blockEnd);
+    const onCompleteWindow = source.slice(onCompleteIdx, onCompleteIdx + 700);
+    expect(onCompleteWindow).toContain("await handleMemorySubagentCompletion(");
+    expect(onCompleteWindow).toContain("appendTaskNotificationEvents(");
   });
 });

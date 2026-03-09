@@ -159,13 +159,12 @@ function buildModelSettings(
     settings = {};
   }
 
-  // Apply max_output_tokens only when provider_type is present.
-  // Without provider_type the discriminated union rejects the payload (e.g. MiniMax).
-  // Pass null through so the server can explicitly unset max_output_tokens
-  // (prevents stale values lingering from a previous model).
+  // Apply max_output_tokens only when provider_type is present and the value
+  // is a concrete number.  Null means "unset" and should only be forwarded via
+  // the top-level max_tokens field — some providers (e.g. OpenAI) reject null
+  // inside their typed model_settings.
   if (
-    (typeof updateArgs?.max_output_tokens === "number" ||
-      updateArgs?.max_output_tokens === null) &&
+    typeof updateArgs?.max_output_tokens === "number" &&
     "provider_type" in settings
   ) {
     (settings as Record<string, unknown>).max_output_tokens =
@@ -246,6 +245,45 @@ export async function updateConversationLLMConfig(
   } as unknown as Parameters<typeof client.conversations.update>[1];
 
   return client.conversations.update(conversationId, payload);
+}
+
+export interface RecompileAgentSystemPromptOptions {
+  dryRun?: boolean;
+  updateTimestamp?: boolean;
+}
+
+interface AgentSystemPromptRecompileClient {
+  agents: {
+    recompile: (
+      agentId: string,
+      params: {
+        dry_run?: boolean;
+        update_timestamp?: boolean;
+      },
+    ) => Promise<string>;
+  };
+}
+
+/**
+ * Recompile an agent's system prompt after memory writes so server-side prompt
+ * state picks up the latest memory content.
+ *
+ * @param agentId - The agent ID to recompile
+ * @param options - Optional dry-run/timestamp controls
+ * @param clientOverride - Optional injected client for tests
+ * @returns The compiled system prompt returned by the API
+ */
+export async function recompileAgentSystemPrompt(
+  agentId: string,
+  options: RecompileAgentSystemPromptOptions = {},
+  clientOverride?: AgentSystemPromptRecompileClient,
+): Promise<string> {
+  const client = clientOverride ?? (await getClient());
+
+  return client.agents.recompile(agentId, {
+    dry_run: options.dryRun,
+    update_timestamp: options.updateTimestamp,
+  });
 }
 
 export interface SystemPromptUpdateResult {

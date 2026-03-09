@@ -474,23 +474,24 @@ export async function getResumeData(
       const retrievedMessages = await client.messages.retrieve(lastInContextId);
 
       // Fetch message history for backfill through the default conversation route.
-      // Default conversation is represented by the agent id at the conversations endpoint.
+      // Default conversation uses the "default" sentinel plus agent_id as a query param.
       // Wrapped in try/catch so backfill failures don't crash the CLI (e.g., older servers
       // may not support this pattern)
       if (includeMessageHistory && isBackfillEnabled()) {
         try {
           const messagesPage = await client.conversations.messages.list(
-            agent.id,
+            "default",
             {
               limit: BACKFILL_PAGE_LIMIT,
               order: "desc",
+              agent_id: agent.id,
             },
           );
           messages = sortChronological(messagesPage.getPaginatedItems());
 
           if (process.env.DEBUG) {
             console.log(
-              `[DEBUG] conversations.messages.list(${agent.id}) returned ${messages.length} messages`,
+              `[DEBUG] conversations.messages.list(default, agent_id=${agent.id}) returned ${messages.length} messages`,
             );
           }
         } catch (backfillError) {
