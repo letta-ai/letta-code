@@ -269,20 +269,23 @@ const InputFooter = memo(function InputFooter({
   useSyncExternalStore(subscribeToSubagents, getSubagentSnapshot);
   const backgroundAgents = [
     ...getActiveBackgroundAgents(),
-    // DEBUG: hardcoded agent for local footer testing
-    {
-      id: "debug-bg-agent",
-      type: "Reflection",
-      description: "Debug background agent",
-      status: "running" as const,
-      agentURL: "https://app.letta.com/chat/agent-debug-link",
-      toolCalls: [],
-      totalTokens: 0,
-      durationMs: 0,
-      startTime: Date.now() - 12_000,
-      isBackground: true,
-      silent: true,
-    },
+    ...(process.env.LETTA_DEBUG_FOOTER === "1"
+      ? [
+          {
+            id: "debug-bg-agent",
+            type: "Reflection",
+            description: "Debug background agent",
+            status: "running" as const,
+            agentURL: "https://app.letta.com/chat/agent-debug-link",
+            toolCalls: [],
+            totalTokens: 0,
+            durationMs: 0,
+            startTime: Date.now() - 12_000,
+            isBackground: true,
+            silent: true,
+          },
+        ]
+      : []),
   ];
 
   // Tick counter for elapsed time display (only active when background agents exist)
