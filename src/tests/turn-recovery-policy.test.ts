@@ -3,6 +3,7 @@ import {
   classifyPreStreamConflict,
   extractConflictDetail,
   getPreStreamErrorAction,
+  getRetryDelayMs,
   getTransientRetryDelayMs,
   isApprovalPendingError,
   isConversationBusyError,
@@ -285,41 +286,87 @@ describe("parseRetryAfterHeaderMs", () => {
   });
 });
 
-describe("getTransientRetryDelayMs", () => {
-  test("uses default backoff for non-Cloudflare details", () => {
+describe("getRetryDelayMs", () => {
+  test("uses default transient backoff for non-Cloudflare details", () => {
     expect(
-      getTransientRetryDelayMs({
+      getRetryDelayMs({
+        category: "transient_provider",
         attempt: 1,
         detail: "Connection error during streaming",
       }),
     ).toBe(1000);
     expect(
-      getTransientRetryDelayMs({
+      getRetryDelayMs({
+        category: "transient_provider",
         attempt: 2,
         detail: "Connection error during streaming",
       }),
     ).toBe(2000);
   });
 
-  test("uses larger base backoff for Cloudflare edge 52x details", () => {
-    const detail =
-      "521 <!DOCTYPE html><html><head><title>api.letta.com | 521: Web server is down</title></head><body>Cloudflare Ray ID: 9d431b5f6f656c08</body></html>";
-
-    expect(getTransientRetryDelayMs({ attempt: 1, detail })).toBe(5000);
-    expect(getTransientRetryDelayMs({ attempt: 3, detail })).toBe(20000);
-  });
-
-  test("uses Retry-After delay when provided", () => {
+  test("uses larger transient base for Cloudflare edge 52x details", () => {
     const detail =
       "521 <!DOCTYPE html><html><head><title>api.letta.com | 521: Web server is down</title></head><body>Cloudflare Ray ID: 9d431b5f6f656c08</body></html>";
 
     expect(
-      getTransientRetryDelayMs({
+      getRetryDelayMs({
+        category: "transient_provider",
+        attempt: 1,
+        detail,
+      }),
+    ).toBe(5000);
+    expect(
+      getRetryDelayMs({
+        category: "transient_provider",
+        attempt: 3,
+        detail,
+      }),
+    ).toBe(20000);
+  });
+
+  test("uses Retry-After delay when provided for transient retries", () => {
+    const detail =
+      "521 <!DOCTYPE html><html><head><title>api.letta.com | 521: Web server is down</title></head><body>Cloudflare Ray ID: 9d431b5f6f656c08</body></html>";
+
+    expect(
+      getRetryDelayMs({
+        category: "transient_provider",
         attempt: 3,
         detail,
         retryAfterMs: 7000,
       }),
     ).toBe(7000);
+  });
+
+  test("uses exponential conversation_busy profile", () => {
+    expect(getRetryDelayMs({ category: "conversation_busy", attempt: 1 })).toBe(
+      10000,
+    );
+    expect(getRetryDelayMs({ category: "conversation_busy", attempt: 2 })).toBe(
+      20000,
+    );
+  });
+
+  test("uses linear empty_response profile", () => {
+    expect(getRetryDelayMs({ category: "empty_response", attempt: 1 })).toBe(
+      500,
+    );
+    expect(getRetryDelayMs({ category: "empty_response", attempt: 2 })).toBe(
+      1000,
+    );
+  });
+});
+
+describe("getTransientRetryDelayMs", () => {
+  test("matches transient_provider category behavior", () => {
+    const detail = "Connection error during streaming";
+    expect(getTransientRetryDelayMs({ attempt: 2, detail })).toBe(
+      getRetryDelayMs({
+        category: "transient_provider",
+        attempt: 2,
+        detail,
+      }),
+    );
   });
 });
 

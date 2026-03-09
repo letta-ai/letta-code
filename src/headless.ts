@@ -12,7 +12,7 @@ import {
   extractConflictDetail,
   fetchRunErrorDetail,
   getPreStreamErrorAction,
-  getTransientRetryDelayMs,
+  getRetryDelayMs,
   isApprovalPendingError,
   isEmptyResponseRetryable,
   isInvalidToolCallIdsError,
@@ -134,7 +134,6 @@ const EMPTY_RESPONSE_MAX_RETRIES = 2;
 
 // Retry config for 409 "conversation busy" errors (exponential backoff)
 const CONVERSATION_BUSY_MAX_RETRIES = 3; // 10s -> 20s -> 40s
-const CONVERSATION_BUSY_RETRY_BASE_DELAY_MS = 10000; // 10 seconds
 
 export type BidirectionalQueuedInput = QueuedTurnInput<
   MessageCreate["content"]
@@ -1545,9 +1544,10 @@ ${SYSTEM_REMINDER_CLOSE}
         // Check for 409 "conversation busy" error - retry once with delay
         if (preStreamAction === "retry_conversation_busy") {
           conversationBusyRetries += 1;
-          const retryDelayMs =
-            CONVERSATION_BUSY_RETRY_BASE_DELAY_MS *
-            2 ** (conversationBusyRetries - 1);
+          const retryDelayMs = getRetryDelayMs({
+            category: "conversation_busy",
+            attempt: conversationBusyRetries,
+          });
 
           // Emit retry message for stream-json mode
           if (outputFormat === "stream-json") {
@@ -1580,7 +1580,8 @@ ${SYSTEM_REMINDER_CLOSE}
                   preStreamError.headers?.get("retry-after"),
                 )
               : null;
-          const delayMs = getTransientRetryDelayMs({
+          const delayMs = getRetryDelayMs({
+            category: "transient_provider",
             attempt,
             detail: errorDetail,
             retryAfterMs,
@@ -1915,7 +1916,8 @@ ${SYSTEM_REMINDER_CLOSE}
       if (stopReason === "llm_api_error") {
         if (llmApiErrorRetries < LLM_API_ERROR_MAX_RETRIES) {
           const attempt = llmApiErrorRetries + 1;
-          const delayMs = getTransientRetryDelayMs({
+          const delayMs = getRetryDelayMs({
+            category: "transient_provider",
             attempt,
             detail: detailFromRun,
           });
@@ -2045,7 +2047,10 @@ ${SYSTEM_REMINDER_CLOSE}
             )
           ) {
             const attempt = emptyResponseRetries + 1;
-            const delayMs = 500 * attempt;
+            const delayMs = getRetryDelayMs({
+              category: "empty_response",
+              attempt,
+            });
 
             emptyResponseRetries = attempt;
 
@@ -2082,7 +2087,8 @@ ${SYSTEM_REMINDER_CLOSE}
 
           if (shouldRetryRunMetadataError(errorType, detail)) {
             const attempt = llmApiErrorRetries + 1;
-            const delayMs = getTransientRetryDelayMs({
+            const delayMs = getRetryDelayMs({
+              category: "transient_provider",
               attempt,
               detail,
             });
@@ -3178,7 +3184,8 @@ async function runBidirectionalMode(
                       preStreamError.headers?.get("retry-after"),
                     )
                   : null;
-              const delayMs = getTransientRetryDelayMs({
+              const delayMs = getRetryDelayMs({
+                category: "transient_provider",
                 attempt,
                 detail: errorDetail,
                 retryAfterMs,

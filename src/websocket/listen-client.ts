@@ -25,7 +25,7 @@ import { getStreamToolContextId, sendMessageStream } from "../agent/message";
 import {
   extractConflictDetail,
   getPreStreamErrorAction,
-  getTransientRetryDelayMs,
+  getRetryDelayMs,
   isApprovalPendingError,
   isInvalidToolCallIdsError,
   parseRetryAfterHeaderMs,
@@ -1527,7 +1527,7 @@ async function sendMessageStreamWithRetry(
   let transientRetries = 0;
   let conversationBusyRetries = 0;
   let preStreamRecoveryAttempts = 0;
-  const MAX_CONVERSATION_BUSY_RETRIES = 1;
+  const MAX_CONVERSATION_BUSY_RETRIES = 3;
 
   // eslint-disable-next-line no-constant-condition
   while (true) {
@@ -1600,7 +1600,8 @@ async function sendMessageStreamWithRetry(
                 preStreamError.headers?.get("retry-after"),
               )
             : null;
-        const delayMs = getTransientRetryDelayMs({
+        const delayMs = getRetryDelayMs({
+          category: "transient_provider",
           attempt,
           detail: errorDetail,
           retryAfterMs,
@@ -1626,7 +1627,10 @@ async function sendMessageStreamWithRetry(
 
       if (action === "retry_conversation_busy") {
         const attempt = conversationBusyRetries + 1;
-        const delayMs = 2500;
+        const delayMs = getRetryDelayMs({
+          category: "conversation_busy",
+          attempt,
+        });
         conversationBusyRetries = attempt;
 
         emitToWS(socket, {

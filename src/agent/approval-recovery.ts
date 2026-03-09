@@ -13,12 +13,14 @@ export type {
   PreStreamConflictKind,
   PreStreamErrorAction,
   PreStreamErrorOptions,
+  RetryDelayCategory,
 } from "./turn-recovery-policy";
 // ── Re-export pure policy helpers (single source of truth) ──────────
 export {
   classifyPreStreamConflict,
   extractConflictDetail,
   getPreStreamErrorAction,
+  getRetryDelayMs,
   getTransientRetryDelayMs,
   isApprovalPendingError,
   isConversationBusyError,
