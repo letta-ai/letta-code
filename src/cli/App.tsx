@@ -1750,6 +1750,7 @@ export default function App({
   const systemPromptRecompileByAgentRef = useRef(
     new Map<string, Promise<void>>(),
   );
+  const queuedSystemPromptRecompileByAgentRef = useRef(new Set<string>());
   const updateInitProgress = (
     forAgentId: string,
     update: Partial<{ shallowCompleted: boolean; deepFired: boolean }>,
@@ -9307,6 +9308,8 @@ export default function App({
                     },
                     {
                       recompileByAgent: systemPromptRecompileByAgentRef.current,
+                      recompileQueuedByAgent:
+                        queuedSystemPromptRecompileByAgentRef.current,
                       updateInitProgress,
                       logRecompileFailure: (message) =>
                         debugWarn("memory", message),
@@ -9492,6 +9495,8 @@ export default function App({
                 },
                 {
                   recompileByAgent: systemPromptRecompileByAgentRef.current,
+                  recompileQueuedByAgent:
+                    queuedSystemPromptRecompileByAgentRef.current,
                   updateInitProgress,
                   logRecompileFailure: (message) =>
                     debugWarn("memory", message),
@@ -9618,6 +9623,8 @@ ${SYSTEM_REMINDER_CLOSE}
                 },
                 {
                   recompileByAgent: systemPromptRecompileByAgentRef.current,
+                  recompileQueuedByAgent:
+                    queuedSystemPromptRecompileByAgentRef.current,
                   updateInitProgress,
                   logRecompileFailure: (message) =>
                     debugWarn("memory", message),
@@ -9672,6 +9679,8 @@ ${SYSTEM_REMINDER_CLOSE}
                 },
                 {
                   recompileByAgent: systemPromptRecompileByAgentRef.current,
+                  recompileQueuedByAgent:
+                    queuedSystemPromptRecompileByAgentRef.current,
                   updateInitProgress,
                   logRecompileFailure: (message) =>
                     debugWarn("memory", message),

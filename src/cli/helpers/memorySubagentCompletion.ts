@@ -8,16 +8,25 @@ export interface MemoryInitProgressUpdate {
   deepFired: boolean;
 }
 
-export interface MemorySubagentCompletionArgs {
-  agentId: string;
-  subagentType: MemorySubagentType;
-  initDepth?: MemoryInitDepth;
-  success: boolean;
-  error?: string;
-}
+export type MemorySubagentCompletionArgs =
+  | {
+      agentId: string;
+      subagentType: "init";
+      initDepth: MemoryInitDepth;
+      success: boolean;
+      error?: string;
+    }
+  | {
+      agentId: string;
+      subagentType: "reflection";
+      initDepth?: never;
+      success: boolean;
+      error?: string;
+    };
 
 export interface MemorySubagentCompletionDeps {
   recompileByAgent: Map<string, Promise<void>>;
+  recompileQueuedByAgent: Set<string>;
   updateInitProgress: (
     agentId: string,
     update: Partial<MemoryInitProgressUpdate>,
@@ -51,13 +60,21 @@ export async function handleMemorySubagentCompletion(
 
       if (!inFlight) {
         inFlight = (async () => {
-          await recompileAgentSystemPrompt(agentId, {
-            updateTimestamp: true,
-          });
+          do {
+            deps.recompileQueuedByAgent.delete(agentId);
+            await recompileAgentSystemPrompt(agentId, {
+              updateTimestamp: true,
+            });
+          } while (deps.recompileQueuedByAgent.has(agentId));
         })().finally(() => {
+          // Cleanup runs only after the shared promise settles, so every
+          // concurrent caller awaits the same full recompile lifecycle.
+          deps.recompileQueuedByAgent.delete(agentId);
           deps.recompileByAgent.delete(agentId);
         });
         deps.recompileByAgent.set(agentId, inFlight);
+      } else {
+        deps.recompileQueuedByAgent.add(agentId);
       }
 
       await inFlight;

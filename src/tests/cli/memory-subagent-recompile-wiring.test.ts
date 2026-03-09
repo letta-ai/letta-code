@@ -41,6 +41,7 @@ describe("memory subagent recompile handling", () => {
       },
       {
         recompileByAgent: new Map(),
+        recompileQueuedByAgent: new Set(),
         updateInitProgress: (agentId, update) => {
           progressUpdates.push({
             agentId,
@@ -67,15 +68,18 @@ describe("memory subagent recompile handling", () => {
     );
   });
 
-  test("deduplicates overlapping recompiles for the same agent", async () => {
-    const deferred = createDeferred<string>();
-    recompileAgentSystemPromptMock.mockImplementationOnce(
-      () => deferred.promise,
-    );
+  test("queues a trailing recompile when later completions land mid-flight", async () => {
+    const firstDeferred = createDeferred<string>();
+    const secondDeferred = createDeferred<string>();
+    recompileAgentSystemPromptMock
+      .mockImplementationOnce(() => firstDeferred.promise)
+      .mockImplementationOnce(() => secondDeferred.promise);
 
     const recompileByAgent = new Map<string, Promise<void>>();
+    const recompileQueuedByAgent = new Set<string>();
     const deps = {
       recompileByAgent,
+      recompileQueuedByAgent,
       updateInitProgress: () => {},
     };
 
@@ -106,8 +110,15 @@ describe("memory subagent recompile handling", () => {
 
     expect(recompileAgentSystemPromptMock).toHaveBeenCalledTimes(1);
     expect(recompileByAgent.has("agent-shared")).toBe(true);
+    expect(recompileQueuedByAgent.has("agent-shared")).toBe(true);
 
-    deferred.resolve("compiled-system-prompt");
+    firstDeferred.resolve("compiled-system-prompt");
+    await Promise.resolve();
+
+    expect(recompileAgentSystemPromptMock).toHaveBeenCalledTimes(2);
+    expect(recompileByAgent.has("agent-shared")).toBe(true);
+
+    secondDeferred.resolve("compiled-system-prompt");
 
     const [firstMessage, secondMessage, thirdMessage] = await Promise.all([
       first,
@@ -124,5 +135,6 @@ describe("memory subagent recompile handling", () => {
       "Reflected on /palace, the halls remember more now.",
     );
     expect(recompileByAgent.size).toBe(0);
+    expect(recompileQueuedByAgent.size).toBe(0);
   });
 });
