@@ -231,6 +231,7 @@ import {
   type ReflectionSettings,
   reflectionSettingsToLegacyMode,
 } from "./helpers/memoryReminder";
+import { handleMemorySubagentCompletion } from "./helpers/memorySubagentCompletion";
 import {
   type QueuedMessage,
   setMessageQueueAdder,
@@ -1955,86 +1956,6 @@ export default function App({
       ),
     [],
   );
-
-  const handleMemorySubagentComplete = async (args: {
-    agentId: string;
-    subagentType: "init" | "reflection";
-    initDepth?: "shallow" | "deep";
-    success: boolean;
-    error?: string;
-  }): Promise<string> => {
-    const { agentId, subagentType, initDepth, success, error } = args;
-    let recompileError: string | null = null;
-
-    if (success) {
-      if (subagentType === "init") {
-        updateInitProgress(
-          agentId,
-          initDepth === "shallow"
-            ? { shallowCompleted: true }
-            : { deepFired: true },
-        );
-      }
-
-      try {
-        const inFlight = systemPromptRecompileByAgentRef.current.get(agentId);
-        if (inFlight) {
-          await inFlight;
-        } else {
-          const recompilation = (async () => {
-            const { recompileAgentSystemPrompt } = await import(
-              "../agent/modify"
-            );
-            await recompileAgentSystemPrompt(agentId, {
-              updateTimestamp: true,
-            });
-          })();
-
-          systemPromptRecompileByAgentRef.current.set(agentId, recompilation);
-          try {
-            await recompilation;
-          } finally {
-            if (
-              systemPromptRecompileByAgentRef.current.get(agentId) ===
-              recompilation
-            ) {
-              systemPromptRecompileByAgentRef.current.delete(agentId);
-            }
-          }
-        }
-      } catch (recompileFailure) {
-        recompileError =
-          recompileFailure instanceof Error
-            ? recompileFailure.message
-            : String(recompileFailure);
-        debugWarn(
-          "memory",
-          `Failed to recompile system prompt after ${subagentType} subagent for ${agentId}: ${recompileError}`,
-        );
-      }
-    }
-
-    if (!success) {
-      const normalizedError = error || "Unknown error";
-      if (subagentType === "reflection") {
-        return `Tried to reflect, but got lost in the palace: ${normalizedError}`;
-      }
-      return initDepth === "deep"
-        ? `Deep memory initialization failed: ${normalizedError}`
-        : `Memory initialization failed: ${normalizedError}`;
-    }
-
-    const baseMessage =
-      subagentType === "reflection"
-        ? "Reflected on /palace, the halls remember more now."
-        : "Built a memory palace of you. Visit it with /palace.";
-
-    if (!recompileError) {
-      return baseMessage;
-    }
-
-    return `${baseMessage} System prompt recompilation failed: ${recompileError}`;
-  };
 
   // Consume queued messages for appending to tool results (clears queue).
   // consumeItems fires onDequeued → setQueueDisplay(prev => prev.slice(n))
@@ -9376,13 +9297,21 @@ export default function App({
                 description: "Initializing memory",
                 silentCompletion: true,
                 onComplete: async ({ success, error }) => {
-                  const msg = await handleMemorySubagentComplete({
-                    agentId,
-                    subagentType: "init",
-                    initDepth: "deep",
-                    success,
-                    error,
-                  });
+                  const msg = await handleMemorySubagentCompletion(
+                    {
+                      agentId,
+                      subagentType: "init",
+                      initDepth: "deep",
+                      success,
+                      error,
+                    },
+                    {
+                      recompileByAgent: systemPromptRecompileByAgentRef.current,
+                      updateInitProgress,
+                      logRecompileFailure: (message) =>
+                        debugWarn("memory", message),
+                    },
+                  );
                   appendTaskNotificationEvents([msg]);
                 },
               });
@@ -9553,13 +9482,21 @@ export default function App({
           const fired = await fireAutoInit(
             agentId,
             async ({ success, error }) => {
-              const msg = await handleMemorySubagentComplete({
-                agentId,
-                subagentType: "init",
-                initDepth: "shallow",
-                success,
-                error,
-              });
+              const msg = await handleMemorySubagentCompletion(
+                {
+                  agentId,
+                  subagentType: "init",
+                  initDepth: "shallow",
+                  success,
+                  error,
+                },
+                {
+                  recompileByAgent: systemPromptRecompileByAgentRef.current,
+                  updateInitProgress,
+                  logRecompileFailure: (message) =>
+                    debugWarn("memory", message),
+                },
+              );
               appendTaskNotificationEvents([msg]);
             },
           );
@@ -9672,12 +9609,20 @@ ${SYSTEM_REMINDER_CLOSE}
             description: AUTO_REFLECTION_DESCRIPTION,
             silentCompletion: true,
             onComplete: async ({ success, error }) => {
-              const msg = await handleMemorySubagentComplete({
-                agentId,
-                subagentType: "reflection",
-                success,
-                error,
-              });
+              const msg = await handleMemorySubagentCompletion(
+                {
+                  agentId,
+                  subagentType: "reflection",
+                  success,
+                  error,
+                },
+                {
+                  recompileByAgent: systemPromptRecompileByAgentRef.current,
+                  updateInitProgress,
+                  logRecompileFailure: (message) =>
+                    debugWarn("memory", message),
+                },
+              );
               appendTaskNotificationEvents([msg]);
             },
           });
@@ -9717,13 +9662,21 @@ ${SYSTEM_REMINDER_CLOSE}
             description: "Deep memory initialization",
             silentCompletion: true,
             onComplete: async ({ success, error }) => {
-              const msg = await handleMemorySubagentComplete({
-                agentId,
-                subagentType: "init",
-                initDepth: "deep",
-                success,
-                error,
-              });
+              const msg = await handleMemorySubagentCompletion(
+                {
+                  agentId,
+                  subagentType: "init",
+                  initDepth: "deep",
+                  success,
+                  error,
+                },
+                {
+                  recompileByAgent: systemPromptRecompileByAgentRef.current,
+                  updateInitProgress,
+                  logRecompileFailure: (message) =>
+                    debugWarn("memory", message),
+                },
+              );
               appendTaskNotificationEvents([msg]);
             },
           });

@@ -237,6 +237,43 @@ describe("spawnBackgroundSubagentTask", () => {
     ]);
   });
 
+  test("continues queue notification and hooks when onComplete throws", async () => {
+    const spawnSubagentImpl = mock(async () => ({
+      agentId: "agent-oncomplete-error",
+      conversationId: "default",
+      report: "reflection done",
+      success: true,
+      totalTokens: 19,
+    }));
+    const onComplete = mock(async () => {
+      throw new Error("callback exploded");
+    });
+
+    const launched = spawnBackgroundSubagentTask({
+      subagentType: "reflection",
+      prompt: "Reflect",
+      description: "Reflect on memory",
+      onComplete,
+      deps: {
+        spawnSubagentImpl,
+        addToMessageQueueImpl,
+        formatTaskNotificationImpl,
+        runSubagentStopHooksImpl,
+        generateSubagentIdImpl,
+        registerSubagentImpl,
+        completeSubagentImpl,
+        getSubagentSnapshotImpl,
+      },
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(queueMessages).toHaveLength(1);
+    expect(runSubagentStopHooksImpl).toHaveBeenCalledTimes(1);
+    const outputContent = readFileSync(launched.outputFile, "utf-8");
+    expect(outputContent).toContain("[onComplete error] callback exploded");
+  });
+
   test("marks background task failed and emits notification on error", async () => {
     const spawnSubagentImpl = mock(async () => {
       throw new Error("subagent exploded");

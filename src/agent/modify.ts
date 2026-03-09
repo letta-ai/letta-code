@@ -253,7 +253,8 @@ export interface RecompileAgentSystemPromptOptions {
 }
 
 /**
- * Recompile an agent's system prompt so new memory content is reflected server-side.
+ * Recompile an agent's system prompt after memory writes so server-side prompt
+ * state picks up the latest memory content.
  *
  * @param agentId - The agent ID to recompile
  * @param options - Optional dry-run/timestamp controls

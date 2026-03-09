@@ -1,30 +1,113 @@
-import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
+import { beforeEach, describe, expect, mock, test } from "bun:test";
 
-describe("memory subagent recompile wiring", () => {
-  test("App.tsx recompiles the parent system prompt from shared memory-subagent completion handling", () => {
-    const appPath = fileURLToPath(
-      new URL("../../cli/App.tsx", import.meta.url),
-    );
-    const source = readFileSync(appPath, "utf-8");
+const recompileAgentSystemPromptMock = mock(
+  (_agentId: string, _opts?: Record<string, unknown>) =>
+    Promise.resolve("compiled-system-prompt"),
+);
 
-    expect(source).toContain("const handleMemorySubagentComplete = async");
-    expect(source).toContain("systemPromptRecompileByAgentRef");
-    expect(source).toContain("recompileAgentSystemPrompt(agentId, {");
-    expect(source).toContain("updateTimestamp: true");
+mock.module("../../agent/modify", () => ({
+  recompileAgentSystemPrompt: recompileAgentSystemPromptMock,
+}));
+
+const { handleMemorySubagentCompletion } = await import(
+  "../../cli/helpers/memorySubagentCompletion"
+);
+
+function createDeferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
+
+describe("memory subagent recompile handling", () => {
+  beforeEach(() => {
+    recompileAgentSystemPromptMock.mockClear();
   });
 
-  test("init and reflection onComplete handlers await shared completion handling before notifying", () => {
-    const appPath = fileURLToPath(
-      new URL("../../cli/App.tsx", import.meta.url),
-    );
-    const source = readFileSync(appPath, "utf-8");
+  test("updates init progress and recompiles after successful shallow init", async () => {
+    const progressUpdates: Array<{
+      agentId: string;
+      update: Record<string, boolean>;
+    }> = [];
 
-    expect(source).toContain('subagentType: "init"');
-    expect(source).toContain('subagentType: "reflection"');
-    expect(source).toContain("await handleMemorySubagentComplete({");
-    expect(source).toContain('initDepth: "shallow"');
-    expect(source).toContain('initDepth: "deep"');
+    const message = await handleMemorySubagentCompletion(
+      {
+        agentId: "agent-init-1",
+        subagentType: "init",
+        initDepth: "shallow",
+        success: true,
+      },
+      {
+        recompileByAgent: new Map(),
+        updateInitProgress: (agentId, update) => {
+          progressUpdates.push({
+            agentId,
+            update: update as Record<string, boolean>,
+          });
+        },
+      },
+    );
+
+    expect(message).toBe(
+      "Built a memory palace of you. Visit it with /palace.",
+    );
+    expect(progressUpdates).toEqual([
+      {
+        agentId: "agent-init-1",
+        update: { shallowCompleted: true },
+      },
+    ]);
+    expect(recompileAgentSystemPromptMock).toHaveBeenCalledWith(
+      "agent-init-1",
+      {
+        updateTimestamp: true,
+      },
+    );
+  });
+
+  test("deduplicates concurrent recompiles for the same agent", async () => {
+    const deferred = createDeferred<string>();
+    recompileAgentSystemPromptMock.mockImplementationOnce(
+      () => deferred.promise,
+    );
+
+    const recompileByAgent = new Map<string, Promise<void>>();
+    const deps = {
+      recompileByAgent,
+      updateInitProgress: () => {},
+    };
+
+    const first = handleMemorySubagentCompletion(
+      {
+        agentId: "agent-shared",
+        subagentType: "reflection",
+        success: true,
+      },
+      deps,
+    );
+    const second = handleMemorySubagentCompletion(
+      {
+        agentId: "agent-shared",
+        subagentType: "reflection",
+        success: true,
+      },
+      deps,
+    );
+
+    expect(recompileAgentSystemPromptMock).toHaveBeenCalledTimes(1);
+    expect(recompileByAgent.has("agent-shared")).toBe(true);
+
+    deferred.resolve("compiled-system-prompt");
+
+    const [firstMessage, secondMessage] = await Promise.all([first, second]);
+    expect(firstMessage).toBe(
+      "Reflected on /palace, the halls remember more now.",
+    );
+    expect(secondMessage).toBe(
+      "Reflected on /palace, the halls remember more now.",
+    );
+    expect(recompileByAgent.size).toBe(0);
   });
 });
