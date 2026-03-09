@@ -243,11 +243,11 @@ export function ConversationSelector({
         if (!afterCursor) {
           try {
             const defaultMessages = await client.conversations.messages.list(
-              // Default conversation is represented by the agent id at the conversations endpoint.
-              agentId,
+              "default",
               {
                 limit: 20,
                 order: "desc",
+                agent_id: agentId,
               },
             );
             const defaultMsgItems = defaultMessages.getPaginatedItems();
