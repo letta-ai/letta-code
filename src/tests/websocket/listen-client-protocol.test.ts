@@ -241,23 +241,11 @@ describe("listen-client requestApprovalOverWS", () => {
   });
 });
 
-describe("listen-client controlResponseCapable latch", () => {
-  test("runtime initializes with controlResponseCapable = false", () => {
+describe("listen-client state_response control protocol", () => {
+  test("always advertises control_response capability", () => {
     const runtime = __listenClientTestUtils.createRuntime();
-    expect(runtime.controlResponseCapable).toBe(false);
-  });
-
-  test("latch stays true after being set once", () => {
-    const runtime = __listenClientTestUtils.createRuntime();
-    expect(runtime.controlResponseCapable).toBe(false);
-
-    runtime.controlResponseCapable = true;
-    expect(runtime.controlResponseCapable).toBe(true);
-
-    // Simulates second message without the flag — latch should persist
-    // (actual latching happens in handleIncomingMessage, but the runtime
-    // field itself should hold the value)
-    expect(runtime.controlResponseCapable).toBe(true);
+    const snapshot = __listenClientTestUtils.buildStateResponse(runtime, 1);
+    expect(snapshot.control_response_capable).toBe(true);
   });
 });
 
