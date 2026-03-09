@@ -32,6 +32,7 @@ import {
   extractConflictDetail,
   fetchRunErrorDetail,
   getPreStreamErrorAction,
+  getRetryDelayMs,
   isApprovalPendingError,
   isEmptyResponseRetryable,
   isInvalidToolCallIdsError,
@@ -331,7 +332,6 @@ const EMPTY_RESPONSE_MAX_RETRIES = 2;
 
 // Retry config for 409 "conversation busy" errors (exponential backoff)
 const CONVERSATION_BUSY_MAX_RETRIES = 3; // 10s -> 20s -> 40s
-const CONVERSATION_BUSY_RETRY_BASE_DELAY_MS = 10000; // 10 seconds
 
 // Message shown when user interrupts the stream
 const INTERRUPT_MESSAGE =
@@ -4072,9 +4072,10 @@ export default function App({
             // Check for 409 "conversation busy" error - retry with exponential backoff
             if (preStreamAction === "retry_conversation_busy") {
               conversationBusyRetriesRef.current += 1;
-              const retryDelayMs =
-                CONVERSATION_BUSY_RETRY_BASE_DELAY_MS *
-                2 ** (conversationBusyRetriesRef.current - 1);
+              const retryDelayMs = getRetryDelayMs({
+                category: "conversation_busy",
+                attempt: conversationBusyRetriesRef.current,
+              });
 
               // Log the conversation-busy error
               telemetry.trackError(
@@ -4142,7 +4143,12 @@ export default function App({
                       preStreamError.headers?.get("retry-after"),
                     )
                   : null;
-              const delayMs = retryAfterMs ?? 1000 * 2 ** (attempt - 1);
+              const delayMs = getRetryDelayMs({
+                category: "transient_provider",
+                attempt,
+                detail: errorDetail,
+                retryAfterMs,
+              });
 
               // Log the error that triggered the retry
               telemetry.trackError(
@@ -5348,7 +5354,10 @@ export default function App({
           ) {
             emptyResponseRetriesRef.current += 1;
             const attempt = emptyResponseRetriesRef.current;
-            const delayMs = 500 * attempt;
+            const delayMs = getRetryDelayMs({
+              category: "empty_response",
+              attempt,
+            });
 
             // Only append a nudge on the last attempt
             if (attempt >= EMPTY_RESPONSE_MAX_RETRIES) {
@@ -5397,7 +5406,11 @@ export default function App({
           ) {
             llmApiErrorRetriesRef.current += 1;
             const attempt = llmApiErrorRetriesRef.current;
-            const delayMs = 1000 * 2 ** (attempt - 1); // 1s, 2s, 4s
+            const delayMs = getRetryDelayMs({
+              category: "transient_provider",
+              attempt,
+              detail: detailFromRun ?? fallbackError,
+            });
 
             // Log the error that triggered the retry
             telemetry.trackError(
