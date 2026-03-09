@@ -412,12 +412,8 @@ const InputFooter = memo(function InputFooter({
         )}
       </Box>
       <Box
-        flexDirection={
-          statusLineRight && !hideFooterContent ? "column" : undefined
-        }
-        alignItems={
-          statusLineRight && !hideFooterContent ? "flex-end" : undefined
-        }
+        flexDirection="column"
+        alignItems="flex-end"
         width={
           statusLineRight && !hideFooterContent
             ? undefined
