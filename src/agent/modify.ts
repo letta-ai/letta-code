@@ -247,6 +247,30 @@ export async function updateConversationLLMConfig(
   return client.conversations.update(conversationId, payload);
 }
 
+export interface RecompileAgentSystemPromptOptions {
+  dryRun?: boolean;
+  updateTimestamp?: boolean;
+}
+
+/**
+ * Recompile an agent's system prompt so new memory content is reflected server-side.
+ *
+ * @param agentId - The agent ID to recompile
+ * @param options - Optional dry-run/timestamp controls
+ * @returns The compiled system prompt returned by the API
+ */
+export async function recompileAgentSystemPrompt(
+  agentId: string,
+  options: RecompileAgentSystemPromptOptions = {},
+): Promise<string> {
+  const client = await getClient();
+
+  return client.agents.recompile(agentId, {
+    dry_run: options.dryRun,
+    update_timestamp: options.updateTimestamp,
+  });
+}
+
 export interface SystemPromptUpdateResult {
   success: boolean;
   message: string;

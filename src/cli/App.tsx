@@ -1746,6 +1746,9 @@ export default function App({
   const initProgressByAgentRef = useRef(
     new Map<string, { shallowCompleted: boolean; deepFired: boolean }>(),
   );
+  const systemPromptRecompileByAgentRef = useRef(
+    new Map<string, Promise<void>>(),
+  );
   const updateInitProgress = (
     forAgentId: string,
     update: Partial<{ shallowCompleted: boolean; deepFired: boolean }>,
@@ -1952,6 +1955,86 @@ export default function App({
       ),
     [],
   );
+
+  const handleMemorySubagentComplete = async (args: {
+    agentId: string;
+    subagentType: "init" | "reflection";
+    initDepth?: "shallow" | "deep";
+    success: boolean;
+    error?: string;
+  }): Promise<string> => {
+    const { agentId, subagentType, initDepth, success, error } = args;
+    let recompileError: string | null = null;
+
+    if (success) {
+      if (subagentType === "init") {
+        updateInitProgress(
+          agentId,
+          initDepth === "shallow"
+            ? { shallowCompleted: true }
+            : { deepFired: true },
+        );
+      }
+
+      try {
+        const inFlight = systemPromptRecompileByAgentRef.current.get(agentId);
+        if (inFlight) {
+          await inFlight;
+        } else {
+          const recompilation = (async () => {
+            const { recompileAgentSystemPrompt } = await import(
+              "../agent/modify"
+            );
+            await recompileAgentSystemPrompt(agentId, {
+              updateTimestamp: true,
+            });
+          })();
+
+          systemPromptRecompileByAgentRef.current.set(agentId, recompilation);
+          try {
+            await recompilation;
+          } finally {
+            if (
+              systemPromptRecompileByAgentRef.current.get(agentId) ===
+              recompilation
+            ) {
+              systemPromptRecompileByAgentRef.current.delete(agentId);
+            }
+          }
+        }
+      } catch (recompileFailure) {
+        recompileError =
+          recompileFailure instanceof Error
+            ? recompileFailure.message
+            : String(recompileFailure);
+        debugWarn(
+          "memory",
+          `Failed to recompile system prompt after ${subagentType} subagent for ${agentId}: ${recompileError}`,
+        );
+      }
+    }
+
+    if (!success) {
+      const normalizedError = error || "Unknown error";
+      if (subagentType === "reflection") {
+        return `Tried to reflect, but got lost in the palace: ${normalizedError}`;
+      }
+      return initDepth === "deep"
+        ? `Deep memory initialization failed: ${normalizedError}`
+        : `Memory initialization failed: ${normalizedError}`;
+    }
+
+    const baseMessage =
+      subagentType === "reflection"
+        ? "Reflected on /palace, the halls remember more now."
+        : "Built a memory palace of you. Visit it with /palace.";
+
+    if (!recompileError) {
+      return baseMessage;
+    }
+
+    return `${baseMessage} System prompt recompilation failed: ${recompileError}`;
+  };
 
   // Consume queued messages for appending to tool results (clears queue).
   // consumeItems fires onDequeued → setQueueDisplay(prev => prev.slice(n))
@@ -9292,13 +9375,14 @@ export default function App({
                 prompt: initPrompt,
                 description: "Initializing memory",
                 silentCompletion: true,
-                onComplete: ({ success, error }) => {
-                  if (success) {
-                    updateInitProgress(agentId, { deepFired: true });
-                  }
-                  const msg = success
-                    ? "Built a memory palace of you. Visit it with /palace."
-                    : `Memory initialization failed: ${error || "Unknown error"}`;
+                onComplete: async ({ success, error }) => {
+                  const msg = await handleMemorySubagentComplete({
+                    agentId,
+                    subagentType: "init",
+                    initDepth: "deep",
+                    success,
+                    error,
+                  });
                   appendTaskNotificationEvents([msg]);
                 },
               });
@@ -9466,15 +9550,19 @@ export default function App({
       // attempt (e.g. another /init subagent in flight) preserves the entry for retry.
       if (autoInitPendingAgentIdsRef.current.has(agentId) && !isSystemOnly) {
         try {
-          const fired = await fireAutoInit(agentId, ({ success, error }) => {
-            if (success) {
-              updateInitProgress(agentId, { shallowCompleted: true });
-            }
-            const msg = success
-              ? "Built a memory palace of you. Visit it with /palace."
-              : `Memory initialization failed: ${error || "Unknown error"}`;
-            appendTaskNotificationEvents([msg]);
-          });
+          const fired = await fireAutoInit(
+            agentId,
+            async ({ success, error }) => {
+              const msg = await handleMemorySubagentComplete({
+                agentId,
+                subagentType: "init",
+                initDepth: "shallow",
+                success,
+                error,
+              });
+              appendTaskNotificationEvents([msg]);
+            },
+          );
           if (fired) {
             autoInitPendingAgentIdsRef.current.delete(agentId);
             sharedReminderStateRef.current.pendingAutoInitReminder = true;
@@ -9583,10 +9671,13 @@ ${SYSTEM_REMINDER_CLOSE}
             prompt: AUTO_REFLECTION_PROMPT,
             description: AUTO_REFLECTION_DESCRIPTION,
             silentCompletion: true,
-            onComplete: ({ success, error }) => {
-              const msg = success
-                ? "Reflected on /palace, the halls remember more now."
-                : `Tried to reflect, but got lost in the palace: ${error}`;
+            onComplete: async ({ success, error }) => {
+              const msg = await handleMemorySubagentComplete({
+                agentId,
+                subagentType: "reflection",
+                success,
+                error,
+              });
               appendTaskNotificationEvents([msg]);
             },
           });
@@ -9625,13 +9716,14 @@ ${SYSTEM_REMINDER_CLOSE}
             prompt: initPrompt,
             description: "Deep memory initialization",
             silentCompletion: true,
-            onComplete: ({ success, error }) => {
-              if (success) {
-                updateInitProgress(agentId, { deepFired: true });
-              }
-              const msg = success
-                ? "Built a memory palace of you. Visit it with /palace."
-                : `Deep memory initialization failed: ${error || "Unknown error"}`;
+            onComplete: async ({ success, error }) => {
+              const msg = await handleMemorySubagentComplete({
+                agentId,
+                subagentType: "init",
+                initDepth: "deep",
+                success,
+                error,
+              });
               appendTaskNotificationEvents([msg]);
             },
           });
