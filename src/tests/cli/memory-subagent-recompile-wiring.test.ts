@@ -1,16 +1,10 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
+import type { RecompileAgentSystemPromptOptions } from "../../agent/modify";
+import { handleMemorySubagentCompletion } from "../../cli/helpers/memorySubagentCompletion";
 
 const recompileAgentSystemPromptMock = mock(
-  (_agentId: string, _opts?: Record<string, unknown>) =>
+  (_agentId: string, _opts?: RecompileAgentSystemPromptOptions) =>
     Promise.resolve("compiled-system-prompt"),
-);
-
-mock.module("../../agent/modify", () => ({
-  recompileAgentSystemPrompt: recompileAgentSystemPromptMock,
-}));
-
-const { handleMemorySubagentCompletion } = await import(
-  "../../cli/helpers/memorySubagentCompletion"
 );
 
 function createDeferred<T>() {
@@ -23,7 +17,11 @@ function createDeferred<T>() {
 
 describe("memory subagent recompile handling", () => {
   beforeEach(() => {
-    recompileAgentSystemPromptMock.mockClear();
+    recompileAgentSystemPromptMock.mockReset();
+    recompileAgentSystemPromptMock.mockImplementation(
+      (_agentId: string, _opts?: RecompileAgentSystemPromptOptions) =>
+        Promise.resolve("compiled-system-prompt"),
+    );
   });
 
   test("updates init progress and recompiles after successful shallow init", async () => {
@@ -42,6 +40,7 @@ describe("memory subagent recompile handling", () => {
       {
         recompileByAgent: new Map(),
         recompileQueuedByAgent: new Set(),
+        recompileAgentSystemPromptImpl: recompileAgentSystemPromptMock,
         updateInitProgress: (agentId, update) => {
           progressUpdates.push({
             agentId,
@@ -80,6 +79,7 @@ describe("memory subagent recompile handling", () => {
     const deps = {
       recompileByAgent,
       recompileQueuedByAgent,
+      recompileAgentSystemPromptImpl: recompileAgentSystemPromptMock,
       updateInitProgress: () => {},
     };
 

@@ -1,4 +1,7 @@
-import { recompileAgentSystemPrompt } from "../../agent/modify";
+import {
+  type RecompileAgentSystemPromptOptions,
+  recompileAgentSystemPrompt,
+} from "../../agent/modify";
 
 export type MemorySubagentType = "init" | "reflection";
 export type MemoryInitDepth = "shallow" | "deep";
@@ -7,6 +10,11 @@ export interface MemoryInitProgressUpdate {
   shallowCompleted: boolean;
   deepFired: boolean;
 }
+
+type RecompileAgentSystemPromptFn = (
+  agentId: string,
+  options?: RecompileAgentSystemPromptOptions,
+) => Promise<string>;
 
 export type MemorySubagentCompletionArgs =
   | {
@@ -32,6 +40,7 @@ export interface MemorySubagentCompletionDeps {
     update: Partial<MemoryInitProgressUpdate>,
   ) => void;
   logRecompileFailure?: (message: string) => void;
+  recompileAgentSystemPromptImpl?: RecompileAgentSystemPromptFn;
 }
 
 /**
@@ -43,6 +52,8 @@ export async function handleMemorySubagentCompletion(
   deps: MemorySubagentCompletionDeps,
 ): Promise<string> {
   const { agentId, subagentType, initDepth, success, error } = args;
+  const recompileAgentSystemPromptFn =
+    deps.recompileAgentSystemPromptImpl ?? recompileAgentSystemPrompt;
   let recompileError: string | null = null;
 
   if (success) {
@@ -62,7 +73,7 @@ export async function handleMemorySubagentCompletion(
         inFlight = (async () => {
           do {
             deps.recompileQueuedByAgent.delete(agentId);
-            await recompileAgentSystemPrompt(agentId, {
+            await recompileAgentSystemPromptFn(agentId, {
               updateTimestamp: true,
             });
           } while (deps.recompileQueuedByAgent.has(agentId));
