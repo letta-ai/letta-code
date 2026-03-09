@@ -67,7 +67,7 @@ describe("memory subagent recompile handling", () => {
     );
   });
 
-  test("deduplicates concurrent recompiles for the same agent", async () => {
+  test("deduplicates overlapping recompiles for the same agent", async () => {
     const deferred = createDeferred<string>();
     recompileAgentSystemPromptMock.mockImplementationOnce(
       () => deferred.promise,
@@ -95,17 +95,32 @@ describe("memory subagent recompile handling", () => {
       },
       deps,
     );
+    const third = handleMemorySubagentCompletion(
+      {
+        agentId: "agent-shared",
+        subagentType: "reflection",
+        success: true,
+      },
+      deps,
+    );
 
     expect(recompileAgentSystemPromptMock).toHaveBeenCalledTimes(1);
     expect(recompileByAgent.has("agent-shared")).toBe(true);
 
     deferred.resolve("compiled-system-prompt");
 
-    const [firstMessage, secondMessage] = await Promise.all([first, second]);
+    const [firstMessage, secondMessage, thirdMessage] = await Promise.all([
+      first,
+      second,
+      third,
+    ]);
     expect(firstMessage).toBe(
       "Reflected on /palace, the halls remember more now.",
     );
     expect(secondMessage).toBe(
+      "Reflected on /palace, the halls remember more now.",
+    );
+    expect(thirdMessage).toBe(
       "Reflected on /palace, the halls remember more now.",
     );
     expect(recompileByAgent.size).toBe(0);

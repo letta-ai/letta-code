@@ -48,25 +48,19 @@ export async function handleMemorySubagentCompletion(
 
     try {
       let inFlight = deps.recompileByAgent.get(agentId);
-      let createdRecompile = false;
 
       if (!inFlight) {
-        createdRecompile = true;
         inFlight = (async () => {
           await recompileAgentSystemPrompt(agentId, {
             updateTimestamp: true,
           });
-        })();
+        })().finally(() => {
+          deps.recompileByAgent.delete(agentId);
+        });
         deps.recompileByAgent.set(agentId, inFlight);
       }
 
-      try {
-        await inFlight;
-      } finally {
-        if (createdRecompile) {
-          deps.recompileByAgent.delete(agentId);
-        }
-      }
+      await inFlight;
     } catch (recompileFailure) {
       recompileError =
         recompileFailure instanceof Error

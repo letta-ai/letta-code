@@ -252,6 +252,9 @@ export function spawnBackgroundSubagentTask(
   backgroundTasks.set(taskId, bgTask);
   writeTaskTranscriptStart(outputFile, description, subagentType);
 
+  // Intentionally fire-and-forget: background tasks own their lifecycle and
+  // capture failures in task state/transcripts instead of surfacing a promise
+  // back to the caller.
   spawnSubagentFn(
     subagentType,
     prompt,
