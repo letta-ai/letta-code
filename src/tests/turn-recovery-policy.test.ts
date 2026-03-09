@@ -3,6 +3,7 @@ import {
   classifyPreStreamConflict,
   extractConflictDetail,
   getPreStreamErrorAction,
+  getTransientRetryDelayMs,
   isApprovalPendingError,
   isConversationBusyError,
   isEmptyResponseError,
@@ -281,6 +282,44 @@ describe("parseRetryAfterHeaderMs", () => {
 
   test("returns null for invalid header", () => {
     expect(parseRetryAfterHeaderMs("not-a-date")).toBeNull();
+  });
+});
+
+describe("getTransientRetryDelayMs", () => {
+  test("uses default backoff for non-Cloudflare details", () => {
+    expect(
+      getTransientRetryDelayMs({
+        attempt: 1,
+        detail: "Connection error during streaming",
+      }),
+    ).toBe(1000);
+    expect(
+      getTransientRetryDelayMs({
+        attempt: 2,
+        detail: "Connection error during streaming",
+      }),
+    ).toBe(2000);
+  });
+
+  test("uses larger base backoff for Cloudflare edge 52x details", () => {
+    const detail =
+      "521 <!DOCTYPE html><html><head><title>api.letta.com | 521: Web server is down</title></head><body>Cloudflare Ray ID: 9d431b5f6f656c08</body></html>";
+
+    expect(getTransientRetryDelayMs({ attempt: 1, detail })).toBe(5000);
+    expect(getTransientRetryDelayMs({ attempt: 3, detail })).toBe(20000);
+  });
+
+  test("uses Retry-After delay when provided", () => {
+    const detail =
+      "521 <!DOCTYPE html><html><head><title>api.letta.com | 521: Web server is down</title></head><body>Cloudflare Ray ID: 9d431b5f6f656c08</body></html>";
+
+    expect(
+      getTransientRetryDelayMs({
+        attempt: 3,
+        detail,
+        retryAfterMs: 7000,
+      }),
+    ).toBe(7000);
   });
 });
 

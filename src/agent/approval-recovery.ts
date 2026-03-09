@@ -19,6 +19,7 @@ export {
   classifyPreStreamConflict,
   extractConflictDetail,
   getPreStreamErrorAction,
+  getTransientRetryDelayMs,
   isApprovalPendingError,
   isConversationBusyError,
   isEmptyResponseError,

@@ -25,6 +25,7 @@ import { getStreamToolContextId, sendMessageStream } from "../agent/message";
 import {
   extractConflictDetail,
   getPreStreamErrorAction,
+  getTransientRetryDelayMs,
   isApprovalPendingError,
   isInvalidToolCallIdsError,
   parseRetryAfterHeaderMs,
@@ -1599,7 +1600,11 @@ async function sendMessageStreamWithRetry(
                 preStreamError.headers?.get("retry-after"),
               )
             : null;
-        const delayMs = retryAfterMs ?? 1000 * 2 ** (attempt - 1);
+        const delayMs = getTransientRetryDelayMs({
+          attempt,
+          detail: errorDetail,
+          retryAfterMs,
+        });
         transientRetries = attempt;
 
         emitToWS(socket, {

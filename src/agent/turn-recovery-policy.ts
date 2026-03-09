@@ -65,6 +65,9 @@ const NON_RETRYABLE_QUOTA_DETAIL_PATTERNS = [
 ];
 const NON_RETRYABLE_4XX_PATTERN = /Error code:\s*4(0[0-8]|1\d|2\d|3\d|4\d|51)/i;
 const RETRYABLE_429_PATTERN = /Error code:\s*429|rate limit|too many requests/i;
+const DEFAULT_TRANSIENT_RETRY_BASE_DELAY_MS = 1000;
+const CLOUDFLARE_EDGE_52X_RETRY_BASE_DELAY_MS = 5000;
+
 function isCloudflareEdge52xDetail(detail: unknown): boolean {
   if (typeof detail !== "string") return false;
   return isCloudflareEdge52xHtmlError(detail);
@@ -204,6 +207,25 @@ export function parseRetryAfterHeaderMs(
 
   const delayMs = retryAtMs - Date.now();
   return delayMs > 0 ? delayMs : 0;
+}
+
+/**
+ * Compute transient retry delay with optional Retry-After override.
+ * Cloudflare edge 52x errors use a larger base delay.
+ */
+export function getTransientRetryDelayMs(opts: {
+  attempt: number;
+  detail: unknown;
+  retryAfterMs?: number | null;
+}): number {
+  const { attempt, detail, retryAfterMs = null } = opts;
+  if (retryAfterMs !== null) return retryAfterMs;
+
+  const baseDelayMs = isCloudflareEdge52xDetail(detail)
+    ? CLOUDFLARE_EDGE_52X_RETRY_BASE_DELAY_MS
+    : DEFAULT_TRANSIENT_RETRY_BASE_DELAY_MS;
+
+  return baseDelayMs * 2 ** (attempt - 1);
 }
 
 // ── Pre-stream conflict routing ─────────────────────────────────────

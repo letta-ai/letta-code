@@ -32,6 +32,7 @@ import {
   extractConflictDetail,
   fetchRunErrorDetail,
   getPreStreamErrorAction,
+  getTransientRetryDelayMs,
   isApprovalPendingError,
   isEmptyResponseRetryable,
   isInvalidToolCallIdsError,
@@ -4142,7 +4143,11 @@ export default function App({
                       preStreamError.headers?.get("retry-after"),
                     )
                   : null;
-              const delayMs = retryAfterMs ?? 1000 * 2 ** (attempt - 1);
+              const delayMs = getTransientRetryDelayMs({
+                attempt,
+                detail: errorDetail,
+                retryAfterMs,
+              });
 
               // Log the error that triggered the retry
               telemetry.trackError(
@@ -5397,7 +5402,10 @@ export default function App({
           ) {
             llmApiErrorRetriesRef.current += 1;
             const attempt = llmApiErrorRetriesRef.current;
-            const delayMs = 1000 * 2 ** (attempt - 1); // 1s, 2s, 4s
+            const delayMs = getTransientRetryDelayMs({
+              attempt,
+              detail: detailFromRun ?? fallbackError,
+            });
 
             // Log the error that triggered the retry
             telemetry.trackError(

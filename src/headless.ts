@@ -12,6 +12,7 @@ import {
   extractConflictDetail,
   fetchRunErrorDetail,
   getPreStreamErrorAction,
+  getTransientRetryDelayMs,
   isApprovalPendingError,
   isEmptyResponseRetryable,
   isInvalidToolCallIdsError,
@@ -1579,7 +1580,11 @@ ${SYSTEM_REMINDER_CLOSE}
                   preStreamError.headers?.get("retry-after"),
                 )
               : null;
-          const delayMs = retryAfterMs ?? 1000 * 2 ** (attempt - 1);
+          const delayMs = getTransientRetryDelayMs({
+            attempt,
+            detail: errorDetail,
+            retryAfterMs,
+          });
 
           llmApiErrorRetries = attempt;
 
@@ -1910,8 +1915,10 @@ ${SYSTEM_REMINDER_CLOSE}
       if (stopReason === "llm_api_error") {
         if (llmApiErrorRetries < LLM_API_ERROR_MAX_RETRIES) {
           const attempt = llmApiErrorRetries + 1;
-          const baseDelayMs = 1000;
-          const delayMs = baseDelayMs * 2 ** (attempt - 1);
+          const delayMs = getTransientRetryDelayMs({
+            attempt,
+            detail: detailFromRun,
+          });
 
           llmApiErrorRetries = attempt;
 
@@ -2075,8 +2082,10 @@ ${SYSTEM_REMINDER_CLOSE}
 
           if (shouldRetryRunMetadataError(errorType, detail)) {
             const attempt = llmApiErrorRetries + 1;
-            const baseDelayMs = 1000;
-            const delayMs = baseDelayMs * 2 ** (attempt - 1);
+            const delayMs = getTransientRetryDelayMs({
+              attempt,
+              detail,
+            });
 
             llmApiErrorRetries = attempt;
 
@@ -3169,7 +3178,11 @@ async function runBidirectionalMode(
                       preStreamError.headers?.get("retry-after"),
                     )
                   : null;
-              const delayMs = retryAfterMs ?? 1000 * 2 ** (attempt - 1);
+              const delayMs = getTransientRetryDelayMs({
+                attempt,
+                detail: errorDetail,
+                retryAfterMs,
+              });
               preStreamTransientRetries = attempt;
 
               const retryMsg: RetryMessage = {
