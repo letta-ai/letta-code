@@ -278,6 +278,7 @@ type ToolExecutionContextSnapshot = {
   toolRegistry: ToolRegistry;
   externalTools: Map<string, ExternalToolDefinition>;
   externalExecutor?: ExternalToolExecutor;
+  workingDirectory: string;
 };
 
 export type CapturedToolExecutionContext = {
@@ -586,11 +587,14 @@ export function getClientToolsFromRegistry(): ClientTool[] {
  * The returned context id can be used later to execute tool calls against this
  * exact snapshot even if the global registry changes between dispatch and execute.
  */
-export function captureToolExecutionContext(): CapturedToolExecutionContext {
+export function captureToolExecutionContext(
+  workingDirectory: string = process.env.USER_CWD || process.cwd(),
+): CapturedToolExecutionContext {
   const snapshot: ToolExecutionContextSnapshot = {
     toolRegistry: new Map(toolRegistry),
     externalTools: new Map(getExternalToolsRegistry()),
     externalExecutor: getExternalToolExecutor(),
+    workingDirectory,
   };
   const contextId = saveExecutionContext(snapshot);
 
@@ -613,6 +617,27 @@ export function captureToolExecutionContext(): CapturedToolExecutionContext {
     contextId,
     clientTools: [...builtInTools, ...externalTools],
   };
+}
+
+async function withExecutionWorkingDirectory<T>(
+  workingDirectory: string | undefined,
+  fn: () => Promise<T>,
+): Promise<T> {
+  if (!workingDirectory) {
+    return fn();
+  }
+
+  const previousUserCwd = process.env.USER_CWD;
+  process.env.USER_CWD = workingDirectory;
+  try {
+    return await fn();
+  } finally {
+    if (previousUserCwd === undefined) {
+      delete process.env.USER_CWD;
+    } else {
+      process.env.USER_CWD = previousUserCwd;
+    }
+  }
 }
 
 /**
@@ -1158,6 +1183,7 @@ export async function executeTool(
     context?.externalTools ?? getExternalToolsRegistry();
   const activeExternalExecutor =
     context?.externalExecutor ?? getExternalToolExecutor();
+  const workingDirectory = context?.workingDirectory;
 
   // Check if this is an external tool (SDK-executed)
   if (activeExternalTools.has(name)) {
@@ -1192,6 +1218,7 @@ export async function executeTool(
     internalName,
     args as Record<string, unknown>,
     options?.toolCallId,
+    workingDirectory,
   );
   if (preHookResult.blocked) {
     const feedback = preHookResult.feedback.join("\n") || "Blocked by hook";
@@ -1229,7 +1256,9 @@ export async function executeTool(
       enhancedArgs = { ...enhancedArgs, toolCallId: options.toolCallId };
     }
 
-    const result = await tool.fn(enhancedArgs);
+    const result = await withExecutionWorkingDirectory(workingDirectory, () =>
+      tool.fn(enhancedArgs),
+    );
     const duration = Date.now() - startTime;
 
     // Extract stdout/stderr if present (for bash tools)
@@ -1271,7 +1300,7 @@ export async function executeTool(
           output: getDisplayableToolReturn(flattenedResponse),
         },
         options?.toolCallId,
-        undefined, // workingDirectory
+        workingDirectory,
         undefined, // agentId
         undefined, // precedingReasoning - not available in tool manager context
         undefined, // precedingAssistantMessage - not available in tool manager context
@@ -1295,7 +1324,7 @@ export async function executeTool(
           errorOutput,
           "tool_error", // error type for returned errors
           options?.toolCallId,
-          undefined, // workingDirectory
+          workingDirectory,
           undefined, // agentId
           undefined, // precedingReasoning - not available in tool manager context
           undefined, // precedingAssistantMessage - not available in tool manager context
@@ -1378,7 +1407,7 @@ export async function executeTool(
         args as Record<string, unknown>,
         { status: "error", output: errorMessage },
         options?.toolCallId,
-        undefined, // workingDirectory
+        workingDirectory,
         undefined, // agentId
         undefined, // precedingReasoning - not available in tool manager context
         undefined, // precedingAssistantMessage - not available in tool manager context
@@ -1397,7 +1426,7 @@ export async function executeTool(
         errorMessage,
         errorType,
         options?.toolCallId,
-        undefined, // workingDirectory
+        workingDirectory,
         undefined, // agentId
         undefined, // precedingReasoning - not available in tool manager context
         undefined, // precedingAssistantMessage - not available in tool manager context

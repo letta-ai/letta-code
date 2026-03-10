@@ -4,7 +4,7 @@
  * and only sends hunks, which is sufficient for rendering.
  */
 
-import { basename } from "node:path";
+import path, { basename } from "node:path";
 import type { AdvancedDiffResult, AdvancedHunk } from "../cli/helpers/diff";
 import type { DiffHunk, DiffHunkLine, DiffPreview } from "../types/protocol";
 
@@ -124,6 +124,7 @@ async function getDiffDeps(): Promise<DiffDeps> {
 export async function computeDiffPreviews(
   toolName: string,
   toolArgs: Record<string, unknown>,
+  workingDirectory: string = process.env.USER_CWD || process.cwd(),
 ): Promise<DiffPreview[]> {
   const {
     computeAdvancedDiff,
@@ -139,9 +140,12 @@ export async function computeDiffPreviews(
     if (isFileWriteTool(toolName)) {
       const filePath = toolArgs.file_path as string | undefined;
       if (filePath) {
+        const resolvedFilePath = path.isAbsolute(filePath)
+          ? filePath
+          : path.resolve(workingDirectory, filePath);
         const result = computeAdvancedDiff({
           kind: "write",
-          filePath,
+          filePath: resolvedFilePath,
           content: (toolArgs.content as string) || "",
         });
         previews.push(toDiffPreview(result, basename(filePath)));
@@ -149,10 +153,13 @@ export async function computeDiffPreviews(
     } else if (isFileEditTool(toolName)) {
       const filePath = toolArgs.file_path as string | undefined;
       if (filePath) {
+        const resolvedFilePath = path.isAbsolute(filePath)
+          ? filePath
+          : path.resolve(workingDirectory, filePath);
         if (toolArgs.edits && Array.isArray(toolArgs.edits)) {
           const result = computeAdvancedDiff({
             kind: "multi_edit",
-            filePath,
+            filePath: resolvedFilePath,
             edits: toolArgs.edits as Array<{
               old_string: string;
               new_string: string;
@@ -163,7 +170,7 @@ export async function computeDiffPreviews(
         } else {
           const result = computeAdvancedDiff({
             kind: "edit",
-            filePath,
+            filePath: resolvedFilePath,
             oldString: (toolArgs.old_string as string) || "",
             newString: (toolArgs.new_string as string) || "",
             replaceAll: toolArgs.replace_all as boolean | undefined,

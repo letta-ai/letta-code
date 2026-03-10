@@ -1,4 +1,7 @@
 import { describe, expect, it } from "bun:test";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import type {
   AdvancedDiffFallback,
   AdvancedDiffSuccess,
@@ -212,5 +215,33 @@ describe("computeDiffPreviews", () => {
     const previews = await computeDiffPreviews("apply_patch", { input: patch });
     expect(previews).toHaveLength(2);
     expect(previews.map((p) => p.fileName).sort()).toEqual(["a.txt", "b.txt"]);
+  });
+
+  it("resolves relative file paths against the provided working directory", async () => {
+    const tempRoot = await mkdtemp(
+      path.join(os.tmpdir(), "letta-diff-preview-"),
+    );
+    const workspaceDir = path.join(tempRoot, "workspace");
+    const nestedDir = path.join(workspaceDir, "nested");
+    const targetFile = path.join(nestedDir, "sample.txt");
+    await mkdir(nestedDir, { recursive: true });
+    await writeFile(targetFile, "old content", "utf8");
+
+    try {
+      const previews = await computeDiffPreviews(
+        "edit",
+        {
+          file_path: "nested/sample.txt",
+          old_string: "old content",
+          new_string: "new content",
+        },
+        workspaceDir,
+      );
+      expect(previews).toHaveLength(1);
+      expect(previews[0]?.mode).toBe("advanced");
+      expect(previews[0]?.fileName).toBe("sample.txt");
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
   });
 });
