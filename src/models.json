@@ -1,4 +1,5 @@
-[
+{
+  "models": [
   {
     "id": "auto",
     "handle": "letta/auto",
@@ -1429,4 +1430,6 @@
       "parallel_tool_calls": true
     }
   }
-]
+
+  ]
+}
