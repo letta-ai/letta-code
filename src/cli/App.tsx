@@ -12487,16 +12487,6 @@ ${SYSTEM_REMINDER_CLOSE}
         if (hasUsablePlan) {
           // User likely cycled out of plan mode (e.g., Shift+Tab to acceptEdits/yolo)
           // Keep approval flow alive and let ExitPlanMode proceed using fallback plan path.
-          const statusId = uid("status");
-          buffersRef.current.byId.set(statusId, {
-            kind: "status",
-            id: statusId,
-            lines: [
-              "ℹ️ Plan mode switched, continuing ExitPlanMode with saved plan file",
-            ],
-          });
-          buffersRef.current.order.push(statusId);
-          refreshDerived();
           return;
         }
 
