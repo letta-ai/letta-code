@@ -2,7 +2,7 @@ export type SharedReminderMode =
   | "interactive"
   | "headless-one-shot"
   | "headless-bidirectional"
-  | "listener"
+  | "listen"
   | "subagent";
 
 export type SharedReminderId =
@@ -53,7 +53,7 @@ export const SHARED_REMINDER_CATALOG: ReadonlyArray<SharedReminderDefinition> =
         "interactive",
         "headless-one-shot",
         "headless-bidirectional",
-        "listener",
+        "listen",
       ],
     },
     {
@@ -63,7 +63,7 @@ export const SHARED_REMINDER_CATALOG: ReadonlyArray<SharedReminderDefinition> =
         "interactive",
         "headless-one-shot",
         "headless-bidirectional",
-        "listener",
+        "listen",
       ],
     },
     {

@@ -43,7 +43,7 @@ import {
   buildSharedReminderParts,
   prependReminderPartsToContent,
 } from "../reminders/engine";
-import { buildListenerReminderContext } from "../reminders/listenerContext";
+import { buildListenReminderContext } from "../reminders/listenContext";
 import { getPlanModeReminder } from "../reminders/planModeReminder";
 import {
   createSharedReminderState,
@@ -2582,7 +2582,7 @@ async function handleIncomingMessage(
 
     if (!isApprovalMessage) {
       const { parts: reminderParts } = await buildSharedReminderParts(
-        buildListenerReminderContext({
+        buildListenReminderContext({
           agentId: agentId || "",
           state: runtime.reminderState,
           resolvePlanModeReminder: getPlanModeReminder,

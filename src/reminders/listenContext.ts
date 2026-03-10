@@ -3,23 +3,23 @@ import type { SharedReminderContext } from "./engine";
 import type { SharedReminderState } from "./state";
 
 // hardcoded for now as we only need plan mode reminder for listener mode
-const LISTENER_REFLECTION_SETTINGS: ReflectionSettings = {
+const LISTEN_REFLECTION_SETTINGS: ReflectionSettings = {
   trigger: "off",
   behavior: "reminder",
   stepCount: 25,
 };
 
-interface BuildListenerReminderContextParams {
+interface BuildListenReminderContextParams {
   agentId: string;
   state: SharedReminderState;
   resolvePlanModeReminder: () => string | Promise<string>;
 }
 
-export function buildListenerReminderContext(
-  params: BuildListenerReminderContextParams,
+export function buildListenReminderContext(
+  params: BuildListenReminderContextParams,
 ): SharedReminderContext {
   return {
-    mode: "listener",
+    mode: "listen",
     agent: {
       id: params.agentId,
       name: null,
@@ -28,7 +28,7 @@ export function buildListenerReminderContext(
     },
     state: params.state,
     sessionContextReminderEnabled: false,
-    reflectionSettings: LISTENER_REFLECTION_SETTINGS,
+    reflectionSettings: LISTEN_REFLECTION_SETTINGS,
     skillSources: [],
     resolvePlanModeReminder: params.resolvePlanModeReminder,
   };
