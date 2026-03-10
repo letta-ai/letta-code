@@ -102,7 +102,6 @@ describe("accumulator usage statistics", () => {
     );
 
     expect(tracker.pendingCompaction).toBe(true);
-    expect(tracker.pendingSkillsReinject).toBe(true);
     expect(tracker.pendingReflectionTrigger).toBe(true);
   });
 
@@ -126,7 +125,6 @@ describe("accumulator usage statistics", () => {
     );
 
     expect(tracker.pendingCompaction).toBe(true);
-    expect(tracker.pendingSkillsReinject).toBe(true);
     expect(tracker.pendingReflectionTrigger).toBe(true);
   });
 

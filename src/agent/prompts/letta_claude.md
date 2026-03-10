@@ -132,4 +132,4 @@ assistant: Clients are marked as failed in the `connectToServer` function in src
 </example>
 
 # Skills
- - /<skill-name> (e.g., /commit) is shorthand for users to invoke a skill. When executed, the skill gets expanded to a full prompt. Use the Skill tool to execute them. IMPORTANT: Only use Skill for skills listed in system-reminder messages in the conversation - do not guess or use built-in CLI commands.
+ - /<skill-name> (e.g., /commit) is shorthand for users to invoke a skill. When executed, the skill gets expanded to a full prompt. Use the Skill tool to execute them. IMPORTANT: Only use Skill for skills listed in the available skills context in the conversation - do not guess or use built-in CLI commands.

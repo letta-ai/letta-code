@@ -21,6 +21,7 @@ import {
 } from "./agent/approval-recovery";
 import { handleBootstrapSessionState } from "./agent/bootstrapHandler";
 import { getClient } from "./agent/client";
+import { buildClientSkillsPayload } from "./agent/clientSkills";
 import { setAgentContext, setConversationId } from "./agent/context";
 import { createAgent } from "./agent/create";
 import { handleListMessages } from "./agent/listMessagesHandler";
@@ -1459,13 +1460,22 @@ ${SYSTEM_REMINDER_CLOSE}
   // Pre-load specific skills' full content (used by subagents with skills: field)
   if (preLoadSkillsRaw) {
     const { readFile: readFileAsync } = await import("node:fs/promises");
+    const { skillPathById } = await buildClientSkillsPayload({
+      agentId: agent.id,
+      skillSources: resolvedSkillSources,
+      logger: (message) => {
+        if (process.env.DEBUG) {
+          console.warn(`[DEBUG] ${message}`);
+        }
+      },
+    });
     const skillIds = preLoadSkillsRaw
       .split(",")
       .map((s) => s.trim())
       .filter(Boolean);
     const loadedContents: string[] = [];
     for (const skillId of skillIds) {
-      const skillPath = sharedReminderState.skillPathById[skillId];
+      const skillPath = skillPathById[skillId];
       if (!skillPath) continue;
       try {
         const content = await readFileAsync(skillPath, "utf-8");

@@ -8182,9 +8182,8 @@ export default function App({
             cmd.finish(outputLines.join("\n"), true);
 
             // Manual /compact bypasses stream compaction events, so trigger
-            // post-compaction reminder/skills reinjection on the next user turn.
+            // post-compaction reflection reminder/auto-launch on the next user turn.
             contextTrackerRef.current.pendingReflectionTrigger = true;
-            contextTrackerRef.current.pendingSkillsReinject = true;
           } catch (error) {
             let errorOutput: string;
 
