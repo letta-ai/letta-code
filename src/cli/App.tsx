@@ -1142,10 +1142,11 @@ export default function App({
       if (mode === "plan" && !permissionMode.getPlanFilePath()) {
         const planPath = generatePlanFilePath();
         permissionMode.setPlanFilePath(planPath);
+        rememberPlanFilePath(planPath);
       }
       permissionMode.setMode(mode);
     }
-  }, []);
+  }, [rememberPlanFilePath]);
 
   const statusLineTriggerVersionRef = useRef(0);
   const [statusLineTriggerVersion, setStatusLineTriggerVersion] = useState(0);
@@ -2592,6 +2593,11 @@ export default function App({
   // Store the last plan file path for post-approval rendering
   // (needed because plan mode is exited before rendering the result)
   const lastPlanFilePathRef = useRef<string | null>(null);
+  const rememberPlanFilePath = useCallback((planFilePath: string | null) => {
+    if (planFilePath) {
+      lastPlanFilePathRef.current = planFilePath;
+    }
+  }, []);
 
   // Track which approval tool call IDs have had their previews eagerly committed
   // This prevents double-committing when the approval changes
@@ -9293,6 +9299,7 @@ export default function App({
           // Generate plan file path and enter plan mode
           const planPath = generatePlanFilePath();
           permissionMode.setPlanFilePath(planPath);
+          rememberPlanFilePath(planPath);
           permissionMode.setMode("plan");
           setUiPermissionMode("plan");
 
@@ -12060,12 +12067,13 @@ ${SYSTEM_REMINDER_CLOSE}
       if (mode === "plan") {
         const planPath = generatePlanFilePath();
         permissionMode.setPlanFilePath(planPath);
+        rememberPlanFilePath(planPath);
       }
       // permissionMode.setMode() is called in InputRich.tsx before this callback
       setUiPermissionMode(mode);
       triggerStatusLineRefresh();
     },
-    [triggerStatusLineRefresh, setUiPermissionMode],
+    [triggerStatusLineRefresh, setUiPermissionMode, rememberPlanFilePath],
   );
 
   // Reasoning tier cycling (Tab hotkey in InputRich.tsx)
@@ -12624,6 +12632,7 @@ ${SYSTEM_REMINDER_CLOSE}
     // Toggle plan mode on and store plan file path
     permissionMode.setMode("plan");
     permissionMode.setPlanFilePath(planFilePath);
+    rememberPlanFilePath(planFilePath);
     setUiPermissionMode("plan");
 
     // Get the tool return message from the implementation
