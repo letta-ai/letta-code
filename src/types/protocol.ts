@@ -42,17 +42,15 @@ export type {
  * Use this to select a built-in system prompt with optional appended text.
  *
  * Available presets (validated at runtime by CLI):
- * - 'default' - Letta-tuned system prompt
- * - 'letta-claude' - Full Letta Code prompt (Claude-optimized)
- * - 'letta-codex' - Full Letta Code prompt (Codex-optimized)
- * - 'letta-gemini' - Full Letta Code prompt (Gemini-optimized)
- * - 'claude' - Basic Claude (no skills/memory instructions)
- * - 'codex' - Basic Codex (no skills/memory instructions)
- * - 'gemini' - Basic Gemini (no skills/memory instructions)
+ * - 'default' - Alias for letta
+ * - 'letta' - Full Letta Code system prompt
+ * - 'source-claude' - Source-faithful Claude Code prompt (for benchmarking)
+ * - 'source-codex' - Source-faithful OpenAI Codex prompt (for benchmarking)
+ * - 'source-gemini' - Source-faithful Gemini CLI prompt (for benchmarking)
  */
 export interface SystemPromptPresetConfig {
   type: "preset";
-  /** Preset ID (e.g., 'default', 'letta-codex'). Validated at runtime. */
+  /** Preset ID (e.g., 'default', 'letta', 'source-claude'). Validated at runtime. */
   preset: string;
   /** Additional instructions to append to the preset */
   append?: string;
