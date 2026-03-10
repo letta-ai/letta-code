@@ -53,6 +53,7 @@ export type SendMessageStreamOptions = {
   background?: boolean;
   agentId?: string; // Required when conversationId is "default"
   approvalNormalization?: ApprovalNormalizationOptions;
+  workingDirectory?: string;
 };
 
 export function buildConversationMessagesCreateRequestBody(
@@ -112,7 +113,9 @@ export async function sendMessageStream(
   // Wait for any in-progress toolset switch to complete before reading tools
   // This prevents sending messages with stale tools during a switch
   await waitForToolsetReady();
-  const { clientTools, contextId } = captureToolExecutionContext();
+  const { clientTools, contextId } = captureToolExecutionContext(
+    opts.workingDirectory,
+  );
 
   const resolvedConversationId = conversationId;
   const requestBody = buildConversationMessagesCreateRequestBody(
