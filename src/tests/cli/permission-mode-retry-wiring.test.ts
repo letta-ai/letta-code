@@ -89,4 +89,23 @@ describe("permission mode retry wiring", () => {
     expect(segment).toContain("conversationBusyRetriesRef.current = 0;");
     expect(segment).toContain("continue;");
   });
+
+  test("preserves saved plan path when approving ExitPlanMode after mode cycling", () => {
+    const source = readAppSource();
+
+    const start = source.indexOf("const handlePlanApprove = useCallback(");
+    const end = source.indexOf(
+      "useEffect(() => {\n    const currentIndex = approvalResults.length;",
+      start,
+    );
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+
+    const segment = source.slice(start, end);
+    expect(segment).toContain(
+      "permissionMode.getPlanFilePath() ?? lastPlanFilePathRef.current",
+    );
+    expect(segment).toContain("if (planFilePath) {");
+    expect(segment).toContain("lastPlanFilePathRef.current = planFilePath;");
+  });
 });

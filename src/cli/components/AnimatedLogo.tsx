@@ -137,7 +137,7 @@ function getSnapshot(): number {
 
 interface AnimatedLogoProps {
   color?: string;
-  /** When false, show static frame 0 (flat logo). Defaults to true. */
+  /** When false, show static frame 1 (logo with shadow). Defaults to true. */
   animate?: boolean;
 }
 
@@ -146,7 +146,7 @@ export function AnimatedLogo({
   animate = true,
 }: AnimatedLogoProps) {
   const tick = useSyncExternalStore(subscribe, getSnapshot);
-  const frame = animate ? tick % normalizedLogoFrames.length : 0;
+  const frame = animate ? tick % normalizedLogoFrames.length : 1;
 
   const logoLines = normalizedLogoFrames[frame]?.split("\n") ?? [];
 
