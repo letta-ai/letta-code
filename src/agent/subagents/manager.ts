@@ -9,6 +9,7 @@
 
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
+import { buildChatUrl } from "../../cli/helpers/appUrls";
 import {
   addToolCall,
   updateSubagent,
@@ -23,7 +24,6 @@ import { permissionMode } from "../../permissions/mode";
 import { sessionPermissions } from "../../permissions/session";
 import { settingsManager } from "../../settings-manager";
 import { resolveLettaInvocation } from "../../tools/impl/shellEnv";
-
 import { getErrorMessage } from "../../utils/error";
 import { getAvailableModelHandles } from "../available-models";
 import { getClient } from "../client";
@@ -248,12 +248,11 @@ function recordToolCall(
 function handleInitEvent(
   event: { agent_id?: string; conversation_id?: string },
   state: ExecutionState,
-  baseURL: string,
   subagentId: string,
 ): void {
   if (event.agent_id) {
     state.agentId = event.agent_id;
-    const agentURL = `${baseURL}/agents/${event.agent_id}`;
+    const agentURL = buildChatUrl(event.agent_id);
     updateSubagent(subagentId, { agentURL });
   }
   if (event.conversation_id) {
@@ -363,7 +362,6 @@ function handleResultEvent(
 function processStreamEvent(
   line: string,
   state: ExecutionState,
-  baseURL: string,
   subagentId: string,
 ): void {
   try {
@@ -374,7 +372,7 @@ function processStreamEvent(
       case "system":
         // Handle both legacy "init" type and new "system" type with subtype "init"
         if (event.type === "init" || event.subtype === "init") {
-          handleInitEvent(event, state, baseURL, subagentId);
+          handleInitEvent(event, state, subagentId);
         }
         break;
 
@@ -709,7 +707,7 @@ async function executeSubagent(
 
     rl.on("line", (line: string) => {
       stdoutChunks.push(Buffer.from(`${line}\n`));
-      processStreamEvent(line, state, baseURL, subagentId);
+      processStreamEvent(line, state, subagentId);
     });
 
     proc.stderr.on("data", (data: Buffer) => {
