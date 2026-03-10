@@ -5519,10 +5519,14 @@ export default function App({
           // When lastRunId is present, prefer the richer server-side error details below.
           if (fallbackError && !lastRunId) {
             setNetworkPhase("error");
-            const errorMsg = `Stream error: ${fallbackError}`;
+            const formattedFallback = formatErrorDetails(
+              fallbackError,
+              agentIdRef.current,
+            );
+            const errorMsg = `Stream error: ${formattedFallback}`;
             appendError(errorMsg, {
               errorType: "FallbackError",
-              errorMessage: fallbackError,
+              errorMessage: formatTelemetryErrorMessage(fallbackError),
               context: "message_stream",
             });
             appendError(ERROR_FEEDBACK_HINT, true);
