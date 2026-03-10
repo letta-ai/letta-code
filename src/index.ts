@@ -370,6 +370,10 @@ async function main(): Promise<void> {
   const { checkAndAutoUpdate } = await import("./updater/auto-update");
   const autoUpdatePromise = startStartupAutoUpdateCheck(checkAndAutoUpdate);
 
+  // Check Docker version for self-hosted users (non-blocking)
+  const { startDockerVersionCheck } = await import("./startup-docker-check");
+  startDockerVersionCheck().catch(() => {});
+
   // Clean up old overflow files (non-blocking, 24h retention)
   const { cleanupOldOverflowFiles } = await import("./tools/impl/overflow");
   Promise.resolve().then(() => {
