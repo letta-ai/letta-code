@@ -250,7 +250,7 @@ function getModelForToolLoading(
     return "openai/gpt-4";
   }
   if (specifiedToolset === "gemini") {
-    return "google/gemini-3-pro";
+    return "google_ai/gemini-3.1-pro-preview";
   }
   if (specifiedToolset === "default") {
     return "anthropic/claude-sonnet-4";
