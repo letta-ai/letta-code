@@ -8,6 +8,10 @@ import {
   getCachedModelHandles,
 } from "../../agent/available-models";
 import { models } from "../../agent/model";
+import {
+  listProviders,
+  type ProviderResponse,
+} from "../../providers/byok-providers";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
 import { Text } from "./Text";
@@ -26,7 +30,57 @@ type ModelCategory =
   | "server-all";
 
 // BYOK provider prefixes (ChatGPT OAuth + lc-* providers from /connect)
-const BYOK_PROVIDER_PREFIXES = ["chatgpt-plus-pro/", "lc-"];
+const STATIC_BYOK_PROVIDER_PREFIXES = ["chatgpt-plus-pro/", "lc-"];
+
+const PROVIDER_TYPE_TO_BASE_PROVIDER: Record<string, string> = {
+  chatgpt_oauth: "chatgpt-plus-pro",
+  anthropic: "anthropic",
+  openai: "openai",
+  zai: "zai",
+  google_ai: "google_ai",
+  google_vertex: "google_vertex",
+  minimax: "minimax",
+  openrouter: "openrouter",
+  bedrock: "bedrock",
+};
+
+export function buildByokProviderAliases(
+  providers: Array<Pick<ProviderResponse, "name" | "provider_type">>,
+): Record<string, string> {
+  const aliases: Record<string, string> = {
+    "lc-anthropic": "anthropic",
+    "lc-openai": "openai",
+    "lc-zai": "zai",
+    "lc-gemini": "google_ai",
+    "chatgpt-plus-pro": "chatgpt-plus-pro",
+  };
+
+  for (const provider of providers) {
+    const baseProvider = PROVIDER_TYPE_TO_BASE_PROVIDER[provider.provider_type];
+    if (baseProvider) {
+      aliases[provider.name] = baseProvider;
+    }
+  }
+
+  return aliases;
+}
+
+export function isByokHandleForSelector(
+  handle: string,
+  byokProviderAliases: Record<string, string>,
+): boolean {
+  if (
+    STATIC_BYOK_PROVIDER_PREFIXES.some((prefix) => handle.startsWith(prefix))
+  ) {
+    return true;
+  }
+
+  const slashIndex = handle.indexOf("/");
+  if (slashIndex === -1) return false;
+
+  const provider = handle.slice(0, slashIndex);
+  return provider in byokProviderAliases;
+}
 
 // Get tab order for model categories.
 // For self-hosted servers, only show server-specific tabs.
@@ -125,6 +179,9 @@ export function ModelSelector({
   const [isCached, setIsCached] = useState(cachedHandlesAtMount !== null);
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [byokProviderAliases, setByokProviderAliases] = useState<
+    Record<string, string>
+  >(() => buildByokProviderAliases([]));
 
   const mountedRef = useRef(true);
   useEffect(() => {
@@ -169,6 +226,19 @@ export function ModelSelector({
   useEffect(() => {
     loadModels.current(forceRefreshOnMount ?? false);
   }, [forceRefreshOnMount]);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const providers = await listProviders();
+        if (!mountedRef.current) return;
+        setByokProviderAliases(buildByokProviderAliases(providers));
+      } catch {
+        if (!mountedRef.current) return;
+        setByokProviderAliases(buildByokProviderAliases([]));
+      }
+    })();
+  }, []);
 
   const pickPreferredStaticModel = useCallback(
     (handle: string): UiModel | undefined => {
@@ -242,11 +312,10 @@ export function ModelSelector({
     pickPreferredStaticModel,
   ]);
 
-  // BYOK models: models from chatgpt-plus-pro or lc-* providers
+  // BYOK models: models from ChatGPT OAuth, standard lc-* providers, or any connected custom BYOK provider
   const isByokHandle = useCallback(
-    (handle: string) =>
-      BYOK_PROVIDER_PREFIXES.some((prefix) => handle.startsWith(prefix)),
-    [],
+    (handle: string) => isByokHandleForSelector(handle, byokProviderAliases),
+    [byokProviderAliases],
   );
 
   // Letta API (all): all non-BYOK handles from API, including recommended models.
@@ -291,32 +360,25 @@ export function ModelSelector({
     searchQuery,
   ]);
 
-  // Provider name mappings for BYOK -> models.json lookup
-  // Maps BYOK provider prefix to models.json provider prefix
-  const BYOK_PROVIDER_ALIASES: Record<string, string> = {
-    "lc-anthropic": "anthropic",
-    "lc-openai": "openai",
-    "lc-zai": "zai",
-    "lc-gemini": "google_ai",
-    "chatgpt-plus-pro": "chatgpt-plus-pro", // No change needed
-  };
-
   // Convert BYOK handle to base provider handle for models.json lookup
   // e.g., "lc-anthropic/claude-3-5-haiku" -> "anthropic/claude-3-5-haiku"
   // e.g., "lc-gemini/gemini-2.0-flash" -> "google_ai/gemini-2.0-flash"
-  const toBaseHandle = useCallback((handle: string): string => {
-    const slashIndex = handle.indexOf("/");
-    if (slashIndex === -1) return handle;
+  const toBaseHandle = useCallback(
+    (handle: string): string => {
+      const slashIndex = handle.indexOf("/");
+      if (slashIndex === -1) return handle;
 
-    const provider = handle.slice(0, slashIndex);
-    const model = handle.slice(slashIndex + 1);
-    const baseProvider = BYOK_PROVIDER_ALIASES[provider];
+      const provider = handle.slice(0, slashIndex);
+      const model = handle.slice(slashIndex + 1);
+      const baseProvider = byokProviderAliases[provider];
 
-    if (baseProvider) {
-      return `${baseProvider}/${model}`;
-    }
-    return handle;
-  }, []);
+      if (baseProvider) {
+        return `${baseProvider}/${model}`;
+      }
+      return handle;
+    },
+    [byokProviderAliases],
+  );
 
   // BYOK (recommended): BYOK API handles that have matching entries in models.json
   const byokModels = useMemo(() => {
