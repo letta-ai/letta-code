@@ -171,20 +171,13 @@ export async function applyMemfsFlags(
   noMemfsFlag: boolean | undefined,
   options?: ApplyMemfsFlagsOptions,
 ): Promise<ApplyMemfsFlagsResult> {
-  const { getServerUrl } = await import("./client");
   const { settingsManager } = await import("../settings-manager");
 
   // Validate explicit enable on supported backend.
-  if (memfsFlag) {
-    const serverUrl = getServerUrl();
-    if (
-      !serverUrl.includes("api.letta.com") &&
-      process.env.LETTA_MEMFS_LOCAL !== "1"
-    ) {
-      throw new Error(
-        "--memfs is only available on Letta Cloud (api.letta.com).",
-      );
-    }
+  if (memfsFlag && !(await isLettaCloud())) {
+    throw new Error(
+      "--memfs is only available on Letta Cloud (api.letta.com).",
+    );
   }
 
   const hasExplicitToggle = Boolean(memfsFlag || noMemfsFlag);
