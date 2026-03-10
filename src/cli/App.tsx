@@ -12372,8 +12372,11 @@ ${SYSTEM_REMINDER_CLOSE}
       const isLast = currentIndex + 1 >= pendingApprovals.length;
 
       // Capture plan file path BEFORE exiting plan mode (for post-approval rendering)
-      const planFilePath = permissionMode.getPlanFilePath();
-      lastPlanFilePathRef.current = planFilePath;
+      const planFilePath =
+        permissionMode.getPlanFilePath() ?? lastPlanFilePathRef.current;
+      if (planFilePath) {
+        lastPlanFilePathRef.current = planFilePath;
+      }
 
       // Exit plan mode
       const restoreMode = acceptEdits
