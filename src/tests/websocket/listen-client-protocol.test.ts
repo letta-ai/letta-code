@@ -6,6 +6,7 @@ import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/mes
 import WebSocket from "ws";
 import { buildConversationMessagesCreateRequestBody } from "../../agent/message";
 import { INTERRUPTED_BY_USER } from "../../constants";
+import type { MessageQueueItem } from "../../queue/queueRuntime";
 import type { ControlRequest, ControlResponseBody } from "../../types/protocol";
 import {
   __listenClientTestUtils,
@@ -241,6 +242,84 @@ describe("listen-client requestApprovalOverWS", () => {
       ),
     ).rejects.toThrow("send failed");
     expect(runtime.pendingApprovalResolvers.size).toBe(0);
+  });
+});
+
+describe("listen-client conversation-scoped protocol events", () => {
+  test("queue lifecycle events carry agent_id and conversation_id from the queued item", () => {
+    const runtime = __listenClientTestUtils.createRuntime();
+    const socket = new MockSocket(WebSocket.OPEN);
+    runtime.socket = socket as unknown as WebSocket;
+
+    const input: Omit<MessageQueueItem, "id" | "enqueuedAt"> = {
+      kind: "message",
+      source: "user",
+      content: "hello",
+      clientMessageId: "cm-queue-1",
+      agentId: "agent-default",
+      conversationId: "default",
+    };
+    const item = runtime.queueRuntime.enqueue(input);
+    expect(item).not.toBeNull();
+
+    runtime.queueRuntime.tryDequeue("runtime_busy");
+
+    const enqueued = JSON.parse(socket.sentPayloads[0] as string);
+    expect(enqueued.type).toBe("queue_item_enqueued");
+    expect(enqueued.agent_id).toBe("agent-default");
+    expect(enqueued.conversation_id).toBe("default");
+
+    const blocked = JSON.parse(socket.sentPayloads[1] as string);
+    expect(blocked.type).toBe("queue_blocked");
+    expect(blocked.agent_id).toBe("agent-default");
+    expect(blocked.conversation_id).toBe("default");
+  });
+
+  test("cancel_ack includes agent_id and conversation_id", () => {
+    const runtime = __listenClientTestUtils.createRuntime();
+    const socket = new MockSocket(WebSocket.OPEN);
+    runtime.activeAgentId = "agent-123";
+    runtime.activeConversationId = "default";
+    runtime.activeRunId = "run-123";
+
+    __listenClientTestUtils.emitCancelAck(
+      socket as unknown as WebSocket,
+      runtime,
+      {
+        requestId: "cancel-1",
+        accepted: true,
+      },
+    );
+
+    const sent = JSON.parse(socket.sentPayloads[0] as string);
+    expect(sent.type).toBe("cancel_ack");
+    expect(sent.agent_id).toBe("agent-123");
+    expect(sent.conversation_id).toBe("default");
+    expect(sent.run_id).toBe("run-123");
+  });
+
+  test("queue_batch_dequeued keeps the batch scope", () => {
+    const runtime = __listenClientTestUtils.createRuntime();
+    const socket = new MockSocket(WebSocket.OPEN);
+    runtime.socket = socket as unknown as WebSocket;
+
+    const input: Omit<MessageQueueItem, "id" | "enqueuedAt"> = {
+      kind: "message",
+      source: "user",
+      content: "hello",
+      clientMessageId: "cm-queue-2",
+      agentId: "agent-xyz",
+      conversationId: "conv-xyz",
+    };
+
+    runtime.queueRuntime.enqueue(input);
+
+    runtime.queueRuntime.tryDequeue(null);
+
+    const dequeued = JSON.parse(socket.sentPayloads[1] as string);
+    expect(dequeued.type).toBe("queue_batch_dequeued");
+    expect(dequeued.agent_id).toBe("agent-xyz");
+    expect(dequeued.conversation_id).toBe("conv-xyz");
   });
 });
 

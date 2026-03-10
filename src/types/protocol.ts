@@ -75,6 +75,10 @@ export interface MessageEnvelope {
   uuid: string;
   /** Monotonic per-session event sequence. Optional for backward compatibility. */
   event_seq?: number;
+  /** Agent that triggered this event. Used with default conversation scoping. */
+  agent_id?: string;
+  /** Conversation that triggered this event. Used for conversation-scoped filtering. */
+  conversation_id?: string;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -162,6 +166,8 @@ export type MessageWire = {
   type: "message";
   session_id: string;
   uuid: string;
+  agent_id?: string;
+  conversation_id?: string;
 } & LettaStreamingResponse;
 
 // ═══════════════════════════════════════════════════════════════
@@ -422,6 +428,10 @@ export interface ControlRequest {
   type: "control_request";
   request_id: string;
   request: ControlRequestBody;
+  /** Agent that triggered this control request. */
+  agent_id?: string;
+  /** Conversation that triggered this control request. */
+  conversation_id?: string;
 }
 
 // SDK → CLI request subtypes
