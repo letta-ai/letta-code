@@ -162,7 +162,7 @@ export function SetupUI({ onComplete }: SetupUIProps) {
   // Main menu
   return (
     <Box flexDirection="column" padding={1}>
-      <AnimatedLogo color={colors.welcome.accent} animate={false} />
+      <AnimatedLogo color={colors.welcome.accent} />
       <Text> </Text>
       <Text bold>Welcome to Letta Code!</Text>
       <Text> </Text>
