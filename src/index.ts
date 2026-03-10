@@ -1942,6 +1942,18 @@ async function main(): Promise<void> {
           ) {
             storedPreset = "custom";
             settingsManager.setSystemPromptPreset(agent.id, storedPreset);
+
+            // Notify user if their prompt is outdated
+            const { detectSystemPromptDrift } = await import(
+              "./agent/promptAssets"
+            );
+            const { formatDriftTip } = await import("./agent/promptTips");
+            const memoryMode = settingsManager.isMemfsEnabled(agent.id)
+              ? "memfs"
+              : "standard";
+            if (detectSystemPromptDrift(agent.system || "", memoryMode)) {
+              console.log(formatDriftTip());
+            }
           }
 
           if (storedPreset && storedPreset !== "custom") {
