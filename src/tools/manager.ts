@@ -1256,9 +1256,8 @@ export async function executeTool(
       enhancedArgs = { ...enhancedArgs, toolCallId: options.toolCallId };
     }
 
-    const result = await withExecutionWorkingDirectory(
-      workingDirectory,
-      () => tool.fn(enhancedArgs),
+    const result = await withExecutionWorkingDirectory(workingDirectory, () =>
+      tool.fn(enhancedArgs),
     );
     const duration = Date.now() - startTime;
 

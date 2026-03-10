@@ -3,10 +3,10 @@
  * Connects to Letta Cloud and receives messages to execute locally
  */
 
-import { APIError } from "@letta-ai/letta-client/core/error";
-import type { Stream } from "@letta-ai/letta-client/core/streaming";
 import { realpath, stat } from "node:fs/promises";
 import path from "node:path";
+import { APIError } from "@letta-ai/letta-client/core/error";
+import type { Stream } from "@letta-ai/letta-client/core/streaming";
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type {
   ApprovalCreate,
@@ -428,7 +428,9 @@ async function handleCwdChange(
         cwd: msg.cwd,
         success: false,
         error:
-          error instanceof Error ? error.message : "Working directory change failed",
+          error instanceof Error
+            ? error.message
+            : "Working directory change failed",
       },
       runtime,
     );

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
-import { mkdtemp, mkdir, realpath, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { join } from "node:path";
+import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import WebSocket from "ws";
 import { buildConversationMessagesCreateRequestBody } from "../../agent/message";
 import { INTERRUPTED_BY_USER } from "../../constants";

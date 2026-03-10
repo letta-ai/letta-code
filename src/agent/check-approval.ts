@@ -479,14 +479,11 @@ export async function getResumeData(
       // may not support this pattern)
       if (includeMessageHistory && isBackfillEnabled()) {
         try {
-          const messagesPage = await client.conversations.messages.list(
-            "default",
-            {
-              limit: BACKFILL_PAGE_LIMIT,
-              order: "desc",
-              agent_id: agent.id,
-            },
-          );
+          const messagesPage = await client.agents.messages.list(agent.id, {
+            conversation_id: "default",
+            limit: BACKFILL_PAGE_LIMIT,
+            order: "desc",
+          });
           messages = sortChronological(messagesPage.getPaginatedItems());
 
           if (process.env.DEBUG) {
