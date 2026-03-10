@@ -136,10 +136,26 @@ describe("init background subagent wiring", () => {
 
     expect(memfsMessage).toContain('subagent_type: "init"');
     expect(legacyMessage).toContain('subagent_type: "general-purpose"');
-    expect(memfsMessage).toContain("silent_completion: true");
+    expect(memfsMessage).not.toContain("silent_completion");
+    expect(legacyMessage).not.toContain("silent_completion");
     expect(legacyMessage).toContain('agent_id: "test-agent"');
     expect(memfsMessage).toContain(INIT_TASK_DESCRIPTION_STANDARD);
     expect(memfsMessage).toContain(INIT_TASK_DESCRIPTION_DEEP);
+  });
+
+  test("Task schema does not expose silent_completion", () => {
+    const schemaSource = readSource("../../tools/schemas/Task.json");
+    const schema = JSON.parse(schemaSource) as {
+      properties?: Record<string, unknown>;
+    };
+    expect(schema.properties?.silent_completion).toBeUndefined();
+  });
+
+  test("Task.ts defaults silent completion for init/reflection background workflows", () => {
+    const taskSource = readSource("../../tools/impl/Task.ts");
+    expect(taskSource).toContain("SILENT_COMPLETION_SUBAGENT_TYPES");
+    expect(taskSource).toContain('"init", "reflection"');
+    expect(taskSource).toContain("shouldDefaultSilentCompletion");
   });
 
   test("App.tsx contains maybeLaunchDeepInitSubagent", () => {

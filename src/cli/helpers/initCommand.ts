@@ -249,7 +249,6 @@ Task({
   subagent_type: "init",
   description: depth === "deep" ? "${INIT_TASK_DESCRIPTION_DEEP}" : "${INIT_TASK_DESCRIPTION_STANDARD}",
   run_in_background: true,
-  silent_completion: true,
   prompt: "<build from intake using the runtime template below>"
 })
 \`\`\`
@@ -272,7 +271,6 @@ Task({
   agent_id: "${args.agentId}",
   description: depth === "deep" ? "${INIT_TASK_DESCRIPTION_DEEP}" : "${INIT_TASK_DESCRIPTION_STANDARD}",
   run_in_background: true,
-  silent_completion: true,
   prompt: "<build from intake using the runtime template below>"
 })
 \`\`\`
@@ -304,7 +302,7 @@ Constraints:
 - Include a required depth question with exactly two options:
   - "Standard research" (maps to \`research_depth: shallow\`)
   - "Deep research" (maps to \`research_depth: deep\`)
-- Use \`run_in_background: true\` and \`silent_completion: true\`.
+- Use \`run_in_background: true\` (init/reflection background workflows use silent completion automatically).
 - Use exactly one of these Task descriptions:
   - ${INIT_TASK_DESCRIPTION_STANDARD}
   - ${INIT_TASK_DESCRIPTION_DEEP}
