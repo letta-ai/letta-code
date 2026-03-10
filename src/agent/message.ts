@@ -8,6 +8,7 @@ import type {
   ApprovalCreate,
   LettaStreamingResponse,
 } from "@letta-ai/letta-client/resources/agents/messages";
+import type { MessageCreateParams as ConversationMessageCreateParams } from "@letta-ai/letta-client/resources/conversations/messages";
 import {
   type ClientTool,
   captureToolExecutionContext,
@@ -19,6 +20,7 @@ import {
   normalizeOutgoingApprovalMessages,
 } from "./approval-result-normalization";
 import { getClient } from "./client";
+import { buildClientSkillsPayload } from "./clientSkills";
 
 const streamRequestStartTimes = new WeakMap<object, number>();
 const streamToolContextIds = new WeakMap<object, string>();
@@ -53,6 +55,7 @@ export type SendMessageStreamOptions = {
   background?: boolean;
   agentId?: string; // Required when conversationId is "default"
   approvalNormalization?: ApprovalNormalizationOptions;
+  workingDirectory?: string;
 };
 
 export function buildConversationMessagesCreateRequestBody(
@@ -60,6 +63,9 @@ export function buildConversationMessagesCreateRequestBody(
   messages: Array<MessageCreate | ApprovalCreate>,
   opts: SendMessageStreamOptions = { streamTokens: true, background: true },
   clientTools: ClientTool[],
+  clientSkills: NonNullable<
+    ConversationMessageCreateParams["client_skills"]
+  > = [],
 ) {
   const isDefaultConversation = conversationId === "default";
   if (isDefaultConversation && !opts.agentId) {
@@ -77,6 +83,7 @@ export function buildConversationMessagesCreateRequestBody(
     stream_tokens: opts.streamTokens ?? true,
     include_pings: true,
     background: opts.background ?? true,
+    client_skills: clientSkills,
     client_tools: clientTools,
     include_compaction_messages: true,
     ...(isDefaultConversation ? { agent_id: opts.agentId } : {}),
@@ -112,7 +119,13 @@ export async function sendMessageStream(
   // Wait for any in-progress toolset switch to complete before reading tools
   // This prevents sending messages with stale tools during a switch
   await waitForToolsetReady();
-  const { clientTools, contextId } = captureToolExecutionContext();
+  const { clientTools, contextId } = captureToolExecutionContext(
+    opts.workingDirectory,
+  );
+  const { clientSkills, errors: clientSkillDiscoveryErrors } =
+    await buildClientSkillsPayload({
+      agentId: opts.agentId,
+    });
 
   const resolvedConversationId = conversationId;
   const requestBody = buildConversationMessagesCreateRequestBody(
@@ -120,12 +133,30 @@ export async function sendMessageStream(
     messages,
     opts,
     clientTools,
+    clientSkills,
   );
 
   if (process.env.DEBUG) {
     console.log(
       `[DEBUG] sendMessageStream: conversationId=${conversationId}, agentId=${opts.agentId ?? "(none)"}`,
     );
+
+    const formattedSkills = clientSkills.map(
+      (skill) => `${skill.name} (${skill.location})`,
+    );
+    console.log(
+      `[DEBUG] sendMessageStream: client_skills (${clientSkills.length}) ${
+        formattedSkills.length > 0 ? formattedSkills.join(", ") : "(none)"
+      }`,
+    );
+
+    if (clientSkillDiscoveryErrors.length > 0) {
+      for (const error of clientSkillDiscoveryErrors) {
+        console.warn(
+          `[DEBUG] sendMessageStream: client_skills discovery error at ${error.path}: ${error.message}`,
+        );
+      }
+    }
   }
 
   const extraHeaders: Record<string, string> = {};

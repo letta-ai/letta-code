@@ -12,7 +12,6 @@ describe("contextTracker", () => {
       { timestamp: 1, tokens: 111, turnId: 1, compacted: true },
     ];
     tracker.pendingCompaction = true;
-    tracker.pendingSkillsReinject = true;
     tracker.pendingReflectionTrigger = true;
     tracker.currentTurnId = 9;
 
@@ -21,7 +20,6 @@ describe("contextTracker", () => {
     expect(tracker.lastContextTokens).toBe(0);
     expect(tracker.contextTokensHistory).toEqual([]);
     expect(tracker.pendingCompaction).toBe(false);
-    expect(tracker.pendingSkillsReinject).toBe(false);
     expect(tracker.pendingReflectionTrigger).toBe(false);
     expect(tracker.currentTurnId).toBe(9);
   });

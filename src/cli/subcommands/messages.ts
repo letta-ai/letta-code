@@ -159,12 +159,12 @@ export async function runMessagesSubcommand(argv: string[]): Promise<number> {
         return 1;
       }
 
-      const response = await client.conversations.messages.list("default", {
+      const response = await client.agents.messages.list(agentId, {
+        conversation_id: "default",
         limit: parseLimit(parsed.values.limit, 20),
         after: parsed.values.after,
         before: parsed.values.before,
         order,
-        agent_id: agentId,
       });
 
       const messages = response.getPaginatedItems() ?? [];

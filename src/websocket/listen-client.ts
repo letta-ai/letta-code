@@ -3,6 +3,8 @@
  * Connects to Letta Cloud and receives messages to execute locally
  */
 
+import { realpath, stat } from "node:fs/promises";
+import path from "node:path";
 import { APIError } from "@letta-ai/letta-client/core/error";
 import type { Stream } from "@letta-ai/letta-client/core/streaming";
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
@@ -161,6 +163,15 @@ interface GetStatusMessage {
 
 interface GetStateMessage {
   type: "get_state";
+  agentId?: string | null;
+  conversationId?: string | null;
+}
+
+interface ChangeCwdMessage {
+  type: "change_cwd";
+  agentId?: string | null;
+  conversationId?: string | null;
+  cwd: string;
 }
 
 interface CancelRunMessage {
@@ -192,6 +203,10 @@ interface StateResponseMessage {
   generated_at: string;
   state_seq: number;
   cwd: string;
+  configured_cwd: string;
+  active_turn_cwd: string | null;
+  cwd_agent_id: string | null;
+  cwd_conversation_id: string | null;
   mode: "default" | "acceptEdits" | "plan" | "bypassPermissions";
   is_processing: boolean;
   last_stop_reason: string | null;
@@ -227,6 +242,17 @@ interface StateResponseMessage {
   event_seq?: number;
 }
 
+interface CwdChangedMessage {
+  type: "cwd_changed";
+  agent_id: string | null;
+  conversation_id: string;
+  cwd: string;
+  success: boolean;
+  error?: string;
+  event_seq?: number;
+  session_id?: string;
+}
+
 type ServerMessage =
   | PongMessage
   | StatusMessage
@@ -234,6 +260,7 @@ type ServerMessage =
   | ModeChangeMessage
   | GetStatusMessage
   | GetStateMessage
+  | ChangeCwdMessage
   | CancelRunMessage
   | RecoverPendingApprovalsMessage
   | WsControlResponse;
@@ -242,6 +269,7 @@ type ClientMessage =
   | RunStartedMessage
   | RunRequestErrorMessage
   | ModeChangedMessage
+  | CwdChangedMessage
   | StatusResponseMessage
   | StateResponseMessage;
 
@@ -270,6 +298,7 @@ type ListenerRuntime = {
   /** Active run metadata for reconnect snapshot state. */
   activeAgentId: string | null;
   activeConversationId: string | null;
+  activeWorkingDirectory: string | null;
   activeRunId: string | null;
   activeRunStartedAt: string | null;
   /** Abort controller for the currently active message turn. */
@@ -315,6 +344,8 @@ type ListenerRuntime = {
    * Threaded into the next send for persistence normalization.
    */
   pendingInterruptedToolCallIds: string[] | null;
+  bootWorkingDirectory: string;
+  workingDirectoryByConversation: Map<string, string>;
 };
 
 // Listen mode supports one active connection per process.
@@ -358,6 +389,88 @@ function handleModeChange(msg: ModeChangeMessage, socket: WebSocket): void {
   }
 }
 
+function normalizeCwdAgentId(agentId?: string | null): string | null {
+  return agentId && agentId.length > 0 ? agentId : null;
+}
+
+function getWorkingDirectoryScopeKey(
+  agentId?: string | null,
+  conversationId?: string | null,
+): string {
+  const normalizedConversationId = normalizeConversationId(conversationId);
+  const normalizedAgentId = normalizeCwdAgentId(agentId);
+  if (normalizedConversationId === "default") {
+    return `agent:${normalizedAgentId ?? "__unknown__"}::conversation:default`;
+  }
+
+  return `conversation:${normalizedConversationId}`;
+}
+
+async function handleCwdChange(
+  msg: ChangeCwdMessage,
+  socket: WebSocket,
+  runtime: ListenerRuntime,
+): Promise<void> {
+  const conversationId = normalizeConversationId(msg.conversationId);
+  const agentId = normalizeCwdAgentId(msg.agentId);
+  const currentWorkingDirectory = getConversationWorkingDirectory(
+    runtime,
+    agentId,
+    conversationId,
+  );
+
+  try {
+    const requestedPath = msg.cwd?.trim();
+    if (!requestedPath) {
+      throw new Error("Working directory cannot be empty");
+    }
+
+    const resolvedPath = path.isAbsolute(requestedPath)
+      ? requestedPath
+      : path.resolve(currentWorkingDirectory, requestedPath);
+    const normalizedPath = await realpath(resolvedPath);
+    const stats = await stat(normalizedPath);
+    if (!stats.isDirectory()) {
+      throw new Error(`Not a directory: ${normalizedPath}`);
+    }
+
+    setConversationWorkingDirectory(
+      runtime,
+      agentId,
+      conversationId,
+      normalizedPath,
+    );
+    sendClientMessage(
+      socket,
+      {
+        type: "cwd_changed",
+        agent_id: agentId,
+        conversation_id: conversationId,
+        cwd: normalizedPath,
+        success: true,
+      },
+      runtime,
+    );
+    sendStateSnapshot(socket, runtime, agentId, conversationId);
+  } catch (error) {
+    sendClientMessage(
+      socket,
+      {
+        type: "cwd_changed",
+        agent_id: agentId,
+        conversation_id: conversationId,
+        cwd: msg.cwd,
+        success: false,
+        error:
+          error instanceof Error
+            ? error.message
+            : "Working directory change failed",
+      },
+      runtime,
+    );
+  }
+}
+
 const MAX_RETRY_DURATION_MS = 5 * 60 * 1000; // 5 minutes
 const INITIAL_RETRY_DELAY_MS = 1000; // 1 second
 const MAX_RETRY_DELAY_MS = 30000; // 30 seconds
@@ -392,6 +505,7 @@ function getQueueItemsScope(items: QueueItem[]): {
 }
 
 function createRuntime(): ListenerRuntime {
+  const bootWorkingDirectory = process.env.USER_CWD || process.cwd();
   const runtime: ListenerRuntime = {
     socket: null,
     heartbeatInterval: null,
@@ -406,6 +520,7 @@ function createRuntime(): ListenerRuntime {
     isProcessing: false,
     activeAgentId: null,
     activeConversationId: null,
+    activeWorkingDirectory: null,
     activeRunId: null,
     activeRunStartedAt: null,
     activeAbortController: null,
@@ -417,6 +532,8 @@ function createRuntime(): ListenerRuntime {
     continuationEpoch: 0,
     activeExecutingToolCallIds: [],
     pendingInterruptedToolCallIds: null,
+    bootWorkingDirectory,
+    workingDirectoryByConversation: new Map<string, string>(),
     coalescedSkipQueueItemIds: new Set<string>(),
     pendingTurns: 0,
     // queueRuntime assigned below — needs runtime ref in callbacks
@@ -500,6 +617,39 @@ function createRuntime(): ListenerRuntime {
   return runtime;
 }
 
+function normalizeConversationId(conversationId?: string | null): string {
+  return conversationId && conversationId.length > 0
+    ? conversationId
+    : "default";
+}
+
+function getConversationWorkingDirectory(
+  runtime: ListenerRuntime,
+  agentId?: string | null,
+  conversationId?: string | null,
+): string {
+  const scopeKey = getWorkingDirectoryScopeKey(agentId, conversationId);
+  return (
+    runtime.workingDirectoryByConversation.get(scopeKey) ??
+    runtime.bootWorkingDirectory
+  );
+}
+
+function setConversationWorkingDirectory(
+  runtime: ListenerRuntime,
+  agentId: string | null,
+  conversationId: string,
+  workingDirectory: string,
+): void {
+  const scopeKey = getWorkingDirectoryScopeKey(agentId, conversationId);
+  if (workingDirectory === runtime.bootWorkingDirectory) {
+    runtime.workingDirectoryByConversation.delete(scopeKey);
+    return;
+  }
+
+  runtime.workingDirectoryByConversation.set(scopeKey, workingDirectory);
+}
+
 function clearRuntimeTimers(runtime: ListenerRuntime): void {
   if (runtime.reconnectTimeout) {
     clearTimeout(runtime.reconnectTimeout);
@@ -514,6 +664,7 @@ function clearRuntimeTimers(runtime: ListenerRuntime): void {
 function clearActiveRunState(runtime: ListenerRuntime): void {
   runtime.activeAgentId = null;
   runtime.activeConversationId = null;
+  runtime.activeWorkingDirectory = null;
   runtime.activeRunId = null;
   runtime.activeRunStartedAt = null;
   runtime.activeAbortController = null;
@@ -653,6 +804,7 @@ export function parseServerMessage(
       parsed.type === "mode_change" ||
       parsed.type === "get_status" ||
       parsed.type === "get_state" ||
+      parsed.type === "change_cwd" ||
       parsed.type === "cancel_run" ||
       parsed.type === "recover_pending_approvals"
     ) {
@@ -730,7 +882,21 @@ function mergeDequeuedBatchContent(
 function buildStateResponse(
   runtime: ListenerRuntime,
   stateSeq: number,
+  agentId?: string | null,
+  conversationId?: string | null,
 ): StateResponseMessage {
+  const scopedAgentId = normalizeCwdAgentId(agentId);
+  const scopedConversationId = normalizeConversationId(conversationId);
+  const configuredWorkingDirectory = getConversationWorkingDirectory(
+    runtime,
+    scopedAgentId,
+    scopedConversationId,
+  );
+  const activeTurnWorkingDirectory =
+    runtime.activeAgentId === scopedAgentId &&
+    runtime.activeConversationId === scopedConversationId
+      ? runtime.activeWorkingDirectory
+      : null;
   const queueItems = runtime.queueRuntime.items.map((item) => ({
     id: item.id,
     client_message_id: item.clientMessageId ?? `cm-${item.id}`,
@@ -762,7 +928,11 @@ function buildStateResponse(
     generated_at: new Date().toISOString(),
     state_seq: stateSeq,
     event_seq: stateSeq,
-    cwd: process.env.USER_CWD || process.cwd(),
+    cwd: configuredWorkingDirectory,
+    configured_cwd: configuredWorkingDirectory,
+    active_turn_cwd: activeTurnWorkingDirectory,
+    cwd_agent_id: scopedAgentId,
+    cwd_conversation_id: scopedConversationId,
     mode: permissionMode.getMode(),
     is_processing: runtime.isProcessing,
     last_stop_reason: runtime.lastStopReason,
@@ -783,12 +953,22 @@ function buildStateResponse(
   };
 }
 
-function sendStateSnapshot(socket: WebSocket, runtime: ListenerRuntime): void {
+function sendStateSnapshot(
+  socket: WebSocket,
+  runtime: ListenerRuntime,
+  agentId?: string | null,
+  conversationId?: string | null,
+): void {
   const stateSeq = nextEventSeq(runtime);
   if (stateSeq === null) {
     return;
   }
-  const stateResponse = buildStateResponse(runtime, stateSeq);
+  const stateResponse = buildStateResponse(
+    runtime,
+    stateSeq,
+    agentId,
+    conversationId,
+  );
   sendClientMessage(socket, stateResponse, runtime);
 }
 
@@ -1553,6 +1733,13 @@ async function resolveStaleApprovals(
       agentId: runtime.activeAgentId,
       streamTokens: true,
       background: true,
+      workingDirectory:
+        runtime.activeWorkingDirectory ??
+        getConversationWorkingDirectory(
+          runtime,
+          runtime.activeAgentId,
+          recoveryConversationId,
+        ),
     },
     { maxRetries: 0, signal: abortSignal },
   );
@@ -1800,6 +1987,17 @@ async function recoverPendingApprovals(
 
     const requestedConversationId = msg.conversationId || undefined;
     const conversationId = requestedConversationId ?? "default";
+    const recoveryAgentId = normalizeCwdAgentId(agentId);
+    const recoveryWorkingDirectory =
+      runtime.activeAgentId === recoveryAgentId &&
+      runtime.activeConversationId === conversationId &&
+      runtime.activeWorkingDirectory
+        ? runtime.activeWorkingDirectory
+        : getConversationWorkingDirectory(
+            runtime,
+            recoveryAgentId,
+            conversationId,
+          );
 
     const client = await getClient();
     const agent = await client.agents.retrieve(agentId);
@@ -1865,6 +2063,7 @@ async function recoverPendingApprovals(
         alwaysRequiresUserInput: isInteractiveApprovalTool,
         treatAskAsDeny: false,
         requireArgsForAutoApprove: true,
+        workingDirectory: recoveryWorkingDirectory,
       },
     );
 
@@ -1911,6 +2110,7 @@ async function recoverPendingApprovals(
         const diffs = await computeDiffPreviews(
           ac.approval.toolName,
           ac.parsedArgs,
+          recoveryWorkingDirectory,
         );
 
         const controlRequest: ControlRequest = {
@@ -1988,7 +2188,9 @@ async function recoverPendingApprovals(
       return;
     }
 
-    const executionResults = await executeApprovalBatch(decisions);
+    const executionResults = await executeApprovalBatch(decisions, undefined, {
+      workingDirectory: recoveryWorkingDirectory,
+    });
     clearPendingApprovalBatchIds(
       runtime,
       decisions.map((decision) => decision.approval),
@@ -2172,6 +2374,15 @@ async function connectWithRetry(
       return;
     }
 
+    if (parsed.type === "change_cwd") {
+      if (runtime !== activeRuntime || runtime.intentionallyClosed) {
+        return;
+      }
+
+      void handleCwdChange(parsed, socket, runtime);
+      return;
+    }
+
     // Handle status request from cloud (immediate response)
     if (parsed.type === "get_status") {
       if (runtime !== activeRuntime || runtime.intentionallyClosed) {
@@ -2276,12 +2487,21 @@ async function connectWithRetry(
       if (runtime !== activeRuntime || runtime.intentionallyClosed) {
         return;
       }
+      const requestedConversationId = normalizeConversationId(
+        parsed.conversationId,
+      );
+      const requestedAgentId = normalizeCwdAgentId(parsed.agentId);
 
       // If we're blocked on an approval callback, don't queue behind the
       // pending turn; respond immediately so refreshed clients can render the
       // approval card needed to unblock execution.
       if (runtime.pendingApprovalResolvers.size > 0) {
-        sendStateSnapshot(socket, runtime);
+        sendStateSnapshot(
+          socket,
+          runtime,
+          requestedAgentId,
+          requestedConversationId,
+        );
         return;
       }
 
@@ -2293,7 +2513,12 @@ async function connectWithRetry(
             return;
           }
 
-          sendStateSnapshot(socket, runtime);
+          sendStateSnapshot(
+            socket,
+            runtime,
+            requestedAgentId,
+            requestedConversationId,
+          );
         })
         .catch((error: unknown) => {
           if (process.env.DEBUG) {
@@ -2570,6 +2795,12 @@ async function handleIncomingMessage(
   const agentId = msg.agentId;
   const requestedConversationId = msg.conversationId || undefined;
   const conversationId = requestedConversationId ?? "default";
+  const normalizedAgentId = normalizeCwdAgentId(agentId);
+  const turnWorkingDirectory = getConversationWorkingDirectory(
+    runtime,
+    normalizedAgentId,
+    conversationId,
+  );
   const msgStartTime = performance.now();
   let msgTurnCount = 0;
   const msgRunIds: string[] = [];
@@ -2586,6 +2817,7 @@ async function handleIncomingMessage(
   runtime.activeAbortController = new AbortController();
   runtime.activeAgentId = agentId ?? null;
   runtime.activeConversationId = conversationId;
+  runtime.activeWorkingDirectory = turnWorkingDirectory;
   runtime.activeRunId = null;
   runtime.activeRunStartedAt = new Date().toISOString();
   runtime.activeExecutingToolCallIds = [];
@@ -2629,6 +2861,7 @@ async function handleIncomingMessage(
       agentId,
       streamTokens: true,
       background: true,
+      workingDirectory: turnWorkingDirectory,
       ...(queuedInterruptedToolCallIds.length > 0
         ? {
             approvalNormalization: {
@@ -2922,6 +3155,7 @@ async function handleIncomingMessage(
           alwaysRequiresUserInput: isInteractiveApprovalTool,
           treatAskAsDeny: false, // Let cloud UI handle approvals
           requireArgsForAutoApprove: true,
+          workingDirectory: turnWorkingDirectory,
         });
 
       // Snapshot all tool_call_ids before entering approval wait so cancel can
@@ -2994,6 +3228,7 @@ async function handleIncomingMessage(
           const diffs = await computeDiffPreviews(
             ac.approval.toolName,
             ac.parsedArgs,
+            turnWorkingDirectory,
           );
 
           const controlRequest: ControlRequest = {
@@ -3084,6 +3319,7 @@ async function handleIncomingMessage(
         {
           toolContextId: turnToolContextId ?? undefined,
           abortSignal: runtime.activeAbortController.signal,
+          workingDirectory: turnWorkingDirectory,
         },
       );
       const persistedExecutionResults =
@@ -3257,13 +3493,16 @@ export const __listenClientTestUtils = {
   createRuntime,
   stopRuntime,
   buildStateResponse,
+  handleCwdChange,
   emitToWS,
   emitCancelAck,
+  getConversationWorkingDirectory,
   rememberPendingApprovalBatchIds,
   resolvePendingApprovalBatchId,
   resolveRecoveryBatchId,
   clearPendingApprovalBatchIds,
   populateInterruptQueue,
+  setConversationWorkingDirectory,
   consumeInterruptQueue,
   extractInterruptToolReturns,
   emitInterruptToolReturnMessage,
