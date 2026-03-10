@@ -2606,7 +2606,7 @@ async function handleIncomingMessage(
       onStatusChange?.("processing", connectionId);
     }
 
-    let messagesToSend: Array<MessageCreate | ApprovalCreate> = [];
+    const messagesToSend: Array<MessageCreate | ApprovalCreate> = [];
     let turnToolContextId: string | null = null;
     let queuedInterruptedToolCallIds: string[] = [];
     let shouldClearSubmittedApprovalTracking = false;
@@ -2701,12 +2701,10 @@ async function handleIncomingMessage(
 
       lastExecutionResults = rebuiltApprovals;
       shouldClearSubmittedApprovalTracking = true;
-      messagesToSend = [
-        {
-          type: "approval",
-          approvals: rebuiltApprovals,
-        },
-      ];
+      messagesToSend.push({
+        type: "approval",
+        approvals: rebuiltApprovals,
+      });
       // Emit terminal tool outcomes immediately so WS consumers can close
       // tool-call UI state without waiting for follow-up hydration.
       emitInterruptToolReturnMessage(
