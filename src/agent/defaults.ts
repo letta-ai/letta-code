@@ -103,7 +103,7 @@ export async function ensureDefaultAgents(
     // Enable memfs on Letta Cloud (tags, repo clone, tool detach).
     // Prompt swap is skipped since the agent was created with the correct mode.
     if (willAutoEnableMemfs) {
-      await enableMemfsIfCloud(agent.id, { skipPromptSwap: true });
+      await enableMemfsIfCloud(agent.id);
     }
 
     return agent;

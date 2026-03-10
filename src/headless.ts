@@ -830,7 +830,7 @@ export async function handleHeadlessCommand(
     // Prompt swap is skipped since the agent was created with the correct mode.
     if (willAutoEnableMemfs) {
       const { enableMemfsIfCloud } = await import("./agent/memoryFilesystem");
-      await enableMemfsIfCloud(agent.id, { skipPromptSwap: true });
+      await enableMemfsIfCloud(agent.id);
     }
   }
 

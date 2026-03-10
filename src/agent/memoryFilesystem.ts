@@ -299,18 +299,15 @@ export async function isLettaCloud(): Promise<boolean> {
  * Enable memfs for a newly created agent if on Letta Cloud.
  * Non-fatal: logs a warning on failure. Skips on self-hosted.
  *
- * When `skipPromptSwap` is true, the system prompt update is skipped
- * (useful when the agent was already created with the correct memory mode).
+ * Skips the system prompt update since callers are expected to create
+ * the agent with the correct memory mode upfront.
  */
-export async function enableMemfsIfCloud(
-  agentId: string,
-  options?: { skipPromptSwap?: boolean },
-): Promise<void> {
+export async function enableMemfsIfCloud(agentId: string): Promise<void> {
   if (!(await isLettaCloud())) return;
 
   try {
     await applyMemfsFlags(agentId, true, undefined, {
-      skipPromptUpdate: options?.skipPromptSwap,
+      skipPromptUpdate: true,
     });
   } catch (error) {
     console.warn(

@@ -1637,7 +1637,7 @@ async function main(): Promise<void> {
             const { enableMemfsIfCloud } = await import(
               "./agent/memoryFilesystem"
             );
-            await enableMemfsIfCloud(agent.id, { skipPromptSwap: true });
+            await enableMemfsIfCloud(agent.id);
           }
         }
 
