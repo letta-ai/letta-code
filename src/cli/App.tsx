@@ -1127,6 +1127,16 @@ export default function App({
     permissionMode.getMode(),
   );
   const uiPermissionModeRef = useRef<PermissionMode>(uiPermissionMode);
+
+  // Store the last plan file path for post-approval rendering
+  // (needed because plan mode is exited before rendering the result)
+  const lastPlanFilePathRef = useRef<string | null>(null);
+  const rememberPlanFilePath = useCallback((planFilePath: string | null) => {
+    if (planFilePath) {
+      lastPlanFilePathRef.current = planFilePath;
+    }
+  }, []);
+
   const setUiPermissionMode = useCallback((mode: PermissionMode) => {
     uiPermissionModeRef.current = mode;
     _setUiPermissionMode(mode);
@@ -2589,15 +2599,6 @@ export default function App({
   const precomputedDiffsRef = useRef<Map<string, AdvancedDiffSuccess>>(
     new Map(),
   );
-
-  // Store the last plan file path for post-approval rendering
-  // (needed because plan mode is exited before rendering the result)
-  const lastPlanFilePathRef = useRef<string | null>(null);
-  const rememberPlanFilePath = useCallback((planFilePath: string | null) => {
-    if (planFilePath) {
-      lastPlanFilePathRef.current = planFilePath;
-    }
-  }, []);
 
   // Track which approval tool call IDs have had their previews eagerly committed
   // This prevents double-committing when the approval changes
