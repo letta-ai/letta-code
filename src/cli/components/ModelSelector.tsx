@@ -8,7 +8,10 @@ import {
   getCachedModelHandles,
 } from "../../agent/available-models";
 import { models } from "../../agent/model";
-import { listProviders, type ProviderResponse } from "../../providers/byok-providers";
+import {
+  listProviders,
+  type ProviderResponse,
+} from "../../providers/byok-providers";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
 import { Text } from "./Text";
@@ -66,7 +69,9 @@ export function isByokHandleForSelector(
   handle: string,
   byokProviderAliases: Record<string, string>,
 ): boolean {
-  if (STATIC_BYOK_PROVIDER_PREFIXES.some((prefix) => handle.startsWith(prefix))) {
+  if (
+    STATIC_BYOK_PROVIDER_PREFIXES.some((prefix) => handle.startsWith(prefix))
+  ) {
     return true;
   }
 
@@ -174,9 +179,9 @@ export function ModelSelector({
   const [isCached, setIsCached] = useState(cachedHandlesAtMount !== null);
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
-  const [byokProviderAliases, setByokProviderAliases] = useState<Record<string, string>>(
-    () => buildByokProviderAliases([]),
-  );
+  const [byokProviderAliases, setByokProviderAliases] = useState<
+    Record<string, string>
+  >(() => buildByokProviderAliases([]));
 
   const mountedRef = useRef(true);
   useEffect(() => {
@@ -358,19 +363,22 @@ export function ModelSelector({
   // Convert BYOK handle to base provider handle for models.json lookup
   // e.g., "lc-anthropic/claude-3-5-haiku" -> "anthropic/claude-3-5-haiku"
   // e.g., "lc-gemini/gemini-2.0-flash" -> "google_ai/gemini-2.0-flash"
-  const toBaseHandle = useCallback((handle: string): string => {
-    const slashIndex = handle.indexOf("/");
-    if (slashIndex === -1) return handle;
+  const toBaseHandle = useCallback(
+    (handle: string): string => {
+      const slashIndex = handle.indexOf("/");
+      if (slashIndex === -1) return handle;
 
-    const provider = handle.slice(0, slashIndex);
-    const model = handle.slice(slashIndex + 1);
-    const baseProvider = byokProviderAliases[provider];
+      const provider = handle.slice(0, slashIndex);
+      const model = handle.slice(slashIndex + 1);
+      const baseProvider = byokProviderAliases[provider];
 
-    if (baseProvider) {
-      return `${baseProvider}/${model}`;
-    }
-    return handle;
-  }, [byokProviderAliases]);
+      if (baseProvider) {
+        return `${baseProvider}/${model}`;
+      }
+      return handle;
+    },
+    [byokProviderAliases],
+  );
 
   // BYOK (recommended): BYOK API handles that have matching entries in models.json
   const byokModels = useMemo(() => {
