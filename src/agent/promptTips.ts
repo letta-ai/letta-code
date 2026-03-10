@@ -1,6 +1,6 @@
 /**
- * Format a tip for users running agents with outdated system prompts.
+ * Format a tip recommending the default system prompt.
  */
-export function formatDriftTip(): string {
-  return "Tip: This agent is using an older system prompt. Run /system default to upgrade to the latest version with automatic prompt management.";
+export function formatDefaultPromptTip(): string {
+  return "Tip: A new default system prompt is available. Run /system default to switch and enable automatic prompt management.";
 }

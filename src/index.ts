@@ -1962,16 +1962,16 @@ async function main(): Promise<void> {
             }
           }
 
-          // Notify user if their agent is not on the latest default prompt
-          const { detectSystemPromptDrift } = await import(
+          // Recommend default prompt if agent is on a different one
+          const { shouldRecommendDefaultPrompt } = await import(
             "./agent/promptAssets"
           );
-          const { formatDriftTip } = await import("./agent/promptTips");
+          const { formatDefaultPromptTip } = await import("./agent/promptTips");
           const memoryMode = settingsManager.isMemfsEnabled(agent.id)
             ? "memfs"
             : "standard";
-          if (detectSystemPromptDrift(agent.system || "", memoryMode)) {
-            console.log(formatDriftTip());
+          if (shouldRecommendDefaultPrompt(agent.system || "", memoryMode)) {
+            console.log(formatDefaultPromptTip());
           }
         }
 

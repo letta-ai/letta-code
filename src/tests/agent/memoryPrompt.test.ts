@@ -2,10 +2,10 @@ import { describe, expect, test } from "bun:test";
 
 import {
   buildSystemPrompt,
-  detectSystemPromptDrift,
   isKnownPreset,
   SYSTEM_PROMPT_MEMFS_ADDON,
   SYSTEM_PROMPT_MEMORY_ADDON,
+  shouldRecommendDefaultPrompt,
   swapMemoryAddon,
 } from "../../agent/promptAssets";
 
@@ -153,31 +153,31 @@ describe("swapMemoryAddon", () => {
   });
 });
 
-describe("detectSystemPromptDrift", () => {
+describe("shouldRecommendDefaultPrompt", () => {
   test("returns false when prompt matches current default (standard)", () => {
     const current = buildSystemPrompt("default", "standard");
-    expect(detectSystemPromptDrift(current, "standard")).toBe(false);
+    expect(shouldRecommendDefaultPrompt(current, "standard")).toBe(false);
   });
 
   test("returns false when prompt matches current default (memfs)", () => {
     const current = buildSystemPrompt("default", "memfs");
-    expect(detectSystemPromptDrift(current, "memfs")).toBe(false);
+    expect(shouldRecommendDefaultPrompt(current, "memfs")).toBe(false);
   });
 
   test("returns true for a different preset", () => {
     const current = buildSystemPrompt("letta-claude", "standard");
-    expect(detectSystemPromptDrift(current, "standard")).toBe(true);
+    expect(shouldRecommendDefaultPrompt(current, "standard")).toBe(true);
   });
 
   test("returns true for a fully custom prompt", () => {
-    expect(detectSystemPromptDrift("You are a custom agent.", "standard")).toBe(
-      true,
-    );
+    expect(
+      shouldRecommendDefaultPrompt("You are a custom agent.", "standard"),
+    ).toBe(true);
   });
 
-  test("returns true for an old/modified default prompt", () => {
+  test("returns true for a modified default prompt", () => {
     const current = buildSystemPrompt("default", "standard");
     const modified = `${current}\n\nExtra instructions added by user.`;
-    expect(detectSystemPromptDrift(modified, "standard")).toBe(true);
+    expect(shouldRecommendDefaultPrompt(modified, "standard")).toBe(true);
   });
 });
