@@ -1354,7 +1354,7 @@
     }
   },
   {
-    "id": "gemini-3-vertex",
+    "id": "gemini-3.1-vertex",
     "handle": "google_vertex/gemini-3.1-pro-preview",
     "label": "Gemini 3.1 Pro",
     "description": "Google's latest Gemini 3.1 Pro model (via Vertex AI)",
