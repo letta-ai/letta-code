@@ -1632,7 +1632,6 @@ async function main(): Promise<void> {
           setAgentProvenance(result.provenance);
 
           // Enable memfs on Letta Cloud (tags, repo clone, tool detach).
-          // Prompt swap is skipped since the agent was created with the correct mode.
           if (willAutoEnableMemfs) {
             const { enableMemfsIfCloud } = await import(
               "./agent/memoryFilesystem"
