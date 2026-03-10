@@ -118,6 +118,7 @@ interface RunStartedMessage {
   batch_id: string;
   event_seq?: number;
   session_id?: string;
+  agent_id?: string;
   conversation_id?: string;
 }
 
@@ -131,6 +132,7 @@ interface RunRequestErrorMessage {
   batch_id?: string;
   event_seq?: number;
   session_id?: string;
+  agent_id?: string;
   conversation_id?: string;
 }
 
@@ -360,6 +362,35 @@ const MAX_RETRY_DURATION_MS = 5 * 60 * 1000; // 5 minutes
 const INITIAL_RETRY_DELAY_MS = 1000; // 1 second
 const MAX_RETRY_DELAY_MS = 30000; // 30 seconds
 
+function getQueueItemScope(item?: QueueItem | null): {
+  agent_id?: string;
+  conversation_id?: string;
+} {
+  if (!item) {
+    return {};
+  }
+  return {
+    agent_id: item.agentId,
+    conversation_id: item.conversationId,
+  };
+}
+
+function getQueueItemsScope(items: QueueItem[]): {
+  agent_id?: string;
+  conversation_id?: string;
+} {
+  const first = items[0];
+  if (!first) {
+    return {};
+  }
+  const sameScope = items.every(
+    (item) =>
+      (item.agentId ?? null) === (first.agentId ?? null) &&
+      (item.conversationId ?? null) === (first.conversationId ?? null),
+  );
+  return sameScope ? getQueueItemScope(first) : {};
+}
+
 function createRuntime(): ListenerRuntime {
   const runtime: ListenerRuntime = {
     socket: null,
@@ -408,7 +439,7 @@ function createRuntime(): ListenerRuntime {
             queue_len: queueLen,
             session_id: runtime.sessionId,
             uuid: `q-enq-${item.id}`,
-            conversation_id: runtime.activeConversationId ?? undefined,
+            ...getQueueItemScope(item),
           });
         }
       },
@@ -422,7 +453,7 @@ function createRuntime(): ListenerRuntime {
             queue_len_after: batch.queueLenAfter,
             session_id: runtime.sessionId,
             uuid: `q-deq-${batch.batchId}`,
-            conversation_id: runtime.activeConversationId ?? undefined,
+            ...getQueueItemsScope(batch.items),
           });
         }
       },
@@ -434,11 +465,11 @@ function createRuntime(): ListenerRuntime {
             queue_len: queueLen,
             session_id: runtime.sessionId,
             uuid: `q-blk-${crypto.randomUUID()}`,
-            conversation_id: runtime.activeConversationId ?? undefined,
+            ...getQueueItemScope(runtime.queueRuntime.items[0]),
           });
         }
       },
-      onCleared: (reason, clearedCount) => {
+      onCleared: (reason, clearedCount, items) => {
         if (runtime.socket?.readyState === WebSocket.OPEN) {
           emitToWS(runtime.socket, {
             type: "queue_cleared",
@@ -446,7 +477,7 @@ function createRuntime(): ListenerRuntime {
             cleared_count: clearedCount,
             session_id: runtime.sessionId,
             uuid: `q-clr-${crypto.randomUUID()}`,
-            conversation_id: runtime.activeConversationId ?? undefined,
+            ...getQueueItemsScope(items),
           });
         }
       },
@@ -460,7 +491,7 @@ function createRuntime(): ListenerRuntime {
             queue_len: queueLen,
             session_id: runtime.sessionId,
             uuid: `q-drp-${item.id}`,
-            conversation_id: runtime.activeConversationId ?? undefined,
+            ...getQueueItemScope(item),
           });
         }
       },
@@ -769,6 +800,8 @@ function emitCancelAck(
     accepted: boolean;
     reason?: string;
     runId?: string | null;
+    agentId?: string | null;
+    conversationId?: string | null;
   },
 ): void {
   emitToWS(socket, {
@@ -777,9 +810,11 @@ function emitCancelAck(
     accepted: params.accepted,
     reason: params.reason,
     run_id: params.runId ?? runtime.activeRunId,
+    agent_id: params.agentId ?? runtime.activeAgentId ?? undefined,
+    conversation_id:
+      params.conversationId ?? runtime.activeConversationId ?? undefined,
     session_id: runtime.sessionId,
     uuid: `cancel-ack-${params.requestId}`,
-    conversation_id: runtime.activeConversationId ?? undefined,
   } as CancelAckMessage);
 }
 
@@ -1269,6 +1304,7 @@ function emitInterruptToolReturnMessage(
       id: `message-${crypto.randomUUID()}`,
       date: new Date().toISOString(),
       run_id: resolvedRunId,
+      agent_id: runtime.activeAgentId ?? undefined,
       tool_returns: [
         {
           tool_call_id: toolReturn.tool_call_id,
@@ -1637,6 +1673,7 @@ async function sendMessageStreamWithRetry(
           delay_ms: delayMs,
           session_id: runtime.sessionId,
           uuid: `retry-${crypto.randomUUID()}`,
+          agent_id: runtime.activeAgentId ?? undefined,
           conversation_id: conversationId,
         } as RetryMessage);
 
@@ -1663,6 +1700,7 @@ async function sendMessageStreamWithRetry(
           delay_ms: delayMs,
           session_id: runtime.sessionId,
           uuid: `retry-${crypto.randomUUID()}`,
+          agent_id: runtime.activeAgentId ?? undefined,
           conversation_id: conversationId,
         } as RetryMessage);
 
@@ -1795,6 +1833,7 @@ async function recoverPendingApprovals(
         stop_reason: "error",
         session_id: runtime.sessionId,
         uuid: `error-${crypto.randomUUID()}`,
+        agent_id: agentId,
         conversation_id: conversationId,
       });
       runtime.lastStopReason = "requires_approval";
@@ -1844,6 +1883,7 @@ async function recoverPendingApprovals(
             : "auto-approved",
         session_id: runtime.sessionId,
         uuid: `auto-approval-${ac.approval.toolCallId}`,
+        agent_id: agentId,
         conversation_id: conversationId,
       } as AutoApprovalMessage);
     }
@@ -1885,6 +1925,7 @@ async function recoverPendingApprovals(
             blocked_path: null,
             ...(diffs.length > 0 ? { diffs } : {}),
           },
+          agent_id: agentId,
           conversation_id: conversationId,
         };
 
@@ -1919,6 +1960,7 @@ async function recoverPendingApprovals(
               matched_rule: "canUseTool callback",
               session_id: runtime.sessionId,
               uuid: `auto-approval-${ac.approval.toolCallId}`,
+              agent_id: agentId,
               conversation_id: conversationId,
             } as AutoApprovalMessage);
           } else {
@@ -2286,6 +2328,7 @@ async function connectWithRetry(
               stop_reason: "error",
               session_id: runtime.sessionId,
               uuid: `error-${crypto.randomUUID()}`,
+              agent_id: runtime.activeAgentId ?? undefined,
               conversation_id: runtime.activeConversationId ?? undefined,
             });
           } finally {
@@ -2320,6 +2363,7 @@ async function connectWithRetry(
           stop_reason: "error",
           session_id: runtime.sessionId,
           uuid: `error-${crypto.randomUUID()}`,
+          agent_id: runtime.activeAgentId ?? undefined,
           conversation_id: runtime.activeConversationId ?? undefined,
         });
         return;
@@ -2340,6 +2384,8 @@ async function connectWithRetry(
           content: userPayload.content,
           clientMessageId:
             userPayload.client_message_id ?? `cm-submit-${crypto.randomUUID()}`,
+          agentId: parsed.agentId ?? undefined,
+          conversationId: parsed.conversationId || "default",
         } as Parameters<typeof runtime.queueRuntime.enqueue>[0]);
         enqueuedQueueItemId = enqueuedItem?.id ?? null;
         // Emit blocked on state transition when turns are already queued.
@@ -2634,6 +2680,7 @@ async function handleIncomingMessage(
                 type: "run_started",
                 runId: maybeRunId,
                 batch_id: dequeuedBatchId,
+                agent_id: agentId,
                 conversation_id: conversationId,
               });
             }
@@ -2649,6 +2696,7 @@ async function handleIncomingMessage(
               run_id: runId || errorInfo.run_id,
               session_id: runtime.sessionId,
               uuid: `error-${crypto.randomUUID()}`,
+              agent_id: agentId,
               conversation_id: conversationId,
             });
           }
@@ -2669,6 +2717,7 @@ async function handleIncomingMessage(
                 session_id: runtime.sessionId,
                 uuid:
                   chunkWithIds.otid || chunkWithIds.id || crypto.randomUUID(),
+                agent_id: agentId,
                 conversation_id: conversationId,
               } as unknown as MessageWire);
             }
@@ -2741,6 +2790,7 @@ async function handleIncomingMessage(
             run_id: runId || msgRunIds[msgRunIds.length - 1] || undefined,
             session_id: runtime.sessionId,
             uuid: `recovery-${crypto.randomUUID()}`,
+            agent_id: agentId,
             conversation_id: conversationId,
           } as RecoveryMessage);
 
@@ -2817,6 +2867,7 @@ async function handleIncomingMessage(
           run_id: runId,
           session_id: runtime.sessionId,
           uuid: `error-${crypto.randomUUID()}`,
+          agent_id: agentId,
           conversation_id: conversationId,
         });
         emitTurnResult(socket, runtime, {
@@ -2844,6 +2895,7 @@ async function handleIncomingMessage(
           stop_reason: "error",
           session_id: runtime.sessionId,
           uuid: `error-${crypto.randomUUID()}`,
+          agent_id: agentId,
           conversation_id: conversationId,
         });
         emitTurnResult(socket, runtime, {
@@ -2915,6 +2967,7 @@ async function handleIncomingMessage(
               : "auto-approved",
           session_id: runtime.sessionId,
           uuid: `auto-approval-${ac.approval.toolCallId}`,
+          agent_id: agentId,
           conversation_id: conversationId,
         } as AutoApprovalMessage);
       }
@@ -2955,6 +3008,7 @@ async function handleIncomingMessage(
               blocked_path: null,
               ...(diffs.length > 0 ? { diffs } : {}),
             },
+            agent_id: agentId,
             conversation_id: conversationId,
           };
 
@@ -2990,6 +3044,7 @@ async function handleIncomingMessage(
                 matched_rule: "canUseTool callback",
                 session_id: runtime.sessionId,
                 uuid: `auto-approval-${ac.approval.toolCallId}`,
+                agent_id: agentId,
                 conversation_id: conversationId,
               } as AutoApprovalMessage);
             } else {
@@ -3143,6 +3198,7 @@ async function handleIncomingMessage(
         type: "run_request_error",
         error: errorPayload,
         batch_id: dequeuedBatchId,
+        agent_id: agentId,
         conversation_id: conversationId,
       });
     }
@@ -3154,6 +3210,7 @@ async function handleIncomingMessage(
       stop_reason: "error",
       session_id: runtime.sessionId,
       uuid: `error-${crypto.randomUUID()}`,
+      agent_id: agentId || undefined,
       conversation_id: conversationId,
     });
     emitTurnResult(socket, runtime, {
@@ -3201,6 +3258,7 @@ export const __listenClientTestUtils = {
   stopRuntime,
   buildStateResponse,
   emitToWS,
+  emitCancelAck,
   rememberPendingApprovalBatchIds,
   resolvePendingApprovalBatchId,
   resolveRecoveryBatchId,

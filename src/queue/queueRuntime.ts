@@ -16,6 +16,10 @@ type QueueItemBase = {
   id: string;
   /** Optional client-side message correlation ID from submit payloads. */
   clientMessageId?: string;
+  /** Optional agent scope for listener-mode attribution. */
+  agentId?: string;
+  /** Optional conversation scope for listener-mode attribution. */
+  conversationId?: string;
   source: QueueItemSource;
   enqueuedAt: number;
 };
@@ -55,6 +59,13 @@ export function isCoalescable(kind: QueueItemKind): boolean {
   return kind === "message" || kind === "task_notification";
 }
 
+function hasSameScope(a: QueueItem, b: QueueItem): boolean {
+  return (
+    (a.agentId ?? null) === (b.agentId ?? null) &&
+    (a.conversationId ?? null) === (b.conversationId ?? null)
+  );
+}
+
 // ── Batch / callbacks ────────────────────────────────────────────
 
 export interface DequeuedBatch {
@@ -77,7 +88,11 @@ export interface QueueCallbacks {
    * Only fires when queue is non-empty.
    */
   onBlocked?: (reason: QueueBlockedReason, queueLen: number) => void;
-  onCleared?: (reason: QueueClearedReason, clearedCount: number) => void;
+  onCleared?: (
+    reason: QueueClearedReason,
+    clearedCount: number,
+    items: QueueItem[],
+  ) => void;
   /**
    * Fired when an item is dropped.
    * queueLen is the post-operation queue depth:
@@ -226,9 +241,12 @@ export class QueueRuntime {
 
     // Drain contiguous coalescable items from head
     const batch: QueueItem[] = [];
+    const first = this.store[0];
     while (
+      first !== undefined &&
       this.store.length > 0 &&
-      isCoalescable(this.store[0]?.kind ?? "approval_result")
+      isCoalescable(this.store[0]?.kind ?? "approval_result") &&
+      hasSameScope(first, this.store[0] as QueueItem)
     ) {
       const item = this.store.shift();
       if (item) batch.push(item);
@@ -300,10 +318,11 @@ export class QueueRuntime {
   /** Remove all items and fire onCleared. */
   clear(reason: QueueClearedReason): void {
     const count = this.store.length;
+    const clearedItems = this.store.slice();
     this.store.length = 0;
     this.lastEmittedBlockedReason = null;
     this.blockedEmittedForNonEmpty = false;
-    this.safeCallback("onCleared", reason, count);
+    this.safeCallback("onCleared", reason, count, clearedItems);
   }
 
   // ── Accessors ──────────────────────────────────────────────────
