@@ -41,6 +41,16 @@ import { computeDiffPreviews } from "../helpers/diffPreview";
 import { permissionMode } from "../permissions/mode";
 import { type QueueItem, QueueRuntime } from "../queue/queueRuntime";
 import { mergeQueuedTurnInput } from "../queue/turnQueueRuntime";
+import {
+  buildSharedReminderParts,
+  prependReminderPartsToContent,
+} from "../reminders/engine";
+import { buildListenReminderContext } from "../reminders/listenContext";
+import { getPlanModeReminder } from "../reminders/planModeReminder";
+import {
+  createSharedReminderState,
+  type SharedReminderState,
+} from "../reminders/state";
 import { settingsManager } from "../settings-manager";
 import { isInteractiveApprovalTool } from "../tools/interactivePolicy";
 import { loadTools } from "../tools/manager";
@@ -344,6 +354,7 @@ type ListenerRuntime = {
    * Threaded into the next send for persistence normalization.
    */
   pendingInterruptedToolCallIds: string[] | null;
+  reminderState: SharedReminderState;
   bootWorkingDirectory: string;
   workingDirectoryByConversation: Map<string, string>;
 };
@@ -532,6 +543,7 @@ function createRuntime(): ListenerRuntime {
     continuationEpoch: 0,
     activeExecutingToolCallIds: [],
     pendingInterruptedToolCallIds: null,
+    reminderState: createSharedReminderState(),
     bootWorkingDirectory,
     workingDirectoryByConversation: new Map<string, string>(),
     coalescedSkipQueueItemIds: new Set<string>(),
@@ -2855,6 +2867,32 @@ async function handleIncomingMessage(
     }
 
     messagesToSend.push(...msg.messages);
+
+    const firstMessage = msg.messages[0];
+    const isApprovalMessage =
+      firstMessage &&
+      "type" in firstMessage &&
+      firstMessage.type === "approval" &&
+      "approvals" in firstMessage;
+
+    if (!isApprovalMessage) {
+      const { parts: reminderParts } = await buildSharedReminderParts(
+        buildListenReminderContext({
+          agentId: agentId || "",
+          state: runtime.reminderState,
+          resolvePlanModeReminder: getPlanModeReminder,
+        }),
+      );
+
+      if (reminderParts.length > 0) {
+        for (const m of messagesToSend) {
+          if ("role" in m && m.role === "user" && "content" in m) {
+            m.content = prependReminderPartsToContent(m.content, reminderParts);
+            break;
+          }
+        }
+      }
+    }
 
     let currentInput = messagesToSend;
     const sendOptions: Parameters<typeof sendMessageStream>[2] = {

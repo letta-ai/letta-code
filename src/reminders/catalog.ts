@@ -2,6 +2,7 @@ export type SharedReminderMode =
   | "interactive"
   | "headless-one-shot"
   | "headless-bidirectional"
+  | "listen"
   | "subagent";
 
 export type SharedReminderId =
@@ -42,12 +43,22 @@ export const SHARED_REMINDER_CATALOG: ReadonlyArray<SharedReminderDefinition> =
     {
       id: "permission-mode",
       description: "Permission mode reminder",
-      modes: ["interactive", "headless-one-shot", "headless-bidirectional"],
+      modes: [
+        "interactive",
+        "headless-one-shot",
+        "headless-bidirectional",
+        "listen",
+      ],
     },
     {
       id: "plan-mode",
       description: "Plan mode behavioral reminder",
-      modes: ["interactive", "headless-one-shot", "headless-bidirectional"],
+      modes: [
+        "interactive",
+        "headless-one-shot",
+        "headless-bidirectional",
+        "listen",
+      ],
     },
     {
       id: "reflection-step-count",
