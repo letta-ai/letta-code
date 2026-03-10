@@ -75,6 +75,7 @@ export function buildConversationMessagesCreateRequestBody(
     ),
     streaming: true,
     stream_tokens: opts.streamTokens ?? true,
+    include_pings: true,
     background: opts.background ?? true,
     client_tools: clientTools,
     include_compaction_messages: true,
