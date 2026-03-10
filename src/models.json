@@ -1283,17 +1283,6 @@
     }
   },
   {
-    "id": "gemini-3",
-    "handle": "google_ai/gemini-3-pro-preview",
-    "label": "Gemini 3 Pro",
-    "description": "Google's smartest model",
-    "updateArgs": {
-      "context_window": 180000,
-      "temperature": 1.0,
-      "parallel_tool_calls": true
-    }
-  },
-  {
     "id": "gemini-3-flash",
     "handle": "google_ai/gemini-3-flash-preview",
     "label": "Gemini 3 Flash",
@@ -1365,10 +1354,10 @@
     }
   },
   {
-    "id": "gemini-3-vertex",
-    "handle": "google_vertex/gemini-3-pro-preview",
-    "label": "Gemini 3 Pro",
-    "description": "Google's smartest Gemini 3 Pro model (via Vertex AI)",
+    "id": "gemini-3.1-vertex",
+    "handle": "google_vertex/gemini-3.1-pro-preview",
+    "label": "Gemini 3.1 Pro",
+    "description": "Google's latest Gemini 3.1 Pro model (via Vertex AI)",
     "updateArgs": {
       "context_window": 180000,
       "temperature": 1.0,
