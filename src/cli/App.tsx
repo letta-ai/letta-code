@@ -1562,8 +1562,10 @@ export default function App({
   }, [currentModelLabel, derivedReasoningEffort, llmConfig]);
   const currentModelProvider = llmConfig?.provider_name ?? null;
   const currentReasoningEffort: ModelReasoningEffort | null =
-    derivedReasoningEffort ??
-    inferReasoningEffortFromModelPreset(currentModelId, currentModelLabel);
+    currentModelLabel?.startsWith("letta/auto")
+      ? null
+      : (derivedReasoningEffort ??
+        inferReasoningEffortFromModelPreset(currentModelId, currentModelLabel));
 
   // Billing tier for conditional UI and error context (fetched once on mount)
   const [billingTier, setBillingTier] = useState<string | null>(null);

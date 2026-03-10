@@ -2544,7 +2544,7 @@ async function handleIncomingMessage(
       onStatusChange?.("processing", connectionId);
     }
 
-    let messagesToSend: Array<MessageCreate | ApprovalCreate> = [];
+    const messagesToSend: Array<MessageCreate | ApprovalCreate> = [];
     let turnToolContextId: string | null = null;
     let queuedInterruptedToolCallIds: string[] = [];
 
