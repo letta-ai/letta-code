@@ -59,7 +59,10 @@ import {
   getModelShortName,
   type ModelReasoningEffort,
 } from "../agent/model";
-import { INTERRUPT_RECOVERY_ALERT } from "../agent/promptAssets";
+import {
+  INTERRUPT_RECOVERY_ALERT,
+  shouldRecommendDefaultPrompt,
+} from "../agent/promptAssets";
 import { recordSessionEnd } from "../agent/sessionHistory";
 import { SessionStats } from "../agent/stats";
 import {
@@ -3093,6 +3096,15 @@ export default function App({
         ? `Resuming conversation with **${agentName}**`
         : `Starting new conversation with **${agentName}**`;
 
+      // Check if agent would benefit from switching to the default prompt
+      const showDefaultPromptTip = (() => {
+        if (!agentState?.id || !agentState.system) return false;
+        const memoryMode = settingsManager.isMemfsEnabled(agentState.id)
+          ? "memfs"
+          : ("standard" as const);
+        return shouldRecommendDefaultPrompt(agentState.system, memoryMode);
+      })();
+
       // Command hints - vary based on agent state:
       // - Resuming: show /new (they may want a fresh conversation)
       // - New session + unpinned: show /pin (they should save their agent)
@@ -3104,6 +3116,9 @@ export default function App({
             "→ **/new**       start a new conversation",
             "→ **/init**      initialize your agent's memory",
             "→ **/remember**  teach your agent",
+            ...(showDefaultPromptTip
+              ? ["→ **/system**    upgrade to the latest default prompt"]
+              : []),
           ]
         : isPinned
           ? [
@@ -3112,6 +3127,9 @@ export default function App({
               "→ **/memory**    view your agent's memory",
               "→ **/init**      initialize your agent's memory",
               "→ **/remember**  teach your agent",
+              ...(showDefaultPromptTip
+                ? ["→ **/system**    upgrade to the latest default prompt"]
+                : []),
             ]
           : [
               "→ **/agents**    list all agents",
@@ -3119,6 +3137,9 @@ export default function App({
               "→ **/pin**       save + name your agent",
               "→ **/init**      initialize your agent's memory",
               "→ **/remember**  teach your agent",
+              ...(showDefaultPromptTip
+                ? ["→ **/system**    upgrade to the latest default prompt"]
+                : []),
             ];
 
       // Build status lines with optional release notes above header

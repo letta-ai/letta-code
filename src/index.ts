@@ -1961,18 +1961,6 @@ async function main(): Promise<void> {
               settingsManager.clearSystemPromptPreset(agent.id);
             }
           }
-
-          // Recommend default prompt if agent is on a different one
-          const { shouldRecommendDefaultPrompt } = await import(
-            "./agent/promptAssets"
-          );
-          const { formatDefaultPromptTip } = await import("./agent/promptTips");
-          const memoryMode = settingsManager.isMemfsEnabled(agent.id)
-            ? "memfs"
-            : "standard";
-          if (shouldRecommendDefaultPrompt(agent.system || "", memoryMode)) {
-            console.log(formatDefaultPromptTip());
-          }
         }
 
         // Save the session (agent + conversation) to settings
