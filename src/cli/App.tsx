@@ -12864,7 +12864,8 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
           ? `Starting new conversation with **${agentName}**`
           : "Creating a new agent";
 
-      const showPromptTip = shouldShowDefaultPromptTip();
+      // Only show prompt tip for existing agents, not brand new ones
+      const showPromptTip = continueSession && shouldShowDefaultPromptTip();
 
       // Command hints - for pinned agents show /memory, for unpinned show /pin
       const commandHints = isPinned
