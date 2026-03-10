@@ -13,19 +13,17 @@ import { getSnapshot as getSubagentSnapshot } from "./subagentState";
 
 export const INIT_TASK_DESCRIPTION = "Memory init";
 
-const INTERACTIVE_INIT_TASK_DESCRIPTIONS = new Set(
-  [INIT_TASK_DESCRIPTION].map((value) => value.toLowerCase()),
-);
-
-const ACTIVE_INIT_TASK_DESCRIPTIONS = new Set([
-  ...INTERACTIVE_INIT_TASK_DESCRIPTIONS,
-  "initializing memory",
-  "deep memory initialization",
-]);
-
 function normalizeDescription(value: string | null | undefined): string {
   return (value ?? "").trim().toLowerCase();
 }
+
+const INTERACTIVE_INIT_TASK_DESCRIPTION = INIT_TASK_DESCRIPTION.toLowerCase();
+
+const ACTIVE_INIT_TASK_DESCRIPTIONS = new Set([
+  INTERACTIVE_INIT_TASK_DESCRIPTION,
+  "initializing memory",
+  "deep memory initialization",
+]);
 
 // ── Guard ──────────────────────────────────────────────────
 
@@ -42,8 +40,8 @@ export function hasActiveInitSubagent(): boolean {
 }
 
 export function isInteractiveInitTaskDescription(description: string): boolean {
-  return INTERACTIVE_INIT_TASK_DESCRIPTIONS.has(
-    normalizeDescription(description),
+  return (
+    normalizeDescription(description) === INTERACTIVE_INIT_TASK_DESCRIPTION
   );
 }
 
