@@ -746,14 +746,14 @@ ${SYSTEM_REMINDER_CLOSE}
 }
 
 // Check if plan file exists
-function planFileExists(): boolean {
-  const planFilePath = permissionMode.getPlanFilePath();
+function planFileExists(fallbackPlanFilePath?: string | null): boolean {
+  const planFilePath = permissionMode.getPlanFilePath() ?? fallbackPlanFilePath;
   return !!planFilePath && existsSync(planFilePath);
 }
 
 // Read plan content from the plan file
-function _readPlanFile(): string {
-  const planFilePath = permissionMode.getPlanFilePath();
+function _readPlanFile(fallbackPlanFilePath?: string | null): string {
+  const planFilePath = permissionMode.getPlanFilePath() ?? fallbackPlanFilePath;
   if (!planFilePath) {
     return "No plan file path set.";
   }
@@ -12467,18 +12467,37 @@ ${SYSTEM_REMINDER_CLOSE}
     [pendingApprovals, approvalResults, sendAllResults],
   );
 
-  // Auto-reject ExitPlanMode if plan mode is not enabled or plan file doesn't exist
+  // Guard ExitPlanMode:
+  // - If not in plan mode, allow graceful continuation when we still have a known plan file path
+  // - Otherwise reject with an expiry message
+  // - If in plan mode but no plan file exists, keep planning
   useEffect(() => {
     const currentIndex = approvalResults.length;
     const approval = pendingApprovals[currentIndex];
     if (approval?.toolName === "ExitPlanMode") {
-      // First check if plan mode is enabled
-      if (permissionMode.getMode() !== "plan") {
-        // Plan mode state was lost (e.g., CLI restart) - queue rejection with helpful message
-        // This is different from immediate rejection because we want the user to see what happened
-        // and be able to type their next message
+      const mode = permissionMode.getMode();
+      const activePlanPath = permissionMode.getPlanFilePath();
+      const fallbackPlanPath = lastPlanFilePathRef.current;
+      const hasUsablePlan = planFileExists(fallbackPlanPath);
 
-        // Add status message to explain what happened
+      if (mode !== "plan") {
+        if (hasUsablePlan) {
+          // User likely cycled out of plan mode (e.g., Shift+Tab to acceptEdits/yolo)
+          // Keep approval flow alive and let ExitPlanMode proceed using fallback plan path.
+          const statusId = uid("status");
+          buffersRef.current.byId.set(statusId, {
+            kind: "status",
+            id: statusId,
+            lines: [
+              "ℹ️ Plan mode switched, continuing ExitPlanMode with saved plan file",
+            ],
+          });
+          buffersRef.current.order.push(statusId);
+          refreshDerived();
+          return;
+        }
+
+        // Plan mode state was lost and no plan file is recoverable (e.g., CLI restart)
         const statusId = uid("status");
         buffersRef.current.byId.set(statusId, {
           kind: "status",
@@ -12494,7 +12513,7 @@ ${SYSTEM_REMINDER_CLOSE}
             tool_call_id: approval.toolCallId,
             approve: false,
             reason:
-              "Plan mode session expired (CLI restarted). Use EnterPlanMode to re-enter plan mode, or request the user to re-enter plan mode.",
+              "Plan mode session expired (CLI restarted or no recoverable plan file). Use EnterPlanMode to re-enter plan mode, or request the user to re-enter plan mode.",
           },
         ];
         queueApprovalResults(denialResults);
@@ -12515,10 +12534,10 @@ ${SYSTEM_REMINDER_CLOSE}
         setAutoDeniedApprovals([]);
         return;
       }
-      // Then check if plan file exists (keep existing behavior - immediate rejection)
-      // This case means plan mode IS active, but agent forgot to write the plan file
-      if (!planFileExists()) {
-        const planFilePath = permissionMode.getPlanFilePath();
+
+      // Mode is plan: require an existing plan file (active or fallback)
+      if (!hasUsablePlan) {
+        const planFilePath = activePlanPath ?? fallbackPlanPath;
         const plansDir = join(homedir(), ".letta", "plans");
         handlePlanKeepPlanning(
           `You must write your plan to a plan file before exiting plan mode.\n` +
@@ -13116,12 +13135,13 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
                             showPreview={showApprovalPreview}
                             planContent={
                               currentApproval.toolName === "ExitPlanMode"
-                                ? _readPlanFile()
+                                ? _readPlanFile(lastPlanFilePathRef.current)
                                 : undefined
                             }
                             planFilePath={
                               currentApproval.toolName === "ExitPlanMode"
                                 ? (permissionMode.getPlanFilePath() ??
+                                  lastPlanFilePathRef.current ??
                                   undefined)
                                 : undefined
                             }
@@ -13212,12 +13232,14 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
                     showPreview={showApprovalPreview}
                     planContent={
                       currentApproval.toolName === "ExitPlanMode"
-                        ? _readPlanFile()
+                        ? _readPlanFile(lastPlanFilePathRef.current)
                         : undefined
                     }
                     planFilePath={
                       currentApproval.toolName === "ExitPlanMode"
-                        ? (permissionMode.getPlanFilePath() ?? undefined)
+                        ? (permissionMode.getPlanFilePath() ??
+                          lastPlanFilePathRef.current ??
+                          undefined)
                         : undefined
                     }
                     agentName={agentName ?? undefined}
