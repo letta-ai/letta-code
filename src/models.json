@@ -332,6 +332,71 @@
     }
   },
   {
+    "id": "gpt-5.4-fast-plus-pro-none",
+    "handle": "chatgpt-plus-pro/gpt-5.4-fast",
+    "label": "GPT-5.4 Fast (ChatGPT)",
+    "description": "GPT-5.4 Fast (no reasoning) via ChatGPT Plus/Pro",
+    "updateArgs": {
+      "reasoning_effort": "none",
+      "verbosity": "low",
+      "context_window": 272000,
+      "max_output_tokens": 128000,
+      "parallel_tool_calls": true
+    }
+  },
+  {
+    "id": "gpt-5.4-fast-plus-pro-low",
+    "handle": "chatgpt-plus-pro/gpt-5.4-fast",
+    "label": "GPT-5.4 Fast (ChatGPT)",
+    "description": "GPT-5.4 Fast (low reasoning) via ChatGPT Plus/Pro",
+    "updateArgs": {
+      "reasoning_effort": "low",
+      "verbosity": "low",
+      "context_window": 272000,
+      "max_output_tokens": 128000,
+      "parallel_tool_calls": true
+    }
+  },
+  {
+    "id": "gpt-5.4-fast-plus-pro-medium",
+    "handle": "chatgpt-plus-pro/gpt-5.4-fast",
+    "label": "GPT-5.4 Fast (ChatGPT)",
+    "description": "GPT-5.4 Fast (med reasoning) via ChatGPT Plus/Pro",
+    "updateArgs": {
+      "reasoning_effort": "medium",
+      "verbosity": "low",
+      "context_window": 272000,
+      "max_output_tokens": 128000,
+      "parallel_tool_calls": true
+    }
+  },
+  {
+    "id": "gpt-5.4-fast-plus-pro-high",
+    "handle": "chatgpt-plus-pro/gpt-5.4-fast",
+    "label": "GPT-5.4 Fast (ChatGPT)",
+    "description": "GPT-5.4 Fast (high reasoning) via ChatGPT Plus/Pro",
+    "updateArgs": {
+      "reasoning_effort": "high",
+      "verbosity": "low",
+      "context_window": 272000,
+      "max_output_tokens": 128000,
+      "parallel_tool_calls": true
+    }
+  },
+  {
+    "id": "gpt-5.4-fast-plus-pro-xhigh",
+    "handle": "chatgpt-plus-pro/gpt-5.4-fast",
+    "label": "GPT-5.4 Fast (ChatGPT)",
+    "description": "GPT-5.4 Fast (max reasoning) via ChatGPT Plus/Pro",
+    "updateArgs": {
+      "reasoning_effort": "xhigh",
+      "verbosity": "low",
+      "context_window": 272000,
+      "max_output_tokens": 128000,
+      "parallel_tool_calls": true
+    }
+  },
+  {
     "id": "gpt-5.3-codex-plus-pro-none",
     "handle": "chatgpt-plus-pro/gpt-5.3-codex",
     "label": "GPT-5.3 Codex (ChatGPT)",
