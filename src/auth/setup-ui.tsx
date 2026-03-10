@@ -140,7 +140,7 @@ export function SetupUI({ onComplete }: SetupUIProps) {
   if (mode === "device-code") {
     return (
       <Box flexDirection="column" padding={1}>
-        <AnimatedLogo color={colors.welcome.accent} />
+        <AnimatedLogo color={colors.welcome.accent} animate={false} />
         <Text> </Text>
         <Text bold>Login to Letta Platform</Text>
         <Text> </Text>
@@ -162,7 +162,7 @@ export function SetupUI({ onComplete }: SetupUIProps) {
   // Main menu
   return (
     <Box flexDirection="column" padding={1}>
-      <AnimatedLogo color={colors.welcome.accent} />
+      <AnimatedLogo color={colors.welcome.accent} animate={false} />
       <Text> </Text>
       <Text bold>Welcome to Letta Code!</Text>
       <Text> </Text>
