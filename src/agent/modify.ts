@@ -247,6 +247,45 @@ export async function updateConversationLLMConfig(
   return client.conversations.update(conversationId, payload);
 }
 
+export interface RecompileAgentSystemPromptOptions {
+  dryRun?: boolean;
+  updateTimestamp?: boolean;
+}
+
+interface AgentSystemPromptRecompileClient {
+  agents: {
+    recompile: (
+      agentId: string,
+      params: {
+        dry_run?: boolean;
+        update_timestamp?: boolean;
+      },
+    ) => Promise<string>;
+  };
+}
+
+/**
+ * Recompile an agent's system prompt after memory writes so server-side prompt
+ * state picks up the latest memory content.
+ *
+ * @param agentId - The agent ID to recompile
+ * @param options - Optional dry-run/timestamp controls
+ * @param clientOverride - Optional injected client for tests
+ * @returns The compiled system prompt returned by the API
+ */
+export async function recompileAgentSystemPrompt(
+  agentId: string,
+  options: RecompileAgentSystemPromptOptions = {},
+  clientOverride?: AgentSystemPromptRecompileClient,
+): Promise<string> {
+  const client = clientOverride ?? (await getClient());
+
+  return client.agents.recompile(agentId, {
+    dry_run: options.dryRun,
+    update_timestamp: options.updateTimestamp,
+  });
+}
+
 export interface SystemPromptUpdateResult {
   success: boolean;
   message: string;
@@ -304,25 +343,21 @@ export async function updateAgentSystemPrompt(
   systemPromptId: string,
 ): Promise<UpdateSystemPromptResult> {
   try {
-    const { resolveSystemPrompt } = await import("./promptAssets");
-    const { detectMemoryPromptDrift, reconcileMemoryPrompt } = await import(
-      "./memoryPrompt"
+    const { isKnownPreset, resolveAndBuildSystemPrompt } = await import(
+      "./promptAssets"
     );
     const { settingsManager } = await import("../settings-manager");
 
     const client = await getClient();
-    const currentAgent = await client.agents.retrieve(agentId);
-    const baseContent = await resolveSystemPrompt(systemPromptId);
-
-    const settingIndicatesMemfs = settingsManager.isMemfsEnabled(agentId);
-    const promptIndicatesMemfs = detectMemoryPromptDrift(
-      currentAgent.system || "",
-      "standard",
-    ).some((drift) => drift.code === "memfs_language_with_standard_mode");
-
     const memoryMode =
-      settingIndicatesMemfs || promptIndicatesMemfs ? "memfs" : "standard";
-    const systemPromptContent = reconcileMemoryPrompt(baseContent, memoryMode);
+      settingsManager.isReady && settingsManager.isMemfsEnabled(agentId)
+        ? "memfs"
+        : "standard";
+
+    const systemPromptContent = await resolveAndBuildSystemPrompt(
+      systemPromptId,
+      memoryMode,
+    );
 
     const updateResult = await updateAgentSystemPromptRaw(
       agentId,
@@ -334,6 +369,15 @@ export async function updateAgentSystemPrompt(
         message: updateResult.message,
         agent: null,
       };
+    }
+
+    // Persist preset for known presets; clear stale preset for subagent/unknown
+    if (settingsManager.isReady) {
+      if (isKnownPreset(systemPromptId)) {
+        settingsManager.setSystemPromptPreset(agentId, systemPromptId);
+      } else {
+        settingsManager.clearSystemPromptPreset(agentId);
+      }
     }
 
     // Re-fetch agent to get updated state
@@ -368,15 +412,26 @@ export async function updateAgentSystemPromptMemfs(
   enableMemfs: boolean,
 ): Promise<SystemPromptUpdateResult> {
   try {
-    const client = await getClient();
-    const agent = await client.agents.retrieve(agentId);
-    const { reconcileMemoryPrompt } = await import("./memoryPrompt");
-
-    const nextSystemPrompt = reconcileMemoryPrompt(
-      agent.system || "",
-      enableMemfs ? "memfs" : "standard",
+    const { settingsManager } = await import("../settings-manager");
+    const { isKnownPreset, buildSystemPrompt, swapMemoryAddon } = await import(
+      "./promptAssets"
     );
 
+    const newMode = enableMemfs ? "memfs" : "standard";
+    const storedPreset = settingsManager.isReady
+      ? settingsManager.getSystemPromptPreset(agentId)
+      : undefined;
+
+    let nextSystemPrompt: string;
+    if (storedPreset && isKnownPreset(storedPreset)) {
+      nextSystemPrompt = buildSystemPrompt(storedPreset, newMode);
+    } else {
+      const client = await getClient();
+      const agent = await client.agents.retrieve(agentId);
+      nextSystemPrompt = swapMemoryAddon(agent.system || "", newMode);
+    }
+
+    const client = await getClient();
     await client.agents.update(agentId, {
       system: nextSystemPrompt,
     });

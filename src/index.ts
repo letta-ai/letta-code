@@ -1538,6 +1538,12 @@ async function main(): Promise<void> {
             blocks: [],
           });
 
+          // Mark imported agents as "custom" to prevent legacy auto-migration
+          // from overwriting their system prompt on resume.
+          if (settingsManager.isReady) {
+            settingsManager.setSystemPromptPreset(agent.id, "custom");
+          }
+
           // Display extracted skills summary
           if (result.skills && result.skills.length > 0) {
             const { getAgentSkillsDir } = await import("./agent/skills");
@@ -1552,24 +1558,6 @@ async function main(): Promise<void> {
         if (!agent && agentIdArg) {
           try {
             agent = await client.agents.retrieve(agentIdArg);
-
-            // Apply --system flag to existing agent if provided
-            if (systemPromptPreset) {
-              const { updateAgentSystemPrompt } = await import(
-                "./agent/modify"
-              );
-              const result = await updateAgentSystemPrompt(
-                agent.id,
-                systemPromptPreset,
-              );
-              if (!result.success || !result.agent) {
-                console.error(
-                  `Failed to update system prompt: ${result.message}`,
-                );
-                process.exit(1);
-              }
-              agent = result.agent;
-            }
           } catch (error) {
             console.error(
               `Agent ${agentIdArg} not found (error: ${JSON.stringify(error)})`,
@@ -1621,6 +1609,14 @@ async function main(): Promise<void> {
             effectiveModel = getDefaultModelForTier(billingTier);
           }
 
+          // Pre-determine memfs mode so the agent is created with the correct prompt.
+          const { isLettaCloud } = await import("./agent/memoryFilesystem");
+          const willAutoEnableMemfs =
+            shouldAutoEnableMemfsForNewAgent && (await isLettaCloud());
+          const effectiveMemoryMode =
+            requestedMemoryPromptMode ??
+            (willAutoEnableMemfs ? "memfs" : undefined);
+
           const updateArgs = getModelUpdateArgs(effectiveModel);
           const result = await createAgent({
             model: effectiveModel,
@@ -1628,15 +1624,15 @@ async function main(): Promise<void> {
             skillsDirectory,
             parallelToolCalls: true,
             systemPromptPreset,
-            memoryPromptMode: requestedMemoryPromptMode,
+            memoryPromptMode: effectiveMemoryMode,
             initBlocks,
             baseTools,
           });
           agent = result.agent;
           setAgentProvenance(result.provenance);
 
-          // Enable memfs by default on Letta Cloud for new agents when no explicit memfs flags are provided.
-          if (shouldAutoEnableMemfsForNewAgent) {
+          // Enable memfs on Letta Cloud (tags, repo clone, tool detach).
+          if (willAutoEnableMemfs) {
             const { enableMemfsIfCloud } = await import(
               "./agent/memoryFilesystem"
             );
@@ -1767,6 +1763,17 @@ async function main(): Promise<void> {
           }
 
           if (systemPromptPreset) {
+            // Await memfs sync first so isMemfsEnabled() reflects the final state
+            // before updateAgentSystemPrompt reads it to pick the memory addon.
+            try {
+              await memfsSyncPromise;
+            } catch (error) {
+              console.error(
+                error instanceof Error ? error.message : String(error),
+              );
+              process.exit(1);
+            }
+
             const result = await updateAgentSystemPrompt(
               agent.id,
               systemPromptPreset,
@@ -1927,6 +1934,41 @@ async function main(): Promise<void> {
         } catch (error) {
           console.error(error instanceof Error ? error.message : String(error));
           process.exit(1);
+        }
+
+        // Auto-heal system prompt drift (rebuild from stored recipe).
+        // Runs after memfs sync so isMemfsEnabled() reflects the final state.
+        if (resuming && !systemPromptPreset) {
+          let storedPreset = settingsManager.getSystemPromptPreset(agent.id);
+
+          // Adopt legacy agents (created before recipe tracking) as "custom"
+          // so their prompts are left untouched by auto-heal.
+          if (
+            !storedPreset &&
+            agent.tags?.includes("origin:letta-code") &&
+            !agent.tags?.includes("role:subagent")
+          ) {
+            storedPreset = "custom";
+            settingsManager.setSystemPromptPreset(agent.id, storedPreset);
+          }
+
+          if (storedPreset && storedPreset !== "custom") {
+            const { buildSystemPrompt: rebuildPrompt, isKnownPreset: isKnown } =
+              await import("./agent/promptAssets");
+            if (isKnown(storedPreset)) {
+              const memoryMode = settingsManager.isMemfsEnabled(agent.id)
+                ? "memfs"
+                : "standard";
+              const expected = rebuildPrompt(storedPreset, memoryMode);
+              if (agent.system !== expected) {
+                const client = await getClient();
+                await client.agents.update(agent.id, { system: expected });
+                agent = await client.agents.retrieve(agent.id);
+              }
+            } else {
+              settingsManager.clearSystemPromptPreset(agent.id);
+            }
+          }
         }
 
         // Save the session (agent + conversation) to settings

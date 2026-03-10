@@ -139,7 +139,10 @@ Instructions:
  */
 export async function fireAutoInit(
   agentId: string,
-  onComplete: (result: { success: boolean; error?: string }) => void,
+  onComplete: (result: {
+    success: boolean;
+    error?: string;
+  }) => void | Promise<void>,
 ): Promise<boolean> {
   if (hasActiveInitSubagent()) return false;
   if (!settingsManager.isMemfsEnabled(agentId)) return false;

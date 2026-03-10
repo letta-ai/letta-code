@@ -80,6 +80,7 @@ export function buildConversationMessagesCreateRequestBody(
     ),
     streaming: true,
     stream_tokens: opts.streamTokens ?? true,
+    include_pings: true,
     background: opts.background ?? true,
     client_skills: clientSkills,
     client_tools: clientTools,

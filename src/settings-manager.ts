@@ -56,6 +56,7 @@ export interface AgentSettings {
     | "gemini"
     | "gemini_snake"
     | "none"; // toolset mode for this agent (manual override or auto)
+  systemPromptPreset?: string; // known preset ID, "custom", or undefined (legacy/subagent)
 }
 
 export interface Settings {
@@ -205,6 +206,13 @@ class SettingsManager {
       this.managedKeys.add(key);
       this.dirtyKeys.add(key);
     }
+  }
+
+  /**
+   * Whether the settings manager has been initialized.
+   */
+  get isReady(): boolean {
+    return this.initialized;
   }
 
   /**
@@ -1469,12 +1477,18 @@ class SettingsManager {
         // Use nullish coalescing for toolset (undefined = keep existing)
         toolset:
           updates.toolset !== undefined ? updates.toolset : existing.toolset,
+        // Use nullish coalescing for systemPromptPreset (undefined = keep existing)
+        systemPromptPreset:
+          updates.systemPromptPreset !== undefined
+            ? updates.systemPromptPreset
+            : existing.systemPromptPreset,
       };
       // Clean up undefined/false values
       if (!updated.pinned) delete updated.pinned;
       if (!updated.memfs) delete updated.memfs;
       if (!updated.toolset || updated.toolset === "auto")
         delete updated.toolset;
+      if (!updated.systemPromptPreset) delete updated.systemPromptPreset;
       if (!updated.baseUrl) delete updated.baseUrl;
       agents[idx] = updated;
     } else {
@@ -1489,6 +1503,7 @@ class SettingsManager {
       if (!newAgent.memfs) delete newAgent.memfs;
       if (!newAgent.toolset || newAgent.toolset === "auto")
         delete newAgent.toolset;
+      if (!newAgent.systemPromptPreset) delete newAgent.systemPromptPreset;
       if (!newAgent.baseUrl) delete newAgent.baseUrl;
       agents.push(newAgent);
     }
@@ -1542,6 +1557,28 @@ class SettingsManager {
       | "none",
   ): void {
     this.upsertAgentSettings(agentId, { toolset: preference });
+  }
+
+  /**
+   * Get the stored system prompt preset for an agent on the current server.
+   */
+  getSystemPromptPreset(agentId: string): string | undefined {
+    return this.getAgentSettings(agentId)?.systemPromptPreset;
+  }
+
+  /**
+   * Set the system prompt preset for an agent on the current server.
+   */
+  setSystemPromptPreset(agentId: string, preset: string): void {
+    this.upsertAgentSettings(agentId, { systemPromptPreset: preset });
+  }
+
+  /**
+   * Clear the stored system prompt preset for an agent (e.g., after switching to a subagent prompt).
+   */
+  clearSystemPromptPreset(agentId: string): void {
+    // Setting to empty string triggers the cleanup `if (!updated.systemPromptPreset) delete ...`
+    this.upsertAgentSettings(agentId, { systemPromptPreset: "" });
   }
 
   /**

@@ -241,23 +241,19 @@ describe("listen-client requestApprovalOverWS", () => {
   });
 });
 
-describe("listen-client controlResponseCapable latch", () => {
-  test("runtime initializes with controlResponseCapable = false", () => {
+describe("listen-client state_response control protocol", () => {
+  test("always advertises control_response capability", () => {
     const runtime = __listenClientTestUtils.createRuntime();
-    expect(runtime.controlResponseCapable).toBe(false);
+    const snapshot = __listenClientTestUtils.buildStateResponse(runtime, 1);
+    expect(snapshot.control_response_capable).toBe(true);
   });
 
-  test("latch stays true after being set once", () => {
+  test("includes the effective working directory", () => {
     const runtime = __listenClientTestUtils.createRuntime();
-    expect(runtime.controlResponseCapable).toBe(false);
+    const snapshot = __listenClientTestUtils.buildStateResponse(runtime, 1);
 
-    runtime.controlResponseCapable = true;
-    expect(runtime.controlResponseCapable).toBe(true);
-
-    // Simulates second message without the flag — latch should persist
-    // (actual latching happens in handleIncomingMessage, but the runtime
-    // field itself should hold the value)
-    expect(runtime.controlResponseCapable).toBe(true);
+    expect(typeof snapshot.cwd).toBe("string");
+    expect(snapshot.cwd.length).toBeGreaterThan(0);
   });
 });
 

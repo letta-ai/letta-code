@@ -12,6 +12,7 @@ import {
   extractConflictDetail,
   fetchRunErrorDetail,
   getPreStreamErrorAction,
+  getRetryDelayMs,
   isApprovalPendingError,
   isEmptyResponseRetryable,
   isInvalidToolCallIdsError,
@@ -134,7 +135,6 @@ const EMPTY_RESPONSE_MAX_RETRIES = 2;
 
 // Retry config for 409 "conversation busy" errors (exponential backoff)
 const CONVERSATION_BUSY_MAX_RETRIES = 3; // 10s -> 20s -> 40s
-const CONVERSATION_BUSY_RETRY_BASE_DELAY_MS = 10000; // 10 seconds
 
 export type BidirectionalQueuedInput = QueuedTurnInput<
   MessageCreate["content"]
@@ -773,6 +773,12 @@ export async function handleHeadlessCommand(
 
     agent = result.agent;
 
+    // Mark imported agents as "custom" to prevent legacy auto-migration
+    // from overwriting their system prompt on resume.
+    if (settingsManager.isReady) {
+      settingsManager.setSystemPromptPreset(agent.id, "custom");
+    }
+
     // Display extracted skills summary
     if (result.skills && result.skills.length > 0) {
       const { getAgentSkillsDir } = await import("./agent/skills");
@@ -796,6 +802,15 @@ export async function handleHeadlessCommand(
   // Priority 3: Check if --new flag was passed (skip all resume logic)
   if (!agent && forceNew) {
     const updateArgs = getModelUpdateArgs(model);
+    // Pre-determine memfs mode so the agent is created with the correct prompt.
+    const { isLettaCloud, enableMemfsIfCloud } = await import(
+      "./agent/memoryFilesystem"
+    );
+    const willAutoEnableMemfs =
+      shouldAutoEnableMemfsForNewAgent && (await isLettaCloud());
+    const effectiveMemoryMode =
+      requestedMemoryPromptMode ?? (willAutoEnableMemfs ? "memfs" : undefined);
+
     const createOptions = {
       model,
       embeddingModel,
@@ -804,7 +819,7 @@ export async function handleHeadlessCommand(
       parallelToolCalls: true,
       systemPromptPreset,
       systemPromptCustom: systemCustom,
-      memoryPromptMode: requestedMemoryPromptMode,
+      memoryPromptMode: effectiveMemoryMode,
       initBlocks,
       baseTools,
       memoryBlocks,
@@ -814,9 +829,8 @@ export async function handleHeadlessCommand(
     const result = await createAgent(createOptions);
     agent = result.agent;
 
-    // Enable memfs by default on Letta Cloud for new agents when no explicit memfs flags are provided.
-    if (shouldAutoEnableMemfsForNewAgent) {
-      const { enableMemfsIfCloud } = await import("./agent/memoryFilesystem");
+    // Enable memfs on Letta Cloud (tags, repo clone, tool detach).
+    if (willAutoEnableMemfs) {
       await enableMemfsIfCloud(agent.id);
     }
   }
@@ -908,18 +922,6 @@ export async function handleHeadlessCommand(
         }
       }
     }
-
-    if (systemPromptPreset) {
-      const result = await updateAgentSystemPrompt(
-        agent.id,
-        systemPromptPreset,
-      );
-      if (!result.success || !result.agent) {
-        console.error(`Failed to update system prompt: ${result.message}`);
-        process.exit(1);
-      }
-      agent = result.agent;
-    }
   }
 
   // Determine which conversation to use
@@ -927,6 +929,9 @@ export async function handleHeadlessCommand(
   let effectiveReflectionSettings: ReflectionSettings;
 
   const isSubagent = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
+
+  // Captured so prompt logic below can await it when needed.
+  let memfsBgPromise: Promise<unknown> | undefined;
 
   // Apply memfs flags and auto-enable from server tag when local settings are missing.
   // Respects memfsStartupPolicy:
@@ -950,7 +955,7 @@ export async function handleHeadlessCommand(
   } else if (memfsStartupPolicy === "background") {
     // Fire pull async; don't block session initialisation.
     const { applyMemfsFlags } = await import("./agent/memoryFilesystem");
-    applyMemfsFlags(agent.id, memfsFlag, noMemfsFlag, {
+    memfsBgPromise = applyMemfsFlags(agent.id, memfsFlag, noMemfsFlag, {
       pullOnExistingRepo: true,
       agentTags: agent.tags,
     }).catch((error) => {
@@ -980,6 +985,56 @@ export async function handleHeadlessCommand(
         `Memory git sync failed: ${error instanceof Error ? error.message : String(error)}`,
       );
       process.exit(1);
+    }
+  }
+
+  // Ensure background memfs sync settles before prompt logic reads isMemfsEnabled().
+  if (memfsBgPromise && isResumingAgent) {
+    await memfsBgPromise;
+  }
+
+  // Apply --system flag after memfs sync so isMemfsEnabled() is up to date.
+  if (isResumingAgent && systemPromptPreset) {
+    const result = await updateAgentSystemPrompt(agent.id, systemPromptPreset);
+    if (!result.success || !result.agent) {
+      console.error(`Failed to update system prompt: ${result.message}`);
+      process.exit(1);
+    }
+    agent = result.agent;
+  }
+
+  // Auto-heal system prompt drift (rebuild from stored recipe).
+  // Runs after memfs sync so isMemfsEnabled() reflects the final state.
+  if (isResumingAgent && !systemPromptPreset) {
+    let storedPreset = settingsManager.getSystemPromptPreset(agent.id);
+
+    // Adopt legacy agents (created before recipe tracking) as "custom"
+    // so their prompts are left untouched by auto-heal.
+    if (
+      !storedPreset &&
+      agent.tags?.includes("origin:letta-code") &&
+      !agent.tags?.includes("role:subagent")
+    ) {
+      storedPreset = "custom";
+      settingsManager.setSystemPromptPreset(agent.id, storedPreset);
+    }
+
+    if (storedPreset && storedPreset !== "custom") {
+      const { buildSystemPrompt: rebuildPrompt, isKnownPreset: isKnown } =
+        await import("./agent/promptAssets");
+      if (isKnown(storedPreset)) {
+        const memoryMode = settingsManager.isMemfsEnabled(agent.id)
+          ? "memfs"
+          : "standard";
+        const expected = rebuildPrompt(storedPreset, memoryMode);
+        if (agent.system !== expected) {
+          const client = await getClient();
+          await client.agents.update(agent.id, { system: expected });
+          agent = await client.agents.retrieve(agent.id);
+        }
+      } else {
+        settingsManager.clearSystemPromptPreset(agent.id);
+      }
     }
   }
 
@@ -1554,9 +1609,10 @@ ${SYSTEM_REMINDER_CLOSE}
         // Check for 409 "conversation busy" error - retry once with delay
         if (preStreamAction === "retry_conversation_busy") {
           conversationBusyRetries += 1;
-          const retryDelayMs =
-            CONVERSATION_BUSY_RETRY_BASE_DELAY_MS *
-            2 ** (conversationBusyRetries - 1);
+          const retryDelayMs = getRetryDelayMs({
+            category: "conversation_busy",
+            attempt: conversationBusyRetries,
+          });
 
           // Emit retry message for stream-json mode
           if (outputFormat === "stream-json") {
@@ -1589,7 +1645,12 @@ ${SYSTEM_REMINDER_CLOSE}
                   preStreamError.headers?.get("retry-after"),
                 )
               : null;
-          const delayMs = retryAfterMs ?? 1000 * 2 ** (attempt - 1);
+          const delayMs = getRetryDelayMs({
+            category: "transient_provider",
+            attempt,
+            detail: errorDetail,
+            retryAfterMs,
+          });
 
           llmApiErrorRetries = attempt;
 
@@ -1920,8 +1981,11 @@ ${SYSTEM_REMINDER_CLOSE}
       if (stopReason === "llm_api_error") {
         if (llmApiErrorRetries < LLM_API_ERROR_MAX_RETRIES) {
           const attempt = llmApiErrorRetries + 1;
-          const baseDelayMs = 1000;
-          const delayMs = baseDelayMs * 2 ** (attempt - 1);
+          const delayMs = getRetryDelayMs({
+            category: "transient_provider",
+            attempt,
+            detail: detailFromRun,
+          });
 
           llmApiErrorRetries = attempt;
 
@@ -2048,7 +2112,10 @@ ${SYSTEM_REMINDER_CLOSE}
             )
           ) {
             const attempt = emptyResponseRetries + 1;
-            const delayMs = 500 * attempt;
+            const delayMs = getRetryDelayMs({
+              category: "empty_response",
+              attempt,
+            });
 
             emptyResponseRetries = attempt;
 
@@ -2085,8 +2152,11 @@ ${SYSTEM_REMINDER_CLOSE}
 
           if (shouldRetryRunMetadataError(errorType, detail)) {
             const attempt = llmApiErrorRetries + 1;
-            const baseDelayMs = 1000;
-            const delayMs = baseDelayMs * 2 ** (attempt - 1);
+            const delayMs = getRetryDelayMs({
+              category: "transient_provider",
+              attempt,
+              detail,
+            });
 
             llmApiErrorRetries = attempt;
 
@@ -3179,7 +3249,12 @@ async function runBidirectionalMode(
                       preStreamError.headers?.get("retry-after"),
                     )
                   : null;
-              const delayMs = retryAfterMs ?? 1000 * 2 ** (attempt - 1);
+              const delayMs = getRetryDelayMs({
+                category: "transient_provider",
+                attempt,
+                detail: errorDetail,
+                retryAfterMs,
+              });
               preStreamTransientRetries = attempt;
 
               const retryMsg: RetryMessage = {
