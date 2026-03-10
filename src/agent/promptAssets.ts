@@ -114,6 +114,140 @@ export const SYSTEM_PROMPTS: SystemPromptOption[] = [
   },
 ];
 
+export type MemoryPromptMode = "standard" | "memfs";
+
+// --- Heading-aware section stripping (for legacy/custom prompts) ---
+
+interface Heading {
+  level: number;
+  title: string;
+  startOffset: number;
+}
+
+function scanHeadingsOutsideFences(text: string): Heading[] {
+  const lines = text.split("\n");
+  const headings: Heading[] = [];
+  let inFence = false;
+  let fenceToken = "";
+  let offset = 0;
+
+  for (const line of lines) {
+    const trimmed = line.trimStart();
+    const fenceMatch = trimmed.match(/^(```+|~~~+)/);
+    if (fenceMatch) {
+      const token = fenceMatch[1] ?? fenceMatch[0] ?? "";
+      const tokenChar = token.startsWith("`") ? "`" : "~";
+      if (!inFence) {
+        inFence = true;
+        fenceToken = tokenChar;
+      } else if (fenceToken === tokenChar) {
+        inFence = false;
+        fenceToken = "";
+      }
+    }
+
+    if (!inFence) {
+      const headingMatch = line.match(/^\s*(#{1,6})\s+(.+?)\s*$/);
+      if (headingMatch) {
+        const hashes = headingMatch[1] ?? "";
+        const rawTitle = headingMatch[2] ?? "";
+        if (hashes && rawTitle) {
+          const level = hashes.length;
+          const title = rawTitle.replace(/\s+#*$/, "").trim();
+          headings.push({ level, title, startOffset: offset });
+        }
+      }
+    }
+
+    offset += line.length + 1;
+  }
+
+  return headings;
+}
+
+function stripHeadingSections(
+  text: string,
+  shouldStrip: (heading: Heading) => boolean,
+): string {
+  let current = text;
+  while (true) {
+    const headings = scanHeadingsOutsideFences(current);
+    const target = headings.find(shouldStrip);
+    if (!target) return current;
+
+    const nextHeading = headings.find(
+      (h) => h.startOffset > target.startOffset && h.level <= target.level,
+    );
+    const end = nextHeading ? nextHeading.startOffset : current.length;
+    current = `${current.slice(0, target.startOffset)}${current.slice(end)}`;
+  }
+}
+
+/**
+ * Check if a preset ID exists in SYSTEM_PROMPTS.
+ */
+export function isKnownPreset(id: string): boolean {
+  return SYSTEM_PROMPTS.some((p) => p.id === id);
+}
+
+/**
+ * Deterministic rebuild of a system prompt from a known preset + memory mode.
+ * Throws on unknown preset (prevents stale/renamed presets from silently rewriting prompts).
+ */
+export function buildSystemPrompt(
+  presetId: string,
+  memoryMode: MemoryPromptMode,
+): string {
+  const preset = SYSTEM_PROMPTS.find((p) => p.id === presetId);
+  if (!preset) {
+    throw new Error(
+      `Unknown preset "${presetId}" — cannot rebuild system prompt`,
+    );
+  }
+  const addon =
+    memoryMode === "memfs"
+      ? SYSTEM_PROMPT_MEMFS_ADDON
+      : SYSTEM_PROMPT_MEMORY_ADDON;
+  return `${preset.content.trimEnd()}\n\n${addon.trimStart()}`.trim();
+}
+
+/**
+ * Swap the memory addon on a custom/subagent/legacy prompt.
+ * Strips all existing addons (handles duplicates) and orphan memfs tail fragments,
+ * then appends the target addon.
+ */
+export function swapMemoryAddon(
+  systemPrompt: string,
+  mode: MemoryPromptMode,
+): string {
+  let result = systemPrompt;
+  // Strip all existing addons (replaceAll handles duplicates)
+  for (const addon of [
+    SYSTEM_PROMPT_MEMORY_ADDON.trim(),
+    SYSTEM_PROMPT_MEMFS_ADDON.trim(),
+  ]) {
+    result = result.replaceAll(addon, "");
+  }
+  // Strip orphan memfs tail fragment (from old drift bugs)
+  const tailAnchor = "# See what changed";
+  const tailStart = SYSTEM_PROMPT_MEMFS_ADDON.indexOf(tailAnchor);
+  if (tailStart !== -1) {
+    const orphanTail = SYSTEM_PROMPT_MEMFS_ADDON.slice(tailStart).trim();
+    result = result.replaceAll(orphanTail, "");
+  }
+  // Strip legacy/variant memory sections by markdown heading parsing
+  // (handles edited or older ## Memory / ## Memory Filesystem sections)
+  result = stripHeadingSections(result, (h) => h.title === "Memory");
+  result = stripHeadingSections(result, (h) =>
+    h.title.startsWith("Memory Filesystem"),
+  );
+  // Compact blank lines and append target addon
+  result = result.replace(/\n{3,}/g, "\n\n").trimEnd();
+  const target =
+    mode === "memfs" ? SYSTEM_PROMPT_MEMFS_ADDON : SYSTEM_PROMPT_MEMORY_ADDON;
+  return `${result}\n\n${target.trimStart()}`.trim();
+}
+
 /**
  * Validate a system prompt preset ID.
  *
@@ -143,6 +277,23 @@ export async function validateSystemPromptPreset(
   throw new Error(
     `Invalid system prompt "${id}". Must be one of: ${validPresets.join(", ")}.`,
   );
+}
+
+/**
+ * Resolve a prompt ID and build the full system prompt with memory addon.
+ * Known presets are rebuilt deterministically; unknown IDs (subagent names)
+ * are resolved async and have the addon swapped in.
+ */
+export async function resolveAndBuildSystemPrompt(
+  promptId: string | undefined,
+  memoryMode: MemoryPromptMode,
+): Promise<string> {
+  const id = promptId ?? "default";
+  if (isKnownPreset(id)) {
+    return buildSystemPrompt(id, memoryMode);
+  }
+  const resolved = await resolveSystemPrompt(id);
+  return swapMemoryAddon(resolved, memoryMode);
 }
 
 /**

@@ -772,6 +772,12 @@ export async function handleHeadlessCommand(
 
     agent = result.agent;
 
+    // Mark imported agents as "custom" to prevent legacy auto-migration
+    // from overwriting their system prompt on resume.
+    if (settingsManager.isReady) {
+      settingsManager.setSystemPromptPreset(agent.id, "custom");
+    }
+
     // Display extracted skills summary
     if (result.skills && result.skills.length > 0) {
       const { getAgentSkillsDir } = await import("./agent/skills");
@@ -907,18 +913,6 @@ export async function handleHeadlessCommand(
         }
       }
     }
-
-    if (systemPromptPreset) {
-      const result = await updateAgentSystemPrompt(
-        agent.id,
-        systemPromptPreset,
-      );
-      if (!result.success || !result.agent) {
-        console.error(`Failed to update system prompt: ${result.message}`);
-        process.exit(1);
-      }
-      agent = result.agent;
-    }
   }
 
   // Determine which conversation to use
@@ -926,6 +920,9 @@ export async function handleHeadlessCommand(
   let effectiveReflectionSettings: ReflectionSettings;
 
   const isSubagent = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
+
+  // Captured so prompt logic below can await it when needed.
+  let memfsBgPromise: Promise<unknown> | undefined;
 
   // Apply memfs flags and auto-enable from server tag when local settings are missing.
   // Respects memfsStartupPolicy:
@@ -949,7 +946,7 @@ export async function handleHeadlessCommand(
   } else if (memfsStartupPolicy === "background") {
     // Fire pull async; don't block session initialisation.
     const { applyMemfsFlags } = await import("./agent/memoryFilesystem");
-    applyMemfsFlags(agent.id, memfsFlag, noMemfsFlag, {
+    memfsBgPromise = applyMemfsFlags(agent.id, memfsFlag, noMemfsFlag, {
       pullOnExistingRepo: true,
       agentTags: agent.tags,
     }).catch((error) => {
@@ -979,6 +976,56 @@ export async function handleHeadlessCommand(
         `Memory git sync failed: ${error instanceof Error ? error.message : String(error)}`,
       );
       process.exit(1);
+    }
+  }
+
+  // Ensure background memfs sync settles before prompt logic reads isMemfsEnabled().
+  if (memfsBgPromise && isResumingAgent) {
+    await memfsBgPromise;
+  }
+
+  // Apply --system flag after memfs sync so isMemfsEnabled() is up to date.
+  if (isResumingAgent && systemPromptPreset) {
+    const result = await updateAgentSystemPrompt(agent.id, systemPromptPreset);
+    if (!result.success || !result.agent) {
+      console.error(`Failed to update system prompt: ${result.message}`);
+      process.exit(1);
+    }
+    agent = result.agent;
+  }
+
+  // Auto-heal system prompt drift (rebuild from stored recipe).
+  // Runs after memfs sync so isMemfsEnabled() reflects the final state.
+  if (isResumingAgent && !systemPromptPreset) {
+    let storedPreset = settingsManager.getSystemPromptPreset(agent.id);
+
+    // Adopt legacy agents (created before recipe tracking) as "custom"
+    // so their prompts are left untouched by auto-heal.
+    if (
+      !storedPreset &&
+      agent.tags?.includes("origin:letta-code") &&
+      !agent.tags?.includes("role:subagent")
+    ) {
+      storedPreset = "custom";
+      settingsManager.setSystemPromptPreset(agent.id, storedPreset);
+    }
+
+    if (storedPreset && storedPreset !== "custom") {
+      const { buildSystemPrompt: rebuildPrompt, isKnownPreset: isKnown } =
+        await import("./agent/promptAssets");
+      if (isKnown(storedPreset)) {
+        const memoryMode = settingsManager.isMemfsEnabled(agent.id)
+          ? "memfs"
+          : "standard";
+        const expected = rebuildPrompt(storedPreset, memoryMode);
+        if (agent.system !== expected) {
+          const client = await getClient();
+          await client.agents.update(agent.id, { system: expected });
+          agent = await client.agents.retrieve(agent.id);
+        }
+      } else {
+        settingsManager.clearSystemPromptPreset(agent.id);
+      }
     }
   }
 
