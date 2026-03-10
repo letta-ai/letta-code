@@ -7,16 +7,16 @@
 
 import { execSync } from "node:child_process";
 import { getMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
-import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "../../constants";
 import { settingsManager } from "../../settings-manager";
+import { buildInitIntakeReminder } from "./initIntakeReminder";
 import { getSnapshot as getSubagentSnapshot } from "./subagentState";
 
-export const INIT_TASK_DESCRIPTION_STANDARD = "Memory init standard";
-export const INIT_TASK_DESCRIPTION_DEEP = "Memory init deep";
+export const INIT_TASK_DESCRIPTION = "Memory init";
 
 const INTERACTIVE_INIT_TASK_DESCRIPTIONS = new Set(
-  [INIT_TASK_DESCRIPTION_STANDARD, INIT_TASK_DESCRIPTION_DEEP].map((value) =>
-    value.toLowerCase(),
+  // Include legacy interactive descriptions for compatibility with older tasks.
+  [INIT_TASK_DESCRIPTION, "Memory init standard", "Memory init deep"].map(
+    (value) => value.toLowerCase(),
   ),
 );
 
@@ -48,19 +48,6 @@ export function isInteractiveInitTaskDescription(description: string): boolean {
   return INTERACTIVE_INIT_TASK_DESCRIPTIONS.has(
     normalizeDescription(description),
   );
-}
-
-export function inferInteractiveInitDepth(
-  description: string,
-): "shallow" | "deep" | null {
-  const normalized = normalizeDescription(description);
-  if (normalized === INIT_TASK_DESCRIPTION_STANDARD.toLowerCase()) {
-    return "shallow";
-  }
-  if (normalized === INIT_TASK_DESCRIPTION_DEEP.toLowerCase()) {
-    return "deep";
-  }
-  return null;
 }
 
 // ── Git context ────────────────────────────────────────────
@@ -247,7 +234,7 @@ export function buildInitIntakeMessage(args: InitIntakeMessageArgs): string {
     ? `\`\`\`ts
 Task({
   subagent_type: "init",
-  description: depth === "deep" ? "${INIT_TASK_DESCRIPTION_DEEP}" : "${INIT_TASK_DESCRIPTION_STANDARD}",
+  description: "${INIT_TASK_DESCRIPTION}",
   run_in_background: true,
   prompt: "<build from intake using the runtime template below>"
 })
@@ -269,7 +256,7 @@ ${buildMemoryInitRuntimePrompt({
 Task({
   subagent_type: "general-purpose",
   agent_id: "${args.agentId}",
-  description: depth === "deep" ? "${INIT_TASK_DESCRIPTION_DEEP}" : "${INIT_TASK_DESCRIPTION_STANDARD}",
+  description: "${INIT_TASK_DESCRIPTION}",
   run_in_background: true,
   prompt: "<build from intake using the runtime template below>"
 })
@@ -287,38 +274,14 @@ ${buildLegacyMemoryInitRuntimePrompt({
 })}
 \`\`\``;
 
-  return `${SYSTEM_REMINDER_OPEN}
-The user explicitly ran /init and wants an interactive setup flow.
-
-You are the primary agent for intake only. Follow this sequence:
-1. Ask ONE AskUserQuestion bundle (max 4 total questions).
-2. Wait for answers, then dispatch the real work in a background Task.
-3. Tell the user initialization is running in the background.
-
-Constraints:
-- Do NOT do deep project research in this foreground turn.
-- Do NOT invoke \`initializing-memory\` in this foreground turn.
-- Ask no more than 4 questions total.
-- Include a required depth question with exactly two options:
-  - "Standard research" (maps to \`research_depth: shallow\`)
-  - "Deep research" (maps to \`research_depth: deep\`)
-- Use \`run_in_background: true\` (init/reflection background workflows use silent completion automatically).
-- Use exactly one of these Task descriptions:
-  - ${INIT_TASK_DESCRIPTION_STANDARD}
-  - ${INIT_TASK_DESCRIPTION_DEEP}
-- Dispatch exactly one background Task.
-
-Runtime context:
-- parent_agent_id: ${args.agentId}
-- working_directory: ${args.workingDirectory}
-- memory_mode: ${args.memfsEnabled ? "memfs" : "legacy-api"}
-- memory_dir: ${args.memoryDir}
-
-After intake, dispatch the background worker:
-${modeSpecificDispatch}
-
-Before dispatching, replace all placeholder values (\`<answer>\`, \`<build from intake>\`) with real intake answers and selected depth.
-${SYSTEM_REMINDER_CLOSE}`;
+  return buildInitIntakeReminder({
+    agentId: args.agentId,
+    workingDirectory: args.workingDirectory,
+    memoryMode: args.memfsEnabled ? "memfs" : "legacy-api",
+    memoryDir: args.memoryDir,
+    modeSpecificDispatch,
+    initTaskDescription: INIT_TASK_DESCRIPTION,
+  });
 }
 
 /**

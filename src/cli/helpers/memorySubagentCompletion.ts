@@ -20,7 +20,7 @@ export type MemorySubagentCompletionArgs =
   | {
       agentId: string;
       subagentType: "init";
-      initDepth: MemoryInitDepth;
+      initDepth?: MemoryInitDepth;
       success: boolean;
       error?: string;
     }
@@ -58,12 +58,11 @@ export async function handleMemorySubagentCompletion(
 
   if (success) {
     if (subagentType === "init") {
-      deps.updateInitProgress(
-        agentId,
-        initDepth === "shallow"
-          ? { shallowCompleted: true }
-          : { deepFired: true },
-      );
+      if (initDepth === "deep") {
+        deps.updateInitProgress(agentId, { deepFired: true });
+      } else {
+        deps.updateInitProgress(agentId, { shallowCompleted: true });
+      }
     }
 
     try {
@@ -105,9 +104,10 @@ export async function handleMemorySubagentCompletion(
     if (subagentType === "reflection") {
       return `Tried to reflect, but got lost in the palace: ${normalizedError}`;
     }
-    return initDepth === "deep"
-      ? `Deep memory initialization failed: ${normalizedError}`
-      : `Memory initialization failed: ${normalizedError}`;
+    if (initDepth === "deep") {
+      return `Deep memory initialization failed: ${normalizedError}`;
+    }
+    return `Memory initialization failed: ${normalizedError}`;
   }
 
   const baseMessage =

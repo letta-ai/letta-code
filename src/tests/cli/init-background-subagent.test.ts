@@ -5,8 +5,7 @@ import {
   buildInitIntakeMessage,
   buildLegacyMemoryInitRuntimePrompt,
   buildMemoryInitRuntimePrompt,
-  INIT_TASK_DESCRIPTION_DEEP,
-  INIT_TASK_DESCRIPTION_STANDARD,
+  INIT_TASK_DESCRIPTION,
 } from "../../cli/helpers/initCommand";
 
 describe("init background subagent wiring", () => {
@@ -57,6 +56,18 @@ describe("init background subagent wiring", () => {
     );
     expect(helperSource).toContain(
       "export function buildLegacyMemoryInitRuntimePrompt(",
+    );
+  });
+
+  test("init intake reminder is split into dedicated helper file", () => {
+    const reminderSource = readSource(
+      "../../cli/helpers/initIntakeReminder.ts",
+    );
+    expect(reminderSource).toContain("INIT_INTAKE_QUESTION_GUIDANCE");
+    expect(reminderSource).toContain("buildInitIntakeReminder");
+    expect(reminderSource).toContain("Which contributor are you?");
+    expect(reminderSource).toContain(
+      "Are there other repositories I should know about",
     );
   });
 
@@ -118,7 +129,7 @@ describe("init background subagent wiring", () => {
     expect(prompt).toContain("Do not launch additional Task subagents");
   });
 
-  test("buildInitIntakeMessage includes both dispatch modes and exact task descriptions", () => {
+  test("buildInitIntakeMessage includes both dispatch modes and one stable task description", () => {
     const memfsMessage = buildInitIntakeMessage({
       agentId: "test-agent",
       workingDirectory: "/tmp/test",
@@ -139,8 +150,10 @@ describe("init background subagent wiring", () => {
     expect(memfsMessage).not.toContain("silent_completion");
     expect(legacyMessage).not.toContain("silent_completion");
     expect(legacyMessage).toContain('agent_id: "test-agent"');
-    expect(memfsMessage).toContain(INIT_TASK_DESCRIPTION_STANDARD);
-    expect(memfsMessage).toContain(INIT_TASK_DESCRIPTION_DEEP);
+    expect(memfsMessage).toContain(INIT_TASK_DESCRIPTION);
+    expect(legacyMessage).toContain(INIT_TASK_DESCRIPTION);
+    expect(memfsMessage).toContain("Research depth (required)");
+    expect(memfsMessage).toContain("How proactive should I be?");
   });
 
   test("Task schema does not expose silent_completion", () => {

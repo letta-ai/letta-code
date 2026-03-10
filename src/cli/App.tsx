@@ -228,7 +228,6 @@ import {
   fireAutoInit,
   gatherGitContext,
   hasActiveInitSubagent,
-  inferInteractiveInitDepth,
   isInteractiveInitTaskDescription,
 } from "./helpers/initCommand";
 import {
@@ -1996,16 +1995,11 @@ export default function App({
         if (!isInteractiveInitTaskDescription(event.description)) {
           return;
         }
-        const initDepth = inferInteractiveInitDepth(event.description);
-        if (!initDepth) {
-          return;
-        }
 
         const msg = await handleMemorySubagentCompletion(
           {
             agentId: parentAgentId,
             subagentType: "init",
-            initDepth,
             success: event.success,
             error: event.error,
           },
