@@ -6328,13 +6328,19 @@ export default function App({
       const cmd = commandRunner.start(inputCmd, `Creating agent "${name}"...`);
 
       try {
-        // Create the new agent
-        const { agent } = await createAgent(name);
-
-        // Enable memfs by default on Letta Cloud for new agents
-        const { enableMemfsIfCloud } = await import(
+        // Pre-determine memfs mode so the agent is created with the correct prompt.
+        const { isLettaCloud, enableMemfsIfCloud } = await import(
           "../agent/memoryFilesystem"
         );
+        const willAutoEnableMemfs = await isLettaCloud();
+
+        // Create the new agent
+        const { agent } = await createAgent({
+          name,
+          memoryPromptMode: willAutoEnableMemfs ? "memfs" : undefined,
+        });
+
+        // Enable memfs on Letta Cloud (tags, repo clone, tool detach).
         await enableMemfsIfCloud(agent.id);
 
         // Queue auto-init for first message if memfs is enabled

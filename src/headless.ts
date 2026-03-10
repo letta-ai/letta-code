@@ -801,6 +801,15 @@ export async function handleHeadlessCommand(
   // Priority 3: Check if --new flag was passed (skip all resume logic)
   if (!agent && forceNew) {
     const updateArgs = getModelUpdateArgs(model);
+    // Pre-determine memfs mode so the agent is created with the correct prompt.
+    const { isLettaCloud, enableMemfsIfCloud } = await import(
+      "./agent/memoryFilesystem"
+    );
+    const willAutoEnableMemfs =
+      shouldAutoEnableMemfsForNewAgent && (await isLettaCloud());
+    const effectiveMemoryMode =
+      requestedMemoryPromptMode ?? (willAutoEnableMemfs ? "memfs" : undefined);
+
     const createOptions = {
       model,
       embeddingModel,
@@ -809,7 +818,7 @@ export async function handleHeadlessCommand(
       parallelToolCalls: true,
       systemPromptPreset,
       systemPromptCustom: systemCustom,
-      memoryPromptMode: requestedMemoryPromptMode,
+      memoryPromptMode: effectiveMemoryMode,
       initBlocks,
       baseTools,
       memoryBlocks,
@@ -819,9 +828,8 @@ export async function handleHeadlessCommand(
     const result = await createAgent(createOptions);
     agent = result.agent;
 
-    // Enable memfs by default on Letta Cloud for new agents when no explicit memfs flags are provided.
-    if (shouldAutoEnableMemfsForNewAgent) {
-      const { enableMemfsIfCloud } = await import("./agent/memoryFilesystem");
+    // Enable memfs on Letta Cloud (tags, repo clone, tool detach).
+    if (willAutoEnableMemfs) {
       await enableMemfsIfCloud(agent.id);
     }
   }
