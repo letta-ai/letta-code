@@ -87,13 +87,24 @@ export async function ensureDefaultAgents(
   }
 
   try {
-    const { agent } = await createAgent(DEFAULT_AGENT_CONFIGS.memo);
+    // Pre-determine memfs mode so the agent is created with the correct prompt.
+    const { isLettaCloud, enableMemfsIfCloud } = await import(
+      "./memoryFilesystem"
+    );
+    const willAutoEnableMemfs = await isLettaCloud();
+
+    const { agent } = await createAgent({
+      ...DEFAULT_AGENT_CONFIGS.memo,
+      memoryPromptMode: willAutoEnableMemfs ? "memfs" : undefined,
+    });
     await addTagToAgent(client, agent.id, MEMO_TAG);
     settingsManager.pinGlobal(agent.id);
 
-    // Enable memfs by default on Letta Cloud
-    const { enableMemfsIfCloud } = await import("./memoryFilesystem");
-    await enableMemfsIfCloud(agent.id);
+    // Enable memfs on Letta Cloud (tags, repo clone, tool detach).
+    // Prompt swap is skipped since the agent was created with the correct mode.
+    if (willAutoEnableMemfs) {
+      await enableMemfsIfCloud(agent.id, { skipPromptSwap: true });
+    }
 
     return agent;
   } catch (err) {
