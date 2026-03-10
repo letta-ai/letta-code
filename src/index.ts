@@ -49,12 +49,14 @@ import { telemetry } from "./telemetry";
 import { loadTools } from "./tools/manager";
 import { debugLog } from "./utils/debug";
 import { markMilestone } from "./utils/timing";
+import { ensureFileIndex } from "./cli/helpers/fileIndex";
 
 // Stable empty array constants to prevent new references on every render
 // These are used as fallbacks when resumeData is null, avoiding the React
 // anti-pattern of creating new [] on every render which triggers useEffect re-runs
 const EMPTY_APPROVAL_ARRAY: ApprovalRequest[] = [];
 const EMPTY_MESSAGE_ARRAY: Message[] = [];
+void ensureFileIndex();
 
 function printHelp() {
   // Keep this plaintext (no colors) so output pipes cleanly
