@@ -12,10 +12,11 @@ describe("permission mode retry wiring", () => {
     const source = readAppSource();
 
     const start = source.indexOf(
-      "const setUiPermissionMode = useCallback((mode: PermissionMode) => {",
+      "const setUiPermissionMode = useCallback(",
     );
     const end = source.indexOf(
       "const statusLineTriggerVersionRef = useRef(0);",
+      start,
     );
     expect(start).toBeGreaterThan(-1);
     expect(end).toBeGreaterThan(start);
@@ -38,7 +39,10 @@ describe("permission mode retry wiring", () => {
     );
 
     const slashPlanStart = source.indexOf('if (trimmed === "/plan") {');
-    const slashPlanEnd = source.indexOf("return { submitted: true };", slashPlanStart);
+    const slashPlanEnd = source.indexOf(
+      "return { submitted: true };",
+      slashPlanStart,
+    );
     expect(slashPlanStart).toBeGreaterThan(-1);
     expect(slashPlanEnd).toBeGreaterThan(slashPlanStart);
     expect(source.slice(slashPlanStart, slashPlanEnd)).toContain(
