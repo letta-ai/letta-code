@@ -86,6 +86,26 @@ describe("getReasoningTierOptionsForHandle", () => {
     ]);
   });
 
+  test("returns byok reasoning options for chatgpt-plus-pro gpt-5.4-fast", () => {
+    const options = getReasoningTierOptionsForHandle(
+      "chatgpt-plus-pro/gpt-5.4-fast",
+    );
+    expect(options.map((option) => option.effort)).toEqual([
+      "none",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+    ]);
+    expect(options.map((option) => option.modelId)).toEqual([
+      "gpt-5.4-fast-plus-pro-none",
+      "gpt-5.4-fast-plus-pro-low",
+      "gpt-5.4-fast-plus-pro-medium",
+      "gpt-5.4-fast-plus-pro-high",
+      "gpt-5.4-fast-plus-pro-xhigh",
+    ]);
+  });
+
   test("returns reasoning options for anthropic sonnet 4.6", () => {
     const options = getReasoningTierOptionsForHandle(
       "anthropic/claude-sonnet-4-6",
