@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import type {
   AdvancedDiffFallback,
@@ -217,7 +218,9 @@ describe("computeDiffPreviews", () => {
   });
 
   it("resolves relative file paths against the provided working directory", async () => {
-    const tempRoot = await mkdtemp("/tmp/letta-diff-preview-");
+    const tempRoot = await mkdtemp(
+      path.join(os.tmpdir(), "letta-diff-preview-"),
+    );
     const workspaceDir = path.join(tempRoot, "workspace");
     const nestedDir = path.join(workspaceDir, "nested");
     const targetFile = path.join(nestedDir, "sample.txt");

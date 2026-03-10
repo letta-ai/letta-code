@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
+import os from "node:os";
 import { join } from "node:path";
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import WebSocket from "ws";
@@ -308,7 +309,7 @@ describe("listen-client cwd change handling", () => {
   test("resolves relative cwd changes against the conversation cwd and preserves active turn cwd", async () => {
     const runtime = __listenClientTestUtils.createRuntime();
     const socket = new MockSocket(WebSocket.OPEN);
-    const tempRoot = await mkdtemp("/tmp/letta-listen-cwd-");
+    const tempRoot = await mkdtemp(join(os.tmpdir(), "letta-listen-cwd-"));
     const repoDir = join(tempRoot, "repo");
     const serverDir = join(repoDir, "server");
     const clientDir = join(repoDir, "client");
