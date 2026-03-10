@@ -1942,8 +1942,10 @@ async function main(): Promise<void> {
           ) {
             storedPreset = "custom";
             settingsManager.setSystemPromptPreset(agent.id, storedPreset);
+          }
 
-            // Notify user if their prompt is outdated
+          // Notify user if their custom/legacy prompt is outdated
+          if (storedPreset === "custom") {
             const { detectSystemPromptDrift } = await import(
               "./agent/promptAssets"
             );
