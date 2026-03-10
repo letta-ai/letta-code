@@ -5,6 +5,7 @@ import {
   isKnownPreset,
   SYSTEM_PROMPT_MEMFS_ADDON,
   SYSTEM_PROMPT_MEMORY_ADDON,
+  shouldRecommendDefaultPrompt,
   swapMemoryAddon,
 } from "../../agent/promptAssets";
 
@@ -149,5 +150,34 @@ describe("swapMemoryAddon", () => {
     expect(twice).toBe(once);
     expect(countOccurrences(twice, "## Syncing")).toBe(1);
     expect(countOccurrences(twice, "# See what changed")).toBe(1);
+  });
+});
+
+describe("shouldRecommendDefaultPrompt", () => {
+  test("returns false when prompt matches current default (standard)", () => {
+    const current = buildSystemPrompt("default", "standard");
+    expect(shouldRecommendDefaultPrompt(current, "standard")).toBe(false);
+  });
+
+  test("returns false when prompt matches current default (memfs)", () => {
+    const current = buildSystemPrompt("default", "memfs");
+    expect(shouldRecommendDefaultPrompt(current, "memfs")).toBe(false);
+  });
+
+  test("returns true for a different preset", () => {
+    const current = buildSystemPrompt("letta-claude", "standard");
+    expect(shouldRecommendDefaultPrompt(current, "standard")).toBe(true);
+  });
+
+  test("returns true for a fully custom prompt", () => {
+    expect(
+      shouldRecommendDefaultPrompt("You are a custom agent.", "standard"),
+    ).toBe(true);
+  });
+
+  test("returns true for a modified default prompt", () => {
+    const current = buildSystemPrompt("default", "standard");
+    const modified = `${current}\n\nExtra instructions added by user.`;
+    expect(shouldRecommendDefaultPrompt(modified, "standard")).toBe(true);
   });
 });

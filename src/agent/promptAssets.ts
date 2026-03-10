@@ -280,6 +280,18 @@ export async function validateSystemPromptPreset(
 }
 
 /**
+ * Returns true if the agent is not on the current default preset
+ * and would benefit from switching to `/system default`.
+ */
+export function shouldRecommendDefaultPrompt(
+  currentPrompt: string,
+  memoryMode: MemoryPromptMode,
+): boolean {
+  const defaultPrompt = buildSystemPrompt("default", memoryMode);
+  return currentPrompt !== defaultPrompt;
+}
+
+/**
  * Resolve a prompt ID and build the full system prompt with memory addon.
  * Known presets are rebuilt deterministically; unknown IDs (subagent names)
  * are resolved async and have the addon swapped in.
