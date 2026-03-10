@@ -1,6 +1,11 @@
 import { Box, useInput } from "ink";
 import { memo, useState } from "react";
+import { permissionMode } from "../../permissions/mode";
 import { resolvePlaceholders } from "../helpers/pasteRegistry";
+import {
+  getPlanExitChoices,
+  type PlanExitChoice,
+} from "../helpers/planExitApproval";
 import { useProgressIndicator } from "../hooks/useProgressIndicator";
 import { colors } from "./colors";
 import { MarkdownDisplay } from "./MarkdownDisplay";
@@ -9,7 +14,8 @@ import { Text } from "./Text";
 
 type Props = {
   plan: string;
-  onApprove: () => void;
+  onApproveRestore: () => void;
+  onApproveManual: () => void;
   onApproveAndAcceptEdits: () => void;
   onKeepPlanning: (reason: string) => void;
 };
@@ -19,7 +25,7 @@ const OptionsRenderer = memo(
     options,
     selectedOption,
   }: {
-    options: Array<{ label: string }>;
+    options: PlanExitChoice[];
     selectedOption: number;
   }) => {
     return (
@@ -43,17 +49,20 @@ const OptionsRenderer = memo(
 OptionsRenderer.displayName = "OptionsRenderer";
 
 export const PlanModeDialog = memo(
-  ({ plan, onApprove, onApproveAndAcceptEdits, onKeepPlanning }: Props) => {
+  ({
+    plan,
+    onApproveRestore,
+    onApproveManual,
+    onApproveAndAcceptEdits,
+    onKeepPlanning,
+  }: Props) => {
     const [selectedOption, setSelectedOption] = useState(0);
     const [isEnteringReason, setIsEnteringReason] = useState(false);
     const [denyReason, setDenyReason] = useState("");
     useProgressIndicator();
 
-    const options = [
-      { label: "Yes, and auto-accept edits", action: onApproveAndAcceptEdits },
-      { label: "Yes, and manually approve edits", action: onApprove },
-      { label: "No, keep planning", action: () => {} }, // Handled via setIsEnteringReason
-    ];
+    const modeBeforePlan = permissionMode.getModeBeforePlan() ?? "default";
+    const options = getPlanExitChoices(modeBeforePlan);
 
     useInput((_input, key) => {
       // CTRL-C: immediately exit plan approval (closest to cancel)
@@ -82,11 +91,15 @@ export const PlanModeDialog = memo(
       } else if (key.downArrow) {
         setSelectedOption((prev) => Math.min(options.length - 1, prev + 1));
       } else if (key.return) {
-        // Check if this is the "keep planning" option (last option)
-        if (selectedOption === options.length - 1) {
+        const choice = options[selectedOption];
+        if (!choice) return;
+
+        if (choice.decision === "custom") {
           setIsEnteringReason(true);
         } else {
-          options[selectedOption]?.action();
+          if (choice.decision === "restore") onApproveRestore();
+          if (choice.decision === "manual") onApproveManual();
+          if (choice.decision === "autoAccept") onApproveAndAcceptEdits();
         }
       } else if (key.escape) {
         setIsEnteringReason(true); // ESC also goes to denial input
