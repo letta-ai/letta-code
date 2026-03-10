@@ -96,6 +96,26 @@ describe("commandRunner", () => {
 
     expect(finishedEvents).toEqual([{ input: "/model", output: "Switched" }]);
   });
+
+  test("onCommandFinished carries suppressReminder flag from handle", () => {
+    const buffers = createBuffers();
+    const buffersRef = { current: buffers };
+    const finishedEvents: Array<{ suppressReminder?: boolean }> = [];
+    const runner = createCommandRunner({
+      buffersRef,
+      refreshDerived: () => {},
+      createId: () => "cmd-1",
+      onCommandFinished: (event) => {
+        finishedEvents.push({ suppressReminder: event.suppressReminder });
+      },
+    });
+
+    const cmd = runner.start("/init", "Starting...");
+    cmd.suppressReminder = true;
+    cmd.finish("Done", true);
+
+    expect(finishedEvents).toEqual([{ suppressReminder: true }]);
+  });
 });
 
 describe("command input preservation in handlers", () => {

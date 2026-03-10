@@ -11,15 +11,56 @@ import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "../../constants";
 import { settingsManager } from "../../settings-manager";
 import { getSnapshot as getSubagentSnapshot } from "./subagentState";
 
+export const INIT_TASK_DESCRIPTION_STANDARD = "Memory init standard";
+export const INIT_TASK_DESCRIPTION_DEEP = "Memory init deep";
+
+const INTERACTIVE_INIT_TASK_DESCRIPTIONS = new Set(
+  [INIT_TASK_DESCRIPTION_STANDARD, INIT_TASK_DESCRIPTION_DEEP].map((value) =>
+    value.toLowerCase(),
+  ),
+);
+
+const ACTIVE_INIT_TASK_DESCRIPTIONS = new Set([
+  ...INTERACTIVE_INIT_TASK_DESCRIPTIONS,
+  "initializing memory",
+  "deep memory initialization",
+]);
+
+function normalizeDescription(value: string | null | undefined): string {
+  return (value ?? "").trim().toLowerCase();
+}
+
 // ── Guard ──────────────────────────────────────────────────
 
 export function hasActiveInitSubagent(): boolean {
   const snapshot = getSubagentSnapshot();
   return snapshot.agents.some(
     (agent) =>
-      agent.type.toLowerCase() === "init" &&
+      (agent.type.toLowerCase() === "init" ||
+        ACTIVE_INIT_TASK_DESCRIPTIONS.has(
+          normalizeDescription(agent.description),
+        )) &&
       (agent.status === "pending" || agent.status === "running"),
   );
+}
+
+export function isInteractiveInitTaskDescription(description: string): boolean {
+  return INTERACTIVE_INIT_TASK_DESCRIPTIONS.has(
+    normalizeDescription(description),
+  );
+}
+
+export function inferInteractiveInitDepth(
+  description: string,
+): "shallow" | "deep" | null {
+  const normalized = normalizeDescription(description);
+  if (normalized === INIT_TASK_DESCRIPTION_STANDARD.toLowerCase()) {
+    return "shallow";
+  }
+  if (normalized === INIT_TASK_DESCRIPTION_DEEP.toLowerCase()) {
+    return "deep";
+  }
+  return null;
 }
 
 // ── Git context ────────────────────────────────────────────
@@ -97,14 +138,27 @@ Deep init — full exploration (follow the initializing-memory skill fully):
 
 // ── Prompt builders ────────────────────────────────────────
 
-/** Prompt for the background init subagent (MemFS path). */
-export function buildMemoryInitRuntimePrompt(args: {
+function buildIntakeSummarySection(intakeSummary?: string): string {
+  if (!intakeSummary) {
+    return "User intake summary: (none provided; infer from repository context)";
+  }
+  return `User intake summary:
+${intakeSummary}`;
+}
+
+export interface MemoryInitRuntimePromptArgs {
   agentId: string;
   workingDirectory: string;
   memoryDir: string;
   gitContext: string;
   depth?: "shallow" | "deep";
-}): string {
+  intakeSummary?: string;
+}
+
+/** Prompt for the background init subagent (MemFS path). */
+export function buildMemoryInitRuntimePrompt(
+  args: MemoryInitRuntimePromptArgs,
+): string {
   const depth = args.depth ?? "deep";
   return `
 The user ran /init for the current project.
@@ -114,6 +168,8 @@ Runtime context:
 - working_directory: ${args.workingDirectory}
 - memory_dir: ${args.memoryDir}
 - research_depth: ${depth}
+
+${buildIntakeSummarySection(args.intakeSummary)}
 
 Git/project context:
 ${args.gitContext}
@@ -131,6 +187,140 @@ Instructions:
 - Make reasonable assumptions and report them
 - If the memory filesystem is unavailable or unsafe to modify, stop and explain why
 `.trim();
+}
+
+export interface LegacyInitRuntimePromptArgs {
+  agentId: string;
+  workingDirectory: string;
+  gitContext: string;
+  depth?: "shallow" | "deep";
+  intakeSummary?: string;
+}
+
+/** Prompt for non-MemFS background init (deploys the existing parent agent). */
+export function buildLegacyMemoryInitRuntimePrompt(
+  args: LegacyInitRuntimePromptArgs,
+): string {
+  const depth = args.depth ?? "deep";
+  return `
+The user ran /init for the current project.
+
+Runtime context:
+- target_agent_id: ${args.agentId}
+- working_directory: ${args.workingDirectory}
+- memory_mode: legacy-api
+- research_depth: ${depth}
+
+${buildIntakeSummarySection(args.intakeSummary)}
+
+Git/project context:
+${args.gitContext}
+
+Task:
+Initialize or reorganize this agent's API-backed memory for the project.
+
+${depth === "shallow" ? SHALLOW_INSTRUCTIONS : DEEP_INSTRUCTIONS}
+
+Instructions:
+- Invoke the \`initializing-memory\` skill first with \`Skill({ skill: "initializing-memory" })\`
+- Then follow that skill autonomously to update memory blocks for this agent
+- Do not ask follow-up questions (intake is already complete)
+- Do not launch additional Task subagents
+- Make reasonable assumptions and report them
+`.trim();
+}
+
+export interface InitIntakeMessageArgs {
+  agentId: string;
+  workingDirectory: string;
+  memfsEnabled: boolean;
+  memoryDir: string;
+  gitContext: string;
+}
+
+/**
+ * Command-scoped reminder for interactive /init intake in the primary agent.
+ * The primary agent asks questions, then dispatches background labor.
+ */
+export function buildInitIntakeMessage(args: InitIntakeMessageArgs): string {
+  const modeSpecificDispatch = args.memfsEnabled
+    ? `\`\`\`ts
+Task({
+  subagent_type: "init",
+  description: depth === "deep" ? "${INIT_TASK_DESCRIPTION_DEEP}" : "${INIT_TASK_DESCRIPTION_STANDARD}",
+  run_in_background: true,
+  silent_completion: true,
+  prompt: "<build from intake using the runtime template below>"
+})
+\`\`\`
+
+Use this worker prompt template:
+\`\`\`
+${buildMemoryInitRuntimePrompt({
+  agentId: args.agentId,
+  workingDirectory: args.workingDirectory,
+  memoryDir: args.memoryDir,
+  gitContext: args.gitContext,
+  depth: "deep",
+  intakeSummary:
+    "- identity: <answer>\n- related_repos: <answer>\n- communication_or_rules: <answer>",
+})}
+\`\`\``
+    : `\`\`\`ts
+Task({
+  subagent_type: "general-purpose",
+  agent_id: "${args.agentId}",
+  description: depth === "deep" ? "${INIT_TASK_DESCRIPTION_DEEP}" : "${INIT_TASK_DESCRIPTION_STANDARD}",
+  run_in_background: true,
+  silent_completion: true,
+  prompt: "<build from intake using the runtime template below>"
+})
+\`\`\`
+
+Use this worker prompt template:
+\`\`\`
+${buildLegacyMemoryInitRuntimePrompt({
+  agentId: args.agentId,
+  workingDirectory: args.workingDirectory,
+  gitContext: args.gitContext,
+  depth: "deep",
+  intakeSummary:
+    "- identity: <answer>\n- related_repos: <answer>\n- communication_or_rules: <answer>",
+})}
+\`\`\``;
+
+  return `${SYSTEM_REMINDER_OPEN}
+The user explicitly ran /init and wants an interactive setup flow.
+
+You are the primary agent for intake only. Follow this sequence:
+1. Ask ONE AskUserQuestion bundle (max 4 total questions).
+2. Wait for answers, then dispatch the real work in a background Task.
+3. Tell the user initialization is running in the background.
+
+Constraints:
+- Do NOT do deep project research in this foreground turn.
+- Do NOT invoke \`initializing-memory\` in this foreground turn.
+- Ask no more than 4 questions total.
+- Include a required depth question with exactly two options:
+  - "Standard research" (maps to \`research_depth: shallow\`)
+  - "Deep research" (maps to \`research_depth: deep\`)
+- Use \`run_in_background: true\` and \`silent_completion: true\`.
+- Use exactly one of these Task descriptions:
+  - ${INIT_TASK_DESCRIPTION_STANDARD}
+  - ${INIT_TASK_DESCRIPTION_DEEP}
+- Dispatch exactly one background Task.
+
+Runtime context:
+- parent_agent_id: ${args.agentId}
+- working_directory: ${args.workingDirectory}
+- memory_mode: ${args.memfsEnabled ? "memfs" : "legacy-api"}
+- memory_dir: ${args.memoryDir}
+
+After intake, dispatch the background worker:
+${modeSpecificDispatch}
+
+Before dispatching, replace all placeholder values (\`<answer>\`, \`<build from intake>\`) with real intake answers and selected depth.
+${SYSTEM_REMINDER_CLOSE}`;
 }
 
 /**
@@ -166,29 +356,4 @@ export async function fireAutoInit(
   });
 
   return true;
-}
-
-/** Message for the primary agent via processConversation (legacy non-MemFS path). */
-export function buildLegacyInitMessage(args: {
-  gitContext: string;
-  memfsSection: string;
-}): string {
-  return `${SYSTEM_REMINDER_OPEN}
-The user has requested memory initialization via /init.
-${args.memfsSection}
-## 1. Invoke the initializing-memory skill
-
-Use the \`Skill\` tool with \`skill: "initializing-memory"\` to load the comprehensive instructions for memory initialization.
-
-If the skill fails to invoke, proceed with your best judgment based on these guidelines:
-- Ask upfront questions (research depth, identity, related repos, workflow style)
-- Research the project based on chosen depth
-- Create/update memory blocks incrementally
-- Reflect and verify completeness
-
-## 2. Follow the skill instructions
-
-Once invoked, follow the instructions from the \`initializing-memory\` skill to complete the initialization.
-${args.gitContext}
-${SYSTEM_REMINDER_CLOSE}`;
 }

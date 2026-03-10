@@ -8,6 +8,7 @@ import {
 } from "../../cli/helpers/subagentState";
 import { backgroundTasks } from "../../tools/impl/process_manager";
 import {
+  addBackgroundSubagentCompletionListener,
   spawnBackgroundSubagentTask,
   waitForBackgroundSubagentLink,
 } from "../../tools/impl/Task";
@@ -272,6 +273,61 @@ describe("spawnBackgroundSubagentTask", () => {
     expect(runSubagentStopHooksImpl).toHaveBeenCalledTimes(1);
     const outputContent = readFileSync(launched.outputFile, "utf-8");
     expect(outputContent).toContain("[onComplete error] callback exploded");
+  });
+
+  test("emits completion listener events for background tasks", async () => {
+    const spawnSubagentImpl = mock(async () => ({
+      agentId: "agent-listener",
+      conversationId: "default",
+      report: "done",
+      success: true,
+      totalTokens: 9,
+    }));
+    const events: Array<{
+      taskId: string;
+      subagentType: string;
+      description: string;
+      success: boolean;
+      silentCompletion: boolean;
+    }> = [];
+    const unsubscribe = addBackgroundSubagentCompletionListener((event) => {
+      events.push({
+        taskId: event.taskId,
+        subagentType: event.subagentType,
+        description: event.description,
+        success: event.success,
+        silentCompletion: event.silentCompletion,
+      });
+    });
+
+    const launched = spawnBackgroundSubagentTask({
+      subagentType: "reflection",
+      prompt: "Reflect",
+      description: "Reflect on memory",
+      deps: {
+        spawnSubagentImpl,
+        addToMessageQueueImpl,
+        formatTaskNotificationImpl,
+        runSubagentStopHooksImpl,
+        generateSubagentIdImpl,
+        registerSubagentImpl,
+        completeSubagentImpl,
+        getSubagentSnapshotImpl,
+      },
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    unsubscribe();
+
+    expect(events).toEqual([
+      {
+        taskId: launched.taskId,
+        subagentType: "reflection",
+        description: "Reflect on memory",
+        success: true,
+        silentCompletion: false,
+      },
+    ]);
   });
 
   test("marks background task failed and emits notification on error", async () => {

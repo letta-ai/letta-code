@@ -21,6 +21,10 @@
       "type": "boolean",
       "description": "Set to true to run this agent in the background. The tool result will include an output_file path - use Read tool or Bash tail to check on output."
     },
+    "silent_completion": {
+      "type": "boolean",
+      "description": "Set to true (background only) to suppress automatic task_notification queue injection. Use this when completion should be handled out-of-band."
+    },
     "agent_id": {
       "type": "string",
       "description": "Deploy an existing agent instead of creating a new one. Starts a new conversation with that agent."

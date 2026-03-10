@@ -223,11 +223,13 @@ import {
 import { formatCompact } from "./helpers/format";
 import { parsePatchOperations } from "./helpers/formatArgsDisplay";
 import {
-  buildLegacyInitMessage,
+  buildInitIntakeMessage,
   buildMemoryInitRuntimePrompt,
   fireAutoInit,
   gatherGitContext,
   hasActiveInitSubagent,
+  inferInteractiveInitDepth,
+  isInteractiveInitTaskDescription,
 } from "./helpers/initCommand";
 import {
   getReflectionSettings,
@@ -1765,17 +1767,20 @@ export default function App({
     new Map<string, Promise<void>>(),
   );
   const queuedSystemPromptRecompileByAgentRef = useRef(new Set<string>());
-  const updateInitProgress = (
-    forAgentId: string,
-    update: Partial<{ shallowCompleted: boolean; deepFired: boolean }>,
-  ) => {
-    const progress = initProgressByAgentRef.current.get(forAgentId) ?? {
-      shallowCompleted: false,
-      deepFired: false,
-    };
-    Object.assign(progress, update);
-    initProgressByAgentRef.current.set(forAgentId, progress);
-  };
+  const updateInitProgress = useCallback(
+    (
+      forAgentId: string,
+      update: Partial<{ shallowCompleted: boolean; deepFired: boolean }>,
+    ) => {
+      const progress = initProgressByAgentRef.current.get(forAgentId) ?? {
+        shallowCompleted: false,
+        deepFired: false,
+      };
+      Object.assign(progress, update);
+      initProgressByAgentRef.current.set(forAgentId, progress);
+    },
+    [],
+  );
 
   // Track if we've set the conversation summary for this new conversation
   // Initialized to true for resumed conversations (they already have context)
@@ -1971,6 +1976,56 @@ export default function App({
       ),
     [],
   );
+
+  useEffect(() => {
+    let cancelled = false;
+    let unsubscribe: (() => void) | null = null;
+
+    void (async () => {
+      const { addBackgroundSubagentCompletionListener } = await import(
+        "../tools/impl/Task"
+      );
+      if (cancelled) {
+        return;
+      }
+      unsubscribe = addBackgroundSubagentCompletionListener(async (event) => {
+        const parentAgentId = event.parentAgentId;
+        if (!parentAgentId) {
+          return;
+        }
+        if (!isInteractiveInitTaskDescription(event.description)) {
+          return;
+        }
+        const initDepth = inferInteractiveInitDepth(event.description);
+        if (!initDepth) {
+          return;
+        }
+
+        const msg = await handleMemorySubagentCompletion(
+          {
+            agentId: parentAgentId,
+            subagentType: "init",
+            initDepth,
+            success: event.success,
+            error: event.error,
+          },
+          {
+            recompileByAgent: systemPromptRecompileByAgentRef.current,
+            recompileQueuedByAgent:
+              queuedSystemPromptRecompileByAgentRef.current,
+            updateInitProgress,
+            logRecompileFailure: (message) => debugWarn("memory", message),
+          },
+        );
+        appendTaskNotificationEvents([msg]);
+      });
+    })();
+
+    return () => {
+      cancelled = true;
+      unsubscribe?.();
+    };
+  }, [appendTaskNotificationEvents, updateInitProgress]);
 
   // Consume queued messages for appending to tool results (clears queue).
   // consumeItems fires onDequeued → setQueueDisplay(prev => prev.slice(n))
@@ -2765,6 +2820,9 @@ export default function App({
   refreshDerivedRef.current = refreshDerived;
 
   const recordCommandReminder = useCallback((event: CommandFinishedEvent) => {
+    if (event.suppressReminder) {
+      return;
+    }
     const input = event.input.trim();
     if (!input.startsWith("/")) {
       return;
@@ -9308,6 +9366,7 @@ export default function App({
         // Special handling for /init command
         if (trimmed === "/init") {
           const cmd = commandRunner.start(msg, "Gathering project context...");
+          cmd.suppressReminder = true;
 
           // Check for pending approvals before either path
           const approvalCheck = await checkPendingApprovalsForSlashCommand();
@@ -9318,110 +9377,45 @@ export default function App({
             return { submitted: false };
           }
 
+          if (hasActiveInitSubagent()) {
+            cmd.fail(
+              "Memory initialization is already running in the background.",
+            );
+            return { submitted: true };
+          }
+
+          // Manual /init supersedes pending shallow auto-init for this agent.
+          autoInitPendingAgentIdsRef.current.delete(agentId);
+
           const gitContext = gatherGitContext();
+          setCommandRunning(true);
+          try {
+            const memfsEnabled = settingsManager.isMemfsEnabled(agentId);
+            const initMessage = buildInitIntakeMessage({
+              agentId,
+              workingDirectory: process.cwd(),
+              memfsEnabled,
+              memoryDir: getMemoryFilesystemRoot(agentId),
+              gitContext,
+            });
 
-          if (settingsManager.isMemfsEnabled(agentId)) {
-            // MemFS path: background subagent
-            if (hasActiveInitSubagent()) {
-              cmd.fail(
-                "Memory initialization is already running in the background.",
-              );
-              return { submitted: true };
-            }
+            cmd.finish(
+              "Starting interactive memory setup. I’ll ask a few questions, then run initialization in the background.",
+              true,
+            );
 
-            try {
-              const initPrompt = buildMemoryInitRuntimePrompt({
-                agentId,
-                workingDirectory: process.cwd(),
-                memoryDir: getMemoryFilesystemRoot(agentId),
-                gitContext,
-                depth: "deep",
-              });
-
-              const { spawnBackgroundSubagentTask } = await import(
-                "../tools/impl/Task"
-              );
-              spawnBackgroundSubagentTask({
-                subagentType: "init",
-                prompt: initPrompt,
-                description: "Initializing memory",
-                silentCompletion: true,
-                onComplete: async ({ success, error }) => {
-                  const msg = await handleMemorySubagentCompletion(
-                    {
-                      agentId,
-                      subagentType: "init",
-                      initDepth: "deep",
-                      success,
-                      error,
-                    },
-                    {
-                      recompileByAgent: systemPromptRecompileByAgentRef.current,
-                      recompileQueuedByAgent:
-                        queuedSystemPromptRecompileByAgentRef.current,
-                      updateInitProgress,
-                      logRecompileFailure: (message) =>
-                        debugWarn("memory", message),
-                    },
-                  );
-                  appendTaskNotificationEvents([msg]);
-                },
-              });
-
-              // Clear pending auto-init only after spawn succeeded
-              autoInitPendingAgentIdsRef.current.delete(agentId);
-
-              cmd.finish(
-                "Learning about you and your codebase in the background. You'll be notified when ready.",
-                true,
-              );
-
-              // TODO: Remove this hack once commandRunner supports a
-              // "silent" finish that skips the reminder callback.
-              // Currently cmd.finish() always enqueues a command-IO
-              // reminder, which leaks the /init context into the
-              // primary agent's next turn and causes it to invoke the
-              // initializing-memory skill itself.
-              const reminders =
-                sharedReminderStateRef.current.pendingCommandIoReminders;
-              const idx = reminders.findIndex((r) => r.input === "/init");
-              if (idx !== -1) {
-                reminders.splice(idx, 1);
-              }
-            } catch (error) {
-              const errorDetails = formatErrorDetails(error, agentId);
-              cmd.fail(
-                `Failed to start memory initialization: ${errorDetails}`,
-              );
-            }
-          } else {
-            // Legacy path: primary agent processConversation
-            autoInitPendingAgentIdsRef.current.delete(agentId);
-            setCommandRunning(true);
-            try {
-              cmd.finish(
-                "Assimilating project context and defragmenting memories...",
-                true,
-              );
-
-              const initMessage = buildLegacyInitMessage({
-                gitContext,
-                memfsSection: "",
-              });
-
-              await processConversation([
-                {
-                  type: "message",
-                  role: "user",
-                  content: buildTextParts(initMessage),
-                },
-              ]);
-            } catch (error) {
-              const errorDetails = formatErrorDetails(error, agentId);
-              cmd.fail(`Failed: ${errorDetails}`);
-            } finally {
-              setCommandRunning(false);
-            }
+            await processConversation([
+              {
+                type: "message",
+                role: "user",
+                content: buildTextParts(initMessage),
+              },
+            ]);
+          } catch (error) {
+            const errorDetails = formatErrorDetails(error, agentId);
+            cmd.fail(`Failed to start /init: ${errorDetails}`);
+          } finally {
+            setCommandRunning(false);
           }
           return { submitted: true };
         }

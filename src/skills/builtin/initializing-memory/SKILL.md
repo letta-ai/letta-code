@@ -1,6 +1,6 @@
 ---
 name: initializing-memory
-description: Comprehensive guide for initializing or reorganizing agent memory. Load this skill when running /init, when the user asks you to set up your memory, or when you need guidance on creating effective memory files.
+description: Comprehensive guide for autonomous memory initialization and reorganization. Best used by background workers that must execute without asking the user follow-up questions.
 ---
 
 # Memory Initialization Request
@@ -231,7 +231,10 @@ Think of memory file descriptions as documentation for your future self. The bet
 
 ## Research Depth
 
-You can ask the user if they want a standard or deep research initialization:
+Research depth should come from runtime context supplied by the caller:
+- If runtime context says `research_depth: deep`, run deep initialization.
+- Otherwise default to standard initialization.
+- Do not ask follow-up intake questions in this skill.
 
 **Standard initialization** (~5-20 tool calls):
 - Inspect existing memory files
@@ -257,11 +260,11 @@ You can ask the user if they want a standard or deep research initialization:
 - **Code evolution**: How has the architecture changed? What major refactors happened?
 - **Review patterns**: Are there PR templates? What gets reviewed carefully vs rubber-stamped?
 - **Pain points**: What areas have lots of bug fixes? What code gets touched frequently?
-- **Related repositories**: Ask the user if there are other repos you should know about (e.g., a backend monorepo, shared libraries, documentation repos). These relationships can be crucial context.
+- **Related repositories**: Use intake/runtime context if related repos are provided. If not provided, infer relationships only from repository evidence.
 
 This kind of deep context can make you significantly more effective as a long-term collaborator on the project.
 
-If the user says "take as long as you need" or explicitly wants deep research, use your TODO or Plan tool to orchestrate a thorough, multi-step research process.
+When deep research is requested in runtime context, use your TODO or Plan tool to orchestrate a thorough, multi-step research process.
 
 ## Research Techniques
 
@@ -273,7 +276,7 @@ If the user says "take as long as you need" or explicitly wants deep research, u
 
 **Historical session research** (Claude Code / Codex) — **only if user approved**:
 
-If the user said "Yes" to the historical sessions question, follow the **Historical Session Analysis** section below after completing project research. If they chose "Skip", skip it entirely.
+If runtime context includes explicit consent for historical analysis, follow the **Historical Session Analysis** section below after completing project research. Otherwise, skip it entirely.
 
 **Git research:**
 - `git log --oneline -20` — recent history
@@ -306,38 +309,6 @@ Thorough research (good):
 - Am I just listing facts, or do I understand the project?
 
 The goal isn't to produce a report - it's to genuinely understand the project and how this human(s) works so you can be an effective collaborator.
-
-## On Asking Questions
-
-**Ask important questions upfront, then be autonomous during execution.**
-
-### Recommended Upfront Questions
-
-You should ask these questions at the start (bundle them together in one AskUserQuestion call):
-
-1. **Research depth**: "Standard or deep research (comprehensive, as long as needed)?"
-2. **Identity**: "Which contributor are you?" (You can often infer this from git logs - e.g., if git shows "cpacker" as a top contributor, ask "Are you cpacker?")
-3. **Related repos**: "Are there other repositories I should know about and consider in my research?" (e.g., backend monorepo, shared libraries)
-4. **Historical sessions** (include this question if history data was found in step 2): "I found Claude Code / Codex history on your machine. Should I analyze it to learn your preferences, coding patterns, and project context? This significantly improves how I work with you but uses additional time and tokens." Options: "Yes, analyze history" / "Skip for now". Use "History" as the header.
-5. **Memory updates**: "How often should I check if I should update my memory?" with options "Frequent (every 3-5 turns)" and "Occasional (every 8-10 turns)". This should be a binary question with "Memory" as the header.
-6. **Communication style**: "Terse or detailed responses?"
-7. **Any specific rules**: "Rules I should always follow?"
-
-**Why these matter:**
-- Identity lets you correlate git history to the user (their commits, PRs, coding style)
-- Related repos provide crucial context (many projects span multiple repos)
-- Historical sessions from Claude Code/Codex can reveal preferences, communication style, and project knowledge — but processing them is expensive (parallel subagents, multiple LLM calls), so always ask first
-- Workflow/communication style should be stored in `system/human/prefs/`
-- Rules go in `system/persona/`
-
-### What NOT to ask
-
-- Things you can find by reading files ("What's your test framework?")
-- "What kind of work do you do? Reviewing PRs vs writing code?" - obvious from git log, most devs do everything
-- Permission for obvious actions - just do them
-- Questions one at a time - bundle them (but don't exhaust the user with too many questions at once)
-
-**During execution**, be autonomous. Make reasonable choices and proceed.
 
 ## Memory File Strategy
 
@@ -425,7 +396,7 @@ There's no reason to wait until you "know everything" to write memory. Treat you
 
 ### Initialize ALL Relevant Blocks
 
-Don't just update a single memory file. Based on your upfront questions, also update:
+Don't just update a single memory file. Based on runtime intake context and repository evidence, also update:
 
 - **`human`**: Store the user's identity, workflow preferences, communication style
 - **`persona`**: Store rules the user wants you to follow, behavioral adaptations
@@ -437,22 +408,22 @@ And add memory files that you think make sense to add (e.g., `project/architectu
 
 1. **Check memory filesystem status**: Look for the `memory_filesystem` section in your system prompt to confirm the filesystem is enabled.
 
-2. **Check for historical session data**: Run `ls ~/.claude/history.jsonl ~/.codex/history.jsonl 2>/dev/null` to see if Claude Code or Codex history exists. You need this result BEFORE asking upfront questions so you know whether to include the history question.
+2. **Determine available intake context**: If your runtime prompt already includes user intake answers (identity, depth preference, related repos, rules), treat those as authoritative and proceed without asking questions.
 
-3. **Ask upfront questions**: Use AskUserQuestion with the recommended questions above (bundled together). This is critical - don't skip it. **If history data exists (from step 2), you MUST include the historical sessions question.**
+3. **Check for historical session data**: Run `ls ~/.claude/history.jsonl ~/.codex/history.jsonl 2>/dev/null` to see if Claude Code or Codex history exists. If no explicit user consent is provided in your runtime prompt, skip historical analysis.
 
 4. **Inspect existing memory**: 
    - If memfs enabled: Use `ls -la ~/.letta/agents/<agent-id>/memory/system/` to see the file structure
    - Otherwise: Use memory tools to inspect existing files
    - Analyze what exists and what needs improvement
 
-5. **Identify the user**: From git logs and their answer, figure out who they are and store in `system/human/`. If relevant, ask questions to gather information about their preferences that will help you be a useful assistant to them.
+5. **Identify the user**: From git logs and any provided intake context, infer who they are and store in `system/human/`.
 
-6. **Update human/persona early**: Based on answers, update your memory files eagerly before diving into project research. You can always change them as you go, you're not locked into any memory configuration.
+6. **Update human/persona early**: Based on intake context and repository evidence, update your memory files early before diving into project research.
 
 7. **Research the project**: Explore based on chosen depth. Use your TODO or plan tool to create a systematic research plan.
 
-8. **Historical session analysis (if approved)**: If the user approved Claude Code / Codex history analysis in step 3, follow the **Historical Session Analysis** section below. This launches parallel subagents to process history data and synthesize findings into memory. Skip this step if the user chose "Skip".
+8. **Historical session analysis (if approved)**: Only run this if explicit consent is provided in your runtime context. Then follow the **Historical Session Analysis** section below.
 
 9. **Create/update memory structure** (can happen incrementally alongside steps 7-8):
    - **With memfs enabled**: Create a deeply hierarchical file structure using bash commands
@@ -479,9 +450,9 @@ And add memory files that you think make sense to add (e.g., `project/architectu
 
 11. **Reflect and review**: See "Reflection Phase" below - this is critical for deep research.
 
-12. **Ask user if done**: Check if they're satisfied or want you to continue refining.
+12. **Finalize autonomously**: Provide a concise summary of what was initialized and any assumptions you made.
 
-13. **Push memory**: Once the user is satisfied, commit and push your memory repo so changes are synced to the server.
+13. **Push memory (if requested)**: Only commit/push memory when explicitly requested by runtime instructions or caller policy.
 
 ## Reflection Phase (Critical for Deep Research)
 
@@ -508,10 +479,7 @@ Before finishing, you MUST do a reflection step. **Your memory files are visible
 
 6. **Structure check**: Would this make sense to your future self? Is anything missing? Is anything redundant?
 
-**After reflection**, fix any issues you found. Then ask the user:
-> "I've completed the initialization. Here's a brief summary of what I set up: [summary]. Should I continue refining, or is this good to proceed?"
-
-This gives the user a chance to provide feedback or ask for adjustments before you finish.
+**After reflection**, fix any issues you found. Then provide a concise completion summary with what was initialized and any assumptions you made.
 
 ## Working with Memory Filesystem (Practical Guide)
 

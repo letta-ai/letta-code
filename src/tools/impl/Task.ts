@@ -5,6 +5,7 @@
  * Supports both built-in subagent types and custom subagents defined in .letta/agents/.
  */
 
+import { getCurrentAgentId } from "../../agent/context";
 import {
   clearSubagentConfigCache,
   discoverSubagents,
@@ -39,6 +40,7 @@ interface TaskArgs {
   agent_id?: string; // Deploy an existing agent instead of creating new
   conversation_id?: string; // Resume from an existing conversation
   run_in_background?: boolean; // Run the task in background
+  silent_completion?: boolean; // Suppress task_notification queue injection
   max_turns?: number; // Maximum number of agentic turns
   toolCallId?: string; // Injected by executeTool for linking subagent to parent tool call
   signal?: AbortSignal; // Injected by executeTool for interruption handling
@@ -47,6 +49,57 @@ interface TaskArgs {
 // Valid subagent_types when deploying an existing agent
 const VALID_DEPLOY_TYPES = new Set(["explore", "general-purpose"]);
 const BACKGROUND_STARTUP_POLL_MS = 50;
+
+export interface BackgroundSubagentCompletionEvent {
+  taskId: string;
+  outputFile: string;
+  subagentId: string;
+  subagentType: string;
+  description: string;
+  parentAgentId: string | null;
+  success: boolean;
+  error?: string;
+  agentId?: string;
+  conversationId?: string;
+  silentCompletion: boolean;
+}
+
+type BackgroundSubagentCompletionListener = (
+  event: BackgroundSubagentCompletionEvent,
+) => void | Promise<void>;
+
+const backgroundSubagentCompletionListeners =
+  new Set<BackgroundSubagentCompletionListener>();
+
+export function addBackgroundSubagentCompletionListener(
+  listener: BackgroundSubagentCompletionListener,
+): () => void {
+  backgroundSubagentCompletionListeners.add(listener);
+  return () => {
+    backgroundSubagentCompletionListeners.delete(listener);
+  };
+}
+
+async function emitBackgroundSubagentCompletion(
+  event: BackgroundSubagentCompletionEvent,
+): Promise<void> {
+  if (backgroundSubagentCompletionListeners.size === 0) {
+    return;
+  }
+  const listeners = Array.from(backgroundSubagentCompletionListeners);
+  for (const listener of listeners) {
+    try {
+      await listener(event);
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      appendToOutputFile(
+        event.outputFile,
+        `[completion listener error] ${errorMessage}\n`,
+      );
+    }
+  }
+}
 
 type TaskRunResult = {
   agentId: string;
@@ -226,6 +279,12 @@ export function spawnBackgroundSubagentTask(
     deps?.getSubagentSnapshotImpl ?? getSubagentSnapshot;
 
   const subagentId = generateSubagentIdFn();
+  let parentAgentId: string | null = null;
+  try {
+    parentAgentId = getCurrentAgentId();
+  } catch {
+    parentAgentId = null;
+  }
   registerSubagentFn(
     subagentId,
     subagentType,
@@ -290,6 +349,20 @@ export function spawnBackgroundSubagentTask(
           error instanceof Error ? error.message : String(error);
         appendToOutputFile(outputFile, `[onComplete error] ${errorMessage}\n`);
       }
+
+      await emitBackgroundSubagentCompletion({
+        taskId,
+        outputFile,
+        subagentId,
+        subagentType,
+        description,
+        parentAgentId,
+        success: result.success,
+        error: result.error,
+        agentId: result.agentId,
+        conversationId: result.conversationId,
+        silentCompletion: Boolean(silentCompletion),
+      });
 
       if (!silentCompletion) {
         const subagentSnapshot = getSubagentSnapshotFn();
@@ -359,6 +432,20 @@ export function spawnBackgroundSubagentTask(
         );
       }
 
+      await emitBackgroundSubagentCompletion({
+        taskId,
+        outputFile,
+        subagentId,
+        subagentType,
+        description,
+        parentAgentId,
+        success: false,
+        error: errorMessage,
+        agentId: existingAgentId,
+        conversationId: existingConversationId,
+        silentCompletion: Boolean(silentCompletion),
+      });
+
       if (!silentCompletion) {
         const subagentSnapshot = getSubagentSnapshotFn();
         const toolUses = subagentSnapshot.agents.find(
@@ -401,7 +488,13 @@ export function spawnBackgroundSubagentTask(
  * Task tool - Launch a specialized subagent to handle complex tasks
  */
 export async function task(args: TaskArgs): Promise<string> {
-  const { command = "run", model, toolCallId, signal } = args;
+  const {
+    command = "run",
+    model,
+    toolCallId,
+    signal,
+    silent_completion,
+  } = args;
 
   // Handle refresh command - re-discover subagents from .letta/agents/ directories
   if (command === "refresh") {
@@ -481,6 +574,7 @@ export async function task(args: TaskArgs): Promise<string> {
       existingAgentId: args.agent_id,
       existingConversationId: args.conversation_id,
       maxTurns: args.max_turns,
+      silentCompletion: Boolean(silent_completion),
     });
 
     await waitForBackgroundSubagentLink(subagentId, null, signal);
@@ -491,8 +585,11 @@ export async function task(args: TaskArgs): Promise<string> {
     );
     const agentId = linkedAgent?.agentURL?.split("/agents/")[1] ?? null;
     const agentIdLine = agentId ? `\nAgent ID: ${agentId}` : "";
+    const completionBehavior = silent_completion
+      ? "This task uses silent completion, so no automatic <task-notification> message will be queued."
+      : "You will be notified automatically when this task completes — a <task-notification> message will be delivered with the result.";
 
-    return `Task running in background with task ID: ${taskId}${agentIdLine}\nOutput file: ${outputFile}\n\nYou will be notified automatically when this task completes — a <task-notification> message will be delivered with the result. No need to poll, sleep-wait, or check the output file. Just continue with your current work.`;
+    return `Task running in background with task ID: ${taskId}${agentIdLine}\nOutput file: ${outputFile}\n\n${completionBehavior} No need to poll, sleep-wait, or check the output file unless you want detailed logs.`;
   }
 
   // Register subagent with state store for UI display (foreground path)

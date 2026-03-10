@@ -1,7 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { buildMemoryInitRuntimePrompt } from "../../cli/helpers/initCommand";
+import {
+  buildInitIntakeMessage,
+  buildLegacyMemoryInitRuntimePrompt,
+  buildMemoryInitRuntimePrompt,
+  INIT_TASK_DESCRIPTION_DEEP,
+  INIT_TASK_DESCRIPTION_STANDARD,
+} from "../../cli/helpers/initCommand";
 
 describe("init background subagent wiring", () => {
   const readSource = (relativePath: string) =>
@@ -10,49 +16,48 @@ describe("init background subagent wiring", () => {
       "utf-8",
     );
 
-  test("App.tsx checks pending approvals before either branch", () => {
+  test("App.tsx checks pending approvals before launching /init intake flow", () => {
     const appSource = readSource("../../cli/App.tsx");
 
-    // The approval check must appear before the MemFS branch
+    const initStart = appSource.indexOf('trimmed === "/init"');
     const approvalIdx = appSource.indexOf(
       "checkPendingApprovalsForSlashCommand",
-      appSource.indexOf('trimmed === "/init"'),
+      initStart,
     );
-    const memfsBranchIdx = appSource.indexOf(
-      "isMemfsEnabled",
-      appSource.indexOf('trimmed === "/init"'),
-    );
+    const intakeIdx = appSource.indexOf("buildInitIntakeMessage({", initStart);
+    expect(initStart).toBeGreaterThan(-1);
     expect(approvalIdx).toBeGreaterThan(-1);
-    expect(memfsBranchIdx).toBeGreaterThan(-1);
-    expect(approvalIdx).toBeLessThan(memfsBranchIdx);
+    expect(intakeIdx).toBeGreaterThan(-1);
+    expect(approvalIdx).toBeLessThan(intakeIdx);
   });
 
-  test("App.tsx branches on MemFS: background subagent vs legacy processConversation", () => {
+  test("App.tsx uses a unified /init intake path (no direct spawn in command handler)", () => {
     const appSource = readSource("../../cli/App.tsx");
+    const initStart = appSource.indexOf('trimmed === "/init"');
+    const initBlock = appSource.slice(initStart, initStart + 1800);
 
-    // MemFS path — background subagent
-    expect(appSource).toContain("hasActiveInitSubagent()");
-    expect(appSource).toContain("buildMemoryInitRuntimePrompt({");
-    expect(appSource).toContain("spawnBackgroundSubagentTask({");
-    expect(appSource).toContain('subagentType: "init"');
-    expect(appSource).toContain("silentCompletion: true");
-    expect(appSource).toContain("appendTaskNotificationEvents(");
-    expect(appSource).toContain("Learning about you and your codebase");
-
-    // Legacy non-MemFS path — primary agent
-    expect(appSource).toContain("buildLegacyInitMessage({");
-    expect(appSource).toContain("processConversation(");
+    expect(initBlock).toContain("cmd.suppressReminder = true");
+    expect(initBlock).toContain("buildInitIntakeMessage({");
+    expect(initBlock).toContain("processConversation([");
+    expect(initBlock).toContain(
+      "autoInitPendingAgentIdsRef.current.delete(agentId)",
+    );
+    expect(initBlock).not.toContain("buildLegacyInitMessage({");
+    expect(initBlock).not.toContain("spawnBackgroundSubagentTask({");
   });
 
-  test("initCommand.ts exports all helpers", () => {
+  test("initCommand.ts exports intake + runtime prompt helpers", () => {
     const helperSource = readSource("../../cli/helpers/initCommand.ts");
 
     expect(helperSource).toContain("export function hasActiveInitSubagent(");
     expect(helperSource).toContain("export function gatherGitContext()");
+    expect(helperSource).toContain("export function buildInitIntakeMessage(");
     expect(helperSource).toContain(
       "export function buildMemoryInitRuntimePrompt(",
     );
-    expect(helperSource).toContain("export function buildLegacyInitMessage(");
+    expect(helperSource).toContain(
+      "export function buildLegacyMemoryInitRuntimePrompt(",
+    );
   });
 
   test("init.md exists as a builtin subagent", () => {
@@ -83,8 +88,10 @@ describe("init background subagent wiring", () => {
     const prompt = buildMemoryInitRuntimePrompt({
       ...baseArgs,
       depth: "shallow",
+      intakeSummary: "- identity: test",
     });
     expect(prompt).toContain("research_depth: shallow");
+    expect(prompt).toContain("User intake summary:");
     expect(prompt).toContain("Shallow init");
     expect(prompt).not.toContain("Deep init");
   });
@@ -99,10 +106,40 @@ describe("init background subagent wiring", () => {
     expect(prompt).not.toContain("Shallow init");
   });
 
-  test('buildMemoryInitRuntimePrompt defaults to "deep" when depth is omitted', () => {
-    const prompt = buildMemoryInitRuntimePrompt(baseArgs);
-    expect(prompt).toContain("research_depth: deep");
-    expect(prompt).toContain("Deep init");
+  test("buildLegacyMemoryInitRuntimePrompt includes Skill invocation guidance", () => {
+    const prompt = buildLegacyMemoryInitRuntimePrompt({
+      agentId: "test-agent",
+      workingDirectory: "/tmp/test",
+      gitContext: "## Git context\nsome git info",
+      depth: "shallow",
+    });
+    expect(prompt).toContain("memory_mode: legacy-api");
+    expect(prompt).toContain('Skill({ skill: "initializing-memory" })');
+    expect(prompt).toContain("Do not launch additional Task subagents");
+  });
+
+  test("buildInitIntakeMessage includes both dispatch modes and exact task descriptions", () => {
+    const memfsMessage = buildInitIntakeMessage({
+      agentId: "test-agent",
+      workingDirectory: "/tmp/test",
+      memfsEnabled: true,
+      memoryDir: "/tmp/test/.memory",
+      gitContext: "## Git context\nsome git info",
+    });
+    const legacyMessage = buildInitIntakeMessage({
+      agentId: "test-agent",
+      workingDirectory: "/tmp/test",
+      memfsEnabled: false,
+      memoryDir: "/tmp/test/.memory",
+      gitContext: "## Git context\nsome git info",
+    });
+
+    expect(memfsMessage).toContain('subagent_type: "init"');
+    expect(legacyMessage).toContain('subagent_type: "general-purpose"');
+    expect(memfsMessage).toContain("silent_completion: true");
+    expect(legacyMessage).toContain('agent_id: "test-agent"');
+    expect(memfsMessage).toContain(INIT_TASK_DESCRIPTION_STANDARD);
+    expect(memfsMessage).toContain(INIT_TASK_DESCRIPTION_DEEP);
   });
 
   test("App.tsx contains maybeLaunchDeepInitSubagent", () => {

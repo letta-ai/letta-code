@@ -95,23 +95,21 @@ describe("auto-init lifecycle guards", () => {
     expect(setDelete).toBeGreaterThan(firedCheck);
   });
 
-  test("manual /init clears pending auto-init for current agent after spawn", () => {
+  test("manual /init clears pending auto-init before intake dispatch", () => {
     const appSource = readSource("../../cli/App.tsx");
 
-    // The /init handler must delete the current agent from the pending set,
-    // but only after the background subagent has been spawned (inside the try).
     const initHandlerIdx = appSource.indexOf('trimmed === "/init"');
     expect(initHandlerIdx).toBeGreaterThan(-1);
 
-    // Search from the /init handler to the end of the block
-    const afterInit = appSource.slice(initHandlerIdx);
-    const spawnIdx = afterInit.indexOf("spawnBackgroundSubagentTask({");
-    const deleteIdx = afterInit.indexOf(
+    const initBlock = appSource.slice(initHandlerIdx, initHandlerIdx + 2000);
+    const deleteIdx = initBlock.indexOf(
       "autoInitPendingAgentIdsRef.current.delete(agentId)",
     );
-    expect(spawnIdx).toBeGreaterThan(-1);
+    const intakeIdx = initBlock.indexOf("buildInitIntakeMessage({");
     expect(deleteIdx).toBeGreaterThan(-1);
-    expect(deleteIdx).toBeGreaterThan(spawnIdx);
+    expect(intakeIdx).toBeGreaterThan(-1);
+    expect(deleteIdx).toBeLessThan(intakeIdx);
+    expect(initBlock).not.toContain("spawnBackgroundSubagentTask({");
   });
 
   test("fireAutoInit returns false (not throw) when init subagent is active", () => {

@@ -24,6 +24,8 @@ export type CommandHandle = {
   fail: (output: string) => void;
   /** Extra context included only in the agent-facing reminder, not shown in the UI. */
   agentHint?: string;
+  /** Skip command-IO reminder enqueueing for this command handle. */
+  suppressReminder?: boolean;
 };
 
 export type CommandFinishedEvent = {
@@ -35,6 +37,8 @@ export type CommandFinishedEvent = {
   preformatted?: boolean;
   /** Extra context included only in the agent-facing reminder, not shown in the UI. */
   agentHint?: string;
+  /** True when this command should not enqueue a command-IO reminder. */
+  suppressReminder?: boolean;
 };
 
 type CreateId = (prefix: string) => string;
@@ -104,6 +108,7 @@ export function createCommandRunner({
           dimOutput: next.dimOutput,
           preformatted: next.preformatted,
           agentHint: handle.agentHint,
+          suppressReminder: handle.suppressReminder,
         });
       }
 
