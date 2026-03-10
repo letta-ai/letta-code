@@ -1,5 +1,5 @@
-import { afterEach, describe, expect, mock, test } from "bun:test";
-import type { Skill } from "../../agent/skills";
+import { describe, expect, test } from "bun:test";
+import type { Skill, SkillDiscoveryResult } from "../../agent/skills";
 
 const baseSkill: Skill = {
   id: "base",
@@ -9,43 +9,37 @@ const baseSkill: Skill = {
   source: "project",
 };
 
-afterEach(() => {
-  mock.restore();
-});
-
 describe("buildClientSkillsPayload", () => {
   test("returns deterministically sorted client skills and path map", async () => {
-    const skillsModule = await import("../../agent/skills");
-    mock.module("../../agent/skills", () => ({
-      ...skillsModule,
-      discoverSkills: async () => ({
-        skills: [
-          {
-            ...baseSkill,
-            id: "z-skill",
-            description: "z",
-            path: "/tmp/z/SKILL.md",
-            source: "project",
-          },
-          {
-            ...baseSkill,
-            id: "a-skill",
-            description: "a",
-            path: "/tmp/a/SKILL.md",
-            source: "bundled",
-          },
-        ],
-        errors: [],
-      }),
-    }));
-
     const { buildClientSkillsPayload } = await import(
       "../../agent/clientSkills"
     );
+
+    const discoverSkillsFn = async (): Promise<SkillDiscoveryResult> => ({
+      skills: [
+        {
+          ...baseSkill,
+          id: "z-skill",
+          description: "z",
+          path: "/tmp/z/SKILL.md",
+          source: "project",
+        },
+        {
+          ...baseSkill,
+          id: "a-skill",
+          description: "a",
+          path: "/tmp/a/SKILL.md",
+          source: "bundled",
+        },
+      ],
+      errors: [],
+    });
+
     const result = await buildClientSkillsPayload({
       agentId: "agent-1",
       skillsDirectory: "/tmp/.skills",
       skillSources: ["project", "bundled"],
+      discoverSkillsFn,
     });
 
     expect(result.clientSkills).toEqual([
@@ -68,20 +62,18 @@ describe("buildClientSkillsPayload", () => {
   });
 
   test("fails open with empty client_skills when discovery throws", async () => {
-    const skillsModule = await import("../../agent/skills");
-    mock.module("../../agent/skills", () => ({
-      ...skillsModule,
-      discoverSkills: async () => {
-        throw new Error("boom");
-      },
-    }));
-
-    const logs: string[] = [];
     const { buildClientSkillsPayload } = await import(
       "../../agent/clientSkills"
     );
+
+    const discoverSkillsFn = async (): Promise<SkillDiscoveryResult> => {
+      throw new Error("boom");
+    };
+
+    const logs: string[] = [];
     const result = await buildClientSkillsPayload({
       skillsDirectory: "/tmp/.skills",
+      discoverSkillsFn,
       logger: (m) => logs.push(m),
     });
 

@@ -18,6 +18,7 @@ export interface BuildClientSkillsPayloadOptions {
   agentId?: string;
   skillsDirectory?: string | null;
   skillSources?: SkillSource[];
+  discoverSkillsFn?: typeof discoverSkills;
   logger?: (message: string) => void;
 }
 
@@ -61,9 +62,10 @@ export async function buildClientSkillsPayload(
 ): Promise<BuildClientSkillsPayloadResult> {
   const { skillsDirectory, skillSources } =
     resolveSkillDiscoveryContext(options);
+  const discoverSkillsFn = options.discoverSkillsFn ?? discoverSkills;
 
   try {
-    const discovery = await discoverSkills(skillsDirectory, options.agentId, {
+    const discovery = await discoverSkillsFn(skillsDirectory, options.agentId, {
       sources: skillSources,
     });
     const sortedSkills = [...discovery.skills].sort(compareSkills);
