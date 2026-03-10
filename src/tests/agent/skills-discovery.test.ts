@@ -107,5 +107,24 @@ describe.skipIf(process.platform === "win32")(
         result.errors.some((error) => error.path.includes("broken-link")),
       ).toBe(true);
     });
+
+    test("returns discovered skills in deterministic sorted order", async () => {
+      mkdirSync(projectSkillsDir, { recursive: true });
+      writeSkill(join(projectSkillsDir, "z-skill"), "Z Skill");
+      writeSkill(join(projectSkillsDir, "a-skill"), "A Skill");
+      writeSkill(join(projectSkillsDir, "m-skill"), "M Skill");
+
+      const result = await discoverSkills(projectSkillsDir, undefined, {
+        skipBundled: true,
+        sources: ["project"],
+      });
+
+      expect(result.errors).toHaveLength(0);
+      expect(result.skills.map((skill) => skill.id)).toEqual([
+        "a-skill",
+        "m-skill",
+        "z-skill",
+      ]);
+    });
   },
 );

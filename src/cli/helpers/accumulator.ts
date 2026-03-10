@@ -454,7 +454,6 @@ function extractTextPart(v: unknown): string {
 function markCompactionCompleted(ctx?: ContextTracker): void {
   if (!ctx) return;
   ctx.pendingCompaction = true;
-  ctx.pendingSkillsReinject = true;
   ctx.pendingReflectionTrigger = true;
 }
 

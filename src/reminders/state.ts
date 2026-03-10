@@ -22,12 +22,8 @@ export interface ToolsetChangeReminder {
 export interface SharedReminderState {
   hasSentAgentInfo: boolean;
   hasSentSessionContext: boolean;
-  hasInjectedSkillsReminder: boolean;
-  cachedSkillsReminder: string | null;
-  skillPathById: Record<string, string>;
   lastNotifiedPermissionMode: PermissionMode | null;
   turnCount: number;
-  pendingSkillsReinject: boolean;
   pendingReflectionTrigger: boolean;
   pendingAutoInitReminder: boolean;
   pendingCommandIoReminders: CommandIoReminder[];
@@ -40,12 +36,8 @@ export function createSharedReminderState(): SharedReminderState {
   return {
     hasSentAgentInfo: false,
     hasSentSessionContext: false,
-    hasInjectedSkillsReminder: false,
-    cachedSkillsReminder: null,
-    skillPathById: {},
     lastNotifiedPermissionMode: null,
     turnCount: 0,
-    pendingSkillsReinject: false,
     pendingReflectionTrigger: false,
     pendingAutoInitReminder: false,
     pendingCommandIoReminders: [],
@@ -63,10 +55,6 @@ export function syncReminderStateFromContextTracker(
   state: SharedReminderState,
   contextTracker: ContextTracker,
 ): void {
-  if (contextTracker.pendingSkillsReinject) {
-    state.pendingSkillsReinject = true;
-    contextTracker.pendingSkillsReinject = false;
-  }
   if (contextTracker.pendingReflectionTrigger) {
     state.pendingReflectionTrigger = true;
     contextTracker.pendingReflectionTrigger = false;
