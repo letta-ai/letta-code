@@ -802,7 +802,9 @@ export async function handleHeadlessCommand(
   if (!agent && forceNew) {
     const updateArgs = getModelUpdateArgs(model);
     // Pre-determine memfs mode so the agent is created with the correct prompt.
-    const { isLettaCloud } = await import("./agent/memoryFilesystem");
+    const { isLettaCloud, enableMemfsIfCloud } = await import(
+      "./agent/memoryFilesystem"
+    );
     const willAutoEnableMemfs =
       shouldAutoEnableMemfsForNewAgent && (await isLettaCloud());
     const effectiveMemoryMode =
@@ -829,7 +831,6 @@ export async function handleHeadlessCommand(
     // Enable memfs on Letta Cloud (tags, repo clone, tool detach).
     // Prompt swap is skipped since the agent was created with the correct mode.
     if (willAutoEnableMemfs) {
-      const { enableMemfsIfCloud } = await import("./agent/memoryFilesystem");
       await enableMemfsIfCloud(agent.id);
     }
   }
