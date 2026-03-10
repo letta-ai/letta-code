@@ -14,10 +14,7 @@ import { getSnapshot as getSubagentSnapshot } from "./subagentState";
 export const INIT_TASK_DESCRIPTION = "Memory init";
 
 const INTERACTIVE_INIT_TASK_DESCRIPTIONS = new Set(
-  // Include legacy interactive descriptions for compatibility with older tasks.
-  [INIT_TASK_DESCRIPTION, "Memory init standard", "Memory init deep"].map(
-    (value) => value.toLowerCase(),
-  ),
+  [INIT_TASK_DESCRIPTION].map((value) => value.toLowerCase()),
 );
 
 const ACTIVE_INIT_TASK_DESCRIPTIONS = new Set([

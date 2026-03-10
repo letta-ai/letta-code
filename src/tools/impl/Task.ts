@@ -51,8 +51,6 @@ const BACKGROUND_STARTUP_POLL_MS = 50;
 const SILENT_COMPLETION_SUBAGENT_TYPES = new Set(["init", "reflection"]);
 const SILENT_COMPLETION_DESCRIPTIONS = new Set([
   "memory init",
-  "memory init standard",
-  "memory init deep",
   "initializing memory",
   "deep memory initialization",
 ]);
