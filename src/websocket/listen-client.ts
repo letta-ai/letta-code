@@ -118,6 +118,7 @@ interface RunStartedMessage {
   batch_id: string;
   event_seq?: number;
   session_id?: string;
+  conversation_id?: string;
 }
 
 interface RunRequestErrorMessage {
@@ -130,6 +131,7 @@ interface RunRequestErrorMessage {
   batch_id?: string;
   event_seq?: number;
   session_id?: string;
+  conversation_id?: string;
 }
 
 interface ModeChangeMessage {
@@ -406,6 +408,7 @@ function createRuntime(): ListenerRuntime {
             queue_len: queueLen,
             session_id: runtime.sessionId,
             uuid: `q-enq-${item.id}`,
+            conversation_id: runtime.activeConversationId ?? undefined,
           });
         }
       },
@@ -419,6 +422,7 @@ function createRuntime(): ListenerRuntime {
             queue_len_after: batch.queueLenAfter,
             session_id: runtime.sessionId,
             uuid: `q-deq-${batch.batchId}`,
+            conversation_id: runtime.activeConversationId ?? undefined,
           });
         }
       },
@@ -430,6 +434,7 @@ function createRuntime(): ListenerRuntime {
             queue_len: queueLen,
             session_id: runtime.sessionId,
             uuid: `q-blk-${crypto.randomUUID()}`,
+            conversation_id: runtime.activeConversationId ?? undefined,
           });
         }
       },
@@ -441,6 +446,7 @@ function createRuntime(): ListenerRuntime {
             cleared_count: clearedCount,
             session_id: runtime.sessionId,
             uuid: `q-clr-${crypto.randomUUID()}`,
+            conversation_id: runtime.activeConversationId ?? undefined,
           });
         }
       },
@@ -454,6 +460,7 @@ function createRuntime(): ListenerRuntime {
             queue_len: queueLen,
             session_id: runtime.sessionId,
             uuid: `q-drp-${item.id}`,
+            conversation_id: runtime.activeConversationId ?? undefined,
           });
         }
       },
@@ -772,6 +779,7 @@ function emitCancelAck(
     run_id: params.runId ?? runtime.activeRunId,
     session_id: runtime.sessionId,
     uuid: `cancel-ack-${params.requestId}`,
+    conversation_id: runtime.activeConversationId ?? undefined,
   } as CancelAckMessage);
 }
 
@@ -1272,6 +1280,7 @@ function emitInterruptToolReturnMessage(
       ],
       session_id: runtime.sessionId,
       uuid: `${uuidPrefix}-${crypto.randomUUID()}`,
+      conversation_id: runtime.activeConversationId ?? undefined,
     } as unknown as MessageWire);
   }
 }
@@ -1628,6 +1637,7 @@ async function sendMessageStreamWithRetry(
           delay_ms: delayMs,
           session_id: runtime.sessionId,
           uuid: `retry-${crypto.randomUUID()}`,
+          conversation_id: conversationId,
         } as RetryMessage);
 
         await new Promise((resolve) => setTimeout(resolve, delayMs));
@@ -1653,6 +1663,7 @@ async function sendMessageStreamWithRetry(
           delay_ms: delayMs,
           session_id: runtime.sessionId,
           uuid: `retry-${crypto.randomUUID()}`,
+          conversation_id: conversationId,
         } as RetryMessage);
 
         await new Promise((resolve) => setTimeout(resolve, delayMs));
@@ -1784,6 +1795,7 @@ async function recoverPendingApprovals(
         stop_reason: "error",
         session_id: runtime.sessionId,
         uuid: `error-${crypto.randomUUID()}`,
+        conversation_id: conversationId,
       });
       runtime.lastStopReason = "requires_approval";
       return;
@@ -1832,6 +1844,7 @@ async function recoverPendingApprovals(
             : "auto-approved",
         session_id: runtime.sessionId,
         uuid: `auto-approval-${ac.approval.toolCallId}`,
+        conversation_id: conversationId,
       } as AutoApprovalMessage);
     }
 
@@ -1872,6 +1885,7 @@ async function recoverPendingApprovals(
             blocked_path: null,
             ...(diffs.length > 0 ? { diffs } : {}),
           },
+          conversation_id: conversationId,
         };
 
         const responseBody = await requestApprovalOverWS(
@@ -1905,6 +1919,7 @@ async function recoverPendingApprovals(
               matched_rule: "canUseTool callback",
               session_id: runtime.sessionId,
               uuid: `auto-approval-${ac.approval.toolCallId}`,
+              conversation_id: conversationId,
             } as AutoApprovalMessage);
           } else {
             decisions.push({
@@ -2271,6 +2286,7 @@ async function connectWithRetry(
               stop_reason: "error",
               session_id: runtime.sessionId,
               uuid: `error-${crypto.randomUUID()}`,
+              conversation_id: runtime.activeConversationId ?? undefined,
             });
           } finally {
             runtime.pendingTurns--;
@@ -2304,6 +2320,7 @@ async function connectWithRetry(
           stop_reason: "error",
           session_id: runtime.sessionId,
           uuid: `error-${crypto.randomUUID()}`,
+          conversation_id: runtime.activeConversationId ?? undefined,
         });
         return;
       }
@@ -2617,6 +2634,7 @@ async function handleIncomingMessage(
                 type: "run_started",
                 runId: maybeRunId,
                 batch_id: dequeuedBatchId,
+                conversation_id: conversationId,
               });
             }
           }
@@ -2631,6 +2649,7 @@ async function handleIncomingMessage(
               run_id: runId || errorInfo.run_id,
               session_id: runtime.sessionId,
               uuid: `error-${crypto.randomUUID()}`,
+              conversation_id: conversationId,
             });
           }
 
@@ -2650,6 +2669,7 @@ async function handleIncomingMessage(
                 session_id: runtime.sessionId,
                 uuid:
                   chunkWithIds.otid || chunkWithIds.id || crypto.randomUUID(),
+                conversation_id: conversationId,
               } as unknown as MessageWire);
             }
           }
@@ -2721,6 +2741,7 @@ async function handleIncomingMessage(
             run_id: runId || msgRunIds[msgRunIds.length - 1] || undefined,
             session_id: runtime.sessionId,
             uuid: `recovery-${crypto.randomUUID()}`,
+            conversation_id: conversationId,
           } as RecoveryMessage);
 
           try {
@@ -2796,6 +2817,7 @@ async function handleIncomingMessage(
           run_id: runId,
           session_id: runtime.sessionId,
           uuid: `error-${crypto.randomUUID()}`,
+          conversation_id: conversationId,
         });
         emitTurnResult(socket, runtime, {
           subtype: "error",
@@ -2822,6 +2844,7 @@ async function handleIncomingMessage(
           stop_reason: "error",
           session_id: runtime.sessionId,
           uuid: `error-${crypto.randomUUID()}`,
+          conversation_id: conversationId,
         });
         emitTurnResult(socket, runtime, {
           subtype: "error",
@@ -2892,6 +2915,7 @@ async function handleIncomingMessage(
               : "auto-approved",
           session_id: runtime.sessionId,
           uuid: `auto-approval-${ac.approval.toolCallId}`,
+          conversation_id: conversationId,
         } as AutoApprovalMessage);
       }
 
@@ -2931,6 +2955,7 @@ async function handleIncomingMessage(
               blocked_path: null,
               ...(diffs.length > 0 ? { diffs } : {}),
             },
+            conversation_id: conversationId,
           };
 
           const responseBody = await requestApprovalOverWS(
@@ -2965,6 +2990,7 @@ async function handleIncomingMessage(
                 matched_rule: "canUseTool callback",
                 session_id: runtime.sessionId,
                 uuid: `auto-approval-${ac.approval.toolCallId}`,
+                conversation_id: conversationId,
               } as AutoApprovalMessage);
             } else {
               decisions.push({
@@ -3117,6 +3143,7 @@ async function handleIncomingMessage(
         type: "run_request_error",
         error: errorPayload,
         batch_id: dequeuedBatchId,
+        conversation_id: conversationId,
       });
     }
 
@@ -3127,6 +3154,7 @@ async function handleIncomingMessage(
       stop_reason: "error",
       session_id: runtime.sessionId,
       uuid: `error-${crypto.randomUUID()}`,
+      conversation_id: conversationId,
     });
     emitTurnResult(socket, runtime, {
       subtype: "error",

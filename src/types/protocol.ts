@@ -75,6 +75,8 @@ export interface MessageEnvelope {
   uuid: string;
   /** Monotonic per-session event sequence. Optional for backward compatibility. */
   event_seq?: number;
+  /** Conversation that triggered this event. Used for conversation-scoped filtering. */
+  conversation_id?: string;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -422,6 +424,8 @@ export interface ControlRequest {
   type: "control_request";
   request_id: string;
   request: ControlRequestBody;
+  /** Conversation that triggered this control request. */
+  conversation_id?: string;
 }
 
 // SDK → CLI request subtypes
