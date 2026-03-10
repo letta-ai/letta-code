@@ -56,18 +56,18 @@ const BACKGROUND_LINK_TIMEOUT_MS = 5_000;
 const SILENT_COMPLETION_SUBAGENT_TYPES = new Set(["init", "reflection"]);
 type InitDepth = "shallow" | "deep";
 
+function isInitLikeTask(subagentType: string, description: string): boolean {
+  return (
+    SILENT_COMPLETION_SUBAGENT_TYPES.has(subagentType.trim().toLowerCase()) ||
+    isKnownActiveInitTaskDescription(description)
+  );
+}
+
 function shouldDefaultSilentCompletion(args: {
   subagentType: string;
   description: string;
 }): boolean {
-  if (
-    SILENT_COMPLETION_SUBAGENT_TYPES.has(
-      normalizeTaskDescription(args.subagentType),
-    )
-  ) {
-    return true;
-  }
-  return isKnownActiveInitTaskDescription(args.description);
+  return isInitLikeTask(args.subagentType, args.description);
 }
 
 function extractInitDepth(prompt: string): InitDepth | undefined {
@@ -83,11 +83,7 @@ function inferInitDepthFromTask(args: {
   description: string;
   prompt: string;
 }): InitDepth | undefined {
-  const normalizedSubagentType = normalizeTaskDescription(args.subagentType);
-  if (
-    normalizedSubagentType !== "init" &&
-    !isKnownActiveInitTaskDescription(args.description)
-  ) {
+  if (!isInitLikeTask(args.subagentType, args.description)) {
     return undefined;
   }
   return extractInitDepth(args.prompt);

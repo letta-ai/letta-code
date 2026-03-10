@@ -61,6 +61,7 @@ export async function handleMemorySubagentCompletion(
       if (initDepth === "deep") {
         deps.updateInitProgress(agentId, { deepFired: true });
       } else {
+        // undefined initDepth defaults to shallow (e.g. auto-init)
         deps.updateInitProgress(agentId, { shallowCompleted: true });
       }
     }
