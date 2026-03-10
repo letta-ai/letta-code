@@ -330,6 +330,42 @@ describe("spawnBackgroundSubagentTask", () => {
     ]);
   });
 
+  test("completion listener event includes initDepth when available", async () => {
+    const spawnSubagentImpl = mock(async () => ({
+      agentId: "agent-init-depth",
+      conversationId: "default",
+      report: "done",
+      success: true,
+      totalTokens: 4,
+    }));
+    const events: Array<{ initDepth?: string }> = [];
+    const unsubscribe = addBackgroundSubagentCompletionListener((event) => {
+      events.push({ initDepth: event.initDepth });
+    });
+
+    spawnBackgroundSubagentTask({
+      subagentType: "init",
+      prompt: "research_depth: deep",
+      description: "Memory init",
+      initDepth: "deep",
+      deps: {
+        spawnSubagentImpl,
+        addToMessageQueueImpl,
+        formatTaskNotificationImpl,
+        runSubagentStopHooksImpl,
+        generateSubagentIdImpl,
+        registerSubagentImpl,
+        completeSubagentImpl,
+        getSubagentSnapshotImpl,
+      },
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    unsubscribe();
+
+    expect(events).toEqual([{ initDepth: "deep" }]);
+  });
+
   test("marks background task failed and emits notification on error", async () => {
     const spawnSubagentImpl = mock(async () => {
       throw new Error("subagent exploded");

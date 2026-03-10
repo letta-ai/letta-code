@@ -1980,6 +1980,9 @@ export default function App({
     let cancelled = false;
     let unsubscribe: (() => void) | null = null;
 
+    // This listener is loaded lazily to keep startup work light.
+    // There is a tiny race window before registration, but in practice
+    // background init tasks take much longer than this import.
     void (async () => {
       const { addBackgroundSubagentCompletionListener } = await import(
         "../tools/impl/Task"
@@ -2000,6 +2003,7 @@ export default function App({
           {
             agentId: parentAgentId,
             subagentType: "init",
+            initDepth: event.initDepth,
             success: event.success,
             error: event.error,
           },
@@ -9359,8 +9363,9 @@ export default function App({
 
         // Special handling for /init command
         if (trimmed === "/init") {
-          const cmd = commandRunner.start(msg, "Gathering project context...");
-          cmd.suppressReminder = true;
+          const cmd = commandRunner.start(msg, "Gathering project context...", {
+            suppressReminder: true,
+          });
 
           // Check for pending approvals before either path
           const approvalCheck = await checkPendingApprovalsForSlashCommand();
@@ -9704,6 +9709,7 @@ ${SYSTEM_REMINDER_CLOSE}
             subagentType: "init",
             prompt: initPrompt,
             description: "Deep memory initialization",
+            initDepth: "deep",
             silentCompletion: true,
             onComplete: async ({ success, error }) => {
               const msg = await handleMemorySubagentCompletion(

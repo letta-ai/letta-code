@@ -9,21 +9,14 @@ import { execSync } from "node:child_process";
 import { getMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
 import { settingsManager } from "../../settings-manager";
 import { buildInitIntakeReminder } from "./initIntakeReminder";
+import {
+  INIT_TASK_DESCRIPTION,
+  isInteractiveInitTaskDescription,
+  isKnownActiveInitTaskDescription,
+} from "./initTaskIdentity";
 import { getSnapshot as getSubagentSnapshot } from "./subagentState";
 
-export const INIT_TASK_DESCRIPTION = "Memory init";
-
-function normalizeDescription(value: string | null | undefined): string {
-  return (value ?? "").trim().toLowerCase();
-}
-
-const INTERACTIVE_INIT_TASK_DESCRIPTION = INIT_TASK_DESCRIPTION.toLowerCase();
-
-const ACTIVE_INIT_TASK_DESCRIPTIONS = new Set([
-  INTERACTIVE_INIT_TASK_DESCRIPTION,
-  "initializing memory",
-  "deep memory initialization",
-]);
+export { INIT_TASK_DESCRIPTION, isInteractiveInitTaskDescription };
 
 // ── Guard ──────────────────────────────────────────────────
 
@@ -32,16 +25,8 @@ export function hasActiveInitSubagent(): boolean {
   return snapshot.agents.some(
     (agent) =>
       (agent.type.toLowerCase() === "init" ||
-        ACTIVE_INIT_TASK_DESCRIPTIONS.has(
-          normalizeDescription(agent.description),
-        )) &&
+        isKnownActiveInitTaskDescription(agent.description)) &&
       (agent.status === "pending" || agent.status === "running"),
-  );
-}
-
-export function isInteractiveInitTaskDescription(description: string): boolean {
-  return (
-    normalizeDescription(description) === INTERACTIVE_INIT_TASK_DESCRIPTION
   );
 }
 
@@ -307,6 +292,7 @@ export async function fireAutoInit(
     subagentType: "init",
     prompt: initPrompt,
     description: "Initializing memory",
+    initDepth: "shallow",
     silentCompletion: true,
     onComplete,
   });

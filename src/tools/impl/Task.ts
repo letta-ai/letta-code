@@ -12,6 +12,10 @@ import {
   getAllSubagentConfigs,
 } from "../../agent/subagents";
 import { spawnSubagent } from "../../agent/subagents/manager";
+import {
+  isKnownActiveInitTaskDescription,
+  normalizeTaskDescription,
+} from "../../cli/helpers/initTaskIdentity";
 import { addToMessageQueue } from "../../cli/helpers/messageQueueBridge.js";
 import {
   completeSubagent,
@@ -48,29 +52,45 @@ interface TaskArgs {
 // Valid subagent_types when deploying an existing agent
 const VALID_DEPLOY_TYPES = new Set(["explore", "general-purpose"]);
 const BACKGROUND_STARTUP_POLL_MS = 50;
+const BACKGROUND_LINK_TIMEOUT_MS = 5_000;
 const SILENT_COMPLETION_SUBAGENT_TYPES = new Set(["init", "reflection"]);
-const SILENT_COMPLETION_DESCRIPTIONS = new Set([
-  "memory init",
-  "initializing memory",
-  "deep memory initialization",
-]);
-
-function normalizeTaskValue(value: string): string {
-  return value.trim().toLowerCase();
-}
+type InitDepth = "shallow" | "deep";
 
 function shouldDefaultSilentCompletion(args: {
   subagentType: string;
   description: string;
 }): boolean {
   if (
-    SILENT_COMPLETION_SUBAGENT_TYPES.has(normalizeTaskValue(args.subagentType))
+    SILENT_COMPLETION_SUBAGENT_TYPES.has(
+      normalizeTaskDescription(args.subagentType),
+    )
   ) {
     return true;
   }
-  return SILENT_COMPLETION_DESCRIPTIONS.has(
-    normalizeTaskValue(args.description),
-  );
+  return isKnownActiveInitTaskDescription(args.description);
+}
+
+function extractInitDepth(prompt: string): InitDepth | undefined {
+  const match = prompt.match(/research_depth:\s*(shallow|deep)\b/i);
+  if (!match) {
+    return undefined;
+  }
+  return match[1]?.toLowerCase() === "deep" ? "deep" : "shallow";
+}
+
+function inferInitDepthFromTask(args: {
+  subagentType: string;
+  description: string;
+  prompt: string;
+}): InitDepth | undefined {
+  const normalizedSubagentType = normalizeTaskDescription(args.subagentType);
+  if (
+    normalizedSubagentType !== "init" &&
+    !isKnownActiveInitTaskDescription(args.description)
+  ) {
+    return undefined;
+  }
+  return extractInitDepth(args.prompt);
 }
 
 export interface BackgroundSubagentCompletionEvent {
@@ -79,6 +99,7 @@ export interface BackgroundSubagentCompletionEvent {
   subagentId: string;
   subagentType: string;
   description: string;
+  initDepth?: InitDepth;
   parentAgentId: string | null;
   success: boolean;
   error?: string;
@@ -137,6 +158,7 @@ export interface SpawnBackgroundSubagentTaskArgs {
   subagentType: string;
   prompt: string;
   description: string;
+  initDepth?: InitDepth;
   model?: string;
   toolCallId?: string;
   existingAgentId?: string;
@@ -278,6 +300,7 @@ export function spawnBackgroundSubagentTask(
     subagentType,
     prompt,
     description,
+    initDepth,
     model,
     toolCallId,
     existingAgentId,
@@ -379,6 +402,7 @@ export function spawnBackgroundSubagentTask(
         subagentId,
         subagentType,
         description,
+        initDepth,
         parentAgentId,
         success: result.success,
         error: result.error,
@@ -461,6 +485,7 @@ export function spawnBackgroundSubagentTask(
         subagentId,
         subagentType,
         description,
+        initDepth,
         parentAgentId,
         success: false,
         error: errorMessage,
@@ -586,11 +611,17 @@ export async function task(args: TaskArgs): Promise<string> {
       subagentType: subagent_type,
       description,
     });
+    const initDepth = inferInitDepthFromTask({
+      subagentType: subagent_type,
+      description,
+      prompt,
+    });
 
     const { taskId, outputFile, subagentId } = spawnBackgroundSubagentTask({
       subagentType: subagent_type,
       prompt,
       description,
+      initDepth,
       model,
       toolCallId,
       existingAgentId: args.agent_id,
@@ -599,7 +630,11 @@ export async function task(args: TaskArgs): Promise<string> {
       silentCompletion: useSilentCompletion,
     });
 
-    await waitForBackgroundSubagentLink(subagentId, null, signal);
+    await waitForBackgroundSubagentLink(
+      subagentId,
+      BACKGROUND_LINK_TIMEOUT_MS,
+      signal,
+    );
 
     // Extract Letta agent ID from subagent state (available after link resolves)
     const linkedAgent = getSubagentSnapshot().agents.find(

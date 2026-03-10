@@ -97,7 +97,7 @@ describe("commandRunner", () => {
     expect(finishedEvents).toEqual([{ input: "/model", output: "Switched" }]);
   });
 
-  test("onCommandFinished carries suppressReminder flag from handle", () => {
+  test("onCommandFinished carries suppressReminder flag from start options", () => {
     const buffers = createBuffers();
     const buffersRef = { current: buffers };
     const finishedEvents: Array<{ suppressReminder?: boolean }> = [];
@@ -110,8 +110,9 @@ describe("commandRunner", () => {
       },
     });
 
-    const cmd = runner.start("/init", "Starting...");
-    cmd.suppressReminder = true;
+    const cmd = runner.start("/init", "Starting...", {
+      suppressReminder: true,
+    });
     cmd.finish("Done", true);
 
     expect(finishedEvents).toEqual([{ suppressReminder: true }]);

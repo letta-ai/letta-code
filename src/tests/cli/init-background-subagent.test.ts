@@ -35,7 +35,7 @@ describe("init background subagent wiring", () => {
     const initStart = appSource.indexOf('trimmed === "/init"');
     const initBlock = appSource.slice(initStart, initStart + 1800);
 
-    expect(initBlock).toContain("cmd.suppressReminder = true");
+    expect(initBlock).toContain("suppressReminder: true");
     expect(initBlock).toContain("buildInitIntakeMessage({");
     expect(initBlock).toContain("processConversation([");
     expect(initBlock).toContain(
@@ -68,6 +68,14 @@ describe("init background subagent wiring", () => {
     expect(reminderSource).toContain("Which contributor are you?");
     expect(reminderSource).toContain(
       "Are there other repositories I should know about",
+    );
+  });
+
+  test("init task descriptions are centralized in shared helper", () => {
+    const identitySource = readSource("../../cli/helpers/initTaskIdentity.ts");
+    expect(identitySource).toContain("export const INIT_TASK_DESCRIPTION");
+    expect(identitySource).toContain(
+      "export function isKnownActiveInitTaskDescription",
     );
   });
 
@@ -169,6 +177,11 @@ describe("init background subagent wiring", () => {
     expect(taskSource).toContain("SILENT_COMPLETION_SUBAGENT_TYPES");
     expect(taskSource).toContain('"init", "reflection"');
     expect(taskSource).toContain("shouldDefaultSilentCompletion");
+    expect(taskSource).toContain("isKnownActiveInitTaskDescription");
+    expect(taskSource).toContain("BACKGROUND_LINK_TIMEOUT_MS = 5_000");
+    expect(taskSource).toContain(
+      "waitForBackgroundSubagentLink(\n      subagentId,\n      BACKGROUND_LINK_TIMEOUT_MS,\n      signal,\n    )",
+    );
   });
 
   test("App.tsx contains maybeLaunchDeepInitSubagent", () => {

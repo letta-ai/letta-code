@@ -41,6 +41,13 @@ export type CommandFinishedEvent = {
   suppressReminder?: boolean;
 };
 
+export type CommandStartOptions = {
+  /** Extra context included only in the agent-facing reminder, not shown in the UI. */
+  agentHint?: string;
+  /** True when this command should not enqueue a command-IO reminder. */
+  suppressReminder?: boolean;
+};
+
 type CreateId = (prefix: string) => string;
 
 type RunnerDeps = {
@@ -141,7 +148,11 @@ export function createCommandRunner({
     return handle;
   }
 
-  function start(input: string, output: string): CommandHandle {
+  function start(
+    input: string,
+    output: string,
+    options?: CommandStartOptions,
+  ): CommandHandle {
     const id = createId("cmd");
     const buffers = buffersRef.current;
     upsertCommandLine(buffers, id, input, {
@@ -151,7 +162,14 @@ export function createCommandRunner({
     buffers.order.push(id);
     refreshDerived();
 
-    return getHandle(id, input);
+    const handle = getHandle(id, input);
+    if (options?.agentHint !== undefined) {
+      handle.agentHint = options.agentHint;
+    }
+    if (options?.suppressReminder !== undefined) {
+      handle.suppressReminder = options.suppressReminder;
+    }
+    return handle;
   }
 
   return { start, getHandle };
