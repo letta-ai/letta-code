@@ -37,6 +37,16 @@ import { drainStreamWithResume } from "../cli/helpers/stream";
 import { INTERRUPTED_BY_USER } from "../constants";
 import { computeDiffPreviews } from "../helpers/diffPreview";
 import { permissionMode } from "../permissions/mode";
+import {
+  buildSharedReminderParts,
+  prependReminderPartsToContent,
+} from "../reminders/engine";
+import { buildListenerReminderContext } from "../reminders/listenerContext";
+import { getPlanModeReminder } from "../reminders/planModeReminder";
+import {
+  createSharedReminderState,
+  type SharedReminderState,
+} from "../reminders/state";
 import { type QueueItem, QueueRuntime } from "../queue/queueRuntime";
 import { mergeQueuedTurnInput } from "../queue/turnQueueRuntime";
 import { settingsManager } from "../settings-manager";
@@ -311,6 +321,7 @@ type ListenerRuntime = {
    * Threaded into the next send for persistence normalization.
    */
   pendingInterruptedToolCallIds: string[] | null;
+  reminderState: SharedReminderState;
 };
 
 // Listen mode supports one active connection per process.
@@ -384,6 +395,7 @@ function createRuntime(): ListenerRuntime {
     continuationEpoch: 0,
     activeExecutingToolCallIds: [],
     pendingInterruptedToolCallIds: null,
+    reminderState: createSharedReminderState(),
     coalescedSkipQueueItemIds: new Set<string>(),
     pendingTurns: 0,
     // queueRuntime assigned below — needs runtime ref in callbacks
@@ -2560,6 +2572,32 @@ async function handleIncomingMessage(
     }
 
     messagesToSend.push(...msg.messages);
+
+    const firstMessage = msg.messages[0];
+    const isApprovalMessage =
+      firstMessage &&
+      "type" in firstMessage &&
+      firstMessage.type === "approval" &&
+      "approvals" in firstMessage;
+
+    if (!isApprovalMessage) {
+      const { parts: reminderParts } = await buildSharedReminderParts(
+        buildListenerReminderContext({
+          agentId: agentId || "",
+          state: runtime.reminderState,
+          resolvePlanModeReminder: getPlanModeReminder,
+        }),
+      );
+
+      if (reminderParts.length > 0) {
+        for (const m of messagesToSend) {
+          if ("role" in m && m.role === "user" && "content" in m) {
+            m.content = prependReminderPartsToContent(m.content, reminderParts);
+            break;
+          }
+        }
+      }
+    }
 
     let currentInput = messagesToSend;
     const sendOptions: Parameters<typeof sendMessageStream>[2] = {
