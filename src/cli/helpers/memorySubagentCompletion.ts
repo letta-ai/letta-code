@@ -73,9 +73,7 @@ export async function handleMemorySubagentCompletion(
         inFlight = (async () => {
           do {
             deps.recompileQueuedByAgent.delete(agentId);
-            await recompileAgentSystemPromptFn(agentId, {
-              updateTimestamp: true,
-            });
+            await recompileAgentSystemPromptFn(agentId, {});
           } while (deps.recompileQueuedByAgent.has(agentId));
         })().finally(() => {
           // Cleanup runs only after the shared promise settles, so every

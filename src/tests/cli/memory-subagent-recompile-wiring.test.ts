@@ -61,9 +61,7 @@ describe("memory subagent recompile handling", () => {
     ]);
     expect(recompileAgentSystemPromptMock).toHaveBeenCalledWith(
       "agent-init-1",
-      {
-        updateTimestamp: true,
-      },
+      {},
     );
   });
 
