@@ -159,11 +159,13 @@ interface GetStatusMessage {
 
 interface GetStateMessage {
   type: "get_state";
+  agentId?: string | null;
   conversationId?: string | null;
 }
 
 interface ChangeCwdMessage {
   type: "change_cwd";
+  agentId?: string | null;
   conversationId?: string | null;
   cwd: string;
 }
@@ -199,6 +201,7 @@ interface StateResponseMessage {
   cwd: string;
   configured_cwd: string;
   active_turn_cwd: string | null;
+  cwd_agent_id: string | null;
   cwd_conversation_id: string | null;
   mode: "default" | "acceptEdits" | "plan" | "bypassPermissions";
   is_processing: boolean;
@@ -237,6 +240,7 @@ interface StateResponseMessage {
 
 interface CwdChangedMessage {
   type: "cwd_changed";
+  agent_id: string | null;
   conversation_id: string;
   cwd: string;
   success: boolean;
@@ -381,14 +385,33 @@ function handleModeChange(msg: ModeChangeMessage, socket: WebSocket): void {
   }
 }
 
+function normalizeCwdAgentId(agentId?: string | null): string | null {
+  return agentId && agentId.length > 0 ? agentId : null;
+}
+
+function getWorkingDirectoryScopeKey(
+  agentId?: string | null,
+  conversationId?: string | null,
+): string {
+  const normalizedConversationId = normalizeConversationId(conversationId);
+  const normalizedAgentId = normalizeCwdAgentId(agentId);
+  if (normalizedConversationId === "default") {
+    return `agent:${normalizedAgentId ?? "__unknown__"}::conversation:default`;
+  }
+
+  return `conversation:${normalizedConversationId}`;
+}
+
 async function handleCwdChange(
   msg: ChangeCwdMessage,
   socket: WebSocket,
   runtime: ListenerRuntime,
 ): Promise<void> {
   const conversationId = normalizeConversationId(msg.conversationId);
+  const agentId = normalizeCwdAgentId(msg.agentId);
   const currentWorkingDirectory = getConversationWorkingDirectory(
     runtime,
+    agentId,
     conversationId,
   );
 
@@ -407,23 +430,30 @@ async function handleCwdChange(
       throw new Error(`Not a directory: ${normalizedPath}`);
     }
 
-    setConversationWorkingDirectory(runtime, conversationId, normalizedPath);
+    setConversationWorkingDirectory(
+      runtime,
+      agentId,
+      conversationId,
+      normalizedPath,
+    );
     sendClientMessage(
       socket,
       {
         type: "cwd_changed",
+        agent_id: agentId,
         conversation_id: conversationId,
         cwd: normalizedPath,
         success: true,
       },
       runtime,
     );
-    sendStateSnapshot(socket, runtime, conversationId);
+    sendStateSnapshot(socket, runtime, agentId, conversationId);
   } catch (error) {
     sendClientMessage(
       socket,
       {
         type: "cwd_changed",
+        agent_id: agentId,
         conversation_id: conversationId,
         cwd: msg.cwd,
         success: false,
@@ -557,26 +587,29 @@ function normalizeConversationId(conversationId?: string | null): string {
 
 function getConversationWorkingDirectory(
   runtime: ListenerRuntime,
+  agentId?: string | null,
   conversationId?: string | null,
 ): string {
-  const normalizedConversationId = normalizeConversationId(conversationId);
+  const scopeKey = getWorkingDirectoryScopeKey(agentId, conversationId);
   return (
-    runtime.workingDirectoryByConversation.get(normalizedConversationId) ??
+    runtime.workingDirectoryByConversation.get(scopeKey) ??
     runtime.bootWorkingDirectory
   );
 }
 
 function setConversationWorkingDirectory(
   runtime: ListenerRuntime,
+  agentId: string | null,
   conversationId: string,
   workingDirectory: string,
 ): void {
+  const scopeKey = getWorkingDirectoryScopeKey(agentId, conversationId);
   if (workingDirectory === runtime.bootWorkingDirectory) {
-    runtime.workingDirectoryByConversation.delete(conversationId);
+    runtime.workingDirectoryByConversation.delete(scopeKey);
     return;
   }
 
-  runtime.workingDirectoryByConversation.set(conversationId, workingDirectory);
+  runtime.workingDirectoryByConversation.set(scopeKey, workingDirectory);
 }
 
 function clearRuntimeTimers(runtime: ListenerRuntime): void {
@@ -811,14 +844,18 @@ function mergeDequeuedBatchContent(
 function buildStateResponse(
   runtime: ListenerRuntime,
   stateSeq: number,
+  agentId?: string | null,
   conversationId?: string | null,
 ): StateResponseMessage {
+  const scopedAgentId = normalizeCwdAgentId(agentId);
   const scopedConversationId = normalizeConversationId(conversationId);
   const configuredWorkingDirectory = getConversationWorkingDirectory(
     runtime,
+    scopedAgentId,
     scopedConversationId,
   );
   const activeTurnWorkingDirectory =
+    runtime.activeAgentId === scopedAgentId &&
     runtime.activeConversationId === scopedConversationId
       ? runtime.activeWorkingDirectory
       : null;
@@ -856,6 +893,7 @@ function buildStateResponse(
     cwd: configuredWorkingDirectory,
     configured_cwd: configuredWorkingDirectory,
     active_turn_cwd: activeTurnWorkingDirectory,
+    cwd_agent_id: scopedAgentId,
     cwd_conversation_id: scopedConversationId,
     mode: permissionMode.getMode(),
     is_processing: runtime.isProcessing,
@@ -880,13 +918,19 @@ function buildStateResponse(
 function sendStateSnapshot(
   socket: WebSocket,
   runtime: ListenerRuntime,
+  agentId?: string | null,
   conversationId?: string | null,
 ): void {
   const stateSeq = nextEventSeq(runtime);
   if (stateSeq === null) {
     return;
   }
-  const stateResponse = buildStateResponse(runtime, stateSeq, conversationId);
+  const stateResponse = buildStateResponse(
+    runtime,
+    stateSeq,
+    agentId,
+    conversationId,
+  );
   sendClientMessage(socket, stateResponse, runtime);
 }
 
@@ -1646,7 +1690,11 @@ async function resolveStaleApprovals(
       background: true,
       workingDirectory:
         runtime.activeWorkingDirectory ??
-        getConversationWorkingDirectory(runtime, recoveryConversationId),
+        getConversationWorkingDirectory(
+          runtime,
+          runtime.activeAgentId,
+          recoveryConversationId,
+        ),
     },
     { maxRetries: 0, signal: abortSignal },
   );
@@ -1890,10 +1938,17 @@ async function recoverPendingApprovals(
 
     const requestedConversationId = msg.conversationId || undefined;
     const conversationId = requestedConversationId ?? "default";
-    const recoveryWorkingDirectory = getConversationWorkingDirectory(
-      runtime,
-      conversationId,
-    );
+    const recoveryAgentId = normalizeCwdAgentId(agentId);
+    const recoveryWorkingDirectory =
+      runtime.activeAgentId === recoveryAgentId &&
+      runtime.activeConversationId === conversationId &&
+      runtime.activeWorkingDirectory
+        ? runtime.activeWorkingDirectory
+        : getConversationWorkingDirectory(
+            runtime,
+            recoveryAgentId,
+            conversationId,
+          );
 
     const client = await getClient();
     const agent = await client.agents.retrieve(agentId);
@@ -2002,6 +2057,7 @@ async function recoverPendingApprovals(
         const diffs = await computeDiffPreviews(
           ac.approval.toolName,
           ac.parsedArgs,
+          recoveryWorkingDirectory,
         );
 
         const controlRequest: ControlRequest = {
@@ -2377,12 +2433,18 @@ async function connectWithRetry(
       const requestedConversationId = normalizeConversationId(
         parsed.conversationId,
       );
+      const requestedAgentId = normalizeCwdAgentId(parsed.agentId);
 
       // If we're blocked on an approval callback, don't queue behind the
       // pending turn; respond immediately so refreshed clients can render the
       // approval card needed to unblock execution.
       if (runtime.pendingApprovalResolvers.size > 0) {
-        sendStateSnapshot(socket, runtime, requestedConversationId);
+        sendStateSnapshot(
+          socket,
+          runtime,
+          requestedAgentId,
+          requestedConversationId,
+        );
         return;
       }
 
@@ -2394,7 +2456,12 @@ async function connectWithRetry(
             return;
           }
 
-          sendStateSnapshot(socket, runtime, requestedConversationId);
+          sendStateSnapshot(
+            socket,
+            runtime,
+            requestedAgentId,
+            requestedConversationId,
+          );
         })
         .catch((error: unknown) => {
           if (process.env.DEBUG) {
@@ -2665,8 +2732,10 @@ async function handleIncomingMessage(
   const agentId = msg.agentId;
   const requestedConversationId = msg.conversationId || undefined;
   const conversationId = requestedConversationId ?? "default";
+  const normalizedAgentId = normalizeCwdAgentId(agentId);
   const turnWorkingDirectory = getConversationWorkingDirectory(
     runtime,
+    normalizedAgentId,
     conversationId,
   );
   const msgStartTime = performance.now();
@@ -3082,6 +3151,7 @@ async function handleIncomingMessage(
           const diffs = await computeDiffPreviews(
             ac.approval.toolName,
             ac.parsedArgs,
+            turnWorkingDirectory,
           );
 
           const controlRequest: ControlRequest = {

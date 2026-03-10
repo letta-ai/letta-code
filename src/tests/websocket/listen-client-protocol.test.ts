@@ -258,41 +258,49 @@ describe("listen-client state_response control protocol", () => {
     expect(snapshot.cwd.length).toBeGreaterThan(0);
     expect(snapshot.configured_cwd).toBe(snapshot.cwd);
     expect(snapshot.active_turn_cwd).toBeNull();
+    expect(snapshot.cwd_agent_id).toBeNull();
     expect(snapshot.cwd_conversation_id).toBe("default");
   });
 
-  test("scopes configured and active cwd to the requested conversation", () => {
+  test("scopes configured and active cwd to the requested agent and conversation", () => {
     const runtime = __listenClientTestUtils.createRuntime();
     __listenClientTestUtils.setConversationWorkingDirectory(
       runtime,
+      "agent-a",
       "conv-a",
       "/repo/a",
     );
     __listenClientTestUtils.setConversationWorkingDirectory(
       runtime,
-      "conv-b",
+      "agent-b",
+      "default",
       "/repo/b",
     );
+    runtime.activeAgentId = "agent-a";
     runtime.activeConversationId = "conv-a";
     runtime.activeWorkingDirectory = "/repo/a";
 
     const activeSnapshot = __listenClientTestUtils.buildStateResponse(
       runtime,
       2,
+      "agent-a",
       "conv-a",
     );
     expect(activeSnapshot.configured_cwd).toBe("/repo/a");
     expect(activeSnapshot.active_turn_cwd).toBe("/repo/a");
+    expect(activeSnapshot.cwd_agent_id).toBe("agent-a");
     expect(activeSnapshot.cwd_conversation_id).toBe("conv-a");
 
-    const inactiveSnapshot = __listenClientTestUtils.buildStateResponse(
+    const defaultSnapshot = __listenClientTestUtils.buildStateResponse(
       runtime,
       3,
-      "conv-b",
+      "agent-b",
+      "default",
     );
-    expect(inactiveSnapshot.configured_cwd).toBe("/repo/b");
-    expect(inactiveSnapshot.active_turn_cwd).toBeNull();
-    expect(inactiveSnapshot.cwd_conversation_id).toBe("conv-b");
+    expect(defaultSnapshot.configured_cwd).toBe("/repo/b");
+    expect(defaultSnapshot.active_turn_cwd).toBeNull();
+    expect(defaultSnapshot.cwd_agent_id).toBe("agent-b");
+    expect(defaultSnapshot.cwd_conversation_id).toBe("default");
   });
 });
 
@@ -312,15 +320,18 @@ describe("listen-client cwd change handling", () => {
     try {
       __listenClientTestUtils.setConversationWorkingDirectory(
         runtime,
+        "agent-1",
         "conv-1",
         normalizedServerDir,
       );
+      runtime.activeAgentId = "agent-1";
       runtime.activeConversationId = "conv-1";
       runtime.activeWorkingDirectory = normalizedServerDir;
 
       await __listenClientTestUtils.handleCwdChange(
         {
           type: "change_cwd",
+          agentId: "agent-1",
           conversationId: "conv-1",
           cwd: "../client",
         },
@@ -331,6 +342,7 @@ describe("listen-client cwd change handling", () => {
       expect(
         __listenClientTestUtils.getConversationWorkingDirectory(
           runtime,
+          "agent-1",
           "conv-1",
         ),
       ).toBe(normalizedClientDir);
@@ -339,6 +351,7 @@ describe("listen-client cwd change handling", () => {
       const changed = JSON.parse(socket.sentPayloads[0] as string);
       expect(changed.type).toBe("cwd_changed");
       expect(changed.success).toBe(true);
+      expect(changed.agent_id).toBe("agent-1");
       expect(changed.cwd).toBe(normalizedClientDir);
       expect(changed.conversation_id).toBe("conv-1");
 
@@ -346,6 +359,7 @@ describe("listen-client cwd change handling", () => {
       expect(snapshot.type).toBe("state_response");
       expect(snapshot.configured_cwd).toBe(normalizedClientDir);
       expect(snapshot.active_turn_cwd).toBe(normalizedServerDir);
+      expect(snapshot.cwd_agent_id).toBe("agent-1");
       expect(snapshot.cwd_conversation_id).toBe("conv-1");
     } finally {
       await rm(tempRoot, { recursive: true, force: true });
