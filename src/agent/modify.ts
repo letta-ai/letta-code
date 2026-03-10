@@ -278,7 +278,8 @@ export async function recompileAgentSystemPrompt(
   options: RecompileAgentSystemPromptOptions = {},
   clientOverride?: AgentSystemPromptRecompileClient,
 ): Promise<string> {
-  const client = clientOverride ?? (await getClient());
+  const client = (clientOverride ??
+    (await getClient())) as AgentSystemPromptRecompileClient;
 
   return client.agents.recompile(agentId, {
     dry_run: options.dryRun,

@@ -8,7 +8,6 @@ export type SharedReminderMode =
 export type SharedReminderId =
   | "session-context"
   | "agent-info"
-  | "skills"
   | "permission-mode"
   | "plan-mode"
   | "reflection-step-count"
@@ -40,11 +39,6 @@ export const SHARED_REMINDER_CATALOG: ReadonlyArray<SharedReminderDefinition> =
         "headless-bidirectional",
         "subagent",
       ],
-    },
-    {
-      id: "skills",
-      description: "Available skills system reminder (with reinjection)",
-      modes: ["interactive", "headless-one-shot", "headless-bidirectional"],
     },
     {
       id: "permission-mode",

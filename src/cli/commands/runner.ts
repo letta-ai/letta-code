@@ -73,13 +73,16 @@ export function createCommandRunner({
   onCommandFinished,
 }: RunnerDeps) {
   function getHandle(id: string, input: string): CommandHandle {
-    // biome-ignore lint/style/noNonNullAssertion: forward-reference pattern — overwritten synchronously below. null! preferred over no-ops to crash loudly if invariant breaks.
+    const uninitialized = (): never => {
+      throw new Error("CommandHandle callback used before initialization");
+    };
+
     const handle: CommandHandle = {
       id,
       input,
-      update: null!,
-      finish: null!,
-      fail: null!,
+      update: uninitialized,
+      finish: uninitialized,
+      fail: uninitialized,
     };
 
     const update = (updateData: CommandUpdate) => {
