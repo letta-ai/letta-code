@@ -85,6 +85,14 @@ export interface SkillDiscoveryError {
   message: string;
 }
 
+export function compareSkills(a: Skill, b: Skill): number {
+  return (
+    a.id.localeCompare(b.id) ||
+    a.source.localeCompare(b.source) ||
+    a.path.localeCompare(b.path)
+  );
+}
+
 /**
  * Default directory name where project skills are stored
  */
@@ -223,7 +231,7 @@ export async function discoverSkills(
   }
 
   return {
-    skills: Array.from(skillsById.values()),
+    skills: Array.from(skillsById.values()).sort(compareSkills),
     errors: allErrors,
   };
 }
@@ -406,7 +414,9 @@ export function formatSkillsAsSystemReminder(skills: Skill[]): string {
     return "";
   }
 
-  const lines = skills.map((s) => `- ${s.id} (${s.source}): ${s.description}`);
+  const lines = [...skills]
+    .sort(compareSkills)
+    .map((s) => `- ${s.id} (${s.source}): ${s.description}`);
 
   return `<system-reminder>
 The following skills are available for use with the Skill tool:

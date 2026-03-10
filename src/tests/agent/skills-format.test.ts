@@ -66,4 +66,53 @@ describe("Skills formatting (system reminder)", () => {
     expect(result).toContain("project-skill (project)");
     expect(result).toContain("global-skill (global)");
   });
+
+  test("sorts skills deterministically before formatting", () => {
+    const skills: Skill[] = [
+      {
+        id: "z-skill",
+        name: "Z Skill",
+        description: "Last by id",
+        path: "/test/.skills/z-skill/SKILL.md",
+        source: "project",
+      },
+      {
+        id: "a-skill",
+        name: "A Skill",
+        description: "First by id",
+        path: "/test/.skills/a-skill/SKILL.md",
+        source: "project",
+      },
+      {
+        id: "same-id",
+        name: "Same Id Global",
+        description: "Global variant",
+        path: "/global/.skills/same-id/SKILL.md",
+        source: "global",
+      },
+      {
+        id: "same-id",
+        name: "Same Id Project",
+        description: "Project variant",
+        path: "/project/.skills/same-id/SKILL.md",
+        source: "project",
+      },
+    ];
+
+    const result = formatSkillsAsSystemReminder(skills);
+
+    const aSkillIndex = result.indexOf("- a-skill (project): First by id");
+    const sameIdGlobalIndex = result.indexOf(
+      "- same-id (global): Global variant",
+    );
+    const sameIdProjectIndex = result.indexOf(
+      "- same-id (project): Project variant",
+    );
+    const zSkillIndex = result.indexOf("- z-skill (project): Last by id");
+
+    expect(aSkillIndex).toBeGreaterThan(-1);
+    expect(sameIdGlobalIndex).toBeGreaterThan(aSkillIndex);
+    expect(sameIdProjectIndex).toBeGreaterThan(sameIdGlobalIndex);
+    expect(zSkillIndex).toBeGreaterThan(sameIdProjectIndex);
+  });
 });
