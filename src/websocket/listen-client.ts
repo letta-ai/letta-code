@@ -37,6 +37,8 @@ import { drainStreamWithResume } from "../cli/helpers/stream";
 import { INTERRUPTED_BY_USER } from "../constants";
 import { computeDiffPreviews } from "../helpers/diffPreview";
 import { permissionMode } from "../permissions/mode";
+import { type QueueItem, QueueRuntime } from "../queue/queueRuntime";
+import { mergeQueuedTurnInput } from "../queue/turnQueueRuntime";
 import {
   buildSharedReminderParts,
   prependReminderPartsToContent,
@@ -47,8 +49,6 @@ import {
   createSharedReminderState,
   type SharedReminderState,
 } from "../reminders/state";
-import { type QueueItem, QueueRuntime } from "../queue/queueRuntime";
-import { mergeQueuedTurnInput } from "../queue/turnQueueRuntime";
 import { settingsManager } from "../settings-manager";
 import { isInteractiveApprovalTool } from "../tools/interactivePolicy";
 import { loadTools } from "../tools/manager";
