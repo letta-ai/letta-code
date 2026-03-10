@@ -1944,20 +1944,6 @@ async function main(): Promise<void> {
             settingsManager.setSystemPromptPreset(agent.id, storedPreset);
           }
 
-          // Notify user if their custom/legacy prompt is outdated
-          if (storedPreset === "custom") {
-            const { detectSystemPromptDrift } = await import(
-              "./agent/promptAssets"
-            );
-            const { formatDriftTip } = await import("./agent/promptTips");
-            const memoryMode = settingsManager.isMemfsEnabled(agent.id)
-              ? "memfs"
-              : "standard";
-            if (detectSystemPromptDrift(agent.system || "", memoryMode)) {
-              console.log(formatDriftTip());
-            }
-          }
-
           if (storedPreset && storedPreset !== "custom") {
             const { buildSystemPrompt: rebuildPrompt, isKnownPreset: isKnown } =
               await import("./agent/promptAssets");
@@ -1974,6 +1960,18 @@ async function main(): Promise<void> {
             } else {
               settingsManager.clearSystemPromptPreset(agent.id);
             }
+          }
+
+          // Notify user if their agent is not on the latest default prompt
+          const { detectSystemPromptDrift } = await import(
+            "./agent/promptAssets"
+          );
+          const { formatDriftTip } = await import("./agent/promptTips");
+          const memoryMode = settingsManager.isMemfsEnabled(agent.id)
+            ? "memfs"
+            : "standard";
+          if (detectSystemPromptDrift(agent.system || "", memoryMode)) {
+            console.log(formatDriftTip());
           }
         }
 
