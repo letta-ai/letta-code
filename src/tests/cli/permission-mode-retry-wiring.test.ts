@@ -11,9 +11,7 @@ describe("permission mode retry wiring", () => {
   test("setUiPermissionMode syncs singleton mode immediately", () => {
     const source = readAppSource();
 
-    const start = source.indexOf(
-      "const setUiPermissionMode = useCallback(",
-    );
+    const start = source.indexOf("const setUiPermissionMode = useCallback(");
     const end = source.indexOf(
       "const statusLineTriggerVersionRef = useRef(0);",
       start,
@@ -27,7 +25,7 @@ describe("permission mode retry wiring", () => {
       'if (mode === "plan" && !permissionMode.getPlanFilePath())',
     );
     expect(segment).toContain("permissionMode.setPlanFilePath(planPath);");
-    expect(segment).toContain("rememberPlanFilePath(planPath);");
+    expect(segment).toContain("cacheLastPlanFilePath(planPath);");
     expect(segment).toContain("permissionMode.setMode(mode);");
   });
 
@@ -35,7 +33,7 @@ describe("permission mode retry wiring", () => {
     const source = readAppSource();
 
     expect(source).toContain(
-      "const rememberPlanFilePath = useCallback((planFilePath: string | null) => {",
+      "const cacheLastPlanFilePath = useCallback((planFilePath: string | null) => {",
     );
 
     const slashPlanStart = source.indexOf('if (trimmed === "/plan") {');
@@ -46,7 +44,7 @@ describe("permission mode retry wiring", () => {
     expect(slashPlanStart).toBeGreaterThan(-1);
     expect(slashPlanEnd).toBeGreaterThan(slashPlanStart);
     expect(source.slice(slashPlanStart, slashPlanEnd)).toContain(
-      "rememberPlanFilePath(planPath);",
+      "cacheLastPlanFilePath(planPath);",
     );
 
     const modeChangeStart = source.indexOf(
@@ -58,7 +56,7 @@ describe("permission mode retry wiring", () => {
     expect(modeChangeStart).toBeGreaterThan(-1);
     expect(modeChangeEnd).toBeGreaterThan(modeChangeStart);
     expect(source.slice(modeChangeStart, modeChangeEnd)).toContain(
-      "rememberPlanFilePath(planPath);",
+      "cacheLastPlanFilePath(planPath);",
     );
 
     const enterPlanStart = source.indexOf(
@@ -70,7 +68,7 @@ describe("permission mode retry wiring", () => {
     expect(enterPlanStart).toBeGreaterThan(-1);
     expect(enterPlanEnd).toBeGreaterThan(enterPlanStart);
     expect(source.slice(enterPlanStart, enterPlanEnd)).toContain(
-      "rememberPlanFilePath(planFilePath);",
+      "cacheLastPlanFilePath(planFilePath);",
     );
   });
 

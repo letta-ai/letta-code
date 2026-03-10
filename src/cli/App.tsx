@@ -1131,7 +1131,7 @@ export default function App({
   // Store the last plan file path for post-approval rendering
   // (needed because plan mode is exited before rendering the result)
   const lastPlanFilePathRef = useRef<string | null>(null);
-  const rememberPlanFilePath = useCallback((planFilePath: string | null) => {
+  const cacheLastPlanFilePath = useCallback((planFilePath: string | null) => {
     if (planFilePath) {
       lastPlanFilePathRef.current = planFilePath;
     }
@@ -1153,12 +1153,12 @@ export default function App({
         if (mode === "plan" && !permissionMode.getPlanFilePath()) {
           const planPath = generatePlanFilePath();
           permissionMode.setPlanFilePath(planPath);
-          rememberPlanFilePath(planPath);
+          cacheLastPlanFilePath(planPath);
         }
         permissionMode.setMode(mode);
       }
     },
-    [rememberPlanFilePath],
+    [cacheLastPlanFilePath],
   );
 
   const statusLineTriggerVersionRef = useRef(0);
@@ -9302,7 +9302,7 @@ export default function App({
           // Generate plan file path and enter plan mode
           const planPath = generatePlanFilePath();
           permissionMode.setPlanFilePath(planPath);
-          rememberPlanFilePath(planPath);
+          cacheLastPlanFilePath(planPath);
           permissionMode.setMode("plan");
           setUiPermissionMode("plan");
 
@@ -12070,13 +12070,13 @@ ${SYSTEM_REMINDER_CLOSE}
       if (mode === "plan") {
         const planPath = generatePlanFilePath();
         permissionMode.setPlanFilePath(planPath);
-        rememberPlanFilePath(planPath);
+        cacheLastPlanFilePath(planPath);
       }
       // permissionMode.setMode() is called in InputRich.tsx before this callback
       setUiPermissionMode(mode);
       triggerStatusLineRefresh();
     },
-    [triggerStatusLineRefresh, setUiPermissionMode, rememberPlanFilePath],
+    [triggerStatusLineRefresh, setUiPermissionMode, cacheLastPlanFilePath],
   );
 
   // Reasoning tier cycling (Tab hotkey in InputRich.tsx)
@@ -12635,7 +12635,7 @@ ${SYSTEM_REMINDER_CLOSE}
     // Toggle plan mode on and store plan file path
     permissionMode.setMode("plan");
     permissionMode.setPlanFilePath(planFilePath);
-    rememberPlanFilePath(planFilePath);
+    cacheLastPlanFilePath(planFilePath);
     setUiPermissionMode("plan");
 
     // Get the tool return message from the implementation
@@ -12692,7 +12692,7 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
     sendAllResults,
     refreshDerived,
     setUiPermissionMode,
-    rememberPlanFilePath,
+    cacheLastPlanFilePath,
   ]);
 
   const handleEnterPlanModeReject = useCallback(async () => {
