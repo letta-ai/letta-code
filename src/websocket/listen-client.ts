@@ -187,6 +187,7 @@ interface StateResponseMessage {
   snapshot_id: string;
   generated_at: string;
   state_seq: number;
+  cwd: string;
   mode: "default" | "acceptEdits" | "plan" | "bypassPermissions";
   is_processing: boolean;
   last_stop_reason: string | null;
@@ -723,6 +724,7 @@ function buildStateResponse(
     generated_at: new Date().toISOString(),
     state_seq: stateSeq,
     event_seq: stateSeq,
+    cwd: process.env.USER_CWD || process.cwd(),
     mode: permissionMode.getMode(),
     is_processing: runtime.isProcessing,
     last_stop_reason: runtime.lastStopReason,

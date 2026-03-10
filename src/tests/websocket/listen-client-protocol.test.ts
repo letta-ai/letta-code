@@ -247,6 +247,14 @@ describe("listen-client state_response control protocol", () => {
     const snapshot = __listenClientTestUtils.buildStateResponse(runtime, 1);
     expect(snapshot.control_response_capable).toBe(true);
   });
+
+  test("includes the effective working directory", () => {
+    const runtime = __listenClientTestUtils.createRuntime();
+    const snapshot = __listenClientTestUtils.buildStateResponse(runtime, 1);
+
+    expect(typeof snapshot.cwd).toBe("string");
+    expect(snapshot.cwd.length).toBeGreaterThan(0);
+  });
 });
 
 describe("listen-client state_response pending interrupt snapshot", () => {
