@@ -227,7 +227,6 @@ import {
   buildInitMessage,
   fireAutoInit,
   gatherGitContext,
-  hasActiveInitSubagent,
 } from "./helpers/initCommand";
 import {
   getReflectionSettings,
