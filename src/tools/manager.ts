@@ -1,6 +1,7 @@
 import { getDisplayableToolReturn } from "../agent/approval-execution";
 import { getModelInfo } from "../agent/model";
 import { getAllSubagentConfigs } from "../agent/subagents";
+import { refreshFileIndex } from "../cli/helpers/fileIndex";
 import { INTERRUPTED_BY_USER } from "../constants";
 import {
   runPostToolUseFailureHooks,
@@ -11,6 +12,33 @@ import { OPENAI_CODEX_PROVIDER_NAME } from "../providers/openai-codex-provider";
 import { telemetry } from "../telemetry";
 import { debugLog } from "../utils/debug";
 import { TOOL_DEFINITIONS, type ToolName } from "./toolDefinitions";
+
+/**
+ * Tools that may create, modify, or delete files on disk.
+ * After any of these complete successfully, the file index is refreshed
+ * in the background so subsequent @ searches reflect the latest state.
+ */
+const FILE_MODIFYING_TOOLS = new Set([
+  // Anthropic toolset
+  "Write",
+  "Edit",
+  "MultiEdit",
+  "Bash",
+  "ApplyPatch",
+  // Codex toolset
+  "Shell",
+  "shell",
+  "ShellCommand",
+  "shell_command",
+  "apply_patch",
+  // Gemini toolset
+  "Replace",
+  "replace",
+  "WriteFileGemini",
+  "write_file_gemini",
+  "RunShellCommand",
+  "run_shell_command",
+]);
 
 export const TOOL_NAMES = Object.keys(TOOL_DEFINITIONS) as ToolName[];
 const STREAMING_SHELL_TOOLS = new Set([
@@ -1260,6 +1288,12 @@ export async function executeTool(
       tool.fn(enhancedArgs),
     );
     const duration = Date.now() - startTime;
+
+    // Refresh the file index in the background after file-modifying tools
+    // so subsequent @ searches reflect newly created or deleted files.
+    if (FILE_MODIFYING_TOOLS.has(internalName)) {
+      void refreshFileIndex();
+    }
 
     // Extract stdout/stderr if present (for bash tools)
     const recordResult = isRecord(result) ? result : undefined;

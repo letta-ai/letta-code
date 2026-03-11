@@ -5,6 +5,8 @@
 .skills
 # Local notes (not for repo)
 .notes
+# Letta Code file index exclusions (auto-created per-project, not for repo)
+.lettaignore
 
 .idea
 node_modules

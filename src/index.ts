@@ -34,6 +34,7 @@ import {
   resolveImportFlagAlias,
 } from "./cli/flagUtils";
 import { formatErrorDetails } from "./cli/helpers/errorFormatter";
+import { ensureFileIndex } from "./cli/helpers/fileIndex";
 import type { ApprovalRequest } from "./cli/helpers/stream";
 import { ProfileSelectionInline } from "./cli/profile-selection";
 import {
@@ -55,6 +56,7 @@ import { markMilestone } from "./utils/timing";
 // anti-pattern of creating new [] on every render which triggers useEffect re-runs
 const EMPTY_APPROVAL_ARRAY: ApprovalRequest[] = [];
 const EMPTY_MESSAGE_ARRAY: Message[] = [];
+void ensureFileIndex();
 
 function printHelp() {
   // Keep this plaintext (no colors) so output pipes cleanly
