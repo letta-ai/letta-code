@@ -3,6 +3,8 @@
  * Connects to Letta Cloud and receives messages to execute locally
  */
 
+import { realpath, stat } from "node:fs/promises";
+import path from "node:path";
 import { APIError } from "@letta-ai/letta-client/core/error";
 import type { Stream } from "@letta-ai/letta-client/core/streaming";
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
@@ -37,8 +39,23 @@ import { drainStreamWithResume } from "../cli/helpers/stream";
 import { INTERRUPTED_BY_USER } from "../constants";
 import { computeDiffPreviews } from "../helpers/diffPreview";
 import { permissionMode } from "../permissions/mode";
-import { type QueueItem, QueueRuntime } from "../queue/queueRuntime";
+import {
+  type DequeuedBatch,
+  type QueueBlockedReason,
+  type QueueItem,
+  QueueRuntime,
+} from "../queue/queueRuntime";
 import { mergeQueuedTurnInput } from "../queue/turnQueueRuntime";
+import {
+  buildSharedReminderParts,
+  prependReminderPartsToContent,
+} from "../reminders/engine";
+import { buildListenReminderContext } from "../reminders/listenContext";
+import { getPlanModeReminder } from "../reminders/planModeReminder";
+import {
+  createSharedReminderState,
+  type SharedReminderState,
+} from "../reminders/state";
 import { settingsManager } from "../settings-manager";
 import { isInteractiveApprovalTool } from "../tools/interactivePolicy";
 import { loadTools } from "../tools/manager";
@@ -60,6 +77,7 @@ import type {
   TranscriptBackfillMessage,
   TranscriptSupplementMessage,
 } from "../types/protocol";
+import { getListenerBlockedReason } from "./helpers/listenerQueueAdapter";
 
 interface StartListenerOptions {
   connectionId: string;
@@ -118,6 +136,8 @@ interface RunStartedMessage {
   batch_id: string;
   event_seq?: number;
   session_id?: string;
+  agent_id?: string;
+  conversation_id?: string;
 }
 
 interface RunRequestErrorMessage {
@@ -130,6 +150,8 @@ interface RunRequestErrorMessage {
   batch_id?: string;
   event_seq?: number;
   session_id?: string;
+  agent_id?: string;
+  conversation_id?: string;
 }
 
 interface ModeChangeMessage {
@@ -157,6 +179,15 @@ interface GetStatusMessage {
 
 interface GetStateMessage {
   type: "get_state";
+  agentId?: string | null;
+  conversationId?: string | null;
+}
+
+interface ChangeCwdMessage {
+  type: "change_cwd";
+  agentId?: string | null;
+  conversationId?: string | null;
+  cwd: string;
 }
 
 interface CancelRunMessage {
@@ -188,6 +219,10 @@ interface StateResponseMessage {
   generated_at: string;
   state_seq: number;
   cwd: string;
+  configured_cwd: string;
+  active_turn_cwd: string | null;
+  cwd_agent_id: string | null;
+  cwd_conversation_id: string | null;
   mode: "default" | "acceptEdits" | "plan" | "bypassPermissions";
   is_processing: boolean;
   last_stop_reason: string | null;
@@ -223,6 +258,17 @@ interface StateResponseMessage {
   event_seq?: number;
 }
 
+interface CwdChangedMessage {
+  type: "cwd_changed";
+  agent_id: string | null;
+  conversation_id: string;
+  cwd: string;
+  success: boolean;
+  error?: string;
+  event_seq?: number;
+  session_id?: string;
+}
+
 type ServerMessage =
   | PongMessage
   | StatusMessage
@@ -230,6 +276,7 @@ type ServerMessage =
   | ModeChangeMessage
   | GetStatusMessage
   | GetStateMessage
+  | ChangeCwdMessage
   | CancelRunMessage
   | RecoverPendingApprovalsMessage
   | WsControlResponse;
@@ -238,6 +285,7 @@ type ClientMessage =
   | RunStartedMessage
   | RunRequestErrorMessage
   | ModeChangedMessage
+  | CwdChangedMessage
   | StatusResponseMessage
   | StateResponseMessage;
 
@@ -266,6 +314,7 @@ type ListenerRuntime = {
   /** Active run metadata for reconnect snapshot state. */
   activeAgentId: string | null;
   activeConversationId: string | null;
+  activeWorkingDirectory: string | null;
   activeRunId: string | null;
   activeRunStartedAt: string | null;
   /** Abort controller for the currently active message turn. */
@@ -274,13 +323,13 @@ type ListenerRuntime = {
   cancelRequested: boolean;
   /** Queue lifecycle tracking — parallel tracking layer, does not affect message processing. */
   queueRuntime: QueueRuntime;
-  /**
-   * Queue item IDs that were coalesced into an earlier dequeued batch.
-   * Their already-scheduled promise-chain callbacks should no-op.
-   */
-  coalescedSkipQueueItemIds: Set<string>;
-  /** Count of turns currently queued or in-flight in the promise chain. Incremented
-   *  synchronously on message arrival (before .then()) to avoid async scheduling races. */
+  /** Correlates queued queue item ids to original inbound frames. */
+  queuedMessagesByItemId: Map<string, IncomingMessage>;
+  /** True while a queue drain pass is actively running. */
+  queuePumpActive: boolean;
+  /** Dedupes queue pump scheduling onto messageQueue chain. */
+  queuePumpScheduled: boolean;
+  /** Queue backlog metric for state snapshot visibility. */
   pendingTurns: number;
   /** Optional debug hook for WS event logging. */
   onWsEvent?: StartListenerOptions["onWsEvent"];
@@ -311,6 +360,9 @@ type ListenerRuntime = {
    * Threaded into the next send for persistence normalization.
    */
   pendingInterruptedToolCallIds: string[] | null;
+  reminderState: SharedReminderState;
+  bootWorkingDirectory: string;
+  workingDirectoryByConversation: Map<string, string>;
 };
 
 // Listen mode supports one active connection per process.
@@ -354,11 +406,123 @@ function handleModeChange(msg: ModeChangeMessage, socket: WebSocket): void {
   }
 }
 
+function normalizeCwdAgentId(agentId?: string | null): string | null {
+  return agentId && agentId.length > 0 ? agentId : null;
+}
+
+function getWorkingDirectoryScopeKey(
+  agentId?: string | null,
+  conversationId?: string | null,
+): string {
+  const normalizedConversationId = normalizeConversationId(conversationId);
+  const normalizedAgentId = normalizeCwdAgentId(agentId);
+  if (normalizedConversationId === "default") {
+    return `agent:${normalizedAgentId ?? "__unknown__"}::conversation:default`;
+  }
+
+  return `conversation:${normalizedConversationId}`;
+}
+
+async function handleCwdChange(
+  msg: ChangeCwdMessage,
+  socket: WebSocket,
+  runtime: ListenerRuntime,
+): Promise<void> {
+  const conversationId = normalizeConversationId(msg.conversationId);
+  const agentId = normalizeCwdAgentId(msg.agentId);
+  const currentWorkingDirectory = getConversationWorkingDirectory(
+    runtime,
+    agentId,
+    conversationId,
+  );
+
+  try {
+    const requestedPath = msg.cwd?.trim();
+    if (!requestedPath) {
+      throw new Error("Working directory cannot be empty");
+    }
+
+    const resolvedPath = path.isAbsolute(requestedPath)
+      ? requestedPath
+      : path.resolve(currentWorkingDirectory, requestedPath);
+    const normalizedPath = await realpath(resolvedPath);
+    const stats = await stat(normalizedPath);
+    if (!stats.isDirectory()) {
+      throw new Error(`Not a directory: ${normalizedPath}`);
+    }
+
+    setConversationWorkingDirectory(
+      runtime,
+      agentId,
+      conversationId,
+      normalizedPath,
+    );
+    sendClientMessage(
+      socket,
+      {
+        type: "cwd_changed",
+        agent_id: agentId,
+        conversation_id: conversationId,
+        cwd: normalizedPath,
+        success: true,
+      },
+      runtime,
+    );
+    sendStateSnapshot(socket, runtime, agentId, conversationId);
+  } catch (error) {
+    sendClientMessage(
+      socket,
+      {
+        type: "cwd_changed",
+        agent_id: agentId,
+        conversation_id: conversationId,
+        cwd: msg.cwd,
+        success: false,
+        error:
+          error instanceof Error
+            ? error.message
+            : "Working directory change failed",
+      },
+      runtime,
+    );
+  }
+}
+
 const MAX_RETRY_DURATION_MS = 5 * 60 * 1000; // 5 minutes
 const INITIAL_RETRY_DELAY_MS = 1000; // 1 second
 const MAX_RETRY_DELAY_MS = 30000; // 30 seconds
 
+function getQueueItemScope(item?: QueueItem | null): {
+  agent_id?: string;
+  conversation_id?: string;
+} {
+  if (!item) {
+    return {};
+  }
+  return {
+    agent_id: item.agentId,
+    conversation_id: item.conversationId,
+  };
+}
+
+function getQueueItemsScope(items: QueueItem[]): {
+  agent_id?: string;
+  conversation_id?: string;
+} {
+  const first = items[0];
+  if (!first) {
+    return {};
+  }
+  const sameScope = items.every(
+    (item) =>
+      (item.agentId ?? null) === (first.agentId ?? null) &&
+      (item.conversationId ?? null) === (first.conversationId ?? null),
+  );
+  return sameScope ? getQueueItemScope(first) : {};
+}
+
 function createRuntime(): ListenerRuntime {
+  const bootWorkingDirectory = process.env.USER_CWD || process.cwd();
   const runtime: ListenerRuntime = {
     socket: null,
     heartbeatInterval: null,
@@ -373,6 +537,7 @@ function createRuntime(): ListenerRuntime {
     isProcessing: false,
     activeAgentId: null,
     activeConversationId: null,
+    activeWorkingDirectory: null,
     activeRunId: null,
     activeRunStartedAt: null,
     activeAbortController: null,
@@ -384,7 +549,12 @@ function createRuntime(): ListenerRuntime {
     continuationEpoch: 0,
     activeExecutingToolCallIds: [],
     pendingInterruptedToolCallIds: null,
-    coalescedSkipQueueItemIds: new Set<string>(),
+    reminderState: createSharedReminderState(),
+    bootWorkingDirectory,
+    workingDirectoryByConversation: new Map<string, string>(),
+    queuedMessagesByItemId: new Map<string, IncomingMessage>(),
+    queuePumpActive: false,
+    queuePumpScheduled: false,
     pendingTurns: 0,
     // queueRuntime assigned below — needs runtime ref in callbacks
     queueRuntime: null as unknown as QueueRuntime,
@@ -392,6 +562,7 @@ function createRuntime(): ListenerRuntime {
   runtime.queueRuntime = new QueueRuntime({
     callbacks: {
       onEnqueued: (item, queueLen) => {
+        runtime.pendingTurns = queueLen;
         if (runtime.socket?.readyState === WebSocket.OPEN) {
           const content = item.kind === "message" ? item.content : item.text;
           emitToWS(runtime.socket, {
@@ -406,10 +577,12 @@ function createRuntime(): ListenerRuntime {
             queue_len: queueLen,
             session_id: runtime.sessionId,
             uuid: `q-enq-${item.id}`,
+            ...getQueueItemScope(item),
           });
         }
       },
       onDequeued: (batch) => {
+        runtime.pendingTurns = batch.queueLenAfter;
         if (runtime.socket?.readyState === WebSocket.OPEN) {
           emitToWS(runtime.socket, {
             type: "queue_batch_dequeued",
@@ -419,6 +592,7 @@ function createRuntime(): ListenerRuntime {
             queue_len_after: batch.queueLenAfter,
             session_id: runtime.sessionId,
             uuid: `q-deq-${batch.batchId}`,
+            ...getQueueItemsScope(batch.items),
           });
         }
       },
@@ -430,10 +604,12 @@ function createRuntime(): ListenerRuntime {
             queue_len: queueLen,
             session_id: runtime.sessionId,
             uuid: `q-blk-${crypto.randomUUID()}`,
+            ...getQueueItemScope(runtime.queueRuntime.items[0]),
           });
         }
       },
-      onCleared: (reason, clearedCount) => {
+      onCleared: (reason, clearedCount, items) => {
+        runtime.pendingTurns = 0;
         if (runtime.socket?.readyState === WebSocket.OPEN) {
           emitToWS(runtime.socket, {
             type: "queue_cleared",
@@ -441,10 +617,13 @@ function createRuntime(): ListenerRuntime {
             cleared_count: clearedCount,
             session_id: runtime.sessionId,
             uuid: `q-clr-${crypto.randomUUID()}`,
+            ...getQueueItemsScope(items),
           });
         }
       },
       onDropped: (item, reason, queueLen) => {
+        runtime.pendingTurns = queueLen;
+        runtime.queuedMessagesByItemId.delete(item.id);
         if (runtime.socket?.readyState === WebSocket.OPEN) {
           emitToWS(runtime.socket, {
             type: "queue_item_dropped",
@@ -454,12 +633,46 @@ function createRuntime(): ListenerRuntime {
             queue_len: queueLen,
             session_id: runtime.sessionId,
             uuid: `q-drp-${item.id}`,
+            ...getQueueItemScope(item),
           });
         }
       },
     },
   });
   return runtime;
+}
+
+function normalizeConversationId(conversationId?: string | null): string {
+  return conversationId && conversationId.length > 0
+    ? conversationId
+    : "default";
+}
+
+function getConversationWorkingDirectory(
+  runtime: ListenerRuntime,
+  agentId?: string | null,
+  conversationId?: string | null,
+): string {
+  const scopeKey = getWorkingDirectoryScopeKey(agentId, conversationId);
+  return (
+    runtime.workingDirectoryByConversation.get(scopeKey) ??
+    runtime.bootWorkingDirectory
+  );
+}
+
+function setConversationWorkingDirectory(
+  runtime: ListenerRuntime,
+  agentId: string | null,
+  conversationId: string,
+  workingDirectory: string,
+): void {
+  const scopeKey = getWorkingDirectoryScopeKey(agentId, conversationId);
+  if (workingDirectory === runtime.bootWorkingDirectory) {
+    runtime.workingDirectoryByConversation.delete(scopeKey);
+    return;
+  }
+
+  runtime.workingDirectoryByConversation.set(scopeKey, workingDirectory);
 }
 
 function clearRuntimeTimers(runtime: ListenerRuntime): void {
@@ -476,6 +689,7 @@ function clearRuntimeTimers(runtime: ListenerRuntime): void {
 function clearActiveRunState(runtime: ListenerRuntime): void {
   runtime.activeAgentId = null;
   runtime.activeConversationId = null;
+  runtime.activeWorkingDirectory = null;
   runtime.activeRunId = null;
   runtime.activeRunStartedAt = null;
   runtime.activeAbortController = null;
@@ -615,6 +829,7 @@ export function parseServerMessage(
       parsed.type === "mode_change" ||
       parsed.type === "get_status" ||
       parsed.type === "get_state" ||
+      parsed.type === "change_cwd" ||
       parsed.type === "cancel_run" ||
       parsed.type === "recover_pending_approvals"
     ) {
@@ -689,10 +904,176 @@ function mergeDequeuedBatchContent(
   });
 }
 
+function getPrimaryQueueMessageItem(items: QueueItem[]): QueueItem | null {
+  for (const item of items) {
+    if (item.kind === "message") {
+      return item;
+    }
+  }
+  return null;
+}
+
+function buildQueuedTurnMessage(
+  runtime: ListenerRuntime,
+  batch: DequeuedBatch,
+): IncomingMessage | null {
+  const primaryItem = getPrimaryQueueMessageItem(batch.items);
+  if (!primaryItem) {
+    for (const item of batch.items) {
+      runtime.queuedMessagesByItemId.delete(item.id);
+    }
+    return null;
+  }
+
+  const template = runtime.queuedMessagesByItemId.get(primaryItem.id);
+  for (const item of batch.items) {
+    runtime.queuedMessagesByItemId.delete(item.id);
+  }
+  if (!template) {
+    return null;
+  }
+
+  const mergedContent = mergeDequeuedBatchContent(batch.items);
+  if (mergedContent === null) {
+    return null;
+  }
+
+  const firstMessageIndex = template.messages.findIndex(
+    (payload): payload is MessageCreate & { client_message_id?: string } =>
+      "content" in payload,
+  );
+  if (firstMessageIndex === -1) {
+    return null;
+  }
+
+  const firstMessage = template.messages[firstMessageIndex] as MessageCreate & {
+    client_message_id?: string;
+  };
+  const mergedFirstMessage = {
+    ...firstMessage,
+    content: mergedContent,
+  };
+  const messages = template.messages.slice();
+  messages[firstMessageIndex] = mergedFirstMessage;
+
+  return {
+    ...template,
+    messages,
+  };
+}
+
+function shouldQueueInboundMessage(parsed: IncomingMessage): boolean {
+  return parsed.messages.some((payload) => "content" in payload);
+}
+
+function computeListenerQueueBlockedReason(
+  runtime: ListenerRuntime,
+): QueueBlockedReason | null {
+  return getListenerBlockedReason({
+    isProcessing: runtime.isProcessing,
+    pendingApprovalsLen: runtime.pendingApprovalResolvers.size,
+    cancelRequested: runtime.cancelRequested,
+    isRecoveringApprovals: runtime.isRecoveringApprovals,
+  });
+}
+
+async function drainQueuedMessages(
+  runtime: ListenerRuntime,
+  socket: WebSocket,
+  opts: StartListenerOptions,
+): Promise<void> {
+  if (runtime.queuePumpActive) {
+    return;
+  }
+
+  runtime.queuePumpActive = true;
+  try {
+    while (true) {
+      if (runtime !== activeRuntime || runtime.intentionallyClosed) {
+        return;
+      }
+
+      const blockedReason = computeListenerQueueBlockedReason(runtime);
+      if (blockedReason) {
+        runtime.queueRuntime.tryDequeue(blockedReason);
+        return;
+      }
+
+      const queueLen = runtime.queueRuntime.length;
+      if (queueLen === 0) {
+        return;
+      }
+
+      const dequeuedBatch = runtime.queueRuntime.consumeItems(queueLen);
+      if (!dequeuedBatch) {
+        return;
+      }
+
+      const queuedTurn = buildQueuedTurnMessage(runtime, dequeuedBatch);
+      if (!queuedTurn) {
+        continue;
+      }
+
+      opts.onStatusChange?.("receiving", opts.connectionId);
+      await handleIncomingMessage(
+        queuedTurn,
+        socket,
+        runtime,
+        opts.onStatusChange,
+        opts.connectionId,
+        dequeuedBatch.batchId,
+      );
+      opts.onStatusChange?.("idle", opts.connectionId);
+    }
+  } finally {
+    runtime.queuePumpActive = false;
+  }
+}
+
+function scheduleQueuePump(
+  runtime: ListenerRuntime,
+  socket: WebSocket,
+  opts: StartListenerOptions,
+): void {
+  if (runtime.queuePumpScheduled) {
+    return;
+  }
+  runtime.queuePumpScheduled = true;
+  runtime.messageQueue = runtime.messageQueue
+    .then(async () => {
+      runtime.queuePumpScheduled = false;
+      if (runtime !== activeRuntime || runtime.intentionallyClosed) {
+        return;
+      }
+      await drainQueuedMessages(runtime, socket, opts);
+    })
+    .catch((error: unknown) => {
+      runtime.queuePumpScheduled = false;
+      if (process.env.DEBUG) {
+        console.error("[Listen] Error in queue pump:", error);
+      }
+      opts.onStatusChange?.("idle", opts.connectionId);
+    });
+}
+
 function buildStateResponse(
   runtime: ListenerRuntime,
   stateSeq: number,
+  agentId?: string | null,
+  conversationId?: string | null,
 ): StateResponseMessage {
+  const scopedAgentId = normalizeCwdAgentId(agentId);
+  const scopedConversationId = normalizeConversationId(conversationId);
+  const configuredWorkingDirectory = getConversationWorkingDirectory(
+    runtime,
+    scopedAgentId,
+    scopedConversationId,
+  );
+  const activeTurnWorkingDirectory =
+    runtime.activeAgentId === scopedAgentId &&
+    runtime.activeConversationId === scopedConversationId
+      ? runtime.activeWorkingDirectory
+      : null;
   const queueItems = runtime.queueRuntime.items.map((item) => ({
     id: item.id,
     client_message_id: item.clientMessageId ?? `cm-${item.id}`,
@@ -724,7 +1105,11 @@ function buildStateResponse(
     generated_at: new Date().toISOString(),
     state_seq: stateSeq,
     event_seq: stateSeq,
-    cwd: process.env.USER_CWD || process.cwd(),
+    cwd: configuredWorkingDirectory,
+    configured_cwd: configuredWorkingDirectory,
+    active_turn_cwd: activeTurnWorkingDirectory,
+    cwd_agent_id: scopedAgentId,
+    cwd_conversation_id: scopedConversationId,
     mode: permissionMode.getMode(),
     is_processing: runtime.isProcessing,
     last_stop_reason: runtime.lastStopReason,
@@ -745,12 +1130,22 @@ function buildStateResponse(
   };
 }
 
-function sendStateSnapshot(socket: WebSocket, runtime: ListenerRuntime): void {
+function sendStateSnapshot(
+  socket: WebSocket,
+  runtime: ListenerRuntime,
+  agentId?: string | null,
+  conversationId?: string | null,
+): void {
   const stateSeq = nextEventSeq(runtime);
   if (stateSeq === null) {
     return;
   }
-  const stateResponse = buildStateResponse(runtime, stateSeq);
+  const stateResponse = buildStateResponse(
+    runtime,
+    stateSeq,
+    agentId,
+    conversationId,
+  );
   sendClientMessage(socket, stateResponse, runtime);
 }
 
@@ -762,6 +1157,8 @@ function emitCancelAck(
     accepted: boolean;
     reason?: string;
     runId?: string | null;
+    agentId?: string | null;
+    conversationId?: string | null;
   },
 ): void {
   emitToWS(socket, {
@@ -770,6 +1167,9 @@ function emitCancelAck(
     accepted: params.accepted,
     reason: params.reason,
     run_id: params.runId ?? runtime.activeRunId,
+    agent_id: params.agentId ?? runtime.activeAgentId ?? undefined,
+    conversation_id:
+      params.conversationId ?? runtime.activeConversationId ?? undefined,
     session_id: runtime.sessionId,
     uuid: `cancel-ack-${params.requestId}`,
   } as CancelAckMessage);
@@ -1261,6 +1661,7 @@ function emitInterruptToolReturnMessage(
       id: `message-${crypto.randomUUID()}`,
       date: new Date().toISOString(),
       run_id: resolvedRunId,
+      agent_id: runtime.activeAgentId ?? undefined,
       tool_returns: [
         {
           tool_call_id: toolReturn.tool_call_id,
@@ -1272,6 +1673,7 @@ function emitInterruptToolReturnMessage(
       ],
       session_id: runtime.sessionId,
       uuid: `${uuidPrefix}-${crypto.randomUUID()}`,
+      conversation_id: runtime.activeConversationId ?? undefined,
     } as unknown as MessageWire);
   }
 }
@@ -1508,6 +1910,13 @@ async function resolveStaleApprovals(
       agentId: runtime.activeAgentId,
       streamTokens: true,
       background: true,
+      workingDirectory:
+        runtime.activeWorkingDirectory ??
+        getConversationWorkingDirectory(
+          runtime,
+          runtime.activeAgentId,
+          recoveryConversationId,
+        ),
     },
     { maxRetries: 0, signal: abortSignal },
   );
@@ -1628,6 +2037,8 @@ async function sendMessageStreamWithRetry(
           delay_ms: delayMs,
           session_id: runtime.sessionId,
           uuid: `retry-${crypto.randomUUID()}`,
+          agent_id: runtime.activeAgentId ?? undefined,
+          conversation_id: conversationId,
         } as RetryMessage);
 
         await new Promise((resolve) => setTimeout(resolve, delayMs));
@@ -1653,6 +2064,8 @@ async function sendMessageStreamWithRetry(
           delay_ms: delayMs,
           session_id: runtime.sessionId,
           uuid: `retry-${crypto.randomUUID()}`,
+          agent_id: runtime.activeAgentId ?? undefined,
+          conversation_id: conversationId,
         } as RetryMessage);
 
         await new Promise((resolve) => setTimeout(resolve, delayMs));
@@ -1751,6 +2164,17 @@ async function recoverPendingApprovals(
 
     const requestedConversationId = msg.conversationId || undefined;
     const conversationId = requestedConversationId ?? "default";
+    const recoveryAgentId = normalizeCwdAgentId(agentId);
+    const recoveryWorkingDirectory =
+      runtime.activeAgentId === recoveryAgentId &&
+      runtime.activeConversationId === conversationId &&
+      runtime.activeWorkingDirectory
+        ? runtime.activeWorkingDirectory
+        : getConversationWorkingDirectory(
+            runtime,
+            recoveryAgentId,
+            conversationId,
+          );
 
     const client = await getClient();
     const agent = await client.agents.retrieve(agentId);
@@ -1784,6 +2208,8 @@ async function recoverPendingApprovals(
         stop_reason: "error",
         session_id: runtime.sessionId,
         uuid: `error-${crypto.randomUUID()}`,
+        agent_id: agentId,
+        conversation_id: conversationId,
       });
       runtime.lastStopReason = "requires_approval";
       return;
@@ -1814,6 +2240,7 @@ async function recoverPendingApprovals(
         alwaysRequiresUserInput: isInteractiveApprovalTool,
         treatAskAsDeny: false,
         requireArgsForAutoApprove: true,
+        workingDirectory: recoveryWorkingDirectory,
       },
     );
 
@@ -1832,6 +2259,8 @@ async function recoverPendingApprovals(
             : "auto-approved",
         session_id: runtime.sessionId,
         uuid: `auto-approval-${ac.approval.toolCallId}`,
+        agent_id: agentId,
+        conversation_id: conversationId,
       } as AutoApprovalMessage);
     }
 
@@ -1858,6 +2287,7 @@ async function recoverPendingApprovals(
         const diffs = await computeDiffPreviews(
           ac.approval.toolName,
           ac.parsedArgs,
+          recoveryWorkingDirectory,
         );
 
         const controlRequest: ControlRequest = {
@@ -1872,6 +2302,8 @@ async function recoverPendingApprovals(
             blocked_path: null,
             ...(diffs.length > 0 ? { diffs } : {}),
           },
+          agent_id: agentId,
+          conversation_id: conversationId,
         };
 
         const responseBody = await requestApprovalOverWS(
@@ -1905,6 +2337,8 @@ async function recoverPendingApprovals(
               matched_rule: "canUseTool callback",
               session_id: runtime.sessionId,
               uuid: `auto-approval-${ac.approval.toolCallId}`,
+              agent_id: agentId,
+              conversation_id: conversationId,
             } as AutoApprovalMessage);
           } else {
             decisions.push({
@@ -1931,7 +2365,9 @@ async function recoverPendingApprovals(
       return;
     }
 
-    const executionResults = await executeApprovalBatch(decisions);
+    const executionResults = await executeApprovalBatch(decisions, undefined, {
+      workingDirectory: recoveryWorkingDirectory,
+    });
     clearPendingApprovalBatchIds(
       runtime,
       decisions.map((decision) => decision.approval),
@@ -2091,7 +2527,9 @@ async function connectWithRetry(
       if (runtime !== activeRuntime || runtime.intentionallyClosed) {
         return;
       }
-      resolvePendingApprovalResolver(runtime, parsed.response);
+      if (resolvePendingApprovalResolver(runtime, parsed.response)) {
+        scheduleQueuePump(runtime, socket, opts);
+      }
       return;
     }
 
@@ -2112,6 +2550,15 @@ async function connectWithRetry(
     // Handle mode change messages immediately (not queued)
     if (parsed.type === "mode_change") {
       handleModeChange(parsed, socket);
+      return;
+    }
+
+    if (parsed.type === "change_cwd") {
+      if (runtime !== activeRuntime || runtime.intentionallyClosed) {
+        return;
+      }
+
+      void handleCwdChange(parsed, socket, runtime);
       return;
     }
 
@@ -2212,6 +2659,7 @@ async function connectWithRetry(
         accepted: true,
         runId: requestedRunId,
       });
+      scheduleQueuePump(runtime, socket, opts);
       return;
     }
 
@@ -2219,12 +2667,21 @@ async function connectWithRetry(
       if (runtime !== activeRuntime || runtime.intentionallyClosed) {
         return;
       }
+      const requestedConversationId = normalizeConversationId(
+        parsed.conversationId,
+      );
+      const requestedAgentId = normalizeCwdAgentId(parsed.agentId);
 
       // If we're blocked on an approval callback, don't queue behind the
       // pending turn; respond immediately so refreshed clients can render the
       // approval card needed to unblock execution.
       if (runtime.pendingApprovalResolvers.size > 0) {
-        sendStateSnapshot(socket, runtime);
+        sendStateSnapshot(
+          socket,
+          runtime,
+          requestedAgentId,
+          requestedConversationId,
+        );
         return;
       }
 
@@ -2236,7 +2693,12 @@ async function connectWithRetry(
             return;
           }
 
-          sendStateSnapshot(socket, runtime);
+          sendStateSnapshot(
+            socket,
+            runtime,
+            requestedAgentId,
+            requestedConversationId,
+          );
         })
         .catch((error: unknown) => {
           if (process.env.DEBUG) {
@@ -2253,7 +2715,6 @@ async function connectWithRetry(
 
       // Serialize recovery with normal message handling to avoid concurrent
       // handleIncomingMessage execution when user messages arrive concurrently.
-      runtime.pendingTurns++;
       runtime.messageQueue = runtime.messageQueue
         .then(async () => {
           try {
@@ -2271,12 +2732,11 @@ async function connectWithRetry(
               stop_reason: "error",
               session_id: runtime.sessionId,
               uuid: `error-${crypto.randomUUID()}`,
+              agent_id: runtime.activeAgentId ?? undefined,
+              conversation_id: runtime.activeConversationId ?? undefined,
             });
           } finally {
-            runtime.pendingTurns--;
-            if (runtime.pendingTurns === 0) {
-              runtime.queueRuntime.resetBlockedState();
-            }
+            scheduleQueuePump(runtime, socket, opts);
           }
         })
         .catch((error: unknown) => {
@@ -2304,116 +2764,60 @@ async function connectWithRetry(
           stop_reason: "error",
           session_id: runtime.sessionId,
           uuid: `error-${crypto.randomUUID()}`,
+          agent_id: runtime.activeAgentId ?? undefined,
+          conversation_id: runtime.activeConversationId ?? undefined,
         });
         return;
       }
 
-      // Queue lifecycle tracking: only enqueue user MessageCreate payloads.
-      const firstPayload = parsed.messages.at(0);
-      const isUserMessage =
-        firstPayload !== undefined && "content" in firstPayload;
-      let enqueuedQueueItemId: string | null = null;
-      if (isUserMessage) {
-        const userPayload = firstPayload as MessageCreate & {
-          client_message_id?: string;
-        };
-        const enqueuedItem = runtime.queueRuntime.enqueue({
-          kind: "message",
-          source: "user",
-          content: userPayload.content,
-          clientMessageId:
-            userPayload.client_message_id ?? `cm-submit-${crypto.randomUUID()}`,
-        } as Parameters<typeof runtime.queueRuntime.enqueue>[0]);
-        enqueuedQueueItemId = enqueuedItem?.id ?? null;
-        // Emit blocked on state transition when turns are already queued.
-        // pendingTurns is incremented synchronously (below) before .then(),
-        // so a second arrival always sees the correct count.
-        if (runtime.pendingTurns > 0) {
-          runtime.queueRuntime.tryDequeue("runtime_busy");
+      if (shouldQueueInboundMessage(parsed)) {
+        const firstUserPayload = parsed.messages.find(
+          (
+            payload,
+          ): payload is MessageCreate & { client_message_id?: string } =>
+            "content" in payload,
+        );
+        if (firstUserPayload) {
+          const enqueuedItem = runtime.queueRuntime.enqueue({
+            kind: "message",
+            source: "user",
+            content: firstUserPayload.content,
+            clientMessageId:
+              firstUserPayload.client_message_id ??
+              `cm-submit-${crypto.randomUUID()}`,
+            agentId: parsed.agentId ?? undefined,
+            conversationId: parsed.conversationId || "default",
+          } as Parameters<typeof runtime.queueRuntime.enqueue>[0]);
+          if (enqueuedItem) {
+            runtime.queuedMessagesByItemId.set(enqueuedItem.id, parsed);
+          }
         }
+        scheduleQueuePump(runtime, socket, opts);
+        return;
       }
-      // Increment synchronously before chaining to avoid scheduling races
-      runtime.pendingTurns++;
 
       runtime.messageQueue = runtime.messageQueue
         .then(async () => {
           if (runtime !== activeRuntime || runtime.intentionallyClosed) {
-            runtime.pendingTurns--;
             return;
           }
-
-          let messageForTurn = parsed;
-          let dequeuedBatchId: string | null = null;
-          if (isUserMessage && enqueuedQueueItemId) {
-            if (runtime.coalescedSkipQueueItemIds.has(enqueuedQueueItemId)) {
-              runtime.coalescedSkipQueueItemIds.delete(enqueuedQueueItemId);
-              runtime.pendingTurns--;
-              if (runtime.pendingTurns === 0) {
-                runtime.queueRuntime.resetBlockedState();
-              }
-              return;
-            }
-
-            const dequeuedBatch = runtime.queueRuntime.tryDequeue(null);
-            if (!dequeuedBatch) {
-              runtime.pendingTurns--;
-              if (runtime.pendingTurns === 0) {
-                runtime.queueRuntime.resetBlockedState();
-              }
-              return;
-            }
-
-            dequeuedBatchId = dequeuedBatch.batchId;
-            for (const item of dequeuedBatch.items) {
-              if (item.id !== enqueuedQueueItemId) {
-                runtime.coalescedSkipQueueItemIds.add(item.id);
-              }
-            }
-
-            const mergedContent = mergeDequeuedBatchContent(
-              dequeuedBatch.items,
-            );
-            if (mergedContent !== null) {
-              const firstMessage = parsed.messages.at(0);
-              if (firstMessage && "content" in firstMessage) {
-                const mergedFirstMessage = {
-                  ...firstMessage,
-                  content: mergedContent,
-                };
-                messageForTurn = {
-                  ...parsed,
-                  messages: [mergedFirstMessage, ...parsed.messages.slice(1)],
-                };
-              }
-            }
-          }
-
-          // onStatusChange("receiving") is inside try so that any throw
-          // still reaches the finally and decrements pendingTurns.
-          try {
-            opts.onStatusChange?.("receiving", opts.connectionId);
-            await handleIncomingMessage(
-              messageForTurn,
-              socket,
-              runtime,
-              opts.onStatusChange,
-              opts.connectionId,
-              dequeuedBatchId ?? `batch-direct-${crypto.randomUUID()}`,
-            );
-            opts.onStatusChange?.("idle", opts.connectionId);
-          } finally {
-            runtime.pendingTurns--;
-            // Reset blocked state only when queue is fully drained
-            if (runtime.pendingTurns === 0) {
-              runtime.queueRuntime.resetBlockedState();
-            }
-          }
+          opts.onStatusChange?.("receiving", opts.connectionId);
+          await handleIncomingMessage(
+            parsed,
+            socket,
+            runtime,
+            opts.onStatusChange,
+            opts.connectionId,
+          );
+          opts.onStatusChange?.("idle", opts.connectionId);
+          scheduleQueuePump(runtime, socket, opts);
         })
         .catch((error: unknown) => {
           if (process.env.DEBUG) {
             console.error("[Listen] Error handling queued message:", error);
           }
           opts.onStatusChange?.("idle", opts.connectionId);
+          scheduleQueuePump(runtime, socket, opts);
         });
     }
   });
@@ -2431,7 +2835,7 @@ async function connectWithRetry(
 
     // Single authoritative queue_cleared emission for all close paths
     // (intentional and unintentional). Must fire before early returns.
-    runtime.coalescedSkipQueueItemIds.clear();
+    runtime.queuedMessagesByItemId.clear();
     runtime.queueRuntime.clear("shutdown");
 
     if (process.env.DEBUG) {
@@ -2507,6 +2911,12 @@ async function handleIncomingMessage(
   const agentId = msg.agentId;
   const requestedConversationId = msg.conversationId || undefined;
   const conversationId = requestedConversationId ?? "default";
+  const normalizedAgentId = normalizeCwdAgentId(agentId);
+  const turnWorkingDirectory = getConversationWorkingDirectory(
+    runtime,
+    normalizedAgentId,
+    conversationId,
+  );
   const msgStartTime = performance.now();
   let msgTurnCount = 0;
   const msgRunIds: string[] = [];
@@ -2523,6 +2933,7 @@ async function handleIncomingMessage(
   runtime.activeAbortController = new AbortController();
   runtime.activeAgentId = agentId ?? null;
   runtime.activeConversationId = conversationId;
+  runtime.activeWorkingDirectory = turnWorkingDirectory;
   runtime.activeRunId = null;
   runtime.activeRunStartedAt = new Date().toISOString();
   runtime.activeExecutingToolCallIds = [];
@@ -2544,7 +2955,7 @@ async function handleIncomingMessage(
       onStatusChange?.("processing", connectionId);
     }
 
-    let messagesToSend: Array<MessageCreate | ApprovalCreate> = [];
+    const messagesToSend: Array<MessageCreate | ApprovalCreate> = [];
     let turnToolContextId: string | null = null;
     let queuedInterruptedToolCallIds: string[] = [];
 
@@ -2561,11 +2972,38 @@ async function handleIncomingMessage(
 
     messagesToSend.push(...msg.messages);
 
+    const firstMessage = msg.messages[0];
+    const isApprovalMessage =
+      firstMessage &&
+      "type" in firstMessage &&
+      firstMessage.type === "approval" &&
+      "approvals" in firstMessage;
+
+    if (!isApprovalMessage) {
+      const { parts: reminderParts } = await buildSharedReminderParts(
+        buildListenReminderContext({
+          agentId: agentId || "",
+          state: runtime.reminderState,
+          resolvePlanModeReminder: getPlanModeReminder,
+        }),
+      );
+
+      if (reminderParts.length > 0) {
+        for (const m of messagesToSend) {
+          if ("role" in m && m.role === "user" && "content" in m) {
+            m.content = prependReminderPartsToContent(m.content, reminderParts);
+            break;
+          }
+        }
+      }
+    }
+
     let currentInput = messagesToSend;
     const sendOptions: Parameters<typeof sendMessageStream>[2] = {
       agentId,
       streamTokens: true,
       background: true,
+      workingDirectory: turnWorkingDirectory,
       ...(queuedInterruptedToolCallIds.length > 0
         ? {
             approvalNormalization: {
@@ -2617,6 +3055,8 @@ async function handleIncomingMessage(
                 type: "run_started",
                 runId: maybeRunId,
                 batch_id: dequeuedBatchId,
+                agent_id: agentId,
+                conversation_id: conversationId,
               });
             }
           }
@@ -2631,6 +3071,8 @@ async function handleIncomingMessage(
               run_id: runId || errorInfo.run_id,
               session_id: runtime.sessionId,
               uuid: `error-${crypto.randomUUID()}`,
+              agent_id: agentId,
+              conversation_id: conversationId,
             });
           }
 
@@ -2650,6 +3092,8 @@ async function handleIncomingMessage(
                 session_id: runtime.sessionId,
                 uuid:
                   chunkWithIds.otid || chunkWithIds.id || crypto.randomUUID(),
+                agent_id: agentId,
+                conversation_id: conversationId,
               } as unknown as MessageWire);
             }
           }
@@ -2721,6 +3165,8 @@ async function handleIncomingMessage(
             run_id: runId || msgRunIds[msgRunIds.length - 1] || undefined,
             session_id: runtime.sessionId,
             uuid: `recovery-${crypto.randomUUID()}`,
+            agent_id: agentId,
+            conversation_id: conversationId,
           } as RecoveryMessage);
 
           try {
@@ -2796,6 +3242,8 @@ async function handleIncomingMessage(
           run_id: runId,
           session_id: runtime.sessionId,
           uuid: `error-${crypto.randomUUID()}`,
+          agent_id: agentId,
+          conversation_id: conversationId,
         });
         emitTurnResult(socket, runtime, {
           subtype: "error",
@@ -2822,6 +3270,8 @@ async function handleIncomingMessage(
           stop_reason: "error",
           session_id: runtime.sessionId,
           uuid: `error-${crypto.randomUUID()}`,
+          agent_id: agentId,
+          conversation_id: conversationId,
         });
         emitTurnResult(socket, runtime, {
           subtype: "error",
@@ -2847,6 +3297,7 @@ async function handleIncomingMessage(
           alwaysRequiresUserInput: isInteractiveApprovalTool,
           treatAskAsDeny: false, // Let cloud UI handle approvals
           requireArgsForAutoApprove: true,
+          workingDirectory: turnWorkingDirectory,
         });
 
       // Snapshot all tool_call_ids before entering approval wait so cancel can
@@ -2892,6 +3343,8 @@ async function handleIncomingMessage(
               : "auto-approved",
           session_id: runtime.sessionId,
           uuid: `auto-approval-${ac.approval.toolCallId}`,
+          agent_id: agentId,
+          conversation_id: conversationId,
         } as AutoApprovalMessage);
       }
 
@@ -2917,6 +3370,7 @@ async function handleIncomingMessage(
           const diffs = await computeDiffPreviews(
             ac.approval.toolName,
             ac.parsedArgs,
+            turnWorkingDirectory,
           );
 
           const controlRequest: ControlRequest = {
@@ -2931,6 +3385,8 @@ async function handleIncomingMessage(
               blocked_path: null,
               ...(diffs.length > 0 ? { diffs } : {}),
             },
+            agent_id: agentId,
+            conversation_id: conversationId,
           };
 
           const responseBody = await requestApprovalOverWS(
@@ -2965,6 +3421,8 @@ async function handleIncomingMessage(
                 matched_rule: "canUseTool callback",
                 session_id: runtime.sessionId,
                 uuid: `auto-approval-${ac.approval.toolCallId}`,
+                agent_id: agentId,
+                conversation_id: conversationId,
               } as AutoApprovalMessage);
             } else {
               decisions.push({
@@ -3003,6 +3461,7 @@ async function handleIncomingMessage(
         {
           toolContextId: turnToolContextId ?? undefined,
           abortSignal: runtime.activeAbortController.signal,
+          workingDirectory: turnWorkingDirectory,
         },
       );
       const persistedExecutionResults =
@@ -3117,6 +3576,8 @@ async function handleIncomingMessage(
         type: "run_request_error",
         error: errorPayload,
         batch_id: dequeuedBatchId,
+        agent_id: agentId,
+        conversation_id: conversationId,
       });
     }
 
@@ -3127,6 +3588,8 @@ async function handleIncomingMessage(
       stop_reason: "error",
       session_id: runtime.sessionId,
       uuid: `error-${crypto.randomUUID()}`,
+      agent_id: agentId || undefined,
+      conversation_id: conversationId,
     });
     emitTurnResult(socket, runtime, {
       subtype: "error",
@@ -3172,12 +3635,16 @@ export const __listenClientTestUtils = {
   createRuntime,
   stopRuntime,
   buildStateResponse,
+  handleCwdChange,
   emitToWS,
+  emitCancelAck,
+  getConversationWorkingDirectory,
   rememberPendingApprovalBatchIds,
   resolvePendingApprovalBatchId,
   resolveRecoveryBatchId,
   clearPendingApprovalBatchIds,
   populateInterruptQueue,
+  setConversationWorkingDirectory,
   consumeInterruptQueue,
   extractInterruptToolReturns,
   emitInterruptToolReturnMessage,

@@ -143,7 +143,7 @@ describe("background onComplete → flush wiring in App.tsx", () => {
     const onCompleteIdx = source.indexOf("onComplete:", initBlock);
     expect(onCompleteIdx).toBeGreaterThan(-1);
 
-    const onCompleteWindow = source.slice(onCompleteIdx, onCompleteIdx + 900);
+    const onCompleteWindow = source.slice(onCompleteIdx, onCompleteIdx + 1600);
     expect(onCompleteWindow).toContain("await handleMemorySubagentCompletion(");
     expect(onCompleteWindow).toContain("appendTaskNotificationEvents(");
   });
@@ -157,7 +157,7 @@ describe("background onComplete → flush wiring in App.tsx", () => {
     const onCompleteIdx = source.indexOf("onComplete:", reflectionBlock);
     expect(onCompleteIdx).toBeGreaterThan(-1);
 
-    const onCompleteWindow = source.slice(onCompleteIdx, onCompleteIdx + 700);
+    const onCompleteWindow = source.slice(onCompleteIdx, onCompleteIdx + 1400);
     expect(onCompleteWindow).toContain("await handleMemorySubagentCompletion(");
     expect(onCompleteWindow).toContain("appendTaskNotificationEvents(");
   });

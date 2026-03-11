@@ -3,7 +3,7 @@ import type { RecompileAgentSystemPromptOptions } from "../../agent/modify";
 import { handleMemorySubagentCompletion } from "../../cli/helpers/memorySubagentCompletion";
 
 const recompileAgentSystemPromptMock = mock(
-  (_agentId: string, _opts?: RecompileAgentSystemPromptOptions) =>
+  (_conversationId: string, _opts?: RecompileAgentSystemPromptOptions) =>
     Promise.resolve("compiled-system-prompt"),
 );
 
@@ -33,13 +33,14 @@ describe("memory subagent recompile handling", () => {
     const message = await handleMemorySubagentCompletion(
       {
         agentId: "agent-init-1",
+        conversationId: "conv-init-1",
         subagentType: "init",
         initDepth: "shallow",
         success: true,
       },
       {
-        recompileByAgent: new Map(),
-        recompileQueuedByAgent: new Set(),
+        recompileByConversation: new Map(),
+        recompileQueuedByConversation: new Set(),
         recompileAgentSystemPromptImpl: recompileAgentSystemPromptMock,
         updateInitProgress: (agentId, update) => {
           progressUpdates.push({
@@ -60,10 +61,8 @@ describe("memory subagent recompile handling", () => {
       },
     ]);
     expect(recompileAgentSystemPromptMock).toHaveBeenCalledWith(
-      "agent-init-1",
-      {
-        updateTimestamp: true,
-      },
+      "conv-init-1",
+      {},
     );
   });
 
@@ -74,11 +73,11 @@ describe("memory subagent recompile handling", () => {
       .mockImplementationOnce(() => firstDeferred.promise)
       .mockImplementationOnce(() => secondDeferred.promise);
 
-    const recompileByAgent = new Map<string, Promise<void>>();
-    const recompileQueuedByAgent = new Set<string>();
+    const recompileByConversation = new Map<string, Promise<void>>();
+    const recompileQueuedByConversation = new Set<string>();
     const deps = {
-      recompileByAgent,
-      recompileQueuedByAgent,
+      recompileByConversation,
+      recompileQueuedByConversation,
       recompileAgentSystemPromptImpl: recompileAgentSystemPromptMock,
       updateInitProgress: () => {},
     };
@@ -86,6 +85,7 @@ describe("memory subagent recompile handling", () => {
     const first = handleMemorySubagentCompletion(
       {
         agentId: "agent-shared",
+        conversationId: "conv-shared",
         subagentType: "reflection",
         success: true,
       },
@@ -94,6 +94,7 @@ describe("memory subagent recompile handling", () => {
     const second = handleMemorySubagentCompletion(
       {
         agentId: "agent-shared",
+        conversationId: "conv-shared",
         subagentType: "reflection",
         success: true,
       },
@@ -102,6 +103,7 @@ describe("memory subagent recompile handling", () => {
     const third = handleMemorySubagentCompletion(
       {
         agentId: "agent-shared",
+        conversationId: "conv-shared",
         subagentType: "reflection",
         success: true,
       },
@@ -109,14 +111,14 @@ describe("memory subagent recompile handling", () => {
     );
 
     expect(recompileAgentSystemPromptMock).toHaveBeenCalledTimes(1);
-    expect(recompileByAgent.has("agent-shared")).toBe(true);
-    expect(recompileQueuedByAgent.has("agent-shared")).toBe(true);
+    expect(recompileByConversation.has("conv-shared")).toBe(true);
+    expect(recompileQueuedByConversation.has("conv-shared")).toBe(true);
 
     firstDeferred.resolve("compiled-system-prompt");
     await Promise.resolve();
 
     expect(recompileAgentSystemPromptMock).toHaveBeenCalledTimes(2);
-    expect(recompileByAgent.has("agent-shared")).toBe(true);
+    expect(recompileByConversation.has("conv-shared")).toBe(true);
 
     secondDeferred.resolve("compiled-system-prompt");
 
@@ -134,7 +136,47 @@ describe("memory subagent recompile handling", () => {
     expect(thirdMessage).toBe(
       "Reflected on /palace, the halls remember more now.",
     );
-    expect(recompileByAgent.size).toBe(0);
-    expect(recompileQueuedByAgent.size).toBe(0);
+    expect(recompileByConversation.size).toBe(0);
+    expect(recompileQueuedByConversation.size).toBe(0);
+  });
+
+  test("does not coalesce recompiles across different conversations for same agent", async () => {
+    const deps = {
+      recompileByConversation: new Map<string, Promise<void>>(),
+      recompileQueuedByConversation: new Set<string>(),
+      recompileAgentSystemPromptImpl: recompileAgentSystemPromptMock,
+      updateInitProgress: () => {},
+    };
+
+    const [firstMessage, secondMessage] = await Promise.all([
+      handleMemorySubagentCompletion(
+        {
+          agentId: "agent-shared",
+          conversationId: "conv-a",
+          subagentType: "reflection",
+          success: true,
+        },
+        deps,
+      ),
+      handleMemorySubagentCompletion(
+        {
+          agentId: "agent-shared",
+          conversationId: "conv-b",
+          subagentType: "reflection",
+          success: true,
+        },
+        deps,
+      ),
+    ]);
+
+    expect(firstMessage).toBe(
+      "Reflected on /palace, the halls remember more now.",
+    );
+    expect(secondMessage).toBe(
+      "Reflected on /palace, the halls remember more now.",
+    );
+    expect(recompileAgentSystemPromptMock).toHaveBeenCalledTimes(2);
+    expect(recompileAgentSystemPromptMock).toHaveBeenCalledWith("conv-a", {});
+    expect(recompileAgentSystemPromptMock).toHaveBeenCalledWith("conv-b", {});
   });
 });

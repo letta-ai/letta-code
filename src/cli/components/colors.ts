@@ -145,6 +145,42 @@ const _colors = {
     dot: brandColors.statusError, // Red dot in output
   },
 
+  // Shell command syntax highlighting
+  shellSyntaxDark: {
+    prompt: "#cba6f7",
+    text: "#cdd6f4",
+    comment: "#6c7086",
+    keyword: "#89b4fa",
+    string: "#a6e3a1",
+    number: "#fab387",
+    literal: "#fab387",
+    builtIn: "#f9e2af",
+    variable: "#f5c2e7",
+    title: "#94e2d5",
+    attr: "#74c7ec",
+    operator: "#bac2de",
+    punctuation: "#bac2de",
+    meta: "#f38ba8",
+    substitution: "#f5c2e7",
+  },
+  shellSyntaxLight: {
+    prompt: "#8839ef",
+    text: "#4c4f69",
+    comment: "#9ca0b0",
+    keyword: "#1e66f5",
+    string: "#40a02b",
+    number: "#fe640b",
+    literal: "#fe640b",
+    builtIn: "#df8e1d",
+    variable: "#ea76cb",
+    title: "#179299",
+    attr: "#209fb5",
+    operator: "#5c5f77",
+    punctuation: "#5c5f77",
+    meta: "#d20f39",
+    substitution: "#e64553",
+  },
+
   // Todo list
   todo: {
     completed: brandColors.primaryAccent, // Same blue as in-progress, with strikethrough
@@ -173,13 +209,15 @@ const _colors = {
     prompt: brandColors.primaryAccent,
   },
 
-  // Diff rendering
+  // Diff rendering (line bg palette matches Codex CLI dark theme, see
+  // ~/dev/codex/codex-rs/tui/src/diff_render.rs lines 60-61)
   diff: {
-    addedLineBg: "#1a4d1a",
-    addedWordBg: "#2d7a2d",
-    removedLineBg: "#4d1a1a",
-    removedWordBg: "#7a2d2d",
+    addedLineBg: "#213A2B",
+    removedLineBg: "#4A221D",
     contextLineBg: undefined,
+    // Word-level highlight colors (used by MemoryDiffRenderer)
+    addedWordBg: "#2d7a2d",
+    removedWordBg: "#7a2d2d",
     textOnDark: "white",
     textOnHighlight: "white",
     symbolAdd: "green",
@@ -219,6 +257,12 @@ const _colors = {
 // Combine static colors with theme-aware dynamic properties
 export const colors = {
   ..._colors,
+
+  get shellSyntax() {
+    return getTerminalTheme() === "light"
+      ? _colors.shellSyntaxLight
+      : _colors.shellSyntaxDark;
+  },
 
   // User messages (past prompts) - theme-aware background
   // Uses getter to read theme at render time (after async init)

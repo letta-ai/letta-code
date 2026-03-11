@@ -250,7 +250,7 @@ function getModelForToolLoading(
     return "openai/gpt-4";
   }
   if (specifiedToolset === "gemini") {
-    return "google/gemini-3-pro";
+    return "google_ai/gemini-3.1-pro-preview";
   }
   if (specifiedToolset === "default") {
     return "anthropic/claude-sonnet-4";
@@ -369,6 +369,10 @@ async function main(): Promise<void> {
   // Check for updates on startup (non-blocking)
   const { checkAndAutoUpdate } = await import("./updater/auto-update");
   const autoUpdatePromise = startStartupAutoUpdateCheck(checkAndAutoUpdate);
+
+  // Check Docker version for self-hosted users (non-blocking)
+  const { startDockerVersionCheck } = await import("./startup-docker-check");
+  startDockerVersionCheck().catch(() => {});
 
   // Clean up old overflow files (non-blocking, 24h retention)
   const { cleanupOldOverflowFiles } = await import("./tools/impl/overflow");
@@ -1609,6 +1613,14 @@ async function main(): Promise<void> {
             effectiveModel = getDefaultModelForTier(billingTier);
           }
 
+          // Pre-determine memfs mode so the agent is created with the correct prompt.
+          const { isLettaCloud } = await import("./agent/memoryFilesystem");
+          const willAutoEnableMemfs =
+            shouldAutoEnableMemfsForNewAgent && (await isLettaCloud());
+          const effectiveMemoryMode =
+            requestedMemoryPromptMode ??
+            (willAutoEnableMemfs ? "memfs" : undefined);
+
           const updateArgs = getModelUpdateArgs(effectiveModel);
           const result = await createAgent({
             model: effectiveModel,
@@ -1616,15 +1628,15 @@ async function main(): Promise<void> {
             skillsDirectory,
             parallelToolCalls: true,
             systemPromptPreset,
-            memoryPromptMode: requestedMemoryPromptMode,
+            memoryPromptMode: effectiveMemoryMode,
             initBlocks,
             baseTools,
           });
           agent = result.agent;
           setAgentProvenance(result.provenance);
 
-          // Enable memfs by default on Letta Cloud for new agents when no explicit memfs flags are provided.
-          if (shouldAutoEnableMemfsForNewAgent) {
+          // Enable memfs on Letta Cloud (tags, repo clone, tool detach).
+          if (willAutoEnableMemfs) {
             const { enableMemfsIfCloud } = await import(
               "./agent/memoryFilesystem"
             );

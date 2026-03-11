@@ -430,9 +430,7 @@ export async function getResumeData(
           return {
             pendingApproval,
             pendingApprovals,
-            messageHistory: prepareMessageHistory(messages, {
-              primaryOnly: true,
-            }),
+            messageHistory: prepareMessageHistory(messages),
           };
         }
       } else {
@@ -445,7 +443,7 @@ export async function getResumeData(
       return {
         pendingApproval: null,
         pendingApprovals: [],
-        messageHistory: prepareMessageHistory(messages, { primaryOnly: true }),
+        messageHistory: prepareMessageHistory(messages),
       };
     } else {
       // Use agent messages API for "default" conversation or when no conversation ID
@@ -479,14 +477,11 @@ export async function getResumeData(
       // may not support this pattern)
       if (includeMessageHistory && isBackfillEnabled()) {
         try {
-          const messagesPage = await client.conversations.messages.list(
-            "default",
-            {
-              limit: BACKFILL_PAGE_LIMIT,
-              order: "desc",
-              agent_id: agent.id,
-            },
-          );
+          const messagesPage = await client.agents.messages.list(agent.id, {
+            conversation_id: "default",
+            limit: BACKFILL_PAGE_LIMIT,
+            order: "desc",
+          });
           messages = sortChronological(messagesPage.getPaginatedItems());
 
           if (process.env.DEBUG) {
@@ -523,9 +518,7 @@ export async function getResumeData(
           return {
             pendingApproval,
             pendingApprovals,
-            messageHistory: prepareMessageHistory(messages, {
-              primaryOnly: true,
-            }),
+            messageHistory: prepareMessageHistory(messages),
           };
         }
       } else {
@@ -538,7 +531,7 @@ export async function getResumeData(
       return {
         pendingApproval: null,
         pendingApprovals: [],
-        messageHistory: prepareMessageHistory(messages, { primaryOnly: true }),
+        messageHistory: prepareMessageHistory(messages),
       };
     }
   } catch (error) {

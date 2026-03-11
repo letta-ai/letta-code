@@ -95,6 +95,7 @@ import {
   ralphMode,
 } from "../ralph/mode";
 import { buildSharedReminderParts } from "../reminders/engine";
+import { getPlanModeReminder } from "../reminders/planModeReminder";
 import {
   createSharedReminderState,
   enqueueCommandIoReminder,
@@ -684,76 +685,15 @@ function saveLastAgentBeforeExit() {
   }
 }
 
-// Get plan mode system reminder if in plan mode
-function getPlanModeReminder(): string {
-  if (permissionMode.getMode() !== "plan") {
-    return "";
-  }
-
-  const planFilePath = permissionMode.getPlanFilePath();
-  const applyPatchRelativePath = planFilePath
-    ? relative(process.cwd(), planFilePath).replace(/\\/g, "/")
-    : null;
-
-  // Generate dynamic reminder with plan file path
-  return `${SYSTEM_REMINDER_OPEN}
-      Plan mode is active. The user indicated that they do not want you to execute yet -- you MUST NOT make any edits (with the exception of the plan file mentioned below), run any non-readonly tools (including changing configs or making commits), or otherwise make any changes to the system. This supersedes any other instructions you have received.
-
-## Plan File Info:
-${planFilePath ? `No plan file exists yet. You should create your plan at ${planFilePath} using a write tool (e.g. Write, ApplyPatch, etc. depending on your toolset).\n${applyPatchRelativePath ? `If using apply_patch, use this exact relative patch path: ${applyPatchRelativePath}.` : ""}` : "No plan file path assigned."}
-
-You should build your plan incrementally by writing to or editing this file. NOTE that this is the only file you are allowed to edit - other than this you are only allowed to take READ-ONLY actions.
-
-**Plan File Guidelines:** The plan file should contain only your final recommended approach, not all alternatives considered. Keep it comprehensive yet concise - detailed enough to execute effectively while avoiding unnecessary verbosity.
-
-## Enhanced Planning Workflow
-
-### Phase 1: Initial Understanding
-Goal: Gain a comprehensive understanding of the user's request by reading through code and asking them questions.
-
-1. Understand the user's request thoroughly
-2. Explore the codebase to understand existing patterns and relevant code
-3. Use AskUserQuestion tool to clarify ambiguities in the user request up front.
-
-### Phase 2: Planning
-Goal: Come up with an approach to solve the problem identified in phase 1.
-
-- Provide any background context that may help with the task without prescribing the exact design itself
-- Create a detailed plan
-
-### Phase 3: Synthesis
-Goal: Synthesize the perspectives from Phase 2, and ensure that it aligns with the user's intentions by asking them questions.
-
-1. Collect all findings from exploration
-2. Keep track of critical files that should be read before implementing the plan
-3. Use AskUserQuestion to ask the user questions about trade offs.
-
-### Phase 4: Final Plan
-Once you have all the information you need, ensure that the plan file has been updated with your synthesized recommendation including:
-
-- Recommended approach with rationale
-- Key insights from different perspectives
-- Critical files that need modification
-
-### Phase 5: Call ExitPlanMode
-At the very end of your turn, once you have asked the user questions and are happy with your final plan file - you should always call ExitPlanMode to indicate to the user that you are done planning.
-
-This is critical - your turn should only end with either asking the user a question or calling ExitPlanMode. Do not stop unless it's for these 2 reasons.
-
-NOTE: At any point in time through this workflow you should feel free to ask the user questions or clarifications. Don't make large assumptions about user intent. The goal is to present a well researched plan to the user, and tie any loose ends before implementation begins.
-${SYSTEM_REMINDER_CLOSE}
-`;
-}
-
 // Check if plan file exists
-function planFileExists(): boolean {
-  const planFilePath = permissionMode.getPlanFilePath();
+function planFileExists(fallbackPlanFilePath?: string | null): boolean {
+  const planFilePath = permissionMode.getPlanFilePath() ?? fallbackPlanFilePath;
   return !!planFilePath && existsSync(planFilePath);
 }
 
 // Read plan content from the plan file
-function _readPlanFile(): string {
-  const planFilePath = permissionMode.getPlanFilePath();
+function _readPlanFile(fallbackPlanFilePath?: string | null): string {
+  const planFilePath = permissionMode.getPlanFilePath() ?? fallbackPlanFilePath;
   if (!planFilePath) {
     return "No plan file path set.";
   }
@@ -1127,25 +1067,39 @@ export default function App({
     permissionMode.getMode(),
   );
   const uiPermissionModeRef = useRef<PermissionMode>(uiPermissionMode);
-  const setUiPermissionMode = useCallback((mode: PermissionMode) => {
-    uiPermissionModeRef.current = mode;
-    _setUiPermissionMode(mode);
 
-    // Keep the permissionMode singleton in sync *immediately*.
-    //
-    // We also have a useEffect sync (below) as a safety net, but relying on it
-    // introduces a render/effect window where the UI can show YOLO while the
-    // singleton still reports an older mode. That window is enough to break
-    // plan-mode restoration (plan remembers the singleton's mode-at-entry).
-    if (permissionMode.getMode() !== mode) {
-      // If entering plan mode via UI state, ensure a plan file path is set.
-      if (mode === "plan" && !permissionMode.getPlanFilePath()) {
-        const planPath = generatePlanFilePath();
-        permissionMode.setPlanFilePath(planPath);
-      }
-      permissionMode.setMode(mode);
+  // Store the last plan file path for post-approval rendering
+  // (needed because plan mode is exited before rendering the result)
+  const lastPlanFilePathRef = useRef<string | null>(null);
+  const cacheLastPlanFilePath = useCallback((planFilePath: string | null) => {
+    if (planFilePath) {
+      lastPlanFilePathRef.current = planFilePath;
     }
   }, []);
+
+  const setUiPermissionMode = useCallback(
+    (mode: PermissionMode) => {
+      uiPermissionModeRef.current = mode;
+      _setUiPermissionMode(mode);
+
+      // Keep the permissionMode singleton in sync *immediately*.
+      //
+      // We also have a useEffect sync (below) as a safety net, but relying on it
+      // introduces a render/effect window where the UI can show YOLO while the
+      // singleton still reports an older mode. That window is enough to break
+      // plan-mode restoration (plan remembers the singleton's mode-at-entry).
+      if (permissionMode.getMode() !== mode) {
+        // If entering plan mode via UI state, ensure a plan file path is set.
+        if (mode === "plan" && !permissionMode.getPlanFilePath()) {
+          const planPath = generatePlanFilePath();
+          permissionMode.setPlanFilePath(planPath);
+          cacheLastPlanFilePath(planPath);
+        }
+        permissionMode.setMode(mode);
+      }
+    },
+    [cacheLastPlanFilePath],
+  );
 
   const statusLineTriggerVersionRef = useRef(0);
   const [statusLineTriggerVersion, setStatusLineTriggerVersion] = useState(0);
@@ -1562,8 +1516,10 @@ export default function App({
   }, [currentModelLabel, derivedReasoningEffort, llmConfig]);
   const currentModelProvider = llmConfig?.provider_name ?? null;
   const currentReasoningEffort: ModelReasoningEffort | null =
-    derivedReasoningEffort ??
-    inferReasoningEffortFromModelPreset(currentModelId, currentModelLabel);
+    currentModelLabel?.startsWith("letta/auto")
+      ? null
+      : (derivedReasoningEffort ??
+        inferReasoningEffortFromModelPreset(currentModelId, currentModelLabel));
 
   // Billing tier for conditional UI and error context (fetched once on mount)
   const [billingTier, setBillingTier] = useState<string | null>(null);
@@ -1759,10 +1715,12 @@ export default function App({
   const initProgressByAgentRef = useRef(
     new Map<string, { shallowCompleted: boolean; deepFired: boolean }>(),
   );
-  const systemPromptRecompileByAgentRef = useRef(
+  const systemPromptRecompileByConversationRef = useRef(
     new Map<string, Promise<void>>(),
   );
-  const queuedSystemPromptRecompileByAgentRef = useRef(new Set<string>());
+  const queuedSystemPromptRecompileByConversationRef = useRef(
+    new Set<string>(),
+  );
   const updateInitProgress = (
     forAgentId: string,
     update: Partial<{ shallowCompleted: boolean; deepFired: boolean }>,
@@ -2586,10 +2544,6 @@ export default function App({
   const precomputedDiffsRef = useRef<Map<string, AdvancedDiffSuccess>>(
     new Map(),
   );
-
-  // Store the last plan file path for post-approval rendering
-  // (needed because plan mode is exited before rendering the result)
-  const lastPlanFilePathRef = useRef<string | null>(null);
 
   // Track which approval tool call IDs have had their previews eagerly committed
   // This prevents double-committing when the approval changes
@@ -5514,10 +5468,14 @@ export default function App({
           // When lastRunId is present, prefer the richer server-side error details below.
           if (fallbackError && !lastRunId) {
             setNetworkPhase("error");
-            const errorMsg = `Stream error: ${fallbackError}`;
+            const formattedFallback = formatErrorDetails(
+              fallbackError,
+              agentIdRef.current,
+            );
+            const errorMsg = `Stream error: ${formattedFallback}`;
             appendError(errorMsg, {
               errorType: "FallbackError",
-              errorMessage: fallbackError,
+              errorMessage: formatTelemetryErrorMessage(fallbackError),
               context: "message_stream",
             });
             appendError(ERROR_FEEDBACK_HINT, true);
@@ -6319,13 +6277,19 @@ export default function App({
       const cmd = commandRunner.start(inputCmd, `Creating agent "${name}"...`);
 
       try {
-        // Create the new agent
-        const { agent } = await createAgent(name);
-
-        // Enable memfs by default on Letta Cloud for new agents
-        const { enableMemfsIfCloud } = await import(
+        // Pre-determine memfs mode so the agent is created with the correct prompt.
+        const { isLettaCloud, enableMemfsIfCloud } = await import(
           "../agent/memoryFilesystem"
         );
+        const willAutoEnableMemfs = await isLettaCloud();
+
+        // Create the new agent
+        const { agent } = await createAgent({
+          name,
+          memoryPromptMode: willAutoEnableMemfs ? "memfs" : undefined,
+        });
+
+        // Enable memfs on Letta Cloud (tags, repo clone, tool detach).
         await enableMemfsIfCloud(agent.id);
 
         // Queue auto-init for first message if memfs is enabled
@@ -8167,9 +8131,8 @@ export default function App({
             cmd.finish(outputLines.join("\n"), true);
 
             // Manual /compact bypasses stream compaction events, so trigger
-            // post-compaction reminder/skills reinjection on the next user turn.
+            // post-compaction reflection reminder/auto-launch on the next user turn.
             contextTrackerRef.current.pendingReflectionTrigger = true;
-            contextTrackerRef.current.pendingSkillsReinject = true;
           } catch (error) {
             let errorOutput: string;
 
@@ -9278,6 +9241,7 @@ export default function App({
           // Generate plan file path and enter plan mode
           const planPath = generatePlanFilePath();
           permissionMode.setPlanFilePath(planPath);
+          cacheLastPlanFilePath(planPath);
           permissionMode.setMode("plan");
           setUiPermissionMode("plan");
 
@@ -9335,15 +9299,17 @@ export default function App({
                   const msg = await handleMemorySubagentCompletion(
                     {
                       agentId,
+                      conversationId: conversationIdRef.current,
                       subagentType: "init",
                       initDepth: "deep",
                       success,
                       error,
                     },
                     {
-                      recompileByAgent: systemPromptRecompileByAgentRef.current,
-                      recompileQueuedByAgent:
-                        queuedSystemPromptRecompileByAgentRef.current,
+                      recompileByConversation:
+                        systemPromptRecompileByConversationRef.current,
+                      recompileQueuedByConversation:
+                        queuedSystemPromptRecompileByConversationRef.current,
                       updateInitProgress,
                       logRecompileFailure: (message) =>
                         debugWarn("memory", message),
@@ -9522,15 +9488,17 @@ export default function App({
               const msg = await handleMemorySubagentCompletion(
                 {
                   agentId,
+                  conversationId: conversationIdRef.current,
                   subagentType: "init",
                   initDepth: "shallow",
                   success,
                   error,
                 },
                 {
-                  recompileByAgent: systemPromptRecompileByAgentRef.current,
-                  recompileQueuedByAgent:
-                    queuedSystemPromptRecompileByAgentRef.current,
+                  recompileByConversation:
+                    systemPromptRecompileByConversationRef.current,
+                  recompileQueuedByConversation:
+                    queuedSystemPromptRecompileByConversationRef.current,
                   updateInitProgress,
                   logRecompileFailure: (message) =>
                     debugWarn("memory", message),
@@ -9651,14 +9619,16 @@ ${SYSTEM_REMINDER_CLOSE}
               const msg = await handleMemorySubagentCompletion(
                 {
                   agentId,
+                  conversationId: conversationIdRef.current,
                   subagentType: "reflection",
                   success,
                   error,
                 },
                 {
-                  recompileByAgent: systemPromptRecompileByAgentRef.current,
-                  recompileQueuedByAgent:
-                    queuedSystemPromptRecompileByAgentRef.current,
+                  recompileByConversation:
+                    systemPromptRecompileByConversationRef.current,
+                  recompileQueuedByConversation:
+                    queuedSystemPromptRecompileByConversationRef.current,
                   updateInitProgress,
                   logRecompileFailure: (message) =>
                     debugWarn("memory", message),
@@ -9706,15 +9676,17 @@ ${SYSTEM_REMINDER_CLOSE}
               const msg = await handleMemorySubagentCompletion(
                 {
                   agentId,
+                  conversationId: conversationIdRef.current,
                   subagentType: "init",
                   initDepth: "deep",
                   success,
                   error,
                 },
                 {
-                  recompileByAgent: systemPromptRecompileByAgentRef.current,
-                  recompileQueuedByAgent:
-                    queuedSystemPromptRecompileByAgentRef.current,
+                  recompileByConversation:
+                    systemPromptRecompileByConversationRef.current,
+                  recompileQueuedByConversation:
+                    queuedSystemPromptRecompileByConversationRef.current,
                   updateInitProgress,
                   logRecompileFailure: (message) =>
                     debugWarn("memory", message),
@@ -12045,12 +12017,13 @@ ${SYSTEM_REMINDER_CLOSE}
       if (mode === "plan") {
         const planPath = generatePlanFilePath();
         permissionMode.setPlanFilePath(planPath);
+        cacheLastPlanFilePath(planPath);
       }
       // permissionMode.setMode() is called in InputRich.tsx before this callback
       setUiPermissionMode(mode);
       triggerStatusLineRefresh();
     },
-    [triggerStatusLineRefresh, setUiPermissionMode],
+    [triggerStatusLineRefresh, setUiPermissionMode, cacheLastPlanFilePath],
   );
 
   // Reasoning tier cycling (Tab hotkey in InputRich.tsx)
@@ -12357,15 +12330,24 @@ ${SYSTEM_REMINDER_CLOSE}
       const isLast = currentIndex + 1 >= pendingApprovals.length;
 
       // Capture plan file path BEFORE exiting plan mode (for post-approval rendering)
-      const planFilePath = permissionMode.getPlanFilePath();
-      lastPlanFilePathRef.current = planFilePath;
+      const planFilePath =
+        permissionMode.getPlanFilePath() ?? lastPlanFilePathRef.current;
+      if (planFilePath) {
+        lastPlanFilePathRef.current = planFilePath;
+      }
 
-      // Exit plan mode
-      const restoreMode = acceptEdits
-        ? "acceptEdits"
-        : (permissionMode.getModeBeforePlan() ?? "default");
-      permissionMode.setMode(restoreMode);
-      setUiPermissionMode(restoreMode);
+      // Exit plan mode — if user already cycled out (e.g., Shift+Tab to
+      // acceptEdits/yolo), keep their chosen mode instead of downgrading.
+      const currentMode = permissionMode.getMode();
+      if (currentMode === "plan") {
+        const restoreMode = acceptEdits
+          ? "acceptEdits"
+          : (permissionMode.getModeBeforePlan() ?? "default");
+        permissionMode.setMode(restoreMode);
+        setUiPermissionMode(restoreMode);
+      } else {
+        setUiPermissionMode(currentMode);
+      }
 
       try {
         // Execute ExitPlanMode tool to get the result
@@ -12452,18 +12434,42 @@ ${SYSTEM_REMINDER_CLOSE}
     [pendingApprovals, approvalResults, sendAllResults],
   );
 
-  // Auto-reject ExitPlanMode if plan mode is not enabled or plan file doesn't exist
+  // Guard ExitPlanMode:
+  // - If not in plan mode, allow graceful continuation when we still have a known plan file path
+  // - Otherwise reject with an expiry message
+  // - If in plan mode but no plan file exists, keep planning
   useEffect(() => {
     const currentIndex = approvalResults.length;
     const approval = pendingApprovals[currentIndex];
     if (approval?.toolName === "ExitPlanMode") {
-      // First check if plan mode is enabled
-      if (permissionMode.getMode() !== "plan") {
-        // Plan mode state was lost (e.g., CLI restart) - queue rejection with helpful message
-        // This is different from immediate rejection because we want the user to see what happened
-        // and be able to type their next message
+      const mode = permissionMode.getMode();
+      const activePlanPath = permissionMode.getPlanFilePath();
+      const fallbackPlanPath = lastPlanFilePathRef.current;
+      const hasUsablePlan = planFileExists(fallbackPlanPath);
 
-        // Add status message to explain what happened
+      if (mode !== "plan") {
+        if (mode === "bypassPermissions") {
+          if (hasUsablePlan) {
+            // YOLO mode with a plan file — auto-approve ExitPlanMode.
+            handlePlanApprove();
+            return;
+          }
+          // YOLO mode but no plan file yet — tell agent to write it first.
+          const planFilePath = activePlanPath ?? fallbackPlanPath;
+          const plansDir = join(homedir(), ".letta", "plans");
+          handlePlanKeepPlanning(
+            `You must write your plan to a plan file before exiting plan mode.\n` +
+              (planFilePath ? `Plan file path: ${planFilePath}\n` : "") +
+              `Use a write tool to create your plan in ${plansDir}, then use ExitPlanMode to present the plan to the user.`,
+          );
+          return;
+        }
+        if (hasUsablePlan) {
+          // Other modes: keep approval flow alive and let user manually approve.
+          return;
+        }
+
+        // Plan mode state was lost and no plan file is recoverable (e.g., CLI restart)
         const statusId = uid("status");
         buffersRef.current.byId.set(statusId, {
           kind: "status",
@@ -12479,7 +12485,7 @@ ${SYSTEM_REMINDER_CLOSE}
             tool_call_id: approval.toolCallId,
             approve: false,
             reason:
-              "Plan mode session expired (CLI restarted). Use EnterPlanMode to re-enter plan mode, or request the user to re-enter plan mode.",
+              "Plan mode session expired (CLI restarted or no recoverable plan file). Use EnterPlanMode to re-enter plan mode, or request the user to re-enter plan mode.",
           },
         ];
         queueApprovalResults(denialResults);
@@ -12500,10 +12506,10 @@ ${SYSTEM_REMINDER_CLOSE}
         setAutoDeniedApprovals([]);
         return;
       }
-      // Then check if plan file exists (keep existing behavior - immediate rejection)
-      // This case means plan mode IS active, but agent forgot to write the plan file
-      if (!planFileExists()) {
-        const planFilePath = permissionMode.getPlanFilePath();
+
+      // Mode is plan: require an existing plan file (active or fallback)
+      if (!hasUsablePlan) {
+        const planFilePath = activePlanPath ?? fallbackPlanPath;
         const plansDir = join(homedir(), ".letta", "plans");
         handlePlanKeepPlanning(
           `You must write your plan to a plan file before exiting plan mode.\n` +
@@ -12515,6 +12521,7 @@ ${SYSTEM_REMINDER_CLOSE}
   }, [
     pendingApprovals,
     approvalResults.length,
+    handlePlanApprove,
     handlePlanKeepPlanning,
     refreshDerived,
     queueApprovalResults,
@@ -12580,27 +12587,33 @@ ${SYSTEM_REMINDER_CLOSE}
     [pendingApprovals, approvalResults, sendAllResults, refreshDerived],
   );
 
-  const handleEnterPlanModeApprove = useCallback(async () => {
-    const currentIndex = approvalResults.length;
-    const approval = pendingApprovals[currentIndex];
-    if (!approval) return;
+  const handleEnterPlanModeApprove = useCallback(
+    async (preserveMode: boolean = false) => {
+      const currentIndex = approvalResults.length;
+      const approval = pendingApprovals[currentIndex];
+      if (!approval) return;
 
-    const isLast = currentIndex + 1 >= pendingApprovals.length;
+      const isLast = currentIndex + 1 >= pendingApprovals.length;
 
-    // Generate plan file path
-    const planFilePath = generatePlanFilePath();
-    const applyPatchRelativePath = relative(
-      process.cwd(),
-      planFilePath,
-    ).replace(/\\/g, "/");
+      // Generate plan file path
+      const planFilePath = generatePlanFilePath();
+      const applyPatchRelativePath = relative(
+        process.cwd(),
+        planFilePath,
+      ).replace(/\\/g, "/");
 
-    // Toggle plan mode on and store plan file path
-    permissionMode.setMode("plan");
-    permissionMode.setPlanFilePath(planFilePath);
-    setUiPermissionMode("plan");
+      // Store plan file path
+      permissionMode.setPlanFilePath(planFilePath);
+      cacheLastPlanFilePath(planFilePath);
 
-    // Get the tool return message from the implementation
-    const toolReturn = `Entered plan mode. You should now focus on exploring the codebase and designing an implementation approach.
+      if (!preserveMode) {
+        // Normal flow: switch to plan mode
+        permissionMode.setMode("plan");
+        setUiPermissionMode("plan");
+      }
+
+      // Get the tool return message from the implementation
+      const toolReturn = `Entered plan mode. You should now focus on exploring the codebase and designing an implementation approach.
 
 In plan mode, you should:
 1. Thoroughly explore the codebase to understand existing patterns
@@ -12615,45 +12628,48 @@ Remember: DO NOT write or edit any files yet. This is a read-only exploration an
 Plan file path: ${planFilePath}
 If using apply_patch, use this exact relative patch path: ${applyPatchRelativePath}`;
 
-    const precomputedResult: ToolExecutionResult = {
-      toolReturn,
-      status: "success",
-    };
+      const precomputedResult: ToolExecutionResult = {
+        toolReturn,
+        status: "success",
+      };
 
-    // Update buffers with tool return
-    onChunk(buffersRef.current, {
-      message_type: "tool_return_message",
-      id: "dummy",
-      date: new Date().toISOString(),
-      tool_call_id: approval.toolCallId,
-      tool_return: toolReturn,
-      status: "success",
-      stdout: null,
-      stderr: null,
-    });
+      // Update buffers with tool return
+      onChunk(buffersRef.current, {
+        message_type: "tool_return_message",
+        id: "dummy",
+        date: new Date().toISOString(),
+        tool_call_id: approval.toolCallId,
+        tool_return: toolReturn,
+        status: "success",
+        stdout: null,
+        stderr: null,
+      });
 
-    setThinkingMessage(getRandomThinkingVerb());
-    refreshDerived();
+      setThinkingMessage(getRandomThinkingVerb());
+      refreshDerived();
 
-    const decision = {
-      type: "approve" as const,
-      approval,
-      precomputedResult,
-    };
+      const decision = {
+        type: "approve" as const,
+        approval,
+        precomputedResult,
+      };
 
-    if (isLast) {
-      setIsExecutingTool(true);
-      await sendAllResults(decision);
-    } else {
-      setApprovalResults((prev) => [...prev, decision]);
-    }
-  }, [
-    pendingApprovals,
-    approvalResults,
-    sendAllResults,
-    refreshDerived,
-    setUiPermissionMode,
-  ]);
+      if (isLast) {
+        setIsExecutingTool(true);
+        await sendAllResults(decision);
+      } else {
+        setApprovalResults((prev) => [...prev, decision]);
+      }
+    },
+    [
+      pendingApprovals,
+      approvalResults,
+      sendAllResults,
+      refreshDerived,
+      setUiPermissionMode,
+      cacheLastPlanFilePath,
+    ],
+  );
 
   const handleEnterPlanModeReject = useCallback(async () => {
     const currentIndex = approvalResults.length;
@@ -12678,6 +12694,20 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
       setApprovalResults((prev) => [...prev, decision]);
     }
   }, [pendingApprovals, approvalResults, sendAllResults]);
+
+  // Guard EnterPlanMode:
+  // When in bypassPermissions (YOLO) mode, auto-approve EnterPlanMode and stay
+  // in YOLO — the agent gets plan instructions but keeps full permissions.
+  // The existing ExitPlanMode guard then auto-approves the exit too.
+  useEffect(() => {
+    const currentIndex = approvalResults.length;
+    const approval = pendingApprovals[currentIndex];
+    if (approval?.toolName === "EnterPlanMode") {
+      if (permissionMode.getMode() === "bypassPermissions") {
+        handleEnterPlanModeApprove(true);
+      }
+    }
+  }, [pendingApprovals, approvalResults.length, handleEnterPlanModeApprove]);
 
   // Live area shows only in-progress items
   // biome-ignore lint/correctness/useExhaustiveDependencies: staticItems.length and deferredCommitAt are intentional triggers to recompute when items are promoted to static or deferred commits complete
@@ -12957,56 +12987,70 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
         style={{ flexDirection: "column" }}
       >
         {(item: StaticItem, index: number) => {
-          return (
-            <Box key={item.id} marginTop={index > 0 ? 1 : 0}>
-              {item.kind === "welcome" ? (
-                <WelcomeScreen loadingState="ready" {...item.snapshot} />
-              ) : item.kind === "user" ? (
-                <UserMessage line={item} prompt={statusLine.prompt} />
-              ) : item.kind === "reasoning" ? (
-                <ReasoningMessage line={item} />
-              ) : item.kind === "assistant" ? (
-                <AssistantMessage line={item} />
-              ) : item.kind === "tool_call" ? (
-                <ToolCallMessage
-                  line={item}
-                  precomputedDiffs={precomputedDiffsRef.current}
-                  lastPlanFilePath={lastPlanFilePathRef.current}
-                />
-              ) : item.kind === "subagent_group" ? (
-                <SubagentGroupStatic agents={item.agents} />
-              ) : item.kind === "error" ? (
-                <ErrorMessage line={item} />
-              ) : item.kind === "status" ? (
-                <StatusMessage line={item} />
-              ) : item.kind === "event" ? (
-                !showCompactionsEnabled &&
-                item.eventType === "compaction" ? null : (
-                  <EventMessage line={item} />
-                )
-              ) : item.kind === "separator" ? (
-                <Box marginTop={1}>
-                  <Text dimColor>{"─".repeat(columns)}</Text>
-                </Box>
-              ) : item.kind === "command" ? (
-                <CommandMessage line={item} />
-              ) : item.kind === "bash_command" ? (
-                <BashCommandMessage line={item} />
-              ) : item.kind === "trajectory_summary" ? (
-                <TrajectorySummary line={item} />
-              ) : item.kind === "approval_preview" ? (
-                <ApprovalPreview
-                  toolName={item.toolName}
-                  toolArgs={item.toolArgs}
-                  precomputedDiff={item.precomputedDiff}
-                  allDiffs={precomputedDiffsRef.current}
-                  planContent={item.planContent}
-                  planFilePath={item.planFilePath}
-                  toolCallId={item.toolCallId}
-                />
-              ) : null}
-            </Box>
-          );
+          try {
+            return (
+              <Box key={item.id} marginTop={index > 0 ? 1 : 0}>
+                {item.kind === "welcome" ? (
+                  <WelcomeScreen loadingState="ready" {...item.snapshot} />
+                ) : item.kind === "user" ? (
+                  <UserMessage line={item} prompt={statusLine.prompt} />
+                ) : item.kind === "reasoning" ? (
+                  <ReasoningMessage line={item} />
+                ) : item.kind === "assistant" ? (
+                  <AssistantMessage line={item} />
+                ) : item.kind === "tool_call" ? (
+                  <ToolCallMessage
+                    line={item}
+                    precomputedDiffs={precomputedDiffsRef.current}
+                    lastPlanFilePath={lastPlanFilePathRef.current}
+                  />
+                ) : item.kind === "subagent_group" ? (
+                  <SubagentGroupStatic agents={item.agents} />
+                ) : item.kind === "error" ? (
+                  <ErrorMessage line={item} />
+                ) : item.kind === "status" ? (
+                  <StatusMessage line={item} />
+                ) : item.kind === "event" ? (
+                  !showCompactionsEnabled &&
+                  item.eventType === "compaction" ? null : (
+                    <EventMessage line={item} />
+                  )
+                ) : item.kind === "separator" ? (
+                  <Box marginTop={1}>
+                    <Text dimColor>{"─".repeat(columns)}</Text>
+                  </Box>
+                ) : item.kind === "command" ? (
+                  <CommandMessage line={item} />
+                ) : item.kind === "bash_command" ? (
+                  <BashCommandMessage line={item} />
+                ) : item.kind === "trajectory_summary" ? (
+                  <TrajectorySummary line={item} />
+                ) : item.kind === "approval_preview" ? (
+                  <ApprovalPreview
+                    toolName={item.toolName}
+                    toolArgs={item.toolArgs}
+                    precomputedDiff={item.precomputedDiff}
+                    allDiffs={precomputedDiffsRef.current}
+                    planContent={item.planContent}
+                    planFilePath={item.planFilePath}
+                    toolCallId={item.toolCallId}
+                  />
+                ) : null}
+              </Box>
+            );
+          } catch (err) {
+            console.error(
+              `[Static render error] kind=${item.kind} id=${item.id}`,
+              err,
+            );
+            return (
+              <Box key={item.id}>
+                <Text color="red">
+                  ⚠ render error: {item.kind} ({String(err)})
+                </Text>
+              </Box>
+            );
+          }
         }}
       </Static>
 
@@ -13101,12 +13145,13 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
                             showPreview={showApprovalPreview}
                             planContent={
                               currentApproval.toolName === "ExitPlanMode"
-                                ? _readPlanFile()
+                                ? _readPlanFile(lastPlanFilePathRef.current)
                                 : undefined
                             }
                             planFilePath={
                               currentApproval.toolName === "ExitPlanMode"
                                 ? (permissionMode.getPlanFilePath() ??
+                                  lastPlanFilePathRef.current ??
                                   undefined)
                                 : undefined
                             }
@@ -13197,12 +13242,14 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
                     showPreview={showApprovalPreview}
                     planContent={
                       currentApproval.toolName === "ExitPlanMode"
-                        ? _readPlanFile()
+                        ? _readPlanFile(lastPlanFilePathRef.current)
                         : undefined
                     }
                     planFilePath={
                       currentApproval.toolName === "ExitPlanMode"
-                        ? (permissionMode.getPlanFilePath() ?? undefined)
+                        ? (permissionMode.getPlanFilePath() ??
+                          lastPlanFilePathRef.current ??
+                          undefined)
                         : undefined
                     }
                     agentName={agentName ?? undefined}

@@ -11,7 +11,7 @@ Your goal is to guide the user through a **focused, collaborative workflow** to 
 
 ## 1. Invoke the creating-skills Skill (if available)
 
-1. Check the available skills listed in system-reminder messages in the conversation.
+1. Check the available skills listed in the current prompt context in the conversation.
 2. If a `creating-skills` skill is available, invoke it using the `Skill` tool:
    - Call the `Skill` tool with: `skill: "creating-skills"`
 3. If invocation fails or the skill is not available, continue using your own judgment based on these instructions.

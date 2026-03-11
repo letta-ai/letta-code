@@ -2,6 +2,7 @@ import { Box } from "ink";
 import { memo } from "react";
 import { useTerminalWidth } from "../../hooks/useTerminalWidth";
 import { colors } from "../colors";
+import { SyntaxHighlightedCommand } from "../SyntaxHighlightedCommand";
 import { Text } from "../Text";
 
 const SOLID_LINE = "─";
@@ -36,7 +37,7 @@ export const BashPreview = memo(({ command, description }: Props) => {
 
       {/* Command preview */}
       <Box paddingLeft={2} flexDirection="column">
-        <Text>{command}</Text>
+        <SyntaxHighlightedCommand command={command} />
         {description && <Text dimColor>{description}</Text>}
       </Box>
     </>

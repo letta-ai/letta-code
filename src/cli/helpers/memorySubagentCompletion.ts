@@ -12,13 +12,14 @@ export interface MemoryInitProgressUpdate {
 }
 
 type RecompileAgentSystemPromptFn = (
-  agentId: string,
+  conversationId: string,
   options?: RecompileAgentSystemPromptOptions,
 ) => Promise<string>;
 
 export type MemorySubagentCompletionArgs =
   | {
       agentId: string;
+      conversationId: string;
       subagentType: "init";
       initDepth: MemoryInitDepth;
       success: boolean;
@@ -26,6 +27,7 @@ export type MemorySubagentCompletionArgs =
     }
   | {
       agentId: string;
+      conversationId: string;
       subagentType: "reflection";
       initDepth?: never;
       success: boolean;
@@ -33,8 +35,8 @@ export type MemorySubagentCompletionArgs =
     };
 
 export interface MemorySubagentCompletionDeps {
-  recompileByAgent: Map<string, Promise<void>>;
-  recompileQueuedByAgent: Set<string>;
+  recompileByConversation: Map<string, Promise<void>>;
+  recompileQueuedByConversation: Set<string>;
   updateInitProgress: (
     agentId: string,
     update: Partial<MemoryInitProgressUpdate>,
@@ -51,7 +53,8 @@ export async function handleMemorySubagentCompletion(
   args: MemorySubagentCompletionArgs,
   deps: MemorySubagentCompletionDeps,
 ): Promise<string> {
-  const { agentId, subagentType, initDepth, success, error } = args;
+  const { agentId, conversationId, subagentType, initDepth, success, error } =
+    args;
   const recompileAgentSystemPromptFn =
     deps.recompileAgentSystemPromptImpl ?? recompileAgentSystemPrompt;
   let recompileError: string | null = null;
@@ -67,25 +70,23 @@ export async function handleMemorySubagentCompletion(
     }
 
     try {
-      let inFlight = deps.recompileByAgent.get(agentId);
+      let inFlight = deps.recompileByConversation.get(conversationId);
 
       if (!inFlight) {
         inFlight = (async () => {
           do {
-            deps.recompileQueuedByAgent.delete(agentId);
-            await recompileAgentSystemPromptFn(agentId, {
-              updateTimestamp: true,
-            });
-          } while (deps.recompileQueuedByAgent.has(agentId));
+            deps.recompileQueuedByConversation.delete(conversationId);
+            await recompileAgentSystemPromptFn(conversationId, {});
+          } while (deps.recompileQueuedByConversation.has(conversationId));
         })().finally(() => {
           // Cleanup runs only after the shared promise settles, so every
           // concurrent caller awaits the same full recompile lifecycle.
-          deps.recompileQueuedByAgent.delete(agentId);
-          deps.recompileByAgent.delete(agentId);
+          deps.recompileQueuedByConversation.delete(conversationId);
+          deps.recompileByConversation.delete(conversationId);
         });
-        deps.recompileByAgent.set(agentId, inFlight);
+        deps.recompileByConversation.set(conversationId, inFlight);
       } else {
-        deps.recompileQueuedByAgent.add(agentId);
+        deps.recompileQueuedByConversation.add(conversationId);
       }
 
       await inFlight;
@@ -95,7 +96,7 @@ export async function handleMemorySubagentCompletion(
           ? recompileFailure.message
           : String(recompileFailure);
       deps.logRecompileFailure?.(
-        `Failed to recompile system prompt after ${subagentType} subagent for ${agentId}: ${recompileError}`,
+        `Failed to recompile system prompt after ${subagentType} subagent for ${agentId} in conversation ${conversationId}: ${recompileError}`,
       );
     }
   }

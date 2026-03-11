@@ -1,8 +1,12 @@
 import { describe, expect, test } from "bun:test";
+import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
+import os from "node:os";
+import { join } from "node:path";
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import WebSocket from "ws";
 import { buildConversationMessagesCreateRequestBody } from "../../agent/message";
 import { INTERRUPTED_BY_USER } from "../../constants";
+import type { MessageQueueItem } from "../../queue/queueRuntime";
 import type { ControlRequest, ControlResponseBody } from "../../types/protocol";
 import {
   __listenClientTestUtils,
@@ -241,6 +245,84 @@ describe("listen-client requestApprovalOverWS", () => {
   });
 });
 
+describe("listen-client conversation-scoped protocol events", () => {
+  test("queue lifecycle events carry agent_id and conversation_id from the queued item", () => {
+    const runtime = __listenClientTestUtils.createRuntime();
+    const socket = new MockSocket(WebSocket.OPEN);
+    runtime.socket = socket as unknown as WebSocket;
+
+    const input: Omit<MessageQueueItem, "id" | "enqueuedAt"> = {
+      kind: "message",
+      source: "user",
+      content: "hello",
+      clientMessageId: "cm-queue-1",
+      agentId: "agent-default",
+      conversationId: "default",
+    };
+    const item = runtime.queueRuntime.enqueue(input);
+    expect(item).not.toBeNull();
+
+    runtime.queueRuntime.tryDequeue("runtime_busy");
+
+    const enqueued = JSON.parse(socket.sentPayloads[0] as string);
+    expect(enqueued.type).toBe("queue_item_enqueued");
+    expect(enqueued.agent_id).toBe("agent-default");
+    expect(enqueued.conversation_id).toBe("default");
+
+    const blocked = JSON.parse(socket.sentPayloads[1] as string);
+    expect(blocked.type).toBe("queue_blocked");
+    expect(blocked.agent_id).toBe("agent-default");
+    expect(blocked.conversation_id).toBe("default");
+  });
+
+  test("cancel_ack includes agent_id and conversation_id", () => {
+    const runtime = __listenClientTestUtils.createRuntime();
+    const socket = new MockSocket(WebSocket.OPEN);
+    runtime.activeAgentId = "agent-123";
+    runtime.activeConversationId = "default";
+    runtime.activeRunId = "run-123";
+
+    __listenClientTestUtils.emitCancelAck(
+      socket as unknown as WebSocket,
+      runtime,
+      {
+        requestId: "cancel-1",
+        accepted: true,
+      },
+    );
+
+    const sent = JSON.parse(socket.sentPayloads[0] as string);
+    expect(sent.type).toBe("cancel_ack");
+    expect(sent.agent_id).toBe("agent-123");
+    expect(sent.conversation_id).toBe("default");
+    expect(sent.run_id).toBe("run-123");
+  });
+
+  test("queue_batch_dequeued keeps the batch scope", () => {
+    const runtime = __listenClientTestUtils.createRuntime();
+    const socket = new MockSocket(WebSocket.OPEN);
+    runtime.socket = socket as unknown as WebSocket;
+
+    const input: Omit<MessageQueueItem, "id" | "enqueuedAt"> = {
+      kind: "message",
+      source: "user",
+      content: "hello",
+      clientMessageId: "cm-queue-2",
+      agentId: "agent-xyz",
+      conversationId: "conv-xyz",
+    };
+
+    runtime.queueRuntime.enqueue(input);
+
+    runtime.queueRuntime.tryDequeue(null);
+
+    const dequeued = JSON.parse(socket.sentPayloads[1] as string);
+    expect(dequeued.type).toBe("queue_batch_dequeued");
+    expect(dequeued.agent_id).toBe("agent-xyz");
+    expect(dequeued.conversation_id).toBe("conv-xyz");
+  });
+});
+
 describe("listen-client state_response control protocol", () => {
   test("always advertises control_response capability", () => {
     const runtime = __listenClientTestUtils.createRuntime();
@@ -254,6 +336,114 @@ describe("listen-client state_response control protocol", () => {
 
     expect(typeof snapshot.cwd).toBe("string");
     expect(snapshot.cwd.length).toBeGreaterThan(0);
+    expect(snapshot.configured_cwd).toBe(snapshot.cwd);
+    expect(snapshot.active_turn_cwd).toBeNull();
+    expect(snapshot.cwd_agent_id).toBeNull();
+    expect(snapshot.cwd_conversation_id).toBe("default");
+  });
+
+  test("scopes configured and active cwd to the requested agent and conversation", () => {
+    const runtime = __listenClientTestUtils.createRuntime();
+    __listenClientTestUtils.setConversationWorkingDirectory(
+      runtime,
+      "agent-a",
+      "conv-a",
+      "/repo/a",
+    );
+    __listenClientTestUtils.setConversationWorkingDirectory(
+      runtime,
+      "agent-b",
+      "default",
+      "/repo/b",
+    );
+    runtime.activeAgentId = "agent-a";
+    runtime.activeConversationId = "conv-a";
+    runtime.activeWorkingDirectory = "/repo/a";
+
+    const activeSnapshot = __listenClientTestUtils.buildStateResponse(
+      runtime,
+      2,
+      "agent-a",
+      "conv-a",
+    );
+    expect(activeSnapshot.configured_cwd).toBe("/repo/a");
+    expect(activeSnapshot.active_turn_cwd).toBe("/repo/a");
+    expect(activeSnapshot.cwd_agent_id).toBe("agent-a");
+    expect(activeSnapshot.cwd_conversation_id).toBe("conv-a");
+
+    const defaultSnapshot = __listenClientTestUtils.buildStateResponse(
+      runtime,
+      3,
+      "agent-b",
+      "default",
+    );
+    expect(defaultSnapshot.configured_cwd).toBe("/repo/b");
+    expect(defaultSnapshot.active_turn_cwd).toBeNull();
+    expect(defaultSnapshot.cwd_agent_id).toBe("agent-b");
+    expect(defaultSnapshot.cwd_conversation_id).toBe("default");
+  });
+});
+
+describe("listen-client cwd change handling", () => {
+  test("resolves relative cwd changes against the conversation cwd and preserves active turn cwd", async () => {
+    const runtime = __listenClientTestUtils.createRuntime();
+    const socket = new MockSocket(WebSocket.OPEN);
+    const tempRoot = await mkdtemp(join(os.tmpdir(), "letta-listen-cwd-"));
+    const repoDir = join(tempRoot, "repo");
+    const serverDir = join(repoDir, "server");
+    const clientDir = join(repoDir, "client");
+    await mkdir(serverDir, { recursive: true });
+    await mkdir(clientDir, { recursive: true });
+    const normalizedServerDir = await realpath(serverDir);
+    const normalizedClientDir = await realpath(clientDir);
+
+    try {
+      __listenClientTestUtils.setConversationWorkingDirectory(
+        runtime,
+        "agent-1",
+        "conv-1",
+        normalizedServerDir,
+      );
+      runtime.activeAgentId = "agent-1";
+      runtime.activeConversationId = "conv-1";
+      runtime.activeWorkingDirectory = normalizedServerDir;
+
+      await __listenClientTestUtils.handleCwdChange(
+        {
+          type: "change_cwd",
+          agentId: "agent-1",
+          conversationId: "conv-1",
+          cwd: "../client",
+        },
+        socket as unknown as WebSocket,
+        runtime,
+      );
+
+      expect(
+        __listenClientTestUtils.getConversationWorkingDirectory(
+          runtime,
+          "agent-1",
+          "conv-1",
+        ),
+      ).toBe(normalizedClientDir);
+
+      expect(socket.sentPayloads).toHaveLength(2);
+      const changed = JSON.parse(socket.sentPayloads[0] as string);
+      expect(changed.type).toBe("cwd_changed");
+      expect(changed.success).toBe(true);
+      expect(changed.agent_id).toBe("agent-1");
+      expect(changed.cwd).toBe(normalizedClientDir);
+      expect(changed.conversation_id).toBe("conv-1");
+
+      const snapshot = JSON.parse(socket.sentPayloads[1] as string);
+      expect(snapshot.type).toBe("state_response");
+      expect(snapshot.configured_cwd).toBe(normalizedClientDir);
+      expect(snapshot.active_turn_cwd).toBe(normalizedServerDir);
+      expect(snapshot.cwd_agent_id).toBe("agent-1");
+      expect(snapshot.cwd_conversation_id).toBe("conv-1");
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
   });
 });
 

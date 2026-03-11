@@ -12,6 +12,20 @@ function makeMsg(text = "hello"): Omit<MessageQueueItem, "id" | "enqueuedAt"> {
   return { kind: "message", source: "user", content: text };
 }
 
+function makeScopedMsg(params: {
+  text?: string;
+  agentId?: string;
+  conversationId?: string;
+}): Omit<MessageQueueItem, "id" | "enqueuedAt"> {
+  return {
+    kind: "message",
+    source: "user",
+    content: params.text ?? "hello",
+    agentId: params.agentId,
+    conversationId: params.conversationId,
+  };
+}
+
 function makeTask(
   text = "<notification/>",
 ): Omit<
@@ -192,6 +206,32 @@ describe("dequeue coalescable items", () => {
     expect(b?.mergedCount).toBe(2);
     expect(b?.queueLenAfter).toBe(0);
     expect(b?.batchId).toMatch(/^batch-\d+$/);
+  });
+
+  test("does not coalesce adjacent items from different conversation scopes", () => {
+    const q = new QueueRuntime();
+    q.enqueue(
+      makeScopedMsg({
+        text: "a",
+        agentId: "agent-1",
+        conversationId: "default",
+      }),
+    );
+    q.enqueue(
+      makeScopedMsg({
+        text: "b",
+        agentId: "agent-2",
+        conversationId: "default",
+      }),
+    );
+
+    const first = q.tryDequeue(null);
+    expect(first?.items).toHaveLength(1);
+    expect((first?.items[0] as MessageQueueItem).content).toBe("a");
+
+    const second = q.tryDequeue(null);
+    expect(second?.items).toHaveLength(1);
+    expect((second?.items[0] as MessageQueueItem).content).toBe("b");
   });
 
   test("length is 0 after full dequeue", () => {

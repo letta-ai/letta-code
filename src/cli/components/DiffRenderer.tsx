@@ -1,11 +1,14 @@
 import { relative } from "node:path";
-import * as Diff from "diff";
 import { Box } from "ink";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
+import {
+  highlightCode,
+  languageFromPath,
+  type StyledSpan,
+} from "./SyntaxHighlightedCommand";
 import { Text } from "./Text";
 
-// Helper to format path as relative with ../
 /**
  * Formats a file path for display (matches Claude Code style):
  * - Files within cwd: relative path without ./ prefix
@@ -14,128 +17,116 @@ import { Text } from "./Text";
 function formatDisplayPath(filePath: string): string {
   const cwd = process.cwd();
   const relativePath = relative(cwd, filePath);
-  // If path goes outside cwd (starts with ..), show full absolute path
   if (relativePath.startsWith("..")) {
     return filePath;
   }
   return relativePath;
 }
 
-// Helper to count lines in a string
 function countLines(str: string): number {
   if (!str) return 0;
   return str.split("\n").length;
 }
 
-// Helper to render a diff line with word-level highlighting
+// A styled text chunk with optional color/dim for row-splitting.
+type StyledChunk = { text: string; color?: string; dimColor?: boolean };
+
+// Split styled chunks into rows of exactly `cols` characters, padding the last row.
+// Continuation rows start with a blank indent of `contIndent` characters
+// (matching Codex's empty-gutter + 2-space continuation, diff_render.rs:922-929).
+function buildPaddedRows(
+  chunks: StyledChunk[],
+  cols: number,
+  contIndent: number,
+): StyledChunk[][] {
+  if (cols <= 0) return [chunks];
+  const rows: StyledChunk[][] = [];
+  let row: StyledChunk[] = [];
+  let len = 0;
+  for (const chunk of chunks) {
+    let rem = chunk.text;
+    while (rem.length > 0) {
+      const space = cols - len;
+      if (rem.length <= space) {
+        row.push({ text: rem, color: chunk.color, dimColor: chunk.dimColor });
+        len += rem.length;
+        rem = "";
+      } else {
+        row.push({
+          text: rem.slice(0, space),
+          color: chunk.color,
+          dimColor: chunk.dimColor,
+        });
+        rows.push(row);
+        // Start continuation row with blank gutter indent
+        row = [{ text: " ".repeat(contIndent) }];
+        len = contIndent;
+        rem = rem.slice(space);
+      }
+    }
+  }
+  if (len < cols) row.push({ text: " ".repeat(cols - len) });
+  if (row.length > 0) rows.push(row);
+  return rows;
+}
+
+// Render a single diff line split into full-width rows.
 interface DiffLineProps {
   lineNumber: number;
   type: "add" | "remove";
   content: string;
-  compareContent?: string; // The other version to compare against for word diff
+  syntaxSpans?: StyledSpan[];
+  showLineNumbers?: boolean;
   columns: number;
-  showLineNumbers?: boolean; // Whether to show line numbers (default true)
 }
 
 function DiffLine({
   lineNumber,
   type,
   content,
-  compareContent,
-  columns,
+  syntaxSpans,
   showLineNumbers = true,
+  columns,
 }: DiffLineProps) {
-  const prefix = type === "add" ? "+" : "-";
+  const symbolColor =
+    type === "add" ? colors.diff.symbolAdd : colors.diff.symbolRemove;
   const lineBg =
     type === "add" ? colors.diff.addedLineBg : colors.diff.removedLineBg;
-  const wordBg =
-    type === "add" ? colors.diff.addedWordBg : colors.diff.removedWordBg;
+  const prefix = type === "add" ? "+" : "-";
 
-  const gutterWidth = 4; // "    " indent to align with tool return prefix
-  const contentWidth = Math.max(0, columns - gutterWidth);
-
-  // Build the line prefix (with or without line number)
-  const linePrefix = showLineNumbers
-    ? `${lineNumber} ${prefix}  `
-    : `${prefix} `;
-
-  // If we have something to compare against, do word-level diff
-  if (compareContent !== undefined && content.trim() && compareContent.trim()) {
-    const wordDiffs =
-      type === "add"
-        ? Diff.diffWords(compareContent, content)
-        : Diff.diffWords(content, compareContent);
-
-    return (
-      <Box flexDirection="row">
-        <Box width={gutterWidth} flexShrink={0}>
-          <Text>{"    "}</Text>
-        </Box>
-        <Box flexGrow={1} width={contentWidth}>
-          <Text wrap="wrap">
-            <Text backgroundColor={lineBg} color={colors.diff.textOnDark}>
-              {linePrefix}
-            </Text>
-            {wordDiffs.map((part, i) => {
-              if (part.added && type === "add") {
-                // This part was added (show with brighter background, black text)
-                return (
-                  <Text
-                    key={`word-${i}-${part.value.substring(0, 10)}`}
-                    backgroundColor={wordBg}
-                    color={colors.diff.textOnHighlight}
-                  >
-                    {part.value}
-                  </Text>
-                );
-              } else if (part.removed && type === "remove") {
-                // This part was removed (show with brighter background, black text)
-                return (
-                  <Text
-                    key={`word-${i}-${part.value.substring(0, 10)}`}
-                    backgroundColor={wordBg}
-                    color={colors.diff.textOnHighlight}
-                  >
-                    {part.value}
-                  </Text>
-                );
-              } else if (!part.added && !part.removed) {
-                // Unchanged part (show with line background, white text)
-                return (
-                  <Text
-                    key={`word-${i}-${part.value.substring(0, 10)}`}
-                    backgroundColor={lineBg}
-                    color={colors.diff.textOnDark}
-                  >
-                    {part.value}
-                  </Text>
-                );
-              }
-              // Skip parts that don't belong in this line
-              return null;
-            })}
-          </Text>
-        </Box>
-      </Box>
-    );
+  // Build styled chunks for the full line.
+  const indent = "    ";
+  const numStr = showLineNumbers ? `${lineNumber} ` : "";
+  const chunks: StyledChunk[] = [{ text: indent }];
+  if (showLineNumbers) chunks.push({ text: numStr, dimColor: true });
+  chunks.push({ text: prefix, color: symbolColor });
+  chunks.push({ text: "  " }); // gap after sign
+  if (syntaxSpans && syntaxSpans.length > 0) {
+    for (const span of syntaxSpans) {
+      chunks.push({ text: span.text, color: span.color });
+    }
+  } else {
+    chunks.push({ text: content });
   }
 
-  // No comparison, just show the whole line with one background
+  // Continuation indent = indent + lineNum + sign + gap (blank, same width)
+  const contIndent = indent.length + numStr.length + 1 + 2;
+  const rows = buildPaddedRows(chunks, columns, contIndent);
+
   return (
-    <Box flexDirection="row">
-      <Box width={gutterWidth} flexShrink={0}>
-        <Text>{"    "}</Text>
-      </Box>
-      <Box flexGrow={1} width={contentWidth}>
-        <Text
-          backgroundColor={lineBg}
-          color={colors.diff.textOnDark}
-          wrap="wrap"
-        >
-          {`${linePrefix}${content}`}
+    <>
+      {rows.map((row, ri) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: rows are static, never reorder
+        <Text key={ri} backgroundColor={lineBg} dimColor={type === "remove"}>
+          {row.map((c, ci) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: chunks are static
+            <Text key={ci} color={c.color} dimColor={c.dimColor}>
+              {c.text}
+            </Text>
+          ))}
         </Text>
-      </Box>
-    </Box>
+      ))}
+    </>
   );
 }
 
@@ -201,16 +192,15 @@ export function EditRenderer({
   const oldLines = oldString.split("\n");
   const newLines = newString.split("\n");
 
-  // For the summary
   const additions = newLines.length;
   const removals = oldLines.length;
 
-  // Try to match up lines for word-level diff
-  // This is a simple approach - for single-line changes, compare directly
-  // For multi-line, we could do more sophisticated matching
-  const singleLineEdit = oldLines.length === 1 && newLines.length === 1;
+  // Highlight old and new blocks separately for syntax coloring.
+  const lang = languageFromPath(filePath);
+  const oldHighlighted = lang ? highlightCode(oldString, lang) : undefined;
+  const newHighlighted = lang ? highlightCode(newString, lang) : undefined;
 
-  const gutterWidth = 4; // "    " indent to align with tool return prefix
+  const gutterWidth = 4;
   const contentWidth = Math.max(0, columns - gutterWidth);
 
   return (
@@ -233,29 +223,27 @@ export function EditRenderer({
         </Box>
       </Box>
 
-      {/* Show removals */}
       {oldLines.map((line, i) => (
         <DiffLine
           key={`old-${i}-${line.substring(0, 20)}`}
           lineNumber={i + 1}
           type="remove"
           content={line}
-          compareContent={singleLineEdit ? newLines[0] : undefined}
-          columns={columns}
+          syntaxSpans={oldHighlighted?.[i]}
           showLineNumbers={showLineNumbers}
+          columns={columns}
         />
       ))}
 
-      {/* Show additions */}
       {newLines.map((line, i) => (
         <DiffLine
           key={`new-${i}-${line.substring(0, 20)}`}
           lineNumber={i + 1}
           type="add"
           content={line}
-          compareContent={singleLineEdit ? oldLines[0] : undefined}
-          columns={columns}
+          syntaxSpans={newHighlighted?.[i]}
           showLineNumbers={showLineNumbers}
+          columns={columns}
         />
       ))}
     </Box>
@@ -279,7 +267,6 @@ export function MultiEditRenderer({
   const columns = useTerminalWidth();
   const relativePath = formatDisplayPath(filePath);
 
-  // Count total additions and removals
   let totalAdditions = 0;
   let totalRemovals = 0;
 
@@ -288,7 +275,8 @@ export function MultiEditRenderer({
     totalRemovals += countLines(edit.old_string);
   });
 
-  const gutterWidth = 4; // "    " indent to align with tool return prefix
+  const lang = languageFromPath(filePath);
+  const gutterWidth = 4;
   const contentWidth = Math.max(0, columns - gutterWidth);
 
   return (
@@ -311,11 +299,15 @@ export function MultiEditRenderer({
         </Box>
       </Box>
 
-      {/* For multi-edit, show each edit sequentially */}
       {edits.map((edit, index) => {
         const oldLines = edit.old_string.split("\n");
         const newLines = edit.new_string.split("\n");
-        const singleLineEdit = oldLines.length === 1 && newLines.length === 1;
+        const oldHighlighted = lang
+          ? highlightCode(edit.old_string, lang)
+          : undefined;
+        const newHighlighted = lang
+          ? highlightCode(edit.new_string, lang)
+          : undefined;
 
         return (
           <Box
@@ -328,11 +320,9 @@ export function MultiEditRenderer({
                 lineNumber={i + 1}
                 type="remove"
                 content={line}
-                compareContent={
-                  singleLineEdit && i === 0 ? newLines[0] : undefined
-                }
-                columns={columns}
+                syntaxSpans={oldHighlighted?.[i]}
                 showLineNumbers={showLineNumbers}
+                columns={columns}
               />
             ))}
             {newLines.map((line, i) => (
@@ -341,11 +331,9 @@ export function MultiEditRenderer({
                 lineNumber={i + 1}
                 type="add"
                 content={line}
-                compareContent={
-                  singleLineEdit && i === 0 ? oldLines[0] : undefined
-                }
-                columns={columns}
+                syntaxSpans={newHighlighted?.[i]}
                 showLineNumbers={showLineNumbers}
+                columns={columns}
               />
             ))}
           </Box>

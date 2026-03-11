@@ -101,6 +101,7 @@ await copyToResolved(
 );
 await copyToResolved("vendor/ink/build/devtools.js", "ink/build/devtools.js");
 await copyToResolved("vendor/ink/build/log-update.js", "ink/build/log-update.js");
+await copyToResolved("vendor/ink/build/wrap-text.js", "ink/build/wrap-text.js");
 
 // ink-text-input (optional vendor with externalCursorOffset support)
 await copyToResolved(

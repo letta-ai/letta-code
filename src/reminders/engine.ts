@@ -1,12 +1,5 @@
-import { join } from "node:path";
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
-import { getSkillsDirectory } from "../agent/context";
-import {
-  discoverSkills,
-  formatSkillsAsSystemReminder,
-  SKILLS_DIR,
-  type SkillSource,
-} from "../agent/skills";
+import type { SkillSource } from "../agent/skills";
 import { buildAgentInfo } from "../cli/helpers/agentInfo";
 import {
   buildCompactionMemoryReminder,
@@ -101,52 +94,6 @@ async function buildSessionContextReminder(
   return reminder || null;
 }
 
-async function buildSkillsReminder(
-  context: SharedReminderContext,
-): Promise<string | null> {
-  const previousSkillsReminder = context.state.cachedSkillsReminder;
-  // Keep a stable empty baseline so a later successful discovery can diff
-  // against "" and trigger reinjection, even after an earlier discovery failure.
-  let latestSkillsReminder = previousSkillsReminder ?? "";
-
-  try {
-    const skillsDir = getSkillsDirectory() || join(process.cwd(), SKILLS_DIR);
-    const { skills } = await discoverSkills(skillsDir, context.agent.id, {
-      sources: context.skillSources,
-    });
-    latestSkillsReminder = formatSkillsAsSystemReminder(skills);
-    context.state.skillPathById = Object.fromEntries(
-      skills
-        .filter(
-          (skill) => typeof skill.path === "string" && skill.path.length > 0,
-        )
-        .map((skill) => [skill.id, skill.path as string]),
-    );
-  } catch {
-    // Keep previous snapshot when discovery fails.
-  }
-
-  if (
-    previousSkillsReminder !== null &&
-    previousSkillsReminder !== latestSkillsReminder
-  ) {
-    context.state.pendingSkillsReinject = true;
-  }
-
-  context.state.cachedSkillsReminder = latestSkillsReminder;
-
-  const shouldInject =
-    !context.state.hasInjectedSkillsReminder ||
-    context.state.pendingSkillsReinject;
-  if (!shouldInject) {
-    return null;
-  }
-
-  context.state.hasInjectedSkillsReminder = true;
-  context.state.pendingSkillsReinject = false;
-  return latestSkillsReminder || null;
-}
-
 async function buildPlanModeReminder(
   context: SharedReminderContext,
 ): Promise<string | null> {
@@ -172,7 +119,7 @@ async function buildPermissionModeReminder(
   const previousMode = context.state.lastNotifiedPermissionMode;
 
   const shouldEmit = (() => {
-    if (context.mode === "interactive") {
+    if (context.mode === "interactive" || context.mode === "listen") {
       if (previousMode === null) {
         // First turn: only remind if in a non-default mode (e.g. bypassPermissions).
         return currentMode !== "default";
@@ -398,7 +345,6 @@ export const sharedReminderProviders: Record<
 > = {
   "agent-info": buildAgentInfoReminder,
   "session-context": buildSessionContextReminder,
-  skills: buildSkillsReminder,
   "permission-mode": buildPermissionModeReminder,
   "plan-mode": buildPlanModeReminder,
   "reflection-step-count": buildReflectionStepReminder,
