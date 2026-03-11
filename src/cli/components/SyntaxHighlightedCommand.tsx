@@ -19,7 +19,74 @@ type Props = {
 type ShellSyntaxPalette = typeof colors.shellSyntax;
 
 /** Styled text span with a resolved color. */
-type StyledSpan = { text: string; color: string };
+export type StyledSpan = { text: string; color: string };
+
+/** Map file extension to a lowlight language name. */
+const EXT_TO_LANG: Record<string, string> = {
+  ts: "typescript",
+  tsx: "typescript",
+  js: "javascript",
+  jsx: "javascript",
+  mjs: "javascript",
+  cjs: "javascript",
+  py: "python",
+  rs: "rust",
+  go: "go",
+  java: "java",
+  rb: "ruby",
+  c: "c",
+  h: "c",
+  cpp: "cpp",
+  cc: "cpp",
+  cxx: "cpp",
+  cs: "csharp",
+  swift: "swift",
+  kt: "kotlin",
+  scala: "scala",
+  php: "php",
+  css: "css",
+  scss: "scss",
+  less: "less",
+  html: "xml",
+  htm: "xml",
+  xml: "xml",
+  svg: "xml",
+  json: "json",
+  yaml: "yaml",
+  yml: "yaml",
+  toml: "ini",
+  ini: "ini",
+  md: "markdown",
+  mdx: "markdown",
+  sql: "sql",
+  sh: "bash",
+  bash: "bash",
+  zsh: "bash",
+  fish: "bash",
+  makefile: "makefile",
+  dockerfile: "dockerfile",
+  r: "r",
+  lua: "lua",
+  perl: "perl",
+  pl: "perl",
+  diff: "diff",
+  graphql: "graphql",
+  gql: "graphql",
+  wasm: "wasm",
+};
+
+/** Resolve a lowlight language name from a file path, or undefined if unknown. */
+export function languageFromPath(filePath: string): string | undefined {
+  const basename = filePath.split("/").pop() ?? filePath;
+  const lower = basename.toLowerCase();
+  // Handle dotfiles like "Makefile", "Dockerfile"
+  if (lower === "makefile") return "makefile";
+  if (lower === "dockerfile") return "dockerfile";
+  const dotIdx = basename.lastIndexOf(".");
+  if (dotIdx < 0) return undefined;
+  const ext = basename.slice(dotIdx + 1).toLowerCase();
+  return EXT_TO_LANG[ext];
+}
 
 function colorForClassName(
   className: string,
@@ -68,7 +135,7 @@ function colorForClassName(
  * Walk the HAST tree depth-first, collecting flat StyledSpan entries.
  * Newlines within text nodes are preserved so callers can split into lines.
  */
-function collectSpans(
+export function collectSpans(
   node: RootContent | ElementContent,
   palette: ShellSyntaxPalette,
   spans: StyledSpan[],
@@ -119,6 +186,45 @@ function highlightCommand(
   }
 
   // Split spans at newline characters into separate lines.
+  const lines: StyledSpan[][] = [[]];
+  for (const span of spans) {
+    const parts = span.text.split("\n");
+    for (let i = 0; i < parts.length; i++) {
+      if (i > 0) {
+        lines.push([]);
+      }
+      const part = parts[i];
+      if (part && part.length > 0) {
+        const currentLine = lines[lines.length - 1];
+        currentLine?.push({ text: part, color: span.color });
+      }
+    }
+  }
+  return lines;
+}
+
+/**
+ * Highlight code in any language, returning per-line StyledSpan arrays.
+ * Highlights the full text at once to preserve multi-line parser state,
+ * then splits at newline boundaries.
+ * Returns undefined when the language is not recognized.
+ */
+export function highlightCode(
+  code: string,
+  language: string,
+): StyledSpan[][] | undefined {
+  const palette = colors.shellSyntax;
+  let spans: StyledSpan[];
+  try {
+    const root = lowlight.highlight(language, code);
+    spans = [];
+    for (const child of root.children) {
+      collectSpans(child, palette, spans);
+    }
+  } catch {
+    return undefined;
+  }
+
   const lines: StyledSpan[][] = [[]];
   for (const span of spans) {
     const parts = span.text.split("\n");

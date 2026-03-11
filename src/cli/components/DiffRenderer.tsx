@@ -1,11 +1,14 @@
 import { relative } from "node:path";
-import * as Diff from "diff";
 import { Box } from "ink";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
+import {
+  highlightCode,
+  languageFromPath,
+  type StyledSpan,
+} from "./SyntaxHighlightedCommand";
 import { Text } from "./Text";
 
-// Helper to format path as relative with ../
 /**
  * Formats a file path for display (matches Claude Code style):
  * - Files within cwd: relative path without ./ prefix
@@ -14,128 +17,72 @@ import { Text } from "./Text";
 function formatDisplayPath(filePath: string): string {
   const cwd = process.cwd();
   const relativePath = relative(cwd, filePath);
-  // If path goes outside cwd (starts with ..), show full absolute path
   if (relativePath.startsWith("..")) {
     return filePath;
   }
   return relativePath;
 }
 
-// Helper to count lines in a string
 function countLines(str: string): number {
   if (!str) return 0;
   return str.split("\n").length;
 }
 
-// Helper to render a diff line with word-level highlighting
+// Render a single diff line with Codex-style full-line background and dimmed deletes.
+// Trailing spaces pad the background to the right terminal edge.
 interface DiffLineProps {
   lineNumber: number;
   type: "add" | "remove";
   content: string;
-  compareContent?: string; // The other version to compare against for word diff
+  syntaxSpans?: StyledSpan[];
+  showLineNumbers?: boolean;
   columns: number;
-  showLineNumbers?: boolean; // Whether to show line numbers (default true)
 }
 
 function DiffLine({
   lineNumber,
   type,
   content,
-  compareContent,
-  columns,
+  syntaxSpans,
   showLineNumbers = true,
+  columns,
 }: DiffLineProps) {
   const prefix = type === "add" ? "+" : "-";
+  const symbolColor =
+    type === "add" ? colors.diff.symbolAdd : colors.diff.symbolRemove;
   const lineBg =
     type === "add" ? colors.diff.addedLineBg : colors.diff.removedLineBg;
-  const wordBg =
-    type === "add" ? colors.diff.addedWordBg : colors.diff.removedWordBg;
 
-  const gutterWidth = 4; // "    " indent to align with tool return prefix
-  const contentWidth = Math.max(0, columns - gutterWidth);
+  // Left indent (tool-result gutter) is inside the bg so color is edge-to-edge.
+  const indent = "    ";
 
-  // Build the line prefix (with or without line number)
-  const linePrefix = showLineNumbers
-    ? `${lineNumber} ${prefix}  `
-    : `${prefix} `;
+  // Compute visible character count so we can pad to fill the terminal width.
+  const numPrefix = showLineNumbers ? `${lineNumber} ` : "";
+  const signAndGap = `${prefix}  `; // sign + 2 spaces
+  const textLen =
+    syntaxSpans?.reduce((sum, s) => sum + s.text.length, 0) ?? content.length;
+  const visibleLen =
+    indent.length + numPrefix.length + signAndGap.length + textLen;
+  const trailingPad = Math.max(0, columns - visibleLen);
 
-  // If we have something to compare against, do word-level diff
-  if (compareContent !== undefined && content.trim() && compareContent.trim()) {
-    const wordDiffs =
-      type === "add"
-        ? Diff.diffWords(compareContent, content)
-        : Diff.diffWords(content, compareContent);
-
-    return (
-      <Box flexDirection="row">
-        <Box width={gutterWidth} flexShrink={0}>
-          <Text>{"    "}</Text>
-        </Box>
-        <Box flexGrow={1} width={contentWidth}>
-          <Text wrap="wrap">
-            <Text backgroundColor={lineBg} color={colors.diff.textOnDark}>
-              {linePrefix}
-            </Text>
-            {wordDiffs.map((part, i) => {
-              if (part.added && type === "add") {
-                // This part was added (show with brighter background, black text)
-                return (
-                  <Text
-                    key={`word-${i}-${part.value.substring(0, 10)}`}
-                    backgroundColor={wordBg}
-                    color={colors.diff.textOnHighlight}
-                  >
-                    {part.value}
-                  </Text>
-                );
-              } else if (part.removed && type === "remove") {
-                // This part was removed (show with brighter background, black text)
-                return (
-                  <Text
-                    key={`word-${i}-${part.value.substring(0, 10)}`}
-                    backgroundColor={wordBg}
-                    color={colors.diff.textOnHighlight}
-                  >
-                    {part.value}
-                  </Text>
-                );
-              } else if (!part.added && !part.removed) {
-                // Unchanged part (show with line background, white text)
-                return (
-                  <Text
-                    key={`word-${i}-${part.value.substring(0, 10)}`}
-                    backgroundColor={lineBg}
-                    color={colors.diff.textOnDark}
-                  >
-                    {part.value}
-                  </Text>
-                );
-              }
-              // Skip parts that don't belong in this line
-              return null;
-            })}
-          </Text>
-        </Box>
-      </Box>
-    );
-  }
-
-  // No comparison, just show the whole line with one background
   return (
-    <Box flexDirection="row">
-      <Box width={gutterWidth} flexShrink={0}>
-        <Text>{"    "}</Text>
-      </Box>
-      <Box flexGrow={1} width={contentWidth}>
-        <Text
-          backgroundColor={lineBg}
-          color={colors.diff.textOnDark}
-          wrap="wrap"
-        >
-          {`${linePrefix}${content}`}
-        </Text>
-      </Box>
-    </Box>
+    <Text backgroundColor={lineBg} dimColor={type === "remove"}>
+      {indent}
+      {showLineNumbers ? <Text dimColor>{lineNumber} </Text> : null}
+      <Text color={symbolColor}>{prefix}</Text>
+      {"  "}
+      {syntaxSpans && syntaxSpans.length > 0
+        ? syntaxSpans.map((span, i) => (
+            <Text
+              key={`${i}:${span.color}:${span.text.substring(0, 12)}`}
+              color={span.color}
+            >
+              {span.text}
+            </Text>
+          ))
+        : content}
+      {trailingPad > 0 ? " ".repeat(trailingPad) : null}
+    </Text>
   );
 }
 
@@ -201,16 +148,15 @@ export function EditRenderer({
   const oldLines = oldString.split("\n");
   const newLines = newString.split("\n");
 
-  // For the summary
   const additions = newLines.length;
   const removals = oldLines.length;
 
-  // Try to match up lines for word-level diff
-  // This is a simple approach - for single-line changes, compare directly
-  // For multi-line, we could do more sophisticated matching
-  const singleLineEdit = oldLines.length === 1 && newLines.length === 1;
+  // Highlight old and new blocks separately for syntax coloring.
+  const lang = languageFromPath(filePath);
+  const oldHighlighted = lang ? highlightCode(oldString, lang) : undefined;
+  const newHighlighted = lang ? highlightCode(newString, lang) : undefined;
 
-  const gutterWidth = 4; // "    " indent to align with tool return prefix
+  const gutterWidth = 4;
   const contentWidth = Math.max(0, columns - gutterWidth);
 
   return (
@@ -233,29 +179,27 @@ export function EditRenderer({
         </Box>
       </Box>
 
-      {/* Show removals */}
       {oldLines.map((line, i) => (
         <DiffLine
           key={`old-${i}-${line.substring(0, 20)}`}
           lineNumber={i + 1}
           type="remove"
           content={line}
-          compareContent={singleLineEdit ? newLines[0] : undefined}
-          columns={columns}
+          syntaxSpans={oldHighlighted?.[i]}
           showLineNumbers={showLineNumbers}
+          columns={columns}
         />
       ))}
 
-      {/* Show additions */}
       {newLines.map((line, i) => (
         <DiffLine
           key={`new-${i}-${line.substring(0, 20)}`}
           lineNumber={i + 1}
           type="add"
           content={line}
-          compareContent={singleLineEdit ? oldLines[0] : undefined}
-          columns={columns}
+          syntaxSpans={newHighlighted?.[i]}
           showLineNumbers={showLineNumbers}
+          columns={columns}
         />
       ))}
     </Box>
@@ -279,7 +223,6 @@ export function MultiEditRenderer({
   const columns = useTerminalWidth();
   const relativePath = formatDisplayPath(filePath);
 
-  // Count total additions and removals
   let totalAdditions = 0;
   let totalRemovals = 0;
 
@@ -288,7 +231,8 @@ export function MultiEditRenderer({
     totalRemovals += countLines(edit.old_string);
   });
 
-  const gutterWidth = 4; // "    " indent to align with tool return prefix
+  const lang = languageFromPath(filePath);
+  const gutterWidth = 4;
   const contentWidth = Math.max(0, columns - gutterWidth);
 
   return (
@@ -311,11 +255,15 @@ export function MultiEditRenderer({
         </Box>
       </Box>
 
-      {/* For multi-edit, show each edit sequentially */}
       {edits.map((edit, index) => {
         const oldLines = edit.old_string.split("\n");
         const newLines = edit.new_string.split("\n");
-        const singleLineEdit = oldLines.length === 1 && newLines.length === 1;
+        const oldHighlighted = lang
+          ? highlightCode(edit.old_string, lang)
+          : undefined;
+        const newHighlighted = lang
+          ? highlightCode(edit.new_string, lang)
+          : undefined;
 
         return (
           <Box
@@ -328,11 +276,9 @@ export function MultiEditRenderer({
                 lineNumber={i + 1}
                 type="remove"
                 content={line}
-                compareContent={
-                  singleLineEdit && i === 0 ? newLines[0] : undefined
-                }
-                columns={columns}
+                syntaxSpans={oldHighlighted?.[i]}
                 showLineNumbers={showLineNumbers}
+                columns={columns}
               />
             ))}
             {newLines.map((line, i) => (
@@ -341,11 +287,9 @@ export function MultiEditRenderer({
                 lineNumber={i + 1}
                 type="add"
                 content={line}
-                compareContent={
-                  singleLineEdit && i === 0 ? oldLines[0] : undefined
-                }
-                columns={columns}
+                syntaxSpans={newHighlighted?.[i]}
                 showLineNumbers={showLineNumbers}
+                columns={columns}
               />
             ))}
           </Box>
