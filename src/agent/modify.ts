@@ -274,6 +274,11 @@ export async function updateConversationLLMConfig(
 
 export interface RecompileAgentSystemPromptOptions {
   dryRun?: boolean;
+  /**
+   * Required when recompiling the special "default" conversation route.
+   * Passed as body param `agent_id` for agent-direct mode.
+   */
+  agentId?: string;
 }
 
 interface ConversationSystemPromptRecompileClient {
@@ -304,9 +309,23 @@ export async function recompileAgentSystemPrompt(
   const client = (clientOverride ??
     (await getClient())) as ConversationSystemPromptRecompileClient;
 
-  return client.conversations.recompile(conversationId, {
+  const params: {
+    dry_run?: boolean;
+    agent_id?: string;
+  } = {
     dry_run: options.dryRun,
-  });
+  };
+
+  if (conversationId === "default") {
+    if (!options.agentId) {
+      throw new Error(
+        'recompileAgentSystemPrompt requires options.agentId when conversationId is "default"',
+      );
+    }
+    params.agent_id = options.agentId;
+  }
+
+  return client.conversations.recompile(conversationId, params);
 }
 
 export interface SystemPromptUpdateResult {

@@ -135,7 +135,7 @@ const DEFAULT_SETTINGS: Settings = {
   sessionContextEnabled: true,
   memoryReminderInterval: 25, // DEPRECATED: use reflection* fields
   reflectionTrigger: "step-count",
-  reflectionBehavior: "reminder",
+  reflectionBehavior: "auto-launch",
   reflectionStepCount: 25,
   globalSharedBlockIds: {},
 };
