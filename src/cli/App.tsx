@@ -9297,14 +9297,16 @@ export default function App({
                   const msg = await handleMemorySubagentCompletion(
                     {
                       agentId,
+                      conversationId: rememberConversationId,
                       subagentType: "reflection",
                       success,
                       error,
                     },
                     {
-                      recompileByAgent: systemPromptRecompileByAgentRef.current,
-                      recompileQueuedByAgent:
-                        queuedSystemPromptRecompileByAgentRef.current,
+                      recompileByConversation:
+                        systemPromptRecompileByConversationRef.current,
+                      recompileQueuedByConversation:
+                        queuedSystemPromptRecompileByConversationRef.current,
                       updateInitProgress,
                       logRecompileFailure: (message) =>
                         debugWarn("memory", message),
