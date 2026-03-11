@@ -98,7 +98,7 @@ Use the printed values (e.g., `agent-abc123...`) in the trailers. If a variable 
 ```bash
 cd $MEMORY_DIR
 git add -A
-git commit -m "<type>(reflection): <summary> 🔮
+git commit --author="Reflection Subagent <ACTUAL_AGENT_ID@letta.com>" -m "<type>(reflection): <summary> 🔮
 
 Reviewed transcript: <transcript_filepath>
 
