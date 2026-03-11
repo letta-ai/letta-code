@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { runWithRuntimeContext } from "../../runtime-context";
 import { read_many_files } from "../../tools/impl/ReadManyFilesGemini";
 import { TestDirectory } from "../helpers/testFs";
 
@@ -14,14 +15,10 @@ describe("ReadManyFiles tool (Gemini)", () => {
     testDir.createFile("file1.txt", "Content 1");
     testDir.createFile("file2.txt", "Content 2");
     testDir.createFile("file3.md", "Markdown");
-
-    // Change to testDir for testing
-    const originalCwd = process.cwd();
-    process.chdir(testDir.path);
-
-    const result = await read_many_files({ include: ["*.txt"] });
-
-    process.chdir(originalCwd);
+    const result = await runWithRuntimeContext(
+      { workingDirectory: testDir.path },
+      () => read_many_files({ include: ["*.txt"] }),
+    );
 
     expect(result.message).toContain("Content 1");
     expect(result.message).toContain("Content 2");
@@ -32,13 +29,10 @@ describe("ReadManyFiles tool (Gemini)", () => {
     testDir = new TestDirectory();
     testDir.createFile("a.txt", "First");
     testDir.createFile("b.txt", "Second");
-
-    const originalCwd = process.cwd();
-    process.chdir(testDir.path);
-
-    const result = await read_many_files({ include: ["*.txt"] });
-
-    process.chdir(originalCwd);
+    const result = await runWithRuntimeContext(
+      { workingDirectory: testDir.path },
+      () => read_many_files({ include: ["*.txt"] }),
+    );
 
     expect(result.message).toContain("First");
     expect(result.message).toContain("Second");
@@ -49,16 +43,14 @@ describe("ReadManyFiles tool (Gemini)", () => {
     testDir = new TestDirectory();
     testDir.createFile("include.txt", "Include me");
     testDir.createFile("exclude.txt", "Exclude me");
-
-    const originalCwd = process.cwd();
-    process.chdir(testDir.path);
-
-    const result = await read_many_files({
-      include: ["*.txt"],
-      exclude: ["exclude.txt"],
-    });
-
-    process.chdir(originalCwd);
+    const result = await runWithRuntimeContext(
+      { workingDirectory: testDir.path },
+      () =>
+        read_many_files({
+          include: ["*.txt"],
+          exclude: ["exclude.txt"],
+        }),
+    );
 
     expect(result.message).toContain("Include me");
     expect(result.message).not.toContain("Exclude me");

@@ -68,16 +68,16 @@ mock.module("../../agent/message", () => ({
     conversationId: string,
     messages: unknown[],
     opts?: { agentId?: string; streamTokens?: boolean; background?: boolean },
-    _clientTools?: unknown[],
-    _clientSkills?: unknown[],
+    clientTools?: unknown[],
+    clientSkills?: unknown[],
   ) => ({
     messages,
     streaming: true,
     stream_tokens: opts?.streamTokens ?? true,
     include_pings: true,
     background: opts?.background ?? true,
-    client_skills: [],
-    client_tools: [],
+    client_skills: clientSkills ?? [],
+    client_tools: clientTools ?? [],
     include_compaction_messages: true,
     ...(conversationId === "default" && opts?.agentId
       ? { agent_id: opts.agentId }
