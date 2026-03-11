@@ -5,6 +5,7 @@
  */
 import { getModelShortName, resolveModel } from "../../agent/model";
 import { OPENAI_CODEX_PROVIDER_NAME } from "../../providers/openai-codex-provider";
+import { formatCompact } from "./format";
 
 /**
  * Format tool count and token statistics for display
@@ -26,11 +27,7 @@ export function formatStats(
     return toolStr;
   }
 
-  const tokenStr =
-    totalTokens >= 1000
-      ? `${(totalTokens / 1000).toFixed(1)}k`
-      : String(totalTokens);
-  return `${toolStr} · ${tokenStr} tokens`;
+  return `${toolStr} · ${formatCompact(totalTokens)} tokens`;
 }
 
 /**
