@@ -9,12 +9,7 @@ The user has requested that you initialize or reorganize your memory. Your memor
 
 ## Autonomous Mode
 
-If you are running as a background subagent (you cannot use AskUserQuestion):
-- Default to standard research depth (~5-20 tool calls)
-- Detect user identity from git logs (`git shortlog -sn`, `git log --format="%an <%ae>"`)
-- Skip historical session analysis
-- Use reasonable defaults for all preferences
-- Any specific overrides will be provided in your initial prompt
+You run as a background subagent. User intake (identity, preferences, research depth) is provided in your initial prompt — do not ask questions. If intake context is missing, fall back to git logs for identity and default to standard research depth.
 
 ## Your Goal: Explode Into 15-25 Hierarchical Files
 
@@ -231,7 +226,7 @@ Think of memory file descriptions as documentation for your future self. The bet
 
 ## Research Depth
 
-You can ask the user if they want a standard or deep research initialization:
+Your initial prompt specifies the research depth. Follow the depth indicated:
 
 **Standard initialization** (~5-20 tool calls):
 - Inspect existing memory files
@@ -257,11 +252,8 @@ You can ask the user if they want a standard or deep research initialization:
 - **Code evolution**: How has the architecture changed? What major refactors happened?
 - **Review patterns**: Are there PR templates? What gets reviewed carefully vs rubber-stamped?
 - **Pain points**: What areas have lots of bug fixes? What code gets touched frequently?
-- **Related repositories**: Ask the user if there are other repos you should know about (e.g., a backend monorepo, shared libraries, documentation repos). These relationships can be crucial context.
 
-This kind of deep context can make you significantly more effective as a long-term collaborator on the project.
-
-If the user says "take as long as you need" or explicitly wants deep research, use your TODO or Plan tool to orchestrate a thorough, multi-step research process.
+For deep research, use your TODO or Plan tool to orchestrate a thorough, multi-step research process.
 
 ## Research Techniques
 
@@ -271,9 +263,9 @@ If the user says "take as long as you need" or explicitly wants deep research, u
 - Config files (.eslintrc, tsconfig.json, .prettierrc)
 - CI/CD configs (.github/workflows/, .gitlab-ci.yml)
 
-**Historical session research** (Claude Code / Codex) — **only if user approved**:
+**Historical session research** (Claude Code / Codex):
 
-If the user said "Yes" to the historical sessions question, follow the **Historical Session Analysis** section below after completing project research. If they chose "Skip", skip it entirely.
+If history data exists on the machine, follow the **Historical Session Analysis** section below after completing project research.
 
 **Git research:**
 - `git log --oneline -20` — recent history
@@ -307,37 +299,16 @@ Thorough research (good):
 
 The goal isn't to produce a report - it's to genuinely understand the project and how this human(s) works so you can be an effective collaborator.
 
-## On Asking Questions
+## User Context
 
-**Ask important questions upfront, then be autonomous during execution.**
+User intake (identity, preferences, research depth, related repos) has already been collected by the primary agent and is included in your initial prompt. **Do not ask questions — proceed autonomously.**
 
-### Recommended Upfront Questions
-
-You should ask these questions at the start (bundle them together in one AskUserQuestion call):
-
-1. **Research depth**: "Standard or deep research (comprehensive, as long as needed)?"
-2. **Identity**: "Which contributor are you?" (You can often infer this from git logs - e.g., if git shows "cpacker" as a top contributor, ask "Are you cpacker?")
-3. **Related repos**: "Are there other repositories I should know about and consider in my research?" (e.g., backend monorepo, shared libraries)
-4. **Historical sessions** (include this question if history data was found in step 2): "I found Claude Code / Codex history on your machine. Should I analyze it to learn your preferences, coding patterns, and project context? This significantly improves how I work with you but uses additional time and tokens." Options: "Yes, analyze history" / "Skip for now". Use "History" as the header.
-5. **Memory updates**: "How often should I check if I should update my memory?" with options "Frequent (every 3-5 turns)" and "Occasional (every 8-10 turns)". This should be a binary question with "Memory" as the header.
-6. **Communication style**: "Terse or detailed responses?"
-7. **Any specific rules**: "Rules I should always follow?"
-
-**Why these matter:**
-- Identity lets you correlate git history to the user (their commits, PRs, coding style)
-- Related repos provide crucial context (many projects span multiple repos)
-- Historical sessions from Claude Code/Codex can reveal preferences, communication style, and project knowledge — but processing them is expensive (parallel subagents, multiple LLM calls), so always ask first
-- Workflow/communication style should be stored in `system/human/prefs/`
-- Rules go in `system/persona/`
-
-### What NOT to ask
-
-- Things you can find by reading files ("What's your test framework?")
-- "What kind of work do you do? Reviewing PRs vs writing code?" - obvious from git log, most devs do everything
-- Permission for obvious actions - just do them
-- Questions one at a time - bundle them (but don't exhaust the user with too many questions at once)
-
-**During execution**, be autonomous. Make reasonable choices and proceed.
+Use the intake context to:
+- Correlate git history to the user (their commits, PRs, coding style)
+- Store identity in `system/human/`
+- Store workflow/communication preferences in `system/human/prefs/`
+- Store rules in `system/persona/`
+- Research related repositories if mentioned
 
 ## Memory File Strategy
 
@@ -437,51 +408,46 @@ And add memory files that you think make sense to add (e.g., `project/architectu
 
 1. **Check memory filesystem status**: Look for the `memory_filesystem` section in your system prompt to confirm the filesystem is enabled.
 
-2. **Check for historical session data**: Run `ls ~/.claude/history.jsonl ~/.codex/history.jsonl 2>/dev/null` to see if Claude Code or Codex history exists. You need this result BEFORE asking upfront questions so you know whether to include the history question.
+2. **Read intake context**: Your initial prompt contains user intake (identity, preferences, research depth, related repos, workflow rules). Use this as your starting point — do not ask the user questions.
 
-3. **Ask upfront questions**: Use AskUserQuestion with the recommended questions above (bundled together). This is critical - don't skip it. **If history data exists (from step 2), you MUST include the historical sessions question.**
-
-4. **Inspect existing memory**: 
+3. **Inspect existing memory**:
    - If memfs enabled: Use `ls -la ~/.letta/agents/<agent-id>/memory/system/` to see the file structure
    - Otherwise: Use memory tools to inspect existing files
    - Analyze what exists and what needs improvement
 
-5. **Identify the user**: From git logs and their answer, figure out who they are and store in `system/human/`. If relevant, ask questions to gather information about their preferences that will help you be a useful assistant to them.
+4. **Identify the user**: Use the identity from the intake context. Fall back to git logs if not provided. Store in `system/human/`.
 
-6. **Update human/persona early**: Based on answers, update your memory files eagerly before diving into project research. You can always change them as you go, you're not locked into any memory configuration.
+5. **Update human/persona early**: Based on intake answers, update your memory files eagerly before diving into project research. You can always change them as you go, you're not locked into any memory configuration.
 
-7. **Research the project**: Explore based on chosen depth. Use your TODO or plan tool to create a systematic research plan.
+6. **Research the project**: Explore based on the specified research depth. Use your TODO or plan tool to create a systematic research plan.
 
-8. **Historical session analysis (if approved)**: If the user approved Claude Code / Codex history analysis in step 3, follow the **Historical Session Analysis** section below. This launches parallel subagents to process history data and synthesize findings into memory. Skip this step if the user chose "Skip".
+7. **Check for historical session data**: Run `ls ~/.claude/history.jsonl ~/.codex/history.jsonl 2>/dev/null`. If history data exists, follow the **Historical Session Analysis** section below.
 
-9. **Create/update memory structure** (can happen incrementally alongside steps 7-8):
+8. **Create/update memory structure** (can happen incrementally alongside steps 6-7):
    - **With memfs enabled**: Create a deeply hierarchical file structure using bash commands
      - Use `mkdir -p` to create subdirectories (2-3 levels deep)
      - Create `.md` files for memory files using `/` naming
      - **Target 15-25 total files** - be aggressive about splitting
      - Use nested paths like `project/tooling/testing.md` (never flat like `project-testing.md`)
      - **Every new file MUST be nested** under a parent using `/`
-     - **Every new file MUST be nested** under a parent using `/`
    - **Without memfs**: Use memory tools to create/update files with hierarchical naming
    - **Don't wait until the end** - write findings as you go
-   
+
    **Checkpoint verification:**
    - After creating files, count them: `ls ~/.letta/agents/<agent-id>/memory/system/ | wc -l`
    - **If count < 15, you haven't split enough** - go back and split more
    - Check maximum depth: `find ~/.letta/agents/<agent-id>/memory/system/ -type f | awk -F/ '{print NF}' | sort -n | tail -1`
    - **Should be 2-3 levels deep** minimum
 
-10. **Organize incrementally**:
+9. **Organize incrementally**:
    - Start with a basic structure
    - Add detail as you research
    - Refine organization as patterns emerge
    - Split large files into smaller, focused ones
 
-11. **Reflect and review**: See "Reflection Phase" below - this is critical for deep research.
+10. **Reflect and review**: See "Reflection Phase" below - this is critical for deep research.
 
-12. **Ask user if done**: Check if they're satisfied or want you to continue refining.
-
-13. **Push memory**: Once the user is satisfied, commit and push your memory repo so changes are synced to the server.
+11. **Push memory**: Commit and push your memory repo so changes are synced to the server.
 
 ## Reflection Phase (Critical for Deep Research)
 
@@ -508,10 +474,7 @@ Before finishing, you MUST do a reflection step. **Your memory files are visible
 
 6. **Structure check**: Would this make sense to your future self? Is anything missing? Is anything redundant?
 
-**After reflection**, fix any issues you found. Then ask the user:
-> "I've completed the initialization. Here's a brief summary of what I set up: [summary]. Should I continue refining, or is this good to proceed?"
-
-This gives the user a chance to provide feedback or ask for adjustments before you finish.
+**After reflection**, fix any issues you found.
 
 ## Working with Memory Filesystem (Practical Guide)
 

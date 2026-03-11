@@ -224,6 +224,7 @@ import {
 import { formatCompact } from "./helpers/format";
 import { parsePatchOperations } from "./helpers/formatArgsDisplay";
 import {
+  buildInitIntakeMessage,
   buildLegacyInitMessage,
   buildMemoryInitRuntimePrompt,
   fireAutoInit,
@@ -1009,6 +1010,12 @@ export default function App({
   // so agent switches later in the session don't re-queue auto-init.
   const startupAutoInitConsumedRef = useRef(false);
 
+  // Completion listener for init subagents dispatched by the primary agent via
+  // the Task tool (interactive /init flow).  App.tsx-dispatched init subagents
+  // use their own onComplete callback and are registered with silent=true, so
+  // the listener skips those to avoid double-handling.
+  const handledInitSubagentIdsRef = useRef<Set<string>>(new Set());
+
   // Track previous prop values to detect actual prop changes (not internal state changes)
   const prevInitialAgentIdRef = useRef(initialAgentId);
   const prevInitialAgentStateRef = useRef(initialAgentState);
@@ -1716,6 +1723,42 @@ export default function App({
     Object.assign(progress, update);
     initProgressByAgentRef.current.set(forAgentId, progress);
   };
+
+  // Listener for init subagents dispatched by the primary agent via the Task
+  // tool (interactive /init).  App.tsx-dispatched init subagents register with
+  // silent=true and have their own onComplete, so the listener skips those.
+  useEffect(() => {
+    return subscribeToSubagents(() => {
+      const { agents } = getSubagentSnapshot();
+      for (const agent of agents) {
+        if (
+          agent.type.toLowerCase() === "init" &&
+          (agent.status === "completed" || agent.status === "error") &&
+          !agent.silent &&
+          !handledInitSubagentIdsRef.current.has(agent.id)
+        ) {
+          handledInitSubagentIdsRef.current.add(agent.id);
+          handleMemorySubagentCompletion(
+            {
+              agentId: agentIdRef.current,
+              subagentType: "init",
+              initDepth: "deep",
+              success: agent.status === "completed",
+              error: agent.error,
+            },
+            {
+              recompileByAgent: systemPromptRecompileByAgentRef.current,
+              recompileQueuedByAgent:
+                queuedSystemPromptRecompileByAgentRef.current,
+              updateInitProgress,
+              logRecompileFailure: (message) =>
+                debugWarn("memory", message),
+            },
+          ).then((msg) => appendTaskNotificationEvents([msg]));
+        }
+      }
+    });
+  }, []); // Stable: all accessed values are refs or module-scoped
 
   // Track if we've set the conversation summary for this new conversation
   // Initialized to true for resumed conversations (they already have context)
@@ -9260,7 +9303,7 @@ export default function App({
           const gitContext = gatherGitContext();
 
           if (settingsManager.isMemfsEnabled(agentId)) {
-            // MemFS path: background subagent
+            // MemFS path: interactive intake → agent dispatches background subagent
             if (hasActiveInitSubagent()) {
               cmd.fail(
                 "Memory initialization is already running in the background.",
@@ -9268,70 +9311,35 @@ export default function App({
               return { submitted: true };
             }
 
+            autoInitPendingAgentIdsRef.current.delete(agentId);
+            setCommandRunning(true);
             try {
-              const initPrompt = buildMemoryInitRuntimePrompt({
-                agentId,
-                workingDirectory: process.cwd(),
-                memoryDir: getMemoryFilesystemRoot(agentId),
-                gitContext,
-                depth: "deep",
-              });
-
-              const { spawnBackgroundSubagentTask } = await import(
-                "../tools/impl/Task"
-              );
-              spawnBackgroundSubagentTask({
-                subagentType: "init",
-                prompt: initPrompt,
-                description: "Initializing memory",
-                silentCompletion: true,
-                onComplete: async ({ success, error }) => {
-                  const msg = await handleMemorySubagentCompletion(
-                    {
-                      agentId,
-                      subagentType: "init",
-                      initDepth: "deep",
-                      success,
-                      error,
-                    },
-                    {
-                      recompileByAgent: systemPromptRecompileByAgentRef.current,
-                      recompileQueuedByAgent:
-                        queuedSystemPromptRecompileByAgentRef.current,
-                      updateInitProgress,
-                      logRecompileFailure: (message) =>
-                        debugWarn("memory", message),
-                    },
-                  );
-                  appendTaskNotificationEvents([msg]);
-                },
-              });
-
-              // Clear pending auto-init only after spawn succeeded
-              autoInitPendingAgentIdsRef.current.delete(agentId);
-
               cmd.finish(
-                "Learning about you and your codebase in the background. You'll be notified when ready.",
+                "Starting memory initialization...",
                 true,
               );
 
-              // TODO: Remove this hack once commandRunner supports a
-              // "silent" finish that skips the reminder callback.
-              // Currently cmd.finish() always enqueues a command-IO
-              // reminder, which leaks the /init context into the
-              // primary agent's next turn and causes it to invoke the
-              // initializing-memory skill itself.
-              const reminders =
-                sharedReminderStateRef.current.pendingCommandIoReminders;
-              const idx = reminders.findIndex((r) => r.input === "/init");
-              if (idx !== -1) {
-                reminders.splice(idx, 1);
-              }
+              const intakeMessage = buildInitIntakeMessage({
+                gitContext,
+                agentId,
+                workingDirectory: process.cwd(),
+                memoryDir: getMemoryFilesystemRoot(agentId),
+              });
+
+              await processConversation([
+                {
+                  type: "message",
+                  role: "user",
+                  content: buildTextParts(intakeMessage),
+                },
+              ]);
             } catch (error) {
               const errorDetails = formatErrorDetails(error, agentId);
               cmd.fail(
                 `Failed to start memory initialization: ${errorDetails}`,
               );
+            } finally {
+              setCommandRunning(false);
             }
           } else {
             // Legacy path: primary agent processConversation

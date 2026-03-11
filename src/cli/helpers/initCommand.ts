@@ -168,6 +168,67 @@ export async function fireAutoInit(
   return true;
 }
 
+// ── Interactive intake ─────────────────────────────────────
+
+/** System-reminder message for the primary agent to run interactive intake. */
+export function buildInitIntakeMessage(args: {
+  gitContext: string;
+  agentId: string;
+  workingDirectory: string;
+  memoryDir: string;
+}): string {
+  return `${SYSTEM_REMINDER_OPEN}
+The user ran /init to initialize your memory for this project.
+
+Your job: ask ONE bundled question to gather context, then dispatch a background init subagent.
+
+## Step 1: Ask the user
+
+Ask a single message with these questions bundled together:
+
+1. **Identity**: Guess who they are from the git log below and ask to confirm (e.g. "Are you cpacker <charles@letta.com>?"). If you can't guess, ask their name/role.
+2. **Related repos**: Are there other repositories worth knowing about? (shared libraries, backend, docs, etc.)
+3. **Workflow rules**: Any rules you should always follow? (e.g. "always use conventional commits", "never push to main")
+4. **Research depth**: Standard (~20 tool calls, quick scan) or Deep (~100+ tool calls, thorough exploration of git history, architecture, code patterns)?
+
+Keep it conversational and short. Pre-fill what you can infer from git context.
+
+## Step 2: Dispatch background subagent
+
+After the user answers, acknowledge their answers briefly, then use the **Task** tool to dispatch the init subagent:
+
+\`\`\`
+Task({
+  subagent_type: "init",
+  run_in_background: true,
+  description: "Initializing memory",
+  prompt: "<see below>"
+})
+\`\`\`
+
+The Task prompt MUST include:
+- All of the user's answers (identity, repos, rules, preferences)
+- Research depth choice (standard or deep)
+- The runtime context below (copy it verbatim into the prompt)
+
+### Runtime context (include in Task prompt)
+
+- parent_agent_id: ${args.agentId}
+- working_directory: ${args.workingDirectory}
+- memory_dir: ${args.memoryDir}
+
+${args.gitContext}
+
+## Rules
+
+- Do NOT invoke the \`initializing-memory\` skill yourself
+- Do NOT do deep project research yourself — that's the subagent's job
+- Do NOT read project files beyond what's needed to answer the user
+- If the user says "skip" or "just do it", dispatch immediately with reasonable defaults
+- The Task prompt should be self-contained — the subagent has no access to this conversation
+${SYSTEM_REMINDER_CLOSE}`;
+}
+
 /** Message for the primary agent via processConversation (legacy non-MemFS path). */
 export function buildLegacyInitMessage(args: {
   gitContext: string;

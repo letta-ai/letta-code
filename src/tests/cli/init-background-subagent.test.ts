@@ -27,21 +27,16 @@ describe("init background subagent wiring", () => {
     expect(approvalIdx).toBeLessThan(memfsBranchIdx);
   });
 
-  test("App.tsx branches on MemFS: background subagent vs legacy processConversation", () => {
+  test("App.tsx branches on MemFS: interactive intake vs legacy processConversation", () => {
     const appSource = readSource("../../cli/App.tsx");
 
-    // MemFS path — background subagent
+    // MemFS path — interactive intake via processConversation
     expect(appSource).toContain("hasActiveInitSubagent()");
-    expect(appSource).toContain("buildMemoryInitRuntimePrompt({");
-    expect(appSource).toContain("spawnBackgroundSubagentTask({");
-    expect(appSource).toContain('subagentType: "init"');
-    expect(appSource).toContain("silentCompletion: true");
-    expect(appSource).toContain("appendTaskNotificationEvents(");
-    expect(appSource).toContain("Learning about you and your codebase");
+    expect(appSource).toContain("buildInitIntakeMessage({");
+    expect(appSource).toContain("processConversation(");
 
     // Legacy non-MemFS path — primary agent
     expect(appSource).toContain("buildLegacyInitMessage({");
-    expect(appSource).toContain("processConversation(");
   });
 
   test("initCommand.ts exports all helpers", () => {
@@ -52,6 +47,7 @@ describe("init background subagent wiring", () => {
     expect(helperSource).toContain(
       "export function buildMemoryInitRuntimePrompt(",
     );
+    expect(helperSource).toContain("export function buildInitIntakeMessage(");
     expect(helperSource).toContain("export function buildLegacyInitMessage(");
   });
 
