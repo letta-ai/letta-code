@@ -3061,7 +3061,6 @@ export default function App({
             "→ **/new**       start a new conversation",
             "→ **/init**      initialize your agent's memory",
             "→ **/remember**  teach your agent",
-            "→ **/reflect**   launch a background reflection agent",
             ...(showPromptTip
               ? ["→ **/system**    upgrade to the latest default prompt"]
               : []),
@@ -3073,7 +3072,6 @@ export default function App({
               "→ **/memory**    view your agent's memory",
               "→ **/init**      initialize your agent's memory",
               "→ **/remember**  teach your agent",
-              "→ **/reflect**   launch a background reflection agent",
               ...(showPromptTip
                 ? ["→ **/system**    upgrade to the latest default prompt"]
                 : []),
@@ -3084,7 +3082,6 @@ export default function App({
               "→ **/pin**       save + name your agent",
               "→ **/init**      initialize your agent's memory",
               "→ **/remember**  teach your agent",
-              "→ **/reflect**   launch a background reflection agent",
               ...(showPromptTip
                 ? ["→ **/system**    upgrade to the latest default prompt"]
                 : []),
@@ -12923,7 +12920,6 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
             "→ **/memory**    view your agent's memory",
             "→ **/init**      initialize your agent's memory",
             "→ **/remember**  teach your agent",
-            "→ **/reflect**   launch a background reflection agent",
             ...(showPromptTip
               ? ["→ **/system**    upgrade to the latest default prompt"]
               : []),
@@ -12934,7 +12930,6 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
             "→ **/pin**       save + name your agent",
             "→ **/init**      initialize your agent's memory",
             "→ **/remember**  teach your agent",
-            "→ **/reflect**   launch a background reflection agent",
             ...(showPromptTip
               ? ["→ **/system**    upgrade to the latest default prompt"]
               : []),
