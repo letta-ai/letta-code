@@ -1701,10 +1701,12 @@ export default function App({
   const initProgressByAgentRef = useRef(
     new Map<string, { shallowCompleted: boolean; deepFired: boolean }>(),
   );
-  const systemPromptRecompileByAgentRef = useRef(
+  const systemPromptRecompileByConversationRef = useRef(
     new Map<string, Promise<void>>(),
   );
-  const queuedSystemPromptRecompileByAgentRef = useRef(new Set<string>());
+  const queuedSystemPromptRecompileByConversationRef = useRef(
+    new Set<string>(),
+  );
   const updateInitProgress = (
     forAgentId: string,
     update: Partial<{ shallowCompleted: boolean; deepFired: boolean }>,
@@ -9289,15 +9291,17 @@ export default function App({
                   const msg = await handleMemorySubagentCompletion(
                     {
                       agentId,
+                      conversationId: conversationIdRef.current,
                       subagentType: "init",
                       initDepth: "deep",
                       success,
                       error,
                     },
                     {
-                      recompileByAgent: systemPromptRecompileByAgentRef.current,
-                      recompileQueuedByAgent:
-                        queuedSystemPromptRecompileByAgentRef.current,
+                      recompileByConversation:
+                        systemPromptRecompileByConversationRef.current,
+                      recompileQueuedByConversation:
+                        queuedSystemPromptRecompileByConversationRef.current,
                       updateInitProgress,
                       logRecompileFailure: (message) =>
                         debugWarn("memory", message),
@@ -9476,15 +9480,17 @@ export default function App({
               const msg = await handleMemorySubagentCompletion(
                 {
                   agentId,
+                  conversationId: conversationIdRef.current,
                   subagentType: "init",
                   initDepth: "shallow",
                   success,
                   error,
                 },
                 {
-                  recompileByAgent: systemPromptRecompileByAgentRef.current,
-                  recompileQueuedByAgent:
-                    queuedSystemPromptRecompileByAgentRef.current,
+                  recompileByConversation:
+                    systemPromptRecompileByConversationRef.current,
+                  recompileQueuedByConversation:
+                    queuedSystemPromptRecompileByConversationRef.current,
                   updateInitProgress,
                   logRecompileFailure: (message) =>
                     debugWarn("memory", message),
@@ -9605,14 +9611,16 @@ ${SYSTEM_REMINDER_CLOSE}
               const msg = await handleMemorySubagentCompletion(
                 {
                   agentId,
+                  conversationId: conversationIdRef.current,
                   subagentType: "reflection",
                   success,
                   error,
                 },
                 {
-                  recompileByAgent: systemPromptRecompileByAgentRef.current,
-                  recompileQueuedByAgent:
-                    queuedSystemPromptRecompileByAgentRef.current,
+                  recompileByConversation:
+                    systemPromptRecompileByConversationRef.current,
+                  recompileQueuedByConversation:
+                    queuedSystemPromptRecompileByConversationRef.current,
                   updateInitProgress,
                   logRecompileFailure: (message) =>
                     debugWarn("memory", message),
@@ -9660,15 +9668,17 @@ ${SYSTEM_REMINDER_CLOSE}
               const msg = await handleMemorySubagentCompletion(
                 {
                   agentId,
+                  conversationId: conversationIdRef.current,
                   subagentType: "init",
                   initDepth: "deep",
                   success,
                   error,
                 },
                 {
-                  recompileByAgent: systemPromptRecompileByAgentRef.current,
-                  recompileQueuedByAgent:
-                    queuedSystemPromptRecompileByAgentRef.current,
+                  recompileByConversation:
+                    systemPromptRecompileByConversationRef.current,
+                  recompileQueuedByConversation:
+                    queuedSystemPromptRecompileByConversationRef.current,
                   updateInitProgress,
                   logRecompileFailure: (message) =>
                     debugWarn("memory", message),
