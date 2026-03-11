@@ -560,9 +560,7 @@ async function handleListFoldersInDirectory(
         hasMore: false,
         success: false,
         error:
-          error instanceof Error
-            ? error.message
-            : "Failed to list folders",
+          error instanceof Error ? error.message : "Failed to list folders",
       },
       runtime,
     );
