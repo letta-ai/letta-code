@@ -257,7 +257,7 @@ import {
   appendTranscriptDeltaJsonl,
   buildAutoReflectionPayload,
   buildReflectionSubagentPrompt,
-  buildRememberPayload,
+  buildRememberPayloadFromLines,
   finalizeAutoReflectionPayload,
   finalizeRememberPayload,
 } from "./helpers/reflectionTranscript";
@@ -9251,28 +9251,17 @@ export default function App({
 
             try {
               const rememberConversationId = conversationIdRef.current;
-              let rememberPayload = await buildRememberPayload(
+              const currentLines = toLines(buffersRef.current);
+              const rememberPayload = await buildRememberPayloadFromLines(
                 agentId,
                 rememberConversationId,
+                currentLines,
               );
 
-              // If the JSON transcript hasn't been seeded yet (e.g. immediate /remember
-              // after resume), hydrate once from current visible transcript.
               if (!rememberPayload) {
-                const currentLines = toLines(buffersRef.current);
-                await appendTranscriptDeltaJsonl(
-                  agentId,
-                  rememberConversationId,
-                  currentLines,
+                cmd.fail(
+                  "No rendered transcript content available to remember yet.",
                 );
-                rememberPayload = await buildRememberPayload(
-                  agentId,
-                  rememberConversationId,
-                );
-              }
-
-              if (!rememberPayload) {
-                cmd.fail("No transcript content available to remember yet.");
                 return { submitted: true };
               }
 

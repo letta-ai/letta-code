@@ -348,6 +348,32 @@ export async function finalizeAutoReflectionPayload(
   await archivePayload(paths, payloadPath, success);
 }
 
+export async function buildRememberPayloadFromLines(
+  agentId: string,
+  conversationId: string,
+  lines: Line[],
+): Promise<RememberPayload | null> {
+  const paths = getReflectionTranscriptPaths(agentId, conversationId);
+  await ensurePaths(paths);
+
+  const capturedAt = new Date().toISOString();
+  const entries = lines
+    .map((line) => lineToTranscriptEntry(line, capturedAt))
+    .filter((entry): entry is TranscriptEntry => entry !== null);
+  if (entries.length === 0) {
+    return null;
+  }
+
+  const transcript = formatTaggedTranscript(entries);
+  if (!transcript) {
+    return null;
+  }
+
+  const payloadPath = buildPayloadPath(paths, "remember");
+  await writeFile(payloadPath, transcript, "utf-8");
+  return { payloadPath };
+}
+
 export async function buildRememberPayload(
   agentId: string,
   conversationId: string,
