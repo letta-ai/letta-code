@@ -28,8 +28,49 @@ function countLines(str: string): number {
   return str.split("\n").length;
 }
 
-// Render a single diff line with Codex-style full-line background and dimmed deletes.
-// Trailing spaces pad the background to the right terminal edge.
+// A styled text chunk with optional color/dim for row-splitting.
+type StyledChunk = { text: string; color?: string; dimColor?: boolean };
+
+// Split styled chunks into rows of exactly `cols` characters, padding the last row.
+// Continuation rows start with a blank indent of `contIndent` characters
+// (matching Codex's empty-gutter + 2-space continuation, diff_render.rs:922-929).
+function buildPaddedRows(
+  chunks: StyledChunk[],
+  cols: number,
+  contIndent: number,
+): StyledChunk[][] {
+  if (cols <= 0) return [chunks];
+  const rows: StyledChunk[][] = [];
+  let row: StyledChunk[] = [];
+  let len = 0;
+  for (const chunk of chunks) {
+    let rem = chunk.text;
+    while (rem.length > 0) {
+      const space = cols - len;
+      if (rem.length <= space) {
+        row.push({ text: rem, color: chunk.color, dimColor: chunk.dimColor });
+        len += rem.length;
+        rem = "";
+      } else {
+        row.push({
+          text: rem.slice(0, space),
+          color: chunk.color,
+          dimColor: chunk.dimColor,
+        });
+        rows.push(row);
+        // Start continuation row with blank gutter indent
+        row = [{ text: " ".repeat(contIndent) }];
+        len = contIndent;
+        rem = rem.slice(space);
+      }
+    }
+  }
+  if (len < cols) row.push({ text: " ".repeat(cols - len) });
+  if (row.length > 0) rows.push(row);
+  return rows;
+}
+
+// Render a single diff line split into full-width rows.
 interface DiffLineProps {
   lineNumber: number;
   type: "add" | "remove";
@@ -47,42 +88,45 @@ function DiffLine({
   showLineNumbers = true,
   columns,
 }: DiffLineProps) {
-  const prefix = type === "add" ? "+" : "-";
   const symbolColor =
     type === "add" ? colors.diff.symbolAdd : colors.diff.symbolRemove;
   const lineBg =
     type === "add" ? colors.diff.addedLineBg : colors.diff.removedLineBg;
+  const prefix = type === "add" ? "+" : "-";
 
-  // Left indent (tool-result gutter) is inside the bg so color is edge-to-edge.
+  // Build styled chunks for the full line.
   const indent = "    ";
+  const numStr = showLineNumbers ? `${lineNumber} ` : "";
+  const chunks: StyledChunk[] = [{ text: indent }];
+  if (showLineNumbers) chunks.push({ text: numStr, dimColor: true });
+  chunks.push({ text: prefix, color: symbolColor });
+  chunks.push({ text: "  " }); // gap after sign
+  if (syntaxSpans && syntaxSpans.length > 0) {
+    for (const span of syntaxSpans) {
+      chunks.push({ text: span.text, color: span.color });
+    }
+  } else {
+    chunks.push({ text: content });
+  }
 
-  // Compute visible character count so we can pad to fill the terminal width.
-  const numPrefix = showLineNumbers ? `${lineNumber} ` : "";
-  const signAndGap = `${prefix}  `; // sign + 2 spaces
-  const textLen =
-    syntaxSpans?.reduce((sum, s) => sum + s.text.length, 0) ?? content.length;
-  const visibleLen =
-    indent.length + numPrefix.length + signAndGap.length + textLen;
-  const trailingPad = Math.max(0, columns - visibleLen);
+  // Continuation indent = indent + lineNum + sign + gap (blank, same width)
+  const contIndent = indent.length + numStr.length + 1 + 2;
+  const rows = buildPaddedRows(chunks, columns, contIndent);
 
   return (
-    <Text backgroundColor={lineBg} dimColor={type === "remove"}>
-      {indent}
-      {showLineNumbers ? <Text dimColor>{lineNumber} </Text> : null}
-      <Text color={symbolColor}>{prefix}</Text>
-      {"  "}
-      {syntaxSpans && syntaxSpans.length > 0
-        ? syntaxSpans.map((span, i) => (
-            <Text
-              key={`${i}:${span.color}:${span.text.substring(0, 12)}`}
-              color={span.color}
-            >
-              {span.text}
+    <>
+      {rows.map((row, ri) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: rows are static, never reorder
+        <Text key={ri} backgroundColor={lineBg} dimColor={type === "remove"}>
+          {row.map((c, ci) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: chunks are static
+            <Text key={ci} color={c.color} dimColor={c.dimColor}>
+              {c.text}
             </Text>
-          ))
-        : content}
-      {trailingPad > 0 ? " ".repeat(trailingPad) : null}
-    </Text>
+          ))}
+        </Text>
+      ))}
+    </>
   );
 }
 
