@@ -1,5 +1,13 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { setAgentContext, setConversationId } from "../../agent/context";
+import {
+  appendTranscriptDeltaJsonl,
+  getReflectionTranscriptPaths,
+} from "../../cli/helpers/reflectionTranscript";
 import type { SubagentState } from "../../cli/helpers/subagentState";
 import {
   clearAllSubagents,
@@ -8,6 +16,7 @@ import {
 } from "../../cli/helpers/subagentState";
 import { backgroundTasks } from "../../tools/impl/process_manager";
 import {
+  resolveReflectionTaskPrompt,
   spawnBackgroundSubagentTask,
   waitForBackgroundSubagentLink,
 } from "../../tools/impl/Task";
@@ -312,6 +321,89 @@ describe("spawnBackgroundSubagentTask", () => {
 
     const outputContent = readFileSync(launched.outputFile, "utf-8");
     expect(outputContent).toContain("[error] subagent exploded");
+  });
+});
+
+describe("resolveReflectionTaskPrompt", () => {
+  let testRoot: string;
+
+  beforeEach(async () => {
+    testRoot = await mkdtemp(join(tmpdir(), "letta-reflection-task-test-"));
+    process.env.LETTA_REFLECTION_TMP_ROOT = testRoot;
+    setAgentContext("agent-reflection-task-test");
+    setConversationId("conv-reflection-task-test");
+  });
+
+  afterEach(async () => {
+    delete process.env.LETTA_REFLECTION_TMP_ROOT;
+    await rm(testRoot, { recursive: true, force: true });
+    setConversationId(null);
+  });
+
+  test("upgrades reflection task prompt to canonical transcript-based prompt", async () => {
+    await appendTranscriptDeltaJsonl(
+      "agent-reflection-task-test",
+      "conv-reflection-task-test",
+      [{ kind: "user", id: "u1", text: "remember db schema" }],
+    );
+
+    const resolved = await resolveReflectionTaskPrompt(
+      "reflection",
+      "Use the standard reflection prompt for this conversation.",
+    );
+
+    expect(resolved.prompt).toContain(
+      "Review the conversation transcript and update memory files.",
+    );
+    expect(resolved.prompt).toContain(
+      "The current conversation transcript has been saved to:",
+    );
+    expect(resolved.prompt).toContain(
+      "The primary agent's memory filesystem is located at:",
+    );
+    expect(resolved.finalizeContext).not.toBeNull();
+  });
+
+  test("keeps caller prompt when no transcript payload is available", async () => {
+    const fallbackPrompt = "caller provided prompt";
+    const resolved = await resolveReflectionTaskPrompt(
+      "reflection",
+      fallbackPrompt,
+    );
+
+    expect(resolved.prompt).toBe(fallbackPrompt);
+    expect(resolved.finalizeContext).toBeNull();
+  });
+
+  test("does not rewrite non-reflection prompts", async () => {
+    const prompt = "analyze this codebase";
+    const resolved = await resolveReflectionTaskPrompt("explore", prompt);
+
+    expect(resolved.prompt).toBe(prompt);
+    expect(resolved.finalizeContext).toBeNull();
+  });
+
+  test("finalize context points at known transcript root", async () => {
+    await appendTranscriptDeltaJsonl(
+      "agent-reflection-task-test",
+      "conv-reflection-task-test",
+      [{ kind: "assistant", id: "a1", text: "done", phase: "finished" }],
+    );
+
+    const resolved = await resolveReflectionTaskPrompt(
+      "reflection",
+      "fallback",
+    );
+    expect(resolved.finalizeContext).not.toBeNull();
+    if (!resolved.finalizeContext) return;
+
+    const paths = getReflectionTranscriptPaths(
+      "agent-reflection-task-test",
+      "conv-reflection-task-test",
+    );
+    expect(
+      resolved.finalizeContext.payloadPath.startsWith(paths.payloadsDir),
+    ).toBe(true);
   });
 });
 

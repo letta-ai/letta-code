@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { isOpenAIModel } from "../../tools/manager";
 import { deriveToolsetFromModel } from "../../tools/toolset";
 
@@ -27,5 +29,17 @@ describe("isOpenAIModel", () => {
 describe("deriveToolsetFromModel", () => {
   test("maps chatgpt_oauth handles to codex toolset", () => {
     expect(deriveToolsetFromModel("chatgpt_oauth/gpt-5.3-codex")).toBe("codex");
+  });
+});
+
+describe("toolset initialization safety", () => {
+  test("avoids top-level toolset aliases that can trigger circular-import TDZ", () => {
+    const toolsetPath = fileURLToPath(
+      new URL("../../tools/toolset.ts", import.meta.url),
+    );
+    const source = readFileSync(toolsetPath, "utf-8");
+
+    expect(source).not.toContain("const CODEX_TOOLS = OPENAI_PASCAL_TOOLS");
+    expect(source).toContain("loadSpecificTools([...OPENAI_PASCAL_TOOLS])");
   });
 });

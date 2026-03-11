@@ -14,9 +14,8 @@ import {
 } from "./manager";
 
 // Toolset definitions from manager.ts (single source of truth)
-const CODEX_TOOLS = OPENAI_PASCAL_TOOLS;
-const CODEX_SNAKE_TOOLS = OPENAI_DEFAULT_TOOLS;
-const GEMINI_TOOLS = GEMINI_PASCAL_TOOLS;
+// Keep these as direct references at call-sites (not top-level aliases) to avoid
+// temporal-dead-zone issues under circular import initialization.
 
 // Server-side memory tool names that can mutate memory blocks.
 // When memfs is enabled, we detach ALL of these from the agent.
@@ -240,13 +239,13 @@ export async function forceToolsetSwitch(
     clearToolsWithLock();
     return;
   } else if (toolsetName === "codex") {
-    await loadSpecificTools([...CODEX_TOOLS]);
+    await loadSpecificTools([...OPENAI_PASCAL_TOOLS]);
     modelForLoading = "openai/gpt-4";
   } else if (toolsetName === "codex_snake") {
-    await loadSpecificTools([...CODEX_SNAKE_TOOLS]);
+    await loadSpecificTools([...OPENAI_DEFAULT_TOOLS]);
     modelForLoading = "openai/gpt-4";
   } else if (toolsetName === "gemini") {
-    await loadSpecificTools([...GEMINI_TOOLS]);
+    await loadSpecificTools([...GEMINI_PASCAL_TOOLS]);
     modelForLoading = "google_ai/gemini-3-pro-preview";
   } else if (toolsetName === "gemini_snake") {
     await loadTools("google_ai/gemini-3-pro-preview");

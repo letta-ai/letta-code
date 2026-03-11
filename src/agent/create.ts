@@ -23,6 +23,7 @@ import {
   isKnownPreset,
   type MemoryPromptMode,
   resolveAndBuildSystemPrompt,
+  resolveSystemPrompt,
   swapMemoryAddon,
 } from "./promptAssets";
 import { SLEEPTIME_MEMORY_PERSONA } from "./prompts/sleeptime";
@@ -357,9 +358,14 @@ export async function createAgent(
 
   // Resolve system prompt content
   const memMode: MemoryPromptMode = options.memoryPromptMode ?? "standard";
-  const systemPromptContent = options.systemPromptCustom
-    ? swapMemoryAddon(options.systemPromptCustom, memMode)
-    : await resolveAndBuildSystemPrompt(options.systemPromptPreset, memMode);
+  const disableManagedMemoryPrompt =
+    Array.isArray(options.initBlocks) && options.initBlocks.length === 0;
+  const systemPromptContent = disableManagedMemoryPrompt
+    ? (options.systemPromptCustom ??
+      (await resolveSystemPrompt(options.systemPromptPreset)))
+    : options.systemPromptCustom
+      ? swapMemoryAddon(options.systemPromptCustom, memMode)
+      : await resolveAndBuildSystemPrompt(options.systemPromptPreset, memMode);
 
   // Create agent with inline memory blocks (LET-7101: single API call instead of N+1)
   // - memory_blocks: new blocks to create inline

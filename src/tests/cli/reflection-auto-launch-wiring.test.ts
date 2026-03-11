@@ -15,6 +15,9 @@ describe("reflection auto-launch wiring", () => {
 
     expect(appSource).toContain("const maybeLaunchReflectionSubagent = async");
     expect(appSource).toContain("hasActiveReflectionSubagent()");
+    expect(appSource).toContain("buildAutoReflectionPayload(");
+    expect(appSource).toContain("finalizeAutoReflectionPayload(");
+    expect(appSource).toContain("buildRememberPayload(");
     expect(appSource).toContain("spawnBackgroundSubagentTask({");
     expect(appSource).toContain("maybeLaunchReflectionSubagent,");
 
@@ -24,5 +27,26 @@ describe("reflection auto-launch wiring", () => {
     expect(engineSource).toContain(
       'await context.maybeLaunchReflectionSubagent("compaction-event")',
     );
+  });
+
+  test("/remember wiring forwards user text through shared reflection prompt builder and hydrates transcript", () => {
+    const appPath = fileURLToPath(
+      new URL("../../cli/App.tsx", import.meta.url),
+    );
+    const helperPath = fileURLToPath(
+      new URL("../../cli/helpers/reflectionTranscript.ts", import.meta.url),
+    );
+    const appSource = readFileSync(appPath, "utf-8");
+    const helperSource = readFileSync(helperPath, "utf-8");
+
+    expect(appSource).toContain("buildReflectionSubagentPrompt({");
+    expect(appSource).toContain("rememberUserText: userText || undefined");
+    expect(appSource).toContain("if (!rememberPayload)");
+    expect(appSource).toContain(
+      "const currentLines = toLines(buffersRef.current);",
+    );
+    expect(appSource).toContain("await appendTranscriptDeltaJsonl(");
+
+    expect(helperSource).toContain("The user specifically asked to remember");
   });
 });

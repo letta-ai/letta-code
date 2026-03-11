@@ -5,6 +5,7 @@
  * Supports both built-in subagent types and custom subagents defined in .letta/agents/.
  */
 
+import { getConversationId, getCurrentAgentId } from "../../agent/context";
 import {
   clearSubagentConfigCache,
   discoverSubagents,
@@ -56,6 +57,99 @@ type TaskRunResult = {
   error?: string;
   totalTokens?: number;
 };
+
+type ReflectionTaskFinalizeContext = {
+  agentId: string;
+  conversationId: string;
+  payloadPath: string;
+  endSnapshotLine: number;
+};
+
+type ReflectionTaskPromptResolution = {
+  prompt: string;
+  finalizeContext: ReflectionTaskFinalizeContext | null;
+};
+
+export async function resolveReflectionTaskPrompt(
+  subagentType: string,
+  prompt: string,
+): Promise<ReflectionTaskPromptResolution> {
+  if (subagentType !== "reflection") {
+    return { prompt, finalizeContext: null };
+  }
+
+  let agentId: string;
+  try {
+    agentId = getCurrentAgentId();
+  } catch {
+    return { prompt, finalizeContext: null };
+  }
+
+  const conversationId = getConversationId();
+  if (!conversationId) {
+    return { prompt, finalizeContext: null };
+  }
+
+  try {
+    const [{ getMemoryFilesystemRoot }, reflectionTranscript] =
+      await Promise.all([
+        import("../../agent/memoryFilesystem"),
+        import("../../cli/helpers/reflectionTranscript"),
+      ]);
+
+    const autoPayload = await reflectionTranscript.buildAutoReflectionPayload(
+      agentId,
+      conversationId,
+    );
+    if (!autoPayload) {
+      return { prompt, finalizeContext: null };
+    }
+
+    const memoryDir = getMemoryFilesystemRoot(agentId);
+    const reflectionPrompt = reflectionTranscript.buildReflectionSubagentPrompt(
+      {
+        transcriptPath: autoPayload.payloadPath,
+        memoryDir,
+      },
+    );
+
+    return {
+      prompt: reflectionPrompt,
+      finalizeContext: {
+        agentId,
+        conversationId,
+        payloadPath: autoPayload.payloadPath,
+        endSnapshotLine: autoPayload.endSnapshotLine,
+      },
+    };
+  } catch {
+    return { prompt, finalizeContext: null };
+  }
+}
+
+async function finalizeReflectionTaskPrompt(
+  context: ReflectionTaskFinalizeContext | null,
+  success: boolean,
+): Promise<void> {
+  if (!context) {
+    return;
+  }
+
+  try {
+    const { finalizeAutoReflectionPayload } = await import(
+      "../../cli/helpers/reflectionTranscript"
+    );
+    await finalizeAutoReflectionPayload(
+      context.agentId,
+      context.conversationId,
+      context.payloadPath,
+      context.endSnapshotLine,
+      success,
+    );
+  } catch {
+    // Best-effort finalize only.
+  }
+}
 
 export interface SpawnBackgroundSubagentTaskArgs {
   subagentType: string;
@@ -446,7 +540,7 @@ export async function task(args: TaskArgs): Promise<string> {
   }
 
   // Extract validated params
-  const prompt = args.prompt as string;
+  const inputPrompt = args.prompt as string;
   const description = args.description as string;
 
   // For existing agents, default subagent_type to "general-purpose" for permissions
@@ -468,6 +562,12 @@ export async function task(args: TaskArgs): Promise<string> {
     return `Error: When deploying an existing agent, subagent_type must be "explore" (read-only) or "general-purpose" (read-write). Got: "${subagent_type}"`;
   }
 
+  const reflectionPromptResolution = await resolveReflectionTaskPrompt(
+    subagent_type,
+    inputPrompt,
+  );
+  const prompt = reflectionPromptResolution.prompt;
+
   const isBackground = args.run_in_background ?? false;
 
   // Handle background execution
@@ -481,6 +581,12 @@ export async function task(args: TaskArgs): Promise<string> {
       existingAgentId: args.agent_id,
       existingConversationId: args.conversation_id,
       maxTurns: args.max_turns,
+      onComplete: async ({ success }) => {
+        await finalizeReflectionTaskPrompt(
+          reflectionPromptResolution.finalizeContext,
+          success,
+        );
+      },
     });
 
     await waitForBackgroundSubagentLink(subagentId, null, signal);
@@ -515,6 +621,11 @@ export async function task(args: TaskArgs): Promise<string> {
       args.agent_id,
       args.conversation_id,
       args.max_turns,
+    );
+
+    await finalizeReflectionTaskPrompt(
+      reflectionPromptResolution.finalizeContext,
+      result.success,
     );
 
     // Mark subagent as completed in state store
@@ -565,6 +676,11 @@ export async function task(args: TaskArgs): Promise<string> {
 
     return `${truncatedOutput}\nOutput file: ${outputFile}`;
   } catch (error) {
+    await finalizeReflectionTaskPrompt(
+      reflectionPromptResolution.finalizeContext,
+      false,
+    );
+
     const errorMessage = error instanceof Error ? error.message : String(error);
     completeSubagent(subagentId, { success: false, error: errorMessage });
 

@@ -196,7 +196,6 @@ import {
   onChunk,
   setToolCallsRunning,
   toLines,
-  linesToTranscript,
 } from "./helpers/accumulator";
 import { classifyApprovals } from "./helpers/approvalClassification";
 import { buildChatUrl } from "./helpers/appUrls";
@@ -254,6 +253,14 @@ import {
   toQueuedMsg,
 } from "./helpers/queuedMessageParts";
 import { resolveReasoningTabToggleCommand } from "./helpers/reasoningTabToggle";
+import {
+  appendTranscriptDeltaJsonl,
+  buildAutoReflectionPayload,
+  buildReflectionSubagentPrompt,
+  buildRememberPayload,
+  finalizeAutoReflectionPayload,
+  finalizeRememberPayload,
+} from "./helpers/reflectionTranscript";
 import { safeJsonParseOr } from "./helpers/safeJsonParse";
 import { getDeviceType, getLocalTime } from "./helpers/sessionContext";
 import {
@@ -846,8 +853,6 @@ function formatReflectionSettings(settings: ReflectionSettings): string {
 }
 
 const AUTO_REFLECTION_DESCRIPTION = "Reflect on recent conversations";
-const AUTO_REFLECTION_PROMPT =
-  "Review recent conversation history and update memory files with important information worth preserving.";
 
 function hasActiveReflectionSubagent(): boolean {
   const snapshot = getSubagentSnapshot();
@@ -991,6 +996,10 @@ export default function App({
   useEffect(() => {
     conversationIdRef.current = conversationId;
   }, [conversationId]);
+
+  // Tracks the transcript start index for the current user turn across
+  // approval continuations (requires_approval -> approval result round-trip).
+  const pendingTranscriptStartLineIndexRef = useRef<number | null>(null);
 
   // Track the most recent run ID from streaming (for statusline display)
   const lastRunIdRef = useRef<string | null>(null);
@@ -3658,7 +3667,11 @@ export default function App({
   const processConversation = useCallback(
     async (
       initialInput: Array<MessageCreate | ApprovalCreate>,
-      options?: { allowReentry?: boolean; submissionGeneration?: number },
+      options?: {
+        allowReentry?: boolean;
+        submissionGeneration?: number;
+        transcriptStartLineIndex?: number | null;
+      },
     ): Promise<void> => {
       // Transient pre-stream retries can yield for seconds.
       // Pin the user's permission mode for the duration of the submission so
@@ -3803,6 +3816,21 @@ export default function App({
       // Copy so we can safely mutate for retry recovery flows
       let currentInput = [...initialInput];
       const allowReentry = options?.allowReentry ?? false;
+      const hasApprovalInput = initialInput.some(
+        (item) => item.type === "approval",
+      );
+      const hasExplicitTranscriptStart =
+        options?.transcriptStartLineIndex !== undefined;
+      if (options?.transcriptStartLineIndex !== undefined) {
+        pendingTranscriptStartLineIndexRef.current =
+          options.transcriptStartLineIndex;
+      } else if (!hasApprovalInput) {
+        pendingTranscriptStartLineIndexRef.current = null;
+      }
+      const transcriptTurnStartLineIndex =
+        hasExplicitTranscriptStart || hasApprovalInput
+          ? pendingTranscriptStartLineIndexRef.current
+          : null;
 
       // Use provided generation (from onSubmit) or capture current
       // This allows detecting if ESC was pressed during async work before this function was called
@@ -3833,6 +3861,7 @@ export default function App({
 
       // Track last run ID for error reporting (accessible in catch block)
       let currentRunId: string | undefined;
+      let preserveTranscriptStartForApproval = false;
 
       try {
         // Check if user hit escape before we started
@@ -4469,6 +4498,29 @@ export default function App({
             lastSentInputRef.current = null; // Clear - no recovery needed
             pendingInterruptRecoveryConversationIdRef.current = null;
 
+            if (transcriptTurnStartLineIndex !== null) {
+              try {
+                const transcriptLines = toLines(buffersRef.current).slice(
+                  transcriptTurnStartLineIndex,
+                );
+                await appendTranscriptDeltaJsonl(
+                  agentIdRef.current,
+                  conversationIdRef.current,
+                  transcriptLines,
+                );
+              } catch (transcriptError) {
+                debugWarn(
+                  "memory",
+                  `Failed to append transcript delta: ${
+                    transcriptError instanceof Error
+                      ? transcriptError.message
+                      : String(transcriptError)
+                  }`,
+                );
+              }
+            }
+            pendingTranscriptStartLineIndexRef.current = null;
+
             // Get last assistant message, user message, and reasoning for Stop hook
             const lastAssistant = Array.from(
               buffersRef.current.byId.values(),
@@ -4629,6 +4681,7 @@ export default function App({
           // Case 1.5: Stream was cancelled by user
           if (stopReasonToHandle === "cancelled") {
             clearApprovalToolContext();
+            pendingTranscriptStartLineIndexRef.current = null;
             setStreaming(false);
             closeTrajectorySegment();
             syncTrajectoryElapsedBase();
@@ -4679,6 +4732,7 @@ export default function App({
           // Case 2: Requires approval
           if (stopReasonToHandle === "requires_approval") {
             clearApprovalToolContext();
+            preserveTranscriptStartForApproval = true;
             approvalToolContextIdRef.current = turnToolContextId;
             // Clear stale state immediately to prevent ID mismatch bugs
             setAutoHandledResults([]);
@@ -5657,6 +5711,10 @@ export default function App({
         refreshDerived();
         resetTrajectoryBases();
       } finally {
+        if (!preserveTranscriptStartForApproval) {
+          pendingTranscriptStartLineIndexRef.current = null;
+        }
+
         // Check if this conversation was superseded by an ESC interrupt
         const isStale = myGeneration !== conversationGenerationRef.current;
 
@@ -9192,27 +9250,39 @@ export default function App({
             }
 
             try {
-              // Build transcript from current display lines and write to temp file
-              const currentLines = toLines(buffersRef.current);
-              const transcript = linesToTranscript(currentLines);
+              const rememberConversationId = conversationIdRef.current;
+              let rememberPayload = await buildRememberPayload(
+                agentId,
+                rememberConversationId,
+              );
 
-              let transcriptInstruction = "";
-              let transcriptPath = "";
-              if (transcript) {
-                transcriptPath = join(
-                  tmpdir(),
-                  `letta-remember-${Date.now()}.txt`,
+              // If the JSON transcript hasn't been seeded yet (e.g. immediate /remember
+              // after resume), hydrate once from current visible transcript.
+              if (!rememberPayload) {
+                const currentLines = toLines(buffersRef.current);
+                await appendTranscriptDeltaJsonl(
+                  agentId,
+                  rememberConversationId,
+                  currentLines,
                 );
-                writeFileSync(transcriptPath, transcript, "utf-8");
-                transcriptInstruction = `\nThe current conversation transcript has been saved to: ${transcriptPath}`;
+                rememberPayload = await buildRememberPayload(
+                  agentId,
+                  rememberConversationId,
+                );
               }
 
-              const memoryDir = getMemoryFilesystemRoot(agentId);
-              const memoryDirNote = `\nThe primary agent's memory filesystem is located at: ${memoryDir}`;
+              if (!rememberPayload) {
+                cmd.fail("No transcript content available to remember yet.");
+                return { submitted: true };
+              }
 
-              const reflectionPrompt = userText
-                ? `Review the conversation transcript and update memory files. The user specifically asked to remember: "${userText}"${transcriptInstruction}${memoryDirNote}`
-                : `Review the conversation transcript and update memory files.${transcriptInstruction}${memoryDirNote}`;
+              const transcriptPath = rememberPayload.payloadPath;
+              const memoryDir = getMemoryFilesystemRoot(agentId);
+              const reflectionPrompt = buildReflectionSubagentPrompt({
+                transcriptPath,
+                memoryDir,
+                rememberUserText: userText || undefined,
+              });
 
               const reflectionDescription = userText
                 ? `Remembering: ${userText.slice(0, 40)}`
@@ -9227,6 +9297,13 @@ export default function App({
                 description: reflectionDescription,
                 silentCompletion: true,
                 onComplete: async ({ success, error }) => {
+                  await finalizeRememberPayload(
+                    agentId,
+                    rememberConversationId,
+                    transcriptPath,
+                    success,
+                  );
+
                   // Recompile system prompt after memory updates
                   const msg = await handleMemorySubagentCompletion(
                     {
@@ -9236,8 +9313,7 @@ export default function App({
                       error,
                     },
                     {
-                      recompileByAgent:
-                        systemPromptRecompileByAgentRef.current,
+                      recompileByAgent: systemPromptRecompileByAgentRef.current,
                       recompileQueuedByAgent:
                         queuedSystemPromptRecompileByAgentRef.current,
                       updateInitProgress,
@@ -9251,9 +9327,7 @@ export default function App({
               // Show in SubagentGroupDisplay even though completion is silent
               updateSubagent(subagentId, { silent: false });
 
-              const transcriptNote = transcriptPath
-                ? ` Transcript: ${transcriptPath}`
-                : "";
+              const transcriptNote = ` Transcript: ${transcriptPath}`;
               cmd.finish(
                 `Reflecting on conversation in the background. You'll be notified when done.${transcriptNote}`,
                 true,
@@ -9270,9 +9344,7 @@ export default function App({
               }
             } catch (error) {
               const errorDetails = formatErrorDetails(error, agentId);
-              cmd.fail(
-                `Failed to start reflection agent: ${errorDetails}`,
-              );
+              cmd.fail(`Failed to start reflection agent: ${errorDetails}`);
             }
           } else {
             // Non-MemFS fallback: inline prompt to primary agent
@@ -9613,15 +9685,42 @@ ${SYSTEM_REMINDER_CLOSE}
           return false;
         }
         try {
+          const reflectionConversationId = conversationIdRef.current;
+          const autoPayload = await buildAutoReflectionPayload(
+            agentId,
+            reflectionConversationId,
+          );
+          if (!autoPayload) {
+            debugLog(
+              "memory",
+              `Skipping auto reflection launch (${triggerSource}) because transcript has no new content`,
+            );
+            return false;
+          }
+
+          const memoryDir = getMemoryFilesystemRoot(agentId);
+          const reflectionPrompt = buildReflectionSubagentPrompt({
+            transcriptPath: autoPayload.payloadPath,
+            memoryDir,
+          });
+
           const { spawnBackgroundSubagentTask } = await import(
             "../tools/impl/Task"
           );
           spawnBackgroundSubagentTask({
             subagentType: "reflection",
-            prompt: AUTO_REFLECTION_PROMPT,
+            prompt: reflectionPrompt,
             description: AUTO_REFLECTION_DESCRIPTION,
             silentCompletion: true,
             onComplete: async ({ success, error }) => {
+              await finalizeAutoReflectionPayload(
+                agentId,
+                reflectionConversationId,
+                autoPayload.payloadPath,
+                autoPayload.endSnapshotLine,
+                success,
+              );
+
               const msg = await handleMemorySubagentCompletion(
                 {
                   agentId,
@@ -9719,6 +9818,9 @@ ${SYSTEM_REMINDER_CLOSE}
         });
         buffersRef.current.order.push(userId);
       }
+      const transcriptStartLineIndex = userTextForInput
+        ? Math.max(0, toLines(buffersRef.current).length - 1)
+        : null;
 
       // Reset token counter for this turn (only count the agent's response)
       buffersRef.current.tokenCount = 0;
@@ -10311,7 +10413,10 @@ ${SYSTEM_REMINDER_CLOSE}
         content: messageContent as unknown as MessageCreate["content"],
       });
 
-      await processConversation(initialInput, { submissionGeneration });
+      await processConversation(initialInput, {
+        submissionGeneration,
+        transcriptStartLineIndex,
+      });
 
       // Clean up placeholders after submission
       clearPlaceholdersInText(msg);
