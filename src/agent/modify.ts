@@ -156,7 +156,12 @@ function buildModelSettings(
     settings = bedrockSettings;
   } else {
     // For BYOK/unknown providers, return generic settings with parallel_tool_calls
-    settings = {};
+    settings = {
+      parallel_tool_calls:
+        typeof updateArgs?.parallel_tool_calls === "boolean"
+          ? updateArgs.parallel_tool_calls
+          : true,
+    };
   }
 
   // Apply max_output_tokens only when provider_type is present and the value
