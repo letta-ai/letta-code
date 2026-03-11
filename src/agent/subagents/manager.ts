@@ -574,7 +574,7 @@ function buildSubagentArgs(
   // Add memory block filtering if specified (only for new agents)
   if (!isDeployingExisting) {
     if (config.memoryBlocks === "none") {
-      args.push("--init-blocks", "none");
+      args.push("--init-blocks", "none", "--no-memfs");
     } else if (
       Array.isArray(config.memoryBlocks) &&
       config.memoryBlocks.length > 0

@@ -382,6 +382,8 @@ export async function updateAgentSystemPrompt(
       memoryMode,
     );
 
+    console.debug("[modify] systemPromptContent:", systemPromptContent);
+
     const updateResult = await updateAgentSystemPromptRaw(
       agentId,
       systemPromptContent,
