@@ -2,7 +2,7 @@ import { readdirSync, statSync } from "node:fs";
 import { join, resolve, relative } from "node:path";
 import { debugLog } from "../../utils/debug";
 import { addEntriesToCache, ensureFileIndex, searchFileIndex, type FileMatch } from "./fileIndex";
-import { shouldExcludeEntry } from "./fileSearchConfig";
+import { shouldHardExcludeEntry } from "./fileSearchConfig";
 
 
 export function debounce<T extends (...args: never[]) => unknown>(
@@ -32,6 +32,7 @@ function searchDirectoryRecursive(
   results: FileMatch[] = [],
   depth: number = 0,
   maxDepth: number = 10,
+  lowerPattern: string = pattern.toLowerCase(),
 ): FileMatch[] {
   if (results.length >= maxResults || depth >= maxDepth) {
     return results;
@@ -43,11 +44,9 @@ function searchDirectoryRecursive(
     for (const entry of entries) {
       try {
         const fullPath = join(dir, entry);
-        const relativePath = fullPath.startsWith(process.cwd())
-          ? fullPath.slice(process.cwd().length + 1)
-          : fullPath;
+        const relativePath = relative(process.cwd(), fullPath);
 
-        if (shouldExcludeEntry(entry, relativePath)) {
+        if (shouldHardExcludeEntry(entry)) {
           continue;
         }
 
@@ -56,7 +55,7 @@ function searchDirectoryRecursive(
         // Check if entry matches the pattern (match against full relative path for partial path support)
         const matches =
           pattern.length === 0 ||
-          relativePath.toLowerCase().includes(pattern.toLowerCase());
+          relativePath.toLowerCase().includes(lowerPattern);
 
         if (matches) {
           results.push({
@@ -78,6 +77,7 @@ function searchDirectoryRecursive(
             results,
             depth + 1,
             maxDepth,
+            lowerPattern,
           );
         }
       } catch {}
@@ -173,7 +173,7 @@ export async function searchFiles(
         // Deep search: recursively search subdirectories.
         // Use a shallower depth limit when searching outside the project directory
         // to avoid walking massive sibling directory trees.
-        const isOutsideCwd = !searchDir.startsWith(process.cwd());
+        const isOutsideCwd = normalizedSearchDir.startsWith("..");
         const maxDepth = isOutsideCwd ? 3 : 10;
         const deepResults = searchDirectoryRecursive(
           searchDir,
@@ -197,19 +197,12 @@ export async function searchFiles(
         // Filter entries matching the search pattern.
         // If pattern is empty, show all entries (for when user just types \"@\").
         // Also exclude common dependency/build directories.
-        const matchingEntries = entries
-          .filter((entry) => {
-            const fullPath = join(searchDir, entry);
-            const relPath = fullPath.startsWith(process.cwd())
-              ? fullPath.slice(process.cwd().length + 1)
-              : fullPath;
-            return !shouldExcludeEntry(entry, relPath);
-          })
-          .filter(
-            (entry) =>
-              searchPattern.length === 0 ||
-              entry.toLowerCase().includes(searchPattern.toLowerCase()),
-          );
+        const lowerPattern = searchPattern.toLowerCase();
+        const matchingEntries = entries.filter(
+          (entry) =>
+            !shouldHardExcludeEntry(entry) &&
+            (searchPattern.length === 0 || entry.toLowerCase().includes(lowerPattern)),
+        );
 
         // Get stats for each matching entry
         for (const entry of matchingEntries.slice(0, 50)) {
@@ -218,10 +211,7 @@ export async function searchFiles(
             const fullPath = join(searchDir, entry);
             const stats = statSync(fullPath);
 
-            // Make path relative to cwd if possible
-            const relativePath = fullPath.startsWith(process.cwd())
-              ? fullPath.slice(process.cwd().length + 1)
-              : fullPath;
+            const relativePath = relative(process.cwd(), fullPath);
 
             results.push({
               path: relativePath,
@@ -239,12 +229,17 @@ export async function searchFiles(
       }
     }
 
-    // Sort: directories first, then files, alphabetically within each group
-    results.sort((a, b) => {
-      if (a.type === "dir" && b.type !== "dir") return -1;
-      if (a.type !== "dir" && b.type === "dir") return 1;
-      return a.path.localeCompare(b.path);
-    });
+    // Only sort when the disk scan ran — its results come in arbitrary readdir
+    // order so we normalise to dirs-first alphabetical. When the index search
+    // succeeded the results already come out in mtime order (most recently
+    // modified first) from buildCachedEntries, so we leave that order intact.
+    if (!indexSearchSucceeded) {
+      results.sort((a, b) => {
+        if (a.type === "dir" && b.type !== "dir") return -1;
+        if (a.type !== "dir" && b.type === "dir") return 1;
+        return a.path.localeCompare(b.path);
+      });
+    }
   } catch (error) {
     // Return empty array on any error
     debugLog("file-search", "File search error: %O", error);

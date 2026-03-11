@@ -2,7 +2,7 @@ import picomatch from "picomatch";
 import { ensureLettaIgnoreFile, readLettaIgnorePatterns } from "./ignoredDirectories";
 
 /**
- * Hardcoded defaults — always excluded regardless of .lettaignore.
+ * Hardcoded defaults — always excluded from both the file index and disk scans.
  * These cover the most common build/dependency directories across ecosystems.
  * Matched case-insensitively against the entry name.
  */
@@ -57,7 +57,12 @@ const { nameMatchers, pathMatchers } = (() => {
 })();
 
 /**
- * Returns true if the given entry should be excluded from file index/search.
+ * Returns true if the given entry should be excluded from the file index.
+ * Applies both the hardcoded defaults and any .lettaignore patterns.
+ *
+ * Use this when building the index — .lettaignore controls what gets cached,
+ * not what the user can ever find. For disk scan fallback paths, use
+ * shouldHardExcludeEntry() so .lettaignore-matched files remain discoverable.
  *
  * @param name         - The entry's basename (e.g. "node_modules", ".env")
  * @param relativePath - Optional path relative to cwd (e.g. "src/generated/foo.ts").
@@ -74,4 +79,15 @@ export function shouldExcludeEntry(name: string, relativePath?: string): boolean
   if (relativePath && pathMatchers.length > 0 && pathMatchers.some((m) => m(relativePath))) return true;
 
   return false;
+}
+
+/**
+ * Returns true if the given entry should be excluded from disk scan fallbacks.
+ * Only applies the hardcoded defaults — .lettaignore patterns are intentionally
+ * skipped here so users can still find those files with an explicit @ search.
+ *
+ * @param name - The entry's basename (e.g. "node_modules", "dist")
+ */
+export function shouldHardExcludeEntry(name: string): boolean {
+  return DEFAULT_EXCLUDED.has(name.toLowerCase());
 }

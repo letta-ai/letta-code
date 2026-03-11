@@ -2,13 +2,17 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const DEFAULT_LETTAIGNORE = `\
-# .lettaignore — Letta Code file search exclusions
+# .lettaignore — Letta Code file index exclusions
 #
-# Files and directories matching these patterns are excluded from @ file search.
+# Files and directories matching these patterns are excluded from the @ file
+# search index (cache). They won't appear in autocomplete results by default,
+# but can still be found if you type their path explicitly.
+#
 # Syntax: one pattern per line, supports globs (e.g. *.log, src/generated/**)
 # Lines starting with # are comments.
 #
-# The following are always excluded and do not need to be listed here:
+# The following are always excluded (even from explicit search) and do not need
+# to be listed here:
 #   node_modules  dist  build  out  coverage  target  bower_components
 #   .git  .cache  .next  .nuxt  venv  .venv  __pycache__  .tox
 

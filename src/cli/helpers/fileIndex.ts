@@ -12,6 +12,7 @@ import { homedir } from "node:os";
 import { join, normalize, relative, sep } from "node:path";
 import { shouldExcludeEntry } from "./fileSearchConfig";
 import { debugLog } from "../../utils/debug";
+import { readIntSetting } from "../../utils/lettaSettings";
 
 interface FileIndexEntry {
   path: string;
@@ -45,7 +46,13 @@ export interface FileMatch {
 const MAX_INDEX_DEPTH = 12;
 const PROJECT_INDEX_FILENAME = "file-index.json";
 
+// Read from ~/.letta/.lettasettings (MAX_ENTRIES), falling back to 50 000.
+// The file is auto-created with comments on first run so users can find it.
+const MAX_CACHE_ENTRIES = readIntSetting("MAX_ENTRIES", 50_000);
+
 let cachedEntries: FileIndexEntry[] = [];
+// Kept in sync with cachedEntries for O(1) membership checks in addEntriesToCache.
+let cachedEntryPaths = new Set<string>();
 let buildPromise: Promise<void> | null = null;
 let hasCompletedBuild = false;
 
@@ -108,29 +115,6 @@ function lowerBound(sorted: string[], target: string): number {
   return low;
 }
 
-function findExactEntryIndex(entryPaths: string[], target: string): number {
-  let low = 0;
-  let high = entryPaths.length - 1;
-
-  while (low <= high) {
-    const mid = (low + high) >> 1;
-    const midPath = entryPaths[mid];
-
-    if (midPath === undefined) break;
-
-    if (midPath === target) {
-      return mid;
-    }
-
-    if (midPath < target) {
-      low = mid + 1;
-    } else {
-      high = mid - 1;
-    }
-  }
-
-  return -1;
-}
 
 function findPrefixRange(sorted: string[], prefix: string): [number, number] {
   const start = lowerBound(sorted, prefix);
@@ -165,18 +149,13 @@ function appendSubtreeEntries(
   path: string,
 ): void {
   if (path === "") {
-    targetEntries.push(...previous.entries);
+    for (const e of previous.entries) targetEntries.push(e);
     return;
   }
 
   const { entryPaths, entries: previousEntries } = previous;
-  const exactIndex = findExactEntryIndex(entryPaths, path);
-
-  if (exactIndex !== -1) {
-    const entry = previousEntries[exactIndex];
-    if (entry !== undefined) targetEntries.push(entry);
-  }
-
+  // Do NOT push the directory's own entry here — the parent loop already did
+  // that before making the recursive buildDirectory call. Only copy children.
   const prefix = `${path}/`;
   const [start, end] = findPrefixRange(entryPaths, prefix);
 
@@ -196,21 +175,15 @@ function copyMerkleSubtree(
   }
 
   const prefix = path === "" ? "" : `${path}/`;
-  const start = prefix === "" ? 0 : lowerBound(previous.merkleKeys, prefix);
-  let idx = start;
+  const [start, end] =
+    prefix === ""
+      ? [0, previous.merkleKeys.length]
+      : findPrefixRange(previous.merkleKeys, prefix);
 
-  while (idx < previous.merkleKeys.length) {
-    const key = previous.merkleKeys[idx];
-
-    if (key === undefined) break;
-
-    if (prefix === "" || key === path || key.startsWith(prefix)) {
-      target[key] = previous.merkle[key] ?? "";
-      idx++;
-      continue;
-    }
-
-    break;
+  for (let i = start; i < end; i++) {
+    const key = previous.merkleKeys[i];
+    if (key === undefined) continue;
+    target[key] = previous.merkle[key] ?? "";
   }
 }
 
@@ -241,11 +214,16 @@ function collectPreviousChildNames(
   const names = new Set<string>();
   const prefix = path === "" ? "" : `${path}/`;
 
-  for (const key of previous.statsKeys) {
-    if (!key.startsWith(prefix) || key === path) {
-      continue;
-    }
+  // Use binary search to jump to the relevant range instead of scanning all
+  // statsKeys. For root (prefix="") every key qualifies so we start at 0;
+  // for any other path findPrefixRange narrows it to O(log n + k).
+  const [start, end] =
+    prefix === ""
+      ? [0, previous.statsKeys.length]
+      : findPrefixRange(previous.statsKeys, prefix);
 
+  for (let i = start; i < end; i++) {
+    const key = previous.statsKeys[i]!;
     const remainder = key.slice(prefix.length);
     const slashIndex = remainder.indexOf("/");
     const childName =
@@ -504,13 +482,20 @@ async function buildIndex(previous?: PreviousIndexData): Promise<FileIndexBuildR
     context,
   );
 
-  entries.sort((a, b) => {
-    if (a.type === "dir" && b.type !== "dir") return -1;
-    if (a.type !== "dir" && b.type === "dir") return 1;
-    return a.path.localeCompare(b.path);
+  entries.sort((a, b) => a.path.localeCompare(b.path));
+
+  // Deduplicate by path. Duplicates can occur when a dirty cache is reused
+  // via appendSubtreeEntries — the parent pushed the dir entry, and the cache
+  // contained it again. This is a one-time cleanup that also writes a clean
+  // cache to disk so subsequent sessions start fresh.
+  const seen = new Set<string>();
+  const deduped = entries.filter((e) => {
+    if (seen.has(e.path)) return false;
+    seen.add(e.path);
+    return true;
   });
 
-  return { entries, merkle, stats: statsMap, rootHash, truncated: context.truncated };
+  return { entries: deduped, merkle, stats: statsMap, rootHash, truncated: context.truncated };
 }
 
 function sanitizeWorkspacePath(workspacePath: string): string {
@@ -621,12 +606,38 @@ function cacheProjectIndex(result: FileIndexBuildResult): void {
 }
 
 /**
+ * Build the in-memory search cache from a full entries list.
+ * Sorts dirs first, then by mtime descending (most recently modified files
+ * appear first in results), and caps at MAX_CACHE_ENTRIES.
+ *
+ * NOTE: buildIndex keeps entries sorted by path — that ordering is load-bearing
+ * for the binary searches in appendSubtreeEntries/findPrefixRange. This helper
+ * produces a separate mtime-sorted copy only for the in-memory search cache.
+ */
+function buildCachedEntries(
+  entries: FileIndexEntry[],
+  stats: StatsMap,
+): { entries: FileIndexEntry[]; paths: Set<string> } {
+  const sorted = [...entries]
+    .sort((a, b) => {
+      if (a.type === "dir" && b.type !== "dir") return -1;
+      if (a.type !== "dir" && b.type === "dir") return 1;
+      const aMtime = stats[a.path]?.mtimeMs ?? 0;
+      const bMtime = stats[b.path]?.mtimeMs ?? 0;
+      return bMtime - aMtime;
+    })
+    .slice(0, MAX_CACHE_ENTRIES);
+  return { entries: sorted, paths: new Set(sorted.map((e) => e.path)) };
+}
+
+/**
  * Ensure the file index is built at least once per session.
  */
 export function ensureFileIndex(): Promise<void> {
   if (hasCompletedBuild) return Promise.resolve();
   if (!buildPromise) {
-    buildPromise = (async () => {
+    let currentPromise!: Promise<void>;
+    currentPromise = (async () => {
       let succeeded = false;
       try {
         const diskIndex = loadCachedIndex();
@@ -634,7 +645,7 @@ export function ensureFileIndex(): Promise<void> {
         const buildResult = await buildIndex(previousData);
 
         if (diskIndex && diskIndex.metadata.rootHash === buildResult.rootHash) {
-          cachedEntries = diskIndex.entries;
+          ({ entries: cachedEntries, paths: cachedEntryPaths } = buildCachedEntries(buildResult.entries, buildResult.stats));
           succeeded = true;
           return;
         }
@@ -648,13 +659,16 @@ export function ensureFileIndex(): Promise<void> {
         }
 
         cacheProjectIndex(buildResult);
-        cachedEntries = buildResult.entries;
+        ({ entries: cachedEntries, paths: cachedEntryPaths } = buildCachedEntries(buildResult.entries, buildResult.stats));
         succeeded = true;
       } finally {
-        buildPromise = null;
+        // Only clear buildPromise if it's still ours — refreshFileIndex may
+        // have already replaced it with a newer promise.
+        if (buildPromise === currentPromise) buildPromise = null;
         if (succeeded) hasCompletedBuild = true;
       }
     })();
+    buildPromise = currentPromise;
   }
 
   return buildPromise;
@@ -670,17 +684,28 @@ export function refreshFileIndex(): Promise<void> {
  * Add newly discovered entries to the in-memory cache without a full rebuild.
  * Called when a disk scan finds files that weren't in the index (e.g. created
  * externally). Skips paths that are already cached.
+ *
+ * The initial build has priority — it fills the cache up to MAX_CACHE_ENTRIES
+ * with the most recently modified files. Disk scan hits fill any remaining
+ * space. Once the cap is reached, new entries are not added until the next
+ * rebuild; the disk scan will still find them on demand.
  */
 export function addEntriesToCache(matches: FileMatch[]): void {
-  const existingPaths = new Set(cachedEntries.map((e) => e.path));
+  const available = MAX_CACHE_ENTRIES - cachedEntries.length;
+  if (available <= 0) return;
+
+  let added = 0;
   for (const match of matches) {
-    if (!existingPaths.has(match.path)) {
+    if (added >= available) break;
+    if (!cachedEntryPaths.has(match.path)) {
       cachedEntries.push({
         path: match.path,
         type: match.type,
         lowerPath: match.path.toLowerCase(),
         parent: normalizeParent(match.path),
       });
+      cachedEntryPaths.add(match.path);
+      added++;
     }
   }
 }
