@@ -326,12 +326,18 @@ describe("spawnBackgroundSubagentTask", () => {
 
 describe("resolveReflectionTaskPrompt", () => {
   let testRoot: string;
+  const agentId = "agent-reflection-task-test";
+  const conversationId = "conv-reflection-task-test";
+  const contextDeps = {
+    getAgentId: () => agentId,
+    getConversationId: () => conversationId,
+  };
 
   beforeEach(async () => {
     testRoot = await mkdtemp(join(tmpdir(), "letta-reflection-task-test-"));
     process.env.LETTA_REFLECTION_TMP_ROOT = testRoot;
-    setAgentContext("agent-reflection-task-test");
-    setConversationId("conv-reflection-task-test");
+    setAgentContext(agentId);
+    setConversationId(conversationId);
   });
 
   afterEach(async () => {
@@ -341,15 +347,14 @@ describe("resolveReflectionTaskPrompt", () => {
   });
 
   test("upgrades reflection task prompt to canonical transcript-based prompt", async () => {
-    await appendTranscriptDeltaJsonl(
-      "agent-reflection-task-test",
-      "conv-reflection-task-test",
-      [{ kind: "user", id: "u1", text: "remember db schema" }],
-    );
+    await appendTranscriptDeltaJsonl(agentId, conversationId, [
+      { kind: "user", id: "u1", text: "remember db schema" },
+    ]);
 
     const resolved = await resolveReflectionTaskPrompt(
       "reflection",
       "Use the standard reflection prompt for this conversation.",
+      contextDeps,
     );
 
     expect(resolved.prompt).toContain(
@@ -369,6 +374,7 @@ describe("resolveReflectionTaskPrompt", () => {
     const resolved = await resolveReflectionTaskPrompt(
       "reflection",
       fallbackPrompt,
+      contextDeps,
     );
 
     expect(resolved.prompt).toBe(fallbackPrompt);
@@ -384,23 +390,19 @@ describe("resolveReflectionTaskPrompt", () => {
   });
 
   test("finalize context points at known transcript root", async () => {
-    await appendTranscriptDeltaJsonl(
-      "agent-reflection-task-test",
-      "conv-reflection-task-test",
-      [{ kind: "assistant", id: "a1", text: "done", phase: "finished" }],
-    );
+    await appendTranscriptDeltaJsonl(agentId, conversationId, [
+      { kind: "assistant", id: "a1", text: "done", phase: "finished" },
+    ]);
 
     const resolved = await resolveReflectionTaskPrompt(
       "reflection",
       "fallback",
+      contextDeps,
     );
     expect(resolved.finalizeContext).not.toBeNull();
     if (!resolved.finalizeContext) return;
 
-    const paths = getReflectionTranscriptPaths(
-      "agent-reflection-task-test",
-      "conv-reflection-task-test",
-    );
+    const paths = getReflectionTranscriptPaths(agentId, conversationId);
     expect(
       resolved.finalizeContext.payloadPath.startsWith(paths.payloadsDir),
     ).toBe(true);

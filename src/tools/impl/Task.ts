@@ -70,9 +70,15 @@ type ReflectionTaskPromptResolution = {
   finalizeContext: ReflectionTaskFinalizeContext | null;
 };
 
+type ReflectionPromptContextDeps = {
+  getAgentId?: () => string;
+  getConversationId?: () => string | null;
+};
+
 export async function resolveReflectionTaskPrompt(
   subagentType: string,
   prompt: string,
+  deps: ReflectionPromptContextDeps = {},
 ): Promise<ReflectionTaskPromptResolution> {
   if (subagentType !== "reflection") {
     return { prompt, finalizeContext: null };
@@ -80,12 +86,14 @@ export async function resolveReflectionTaskPrompt(
 
   let agentId: string;
   try {
-    agentId = getCurrentAgentId();
+    agentId = deps.getAgentId ? deps.getAgentId() : getCurrentAgentId();
   } catch {
     return { prompt, finalizeContext: null };
   }
 
-  const conversationId = getConversationId();
+  const conversationId = deps.getConversationId
+    ? deps.getConversationId()
+    : getConversationId();
   if (!conversationId) {
     return { prompt, finalizeContext: null };
   }
