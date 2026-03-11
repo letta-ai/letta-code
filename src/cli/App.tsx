@@ -9258,7 +9258,7 @@ export default function App({
           setCommandRunning(true);
           try {
             cmd.finish(
-              "Assimilating project context and defragmenting memories...",
+              "Building your memory palace... Start a new conversation with `letta --new` to work in parallel.",
               true,
             );
 
