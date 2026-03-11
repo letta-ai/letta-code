@@ -285,7 +285,6 @@ import {
   hasActiveSubagents,
   interruptActiveSubagents,
   subscribe as subscribeToSubagents,
-  updateSubagent,
 } from "./helpers/subagentState";
 import {
   flushEligibleLinesBeforeReentry,
@@ -9280,7 +9279,7 @@ export default function App({
               const { spawnBackgroundSubagentTask } = await import(
                 "../tools/impl/Task"
               );
-              const { subagentId } = spawnBackgroundSubagentTask({
+              spawnBackgroundSubagentTask({
                 subagentType: "reflection",
                 prompt: reflectionPrompt,
                 description: reflectionDescription,
@@ -9315,12 +9314,8 @@ export default function App({
                   appendTaskNotificationEvents([msg]);
                 },
               });
-              // Show in SubagentGroupDisplay even though completion is silent
-              updateSubagent(subagentId, { silent: false });
-
-              const transcriptNote = ` Transcript: ${transcriptPath}`;
               cmd.finish(
-                `Reflecting on conversation in the background. You'll be notified when done.${transcriptNote}`,
+                `Reflecting on the recent conversation. View the transcript here: ${transcriptPath}`,
                 true,
               );
 

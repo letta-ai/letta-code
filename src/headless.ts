@@ -946,6 +946,7 @@ export async function handleHeadlessCommand(
       await applyMemfsFlags(agent.id, memfsFlag, noMemfsFlag, {
         pullOnExistingRepo: false,
         agentTags: agent.tags,
+        skipPromptUpdate: forceNew,
       });
     } catch (error) {
       console.error(
@@ -959,6 +960,7 @@ export async function handleHeadlessCommand(
     memfsBgPromise = applyMemfsFlags(agent.id, memfsFlag, noMemfsFlag, {
       pullOnExistingRepo: true,
       agentTags: agent.tags,
+      skipPromptUpdate: forceNew,
     }).catch((error) => {
       // Log to stderr only — the session is already live.
       console.error(
@@ -973,7 +975,11 @@ export async function handleHeadlessCommand(
         agent.id,
         memfsFlag,
         noMemfsFlag,
-        { pullOnExistingRepo: true, agentTags: agent.tags },
+        {
+          pullOnExistingRepo: true,
+          agentTags: agent.tags,
+          skipPromptUpdate: forceNew,
+        },
       );
       if (memfsResult.pullSummary?.includes("CONFLICT")) {
         console.error(
