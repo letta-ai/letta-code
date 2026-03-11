@@ -73,7 +73,6 @@ function buildPaddedRows(
   const rows: StyledChunk[][] = [];
   let row: StyledChunk[] = [];
   let len = 0;
-  let isFirst = true;
   for (const chunk of chunks) {
     let rem = chunk.text;
     while (rem.length > 0) {
@@ -89,7 +88,6 @@ function buildPaddedRows(
           dimColor: chunk.dimColor,
         });
         rows.push(row);
-        isFirst = false;
         // Start continuation row with blank gutter indent
         row = [{ text: " ".repeat(contIndent) }];
         len = contIndent;
