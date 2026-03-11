@@ -64,6 +64,9 @@ function buildModelSettings(
       // client type may lag this field, so set it via a narrow record cast.
       (openaiSettings as Record<string, unknown>).verbosity = verbosity;
     }
+    if (typeof updateArgs?.strict === "boolean") {
+      openaiSettings.strict = updateArgs.strict;
+    }
     settings = openaiSettings;
   } else if (isAnthropic) {
     const anthropicSettings: AnthropicModelSettings = {
@@ -89,6 +92,9 @@ function buildModelSettings(
           budget_tokens: updateArgs.max_reasoning_tokens,
         }),
       };
+    }
+    if (typeof updateArgs?.strict === "boolean") {
+      (anthropicSettings as Record<string, unknown>).strict = updateArgs.strict;
     }
     settings = anthropicSettings;
   } else if (isZai) {
@@ -162,6 +168,9 @@ function buildModelSettings(
           ? updateArgs.parallel_tool_calls
           : true,
     };
+    if (typeof updateArgs?.strict === "boolean") {
+      (settings as Record<string, unknown>).strict = updateArgs.strict;
+    }
   }
 
   // Apply max_output_tokens only when provider_type is present and the value
