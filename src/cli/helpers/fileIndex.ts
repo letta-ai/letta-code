@@ -324,7 +324,7 @@ async function buildDirectory(
   depth: number,
   context: BuildContext,
 ): Promise<string> {
-  let dirStats;
+  let dirStats: FsStats;
 
   try {
     dirStats = statSync(dir);
