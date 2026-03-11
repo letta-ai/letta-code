@@ -36,9 +36,7 @@ describe("model preset refresh wiring", () => {
     expect(updateSegment).toContain("options?: UpdateAgentLLMConfigOptions");
     expect(updateSegment).toContain("shouldPreserveContextWindow");
     expect(updateSegment).toContain("getModelContextWindow(modelHandle)");
-    expect(updateSegment).toContain(
-      "options?.preserveContextWindow === true",
-    );
+    expect(updateSegment).toContain("options?.preserveContextWindow === true");
     expect(updateSegment).not.toContain(
       "(updateArgs?.context_window as number | undefined) ??\n    (await getModelContextWindow(modelHandle));",
     );
