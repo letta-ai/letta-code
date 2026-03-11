@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import WebSocket from "ws";
 import { permissionMode } from "../../permissions/mode";
+import { updateRuntimeContext } from "../../runtime-context";
 
 type MockStream = {
   conversationId: string;
@@ -274,12 +275,19 @@ describe("listen-client multi-worker concurrency", () => {
     const socket = new MockSocket();
 
     drainHandlers.set("conv-a", async () => {
-      permissionMode.setMode("plan");
-      permissionMode.setPlanFilePath("/tmp/conv-a-plan.md");
+      updateRuntimeContext({
+        permissionMode: "plan",
+        planFilePath: "/tmp/conv-a-plan.md",
+        modeBeforePlan: "default",
+      });
       return defaultDrainResult;
     });
     drainHandlers.set("conv-b", async () => {
-      permissionMode.setMode("bypassPermissions");
+      updateRuntimeContext({
+        permissionMode: "bypassPermissions",
+        planFilePath: null,
+        modeBeforePlan: null,
+      });
       return defaultDrainResult;
     });
 

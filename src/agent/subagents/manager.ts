@@ -668,9 +668,10 @@ async function executeSubagent(
     const inheritedBaseUrl =
       process.env.LETTA_BASE_URL || settings.env?.LETTA_BASE_URL;
 
+    const subagentWorkingDirectory = getCurrentWorkingDirectory();
     const proc = runOutsideRuntimeContext(() =>
       spawn(launcher.command, launcher.args, {
-        cwd: getCurrentWorkingDirectory(),
+        cwd: subagentWorkingDirectory,
         env: {
           ...process.env,
           ...(inheritedApiKey && { LETTA_API_KEY: inheritedApiKey }),
