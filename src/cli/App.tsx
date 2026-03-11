@@ -12502,13 +12502,13 @@ ${SYSTEM_REMINDER_CLOSE}
 
       if (mode !== "plan") {
         if (hasUsablePlan) {
-          if (mode === "acceptEdits" || mode === "bypassPermissions") {
-            // User cycled to a permissive mode — auto-approve ExitPlanMode
+          if (mode === "bypassPermissions") {
+            // User cycled to YOLO mode — auto-approve ExitPlanMode
             // so they don't need to manually click through the approval.
             handlePlanApprove();
             return;
           }
-          // Default mode: keep approval flow alive and let user manually approve.
+          // Other modes: keep approval flow alive and let user manually approve.
           return;
         }
 
