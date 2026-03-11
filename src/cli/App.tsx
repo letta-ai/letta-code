@@ -1010,6 +1010,12 @@ export default function App({
   // so agent switches later in the session don't re-queue auto-init.
   const startupAutoInitConsumedRef = useRef(false);
 
+  // Tracks the agent ID that launched interactive /init.  Only one interactive
+  // init can be active at a time (hasActiveInitSubagent guard), so a single
+  // ref suffices.  The completion listener reads this instead of agentIdRef to
+  // avoid misrouting completion effects after an agent switch.
+  const initLauncherAgentIdRef = useRef<string | null>(null);
+
   // Completion listener for init subagents dispatched by the primary agent via
   // the Task tool (interactive /init flow).  App.tsx-dispatched init subagents
   // use their own onComplete callback and are registered with silent=true, so
@@ -1738,9 +1744,11 @@ export default function App({
           !handledInitSubagentIdsRef.current.has(agent.id)
         ) {
           handledInitSubagentIdsRef.current.add(agent.id);
+          const launcherId = initLauncherAgentIdRef.current;
+          if (!launcherId) continue; // No tracked launcher — skip
           handleMemorySubagentCompletion(
             {
-              agentId: agentIdRef.current,
+              agentId: launcherId,
               subagentType: "init",
               initDepth: "deep",
               success: agent.status === "completed",
@@ -9311,7 +9319,7 @@ export default function App({
               return { submitted: true };
             }
 
-            autoInitPendingAgentIdsRef.current.delete(agentId);
+            initLauncherAgentIdRef.current = agentId;
             setCommandRunning(true);
             try {
               cmd.finish(
@@ -9333,6 +9341,9 @@ export default function App({
                   content: buildTextParts(intakeMessage),
                 },
               ]);
+
+              // Clear pending auto-init only after intake succeeded
+              autoInitPendingAgentIdsRef.current.delete(agentId);
             } catch (error) {
               const errorDetails = formatErrorDetails(error, agentId);
               cmd.fail(
