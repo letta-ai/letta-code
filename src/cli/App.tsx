@@ -841,12 +841,10 @@ function formatReflectionSettings(settings: ReflectionSettings): string {
   if (settings.trigger === "off") {
     return "Off";
   }
-  const behaviorLabel =
-    settings.behavior === "auto-launch" ? "auto-launch" : "reminder";
   if (settings.trigger === "compaction-event") {
-    return `Compaction event (${behaviorLabel})`;
+    return "Compaction event";
   }
-  return `Step count (every ${settings.stepCount} turns, ${behaviorLabel})`;
+  return `Step count (every ${settings.stepCount} turns)`;
 }
 
 const AUTO_REFLECTION_DESCRIPTION = "Reflect on recent conversations";
@@ -3063,6 +3061,7 @@ export default function App({
             "→ **/new**       start a new conversation",
             "→ **/init**      initialize your agent's memory",
             "→ **/remember**  teach your agent",
+            "→ **/reflect**   launch a background reflection agent",
             ...(showPromptTip
               ? ["→ **/system**    upgrade to the latest default prompt"]
               : []),
@@ -3074,6 +3073,7 @@ export default function App({
               "→ **/memory**    view your agent's memory",
               "→ **/init**      initialize your agent's memory",
               "→ **/remember**  teach your agent",
+              "→ **/reflect**   launch a background reflection agent",
               ...(showPromptTip
                 ? ["→ **/system**    upgrade to the latest default prompt"]
                 : []),
@@ -3084,6 +3084,7 @@ export default function App({
               "→ **/pin**       save + name your agent",
               "→ **/init**      initialize your agent's memory",
               "→ **/remember**  teach your agent",
+              "→ **/reflect**   launch a background reflection agent",
               ...(showPromptTip
                 ? ["→ **/system**    upgrade to the latest default prompt"]
                 : []),
@@ -9279,6 +9280,93 @@ export default function App({
           return { submitted: true };
         }
 
+        // Special handling for /reflect command - manually launch reflection subagent
+        if (trimmed === "/reflect") {
+          const cmd = commandRunner.start(msg, "Launching reflection agent...");
+
+          if (!settingsManager.isMemfsEnabled(agentId)) {
+            cmd.fail(
+              "Memory filesystem is not enabled. Use /remember instead.",
+            );
+            return { submitted: true };
+          }
+
+          if (hasActiveReflectionSubagent()) {
+            cmd.fail(
+              "A reflection agent is already running in the background.",
+            );
+            return { submitted: true };
+          }
+
+          try {
+            const reflectionConversationId = conversationIdRef.current;
+            const autoPayload = await buildAutoReflectionPayload(
+              agentId,
+              reflectionConversationId,
+            );
+
+            if (!autoPayload) {
+              cmd.fail("No new transcript content to reflect on.");
+              return { submitted: true };
+            }
+
+            const memoryDir = getMemoryFilesystemRoot(agentId);
+            const reflectionPrompt = buildReflectionSubagentPrompt({
+              transcriptPath: autoPayload.payloadPath,
+              memoryDir,
+            });
+
+            const { spawnBackgroundSubagentTask } = await import(
+              "../tools/impl/Task"
+            );
+            spawnBackgroundSubagentTask({
+              subagentType: "reflection",
+              prompt: reflectionPrompt,
+              description: "Reflecting on conversation",
+              silentCompletion: true,
+              onComplete: async ({ success, error }) => {
+                await finalizeAutoReflectionPayload(
+                  agentId,
+                  reflectionConversationId,
+                  autoPayload.payloadPath,
+                  autoPayload.endSnapshotLine,
+                  success,
+                );
+
+                const msg = await handleMemorySubagentCompletion(
+                  {
+                    agentId,
+                    conversationId: conversationIdRef.current,
+                    subagentType: "reflection",
+                    success,
+                    error,
+                  },
+                  {
+                    recompileByConversation:
+                      systemPromptRecompileByConversationRef.current,
+                    recompileQueuedByConversation:
+                      queuedSystemPromptRecompileByConversationRef.current,
+                    updateInitProgress,
+                    logRecompileFailure: (message) =>
+                      debugWarn("memory", message),
+                  },
+                );
+                appendTaskNotificationEvents([msg]);
+              },
+            });
+
+            cmd.finish(
+              `Reflecting on the recent conversation. View the transcript here: ${autoPayload.payloadPath}`,
+              true,
+            );
+          } catch (error) {
+            const errorDetails = formatErrorDetails(error, agentId);
+            cmd.fail(`Failed to start reflection agent: ${errorDetails}`);
+          }
+
+          return { submitted: true };
+        }
+
         // Special handling for /plan command - enter plan mode
         if (trimmed === "/plan") {
           // Generate plan file path and enter plan mode
@@ -11479,13 +11567,11 @@ ${SYSTEM_REMINDER_CLOSE}
           settingsManager.updateLocalProjectSettings({
             memoryReminderInterval: legacyMode,
             reflectionTrigger: reflectionSettings.trigger,
-            reflectionBehavior: reflectionSettings.behavior,
             reflectionStepCount: reflectionSettings.stepCount,
           });
           settingsManager.updateSettings({
             memoryReminderInterval: legacyMode,
             reflectionTrigger: reflectionSettings.trigger,
-            reflectionBehavior: reflectionSettings.behavior,
             reflectionStepCount: reflectionSettings.stepCount,
           });
 
@@ -12837,6 +12923,7 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
             "→ **/memory**    view your agent's memory",
             "→ **/init**      initialize your agent's memory",
             "→ **/remember**  teach your agent",
+            "→ **/reflect**   launch a background reflection agent",
             ...(showPromptTip
               ? ["→ **/system**    upgrade to the latest default prompt"]
               : []),
@@ -12847,6 +12934,7 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
             "→ **/pin**       save + name your agent",
             "→ **/init**      initialize your agent's memory",
             "→ **/remember**  teach your agent",
+            "→ **/reflect**   launch a background reflection agent",
             ...(showPromptTip
               ? ["→ **/system**    upgrade to the latest default prompt"]
               : []),

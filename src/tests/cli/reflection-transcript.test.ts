@@ -3,13 +3,10 @@ import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Line } from "../../cli/helpers/accumulator";
 import {
   appendTranscriptDeltaJsonl,
   buildAutoReflectionPayload,
-  buildRememberPayloadFromLines,
   finalizeAutoReflectionPayload,
-  finalizeRememberPayload,
   getReflectionTranscriptPaths,
 } from "../../cli/helpers/reflectionTranscript";
 
@@ -29,7 +26,7 @@ describe("reflectionTranscript helper", () => {
   });
 
   test("auto payload advances cursor on success", async () => {
-    const lines: Line[] = [
+    await appendTranscriptDeltaJsonl(agentId, conversationId, [
       { kind: "user", id: "u1", text: "hello" },
       {
         kind: "assistant",
@@ -37,9 +34,7 @@ describe("reflectionTranscript helper", () => {
         text: "hi there",
         phase: "finished",
       },
-    ];
-
-    await appendTranscriptDeltaJsonl(agentId, conversationId, lines);
+    ]);
 
     const payload = await buildAutoReflectionPayload(agentId, conversationId);
     expect(payload).not.toBeNull();
@@ -132,66 +127,5 @@ describe("reflectionTranscript helper", () => {
 
     const payloadText = await readFile(secondAttempt.payloadPath, "utf-8");
     expect(payloadText).toContain("<assistant>second</assistant>");
-  });
-
-  test("remember payload from rendered lines does not modify auto cursor", async () => {
-    await appendTranscriptDeltaJsonl(agentId, conversationId, [
-      { kind: "user", id: "u1", text: "alpha" },
-      { kind: "assistant", id: "a1", text: "beta", phase: "finished" },
-    ]);
-
-    const autoPayload = await buildAutoReflectionPayload(
-      agentId,
-      conversationId,
-    );
-    expect(autoPayload).not.toBeNull();
-    if (!autoPayload) return;
-
-    await finalizeAutoReflectionPayload(
-      agentId,
-      conversationId,
-      autoPayload.payloadPath,
-      autoPayload.endSnapshotLine,
-      true,
-    );
-
-    const paths = getReflectionTranscriptPaths(agentId, conversationId);
-    const beforeRaw = await readFile(paths.statePath, "utf-8");
-    const before = JSON.parse(beforeRaw) as { auto_cursor_line: number };
-
-    const renderedLines: Line[] = [
-      { kind: "user", id: "u-render", text: "most recent rendered" },
-      {
-        kind: "assistant",
-        id: "a-render",
-        text: "rendered answer",
-        phase: "finished",
-      },
-    ];
-    const rememberPayload = await buildRememberPayloadFromLines(
-      agentId,
-      conversationId,
-      renderedLines,
-    );
-    expect(rememberPayload).not.toBeNull();
-    if (!rememberPayload) return;
-
-    const rememberText = await readFile(rememberPayload.payloadPath, "utf-8");
-    expect(rememberText).toContain("<user>most recent rendered</user>");
-    expect(rememberText).toContain("<assistant>rendered answer</assistant>");
-    expect(rememberText).not.toContain("<user>alpha</user>");
-
-    await finalizeRememberPayload(
-      agentId,
-      conversationId,
-      rememberPayload.payloadPath,
-      true,
-    );
-
-    expect(existsSync(rememberPayload.payloadPath)).toBe(true);
-
-    const afterRaw = await readFile(paths.statePath, "utf-8");
-    const after = JSON.parse(afterRaw) as { auto_cursor_line: number };
-    expect(after.auto_cursor_line).toBe(before.auto_cursor_line);
   });
 });

@@ -39,26 +39,16 @@ export interface AutoReflectionPayload {
   endSnapshotLine: number;
 }
 
-export interface RememberPayload {
-  payloadPath: string;
-}
-
 export interface ReflectionPromptInput {
   transcriptPath: string;
   memoryDir: string;
-  rememberUserText?: string;
 }
 
 export function buildReflectionSubagentPrompt(
   input: ReflectionPromptInput,
 ): string {
-  const rememberUserText = input.rememberUserText?.trim();
-  const base = rememberUserText
-    ? `Review the conversation transcript and update memory files. The user specifically asked to remember: "${rememberUserText}"`
-    : "Review the conversation transcript and update memory files.";
-
   return [
-    base,
+    "Review the conversation transcript and update memory files.",
     `The current conversation transcript has been saved to: ${input.transcriptPath}`,
     `The primary agent's memory filesystem is located at: ${input.memoryDir}`,
   ].join("\n");
@@ -313,62 +303,4 @@ export async function finalizeAutoReflectionPayload(
     state.last_auto_reflection_succeeded_at = new Date().toISOString();
   }
   await writeState(paths, state);
-}
-
-export async function buildRememberPayloadFromLines(
-  _agentId: string,
-  _conversationId: string,
-  lines: Line[],
-): Promise<RememberPayload | null> {
-  const capturedAt = new Date().toISOString();
-  const entries = lines
-    .map((line) => lineToTranscriptEntry(line, capturedAt))
-    .filter((entry): entry is TranscriptEntry => entry !== null);
-  if (entries.length === 0) {
-    return null;
-  }
-
-  const transcript = formatTaggedTranscript(entries);
-  if (!transcript) {
-    return null;
-  }
-
-  const payloadPath = buildPayloadPath("remember");
-  await writeFile(payloadPath, transcript, "utf-8");
-  return { payloadPath };
-}
-
-export async function buildRememberPayload(
-  agentId: string,
-  conversationId: string,
-): Promise<RememberPayload | null> {
-  const paths = getReflectionTranscriptPaths(agentId, conversationId);
-  await ensurePaths(paths);
-
-  const lines = await readTranscriptLines(paths);
-  if (lines.length === 0) {
-    return null;
-  }
-
-  const entries = lines
-    .map((line) => parseJsonLine<TranscriptEntry>(line))
-    .filter((entry): entry is TranscriptEntry => entry !== null);
-  const transcript = formatTaggedTranscript(entries);
-  if (!transcript) {
-    return null;
-  }
-
-  const payloadPath = buildPayloadPath("remember");
-  await writeFile(payloadPath, transcript, "utf-8");
-  return { payloadPath };
-}
-
-export async function finalizeRememberPayload(
-  _agentId: string,
-  _conversationId: string,
-  _payloadPath: string,
-  _success: boolean,
-): Promise<void> {
-  // Payload files live in /tmp and are cleaned up by the OS.
-  // State tracking (cursor, timestamps) is in ~/.letta/transcripts/.
 }
