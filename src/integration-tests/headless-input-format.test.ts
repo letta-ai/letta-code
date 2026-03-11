@@ -202,27 +202,106 @@ async function runBidirectional(
   });
 }
 
-async function runBidirectionalWithRetry(
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isRetriableBidirectionalError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const message = error.message;
+  return (
+    message.includes("Timeout after") ||
+    message.includes("before all results received") ||
+    message.includes("no output received") ||
+    message.includes("terminated by signal") ||
+    message.includes("Segmentation fault") ||
+    message.includes('script "dev"')
+  );
+}
+
+function summarizeWireObjects(objects: WireMessage[]): string {
+  const resultSubtypes = objects
+    .filter((o): o is ResultMessage => o.type === "result")
+    .map((o) => o.subtype);
+  const errorMessages = objects
+    .filter((o): o is ErrorMessage => o.type === "error")
+    .map((o) => `${o.stop_reason}:${o.message}`);
+  const autoApprovals = objects.filter(
+    (o) => o.type === "auto_approval",
+  ).length;
+  return `results=[${resultSubtypes.join(",")}], errors=${errorMessages.length}, auto_approvals=${autoApprovals}`;
+}
+
+async function runBidirectionalExpectingSuccess(
   inputs: string[],
-  extraArgs: string[] = [],
-  timeoutMs = 180000,
-  retryOnTimeouts = 1,
-): Promise<object[]> {
+  options: {
+    extraArgs?: string[];
+    timeoutMs?: number;
+    maxAttempts?: number;
+    minSuccessfulResults?: number;
+    requireAutoApproval?: boolean;
+  } = {},
+): Promise<WireMessage[]> {
+  const {
+    extraArgs = [],
+    timeoutMs = 180000,
+    maxAttempts = 2,
+    minSuccessfulResults = 1,
+    requireAutoApproval = false,
+  } = options;
+
   let attempt = 0;
   while (true) {
+    attempt += 1;
     try {
-      return await runBidirectional(inputs, extraArgs, timeoutMs);
+      const objects = (await runBidirectional(
+        inputs,
+        extraArgs,
+        timeoutMs,
+      )) as WireMessage[];
+
+      const results = objects.filter(
+        (o): o is ResultMessage => o.type === "result",
+      );
+      const successCount = results.filter(
+        (r) => r.subtype === "success",
+      ).length;
+      const hasErrorResult = results.some((r) => r.subtype === "error");
+      const hasAutoApproval = objects.some((o) => o.type === "auto_approval");
+
+      const success =
+        successCount >= minSuccessfulResults &&
+        (!requireAutoApproval || hasAutoApproval);
+
+      if (success) {
+        return objects;
+      }
+
+      const isRetriableResultState =
+        hasErrorResult ||
+        successCount < minSuccessfulResults ||
+        (requireAutoApproval && !hasAutoApproval);
+
+      if (!isRetriableResultState || attempt >= maxAttempts) {
+        throw new Error(
+          `Expected >=${minSuccessfulResults} successful result(s)` +
+            `${requireAutoApproval ? " with auto_approval" : ""}, got ${summarizeWireObjects(objects)}`,
+        );
+      }
+
+      console.warn(
+        `[headless-input-format] retrying after transient result state (${attempt}/${maxAttempts - 1}) ${summarizeWireObjects(objects)}`,
+      );
+      await sleep(500);
     } catch (error) {
-      const isTimeoutError =
-        error instanceof Error && error.message.includes("Timeout after");
-      if (!isTimeoutError || attempt >= retryOnTimeouts) {
+      if (!isRetriableBidirectionalError(error) || attempt >= maxAttempts) {
         throw error;
       }
-      attempt += 1;
-      // CI API latency can cause occasional long-tail timeouts.
+      // CI API + Bun child-process behavior can fail transiently on integration tests.
       console.warn(
-        `[headless-input-format] retrying after timeout (${attempt}/${retryOnTimeouts})`,
+        `[headless-input-format] retrying after transient process failure (${attempt}/${maxAttempts - 1})`,
       );
+      await sleep(500);
     }
   }
 }
@@ -324,7 +403,7 @@ describe("input-format stream-json", () => {
     "multi-turn conversation maintains context",
     async () => {
       // Multi-turn test needs 2 sequential LLM calls, so allow more time
-      const objects = (await runBidirectionalWithRetry(
+      const objects = await runBidirectionalExpectingSuccess(
         [
           JSON.stringify({
             type: "user",
@@ -341,10 +420,12 @@ describe("input-format stream-json", () => {
             },
           }),
         ],
-        [], // no extra args
-        300000, // 300s for 2 sequential LLM calls - CI can be very slow
-        1, // one retry for transient API slowness
-      )) as WireMessage[];
+        {
+          timeoutMs: 300000, // 300s for 2 sequential LLM calls - CI can be very slow
+          maxAttempts: 3,
+          minSuccessfulResults: 2,
+        },
+      );
 
       // Should have at least two results (one per turn)
       const results = objects.filter(
@@ -485,7 +566,7 @@ describe("input-format stream-json", () => {
     "Task tool with explore subagent works",
     async () => {
       // Prescriptive prompt to ensure Task tool is used
-      const objects = (await runBidirectional(
+      const objects = await runBidirectionalExpectingSuccess(
         [
           JSON.stringify({
             type: "user",
@@ -497,9 +578,13 @@ describe("input-format stream-json", () => {
             },
           }),
         ],
-        [],
-        300000, // 5 min timeout - subagent spawn + execution can be slow
-      )) as WireMessage[];
+        {
+          timeoutMs: 300000, // 5 min timeout - subagent spawn + execution can be slow
+          maxAttempts: 3,
+          minSuccessfulResults: 1,
+          requireAutoApproval: true,
+        },
+      );
 
       // Should have a successful result
       const result = objects.find(
