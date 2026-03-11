@@ -387,6 +387,68 @@ describe("listen-client conversation-scoped protocol events", () => {
     expect(dequeued.agent_id).toBe("agent-xyz");
     expect(dequeued.conversation_id).toBe("conv-xyz");
   });
+
+  test("dropped queue items are removed from queuedMessagesByItemId", () => {
+    const runtime = __listenClientTestUtils.createRuntime(
+      "agent-drop",
+      "conv-drop",
+    );
+
+    for (let i = 0; i < 110; i++) {
+      const input: Omit<MessageQueueItem, "id" | "enqueuedAt"> = {
+        kind: "message",
+        source: "user",
+        content: `message-${i}`,
+        clientMessageId: `cm-${i}`,
+      };
+      const item = runtime.queueRuntime.enqueue(input);
+      expect(item).not.toBeNull();
+      runtime.queuedMessagesByItemId.set(
+        (item as MessageQueueItem).id,
+        {} as never,
+      );
+    }
+
+    expect(runtime.queueRuntime.length).toBe(100);
+    expect(runtime.queuedMessagesByItemId.size).toBe(
+      runtime.queueRuntime.length,
+    );
+  });
+});
+
+describe("listen-client status_response aggregate semantics", () => {
+  test("isProcessing stays true while any worker is recovering or has pending turns", () => {
+    const runtimeA = __listenClientTestUtils.createRuntime("agent-a", "conv-a");
+    const runtimeB = __listenClientTestUtils.getOrCreateConversationRuntime(
+      runtimeA.listener,
+      "agent-b",
+      "conv-b",
+    );
+
+    runtimeA.isRecoveringApprovals = true;
+    const recoveringStatus = __listenClientTestUtils.buildStatusResponse(
+      runtimeA.listener,
+    );
+    expect(recoveringStatus.isProcessing).toBe(true);
+
+    runtimeA.isRecoveringApprovals = false;
+    runtimeB.queueRuntime.enqueue({
+      kind: "message",
+      source: "user",
+      content: "queued",
+      clientMessageId: "cm-queued",
+    } as Parameters<typeof runtimeB.queueRuntime.enqueue>[0]);
+    const queuedStatus = __listenClientTestUtils.buildStatusResponse(
+      runtimeA.listener,
+    );
+    expect(queuedStatus.isProcessing).toBe(true);
+
+    runtimeB.queueRuntime.clear("shutdown");
+    const idleStatus = __listenClientTestUtils.buildStatusResponse(
+      runtimeA.listener,
+    );
+    expect(idleStatus.isProcessing).toBe(false);
+  });
 });
 
 describe("listen-client state_response control protocol", () => {

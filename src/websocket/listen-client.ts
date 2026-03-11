@@ -567,6 +567,7 @@ function createConversationRuntime(
       },
       onDropped: (item, reason, queueLen) => {
         runtime.pendingTurns = queueLen;
+        runtime.queuedMessagesByItemId.delete(item.id);
         if (listener.socket?.readyState === WebSocket.OPEN) {
           emitToWS(
             listener.socket,
@@ -1246,6 +1247,15 @@ function buildStateResponse(
       pending_turns: runtime.pendingTurns,
       items: queueItems,
     },
+  };
+}
+
+function buildStatusResponse(listener: ListenerRuntime): StatusResponseMessage {
+  return {
+    type: "status_response",
+    currentMode: permissionMode.getMode(),
+    lastStopReason: listener.lastStopReason,
+    isProcessing: getListenerStatus(listener) !== "idle",
   };
 }
 
@@ -2733,14 +2743,7 @@ async function connectWithRetry(
         return;
       }
 
-      sendClientMessage(socket, {
-        type: "status_response",
-        currentMode: permissionMode.getMode(),
-        lastStopReason: listener.lastStopReason,
-        isProcessing: Array.from(listener.conversationRuntimes.values()).some(
-          (runtime) => runtime.isProcessing,
-        ),
-      });
+      sendClientMessage(socket, buildStatusResponse(listener));
       return;
     }
 
@@ -3825,6 +3828,8 @@ async function handleIncomingMessage(
             type: "run_request_error",
             error: errorPayload,
             batch_id: dequeuedBatchId,
+            agent_id: runtime.agentId ?? undefined,
+            conversation_id: runtime.conversationId,
           });
         }
 
@@ -3836,6 +3841,8 @@ async function handleIncomingMessage(
           stop_reason: "error",
           session_id: runtime.listener.sessionId,
           uuid: `error-${crypto.randomUUID()}`,
+          agent_id: runtime.agentId ?? undefined,
+          conversation_id: runtime.conversationId,
         });
         emitTurnResult(socket, runtime, {
           subtype: "error",
@@ -4015,6 +4022,7 @@ export const __listenClientTestUtils = {
     activeRuntime = runtime;
   },
   stopRuntime,
+  buildStatusResponse,
   buildStateResponse: buildTestStateResponse,
   handleCwdChange,
   emitCancelAck,

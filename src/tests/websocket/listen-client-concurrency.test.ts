@@ -323,6 +323,42 @@ describe("listen-client multi-worker concurrency", () => {
     );
   });
 
+  test("worker-scoped failure emissions stay attributed on pre-run errors", async () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const runtime = __listenClientTestUtils.getOrCreateConversationRuntime(
+      listener,
+      "agent-1",
+      "conv-a",
+    );
+    const socket = new MockSocket();
+
+    sendMessageStreamMock.mockImplementationOnce(async () => {
+      throw new Error("pre-run failure");
+    });
+
+    await __listenClientTestUtils.handleIncomingMessage(
+      makeIncomingMessage("agent-1", "conv-a", "trigger error"),
+      socket as unknown as WebSocket,
+      runtime,
+    );
+
+    const payloads = socket.sentPayloads.map((payload) => JSON.parse(payload));
+    const runRequestError = payloads.find(
+      (payload) => payload.type === "run_request_error",
+    );
+    expect(runRequestError).toBeDefined();
+    expect(runRequestError.agent_id).toBe("agent-1");
+    expect(runRequestError.conversation_id).toBe("conv-a");
+
+    const genericError = payloads.find(
+      (payload) =>
+        payload.type === "error" && payload.message === "pre-run failure",
+    );
+    expect(genericError).toBeDefined();
+    expect(genericError.agent_id).toBe("agent-1");
+    expect(genericError.conversation_id).toBe("conv-a");
+  });
+
   test("a pending approval in one worker does not block another worker queue pump", async () => {
     const listener = __listenClientTestUtils.createListenerRuntime();
     const runtimeA = __listenClientTestUtils.getOrCreateConversationRuntime(
