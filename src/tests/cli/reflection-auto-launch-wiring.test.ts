@@ -17,7 +17,6 @@ describe("reflection auto-launch wiring", () => {
     expect(appSource).toContain("hasActiveReflectionSubagent()");
     expect(appSource).toContain("buildAutoReflectionPayload(");
     expect(appSource).toContain("finalizeAutoReflectionPayload(");
-    expect(appSource).toContain("buildRememberPayloadFromLines(");
     expect(appSource).toContain("spawnBackgroundSubagentTask({");
     expect(appSource).toContain("maybeLaunchReflectionSubagent,");
 
@@ -29,26 +28,15 @@ describe("reflection auto-launch wiring", () => {
     );
   });
 
-  test("/remember wiring forwards user text through shared reflection prompt builder using rendered transcript", () => {
+  test("/remember sends REMEMBER_PROMPT to primary agent via processConversation", () => {
     const appPath = fileURLToPath(
       new URL("../../cli/App.tsx", import.meta.url),
     );
-    const helperPath = fileURLToPath(
-      new URL("../../cli/helpers/reflectionTranscript.ts", import.meta.url),
-    );
     const appSource = readFileSync(appPath, "utf-8");
-    const helperSource = readFileSync(helperPath, "utf-8");
 
-    expect(appSource).toContain("buildReflectionSubagentPrompt({");
-    expect(appSource).toContain("rememberUserText: userText || undefined");
-    expect(appSource).toContain(
-      "const currentLines = toLines(buffersRef.current);",
-    );
-    expect(appSource).toContain("buildRememberPayloadFromLines(");
-    expect(appSource).toContain(
-      "No rendered transcript content available to remember yet.",
-    );
-
-    expect(helperSource).toContain("The user specifically asked to remember");
+    // /remember uses the primary agent path (no subagent)
+    expect(appSource).toContain("REMEMBER_PROMPT");
+    expect(appSource).toContain("processConversation([");
+    expect(appSource).toContain("The user did not specify what to remember.");
   });
 });

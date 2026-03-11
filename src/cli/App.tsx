@@ -257,9 +257,7 @@ import {
   appendTranscriptDeltaJsonl,
   buildAutoReflectionPayload,
   buildReflectionSubagentPrompt,
-  buildRememberPayloadFromLines,
   finalizeAutoReflectionPayload,
-  finalizeRememberPayload,
 } from "./helpers/reflectionTranscript";
 import { safeJsonParseOr } from "./helpers/safeJsonParse";
 import { getDeviceType, getLocalTime } from "./helpers/sessionContext";
@@ -9239,139 +9237,43 @@ export default function App({
             return { submitted: false }; // Keep /remember in input box, user handles approval first
           }
 
-          if (settingsManager.isMemfsEnabled(agentId)) {
-            // MemFS path: spawn background reflection subagent
-            if (hasActiveReflectionSubagent()) {
-              cmd.fail(
-                "A reflection agent is already running in the background.",
-              );
-              return { submitted: true };
-            }
+          setCommandRunning(true);
 
-            try {
-              const rememberConversationId = conversationIdRef.current;
-              const currentLines = toLines(buffersRef.current);
-              const rememberPayload = await buildRememberPayloadFromLines(
-                agentId,
-                rememberConversationId,
-                currentLines,
-              );
+          try {
+            // Import the remember prompt
+            const { REMEMBER_PROMPT } = await import(
+              "../agent/promptAssets.js"
+            );
 
-              if (!rememberPayload) {
-                cmd.fail(
-                  "No rendered transcript content available to remember yet.",
-                );
-                return { submitted: true };
-              }
+            // Build system-reminder content for memory request
+            const rememberReminder = userText
+              ? `${SYSTEM_REMINDER_OPEN}\n${REMEMBER_PROMPT}\n${SYSTEM_REMINDER_CLOSE}`
+              : `${SYSTEM_REMINDER_OPEN}\n${REMEMBER_PROMPT}\n\nThe user did not specify what to remember. Look at the recent conversation context to identify what they likely want you to remember, or ask them to clarify.\n${SYSTEM_REMINDER_CLOSE}`;
+            const rememberParts = userText
+              ? buildTextParts(rememberReminder, userText)
+              : buildTextParts(rememberReminder);
 
-              const transcriptPath = rememberPayload.payloadPath;
-              const memoryDir = getMemoryFilesystemRoot(agentId);
-              const reflectionPrompt = buildReflectionSubagentPrompt({
-                transcriptPath,
-                memoryDir,
-                rememberUserText: userText || undefined,
-              });
+            // Mark command as finished before sending message
+            cmd.finish(
+              userText
+                ? "Storing to memory..."
+                : "Processing memory request from conversation context...",
+              true,
+            );
 
-              const reflectionDescription = userText
-                ? `Remembering: ${userText.slice(0, 40)}`
-                : "Reflecting on conversation";
-
-              const { spawnBackgroundSubagentTask } = await import(
-                "../tools/impl/Task"
-              );
-              spawnBackgroundSubagentTask({
-                subagentType: "reflection",
-                prompt: reflectionPrompt,
-                description: reflectionDescription,
-                silentCompletion: true,
-                onComplete: async ({ success, error }) => {
-                  await finalizeRememberPayload(
-                    agentId,
-                    rememberConversationId,
-                    transcriptPath,
-                    success,
-                  );
-
-                  // Recompile system prompt after memory updates
-                  const msg = await handleMemorySubagentCompletion(
-                    {
-                      agentId,
-                      conversationId: rememberConversationId,
-                      subagentType: "reflection",
-                      success,
-                      error,
-                    },
-                    {
-                      recompileByConversation:
-                        systemPromptRecompileByConversationRef.current,
-                      recompileQueuedByConversation:
-                        queuedSystemPromptRecompileByConversationRef.current,
-                      updateInitProgress,
-                      logRecompileFailure: (message) =>
-                        debugWarn("memory", message),
-                    },
-                  );
-                  appendTaskNotificationEvents([msg]);
-                },
-              });
-              cmd.finish(
-                `Reflecting on the recent conversation. View the transcript here: ${transcriptPath}`,
-                true,
-              );
-
-              // Strip command-IO reminder so it doesn't leak into the primary agent's next turn
-              const reminders =
-                sharedReminderStateRef.current.pendingCommandIoReminders;
-              const idx = reminders.findIndex((r) =>
-                r.input?.startsWith("/remember"),
-              );
-              if (idx !== -1) {
-                reminders.splice(idx, 1);
-              }
-            } catch (error) {
-              const errorDetails = formatErrorDetails(error, agentId);
-              cmd.fail(`Failed to start reflection agent: ${errorDetails}`);
-            }
-          } else {
-            // Non-MemFS fallback: inline prompt to primary agent
-            setCommandRunning(true);
-
-            try {
-              // Import the remember prompt
-              const { REMEMBER_PROMPT } = await import(
-                "../agent/promptAssets.js"
-              );
-
-              // Build system-reminder content for memory request
-              const rememberReminder = userText
-                ? `${SYSTEM_REMINDER_OPEN}\n${REMEMBER_PROMPT}\n${SYSTEM_REMINDER_CLOSE}`
-                : `${SYSTEM_REMINDER_OPEN}\n${REMEMBER_PROMPT}\n\nThe user did not specify what to remember. Look at the recent conversation context to identify what they likely want you to remember, or ask them to clarify.\n${SYSTEM_REMINDER_CLOSE}`;
-              const rememberParts = userText
-                ? buildTextParts(rememberReminder, userText)
-                : buildTextParts(rememberReminder);
-
-              // Mark command as finished before sending message
-              cmd.finish(
-                userText
-                  ? "Storing to memory..."
-                  : "Processing memory request from conversation context...",
-                true,
-              );
-
-              // Process conversation with the remember prompt
-              await processConversation([
-                {
-                  type: "message",
-                  role: "user",
-                  content: rememberParts,
-                },
-              ]);
-            } catch (error) {
-              const errorDetails = formatErrorDetails(error, agentId);
-              cmd.fail(`Failed: ${errorDetails}`);
-            } finally {
-              setCommandRunning(false);
-            }
+            // Process conversation with the remember prompt
+            await processConversation([
+              {
+                type: "message",
+                role: "user",
+                content: rememberParts,
+              },
+            ]);
+          } catch (error) {
+            const errorDetails = formatErrorDetails(error, agentId);
+            cmd.fail(`Failed: ${errorDetails}`);
+          } finally {
+            setCommandRunning(false);
           }
 
           return { submitted: true };
