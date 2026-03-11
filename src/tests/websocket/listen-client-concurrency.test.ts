@@ -58,6 +58,7 @@ const getClientMock = mock(async () => ({
   },
 }));
 const fetchRunErrorDetailMock = mock(async () => null);
+const realStreamModule = await import("../../cli/helpers/stream");
 
 mock.module("../../agent/message", () => ({
   sendMessageStream: sendMessageStreamMock,
@@ -86,6 +87,7 @@ mock.module("../../agent/message", () => ({
 }));
 
 mock.module("../../cli/helpers/stream", () => ({
+  ...realStreamModule,
   drainStreamWithResume: drainStreamWithResumeMock,
 }));
 
