@@ -1,14 +1,7 @@
-import type {
-  Element,
-  ElementContent,
-  Text as HastText,
-  Root,
-  RootContent,
-} from "hast";
+import type { ElementContent, RootContent } from "hast";
 import { Box } from "ink";
 import { common, createLowlight } from "lowlight";
-import type { ReactNode } from "react";
-import { Fragment, memo } from "react";
+import { memo } from "react";
 import { colors } from "./colors";
 import { Text } from "./Text";
 
@@ -24,6 +17,9 @@ type Props = {
 };
 
 type ShellSyntaxPalette = typeof colors.shellSyntax;
+
+/** Styled text span with a resolved color. */
+type StyledSpan = { text: string; color: string };
 
 function colorForClassName(
   className: string,
@@ -68,58 +64,19 @@ function colorForClassName(
   return palette.text;
 }
 
-function getNodeSignature(node: RootContent | ElementContent): string {
-  if (node.type === "text") {
-    return `text:${node.value}`;
-  }
-
-  if (node.type !== "element") {
-    return node.type;
-  }
-
-  const nodeClasses =
-    (node.properties?.className as string[] | undefined) ?? [];
-  const childSignatures = node.children
-    ?.map((child: ElementContent) => getNodeSignature(child))
-    .join("|");
-  return `element:${node.tagName}:${nodeClasses.join(".")}:${childSignatures ?? ""}`;
-}
-
-function renderChildren(
-  children: ReadonlyArray<RootContent | ElementContent> | undefined,
+/**
+ * Walk the HAST tree depth-first, collecting flat StyledSpan entries.
+ * Newlines within text nodes are preserved so callers can split into lines.
+ */
+function collectSpans(
+  node: RootContent | ElementContent,
   palette: ShellSyntaxPalette,
+  spans: StyledSpan[],
   inheritedColor?: string,
-): ReactNode {
-  if (!children?.length) {
-    return null;
-  }
-
-  const seenSignatures = new Map<string, number>();
-
-  return (
-    <>
-      {children.map((child) => {
-        const signature = getNodeSignature(child);
-        const duplicateCount = seenSignatures.get(signature) ?? 0;
-        seenSignatures.set(signature, duplicateCount + 1);
-        const key = `${signature}:${duplicateCount}`;
-        return (
-          <Fragment key={key}>
-            {renderHighlightedNode(child, palette, inheritedColor)}
-          </Fragment>
-        );
-      })}
-    </>
-  );
-}
-
-function renderHighlightedNode(
-  node: Root | Element | HastText | RootContent,
-  palette: ShellSyntaxPalette,
-  inheritedColor?: string,
-): ReactNode {
+): void {
   if (node.type === "text") {
-    return <Text color={inheritedColor ?? palette.text}>{node.value}</Text>;
+    spans.push({ text: node.value, color: inheritedColor ?? palette.text });
+    return;
   }
 
   if (node.type === "element") {
@@ -132,46 +89,81 @@ function renderHighlightedNode(
       ? colorForClassName(highlightClass, palette)
       : inheritedColor;
 
-    return renderChildren(node.children, palette, nodeColor);
+    for (const child of node.children) {
+      collectSpans(child, palette, spans, nodeColor);
+    }
   }
-
-  if (node.type === "root") {
-    return renderChildren(node.children, palette, inheritedColor);
-  }
-
-  return null;
 }
 
-function renderLine(line: string, palette: ShellSyntaxPalette): ReactNode {
+/**
+ * Highlight the full command at once (preserves heredoc/multi-line parser
+ * state), then split the flat span list at newline boundaries into per-line
+ * arrays.
+ */
+function highlightCommand(
+  command: string,
+  palette: ShellSyntaxPalette,
+): StyledSpan[][] {
+  let spans: StyledSpan[];
   try {
-    const highlighted = lowlight.highlight(BASH_LANGUAGE, line);
-    return renderHighlightedNode(highlighted, palette);
+    const root = lowlight.highlight(BASH_LANGUAGE, command);
+    spans = [];
+    for (const child of root.children) {
+      collectSpans(child, palette, spans);
+    }
   } catch {
-    return line;
+    // Fallback: plain text, split by newlines.
+    return command
+      .split("\n")
+      .map((line) => [{ text: line, color: palette.text }]);
   }
+
+  // Split spans at newline characters into separate lines.
+  const lines: StyledSpan[][] = [[]];
+  for (const span of spans) {
+    const parts = span.text.split("\n");
+    for (let i = 0; i < parts.length; i++) {
+      if (i > 0) {
+        lines.push([]);
+      }
+      const part = parts[i];
+      if (part && part.length > 0) {
+        const currentLine = lines[lines.length - 1];
+        currentLine?.push({ text: part, color: span.color });
+      }
+    }
+  }
+  return lines;
 }
 
 export const SyntaxHighlightedCommand = memo(
   ({ command, showPrompt = true, prefix, suffix }: Props) => {
     const palette = colors.shellSyntax;
-    const lines = command.split("\n");
+    const lines = highlightCommand(command, palette);
 
     return (
       <Box flexDirection="column">
-        {lines.map((line, index) => (
-          <Box key={`${index}:${line}`}>
-            {showPrompt ? (
-              <Text color={palette.prompt}>
-                {index === 0 ? FIRST_LINE_PREFIX : "  "}
+        {lines.map((spans, lineIdx) => {
+          const lineKey = spans.map((s) => s.text).join("");
+          return (
+            <Box key={`${lineIdx}:${lineKey}`}>
+              {showPrompt ? (
+                <Text color={palette.prompt}>
+                  {lineIdx === 0 ? FIRST_LINE_PREFIX : "  "}
+                </Text>
+              ) : null}
+              <Text color={palette.text}>
+                {lineIdx === 0 && prefix ? prefix : null}
+                {spans.map((span) => (
+                  <Text key={`${span.color}:${span.text}`} color={span.color}>
+                    {span.text}
+                  </Text>
+                ))}
+                {lineIdx === lines.length - 1 && suffix ? suffix : null}
               </Text>
-            ) : null}
-            <Text color={palette.text}>
-              {index === 0 && prefix ? prefix : null}
-              {renderLine(line, palette)}
-              {index === lines.length - 1 && suffix ? suffix : null}
-            </Text>
-          </Box>
-        ))}
+            </Box>
+          );
+        })}
       </Box>
     );
   },
