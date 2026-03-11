@@ -4,10 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setAgentContext, setConversationId } from "../../agent/context";
-import {
-  appendTranscriptDeltaJsonl,
-  getReflectionTranscriptPaths,
-} from "../../cli/helpers/reflectionTranscript";
+import { appendTranscriptDeltaJsonl } from "../../cli/helpers/reflectionTranscript";
 import type { SubagentState } from "../../cli/helpers/subagentState";
 import {
   clearAllSubagents,
@@ -335,13 +332,13 @@ describe("resolveReflectionTaskPrompt", () => {
 
   beforeEach(async () => {
     testRoot = await mkdtemp(join(tmpdir(), "letta-reflection-task-test-"));
-    process.env.LETTA_REFLECTION_TMP_ROOT = testRoot;
+    process.env.LETTA_TRANSCRIPT_ROOT = testRoot;
     setAgentContext(agentId);
     setConversationId(conversationId);
   });
 
   afterEach(async () => {
-    delete process.env.LETTA_REFLECTION_TMP_ROOT;
+    delete process.env.LETTA_TRANSCRIPT_ROOT;
     await rm(testRoot, { recursive: true, force: true });
     setConversationId(null);
   });
@@ -402,10 +399,10 @@ describe("resolveReflectionTaskPrompt", () => {
     expect(resolved.finalizeContext).not.toBeNull();
     if (!resolved.finalizeContext) return;
 
-    const paths = getReflectionTranscriptPaths(agentId, conversationId);
-    expect(
-      resolved.finalizeContext.payloadPath.startsWith(paths.payloadsDir),
-    ).toBe(true);
+    expect(resolved.finalizeContext.payloadPath.startsWith(tmpdir())).toBe(
+      true,
+    );
+    expect(resolved.finalizeContext.payloadPath).toContain("letta-auto-");
   });
 });
 

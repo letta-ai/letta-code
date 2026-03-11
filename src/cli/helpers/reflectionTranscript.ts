@@ -1,16 +1,10 @@
-import {
-  appendFile,
-  copyFile,
-  mkdir,
-  readFile,
-  writeFile,
-} from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
+import { join } from "node:path";
 import { type Line, linesToTranscript } from "./accumulator";
 
-const REFLECTION_TMP_ROOT_ENV = "LETTA_REFLECTION_TMP_ROOT";
-const DEFAULT_REFLECTION_DIR = "letta-reflection";
+const TRANSCRIPT_ROOT_ENV = "LETTA_TRANSCRIPT_ROOT";
+const DEFAULT_TRANSCRIPT_DIR = "transcripts";
 
 interface ReflectionTranscriptState {
   auto_cursor_line: number;
@@ -34,10 +28,9 @@ type TranscriptEntry =
     };
 
 export interface ReflectionTranscriptPaths {
+  /** ~/.letta/transcripts/{agentId}/{conversationId}/ */
   rootDir: string;
   transcriptPath: string;
-  payloadsDir: string;
-  previousDir: string;
   statePath: string;
 }
 
@@ -76,12 +69,12 @@ function sanitizePathSegment(segment: string): string {
   return sanitized.length > 0 ? sanitized : "unknown";
 }
 
-function getReflectionRoot(): string {
-  const envRoot = process.env[REFLECTION_TMP_ROOT_ENV]?.trim();
+function getTranscriptRoot(): string {
+  const envRoot = process.env[TRANSCRIPT_ROOT_ENV]?.trim();
   if (envRoot) {
     return envRoot;
   }
-  return join(tmpdir(), DEFAULT_REFLECTION_DIR);
+  return join(homedir(), ".letta", DEFAULT_TRANSCRIPT_DIR);
 }
 
 function defaultState(): ReflectionTranscriptState {
@@ -168,8 +161,6 @@ function parseJsonLine<T>(line: string): T | null {
 
 async function ensurePaths(paths: ReflectionTranscriptPaths): Promise<void> {
   await mkdir(paths.rootDir, { recursive: true });
-  await mkdir(paths.payloadsDir, { recursive: true });
-  await mkdir(paths.previousDir, { recursive: true });
   await writeFile(paths.transcriptPath, "", { encoding: "utf-8", flag: "a" });
 }
 
@@ -222,30 +213,9 @@ async function readTranscriptLines(
   }
 }
 
-function buildPayloadPath(
-  paths: ReflectionTranscriptPaths,
-  kind: "auto" | "remember",
-): string {
-  const stamp = new Date().toISOString().replace(/[.:]/g, "-");
+function buildPayloadPath(kind: "auto" | "remember"): string {
   const nonce = Math.random().toString(36).slice(2, 8);
-  return join(paths.payloadsDir, `${kind}-${stamp}-${nonce}.txt`);
-}
-
-async function archivePayload(
-  paths: ReflectionTranscriptPaths,
-  payloadPath: string,
-  success: boolean,
-): Promise<void> {
-  const filename = basename(payloadPath);
-  const archivedName = success
-    ? filename
-    : filename.replace(/\.txt$/, "-failed.txt");
-  const destination = join(paths.previousDir, archivedName);
-  try {
-    await copyFile(payloadPath, destination);
-  } catch {
-    // Best-effort archive only.
-  }
+  return join(tmpdir(), `letta-${kind}-${nonce}.txt`);
 }
 
 export function getReflectionTranscriptPaths(
@@ -253,15 +223,13 @@ export function getReflectionTranscriptPaths(
   conversationId: string,
 ): ReflectionTranscriptPaths {
   const rootDir = join(
-    getReflectionRoot(),
+    getTranscriptRoot(),
     sanitizePathSegment(agentId),
     sanitizePathSegment(conversationId),
   );
   return {
     rootDir,
     transcriptPath: join(rootDir, "transcript.jsonl"),
-    payloadsDir: join(rootDir, "payloads"),
-    previousDir: join(rootDir, "previous"),
     statePath: join(rootDir, "state.json"),
   };
 }
@@ -317,7 +285,7 @@ export async function buildAutoReflectionPayload(
     return null;
   }
 
-  const payloadPath = buildPayloadPath(paths, "auto");
+  const payloadPath = buildPayloadPath("auto");
   await writeFile(payloadPath, transcript, "utf-8");
 
   state.last_auto_reflection_started_at = new Date().toISOString();
@@ -332,7 +300,7 @@ export async function buildAutoReflectionPayload(
 export async function finalizeAutoReflectionPayload(
   agentId: string,
   conversationId: string,
-  payloadPath: string,
+  _payloadPath: string,
   endSnapshotLine: number,
   success: boolean,
 ): Promise<void> {
@@ -345,17 +313,13 @@ export async function finalizeAutoReflectionPayload(
     state.last_auto_reflection_succeeded_at = new Date().toISOString();
   }
   await writeState(paths, state);
-  await archivePayload(paths, payloadPath, success);
 }
 
 export async function buildRememberPayloadFromLines(
-  agentId: string,
-  conversationId: string,
+  _agentId: string,
+  _conversationId: string,
   lines: Line[],
 ): Promise<RememberPayload | null> {
-  const paths = getReflectionTranscriptPaths(agentId, conversationId);
-  await ensurePaths(paths);
-
   const capturedAt = new Date().toISOString();
   const entries = lines
     .map((line) => lineToTranscriptEntry(line, capturedAt))
@@ -369,7 +333,7 @@ export async function buildRememberPayloadFromLines(
     return null;
   }
 
-  const payloadPath = buildPayloadPath(paths, "remember");
+  const payloadPath = buildPayloadPath("remember");
   await writeFile(payloadPath, transcript, "utf-8");
   return { payloadPath };
 }
@@ -394,18 +358,17 @@ export async function buildRememberPayload(
     return null;
   }
 
-  const payloadPath = buildPayloadPath(paths, "remember");
+  const payloadPath = buildPayloadPath("remember");
   await writeFile(payloadPath, transcript, "utf-8");
   return { payloadPath };
 }
 
 export async function finalizeRememberPayload(
-  agentId: string,
-  conversationId: string,
-  payloadPath: string,
-  success: boolean,
+  _agentId: string,
+  _conversationId: string,
+  _payloadPath: string,
+  _success: boolean,
 ): Promise<void> {
-  const paths = getReflectionTranscriptPaths(agentId, conversationId);
-  await ensurePaths(paths);
-  await archivePayload(paths, payloadPath, success);
+  // Payload files live in /tmp and are cleaned up by the OS.
+  // State tracking (cursor, timestamps) is in ~/.letta/transcripts/.
 }

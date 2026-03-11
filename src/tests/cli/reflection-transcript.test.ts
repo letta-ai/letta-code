@@ -19,12 +19,12 @@ describe("reflectionTranscript helper", () => {
   let testRoot: string;
 
   beforeEach(async () => {
-    testRoot = await mkdtemp(join(tmpdir(), "letta-reflection-test-"));
-    process.env.LETTA_REFLECTION_TMP_ROOT = testRoot;
+    testRoot = await mkdtemp(join(tmpdir(), "letta-transcript-test-"));
+    process.env.LETTA_TRANSCRIPT_ROOT = testRoot;
   });
 
   afterEach(async () => {
-    delete process.env.LETTA_REFLECTION_TMP_ROOT;
+    delete process.env.LETTA_TRANSCRIPT_ROOT;
     await rm(testRoot, { recursive: true, force: true });
   });
 
@@ -193,7 +193,5 @@ describe("reflectionTranscript helper", () => {
     const afterRaw = await readFile(paths.statePath, "utf-8");
     const after = JSON.parse(afterRaw) as { auto_cursor_line: number };
     expect(after.auto_cursor_line).toBe(before.auto_cursor_line);
-
-    expect(existsSync(paths.previousDir)).toBe(true);
   });
 });
