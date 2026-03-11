@@ -111,6 +111,40 @@ describe("Settings Manager - Initialization", () => {
       "Settings not initialized",
     );
   });
+
+  test("Initialize tolerates legacy reflectionBehavior key and strips it on persist", async () => {
+    const { writeFile, readFile, mkdir } = await import("../utils/fs.js");
+    const settingsDir = join(testHomeDir, ".letta");
+    await mkdir(settingsDir, { recursive: true });
+    const settingsPath = join(settingsDir, "settings.json");
+
+    await writeFile(
+      settingsPath,
+      JSON.stringify({
+        reflectionBehavior: "reminder",
+        reflectionTrigger: "step-count",
+        reflectionStepCount: 12,
+      }),
+    );
+
+    await settingsManager.initialize();
+    const settings = settingsManager.getSettings() as unknown as Record<
+      string,
+      unknown
+    >;
+    expect(settings.reflectionTrigger).toBe("step-count");
+    expect(settings.reflectionStepCount).toBe(12);
+    expect(settings).not.toHaveProperty("reflectionBehavior");
+
+    settingsManager.updateSettings({ tokenStreaming: true });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    const persisted = JSON.parse(await readFile(settingsPath)) as Record<
+      string,
+      unknown
+    >;
+    expect(persisted).not.toHaveProperty("reflectionBehavior");
+  });
 });
 
 // ============================================================================
@@ -402,6 +436,34 @@ describe("Settings Manager - Local Project Settings", () => {
       await settingsManager.loadLocalProjectSettings(testProjectDir);
 
     expect(localSettings.lastAgent).toBe(null);
+  });
+
+  test("Load local settings tolerates legacy reflectionBehavior key and strips it", async () => {
+    const { writeFile, readFile, mkdir } = await import("../utils/fs.js");
+    const settingsDir = join(testProjectDir, ".letta");
+    await mkdir(settingsDir, { recursive: true });
+    const settingsPath = join(settingsDir, "settings.local.json");
+
+    await writeFile(
+      settingsPath,
+      JSON.stringify({
+        lastAgent: "agent-local-legacy",
+        reflectionBehavior: "reminder",
+        reflectionTrigger: "step-count",
+        reflectionStepCount: 9,
+      }),
+    );
+
+    const localSettings =
+      await settingsManager.loadLocalProjectSettings(testProjectDir);
+    expect(localSettings.lastAgent).toBe("agent-local-legacy");
+    expect(localSettings).not.toHaveProperty("reflectionBehavior");
+
+    const persisted = JSON.parse(await readFile(settingsPath)) as Record<
+      string,
+      unknown
+    >;
+    expect(persisted).not.toHaveProperty("reflectionBehavior");
   });
 
   test("Get local project settings returns cached value", async () => {

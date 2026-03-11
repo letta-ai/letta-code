@@ -255,7 +255,8 @@ export const CLI_FLAG_CATALOG = {
     mode: "both",
     help: {
       argLabel: "<mode>",
-      description: "Sleeptime behavior: reminder, auto-launch",
+      description:
+        "DEPRECATED: reflection always auto-launches subagents (flag accepted for compatibility)",
     },
   },
   "reflection-step-count": {
