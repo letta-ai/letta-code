@@ -1,5 +1,6 @@
 import { getClient } from "../agent/client";
 import { getCurrentAgentId } from "../agent/context";
+import { getCurrentWorkingDirectory } from "../runtime-context";
 import {
   HookExitCode,
   type HookInput,
@@ -161,7 +162,7 @@ interface GenerateResponse {
 export async function executePromptHook(
   hook: PromptHookConfig,
   input: HookInput,
-  _workingDirectory: string = process.cwd(),
+  _workingDirectory: string = getCurrentWorkingDirectory(),
 ): Promise<HookResult> {
   const startTime = Date.now();
 

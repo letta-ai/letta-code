@@ -9,6 +9,7 @@
 import { existsSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { getCurrentWorkingDirectory } from "../../runtime-context";
 import { getErrorMessage } from "../../utils/error";
 import {
   getStringField,
@@ -336,7 +337,7 @@ async function discoverSubagentsFromDir(
  * Project-level subagents override global ones with the same name
  */
 export async function discoverSubagents(
-  workingDirectory: string = process.cwd(),
+  workingDirectory: string = getCurrentWorkingDirectory(),
 ): Promise<SubagentDiscoveryResult> {
   const errors: Array<{ path: string; message: string }> = [];
   const subagents: SubagentConfig[] = [];
@@ -370,7 +371,7 @@ export async function discoverSubagents(
  * Results are cached per working directory
  */
 export async function getAllSubagentConfigs(
-  workingDirectory: string = process.cwd(),
+  workingDirectory: string = getCurrentWorkingDirectory(),
 ): Promise<Record<string, SubagentConfig>> {
   // Return cached if same working directory
   if (cache.configs && cache.workingDir === workingDirectory) {

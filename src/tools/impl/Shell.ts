@@ -1,4 +1,5 @@
 import * as path from "node:path";
+import { getCurrentWorkingDirectory } from "../../runtime-context";
 import { getShellEnv } from "./shellEnv.js";
 import { buildShellLaunchers } from "./shellLaunchers.js";
 import { ShellExecutionError, spawnWithLauncher } from "./shellRunner.js";
@@ -79,8 +80,8 @@ export async function shell(args: ShellArgs): Promise<ShellResult> {
   const cwd = workdir
     ? path.isAbsolute(workdir)
       ? workdir
-      : path.resolve(process.env.USER_CWD || process.cwd(), workdir)
-    : process.env.USER_CWD || process.cwd();
+      : path.resolve(getCurrentWorkingDirectory(), workdir)
+    : getCurrentWorkingDirectory();
 
   const context: SpawnContext = {
     command,

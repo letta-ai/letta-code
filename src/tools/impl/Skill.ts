@@ -8,6 +8,7 @@ import {
   getBundledSkills,
   SKILLS_DIR,
 } from "../../agent/skills";
+import { getCurrentWorkingDirectory } from "../../runtime-context";
 import { queueSkillContent } from "./skillContentRegistry";
 import { validateRequiredParams } from "./validation.js";
 
@@ -97,7 +98,11 @@ async function readSkillContent(
 
   // Legacy fallback: check for bundled skills in a repo-level skills directory
   try {
-    const bundledSkillsDir = join(process.cwd(), "skills", "skills");
+    const bundledSkillsDir = join(
+      getCurrentWorkingDirectory(),
+      "skills",
+      "skills",
+    );
     const bundledSkillPath = join(bundledSkillsDir, skillId, "SKILL.md");
     const content = await readFile(bundledSkillPath, "utf-8");
     return { content, path: bundledSkillPath };
@@ -119,7 +124,7 @@ async function getResolvedSkillsDir(): Promise<string> {
   }
 
   // Fall back to default .skills directory in cwd
-  return join(process.cwd(), SKILLS_DIR);
+  return join(getCurrentWorkingDirectory(), SKILLS_DIR);
 }
 
 export async function skill(args: SkillArgs): Promise<SkillResult> {

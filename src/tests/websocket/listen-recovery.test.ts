@@ -13,6 +13,7 @@ import { __listenClientTestUtils } from "../../websocket/listen-client";
 
 const {
   createRuntime,
+  getOrCreateConversationRuntime,
   resolveRecoveryBatchId,
   resolvePendingApprovalBatchId,
   rememberPendingApprovalBatchIds,
@@ -103,6 +104,33 @@ describe("resolveRecoveryBatchId warm path", () => {
 
     expect(batchId).toBeNull();
   });
+
+  test("batch correlation stays worker-local for the same tool_call_id", () => {
+    const runtimeA = createRuntime("agent-a", "conv-a");
+    const runtimeB = getOrCreateConversationRuntime(
+      runtimeA.listener,
+      "agent-b",
+      "conv-b",
+    );
+
+    rememberPendingApprovalBatchIds(
+      runtimeA,
+      [{ toolCallId: "call-1" }],
+      "batch-a",
+    );
+    rememberPendingApprovalBatchIds(
+      runtimeB,
+      [{ toolCallId: "call-1" }],
+      "batch-b",
+    );
+
+    expect(resolveRecoveryBatchId(runtimeA, [{ toolCallId: "call-1" }])).toBe(
+      "batch-a",
+    );
+    expect(resolveRecoveryBatchId(runtimeB, [{ toolCallId: "call-1" }])).toBe(
+      "batch-b",
+    );
+  });
 });
 
 describe("isRecoveringApprovals guard", () => {
@@ -123,6 +151,19 @@ describe("isRecoveringApprovals guard", () => {
     // Simulate completion
     runtime.isRecoveringApprovals = false;
     expect(runtime.isRecoveringApprovals).toBe(false);
+  });
+
+  test("recovery guard is worker-local", () => {
+    const runtimeA = createRuntime("agent-a", "conv-a");
+    const runtimeB = getOrCreateConversationRuntime(
+      runtimeA.listener,
+      "agent-a",
+      "conv-b",
+    );
+
+    runtimeA.isRecoveringApprovals = true;
+    expect(runtimeA.isRecoveringApprovals).toBe(true);
+    expect(runtimeB.isRecoveringApprovals).toBe(false);
   });
 });
 

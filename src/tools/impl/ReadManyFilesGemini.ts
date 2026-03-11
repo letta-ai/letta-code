@@ -5,6 +5,7 @@
 
 import path from "node:path";
 import { glob as globFn } from "glob";
+import { getCurrentWorkingDirectory } from "../../runtime-context";
 import { read } from "./Read";
 
 interface ReadManyFilesGeminiArgs {
@@ -43,7 +44,7 @@ export async function read_many_files(
     ? [...DEFAULT_EXCLUDES, ...exclude]
     : exclude;
 
-  const cwd = process.cwd();
+  const cwd = getCurrentWorkingDirectory();
   const allFiles = new Set<string>();
 
   // Process each include pattern

@@ -1,5 +1,6 @@
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
+import { getCurrentWorkingDirectory } from "../../runtime-context";
 import { validateRequiredParams } from "./validation.js";
 
 const MAX_ENTRY_LENGTH = 500;
@@ -33,7 +34,7 @@ export async function list_dir(
   validateRequiredParams(args, ["dir_path"], "list_dir");
 
   const { dir_path, offset = 1, limit = 25, depth = 2 } = args;
-  const userCwd = process.env.USER_CWD || process.cwd();
+  const userCwd = getCurrentWorkingDirectory();
   const resolvedPath = path.isAbsolute(dir_path)
     ? dir_path
     : path.resolve(userCwd, dir_path);

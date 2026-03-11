@@ -3,7 +3,11 @@
 
 import { homedir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
-
+import {
+  getCurrentWorkingDirectory,
+  getRuntimeContext,
+  updateRuntimeContext,
+} from "../runtime-context";
 import { isReadOnlyShellCommand } from "./readOnlyShell";
 import { unwrapShellLauncherCommand } from "./shell-command-normalization";
 
@@ -31,6 +35,18 @@ function getGlobalMode(): PermissionMode {
     global[MODE_KEY] = "default";
   }
   return global[MODE_KEY];
+}
+
+function getContextMode(): PermissionMode | undefined {
+  return getRuntimeContext()?.permissionMode;
+}
+
+function getContextPlanFilePath(): string | null | undefined {
+  return getRuntimeContext()?.planFilePath;
+}
+
+function getContextModeBeforePlan(): PermissionMode | null | undefined {
+  return getRuntimeContext()?.modeBeforePlan;
 }
 
 function setGlobalMode(value: PermissionMode): void {
@@ -201,18 +217,22 @@ class PermissionModeManager {
     // ExitPlanMode can restore it (e.g. YOLO).
     if (mode === "plan" && prevMode !== "plan") {
       setGlobalModeBeforePlan(prevMode);
+      updateRuntimeContext({ modeBeforePlan: prevMode });
     }
 
     this.currentMode = mode;
+    updateRuntimeContext({ permissionMode: mode });
 
     // Clear plan file path when exiting plan mode
     if (mode !== "plan") {
       setGlobalPlanFilePath(null);
+      updateRuntimeContext({ planFilePath: null });
     }
 
     // Once we leave plan mode, the remembered mode has been consumed.
     if (prevMode === "plan" && mode !== "plan") {
       setGlobalModeBeforePlan(null);
+      updateRuntimeContext({ modeBeforePlan: null });
     }
   }
 
@@ -221,14 +241,14 @@ class PermissionModeManager {
    * Used to restore the user's previous setting (e.g., bypassPermissions).
    */
   getModeBeforePlan(): PermissionMode | null {
-    return getGlobalModeBeforePlan();
+    return getContextModeBeforePlan() ?? getGlobalModeBeforePlan();
   }
 
   /**
    * Get the current permission mode
    */
   getMode(): PermissionMode {
-    return this.currentMode;
+    return getContextMode() ?? this.currentMode;
   }
 
   /**
@@ -236,13 +256,14 @@ class PermissionModeManager {
    */
   setPlanFilePath(path: string | null): void {
     setGlobalPlanFilePath(path);
+    updateRuntimeContext({ planFilePath: path });
   }
 
   /**
    * Get the current plan file path
    */
   getPlanFilePath(): string | null {
-    return getGlobalPlanFilePath();
+    return getContextPlanFilePath() ?? getGlobalPlanFilePath();
   }
 
   /**
@@ -252,9 +273,9 @@ class PermissionModeManager {
   checkModeOverride(
     toolName: string,
     toolArgs?: Record<string, unknown>,
-    workingDirectory: string = process.cwd(),
+    workingDirectory: string = getCurrentWorkingDirectory(),
   ): "allow" | "deny" | null {
-    switch (this.currentMode) {
+    switch (this.getMode()) {
       case "bypassPermissions":
         // Auto-allow everything (except explicit deny rules checked earlier)
         return "allow";
@@ -454,6 +475,11 @@ class PermissionModeManager {
     this.currentMode = "default";
     setGlobalPlanFilePath(null);
     setGlobalModeBeforePlan(null);
+    updateRuntimeContext({
+      permissionMode: "default",
+      planFilePath: null,
+      modeBeforePlan: null,
+    });
   }
 }
 

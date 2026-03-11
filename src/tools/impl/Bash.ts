@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { INTERRUPTED_BY_USER } from "../../constants";
+import { getCurrentWorkingDirectory } from "../../runtime-context";
 import {
   appendToOutputFile,
   backgroundProcesses,
@@ -148,7 +149,7 @@ export async function bash(args: BashArgs): Promise<BashResult> {
     signal,
     onOutput,
   } = args;
-  const userCwd = process.env.USER_CWD || process.cwd();
+  const userCwd = getCurrentWorkingDirectory();
 
   if (command === "/bg") {
     const processes = Array.from(backgroundProcesses.entries());

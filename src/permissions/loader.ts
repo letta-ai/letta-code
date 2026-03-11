@@ -4,6 +4,7 @@ import { exists, readFile, writeFile } from "../utils/fs.js";
 
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { getCurrentWorkingDirectory } from "../runtime-context";
 import {
   normalizePermissionRule,
   permissionRulesEquivalent,
@@ -48,7 +49,7 @@ export function getUserSettingsPaths(options: UserSettingsPathsOptions = {}): {
  * Rules are merged by concatenating arrays (more specific settings add to broader ones)
  */
 export async function loadPermissions(
-  workingDirectory: string = process.cwd(),
+  workingDirectory: string = getCurrentWorkingDirectory(),
 ): Promise<PermissionRules> {
   const merged: PermissionRules = {
     allow: [],
@@ -129,7 +130,7 @@ export async function savePermissionRule(
   rule: string,
   ruleType: "allow" | "deny" | "ask",
   scope: "project" | "local" | "user",
-  workingDirectory: string = process.cwd(),
+  workingDirectory: string = getCurrentWorkingDirectory(),
 ): Promise<void> {
   // Determine settings file path based on scope
   let settingsPath: string;

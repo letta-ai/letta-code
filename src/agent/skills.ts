@@ -12,6 +12,7 @@ import { existsSync } from "node:fs";
 import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { getCurrentWorkingDirectory } from "../runtime-context";
 import { parseFrontmatter } from "../utils/frontmatter";
 import { ALL_SKILL_SOURCES } from "./skillSources";
 
@@ -179,7 +180,7 @@ async function discoverSkillsFromDir(
  * @returns A result containing discovered skills and any errors
  */
 export async function discoverSkills(
-  projectSkillsPath: string = join(process.cwd(), SKILLS_DIR),
+  projectSkillsPath: string = join(getCurrentWorkingDirectory(), SKILLS_DIR),
   agentId?: string,
   options?: SkillDiscoveryOptions,
 ): Promise<SkillDiscoveryResult> {

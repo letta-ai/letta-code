@@ -22,6 +22,7 @@ import {
 import { cliPermissions } from "../../permissions/cli";
 import { permissionMode } from "../../permissions/mode";
 import { sessionPermissions } from "../../permissions/session";
+import { getCurrentWorkingDirectory } from "../../runtime-context";
 import { settingsManager } from "../../settings-manager";
 import { resolveLettaInvocation } from "../../tools/impl/shellEnv";
 import { getErrorMessage } from "../../utils/error";
@@ -665,7 +666,7 @@ async function executeSubagent(
       process.env.LETTA_BASE_URL || settings.env?.LETTA_BASE_URL;
 
     const proc = spawn(launcher.command, launcher.args, {
-      cwd: process.cwd(),
+      cwd: getCurrentWorkingDirectory(),
       env: {
         ...process.env,
         ...(inheritedApiKey && { LETTA_API_KEY: inheritedApiKey }),

@@ -3,6 +3,7 @@
 // Cross-platform: uses platform-appropriate shell (PowerShell on Windows, sh/bash/zsh on Unix)
 
 import { type ChildProcess, spawn } from "node:child_process";
+import { getCurrentWorkingDirectory } from "../runtime-context";
 import { buildShellLaunchers } from "../tools/impl/shellLaunchers";
 import { executePromptHook } from "./prompt-executor";
 import {
@@ -76,7 +77,7 @@ function trySpawnWithLauncher(
 export async function executeHookCommand(
   hook: HookCommand,
   input: HookInput,
-  workingDirectory: string = process.cwd(),
+  workingDirectory: string = getCurrentWorkingDirectory(),
 ): Promise<HookResult> {
   // Dispatch based on hook type
   if (isPromptHook(hook)) {
@@ -106,7 +107,7 @@ export async function executeHookCommand(
 export async function executeCommandHook(
   hook: CommandHookConfig,
   input: HookInput,
-  workingDirectory: string = process.cwd(),
+  workingDirectory: string = getCurrentWorkingDirectory(),
 ): Promise<HookResult> {
   const startTime = Date.now();
   const timeout = hook.timeout ?? DEFAULT_TIMEOUT_MS;
@@ -332,7 +333,7 @@ function executeWithLauncher(
 export async function executeHooks(
   hooks: HookCommand[],
   input: HookInput,
-  workingDirectory: string = process.cwd(),
+  workingDirectory: string = getCurrentWorkingDirectory(),
 ): Promise<HookExecutionResult> {
   const results: HookResult[] = [];
   const feedback: string[] = [];
@@ -391,7 +392,7 @@ export async function executeHooks(
 export async function executeHooksParallel(
   hooks: HookCommand[],
   input: HookInput,
-  workingDirectory: string = process.cwd(),
+  workingDirectory: string = getCurrentWorkingDirectory(),
 ): Promise<HookExecutionResult> {
   const results = await Promise.all(
     hooks.map((hook) => executeHookCommand(hook, input, workingDirectory)),

@@ -1,5 +1,6 @@
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
+import { getCurrentWorkingDirectory } from "../../runtime-context";
 import { validateRequiredParams } from "./validation.js";
 
 interface ApplyPatchArgs {
@@ -176,7 +177,7 @@ export async function apply_patch(
     throw new Error(`Unknown patch directive at line ${i + 1}: ${line}`);
   }
 
-  const cwd = process.env.USER_CWD || process.cwd();
+  const cwd = getCurrentWorkingDirectory();
   const pendingWrites = new Map<string, string>();
   const pendingDeletes = new Set<string>();
 
