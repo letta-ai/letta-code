@@ -1,7 +1,7 @@
 // existsSync, readFileSync removed - no longer needed since plan content
 // is shown via StaticPlanApproval during approval, not in tool result
 import { Box } from "ink";
-import { memo } from "react";
+import { Fragment, memo, type ReactNode } from "react";
 import { INTERRUPTED_BY_USER } from "../../constants";
 import { clipToolReturn } from "../../tools/manager.js";
 import type { AdvancedDiffSuccess } from "../helpers/diff";
@@ -33,6 +33,55 @@ import { Text } from "./Text";
  */
 function isQuestionTool(name: string): boolean {
   return name === "AskUserQuestion";
+}
+
+/**
+ * Colorize tool args string with file paths, numbers, and labels.
+ * Regex-based tokenizer that applies shell syntax palette colors.
+ */
+function colorizeArgs(argsStr: string): ReactNode {
+  if (!argsStr) return null;
+
+  const palette = colors.shellSyntax;
+  const parts: ReactNode[] = [];
+  let lastIndex = 0;
+  let key = 0;
+
+  // Group 1: paths containing / (e.g. src/cli/foo.tsx, **/*.ts)
+  // Group 2: filenames with extension (e.g. foo.tsx, package.json)
+  // Group 3: labels before : (e.g. offset, limit)
+  // Group 4: standalone numbers (e.g. 50, 10)
+  const re =
+    /([\w.*?\-@~/]+\/[\w.*?\-@~/]*)|((?<=[(\s,])[\w.-]+\.\w{1,5}(?=[)\s,]|$))|(\w+)(?=\s*:)|(\b\d+\b)/g;
+
+  for (let m = re.exec(argsStr); m !== null; m = re.exec(argsStr)) {
+    if (m.index > lastIndex) {
+      parts.push(
+        <Fragment key={key++}>{argsStr.slice(lastIndex, m.index)}</Fragment>,
+      );
+    }
+
+    const color = m[1]
+      ? palette.string // path with /
+      : m[2]
+        ? palette.string // filename.ext
+        : m[3]
+          ? palette.comment // label (dimmed)
+          : palette.number; // number
+
+    parts.push(
+      <Text key={key++} color={color}>
+        {m[0]}
+      </Text>,
+    );
+    lastIndex = m.index + m[0].length;
+  }
+
+  if (lastIndex < argsStr.length) {
+    parts.push(<Fragment key={key++}>{argsStr.slice(lastIndex)}</Fragment>);
+  }
+
+  return <>{parts}</>;
 }
 
 import type { StreamingState } from "../helpers/accumulator";
@@ -155,7 +204,7 @@ export const ToolCallMessage = memo(
       // - Question tool: hide args (shown in result instead)
       // - Still streaming + phase "ready": args may be incomplete, show ellipsis
       // - Phase "running"/"finished" or stream done: args complete, show formatted
-      let args = "";
+      let args: ReactNode = null;
       if (!isQuestionTool(rawName)) {
         const parseArgs = (): {
           formatted: ReturnType<typeof formatArgsDisplay> | null;
@@ -197,9 +246,9 @@ export const ToolCallMessage = memo(
             : normalizedDisplay;
           if (rawName.toLowerCase() === "taskoutput") {
             const separator = truncatedDisplay.startsWith("(") ? "" : " ";
-            args = separator + truncatedDisplay;
+            args = colorizeArgs(separator + truncatedDisplay);
           } else {
-            args = `(${truncatedDisplay})`;
+            args = colorizeArgs(`(${truncatedDisplay})`);
           }
         }
       }
