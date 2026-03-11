@@ -205,6 +205,7 @@ import {
   type ContextWindowOverview,
   renderContextUsage,
 } from "./helpers/contextChart";
+import { formatStatusCommandOutput } from "./helpers/statusCommand";
 import {
   createContextTracker,
   resetContextHistory,
@@ -524,6 +525,7 @@ const INTERACTIVE_SLASH_COMMANDS = new Set([
 const NON_STATE_COMMANDS = new Set([
   "/ade",
   "/bg",
+  "/status",
   "/usage",
   "/help",
   "/hooks",
@@ -7631,6 +7633,36 @@ export default function App({
             false,
             true,
           );
+
+          return { submitted: true };
+        }
+
+        // Special handling for /status command - show session/runtime status
+        if (trimmed === "/status") {
+          const cmd = commandRunner.start(trimmed, "Fetching status...");
+
+          try {
+            const memfsEnabled = settingsManager.isMemfsEnabled(agentId);
+            const memoryDirectory = getMemoryFilesystemRoot(agentId);
+            const output = formatStatusCommandOutput({
+              agentId,
+              agentName,
+              conversationId: conversationIdRef.current,
+              serverUrl: getServerUrl(),
+              memfsEnabled,
+              memoryDirectory,
+              currentDirectory: process.cwd(),
+              projectDirectory,
+              permissionMode: uiPermissionMode,
+              modelDisplayName: currentModelDisplay,
+            });
+
+            cmd.finish(output, true);
+          } catch (error) {
+            cmd.fail(
+              `Error fetching status: ${error instanceof Error ? error.message : String(error)}`,
+            );
+          }
 
           return { submitted: true };
         }

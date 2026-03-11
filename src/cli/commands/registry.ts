@@ -261,6 +261,15 @@ export const commands: Record<string, Command> = {
       return "Fetching context usage...";
     },
   },
+  "/status": {
+    desc: "Show current session status",
+    order: 33.6,
+    noArgs: true,
+    handler: () => {
+      // Handled specially in App.tsx to display runtime/session status
+      return "Fetching status...";
+    },
+  },
   "/feedback": {
     desc: "Send feedback to the Letta team",
     order: 34,
