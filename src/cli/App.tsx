@@ -12580,28 +12580,33 @@ ${SYSTEM_REMINDER_CLOSE}
     [pendingApprovals, approvalResults, sendAllResults, refreshDerived],
   );
 
-  const handleEnterPlanModeApprove = useCallback(async () => {
-    const currentIndex = approvalResults.length;
-    const approval = pendingApprovals[currentIndex];
-    if (!approval) return;
+  const handleEnterPlanModeApprove = useCallback(
+    async (preserveMode: boolean = false) => {
+      const currentIndex = approvalResults.length;
+      const approval = pendingApprovals[currentIndex];
+      if (!approval) return;
 
-    const isLast = currentIndex + 1 >= pendingApprovals.length;
+      const isLast = currentIndex + 1 >= pendingApprovals.length;
 
-    // Generate plan file path
-    const planFilePath = generatePlanFilePath();
-    const applyPatchRelativePath = relative(
-      process.cwd(),
-      planFilePath,
-    ).replace(/\\/g, "/");
+      // Generate plan file path
+      const planFilePath = generatePlanFilePath();
+      const applyPatchRelativePath = relative(
+        process.cwd(),
+        planFilePath,
+      ).replace(/\\/g, "/");
 
-    // Toggle plan mode on and store plan file path
-    permissionMode.setMode("plan");
-    permissionMode.setPlanFilePath(planFilePath);
-    cacheLastPlanFilePath(planFilePath);
-    setUiPermissionMode("plan");
+      // Store plan file path
+      permissionMode.setPlanFilePath(planFilePath);
+      cacheLastPlanFilePath(planFilePath);
 
-    // Get the tool return message from the implementation
-    const toolReturn = `Entered plan mode. You should now focus on exploring the codebase and designing an implementation approach.
+      if (!preserveMode) {
+        // Normal flow: switch to plan mode
+        permissionMode.setMode("plan");
+        setUiPermissionMode("plan");
+      }
+
+      // Get the tool return message from the implementation
+      const toolReturn = `Entered plan mode. You should now focus on exploring the codebase and designing an implementation approach.
 
 In plan mode, you should:
 1. Thoroughly explore the codebase to understand existing patterns
@@ -12616,46 +12621,48 @@ Remember: DO NOT write or edit any files yet. This is a read-only exploration an
 Plan file path: ${planFilePath}
 If using apply_patch, use this exact relative patch path: ${applyPatchRelativePath}`;
 
-    const precomputedResult: ToolExecutionResult = {
-      toolReturn,
-      status: "success",
-    };
+      const precomputedResult: ToolExecutionResult = {
+        toolReturn,
+        status: "success",
+      };
 
-    // Update buffers with tool return
-    onChunk(buffersRef.current, {
-      message_type: "tool_return_message",
-      id: "dummy",
-      date: new Date().toISOString(),
-      tool_call_id: approval.toolCallId,
-      tool_return: toolReturn,
-      status: "success",
-      stdout: null,
-      stderr: null,
-    });
+      // Update buffers with tool return
+      onChunk(buffersRef.current, {
+        message_type: "tool_return_message",
+        id: "dummy",
+        date: new Date().toISOString(),
+        tool_call_id: approval.toolCallId,
+        tool_return: toolReturn,
+        status: "success",
+        stdout: null,
+        stderr: null,
+      });
 
-    setThinkingMessage(getRandomThinkingVerb());
-    refreshDerived();
+      setThinkingMessage(getRandomThinkingVerb());
+      refreshDerived();
 
-    const decision = {
-      type: "approve" as const,
-      approval,
-      precomputedResult,
-    };
+      const decision = {
+        type: "approve" as const,
+        approval,
+        precomputedResult,
+      };
 
-    if (isLast) {
-      setIsExecutingTool(true);
-      await sendAllResults(decision);
-    } else {
-      setApprovalResults((prev) => [...prev, decision]);
-    }
-  }, [
-    pendingApprovals,
-    approvalResults,
-    sendAllResults,
-    refreshDerived,
-    setUiPermissionMode,
-    cacheLastPlanFilePath,
-  ]);
+      if (isLast) {
+        setIsExecutingTool(true);
+        await sendAllResults(decision);
+      } else {
+        setApprovalResults((prev) => [...prev, decision]);
+      }
+    },
+    [
+      pendingApprovals,
+      approvalResults,
+      sendAllResults,
+      refreshDerived,
+      setUiPermissionMode,
+      cacheLastPlanFilePath,
+    ],
+  );
 
   const handleEnterPlanModeReject = useCallback(async () => {
     const currentIndex = approvalResults.length;
@@ -12680,6 +12687,20 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
       setApprovalResults((prev) => [...prev, decision]);
     }
   }, [pendingApprovals, approvalResults, sendAllResults]);
+
+  // Guard EnterPlanMode:
+  // When in bypassPermissions (YOLO) mode, auto-approve EnterPlanMode and stay
+  // in YOLO — the agent gets plan instructions but keeps full permissions.
+  // The existing ExitPlanMode guard then auto-approves the exit too.
+  useEffect(() => {
+    const currentIndex = approvalResults.length;
+    const approval = pendingApprovals[currentIndex];
+    if (approval?.toolName === "EnterPlanMode") {
+      if (permissionMode.getMode() === "bypassPermissions") {
+        handleEnterPlanModeApprove(true);
+      }
+    }
+  }, [pendingApprovals, approvalResults.length, handleEnterPlanModeApprove]);
 
   // Live area shows only in-progress items
   // biome-ignore lint/correctness/useExhaustiveDependencies: staticItems.length and deferredCommitAt are intentional triggers to recompute when items are promoted to static or deferred commits complete

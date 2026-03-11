@@ -60,7 +60,7 @@ describe("permission mode retry wiring", () => {
     );
 
     const enterPlanStart = source.indexOf(
-      "const handleEnterPlanModeApprove = useCallback(async () => {",
+      "const handleEnterPlanModeApprove = useCallback(",
     );
     const enterPlanEnd = source.indexOf(
       "const handleEnterPlanModeReject = useCallback(async () => {",
@@ -131,6 +131,44 @@ describe("permission mode retry wiring", () => {
     expect(segment).toContain("buffersRef.current.interrupted = false;");
     expect(segment).toContain("conversationBusyRetriesRef.current = 0;");
     expect(segment).toContain("continue;");
+  });
+
+  test("handleEnterPlanModeApprove supports preserveMode to stay in YOLO", () => {
+    const source = readAppSource();
+
+    const start = source.indexOf(
+      "const handleEnterPlanModeApprove = useCallback(",
+    );
+    const end = source.indexOf(
+      "const handleEnterPlanModeReject = useCallback(async () => {",
+    );
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+
+    const segment = source.slice(start, end);
+    expect(segment).toContain("preserveMode: boolean = false");
+    expect(segment).toContain("if (!preserveMode)");
+    expect(segment).toContain('permissionMode.setMode("plan")');
+  });
+
+  test("auto-approves EnterPlanMode in bypassPermissions mode", () => {
+    const source = readAppSource();
+
+    const guardStart = source.indexOf("Guard EnterPlanMode:");
+    expect(guardStart).toBeGreaterThan(-1);
+
+    const guardEnd = source.indexOf(
+      "// Live area shows only in-progress items",
+      guardStart,
+    );
+    expect(guardEnd).toBeGreaterThan(guardStart);
+
+    const segment = source.slice(guardStart, guardEnd);
+    expect(segment).toContain('approval?.toolName === "EnterPlanMode"');
+    expect(segment).toContain(
+      'permissionMode.getMode() === "bypassPermissions"',
+    );
+    expect(segment).toContain("handleEnterPlanModeApprove(true)");
   });
 
   test("preserves saved plan path when approving ExitPlanMode after mode cycling", () => {
