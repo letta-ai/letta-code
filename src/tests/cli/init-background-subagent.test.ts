@@ -105,10 +105,4 @@ describe("init background subagent wiring", () => {
     expect(prompt).toContain("Deep init");
   });
 
-  test("App.tsx contains maybeLaunchDeepInitSubagent", () => {
-    const appSource = readSource("../../cli/App.tsx");
-    expect(appSource).toContain("maybeLaunchDeepInitSubagent");
-    expect(appSource).toContain("Deep memory initialization");
-    expect(appSource).toContain('depth: "deep"');
-  });
 });

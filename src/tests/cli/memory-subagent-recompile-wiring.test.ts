@@ -35,7 +35,6 @@ describe("memory subagent recompile handling", () => {
         agentId: "agent-init-1",
         conversationId: "conv-init-1",
         subagentType: "init",
-        initDepth: "shallow",
         success: true,
       },
       {

@@ -39,7 +39,6 @@ export interface SharedReminderContext {
   maybeLaunchReflectionSubagent?: (
     triggerSource: ReflectionTriggerSource,
   ) => Promise<boolean>;
-  maybeLaunchDeepInitSubagent?: () => Promise<boolean>;
 }
 
 export type ReminderTextPart = { type: "text"; text: string };
@@ -213,29 +212,6 @@ async function buildAutoInitReminder(
   return AUTO_INIT_REMINDER;
 }
 
-// Disabled: deep init at turn 8 + reflection at turn 10 is too chaotic.
-// Re-enable once both subagent prompts are tuned to coexist.
-const DEEP_INIT_AUTO_LAUNCH_ENABLED = false;
-
-async function maybeLaunchDeepInit(
-  context: SharedReminderContext,
-): Promise<string | null> {
-  if (!DEEP_INIT_AUTO_LAUNCH_ENABLED) return null;
-  if (!context.state.shallowInitCompleted) return null;
-  if (context.state.deepInitFired) return null;
-  if (context.state.turnCount < 8) return null;
-
-  const memfsEnabled = settingsManager.isMemfsEnabled(context.agent.id);
-  if (!memfsEnabled) return null;
-
-  if (context.maybeLaunchDeepInitSubagent) {
-    // Don't latch deepInitFired here — it's set in the onComplete callback
-    // only on success, so a failed deep init allows automatic retry.
-    await context.maybeLaunchDeepInitSubagent();
-  }
-  return null;
-}
-
 const MAX_COMMAND_REMINDERS_PER_TURN = 10;
 const MAX_TOOLSET_REMINDERS_PER_TURN = 5;
 const MAX_COMMAND_INPUT_CHARS = 2000;
@@ -349,7 +325,6 @@ export const sharedReminderProviders: Record<
   "plan-mode": buildPlanModeReminder,
   "reflection-step-count": buildReflectionStepReminder,
   "reflection-compaction": buildReflectionCompactionReminder,
-  "deep-init": maybeLaunchDeepInit,
   "command-io": buildCommandIoReminder,
   "toolset-change": buildToolsetChangeReminder,
   "auto-init": buildAutoInitReminder,
