@@ -1067,25 +1067,39 @@ export default function App({
     permissionMode.getMode(),
   );
   const uiPermissionModeRef = useRef<PermissionMode>(uiPermissionMode);
-  const setUiPermissionMode = useCallback((mode: PermissionMode) => {
-    uiPermissionModeRef.current = mode;
-    _setUiPermissionMode(mode);
 
-    // Keep the permissionMode singleton in sync *immediately*.
-    //
-    // We also have a useEffect sync (below) as a safety net, but relying on it
-    // introduces a render/effect window where the UI can show YOLO while the
-    // singleton still reports an older mode. That window is enough to break
-    // plan-mode restoration (plan remembers the singleton's mode-at-entry).
-    if (permissionMode.getMode() !== mode) {
-      // If entering plan mode via UI state, ensure a plan file path is set.
-      if (mode === "plan" && !permissionMode.getPlanFilePath()) {
-        const planPath = generatePlanFilePath();
-        permissionMode.setPlanFilePath(planPath);
-      }
-      permissionMode.setMode(mode);
+  // Store the last plan file path for post-approval rendering
+  // (needed because plan mode is exited before rendering the result)
+  const lastPlanFilePathRef = useRef<string | null>(null);
+  const cacheLastPlanFilePath = useCallback((planFilePath: string | null) => {
+    if (planFilePath) {
+      lastPlanFilePathRef.current = planFilePath;
     }
   }, []);
+
+  const setUiPermissionMode = useCallback(
+    (mode: PermissionMode) => {
+      uiPermissionModeRef.current = mode;
+      _setUiPermissionMode(mode);
+
+      // Keep the permissionMode singleton in sync *immediately*.
+      //
+      // We also have a useEffect sync (below) as a safety net, but relying on it
+      // introduces a render/effect window where the UI can show YOLO while the
+      // singleton still reports an older mode. That window is enough to break
+      // plan-mode restoration (plan remembers the singleton's mode-at-entry).
+      if (permissionMode.getMode() !== mode) {
+        // If entering plan mode via UI state, ensure a plan file path is set.
+        if (mode === "plan" && !permissionMode.getPlanFilePath()) {
+          const planPath = generatePlanFilePath();
+          permissionMode.setPlanFilePath(planPath);
+          cacheLastPlanFilePath(planPath);
+        }
+        permissionMode.setMode(mode);
+      }
+    },
+    [cacheLastPlanFilePath],
+  );
 
   const statusLineTriggerVersionRef = useRef(0);
   const [statusLineTriggerVersion, setStatusLineTriggerVersion] = useState(0);
@@ -2530,10 +2544,6 @@ export default function App({
   const precomputedDiffsRef = useRef<Map<string, AdvancedDiffSuccess>>(
     new Map(),
   );
-
-  // Store the last plan file path for post-approval rendering
-  // (needed because plan mode is exited before rendering the result)
-  const lastPlanFilePathRef = useRef<string | null>(null);
 
   // Track which approval tool call IDs have had their previews eagerly committed
   // This prevents double-committing when the approval changes
@@ -9234,6 +9244,7 @@ export default function App({
           // Generate plan file path and enter plan mode
           const planPath = generatePlanFilePath();
           permissionMode.setPlanFilePath(planPath);
+          cacheLastPlanFilePath(planPath);
           permissionMode.setMode("plan");
           setUiPermissionMode("plan");
 
@@ -12009,12 +12020,13 @@ ${SYSTEM_REMINDER_CLOSE}
       if (mode === "plan") {
         const planPath = generatePlanFilePath();
         permissionMode.setPlanFilePath(planPath);
+        cacheLastPlanFilePath(planPath);
       }
       // permissionMode.setMode() is called in InputRich.tsx before this callback
       setUiPermissionMode(mode);
       triggerStatusLineRefresh();
     },
-    [triggerStatusLineRefresh, setUiPermissionMode],
+    [triggerStatusLineRefresh, setUiPermissionMode, cacheLastPlanFilePath],
   );
 
   // Reasoning tier cycling (Tab hotkey in InputRich.tsx)
@@ -12327,12 +12339,18 @@ ${SYSTEM_REMINDER_CLOSE}
         lastPlanFilePathRef.current = planFilePath;
       }
 
-      // Exit plan mode
-      const restoreMode = acceptEdits
-        ? "acceptEdits"
-        : (permissionMode.getModeBeforePlan() ?? "default");
-      permissionMode.setMode(restoreMode);
-      setUiPermissionMode(restoreMode);
+      // Exit plan mode — if user already cycled out (e.g., Shift+Tab to
+      // acceptEdits/yolo), keep their chosen mode instead of downgrading.
+      const currentMode = permissionMode.getMode();
+      if (currentMode === "plan") {
+        const restoreMode = acceptEdits
+          ? "acceptEdits"
+          : (permissionMode.getModeBeforePlan() ?? "default");
+        permissionMode.setMode(restoreMode);
+        setUiPermissionMode(restoreMode);
+      } else {
+        setUiPermissionMode(currentMode);
+      }
 
       try {
         // Execute ExitPlanMode tool to get the result
@@ -12434,8 +12452,13 @@ ${SYSTEM_REMINDER_CLOSE}
 
       if (mode !== "plan") {
         if (hasUsablePlan) {
-          // User likely cycled out of plan mode (e.g., Shift+Tab to acceptEdits/yolo)
-          // Keep approval flow alive and let ExitPlanMode proceed using fallback plan path.
+          if (mode === "bypassPermissions") {
+            // User cycled to YOLO mode — auto-approve ExitPlanMode
+            // so they don't need to manually click through the approval.
+            handlePlanApprove();
+            return;
+          }
+          // Other modes: keep approval flow alive and let user manually approve.
           return;
         }
 
@@ -12491,6 +12514,7 @@ ${SYSTEM_REMINDER_CLOSE}
   }, [
     pendingApprovals,
     approvalResults.length,
+    handlePlanApprove,
     handlePlanKeepPlanning,
     refreshDerived,
     queueApprovalResults,
@@ -12573,6 +12597,7 @@ ${SYSTEM_REMINDER_CLOSE}
     // Toggle plan mode on and store plan file path
     permissionMode.setMode("plan");
     permissionMode.setPlanFilePath(planFilePath);
+    cacheLastPlanFilePath(planFilePath);
     setUiPermissionMode("plan");
 
     // Get the tool return message from the implementation
@@ -12629,6 +12654,7 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
     sendAllResults,
     refreshDerived,
     setUiPermissionMode,
+    cacheLastPlanFilePath,
   ]);
 
   const handleEnterPlanModeReject = useCallback(async () => {

@@ -11,11 +11,10 @@ describe("permission mode retry wiring", () => {
   test("setUiPermissionMode syncs singleton mode immediately", () => {
     const source = readAppSource();
 
-    const start = source.indexOf(
-      "const setUiPermissionMode = useCallback((mode: PermissionMode) => {",
-    );
+    const start = source.indexOf("const setUiPermissionMode = useCallback(");
     const end = source.indexOf(
       "const statusLineTriggerVersionRef = useRef(0);",
+      start,
     );
     expect(start).toBeGreaterThan(-1);
     expect(end).toBeGreaterThan(start);
@@ -26,7 +25,51 @@ describe("permission mode retry wiring", () => {
       'if (mode === "plan" && !permissionMode.getPlanFilePath())',
     );
     expect(segment).toContain("permissionMode.setPlanFilePath(planPath);");
+    expect(segment).toContain("cacheLastPlanFilePath(planPath);");
     expect(segment).toContain("permissionMode.setMode(mode);");
+  });
+
+  test("caches the plan path at every plan-mode entry point", () => {
+    const source = readAppSource();
+
+    expect(source).toContain(
+      "const cacheLastPlanFilePath = useCallback((planFilePath: string | null) => {",
+    );
+
+    const slashPlanStart = source.indexOf('if (trimmed === "/plan") {');
+    const slashPlanEnd = source.indexOf(
+      "return { submitted: true };",
+      slashPlanStart,
+    );
+    expect(slashPlanStart).toBeGreaterThan(-1);
+    expect(slashPlanEnd).toBeGreaterThan(slashPlanStart);
+    expect(source.slice(slashPlanStart, slashPlanEnd)).toContain(
+      "cacheLastPlanFilePath(planPath);",
+    );
+
+    const modeChangeStart = source.indexOf(
+      "const handlePermissionModeChange = useCallback(",
+    );
+    const modeChangeEnd = source.indexOf(
+      "// Reasoning tier cycling (Tab hotkey in InputRich.tsx)",
+    );
+    expect(modeChangeStart).toBeGreaterThan(-1);
+    expect(modeChangeEnd).toBeGreaterThan(modeChangeStart);
+    expect(source.slice(modeChangeStart, modeChangeEnd)).toContain(
+      "cacheLastPlanFilePath(planPath);",
+    );
+
+    const enterPlanStart = source.indexOf(
+      "const handleEnterPlanModeApprove = useCallback(async () => {",
+    );
+    const enterPlanEnd = source.indexOf(
+      "const handleEnterPlanModeReject = useCallback(async () => {",
+    );
+    expect(enterPlanStart).toBeGreaterThan(-1);
+    expect(enterPlanEnd).toBeGreaterThan(enterPlanStart);
+    expect(source.slice(enterPlanStart, enterPlanEnd)).toContain(
+      "cacheLastPlanFilePath(planFilePath);",
+    );
   });
 
   test("pins submission permission mode and defines a restore helper", () => {
