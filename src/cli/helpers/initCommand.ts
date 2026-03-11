@@ -76,7 +76,7 @@ ${recentCommits}
   }
 }
 
-// ── Depth instructions ────────────────────────────────────
+// ── Shallow init (background subagent) ───────────────────
 
 const SHALLOW_INSTRUCTIONS = `
 Shallow init — fast project basics only (~5 tool calls max):
@@ -87,25 +87,13 @@ Shallow init — fast project basics only (~5 tool calls max):
 - Skip: deep directory exploration, architecture mapping, config analysis, historical sessions, persona files, reflection/checkpoint phase
 `.trim();
 
-const DEEP_INSTRUCTIONS = `
-Deep init — full exploration (follow the initializing-memory skill fully):
-- Read all existing memory files first — do NOT recreate what already exists
-- Then follow the full initializing-memory skill as your operating guide
-- Expand and deepen existing shallow files, add new ones to reach 15-25 target
-- If shallow init already ran, build on its output rather than starting over
-`.trim();
-
-// ── Prompt builders ────────────────────────────────────────
-
-/** Prompt for the background init subagent (MemFS path). */
-export function buildMemoryInitRuntimePrompt(args: {
+/** Prompt for the background shallow-init subagent. */
+export function buildShallowInitPrompt(args: {
   agentId: string;
   workingDirectory: string;
   memoryDir: string;
   gitContext: string;
-  depth?: "shallow" | "deep";
 }): string {
-  const depth = args.depth ?? "deep";
   return `
 The user ran /init for the current project.
 
@@ -113,7 +101,7 @@ Runtime context:
 - parent_agent_id: ${args.agentId}
 - working_directory: ${args.workingDirectory}
 - memory_dir: ${args.memoryDir}
-- research_depth: ${depth}
+- research_depth: shallow
 
 Git/project context:
 ${args.gitContext}
@@ -121,7 +109,7 @@ ${args.gitContext}
 Task:
 Initialize or reorganize the parent agent's filesystem-backed memory for this project.
 
-${depth === "shallow" ? SHALLOW_INSTRUCTIONS : DEEP_INSTRUCTIONS}
+${SHALLOW_INSTRUCTIONS}
 
 Instructions:
 - Use the pre-loaded initializing-memory skill as your operating guide
@@ -148,12 +136,11 @@ export async function fireAutoInit(
   if (!settingsManager.isMemfsEnabled(agentId)) return false;
 
   const gitContext = gatherGitContext();
-  const initPrompt = buildMemoryInitRuntimePrompt({
+  const initPrompt = buildShallowInitPrompt({
     agentId,
     workingDirectory: process.cwd(),
     memoryDir: getMemoryFilesystemRoot(agentId),
     gitContext,
-    depth: "shallow",
   });
 
   const { spawnBackgroundSubagentTask } = await import("../../tools/impl/Task");
@@ -168,14 +155,20 @@ export async function fireAutoInit(
   return true;
 }
 
-/** Message for the primary agent via processConversation (legacy non-MemFS path). */
-export function buildLegacyInitMessage(args: {
+// ── Interactive init (primary agent) ─────────────────────
+
+/** Message for the primary agent via processConversation when user runs /init. */
+export function buildInitMessage(args: {
   gitContext: string;
-  memfsSection: string;
+  memoryDir?: string;
 }): string {
+  const memfsSection = args.memoryDir
+    ? `\n## Memory filesystem\n\nMemory filesystem is enabled. Memory directory: \`${args.memoryDir}\`\n`
+    : "";
+
   return `${SYSTEM_REMINDER_OPEN}
 The user has requested memory initialization via /init.
-${args.memfsSection}
+${memfsSection}
 ## 1. Invoke the initializing-memory skill
 
 Use the \`Skill\` tool with \`skill: "initializing-memory"\` to load the comprehensive instructions for memory initialization.

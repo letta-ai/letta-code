@@ -224,8 +224,7 @@ import {
 import { formatCompact } from "./helpers/format";
 import { parsePatchOperations } from "./helpers/formatArgsDisplay";
 import {
-  buildLegacyInitMessage,
-  buildMemoryInitRuntimePrompt,
+  buildInitMessage,
   fireAutoInit,
   gatherGitContext,
   hasActiveInitSubagent,
@@ -9260,7 +9259,6 @@ export default function App({
         if (trimmed === "/init") {
           const cmd = commandRunner.start(msg, "Gathering project context...");
 
-          // Check for pending approvals before either path
           const approvalCheck = await checkPendingApprovalsForSlashCommand();
           if (approvalCheck.blocked) {
             cmd.fail(
@@ -9269,112 +9267,38 @@ export default function App({
             return { submitted: false };
           }
 
-          const gitContext = gatherGitContext();
+          // Interactive init: the primary agent conducts the flow,
+          // asks the user questions, and runs the initializing-memory skill.
+          autoInitPendingAgentIdsRef.current.delete(agentId);
+          setCommandRunning(true);
+          try {
+            cmd.finish(
+              "Assimilating project context and defragmenting memories...",
+              true,
+            );
 
-          if (settingsManager.isMemfsEnabled(agentId)) {
-            // MemFS path: background subagent
-            if (hasActiveInitSubagent()) {
-              cmd.fail(
-                "Memory initialization is already running in the background.",
-              );
-              return { submitted: true };
-            }
+            const gitContext = gatherGitContext();
+            const memoryDir = settingsManager.isMemfsEnabled(agentId)
+              ? getMemoryFilesystemRoot(agentId)
+              : undefined;
 
-            try {
-              const initPrompt = buildMemoryInitRuntimePrompt({
-                agentId,
-                workingDirectory: process.cwd(),
-                memoryDir: getMemoryFilesystemRoot(agentId),
-                gitContext,
-                depth: "deep",
-              });
+            const initMessage = buildInitMessage({
+              gitContext,
+              memoryDir,
+            });
 
-              const { spawnBackgroundSubagentTask } = await import(
-                "../tools/impl/Task"
-              );
-              spawnBackgroundSubagentTask({
-                subagentType: "init",
-                prompt: initPrompt,
-                description: "Initializing memory",
-                silentCompletion: true,
-                onComplete: async ({ success, error }) => {
-                  const msg = await handleMemorySubagentCompletion(
-                    {
-                      agentId,
-                      conversationId: conversationIdRef.current,
-                      subagentType: "init",
-                      initDepth: "deep",
-                      success,
-                      error,
-                    },
-                    {
-                      recompileByConversation:
-                        systemPromptRecompileByConversationRef.current,
-                      recompileQueuedByConversation:
-                        queuedSystemPromptRecompileByConversationRef.current,
-                      updateInitProgress,
-                      logRecompileFailure: (message) =>
-                        debugWarn("memory", message),
-                    },
-                  );
-                  appendTaskNotificationEvents([msg]);
-                },
-              });
-
-              // Clear pending auto-init only after spawn succeeded
-              autoInitPendingAgentIdsRef.current.delete(agentId);
-
-              cmd.finish(
-                "Learning about you and your codebase in the background. You'll be notified when ready.",
-                true,
-              );
-
-              // TODO: Remove this hack once commandRunner supports a
-              // "silent" finish that skips the reminder callback.
-              // Currently cmd.finish() always enqueues a command-IO
-              // reminder, which leaks the /init context into the
-              // primary agent's next turn and causes it to invoke the
-              // initializing-memory skill itself.
-              const reminders =
-                sharedReminderStateRef.current.pendingCommandIoReminders;
-              const idx = reminders.findIndex((r) => r.input === "/init");
-              if (idx !== -1) {
-                reminders.splice(idx, 1);
-              }
-            } catch (error) {
-              const errorDetails = formatErrorDetails(error, agentId);
-              cmd.fail(
-                `Failed to start memory initialization: ${errorDetails}`,
-              );
-            }
-          } else {
-            // Legacy path: primary agent processConversation
-            autoInitPendingAgentIdsRef.current.delete(agentId);
-            setCommandRunning(true);
-            try {
-              cmd.finish(
-                "Assimilating project context and defragmenting memories...",
-                true,
-              );
-
-              const initMessage = buildLegacyInitMessage({
-                gitContext,
-                memfsSection: "",
-              });
-
-              await processConversation([
-                {
-                  type: "message",
-                  role: "user",
-                  content: buildTextParts(initMessage),
-                },
-              ]);
-            } catch (error) {
-              const errorDetails = formatErrorDetails(error, agentId);
-              cmd.fail(`Failed: ${errorDetails}`);
-            } finally {
-              setCommandRunning(false);
-            }
+            await processConversation([
+              {
+                type: "message",
+                role: "user",
+                content: buildTextParts(initMessage),
+              },
+            ]);
+          } catch (error) {
+            const errorDetails = formatErrorDetails(error, agentId);
+            cmd.fail(`Failed: ${errorDetails}`);
+          } finally {
+            setCommandRunning(false);
           }
           return { submitted: true };
         }
