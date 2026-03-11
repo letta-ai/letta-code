@@ -1,5 +1,8 @@
 import picomatch from "picomatch";
-import { ensureLettaIgnoreFile, readLettaIgnorePatterns } from "./ignoredDirectories";
+import {
+  ensureLettaIgnoreFile,
+  readLettaIgnorePatterns,
+} from "./ignoredDirectories";
 
 /**
  * Hardcoded defaults — always excluded from both the file index and disk scans.
@@ -68,7 +71,10 @@ const { nameMatchers, pathMatchers } = (() => {
  * @param relativePath - Optional path relative to cwd (e.g. "src/generated/foo.ts").
  *                       Required for path-based .lettaignore patterns to work.
  */
-export function shouldExcludeEntry(name: string, relativePath?: string): boolean {
+export function shouldExcludeEntry(
+  name: string,
+  relativePath?: string,
+): boolean {
   // Fast path: hardcoded defaults (O(1) Set lookup)
   if (DEFAULT_EXCLUDED.has(name.toLowerCase())) return true;
 
@@ -76,7 +82,12 @@ export function shouldExcludeEntry(name: string, relativePath?: string): boolean
   if (nameMatchers.length > 0 && nameMatchers.some((m) => m(name))) return true;
 
   // Path-based .lettaignore patterns (e.g. src/generated/**)
-  if (relativePath && pathMatchers.length > 0 && pathMatchers.some((m) => m(relativePath))) return true;
+  if (
+    relativePath &&
+    pathMatchers.length > 0 &&
+    pathMatchers.some((m) => m(relativePath))
+  )
+    return true;
 
   return false;
 }

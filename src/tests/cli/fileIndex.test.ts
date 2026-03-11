@@ -194,7 +194,9 @@ describe("search filtering", () => {
       maxResults: 100,
     });
 
-    expect(deep.some((r) => r.path === join("src", "components", "Button.tsx"))).toBe(true);
+    expect(
+      deep.some((r) => r.path === join("src", "components", "Button.tsx")),
+    ).toBe(true);
   });
 });
 
@@ -333,7 +335,9 @@ describe("incremental rebuild", () => {
       true,
     );
     expect(
-      results.some((r) => r.path === join("lib", "util.ts") && r.type === "file"),
+      results.some(
+        (r) => r.path === join("lib", "util.ts") && r.type === "file",
+      ),
     ).toBe(true);
   });
 });
@@ -347,9 +351,7 @@ describe("addEntriesToCache", () => {
     await refreshFileIndex();
 
     // Simulate a disk scan discovering an external file
-    addEntriesToCache([
-      { path: "external/found.txt", type: "file" },
-    ]);
+    addEntriesToCache([{ path: "external/found.txt", type: "file" }]);
 
     const results = searchFileIndex({
       searchDir: "",

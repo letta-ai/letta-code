@@ -75,8 +75,6 @@ function parseLettaIgnore(content: string): string[] {
     .map((line) => line.trim())
     .filter(
       (line) =>
-        line.length > 0 &&
-        !line.startsWith("#") &&
-        !line.startsWith("!"),
+        line.length > 0 && !line.startsWith("#") && !line.startsWith("!"),
     );
 }

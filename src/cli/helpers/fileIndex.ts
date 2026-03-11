@@ -1,18 +1,18 @@
+import { createHash } from "node:crypto";
+import type { Stats as FsStats } from "node:fs";
 import {
   existsSync,
   mkdirSync,
-  readFileSync,
   readdirSync,
+  readFileSync,
   statSync,
   writeFileSync,
 } from "node:fs";
-import type { Stats as FsStats } from "node:fs";
-import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { join, normalize, relative, sep } from "node:path";
-import { shouldExcludeEntry } from "./fileSearchConfig";
 import { debugLog } from "../../utils/debug";
 import { readIntSetting } from "../../utils/lettaSettings";
+import { shouldExcludeEntry } from "./fileSearchConfig";
 
 interface FileIndexEntry {
   path: string;
@@ -115,7 +115,6 @@ function lowerBound(sorted: string[], target: string): number {
   return low;
 }
 
-
 function findPrefixRange(sorted: string[], prefix: string): [number, number] {
   const start = lowerBound(sorted, prefix);
   let end = start;
@@ -197,7 +196,10 @@ function copyStatsSubtree(
   }
 
   const prefix = path === "" ? "" : `${path}/`;
-  const [start, end] = prefix === "" ? [0, previous.statsKeys.length] : findPrefixRange(previous.statsKeys, prefix);
+  const [start, end] =
+    prefix === ""
+      ? [0, previous.statsKeys.length]
+      : findPrefixRange(previous.statsKeys, prefix);
 
   for (let i = start; i < end; i++) {
     const key = previous.statsKeys[i];
@@ -245,17 +247,12 @@ function statsMatch(prev: FileStats, current: FsStats): boolean {
     return false;
   }
 
-  if (
-    prev.mtimeMs !== current.mtimeMs ||
-    prev.ino !== (current.ino ?? 0)
-  ) {
+  if (prev.mtimeMs !== current.mtimeMs || prev.ino !== (current.ino ?? 0)) {
     return false;
   }
 
   if (prev.type === "file") {
-    return typeof prev.size === "number"
-      ? prev.size === current.size
-      : true;
+    return typeof prev.size === "number" ? prev.size === current.size : true;
   }
 
   return true;
@@ -356,7 +353,8 @@ async function buildDirectory(
   const childStatsMap = new Map<string, FsStats>();
 
   for (const entry of dirEntries) {
-    const entryRelPath = relativePath === "" ? entry : `${relativePath}/${entry}`;
+    const entryRelPath =
+      relativePath === "" ? entry : `${relativePath}/${entry}`;
     if (shouldExcludeEntry(entry, entryRelPath)) {
       continue;
     }
@@ -365,9 +363,7 @@ async function buildDirectory(
       const childStat = statSync(join(dir, entry));
       childNames.push(entry);
       childStatsMap.set(entry, childStat);
-    } catch {
-      continue;
-    }
+    } catch {}
   }
 
   if (
@@ -466,7 +462,9 @@ async function buildDirectory(
   return dirHash;
 }
 
-async function buildIndex(previous?: PreviousIndexData): Promise<FileIndexBuildResult> {
+async function buildIndex(
+  previous?: PreviousIndexData,
+): Promise<FileIndexBuildResult> {
   const entries: FileIndexEntry[] = [];
   const merkle: MerkleMap = {};
   const statsMap: StatsMap = {};
@@ -495,15 +493,19 @@ async function buildIndex(previous?: PreviousIndexData): Promise<FileIndexBuildR
     return true;
   });
 
-  return { entries: deduped, merkle, stats: statsMap, rootHash, truncated: context.truncated };
+  return {
+    entries: deduped,
+    merkle,
+    stats: statsMap,
+    rootHash,
+    truncated: context.truncated,
+  };
 }
 
 function sanitizeWorkspacePath(workspacePath: string): string {
   const normalizedPath = normalize(workspacePath);
   const strippedPath = normalizedPath.replace(/^[/\\]+/, "");
-  const sanitized = strippedPath
-    .replace(/[/\\:]/g, "_")
-    .replace(/\s+/g, "_");
+  const sanitized = strippedPath.replace(/[/\\:]/g, "_").replace(/\s+/g, "_");
 
   return sanitized.length === 0 ? "workspace" : sanitized;
 }
@@ -586,7 +588,6 @@ function loadCachedIndex(): FileIndexCache | null {
   return null;
 }
 
-
 function cacheProjectIndex(result: FileIndexBuildResult): void {
   try {
     const storageDir = ensureProjectStorageDir();
@@ -641,11 +642,14 @@ export function ensureFileIndex(): Promise<void> {
       let succeeded = false;
       try {
         const diskIndex = loadCachedIndex();
-        const previousData = diskIndex ? preparePreviousIndexData(diskIndex) : undefined;
+        const previousData = diskIndex
+          ? preparePreviousIndexData(diskIndex)
+          : undefined;
         const buildResult = await buildIndex(previousData);
 
         if (diskIndex && diskIndex.metadata.rootHash === buildResult.rootHash) {
-          ({ entries: cachedEntries, paths: cachedEntryPaths } = buildCachedEntries(buildResult.entries, buildResult.stats));
+          ({ entries: cachedEntries, paths: cachedEntryPaths } =
+            buildCachedEntries(buildResult.entries, buildResult.stats));
           succeeded = true;
           return;
         }
@@ -654,12 +658,13 @@ export function ensureFileIndex(): Promise<void> {
           debugLog(
             "file-index",
             `Index truncated: workspace exceeds ${MAX_INDEX_DEPTH} directory levels deep. ` +
-            `Files beyond that depth will fall back to disk search.`,
+              `Files beyond that depth will fall back to disk search.`,
           );
         }
 
         cacheProjectIndex(buildResult);
-        ({ entries: cachedEntries, paths: cachedEntryPaths } = buildCachedEntries(buildResult.entries, buildResult.stats));
+        ({ entries: cachedEntries, paths: cachedEntryPaths } =
+          buildCachedEntries(buildResult.entries, buildResult.stats));
         succeeded = true;
       } finally {
         // Only clear buildPromise if it's still ours — refreshFileIndex may
@@ -740,5 +745,3 @@ export function searchFileIndex(options: SearchFileIndexOptions): FileMatch[] {
 
   return results;
 }
-
-

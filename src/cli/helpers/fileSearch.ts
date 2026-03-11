@@ -1,9 +1,13 @@
 import { readdirSync, statSync } from "node:fs";
-import { join, resolve, relative } from "node:path";
+import { join, relative, resolve } from "node:path";
 import { debugLog } from "../../utils/debug";
-import { addEntriesToCache, ensureFileIndex, searchFileIndex, type FileMatch } from "./fileIndex";
+import {
+  addEntriesToCache,
+  ensureFileIndex,
+  type FileMatch,
+  searchFileIndex,
+} from "./fileIndex";
 import { shouldHardExcludeEntry } from "./fileSearchConfig";
-
 
 export function debounce<T extends (...args: never[]) => unknown>(
   func: T,
@@ -201,7 +205,8 @@ export async function searchFiles(
         const matchingEntries = entries.filter(
           (entry) =>
             !shouldHardExcludeEntry(entry) &&
-            (searchPattern.length === 0 || entry.toLowerCase().includes(lowerPattern)),
+            (searchPattern.length === 0 ||
+              entry.toLowerCase().includes(lowerPattern)),
         );
 
         // Get stats for each matching entry

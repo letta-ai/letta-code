@@ -1,6 +1,7 @@
 import { getDisplayableToolReturn } from "../agent/approval-execution";
 import { getModelInfo } from "../agent/model";
 import { getAllSubagentConfigs } from "../agent/subagents";
+import { refreshFileIndex } from "../cli/helpers/fileIndex";
 import { INTERRUPTED_BY_USER } from "../constants";
 import {
   runPostToolUseFailureHooks,
@@ -11,7 +12,6 @@ import { OPENAI_CODEX_PROVIDER_NAME } from "../providers/openai-codex-provider";
 import { telemetry } from "../telemetry";
 import { debugLog } from "../utils/debug";
 import { TOOL_DEFINITIONS, type ToolName } from "./toolDefinitions";
-import { refreshFileIndex } from "../cli/helpers/fileIndex";
 
 /**
  * Tools that may create, modify, or delete files on disk.

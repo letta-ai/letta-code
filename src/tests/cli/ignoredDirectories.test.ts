@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { TestDirectory } from "../helpers/testFs";
 import {
   ensureLettaIgnoreFile,
   readLettaIgnorePatterns,
 } from "../../cli/helpers/ignoredDirectories";
+import { TestDirectory } from "../helpers/testFs";
 
 describe("ensureLettaIgnoreFile", () => {
   let testDir: TestDirectory;

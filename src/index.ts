@@ -34,6 +34,7 @@ import {
   resolveImportFlagAlias,
 } from "./cli/flagUtils";
 import { formatErrorDetails } from "./cli/helpers/errorFormatter";
+import { ensureFileIndex } from "./cli/helpers/fileIndex";
 import type { ApprovalRequest } from "./cli/helpers/stream";
 import { ProfileSelectionInline } from "./cli/profile-selection";
 import {
@@ -49,7 +50,6 @@ import { telemetry } from "./telemetry";
 import { loadTools } from "./tools/manager";
 import { debugLog } from "./utils/debug";
 import { markMilestone } from "./utils/timing";
-import { ensureFileIndex } from "./cli/helpers/fileIndex";
 
 // Stable empty array constants to prevent new references on every render
 // These are used as fallbacks when resumeData is null, avoiding the React
