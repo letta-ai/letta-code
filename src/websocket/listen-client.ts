@@ -4017,6 +4017,7 @@ export const __listenClientTestUtils = {
   stopRuntime,
   buildStateResponse: buildTestStateResponse,
   handleCwdChange,
+  emitCancelAck,
   emitToWS,
   getConversationWorkingDirectory: getTestConversationWorkingDirectory,
   rememberPendingApprovalBatchIds,

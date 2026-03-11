@@ -310,7 +310,10 @@ describe("listen-client requestApprovalOverWS", () => {
 
 describe("listen-client conversation-scoped protocol events", () => {
   test("queue lifecycle events carry agent_id and conversation_id from the queued item", () => {
-    const runtime = __listenClientTestUtils.createRuntime();
+    const runtime = __listenClientTestUtils.createRuntime(
+      "agent-default",
+      "default",
+    );
     const socket = new MockSocket(WebSocket.OPEN);
     runtime.socket = socket as unknown as WebSocket;
 
@@ -319,8 +322,6 @@ describe("listen-client conversation-scoped protocol events", () => {
       source: "user",
       content: "hello",
       clientMessageId: "cm-queue-1",
-      agentId: "agent-default",
-      conversationId: "default",
     };
     const item = runtime.queueRuntime.enqueue(input);
     expect(item).not.toBeNull();
@@ -339,10 +340,11 @@ describe("listen-client conversation-scoped protocol events", () => {
   });
 
   test("cancel_ack includes agent_id and conversation_id", () => {
-    const runtime = __listenClientTestUtils.createRuntime();
+    const runtime = __listenClientTestUtils.createRuntime(
+      "agent-123",
+      "default",
+    );
     const socket = new MockSocket(WebSocket.OPEN);
-    runtime.activeAgentId = "agent-123";
-    runtime.activeConversationId = "default";
     runtime.activeRunId = "run-123";
 
     __listenClientTestUtils.emitCancelAck(
@@ -362,7 +364,10 @@ describe("listen-client conversation-scoped protocol events", () => {
   });
 
   test("queue_batch_dequeued keeps the batch scope", () => {
-    const runtime = __listenClientTestUtils.createRuntime();
+    const runtime = __listenClientTestUtils.createRuntime(
+      "agent-xyz",
+      "conv-xyz",
+    );
     const socket = new MockSocket(WebSocket.OPEN);
     runtime.socket = socket as unknown as WebSocket;
 
@@ -371,8 +376,6 @@ describe("listen-client conversation-scoped protocol events", () => {
       source: "user",
       content: "hello",
       clientMessageId: "cm-queue-2",
-      agentId: "agent-xyz",
-      conversationId: "conv-xyz",
     };
 
     runtime.queueRuntime.enqueue(input);
