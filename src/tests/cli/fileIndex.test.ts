@@ -124,7 +124,7 @@ describe("search filtering", () => {
       maxResults: 1000,
     });
 
-    // 3 dirs + 6 files + .lettaignore (auto-created by module load) = 10
+    // 3 dirs + 7 files = 10
     expect(all.length).toBe(10);
   });
 
