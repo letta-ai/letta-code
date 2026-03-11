@@ -50,9 +50,8 @@ export const commands: Record<string, Command> = {
   },
   "/reflect": {
     desc: "Launch a background reflection agent to update memory",
-    order: 14,
+    order: 50,
     noArgs: true,
-    hidden: true,
     handler: () => {
       // Handled specially in App.tsx
       return "Launching reflection agent...";
