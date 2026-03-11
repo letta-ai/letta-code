@@ -209,13 +209,15 @@ const _colors = {
     prompt: brandColors.primaryAccent,
   },
 
-  // Diff rendering
+  // Diff rendering (line bg palette matches Codex CLI dark theme, see
+  // ~/dev/codex/codex-rs/tui/src/diff_render.rs lines 60-61)
   diff: {
-    addedLineBg: "#1a4d1a",
-    addedWordBg: "#2d7a2d",
-    removedLineBg: "#4d1a1a",
-    removedWordBg: "#7a2d2d",
+    addedLineBg: "#213A2B",
+    removedLineBg: "#4A221D",
     contextLineBg: undefined,
+    // Word-level highlight colors (used by MemoryDiffRenderer)
+    addedWordBg: "#2d7a2d",
+    removedWordBg: "#7a2d2d",
     textOnDark: "white",
     textOnHighlight: "white",
     symbolAdd: "green",
