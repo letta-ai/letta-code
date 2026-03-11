@@ -186,12 +186,12 @@ Your job: ask ONE bundled question to gather context, then dispatch a background
 
 Ask a single message with these questions bundled together:
 
-1. **Identity**: Guess who they are from the git log below and ask to confirm (e.g. "Are you cpacker <charles@letta.com>?"). If you can't guess, ask their name/role.
-2. **Related repos**: Are there other repositories worth knowing about? (shared libraries, backend, docs, etc.)
-3. **Workflow rules**: Any rules you should always follow? (e.g. "always use conventional commits", "never push to main")
-4. **Research depth**: Standard (~20 tool calls, quick scan) or Deep (~100+ tool calls, thorough exploration of git history, architecture, code patterns)?
+1. **Research depth**: "Standard or deep research (comprehensive, as long as needed)?"
+2. **Related repos**: "Are there other repositories I should know about and consider in my research?" (e.g., backend monorepo, shared libraries)
+3. **Historical sessions**: "I found Claude Code / Codex history on your machine. Should I analyze it to learn your preferences, coding patterns, and project context? This significantly improves how I work with you but uses additional time and tokens." Options: "Yes, analyze history" / "Skip for now". Only include this question if history data exists — run \`ls ~/.claude/history.jsonl ~/.codex/history.jsonl 2>/dev/null\` first to check.
+4. **Any specific rules**: "Rules I should always follow?"
 
-Keep it conversational and short. Pre-fill what you can infer from git context.
+Keep it conversational and short.
 
 ## Step 2: Dispatch background subagent
 
@@ -207,8 +207,7 @@ Task({
 \`\`\`
 
 The Task prompt MUST include:
-- All of the user's answers (identity, repos, rules, preferences)
-- Research depth choice (standard or deep)
+- All of the user's answers (research depth, related repos, historical sessions preference, rules)
 - The runtime context below (copy it verbatim into the prompt)
 
 ### Runtime context (include in Task prompt)
