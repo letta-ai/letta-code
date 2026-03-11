@@ -154,7 +154,9 @@ export const InlineBashApproval = memo(
           <Box paddingLeft={2} flexDirection="column">
             <SyntaxHighlightedCommand command={bashInfo.command} />
             {bashInfo.description && (
-              <Text dimColor>{bashInfo.description}</Text>
+              <Box marginTop={1}>
+                <Text dimColor>{bashInfo.description}</Text>
+              </Box>
             )}
           </Box>
         </>
