@@ -12389,12 +12389,18 @@ ${SYSTEM_REMINDER_CLOSE}
         lastPlanFilePathRef.current = planFilePath;
       }
 
-      // Exit plan mode
-      const restoreMode = acceptEdits
-        ? "acceptEdits"
-        : (permissionMode.getModeBeforePlan() ?? "default");
-      permissionMode.setMode(restoreMode);
-      setUiPermissionMode(restoreMode);
+      // Exit plan mode — if user already cycled out (e.g., Shift+Tab to
+      // acceptEdits/yolo), keep their chosen mode instead of downgrading.
+      const currentMode = permissionMode.getMode();
+      if (currentMode === "plan") {
+        const restoreMode = acceptEdits
+          ? "acceptEdits"
+          : (permissionMode.getModeBeforePlan() ?? "default");
+        permissionMode.setMode(restoreMode);
+        setUiPermissionMode(restoreMode);
+      } else {
+        setUiPermissionMode(currentMode);
+      }
 
       try {
         // Execute ExitPlanMode tool to get the result
@@ -12496,8 +12502,13 @@ ${SYSTEM_REMINDER_CLOSE}
 
       if (mode !== "plan") {
         if (hasUsablePlan) {
-          // User likely cycled out of plan mode (e.g., Shift+Tab to acceptEdits/yolo)
-          // Keep approval flow alive and let ExitPlanMode proceed using fallback plan path.
+          if (mode === "acceptEdits" || mode === "bypassPermissions") {
+            // User cycled to a permissive mode — auto-approve ExitPlanMode
+            // so they don't need to manually click through the approval.
+            handlePlanApprove();
+            return;
+          }
+          // Default mode: keep approval flow alive and let user manually approve.
           return;
         }
 
@@ -12553,6 +12564,7 @@ ${SYSTEM_REMINDER_CLOSE}
   }, [
     pendingApprovals,
     approvalResults.length,
+    handlePlanApprove,
     handlePlanKeepPlanning,
     refreshDerived,
     queueApprovalResults,
