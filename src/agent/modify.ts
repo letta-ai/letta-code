@@ -251,7 +251,7 @@ export interface RecompileAgentSystemPromptOptions {
   dryRun?: boolean;
 }
 
-interface AgentSystemPromptRecompileClient {
+interface ConversationSystemPromptRecompileClient {
   conversations: {
     recompile: (
       conversationId: string,
@@ -274,10 +274,10 @@ interface AgentSystemPromptRecompileClient {
 export async function recompileAgentSystemPrompt(
   conversationId: string,
   options: RecompileAgentSystemPromptOptions = {},
-  clientOverride?: AgentSystemPromptRecompileClient,
+  clientOverride?: ConversationSystemPromptRecompileClient,
 ): Promise<string> {
   const client = (clientOverride ??
-    (await getClient())) as AgentSystemPromptRecompileClient;
+    (await getClient())) as ConversationSystemPromptRecompileClient;
 
   return client.conversations.recompile(conversationId, {
     dry_run: options.dryRun,
