@@ -266,20 +266,20 @@ interface AgentSystemPromptRecompileClient {
  * Recompile an agent's system prompt after memory writes so server-side prompt
  * state picks up the latest memory content.
  *
- * @param agentId - The agent ID to recompile (used as conversation ID)
+ * @param conversationId - The conversation whose prompt should be recompiled
  * @param options - Optional dry-run control
  * @param clientOverride - Optional injected client for tests
  * @returns The compiled system prompt returned by the API
  */
 export async function recompileAgentSystemPrompt(
-  agentId: string,
+  conversationId: string,
   options: RecompileAgentSystemPromptOptions = {},
   clientOverride?: AgentSystemPromptRecompileClient,
 ): Promise<string> {
   const client = (clientOverride ??
     (await getClient())) as AgentSystemPromptRecompileClient;
 
-  return client.conversations.recompile(agentId, {
+  return client.conversations.recompile(conversationId, {
     dry_run: options.dryRun,
   });
 }
