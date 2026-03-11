@@ -182,21 +182,32 @@ function buildModelSettings(
  * @param agentId - The agent ID
  * @param modelHandle - The model handle (e.g., "anthropic/claude-sonnet-4-5-20250929")
  * @param updateArgs - Additional config args (context_window, reasoning_effort, enable_reasoner, etc.)
- * @param preserveParallelToolCalls - If true, preserves the parallel_tool_calls setting when updating the model
+ * @param options - Optional update behavior overrides
  * @returns The updated agent state from the server (includes llm_config and model_settings)
  */
+export interface UpdateAgentLLMConfigOptions {
+  preserveContextWindow?: boolean;
+}
+
 export async function updateAgentLLMConfig(
   agentId: string,
   modelHandle: string,
   updateArgs?: Record<string, unknown>,
+  options?: UpdateAgentLLMConfigOptions,
 ): Promise<AgentState> {
   const client = await getClient();
 
   const modelSettings = buildModelSettings(modelHandle, updateArgs);
-  // First try updateArgs, then fall back to API-cached context window for BYOK models
+  const explicitContextWindow = updateArgs?.context_window as
+    | number
+    | undefined;
+  const shouldPreserveContextWindow = options?.preserveContextWindow === true;
+  // Resume refresh updates should not implicitly reset context window.
   const contextWindow =
-    (updateArgs?.context_window as number | undefined) ??
-    (await getModelContextWindow(modelHandle));
+    explicitContextWindow ??
+    (!shouldPreserveContextWindow
+      ? await getModelContextWindow(modelHandle)
+      : undefined);
   const hasModelSettings = Object.keys(modelSettings).length > 0;
 
   // MiniMax doesn't have a dedicated ModelSettings class, so model_settings

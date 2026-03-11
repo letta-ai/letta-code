@@ -1761,6 +1761,7 @@ async function main(): Promise<void> {
                   agent.id,
                   presetRefresh.modelHandle,
                   resumeRefreshUpdateArgs,
+                  { preserveContextWindow: true },
                 );
               }
             }
