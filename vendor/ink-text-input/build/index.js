@@ -70,21 +70,21 @@ function TextInput({ value: originalValue, placeholder = '', focus = true, mask,
     let renderedValue = value;
     let renderedPlaceholder = placeholder ? chalk.grey(placeholder) : undefined;
     if (showCursor && focus) {
-        renderedPlaceholder = placeholder.length > 0 ? chalk.inverse(placeholder[0]) + chalk.grey(placeholder.slice(1)) : chalk.inverse(' ');
-        renderedValue = value.length > 0 ? '' : chalk.inverse(' ');
+        renderedPlaceholder = placeholder.length > 0 ? chalk.inverse(placeholder[0]) + chalk.grey(placeholder.slice(1)) : chalk.inverse('\u00A0');
+        renderedValue = value.length > 0 ? '' : chalk.inverse('\u00A0');
         let i = 0;
         for (const char of value) {
             const isCursorPosition = i >= cursorOffset - cursorActualWidth && i <= cursorOffset;
             if (isCursorPosition && char === '\n') {
                 // Newline at cursor: show inverted space (visible cursor) then the newline
-                renderedValue += chalk.inverse(' ') + char;
+                renderedValue += chalk.inverse('\u00A0') + char;
             } else {
                 renderedValue += isCursorPosition ? chalk.inverse(char) : char;
             }
             i++;
         }
         if (value.length > 0 && cursorOffset === value.length) {
-            renderedValue += chalk.inverse(' ');
+            renderedValue += chalk.inverse('\u00A0');
         }
     }
     useInput((input, key) => {
