@@ -162,12 +162,88 @@ export function collectSpans(
   }
 }
 
+// Detect heredoc: first line ends with << 'MARKER', << "MARKER", or << MARKER.
+const HEREDOC_RE = /<<-?\s*['"]?(\w+)['"]?\s*$/;
+// Extract redirect target filename: > filepath or >> filepath before the <<.
+const REDIRECT_FILE_RE = />>?\s+(\S+)/;
+
 /**
- * Highlight the full command at once (preserves heredoc/multi-line parser
- * state), then split the flat span list at newline boundaries into per-line
- * arrays.
+ * Highlight a bash command, with special handling for heredocs.
+ * When a heredoc is detected, the body is highlighted using the language
+ * inferred from the redirect target filename (e.g. .ts -> typescript).
  */
 function highlightCommand(
+  command: string,
+  palette: ShellSyntaxPalette,
+): StyledSpan[][] {
+  const allLines = command.split("\n");
+  const firstLine = allLines[0] ?? "";
+  const heredocMatch = HEREDOC_RE.exec(firstLine);
+
+  // If heredoc detected and there's body content, split highlighting.
+  if (heredocMatch && allLines.length > 2) {
+    const marker = heredocMatch[1] ?? "EOF";
+    // Find where the heredoc body ends (the marker terminator line).
+    let endIdx = allLines.length - 1;
+    for (let i = allLines.length - 1; i > 0; i--) {
+      if (allLines[i]?.trim() === marker) {
+        endIdx = i;
+        break;
+      }
+    }
+
+    const bodyLines = allLines.slice(1, endIdx);
+    const terminatorLine = allLines[endIdx] ?? marker;
+
+    // Highlight the first line as bash.
+    const bashSpans = highlightSingleLineBash(firstLine, palette);
+
+    // Determine language from redirect target filename.
+    const fileMatch = REDIRECT_FILE_RE.exec(
+      firstLine.slice(0, heredocMatch.index),
+    );
+    const targetFile = fileMatch?.[1];
+    const lang = targetFile ? languageFromPath(targetFile) : undefined;
+
+    // Highlight heredoc body with target language.
+    let bodySpanLines: StyledSpan[][];
+    if (lang) {
+      bodySpanLines =
+        highlightCode(bodyLines.join("\n"), lang) ??
+        bodyLines.map((l) => [{ text: l, color: palette.text }]);
+    } else {
+      bodySpanLines = bodyLines.map((l) => [{ text: l, color: palette.text }]);
+    }
+
+    // Highlight terminator as bash.
+    const termSpans = highlightSingleLineBash(terminatorLine, palette);
+
+    return [bashSpans, ...bodySpanLines, termSpans];
+  }
+
+  // No heredoc: highlight full command as bash.
+  return highlightFullBash(command, palette);
+}
+
+/** Highlight a single line as bash, returning a flat StyledSpan array. */
+function highlightSingleLineBash(
+  line: string,
+  palette: ShellSyntaxPalette,
+): StyledSpan[] {
+  try {
+    const root = lowlight.highlight(BASH_LANGUAGE, line);
+    const spans: StyledSpan[] = [];
+    for (const child of root.children) {
+      collectSpans(child, palette, spans);
+    }
+    return spans;
+  } catch {
+    return [{ text: line, color: palette.text }];
+  }
+}
+
+/** Highlight full multi-line text as bash, split at newline boundaries. */
+function highlightFullBash(
   command: string,
   palette: ShellSyntaxPalette,
 ): StyledSpan[][] {
@@ -179,13 +255,11 @@ function highlightCommand(
       collectSpans(child, palette, spans);
     }
   } catch {
-    // Fallback: plain text, split by newlines.
     return command
       .split("\n")
       .map((line) => [{ text: line, color: palette.text }]);
   }
 
-  // Split spans at newline characters into separate lines.
   const lines: StyledSpan[][] = [[]];
   for (const span of spans) {
     const parts = span.text.split("\n");
@@ -260,8 +334,8 @@ export const SyntaxHighlightedCommand = memo(
               ) : null}
               <Text color={palette.text}>
                 {lineIdx === 0 && prefix ? prefix : null}
-                {spans.map((span) => (
-                  <Text key={`${span.color}:${span.text}`} color={span.color}>
+                {spans.map((span, si) => (
+                  <Text key={`${si}:${span.color}`} color={span.color}>
                     {span.text}
                   </Text>
                 ))}
