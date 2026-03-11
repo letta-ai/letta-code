@@ -10,11 +10,6 @@ import {
   reflectionSettingsToLegacyMode,
   shouldFireStepCountTrigger,
 } from "../../cli/helpers/memoryReminder";
-import {
-  type SharedReminderContext,
-  sharedReminderProviders,
-} from "../../reminders/engine";
-import { createSharedReminderState } from "../../reminders/state";
 import { settingsManager } from "../../settings-manager";
 
 const originalGetLocalProjectSettings = settingsManager.getLocalProjectSettings;
@@ -175,4 +170,3 @@ describe("memoryReminder", () => {
     ).toBe(false);
   });
 });
-
