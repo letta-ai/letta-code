@@ -623,6 +623,7 @@ function createRuntime(): ListenerRuntime {
       },
       onDropped: (item, reason, queueLen) => {
         runtime.pendingTurns = queueLen;
+        runtime.queuedMessagesByItemId.delete(item.id);
         if (runtime.socket?.readyState === WebSocket.OPEN) {
           emitToWS(runtime.socket, {
             type: "queue_item_dropped",
@@ -2816,6 +2817,7 @@ async function connectWithRetry(
             console.error("[Listen] Error handling queued message:", error);
           }
           opts.onStatusChange?.("idle", opts.connectionId);
+          scheduleQueuePump(runtime, socket, opts);
         });
     }
   });
