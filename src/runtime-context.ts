@@ -41,6 +41,10 @@ export function runWithRuntimeContext<T>(
   );
 }
 
+export function runOutsideRuntimeContext<T>(fn: () => T): T {
+  return runtimeContextStorage.exit(fn);
+}
+
 export function updateRuntimeContext(
   update: Partial<RuntimeContextSnapshot>,
 ): void {

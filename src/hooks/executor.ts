@@ -3,7 +3,10 @@
 // Cross-platform: uses platform-appropriate shell (PowerShell on Windows, sh/bash/zsh on Unix)
 
 import { type ChildProcess, spawn } from "node:child_process";
-import { getCurrentWorkingDirectory } from "../runtime-context";
+import {
+  getCurrentWorkingDirectory,
+  runOutsideRuntimeContext,
+} from "../runtime-context";
 import { buildShellLaunchers } from "../tools/impl/shellLaunchers";
 import { executePromptHook } from "./prompt-executor";
 import {
@@ -55,17 +58,19 @@ function trySpawnWithLauncher(
   // We only want to pass the agent ID that's explicitly provided in the hook input
   const { LETTA_AGENT_ID: _, ...parentEnv } = process.env;
 
-  return spawn(executable, args, {
-    cwd: workingDirectory,
-    env: {
-      ...parentEnv,
-      // Add hook-specific environment variables
-      LETTA_HOOK_EVENT: input.event_type,
-      LETTA_WORKING_DIR: workingDirectory,
-      ...(agentId && { LETTA_AGENT_ID: agentId }),
-    },
-    stdio: ["pipe", "pipe", "pipe"],
-  });
+  return runOutsideRuntimeContext(() =>
+    spawn(executable, args, {
+      cwd: workingDirectory,
+      env: {
+        ...parentEnv,
+        // Add hook-specific environment variables
+        LETTA_HOOK_EVENT: input.event_type,
+        LETTA_WORKING_DIR: workingDirectory,
+        ...(agentId && { LETTA_AGENT_ID: agentId }),
+      },
+      stdio: ["pipe", "pipe", "pipe"],
+    }),
+  );
 }
 
 /**

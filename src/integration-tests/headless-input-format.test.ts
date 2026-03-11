@@ -212,10 +212,7 @@ function isRetriableBidirectionalError(error: unknown): boolean {
   return (
     message.includes("Timeout after") ||
     message.includes("before all results received") ||
-    message.includes("no output received") ||
-    message.includes("terminated by signal") ||
-    message.includes("Segmentation fault") ||
-    message.includes('script "dev"')
+    message.includes("no output received")
   );
 }
 

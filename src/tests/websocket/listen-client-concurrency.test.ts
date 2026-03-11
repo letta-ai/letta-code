@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import WebSocket from "ws";
+import { permissionMode } from "../../permissions/mode";
 
 type MockStream = {
   conversationId: string;
@@ -149,6 +150,7 @@ function makeIncomingMessage(
 
 describe("listen-client multi-worker concurrency", () => {
   beforeEach(() => {
+    permissionMode.reset();
     sendMessageStreamMock.mockClear();
     getStreamToolContextIdMock.mockClear();
     drainStreamWithResumeMock.mockClear();
@@ -160,6 +162,7 @@ describe("listen-client multi-worker concurrency", () => {
   });
 
   afterEach(() => {
+    permissionMode.reset();
     __listenClientTestUtils.setActiveRuntime(null);
   });
 
@@ -254,6 +257,50 @@ describe("listen-client multi-worker concurrency", () => {
     expect(sendMessageStreamMock.mock.calls[1]?.[2]).toMatchObject({
       agentId: "agent-b",
     });
+  });
+
+  test("persists permission mode changes per worker across concurrent turns", async () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const runtimeA = __listenClientTestUtils.getOrCreateConversationRuntime(
+      listener,
+      "agent-1",
+      "conv-a",
+    );
+    const runtimeB = __listenClientTestUtils.getOrCreateConversationRuntime(
+      listener,
+      "agent-1",
+      "conv-b",
+    );
+    const socket = new MockSocket();
+
+    drainHandlers.set("conv-a", async () => {
+      permissionMode.setMode("plan");
+      permissionMode.setPlanFilePath("/tmp/conv-a-plan.md");
+      return defaultDrainResult;
+    });
+    drainHandlers.set("conv-b", async () => {
+      permissionMode.setMode("bypassPermissions");
+      return defaultDrainResult;
+    });
+
+    await Promise.all([
+      __listenClientTestUtils.handleIncomingMessage(
+        makeIncomingMessage("agent-1", "conv-a", "set plan mode"),
+        socket as unknown as WebSocket,
+        runtimeA,
+      ),
+      __listenClientTestUtils.handleIncomingMessage(
+        makeIncomingMessage("agent-1", "conv-b", "set yolo mode"),
+        socket as unknown as WebSocket,
+        runtimeB,
+      ),
+    ]);
+
+    const snapshotA = __listenClientTestUtils.buildStateResponse(runtimeA, 21);
+    const snapshotB = __listenClientTestUtils.buildStateResponse(runtimeB, 22);
+
+    expect(snapshotA.mode).toBe("plan");
+    expect(snapshotB.mode).toBe("bypassPermissions");
   });
 
   test("cancelling one active worker does not interrupt another", async () => {

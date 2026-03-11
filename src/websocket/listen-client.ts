@@ -46,10 +46,15 @@ import {
   QueueRuntime,
 } from "../queue/queueRuntime";
 import { mergeQueuedTurnInput } from "../queue/turnQueueRuntime";
-import { runWithRuntimeContext } from "../runtime-context";
+import {
+  getRuntimeContext,
+  type RuntimePermissionMode,
+  type RuntimeContextSnapshot,
+  runWithRuntimeContext,
+} from "../runtime-context";
 import { settingsManager } from "../settings-manager";
 import { isInteractiveApprovalTool } from "../tools/interactivePolicy";
-import { loadTools } from "../tools/manager";
+import { captureToolExecutionContext, loadTools } from "../tools/manager";
 import type {
   AutoApprovalMessage,
   CancelAckMessage,
@@ -309,6 +314,7 @@ type ListenerRuntime = {
   approvalRuntimeKeyByRequestId: Map<string, string>;
   runRuntimeKeyByRunId: Map<string, string>;
   lastEmittedStatus: "idle" | "receiving" | "processing" | null;
+  defaultRuntimeContext: RuntimeContextSnapshot;
 };
 
 type ConversationRuntime = {
@@ -342,22 +348,118 @@ type ConversationRuntime = {
   continuationEpoch: number;
   activeExecutingToolCallIds: string[];
   pendingInterruptedToolCallIds: string[] | null;
+  runtimeContext: RuntimeContextSnapshot;
 };
 
 // Listen mode supports one active connection per process.
 let activeRuntime: ListenerRuntime | null = null;
 
+function cloneRuntimeContext(
+  snapshot: RuntimeContextSnapshot,
+): RuntimeContextSnapshot {
+  return {
+    ...snapshot,
+    ...(snapshot.skillSources
+      ? { skillSources: [...snapshot.skillSources] }
+      : {}),
+  };
+}
+
+function getListenerDefaultRuntimeContext(
+  listener: ListenerRuntime,
+): RuntimeContextSnapshot {
+  return cloneRuntimeContext(listener.defaultRuntimeContext);
+}
+
+function applyPermissionModeSnapshot(
+  target: RuntimeContextSnapshot,
+  mode: RuntimePermissionMode,
+  planFilePath: string | null,
+  modeBeforePlan: RuntimePermissionMode | null,
+): void {
+  target.permissionMode = mode;
+  target.planFilePath = planFilePath;
+  target.modeBeforePlan = modeBeforePlan;
+}
+
+function updateListenerDefaultPermissionMode(
+  listener: ListenerRuntime,
+  mode: RuntimePermissionMode,
+): void {
+  const previousMode = listener.defaultRuntimeContext.permissionMode ?? "default";
+  const nextModeBeforePlan =
+    mode === "plan" && previousMode !== "plan"
+      ? previousMode
+      : previousMode === "plan" && mode !== "plan"
+        ? null
+        : listener.defaultRuntimeContext.modeBeforePlan ?? null;
+  const nextPlanFilePath =
+    mode === "plan"
+      ? listener.defaultRuntimeContext.planFilePath ?? generatePlanFilePath()
+      : null;
+  applyPermissionModeSnapshot(
+    listener.defaultRuntimeContext,
+    mode,
+    nextPlanFilePath,
+    nextModeBeforePlan,
+  );
+}
+
+function getConversationRuntimeContext(
+  runtime: ConversationRuntime,
+): RuntimeContextSnapshot {
+  return {
+    ...getListenerDefaultRuntimeContext(runtime.listener),
+    ...cloneRuntimeContext(runtime.runtimeContext),
+    agentId: runtime.agentId,
+    conversationId: runtime.conversationId,
+    workingDirectory:
+      runtime.activeWorkingDirectory ?? getConversationWorkingDirectory(runtime),
+  };
+}
+
+function persistConversationRuntimeContext(runtime: ConversationRuntime): void {
+  const current = getRuntimeContext();
+  if (current) {
+    if (current.skillsDirectory !== undefined) {
+      runtime.runtimeContext.skillsDirectory = current.skillsDirectory;
+    }
+    if (current.skillSources !== undefined) {
+      runtime.runtimeContext.skillSources = [...current.skillSources];
+    }
+    if (current.permissionMode !== undefined) {
+      runtime.runtimeContext.permissionMode = current.permissionMode;
+    }
+    if (current.planFilePath !== undefined) {
+      runtime.runtimeContext.planFilePath = current.planFilePath;
+    }
+    if (current.modeBeforePlan !== undefined) {
+      runtime.runtimeContext.modeBeforePlan = current.modeBeforePlan;
+    }
+  }
+
+  runtime.runtimeContext.agentId = runtime.agentId;
+  runtime.runtimeContext.conversationId = runtime.conversationId;
+  runtime.runtimeContext.workingDirectory = getConversationWorkingDirectory(runtime);
+}
+
 /**
  * Handle mode change request from cloud
  */
-function handleModeChange(msg: ModeChangeMessage, socket: WebSocket): void {
+function handleModeChange(
+  listener: ListenerRuntime,
+  msg: ModeChangeMessage,
+  socket: WebSocket,
+): void {
   try {
-    permissionMode.setMode(msg.mode);
-
-    // If entering plan mode, generate and set plan file path
-    if (msg.mode === "plan" && !permissionMode.getPlanFilePath()) {
-      const planFilePath = generatePlanFilePath();
-      permissionMode.setPlanFilePath(planFilePath);
+    updateListenerDefaultPermissionMode(listener, msg.mode);
+    for (const runtime of listener.conversationRuntimes.values()) {
+      applyPermissionModeSnapshot(
+        runtime.runtimeContext,
+        listener.defaultRuntimeContext.permissionMode ?? "default",
+        listener.defaultRuntimeContext.planFilePath ?? null,
+        listener.defaultRuntimeContext.modeBeforePlan ?? null,
+      );
     }
 
     // Send success acknowledgment
@@ -365,7 +467,7 @@ function handleModeChange(msg: ModeChangeMessage, socket: WebSocket): void {
       type: "mode_changed",
       mode: msg.mode,
       success: true,
-    });
+    }, listener);
 
     if (process.env.DEBUG) {
       console.log(`[Listen] Mode changed to: ${msg.mode}`);
@@ -377,7 +479,7 @@ function handleModeChange(msg: ModeChangeMessage, socket: WebSocket): void {
       mode: msg.mode,
       success: false,
       error: error instanceof Error ? error.message : "Mode change failed",
-    });
+    }, listener);
 
     if (process.env.DEBUG) {
       console.error("[Listen] Mode change failed:", error);
@@ -482,6 +584,12 @@ function createConversationRuntime(
     continuationEpoch: 0,
     activeExecutingToolCallIds: [],
     pendingInterruptedToolCallIds: null,
+    runtimeContext: {
+      ...getListenerDefaultRuntimeContext(listener),
+      agentId: normalizedAgentId,
+      conversationId: normalizedConversationId,
+      workingDirectory: listener.bootWorkingDirectory,
+    },
   };
   runtime.queueRuntime = new QueueRuntime({
     callbacks: {
@@ -738,6 +846,12 @@ function createListenerRuntime(): ListenerRuntime {
     approvalRuntimeKeyByRequestId: new Map<string, string>(),
     runRuntimeKeyByRunId: new Map<string, string>(),
     lastEmittedStatus: null,
+    defaultRuntimeContext: {
+      permissionMode: permissionMode.getMode(),
+      planFilePath: permissionMode.getPlanFilePath(),
+      modeBeforePlan: permissionMode.getModeBeforePlan(),
+      workingDirectory: bootWorkingDirectory,
+    },
   };
   return runtime;
 }
@@ -1230,7 +1344,7 @@ function buildStateResponse(
     active_turn_cwd: activeTurnWorkingDirectory,
     cwd_agent_id: runtime.agentId,
     cwd_conversation_id: runtime.conversationId,
-    mode: permissionMode.getMode(),
+    mode: runtime.runtimeContext.permissionMode ?? "default",
     is_processing: runtime.isProcessing,
     last_stop_reason: runtime.lastStopReason,
     control_response_capable: true,
@@ -1253,7 +1367,7 @@ function buildStateResponse(
 function buildStatusResponse(listener: ListenerRuntime): StatusResponseMessage {
   return {
     type: "status_response",
-    currentMode: permissionMode.getMode(),
+    currentMode: listener.defaultRuntimeContext.permissionMode ?? "default",
     lastStopReason: listener.lastStopReason,
     isProcessing: getListenerStatus(listener) !== "idle",
   };
@@ -2345,6 +2459,11 @@ async function recoverPendingApprovals(
       return;
     }
 
+    const recoveryToolContextId = runWithRuntimeContext(
+      getConversationRuntimeContext(runtime),
+      () => captureToolExecutionContext(recoveryWorkingDirectory).contextId,
+    );
+
     const recoveryBatchId = resolveRecoveryBatchId(runtime, pendingApprovals);
     if (!recoveryBatchId) {
       emitToWS(
@@ -2524,6 +2643,7 @@ async function recoverPendingApprovals(
     }
 
     const executionResults = await executeApprovalBatch(decisions, undefined, {
+      toolContextId: recoveryToolContextId,
       workingDirectory: recoveryWorkingDirectory,
     });
     clearPendingApprovalBatchIds(
@@ -2650,9 +2770,9 @@ async function connectWithRetry(
     // Send current mode state to cloud for UI sync
     sendClientMessage(socket, {
       type: "mode_changed",
-      mode: permissionMode.getMode(),
+      mode: listener.defaultRuntimeContext.permissionMode ?? "default",
       success: true,
-    });
+    }, listener);
 
     listener.heartbeatInterval = setInterval(() => {
       sendClientMessage(socket, { type: "ping" });
@@ -2712,7 +2832,7 @@ async function connectWithRetry(
 
     // Handle mode change messages immediately (not queued)
     if (parsed.type === "mode_change") {
-      handleModeChange(parsed, socket);
+      handleModeChange(listener, parsed, socket);
       return;
     }
 
@@ -3162,14 +3282,7 @@ async function handleIncomingMessage(
   let lastNeedsUserInputToolCallIds: string[] = [];
 
   return runWithRuntimeContext(
-    {
-      agentId,
-      conversationId,
-      workingDirectory: turnWorkingDirectory,
-      permissionMode: permissionMode.getMode(),
-      planFilePath: permissionMode.getPlanFilePath(),
-      modeBeforePlan: permissionMode.getModeBeforePlan(),
-    },
+    getConversationRuntimeContext(runtime),
     async () => {
       runtime.isProcessing = true;
       emitListenerStatus(runtime.listener, onStatusChange, connectionId);
@@ -3858,6 +3971,7 @@ async function handleIncomingMessage(
           console.error("[Listen] Error handling message:", error);
         }
       } finally {
+        persistConversationRuntimeContext(runtime);
         runtime.activeAbortController = null;
         runtime.cancelRequested = false;
         runtime.activeExecutingToolCallIds = [];
@@ -4007,6 +4121,33 @@ function getTestConversationWorkingDirectory(
   );
 }
 
+function setTestConversationPermissionState(
+  runtime: ConversationRuntime,
+  mode: RuntimePermissionMode,
+  options: {
+    agentId?: string;
+    conversationId?: string;
+    planFilePath?: string | null;
+    modeBeforePlan?: RuntimePermissionMode | null;
+  } = {},
+): void {
+  const scopedRuntime =
+    options.agentId !== undefined || options.conversationId !== undefined
+      ? getOrCreateConversationRuntime(
+          runtime.listener,
+          options.agentId ?? runtime.agentId,
+          options.conversationId ?? runtime.conversationId,
+        )
+      : runtime;
+  scopedRuntime.runtimeContext.permissionMode = mode;
+  if (options.planFilePath !== undefined) {
+    scopedRuntime.runtimeContext.planFilePath = options.planFilePath;
+  }
+  if (options.modeBeforePlan !== undefined) {
+    scopedRuntime.runtimeContext.modeBeforePlan = options.modeBeforePlan;
+  }
+}
+
 export const __listenClientTestUtils = {
   createRuntime: createTestRuntime,
   createListenerRuntime,
@@ -4041,4 +4182,5 @@ export const __listenClientTestUtils = {
   normalizeToolReturnWireMessage,
   normalizeExecutionResultsForInterruptParity,
   shouldAttemptPostStopApprovalRecovery,
+  setConversationPermissionState: setTestConversationPermissionState,
 };

@@ -22,7 +22,10 @@ import {
 import { cliPermissions } from "../../permissions/cli";
 import { permissionMode } from "../../permissions/mode";
 import { sessionPermissions } from "../../permissions/session";
-import { getCurrentWorkingDirectory } from "../../runtime-context";
+import {
+  getCurrentWorkingDirectory,
+  runOutsideRuntimeContext,
+} from "../../runtime-context";
 import { settingsManager } from "../../settings-manager";
 import { resolveLettaInvocation } from "../../tools/impl/shellEnv";
 import { getErrorMessage } from "../../utils/error";
@@ -665,18 +668,20 @@ async function executeSubagent(
     const inheritedBaseUrl =
       process.env.LETTA_BASE_URL || settings.env?.LETTA_BASE_URL;
 
-    const proc = spawn(launcher.command, launcher.args, {
-      cwd: getCurrentWorkingDirectory(),
-      env: {
-        ...process.env,
-        ...(inheritedApiKey && { LETTA_API_KEY: inheritedApiKey }),
-        ...(inheritedBaseUrl && { LETTA_BASE_URL: inheritedBaseUrl }),
-        // Tag Task-spawned agents for easy filtering.
-        LETTA_CODE_AGENT_ROLE: "subagent",
-        // Pass parent agent ID for subagents that need to access parent's context
-        ...(parentAgentId && { LETTA_PARENT_AGENT_ID: parentAgentId }),
-      },
-    });
+    const proc = runOutsideRuntimeContext(() =>
+      spawn(launcher.command, launcher.args, {
+        cwd: getCurrentWorkingDirectory(),
+        env: {
+          ...process.env,
+          ...(inheritedApiKey && { LETTA_API_KEY: inheritedApiKey }),
+          ...(inheritedBaseUrl && { LETTA_BASE_URL: inheritedBaseUrl }),
+          // Tag Task-spawned agents for easy filtering.
+          LETTA_CODE_AGENT_ROLE: "subagent",
+          // Pass parent agent ID for subagents that need to access parent's context
+          ...(parentAgentId && { LETTA_PARENT_AGENT_ID: parentAgentId }),
+        },
+      }),
+    );
 
     // Set up abort handler to kill the child process
     let wasAborted = false;

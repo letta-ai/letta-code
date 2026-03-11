@@ -4,6 +4,7 @@
  */
 
 import type { LSPServerInfo } from "../types.js";
+import { runOutsideRuntimeContext } from "../../runtime-context";
 
 /**
  * Python Language Server (Pyright)
@@ -46,9 +47,11 @@ export const PythonServer: LSPServerInfo = {
       const { spawn } = await import("node:child_process");
 
       return new Promise((resolve, reject) => {
-        const proc = spawn("npm", ["install", "-g", "pyright"], {
-          stdio: "inherit",
-        });
+        const proc = runOutsideRuntimeContext(() =>
+          spawn("npm", ["install", "-g", "pyright"], {
+            stdio: "inherit",
+          }),
+        );
 
         proc.on("exit", (code) => {
           if (code === 0) {

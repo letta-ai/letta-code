@@ -501,6 +501,32 @@ describe("listen-client state_response control protocol", () => {
     expect(defaultSnapshot.cwd_agent_id).toBe("agent-b");
     expect(defaultSnapshot.cwd_conversation_id).toBe("default");
   });
+
+  test("scopes permission mode to the requested agent and conversation", () => {
+    const runtime = __listenClientTestUtils.createRuntime("agent-a", "conv-a");
+    __listenClientTestUtils.setConversationPermissionState(runtime, "plan", {
+      planFilePath: "/tmp/plan-a.md",
+    });
+    __listenClientTestUtils.setConversationPermissionState(
+      runtime,
+      "bypassPermissions",
+      {
+        agentId: "agent-b",
+        conversationId: "default",
+      },
+    );
+
+    const snapshotA = __listenClientTestUtils.buildStateResponse(runtime, 4);
+    const snapshotB = __listenClientTestUtils.buildStateResponse(
+      runtime,
+      5,
+      "agent-b",
+      "default",
+    );
+
+    expect(snapshotA.mode).toBe("plan");
+    expect(snapshotB.mode).toBe("bypassPermissions");
+  });
 });
 
 describe("listen-client multi-worker runtime routing", () => {

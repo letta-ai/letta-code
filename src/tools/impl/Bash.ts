@@ -1,6 +1,9 @@
 import { spawn } from "node:child_process";
 import { INTERRUPTED_BY_USER } from "../../constants";
-import { getCurrentWorkingDirectory } from "../../runtime-context";
+import {
+  getCurrentWorkingDirectory,
+  runOutsideRuntimeContext,
+} from "../../runtime-context";
 import {
   appendToOutputFile,
   backgroundProcesses,
@@ -183,11 +186,13 @@ export async function bash(args: BashArgs): Promise<BashResult> {
         status: "error",
       };
     }
-    const childProcess = spawn(executable, launcherArgs, {
-      shell: false,
-      cwd: userCwd,
-      env: getShellEnv(),
-    });
+    const childProcess = runOutsideRuntimeContext(() =>
+      spawn(executable, launcherArgs, {
+        shell: false,
+        cwd: userCwd,
+        env: getShellEnv(),
+      }),
+    );
     backgroundProcesses.set(bashId, {
       process: childProcess,
       command,
