@@ -218,7 +218,7 @@ const useInput = (inputHandler, options = {}) => {
                 console.error(`[debug:ink-keypress] raw=${rawHex} name="${keypress.name}" seq="${keypress.sequence}" key={escape:${key.escape},tab:${key.tab},shift:${key.shift},ctrl:${key.ctrl},meta:${key.meta}}`);
             }
 
-            let input = keypress.ctrl ? keypress.name : keypress.sequence;
+            let input = (keypress.ctrl ? keypress.name : keypress.sequence) ?? '';
             const seq = typeof keypress.sequence === 'string' ? keypress.sequence : '';
             // Filter xterm focus in/out sequences (ESC[I / ESC[O)
             if (seq === '\u001B[I' || seq === '\u001B[O' || input === '[I' || input === '[O' || /^(?:\[I|\[O)+$/.test(input || '')) {
