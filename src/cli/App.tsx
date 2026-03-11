@@ -1730,6 +1730,15 @@ export default function App({
     initProgressByAgentRef.current.set(forAgentId, progress);
   };
 
+  // Shared deps snapshot for handleMemorySubagentCompletion — all fields are
+  // refs or stable functions, so calling this at any point yields correct values.
+  const getMemoryCompletionDeps = () => ({
+    recompileByAgent: systemPromptRecompileByAgentRef.current,
+    recompileQueuedByAgent: queuedSystemPromptRecompileByAgentRef.current,
+    updateInitProgress,
+    logRecompileFailure: (message: string) => debugWarn("memory", message),
+  });
+
   // Listener for init subagents dispatched by the primary agent via the Task
   // tool (interactive /init).  App.tsx-dispatched init subagents register with
   // silent=true and have their own onComplete, so the listener skips those.
@@ -1738,7 +1747,7 @@ export default function App({
       const { agents } = getSubagentSnapshot();
       for (const agent of agents) {
         if (
-          agent.type.toLowerCase() === "init" &&
+          agent.type === "Init" &&
           (agent.status === "completed" || agent.status === "error") &&
           !agent.silent &&
           !handledInitSubagentIdsRef.current.has(agent.id)
@@ -1754,15 +1763,15 @@ export default function App({
               success: agent.status === "completed",
               error: agent.error,
             },
-            {
-              recompileByAgent: systemPromptRecompileByAgentRef.current,
-              recompileQueuedByAgent:
-                queuedSystemPromptRecompileByAgentRef.current,
-              updateInitProgress,
-              logRecompileFailure: (message) =>
-                debugWarn("memory", message),
-            },
-          ).then((msg) => appendTaskNotificationEvents([msg]));
+            getMemoryCompletionDeps(),
+          )
+            .then((msg) => appendTaskNotificationEvents([msg]))
+            .catch((err) =>
+              debugWarn(
+                "memory",
+                `Init completion handler failed: ${err instanceof Error ? err.message : String(err)}`,
+              ),
+            );
         }
       }
     });
@@ -9500,14 +9509,7 @@ export default function App({
                   success,
                   error,
                 },
-                {
-                  recompileByAgent: systemPromptRecompileByAgentRef.current,
-                  recompileQueuedByAgent:
-                    queuedSystemPromptRecompileByAgentRef.current,
-                  updateInitProgress,
-                  logRecompileFailure: (message) =>
-                    debugWarn("memory", message),
-                },
+                getMemoryCompletionDeps(),
               );
               appendTaskNotificationEvents([msg]);
             },
@@ -9628,14 +9630,7 @@ ${SYSTEM_REMINDER_CLOSE}
                   success,
                   error,
                 },
-                {
-                  recompileByAgent: systemPromptRecompileByAgentRef.current,
-                  recompileQueuedByAgent:
-                    queuedSystemPromptRecompileByAgentRef.current,
-                  updateInitProgress,
-                  logRecompileFailure: (message) =>
-                    debugWarn("memory", message),
-                },
+                getMemoryCompletionDeps(),
               );
               appendTaskNotificationEvents([msg]);
             },
@@ -9684,14 +9679,7 @@ ${SYSTEM_REMINDER_CLOSE}
                   success,
                   error,
                 },
-                {
-                  recompileByAgent: systemPromptRecompileByAgentRef.current,
-                  recompileQueuedByAgent:
-                    queuedSystemPromptRecompileByAgentRef.current,
-                  updateInitProgress,
-                  logRecompileFailure: (message) =>
-                    debugWarn("memory", message),
-                },
+                getMemoryCompletionDeps(),
               );
               appendTaskNotificationEvents([msg]);
             },
