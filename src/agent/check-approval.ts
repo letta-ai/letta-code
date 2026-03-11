@@ -430,9 +430,7 @@ export async function getResumeData(
           return {
             pendingApproval,
             pendingApprovals,
-            messageHistory: prepareMessageHistory(messages, {
-              primaryOnly: true,
-            }),
+            messageHistory: prepareMessageHistory(messages),
           };
         }
       } else {
@@ -445,7 +443,7 @@ export async function getResumeData(
       return {
         pendingApproval: null,
         pendingApprovals: [],
-        messageHistory: prepareMessageHistory(messages, { primaryOnly: true }),
+        messageHistory: prepareMessageHistory(messages),
       };
     } else {
       // Use agent messages API for "default" conversation or when no conversation ID
@@ -520,9 +518,7 @@ export async function getResumeData(
           return {
             pendingApproval,
             pendingApprovals,
-            messageHistory: prepareMessageHistory(messages, {
-              primaryOnly: true,
-            }),
+            messageHistory: prepareMessageHistory(messages),
           };
         }
       } else {
@@ -535,7 +531,7 @@ export async function getResumeData(
       return {
         pendingApproval: null,
         pendingApprovals: [],
-        messageHistory: prepareMessageHistory(messages, { primaryOnly: true }),
+        messageHistory: prepareMessageHistory(messages),
       };
     }
   } catch (error) {

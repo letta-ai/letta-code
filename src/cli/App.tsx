@@ -12990,56 +12990,70 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
         style={{ flexDirection: "column" }}
       >
         {(item: StaticItem, index: number) => {
-          return (
-            <Box key={item.id} marginTop={index > 0 ? 1 : 0}>
-              {item.kind === "welcome" ? (
-                <WelcomeScreen loadingState="ready" {...item.snapshot} />
-              ) : item.kind === "user" ? (
-                <UserMessage line={item} prompt={statusLine.prompt} />
-              ) : item.kind === "reasoning" ? (
-                <ReasoningMessage line={item} />
-              ) : item.kind === "assistant" ? (
-                <AssistantMessage line={item} />
-              ) : item.kind === "tool_call" ? (
-                <ToolCallMessage
-                  line={item}
-                  precomputedDiffs={precomputedDiffsRef.current}
-                  lastPlanFilePath={lastPlanFilePathRef.current}
-                />
-              ) : item.kind === "subagent_group" ? (
-                <SubagentGroupStatic agents={item.agents} />
-              ) : item.kind === "error" ? (
-                <ErrorMessage line={item} />
-              ) : item.kind === "status" ? (
-                <StatusMessage line={item} />
-              ) : item.kind === "event" ? (
-                !showCompactionsEnabled &&
-                item.eventType === "compaction" ? null : (
-                  <EventMessage line={item} />
-                )
-              ) : item.kind === "separator" ? (
-                <Box marginTop={1}>
-                  <Text dimColor>{"─".repeat(columns)}</Text>
-                </Box>
-              ) : item.kind === "command" ? (
-                <CommandMessage line={item} />
-              ) : item.kind === "bash_command" ? (
-                <BashCommandMessage line={item} />
-              ) : item.kind === "trajectory_summary" ? (
-                <TrajectorySummary line={item} />
-              ) : item.kind === "approval_preview" ? (
-                <ApprovalPreview
-                  toolName={item.toolName}
-                  toolArgs={item.toolArgs}
-                  precomputedDiff={item.precomputedDiff}
-                  allDiffs={precomputedDiffsRef.current}
-                  planContent={item.planContent}
-                  planFilePath={item.planFilePath}
-                  toolCallId={item.toolCallId}
-                />
-              ) : null}
-            </Box>
-          );
+          try {
+            return (
+              <Box key={item.id} marginTop={index > 0 ? 1 : 0}>
+                {item.kind === "welcome" ? (
+                  <WelcomeScreen loadingState="ready" {...item.snapshot} />
+                ) : item.kind === "user" ? (
+                  <UserMessage line={item} prompt={statusLine.prompt} />
+                ) : item.kind === "reasoning" ? (
+                  <ReasoningMessage line={item} />
+                ) : item.kind === "assistant" ? (
+                  <AssistantMessage line={item} />
+                ) : item.kind === "tool_call" ? (
+                  <ToolCallMessage
+                    line={item}
+                    precomputedDiffs={precomputedDiffsRef.current}
+                    lastPlanFilePath={lastPlanFilePathRef.current}
+                  />
+                ) : item.kind === "subagent_group" ? (
+                  <SubagentGroupStatic agents={item.agents} />
+                ) : item.kind === "error" ? (
+                  <ErrorMessage line={item} />
+                ) : item.kind === "status" ? (
+                  <StatusMessage line={item} />
+                ) : item.kind === "event" ? (
+                  !showCompactionsEnabled &&
+                  item.eventType === "compaction" ? null : (
+                    <EventMessage line={item} />
+                  )
+                ) : item.kind === "separator" ? (
+                  <Box marginTop={1}>
+                    <Text dimColor>{"─".repeat(columns)}</Text>
+                  </Box>
+                ) : item.kind === "command" ? (
+                  <CommandMessage line={item} />
+                ) : item.kind === "bash_command" ? (
+                  <BashCommandMessage line={item} />
+                ) : item.kind === "trajectory_summary" ? (
+                  <TrajectorySummary line={item} />
+                ) : item.kind === "approval_preview" ? (
+                  <ApprovalPreview
+                    toolName={item.toolName}
+                    toolArgs={item.toolArgs}
+                    precomputedDiff={item.precomputedDiff}
+                    allDiffs={precomputedDiffsRef.current}
+                    planContent={item.planContent}
+                    planFilePath={item.planFilePath}
+                    toolCallId={item.toolCallId}
+                  />
+                ) : null}
+              </Box>
+            );
+          } catch (err) {
+            console.error(
+              `[Static render error] kind=${item.kind} id=${item.id}`,
+              err,
+            );
+            return (
+              <Box key={item.id}>
+                <Text color="red">
+                  ⚠ render error: {item.kind} ({String(err)})
+                </Text>
+              </Box>
+            );
+          }
         }}
       </Static>
 
