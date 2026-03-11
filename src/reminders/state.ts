@@ -28,7 +28,6 @@ export interface SharedReminderState {
   pendingAutoInitReminder: boolean;
   pendingCommandIoReminders: CommandIoReminder[];
   pendingToolsetChangeReminders: ToolsetChangeReminder[];
-  shallowInitCompleted: boolean;
 }
 
 export function createSharedReminderState(): SharedReminderState {
@@ -41,7 +40,6 @@ export function createSharedReminderState(): SharedReminderState {
     pendingAutoInitReminder: false,
     pendingCommandIoReminders: [],
     pendingToolsetChangeReminders: [],
-    shallowInitCompleted: false,
   };
 }
 

@@ -24,12 +24,7 @@ describe("memory subagent recompile handling", () => {
     );
   });
 
-  test("updates init progress and recompiles after successful shallow init", async () => {
-    const progressUpdates: Array<{
-      agentId: string;
-      update: Record<string, boolean>;
-    }> = [];
-
+  test("recompiles system prompt after successful init", async () => {
     const message = await handleMemorySubagentCompletion(
       {
         agentId: "agent-init-1",
@@ -41,24 +36,12 @@ describe("memory subagent recompile handling", () => {
         recompileByConversation: new Map(),
         recompileQueuedByConversation: new Set(),
         recompileAgentSystemPromptImpl: recompileAgentSystemPromptMock,
-        updateInitProgress: (agentId, update) => {
-          progressUpdates.push({
-            agentId,
-            update: update as Record<string, boolean>,
-          });
-        },
       },
     );
 
     expect(message).toBe(
       "Built a memory palace of you. Visit it with /palace.",
     );
-    expect(progressUpdates).toEqual([
-      {
-        agentId: "agent-init-1",
-        update: { shallowCompleted: true },
-      },
-    ]);
     expect(recompileAgentSystemPromptMock).toHaveBeenCalledWith(
       "conv-init-1",
       {},
@@ -78,7 +61,6 @@ describe("memory subagent recompile handling", () => {
       recompileByConversation,
       recompileQueuedByConversation,
       recompileAgentSystemPromptImpl: recompileAgentSystemPromptMock,
-      updateInitProgress: () => {},
     };
 
     const first = handleMemorySubagentCompletion(
@@ -144,7 +126,6 @@ describe("memory subagent recompile handling", () => {
       recompileByConversation: new Map<string, Promise<void>>(),
       recompileQueuedByConversation: new Set<string>(),
       recompileAgentSystemPromptImpl: recompileAgentSystemPromptMock,
-      updateInitProgress: () => {},
     };
 
     const [firstMessage, secondMessage] = await Promise.all([

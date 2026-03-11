@@ -1710,26 +1710,12 @@ export default function App({
   const [showExitStats, setShowExitStats] = useState(false);
 
   const sharedReminderStateRef = useRef(createSharedReminderState());
-  // Per-agent init progression — survives agent/conversation switches unlike SharedReminderState.
-  const initProgressByAgentRef = useRef(
-    new Map<string, { shallowCompleted: boolean }>(),
-  );
   const systemPromptRecompileByConversationRef = useRef(
     new Map<string, Promise<void>>(),
   );
   const queuedSystemPromptRecompileByConversationRef = useRef(
     new Set<string>(),
   );
-  const updateInitProgress = (
-    forAgentId: string,
-    update: Partial<{ shallowCompleted: boolean }>,
-  ) => {
-    const progress = initProgressByAgentRef.current.get(forAgentId) ?? {
-      shallowCompleted: false,
-    };
-    Object.assign(progress, update);
-    initProgressByAgentRef.current.set(forAgentId, progress);
-  };
 
   // Track if we've set the conversation summary for this new conversation
   // Initialized to true for resumed conversations (they already have context)
@@ -9424,7 +9410,6 @@ export default function App({
                     systemPromptRecompileByConversationRef.current,
                   recompileQueuedByConversation:
                     queuedSystemPromptRecompileByConversationRef.current,
-                  updateInitProgress,
                   logRecompileFailure: (message) =>
                     debugWarn("memory", message),
                 },
@@ -9554,7 +9539,6 @@ ${SYSTEM_REMINDER_CLOSE}
                     systemPromptRecompileByConversationRef.current,
                   recompileQueuedByConversation:
                     queuedSystemPromptRecompileByConversationRef.current,
-                  updateInitProgress,
                   logRecompileFailure: (message) =>
                     debugWarn("memory", message),
                 },
@@ -9581,9 +9565,6 @@ ${SYSTEM_REMINDER_CLOSE}
         sharedReminderStateRef.current,
         contextTrackerRef.current,
       );
-      const initProgress = initProgressByAgentRef.current.get(agentId);
-      sharedReminderStateRef.current.shallowInitCompleted =
-        initProgress?.shallowCompleted ?? false;
       const { getSkillSources } = await import("../agent/context");
       const { parts: sharedReminderParts } = await buildSharedReminderParts({
         mode: "interactive",

@@ -5,45 +5,29 @@ import {
 
 export type MemorySubagentType = "init" | "reflection";
 
-export interface MemoryInitProgressUpdate {
-  shallowCompleted: boolean;
-}
-
 type RecompileAgentSystemPromptFn = (
   conversationId: string,
   options?: RecompileAgentSystemPromptOptions,
 ) => Promise<string>;
 
-export type MemorySubagentCompletionArgs =
-  | {
-      agentId: string;
-      conversationId: string;
-      subagentType: "init";
-      success: boolean;
-      error?: string;
-    }
-  | {
-      agentId: string;
-      conversationId: string;
-      subagentType: "reflection";
-      success: boolean;
-      error?: string;
-    };
+export interface MemorySubagentCompletionArgs {
+  agentId: string;
+  conversationId: string;
+  subagentType: MemorySubagentType;
+  success: boolean;
+  error?: string;
+}
 
 export interface MemorySubagentCompletionDeps {
   recompileByConversation: Map<string, Promise<void>>;
   recompileQueuedByConversation: Set<string>;
-  updateInitProgress: (
-    agentId: string,
-    update: Partial<MemoryInitProgressUpdate>,
-  ) => void;
   logRecompileFailure?: (message: string) => void;
   recompileAgentSystemPromptImpl?: RecompileAgentSystemPromptFn;
 }
 
 /**
- * Finalize a memory-writing subagent by updating init progress, recompiling the
- * parent agent's system prompt, and returning the user-facing completion text.
+ * Finalize a memory-writing subagent by recompiling the parent agent's
+ * system prompt and returning the user-facing completion text.
  */
 export async function handleMemorySubagentCompletion(
   args: MemorySubagentCompletionArgs,
@@ -55,10 +39,6 @@ export async function handleMemorySubagentCompletion(
   let recompileError: string | null = null;
 
   if (success) {
-    if (subagentType === "init") {
-      deps.updateInitProgress(agentId, { shallowCompleted: true });
-    }
-
     try {
       let inFlight = deps.recompileByConversation.get(conversationId);
 
