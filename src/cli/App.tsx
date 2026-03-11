@@ -12451,13 +12451,23 @@ ${SYSTEM_REMINDER_CLOSE}
       const hasUsablePlan = planFileExists(fallbackPlanPath);
 
       if (mode !== "plan") {
-        if (hasUsablePlan) {
-          if (mode === "bypassPermissions") {
-            // User cycled to YOLO mode — auto-approve ExitPlanMode
-            // so they don't need to manually click through the approval.
+        if (mode === "bypassPermissions") {
+          if (hasUsablePlan) {
+            // YOLO mode with a plan file — auto-approve ExitPlanMode.
             handlePlanApprove();
             return;
           }
+          // YOLO mode but no plan file yet — tell agent to write it first.
+          const planFilePath = activePlanPath ?? fallbackPlanPath;
+          const plansDir = join(homedir(), ".letta", "plans");
+          handlePlanKeepPlanning(
+            `You must write your plan to a plan file before exiting plan mode.\n` +
+              (planFilePath ? `Plan file path: ${planFilePath}\n` : "") +
+              `Use a write tool to create your plan in ${plansDir}, then use ExitPlanMode to present the plan to the user.`,
+          );
+          return;
+        }
+        if (hasUsablePlan) {
           // Other modes: keep approval flow alive and let user manually approve.
           return;
         }
