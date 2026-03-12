@@ -144,7 +144,7 @@ export interface CreateAgentOptions {
   skillsDirectory?: string;
   parallelToolCalls?: boolean;
   enableSleeptime?: boolean;
-  /** System prompt preset (e.g., 'default', 'letta-claude', 'letta-codex') */
+  /** System prompt preset (e.g., 'default', 'letta', 'source-claude') */
   systemPromptPreset?: string;
   /** Raw system prompt string (mutually exclusive with systemPromptPreset) */
   systemPromptCustom?: string;

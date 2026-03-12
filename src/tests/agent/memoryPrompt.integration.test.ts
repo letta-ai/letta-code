@@ -54,9 +54,7 @@ describeIntegration("memory prompt integration", () => {
       const expectedMemfs = expectedPrompt(base, SYSTEM_PROMPT_MEMFS_ADDON);
       let fetched = await client.agents.retrieve(created.agent.id);
       expect(fetched.system).toBe(expectedMemfs);
-      expect((fetched.system.match(/## Memory Filesystem/g) || []).length).toBe(
-        1,
-      );
+      expect((fetched.system.match(/## Memory layout/g) || []).length).toBe(1);
       expect((fetched.system.match(/# See what changed/g) || []).length).toBe(
         1,
       );
@@ -77,7 +75,7 @@ describeIntegration("memory prompt integration", () => {
       const expectedStandard = expectedPrompt(base, SYSTEM_PROMPT_MEMORY_ADDON);
       fetched = await client.agents.retrieve(created.agent.id);
       expect(fetched.system).toBe(expectedStandard);
-      expect(fetched.system).not.toContain("## Memory Filesystem");
+      expect(fetched.system).not.toContain("## Memory layout");
       expect(fetched.system).toContain(
         "Your memory consists of core memory (composed of memory blocks)",
       );

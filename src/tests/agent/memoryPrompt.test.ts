@@ -17,28 +17,31 @@ function countOccurrences(haystack: string, needle: string): number {
 describe("isKnownPreset", () => {
   test("returns true for known preset IDs", () => {
     expect(isKnownPreset("default")).toBe(true);
-    expect(isKnownPreset("letta-claude")).toBe(true);
-    expect(isKnownPreset("letta-codex")).toBe(true);
+    expect(isKnownPreset("letta")).toBe(true);
+    expect(isKnownPreset("source-claude")).toBe(true);
   });
 
   test("returns false for unknown IDs", () => {
     expect(isKnownPreset("explore")).toBe(false);
     expect(isKnownPreset("nonexistent")).toBe(false);
+    // Old IDs should no longer be known
+    expect(isKnownPreset("letta-claude")).toBe(false);
+    expect(isKnownPreset("claude")).toBe(false);
   });
 });
 
 describe("buildSystemPrompt", () => {
   test("builds standard prompt with memory addon", () => {
-    const result = buildSystemPrompt("letta-claude", "standard");
+    const result = buildSystemPrompt("letta", "standard");
     expect(result).toContain(
       "Your memory consists of core memory (composed of memory blocks)",
     );
-    expect(result).not.toContain("## Memory Filesystem");
+    expect(result).not.toContain("## Memory layout");
   });
 
   test("builds memfs prompt with memfs addon", () => {
-    const result = buildSystemPrompt("letta-claude", "memfs");
-    expect(result).toContain("## Memory Filesystem");
+    const result = buildSystemPrompt("letta", "memfs");
+    expect(result).toContain("## Memory layout");
     expect(result).not.toContain(
       "Your memory consists of core memory (composed of memory blocks)",
     );
@@ -56,12 +59,10 @@ describe("buildSystemPrompt", () => {
     expect(first).toBe(second);
   });
 
-  test("default preset uses SYSTEM_PROMPT content", () => {
-    const result = buildSystemPrompt("default", "standard");
-    expect(result).toContain("You are a self-improving AI agent");
-    // default is NOT letta-claude — it uses the Letta-tuned system prompt
-    const lettaClaudeResult = buildSystemPrompt("letta-claude", "standard");
-    expect(result).not.toBe(lettaClaudeResult);
+  test("default and letta presets resolve to same content", () => {
+    const defaultResult = buildSystemPrompt("default", "standard");
+    const lettaResult = buildSystemPrompt("letta", "standard");
+    expect(defaultResult).toBe(lettaResult);
   });
 });
 
@@ -72,11 +73,11 @@ describe("swapMemoryAddon", () => {
 
     const result = swapMemoryAddon(standard, "memfs");
 
-    expect(result).toContain("## Memory Filesystem");
+    expect(result).toContain("## Memory layout");
     expect(result).not.toContain(
       "Your memory consists of core memory (composed of memory blocks)",
     );
-    expect(countOccurrences(result, "## Memory Filesystem")).toBe(1);
+    expect(countOccurrences(result, "## Memory layout")).toBe(1);
   });
 
   test("swaps memfs to standard without orphan fragments", () => {
@@ -88,7 +89,7 @@ describe("swapMemoryAddon", () => {
     expect(result).toContain(
       "Your memory consists of core memory (composed of memory blocks)",
     );
-    expect(result).not.toContain("## Memory Filesystem");
+    expect(result).not.toContain("## Memory layout");
     expect(result).not.toContain("# See what changed");
     expect(result).not.toContain('git commit -m "<type>: <what changed>"');
   });
@@ -99,7 +100,7 @@ describe("swapMemoryAddon", () => {
 
     const result = swapMemoryAddon(doubled, "memfs");
 
-    expect(countOccurrences(result, "## Memory Filesystem")).toBe(1);
+    expect(countOccurrences(result, "## Memory layout")).toBe(1);
     expect(result).not.toContain(
       "Your memory consists of core memory (composed of memory blocks)",
     );
@@ -125,9 +126,9 @@ describe("swapMemoryAddon", () => {
 
     const result = swapMemoryAddon(legacy, "memfs");
 
-    expect(result).toContain("## Memory Filesystem");
+    expect(result).toContain("## Memory layout");
     expect(result).not.toContain("Legacy memory instructions");
-    expect(countOccurrences(result, "## Memory Filesystem")).toBe(1);
+    expect(countOccurrences(result, "## Memory layout")).toBe(1);
   });
 
   test("strips legacy heading-based ## Memory Filesystem section", () => {
@@ -165,7 +166,7 @@ describe("shouldRecommendDefaultPrompt", () => {
   });
 
   test("returns true for a different preset", () => {
-    const current = buildSystemPrompt("letta-claude", "standard");
+    const current = buildSystemPrompt("source-claude", "standard");
     expect(shouldRecommendDefaultPrompt(current, "standard")).toBe(true);
   });
 
