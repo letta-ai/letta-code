@@ -512,6 +512,9 @@ export async function drainStreamWithResume(
   );
 
   let runIdToResume = result.lastRunId ?? null;
+  let runIdSource: "stream_chunk" | "discovery" | null = result.lastRunId
+    ? "stream_chunk"
+    : null;
 
   // If the stream failed before exposing run_id, try to discover the latest
   // running/created run for this conversation that was created after send start.
@@ -541,6 +544,7 @@ export async function drainStreamWithResume(
       );
       if (runIdToResume) {
         result.lastRunId = runIdToResume;
+        runIdSource = "discovery";
       }
     } catch (lookupError) {
       const lookupErrorMsg =
@@ -583,6 +587,14 @@ export async function drainStreamWithResume(
       {
         runId: result.lastRunId ?? undefined,
       },
+    );
+
+    debugLog(
+      "stream",
+      "Mid-stream resume: fetching run stream (source=%s, runId=%s, lastSeqId=%s)",
+      runIdSource ?? "unknown",
+      runIdToResume,
+      result.lastSeqId ?? 0,
     );
 
     debugLog(

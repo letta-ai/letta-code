@@ -1610,6 +1610,11 @@ ${SYSTEM_REMINDER_CLOSE}
         }
 
         // Check for 409 "conversation busy" error - retry once with delay
+        // TODO: Add pre-stream resume logic for parity with App.tsx.
+        // Before waiting, attempt to discover the in-flight run via
+        // discoverFallbackRunIdWithTimeout() and resume its stream with
+        // client.runs.messages.stream() + drainStream(). See App.tsx
+        // retry_conversation_busy handler for reference implementation.
         if (preStreamAction === "retry_conversation_busy") {
           conversationBusyRetries += 1;
           const retryDelayMs = getRetryDelayMs({

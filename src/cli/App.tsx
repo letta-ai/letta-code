@@ -53,8 +53,8 @@ import {
   getMemoryFilesystemRoot,
 } from "../agent/memoryFilesystem";
 import {
-  type StreamRequestContext,
   getStreamToolContextId,
+  type StreamRequestContext,
   sendMessageStream,
 } from "../agent/message";
 import {
@@ -3999,16 +3999,18 @@ export default function App({
           // Wrap in try-catch to handle pre-stream desync errors (when sendMessageStream
           // throws before streaming begins, e.g., retry after LLM error when backend
           // already cleared the approval)
-          let stream: Awaited<ReturnType<typeof sendMessageStream>>;
+          let stream: Awaited<ReturnType<typeof sendMessageStream>> | null =
+            null;
           let turnToolContextId: string | null = null;
           let preStreamResumeResult: DrainResult | null = null;
           try {
-            stream = await sendMessageStream(
+            const nextStream = await sendMessageStream(
               conversationIdRef.current,
               currentInput,
               { agentId: agentIdRef.current },
             );
-            turnToolContextId = getStreamToolContextId(stream);
+            stream = nextStream;
+            turnToolContextId = getStreamToolContextId(nextStream);
           } catch (preStreamError) {
             debugLog(
               "stream",
@@ -4112,8 +4114,10 @@ export default function App({
                   resumeCtx.agentId,
                 );
                 const client = await getClient();
-                const discoveredRunId =
-                  await discoverFallbackRunIdWithTimeout(client, resumeCtx);
+                const discoveredRunId = await discoverFallbackRunIdWithTimeout(
+                  client,
+                  resumeCtx,
+                );
                 debugLog(
                   "stream",
                   "Run discovery result: %s",
@@ -4121,6 +4125,15 @@ export default function App({
                 );
 
                 if (discoveredRunId) {
+                  if (signal?.aborted || userCancelledRef.current) {
+                    const isStaleAtAbort =
+                      myGeneration !== conversationGenerationRef.current;
+                    if (!isStaleAtAbort) {
+                      setStreaming(false);
+                    }
+                    return;
+                  }
+
                   // Found a running run — resume its stream
                   buffersRef.current.interrupted = false;
                   buffersRef.current.commitGeneration =
@@ -4138,7 +4151,7 @@ export default function App({
                     resumeStream,
                     buffersRef.current,
                     refreshDerivedThrottled,
-                    abortControllerRef.current?.signal,
+                    signal,
                     undefined, // no handleFirstMessage on resume
                     undefined,
                     contextTrackerRef.current,
@@ -4156,6 +4169,15 @@ export default function App({
                   // Fall through — preStreamResumeResult will short-circuit drainStreamWithResume
                 }
               } catch (resumeError) {
+                if (signal?.aborted || userCancelledRef.current) {
+                  const isStaleAtAbort =
+                    myGeneration !== conversationGenerationRef.current;
+                  if (!isStaleAtAbort) {
+                    setStreaming(false);
+                  }
+                  return;
+                }
+
                 debugLog(
                   "stream",
                   "Pre-stream resume failed, falling back to wait/retry: %s",
@@ -4493,6 +4515,25 @@ export default function App({
             contextTrackerRef.current.currentTurnId++;
           }
 
+          const drainResult = preStreamResumeResult
+            ? preStreamResumeResult
+            : (() => {
+                if (!stream) {
+                  throw new Error(
+                    "Expected stream when pre-stream resume did not succeed",
+                  );
+                }
+                return drainStreamWithResume(
+                  stream,
+                  buffersRef.current,
+                  refreshDerivedThrottled,
+                  signal, // Use captured signal, not ref (which may be nulled by handleInterrupt)
+                  handleFirstMessage,
+                  undefined,
+                  contextTrackerRef.current,
+                );
+              })();
+
           const {
             stopReason,
             approval,
@@ -4500,16 +4541,7 @@ export default function App({
             apiDurationMs,
             lastRunId,
             fallbackError,
-          } = preStreamResumeResult ??
-            (await drainStreamWithResume(
-              stream!,
-              buffersRef.current,
-              refreshDerivedThrottled,
-              signal, // Use captured signal, not ref (which may be nulled by handleInterrupt)
-              handleFirstMessage,
-              undefined,
-              contextTrackerRef.current,
-            ));
+          } = await drainResult;
 
           // Update currentRunId for error reporting in catch block
           currentRunId = lastRunId ?? undefined;
