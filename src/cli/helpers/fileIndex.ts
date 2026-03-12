@@ -119,7 +119,11 @@ function findPrefixRange(sorted: string[], prefix: string): [number, number] {
   const start = lowerBound(sorted, prefix);
   let end = start;
 
-  while (end < sorted.length && sorted[end]!.startsWith(prefix)) {
+  while (end < sorted.length) {
+    const candidate = sorted[end];
+    if (!candidate?.startsWith(prefix)) {
+      break;
+    }
     end++;
   }
 
@@ -225,7 +229,11 @@ function collectPreviousChildNames(
       : findPrefixRange(previous.statsKeys, prefix);
 
   for (let i = start; i < end; i++) {
-    const key = previous.statsKeys[i]!;
+    const key = previous.statsKeys[i];
+    if (!key) {
+      continue;
+    }
+
     const remainder = key.slice(prefix.length);
     const slashIndex = remainder.indexOf("/");
     const childName =
@@ -539,8 +547,7 @@ function loadCachedIndex(): FileIndexCache | null {
     const parsed = JSON.parse(content);
 
     if (
-      parsed &&
-      parsed.metadata &&
+      parsed?.metadata &&
       typeof parsed.metadata.rootHash === "string" &&
       Array.isArray(parsed.entries) &&
       parsed.merkle &&
@@ -559,14 +566,14 @@ function loadCachedIndex(): FileIndexCache | null {
           const sv = rawStats as Record<string, unknown>;
           if (
             sv &&
-            typeof sv["mtimeMs"] === "number" &&
-            typeof sv["ino"] === "number" &&
-            (sv["type"] === "file" || sv["type"] === "dir")
+            typeof sv.mtimeMs === "number" &&
+            typeof sv.ino === "number" &&
+            (sv.type === "file" || sv.type === "dir")
           ) {
             stats[path] = {
-              type: sv["type"] as "file" | "dir",
-              mtimeMs: sv["mtimeMs"],
-              ino: sv["ino"],
+              type: sv.type as "file" | "dir",
+              mtimeMs: sv.mtimeMs,
+              ino: sv.ino,
             };
           }
         }

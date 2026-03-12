@@ -283,7 +283,11 @@ export function AdvancedDiffRenderer(
   };
   const rows: Row[] = [];
   for (let hIdx = 0; hIdx < hunks.length; hIdx++) {
-    const h = hunks[hIdx]!;
+    const h = hunks[hIdx];
+    if (!h) {
+      continue;
+    }
+
     const syntaxForHunk = hunkSyntaxLines[hIdx] ?? [];
     let oldNo = h.oldStart;
     let newNo = h.newStart;
