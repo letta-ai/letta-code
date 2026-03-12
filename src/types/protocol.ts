@@ -524,6 +524,18 @@ export interface RecoverPendingApprovalsControlRequest {
 }
 
 /**
+ * Successful recover_pending_approvals response payload.
+ *
+ * `pending_approval: true` indicates recovery completed without transport
+ * failure, but unresolved approvals still remain after bounded recovery passes.
+ */
+export interface RecoverPendingApprovalsResponsePayload {
+  recovered: boolean;
+  pending_approval: boolean;
+  approvals_processed: number;
+}
+
+/**
  * Successful list_messages response payload.
  */
 export interface ListMessagesResponsePayload {
@@ -615,7 +627,10 @@ export type ControlResponseBody =
   | {
       subtype: "success";
       request_id: string;
-      response?: CanUseToolResponse | Record<string, unknown>;
+      response?:
+        | CanUseToolResponse
+        | RecoverPendingApprovalsResponsePayload
+        | Record<string, unknown>;
     }
   | { subtype: "error"; request_id: string; error: string }
   | ExternalToolResultResponse;
