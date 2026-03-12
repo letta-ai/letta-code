@@ -54,7 +54,7 @@ export function buildReflectionSubagentPrompt(
     `The primary agent's memory filesystem is located at: ${input.memoryDir}`,
   ];
   if (input.cwd) {
-    lines.push(`The user's current working directory is: ${input.cwd}`);
+    lines.push(`Your current working directory is: ${input.cwd}`);
   }
   return lines.join("\n");
 }
