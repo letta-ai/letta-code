@@ -3,7 +3,9 @@
  * Connects to Letta Cloud and receives messages to execute locally
  */
 
-import { readdir, realpath, stat } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdir, readdir, realpath, stat, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import path from "node:path";
 import { APIError } from "@letta-ai/letta-client/core/error";
 import type { Stream } from "@letta-ai/letta-client/core/streaming";
@@ -630,7 +632,7 @@ function createRuntime(): ListenerRuntime {
     pendingInterruptedToolCallIds: null,
     reminderState: createSharedReminderState(),
     bootWorkingDirectory,
-    workingDirectoryByConversation: new Map<string, string>(),
+    workingDirectoryByConversation: loadPersistedCwdMap(),
     queuedMessagesByItemId: new Map<string, IncomingMessage>(),
     queuePumpActive: false,
     queuePumpScheduled: false,
@@ -739,6 +741,48 @@ function getConversationWorkingDirectory(
   );
 }
 
+// ---------------------------------------------------------------------------
+//  CWD persistence (opt-in via PERSIST_CWD=1, used by letta-code-desktop)
+// ---------------------------------------------------------------------------
+
+const shouldPersistCwd = process.env.PERSIST_CWD === "1";
+
+function getCwdCachePath(): string {
+  return path.join(homedir(), ".letta", "cwd-cache.json");
+}
+
+function loadPersistedCwdMap(): Map<string, string> {
+  if (!shouldPersistCwd) return new Map();
+  try {
+    const cachePath = getCwdCachePath();
+    if (!existsSync(cachePath)) return new Map();
+    const raw = require("fs").readFileSync(cachePath, "utf-8") as string;
+    const parsed = JSON.parse(raw) as Record<string, string>;
+    // Validate entries: only keep directories that still exist
+    const map = new Map<string, string>();
+    for (const [key, value] of Object.entries(parsed)) {
+      if (typeof value === "string" && existsSync(value)) {
+        map.set(key, value);
+      }
+    }
+    return map;
+  } catch {
+    return new Map();
+  }
+}
+
+function persistCwdMap(map: Map<string, string>): void {
+  if (!shouldPersistCwd) return;
+  const cachePath = getCwdCachePath();
+  const obj: Record<string, string> = Object.fromEntries(map);
+  // Fire-and-forget write, don't block the event loop
+  void mkdir(path.dirname(cachePath), { recursive: true })
+    .then(() => writeFile(cachePath, JSON.stringify(obj, null, 2)))
+    .catch(() => {
+      // Silently ignore write failures
+    });
+}
+
 function setConversationWorkingDirectory(
   runtime: ListenerRuntime,
   agentId: string | null,
@@ -748,10 +792,11 @@ function setConversationWorkingDirectory(
   const scopeKey = getWorkingDirectoryScopeKey(agentId, conversationId);
   if (workingDirectory === runtime.bootWorkingDirectory) {
     runtime.workingDirectoryByConversation.delete(scopeKey);
-    return;
+  } else {
+    runtime.workingDirectoryByConversation.set(scopeKey, workingDirectory);
   }
 
-  runtime.workingDirectoryByConversation.set(scopeKey, workingDirectory);
+  persistCwdMap(runtime.workingDirectoryByConversation);
 }
 
 function clearRuntimeTimers(runtime: ListenerRuntime): void {
