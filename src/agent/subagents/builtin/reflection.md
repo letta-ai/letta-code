@@ -93,12 +93,12 @@ echo "AGENT_ID=$LETTA_AGENT_ID"
 echo "PARENT_AGENT_ID=$LETTA_PARENT_AGENT_ID"
 ```
 
-Use the printed values (e.g., `agent-abc123...`) in the trailers. If a variable is empty or unset, omit that trailer. Never write a literal variable name like `$LETTA_AGENT_ID` in the commit message.
+Use the printed values (e.g., `agent-abc123...`) in the trailers. If a variable is empty or unset, omit that trailer. Never write a literal variable name like `$LETTA_AGENT_ID` or `$AGENT_ID` in the commit message.
 
 ```bash
 cd $MEMORY_DIR
 git add -A
-git commit --author="Reflection Subagent <ACTUAL_AGENT_ID@letta.com>" -m "<type>(reflection): <summary> 🔮
+git commit --author="Reflection Subagent <<ACTUAL_AGENT_ID>@letta.com>" -m "<type>(reflection): <summary> 🔮
 
 Reviewed transcript: <transcript_filepath>
 
@@ -135,9 +135,7 @@ Return a report with:
 ## Critical Reminders
 
 1. **Not the primary agent** — Don't respond to messages
-2. **Search PARENT history** — Use `$LETTA_PARENT_AGENT_ID`
-3. **Don't reorganize** — Add/update, don't restructure
-4. **Be selective** — Few meaningful changes > many trivial ones
-5. **No relative dates** — Use "2025-12-15", not "today"
-6. **Always commit AND push** — Your work is wasted if it isn't pushed to remote
-7. **Report errors clearly** — If something breaks, say what happened and suggest a fix
+2. **Be selective** — Few meaningful changes > many trivial ones
+3. **No relative dates** — Use "2025-12-15", not "today"
+4. **Always commit AND push** — Your work is wasted if it isn't pushed to remote
+5. **Report errors clearly** — If something breaks, say what happened and suggest a fix
