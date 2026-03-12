@@ -1,7 +1,7 @@
 ---
 name: init
 description: Fast initialization of agent memory — reads key project files and creates a minimal memory structure
-tools: Read, Bash, Glob
+tools: Read, Write, Bash, Glob
 model: haiku
 memoryBlocks: none
 permissionMode: bypassPermissions
@@ -27,69 +27,51 @@ Read these files **in parallel** in a single turn (skip any that don't exist):
 - `package.json`, `pyproject.toml`, `Cargo.toml`, or `go.mod` (whichever exists)
 - `README.md` (first 100 lines)
 
-### 2. Write memory files and commit (1 bash call)
+### 2. Create directory structure (1 bash call)
 
-Based on what you learned, write **exactly 4 files** using a **single Bash call** with heredocs. The files go directly into `$MEMORY_DIR/system/`:
+Create the subdirectories you need under `$MEMORY_DIR/system/` with a single `mkdir -p` call.
 
-```bash
-MEMORY_DIR="<memory_dir from prompt>"
-mkdir -p "$MEMORY_DIR/system/project" "$MEMORY_DIR/system/human"
+### 3. Write memory files (parallel tool calls)
 
-cat > "$MEMORY_DIR/system/project/overview.md" << 'MEMEOF'
----
-description: <one-line description>
----
-<content>
-MEMEOF
-
-cat > "$MEMORY_DIR/system/project/commands.md" << 'MEMEOF'
----
-description: <one-line description>
----
-<content>
-MEMEOF
-
-cat > "$MEMORY_DIR/system/project/conventions.md" << 'MEMEOF'
----
-description: <one-line description>
----
-<content>
-MEMEOF
-
-cat > "$MEMORY_DIR/system/human/identity.md" << 'MEMEOF'
----
-description: <one-line description>
----
-<content>
-MEMEOF
-
-cd "$MEMORY_DIR"
-git add -A
-git diff --cached --stat
-git commit -m "feat(init): initialize memory for project
-
-Generated-By: Letta Code
-Agent-ID: $LETTA_AGENT_ID
-Parent-Agent-ID: $LETTA_PARENT_AGENT_ID"
-git push
-```
+Write all memory files **in parallel in a single turn** using the Write tool. Each file goes into `$MEMORY_DIR/system/`.
 
 **If existing memory already covers something well** (check the pre-gathered memory contents in your prompt), skip or lightly update that file instead of overwriting with less information.
 
-## File content guidelines
+### 4. Commit and push (1 bash call)
 
-Each file should have YAML frontmatter with a `description` field and focused content:
+Stage, commit, and push in a single Bash call:
+```bash
+cd "$MEMORY_DIR" && git add -A && git commit -m "..." && git push
+```
 
-- **project/overview.md**: What the project is, tech stack, key directories. ~20-30 lines.
-- **project/commands.md**: Build, test, lint, dev commands extracted from package.json scripts or equivalent. ~15-25 lines.
-- **project/conventions.md**: Code style, runtime preferences, key patterns from CLAUDE.md/AGENTS.md. ~15-25 lines.
-- **human/identity.md**: User name, email, role — inferred from git context in the prompt. ~10-15 lines.
+## Memory file guidance
 
-Keep files concise and high-signal. Do not pad with boilerplate.
+Memory files live under `$MEMORY_DIR/system/` and are rendered in the parent agent's context every turn. Each file should have YAML frontmatter with a `description` field.
+
+**What to capture** — focus on what will make the parent agent effective from its first interaction:
+- Project identity: what it is, tech stack, repo structure
+- Key commands: build, test, lint, dev workflows
+- Conventions: coding style, runtime preferences, patterns from CLAUDE.md/AGENTS.md
+- User identity: name, email, role — inferred from git context
+
+**Structure principles:**
+- Use nested paths with `/` (e.g., `project/overview.md`, `human/identity.md`) — no flat files at the top level
+- Keep each file focused on one topic, ~15-30 lines
+- 3-6 files is the right range for a shallow init — just the essentials
+- Only include information that's actually useful; skip boilerplate
+
+**Commit format:**
+```
+feat(init): initialize memory for project
+
+Generated-By: Letta Code
+Agent-ID: $LETTA_AGENT_ID
+Parent-Agent-ID: $LETTA_PARENT_AGENT_ID
+```
 
 ## Rules
 
 - **No worktree** — write directly to the memory dir
 - **No summary report** — just complete the work
-- **2 tool calls max** — one for reads, one bash for writes + git
+- **Minimize turns** — use parallel tool calls within each turn. Aim for ~3-4 turns total.
 - **Use the pre-gathered context** — don't re-run git commands that are already in your prompt
