@@ -5442,6 +5442,13 @@ export default function App({
             );
 
             // Show subtle grey status message (skip for silently-retried errors)
+            debugLog(
+              "retry",
+              "Post-stream retry (run=%s, stop=%s): %s",
+              lastRunId ?? "unknown",
+              stopReasonToHandle ?? "unknown",
+              detailFromRun || fallbackError || "unknown error",
+            );
             const retryStatusMsg = getRetryStatusMessage(detailFromRun);
             const retryStatusId = retryStatusMsg != null ? uid("status") : null;
             if (retryStatusId && retryStatusMsg) {
