@@ -2216,6 +2216,13 @@ async function sendMessageStreamWithRetry(
       }
 
       if (action === "retry_conversation_busy") {
+        // TODO: Add pre-stream resume logic for parity with App.tsx.
+        // Before waiting, attempt to discover the in-flight run via
+        // discoverFallbackRunIdWithTimeout() and resume its stream with
+        // client.runs.messages.stream() + drainStream(). This avoids
+        // blind wait/retry cycles when the server already created a run
+        // from the original request. See App.tsx retry_conversation_busy
+        // handler for reference implementation.
         const attempt = conversationBusyRetries + 1;
         const delayMs = getRetryDelayMs({
           category: "conversation_busy",
