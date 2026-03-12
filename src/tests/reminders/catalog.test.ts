@@ -30,11 +30,11 @@ describe("shared reminder catalog", () => {
     }
   });
 
-  test("subagent mode only has agent-info reminder", () => {
+  test("subagent mode has no shared reminders", () => {
     const subagentReminders = SHARED_REMINDER_CATALOG.filter((entry) =>
       entry.modes.includes("subagent"),
     );
-    expect(subagentReminders.map((entry) => entry.id)).toEqual(["agent-info"]);
+    expect(subagentReminders.map((entry) => entry.id)).toEqual([]);
   });
 
   test("command and toolset reminders are interactive-only", () => {

@@ -32,12 +32,7 @@ export const SHARED_REMINDER_CATALOG: ReadonlyArray<SharedReminderDefinition> =
     {
       id: "agent-info",
       description: "Agent identity (ID, name, server, memory dir)",
-      modes: [
-        "interactive",
-        "headless-one-shot",
-        "headless-bidirectional",
-        "subagent",
-      ],
+      modes: ["interactive", "headless-one-shot", "headless-bidirectional"],
     },
     {
       id: "permission-mode",

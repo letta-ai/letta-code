@@ -88,7 +88,7 @@ describe("shared reminder parity", () => {
     );
   });
 
-  test("subagent mode produces only agent-info reminder", async () => {
+  test("subagent mode produces no shared reminders", async () => {
     for (const reminderId of SHARED_REMINDER_IDS) {
       providerMap[reminderId] = async () => reminderId;
     }
@@ -114,7 +114,7 @@ describe("shared reminder parity", () => {
     });
 
     expect(subagent.appliedReminderIds).toEqual(reminderIdsForMode("subagent"));
-    expect(subagent.appliedReminderIds).toEqual(["agent-info"]);
-    expect(subagent.parts.map((part) => part.text)).toEqual(["agent-info"]);
+    expect(subagent.appliedReminderIds).toEqual([]);
+    expect(subagent.parts.map((part) => part.text)).toEqual([]);
   });
 });
