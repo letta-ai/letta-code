@@ -7,6 +7,7 @@ import type {
 import { LETTA_CLOUD_API_URL } from "../../auth/oauth.js";
 import { resizeImageIfNeeded } from "../../cli/helpers/imageResize.js";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "../../constants";
+import { getCurrentWorkingDirectory } from "../../runtime-context";
 import { settingsManager } from "../../settings-manager.js";
 import { debugLog } from "../../utils/debug.js";
 import { OVERFLOW_CONFIG, writeOverflowFile } from "./overflow.js";
@@ -211,7 +212,7 @@ function formatWithLineNumbers(
 export async function read(args: ReadArgs): Promise<ReadResult> {
   validateRequiredParams(args, ["file_path"], "Read");
   const { file_path, offset, limit } = args;
-  const userCwd = process.env.USER_CWD || process.cwd();
+  const userCwd = getCurrentWorkingDirectory();
   const resolvedPath = path.isAbsolute(file_path)
     ? file_path
     : path.resolve(userCwd, file_path);

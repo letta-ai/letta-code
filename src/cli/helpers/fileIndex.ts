@@ -233,7 +233,6 @@ function collectPreviousChildNames(
     if (!key) {
       continue;
     }
-
     const remainder = key.slice(prefix.length);
     const slashIndex = remainder.indexOf("/");
     const childName =

@@ -206,6 +206,29 @@ describe("listen-client approval resolver wiring", () => {
     expect(socket.closeCalls).toBe(1);
     await expect(pending).rejects.toThrow("Listener runtime stopped");
   });
+
+  test("stopRuntime rejects pending resolvers across all workers", async () => {
+    const runtimeA = __listenClientTestUtils.createRuntime("agent-a", "conv-a");
+    const runtimeB = __listenClientTestUtils.getOrCreateConversationRuntime(
+      runtimeA.listener,
+      "agent-b",
+      "conv-b",
+    );
+
+    const pendingA = new Promise<ControlResponseBody>((resolve, reject) => {
+      runtimeA.pendingApprovalResolvers.set("perm-a", { resolve, reject });
+    });
+    const pendingB = new Promise<ControlResponseBody>((resolve, reject) => {
+      runtimeB.pendingApprovalResolvers.set("perm-b", { resolve, reject });
+    });
+
+    __listenClientTestUtils.stopRuntime(runtimeA, true);
+
+    expect(runtimeA.pendingApprovalResolvers.size).toBe(0);
+    expect(runtimeB.pendingApprovalResolvers.size).toBe(0);
+    await expect(pendingA).rejects.toThrow("Listener runtime stopped");
+    await expect(pendingB).rejects.toThrow("Listener runtime stopped");
+  });
 });
 
 describe("listen-client requestApprovalOverWS", () => {
@@ -243,11 +266,54 @@ describe("listen-client requestApprovalOverWS", () => {
     ).rejects.toThrow("send failed");
     expect(runtime.pendingApprovalResolvers.size).toBe(0);
   });
+
+  test("rejects duplicate request_id across workers (fail-closed)", async () => {
+    const runtimeA = __listenClientTestUtils.createRuntime("agent-a", "conv-a");
+    const runtimeB = __listenClientTestUtils.getOrCreateConversationRuntime(
+      runtimeA.listener,
+      "agent-b",
+      "conv-b",
+    );
+    const socket = new MockSocket(WebSocket.OPEN);
+    const requestId = "perm-duplicate";
+
+    const pending = requestApprovalOverWS(
+      runtimeA,
+      socket as unknown as WebSocket,
+      requestId,
+      makeControlRequest(requestId),
+    );
+
+    await expect(
+      requestApprovalOverWS(
+        runtimeB,
+        socket as unknown as WebSocket,
+        requestId,
+        makeControlRequest(requestId),
+      ),
+    ).rejects.toThrow("Duplicate control request_id detected");
+
+    expect(runtimeA.pendingApprovalResolvers.size).toBe(1);
+    expect(runtimeB.pendingApprovalResolvers.size).toBe(0);
+
+    const resolved = resolvePendingApprovalResolver(
+      runtimeA,
+      makeSuccessResponse(requestId),
+    );
+    expect(resolved).toBe(true);
+    await expect(pending).resolves.toMatchObject({
+      subtype: "success",
+      request_id: requestId,
+    });
+  });
 });
 
 describe("listen-client conversation-scoped protocol events", () => {
   test("queue lifecycle events carry agent_id and conversation_id from the queued item", () => {
-    const runtime = __listenClientTestUtils.createRuntime();
+    const runtime = __listenClientTestUtils.createRuntime(
+      "agent-default",
+      "default",
+    );
     const socket = new MockSocket(WebSocket.OPEN);
     runtime.socket = socket as unknown as WebSocket;
 
@@ -256,8 +322,6 @@ describe("listen-client conversation-scoped protocol events", () => {
       source: "user",
       content: "hello",
       clientMessageId: "cm-queue-1",
-      agentId: "agent-default",
-      conversationId: "default",
     };
     const item = runtime.queueRuntime.enqueue(input);
     expect(item).not.toBeNull();
@@ -276,10 +340,11 @@ describe("listen-client conversation-scoped protocol events", () => {
   });
 
   test("cancel_ack includes agent_id and conversation_id", () => {
-    const runtime = __listenClientTestUtils.createRuntime();
+    const runtime = __listenClientTestUtils.createRuntime(
+      "agent-123",
+      "default",
+    );
     const socket = new MockSocket(WebSocket.OPEN);
-    runtime.activeAgentId = "agent-123";
-    runtime.activeConversationId = "default";
     runtime.activeRunId = "run-123";
 
     __listenClientTestUtils.emitCancelAck(
@@ -299,7 +364,10 @@ describe("listen-client conversation-scoped protocol events", () => {
   });
 
   test("queue_batch_dequeued keeps the batch scope", () => {
-    const runtime = __listenClientTestUtils.createRuntime();
+    const runtime = __listenClientTestUtils.createRuntime(
+      "agent-xyz",
+      "conv-xyz",
+    );
     const socket = new MockSocket(WebSocket.OPEN);
     runtime.socket = socket as unknown as WebSocket;
 
@@ -308,8 +376,6 @@ describe("listen-client conversation-scoped protocol events", () => {
       source: "user",
       content: "hello",
       clientMessageId: "cm-queue-2",
-      agentId: "agent-xyz",
-      conversationId: "conv-xyz",
     };
 
     runtime.queueRuntime.enqueue(input);
@@ -320,6 +386,68 @@ describe("listen-client conversation-scoped protocol events", () => {
     expect(dequeued.type).toBe("queue_batch_dequeued");
     expect(dequeued.agent_id).toBe("agent-xyz");
     expect(dequeued.conversation_id).toBe("conv-xyz");
+  });
+
+  test("dropped queue items are removed from queuedMessagesByItemId", () => {
+    const runtime = __listenClientTestUtils.createRuntime(
+      "agent-drop",
+      "conv-drop",
+    );
+
+    for (let i = 0; i < 110; i++) {
+      const input: Omit<MessageQueueItem, "id" | "enqueuedAt"> = {
+        kind: "message",
+        source: "user",
+        content: `message-${i}`,
+        clientMessageId: `cm-${i}`,
+      };
+      const item = runtime.queueRuntime.enqueue(input);
+      expect(item).not.toBeNull();
+      runtime.queuedMessagesByItemId.set(
+        (item as MessageQueueItem).id,
+        {} as never,
+      );
+    }
+
+    expect(runtime.queueRuntime.length).toBe(100);
+    expect(runtime.queuedMessagesByItemId.size).toBe(
+      runtime.queueRuntime.length,
+    );
+  });
+});
+
+describe("listen-client status_response aggregate semantics", () => {
+  test("isProcessing stays true while any worker is recovering or has pending turns", () => {
+    const runtimeA = __listenClientTestUtils.createRuntime("agent-a", "conv-a");
+    const runtimeB = __listenClientTestUtils.getOrCreateConversationRuntime(
+      runtimeA.listener,
+      "agent-b",
+      "conv-b",
+    );
+
+    runtimeA.isRecoveringApprovals = true;
+    const recoveringStatus = __listenClientTestUtils.buildStatusResponse(
+      runtimeA.listener,
+    );
+    expect(recoveringStatus.isProcessing).toBe(true);
+
+    runtimeA.isRecoveringApprovals = false;
+    runtimeB.queueRuntime.enqueue({
+      kind: "message",
+      source: "user",
+      content: "queued",
+      clientMessageId: "cm-queued",
+    } as Parameters<typeof runtimeB.queueRuntime.enqueue>[0]);
+    const queuedStatus = __listenClientTestUtils.buildStatusResponse(
+      runtimeA.listener,
+    );
+    expect(queuedStatus.isProcessing).toBe(true);
+
+    runtimeB.queueRuntime.clear("shutdown");
+    const idleStatus = __listenClientTestUtils.buildStatusResponse(
+      runtimeA.listener,
+    );
+    expect(idleStatus.isProcessing).toBe(false);
   });
 });
 
@@ -343,28 +471,19 @@ describe("listen-client state_response control protocol", () => {
   });
 
   test("scopes configured and active cwd to the requested agent and conversation", () => {
-    const runtime = __listenClientTestUtils.createRuntime();
-    __listenClientTestUtils.setConversationWorkingDirectory(
-      runtime,
-      "agent-a",
-      "conv-a",
-      "/repo/a",
-    );
+    const runtime = __listenClientTestUtils.createRuntime("agent-a", "conv-a");
+    __listenClientTestUtils.setConversationWorkingDirectory(runtime, "/repo/a");
     __listenClientTestUtils.setConversationWorkingDirectory(
       runtime,
       "agent-b",
       "default",
       "/repo/b",
     );
-    runtime.activeAgentId = "agent-a";
-    runtime.activeConversationId = "conv-a";
     runtime.activeWorkingDirectory = "/repo/a";
 
     const activeSnapshot = __listenClientTestUtils.buildStateResponse(
       runtime,
       2,
-      "agent-a",
-      "conv-a",
     );
     expect(activeSnapshot.configured_cwd).toBe("/repo/a");
     expect(activeSnapshot.active_turn_cwd).toBe("/repo/a");
@@ -382,11 +501,107 @@ describe("listen-client state_response control protocol", () => {
     expect(defaultSnapshot.cwd_agent_id).toBe("agent-b");
     expect(defaultSnapshot.cwd_conversation_id).toBe("default");
   });
+
+  test("scopes permission mode to the requested agent and conversation", () => {
+    const runtime = __listenClientTestUtils.createRuntime("agent-a", "conv-a");
+    __listenClientTestUtils.setConversationPermissionState(runtime, "plan", {
+      planFilePath: "/tmp/plan-a.md",
+    });
+    __listenClientTestUtils.setConversationPermissionState(
+      runtime,
+      "bypassPermissions",
+      {
+        agentId: "agent-b",
+        conversationId: "default",
+      },
+    );
+
+    const snapshotA = __listenClientTestUtils.buildStateResponse(runtime, 4);
+    const snapshotB = __listenClientTestUtils.buildStateResponse(
+      runtime,
+      5,
+      "agent-b",
+      "default",
+    );
+
+    expect(snapshotA.mode).toBe("plan");
+    expect(snapshotB.mode).toBe("bypassPermissions");
+  });
+});
+
+describe("listen-client multi-worker runtime routing", () => {
+  test("treats default conversations as agent-scoped workers", () => {
+    const runtimeA = __listenClientTestUtils.createRuntime(
+      "agent-a",
+      "default",
+    );
+    const runtimeB = __listenClientTestUtils.getOrCreateConversationRuntime(
+      runtimeA.listener,
+      "agent-b",
+      "default",
+    );
+    const runtimeAAgain =
+      __listenClientTestUtils.getOrCreateConversationRuntime(
+        runtimeA.listener,
+        "agent-a",
+        "default",
+      );
+
+    expect(runtimeA.key).toBe("agent:agent-a::conversation:default");
+    expect(runtimeB.key).toBe("agent:agent-b::conversation:default");
+    expect(runtimeB).not.toBe(runtimeA);
+    expect(runtimeAAgain).toBe(runtimeA);
+  });
+
+  test("indexes runs to the owning worker without clobbering another worker", () => {
+    const runtimeA = __listenClientTestUtils.createRuntime(
+      "agent-a",
+      "default",
+    );
+    const runtimeB = __listenClientTestUtils.getOrCreateConversationRuntime(
+      runtimeA.listener,
+      "agent-b",
+      "default",
+    );
+
+    runtimeA.activeRunId = "run-a";
+    runtimeB.activeRunId = "run-b";
+    __listenClientTestUtils.indexRun(runtimeA, "run-a");
+    __listenClientTestUtils.indexRun(runtimeB, "run-b");
+
+    expect(
+      __listenClientTestUtils.resolveRuntimeForRun(runtimeA.listener, "run-a"),
+    ).toBe(runtimeA);
+    expect(
+      __listenClientTestUtils.resolveRuntimeForRun(runtimeA.listener, "run-b"),
+    ).toBe(runtimeB);
+
+    __listenClientTestUtils.clearRunIndex(runtimeA);
+    expect(
+      __listenClientTestUtils.resolveRuntimeForRun(runtimeA.listener, "run-a"),
+    ).toBeNull();
+    expect(
+      __listenClientTestUtils.resolveRuntimeForRun(runtimeA.listener, "run-b"),
+    ).toBe(runtimeB);
+  });
+
+  test("treats named conversations as agent-scoped workers", () => {
+    const runtimeA = __listenClientTestUtils.createRuntime("agent-a", "conv-1");
+    const runtimeB = __listenClientTestUtils.getOrCreateConversationRuntime(
+      runtimeA.listener,
+      "agent-b",
+      "conv-1",
+    );
+
+    expect(runtimeA.key).toBe("agent:agent-a::conversation:conv-1");
+    expect(runtimeB.key).toBe("agent:agent-b::conversation:conv-1");
+    expect(runtimeB).not.toBe(runtimeA);
+  });
 });
 
 describe("listen-client cwd change handling", () => {
   test("resolves relative cwd changes against the conversation cwd and preserves active turn cwd", async () => {
-    const runtime = __listenClientTestUtils.createRuntime();
+    const runtime = __listenClientTestUtils.createRuntime("agent-1", "conv-1");
     const socket = new MockSocket(WebSocket.OPEN);
     const tempRoot = await mkdtemp(join(os.tmpdir(), "letta-listen-cwd-"));
     const repoDir = join(tempRoot, "repo");
@@ -400,12 +615,8 @@ describe("listen-client cwd change handling", () => {
     try {
       __listenClientTestUtils.setConversationWorkingDirectory(
         runtime,
-        "agent-1",
-        "conv-1",
         normalizedServerDir,
       );
-      runtime.activeAgentId = "agent-1";
-      runtime.activeConversationId = "conv-1";
       runtime.activeWorkingDirectory = normalizedServerDir;
 
       await __listenClientTestUtils.handleCwdChange(

@@ -3,6 +3,7 @@
  */
 
 import * as path from "node:path";
+import { runOutsideRuntimeContext } from "../runtime-context";
 import { LSPClient } from "./client.js";
 import type { Diagnostic, LSPServerInfo } from "./types.js";
 
@@ -98,13 +99,15 @@ export class LSPManager {
         return null;
       }
 
-      const proc = spawn(command, serverDef.command.slice(1), {
-        cwd: rootUri,
-        env: {
-          ...process.env,
-          ...serverDef.env,
-        },
-      });
+      const proc = runOutsideRuntimeContext(() =>
+        spawn(command, serverDef.command.slice(1), {
+          cwd: rootUri,
+          env: {
+            ...process.env,
+            ...serverDef.env,
+          },
+        }),
+      );
 
       const client = new LSPClient({
         serverID: serverDef.id,

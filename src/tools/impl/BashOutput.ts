@@ -1,3 +1,4 @@
+import { getCurrentWorkingDirectory } from "../../runtime-context";
 import { backgroundProcesses, backgroundTasks } from "./process_manager.js";
 import { LIMITS, truncateByChars } from "./truncation.js";
 import { validateRequiredParams } from "./validation.js";
@@ -200,7 +201,7 @@ async function getProcessOutput(
       .join("\n");
   }
 
-  const userCwd = process.env.USER_CWD || process.cwd();
+  const userCwd = getCurrentWorkingDirectory();
 
   // Apply character limit to prevent excessive token usage
   const { content: truncatedOutput } = truncateByChars(
@@ -293,7 +294,7 @@ async function getBackgroundTaskOutput(
       .join("\n");
   }
 
-  const userCwd = process.env.USER_CWD || process.cwd();
+  const userCwd = getCurrentWorkingDirectory();
 
   // Apply character limit to prevent excessive token usage
   const { content: truncatedOutput } = truncateByChars(

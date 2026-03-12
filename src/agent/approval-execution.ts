@@ -9,6 +9,7 @@ import type {
 import type { ToolReturnMessage } from "@letta-ai/letta-client/resources/tools";
 import type { ApprovalRequest } from "../cli/helpers/stream";
 import { INTERRUPTED_BY_USER } from "../constants";
+import { getCurrentWorkingDirectory } from "../runtime-context";
 import {
   captureToolExecutionContext,
   executeTool,
@@ -136,7 +137,7 @@ const GLOBAL_LOCK_TOOLS = new Set([
 export function getResourceKey(
   toolName: string,
   toolArgs: Record<string, unknown>,
-  workingDirectory: string = process.env.USER_CWD || process.cwd(),
+  workingDirectory: string = getCurrentWorkingDirectory(),
 ): string {
   // Global lock tools serialize with everything
   if (GLOBAL_LOCK_TOOLS.has(toolName)) {

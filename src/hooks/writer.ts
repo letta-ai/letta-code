@@ -3,6 +3,7 @@
 
 import { homedir } from "node:os";
 import { resolve } from "node:path";
+import { getCurrentWorkingDirectory } from "../runtime-context";
 import { settingsManager } from "../settings-manager";
 import { debugLog } from "../utils/debug";
 import {
@@ -43,7 +44,7 @@ function isProjectSettingsPathCollidingWithGlobal(
  */
 export function loadHooksFromLocation(
   location: SaveLocation,
-  workingDirectory: string = process.cwd(),
+  workingDirectory: string = getCurrentWorkingDirectory(),
 ): HooksConfig {
   try {
     switch (location) {
@@ -76,7 +77,7 @@ export function loadHooksFromLocation(
 export async function saveHooksToLocation(
   hooks: HooksConfig,
   location: SaveLocation,
-  workingDirectory: string = process.cwd(),
+  workingDirectory: string = getCurrentWorkingDirectory(),
 ): Promise<void> {
   // Ensure settings are loaded before updating
   switch (location) {
@@ -118,7 +119,7 @@ export async function addHookMatcher(
   event: ToolHookEvent,
   matcher: HookMatcher,
   location: SaveLocation,
-  workingDirectory: string = process.cwd(),
+  workingDirectory: string = getCurrentWorkingDirectory(),
 ): Promise<void> {
   const hooks = loadHooksFromLocation(location, workingDirectory);
 
@@ -142,7 +143,7 @@ export async function addSimpleHookMatcher(
   event: SimpleHookEvent,
   matcher: SimpleHookMatcher,
   location: SaveLocation,
-  workingDirectory: string = process.cwd(),
+  workingDirectory: string = getCurrentWorkingDirectory(),
 ): Promise<void> {
   const hooks = loadHooksFromLocation(location, workingDirectory);
 
@@ -166,7 +167,7 @@ export async function removeHook(
   event: HookEvent,
   index: number,
   location: SaveLocation,
-  workingDirectory: string = process.cwd(),
+  workingDirectory: string = getCurrentWorkingDirectory(),
 ): Promise<void> {
   const hooks = loadHooksFromLocation(location, workingDirectory);
 
@@ -205,7 +206,7 @@ export async function updateHookMatcher(
   matcherIndex: number,
   matcher: HookMatcher,
   location: SaveLocation,
-  workingDirectory: string = process.cwd(),
+  workingDirectory: string = getCurrentWorkingDirectory(),
 ): Promise<void> {
   const hooks = loadHooksFromLocation(location, workingDirectory);
   const eventMatchers = hooks[event] as HookMatcher[] | undefined;
@@ -231,7 +232,7 @@ export async function updateSimpleHookMatcher(
   matcherIndex: number,
   matcher: SimpleHookMatcher,
   location: SaveLocation,
-  workingDirectory: string = process.cwd(),
+  workingDirectory: string = getCurrentWorkingDirectory(),
 ): Promise<void> {
   const hooks = loadHooksFromLocation(location, workingDirectory);
   const eventMatchers = hooks[event] as SimpleHookMatcher[] | undefined;
@@ -277,7 +278,7 @@ export type HookWithSource =
  */
 export function loadMatchersWithSource(
   event: ToolHookEvent,
-  workingDirectory: string = process.cwd(),
+  workingDirectory: string = getCurrentWorkingDirectory(),
 ): HookMatcherWithSource[] {
   const result: HookMatcherWithSource[] = [];
   const locations: SaveLocation[] = ["project-local", "project", "user"];
@@ -306,7 +307,7 @@ export function loadMatchersWithSource(
  */
 export function loadSimpleMatchersWithSource(
   event: SimpleHookEvent,
-  workingDirectory: string = process.cwd(),
+  workingDirectory: string = getCurrentWorkingDirectory(),
 ): SimpleHookMatcherWithSource[] {
   const result: SimpleHookMatcherWithSource[] = [];
   const locations: SaveLocation[] = ["project-local", "project", "user"];
@@ -334,7 +335,7 @@ export function loadSimpleMatchersWithSource(
  * Count total hooks across all events and locations
  */
 export function countTotalHooks(
-  workingDirectory: string = process.cwd(),
+  workingDirectory: string = getCurrentWorkingDirectory(),
 ): number {
   let count = 0;
 
@@ -372,7 +373,7 @@ export function countTotalHooks(
  */
 export function countHooksForEvent(
   event: HookEvent,
-  workingDirectory: string = process.cwd(),
+  workingDirectory: string = getCurrentWorkingDirectory(),
 ): number {
   let count = 0;
 

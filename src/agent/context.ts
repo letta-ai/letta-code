@@ -3,6 +3,7 @@
  * This allows tools to access the current agent ID without threading it through params.
  */
 
+import { getRuntimeContext, updateRuntimeContext } from "../runtime-context";
 import { ALL_SKILL_SOURCES } from "./skillSources";
 import type { SkillSource } from "./skills";
 
@@ -51,6 +52,12 @@ export function setAgentContext(
   context.skillsDirectory = skillsDirectory || null;
   context.skillSources =
     skillSources !== undefined ? [...skillSources] : [...ALL_SKILL_SOURCES];
+  updateRuntimeContext({
+    agentId,
+    skillsDirectory: skillsDirectory || null,
+    skillSources:
+      skillSources !== undefined ? [...skillSources] : [...ALL_SKILL_SOURCES],
+  });
 }
 
 /**
@@ -58,6 +65,7 @@ export function setAgentContext(
  */
 export function setCurrentAgentId(agentId: string): void {
   context.agentId = agentId;
+  updateRuntimeContext({ agentId });
 }
 
 /**
@@ -65,6 +73,10 @@ export function setCurrentAgentId(agentId: string): void {
  * @throws Error if no agent context is set
  */
 export function getCurrentAgentId(): string {
+  const runtimeAgentId = getRuntimeContext()?.agentId;
+  if (runtimeAgentId) {
+    return runtimeAgentId;
+  }
   if (!context.agentId) {
     throw new Error("No agent context set. Agent ID is required.");
   }
@@ -76,6 +88,10 @@ export function getCurrentAgentId(): string {
  * @returns The skills directory path or null if not set
  */
 export function getSkillsDirectory(): string | null {
+  const runtimeSkillsDirectory = getRuntimeContext()?.skillsDirectory;
+  if (runtimeSkillsDirectory !== undefined) {
+    return runtimeSkillsDirectory;
+  }
   return context.skillsDirectory;
 }
 
@@ -83,6 +99,10 @@ export function getSkillsDirectory(): string | null {
  * Get enabled skill sources for discovery/injection.
  */
 export function getSkillSources(): SkillSource[] {
+  const runtimeSkillSources = getRuntimeContext()?.skillSources;
+  if (runtimeSkillSources) {
+    return [...runtimeSkillSources];
+  }
   return [...context.skillSources];
 }
 
@@ -99,6 +119,7 @@ export function getNoSkills(): boolean {
  */
 export function setConversationId(conversationId: string | null): void {
   context.conversationId = conversationId;
+  updateRuntimeContext({ conversationId });
 }
 
 /**
@@ -106,5 +127,9 @@ export function setConversationId(conversationId: string | null): void {
  * @returns The conversation ID or null if not set
  */
 export function getConversationId(): string | null {
+  const runtimeConversationId = getRuntimeContext()?.conversationId;
+  if (runtimeConversationId !== undefined) {
+    return runtimeConversationId;
+  }
   return context.conversationId;
 }

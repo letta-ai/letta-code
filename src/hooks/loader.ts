@@ -3,6 +3,7 @@
 
 import { homedir } from "node:os";
 import { resolve } from "node:path";
+import { getCurrentWorkingDirectory } from "../runtime-context";
 import { settingsManager } from "../settings-manager";
 import { debugLog } from "../utils/debug";
 import {
@@ -63,7 +64,7 @@ export function loadGlobalHooks(): HooksConfig {
  * Uses settings-manager cache
  */
 export async function loadProjectHooks(
-  workingDirectory: string = process.cwd(),
+  workingDirectory: string = getCurrentWorkingDirectory(),
 ): Promise<HooksConfig> {
   // Avoid reading global settings as project settings when cwd is HOME.
   if (isProjectSettingsPathCollidingWithGlobal(workingDirectory)) {
@@ -90,7 +91,7 @@ export async function loadProjectHooks(
  * Uses settings-manager cache
  */
 export async function loadProjectLocalHooks(
-  workingDirectory: string = process.cwd(),
+  workingDirectory: string = getCurrentWorkingDirectory(),
 ): Promise<HooksConfig> {
   try {
     // Ensure local project settings are loaded
@@ -164,7 +165,7 @@ export function mergeHooksConfigs(
  * Load merged hooks configuration (global + project + project-local)
  */
 export async function loadHooks(
-  workingDirectory: string = process.cwd(),
+  workingDirectory: string = getCurrentWorkingDirectory(),
 ): Promise<HooksConfig> {
   const [global, project, projectLocal] = await Promise.all([
     Promise.resolve(loadGlobalHooks()),
@@ -313,7 +314,7 @@ export function hasHooksForEvent(
  * 4. Default → ENABLED
  */
 export function areHooksDisabled(
-  workingDirectory: string = process.cwd(),
+  workingDirectory: string = getCurrentWorkingDirectory(),
 ): boolean {
   try {
     // Check user-level settings first (highest precedence)
@@ -374,7 +375,7 @@ export function areHooksDisabled(
 export async function getHooksForEvent(
   event: HookEvent,
   toolName?: string,
-  workingDirectory: string = process.cwd(),
+  workingDirectory: string = getCurrentWorkingDirectory(),
 ): Promise<HookCommand[]> {
   // Check if all hooks are disabled
   if (areHooksDisabled(workingDirectory)) {

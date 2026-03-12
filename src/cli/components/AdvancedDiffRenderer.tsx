@@ -287,7 +287,6 @@ export function AdvancedDiffRenderer(
     if (!h) {
       continue;
     }
-
     const syntaxForHunk = hunkSyntaxLines[hIdx] ?? [];
     let oldNo = h.oldStart;
     let newNo = h.newStart;

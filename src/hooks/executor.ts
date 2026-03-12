@@ -3,6 +3,10 @@
 // Cross-platform: uses platform-appropriate shell (PowerShell on Windows, sh/bash/zsh on Unix)
 
 import { type ChildProcess, spawn } from "node:child_process";
+import {
+  getCurrentWorkingDirectory,
+  runOutsideRuntimeContext,
+} from "../runtime-context";
 import { buildShellLaunchers } from "../tools/impl/shellLaunchers";
 import { executePromptHook } from "./prompt-executor";
 import {
@@ -54,17 +58,19 @@ function trySpawnWithLauncher(
   // We only want to pass the agent ID that's explicitly provided in the hook input
   const { LETTA_AGENT_ID: _, ...parentEnv } = process.env;
 
-  return spawn(executable, args, {
-    cwd: workingDirectory,
-    env: {
-      ...parentEnv,
-      // Add hook-specific environment variables
-      LETTA_HOOK_EVENT: input.event_type,
-      LETTA_WORKING_DIR: workingDirectory,
-      ...(agentId && { LETTA_AGENT_ID: agentId }),
-    },
-    stdio: ["pipe", "pipe", "pipe"],
-  });
+  return runOutsideRuntimeContext(() =>
+    spawn(executable, args, {
+      cwd: workingDirectory,
+      env: {
+        ...parentEnv,
+        // Add hook-specific environment variables
+        LETTA_HOOK_EVENT: input.event_type,
+        LETTA_WORKING_DIR: workingDirectory,
+        ...(agentId && { LETTA_AGENT_ID: agentId }),
+      },
+      stdio: ["pipe", "pipe", "pipe"],
+    }),
+  );
 }
 
 /**
@@ -76,7 +82,7 @@ function trySpawnWithLauncher(
 export async function executeHookCommand(
   hook: HookCommand,
   input: HookInput,
-  workingDirectory: string = process.cwd(),
+  workingDirectory: string = getCurrentWorkingDirectory(),
 ): Promise<HookResult> {
   // Dispatch based on hook type
   if (isPromptHook(hook)) {
@@ -106,7 +112,7 @@ export async function executeHookCommand(
 export async function executeCommandHook(
   hook: CommandHookConfig,
   input: HookInput,
-  workingDirectory: string = process.cwd(),
+  workingDirectory: string = getCurrentWorkingDirectory(),
 ): Promise<HookResult> {
   const startTime = Date.now();
   const timeout = hook.timeout ?? DEFAULT_TIMEOUT_MS;
@@ -332,7 +338,7 @@ function executeWithLauncher(
 export async function executeHooks(
   hooks: HookCommand[],
   input: HookInput,
-  workingDirectory: string = process.cwd(),
+  workingDirectory: string = getCurrentWorkingDirectory(),
 ): Promise<HookExecutionResult> {
   const results: HookResult[] = [];
   const feedback: string[] = [];
@@ -391,7 +397,7 @@ export async function executeHooks(
 export async function executeHooksParallel(
   hooks: HookCommand[],
   input: HookInput,
-  workingDirectory: string = process.cwd(),
+  workingDirectory: string = getCurrentWorkingDirectory(),
 ): Promise<HookExecutionResult> {
   const results = await Promise.all(
     hooks.map((hook) => executeHookCommand(hook, input, workingDirectory)),

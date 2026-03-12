@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import type { MessageCreateParams as ConversationMessageCreateParams } from "@letta-ai/letta-client/resources/conversations/messages";
+import { getCurrentWorkingDirectory } from "../runtime-context";
 import { getSkillSources, getSkillsDirectory } from "./context";
 import {
   compareSkills,
@@ -45,7 +46,7 @@ function resolveSkillDiscoveryContext(
   const skillsDirectory =
     options.skillsDirectory ??
     getSkillsDirectory() ??
-    join(process.cwd(), SKILLS_DIR);
+    join(getCurrentWorkingDirectory(), SKILLS_DIR);
   const skillSources = options.skillSources ?? getSkillSources();
   return { skillsDirectory, skillSources };
 }

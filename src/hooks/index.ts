@@ -2,6 +2,7 @@
 // Main hooks module - provides high-level API for running hooks
 
 import { sessionPermissions } from "../permissions/session";
+import { getCurrentWorkingDirectory } from "../runtime-context";
 import { executeHooks, executeHooksParallel } from "./executor";
 import { getHooksForEvent, hasHooksForEvent, loadHooks } from "./loader";
 import type {
@@ -36,7 +37,7 @@ export async function runPreToolUseHooks(
   toolName: string,
   toolInput: Record<string, unknown>,
   toolCallId?: string,
-  workingDirectory: string = process.cwd(),
+  workingDirectory: string = getCurrentWorkingDirectory(),
   agentId?: string,
 ): Promise<HookExecutionResult> {
   const hooks = await getHooksForEvent(
@@ -70,7 +71,7 @@ export async function runPostToolUseHooks(
   toolInput: Record<string, unknown>,
   toolResult: { status: "success" | "error"; output?: string },
   toolCallId?: string,
-  workingDirectory: string = process.cwd(),
+  workingDirectory: string = getCurrentWorkingDirectory(),
   agentId?: string,
   precedingReasoning?: string,
   precedingAssistantMessage?: string,
@@ -111,7 +112,7 @@ export async function runPostToolUseFailureHooks(
   errorMessage: string,
   errorType?: string,
   toolCallId?: string,
-  workingDirectory: string = process.cwd(),
+  workingDirectory: string = getCurrentWorkingDirectory(),
   agentId?: string,
   precedingReasoning?: string,
   precedingAssistantMessage?: string,
@@ -160,7 +161,7 @@ export async function runPermissionRequestHooks(
   toolInput: Record<string, unknown>,
   permissionType: "allow" | "deny" | "ask",
   scope?: "session" | "project" | "user",
-  workingDirectory: string = process.cwd(),
+  workingDirectory: string = getCurrentWorkingDirectory(),
 ): Promise<HookExecutionResult> {
   const hooks = await getHooksForEvent(
     "PermissionRequest",
@@ -197,7 +198,7 @@ export async function runUserPromptSubmitHooks(
   isCommand: boolean,
   agentId?: string,
   conversationId?: string,
-  workingDirectory: string = process.cwd(),
+  workingDirectory: string = getCurrentWorkingDirectory(),
 ): Promise<HookExecutionResult> {
   // Skip hooks for slash commands - they don't trigger agent execution
   if (isCommand) {
@@ -232,7 +233,7 @@ export async function runUserPromptSubmitHooks(
 export async function runNotificationHooks(
   message: string,
   level: "info" | "warning" | "error" = "info",
-  workingDirectory: string = process.cwd(),
+  workingDirectory: string = getCurrentWorkingDirectory(),
 ): Promise<HookExecutionResult> {
   const hooks = await getHooksForEvent(
     "Notification",
@@ -262,7 +263,7 @@ export async function runStopHooks(
   stopReason: string,
   messageCount?: number,
   toolCallCount?: number,
-  workingDirectory: string = process.cwd(),
+  workingDirectory: string = getCurrentWorkingDirectory(),
   precedingReasoning?: string,
   assistantMessage?: string,
   userMessage?: string,
@@ -298,7 +299,7 @@ export async function runSubagentStopHooks(
   error?: string,
   agentId?: string,
   conversationId?: string,
-  workingDirectory: string = process.cwd(),
+  workingDirectory: string = getCurrentWorkingDirectory(),
 ): Promise<HookExecutionResult> {
   const hooks = await getHooksForEvent(
     "SubagentStop",
@@ -333,7 +334,7 @@ export async function runPreCompactHooks(
   maxContextLength?: number,
   agentId?: string,
   conversationId?: string,
-  workingDirectory: string = process.cwd(),
+  workingDirectory: string = getCurrentWorkingDirectory(),
 ): Promise<HookExecutionResult> {
   const hooks = await getHooksForEvent(
     "PreCompact",
@@ -367,7 +368,7 @@ export async function runSessionStartHooks(
   agentId?: string,
   agentName?: string,
   conversationId?: string,
-  workingDirectory: string = process.cwd(),
+  workingDirectory: string = getCurrentWorkingDirectory(),
 ): Promise<HookExecutionResult> {
   const hooks = await getHooksForEvent(
     "SessionStart",
@@ -415,7 +416,7 @@ export async function runSessionEndHooks(
   toolCallCount?: number,
   agentId?: string,
   conversationId?: string,
-  workingDirectory: string = process.cwd(),
+  workingDirectory: string = getCurrentWorkingDirectory(),
 ): Promise<HookExecutionResult> {
   const hooks = await getHooksForEvent(
     "SessionEnd",
@@ -445,7 +446,7 @@ export async function runSessionEndHooks(
  */
 export async function hasHooks(
   event: HookEvent,
-  workingDirectory: string = process.cwd(),
+  workingDirectory: string = getCurrentWorkingDirectory(),
 ): Promise<boolean> {
   const config = await loadHooks(workingDirectory);
   return hasHooksForEvent(config, event);

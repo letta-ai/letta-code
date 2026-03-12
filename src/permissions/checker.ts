@@ -4,6 +4,7 @@
 import { relative, resolve } from "node:path";
 import { getCurrentAgentId } from "../agent/context";
 import { runPermissionRequestHooks } from "../hooks";
+import { getCurrentWorkingDirectory } from "../runtime-context";
 import { canonicalToolName, isShellToolName } from "./canonical";
 import { cliPermissions } from "./cli";
 import {
@@ -132,7 +133,7 @@ export function checkPermission(
   toolName: string,
   toolArgs: ToolArgs,
   permissions: PermissionRules,
-  workingDirectory: string = process.cwd(),
+  workingDirectory: string = getCurrentWorkingDirectory(),
 ): PermissionCheckResult {
   const engine: PermissionEngine = isPermissionsV2Enabled() ? "v2" : "v1";
   const primary = checkPermissionForEngine(
@@ -762,7 +763,7 @@ export async function checkPermissionWithHooks(
   toolName: string,
   toolArgs: ToolArgs,
   permissions: PermissionRules,
-  workingDirectory: string = process.cwd(),
+  workingDirectory: string = getCurrentWorkingDirectory(),
 ): Promise<PermissionCheckResult> {
   // First, check permission using normal rules
   const result = checkPermission(

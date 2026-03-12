@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { runOutsideRuntimeContext } from "../../runtime-context";
 
 export class ShellExecutionError extends Error {
   code?: string;
@@ -30,15 +31,17 @@ export function spawnWithLauncher(
       return;
     }
 
-    const childProcess = spawn(executable, args, {
-      cwd: options.cwd,
-      env: options.env,
-      shell: false,
-      stdio: ["ignore", "pipe", "pipe"],
-      // On Unix, detached creates a new process group for clean termination
-      // On Windows, detached creates a new console window which we don't want
-      detached: process.platform !== "win32",
-    });
+    const childProcess = runOutsideRuntimeContext(() =>
+      spawn(executable, args, {
+        cwd: options.cwd,
+        env: options.env,
+        shell: false,
+        stdio: ["ignore", "pipe", "pipe"],
+        // On Unix, detached creates a new process group for clean termination
+        // On Windows, detached creates a new console window which we don't want
+        detached: process.platform !== "win32",
+      }),
+    );
 
     // Helper to kill the entire process group
     const killProcessGroup = (signal: "SIGTERM" | "SIGKILL") => {

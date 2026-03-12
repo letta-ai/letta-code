@@ -20,6 +20,7 @@ import {
 } from "../../cli/helpers/subagentState.js";
 import { formatTaskNotification } from "../../cli/helpers/taskNotifications.js";
 import { runSubagentStopHooks } from "../../hooks";
+import { getCurrentWorkingDirectory } from "../../runtime-context";
 import {
   appendToOutputFile,
   type BackgroundTask,
@@ -301,7 +302,7 @@ export function spawnBackgroundSubagentTask(
         const fullResult = result.success
           ? `${header}\n\n${result.report || ""}`
           : result.error || "Subagent execution failed";
-        const userCwd = process.env.USER_CWD || process.cwd();
+        const userCwd = getCurrentWorkingDirectory();
         const { content: truncatedResult } = truncateByChars(
           fullResult,
           LIMITS.TASK_OUTPUT_CHARS,
@@ -555,7 +556,7 @@ export async function task(args: TaskArgs): Promise<string> {
     const fullOutput = `${header}\n\n${result.report}`;
     writeTaskTranscriptResult(outputFile, result, header);
 
-    const userCwd = process.env.USER_CWD || process.cwd();
+    const userCwd = getCurrentWorkingDirectory();
 
     // Apply truncation to prevent excessive token usage (same pattern as Bash tool)
     const { content: truncatedOutput } = truncateByChars(

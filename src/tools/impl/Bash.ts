@@ -1,6 +1,10 @@
 import { spawn } from "node:child_process";
 import { INTERRUPTED_BY_USER } from "../../constants";
 import {
+  getCurrentWorkingDirectory,
+  runOutsideRuntimeContext,
+} from "../../runtime-context";
+import {
   appendToOutputFile,
   backgroundProcesses,
   createBackgroundOutputFile,
@@ -148,7 +152,7 @@ export async function bash(args: BashArgs): Promise<BashResult> {
     signal,
     onOutput,
   } = args;
-  const userCwd = process.env.USER_CWD || process.cwd();
+  const userCwd = getCurrentWorkingDirectory();
 
   if (command === "/bg") {
     const processes = Array.from(backgroundProcesses.entries());
@@ -182,11 +186,13 @@ export async function bash(args: BashArgs): Promise<BashResult> {
         status: "error",
       };
     }
-    const childProcess = spawn(executable, launcherArgs, {
-      shell: false,
-      cwd: userCwd,
-      env: getShellEnv(),
-    });
+    const childProcess = runOutsideRuntimeContext(() =>
+      spawn(executable, launcherArgs, {
+        shell: false,
+        cwd: userCwd,
+        env: getShellEnv(),
+      }),
+    );
     backgroundProcesses.set(bashId, {
       process: childProcess,
       command,

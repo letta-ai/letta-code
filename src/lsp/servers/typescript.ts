@@ -2,6 +2,7 @@
  * TypeScript/JavaScript LSP Server Definition
  */
 
+import { runOutsideRuntimeContext } from "../../runtime-context";
 import type { LSPServerInfo } from "../types.js";
 
 /**
@@ -44,12 +45,14 @@ export const TypeScriptServer: LSPServerInfo = {
       const { spawn } = await import("node:child_process");
 
       return new Promise((resolve, reject) => {
-        const proc = spawn(
-          "npm",
-          ["install", "-g", "typescript-language-server", "typescript"],
-          {
-            stdio: "inherit",
-          },
+        const proc = runOutsideRuntimeContext(() =>
+          spawn(
+            "npm",
+            ["install", "-g", "typescript-language-server", "typescript"],
+            {
+              stdio: "inherit",
+            },
+          ),
         );
 
         proc.on("exit", (code) => {

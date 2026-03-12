@@ -2,6 +2,7 @@
 // Executes a status-line shell command, pipes JSON to stdin, collects stdout.
 
 import { type ChildProcess, spawn } from "node:child_process";
+import { runOutsideRuntimeContext } from "../../runtime-context";
 import { buildShellLaunchers } from "../../tools/impl/shellLaunchers";
 
 /** Maximum stdout bytes collected (4 KB). */
@@ -118,11 +119,14 @@ function runWithLauncher(
 
     let child: ChildProcess;
     try {
-      child = spawn(executable, args, {
-        cwd: workingDirectory || process.cwd(),
-        env: process.env,
-        stdio: ["pipe", "pipe", "pipe"],
-      });
+      const statusLineWorkingDirectory = workingDirectory || process.cwd();
+      child = runOutsideRuntimeContext(() =>
+        spawn(executable, args, {
+          cwd: statusLineWorkingDirectory,
+          env: process.env,
+          stdio: ["pipe", "pipe", "pipe"],
+        }),
+      );
     } catch (error) {
       reject(error);
       return;

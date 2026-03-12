@@ -1,4 +1,10 @@
 import { getDisplayableToolReturn } from "../agent/approval-execution";
+import {
+  getConversationId,
+  getCurrentAgentId,
+  getSkillSources,
+  getSkillsDirectory,
+} from "../agent/context";
 import { getModelInfo } from "../agent/model";
 import { getAllSubagentConfigs } from "../agent/subagents";
 import { refreshFileIndex } from "../cli/helpers/fileIndex";
@@ -8,7 +14,13 @@ import {
   runPostToolUseHooks,
   runPreToolUseHooks,
 } from "../hooks";
+import { permissionMode } from "../permissions/mode";
 import { OPENAI_CODEX_PROVIDER_NAME } from "../providers/openai-codex-provider";
+import {
+  getCurrentWorkingDirectory,
+  type RuntimeContextSnapshot,
+  runWithRuntimeContext,
+} from "../runtime-context";
 import { telemetry } from "../telemetry";
 import { debugLog } from "../utils/debug";
 import { TOOL_DEFINITIONS, type ToolName } from "./toolDefinitions";
@@ -307,6 +319,7 @@ type ToolExecutionContextSnapshot = {
   externalTools: Map<string, ExternalToolDefinition>;
   externalExecutor?: ExternalToolExecutor;
   workingDirectory: string;
+  runtimeContext: RuntimeContextSnapshot;
 };
 
 export type CapturedToolExecutionContext = {
@@ -616,13 +629,30 @@ export function getClientToolsFromRegistry(): ClientTool[] {
  * exact snapshot even if the global registry changes between dispatch and execute.
  */
 export function captureToolExecutionContext(
-  workingDirectory: string = process.env.USER_CWD || process.cwd(),
+  workingDirectory: string = getCurrentWorkingDirectory(),
 ): CapturedToolExecutionContext {
+  let agentId: string | null = null;
+  try {
+    agentId = getCurrentAgentId();
+  } catch {
+    agentId = null;
+  }
+
   const snapshot: ToolExecutionContextSnapshot = {
     toolRegistry: new Map(toolRegistry),
     externalTools: new Map(getExternalToolsRegistry()),
     externalExecutor: getExternalToolExecutor(),
     workingDirectory,
+    runtimeContext: {
+      agentId,
+      conversationId: getConversationId(),
+      skillsDirectory: getSkillsDirectory(),
+      skillSources: getSkillSources(),
+      workingDirectory,
+      permissionMode: permissionMode.getMode(),
+      planFilePath: permissionMode.getPlanFilePath(),
+      modeBeforePlan: permissionMode.getModeBeforePlan(),
+    },
   };
   const contextId = saveExecutionContext(snapshot);
 
@@ -654,18 +684,7 @@ async function withExecutionWorkingDirectory<T>(
   if (!workingDirectory) {
     return fn();
   }
-
-  const previousUserCwd = process.env.USER_CWD;
-  process.env.USER_CWD = workingDirectory;
-  try {
-    return await fn();
-  } finally {
-    if (previousUserCwd === undefined) {
-      delete process.env.USER_CWD;
-    } else {
-      process.env.USER_CWD = previousUserCwd;
-    }
-  }
+  return runWithRuntimeContext({ workingDirectory }, fn);
 }
 
 /**
@@ -697,7 +716,7 @@ export function requiresApproval(toolName: string): boolean {
 export async function checkToolPermission(
   toolName: string,
   toolArgs: ToolArgs,
-  workingDirectory: string = process.cwd(),
+  workingDirectory: string = getCurrentWorkingDirectory(),
 ): Promise<{
   decision: "allow" | "deny" | "ask";
   matchedRule?: string;
@@ -726,7 +745,7 @@ export async function savePermissionRule(
   rule: string,
   ruleType: "allow" | "deny" | "ask",
   scope: "project" | "local" | "user" | "session",
-  workingDirectory: string = process.cwd(),
+  workingDirectory: string = getCurrentWorkingDirectory(),
 ): Promise<void> {
   // Handle session-only permissions
   if (scope === "session") {
@@ -750,7 +769,7 @@ export async function savePermissionRule(
 export async function analyzeToolApproval(
   toolName: string,
   toolArgs: ToolArgs,
-  workingDirectory: string = process.cwd(),
+  workingDirectory: string = getCurrentWorkingDirectory(),
 ): Promise<import("../permissions/analyzer").ApprovalContext> {
   const { analyzeApprovalContext } = await import("../permissions/analyzer");
   return analyzeApprovalContext(toolName, toolArgs, workingDirectory);
@@ -1211,7 +1230,11 @@ export async function executeTool(
     context?.externalTools ?? getExternalToolsRegistry();
   const activeExternalExecutor =
     context?.externalExecutor ?? getExternalToolExecutor();
-  const workingDirectory = context?.workingDirectory;
+  const workingDirectory =
+    context?.workingDirectory ??
+    context?.runtimeContext.workingDirectory ??
+    undefined;
+  const runtimeContext = context?.runtimeContext ?? { workingDirectory };
 
   // Check if this is an external tool (SDK-executed)
   if (activeExternalTools.has(name)) {
@@ -1240,123 +1263,228 @@ export async function executeTool(
   }
 
   const startTime = Date.now();
-
-  // Run PreToolUse hooks - can block tool execution
-  const preHookResult = await runPreToolUseHooks(
-    internalName,
-    args as Record<string, unknown>,
-    options?.toolCallId,
-    workingDirectory,
-  );
-  if (preHookResult.blocked) {
-    const feedback = preHookResult.feedback.join("\n") || "Blocked by hook";
-    return {
-      toolReturn: `Error: Tool execution blocked by hook. ${feedback}`,
-      status: "error",
-    };
-  }
-
-  try {
-    // Inject options for tools that support them without altering schemas
-    let enhancedArgs = args;
-
-    if (STREAMING_SHELL_TOOLS.has(internalName)) {
-      if (options?.signal) {
-        enhancedArgs = { ...enhancedArgs, signal: options.signal };
-      }
-      if (options?.onOutput) {
-        enhancedArgs = { ...enhancedArgs, onOutput: options.onOutput };
-      }
+  return runWithRuntimeContext(runtimeContext, async () => {
+    // Run PreToolUse hooks - can block tool execution
+    const preHookResult = await runPreToolUseHooks(
+      internalName,
+      args as Record<string, unknown>,
+      options?.toolCallId,
+      workingDirectory,
+    );
+    if (preHookResult.blocked) {
+      const feedback = preHookResult.feedback.join("\n") || "Blocked by hook";
+      return {
+        toolReturn: `Error: Tool execution blocked by hook. ${feedback}`,
+        status: "error",
+      };
     }
 
-    // Inject toolCallId and abort signal for Task tool
-    if (internalName === "Task") {
-      if (options?.toolCallId) {
+    try {
+      // Inject options for tools that support them without altering schemas
+      let enhancedArgs = args;
+
+      if (STREAMING_SHELL_TOOLS.has(internalName)) {
+        if (options?.signal) {
+          enhancedArgs = { ...enhancedArgs, signal: options.signal };
+        }
+        if (options?.onOutput) {
+          enhancedArgs = { ...enhancedArgs, onOutput: options.onOutput };
+        }
+      }
+
+      // Inject toolCallId and abort signal for Task tool
+      if (internalName === "Task") {
+        if (options?.toolCallId) {
+          enhancedArgs = { ...enhancedArgs, toolCallId: options.toolCallId };
+        }
+        if (options?.signal) {
+          enhancedArgs = { ...enhancedArgs, signal: options.signal };
+        }
+      }
+
+      // Inject toolCallId for Skill tool (used for skill content registry)
+      if (internalName === "Skill" && options?.toolCallId) {
         enhancedArgs = { ...enhancedArgs, toolCallId: options.toolCallId };
       }
-      if (options?.signal) {
-        enhancedArgs = { ...enhancedArgs, signal: options.signal };
-      }
-    }
 
-    // Inject toolCallId for Skill tool (used for skill content registry)
-    if (internalName === "Skill" && options?.toolCallId) {
-      enhancedArgs = { ...enhancedArgs, toolCallId: options.toolCallId };
-    }
-
-    const result = await withExecutionWorkingDirectory(workingDirectory, () =>
-      tool.fn(enhancedArgs),
-    );
-    const duration = Date.now() - startTime;
-
-    // Refresh the file index in the background after file-modifying tools
-    // so subsequent @ searches reflect newly created or deleted files.
-    if (FILE_MODIFYING_TOOLS.has(internalName)) {
-      void refreshFileIndex();
-    }
-
-    // Extract stdout/stderr if present (for bash tools)
-    const recordResult = isRecord(result) ? result : undefined;
-    const stdoutValue = recordResult?.stdout;
-    const stderrValue = recordResult?.stderr;
-    const stdout = isStringArray(stdoutValue) ? stdoutValue : undefined;
-    const stderr = isStringArray(stderrValue) ? stderrValue : undefined;
-
-    // Check if tool returned a status (e.g., Bash returns status: "error" on abort)
-    const toolStatus = recordResult?.status === "error" ? "error" : "success";
-
-    // Flatten the response to plain text
-    const flattenedResponse = flattenToolResponse(result);
-
-    // Track tool usage (calculate size for multimodal content)
-    const responseSize =
-      typeof flattenedResponse === "string"
-        ? flattenedResponse.length
-        : JSON.stringify(flattenedResponse).length;
-    telemetry.trackToolUsage(
-      internalName,
-      toolStatus === "success",
-      duration,
-      responseSize,
-      toolStatus === "error" ? "tool_error" : undefined,
-      stderr ? stderr.join("\n") : undefined,
-    );
-
-    // Run PostToolUse hooks - exit 2 injects stderr into agent context
-    // Note: preceding_reasoning/assistant_message not available here - tracked in accumulator for server tools
-    let postToolUseFeedback: string[] = [];
-    try {
-      const postHookResult = await runPostToolUseHooks(
-        internalName,
-        args as Record<string, unknown>,
-        {
-          status: toolStatus,
-          output: getDisplayableToolReturn(flattenedResponse),
-        },
-        options?.toolCallId,
-        workingDirectory,
-        undefined, // agentId
-        undefined, // precedingReasoning - not available in tool manager context
-        undefined, // precedingAssistantMessage - not available in tool manager context
+      const result = await withExecutionWorkingDirectory(workingDirectory, () =>
+        tool.fn(enhancedArgs),
       );
-      postToolUseFeedback = postHookResult.feedback;
-    } catch (error) {
-      debugLog("hooks", "PostToolUse hook error (success path)", error);
-    }
+      const duration = Date.now() - startTime;
 
-    // Run PostToolUseFailure hooks when tool returns error status
-    let postToolUseFailureFeedback: string[] = [];
-    if (toolStatus === "error") {
-      const errorOutput =
+      // Refresh the file index in the background after file-modifying tools
+      // so subsequent @ searches reflect newly created or deleted files.
+      if (FILE_MODIFYING_TOOLS.has(internalName)) {
+        void refreshFileIndex();
+      }
+
+      // Extract stdout/stderr if present (for bash tools)
+      const recordResult = isRecord(result) ? result : undefined;
+      const stdoutValue = recordResult?.stdout;
+      const stderrValue = recordResult?.stderr;
+      const stdout = isStringArray(stdoutValue) ? stdoutValue : undefined;
+      const stderr = isStringArray(stderrValue) ? stderrValue : undefined;
+
+      // Check if tool returned a status (e.g., Bash returns status: "error" on abort)
+      const toolStatus = recordResult?.status === "error" ? "error" : "success";
+
+      // Flatten the response to plain text
+      const flattenedResponse = flattenToolResponse(result);
+
+      // Track tool usage (calculate size for multimodal content)
+      const responseSize =
         typeof flattenedResponse === "string"
-          ? flattenedResponse
-          : JSON.stringify(flattenedResponse);
+          ? flattenedResponse.length
+          : JSON.stringify(flattenedResponse).length;
+      telemetry.trackToolUsage(
+        internalName,
+        toolStatus === "success",
+        duration,
+        responseSize,
+        toolStatus === "error" ? "tool_error" : undefined,
+        stderr ? stderr.join("\n") : undefined,
+      );
+
+      // Run PostToolUse hooks - exit 2 injects stderr into agent context
+      // Note: preceding_reasoning/assistant_message not available here - tracked in accumulator for server tools
+      let postToolUseFeedback: string[] = [];
+      try {
+        const postHookResult = await runPostToolUseHooks(
+          internalName,
+          args as Record<string, unknown>,
+          {
+            status: toolStatus,
+            output: getDisplayableToolReturn(flattenedResponse),
+          },
+          options?.toolCallId,
+          workingDirectory,
+          undefined, // agentId
+          undefined, // precedingReasoning - not available in tool manager context
+          undefined, // precedingAssistantMessage - not available in tool manager context
+        );
+        postToolUseFeedback = postHookResult.feedback;
+      } catch (error) {
+        debugLog("hooks", "PostToolUse hook error (success path)", error);
+      }
+
+      // Run PostToolUseFailure hooks when tool returns error status
+      let postToolUseFailureFeedback: string[] = [];
+      if (toolStatus === "error") {
+        const errorOutput =
+          typeof flattenedResponse === "string"
+            ? flattenedResponse
+            : JSON.stringify(flattenedResponse);
+        try {
+          const failureHookResult = await runPostToolUseFailureHooks(
+            internalName,
+            args as Record<string, unknown>,
+            errorOutput,
+            "tool_error", // error type for returned errors
+            options?.toolCallId,
+            workingDirectory,
+            undefined, // agentId
+            undefined, // precedingReasoning - not available in tool manager context
+            undefined, // precedingAssistantMessage - not available in tool manager context
+          );
+          postToolUseFailureFeedback = failureHookResult.feedback;
+        } catch (error) {
+          debugLog(
+            "hooks",
+            "PostToolUseFailure hook error (tool returned error)",
+            error,
+          );
+        }
+      }
+
+      // Combine feedback from both hook types and inject into tool return
+      const allFeedback = [
+        ...postToolUseFeedback,
+        ...postToolUseFailureFeedback,
+      ];
+      if (allFeedback.length > 0) {
+        const feedbackMessage = `\n\n[Hook feedback]:\n${allFeedback.join("\n")}`;
+        let finalToolReturn: ToolReturnContent;
+        if (typeof flattenedResponse === "string") {
+          finalToolReturn = flattenedResponse + feedbackMessage;
+        } else if (Array.isArray(flattenedResponse)) {
+          // Append feedback as a new text content block
+          finalToolReturn = [
+            ...flattenedResponse,
+            { type: "text" as const, text: feedbackMessage },
+          ];
+        } else {
+          finalToolReturn = flattenedResponse;
+        }
+        return {
+          toolReturn: finalToolReturn,
+          status: toolStatus,
+          ...(stdout && { stdout }),
+          ...(stderr && { stderr }),
+        };
+      }
+
+      // Return the full response (truncation happens in UI layer only)
+      return {
+        toolReturn: flattenedResponse,
+        status: toolStatus,
+        ...(stdout && { stdout }),
+        ...(stderr && { stderr }),
+      };
+    } catch (error) {
+      const duration = Date.now() - startTime;
+      const isAbort =
+        error instanceof Error &&
+        (error.name === "AbortError" ||
+          error.message === "The operation was aborted" ||
+          // node:child_process AbortError may include code/message variants
+          ("code" in error && error.code === "ABORT_ERR"));
+      const errorType = isAbort
+        ? "abort"
+        : error instanceof Error
+          ? error.name
+          : "unknown";
+      const errorMessage = isAbort
+        ? INTERRUPTED_BY_USER
+        : error instanceof Error
+          ? error.message
+          : String(error);
+
+      // Track tool usage error
+      telemetry.trackToolUsage(
+        internalName,
+        false,
+        duration,
+        errorMessage.length,
+        errorType,
+        errorMessage,
+      );
+
+      // Run PostToolUse hooks for error case - exit 2 injects stderr
+      let postToolUseFeedback: string[] = [];
+      try {
+        const postHookResult = await runPostToolUseHooks(
+          internalName,
+          args as Record<string, unknown>,
+          { status: "error", output: errorMessage },
+          options?.toolCallId,
+          workingDirectory,
+          undefined, // agentId
+          undefined, // precedingReasoning - not available in tool manager context
+          undefined, // precedingAssistantMessage - not available in tool manager context
+        );
+        postToolUseFeedback = postHookResult.feedback;
+      } catch (error) {
+        debugLog("hooks", "PostToolUse hook error (error path)", error);
+      }
+
+      // Run PostToolUseFailure hooks - exit 2 injects stderr
+      let postToolUseFailureFeedback: string[] = [];
       try {
         const failureHookResult = await runPostToolUseFailureHooks(
           internalName,
           args as Record<string, unknown>,
-          errorOutput,
-          "tool_error", // error type for returned errors
+          errorMessage,
+          errorType,
           options?.toolCallId,
           workingDirectory,
           undefined, // agentId
@@ -1367,127 +1495,29 @@ export async function executeTool(
       } catch (error) {
         debugLog(
           "hooks",
-          "PostToolUseFailure hook error (tool returned error)",
+          "PostToolUseFailure hook error (exception path)",
           error,
         );
       }
-    }
 
-    // Combine feedback from both hook types and inject into tool return
-    const allFeedback = [...postToolUseFeedback, ...postToolUseFailureFeedback];
-    if (allFeedback.length > 0) {
-      const feedbackMessage = `\n\n[Hook feedback]:\n${allFeedback.join("\n")}`;
-      let finalToolReturn: ToolReturnContent;
-      if (typeof flattenedResponse === "string") {
-        finalToolReturn = flattenedResponse + feedbackMessage;
-      } else if (Array.isArray(flattenedResponse)) {
-        // Append feedback as a new text content block
-        finalToolReturn = [
-          ...flattenedResponse,
-          { type: "text" as const, text: feedbackMessage },
-        ];
-      } else {
-        finalToolReturn = flattenedResponse;
-      }
+      // Combine feedback from both hook types
+      const allFeedback = [
+        ...postToolUseFeedback,
+        ...postToolUseFailureFeedback,
+      ];
+      const finalErrorMessage =
+        allFeedback.length > 0
+          ? `${errorMessage}\n\n[Hook feedback]:\n${allFeedback.join("\n")}`
+          : errorMessage;
+
+      // Don't console.error here - it pollutes the TUI
+      // The error message is already returned in toolReturn
       return {
-        toolReturn: finalToolReturn,
-        status: toolStatus,
-        ...(stdout && { stdout }),
-        ...(stderr && { stderr }),
+        toolReturn: finalErrorMessage,
+        status: "error",
       };
     }
-
-    // Return the full response (truncation happens in UI layer only)
-    return {
-      toolReturn: flattenedResponse,
-      status: toolStatus,
-      ...(stdout && { stdout }),
-      ...(stderr && { stderr }),
-    };
-  } catch (error) {
-    const duration = Date.now() - startTime;
-    const isAbort =
-      error instanceof Error &&
-      (error.name === "AbortError" ||
-        error.message === "The operation was aborted" ||
-        // node:child_process AbortError may include code/message variants
-        ("code" in error && error.code === "ABORT_ERR"));
-    const errorType = isAbort
-      ? "abort"
-      : error instanceof Error
-        ? error.name
-        : "unknown";
-    const errorMessage = isAbort
-      ? INTERRUPTED_BY_USER
-      : error instanceof Error
-        ? error.message
-        : String(error);
-
-    // Track tool usage error
-    telemetry.trackToolUsage(
-      internalName,
-      false,
-      duration,
-      errorMessage.length,
-      errorType,
-      errorMessage,
-    );
-
-    // Run PostToolUse hooks for error case - exit 2 injects stderr
-    let postToolUseFeedback: string[] = [];
-    try {
-      const postHookResult = await runPostToolUseHooks(
-        internalName,
-        args as Record<string, unknown>,
-        { status: "error", output: errorMessage },
-        options?.toolCallId,
-        workingDirectory,
-        undefined, // agentId
-        undefined, // precedingReasoning - not available in tool manager context
-        undefined, // precedingAssistantMessage - not available in tool manager context
-      );
-      postToolUseFeedback = postHookResult.feedback;
-    } catch (error) {
-      debugLog("hooks", "PostToolUse hook error (error path)", error);
-    }
-
-    // Run PostToolUseFailure hooks - exit 2 injects stderr
-    let postToolUseFailureFeedback: string[] = [];
-    try {
-      const failureHookResult = await runPostToolUseFailureHooks(
-        internalName,
-        args as Record<string, unknown>,
-        errorMessage,
-        errorType,
-        options?.toolCallId,
-        workingDirectory,
-        undefined, // agentId
-        undefined, // precedingReasoning - not available in tool manager context
-        undefined, // precedingAssistantMessage - not available in tool manager context
-      );
-      postToolUseFailureFeedback = failureHookResult.feedback;
-    } catch (error) {
-      debugLog(
-        "hooks",
-        "PostToolUseFailure hook error (exception path)",
-        error,
-      );
-    }
-
-    // Combine feedback from both hook types
-    const allFeedback = [...postToolUseFeedback, ...postToolUseFailureFeedback];
-    const finalErrorMessage =
-      allFeedback.length > 0
-        ? `${errorMessage}\n\n[Hook feedback]:\n${allFeedback.join("\n")}`
-        : errorMessage;
-
-    // Don't console.error here - it pollutes the TUI
-    // The error message is already returned in toolReturn
-    return {
-      toolReturn: finalErrorMessage,
-      status: "error",
-    };
-  }
+  });
 }
 
 /**
