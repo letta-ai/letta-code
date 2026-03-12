@@ -16,7 +16,7 @@ import {
   type StreamRequestContext,
 } from "../../agent/message";
 import { telemetry } from "../../telemetry";
-import { debugWarn } from "../../utils/debug";
+import { debugLog, debugWarn } from "../../utils/debug";
 import { formatDuration, logTiming } from "../../utils/timing";
 
 import {
@@ -523,10 +523,21 @@ export async function drainStreamWithResume(
     !abortSignal.aborted
   ) {
     try {
+      debugLog(
+        "stream",
+        "Mid-stream resume: attempting run discovery (conv=%s, agent=%s)",
+        streamRequestContext.conversationId,
+        streamRequestContext.agentId,
+      );
       const client = await lazyClient();
       runIdToResume = await discoverFallbackRunIdWithTimeout(
         client,
         streamRequestContext,
+      );
+      debugLog(
+        "stream",
+        "Mid-stream resume: run discovery result: %s",
+        runIdToResume ?? "none",
       );
       if (runIdToResume) {
         result.lastRunId = runIdToResume;
@@ -574,6 +585,13 @@ export async function drainStreamWithResume(
       },
     );
 
+    debugLog(
+      "stream",
+      "Mid-stream resume: attempting resume (runId=%s, lastSeqId=%s)",
+      runIdToResume,
+      result.lastSeqId ?? 0,
+    );
+
     try {
       const client = await lazyClient();
 
@@ -613,6 +631,12 @@ export async function drainStreamWithResume(
 
       // Use the resume result (should have proper stop_reason now)
       // Clear the original stream error since we recovered
+      debugLog(
+        "stream",
+        "Mid-stream resume succeeded (runId=%s, stopReason=%s)",
+        runIdToResume,
+        resumeResult.stopReason,
+      );
       result = resumeResult;
 
       // The resumed stream uses a fresh streamProcessor that won't have
@@ -635,6 +659,12 @@ export async function drainStreamWithResume(
         resumeError instanceof Error
           ? resumeError.message
           : String(resumeError);
+      debugLog(
+        "stream",
+        "Mid-stream resume failed (runId=%s): %s",
+        runIdToResume,
+        resumeErrorMsg,
+      );
       telemetry.trackError(
         "stream_resume_failed",
         resumeErrorMsg,
@@ -655,6 +685,11 @@ export async function drainStreamWithResume(
 
     // Only log if we actually skipped for a reason (i.e., we didn't enter the resume branch above)
     if (skipReasons.length > 0) {
+      debugLog(
+        "stream",
+        "Mid-stream resume skipped: %s",
+        skipReasons.join(", "),
+      );
       telemetry.trackError(
         "stream_resume_skipped",
         `${result.fallbackError || "Stream error (no client-side detail)"} [skip: ${skipReasons.join(", ")}]`,
