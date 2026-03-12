@@ -42,16 +42,21 @@ export interface AutoReflectionPayload {
 export interface ReflectionPromptInput {
   transcriptPath: string;
   memoryDir: string;
+  cwd?: string;
 }
 
 export function buildReflectionSubagentPrompt(
   input: ReflectionPromptInput,
 ): string {
-  return [
+  const lines = [
     "Review the conversation transcript and update memory files.",
     `The current conversation transcript has been saved to: ${input.transcriptPath}`,
     `The primary agent's memory filesystem is located at: ${input.memoryDir}`,
-  ].join("\n");
+  ];
+  if (input.cwd) {
+    lines.push(`The user's current working directory is: ${input.cwd}`);
+  }
+  return lines.join("\n");
 }
 
 function sanitizePathSegment(segment: string): string {
