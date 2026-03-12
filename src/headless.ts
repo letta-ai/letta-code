@@ -7,7 +7,10 @@ import type {
 } from "@letta-ai/letta-client/resources/agents/agents";
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
-import type { ApprovalResult } from "./agent/approval-execution";
+import type {
+  ApprovalDecision,
+  ApprovalResult,
+} from "./agent/approval-execution";
 import {
   extractConflictDetail,
   fetchRunErrorDetail,
@@ -109,6 +112,7 @@ import type {
   ListMessagesControlRequest,
   MessageWire,
   QueueLifecycleEvent,
+  RecoverPendingApprovalsControlRequest,
   RecoveryMessage,
   ResultMessage,
   RetryMessage,
@@ -2834,6 +2838,148 @@ async function runBidirectionalMode(
     return result;
   }
 
+  async function recoverPendingApprovalsFromControlRequest(
+    request: RecoverPendingApprovalsControlRequest,
+  ): Promise<{
+    recovered: boolean;
+    pending_approval: boolean;
+    approvals_processed: number;
+  }> {
+    const targetAgentId = request.agent_id ?? agent.id;
+    const targetConversationId = request.conversation_id ?? conversationId;
+
+    if (targetAgentId !== agent.id) {
+      throw new Error(
+        `recover_pending_approvals agent mismatch: ${targetAgentId} != ${agent.id}`,
+      );
+    }
+
+    const { getResumeData } = await import("./agent/check-approval");
+    const { executeApprovalBatch } = await import("./agent/approval-execution");
+
+    let approvalsProcessed = 0;
+    const MAX_RECOVERY_PASSES = 8;
+
+    for (let pass = 0; pass < MAX_RECOVERY_PASSES; pass += 1) {
+      const freshAgent = await client.agents.retrieve(agent.id);
+
+      let resume: Awaited<ReturnType<typeof getResumeData>>;
+      try {
+        resume = await getResumeData(client, freshAgent, targetConversationId, {
+          includeMessageHistory: false,
+        });
+      } catch (error) {
+        if (
+          error instanceof APIError &&
+          (error.status === 404 || error.status === 422)
+        ) {
+          return {
+            recovered: true,
+            pending_approval: false,
+            approvals_processed: approvalsProcessed,
+          };
+        }
+        throw error;
+      }
+
+      const pendingApprovals = resume.pendingApprovals || [];
+      if (pendingApprovals.length === 0) {
+        return {
+          recovered: true,
+          pending_approval: false,
+          approvals_processed: approvalsProcessed,
+        };
+      }
+
+      const { autoAllowed, autoDenied, needsUserInput } =
+        await classifyApprovals(pendingApprovals, {
+          alwaysRequiresUserInput: isInteractiveApprovalTool,
+          requireArgsForAutoApprove: true,
+          missingNameReason: "Tool call incomplete - missing name",
+        });
+
+      const decisions: ApprovalDecision[] = [
+        ...autoAllowed.map((ac) => ({
+          type: "approve" as const,
+          approval: ac.approval,
+        })),
+        ...autoDenied.map((ac) => ({
+          type: "deny" as const,
+          approval: ac.approval,
+          reason: ac.denyReason || ac.permission.reason || "Permission denied",
+        })),
+      ];
+
+      for (const ac of needsUserInput) {
+        const permResponse = await requestPermission(
+          ac.approval.toolCallId,
+          ac.approval.toolName,
+          ac.parsedArgs,
+        );
+
+        if (permResponse.decision === "allow") {
+          const finalApproval = permResponse.updatedInput
+            ? {
+                ...ac.approval,
+                toolArgs: JSON.stringify(permResponse.updatedInput),
+              }
+            : ac.approval;
+          decisions.push({ type: "approve", approval: finalApproval });
+        } else {
+          decisions.push({
+            type: "deny",
+            approval: ac.approval,
+            reason: permResponse.reason || "Denied by SDK callback",
+          });
+        }
+      }
+
+      if (decisions.length === 0) {
+        return {
+          recovered: false,
+          pending_approval: true,
+          approvals_processed: approvalsProcessed,
+        };
+      }
+
+      const executedResults = await executeApprovalBatch(decisions);
+      approvalsProcessed += executedResults.length;
+
+      const approvalInput: ApprovalCreate = {
+        type: "approval",
+        approvals: executedResults as ApprovalResult[],
+      };
+      const approvalStream = await sendMessageStream(
+        targetConversationId,
+        [approvalInput],
+        { agentId: agent.id },
+      );
+
+      const drainResult = await drainStreamWithResume(
+        approvalStream,
+        createBuffers(agent.id),
+        () => {},
+        undefined,
+        undefined,
+        undefined,
+        reminderContextTracker,
+      );
+
+      if (drainResult.stopReason === "error") {
+        throw new Error(
+          drainResult.fallbackError ||
+            "recover_pending_approvals failed while applying approvals",
+        );
+      }
+    }
+
+    return {
+      recovered: false,
+      pending_approval: true,
+      approvals_processed: approvalsProcessed,
+    };
+  }
+
   // Main processing loop
   while (true) {
     const line = await getNextLine();
@@ -3024,6 +3170,36 @@ async function runBidirectionalMode(
           client,
         });
         console.log(JSON.stringify(listResp));
+      } else if (subtype === "recover_pending_approvals") {
+        const recoverReq =
+          message.request as RecoverPendingApprovalsControlRequest;
+        try {
+          const recovery =
+            await recoverPendingApprovalsFromControlRequest(recoverReq);
+          const recoveryResponse: ControlResponse = {
+            type: "control_response",
+            response: {
+              subtype: "success",
+              request_id: requestId ?? "",
+              response: recovery,
+            },
+            session_id: sessionId,
+            uuid: randomUUID(),
+          };
+          console.log(JSON.stringify(recoveryResponse));
+        } catch (error) {
+          const recoveryError: ControlResponse = {
+            type: "control_response",
+            response: {
+              subtype: "error",
+              request_id: requestId ?? "",
+              error: error instanceof Error ? error.message : String(error),
+            },
+            session_id: sessionId,
+            uuid: randomUUID(),
+          };
+          console.log(JSON.stringify(recoveryError));
+        }
       } else {
         const errorResponse: ControlResponse = {
           type: "control_response",

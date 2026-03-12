@@ -394,6 +394,72 @@ describe("input-format stream-json", () => {
   );
 
   test(
+    "recover_pending_approvals returns structured recovery payload",
+    async () => {
+      const objects = (await runBidirectional([
+        JSON.stringify({
+          type: "control_request",
+          request_id: "recover_1",
+          request: { subtype: "recover_pending_approvals" },
+        }),
+      ])) as WireMessage[];
+
+      const controlResponse = objects.find(
+        (o): o is ControlResponse =>
+          o.type === "control_response" &&
+          o.response?.request_id === "recover_1",
+      );
+      expect(controlResponse).toBeDefined();
+      expect(controlResponse?.response.subtype).toBe("success");
+
+      if (controlResponse?.response.subtype === "success") {
+        const recovery = controlResponse.response.response as
+          | {
+              recovered?: boolean;
+              pending_approval?: boolean;
+              approvals_processed?: number;
+            }
+          | undefined;
+        expect(recovery?.recovered).toBe(true);
+        expect(recovery?.pending_approval).toBe(false);
+        expect(recovery?.approvals_processed).toBe(0);
+      }
+    },
+    { timeout: 200000 },
+  );
+
+  test(
+    "recover_pending_approvals agent mismatch returns error response",
+    async () => {
+      const objects = (await runBidirectional([
+        JSON.stringify({
+          type: "control_request",
+          request_id: "recover_mismatch_1",
+          request: {
+            subtype: "recover_pending_approvals",
+            agent_id: "agent-mismatch",
+          },
+        }),
+      ])) as WireMessage[];
+
+      const controlResponse = objects.find(
+        (o): o is ControlResponse =>
+          o.type === "control_response" &&
+          o.response?.request_id === "recover_mismatch_1",
+      );
+      expect(controlResponse).toBeDefined();
+      expect(controlResponse?.response.subtype).toBe("error");
+
+      if (controlResponse?.response.subtype === "error") {
+        expect(controlResponse.response.error).toContain(
+          "recover_pending_approvals agent mismatch",
+        );
+      }
+    },
+    { timeout: 200000 },
+  );
+
+  test(
     "--include-partial-messages emits stream_event in bidirectional mode",
     async () => {
       const objects = (await runBidirectional(
