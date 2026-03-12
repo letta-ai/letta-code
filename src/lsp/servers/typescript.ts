@@ -2,8 +2,8 @@
  * TypeScript/JavaScript LSP Server Definition
  */
 
-import type { LSPServerInfo } from "../types.js";
 import { runOutsideRuntimeContext } from "../../runtime-context";
+import type { LSPServerInfo } from "../types.js";
 
 /**
  * TypeScript Language Server

@@ -48,8 +48,8 @@ import {
 import { mergeQueuedTurnInput } from "../queue/turnQueueRuntime";
 import {
   getRuntimeContext,
-  type RuntimePermissionMode,
   type RuntimeContextSnapshot,
+  type RuntimePermissionMode,
   runWithRuntimeContext,
 } from "../runtime-context";
 import { settingsManager } from "../settings-manager";
@@ -406,16 +406,17 @@ function updateListenerDefaultPermissionMode(
   listener: ListenerRuntime,
   mode: RuntimePermissionMode,
 ): void {
-  const previousMode = listener.defaultRuntimeContext.permissionMode ?? "default";
+  const previousMode =
+    listener.defaultRuntimeContext.permissionMode ?? "default";
   const nextModeBeforePlan =
     mode === "plan" && previousMode !== "plan"
       ? previousMode
       : previousMode === "plan" && mode !== "plan"
         ? null
-        : listener.defaultRuntimeContext.modeBeforePlan ?? null;
+        : (listener.defaultRuntimeContext.modeBeforePlan ?? null);
   const nextPlanFilePath =
     mode === "plan"
-      ? listener.defaultRuntimeContext.planFilePath ?? generatePlanFilePath()
+      ? (listener.defaultRuntimeContext.planFilePath ?? generatePlanFilePath())
       : null;
   applyPermissionModeSnapshot(
     listener.defaultRuntimeContext,
@@ -434,7 +435,8 @@ function getConversationRuntimeContext(
     agentId: runtime.agentId,
     conversationId: runtime.conversationId,
     workingDirectory:
-      runtime.activeWorkingDirectory ?? getConversationWorkingDirectory(runtime),
+      runtime.activeWorkingDirectory ??
+      getConversationWorkingDirectory(runtime),
   };
 }
 
@@ -460,7 +462,8 @@ function persistConversationRuntimeContext(runtime: ConversationRuntime): void {
 
   runtime.runtimeContext.agentId = runtime.agentId;
   runtime.runtimeContext.conversationId = runtime.conversationId;
-  runtime.runtimeContext.workingDirectory = getConversationWorkingDirectory(runtime);
+  runtime.runtimeContext.workingDirectory =
+    getConversationWorkingDirectory(runtime);
 }
 
 /**
@@ -483,23 +486,31 @@ function handleModeChange(
     }
 
     // Send success acknowledgment
-    sendClientMessage(socket, {
-      type: "mode_changed",
-      mode: msg.mode,
-      success: true,
-    }, listener);
+    sendClientMessage(
+      socket,
+      {
+        type: "mode_changed",
+        mode: msg.mode,
+        success: true,
+      },
+      listener,
+    );
 
     if (process.env.DEBUG) {
       console.log(`[Listen] Mode changed to: ${msg.mode}`);
     }
   } catch (error) {
     // Send failure acknowledgment
-    sendClientMessage(socket, {
-      type: "mode_changed",
-      mode: msg.mode,
-      success: false,
-      error: error instanceof Error ? error.message : "Mode change failed",
-    }, listener);
+    sendClientMessage(
+      socket,
+      {
+        type: "mode_changed",
+        mode: msg.mode,
+        success: false,
+        error: error instanceof Error ? error.message : "Mode change failed",
+      },
+      listener,
+    );
 
     if (process.env.DEBUG) {
       console.error("[Listen] Mode change failed:", error);
@@ -2848,11 +2859,15 @@ async function connectWithRetry(
     opts.onConnected(opts.connectionId);
 
     // Send current mode state to cloud for UI sync
-    sendClientMessage(socket, {
-      type: "mode_changed",
-      mode: listener.defaultRuntimeContext.permissionMode ?? "default",
-      success: true,
-    }, listener);
+    sendClientMessage(
+      socket,
+      {
+        type: "mode_changed",
+        mode: listener.defaultRuntimeContext.permissionMode ?? "default",
+        success: true,
+      },
+      listener,
+    );
 
     listener.heartbeatInterval = setInterval(() => {
       sendClientMessage(socket, { type: "ping" });

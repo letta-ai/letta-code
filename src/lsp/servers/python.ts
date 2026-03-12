@@ -3,8 +3,8 @@
  * Uses Pyright language server
  */
 
-import type { LSPServerInfo } from "../types.js";
 import { runOutsideRuntimeContext } from "../../runtime-context";
+import type { LSPServerInfo } from "../types.js";
 
 /**
  * Python Language Server (Pyright)
