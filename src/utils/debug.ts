@@ -49,7 +49,7 @@ function printDebugLine(line: string, level: "log" | "warn" = "log"): void {
   }
   const colored =
     level === "warn"
-      ? `\x1b[38;5;173m${line.trimEnd()}\x1b[0m` // muted red-orange
+      ? `\x1b[38;5;167m${line.trimEnd()}\x1b[0m` // muted red
       : `\x1b[38;5;179m${line.trimEnd()}\x1b[0m`; // muted golden yellow
   console.log(colored);
 }
