@@ -16,17 +16,14 @@ export type MemoryReminderMode =
   | "auto-compaction";
 
 export type ReflectionTrigger = "off" | "step-count" | "compaction-event";
-export type ReflectionBehavior = "reminder" | "auto-launch";
 
 export interface ReflectionSettings {
   trigger: ReflectionTrigger;
-  behavior: ReflectionBehavior;
   stepCount: number;
 }
 
 const DEFAULT_REFLECTION_SETTINGS: ReflectionSettings = {
   trigger: "compaction-event",
-  behavior: "reminder",
   stepCount: DEFAULT_STEP_COUNT,
 };
 
@@ -57,27 +54,15 @@ function normalizeTrigger(
   return fallback;
 }
 
-function normalizeBehavior(
-  value: unknown,
-  fallback: ReflectionBehavior,
-): ReflectionBehavior {
-  if (value === "reminder" || value === "auto-launch") {
-    return value;
-  }
-  return fallback;
-}
-
 function applyExplicitReflectionOverrides(
   base: ReflectionSettings,
   raw: {
     reflectionTrigger?: unknown;
-    reflectionBehavior?: unknown;
     reflectionStepCount?: unknown;
   },
 ): ReflectionSettings {
   return {
     trigger: normalizeTrigger(raw.reflectionTrigger, base.trigger),
-    behavior: normalizeBehavior(raw.reflectionBehavior, base.behavior),
     stepCount: normalizeStepCount(raw.reflectionStepCount, base.stepCount),
   };
 }
@@ -88,7 +73,6 @@ function legacyModeToReflectionSettings(
   if (typeof mode === "number") {
     return {
       trigger: "step-count",
-      behavior: "reminder",
       stepCount: normalizeStepCount(mode, DEFAULT_STEP_COUNT),
     };
   }
@@ -96,7 +80,6 @@ function legacyModeToReflectionSettings(
   if (mode === null) {
     return {
       trigger: "off",
-      behavior: DEFAULT_REFLECTION_SETTINGS.behavior,
       stepCount: DEFAULT_REFLECTION_SETTINGS.stepCount,
     };
   }
@@ -104,7 +87,6 @@ function legacyModeToReflectionSettings(
   if (mode === "compaction") {
     return {
       trigger: "compaction-event",
-      behavior: "reminder",
       stepCount: DEFAULT_REFLECTION_SETTINGS.stepCount,
     };
   }
@@ -112,7 +94,6 @@ function legacyModeToReflectionSettings(
   if (mode === "auto-compaction") {
     return {
       trigger: "compaction-event",
-      behavior: "auto-launch",
       stepCount: DEFAULT_REFLECTION_SETTINGS.stepCount,
     };
   }
@@ -127,9 +108,7 @@ export function reflectionSettingsToLegacyMode(
     return null;
   }
   if (settings.trigger === "compaction-event") {
-    return settings.behavior === "auto-launch"
-      ? "auto-compaction"
-      : "compaction";
+    return "auto-compaction";
   }
   return normalizeStepCount(settings.stepCount, DEFAULT_STEP_COUNT);
 }
@@ -182,20 +161,9 @@ async function buildMemfsAwareMemoryReminder(
   agentId: string,
   trigger: "interval" | "compaction",
 ): Promise<string> {
-  if (settingsManager.isMemfsEnabled(agentId)) {
-    debugLog(
-      "memory",
-      `Reflection reminder fired (${trigger}, agent ${agentId})`,
-    );
-    const { MEMORY_REFLECTION_REMINDER } = await import(
-      "../../agent/promptAssets.js"
-    );
-    return MEMORY_REFLECTION_REMINDER;
-  }
-
   debugLog(
     "memory",
-    `Memory check reminder fired (${trigger}, agent ${agentId})`,
+    `${settingsManager.isMemfsEnabled(agentId) ? "Memfs" : "Memory"} check reminder fired (${trigger}, agent ${agentId})`,
   );
   const { MEMORY_CHECK_REMINDER } = await import("../../agent/promptAssets.js");
   return MEMORY_CHECK_REMINDER;
@@ -214,10 +182,8 @@ export async function buildCompactionMemoryReminder(
 /**
  * Build a memory check reminder if the turn count matches the interval.
  *
- * - MemFS enabled: returns MEMORY_REFLECTION_REMINDER
- *   (instructs agent to launch background reflection Task)
- * - MemFS disabled: returns MEMORY_CHECK_REMINDER
- *   (existing behavior, agent updates memory inline)
+ * Returns MEMORY_CHECK_REMINDER when the interval trigger fires.
+ * Reflection subagent launch is handled by runtime orchestration, not reminder text.
  *
  * @param turnCount - Current conversation turn count
  * @param agentId - Current agent ID (needed to check MemFS status)
@@ -277,7 +243,6 @@ export function parseMemoryPreference(
         settingsManager.updateLocalProjectSettings({
           memoryReminderInterval: MEMORY_INTERVAL_FREQUENT,
           reflectionTrigger: "step-count",
-          reflectionBehavior: "reminder",
           reflectionStepCount: MEMORY_INTERVAL_FREQUENT,
         });
         return true;
@@ -285,7 +250,6 @@ export function parseMemoryPreference(
         settingsManager.updateLocalProjectSettings({
           memoryReminderInterval: MEMORY_INTERVAL_OCCASIONAL,
           reflectionTrigger: "step-count",
-          reflectionBehavior: "reminder",
           reflectionStepCount: MEMORY_INTERVAL_OCCASIONAL,
         });
         return true;

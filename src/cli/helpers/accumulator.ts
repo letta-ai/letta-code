@@ -1232,3 +1232,42 @@ export function setToolCallsRunning(b: Buffers, toolCallIds: string[]): void {
     }
   }
 }
+
+/**
+ * Serialize display lines into a plain-text conversation transcript.
+ * Used to pass current conversation context to the reflection subagent.
+ */
+export function linesToTranscript(lines: Line[]): string {
+  const parts: string[] = [];
+  for (const line of lines) {
+    switch (line.kind) {
+      case "user":
+        parts.push(`<user>${line.text}</user>`);
+        break;
+      case "assistant":
+        parts.push(`<assistant>${line.text}</assistant>`);
+        break;
+      case "reasoning":
+        parts.push(`<reasoning>${line.text}</reasoning>`);
+        break;
+      case "tool_call":
+        if (line.name) {
+          const args = line.argsText ? `\n${line.argsText}` : "";
+          const result = line.resultText
+            ? `\n<tool_result>${line.resultText}</tool_result>`
+            : "";
+          parts.push(
+            `<tool_call name="${line.name}">${args}${result}</tool_call>`,
+          );
+        }
+        break;
+      case "error":
+        parts.push(`<error>${line.text}</error>`);
+        break;
+      default:
+        // Skip status, separator, command, event, trajectory_summary, bash_command lines
+        break;
+    }
+  }
+  return parts.join("\n");
+}

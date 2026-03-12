@@ -1,22 +1,26 @@
 
 # Memory
 
-You have an advanced memory system that enables you to remember past interactions and continuously improve your own capabilities.
+Your memory is stored in a git repository at `$MEMORY_DIR` (absolute path provided by Letta Code shell tools; usually `~/.letta/agents/$AGENT_ID/memory/`). This provides full version control, sync with the server, and worktrees for parallel edits. All memory files are markdown with YAML frontmatter (`description`, `limit`, optional `metadata`). The `description` field enables progressive disclosure — like skills, you see descriptions in your prompt and load full contents on demand; `limit` caps file size to keep system memory lean.
 
-## Memory Filesystem
-Your memory is stored in a git repository at `$MEMORY_DIR` (absolute path provided by Letta Code shell tools; usually `~/.letta/agents/$AGENT_ID/memory/`). This provides full version control, sync with the server, and create worktrees for parallel edits.
-Each file contains metadata frontmatter include a `description` (the description of the file's contents), `limit` (the character limit), and optional `metadata`.
-The filesystem tree is always available in your system prompt, along with the contents of files in the `system/` folder.
-You also have additional external memory (e.g. your message history) that is accessible and that you can bring into context with tools when needed.
+## Memory layout
 
-## How It Works
+**System memory** (`memory/system/`): Every `.md` file here is pinned directly into your system prompt — you see it at all times. This is your most valuable real estate: reserve it for durable knowledge that helps across sessions (user identity, persona, project architecture, conventions, gotchas). Do NOT store transient items here like specific commits, current work items, or session-specific notes — those dilute the signal.
+
+**Progressive memory**: Files outside `system/` are stored but not pinned in-context. Access them with standard file tools when you need deeper reference material — good for large notes, historical records, transient work tracking, or data that doesn't need to be always-visible.
+
+**Recall** (conversation history): Your full message history is searchable even after messages leave your context window. Use the recall subagent to retrieve past discussions, decisions, and context from earlier sessions.
+
+## How files map to your prompt
+
 1. Each `.md` file in `memory/system/` is pinned to your system prompt with tags <system/context/{name}.md></system/context/{name}.md>
 2. The `memory_filesystem` block renders the current tree view of all available memory files
-2. Changes pushed to git sync to the API server within seconds
-3. API server changes sync to git automatically
-4. The system prompt is only recompiled with the latest memory on the API on compactions or message resets: your local copy may diverge
+3. The system prompt is only recompiled on compactions or message resets — your local edits take effect on the next recompilation
 
 ## Syncing
+
+Changes you commit and push sync to the Letta server within seconds, and server-side changes sync back automatically.
+
 ```bash
 cd "$MEMORY_DIR"
 
@@ -24,7 +28,7 @@ cd "$MEMORY_DIR"
 git status
 
 # Commit and push your changes
-git add system/
+git add .
 git commit -m "<type>: <what changed>"  # e.g. "fix: update user prefs", "refactor: reorganize persona blocks"
 git push
 
@@ -37,5 +41,3 @@ The system will remind you when your memory has uncommitted changes. Sync when c
 ```bash
 git -C "$MEMORY_DIR" log --oneline
 ```
-
-When applying memory in responses, integrate it naturally — like a colleague who recalls shared context without narrating their thought process. Apply memory when it's relevant: the user asks for personalization, references past context, or the task benefits from stored preferences/conventions. Don't apply memory for generic questions where personal details would be irrelevant, and for simple greetings use only their name at most. Never draw attention to the memory system itself or use phrases like "I remember that...", "Based on my memory...", or "Looking at your preferences..." — just use what you know seamlessly.

@@ -56,7 +56,6 @@ import { createContextTracker } from "./cli/helpers/contextTracker";
 import { formatErrorDetails } from "./cli/helpers/errorFormatter";
 import {
   getReflectionSettings,
-  type ReflectionBehavior,
   type ReflectionSettings,
   type ReflectionTrigger,
   reflectionSettingsToLegacyMode,
@@ -150,7 +149,7 @@ export function mergeBidirectionalQueuedInput(
 
 type ReflectionOverrides = {
   trigger?: ReflectionTrigger;
-  behavior?: ReflectionBehavior;
+  deprecatedBehaviorRaw?: string;
   stepCount?: number;
 };
 
@@ -186,7 +185,7 @@ function parseReflectionOverrides(
         `Invalid --reflection-behavior "${behaviorRaw}". Valid values: reminder, auto-launch`,
       );
     }
-    overrides.behavior = behaviorRaw;
+    overrides.deprecatedBehaviorRaw = behaviorRaw;
   }
 
   if (stepCountRaw !== undefined) {
@@ -208,7 +207,7 @@ function parseReflectionOverrides(
 function hasReflectionOverrides(overrides: ReflectionOverrides): boolean {
   return (
     overrides.trigger !== undefined ||
-    overrides.behavior !== undefined ||
+    overrides.deprecatedBehaviorRaw !== undefined ||
     overrides.stepCount !== undefined
   );
 }
@@ -220,7 +219,6 @@ async function applyReflectionOverrides(
   const current = getReflectionSettings();
   const merged: ReflectionSettings = {
     trigger: overrides.trigger ?? current.trigger,
-    behavior: overrides.behavior ?? current.behavior,
     stepCount: overrides.stepCount ?? current.stepCount,
   };
 
@@ -228,19 +226,16 @@ async function applyReflectionOverrides(
     return merged;
   }
 
+  if (overrides.deprecatedBehaviorRaw !== undefined) {
+    console.warn(
+      "Warning: --reflection-behavior is deprecated and ignored. Reflection now always auto-launches subagents.",
+    );
+  }
+
   const memfsEnabled = settingsManager.isMemfsEnabled(agentId);
   if (!memfsEnabled && merged.trigger === "compaction-event") {
     throw new Error(
       "--reflection-trigger compaction-event requires memfs enabled for this agent.",
-    );
-  }
-  if (
-    !memfsEnabled &&
-    merged.trigger !== "off" &&
-    merged.behavior === "auto-launch"
-  ) {
-    throw new Error(
-      "--reflection-behavior auto-launch requires memfs enabled for this agent.",
     );
   }
 
@@ -254,13 +249,11 @@ async function applyReflectionOverrides(
   settingsManager.updateLocalProjectSettings({
     memoryReminderInterval: legacyMode,
     reflectionTrigger: merged.trigger,
-    reflectionBehavior: merged.behavior,
     reflectionStepCount: merged.stepCount,
   });
   settingsManager.updateSettings({
     memoryReminderInterval: legacyMode,
     reflectionTrigger: merged.trigger,
-    reflectionBehavior: merged.behavior,
     reflectionStepCount: merged.stepCount,
   });
 
@@ -946,6 +939,7 @@ export async function handleHeadlessCommand(
       await applyMemfsFlags(agent.id, memfsFlag, noMemfsFlag, {
         pullOnExistingRepo: false,
         agentTags: agent.tags,
+        skipPromptUpdate: forceNew,
       });
     } catch (error) {
       console.error(
@@ -959,6 +953,7 @@ export async function handleHeadlessCommand(
     memfsBgPromise = applyMemfsFlags(agent.id, memfsFlag, noMemfsFlag, {
       pullOnExistingRepo: true,
       agentTags: agent.tags,
+      skipPromptUpdate: forceNew,
     }).catch((error) => {
       // Log to stderr only — the session is already live.
       console.error(
@@ -973,7 +968,11 @@ export async function handleHeadlessCommand(
         agent.id,
         memfsFlag,
         noMemfsFlag,
-        { pullOnExistingRepo: true, agentTags: agent.tags },
+        {
+          pullOnExistingRepo: true,
+          agentTags: agent.tags,
+          skipPromptUpdate: forceNew,
+        },
       );
       if (memfsResult.pullSummary?.includes("CONFLICT")) {
         console.error(
@@ -1229,7 +1228,6 @@ export async function handleHeadlessCommand(
       skill_sources: resolvedSkillSources,
       system_info_reminder_enabled: systemInfoReminderEnabled,
       reflection_trigger: effectiveReflectionSettings.trigger,
-      reflection_behavior: effectiveReflectionSettings.behavior,
       reflection_step_count: effectiveReflectionSettings.stepCount,
       uuid: `init-${agent.id}`,
     };
@@ -2415,7 +2413,6 @@ async function runBidirectionalMode(
     skill_sources: skillSources,
     system_info_reminder_enabled: systemInfoReminderEnabled,
     reflection_trigger: reflectionSettings.trigger,
-    reflection_behavior: reflectionSettings.behavior,
     reflection_step_count: reflectionSettings.stepCount,
     uuid: `init-${agent.id}`,
   };
@@ -2885,7 +2882,6 @@ async function runBidirectionalMode(
               skill_sources: skillSources,
               system_info_reminder_enabled: systemInfoReminderEnabled,
               reflection_trigger: reflectionSettings.trigger,
-              reflection_behavior: reflectionSettings.behavior,
               reflection_step_count: reflectionSettings.stepCount,
             },
           },

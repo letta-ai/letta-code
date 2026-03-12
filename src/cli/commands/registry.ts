@@ -48,6 +48,15 @@ export const commands: Record<string, Command> = {
       return "Processing memory request...";
     },
   },
+  "/reflect": {
+    desc: "Launch a background reflection agent to update memory",
+    order: 50,
+    noArgs: true,
+    handler: () => {
+      // Handled specially in App.tsx
+      return "Launching reflection agent...";
+    },
+  },
   "/skills": {
     desc: "Browse available skills",
     order: 28,

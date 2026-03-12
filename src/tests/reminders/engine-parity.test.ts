@@ -36,7 +36,6 @@ describe("shared reminder parity", () => {
 
     const reflectionSettings: ReflectionSettings = {
       trigger: "off",
-      behavior: "reminder",
       stepCount: 25,
     };
 
@@ -96,7 +95,6 @@ describe("shared reminder parity", () => {
 
     const reflectionSettings: ReflectionSettings = {
       trigger: "off",
-      behavior: "reminder",
       stepCount: 25,
     };
 

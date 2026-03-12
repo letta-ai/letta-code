@@ -69,7 +69,6 @@ export interface Settings {
   sessionContextEnabled: boolean; // Send device/agent context on first message of each session
   memoryReminderInterval: number | null | "compaction" | "auto-compaction"; // DEPRECATED: use reflection* fields
   reflectionTrigger: "off" | "step-count" | "compaction-event";
-  reflectionBehavior: "reminder" | "auto-launch";
   reflectionStepCount: number;
   conversationSwitchAlertEnabled: boolean; // Send system-reminder when switching conversations/agents
   globalSharedBlockIds: Record<string, string>; // DEPRECATED: kept for backwards compat
@@ -117,7 +116,6 @@ export interface LocalProjectSettings {
   pinnedAgents?: string[]; // DEPRECATED: kept for backwards compat, use pinnedAgentsByServer
   memoryReminderInterval?: number | null | "compaction" | "auto-compaction"; // DEPRECATED: use reflection* fields
   reflectionTrigger?: "off" | "step-count" | "compaction-event";
-  reflectionBehavior?: "reminder" | "auto-launch";
   reflectionStepCount?: number;
   // Server-indexed settings (agent IDs are server-specific)
   sessionsByServer?: Record<string, SessionRef>; // key = normalized base URL
@@ -135,7 +133,6 @@ const DEFAULT_SETTINGS: Settings = {
   sessionContextEnabled: true,
   memoryReminderInterval: 25, // DEPRECATED: use reflection* fields
   reflectionTrigger: "step-count",
-  reflectionBehavior: "reminder",
   reflectionStepCount: 25,
   globalSharedBlockIds: {},
 };
@@ -236,10 +233,25 @@ class SettingsManager {
       } else {
         // Read and parse settings
         const content = await readFile(settingsPath);
-        const loadedSettings = JSON.parse(content) as Settings;
+        const loadedSettingsRaw = JSON.parse(content) as Record<
+          string,
+          unknown
+        >;
+        const hadLegacyReflectionBehavior = Object.hasOwn(
+          loadedSettingsRaw,
+          "reflectionBehavior",
+        );
+        if (hadLegacyReflectionBehavior) {
+          delete loadedSettingsRaw.reflectionBehavior;
+          // Mark for deletion on next persist; keep startup backward-compatible.
+          this.markDirty("reflectionBehavior");
+        }
         // Merge with defaults in case new fields were added
-        this.settings = { ...DEFAULT_SETTINGS, ...loadedSettings };
-        for (const key of Object.keys(loadedSettings)) {
+        this.settings = {
+          ...DEFAULT_SETTINGS,
+          ...(loadedSettingsRaw as Partial<Settings>),
+        };
+        for (const key of Object.keys(loadedSettingsRaw)) {
           this.managedKeys.add(key);
         }
       }
@@ -719,6 +731,9 @@ class SettingsManager {
         }
       }
 
+      // Hard-deprecate legacy field (now fully ignored). Always strip from disk.
+      delete existingSettings.reflectionBehavior;
+
       // Only write keys we loaded from the file or explicitly set via updateSettings().
       // This preserves manual file edits for keys we never touched (e.g. defaults).
       const merged: Record<string, unknown> = { ...existingSettings };
@@ -834,9 +849,24 @@ class SettingsManager {
       }
 
       const content = await readFile(settingsPath);
-      const localSettings = JSON.parse(content) as LocalProjectSettings;
+      const localSettingsRaw = JSON.parse(content) as Record<string, unknown>;
+      const hadLegacyReflectionBehavior = Object.hasOwn(
+        localSettingsRaw,
+        "reflectionBehavior",
+      );
+      if (hadLegacyReflectionBehavior) {
+        delete localSettingsRaw.reflectionBehavior;
+      }
+      const localSettings = localSettingsRaw as unknown as LocalProjectSettings;
 
       this.localProjectSettings.set(workingDirectory, localSettings);
+      if (hadLegacyReflectionBehavior) {
+        try {
+          await this.persistLocalProjectSettings(workingDirectory);
+        } catch {
+          // Best-effort cleanup only; do not fail load path.
+        }
+      }
       return { ...localSettings };
     } catch (error) {
       console.error(
@@ -920,6 +950,9 @@ class SettingsManager {
           // If read/parse fails, use empty object
         }
       }
+
+      // Hard-deprecate legacy field (now fully ignored). Always strip from disk.
+      delete existingSettings.reflectionBehavior;
 
       // Merge: existing fields + our managed settings
       const merged = {

@@ -11,6 +11,7 @@ import { buildSessionContext } from "../cli/helpers/sessionContext";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "../constants";
 import { permissionMode } from "../permissions/mode";
 import { settingsManager } from "../settings-manager";
+import { debugLog } from "../utils/debug";
 import {
   SHARED_REMINDER_CATALOG,
   type SharedReminderId,
@@ -157,20 +158,20 @@ async function buildReflectionStepReminder(
   let reminder: string | null = null;
 
   if (shouldFireStepTrigger) {
-    if (context.reflectionSettings.behavior === "reminder" || !memfsEnabled) {
+    if (memfsEnabled) {
+      if (context.maybeLaunchReflectionSubagent) {
+        await context.maybeLaunchReflectionSubagent("step-count");
+      } else {
+        debugLog(
+          "memory",
+          `Step-count reflection trigger fired with no launcher callback (agent ${context.agent.id})`,
+        );
+      }
+    } else {
       reminder = await buildMemoryReminder(
         context.state.turnCount,
         context.agent.id,
       );
-    } else {
-      if (context.maybeLaunchReflectionSubagent) {
-        await context.maybeLaunchReflectionSubagent("step-count");
-      } else {
-        reminder = await buildMemoryReminder(
-          context.state.turnCount,
-          context.agent.id,
-        );
-      }
     }
   }
 
@@ -193,11 +194,16 @@ async function buildReflectionCompactionReminder(
   }
 
   const memfsEnabled = settingsManager.isMemfsEnabled(context.agent.id);
-  if (context.reflectionSettings.behavior === "auto-launch" && memfsEnabled) {
+  if (memfsEnabled) {
     if (context.maybeLaunchReflectionSubagent) {
       await context.maybeLaunchReflectionSubagent("compaction-event");
-      return null;
+    } else {
+      debugLog(
+        "memory",
+        `Compaction reflection trigger fired with no launcher callback (agent ${context.agent.id})`,
+      );
     }
+    return null;
   }
 
   return buildCompactionMemoryReminder(context.agent.id);

@@ -61,13 +61,12 @@ export const SHARED_REMINDER_CATALOG: ReadonlyArray<SharedReminderDefinition> =
     },
     {
       id: "reflection-step-count",
-      description: "Step-count reflection reminder/auto-launch behavior",
+      description: "Step-count reflection trigger handling",
       modes: ["interactive", "headless-one-shot", "headless-bidirectional"],
     },
     {
       id: "reflection-compaction",
-      description:
-        "Compaction-triggered reflection reminder/auto-launch behavior",
+      description: "Compaction-triggered reflection trigger handling",
       modes: ["interactive", "headless-one-shot", "headless-bidirectional"],
     },
     {

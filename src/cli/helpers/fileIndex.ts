@@ -119,7 +119,11 @@ function findPrefixRange(sorted: string[], prefix: string): [number, number] {
   const start = lowerBound(sorted, prefix);
   let end = start;
 
-  while (end < sorted.length && sorted[end]?.startsWith(prefix)) {
+  while (end < sorted.length) {
+    const candidate = sorted[end];
+    if (!candidate?.startsWith(prefix)) {
+      break;
+    }
     end++;
   }
 

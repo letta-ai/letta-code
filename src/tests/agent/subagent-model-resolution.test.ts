@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import type { SubagentConfig } from "../../agent/subagents";
 import {
+  buildSubagentArgs,
   resolveSubagentLauncher,
   resolveSubagentModel,
 } from "../../agent/subagents/manager";
@@ -115,6 +117,44 @@ describe("resolveSubagentLauncher", () => {
       command: "C:\\Users\\Example User\\AppData\\Roaming\\npm\\letta.cmd",
       args: ["--output-format", "stream-json"],
     });
+  });
+});
+
+describe("buildSubagentArgs", () => {
+  const baseConfig: Omit<SubagentConfig, "mode"> = {
+    name: "test-subagent",
+    description: "test",
+    systemPrompt: "test prompt",
+    allowedTools: "all",
+    recommendedModel: "inherit",
+    skills: [],
+    memoryBlocks: "none",
+  };
+
+  test("adds --no-memfs for stateless subagents with memoryBlocks none", () => {
+    const args = buildSubagentArgs(
+      "test-subagent",
+      { ...baseConfig, mode: "stateless" },
+      null,
+      "hello",
+    );
+
+    expect(args).toContain("--init-blocks");
+    expect(args).toContain("none");
+    expect(args).toContain("--no-memfs");
+  });
+
+  test("does not add --no-memfs for stateful subagents with memoryBlocks none", () => {
+    const args = buildSubagentArgs(
+      "test-subagent",
+      { ...baseConfig, mode: "stateful" },
+      null,
+      "hello",
+    );
+
+    expect(args).toContain("--init-blocks");
+    expect(args).toContain("none");
+    expect(args).not.toContain("--no-memfs");
   });
 });
 

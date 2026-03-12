@@ -26,7 +26,6 @@ function baseContext(
     sessionContextReminderEnabled: false,
     reflectionSettings: {
       trigger: "off",
-      behavior: "reminder",
       stepCount: 25,
     },
     skillSources: [],

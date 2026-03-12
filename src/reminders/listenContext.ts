@@ -5,7 +5,6 @@ import type { SharedReminderState } from "./state";
 // hardcoded for now as we only need plan mode reminder for listener mode
 const LISTEN_REFLECTION_SETTINGS: ReflectionSettings = {
   trigger: "off",
-  behavior: "reminder",
   stepCount: 25,
 };
 
