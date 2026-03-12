@@ -57,7 +57,7 @@ export type DrainStreamHook = (
   | undefined
   | Promise<DrainStreamHookResult | undefined>;
 
-type DrainResult = {
+export type DrainResult = {
   stopReason: StopReasonType;
   lastRunId?: string | null;
   lastSeqId?: number | null;
@@ -101,7 +101,7 @@ function parseRunCreatedAtMs(run: Run): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-async function discoverFallbackRunIdWithTimeout(
+export async function discoverFallbackRunIdWithTimeout(
   client: RunsListClient,
   ctx: StreamRequestContext,
 ): Promise<string | null> {
