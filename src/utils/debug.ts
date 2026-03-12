@@ -37,7 +37,7 @@ function getDebugFile(): string | null {
 }
 
 /** Print to screen (or LETTA_DEBUG_FILE). Only called when LETTA_DEBUG=1. */
-function printDebugLine(line: string): void {
+function printDebugLine(line: string, level: "log" | "warn" = "log"): void {
   const debugFile = getDebugFile();
   if (debugFile) {
     try {
@@ -47,7 +47,11 @@ function printDebugLine(line: string): void {
       // Fall back to console if file write fails
     }
   }
-  console.log(line.trimEnd());
+  const colored =
+    level === "warn"
+      ? `\x1b[38;5;167m${line.trimEnd()}\x1b[0m` // muted red
+      : `\x1b[38;5;179m${line.trimEnd()}\x1b[0m`; // muted golden yellow
+  console.log(colored);
 }
 
 // ---------------------------------------------------------------------------
@@ -148,6 +152,7 @@ function writeDebugLine(
   prefix: string,
   message: string,
   args: unknown[],
+  level: "log" | "warn" = "log",
 ): void {
   const ts = new Date().toISOString();
   const body = format(`[${prefix}] ${message}`, ...args);
@@ -158,7 +163,7 @@ function writeDebugLine(
 
   // Screen output only when LETTA_DEBUG is on
   if (isDebugEnabled()) {
-    printDebugLine(line);
+    printDebugLine(line, level);
   }
 }
 
@@ -187,5 +192,5 @@ export function debugWarn(
   message: string,
   ...args: unknown[]
 ): void {
-  writeDebugLine(prefix, `WARN: ${message}`, args);
+  writeDebugLine(prefix, `WARN: ${message}`, args, "warn");
 }
