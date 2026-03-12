@@ -74,17 +74,30 @@ export function handleTerminalSpawn(
       terminal: {
         cols: cols || 80,
         rows: rows || 24,
-        data(_terminal: unknown, data: Buffer | string) {
-          const str = typeof data === "string" ? data : data.toString();
-          console.log(
-            `[Terminal] PTY output (${str.length} chars): ${JSON.stringify(str.slice(0, 100))}`,
-          );
-          sendTerminalMessage(socket, {
-            type: "terminal_output",
-            terminal_id,
-            data: str,
-          });
-        },
+        data: (() => {
+          // Batch output chunks within a 16ms window into a single WS message
+          // to avoid flooding the WebSocket with many small frames.
+          let buffer = "";
+          let flushTimer: ReturnType<typeof setTimeout> | null = null;
+
+          return (_terminal: unknown, data: Buffer | string) => {
+            buffer += typeof data === "string" ? data : data.toString();
+
+            if (!flushTimer) {
+              flushTimer = setTimeout(() => {
+                if (buffer.length > 0) {
+                  sendTerminalMessage(socket, {
+                    type: "terminal_output",
+                    terminal_id,
+                    data: buffer,
+                  });
+                  buffer = "";
+                }
+                flushTimer = null;
+              }, 16);
+            }
+          };
+        })(),
       },
     });
 
@@ -166,12 +179,7 @@ export function handleTerminalInput(msg: {
 }): void {
   const session = terminals.get(msg.terminal_id);
   if (session) {
-    console.log(`[Terminal] Writing input to PTY: ${JSON.stringify(msg.data)}`);
     session.terminal.write(msg.data);
-  } else {
-    console.warn(
-      `[Terminal] No session found for terminal_id: ${msg.terminal_id}`,
-    );
   }
 }
 
