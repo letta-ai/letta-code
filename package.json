@@ -67,7 +67,7 @@
     "fix": "bunx --bun @biomejs/biome@2.2.5 check --write src",
     "typecheck": "tsc --noEmit",
     "check": "bun run scripts/check.js",
-    "dev": "bun --loader:.md=text --loader:.mdx=text --loader:.txt=text run src/index.ts",
+    "dev": "LETTA_DEBUG=1 bun --loader:.md=text --loader:.mdx=text --loader:.txt=text run src/index.ts",
     "build": "node scripts/postinstall-patches.js && bun run build.js",
     "test:update-chain:manual": "bun run src/tests/update-chain-smoke.ts --mode manual",
     "test:update-chain:startup": "bun run src/tests/update-chain-smoke.ts --mode startup",
