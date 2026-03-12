@@ -80,6 +80,13 @@ import type {
   TranscriptSupplementMessage,
 } from "../types/protocol";
 import { getListenerBlockedReason } from "./helpers/listenerQueueAdapter";
+import {
+  handleTerminalInput,
+  handleTerminalKill,
+  handleTerminalResize,
+  handleTerminalSpawn,
+  killAllTerminals,
+} from "./terminalHandler";
 
 interface StartListenerOptions {
   connectionId: string;
@@ -216,6 +223,33 @@ interface CancelRunMessage {
   run_id?: string | null;
 }
 
+interface TerminalSpawnMessage {
+  type: "terminal_spawn";
+  terminal_id: string;
+  cols: number;
+  rows: number;
+  agentId?: string | null;
+  conversationId?: string | null;
+}
+
+interface TerminalInputMessage {
+  type: "terminal_input";
+  terminal_id: string;
+  data: string;
+}
+
+interface TerminalResizeMessage {
+  type: "terminal_resize";
+  terminal_id: string;
+  cols: number;
+  rows: number;
+}
+
+interface TerminalKillMessage {
+  type: "terminal_kill";
+  terminal_id: string;
+}
+
 interface RecoverPendingApprovalsMessage {
   type: "recover_pending_approvals";
   agentId?: string;
@@ -300,7 +334,11 @@ type ServerMessage =
   | ListFoldersInDirectoryMessage
   | CancelRunMessage
   | RecoverPendingApprovalsMessage
-  | WsControlResponse;
+  | WsControlResponse
+  | TerminalSpawnMessage
+  | TerminalInputMessage
+  | TerminalResizeMessage
+  | TerminalKillMessage;
 type ClientMessage =
   | PingMessage
   | RunStartedMessage
@@ -955,6 +993,10 @@ export function parseServerMessage(
       parsed.type === "get_state" ||
       parsed.type === "change_cwd" ||
       parsed.type === "list_folders_in_directory" ||
+      parsed.type === "terminal_spawn" ||
+      parsed.type === "terminal_input" ||
+      parsed.type === "terminal_resize" ||
+      parsed.type === "terminal_kill" ||
       parsed.type === "cancel_run" ||
       parsed.type === "recover_pending_approvals"
     ) {
@@ -2696,6 +2738,35 @@ async function connectWithRetry(
       return;
     }
 
+    // Handle terminal (PTY) messages
+    if (parsed.type === "terminal_spawn") {
+      if (runtime !== activeRuntime || runtime.intentionallyClosed) {
+        return;
+      }
+      const cwd = getConversationWorkingDirectory(
+        runtime,
+        parsed.agentId,
+        parsed.conversationId,
+      );
+      handleTerminalSpawn(parsed, socket, cwd);
+      return;
+    }
+
+    if (parsed.type === "terminal_input") {
+      handleTerminalInput(parsed);
+      return;
+    }
+
+    if (parsed.type === "terminal_resize") {
+      handleTerminalResize(parsed);
+      return;
+    }
+
+    if (parsed.type === "terminal_kill") {
+      handleTerminalKill(parsed);
+      return;
+    }
+
     // Handle status request from cloud (immediate response)
     if (parsed.type === "get_status") {
       if (runtime !== activeRuntime || runtime.intentionallyClosed) {
@@ -2979,6 +3050,7 @@ async function connectWithRetry(
     }
 
     clearRuntimeTimers(runtime);
+    killAllTerminals();
     runtime.socket = null;
     rejectPendingApprovalResolvers(runtime, "WebSocket disconnected");
 
