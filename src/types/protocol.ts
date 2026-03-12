@@ -440,6 +440,7 @@ export type SdkToCliControlRequest =
   | { subtype: "interrupt" }
   | RegisterExternalToolsRequest
   | BootstrapSessionStateRequest
+  | RecoverPendingApprovalsControlRequest
   | ListMessagesControlRequest;
 
 /**
@@ -506,6 +507,20 @@ export interface ListMessagesControlRequest {
   order?: "asc" | "desc";
   /** Max messages to return. Defaults to 50. */
   limit?: number;
+}
+
+/**
+ * Request to recover pending approvals in the current session context (SDK → CLI).
+ *
+ * Optional agent/conversation IDs let callers target a specific thread when
+ * the transport has enough context to do so.
+ */
+export interface RecoverPendingApprovalsControlRequest {
+  subtype: "recover_pending_approvals";
+  /** Optional explicit agent ID. Defaults to session agent. */
+  agent_id?: string;
+  /** Optional explicit conversation ID. Defaults to session conversation. */
+  conversation_id?: string;
 }
 
 /**

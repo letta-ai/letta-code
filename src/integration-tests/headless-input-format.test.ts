@@ -394,6 +394,28 @@ describe("input-format stream-json", () => {
   );
 
   test(
+    "recover_pending_approvals control request is acknowledged",
+    async () => {
+      const objects = (await runBidirectional([
+        JSON.stringify({
+          type: "control_request",
+          request_id: "recover_1",
+          request: { subtype: "recover_pending_approvals" },
+        }),
+      ])) as WireMessage[];
+
+      const controlResponse = objects.find(
+        (o): o is ControlResponse =>
+          o.type === "control_response" &&
+          o.response?.request_id === "recover_1",
+      );
+      expect(controlResponse).toBeDefined();
+      expect(controlResponse?.response.subtype).toBe("success");
+    },
+    { timeout: 200000 },
+  );
+
+  test(
     "--include-partial-messages emits stream_event in bidirectional mode",
     async () => {
       const objects = (await runBidirectional(
