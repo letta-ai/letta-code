@@ -25,7 +25,7 @@ Your prompt includes pre-gathered context:
 Read these files **in parallel** in a single turn (skip any that don't exist):
 - `CLAUDE.md` or `AGENTS.md`
 - `package.json`, `pyproject.toml`, `Cargo.toml`, or `go.mod` (whichever exists)
-- `README.md` (first 100 lines)
+- `README.md`
 
 ### 2. Create directory structure (1 bash call)
 
