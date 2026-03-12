@@ -37,10 +37,7 @@ function getDebugFile(): string | null {
 }
 
 /** Print to screen (or LETTA_DEBUG_FILE). Only called when LETTA_DEBUG=1. */
-function printDebugLine(
-  line: string,
-  level: "log" | "warn" = "log",
-): void {
+function printDebugLine(line: string, level: "log" | "warn" = "log"): void {
   const debugFile = getDebugFile();
   if (debugFile) {
     try {
