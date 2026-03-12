@@ -14,7 +14,7 @@ describe("model preset refresh wiring", () => {
     expect(source).toContain("getModelInfoForLlmConfig(modelHandle");
   });
 
-  test("modify.ts keeps direct updateArgs-driven model update flow", () => {
+  test("modify.ts supports preserving context window during resume refresh", () => {
     const path = fileURLToPath(
       new URL("../../agent/modify.ts", import.meta.url),
     );
@@ -32,7 +32,14 @@ describe("model preset refresh wiring", () => {
     expect(updateSegment).toContain(
       "buildModelSettings(modelHandle, updateArgs)",
     );
+    expect(source).toContain("export interface UpdateAgentLLMConfigOptions");
+    expect(updateSegment).toContain("options?: UpdateAgentLLMConfigOptions");
+    expect(updateSegment).toContain("shouldPreserveContextWindow");
     expect(updateSegment).toContain("getModelContextWindow(modelHandle)");
+    expect(updateSegment).toContain("options?.preserveContextWindow === true");
+    expect(updateSegment).not.toContain(
+      "(updateArgs?.context_window as number | undefined) ??\n    (await getModelContextWindow(modelHandle));",
+    );
     expect(updateSegment).not.toContain(
       "const currentAgent = await client.agents.retrieve(",
     );
@@ -175,6 +182,9 @@ describe("model preset refresh wiring", () => {
     expect(source).toContain("needsUpdate");
     expect(source).toContain("await updateAgentLLMConfig(");
     expect(source).toContain("presetRefresh.modelHandle");
+    expect(source).toMatch(
+      /resumeRefreshUpdateArgs,\s*\{\s*preserveContextWindow:\s*true\s*\},/,
+    );
     expect(source).not.toContain(
       "await updateAgentLLMConfig(\n                agent.id,\n                presetRefresh.modelHandle,\n                presetRefresh.updateArgs,",
     );
@@ -194,6 +204,9 @@ describe("model preset refresh wiring", () => {
     expect(source).toContain("needsUpdate");
     expect(source).toContain("await updateAgentLLMConfig(");
     expect(source).toContain("presetRefresh.modelHandle");
+    expect(source).toMatch(
+      /resumeRefreshUpdateArgs,\s*\{\s*preserveContextWindow:\s*true\s*\},/,
+    );
     expect(source).not.toContain(
       "await updateAgentLLMConfig(\n          agent.id,\n          presetRefresh.modelHandle,\n          presetRefresh.updateArgs,",
     );

@@ -1,5 +1,4 @@
 import { relative } from "node:path";
-import * as Diff from "diff";
 import { Box } from "ink";
 import { useMemo } from "react";
 import {
@@ -10,6 +9,11 @@ import {
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
 import { EditRenderer, MultiEditRenderer, WriteRenderer } from "./DiffRenderer";
+import {
+  highlightCode,
+  languageFromPath,
+  type StyledSpan,
+} from "./SyntaxHighlightedCommand";
 import { Text } from "./Text";
 
 type EditItem = {
@@ -54,38 +58,67 @@ function padLeft(n: number, width: number): string {
   return s.length >= width ? s : " ".repeat(width - s.length) + s;
 }
 
-// Calculate word-level similarity between two strings (0-1)
-// Used to decide whether to show word-level highlighting
-function wordSimilarity(a: string, b: string): number {
-  const wordsA = new Set(a.toLowerCase().split(/\s+/).filter(Boolean));
-  const wordsB = new Set(b.toLowerCase().split(/\s+/).filter(Boolean));
-  if (wordsA.size === 0 && wordsB.size === 0) return 1;
-  if (wordsA.size === 0 || wordsB.size === 0) return 0;
-  const intersection = [...wordsA].filter((w) => wordsB.has(w)).length;
-  const union = new Set([...wordsA, ...wordsB]).size;
-  return intersection / union; // Jaccard similarity
+// A styled text chunk with optional color/dim for row-splitting.
+type StyledChunk = { text: string; color?: string; dimColor?: boolean };
+
+// Split styled chunks into rows of exactly `cols` characters, padding the last row.
+// Continuation rows start with a blank indent of `contIndent` characters
+// (matching Codex's empty-gutter + 2-space continuation, diff_render.rs:922-929).
+function buildPaddedRows(
+  chunks: StyledChunk[],
+  cols: number,
+  contIndent: number,
+): StyledChunk[][] {
+  if (cols <= 0) return [chunks];
+  const rows: StyledChunk[][] = [];
+  let row: StyledChunk[] = [];
+  let len = 0;
+  for (const chunk of chunks) {
+    let rem = chunk.text;
+    while (rem.length > 0) {
+      const space = cols - len;
+      if (rem.length <= space) {
+        row.push({ text: rem, color: chunk.color, dimColor: chunk.dimColor });
+        len += rem.length;
+        rem = "";
+      } else {
+        row.push({
+          text: rem.slice(0, space),
+          color: chunk.color,
+          dimColor: chunk.dimColor,
+        });
+        rows.push(row);
+        // Start continuation row with blank gutter indent
+        row = [{ text: " ".repeat(contIndent) }];
+        len = contIndent;
+        rem = rem.slice(space);
+      }
+    }
+  }
+  if (len < cols) row.push({ text: " ".repeat(cols - len) });
+  if (row.length > 0) rows.push(row);
+  return rows;
 }
 
-// Threshold: only show word-level highlighting if lines share enough words
-const WORD_SIMILARITY_THRESHOLD = 0.3;
-
-// Render a single line with gutters and optional word-diff highlighting
+// Render a single diff line split into full-width rows.
+// Each visual row gets its own <Text> with backgroundColor so there are no gaps.
+// See ~/dev/codex/codex-rs/tui/src/diff_render.rs lines 836-936.
 function Line({
   kind,
   displayNo,
   text,
-  pairText,
+  syntaxSpans,
   gutterWidth,
   columns,
-  enableWord,
+  indent,
 }: {
   kind: "context" | "remove" | "add";
   displayNo: number;
   text: string;
-  pairText?: string; // when '-' followed by '+' to highlight words
+  syntaxSpans?: StyledSpan[];
   gutterWidth: number;
   columns: number;
-  enableWord: boolean;
+  indent: string;
 }) {
   const symbol = kind === "add" ? "+" : kind === "remove" ? "-" : " ";
   const symbolColor =
@@ -100,116 +133,40 @@ function Line({
       : kind === "remove"
         ? colors.diff.removedLineBg
         : colors.diff.contextLineBg;
-  const bgWord =
-    kind === "add"
-      ? colors.diff.addedWordBg
-      : kind === "remove"
-        ? colors.diff.removedWordBg
-        : undefined;
 
-  // Word-level diff only for '-' or '+' when pairText is present AND lines are similar enough
-  // If lines are too different, word-level highlighting becomes noise - show full-line colors instead
-  const similarity =
-    enableWord && pairText ? wordSimilarity(text, pairText) : 0;
-  const charParts: Array<{
-    value: string;
-    added?: boolean;
-    removed?: boolean;
-  }> | null =
-    enableWord &&
-    pairText &&
-    (kind === "add" || kind === "remove") &&
-    pairText !== text &&
-    similarity >= WORD_SIMILARITY_THRESHOLD
-      ? kind === "add"
-        ? Diff.diffWordsWithSpace(pairText, text)
-        : Diff.diffWordsWithSpace(text, pairText)
-      : null;
+  // Build styled chunks: indent + gutter + sign + content
+  const gutterStr = `${padLeft(displayNo, gutterWidth)} `;
+  const chunks: StyledChunk[] = [];
+  if (indent) chunks.push({ text: indent });
+  chunks.push({ text: gutterStr, dimColor: kind === "context" });
+  chunks.push({ text: symbol, color: symbolColor });
+  chunks.push({ text: " " });
+  if (syntaxSpans && syntaxSpans.length > 0) {
+    for (const span of syntaxSpans) {
+      chunks.push({ text: span.text, color: span.color });
+    }
+  } else {
+    chunks.push({ text });
+  }
 
-  // Build prefix: "  1 + " (line number + symbol)
-  const linePrefix = `${padLeft(displayNo, gutterWidth)} ${symbol} `;
-  const prefixWidth = linePrefix.length;
-  const contentWidth = Math.max(0, columns - prefixWidth);
+  // Continuation indent = indent + gutter + sign + space (blank, same width)
+  const contIndent = indent.length + gutterStr.length + 1 + 1;
+  const rows = buildPaddedRows(chunks, columns, contIndent);
 
   return (
-    <Box flexDirection="row">
-      <Box width={prefixWidth} flexShrink={0}>
-        <Text dimColor={kind === "context"}>
-          {padLeft(displayNo, gutterWidth)}{" "}
-          <Text color={symbolColor}>{symbol}</Text>{" "}
+    <>
+      {rows.map((row, ri) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: rows are static, never reorder
+        <Text key={ri} backgroundColor={bgLine} dimColor={kind === "remove"}>
+          {row.map((c, ci) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: chunks are static
+            <Text key={ci} color={c.color} dimColor={c.dimColor}>
+              {c.text}
+            </Text>
+          ))}
         </Text>
-      </Box>
-      <Box flexGrow={1} width={contentWidth}>
-        {charParts ? (
-          <Text wrap="wrap" backgroundColor={bgLine}>
-            {charParts.map((p, i) => {
-              // For '-' lines: render removed + unchanged; drop added
-              if (kind === "remove") {
-                if (p.removed)
-                  return (
-                    <Text
-                      key={`${kind}-${i}-${p.value.substring(0, 10)}`}
-                      backgroundColor={bgWord}
-                      color={colors.diff.textOnHighlight}
-                    >
-                      {p.value}
-                    </Text>
-                  );
-                if (!p.added && !p.removed)
-                  return (
-                    <Text
-                      key={`${kind}-${i}-${p.value.substring(0, 10)}`}
-                      backgroundColor={bgLine}
-                      color={colors.diff.textOnDark}
-                    >
-                      {p.value}
-                    </Text>
-                  );
-                return null; // skip added segments on '-'
-              }
-              // For '+' lines: render added + unchanged; drop removed
-              if (kind === "add") {
-                if (p.added)
-                  return (
-                    <Text
-                      key={`${kind}-${i}-${p.value.substring(0, 10)}`}
-                      backgroundColor={bgWord}
-                      color={colors.diff.textOnHighlight}
-                    >
-                      {p.value}
-                    </Text>
-                  );
-                if (!p.added && !p.removed)
-                  return (
-                    <Text
-                      key={`${kind}-${i}-${p.value.substring(0, 10)}`}
-                      backgroundColor={bgLine}
-                      color={colors.diff.textOnDark}
-                    >
-                      {p.value}
-                    </Text>
-                  );
-                return null; // skip removed segments on '+'
-              }
-              // Context (should not occur with charParts), fall back to full line
-              return (
-                <Text key={`context-${i}-${p.value.substring(0, 10)}`}>
-                  {p.value}
-                </Text>
-              );
-            })}
-          </Text>
-        ) : (
-          <Text
-            wrap="wrap"
-            backgroundColor={bgLine}
-            color={kind === "context" ? undefined : colors.diff.textOnDark}
-          >
-            {text}
-          </Text>
-        )}
-      </Box>
-    </Box>
+      ))}
+    </>
   );
 }
 
@@ -295,57 +252,62 @@ export function AdvancedDiffRenderer(
   }
 
   const { hunks } = result;
-  const relative = formatRelativePath((props as { filePath: string }).filePath);
-  const enableWord = props.kind !== "multi_edit";
+  const filePath = (props as { filePath: string }).filePath;
+  const relative = formatRelativePath(filePath);
 
-  // Prepare display rows with shared-line-number behavior like the snippet.
+  // Syntax-highlight all hunk content at once per hunk (preserves parser state
+  // across consecutive lines, like Codex's hunk-level highlighting approach).
+  const lang = languageFromPath(filePath);
+  const hunkSyntaxLines: (StyledSpan[] | undefined)[][] = [];
+  for (const h of hunks) {
+    // Concatenate all displayable lines in the hunk for a single highlight pass.
+    const textLines: string[] = [];
+    for (const line of h.lines) {
+      if (!line) continue;
+      const raw = line.raw || "";
+      if (raw.charAt(0) === "\\") continue; // skip meta
+      textLines.push(raw.slice(1));
+    }
+    const block = textLines.join("\n");
+    const highlighted = lang ? highlightCode(block, lang) : undefined;
+    // Map highlighted per-line spans back; undefined when highlighting failed.
+    hunkSyntaxLines.push(textLines.map((_, i) => highlighted?.[i]));
+  }
+
+  // Prepare display rows with shared-line-number behavior.
   type Row = {
     kind: "context" | "remove" | "add";
     displayNo: number;
     text: string;
-    pairText?: string;
+    syntaxSpans?: StyledSpan[];
   };
   const rows: Row[] = [];
-  for (const h of hunks) {
+  for (let hIdx = 0; hIdx < hunks.length; hIdx++) {
+    const h = hunks[hIdx]!;
+    const syntaxForHunk = hunkSyntaxLines[hIdx] ?? [];
     let oldNo = h.oldStart;
     let newNo = h.newStart;
     let lastRemovalNo: number | null = null;
+    let displayLineIdx = 0; // index into syntaxForHunk
     for (let i = 0; i < h.lines.length; i++) {
       const line = h.lines[i];
       if (!line) continue;
       const raw = line.raw || "";
       const ch = raw.charAt(0);
       const body = raw.slice(1);
-      // Skip meta lines (e.g., "\ No newline at end of file"): do not display, do not advance counters,
-      // and do not clear pairing state.
+      // Skip meta lines (e.g., "\ No newline at end of file")
       if (ch === "\\") continue;
 
-      // Helper to find next non-meta '+' index
-      const findNextPlus = (start: number): string | undefined => {
-        for (let j = start + 1; j < h.lines.length; j++) {
-          const nextLine = h.lines[j];
-          if (!nextLine) continue;
-          const r = nextLine.raw || "";
-          if (r.charAt(0) === "\\") continue; // skip meta
-          if (r.startsWith("+")) return r.slice(1);
-          break; // stop at first non-meta non-plus
-        }
-        return undefined;
-      };
-      // Helper to find previous non-meta '-' index
-      const findPrevMinus = (start: number): string | undefined => {
-        for (let k = start - 1; k >= 0; k--) {
-          const prevLine = h.lines[k];
-          if (!prevLine) continue;
-          const r = prevLine.raw || "";
-          if (r.charAt(0) === "\\") continue; // skip meta
-          if (r.startsWith("-")) return r.slice(1);
-          break; // stop at first non-meta non-minus
-        }
-        return undefined;
-      };
+      const spans = syntaxForHunk[displayLineIdx];
+      displayLineIdx++;
+
       if (ch === " ") {
-        rows.push({ kind: "context", displayNo: oldNo, text: body });
+        rows.push({
+          kind: "context",
+          displayNo: oldNo,
+          text: body,
+          syntaxSpans: spans,
+        });
         oldNo++;
         newNo++;
         lastRemovalNo = null;
@@ -354,25 +316,22 @@ export function AdvancedDiffRenderer(
           kind: "remove",
           displayNo: oldNo,
           text: body,
-          pairText: findNextPlus(i),
+          syntaxSpans: spans,
         });
         lastRemovalNo = oldNo;
         oldNo++;
       } else if (ch === "+") {
-        // For insertions (no preceding '-'), use newNo for display number.
-        // For single-line replacements, share the old number from the '-' line.
         const displayNo = lastRemovalNo !== null ? lastRemovalNo : newNo;
-        rows.push({
-          kind: "add",
-          displayNo,
-          text: body,
-          pairText: findPrevMinus(i),
-        });
+        rows.push({ kind: "add", displayNo, text: body, syntaxSpans: spans });
         newNo++;
         lastRemovalNo = null;
       } else {
-        // Unknown marker, treat as context
-        rows.push({ kind: "context", displayNo: oldNo, text: raw });
+        rows.push({
+          kind: "context",
+          displayNo: oldNo,
+          text: raw,
+          syntaxSpans: spans,
+        });
         oldNo++;
         newNo++;
         lastRemovalNo = null;
@@ -452,38 +411,18 @@ export function AdvancedDiffRenderer(
           </Box>
         </>
       ) : null}
-      {rows.map((r, idx) =>
-        showHeader ? (
-          <Box
-            key={`row-${idx}-${r.kind}-${r.displayNo || idx}`}
-            flexDirection="row"
-          >
-            <Box width={toolResultGutter} flexShrink={0}>
-              <Text>{"    "}</Text>
-            </Box>
-            <Line
-              kind={r.kind}
-              displayNo={r.displayNo}
-              text={r.text}
-              pairText={r.pairText}
-              gutterWidth={gutterWidth}
-              columns={columns - toolResultGutter}
-              enableWord={enableWord}
-            />
-          </Box>
-        ) : (
-          <Line
-            key={`row-${idx}-${r.kind}-${r.displayNo || idx}`}
-            kind={r.kind}
-            displayNo={r.displayNo}
-            text={r.text}
-            pairText={r.pairText}
-            gutterWidth={gutterWidth}
-            columns={columns}
-            enableWord={enableWord}
-          />
-        ),
-      )}
+      {rows.map((r, idx) => (
+        <Line
+          key={`row-${idx}-${r.kind}-${r.displayNo || idx}`}
+          kind={r.kind}
+          displayNo={r.displayNo}
+          text={r.text}
+          syntaxSpans={r.syntaxSpans}
+          gutterWidth={gutterWidth}
+          columns={columns}
+          indent={showHeader ? " ".repeat(toolResultGutter) : ""}
+        />
+      ))}
     </Box>
   );
 }

@@ -4,6 +4,7 @@ import { useProgressIndicator } from "../hooks/useProgressIndicator";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { useTextInputCursor } from "../hooks/useTextInputCursor";
 import { colors } from "./colors";
+import { SyntaxHighlightedCommand } from "./SyntaxHighlightedCommand";
 import { Text } from "./Text";
 
 type BashInfo = {
@@ -151,9 +152,11 @@ export const InlineBashApproval = memo(
 
           {/* Command preview */}
           <Box paddingLeft={2} flexDirection="column">
-            <Text>{bashInfo.command}</Text>
+            <SyntaxHighlightedCommand command={bashInfo.command} />
             {bashInfo.description && (
-              <Text dimColor>{bashInfo.description}</Text>
+              <Box marginTop={1}>
+                <Text dimColor>{bashInfo.description}</Text>
+              </Box>
             )}
           </Box>
         </>

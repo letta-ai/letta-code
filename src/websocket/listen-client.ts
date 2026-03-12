@@ -3,7 +3,7 @@
  * Connects to Letta Cloud and receives messages to execute locally
  */
 
-import { realpath, stat } from "node:fs/promises";
+import { readdir, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { APIError } from "@letta-ai/letta-client/core/error";
 import type { Stream } from "@letta-ai/letta-client/core/streaming";
@@ -186,6 +186,24 @@ interface ChangeCwdMessage {
   cwd: string;
 }
 
+interface ListFoldersInDirectoryMessage {
+  type: "list_folders_in_directory";
+  path: string;
+  agentId?: string | null;
+  conversationId?: string | null;
+}
+
+interface ListFoldersInDirectoryResponseMessage {
+  type: "list_folders_in_directory_response";
+  path: string;
+  folders: string[];
+  hasMore: boolean;
+  success: boolean;
+  error?: string;
+  event_seq?: number;
+  session_id?: string;
+}
+
 interface CancelRunMessage {
   type: "cancel_run";
   request_id?: string;
@@ -277,6 +295,7 @@ type ServerMessage =
   | GetStatusMessage
   | GetStateMessage
   | ChangeCwdMessage
+  | ListFoldersInDirectoryMessage
   | CancelRunMessage
   | RecoverPendingApprovalsMessage
   | WsControlResponse;
@@ -286,6 +305,7 @@ type ClientMessage =
   | RunRequestErrorMessage
   | ModeChangedMessage
   | CwdChangedMessage
+  | ListFoldersInDirectoryResponseMessage
   | StatusResponseMessage
   | StateResponseMessage;
 
@@ -826,6 +846,65 @@ async function handleCwdChange(
   }
 }
 
+const MAX_LIST_FOLDERS = 100;
+
+async function handleListFoldersInDirectory(
+  msg: ListFoldersInDirectoryMessage,
+  socket: WebSocket,
+  runtime: ListenerRuntime,
+): Promise<void> {
+  try {
+    const requestedPath = msg.path?.trim();
+    if (!requestedPath) {
+      throw new Error("Path cannot be empty");
+    }
+
+    const resolvedPath = path.isAbsolute(requestedPath)
+      ? requestedPath
+      : path.resolve(process.cwd(), requestedPath);
+    const normalizedPath = await realpath(resolvedPath);
+    const stats = await stat(normalizedPath);
+    if (!stats.isDirectory()) {
+      throw new Error(`Not a directory: ${normalizedPath}`);
+    }
+
+    const entries = await readdir(normalizedPath, { withFileTypes: true });
+    const allFolders = entries
+      .filter((e) => e.isDirectory() && !e.name.startsWith("."))
+      .map((e) => e.name)
+      .sort();
+
+    const folders = allFolders.slice(0, MAX_LIST_FOLDERS);
+    const hasMore = allFolders.length > MAX_LIST_FOLDERS;
+
+    sendClientMessage(
+      socket,
+      {
+        type: "list_folders_in_directory_response",
+        path: normalizedPath,
+        folders,
+        hasMore,
+        success: true,
+      },
+      runtime,
+    );
+  } catch (error) {
+    sendClientMessage(
+      socket,
+      {
+        type: "list_folders_in_directory_response",
+        path: msg.path,
+        folders: [],
+        hasMore: false,
+        success: false,
+        error:
+          error instanceof Error ? error.message : "Failed to list folders",
+      },
+      runtime,
+    );
+  }
+}
+
 const MAX_RETRY_DURATION_MS = 5 * 60 * 1000; // 5 minutes
 const INITIAL_RETRY_DELAY_MS = 1000; // 1 second
 const MAX_RETRY_DELAY_MS = 30000; // 30 seconds
@@ -1059,6 +1138,7 @@ export function parseServerMessage(
       parsed.type === "get_status" ||
       parsed.type === "get_state" ||
       parsed.type === "change_cwd" ||
+      parsed.type === "list_folders_in_directory" ||
       parsed.type === "cancel_run" ||
       parsed.type === "recover_pending_approvals"
     ) {
@@ -2854,6 +2934,15 @@ async function connectWithRetry(
         return;
       }
       void handleCwdChange(parsed, socket, runtime);
+      return;
+    }
+
+    if (parsed.type === "list_folders_in_directory") {
+      if (listener !== activeRuntime || listener.intentionallyClosed) {
+        return;
+      }
+
+      void handleListFoldersInDirectory(parsed, socket, listener);
       return;
     }
 

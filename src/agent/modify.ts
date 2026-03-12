@@ -30,10 +30,11 @@ function buildModelSettings(
   const isOpenAI =
     modelHandle.startsWith("openai/") ||
     modelHandle.startsWith(`${OPENAI_CODEX_PROVIDER_NAME}/`);
-  // Include legacy custom Anthropic OAuth provider (claude-pro-max)
+  // Include legacy custom Anthropic OAuth provider (claude-pro-max) and minimax
   const isAnthropic =
     modelHandle.startsWith("anthropic/") ||
-    modelHandle.startsWith("claude-pro-max/");
+    modelHandle.startsWith("claude-pro-max/") ||
+    modelHandle.startsWith("minimax/");
   const isZai = modelHandle.startsWith("zai/");
   const isGoogleAI = modelHandle.startsWith("google_ai/");
   const isGoogleVertex = modelHandle.startsWith("google_vertex/");
@@ -64,6 +65,9 @@ function buildModelSettings(
       // client type may lag this field, so set it via a narrow record cast.
       (openaiSettings as Record<string, unknown>).verbosity = verbosity;
     }
+    if (typeof updateArgs?.strict === "boolean") {
+      openaiSettings.strict = updateArgs.strict;
+    }
     settings = openaiSettings;
   } else if (isAnthropic) {
     const anthropicSettings: AnthropicModelSettings = {
@@ -89,6 +93,9 @@ function buildModelSettings(
           budget_tokens: updateArgs.max_reasoning_tokens,
         }),
       };
+    }
+    if (typeof updateArgs?.strict === "boolean") {
+      (anthropicSettings as Record<string, unknown>).strict = updateArgs.strict;
     }
     settings = anthropicSettings;
   } else if (isZai) {
@@ -155,8 +162,19 @@ function buildModelSettings(
     }
     settings = bedrockSettings;
   } else {
-    // For BYOK/unknown providers, return generic settings with parallel_tool_calls
-    settings = {};
+    // Unknown/BYOK providers (e.g. openai-proxy) — assume OpenAI-compatible
+    const openaiProxySettings: OpenAIModelSettings = {
+      provider_type: "openai",
+      parallel_tool_calls:
+        typeof updateArgs?.parallel_tool_calls === "boolean"
+          ? updateArgs.parallel_tool_calls
+          : true,
+    };
+    if (typeof updateArgs?.strict === "boolean") {
+      (openaiProxySettings as Record<string, unknown>).strict =
+        updateArgs.strict;
+    }
+    settings = openaiProxySettings;
   }
 
   // Apply max_output_tokens only when provider_type is present and the value
@@ -182,31 +200,36 @@ function buildModelSettings(
  * @param agentId - The agent ID
  * @param modelHandle - The model handle (e.g., "anthropic/claude-sonnet-4-5-20250929")
  * @param updateArgs - Additional config args (context_window, reasoning_effort, enable_reasoner, etc.)
- * @param preserveParallelToolCalls - If true, preserves the parallel_tool_calls setting when updating the model
+ * @param options - Optional update behavior overrides
  * @returns The updated agent state from the server (includes llm_config and model_settings)
  */
+export interface UpdateAgentLLMConfigOptions {
+  preserveContextWindow?: boolean;
+}
+
 export async function updateAgentLLMConfig(
   agentId: string,
   modelHandle: string,
   updateArgs?: Record<string, unknown>,
+  options?: UpdateAgentLLMConfigOptions,
 ): Promise<AgentState> {
   const client = await getClient();
 
   const modelSettings = buildModelSettings(modelHandle, updateArgs);
-  // First try updateArgs, then fall back to API-cached context window for BYOK models
+  const explicitContextWindow = updateArgs?.context_window as
+    | number
+    | undefined;
+  const shouldPreserveContextWindow = options?.preserveContextWindow === true;
+  // Resume refresh updates should not implicitly reset context window.
   const contextWindow =
-    (updateArgs?.context_window as number | undefined) ??
-    (await getModelContextWindow(modelHandle));
+    explicitContextWindow ??
+    (!shouldPreserveContextWindow
+      ? await getModelContextWindow(modelHandle)
+      : undefined);
   const hasModelSettings = Object.keys(modelSettings).length > 0;
-
-  // MiniMax doesn't have a dedicated ModelSettings class, so model_settings
-  // won't carry parallel_tool_calls. Pass it directly to prevent
-  // get_llm_config_from_handle from defaulting it to false.
-  const isMinimax = modelHandle.startsWith("minimax/");
 
   await client.agents.update(agentId, {
     model: modelHandle,
-    ...(isMinimax && { parallel_tool_calls: true }),
     ...(hasModelSettings && { model_settings: modelSettings }),
     ...(contextWindow && { context_window_limit: contextWindow }),
     ...((typeof updateArgs?.max_output_tokens === "number" ||
@@ -249,16 +272,14 @@ export async function updateConversationLLMConfig(
 
 export interface RecompileAgentSystemPromptOptions {
   dryRun?: boolean;
-  updateTimestamp?: boolean;
 }
 
-interface AgentSystemPromptRecompileClient {
-  agents: {
+interface ConversationSystemPromptRecompileClient {
+  conversations: {
     recompile: (
-      agentId: string,
+      conversationId: string,
       params: {
         dry_run?: boolean;
-        update_timestamp?: boolean;
       },
     ) => Promise<string>;
   };
@@ -268,22 +289,21 @@ interface AgentSystemPromptRecompileClient {
  * Recompile an agent's system prompt after memory writes so server-side prompt
  * state picks up the latest memory content.
  *
- * @param agentId - The agent ID to recompile
- * @param options - Optional dry-run/timestamp controls
+ * @param conversationId - The conversation whose prompt should be recompiled
+ * @param options - Optional dry-run control
  * @param clientOverride - Optional injected client for tests
  * @returns The compiled system prompt returned by the API
  */
 export async function recompileAgentSystemPrompt(
-  agentId: string,
+  conversationId: string,
   options: RecompileAgentSystemPromptOptions = {},
-  clientOverride?: AgentSystemPromptRecompileClient,
+  clientOverride?: ConversationSystemPromptRecompileClient,
 ): Promise<string> {
   const client = (clientOverride ??
-    (await getClient())) as AgentSystemPromptRecompileClient;
+    (await getClient())) as ConversationSystemPromptRecompileClient;
 
-  return client.agents.recompile(agentId, {
+  return client.conversations.recompile(conversationId, {
     dry_run: options.dryRun,
-    update_timestamp: options.updateTimestamp,
   });
 }
 

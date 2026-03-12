@@ -224,11 +224,9 @@ import {
 import { formatCompact } from "./helpers/format";
 import { parsePatchOperations } from "./helpers/formatArgsDisplay";
 import {
-  buildLegacyInitMessage,
-  buildMemoryInitRuntimePrompt,
+  buildInitMessage,
   fireAutoInit,
   gatherGitContext,
-  hasActiveInitSubagent,
 } from "./helpers/initCommand";
 import {
   getReflectionSettings,
@@ -1067,25 +1065,39 @@ export default function App({
     permissionMode.getMode(),
   );
   const uiPermissionModeRef = useRef<PermissionMode>(uiPermissionMode);
-  const setUiPermissionMode = useCallback((mode: PermissionMode) => {
-    uiPermissionModeRef.current = mode;
-    _setUiPermissionMode(mode);
 
-    // Keep the permissionMode singleton in sync *immediately*.
-    //
-    // We also have a useEffect sync (below) as a safety net, but relying on it
-    // introduces a render/effect window where the UI can show YOLO while the
-    // singleton still reports an older mode. That window is enough to break
-    // plan-mode restoration (plan remembers the singleton's mode-at-entry).
-    if (permissionMode.getMode() !== mode) {
-      // If entering plan mode via UI state, ensure a plan file path is set.
-      if (mode === "plan" && !permissionMode.getPlanFilePath()) {
-        const planPath = generatePlanFilePath();
-        permissionMode.setPlanFilePath(planPath);
-      }
-      permissionMode.setMode(mode);
+  // Store the last plan file path for post-approval rendering
+  // (needed because plan mode is exited before rendering the result)
+  const lastPlanFilePathRef = useRef<string | null>(null);
+  const cacheLastPlanFilePath = useCallback((planFilePath: string | null) => {
+    if (planFilePath) {
+      lastPlanFilePathRef.current = planFilePath;
     }
   }, []);
+
+  const setUiPermissionMode = useCallback(
+    (mode: PermissionMode) => {
+      uiPermissionModeRef.current = mode;
+      _setUiPermissionMode(mode);
+
+      // Keep the permissionMode singleton in sync *immediately*.
+      //
+      // We also have a useEffect sync (below) as a safety net, but relying on it
+      // introduces a render/effect window where the UI can show YOLO while the
+      // singleton still reports an older mode. That window is enough to break
+      // plan-mode restoration (plan remembers the singleton's mode-at-entry).
+      if (permissionMode.getMode() !== mode) {
+        // If entering plan mode via UI state, ensure a plan file path is set.
+        if (mode === "plan" && !permissionMode.getPlanFilePath()) {
+          const planPath = generatePlanFilePath();
+          permissionMode.setPlanFilePath(planPath);
+          cacheLastPlanFilePath(planPath);
+        }
+        permissionMode.setMode(mode);
+      }
+    },
+    [cacheLastPlanFilePath],
+  );
 
   const statusLineTriggerVersionRef = useRef(0);
   const [statusLineTriggerVersion, setStatusLineTriggerVersion] = useState(0);
@@ -1697,25 +1709,12 @@ export default function App({
   const [showExitStats, setShowExitStats] = useState(false);
 
   const sharedReminderStateRef = useRef(createSharedReminderState());
-  // Per-agent init progression — survives agent/conversation switches unlike SharedReminderState.
-  const initProgressByAgentRef = useRef(
-    new Map<string, { shallowCompleted: boolean; deepFired: boolean }>(),
-  );
-  const systemPromptRecompileByAgentRef = useRef(
+  const systemPromptRecompileByConversationRef = useRef(
     new Map<string, Promise<void>>(),
   );
-  const queuedSystemPromptRecompileByAgentRef = useRef(new Set<string>());
-  const updateInitProgress = (
-    forAgentId: string,
-    update: Partial<{ shallowCompleted: boolean; deepFired: boolean }>,
-  ) => {
-    const progress = initProgressByAgentRef.current.get(forAgentId) ?? {
-      shallowCompleted: false,
-      deepFired: false,
-    };
-    Object.assign(progress, update);
-    initProgressByAgentRef.current.set(forAgentId, progress);
-  };
+  const queuedSystemPromptRecompileByConversationRef = useRef(
+    new Set<string>(),
+  );
 
   // Track if we've set the conversation summary for this new conversation
   // Initialized to true for resumed conversations (they already have context)
@@ -2528,10 +2527,6 @@ export default function App({
   const precomputedDiffsRef = useRef<Map<string, AdvancedDiffSuccess>>(
     new Map(),
   );
-
-  // Store the last plan file path for post-approval rendering
-  // (needed because plan mode is exited before rendering the result)
-  const lastPlanFilePathRef = useRef<string | null>(null);
 
   // Track which approval tool call IDs have had their previews eagerly committed
   // This prevents double-committing when the approval changes
@@ -9232,6 +9227,7 @@ export default function App({
           // Generate plan file path and enter plan mode
           const planPath = generatePlanFilePath();
           permissionMode.setPlanFilePath(planPath);
+          cacheLastPlanFilePath(planPath);
           permissionMode.setMode("plan");
           setUiPermissionMode("plan");
 
@@ -9248,7 +9244,6 @@ export default function App({
         if (trimmed === "/init") {
           const cmd = commandRunner.start(msg, "Gathering project context...");
 
-          // Check for pending approvals before either path
           const approvalCheck = await checkPendingApprovalsForSlashCommand();
           if (approvalCheck.blocked) {
             cmd.fail(
@@ -9257,110 +9252,38 @@ export default function App({
             return { submitted: false };
           }
 
-          const gitContext = gatherGitContext();
+          // Interactive init: the primary agent conducts the flow,
+          // asks the user questions, and runs the initializing-memory skill.
+          autoInitPendingAgentIdsRef.current.delete(agentId);
+          setCommandRunning(true);
+          try {
+            cmd.finish(
+              "Building your memory palace... Start a new conversation with `letta --new` to work in parallel.",
+              true,
+            );
 
-          if (settingsManager.isMemfsEnabled(agentId)) {
-            // MemFS path: background subagent
-            if (hasActiveInitSubagent()) {
-              cmd.fail(
-                "Memory initialization is already running in the background.",
-              );
-              return { submitted: true };
-            }
+            const gitContext = gatherGitContext();
+            const memoryDir = settingsManager.isMemfsEnabled(agentId)
+              ? getMemoryFilesystemRoot(agentId)
+              : undefined;
 
-            try {
-              const initPrompt = buildMemoryInitRuntimePrompt({
-                agentId,
-                workingDirectory: process.cwd(),
-                memoryDir: getMemoryFilesystemRoot(agentId),
-                gitContext,
-                depth: "deep",
-              });
+            const initMessage = buildInitMessage({
+              gitContext,
+              memoryDir,
+            });
 
-              const { spawnBackgroundSubagentTask } = await import(
-                "../tools/impl/Task"
-              );
-              spawnBackgroundSubagentTask({
-                subagentType: "init",
-                prompt: initPrompt,
-                description: "Initializing memory",
-                silentCompletion: true,
-                onComplete: async ({ success, error }) => {
-                  const msg = await handleMemorySubagentCompletion(
-                    {
-                      agentId,
-                      subagentType: "init",
-                      initDepth: "deep",
-                      success,
-                      error,
-                    },
-                    {
-                      recompileByAgent: systemPromptRecompileByAgentRef.current,
-                      recompileQueuedByAgent:
-                        queuedSystemPromptRecompileByAgentRef.current,
-                      updateInitProgress,
-                      logRecompileFailure: (message) =>
-                        debugWarn("memory", message),
-                    },
-                  );
-                  appendTaskNotificationEvents([msg]);
-                },
-              });
-
-              // Clear pending auto-init only after spawn succeeded
-              autoInitPendingAgentIdsRef.current.delete(agentId);
-
-              cmd.finish(
-                "Learning about you and your codebase in the background. You'll be notified when ready.",
-                true,
-              );
-
-              // TODO: Remove this hack once commandRunner supports a
-              // "silent" finish that skips the reminder callback.
-              // Currently cmd.finish() always enqueues a command-IO
-              // reminder, which leaks the /init context into the
-              // primary agent's next turn and causes it to invoke the
-              // initializing-memory skill itself.
-              const reminders =
-                sharedReminderStateRef.current.pendingCommandIoReminders;
-              const idx = reminders.findIndex((r) => r.input === "/init");
-              if (idx !== -1) {
-                reminders.splice(idx, 1);
-              }
-            } catch (error) {
-              const errorDetails = formatErrorDetails(error, agentId);
-              cmd.fail(
-                `Failed to start memory initialization: ${errorDetails}`,
-              );
-            }
-          } else {
-            // Legacy path: primary agent processConversation
-            autoInitPendingAgentIdsRef.current.delete(agentId);
-            setCommandRunning(true);
-            try {
-              cmd.finish(
-                "Assimilating project context and defragmenting memories...",
-                true,
-              );
-
-              const initMessage = buildLegacyInitMessage({
-                gitContext,
-                memfsSection: "",
-              });
-
-              await processConversation([
-                {
-                  type: "message",
-                  role: "user",
-                  content: buildTextParts(initMessage),
-                },
-              ]);
-            } catch (error) {
-              const errorDetails = formatErrorDetails(error, agentId);
-              cmd.fail(`Failed: ${errorDetails}`);
-            } finally {
-              setCommandRunning(false);
-            }
+            await processConversation([
+              {
+                type: "message",
+                role: "user",
+                content: buildTextParts(initMessage),
+              },
+            ]);
+          } catch (error) {
+            const errorDetails = formatErrorDetails(error, agentId);
+            cmd.fail(`Failed: ${errorDetails}`);
+          } finally {
+            setCommandRunning(false);
           }
           return { submitted: true };
         }
@@ -9476,16 +9399,16 @@ export default function App({
               const msg = await handleMemorySubagentCompletion(
                 {
                   agentId,
+                  conversationId: conversationIdRef.current,
                   subagentType: "init",
-                  initDepth: "shallow",
                   success,
                   error,
                 },
                 {
-                  recompileByAgent: systemPromptRecompileByAgentRef.current,
-                  recompileQueuedByAgent:
-                    queuedSystemPromptRecompileByAgentRef.current,
-                  updateInitProgress,
+                  recompileByConversation:
+                    systemPromptRecompileByConversationRef.current,
+                  recompileQueuedByConversation:
+                    queuedSystemPromptRecompileByConversationRef.current,
                   logRecompileFailure: (message) =>
                     debugWarn("memory", message),
                 },
@@ -9605,15 +9528,16 @@ ${SYSTEM_REMINDER_CLOSE}
               const msg = await handleMemorySubagentCompletion(
                 {
                   agentId,
+                  conversationId: conversationIdRef.current,
                   subagentType: "reflection",
                   success,
                   error,
                 },
                 {
-                  recompileByAgent: systemPromptRecompileByAgentRef.current,
-                  recompileQueuedByAgent:
-                    queuedSystemPromptRecompileByAgentRef.current,
-                  updateInitProgress,
+                  recompileByConversation:
+                    systemPromptRecompileByConversationRef.current,
+                  recompileQueuedByConversation:
+                    queuedSystemPromptRecompileByConversationRef.current,
                   logRecompileFailure: (message) =>
                     debugWarn("memory", message),
                 },
@@ -9636,70 +9560,10 @@ ${SYSTEM_REMINDER_CLOSE}
           return false;
         }
       };
-      const maybeLaunchDeepInitSubagent = async () => {
-        if (!memfsEnabledForAgent) return false;
-        if (hasActiveInitSubagent()) return false;
-        try {
-          const gitContext = gatherGitContext();
-          const initPrompt = buildMemoryInitRuntimePrompt({
-            agentId,
-            workingDirectory: process.cwd(),
-            memoryDir: getMemoryFilesystemRoot(agentId),
-            gitContext,
-            depth: "deep",
-          });
-          const { spawnBackgroundSubagentTask } = await import(
-            "../tools/impl/Task"
-          );
-          spawnBackgroundSubagentTask({
-            subagentType: "init",
-            prompt: initPrompt,
-            description: "Deep memory initialization",
-            silentCompletion: true,
-            onComplete: async ({ success, error }) => {
-              const msg = await handleMemorySubagentCompletion(
-                {
-                  agentId,
-                  subagentType: "init",
-                  initDepth: "deep",
-                  success,
-                  error,
-                },
-                {
-                  recompileByAgent: systemPromptRecompileByAgentRef.current,
-                  recompileQueuedByAgent:
-                    queuedSystemPromptRecompileByAgentRef.current,
-                  updateInitProgress,
-                  logRecompileFailure: (message) =>
-                    debugWarn("memory", message),
-                },
-              );
-              appendTaskNotificationEvents([msg]);
-            },
-          });
-          debugLog("memory", "Auto-launched deep init subagent");
-          return true;
-        } catch (error) {
-          debugWarn(
-            "memory",
-            `Failed to auto-launch deep init subagent: ${
-              error instanceof Error ? error.message : String(error)
-            }`,
-          );
-          return false;
-        }
-      };
       syncReminderStateFromContextTracker(
         sharedReminderStateRef.current,
         contextTrackerRef.current,
       );
-      // Hydrate init progression from the per-agent map into the shared state
-      // so the deep-init provider sees the correct flags for the current agent.
-      const initProgress = initProgressByAgentRef.current.get(agentId);
-      sharedReminderStateRef.current.shallowInitCompleted =
-        initProgress?.shallowCompleted ?? false;
-      sharedReminderStateRef.current.deepInitFired =
-        initProgress?.deepFired ?? false;
       const { getSkillSources } = await import("../agent/context");
       const { parts: sharedReminderParts } = await buildSharedReminderParts({
         mode: "interactive",
@@ -9715,7 +9579,6 @@ ${SYSTEM_REMINDER_CLOSE}
         skillSources: getSkillSources(),
         resolvePlanModeReminder: getPlanModeReminder,
         maybeLaunchReflectionSubagent,
-        maybeLaunchDeepInitSubagent,
       });
       for (const part of sharedReminderParts) {
         reminderParts.push(part);
@@ -11999,12 +11862,13 @@ ${SYSTEM_REMINDER_CLOSE}
       if (mode === "plan") {
         const planPath = generatePlanFilePath();
         permissionMode.setPlanFilePath(planPath);
+        cacheLastPlanFilePath(planPath);
       }
       // permissionMode.setMode() is called in InputRich.tsx before this callback
       setUiPermissionMode(mode);
       triggerStatusLineRefresh();
     },
-    [triggerStatusLineRefresh, setUiPermissionMode],
+    [triggerStatusLineRefresh, setUiPermissionMode, cacheLastPlanFilePath],
   );
 
   // Reasoning tier cycling (Tab hotkey in InputRich.tsx)
@@ -12317,12 +12181,18 @@ ${SYSTEM_REMINDER_CLOSE}
         lastPlanFilePathRef.current = planFilePath;
       }
 
-      // Exit plan mode
-      const restoreMode = acceptEdits
-        ? "acceptEdits"
-        : (permissionMode.getModeBeforePlan() ?? "default");
-      permissionMode.setMode(restoreMode);
-      setUiPermissionMode(restoreMode);
+      // Exit plan mode — if user already cycled out (e.g., Shift+Tab to
+      // acceptEdits/yolo), keep their chosen mode instead of downgrading.
+      const currentMode = permissionMode.getMode();
+      if (currentMode === "plan") {
+        const restoreMode = acceptEdits
+          ? "acceptEdits"
+          : (permissionMode.getModeBeforePlan() ?? "default");
+        permissionMode.setMode(restoreMode);
+        setUiPermissionMode(restoreMode);
+      } else {
+        setUiPermissionMode(currentMode);
+      }
 
       try {
         // Execute ExitPlanMode tool to get the result
@@ -12423,9 +12293,24 @@ ${SYSTEM_REMINDER_CLOSE}
       const hasUsablePlan = planFileExists(fallbackPlanPath);
 
       if (mode !== "plan") {
+        if (mode === "bypassPermissions") {
+          if (hasUsablePlan) {
+            // YOLO mode with a plan file — auto-approve ExitPlanMode.
+            handlePlanApprove();
+            return;
+          }
+          // YOLO mode but no plan file yet — tell agent to write it first.
+          const planFilePath = activePlanPath ?? fallbackPlanPath;
+          const plansDir = join(homedir(), ".letta", "plans");
+          handlePlanKeepPlanning(
+            `You must write your plan to a plan file before exiting plan mode.\n` +
+              (planFilePath ? `Plan file path: ${planFilePath}\n` : "") +
+              `Use a write tool to create your plan in ${plansDir}, then use ExitPlanMode to present the plan to the user.`,
+          );
+          return;
+        }
         if (hasUsablePlan) {
-          // User likely cycled out of plan mode (e.g., Shift+Tab to acceptEdits/yolo)
-          // Keep approval flow alive and let ExitPlanMode proceed using fallback plan path.
+          // Other modes: keep approval flow alive and let user manually approve.
           return;
         }
 
@@ -12481,6 +12366,7 @@ ${SYSTEM_REMINDER_CLOSE}
   }, [
     pendingApprovals,
     approvalResults.length,
+    handlePlanApprove,
     handlePlanKeepPlanning,
     refreshDerived,
     queueApprovalResults,
@@ -12546,27 +12432,33 @@ ${SYSTEM_REMINDER_CLOSE}
     [pendingApprovals, approvalResults, sendAllResults, refreshDerived],
   );
 
-  const handleEnterPlanModeApprove = useCallback(async () => {
-    const currentIndex = approvalResults.length;
-    const approval = pendingApprovals[currentIndex];
-    if (!approval) return;
+  const handleEnterPlanModeApprove = useCallback(
+    async (preserveMode: boolean = false) => {
+      const currentIndex = approvalResults.length;
+      const approval = pendingApprovals[currentIndex];
+      if (!approval) return;
 
-    const isLast = currentIndex + 1 >= pendingApprovals.length;
+      const isLast = currentIndex + 1 >= pendingApprovals.length;
 
-    // Generate plan file path
-    const planFilePath = generatePlanFilePath();
-    const applyPatchRelativePath = relative(
-      process.cwd(),
-      planFilePath,
-    ).replace(/\\/g, "/");
+      // Generate plan file path
+      const planFilePath = generatePlanFilePath();
+      const applyPatchRelativePath = relative(
+        process.cwd(),
+        planFilePath,
+      ).replace(/\\/g, "/");
 
-    // Toggle plan mode on and store plan file path
-    permissionMode.setMode("plan");
-    permissionMode.setPlanFilePath(planFilePath);
-    setUiPermissionMode("plan");
+      // Store plan file path
+      permissionMode.setPlanFilePath(planFilePath);
+      cacheLastPlanFilePath(planFilePath);
 
-    // Get the tool return message from the implementation
-    const toolReturn = `Entered plan mode. You should now focus on exploring the codebase and designing an implementation approach.
+      if (!preserveMode) {
+        // Normal flow: switch to plan mode
+        permissionMode.setMode("plan");
+        setUiPermissionMode("plan");
+      }
+
+      // Get the tool return message from the implementation
+      const toolReturn = `Entered plan mode. You should now focus on exploring the codebase and designing an implementation approach.
 
 In plan mode, you should:
 1. Thoroughly explore the codebase to understand existing patterns
@@ -12581,45 +12473,48 @@ Remember: DO NOT write or edit any files yet. This is a read-only exploration an
 Plan file path: ${planFilePath}
 If using apply_patch, use this exact relative patch path: ${applyPatchRelativePath}`;
 
-    const precomputedResult: ToolExecutionResult = {
-      toolReturn,
-      status: "success",
-    };
+      const precomputedResult: ToolExecutionResult = {
+        toolReturn,
+        status: "success",
+      };
 
-    // Update buffers with tool return
-    onChunk(buffersRef.current, {
-      message_type: "tool_return_message",
-      id: "dummy",
-      date: new Date().toISOString(),
-      tool_call_id: approval.toolCallId,
-      tool_return: toolReturn,
-      status: "success",
-      stdout: null,
-      stderr: null,
-    });
+      // Update buffers with tool return
+      onChunk(buffersRef.current, {
+        message_type: "tool_return_message",
+        id: "dummy",
+        date: new Date().toISOString(),
+        tool_call_id: approval.toolCallId,
+        tool_return: toolReturn,
+        status: "success",
+        stdout: null,
+        stderr: null,
+      });
 
-    setThinkingMessage(getRandomThinkingVerb());
-    refreshDerived();
+      setThinkingMessage(getRandomThinkingVerb());
+      refreshDerived();
 
-    const decision = {
-      type: "approve" as const,
-      approval,
-      precomputedResult,
-    };
+      const decision = {
+        type: "approve" as const,
+        approval,
+        precomputedResult,
+      };
 
-    if (isLast) {
-      setIsExecutingTool(true);
-      await sendAllResults(decision);
-    } else {
-      setApprovalResults((prev) => [...prev, decision]);
-    }
-  }, [
-    pendingApprovals,
-    approvalResults,
-    sendAllResults,
-    refreshDerived,
-    setUiPermissionMode,
-  ]);
+      if (isLast) {
+        setIsExecutingTool(true);
+        await sendAllResults(decision);
+      } else {
+        setApprovalResults((prev) => [...prev, decision]);
+      }
+    },
+    [
+      pendingApprovals,
+      approvalResults,
+      sendAllResults,
+      refreshDerived,
+      setUiPermissionMode,
+      cacheLastPlanFilePath,
+    ],
+  );
 
   const handleEnterPlanModeReject = useCallback(async () => {
     const currentIndex = approvalResults.length;
@@ -12644,6 +12539,20 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
       setApprovalResults((prev) => [...prev, decision]);
     }
   }, [pendingApprovals, approvalResults, sendAllResults]);
+
+  // Guard EnterPlanMode:
+  // When in bypassPermissions (YOLO) mode, auto-approve EnterPlanMode and stay
+  // in YOLO — the agent gets plan instructions but keeps full permissions.
+  // The existing ExitPlanMode guard then auto-approves the exit too.
+  useEffect(() => {
+    const currentIndex = approvalResults.length;
+    const approval = pendingApprovals[currentIndex];
+    if (approval?.toolName === "EnterPlanMode") {
+      if (permissionMode.getMode() === "bypassPermissions") {
+        handleEnterPlanModeApprove(true);
+      }
+    }
+  }, [pendingApprovals, approvalResults.length, handleEnterPlanModeApprove]);
 
   // Live area shows only in-progress items
   // biome-ignore lint/correctness/useExhaustiveDependencies: staticItems.length and deferredCommitAt are intentional triggers to recompute when items are promoted to static or deferred commits complete
@@ -12923,56 +12832,70 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
         style={{ flexDirection: "column" }}
       >
         {(item: StaticItem, index: number) => {
-          return (
-            <Box key={item.id} marginTop={index > 0 ? 1 : 0}>
-              {item.kind === "welcome" ? (
-                <WelcomeScreen loadingState="ready" {...item.snapshot} />
-              ) : item.kind === "user" ? (
-                <UserMessage line={item} prompt={statusLine.prompt} />
-              ) : item.kind === "reasoning" ? (
-                <ReasoningMessage line={item} />
-              ) : item.kind === "assistant" ? (
-                <AssistantMessage line={item} />
-              ) : item.kind === "tool_call" ? (
-                <ToolCallMessage
-                  line={item}
-                  precomputedDiffs={precomputedDiffsRef.current}
-                  lastPlanFilePath={lastPlanFilePathRef.current}
-                />
-              ) : item.kind === "subagent_group" ? (
-                <SubagentGroupStatic agents={item.agents} />
-              ) : item.kind === "error" ? (
-                <ErrorMessage line={item} />
-              ) : item.kind === "status" ? (
-                <StatusMessage line={item} />
-              ) : item.kind === "event" ? (
-                !showCompactionsEnabled &&
-                item.eventType === "compaction" ? null : (
-                  <EventMessage line={item} />
-                )
-              ) : item.kind === "separator" ? (
-                <Box marginTop={1}>
-                  <Text dimColor>{"─".repeat(columns)}</Text>
-                </Box>
-              ) : item.kind === "command" ? (
-                <CommandMessage line={item} />
-              ) : item.kind === "bash_command" ? (
-                <BashCommandMessage line={item} />
-              ) : item.kind === "trajectory_summary" ? (
-                <TrajectorySummary line={item} />
-              ) : item.kind === "approval_preview" ? (
-                <ApprovalPreview
-                  toolName={item.toolName}
-                  toolArgs={item.toolArgs}
-                  precomputedDiff={item.precomputedDiff}
-                  allDiffs={precomputedDiffsRef.current}
-                  planContent={item.planContent}
-                  planFilePath={item.planFilePath}
-                  toolCallId={item.toolCallId}
-                />
-              ) : null}
-            </Box>
-          );
+          try {
+            return (
+              <Box key={item.id} marginTop={index > 0 ? 1 : 0}>
+                {item.kind === "welcome" ? (
+                  <WelcomeScreen loadingState="ready" {...item.snapshot} />
+                ) : item.kind === "user" ? (
+                  <UserMessage line={item} prompt={statusLine.prompt} />
+                ) : item.kind === "reasoning" ? (
+                  <ReasoningMessage line={item} />
+                ) : item.kind === "assistant" ? (
+                  <AssistantMessage line={item} />
+                ) : item.kind === "tool_call" ? (
+                  <ToolCallMessage
+                    line={item}
+                    precomputedDiffs={precomputedDiffsRef.current}
+                    lastPlanFilePath={lastPlanFilePathRef.current}
+                  />
+                ) : item.kind === "subagent_group" ? (
+                  <SubagentGroupStatic agents={item.agents} />
+                ) : item.kind === "error" ? (
+                  <ErrorMessage line={item} />
+                ) : item.kind === "status" ? (
+                  <StatusMessage line={item} />
+                ) : item.kind === "event" ? (
+                  !showCompactionsEnabled &&
+                  item.eventType === "compaction" ? null : (
+                    <EventMessage line={item} />
+                  )
+                ) : item.kind === "separator" ? (
+                  <Box marginTop={1}>
+                    <Text dimColor>{"─".repeat(columns)}</Text>
+                  </Box>
+                ) : item.kind === "command" ? (
+                  <CommandMessage line={item} />
+                ) : item.kind === "bash_command" ? (
+                  <BashCommandMessage line={item} />
+                ) : item.kind === "trajectory_summary" ? (
+                  <TrajectorySummary line={item} />
+                ) : item.kind === "approval_preview" ? (
+                  <ApprovalPreview
+                    toolName={item.toolName}
+                    toolArgs={item.toolArgs}
+                    precomputedDiff={item.precomputedDiff}
+                    allDiffs={precomputedDiffsRef.current}
+                    planContent={item.planContent}
+                    planFilePath={item.planFilePath}
+                    toolCallId={item.toolCallId}
+                  />
+                ) : null}
+              </Box>
+            );
+          } catch (err) {
+            console.error(
+              `[Static render error] kind=${item.kind} id=${item.id}`,
+              err,
+            );
+            return (
+              <Box key={item.id}>
+                <Text color="red">
+                  ⚠ render error: {item.kind} ({String(err)})
+                </Text>
+              </Box>
+            );
+          }
         }}
       </Static>
 
