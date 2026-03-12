@@ -7,7 +7,10 @@ import type {
 } from "@letta-ai/letta-client/resources/agents/agents";
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
-import type { ApprovalDecision, ApprovalResult } from "./agent/approval-execution";
+import type {
+  ApprovalDecision,
+  ApprovalResult,
+} from "./agent/approval-execution";
 import {
   extractConflictDetail,
   fetchRunErrorDetail,
@@ -108,9 +111,9 @@ import type {
   ControlResponse,
   ErrorMessage,
   ListMessagesControlRequest,
-  RecoverPendingApprovalsControlRequest,
   MessageWire,
   QueueLifecycleEvent,
+  RecoverPendingApprovalsControlRequest,
   RecoveryMessage,
   ResultMessage,
   RetryMessage,
@@ -3194,8 +3197,7 @@ async function runBidirectionalMode(
             response: {
               subtype: "error",
               request_id: requestId ?? "",
-              error:
-                error instanceof Error ? error.message : String(error),
+              error: error instanceof Error ? error.message : String(error),
             },
             session_id: sessionId,
             uuid: randomUUID(),
