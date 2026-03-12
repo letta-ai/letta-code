@@ -121,29 +121,45 @@ function gatherExistingMemory(agentId: string): string {
   return files.length > 0 ? files.join("\n\n") : "(empty)";
 }
 
-const IGNORED_DIRS = new Set([
-  "node_modules",
-  ".git",
-  "dist",
-  "build",
-  ".next",
-  "__pycache__",
-  "target",
-  "vendor",
-  ".cache",
-  ".turbo",
-]);
+/** Batch-check which paths are gitignored. Falls back to a hardcoded set. */
+function getGitIgnored(cwd: string, names: string[]): Set<string> {
+  if (names.length === 0) return new Set();
+  try {
+    const result = execSync("git check-ignore --stdin", {
+      cwd,
+      encoding: "utf-8",
+      input: names.join("\n"),
+    }).trim();
+    return new Set(result.split("\n").filter(Boolean));
+  } catch {
+    // exit code 1 = no ignored paths, or not a git repo — fall back
+    return new Set([
+      "node_modules",
+      "dist",
+      "build",
+      "__pycache__",
+      "target",
+      "vendor",
+    ]);
+  }
+}
 
 /** Get project directory structure as a tree (2 levels deep). */
 function gatherDirListing(): string {
   const cwd = process.cwd();
   try {
     const entries = readdirSync(cwd, { withFileTypes: true });
-    const dirs = entries
-      .filter((e) => e.isDirectory() && !IGNORED_DIRS.has(e.name))
+    const visible = entries.filter((e) => !e.name.startsWith("."));
+    const ignored = getGitIgnored(
+      cwd,
+      visible.map((e) => e.name),
+    );
+
+    const dirs = visible
+      .filter((e) => e.isDirectory() && !ignored.has(e.name))
       .sort((a, b) => a.name.localeCompare(b.name));
-    const files = entries
-      .filter((e) => !e.isDirectory())
+    const files = visible
+      .filter((e) => !e.isDirectory() && !ignored.has(e.name))
       .sort((a, b) => a.name.localeCompare(b.name));
 
     const lines: string[] = [];
@@ -156,12 +172,17 @@ function gatherDirListing(): string {
 
       if (entry.isDirectory()) {
         lines.push(`${prefix}${entry.name}/`);
-        // Show 1 level of children for directories
         try {
-          const children = readdirSync(join(cwd, entry.name), {
+          const dirPath = join(cwd, entry.name);
+          const childEntries = readdirSync(dirPath, {
             withFileTypes: true,
-          })
-            .filter((e) => !IGNORED_DIRS.has(e.name))
+          }).filter((e) => !e.name.startsWith("."));
+          const childIgnored = getGitIgnored(
+            dirPath,
+            childEntries.map((e) => e.name),
+          );
+          const children = childEntries
+            .filter((e) => !childIgnored.has(e.name))
             .sort((a, b) => {
               if (a.isDirectory() !== b.isDirectory())
                 return a.isDirectory() ? -1 : 1;
