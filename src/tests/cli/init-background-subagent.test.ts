@@ -49,7 +49,7 @@ describe("init wiring", () => {
     const content = readSource("../../agent/subagents/builtin/init.md");
 
     expect(content).toContain("name: init");
-    expect(content).toContain("skills: initializing-memory");
+    expect(content).toContain("model: haiku");
     expect(content).toContain("permissionMode: bypassPermissions");
   });
 
@@ -62,18 +62,31 @@ describe("init wiring", () => {
     expect(indexSource).toContain("initAgentMd");
   });
 
+  test("init.md uses haiku model and no skills", () => {
+    const content = readSource("../../agent/subagents/builtin/init.md");
+
+    expect(content).toContain("name: init");
+    expect(content).toContain("model: haiku");
+    expect(content).not.toContain("skills:");
+    expect(content).toContain("permissionMode: bypassPermissions");
+  });
+
   const baseArgs = {
     agentId: "test-agent",
     workingDirectory: "/tmp/test",
     memoryDir: "/tmp/test/.memory",
-    gitContext: "## Git context\nsome git info",
+    gitContext: "- branch: main\n- status: (clean)",
+    gitIdentity: "Test User <test@example.com>",
+    existingMemory: "(empty)",
+    dirListing: "README.md\npackage.json\nsrc",
   };
 
-  test("buildShallowInitPrompt produces shallow-only prompt", () => {
+  test("buildShallowInitPrompt includes pre-gathered context", () => {
     const prompt = buildShallowInitPrompt(baseArgs);
-    expect(prompt).toContain("research_depth: shallow");
-    expect(prompt).toContain("Shallow init");
-    expect(prompt).not.toContain("Deep init");
+    expect(prompt).toContain("memory_dir: /tmp/test/.memory");
+    expect(prompt).toContain("git_user: Test User");
+    expect(prompt).toContain("## Project Structure");
+    expect(prompt).toContain("## Existing Memory");
   });
 
   test("buildInitMessage includes memoryDir when provided", () => {

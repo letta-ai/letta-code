@@ -6,7 +6,12 @@
  */
 
 import { execSync } from "node:child_process";
-import { getMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import {
+  getMemoryFilesystemRoot,
+  getMemorySystemDir,
+} from "../../agent/memoryFilesystem";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "../../constants";
 import { settingsManager } from "../../settings-manager";
 import { getSnapshot as getSubagentSnapshot } from "./subagentState";
@@ -49,26 +54,15 @@ export function gatherGitContext(): string {
       ).trim();
 
       return `
-## Current Project Context
+- branch: ${branch}
+- main: ${mainBranch}
+- status: ${status || "(clean)"}
 
-**Working directory**: ${cwd}
-
-### Git Status
-- **Current branch**: ${branch}
-- **Main branch**: ${mainBranch}
-- **Status**:
-${status || "(clean working tree)"}
-
-### Recent Commits
+Recent commits:
 ${recentCommits}
 `;
     } catch {
-      return `
-## Current Project Context
-
-**Working directory**: ${cwd}
-**Git**: Not a git repository
-`;
+      return "(not a git repository)";
     }
   } catch {
     // execSync import failed (shouldn't happen with static import, but be safe)
@@ -78,14 +72,142 @@ ${recentCommits}
 
 // ── Shallow init (background subagent) ───────────────────
 
-const SHALLOW_INSTRUCTIONS = `
-Shallow init — fast project basics only (~5 tool calls max):
-- Only read: CLAUDE.md, AGENTS.md, package.json/pyproject.toml/Cargo.toml, README.md (first 100 lines), top-level directory listing
-- Detect user identity from the git context provided above (already in the prompt — no extra calls)
-- Run one git call: git log --format="%an <%ae>" | sort -u | head -5
-- Write exactly 4 files: project/overview.md, project/commands.md, project/conventions.md, human/identity.md
-- Skip: deep directory exploration, architecture mapping, config analysis, historical sessions, persona files, reflection/checkpoint phase
-`.trim();
+/** Gather git identity for the local user. */
+function gatherGitIdentity(): string {
+  const cwd = process.cwd();
+  try {
+    const userName = execSync("git config user.name 2>/dev/null || true", {
+      cwd,
+      encoding: "utf-8",
+    }).trim();
+    const userEmail = execSync("git config user.email 2>/dev/null || true", {
+      cwd,
+      encoding: "utf-8",
+    }).trim();
+
+    if (userName || userEmail) return `${userName} <${userEmail}>`;
+    return "";
+  } catch {
+    return "";
+  }
+}
+
+/** Read existing memory files from the local filesystem. */
+function gatherExistingMemory(agentId: string): string {
+  const systemDir = getMemorySystemDir(agentId);
+  if (!existsSync(systemDir)) return "(empty)";
+
+  const files: string[] = [];
+  function walk(dir: string, prefix: string): void {
+    try {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
+        if (entry.isDirectory()) {
+          walk(join(dir, entry.name), rel);
+        } else if (entry.name.endsWith(".md")) {
+          try {
+            const content = readFileSync(join(dir, entry.name), "utf-8");
+            files.push(`── ${rel}\n${content.slice(0, 2000)}`);
+          } catch {
+            // skip unreadable files
+          }
+        }
+      }
+    } catch {
+      // skip unreadable dirs
+    }
+  }
+  walk(systemDir, "");
+  return files.length > 0 ? files.join("\n\n") : "(empty)";
+}
+
+/** Batch-check which paths are gitignored. Falls back to a hardcoded set. */
+function getGitIgnored(cwd: string, names: string[]): Set<string> {
+  if (names.length === 0) return new Set();
+  try {
+    const result = execSync("git check-ignore --stdin", {
+      cwd,
+      encoding: "utf-8",
+      input: names.join("\n"),
+    }).trim();
+    return new Set(result.split("\n").filter(Boolean));
+  } catch {
+    // exit code 1 = no ignored paths, or not a git repo — fall back
+    return new Set([
+      "node_modules",
+      "dist",
+      "build",
+      "__pycache__",
+      "target",
+      "vendor",
+    ]);
+  }
+}
+
+/** Get project directory structure as a tree (2 levels deep). */
+function gatherDirListing(): string {
+  const cwd = process.cwd();
+  try {
+    const entries = readdirSync(cwd, { withFileTypes: true });
+    const visible = entries.filter((e) => !e.name.startsWith("."));
+    const ignored = getGitIgnored(
+      cwd,
+      visible.map((e) => e.name),
+    );
+
+    const dirs = visible
+      .filter((e) => e.isDirectory() && !ignored.has(e.name))
+      .sort((a, b) => a.name.localeCompare(b.name));
+    const files = visible
+      .filter((e) => !e.isDirectory() && !ignored.has(e.name))
+      .sort((a, b) => a.name.localeCompare(b.name));
+
+    const lines: string[] = [];
+    const sorted = [...dirs, ...files];
+
+    for (let i = 0; i < sorted.length; i++) {
+      const entry = sorted[i]!;
+      const isLast = i === sorted.length - 1;
+      const prefix = isLast ? "└── " : "├── ";
+
+      if (entry.isDirectory()) {
+        lines.push(`${prefix}${entry.name}/`);
+        try {
+          const dirPath = join(cwd, entry.name);
+          const childEntries = readdirSync(dirPath, {
+            withFileTypes: true,
+          }).filter((e) => !e.name.startsWith("."));
+          const childIgnored = getGitIgnored(
+            dirPath,
+            childEntries.map((e) => e.name),
+          );
+          const children = childEntries
+            .filter((e) => !childIgnored.has(e.name))
+            .sort((a, b) => {
+              if (a.isDirectory() !== b.isDirectory())
+                return a.isDirectory() ? -1 : 1;
+              return a.name.localeCompare(b.name);
+            });
+          const childPrefix = isLast ? "    " : "│   ";
+          for (let j = 0; j < children.length; j++) {
+            const child = children[j]!;
+            const childIsLast = j === children.length - 1;
+            const connector = childIsLast ? "└── " : "├── ";
+            const suffix = child.isDirectory() ? "/" : "";
+            lines.push(`${childPrefix}${connector}${child.name}${suffix}`);
+          }
+        } catch {
+          // skip unreadable dirs
+        }
+      } else {
+        lines.push(`${prefix}${entry.name}`);
+      }
+    }
+    return lines.join("\n");
+  } catch {
+    return "";
+  }
+}
 
 /** Prompt for the background shallow-init subagent. */
 export function buildShallowInitPrompt(args: {
@@ -93,31 +215,34 @@ export function buildShallowInitPrompt(args: {
   workingDirectory: string;
   memoryDir: string;
   gitContext: string;
+  gitIdentity: string;
+  existingMemory: string;
+  dirListing: string;
 }): string {
-  return `
-The user ran /init for the current project.
+  const identityLine = args.gitIdentity
+    ? `- git_user: ${args.gitIdentity}`
+    : "";
 
-Runtime context:
-- parent_agent_id: ${args.agentId}
+  return `
+## Environment
+
 - working_directory: ${args.workingDirectory}
 - memory_dir: ${args.memoryDir}
-- research_depth: shallow
+- parent_agent_id: ${args.agentId}
+${identityLine}
 
-Git/project context:
+## Git
 ${args.gitContext}
 
-Task:
-Initialize or reorganize the parent agent's filesystem-backed memory for this project.
+## Project Structure
 
-${SHALLOW_INSTRUCTIONS}
+\`\`\`
+${args.dirListing}
+\`\`\`
 
-Instructions:
-- Use the pre-loaded initializing-memory skill as your operating guide
-- Inspect existing memory before editing
-- Base your decisions on the current repository and current memory contents
-- Do not ask follow-up questions
-- Make reasonable assumptions and report them
-- If the memory filesystem is unavailable or unsafe to modify, stop and explain why
+## Existing Memory
+
+${args.existingMemory}
 `.trim();
 }
 
@@ -136,11 +261,18 @@ export async function fireAutoInit(
   if (!settingsManager.isMemfsEnabled(agentId)) return false;
 
   const gitContext = gatherGitContext();
+  const gitIdentity = gatherGitIdentity();
+  const existingMemory = gatherExistingMemory(agentId);
+  const dirListing = gatherDirListing();
+
   const initPrompt = buildShallowInitPrompt({
     agentId,
     workingDirectory: process.cwd(),
     memoryDir: getMemoryFilesystemRoot(agentId),
     gitContext,
+    gitIdentity,
+    existingMemory,
+    dirListing,
   });
 
   const { spawnBackgroundSubagentTask } = await import("../../tools/impl/Task");
