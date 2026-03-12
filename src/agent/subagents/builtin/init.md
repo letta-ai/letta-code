@@ -1,7 +1,7 @@
 ---
 name: init
 description: Fast initialization of agent memory — reads key project files and creates a minimal memory structure
-tools: Read, Write, Bash, Glob
+tools: Read, Write, Edit, Bash, Glob
 model: haiku
 memoryBlocks: none
 permissionMode: bypassPermissions
