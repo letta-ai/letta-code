@@ -49,8 +49,8 @@ function printDebugLine(line: string, level: "log" | "warn" = "log"): void {
   }
   const colored =
     level === "warn"
-      ? `\x1b[38;5;202m${line.trimEnd()}\x1b[0m` // red-orange
-      : `\x1b[38;5;220m${line.trimEnd()}\x1b[0m`; // golden yellow
+      ? `\x1b[2;38;5;202m${line.trimEnd()}\x1b[0m` // red-orange, dim
+      : `\x1b[2;38;5;220m${line.trimEnd()}\x1b[0m`; // golden yellow, dim
   console.log(colored);
 }
 
