@@ -446,7 +446,7 @@ export async function task(args: TaskArgs): Promise<string> {
   }
 
   // Extract validated params
-  const prompt = args.prompt as string;
+  const inputPrompt = args.prompt as string;
   const description = args.description as string;
 
   // For existing agents, default subagent_type to "general-purpose" for permissions
@@ -467,6 +467,8 @@ export async function task(args: TaskArgs): Promise<string> {
   if (isDeployingExisting && !VALID_DEPLOY_TYPES.has(subagent_type)) {
     return `Error: When deploying an existing agent, subagent_type must be "explore" (read-only) or "general-purpose" (read-write). Got: "${subagent_type}"`;
   }
+
+  const prompt = inputPrompt;
 
   const isBackground = args.run_in_background ?? false;
 

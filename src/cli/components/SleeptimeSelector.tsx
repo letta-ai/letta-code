@@ -1,7 +1,6 @@
 import { Box, useInput } from "ink";
 import { useEffect, useMemo, useState } from "react";
 import type {
-  ReflectionBehavior,
   ReflectionSettings,
   ReflectionTrigger,
 } from "../helpers/memoryReminder";
@@ -11,9 +10,8 @@ import { Text } from "./Text";
 
 const SOLID_LINE = "─";
 const DEFAULT_STEP_COUNT = "25";
-const BEHAVIOR_OPTIONS: ReflectionBehavior[] = ["reminder", "auto-launch"];
 
-type FocusRow = "trigger" | "behavior" | "step-count";
+type FocusRow = "trigger" | "step-count";
 
 interface SleeptimeSelectorProps {
   initialSettings: ReflectionSettings;
@@ -44,7 +42,6 @@ function cycleOption<T extends string>(
 
 function parseInitialState(initialSettings: ReflectionSettings): {
   trigger: ReflectionTrigger;
-  behavior: ReflectionBehavior;
   stepCount: string;
 } {
   return {
@@ -54,8 +51,6 @@ function parseInitialState(initialSettings: ReflectionSettings): {
       initialSettings.trigger === "compaction-event"
         ? initialSettings.trigger
         : "step-count",
-    behavior:
-      initialSettings.behavior === "auto-launch" ? "auto-launch" : "reminder",
     stepCount: String(
       Number.isInteger(initialSettings.stepCount) &&
         initialSettings.stepCount > 0
@@ -92,9 +87,6 @@ export function SleeptimeSelector({
     }
     return initialState.trigger;
   });
-  const [behavior, setBehavior] = useState<ReflectionBehavior>(
-    initialState.behavior,
-  );
   const [stepCountInput, setStepCountInput] = useState(initialState.stepCount);
   const [focusRow, setFocusRow] = useState<FocusRow>("trigger");
   const [validationError, setValidationError] = useState<string | null>(null);
@@ -104,14 +96,11 @@ export function SleeptimeSelector({
   );
   const visibleRows = useMemo(() => {
     const rows: FocusRow[] = ["trigger"];
-    if (memfsEnabled && trigger !== "off") {
-      rows.push("behavior");
-    }
     if (trigger === "step-count") {
       rows.push("step-count");
     }
     return rows;
-  }, [memfsEnabled, trigger]);
+  }, [trigger]);
   const isEditingStepCount =
     focusRow === "step-count" && trigger === "step-count";
 
@@ -130,7 +119,6 @@ export function SleeptimeSelector({
       }
       onSave({
         trigger,
-        behavior: memfsEnabled ? behavior : "reminder",
         stepCount,
       });
       return;
@@ -140,7 +128,6 @@ export function SleeptimeSelector({
       parseStepCount(stepCountInput) ?? Number(DEFAULT_STEP_COUNT);
     onSave({
       trigger,
-      behavior: memfsEnabled ? behavior : "reminder",
       stepCount: fallbackStepCount,
     });
   };
@@ -179,8 +166,6 @@ export function SleeptimeSelector({
       const direction: -1 | 1 = key.leftArrow ? -1 : 1;
       if (focusRow === "trigger") {
         setTrigger((prev) => cycleOption(triggerOptions, prev, direction));
-      } else if (focusRow === "behavior" && memfsEnabled && trigger !== "off") {
-        setBehavior((prev) => cycleOption(BEHAVIOR_OPTIONS, prev, direction));
       }
       return;
     }
@@ -263,40 +248,6 @@ export function SleeptimeSelector({
               {" Compaction event "}
             </Text>
           </Box>
-
-          {trigger !== "off" && (
-            <>
-              <Box height={1} />
-              <Box flexDirection="row">
-                <Text>{focusRow === "behavior" ? "> " : "  "}</Text>
-                <Text bold>Forced:</Text>
-                <Text>{"  "}</Text>
-                <Text
-                  backgroundColor={
-                    behavior === "reminder"
-                      ? colors.selector.itemHighlighted
-                      : undefined
-                  }
-                  color={behavior === "reminder" ? "black" : undefined}
-                  bold={behavior === "reminder"}
-                >
-                  {" No (reminder only) "}
-                </Text>
-                <Text> </Text>
-                <Text
-                  backgroundColor={
-                    behavior === "auto-launch"
-                      ? colors.selector.itemHighlighted
-                      : undefined
-                  }
-                  color={behavior === "auto-launch" ? "black" : undefined}
-                  bold={behavior === "auto-launch"}
-                >
-                  {" Yes (auto-launch) "}
-                </Text>
-              </Box>
-            </>
-          )}
 
           {trigger === "step-count" && (
             <>

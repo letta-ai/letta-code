@@ -15,6 +15,8 @@ describe("reflection auto-launch wiring", () => {
 
     expect(appSource).toContain("const maybeLaunchReflectionSubagent = async");
     expect(appSource).toContain("hasActiveReflectionSubagent()");
+    expect(appSource).toContain("buildAutoReflectionPayload(");
+    expect(appSource).toContain("finalizeAutoReflectionPayload(");
     expect(appSource).toContain("spawnBackgroundSubagentTask({");
     expect(appSource).toContain("maybeLaunchReflectionSubagent,");
 
@@ -24,5 +26,17 @@ describe("reflection auto-launch wiring", () => {
     expect(engineSource).toContain(
       'await context.maybeLaunchReflectionSubagent("compaction-event")',
     );
+  });
+
+  test("/remember sends REMEMBER_PROMPT to primary agent via processConversation", () => {
+    const appPath = fileURLToPath(
+      new URL("../../cli/App.tsx", import.meta.url),
+    );
+    const appSource = readFileSync(appPath, "utf-8");
+
+    // /remember uses the primary agent path (no subagent)
+    expect(appSource).toContain("REMEMBER_PROMPT");
+    expect(appSource).toContain("processConversation([");
+    expect(appSource).toContain("The user did not specify what to remember.");
   });
 });

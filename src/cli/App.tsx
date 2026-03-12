@@ -253,6 +253,12 @@ import {
   toQueuedMsg,
 } from "./helpers/queuedMessageParts";
 import { resolveReasoningTabToggleCommand } from "./helpers/reasoningTabToggle";
+import {
+  appendTranscriptDeltaJsonl,
+  buildAutoReflectionPayload,
+  buildReflectionSubagentPrompt,
+  finalizeAutoReflectionPayload,
+} from "./helpers/reflectionTranscript";
 import { safeJsonParseOr } from "./helpers/safeJsonParse";
 import { getDeviceType, getLocalTime } from "./helpers/sessionContext";
 import {
@@ -835,17 +841,13 @@ function formatReflectionSettings(settings: ReflectionSettings): string {
   if (settings.trigger === "off") {
     return "Off";
   }
-  const behaviorLabel =
-    settings.behavior === "auto-launch" ? "auto-launch" : "reminder";
   if (settings.trigger === "compaction-event") {
-    return `Compaction event (${behaviorLabel})`;
+    return "Compaction event";
   }
-  return `Step count (every ${settings.stepCount} turns, ${behaviorLabel})`;
+  return `Step count (every ${settings.stepCount} turns)`;
 }
 
 const AUTO_REFLECTION_DESCRIPTION = "Reflect on recent conversations";
-const AUTO_REFLECTION_PROMPT =
-  "Review recent conversation history and update memory files with important information worth preserving.";
 
 function hasActiveReflectionSubagent(): boolean {
   const snapshot = getSubagentSnapshot();
@@ -989,6 +991,10 @@ export default function App({
   useEffect(() => {
     conversationIdRef.current = conversationId;
   }, [conversationId]);
+
+  // Tracks the transcript start index for the current user turn across
+  // approval continuations (requires_approval -> approval result round-trip).
+  const pendingTranscriptStartLineIndexRef = useRef<number | null>(null);
 
   // Track the most recent run ID from streaming (for statusline display)
   const lastRunIdRef = useRef<string | null>(null);
@@ -3656,7 +3662,11 @@ export default function App({
   const processConversation = useCallback(
     async (
       initialInput: Array<MessageCreate | ApprovalCreate>,
-      options?: { allowReentry?: boolean; submissionGeneration?: number },
+      options?: {
+        allowReentry?: boolean;
+        submissionGeneration?: number;
+        transcriptStartLineIndex?: number | null;
+      },
     ): Promise<void> => {
       // Transient pre-stream retries can yield for seconds.
       // Pin the user's permission mode for the duration of the submission so
@@ -3801,6 +3811,21 @@ export default function App({
       // Copy so we can safely mutate for retry recovery flows
       let currentInput = [...initialInput];
       const allowReentry = options?.allowReentry ?? false;
+      const hasApprovalInput = initialInput.some(
+        (item) => item.type === "approval",
+      );
+      const hasExplicitTranscriptStart =
+        options?.transcriptStartLineIndex !== undefined;
+      if (options?.transcriptStartLineIndex !== undefined) {
+        pendingTranscriptStartLineIndexRef.current =
+          options.transcriptStartLineIndex;
+      } else if (!hasApprovalInput) {
+        pendingTranscriptStartLineIndexRef.current = null;
+      }
+      const transcriptTurnStartLineIndex =
+        hasExplicitTranscriptStart || hasApprovalInput
+          ? pendingTranscriptStartLineIndexRef.current
+          : null;
 
       // Use provided generation (from onSubmit) or capture current
       // This allows detecting if ESC was pressed during async work before this function was called
@@ -3831,6 +3856,7 @@ export default function App({
 
       // Track last run ID for error reporting (accessible in catch block)
       let currentRunId: string | undefined;
+      let preserveTranscriptStartForApproval = false;
 
       try {
         // Check if user hit escape before we started
@@ -4467,6 +4493,29 @@ export default function App({
             lastSentInputRef.current = null; // Clear - no recovery needed
             pendingInterruptRecoveryConversationIdRef.current = null;
 
+            if (transcriptTurnStartLineIndex !== null) {
+              try {
+                const transcriptLines = toLines(buffersRef.current).slice(
+                  transcriptTurnStartLineIndex,
+                );
+                await appendTranscriptDeltaJsonl(
+                  agentIdRef.current,
+                  conversationIdRef.current,
+                  transcriptLines,
+                );
+              } catch (transcriptError) {
+                debugWarn(
+                  "memory",
+                  `Failed to append transcript delta: ${
+                    transcriptError instanceof Error
+                      ? transcriptError.message
+                      : String(transcriptError)
+                  }`,
+                );
+              }
+            }
+            pendingTranscriptStartLineIndexRef.current = null;
+
             // Get last assistant message, user message, and reasoning for Stop hook
             const lastAssistant = Array.from(
               buffersRef.current.byId.values(),
@@ -4627,6 +4676,7 @@ export default function App({
           // Case 1.5: Stream was cancelled by user
           if (stopReasonToHandle === "cancelled") {
             clearApprovalToolContext();
+            pendingTranscriptStartLineIndexRef.current = null;
             setStreaming(false);
             closeTrajectorySegment();
             syncTrajectoryElapsedBase();
@@ -4677,6 +4727,7 @@ export default function App({
           // Case 2: Requires approval
           if (stopReasonToHandle === "requires_approval") {
             clearApprovalToolContext();
+            preserveTranscriptStartForApproval = true;
             approvalToolContextIdRef.current = turnToolContextId;
             // Clear stale state immediately to prevent ID mismatch bugs
             setAutoHandledResults([]);
@@ -5655,6 +5706,10 @@ export default function App({
         refreshDerived();
         resetTrajectoryBases();
       } finally {
+        if (!preserveTranscriptStartForApproval) {
+          pendingTranscriptStartLineIndexRef.current = null;
+        }
+
         // Check if this conversation was superseded by an ESC interrupt
         const isStale = myGeneration !== conversationGenerationRef.current;
 
@@ -9222,6 +9277,93 @@ export default function App({
           return { submitted: true };
         }
 
+        // Special handling for /reflect command - manually launch reflection subagent
+        if (trimmed === "/reflect") {
+          const cmd = commandRunner.start(msg, "Launching reflection agent...");
+
+          if (!settingsManager.isMemfsEnabled(agentId)) {
+            cmd.fail(
+              "Memory filesystem is not enabled. Use /remember instead.",
+            );
+            return { submitted: true };
+          }
+
+          if (hasActiveReflectionSubagent()) {
+            cmd.fail(
+              "A reflection agent is already running in the background.",
+            );
+            return { submitted: true };
+          }
+
+          try {
+            const reflectionConversationId = conversationIdRef.current;
+            const autoPayload = await buildAutoReflectionPayload(
+              agentId,
+              reflectionConversationId,
+            );
+
+            if (!autoPayload) {
+              cmd.fail("No new transcript content to reflect on.");
+              return { submitted: true };
+            }
+
+            const memoryDir = getMemoryFilesystemRoot(agentId);
+            const reflectionPrompt = buildReflectionSubagentPrompt({
+              transcriptPath: autoPayload.payloadPath,
+              memoryDir,
+              cwd: process.cwd(),
+            });
+
+            const { spawnBackgroundSubagentTask } = await import(
+              "../tools/impl/Task"
+            );
+            spawnBackgroundSubagentTask({
+              subagentType: "reflection",
+              prompt: reflectionPrompt,
+              description: "Reflecting on conversation",
+              silentCompletion: true,
+              onComplete: async ({ success, error }) => {
+                await finalizeAutoReflectionPayload(
+                  agentId,
+                  reflectionConversationId,
+                  autoPayload.payloadPath,
+                  autoPayload.endSnapshotLine,
+                  success,
+                );
+
+                const msg = await handleMemorySubagentCompletion(
+                  {
+                    agentId,
+                    conversationId: conversationIdRef.current,
+                    subagentType: "reflection",
+                    success,
+                    error,
+                  },
+                  {
+                    recompileByConversation:
+                      systemPromptRecompileByConversationRef.current,
+                    recompileQueuedByConversation:
+                      queuedSystemPromptRecompileByConversationRef.current,
+                    logRecompileFailure: (message) =>
+                      debugWarn("memory", message),
+                  },
+                );
+                appendTaskNotificationEvents([msg]);
+              },
+            });
+
+            cmd.finish(
+              `Reflecting on the recent conversation. View the transcript here: ${autoPayload.payloadPath}`,
+              true,
+            );
+          } catch (error) {
+            const errorDetails = formatErrorDetails(error, agentId);
+            cmd.fail(`Failed to start reflection agent: ${errorDetails}`);
+          }
+
+          return { submitted: true };
+        }
+
         // Special handling for /plan command - enter plan mode
         if (trimmed === "/plan") {
           // Generate plan file path and enter plan mode
@@ -9516,15 +9658,43 @@ ${SYSTEM_REMINDER_CLOSE}
           return false;
         }
         try {
+          const reflectionConversationId = conversationIdRef.current;
+          const autoPayload = await buildAutoReflectionPayload(
+            agentId,
+            reflectionConversationId,
+          );
+          if (!autoPayload) {
+            debugLog(
+              "memory",
+              `Skipping auto reflection launch (${triggerSource}) because transcript has no new content`,
+            );
+            return false;
+          }
+
+          const memoryDir = getMemoryFilesystemRoot(agentId);
+          const reflectionPrompt = buildReflectionSubagentPrompt({
+            transcriptPath: autoPayload.payloadPath,
+            memoryDir,
+            cwd: process.cwd(),
+          });
+
           const { spawnBackgroundSubagentTask } = await import(
             "../tools/impl/Task"
           );
           spawnBackgroundSubagentTask({
             subagentType: "reflection",
-            prompt: AUTO_REFLECTION_PROMPT,
+            prompt: reflectionPrompt,
             description: AUTO_REFLECTION_DESCRIPTION,
             silentCompletion: true,
             onComplete: async ({ success, error }) => {
+              await finalizeAutoReflectionPayload(
+                agentId,
+                reflectionConversationId,
+                autoPayload.payloadPath,
+                autoPayload.endSnapshotLine,
+                success,
+              );
+
               const msg = await handleMemorySubagentCompletion(
                 {
                   agentId,
@@ -9622,6 +9792,9 @@ ${SYSTEM_REMINDER_CLOSE}
         });
         buffersRef.current.order.push(userId);
       }
+      const transcriptStartLineIndex = userTextForInput
+        ? Math.max(0, toLines(buffersRef.current).length - 1)
+        : null;
 
       // Reset token counter for this turn (only count the agent's response)
       buffersRef.current.tokenCount = 0;
@@ -10214,7 +10387,10 @@ ${SYSTEM_REMINDER_CLOSE}
         content: messageContent as unknown as MessageCreate["content"],
       });
 
-      await processConversation(initialInput, { submissionGeneration });
+      await processConversation(initialInput, {
+        submissionGeneration,
+        transcriptStartLineIndex,
+      });
 
       // Clean up placeholders after submission
       clearPlaceholdersInText(msg);
@@ -11389,13 +11565,11 @@ ${SYSTEM_REMINDER_CLOSE}
           settingsManager.updateLocalProjectSettings({
             memoryReminderInterval: legacyMode,
             reflectionTrigger: reflectionSettings.trigger,
-            reflectionBehavior: reflectionSettings.behavior,
             reflectionStepCount: reflectionSettings.stepCount,
           });
           settingsManager.updateSettings({
             memoryReminderInterval: legacyMode,
             reflectionTrigger: reflectionSettings.trigger,
-            reflectionBehavior: reflectionSettings.behavior,
             reflectionStepCount: reflectionSettings.stepCount,
           });
 

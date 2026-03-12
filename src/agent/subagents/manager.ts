@@ -504,7 +504,7 @@ export function resolveSubagentLauncher(
 /**
  * Build CLI arguments for spawning a subagent
  */
-function buildSubagentArgs(
+export function buildSubagentArgs(
   type: string,
   config: SubagentConfig,
   model: string | null,
@@ -575,6 +575,9 @@ function buildSubagentArgs(
   if (!isDeployingExisting) {
     if (config.memoryBlocks === "none") {
       args.push("--init-blocks", "none");
+      if (config.mode === "stateless") {
+        args.push("--no-memfs");
+      }
     } else if (
       Array.isArray(config.memoryBlocks) &&
       config.memoryBlocks.length > 0

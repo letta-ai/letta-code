@@ -48,6 +48,26 @@ describe("memory subagent recompile handling", () => {
     );
   });
 
+  test("passes agent id when recompiling the default conversation", async () => {
+    await handleMemorySubagentCompletion(
+      {
+        agentId: "agent-default",
+        conversationId: "default",
+        subagentType: "reflection",
+        success: true,
+      },
+      {
+        recompileByConversation: new Map(),
+        recompileQueuedByConversation: new Set(),
+        recompileAgentSystemPromptImpl: recompileAgentSystemPromptMock,
+      },
+    );
+
+    expect(recompileAgentSystemPromptMock).toHaveBeenCalledWith("default", {
+      agentId: "agent-default",
+    });
+  });
+
   test("queues a trailing recompile when later completions land mid-flight", async () => {
     const firstDeferred = createDeferred<string>();
     const secondDeferred = createDeferred<string>();

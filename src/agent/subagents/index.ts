@@ -47,6 +47,8 @@ export type { MemoryBlockLabel };
 /**
  * Subagent configuration
  */
+export type SubagentMode = "stateful" | "stateless";
+
 export interface SubagentConfig {
   /** Unique identifier for the subagent */
   name: string;
@@ -62,6 +64,8 @@ export interface SubagentConfig {
   skills: string[];
   /** Memory blocks the subagent has access to - list of labels or "all" or "none" */
   memoryBlocks: MemoryBlockLabel[] | "all" | "none";
+  /** Stateless agents should not persist private working memory. */
+  mode: SubagentMode;
   /** Permission mode for this subagent (default, acceptEdits, plan, bypassPermissions) */
   permissionMode?: string;
 }
@@ -171,6 +175,12 @@ function parseMemoryBlocks(
   return blocks.length > 0 ? blocks : "all";
 }
 
+function parseSubagentMode(modeStr: string | undefined): SubagentMode {
+  return modeStr?.trim().toLowerCase() === "stateless"
+    ? "stateless"
+    : "stateful";
+}
+
 /**
  * Validate subagent frontmatter
  * Only validates required fields - optional fields are validated at runtime where needed
@@ -228,6 +238,7 @@ function parseSubagentContent(content: string): SubagentConfig {
     memoryBlocks: parseMemoryBlocks(
       getStringField(frontmatter, "memoryBlocks"),
     ),
+    mode: parseSubagentMode(getStringField(frontmatter, "mode")),
     permissionMode: getStringField(frontmatter, "permissionMode"),
   };
 }
