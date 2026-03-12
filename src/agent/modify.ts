@@ -161,16 +161,18 @@ function buildModelSettings(
     }
     settings = bedrockSettings;
   } else {
-    // For BYOK/unknown providers, return generic settings with parallel_tool_calls
-    settings = {
+    // Unknown/BYOK providers (e.g. openai-proxy) — assume OpenAI-compatible
+    const openaiProxySettings: OpenAIModelSettings = {
+      provider_type: "openai",
       parallel_tool_calls:
         typeof updateArgs?.parallel_tool_calls === "boolean"
           ? updateArgs.parallel_tool_calls
           : true,
     };
     if (typeof updateArgs?.strict === "boolean") {
-      (settings as Record<string, unknown>).strict = updateArgs.strict;
+      (openaiProxySettings as Record<string, unknown>).strict = updateArgs.strict;
     }
+    settings = openaiProxySettings;
   }
 
   // Apply max_output_tokens only when provider_type is present and the value
