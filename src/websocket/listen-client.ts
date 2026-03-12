@@ -391,7 +391,12 @@ let activeRuntime: ListenerRuntime | null = null;
 /**
  * Handle mode change request from cloud
  */
-function handleModeChange(msg: ModeChangeMessage, socket: WebSocket): void {
+function handleModeChange(
+  msg: ModeChangeMessage,
+  socket: WebSocket,
+  runtime: ListenerRuntime,
+  opts: StartListenerOptions,
+): void {
   try {
     permissionMode.setMode(msg.mode);
 
@@ -410,6 +415,47 @@ function handleModeChange(msg: ModeChangeMessage, socket: WebSocket): void {
 
     if (process.env.DEBUG) {
       console.log(`[Listen] Mode changed to: ${msg.mode}`);
+    }
+
+    // When switching to bypassPermissions, auto-resolve any pending approvals
+    if (msg.mode === "bypassPermissions") {
+      if (runtime.pendingApprovalResolvers.size > 0) {
+        // Scenario 1: Currently blocked on approval promises — resolve them all
+        for (const [requestId, pending] of runtime.pendingApprovalResolvers) {
+          pending.resolve({
+            subtype: "success",
+            request_id: requestId,
+            response: { behavior: "allow" },
+          });
+        }
+        runtime.pendingApprovalResolvers.clear();
+        scheduleQueuePump(runtime, socket, opts);
+      } else if (
+        !runtime.isProcessing &&
+        runtime.lastStopReason === "requires_approval" &&
+        runtime.activeAgentId
+      ) {
+        // Scenario 2: Not processing but last run stopped at approval — trigger recovery
+        runtime.messageQueue = runtime.messageQueue.then(async () => {
+          try {
+            if (runtime !== activeRuntime || runtime.intentionallyClosed) {
+              return;
+            }
+            await recoverPendingApprovals(runtime, socket, {
+              type: "recover_pending_approvals",
+              agentId: runtime.activeAgentId ?? undefined,
+              conversationId: runtime.activeConversationId ?? undefined,
+            });
+          } catch (error) {
+            const errorMessage =
+              error instanceof Error ? error.message : String(error);
+            console.error(
+              "[Listen] Auto-recovery after mode change failed:",
+              errorMessage,
+            );
+          }
+        });
+      }
     }
   } catch (error) {
     // Send failure acknowledgment
@@ -2629,7 +2675,7 @@ async function connectWithRetry(
 
     // Handle mode change messages immediately (not queued)
     if (parsed.type === "mode_change") {
-      handleModeChange(parsed, socket);
+      handleModeChange(parsed, socket, runtime, opts);
       return;
     }
 
