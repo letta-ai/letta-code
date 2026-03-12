@@ -75,19 +75,18 @@ describe("init wiring", () => {
     agentId: "test-agent",
     workingDirectory: "/tmp/test",
     memoryDir: "/tmp/test/.memory",
-    gitContext: "## Git context\nsome git info",
-    gitIdentity: "**Local git user**: Test User <test@example.com>",
-    existingMemory: "(no existing memory files)",
+    gitContext: "- branch: main\n- status: (clean)",
+    gitIdentity: "Test User <test@example.com>",
+    existingMemory: "(empty)",
     dirListing: "README.md\npackage.json\nsrc",
   };
 
   test("buildShallowInitPrompt includes pre-gathered context", () => {
     const prompt = buildShallowInitPrompt(baseArgs);
     expect(prompt).toContain("memory_dir: /tmp/test/.memory");
-    expect(prompt).toContain("Git identity:");
-    expect(prompt).toContain("Test User");
-    expect(prompt).toContain("Top-level directory listing:");
-    expect(prompt).toContain("Existing memory files:");
+    expect(prompt).toContain("git_user: Test User");
+    expect(prompt).toContain("## Project Structure");
+    expect(prompt).toContain("## Existing Memory");
   });
 
   test("buildInitMessage includes memoryDir when provided", () => {

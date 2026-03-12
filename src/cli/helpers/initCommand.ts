@@ -54,26 +54,15 @@ export function gatherGitContext(): string {
       ).trim();
 
       return `
-## Current Project Context
+- branch: ${branch}
+- main: ${mainBranch}
+- status: ${status || "(clean)"}
 
-**Working directory**: ${cwd}
-
-### Git Status
-- **Current branch**: ${branch}
-- **Main branch**: ${mainBranch}
-- **Status**:
-${status || "(clean working tree)"}
-
-### Recent Commits
+Recent commits:
 ${recentCommits}
 `;
     } catch {
-      return `
-## Current Project Context
-
-**Working directory**: ${cwd}
-**Git**: Not a git repository
-`;
+      return "(not a git repository)";
     }
   } catch {
     // execSync import failed (shouldn't happen with static import, but be safe)
@@ -83,7 +72,7 @@ ${recentCommits}
 
 // ── Shallow init (background subagent) ───────────────────
 
-/** Gather git contributor identity for the local user. */
+/** Gather git identity for the local user. */
 function gatherGitIdentity(): string {
   const cwd = process.cwd();
   try {
@@ -95,16 +84,9 @@ function gatherGitIdentity(): string {
       cwd,
       encoding: "utf-8",
     }).trim();
-    const contributors = execSync(
-      'git log --format="%an <%ae>" | sort -u | head -10 2>/dev/null || true',
-      { cwd, encoding: "utf-8" },
-    ).trim();
 
-    const parts: string[] = [];
-    if (userName || userEmail)
-      parts.push(`**Local git user**: ${userName} <${userEmail}>`);
-    if (contributors) parts.push(`**Contributors**:\n${contributors}`);
-    return parts.join("\n\n");
+    if (userName || userEmail) return `${userName} <${userEmail}>`;
+    return "";
   } catch {
     return "";
   }
@@ -113,7 +95,7 @@ function gatherGitIdentity(): string {
 /** Read existing memory files from the local filesystem. */
 function gatherExistingMemory(agentId: string): string {
   const systemDir = getMemorySystemDir(agentId);
-  if (!existsSync(systemDir)) return "(no existing memory files)";
+  if (!existsSync(systemDir)) return "(empty)";
 
   const files: string[] = [];
   function walk(dir: string, prefix: string): void {
@@ -125,7 +107,7 @@ function gatherExistingMemory(agentId: string): string {
         } else if (entry.name.endsWith(".md")) {
           try {
             const content = readFileSync(join(dir, entry.name), "utf-8");
-            files.push(`### ${rel}\n\`\`\`\n${content.slice(0, 2000)}\n\`\`\``);
+            files.push(`── ${rel}\n${content.slice(0, 2000)}`);
           } catch {
             // skip unreadable files
           }
@@ -136,14 +118,71 @@ function gatherExistingMemory(agentId: string): string {
     }
   }
   walk(systemDir, "");
-  return files.length > 0 ? files.join("\n\n") : "(no existing memory files)";
+  return files.length > 0 ? files.join("\n\n") : "(empty)";
 }
 
-/** Get top-level directory listing. */
+const IGNORED_DIRS = new Set([
+  "node_modules",
+  ".git",
+  "dist",
+  "build",
+  ".next",
+  "__pycache__",
+  "target",
+  "vendor",
+  ".cache",
+  ".turbo",
+]);
+
+/** Get project directory structure as a tree (2 levels deep). */
 function gatherDirListing(): string {
   const cwd = process.cwd();
   try {
-    return execSync("ls -1", { cwd, encoding: "utf-8" }).trim();
+    const entries = readdirSync(cwd, { withFileTypes: true });
+    const dirs = entries
+      .filter((e) => e.isDirectory() && !IGNORED_DIRS.has(e.name))
+      .sort((a, b) => a.name.localeCompare(b.name));
+    const files = entries
+      .filter((e) => !e.isDirectory())
+      .sort((a, b) => a.name.localeCompare(b.name));
+
+    const lines: string[] = [];
+    const sorted = [...dirs, ...files];
+
+    for (let i = 0; i < sorted.length; i++) {
+      const entry = sorted[i]!;
+      const isLast = i === sorted.length - 1;
+      const prefix = isLast ? "└── " : "├── ";
+
+      if (entry.isDirectory()) {
+        lines.push(`${prefix}${entry.name}/`);
+        // Show 1 level of children for directories
+        try {
+          const children = readdirSync(join(cwd, entry.name), {
+            withFileTypes: true,
+          })
+            .filter((e) => !IGNORED_DIRS.has(e.name))
+            .sort((a, b) => {
+              if (a.isDirectory() !== b.isDirectory())
+                return a.isDirectory() ? -1 : 1;
+              return a.name.localeCompare(b.name);
+            });
+          const childPrefix = isLast ? "    " : "│   ";
+          for (let j = 0; j < children.length; j++) {
+            const child = children[j]!;
+            const childIsLast = j === children.length - 1;
+            const connector = childIsLast ? "└── " : "├── ";
+            const suffix = child.isDirectory() ? "/" : "";
+            lines.push(`${childPrefix}${connector}${child.name}${suffix}`);
+          }
+        } catch {
+          // skip unreadable dirs
+        }
+      } else {
+        lines.push(`${prefix}${entry.name}`);
+      }
+    }
+    return lines.join("\n");
   } catch {
     return "";
   }
@@ -159,22 +198,29 @@ export function buildShallowInitPrompt(args: {
   existingMemory: string;
   dirListing: string;
 }): string {
+  const identityLine = args.gitIdentity
+    ? `- git_user: ${args.gitIdentity}`
+    : "";
+
   return `
-Runtime context:
-- parent_agent_id: ${args.agentId}
+## Environment
+
 - working_directory: ${args.workingDirectory}
 - memory_dir: ${args.memoryDir}
+- parent_agent_id: ${args.agentId}
+${identityLine}
 
-Git/project context:
+## Git
 ${args.gitContext}
 
-Git identity:
-${args.gitIdentity}
+## Project Structure
 
-Top-level directory listing:
+\`\`\`
 ${args.dirListing}
+\`\`\`
 
-Existing memory files:
+## Existing Memory
+
 ${args.existingMemory}
 `.trim();
 }
