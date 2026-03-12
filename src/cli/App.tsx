@@ -4156,11 +4156,6 @@ export default function App({
               );
 
               const retryStatusMsg = getRetryStatusMessage(errorDetail);
-              debugLog(
-                "retry",
-                "Pre-stream retry: %s",
-                errorDetail || "unknown error",
-              );
               const retryStatusId =
                 retryStatusMsg != null ? uid("status") : null;
               if (retryStatusId && retryStatusMsg) {
