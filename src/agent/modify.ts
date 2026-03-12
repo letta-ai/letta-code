@@ -30,10 +30,11 @@ function buildModelSettings(
   const isOpenAI =
     modelHandle.startsWith("openai/") ||
     modelHandle.startsWith(`${OPENAI_CODEX_PROVIDER_NAME}/`);
-  // Include legacy custom Anthropic OAuth provider (claude-pro-max)
+  // Include legacy custom Anthropic OAuth provider (claude-pro-max) and minimax
   const isAnthropic =
     modelHandle.startsWith("anthropic/") ||
-    modelHandle.startsWith("claude-pro-max/");
+    modelHandle.startsWith("claude-pro-max/") ||
+    modelHandle.startsWith("minimax/");
   const isZai = modelHandle.startsWith("zai/");
   const isGoogleAI = modelHandle.startsWith("google_ai/");
   const isGoogleVertex = modelHandle.startsWith("google_vertex/");
@@ -161,16 +162,19 @@ function buildModelSettings(
     }
     settings = bedrockSettings;
   } else {
-    // For BYOK/unknown providers, return generic settings with parallel_tool_calls
-    settings = {
+    // Unknown/BYOK providers (e.g. openai-proxy) — assume OpenAI-compatible
+    const openaiProxySettings: OpenAIModelSettings = {
+      provider_type: "openai",
       parallel_tool_calls:
         typeof updateArgs?.parallel_tool_calls === "boolean"
           ? updateArgs.parallel_tool_calls
           : true,
     };
     if (typeof updateArgs?.strict === "boolean") {
-      (settings as Record<string, unknown>).strict = updateArgs.strict;
+      (openaiProxySettings as Record<string, unknown>).strict =
+        updateArgs.strict;
     }
+    settings = openaiProxySettings;
   }
 
   // Apply max_output_tokens only when provider_type is present and the value
@@ -224,14 +228,8 @@ export async function updateAgentLLMConfig(
       : undefined);
   const hasModelSettings = Object.keys(modelSettings).length > 0;
 
-  // MiniMax doesn't have a dedicated ModelSettings class, so model_settings
-  // won't carry parallel_tool_calls. Pass it directly to prevent
-  // get_llm_config_from_handle from defaulting it to false.
-  const isMinimax = modelHandle.startsWith("minimax/");
-
   await client.agents.update(agentId, {
     model: modelHandle,
-    ...(isMinimax && { parallel_tool_calls: true }),
     ...(hasModelSettings && { model_settings: modelSettings }),
     ...(contextWindow && { context_window_limit: contextWindow }),
     ...((typeof updateArgs?.max_output_tokens === "number" ||
