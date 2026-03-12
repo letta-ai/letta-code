@@ -80,8 +80,8 @@ export function handleTerminalSpawn(
           let buffer = "";
           let flushTimer: ReturnType<typeof setTimeout> | null = null;
 
-          return (_terminal: unknown, data: Buffer | string) => {
-            buffer += typeof data === "string" ? data : data.toString();
+          return (_terminal: unknown, data: Uint8Array) => {
+            buffer += new TextDecoder().decode(data);
 
             if (!flushTimer) {
               flushTimer = setTimeout(() => {
