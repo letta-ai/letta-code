@@ -9343,7 +9343,6 @@ export default function App({
                       systemPromptRecompileByConversationRef.current,
                     recompileQueuedByConversation:
                       queuedSystemPromptRecompileByConversationRef.current,
-                    updateInitProgress,
                     logRecompileFailure: (message) =>
                       debugWarn("memory", message),
                   },

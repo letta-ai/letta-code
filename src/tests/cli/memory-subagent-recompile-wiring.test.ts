@@ -60,7 +60,6 @@ describe("memory subagent recompile handling", () => {
         recompileByConversation: new Map(),
         recompileQueuedByConversation: new Set(),
         recompileAgentSystemPromptImpl: recompileAgentSystemPromptMock,
-        updateInitProgress: () => {},
       },
     );
 
