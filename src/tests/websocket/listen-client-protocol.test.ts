@@ -124,6 +124,19 @@ describe("listen-client parseServerMessage", () => {
     );
     expect(abort?.type).toBe("abort_message");
   });
+
+  test("rejects legacy cancel_run in hard-cut v2 protocol", () => {
+    const legacyCancel = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "cancel_run",
+          request_id: "cancel-1",
+          run_id: "run-1",
+        }),
+      ),
+    );
+    expect(legacyCancel).toBeNull();
+  });
 });
 
 describe("listen-client approval resolver wiring", () => {

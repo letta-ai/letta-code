@@ -228,13 +228,6 @@ interface AbortMessage {
   run_id?: string | null;
 }
 
-// Backward-compatibility alias while cloud clients migrate to abort_message.
-interface LegacyCancelRunMessage {
-  type: "cancel_run";
-  request_id?: string;
-  run_id?: string | null;
-}
-
 interface TerminalSpawnMessage {
   type: "terminal_spawn";
   terminal_id: string;
@@ -350,7 +343,6 @@ type ServerMessage =
   | ChangeCwdMessage
   | ListFoldersInDirectoryMessage
   | AbortMessage
-  | LegacyCancelRunMessage
   | RecoverPendingApprovalsMessage
   | WsControlResponse
   | TerminalSpawnMessage
@@ -397,7 +389,7 @@ type ListenerRuntime = {
   activeRunStartedAt: string | null;
   /** Abort controller for the currently active message turn. */
   activeAbortController: AbortController | null;
-  /** True when a cancel_run request has been issued for the active turn. */
+  /** True when an abort_message request has been issued for the active turn. */
   cancelRequested: boolean;
   /** Queue lifecycle tracking — parallel tracking layer, does not affect message processing. */
   queueRuntime: QueueRuntime;
@@ -1016,7 +1008,6 @@ export function parseServerMessage(
       parsed.type === "terminal_resize" ||
       parsed.type === "terminal_kill" ||
       parsed.type === "abort_message" ||
-      parsed.type === "cancel_run" ||
       parsed.type === "recover_pending_approvals"
     ) {
       return parsed as ServerMessage;
@@ -2960,7 +2951,7 @@ async function connectWithRetry(
       return;
     }
 
-    if (parsed.type === "abort_message" || parsed.type === "cancel_run") {
+    if (parsed.type === "abort_message") {
       if (runtime !== activeRuntime || runtime.intentionallyClosed) {
         return;
       }
@@ -2968,7 +2959,7 @@ async function connectWithRetry(
       const requestId =
         typeof parsed.request_id === "string" && parsed.request_id.length > 0
           ? parsed.request_id
-          : `${parsed.type === "abort_message" ? "abort" : "cancel"}-${crypto.randomUUID()}`;
+          : `abort-${crypto.randomUUID()}`;
       const requestedRunId =
         typeof parsed.run_id === "string" ? parsed.run_id : runtime.activeRunId;
       const hasPendingApprovals = runtime.pendingApprovalResolvers.size > 0;
