@@ -228,6 +228,7 @@ const InputFooter = memo(function InputFooter({
   ctrlCPressed,
   escapePressed,
   isBashMode,
+  bashExitArmed,
   modeName,
   modeColor,
   modeGlyph,
@@ -247,6 +248,7 @@ const InputFooter = memo(function InputFooter({
   ctrlCPressed: boolean;
   escapePressed: boolean;
   isBashMode: boolean;
+  bashExitArmed: boolean;
   modeName: string | null;
   modeColor: string | null;
   modeGlyph?: string | null;
@@ -381,7 +383,9 @@ const InputFooter = memo(function InputFooter({
             <Text color={colors.bash.prompt}>⏵⏵ bash mode</Text>
             <Text color={colors.bash.prompt} dimColor>
               {" "}
-              (backspace to exit)
+              {bashExitArmed
+                ? "(backspace again to exit)"
+                : "(backspace to exit)"}
             </Text>
           </Text>
         ) : statusLineText ? (
@@ -803,6 +807,7 @@ export function Input({
 
   // Bash mode state (declared early so prompt width can feed into contentWidth)
   const [isBashMode, setIsBashMode] = useState(false);
+  const [bashExitArmed, setBashExitArmed] = useState(false);
 
   useEffect(() => {
     const prev = lastColumnsRef.current;
@@ -926,14 +931,21 @@ export function Input({
   const handleBangAtEmpty = useCallback(() => {
     if (isBashMode) return false;
     setIsBashMode(true);
+    // Arm immediately so initial empty backspace exits in one press.
+    setBashExitArmed(true);
     return true;
   }, [isBashMode]);
 
   const handleBackspaceAtEmpty = useCallback(() => {
     if (!isBashMode) return false;
+    if (!bashExitArmed) {
+      setBashExitArmed(true);
+      return true;
+    }
     setIsBashMode(false);
+    setBashExitArmed(false);
     return true;
-  }, [isBashMode]);
+  }, [isBashMode, bashExitArmed]);
 
   // Reset cursor position after it's been applied
   useEffect(() => {
@@ -942,6 +954,20 @@ export function Input({
       return () => clearTimeout(timer);
     }
   }, [cursorPos]);
+
+  // Reset bash exit arming when leaving bash mode
+  useEffect(() => {
+    if (!isBashMode && bashExitArmed) {
+      setBashExitArmed(false);
+    }
+  }, [isBashMode, bashExitArmed]);
+
+  // If user types after first backspace-at-empty, disarm exit intent
+  useEffect(() => {
+    if (bashExitArmed && value.length > 0) {
+      setBashExitArmed(false);
+    }
+  }, [value, bashExitArmed]);
 
   // Reset boundary flags and preferred column when cursor moves or value changes
   useEffect(() => {
@@ -1057,6 +1083,7 @@ export function Input({
         // First CTRL-C - wipe input and start 1-second timer
         // Note: In bash mode, this clears input but keeps bash mode active
         setValue("");
+        setBashExitArmed(false);
         setCtrlCPressed(true);
         if (ctrlCTimerRef.current) clearTimeout(ctrlCTimerRef.current);
         ctrlCTimerRef.current = setTimeout(() => {
@@ -1577,6 +1604,7 @@ export function Input({
                 ctrlCPressed={ctrlCPressed}
                 escapePressed={escapePressed}
                 isBashMode={isBashMode}
+                bashExitArmed={bashExitArmed}
                 modeName={modeInfo?.name ?? null}
                 modeColor={modeInfo?.color ?? null}
                 modeGlyph={modeInfo?.glyph ?? null}
@@ -1609,6 +1637,7 @@ export function Input({
     messageQueue,
     interactionEnabled,
     isBashMode,
+    bashExitArmed,
     horizontalLine,
     contentWidth,
     value,
