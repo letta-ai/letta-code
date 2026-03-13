@@ -1,5 +1,4 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 
 const DEFAULT_LETTAIGNORE = `\
@@ -54,13 +53,13 @@ const DEFAULT_LETTAIGNORE = `\
 `;
 
 /**
- * Create a .lettaignore file in the user's ~/.letta directory with a
+ * Create a .lettaignore file in the project's .letta directory with a
  * commented-out template if one does not already exist.
  * All patterns in the generated file are commented out — nothing is excluded
  * by default. Users uncomment the patterns they want.
  */
-export function ensureLettaIgnoreFile(homeDir: string = homedir()): void {
-  const lettaDir = join(homeDir, ".letta");
+export function ensureLettaIgnoreFile(cwd: string = process.cwd()): void {
+  const lettaDir = join(cwd, ".letta");
   const filePath = join(lettaDir, ".lettaignore");
   if (existsSync(filePath)) return;
 
@@ -73,7 +72,7 @@ export function ensureLettaIgnoreFile(homeDir: string = homedir()): void {
 }
 
 /**
- * Read glob patterns from ~/.letta/.lettaignore.
+ * Read glob patterns from the project's .letta/.lettaignore file.
  * Returns an empty array if the file is missing or unreadable.
  *
  * Syntax:
@@ -82,8 +81,8 @@ export function ensureLettaIgnoreFile(homeDir: string = homedir()): void {
  *   - Negations (!) are not currently supported and are silently skipped
  *   - A trailing / is treated as a directory hint and stripped before matching
  */
-export function readLettaIgnorePatterns(homeDir: string = homedir()): string[] {
-  const filePath = join(homeDir, ".letta", ".lettaignore");
+export function readLettaIgnorePatterns(cwd: string = process.cwd()): string[] {
+  const filePath = join(cwd, ".letta", ".lettaignore");
   if (!existsSync(filePath)) return [];
 
   try {
