@@ -216,6 +216,43 @@ describe("renderMemoryFilesystemTree", () => {
     expect(tree).not.toContain("topic-0009.md");
   });
 
+  test("applies leaf truncation within nested system folders", () => {
+    const systemLabels = Array.from({ length: 60 }, (_, idx) => {
+      return `project/notes/item-${String(idx).padStart(4, "0")}`;
+    });
+
+    const tree = renderMemoryFilesystemTree(systemLabels, [], {
+      maxLines: 500,
+      maxChars: 20_000,
+      maxChildrenPerDir: 5,
+    });
+
+    expect(tree).toContain("notes/");
+    expect(tree).toContain("item-0000.md");
+    expect(tree).toContain("… (55 more entries)");
+    expect(tree).not.toContain("item-0059.md");
+  });
+
+  test("retains leaf omission markers when global caps also truncate", () => {
+    const detachedLabels = [
+      ...Array.from({ length: 200 }, (_, idx) => {
+        return `journal/entry-${String(idx).padStart(4, "0")}`;
+      }),
+      ...Array.from({ length: 200 }, (_, idx) => {
+        return `notes/topic-${String(idx).padStart(4, "0")}`;
+      }),
+    ];
+
+    const tree = renderMemoryFilesystemTree([], detachedLabels, {
+      maxLines: 13,
+      maxChars: 5_000,
+      maxChildrenPerDir: 5,
+    });
+
+    expect(tree).toContain("… (195 more entries)");
+    expect(tree).toContain("[Tree truncated: showing");
+  });
+
   test("uses env overrides for default tree limits", () => {
     process.env[DIRECTORY_LIMIT_ENV.memfsTreeMaxLines] = "20";
     process.env[DIRECTORY_LIMIT_ENV.memfsTreeMaxChars] = "500";

@@ -22,10 +22,15 @@ function restoreDirectoryLimitEnv(): void {
 }
 
 describe("list_dir codex tool", () => {
-  let tempDir: string;
+  let tempDirs: string[] = [];
 
-  afterEach(() => {
+  afterEach(async () => {
     restoreDirectoryLimitEnv();
+
+    await Promise.all(
+      tempDirs.map((dir) => fs.rm(dir, { recursive: true, force: true })),
+    );
+    tempDirs = [];
   });
 
   test("uses env overrides for per-folder child cap", async () => {
@@ -44,9 +49,8 @@ describe("list_dir codex tool", () => {
   });
 
   async function setupTempDir(): Promise<string> {
-    if (!tempDir) {
-      tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "list-dir-test-"));
-    }
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "list-dir-test-"));
+    tempDirs.push(tempDir);
     return tempDir;
   }
 
@@ -237,8 +241,78 @@ describe("list_dir codex tool", () => {
     const dir = await createStructure(structure);
     const result = await list_dir({ dir_path: dir, limit: 200, depth: 2 });
 
-    expect(result.content).toMatch(/… \([\d,]+ more entries\)/);
+    expect(result.content).toContain("… (10 more entries)");
     expect(result.content).not.toContain("file-0059.txt");
+  });
+
+  test("truncates nested folder children in-place", async () => {
+    process.env[DIRECTORY_LIMIT_ENV.listDirMaxChildrenPerDir] = "5";
+
+    const structure: Record<string, string | null> = {};
+    for (let i = 0; i < 60; i++) {
+      structure[`parent/child-${String(i).padStart(4, "0")}.txt`] = String(i);
+    }
+
+    const dir = await createStructure(structure);
+    const result = await list_dir({ dir_path: dir, limit: 200, depth: 3 });
+
+    expect(result.content).toContain("parent/");
+    expect(result.content).toContain("  child-0000.txt");
+    expect(result.content).toContain("  … (55 more entries)");
+    expect(result.content).not.toContain("child-0059.txt");
+  });
+
+  test("offset paginates truncated view with stable omission marker ordering", async () => {
+    process.env[DIRECTORY_LIMIT_ENV.listDirMaxChildrenPerDir] = "3";
+
+    const structure: Record<string, string | null> = {};
+    for (let i = 0; i < 10; i++) {
+      structure[`file-${String(i).padStart(4, "0")}.txt`] = String(i);
+    }
+
+    const dir = await createStructure(structure);
+    const result = await list_dir({
+      dir_path: dir,
+      offset: 4,
+      limit: 2,
+      depth: 2,
+    });
+
+    const lines = result.content.split("\n").slice(1);
+    expect(lines[0]).toBe("… (7 more entries)");
+    expect(result.content).toContain("More than 1 entries found");
+  });
+
+  test("offset beyond truncated view is rejected", async () => {
+    process.env[DIRECTORY_LIMIT_ENV.listDirMaxChildrenPerDir] = "3";
+
+    const structure: Record<string, string | null> = {};
+    for (let i = 0; i < 10; i++) {
+      structure[`file-${String(i).padStart(4, "0")}.txt`] = String(i);
+    }
+
+    const dir = await createStructure(structure);
+
+    await expect(
+      list_dir({ dir_path: dir, offset: 5, limit: 1, depth: 2 }),
+    ).rejects.toThrow("offset exceeds directory entry count");
+  });
+
+  test("does not traverse subdirectories omitted by per-folder cap", async () => {
+    process.env[DIRECTORY_LIMIT_ENV.listDirMaxChildrenPerDir] = "1";
+
+    const dir = await createStructure({
+      "alpha/visible.txt": "visible",
+      "zeta/deep/hidden.txt": "hidden",
+    });
+
+    const result = await list_dir({ dir_path: dir, limit: 200, depth: 5 });
+
+    expect(result.content).toContain("alpha/");
+    expect(result.content).toContain("  visible.txt");
+    expect(result.content).toContain("… (1 more entries)");
+    expect(result.content).not.toContain("zeta/");
+    expect(result.content).not.toContain("hidden.txt");
   });
 
   test("uses env overrides for list_dir caps", async () => {
