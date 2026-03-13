@@ -19,10 +19,10 @@ _SETTINGS_AGENT_ID_KEYS = ("agent_id", "default_agent_id", "lastAgent", "last_ag
 
 # Provider keywords used to select the right system prompt for the CLI.
 _PROVIDER_SYSTEM_MAP = {
-    "source-claude": ("opus", "sonnet", "haiku", "claude"),
     "source-codex": ("gpt", "o1-", "o3-"),
     "source-gemini": ("gemini",),
 }
+_DEFAULT_SYSTEM = "source-claude"
 
 
 class LettaCode(BaseInstalledAgent):
@@ -96,10 +96,12 @@ class LettaCode(BaseInstalledAgent):
             return ""
         flags = f"--model {shlex.quote(model_name)} "
         lower = model_name.lower()
-        for system, keywords in _PROVIDER_SYSTEM_MAP.items():
+        system = _DEFAULT_SYSTEM
+        for sys_name, keywords in _PROVIDER_SYSTEM_MAP.items():
             if any(kw in lower for kw in keywords):
-                flags += f"--system {system} "
+                system = sys_name
                 break
+        flags += f"--system {system} "
         return flags
 
     def _find_events_text(self) -> str:
