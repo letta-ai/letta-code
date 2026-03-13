@@ -1,11 +1,7 @@
 import { readdirSync, statSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { debugLog } from "../../utils/debug";
-import {
-  ensureFileIndex,
-  type FileMatch,
-  searchFileIndex,
-} from "./fileIndex";
+import { ensureFileIndex, type FileMatch, searchFileIndex } from "./fileIndex";
 import { shouldHardExcludeEntry } from "./fileSearchConfig";
 
 export function debounce<T extends (...args: never[]) => unknown>(
@@ -222,7 +218,6 @@ export async function searchFiles(
           } catch {}
         }
       }
-
     }
 
     // Only sort when the disk scan ran — its results come in arbitrary readdir
