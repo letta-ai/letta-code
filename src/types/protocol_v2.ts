@@ -8,16 +8,18 @@
 
 import type { Skill } from "../agent/skills";
 import type { CommandFinishedEvent } from "../cli/commands/runner";
-import type { SubagentState } from "../cli/helpers/subagentState";
 import type { PermissionMode } from "../permissions/mode";
-import type { BackgroundProcess } from "../tools/impl/process_manager";
+import type {
+  BackgroundProcess,
+  BackgroundTask,
+} from "../tools/impl/process_manager";
 import type { ToolsetName, ToolsetPreference } from "../tools/toolset";
 import type {
   ControlRequest,
   ControlResponse,
   ErrorMessage,
   MessageWire,
-  QueueSnapshotMessage,
+  QueueRuntimeItemWire,
   RetryMessage,
   ToolExecutionFinishedMessage,
   ToolExecutionStartedMessage,
@@ -77,11 +79,12 @@ export interface BashBackgroundProcessSummary {
 export interface AgentTaskBackgroundProcessSummary {
   process_id: string;
   kind: "agent_task";
-  task_type: SubagentState["type"];
-  description: SubagentState["description"];
+  task_type: BackgroundTask["subagentType"];
+  description: BackgroundTask["description"];
   started_at_ms: number;
-  status: SubagentState["status"];
-  error?: SubagentState["error"];
+  status: BackgroundTask["status"];
+  subagent_id: BackgroundTask["subagentId"];
+  error?: BackgroundTask["error"];
 }
 
 export type BackgroundProcessSummary =
@@ -113,9 +116,7 @@ export type LoopStatus =
   | "WAITING_ON_APPROVAL"
   | "WAITING_ON_INPUT";
 
-export type QueueMessage = QueueSnapshotMessage["items"][number] & {
-  enqueued_at?: string;
-};
+export type QueueMessage = QueueRuntimeItemWire;
 
 /**
  * Loop state is intentionally small and finite.

@@ -74,6 +74,7 @@ import type {
   MessageWire,
   ResultMessage as ProtocolResultMessage,
   QueueLifecycleEvent,
+  QueueRuntimeItemWire,
   QueueSnapshotMessage,
   RecoveryMessage,
   RetryMessage,
@@ -310,14 +311,7 @@ interface StateResponseMessage {
   queue: {
     queue_len: number;
     pending_turns: number;
-    items: Array<{
-      id: string;
-      client_message_id: string;
-      kind: string;
-      source: string;
-      content: unknown;
-      enqueued_at: string;
-    }>;
+    items: QueueRuntimeItemWire[];
   };
   event_seq?: number;
 }
@@ -1045,7 +1039,7 @@ function nextEventSeq(runtime: ListenerRuntime | null): number | null {
   return runtime.eventSeqCounter;
 }
 
-function getQueueItemContent(item: QueueItem): unknown {
+function getQueueItemContent(item: QueueItem): QueueRuntimeItemWire["content"] {
   return item.kind === "message" ? item.content : item.text;
 }
 
