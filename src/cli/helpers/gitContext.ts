@@ -46,10 +46,15 @@ function truncateLines(value: string, maxLines: number): string {
   }
   return (
     lines.slice(0, maxLines).join("\n") +
-    `\n... and ${lines.length - maxLines} more files`
+    `\n... and ${lines.length - maxLines} more changes`
   );
 }
 
+/**
+ * Parse `git status --short` output. Each line has the format `XY path`
+ * where X is the index (staged) state and Y is the worktree (unstaged) state.
+ * `??` marks untracked files. A space means no change in that column.
+ */
 function summarizeStatus(status: string | null): GitStatusSummary | null {
   if (!status) {
     return null;
@@ -136,8 +141,20 @@ export function gatherGitContextSnapshot(
       )
     : runGit(["log", "--oneline", "-n", String(recentCommitLimit)], cwd);
 
-  const userName = runGit(["config", "user.name"], cwd);
-  const userEmail = runGit(["config", "user.email"], cwd);
+  const userConfig = runGit(
+    ["config", "--get-regexp", "^user\\.(name|email)$"],
+    cwd,
+  );
+  let userName: string | null = null;
+  let userEmail: string | null = null;
+  if (userConfig) {
+    for (const line of userConfig.split("\n")) {
+      if (line.startsWith("user.name "))
+        userName = line.slice("user.name ".length);
+      else if (line.startsWith("user.email "))
+        userEmail = line.slice("user.email ".length);
+    }
+  }
   const gitUser = formatGitUser(userName, userEmail);
 
   return {
