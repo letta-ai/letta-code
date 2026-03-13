@@ -1,13 +1,7 @@
-import {
-  afterEach,
-  beforeEach,
-  describe,
-  expect,
-  test,
-} from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   shouldExcludeEntry,
   shouldHardExcludeEntry,
@@ -23,7 +17,10 @@ let originalCwd: string;
 
 beforeEach(() => {
   originalCwd = process.cwd();
-  testDir = join(tmpdir(), `letta-fsc-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  testDir = join(
+    tmpdir(),
+    `letta-fsc-test-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+  );
   mkdirSync(testDir, { recursive: true });
   process.chdir(testDir);
 });
