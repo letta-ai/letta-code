@@ -1,17 +1,9 @@
 import { execFileSync } from "node:child_process";
 
-export interface GitStatusSummary {
-  staged: number;
-  unstaged: number;
-  untracked: number;
-  total: number;
-}
-
 export interface GitContextSnapshot {
   isGitRepo: boolean;
   branch: string | null;
   status: string | null;
-  statusSummary: GitStatusSummary | null;
   recentCommits: string | null;
   gitUser: string | null;
 }
@@ -50,46 +42,6 @@ function truncateLines(value: string, maxLines: number): string {
   );
 }
 
-/**
- * Parse `git status --short` output. Each line has the format `XY path`
- * where X is the index (staged) state and Y is the worktree (unstaged) state.
- * `??` marks untracked files. A space means no change in that column.
- */
-function summarizeStatus(status: string | null): GitStatusSummary | null {
-  if (!status) {
-    return null;
-  }
-
-  let staged = 0;
-  let unstaged = 0;
-  let untracked = 0;
-
-  for (const line of status.split("\n")) {
-    if (!line) continue;
-
-    if (line.startsWith("??")) {
-      untracked += 1;
-      continue;
-    }
-
-    const indexState = line[0];
-    const worktreeState = line[1];
-    if (indexState && indexState !== " " && indexState !== "?") {
-      staged += 1;
-    }
-    if (worktreeState && worktreeState !== " " && worktreeState !== "?") {
-      unstaged += 1;
-    }
-  }
-
-  return {
-    staged,
-    unstaged,
-    untracked,
-    total: staged + unstaged + untracked,
-  };
-}
-
 function formatGitUser(
   name: string | null,
   email: string | null,
@@ -114,7 +66,6 @@ export function gatherGitContextSnapshot(
       isGitRepo: false,
       branch: null,
       status: null,
-      statusSummary: null,
       recentCommits: null,
       gitUser: null,
     };
@@ -123,7 +74,6 @@ export function gatherGitContextSnapshot(
   const branch = runGit(["branch", "--show-current"], cwd);
 
   const fullStatus = runGit(["status", "--short"], cwd);
-  const statusSummary = summarizeStatus(fullStatus);
   const status =
     typeof fullStatus === "string" && options.statusLineLimit
       ? truncateLines(fullStatus, options.statusLineLimit)
@@ -161,7 +111,6 @@ export function gatherGitContextSnapshot(
     isGitRepo: true,
     branch,
     status,
-    statusSummary,
     recentCommits,
     gitUser,
   };

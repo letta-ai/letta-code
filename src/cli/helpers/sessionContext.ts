@@ -48,7 +48,6 @@ export function getDeviceType(): string {
 function getGitInfo(): {
   isGitRepo: boolean;
   branch?: string;
-  changeSummary?: string;
   recentCommits?: string;
   status?: string;
   gitUser?: string;
@@ -63,15 +62,9 @@ function getGitInfo(): {
     return { isGitRepo: false };
   }
 
-  const changeSummary = (() => {
-    if (!git.statusSummary) return "(unknown)";
-    return `${git.statusSummary.staged} staged, ${git.statusSummary.unstaged} unstaged, ${git.statusSummary.untracked} untracked`;
-  })();
-
   return {
     isGitRepo: true,
     branch: git.branch ?? "(unknown)",
-    changeSummary,
     recentCommits: git.recentCommits ?? "(failed to get commits)",
     status: git.status || "(clean working tree)",
     gitUser: git.gitUser ?? "(not configured)",
@@ -126,7 +119,6 @@ The user has just initiated a new connection via the [Letta Code CLI client](htt
     // Add git info if available
     if (gitInfo.isGitRepo) {
       context += `- **Git repository**: Yes (branch: ${gitInfo.branch})
-- **Working tree summary**: ${gitInfo.changeSummary}
 - **Git user**: ${gitInfo.gitUser}
 
 ### Recent Commits
