@@ -10,7 +10,6 @@ export interface GitStatusSummary {
 export interface GitContextSnapshot {
   isGitRepo: boolean;
   branch: string | null;
-  mainBranch: string | null;
   status: string | null;
   statusSummary: GitStatusSummary | null;
   recentCommits: string | null;
@@ -109,7 +108,6 @@ export function gatherGitContextSnapshot(
     return {
       isGitRepo: false,
       branch: null,
-      mainBranch: null,
       status: null,
       statusSummary: null,
       recentCommits: null,
@@ -118,13 +116,6 @@ export function gatherGitContextSnapshot(
   }
 
   const branch = runGit(["branch", "--show-current"], cwd);
-  const originHead = runGit(
-    ["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"],
-    cwd,
-  );
-  const mainBranch = originHead?.startsWith("origin/")
-    ? originHead.slice("origin/".length)
-    : (originHead ?? "main");
 
   const fullStatus = runGit(["status", "--short"], cwd);
   const statusSummary = summarizeStatus(fullStatus);
@@ -152,7 +143,6 @@ export function gatherGitContextSnapshot(
   return {
     isGitRepo: true,
     branch,
-    mainBranch,
     status,
     statusSummary,
     recentCommits,

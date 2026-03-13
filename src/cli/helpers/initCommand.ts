@@ -45,7 +45,6 @@ export function gatherInitGitContext(): { context: string; identity: string } {
     return {
       context: `
 - branch: ${git.branch ?? "(unknown)"}
-- main: ${git.mainBranch ?? "main"}
 - status: ${git.status || "(clean)"}
 
 Recent commits:
