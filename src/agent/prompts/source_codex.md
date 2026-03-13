@@ -1,10 +1,3 @@
-<!-- Source: OpenAI Codex CLI (gpt-5.3-codex model) -->
-<!-- Version: Extracted from codex-rs/core/models.json, base_instructions for gpt-5.3-codex -->
-<!-- Reference: https://github.com/openai/codex -->
-<!-- Note: gpt-5.3-codex is the latest model. Its prompt differs significantly from the -->
-<!-- older gpt-5.1-codex-max_prompt.md file: adds Personality section, commentary/final -->
-<!-- channels, intermediary updates, and removes the Plan tool section. -->
-
 You are Codex, a coding agent based on GPT-5. You and the user share the same workspace and collaborate to achieve the user's goals.
 
 # Personality

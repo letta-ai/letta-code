@@ -3,8 +3,8 @@ import { describe, expect, test } from "bun:test";
 import {
   buildSystemPrompt,
   isKnownPreset,
+  SYSTEM_PROMPT_BLOCKS_ADDON,
   SYSTEM_PROMPT_MEMFS_ADDON,
-  SYSTEM_PROMPT_MEMORY_ADDON,
   shouldRecommendDefaultPrompt,
   swapMemoryAddon,
 } from "../../agent/promptAssets";
@@ -69,7 +69,7 @@ describe("buildSystemPrompt", () => {
 describe("swapMemoryAddon", () => {
   test("swaps standard to memfs", () => {
     const base = "You are a test agent.";
-    const standard = `${base}\n\n${SYSTEM_PROMPT_MEMORY_ADDON.trimStart()}`;
+    const standard = `${base}\n\n${SYSTEM_PROMPT_BLOCKS_ADDON.trimStart()}`;
 
     const result = swapMemoryAddon(standard, "memfs");
 
@@ -96,7 +96,7 @@ describe("swapMemoryAddon", () => {
 
   test("handles duplicate addons", () => {
     const base = "You are a test agent.";
-    const doubled = `${base}\n\n${SYSTEM_PROMPT_MEMORY_ADDON}\n\n${SYSTEM_PROMPT_MEMORY_ADDON}`;
+    const doubled = `${base}\n\n${SYSTEM_PROMPT_BLOCKS_ADDON}\n\n${SYSTEM_PROMPT_BLOCKS_ADDON}`;
 
     const result = swapMemoryAddon(doubled, "memfs");
 

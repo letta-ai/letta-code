@@ -3,8 +3,8 @@ import { getClient } from "../../agent/client";
 import { createAgent } from "../../agent/create";
 import { updateAgentSystemPromptMemfs } from "../../agent/modify";
 import {
+  SYSTEM_PROMPT_BLOCKS_ADDON,
   SYSTEM_PROMPT_MEMFS_ADDON,
-  SYSTEM_PROMPT_MEMORY_ADDON,
 } from "../../agent/promptAssets";
 
 const describeIntegration = process.env.LETTA_API_KEY
@@ -72,7 +72,7 @@ describeIntegration("memory prompt integration", () => {
         false,
       );
       expect(disable.success).toBe(true);
-      const expectedStandard = expectedPrompt(base, SYSTEM_PROMPT_MEMORY_ADDON);
+      const expectedStandard = expectedPrompt(base, SYSTEM_PROMPT_BLOCKS_ADDON);
       fetched = await client.agents.retrieve(created.agent.id);
       expect(fetched.system).toBe(expectedStandard);
       expect(fetched.system).not.toContain("## Memory layout");
