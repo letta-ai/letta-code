@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   ensureLettaIgnoreFile,
@@ -16,7 +16,7 @@ describe("ensureLettaIgnoreFile", () => {
 
   test("creates .lettaignore when missing", () => {
     testDir = new TestDirectory();
-    const filePath = join(testDir.path, ".lettaignore");
+    const filePath = join(testDir.path, ".letta", ".lettaignore");
 
     expect(existsSync(filePath)).toBe(false);
     ensureLettaIgnoreFile(testDir.path);
@@ -35,8 +35,10 @@ describe("ensureLettaIgnoreFile", () => {
 
   test("does not overwrite existing .lettaignore", () => {
     testDir = new TestDirectory();
-    const filePath = join(testDir.path, ".lettaignore");
+    const lettaDir = join(testDir.path, ".letta");
+    const filePath = join(lettaDir, ".lettaignore");
 
+    mkdirSync(lettaDir, { recursive: true });
     writeFileSync(filePath, "custom-pattern\n", "utf-8");
     ensureLettaIgnoreFile(testDir.path);
 
@@ -60,8 +62,10 @@ describe("readLettaIgnorePatterns", () => {
 
   test("parses patterns from file", () => {
     testDir = new TestDirectory();
+    const lettaDir = join(testDir.path, ".letta");
+    mkdirSync(lettaDir, { recursive: true });
     writeFileSync(
-      join(testDir.path, ".lettaignore"),
+      join(lettaDir, ".lettaignore"),
       "*.log\nvendor\nsrc/generated/**\n",
       "utf-8",
     );
@@ -72,8 +76,10 @@ describe("readLettaIgnorePatterns", () => {
 
   test("skips comments and blank lines", () => {
     testDir = new TestDirectory();
+    const lettaDir = join(testDir.path, ".letta");
+    mkdirSync(lettaDir, { recursive: true });
     writeFileSync(
-      join(testDir.path, ".lettaignore"),
+      join(lettaDir, ".lettaignore"),
       "# This is a comment\n\n  \npattern1\n# Another comment\npattern2\n",
       "utf-8",
     );
@@ -84,8 +90,10 @@ describe("readLettaIgnorePatterns", () => {
 
   test("skips negation patterns", () => {
     testDir = new TestDirectory();
+    const lettaDir = join(testDir.path, ".letta");
+    mkdirSync(lettaDir, { recursive: true });
     writeFileSync(
-      join(testDir.path, ".lettaignore"),
+      join(lettaDir, ".lettaignore"),
       "*.log\n!important.log\nvendor\n",
       "utf-8",
     );
@@ -96,8 +104,10 @@ describe("readLettaIgnorePatterns", () => {
 
   test("trims whitespace from patterns", () => {
     testDir = new TestDirectory();
+    const lettaDir = join(testDir.path, ".letta");
+    mkdirSync(lettaDir, { recursive: true });
     writeFileSync(
-      join(testDir.path, ".lettaignore"),
+      join(lettaDir, ".lettaignore"),
       "  *.log  \n  vendor  \n",
       "utf-8",
     );
