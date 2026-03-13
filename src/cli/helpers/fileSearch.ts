@@ -1,12 +1,7 @@
 import { readdirSync, statSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { debugLog } from "../../utils/debug";
-import {
-  addEntriesToCache,
-  ensureFileIndex,
-  type FileMatch,
-  searchFileIndex,
-} from "./fileIndex";
+import { ensureFileIndex, type FileMatch, searchFileIndex } from "./fileIndex";
 import { shouldHardExcludeEntry } from "./fileSearchConfig";
 
 export function debounce<T extends (...args: never[]) => unknown>(
@@ -171,8 +166,6 @@ export async function searchFiles(
     }
 
     if (!indexSearchSucceeded || results.length === 0) {
-      const diskResultsBefore = results.length;
-
       if (effectiveDeep) {
         // Deep search: recursively search subdirectories.
         // Use a shallower depth limit when searching outside the project directory
@@ -224,13 +217,6 @@ export async function searchFiles(
             });
           } catch {}
         }
-      }
-
-      // If the index was working but just didn't have these files (created
-      // externally), add the newly found entries so future searches hit the
-      // cache instead of falling back to disk again.
-      if (indexSearchSucceeded && results.length > diskResultsBefore) {
-        addEntriesToCache(results.slice(diskResultsBefore));
       }
     }
 

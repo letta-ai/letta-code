@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { addEntriesToCache } from "../helpers/fileIndex";
 import { searchFiles } from "../helpers/fileSearch";
 import { useAutocompleteNavigation } from "../hooks/useAutocompleteNavigation";
 import { AutocompleteBox, AutocompleteItem } from "./Autocomplete";
@@ -66,7 +67,15 @@ export function FileAutocomplete({
   const { selectedIndex } = useAutocompleteNavigation({
     matches,
     maxVisible: 10,
-    onSelect: onSelect ? (item) => onSelect(item.path) : undefined,
+    onSelect: onSelect
+      ? (item) => {
+          // Index only the selected item, not all search results
+          if (item.type === "file" || item.type === "dir") {
+            addEntriesToCache([{ path: item.path, type: item.type }]);
+          }
+          onSelect(item.path);
+        }
+      : undefined,
     manageActiveState: false, // We manage active state manually due to async loading
   });
 
