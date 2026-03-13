@@ -260,6 +260,7 @@ import { resolveReasoningTabToggleCommand } from "./helpers/reasoningTabToggle";
 import {
   appendTranscriptDeltaJsonl,
   buildAutoReflectionPayload,
+  buildParentMemorySnapshot,
   buildReflectionSubagentPrompt,
   finalizeAutoReflectionPayload,
 } from "./helpers/reflectionTranscript";
@@ -3833,6 +3834,35 @@ export default function App({
         hasExplicitTranscriptStart || hasApprovalInput
           ? pendingTranscriptStartLineIndexRef.current
           : null;
+      let transcriptDeltaSaved = false;
+
+      // Helper: saves transcript delta (user msg + agent response so far).
+      // Safe to call multiple times – only saves once.
+      const maybeSaveTranscriptDelta = async () => {
+        if (transcriptDeltaSaved || transcriptTurnStartLineIndex === null) {
+          return;
+        }
+        transcriptDeltaSaved = true;
+        try {
+          const transcriptLines = toLines(buffersRef.current).slice(
+            transcriptTurnStartLineIndex,
+          );
+          await appendTranscriptDeltaJsonl(
+            agentIdRef.current,
+            conversationIdRef.current,
+            transcriptLines,
+          );
+        } catch (transcriptError) {
+          debugWarn(
+            "memory",
+            `Failed to append transcript delta: ${
+              transcriptError instanceof Error
+                ? transcriptError.message
+                : String(transcriptError)
+            }`,
+          );
+        }
+      };
 
       // Use provided generation (from onSubmit) or capture current
       // This allows detecting if ESC was pressed during async work before this function was called
@@ -4613,27 +4643,7 @@ export default function App({
             lastSentInputRef.current = null; // Clear - no recovery needed
             pendingInterruptRecoveryConversationIdRef.current = null;
 
-            if (transcriptTurnStartLineIndex !== null) {
-              try {
-                const transcriptLines = toLines(buffersRef.current).slice(
-                  transcriptTurnStartLineIndex,
-                );
-                await appendTranscriptDeltaJsonl(
-                  agentIdRef.current,
-                  conversationIdRef.current,
-                  transcriptLines,
-                );
-              } catch (transcriptError) {
-                debugWarn(
-                  "memory",
-                  `Failed to append transcript delta: ${
-                    transcriptError instanceof Error
-                      ? transcriptError.message
-                      : String(transcriptError)
-                  }`,
-                );
-              }
-            }
+            await maybeSaveTranscriptDelta();
             pendingTranscriptStartLineIndexRef.current = null;
 
             // Get last assistant message, user message, and reasoning for Stop hook
@@ -4796,6 +4806,7 @@ export default function App({
           // Case 1.5: Stream was cancelled by user
           if (stopReasonToHandle === "cancelled") {
             clearApprovalToolContext();
+            await maybeSaveTranscriptDelta();
             pendingTranscriptStartLineIndexRef.current = null;
             setStreaming(false);
             closeTrajectorySegment();
@@ -5834,6 +5845,10 @@ export default function App({
         resetTrajectoryBases();
       } finally {
         if (!preserveTranscriptStartForApproval) {
+          // For approval-continuation turns we preserve the original start index and
+          // must avoid saving in this partial turn, otherwise we duplicate transcript
+          // lines when the approval continuation completes.
+          await maybeSaveTranscriptDelta();
           pendingTranscriptStartLineIndexRef.current = null;
         }
 
@@ -9435,10 +9450,12 @@ export default function App({
             }
 
             const memoryDir = getMemoryFilesystemRoot(agentId);
+            const parentMemory = await buildParentMemorySnapshot(memoryDir);
             const reflectionPrompt = buildReflectionSubagentPrompt({
               transcriptPath: autoPayload.payloadPath,
               memoryDir,
               cwd: process.cwd(),
+              parentMemory,
             });
 
             const { spawnBackgroundSubagentTask } = await import(
@@ -9799,10 +9816,12 @@ ${SYSTEM_REMINDER_CLOSE}
           }
 
           const memoryDir = getMemoryFilesystemRoot(agentId);
+          const parentMemory = await buildParentMemorySnapshot(memoryDir);
           const reflectionPrompt = buildReflectionSubagentPrompt({
             transcriptPath: autoPayload.payloadPath,
             memoryDir,
             cwd: process.cwd(),
+            parentMemory,
           });
 
           const { spawnBackgroundSubagentTask } = await import(

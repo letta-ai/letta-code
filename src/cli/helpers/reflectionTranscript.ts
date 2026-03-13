@@ -1,10 +1,25 @@
-import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import type { Dirent } from "node:fs";
+import {
+  appendFile,
+  mkdir,
+  readdir,
+  readFile,
+  writeFile,
+} from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
+import {
+  labelFromRelativePath,
+  MEMORY_SYSTEM_DIR,
+  renderMemoryFilesystemTree,
+} from "../../agent/memoryFilesystem";
+import { parseFrontmatter } from "../../utils/frontmatter";
 import { type Line, linesToTranscript } from "./accumulator";
 
 const TRANSCRIPT_ROOT_ENV = "LETTA_TRANSCRIPT_ROOT";
 const DEFAULT_TRANSCRIPT_DIR = "transcripts";
+const AUTO_REFLECTION_MAX_JSONL_LINES = 400;
+const AUTO_REFLECTION_MAX_JSONL_CHARS = 200_000;
 
 interface ReflectionTranscriptState {
   auto_cursor_line: number;
@@ -43,6 +58,7 @@ export interface ReflectionPromptInput {
   transcriptPath: string;
   memoryDir: string;
   cwd?: string;
+  parentMemory?: string;
 }
 
 export function buildReflectionSubagentPrompt(
@@ -56,6 +72,148 @@ export function buildReflectionSubagentPrompt(
   if (input.cwd) {
     lines.push(`Your current working directory is: ${input.cwd}`);
   }
+  if (input.parentMemory) {
+    lines.push(
+      "Parent memory is provided inline below. Use this snapshot directly so you do not need to spend turns reading memory files first.",
+    );
+    lines.push(input.parentMemory);
+  }
+  return lines.join("\n");
+}
+
+interface ParentMemoryFile {
+  relativePath: string;
+  content: string;
+  description?: string;
+}
+
+const MEMORY_SKILLS_DIR = "skills";
+
+function isSystemMemoryFile(relativePath: string): boolean {
+  return relativePath.startsWith(`${MEMORY_SYSTEM_DIR}/`);
+}
+
+function isSkillMemoryFile(relativePath: string): boolean {
+  return relativePath.startsWith(`${MEMORY_SKILLS_DIR}/`);
+}
+
+async function collectParentMemoryFiles(
+  memoryDir: string,
+): Promise<ParentMemoryFile[]> {
+  const files: ParentMemoryFile[] = [];
+
+  const walk = async (currentDir: string, relativeDir: string) => {
+    let entries: Dirent[] = [];
+    try {
+      entries = await readdir(currentDir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+
+    const sortedEntries = entries
+      .filter((entry) => !entry.name.startsWith("."))
+      .sort((a, b) => {
+        if (a.isDirectory() !== b.isDirectory()) {
+          return a.isDirectory() ? -1 : 1;
+        }
+        return a.name.localeCompare(b.name);
+      });
+
+    for (const entry of sortedEntries) {
+      const entryPath = join(currentDir, entry.name);
+      const relativePath = relativeDir
+        ? `${relativeDir}/${entry.name}`
+        : entry.name;
+
+      if (entry.isDirectory()) {
+        await walk(entryPath, relativePath);
+        continue;
+      }
+
+      if (!entry.isFile() || !entry.name.endsWith(".md")) {
+        continue;
+      }
+
+      try {
+        const content = await readFile(entryPath, "utf-8");
+        const { frontmatter } = parseFrontmatter(content);
+        const description =
+          typeof frontmatter.description === "string"
+            ? frontmatter.description
+            : undefined;
+        files.push({
+          relativePath: relativePath.replace(/\\/g, "/"),
+          content,
+          description,
+        });
+      } catch {
+        // Skip unreadable files.
+      }
+    }
+  };
+
+  await walk(memoryDir, "");
+  return files;
+}
+
+function buildParentMemoryTree(files: ParentMemoryFile[]): string {
+  const systemLabels: string[] = [];
+  const detachedLabels: string[] = [];
+
+  for (const file of files) {
+    const label = labelFromRelativePath(file.relativePath);
+    if (file.relativePath.startsWith(`${MEMORY_SYSTEM_DIR}/`)) {
+      systemLabels.push(label.slice(`${MEMORY_SYSTEM_DIR}/`.length));
+      continue;
+    }
+    detachedLabels.push(label);
+  }
+
+  return renderMemoryFilesystemTree(systemLabels, detachedLabels);
+}
+
+export async function buildParentMemorySnapshot(
+  memoryDir: string,
+): Promise<string> {
+  const files = await collectParentMemoryFiles(memoryDir);
+  const tree = buildParentMemoryTree(files);
+  const systemFiles = files.filter((file) =>
+    isSystemMemoryFile(file.relativePath),
+  );
+  const skillFiles = files.filter((file) =>
+    isSkillMemoryFile(file.relativePath),
+  );
+
+  const lines = [
+    "<parent_memory>",
+    "<memory_filesystem>",
+    tree,
+    "</memory_filesystem>",
+  ];
+
+  if (files.length === 0) {
+    lines.push("(no memory markdown files found)");
+  } else {
+    lines.push("<system_memory>");
+    for (const file of systemFiles) {
+      lines.push(`<path=${file.relativePath}>`);
+      lines.push(file.content);
+      lines.push("</path>");
+    }
+    lines.push("</system_memory>");
+
+    if (skillFiles.length > 0) {
+      lines.push("<skill_descriptions>");
+      for (const file of skillFiles) {
+        lines.push(`<path=${file.relativePath}>`);
+        lines.push(file.description || "(no description)");
+        lines.push("</path>");
+      }
+      lines.push("</skill_descriptions>");
+    }
+  }
+
+  lines.push("</parent_memory>");
   return lines.join("\n");
 }
 
@@ -271,7 +429,27 @@ export async function buildAutoReflectionPayload(
     return null;
   }
 
-  const snapshotLines = lines.slice(cursorLine);
+  const remainingLines = lines.slice(cursorLine);
+  const snapshotLines: string[] = [];
+  let snapshotChars = 0;
+  for (const line of remainingLines) {
+    if (snapshotLines.length >= AUTO_REFLECTION_MAX_JSONL_LINES) {
+      break;
+    }
+    if (
+      snapshotLines.length > 0 &&
+      snapshotChars + line.length > AUTO_REFLECTION_MAX_JSONL_CHARS
+    ) {
+      break;
+    }
+    snapshotLines.push(line);
+    snapshotChars += line.length;
+  }
+
+  if (snapshotLines.length === 0) {
+    return null;
+  }
+
   const entries = snapshotLines
     .map((line) => parseJsonLine<TranscriptEntry>(line))
     .filter((entry): entry is TranscriptEntry => entry !== null);
@@ -288,7 +466,7 @@ export async function buildAutoReflectionPayload(
 
   return {
     payloadPath,
-    endSnapshotLine: lines.length,
+    endSnapshotLine: cursorLine + snapshotLines.length,
   };
 }
 
