@@ -2487,6 +2487,11 @@ export default function App({
   // Configurable status line hook
   const sessionStatsSnapshot = sessionStatsRef.current.getSnapshot();
   const contextWindowSize = llmConfigRef.current?.context_window;
+  const memfsEnabled = settingsManager.isMemfsEnabled(agentId);
+  const memfsDirectory =
+    memfsEnabled && agentId && agentId !== "loading"
+      ? getMemoryFilesystemRoot(agentId)
+      : null;
   const statusLine = useConfigurableStatusLine({
     modelId: llmConfigRef.current?.model ?? null,
     modelDisplayName: currentModelDisplay,
@@ -2505,6 +2510,9 @@ export default function App({
     totalOutputTokens: sessionStatsSnapshot.usage.completionTokens,
     contextWindowSize,
     usedContextTokens: contextTrackerRef.current.lastContextTokens,
+    stepCount: sessionStatsSnapshot.usage.stepCount,
+    memfsEnabled,
+    memfsDirectory,
     permissionMode: uiPermissionMode,
     networkPhase,
     terminalWidth: chromeColumns,
@@ -7616,6 +7624,16 @@ export default function App({
                     contextWindowSize: llmConfigRef.current?.context_window,
                     usedContextTokens:
                       contextTrackerRef.current.lastContextTokens,
+                    stepCount: stats.usage.stepCount,
+                    memfsEnabled:
+                      agentId !== "loading"
+                        ? settingsManager.isMemfsEnabled(agentId)
+                        : false,
+                    memfsDirectory:
+                      agentId !== "loading" &&
+                      settingsManager.isMemfsEnabled(agentId)
+                        ? getMemoryFilesystemRoot(agentId)
+                        : null,
                     permissionMode: uiPermissionMode,
                     networkPhase,
                     terminalWidth: chromeColumns,
