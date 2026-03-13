@@ -1,16 +1,9 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { handleMemorySubagentCompletion } from "../../cli/helpers/memorySubagentCompletion";
 
 const recompileAgentSystemPromptMock = mock(
   (_conversationId: string, _agentId: string) =>
     Promise.resolve("compiled-system-prompt"),
-);
-
-mock.module("../../agent/modify", () => ({
-  recompileAgentSystemPrompt: recompileAgentSystemPromptMock,
-}));
-
-const { handleMemorySubagentCompletion } = await import(
-  "../../cli/helpers/memorySubagentCompletion"
 );
 
 function createDeferred<T>() {
@@ -41,6 +34,7 @@ describe("memory subagent recompile handling", () => {
       {
         recompileByConversation: new Map(),
         recompileQueuedByConversation: new Set(),
+        recompileAgentSystemPromptImpl: recompileAgentSystemPromptMock,
       },
     );
 
@@ -64,6 +58,7 @@ describe("memory subagent recompile handling", () => {
       {
         recompileByConversation: new Map(),
         recompileQueuedByConversation: new Set(),
+        recompileAgentSystemPromptImpl: recompileAgentSystemPromptMock,
       },
     );
 
@@ -85,6 +80,7 @@ describe("memory subagent recompile handling", () => {
     const deps = {
       recompileByConversation,
       recompileQueuedByConversation,
+      recompileAgentSystemPromptImpl: recompileAgentSystemPromptMock,
     };
 
     const first = handleMemorySubagentCompletion(
@@ -149,6 +145,7 @@ describe("memory subagent recompile handling", () => {
     const deps = {
       recompileByConversation: new Map<string, Promise<void>>(),
       recompileQueuedByConversation: new Set<string>(),
+      recompileAgentSystemPromptImpl: recompileAgentSystemPromptMock,
     };
 
     const [firstMessage, secondMessage] = await Promise.all([

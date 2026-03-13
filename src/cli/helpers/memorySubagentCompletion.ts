@@ -2,6 +2,11 @@ import { recompileAgentSystemPrompt } from "../../agent/modify";
 
 export type MemorySubagentType = "init" | "reflection";
 
+type RecompileAgentSystemPromptFn = (
+  conversationId: string,
+  agentId: string,
+) => Promise<string>;
+
 export interface MemorySubagentCompletionArgs {
   agentId: string;
   conversationId: string;
@@ -14,6 +19,7 @@ export interface MemorySubagentCompletionDeps {
   recompileByConversation: Map<string, Promise<void>>;
   recompileQueuedByConversation: Set<string>;
   logRecompileFailure?: (message: string) => void;
+  recompileAgentSystemPromptImpl?: RecompileAgentSystemPromptFn;
 }
 
 /**
@@ -25,6 +31,8 @@ export async function handleMemorySubagentCompletion(
   deps: MemorySubagentCompletionDeps,
 ): Promise<string> {
   const { agentId, conversationId, subagentType, success, error } = args;
+  const recompileAgentSystemPromptFn =
+    deps.recompileAgentSystemPromptImpl ?? recompileAgentSystemPrompt;
   let recompileError: string | null = null;
 
   if (success) {
@@ -35,7 +43,7 @@ export async function handleMemorySubagentCompletion(
         inFlight = (async () => {
           do {
             deps.recompileQueuedByConversation.delete(conversationId);
-            await recompileAgentSystemPrompt(conversationId, agentId);
+            await recompileAgentSystemPromptFn(conversationId, agentId);
           } while (deps.recompileQueuedByConversation.has(conversationId));
         })().finally(() => {
           // Cleanup runs only after the shared promise settles, so every
