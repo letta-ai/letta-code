@@ -238,6 +238,19 @@ export interface RuntimeStateSnapshotMessage extends RuntimeEnvelope {
   snapshot: RuntimeStateSnapshot;
 }
 
+/**
+ * Controller -> execution-environment commands.
+ * Keep these minimal; payload shapes will be tightened as controller wiring lands.
+ */
+export interface AbortMessageCommand {
+  type: "abort_message";
+  runtime: RuntimeScope;
+  request_id?: string;
+  run_id?: string | null;
+}
+
+export type WsProtocolCommand = AbortMessageCommand;
+
 export type WsProtocolMessage =
   | DeviceStatusUpdateMessage
   | LoopStatusUpdateMessage

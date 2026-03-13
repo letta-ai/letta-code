@@ -222,7 +222,14 @@ interface ListFoldersInDirectoryResponseMessage {
   session_id?: string;
 }
 
-interface CancelRunMessage {
+interface AbortMessage {
+  type: "abort_message";
+  request_id?: string;
+  run_id?: string | null;
+}
+
+// Backward-compatibility alias while cloud clients migrate to abort_message.
+interface LegacyCancelRunMessage {
   type: "cancel_run";
   request_id?: string;
   run_id?: string | null;
@@ -342,7 +349,8 @@ type ServerMessage =
   | GetStateMessage
   | ChangeCwdMessage
   | ListFoldersInDirectoryMessage
-  | CancelRunMessage
+  | AbortMessage
+  | LegacyCancelRunMessage
   | RecoverPendingApprovalsMessage
   | WsControlResponse
   | TerminalSpawnMessage
@@ -1007,6 +1015,7 @@ export function parseServerMessage(
       parsed.type === "terminal_input" ||
       parsed.type === "terminal_resize" ||
       parsed.type === "terminal_kill" ||
+      parsed.type === "abort_message" ||
       parsed.type === "cancel_run" ||
       parsed.type === "recover_pending_approvals"
     ) {
@@ -2951,7 +2960,7 @@ async function connectWithRetry(
       return;
     }
 
-    if (parsed.type === "cancel_run") {
+    if (parsed.type === "abort_message" || parsed.type === "cancel_run") {
       if (runtime !== activeRuntime || runtime.intentionallyClosed) {
         return;
       }
@@ -2959,7 +2968,7 @@ async function connectWithRetry(
       const requestId =
         typeof parsed.request_id === "string" && parsed.request_id.length > 0
           ? parsed.request_id
-          : `cancel-${crypto.randomUUID()}`;
+          : `${parsed.type === "abort_message" ? "abort" : "cancel"}-${crypto.randomUUID()}`;
       const requestedRunId =
         typeof parsed.run_id === "string" ? parsed.run_id : runtime.activeRunId;
       const hasPendingApprovals = runtime.pendingApprovalResolvers.size > 0;

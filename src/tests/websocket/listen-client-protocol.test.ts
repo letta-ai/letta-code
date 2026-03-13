@@ -111,6 +111,19 @@ describe("listen-client parseServerMessage", () => {
     expect(pong?.type).toBe("pong");
     expect(modeChange?.type).toBe("mode_change");
   });
+
+  test("parses abort_message as the canonical abort command", () => {
+    const abort = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "abort_message",
+          request_id: "abort-1",
+          run_id: "run-1",
+        }),
+      ),
+    );
+    expect(abort?.type).toBe("abort_message");
+  });
 });
 
 describe("listen-client approval resolver wiring", () => {
