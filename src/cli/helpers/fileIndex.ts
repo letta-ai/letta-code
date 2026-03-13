@@ -392,7 +392,7 @@ async function buildDirectory(
 
   statsMap[relativePath] = currentStats;
 
-  if (depth >= MAX_INDEX_DEPTH) {
+  if (depth >= MAX_INDEX_DEPTH || context.newEntryCount >= MAX_CACHE_ENTRIES) {
     context.truncated = true;
     const truncatedHash = hashValue("__truncated__");
     merkle[relativePath] = truncatedHash;
@@ -402,6 +402,11 @@ async function buildDirectory(
   const childHashes: string[] = [];
 
   for (const entry of childNames) {
+    if (context.newEntryCount >= MAX_CACHE_ENTRIES) {
+      context.truncated = true;
+      break;
+    }
+
     // Yield to the event loop every 500 entries to keep the UI responsive
     // during the initial walk of large workspaces.
     if (context.newEntryCount > 0 && context.newEntryCount % 500 === 0) {
