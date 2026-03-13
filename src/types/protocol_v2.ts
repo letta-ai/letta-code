@@ -6,7 +6,22 @@
  * listener emitters/consumers in controlled steps.
  */
 
-import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
+import type { Skill } from "../agent/skills";
+import type { CommandFinishedEvent } from "../cli/commands/runner";
+import type { SubagentState } from "../cli/helpers/subagentState";
+import type { PermissionMode } from "../permissions/mode";
+import type { BackgroundProcess } from "../tools/impl/process_manager";
+import type { ToolsetName, ToolsetPreference } from "../tools/toolset";
+import type {
+  ControlRequest,
+  ControlResponse,
+  ErrorMessage,
+  MessageWire,
+  QueueSnapshotMessage,
+  RetryMessage,
+  ToolExecutionFinishedMessage,
+  ToolExecutionStartedMessage,
+} from "./protocol";
 
 /**
  * Runtime identity for all state and delta events.
@@ -33,19 +48,45 @@ export interface RuntimeEnvelope {
   idempotency_key: string;
 }
 
-export type DevicePermissionMode =
-  | "bypass-all"
-  | "default"
-  | "plan"
-  | "accept-edits";
+type ProtocolEnvelopeKeys =
+  | "type"
+  | "session_id"
+  | "uuid"
+  | "event_seq"
+  | "agent_id"
+  | "conversation_id";
 
-export interface BackgroundProcessSummary {
+type ProtocolPayload<T> = Omit<T, ProtocolEnvelopeKeys>;
+
+export type DevicePermissionMode = PermissionMode;
+
+export type AvailableSkillSummary = Pick<
+  Skill,
+  "id" | "name" | "description" | "path" | "source"
+>;
+
+export interface BashBackgroundProcessSummary {
   process_id: string;
-  kind: "bash" | "agent_task";
-  label: string;
-  started_at: string; // ISO8601
-  status: "running" | "completed" | "failed" | "cancelled";
+  kind: "bash";
+  command: BackgroundProcess["command"];
+  started_at_ms: number | null;
+  status: BackgroundProcess["status"];
+  exit_code: BackgroundProcess["exitCode"];
 }
+
+export interface AgentTaskBackgroundProcessSummary {
+  process_id: string;
+  kind: "agent_task";
+  task_type: SubagentState["type"];
+  description: SubagentState["description"];
+  started_at_ms: number;
+  status: SubagentState["status"];
+  error?: SubagentState["error"];
+}
+
+export type BackgroundProcessSummary =
+  | BashBackgroundProcessSummary
+  | AgentTaskBackgroundProcessSummary;
 
 /**
  * Bottom-bar and device execution context state.
@@ -55,8 +96,10 @@ export interface DeviceStatus {
   current_permission_mode: DevicePermissionMode;
   current_working_directory: string | null;
   letta_code_version: string | null;
-  current_toolset: string[];
-  current_available_skills: string[];
+  current_toolset: ToolsetName | null;
+  current_toolset_preference: ToolsetPreference;
+  current_loaded_tools: string[];
+  current_available_skills: AvailableSkillSummary[];
   background_processes: BackgroundProcessSummary[];
 }
 
@@ -70,12 +113,9 @@ export type LoopStatus =
   | "WAITING_ON_APPROVAL"
   | "WAITING_ON_INPUT";
 
-export interface QueueMessage {
-  id: string;
-  source: "user" | "task_notification" | "subagent" | "system";
-  kind: "message" | "task_notification" | "approval_result" | "overlay_action";
+export type QueueMessage = QueueSnapshotMessage["items"][number] & {
   enqueued_at?: string;
-}
+};
 
 /**
  * Loop state is intentionally small and finite.
@@ -98,88 +138,46 @@ export interface LoopStatusUpdateMessage extends RuntimeEnvelope {
 }
 
 /**
- * Message-level delta with explicit identity fields required by UIs.
+ * Canonical stream chunk payload.
+ * Identity fields (id/date/otid/run_id/seq_id) are carried directly on the
+ * message chunk when present in the upstream Letta response type.
  */
-export interface MessageDelta {
-  id: string;
-  date: string; // ISO8601
-  message_type: LettaStreamingResponse["message_type"] | "system_message";
-  run_id?: string | null;
-  otid?: string | null;
-  seq_id?: number | null;
-  chunk: LettaStreamingResponse;
-}
+export type MessageDelta = ProtocolPayload<MessageWire>;
 
 /**
  * Canonical approval request/response deltas for approval UI state.
  */
-export interface ControlRequestDelta {
-  request_id: string;
-  request: Record<string, unknown>;
-}
+export type ControlRequestDelta = ProtocolPayload<ControlRequest>;
 
-export interface ControlResponseDelta {
-  request_id: string;
-  subtype: "success" | "error";
-  response?: Record<string, unknown>;
-  error?: string;
-}
+export type ControlResponseDelta = ProtocolPayload<ControlResponse>;
 
 /**
  * Canonical client-side tool lifecycle deltas for tool timers.
  */
-export interface ClientToolStartDelta {
-  tool_call_id: string;
-  tool_name: string;
-  run_id?: string | null;
-  started_at_ms: number;
-  input?: Record<string, unknown>;
-}
+export type ClientToolStartDelta = ProtocolPayload<ToolExecutionStartedMessage>;
 
-export interface ClientToolCompleteDelta {
-  tool_call_id: string;
-  run_id?: string | null;
-  status: "success" | "error";
-  finished_at_ms: number;
-  tool_return?: unknown;
-}
+export type ClientToolCompleteDelta =
+  ProtocolPayload<ToolExecutionFinishedMessage>;
 
 /**
  * Canonical command lifecycle deltas for slash-command/task command projection.
  */
-export interface CommandStartDelta {
-  command_id: string;
-  command_name: string;
+export type CommandStartDelta = Pick<CommandFinishedEvent, "id" | "input"> & {
   started_at_ms: number;
-  args?: Record<string, unknown>;
-}
+};
 
-export interface CommandCompleteDelta {
-  command_id: string;
-  command_name: string;
+export type CommandCompleteDelta = CommandFinishedEvent & {
   finished_at_ms: number;
-  status: "success" | "error" | "cancelled";
-  output?: unknown;
-}
+};
 
 /**
  * Retry/error/status deltas surfaced in TUI and chat timeline.
  */
-export interface RetryNoticeDelta {
-  reason: string;
-  attempt: number;
-  max_attempts: number;
-  delay_ms: number;
-  run_id?: string | null;
-}
+export type RetryNoticeDelta = ProtocolPayload<RetryMessage>;
 
-export interface RuntimeErrorPrintDelta {
-  message: string;
-  stop_reason?: string;
-  run_id?: string | null;
+export type RuntimeErrorPrintDelta = ProtocolPayload<ErrorMessage> & {
   is_terminal: boolean;
-  detail?: string;
-}
+};
 
 export interface StatusPrintDelta {
   message: string;
