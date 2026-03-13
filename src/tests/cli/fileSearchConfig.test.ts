@@ -5,12 +5,14 @@ import {
 } from "../../cli/helpers/fileSearchConfig";
 
 // ---------------------------------------------------------------------------
-// shouldExcludeEntry — hardcoded defaults
+// shouldExcludeEntry — driven by .lettaignore only (no hardcoded defaults)
 // ---------------------------------------------------------------------------
 
 describe("shouldExcludeEntry", () => {
-  describe("hardcoded defaults", () => {
-    const hardcoded = [
+  describe("no hardcoded defaults", () => {
+    // Previously hardcoded entries are no longer excluded by default.
+    // Users must opt in via .lettaignore.
+    const formerlyHardcoded = [
       "node_modules",
       "bower_components",
       "dist",
@@ -28,18 +30,11 @@ describe("shouldExcludeEntry", () => {
       ".cache",
     ];
 
-    for (const name of hardcoded) {
-      test(`excludes "${name}"`, () => {
-        expect(shouldExcludeEntry(name)).toBe(true);
+    for (const name of formerlyHardcoded) {
+      test(`does not exclude "${name}" without a .lettaignore entry`, () => {
+        expect(shouldExcludeEntry(name)).toBe(false);
       });
     }
-
-    test("exclusion is case-insensitive", () => {
-      expect(shouldExcludeEntry("Node_Modules")).toBe(true);
-      expect(shouldExcludeEntry("DIST")).toBe(true);
-      expect(shouldExcludeEntry("BUILD")).toBe(true);
-      expect(shouldExcludeEntry(".GIT")).toBe(true);
-    });
   });
 
   describe("non-excluded entries", () => {
@@ -59,19 +54,14 @@ describe("shouldExcludeEntry", () => {
 });
 
 // ---------------------------------------------------------------------------
-// shouldHardExcludeEntry — hardcoded only, no .lettaignore
+// shouldHardExcludeEntry — driven by .lettaignore name patterns only
 // ---------------------------------------------------------------------------
 
 describe("shouldHardExcludeEntry", () => {
-  test("excludes hardcoded defaults", () => {
-    expect(shouldHardExcludeEntry("node_modules")).toBe(true);
-    expect(shouldHardExcludeEntry(".git")).toBe(true);
-    expect(shouldHardExcludeEntry("dist")).toBe(true);
-  });
-
-  test("exclusion is case-insensitive", () => {
-    expect(shouldHardExcludeEntry("Node_Modules")).toBe(true);
-    expect(shouldHardExcludeEntry("DIST")).toBe(true);
+  test("does not exclude previously hardcoded entries without a .lettaignore entry", () => {
+    expect(shouldHardExcludeEntry("node_modules")).toBe(false);
+    expect(shouldHardExcludeEntry(".git")).toBe(false);
+    expect(shouldHardExcludeEntry("dist")).toBe(false);
   });
 
   test("does not exclude normal entries", () => {

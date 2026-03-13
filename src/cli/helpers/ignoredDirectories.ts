@@ -5,35 +5,58 @@ const DEFAULT_LETTAIGNORE = `\
 # .lettaignore — Letta Code file index exclusions
 #
 # Files and directories matching these patterns are excluded from the @ file
-# search index (cache). They won't appear in autocomplete results by default,
-# but can still be found if you type their path explicitly.
+# search index and disk scan fallback. Add a pattern per line to opt out of
+# indexing; remove or comment a line to bring it back.
 #
 # Syntax: one pattern per line, supports globs (e.g. *.log, src/generated/**)
 # Lines starting with # are comments.
 #
-# The following are always excluded (even from explicit search) and do not need
-# to be listed here:
-#   node_modules  dist  build  out  coverage  target  bower_components
-#   .git  .cache  .next  .nuxt  venv  .venv  __pycache__  .tox
-
-# Lock files
-package-lock.json
-yarn.lock
-pnpm-lock.yaml
-poetry.lock
-Cargo.lock
-
-# Logs
-*.log
-
-# OS artifacts
-.DS_Store
-Thumbs.db
+# Common patterns (uncomment to enable):
+#
+# --- Dependency directories ---
+# node_modules
+# bower_components
+# vendor
+#
+# --- Build outputs ---
+# dist
+# build
+# out
+# coverage
+# target
+# .next
+# .nuxt
+#
+# --- Python ---
+# venv
+# .venv
+# __pycache__
+# .tox
+#
+# --- Version control & tooling ---
+# .git
+# .cache
+#
+# --- Lock files ---
+# package-lock.json
+# yarn.lock
+# pnpm-lock.yaml
+# poetry.lock
+# Cargo.lock
+#
+# --- Logs ---
+# *.log
+#
+# --- OS artifacts ---
+# .DS_Store
+# Thumbs.db
 `;
 
 /**
- * Create a .lettaignore file in the project root with sensible defaults
- * if one does not already exist. Safe to call multiple times.
+ * Create a .lettaignore file in the project root with a commented-out template
+ * if one does not already exist.
+ * All patterns in the generated file are commented out — nothing is excluded
+ * by default. Users uncomment the patterns or add the patterns they want.
  */
 export function ensureLettaIgnoreFile(cwd: string = process.cwd()): void {
   const filePath = join(cwd, ".lettaignore");
@@ -42,8 +65,7 @@ export function ensureLettaIgnoreFile(cwd: string = process.cwd()): void {
   try {
     writeFileSync(filePath, DEFAULT_LETTAIGNORE, "utf-8");
   } catch {
-    // If we can't write (e.g. read-only fs), silently skip — the
-    // hardcoded defaults in fileSearchConfig.ts still apply.
+    // If we can't write (e.g. read-only fs), silently skip.
   }
 }
 
