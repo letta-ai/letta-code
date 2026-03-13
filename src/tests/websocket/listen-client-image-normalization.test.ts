@@ -35,6 +35,9 @@ describe("listen-client inbound image normalization", () => {
 
     expect(normalized).toHaveLength(1);
     const message = normalized[0];
+    if (!message) {
+      throw new Error("Expected normalized message");
+    }
     expect("content" in message).toBe(true);
     if (!("content" in message) || typeof message.content === "string") {
       throw new Error("Expected multimodal content");
