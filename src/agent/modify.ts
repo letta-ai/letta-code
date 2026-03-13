@@ -270,58 +270,45 @@ export async function updateConversationLLMConfig(
   return client.conversations.update(conversationId, payload);
 }
 
-export interface RecompileAgentSystemPromptOptions {
-  dryRun?: boolean;
-  /**
-   * Required when recompiling the special "default" conversation route.
-   * Passed as body param `agent_id` for agent-direct mode.
-   */
-  agentId?: string;
-}
-
-interface ConversationSystemPromptRecompileClient {
-  conversations: {
-    recompile: (
-      conversationId: string,
-      params: {
-        dry_run?: boolean;
-      },
-    ) => Promise<string>;
-  };
-}
-
 /**
  * Recompile an agent's system prompt after memory writes so server-side prompt
  * state picks up the latest memory content.
  *
  * @param conversationId - The conversation whose prompt should be recompiled
- * @param options - Optional dry-run control
+ * @param agentId - Agent id for the parent conversation
+ * @param dryRun - Optional dry-run control
  * @param clientOverride - Optional injected client for tests
  * @returns The compiled system prompt returned by the API
  */
 export async function recompileAgentSystemPrompt(
   conversationId: string,
-  options: RecompileAgentSystemPromptOptions = {},
-  clientOverride?: ConversationSystemPromptRecompileClient,
+  agentId: string,
+  dryRun?: boolean,
+  clientOverride?: {
+    conversations: {
+      recompile: (
+        conversationId: string,
+        params: {
+          dry_run?: boolean;
+          agent_id?: string;
+        },
+      ) => Promise<string>;
+    };
+  },
 ): Promise<string> {
-  const client = (clientOverride ??
-    (await getClient())) as ConversationSystemPromptRecompileClient;
+  const client = (clientOverride ?? (await getClient())) as Exclude<
+    typeof clientOverride,
+    undefined
+  >;
 
-  const params: {
-    dry_run?: boolean;
-    agent_id?: string;
-  } = {
-    dry_run: options.dryRun,
-  };
-
-  if (conversationId === "default") {
-    if (!options.agentId) {
-      throw new Error(
-        'recompileAgentSystemPrompt requires options.agentId when conversationId is "default"',
-      );
-    }
-    params.agent_id = options.agentId;
+  if (!agentId) {
+    throw new Error("recompileAgentSystemPrompt requires agentId");
   }
+
+  const params = {
+    dry_run: dryRun,
+    agent_id: agentId,
+  };
 
   return client.conversations.recompile(conversationId, params);
 }

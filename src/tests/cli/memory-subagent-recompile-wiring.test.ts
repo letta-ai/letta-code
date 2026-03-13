@@ -1,9 +1,8 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
-import type { RecompileAgentSystemPromptOptions } from "../../agent/modify";
 import { handleMemorySubagentCompletion } from "../../cli/helpers/memorySubagentCompletion";
 
 const recompileAgentSystemPromptMock = mock(
-  (_conversationId: string, _opts?: RecompileAgentSystemPromptOptions) =>
+  (_conversationId: string, _agentId: string, _dryRun?: boolean) =>
     Promise.resolve("compiled-system-prompt"),
 );
 
@@ -19,7 +18,7 @@ describe("memory subagent recompile handling", () => {
   beforeEach(() => {
     recompileAgentSystemPromptMock.mockReset();
     recompileAgentSystemPromptMock.mockImplementation(
-      (_agentId: string, _opts?: RecompileAgentSystemPromptOptions) =>
+      (_conversationId: string, _agentId: string, _dryRun?: boolean) =>
         Promise.resolve("compiled-system-prompt"),
     );
   });
@@ -44,7 +43,7 @@ describe("memory subagent recompile handling", () => {
     );
     expect(recompileAgentSystemPromptMock).toHaveBeenCalledWith(
       "conv-init-1",
-      {},
+      "agent-init-1",
     );
   });
 
@@ -63,9 +62,10 @@ describe("memory subagent recompile handling", () => {
       },
     );
 
-    expect(recompileAgentSystemPromptMock).toHaveBeenCalledWith("default", {
-      agentId: "agent-default",
-    });
+    expect(recompileAgentSystemPromptMock).toHaveBeenCalledWith(
+      "default",
+      "agent-default",
+    );
   });
 
   test("queues a trailing recompile when later completions land mid-flight", async () => {
@@ -176,7 +176,13 @@ describe("memory subagent recompile handling", () => {
       "Reflected on /palace, the halls remember more now.",
     );
     expect(recompileAgentSystemPromptMock).toHaveBeenCalledTimes(2);
-    expect(recompileAgentSystemPromptMock).toHaveBeenCalledWith("conv-a", {});
-    expect(recompileAgentSystemPromptMock).toHaveBeenCalledWith("conv-b", {});
+    expect(recompileAgentSystemPromptMock).toHaveBeenCalledWith(
+      "conv-a",
+      "agent-shared",
+    );
+    expect(recompileAgentSystemPromptMock).toHaveBeenCalledWith(
+      "conv-b",
+      "agent-shared",
+    );
   });
 });
