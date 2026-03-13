@@ -3,18 +3,4 @@
 # Criteria: fast (<10 min), diverse capabilities, deterministic.
 # Adjust based on known Letta Code pass rates.
 
-# Easy — file operations & basic coding
-hello-world
-csv-to-parquet
-extract-safely
-fix-permissions
-processing-pipeline
-modernize-fortran-build
-grid-pattern-transform
-
-# Medium — coding, debugging, system
-fibonacci-server
-fix-git
-fix-pandas-version
-heterogeneous-dates
-openssl-selfsigned-cert
+cancel-async-tasks
