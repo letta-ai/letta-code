@@ -12,6 +12,9 @@ from harbor.agents.installed.base import BaseInstalledAgent, ExecInput
 from harbor.environments.base import BaseEnvironment
 from harbor.models.agent.context import AgentContext
 
+from litellm import ModelResponse, Usage, completion_cost
+from litellm.types.utils import CompletionTokensDetailsWrapper, PromptTokensDetailsWrapper
+
 logger = logging.getLogger(__name__)
 
 # Keys tried (in order) when extracting agent ID from Letta settings JSON.
@@ -113,6 +116,112 @@ class LettaCode(BaseInstalledAgent):
         return events_files[0].read_text()
 
     # ------------------------------------------------------------------
+    # Usage / cost tracking
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _extract_usage_from_events(events_text: str) -> dict[str, int]:
+        """Extract token usage from Letta Code stream-json events.
+
+        Checks two formats:
+        1. ``message_type == "usage_statistics"`` events (Letta streaming API)
+        2. Last event with ``type == "result"`` containing a ``usage`` field
+        """
+        totals: dict[str, int] = {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "cached_input_tokens": 0,
+            "cache_write_tokens": 0,
+            "reasoning_tokens": 0,
+        }
+        parsed_events: list[dict] = []
+        found_usage_stats = False
+
+        for line in events_text.splitlines():
+            line = line.strip()
+            if not line.startswith("{"):
+                continue
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            parsed_events.append(event)
+
+            if event.get("message_type") == "usage_statistics":
+                found_usage_stats = True
+                for key in totals:
+                    totals[key] += event.get(key) or 0
+                details = event.get("prompt_tokens_details") or {}
+                totals["cached_input_tokens"] += details.get("cached_tokens") or 0
+                details = event.get("completion_tokens_details") or {}
+                totals["reasoning_tokens"] += details.get("reasoning_tokens") or 0
+
+        # Fallback: last result event
+        if not found_usage_stats and parsed_events:
+            last = parsed_events[-1]
+            if last.get("type") == "result" and "usage" in last:
+                usage = last["usage"]
+                for key in totals:
+                    totals[key] += usage.get(key) or 0
+
+        return totals
+
+    @staticmethod
+    def _calculate_cost(model_name: str, usage: dict[str, int]) -> float:
+        """Calculate cost in USD using litellm's pricing data."""
+        prompt_tokens = usage.get("prompt_tokens", 0)
+        completion_tokens = usage.get("completion_tokens", 0)
+        if not model_name or (prompt_tokens == 0 and completion_tokens == 0):
+            return 0.0
+        resp = ModelResponse()
+        resp.usage = Usage(
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=prompt_tokens + completion_tokens,
+            prompt_tokens_details=PromptTokensDetailsWrapper(
+                cached_tokens=usage.get("cached_input_tokens", 0),
+                cache_creation_tokens=usage.get("cache_write_tokens", 0),
+            ),
+            completion_tokens_details=CompletionTokensDetailsWrapper(
+                reasoning_tokens=usage.get("reasoning_tokens", 0),
+            ),
+        )
+        try:
+            return float(completion_cost(completion_response=resp, model=model_name))
+        except Exception:
+            logger.debug(f"Could not calculate cost for model {model_name}", exc_info=True)
+            return 0.0
+
+    def _populate_usage(self, events_text: str, context: AgentContext) -> None:
+        """Extract usage from events and populate context + write usage.json."""
+        model_name = self.model_name or os.environ.get("LETTA_MODEL", "").strip()
+        usage = self._extract_usage_from_events(events_text)
+        cost = self._calculate_cost(model_name, usage)
+
+        context.n_input_tokens = usage["prompt_tokens"] or None
+        context.n_output_tokens = usage["completion_tokens"] or None
+        context.cost_usd = cost if cost > 0 else None
+
+        # Write usage.json to the task directory (parent of agent logs)
+        usage_data: dict = {
+            "prompt_tokens": usage["prompt_tokens"],
+            "completion_tokens": usage["completion_tokens"],
+            "total_tokens": usage["prompt_tokens"] + usage["completion_tokens"],
+            "cost_usd": round(cost, 6),
+        }
+        for key in ("cached_input_tokens", "cache_write_tokens", "reasoning_tokens"):
+            if usage.get(key, 0) > 0:
+                usage_data[key] = usage[key]
+
+        try:
+            usage_path = Path(self.logs_dir).parent / "usage.json"
+            usage_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(usage_path, "w") as f:
+                json.dump(usage_data, f, indent=2)
+        except Exception as e:
+            logger.warning(f"Failed to save usage.json: {e}")
+
+    # ------------------------------------------------------------------
     # Harbor lifecycle hooks
     # ------------------------------------------------------------------
 
@@ -132,6 +241,11 @@ class LettaCode(BaseInstalledAgent):
         agent_id = self._extract_agent_id_from_events(events_text)
         if agent_id:
             (Path(self.logs_dir) / "letta_agent_id_recovered.txt").write_text(agent_id)
+
+        try:
+            self._populate_usage(events_text, context)
+        except Exception as e:
+            logger.warning(f"Failed to extract usage in populate_context_post_run: {e}")
 
     async def setup(self, environment: BaseEnvironment) -> None:
         """Install the letta CLI inside the task container."""
@@ -241,6 +355,7 @@ class LettaCode(BaseInstalledAgent):
         # Harbor already downloads /logs/agent/{ts}.* to self.logs_dir,
         # so we only need to fetch the events in-memory for agent ID extraction.
         agent_id: str | None = None
+        events_text: str = ""
         try:
             events_text = await self._download_file(environment, f"{base}.events.jsonl")
 
@@ -257,6 +372,12 @@ class LettaCode(BaseInstalledAgent):
                 self._export_agent(agent_id, logs_dir, ts)
         except Exception:
             pass
+
+        # --- usage / cost -------------------------------------------------
+        try:
+            self._populate_usage(events_text, context)
+        except Exception as e:
+            logger.warning(f"Failed to extract/save usage: {e}")
 
         # --- populate context ---------------------------------------------
         context.metadata = {

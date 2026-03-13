@@ -28,7 +28,7 @@ jobs:
         uses: astral-sh/setup-uv@v6
 
       - name: Install Harbor
-        run: uv pip install --system "harbor>=0.1.45"
+        run: uv pip install --system "harbor>=0.1.45" "litellm>=1.0.0"
 
       - name: Run regression tasks
         env:
