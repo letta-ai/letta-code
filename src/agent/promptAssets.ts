@@ -4,7 +4,6 @@ import approvalRecoveryAlert from "./prompts/approval_recovery_alert.txt";
 import autoInitReminder from "./prompts/auto_init_reminder.txt";
 import humanPrompt from "./prompts/human.mdx";
 import interruptRecoveryAlert from "./prompts/interrupt_recovery_alert.txt";
-// init_memory.md is now a bundled skill at src/skills/builtin/init/SKILL.md
 import lettaPrompt from "./prompts/letta.md";
 import memoryCheckReminder from "./prompts/memory_check_reminder.txt";
 import memoryFilesystemPrompt from "./prompts/memory_filesystem.mdx";
