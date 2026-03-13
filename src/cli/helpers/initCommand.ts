@@ -165,8 +165,7 @@ function gatherDirListing(): string {
     const lines: string[] = [];
     const sorted = [...dirs, ...files];
 
-    for (let i = 0; i < sorted.length; i++) {
-      const entry = sorted[i]!;
+    for (const [i, entry] of sorted.entries()) {
       const isLast = i === sorted.length - 1;
       const prefix = isLast ? "└── " : "├── ";
 
@@ -189,8 +188,7 @@ function gatherDirListing(): string {
               return a.name.localeCompare(b.name);
             });
           const childPrefix = isLast ? "    " : "│   ";
-          for (let j = 0; j < children.length; j++) {
-            const child = children[j]!;
+          for (const [j, child] of children.entries()) {
             const childIsLast = j === children.length - 1;
             const connector = childIsLast ? "└── " : "├── ";
             const suffix = child.isDirectory() ? "/" : "";
