@@ -30,6 +30,14 @@ jobs:
       - name: Install Harbor
         run: uv pip install --system "harbor>=0.1.45" "litellm>=1.0.0"
 
+      - name: Configure Modal
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+        run: |
+          printf '[letta]\ntoken_id = "%s"\ntoken_secret = "%s"\nactive = true\nenvironment = "terminal-bench"\nimage_builder_version = "2025.06"\n' \
+            "$MODAL_TOKEN_ID" "$MODAL_TOKEN_SECRET" > ~/.modal.toml
+
       - name: Run regression tasks
         env:
           LETTA_API_KEY: ${{ secrets.LETTA_API_KEY }}
@@ -47,6 +55,7 @@ jobs:
             --dataset terminal-bench@2.0 \
             --agent-import-path benchmarks.terminal_bench.letta_code_agent:LettaCode \
             --model "${{ matrix.model }}" \
+            --env modal \
             --n-concurrent ${{ inputs.concurrency || '4' }} \
             --job-name "regression-${{ matrix.model }}-$(date +%Y%m%d)" \
             $TASK_FLAGS
