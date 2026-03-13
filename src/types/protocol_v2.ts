@@ -6,6 +6,8 @@
  * listener emitters/consumers in controlled steps.
  */
 
+import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
+import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import type { Skill } from "../agent/skills";
 import type { CommandFinishedEvent } from "../cli/commands/runner";
 import type { PermissionMode } from "../permissions/mode";
@@ -129,12 +131,12 @@ export interface LoopState {
 }
 
 export interface DeviceStatusUpdateMessage extends RuntimeEnvelope {
-  type: "device_status_update";
+  type: "update_device_status";
   device_status: DeviceStatus;
 }
 
 export interface LoopStatusUpdateMessage extends RuntimeEnvelope {
-  type: "loop_status_update";
+  type: "update_loop_status";
   loop_status: LoopState;
 }
 
@@ -190,59 +192,45 @@ export interface UnknownDelta {
   payload: Record<string, unknown>;
 }
 
-export type RuntimeDeltaType =
-  | "message_delta"
-  | "control_request"
-  | "control_response"
-  | "client_side_tool_start"
-  | "client_side_tool_complete"
-  | "command_start"
-  | "command_complete"
-  | "retry_notice"
-  | "runtime_error_print"
-  | "status_print"
-  | "unknown";
-
-export type RuntimeDeltaPayloadByType = {
-  message_delta: MessageDelta;
-  control_request: ControlRequestDelta;
-  control_response: ControlResponseDelta;
-  client_side_tool_start: ClientToolStartDelta;
-  client_side_tool_complete: ClientToolCompleteDelta;
-  command_start: CommandStartDelta;
-  command_complete: CommandCompleteDelta;
-  retry_notice: RetryNoticeDelta;
-  runtime_error_print: RuntimeErrorPrintDelta;
-  status_print: StatusPrintDelta;
-  unknown: UnknownDelta;
-};
-
-export type RuntimeDeltaMessage = {
-  [K in RuntimeDeltaType]: RuntimeEnvelope & {
-    type: "runtime_delta";
-    delta_type: K;
-    delta: RuntimeDeltaPayloadByType[K];
-  };
-}[RuntimeDeltaType];
-
 /**
- * Optional full snapshot for bootstrap/reconnect.
+ * Expanded message-delta union (Letta message deltas + runtime lifecycle deltas).
+ * stream_delta is the only message stream event the WS server emits in v2.
  */
-export interface RuntimeStateSnapshot {
-  messages: MessageDelta[];
-  device_status: DeviceStatus | null;
-  loop_status: LoopState | null;
-}
+export type StreamDelta =
+  | MessageDelta
+  | ControlRequestDelta
+  | ControlResponseDelta
+  | ClientToolStartDelta
+  | ClientToolCompleteDelta
+  | CommandStartDelta
+  | CommandCompleteDelta
+  | RetryNoticeDelta
+  | RuntimeErrorPrintDelta
+  | StatusPrintDelta
+  | UnknownDelta;
 
-export interface RuntimeStateSnapshotMessage extends RuntimeEnvelope {
-  type: "runtime_state_snapshot";
-  snapshot: RuntimeStateSnapshot;
+export interface StreamDeltaMessage extends RuntimeEnvelope {
+  type: "stream_delta";
+  delta: StreamDelta;
 }
 
 /**
  * Controller -> execution-environment commands.
- * Keep these minimal; payload shapes will be tightened as controller wiring lands.
+ * In v2, the WS server accepts only:
+ * - send_message (create message payload)
+ * - abort_message (abort request)
  */
+export interface SendMessageCommand {
+  type: "send_message";
+  runtime: RuntimeScope;
+  payload: {
+    messages: Array<
+      (MessageCreate & { client_message_id?: string }) | ApprovalCreate
+    >;
+    supports_control_response?: boolean;
+  };
+}
+
 export interface AbortMessageCommand {
   type: "abort_message";
   runtime: RuntimeScope;
@@ -250,10 +238,9 @@ export interface AbortMessageCommand {
   run_id?: string | null;
 }
 
-export type WsProtocolCommand = AbortMessageCommand;
+export type WsProtocolCommand = SendMessageCommand | AbortMessageCommand;
 
 export type WsProtocolMessage =
   | DeviceStatusUpdateMessage
   | LoopStatusUpdateMessage
-  | RuntimeDeltaMessage
-  | RuntimeStateSnapshotMessage;
+  | StreamDeltaMessage;
