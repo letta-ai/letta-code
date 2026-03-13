@@ -1,11 +1,25 @@
 import { execFileSync } from "node:child_process";
 
+export interface GitStatusSummary {
+  staged: number;
+  unstaged: number;
+  untracked: number;
+  total: number;
+}
+
 export interface GitContextSnapshot {
   isGitRepo: boolean;
+  repoRoot: string | null;
   branch: string | null;
+  head: string | null;
   mainBranch: string | null;
+  upstream: string | null;
+  aheadCount: number | null;
+  behindCount: number | null;
   status: string | null;
+  statusSummary: GitStatusSummary | null;
   recentCommits: string | null;
+  recentContributors: string[] | null;
   gitUser: string | null;
 }
 
@@ -18,6 +32,7 @@ export interface GatherGitContextOptions {
    */
   recentCommitFormat?: string;
   statusLineLimit?: number;
+  contributorLimit?: number;
 }
 
 function runGit(args: string[], cwd: string): string | null {
@@ -43,6 +58,79 @@ function truncateLines(value: string, maxLines: number): string {
   );
 }
 
+function summarizeStatus(status: string | null): GitStatusSummary | null {
+  if (!status) {
+    return null;
+  }
+
+  let staged = 0;
+  let unstaged = 0;
+  let untracked = 0;
+
+  for (const line of status.split("\n")) {
+    if (!line) continue;
+
+    if (line.startsWith("??")) {
+      untracked += 1;
+      continue;
+    }
+
+    const indexState = line[0];
+    const worktreeState = line[1];
+    if (indexState && indexState !== " " && indexState !== "?") {
+      staged += 1;
+    }
+    if (worktreeState && worktreeState !== " " && worktreeState !== "?") {
+      unstaged += 1;
+    }
+  }
+
+  return {
+    staged,
+    unstaged,
+    untracked,
+    total: staged + unstaged + untracked,
+  };
+}
+
+function parseAheadBehind(value: string | null): {
+  aheadCount: number | null;
+  behindCount: number | null;
+} {
+  if (!value) {
+    return { aheadCount: null, behindCount: null };
+  }
+
+  const [behindRaw, aheadRaw] = value.trim().split(/\s+/);
+  const behind = Number.parseInt(behindRaw ?? "", 10);
+  const ahead = Number.parseInt(aheadRaw ?? "", 10);
+  if (!Number.isFinite(behind) || !Number.isFinite(ahead)) {
+    return { aheadCount: null, behindCount: null };
+  }
+
+  return { aheadCount: ahead, behindCount: behind };
+}
+
+function parseContributors(
+  value: string | null,
+  maxContributors: number,
+): string[] {
+  if (!value) {
+    return [];
+  }
+
+  const contributors: string[] = [];
+  for (const line of value.split("\n")) {
+    const match = line.match(/^\s*\d+\s+(.+)$/);
+    if (!match?.[1]) continue;
+    contributors.push(match[1].trim());
+    if (contributors.length >= maxContributors) {
+      break;
+    }
+  }
+  return contributors;
+}
+
 function formatGitUser(
   name: string | null,
   email: string | null,
@@ -61,28 +149,47 @@ export function gatherGitContextSnapshot(
 ): GitContextSnapshot {
   const cwd = options.cwd ?? process.cwd();
   const recentCommitLimit = options.recentCommitLimit ?? 3;
+  const contributorLimit = options.contributorLimit ?? 3;
 
   if (!runGit(["rev-parse", "--git-dir"], cwd)) {
     return {
       isGitRepo: false,
+      repoRoot: null,
       branch: null,
+      head: null,
       mainBranch: null,
+      upstream: null,
+      aheadCount: null,
+      behindCount: null,
       status: null,
+      statusSummary: null,
       recentCommits: null,
+      recentContributors: null,
       gitUser: null,
     };
   }
 
+  const repoRoot = runGit(["rev-parse", "--show-toplevel"], cwd);
   const branch = runGit(["branch", "--show-current"], cwd);
+  const head = runGit(["show", "-s", "--format=%h %s", "HEAD"], cwd);
   const originHead = runGit(
     ["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"],
     cwd,
   );
+  const upstream = runGit(
+    ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+    cwd,
+  );
+  const aheadBehindRaw = upstream
+    ? runGit(["rev-list", "--left-right", "--count", "@{u}...HEAD"], cwd)
+    : null;
+  const { aheadCount, behindCount } = parseAheadBehind(aheadBehindRaw);
   const mainBranch = originHead?.startsWith("origin/")
     ? originHead.slice("origin/".length)
     : (originHead ?? "main");
 
   const fullStatus = runGit(["status", "--short"], cwd);
+  const statusSummary = summarizeStatus(fullStatus);
   const status =
     typeof fullStatus === "string" && options.statusLineLimit
       ? truncateLines(fullStatus, options.statusLineLimit)
@@ -99,6 +206,11 @@ export function gatherGitContextSnapshot(
         cwd,
       )
     : runGit(["log", "--oneline", "-n", String(recentCommitLimit)], cwd);
+  const contributorsRaw = runGit(["shortlog", "-sn", "-n", "-20", "HEAD"], cwd);
+  const recentContributors = parseContributors(
+    contributorsRaw,
+    contributorLimit,
+  );
 
   const userName = runGit(["config", "user.name"], cwd);
   const userEmail = runGit(["config", "user.email"], cwd);
@@ -106,10 +218,18 @@ export function gatherGitContextSnapshot(
 
   return {
     isGitRepo: true,
+    repoRoot,
     branch,
+    head,
     mainBranch,
+    upstream,
+    aheadCount,
+    behindCount,
     status,
+    statusSummary,
     recentCommits,
+    recentContributors:
+      recentContributors.length > 0 ? recentContributors : null,
     gitUser,
   };
 }

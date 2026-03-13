@@ -47,8 +47,15 @@ export function getDeviceType(): string {
  */
 function getGitInfo(): {
   isGitRepo: boolean;
+  repoRoot?: string;
   branch?: string;
+  head?: string;
+  upstream?: string;
+  aheadCount?: number | null;
+  behindCount?: number | null;
+  changeSummary?: string;
   recentCommits?: string;
+  recentContributors?: string;
   status?: string;
   gitUser?: string;
 } {
@@ -62,10 +69,29 @@ function getGitInfo(): {
     return { isGitRepo: false };
   }
 
+  const upstreamText = (() => {
+    if (!git.upstream) return "No upstream configured";
+    if (git.aheadCount === null || git.behindCount === null) {
+      return git.upstream;
+    }
+    return `${git.upstream} (ahead ${git.aheadCount}, behind ${git.behindCount})`;
+  })();
+  const changeSummary = (() => {
+    if (!git.statusSummary) return "(unknown)";
+    return `${git.statusSummary.staged} staged, ${git.statusSummary.unstaged} unstaged, ${git.statusSummary.untracked} untracked`;
+  })();
+
   return {
     isGitRepo: true,
+    repoRoot: git.repoRoot ?? process.cwd(),
     branch: git.branch ?? "(unknown)",
+    head: git.head ?? "(unknown)",
+    upstream: upstreamText,
+    aheadCount: git.aheadCount,
+    behindCount: git.behindCount,
+    changeSummary,
     recentCommits: git.recentCommits ?? "(failed to get commits)",
+    recentContributors: git.recentContributors?.join(", ") ?? "(unknown)",
     status: git.status || "(clean working tree)",
     gitUser: git.gitUser ?? "(not configured)",
   };
@@ -119,7 +145,12 @@ The user has just initiated a new connection via the [Letta Code CLI client](htt
     // Add git info if available
     if (gitInfo.isGitRepo) {
       context += `- **Git repository**: Yes (branch: ${gitInfo.branch})
+- **Repository root**: ${gitInfo.repoRoot}
+- **HEAD**: ${gitInfo.head}
+- **Tracking**: ${gitInfo.upstream}
+- **Working tree summary**: ${gitInfo.changeSummary}
 - **Git user**: ${gitInfo.gitUser}
+- **Recent contributors**: ${gitInfo.recentContributors}
 
 ### Recent Commits
 \`\`\`

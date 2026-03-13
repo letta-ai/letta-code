@@ -34,6 +34,7 @@ export function gatherInitGitContext(): { context: string; identity: string } {
   try {
     const git = gatherGitContextSnapshot({
       recentCommitLimit: 10,
+      contributorLimit: 5,
     });
     if (!git.isGitRepo) {
       return {
@@ -42,10 +43,29 @@ export function gatherInitGitContext(): { context: string; identity: string } {
       };
     }
 
+    const upstreamText = (() => {
+      if (!git.upstream) return "No upstream configured";
+      if (git.aheadCount === null || git.behindCount === null) {
+        return git.upstream;
+      }
+      return `${git.upstream} (ahead ${git.aheadCount}, behind ${git.behindCount})`;
+    })();
+    const summaryText = (() => {
+      if (!git.statusSummary) return "(unknown)";
+      return `${git.statusSummary.staged} staged, ${git.statusSummary.unstaged} unstaged, ${git.statusSummary.untracked} untracked`;
+    })();
+    const contributorText =
+      git.recentContributors?.join(", ") ?? "(unknown contributors)";
+
     return {
       context: `
+- repo_root: ${git.repoRoot ?? process.cwd()}
 - branch: ${git.branch ?? "(unknown)"}
 - main: ${git.mainBranch ?? "main"}
+- head: ${git.head ?? "(unknown)"}
+- upstream: ${upstreamText}
+- change_summary: ${summaryText}
+- contributors: ${contributorText}
 - status: ${git.status || "(clean)"}
 
 Recent commits:
