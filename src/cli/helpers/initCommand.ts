@@ -42,16 +42,10 @@ export function gatherInitGitContext(): { context: string; identity: string } {
       };
     }
 
-    const summaryText = (() => {
-      if (!git.statusSummary) return "(unknown)";
-      return `${git.statusSummary.staged} staged, ${git.statusSummary.unstaged} unstaged, ${git.statusSummary.untracked} untracked`;
-    })();
-
     return {
       context: `
 - branch: ${git.branch ?? "(unknown)"}
 - main: ${git.mainBranch ?? "main"}
-- change_summary: ${summaryText}
 - status: ${git.status || "(clean)"}
 
 Recent commits:
