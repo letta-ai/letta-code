@@ -144,7 +144,7 @@ describe("buildSubagentArgs", () => {
     expect(args).toContain("--no-memfs");
   });
 
-  test("does not add --no-memfs for stateful subagents with memoryBlocks none", () => {
+  test("adds --no-memfs for stateful subagents with memoryBlocks none", () => {
     const args = buildSubagentArgs(
       "test-subagent",
       { ...baseConfig, mode: "stateful" },
@@ -154,6 +154,20 @@ describe("buildSubagentArgs", () => {
 
     expect(args).toContain("--init-blocks");
     expect(args).toContain("none");
+    expect(args).toContain("--no-memfs");
+  });
+
+  test("does not force --no-memfs when deploying an existing subagent agent", () => {
+    const args = buildSubagentArgs(
+      "test-subagent",
+      { ...baseConfig, mode: "stateful" },
+      null,
+      "hello",
+      "agent-existing",
+    );
+
+    expect(args).toContain("--agent");
+    expect(args).not.toContain("--new-agent");
     expect(args).not.toContain("--no-memfs");
   });
 });
