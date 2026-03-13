@@ -8,7 +8,6 @@ import lettaPrompt from "./prompts/letta.md";
 import memoryCheckReminder from "./prompts/memory_check_reminder.txt";
 import memoryFilesystemPrompt from "./prompts/memory_filesystem.mdx";
 import personaPrompt from "./prompts/persona.mdx";
-import personaClaudePrompt from "./prompts/persona_claude.mdx";
 import personaKawaiiPrompt from "./prompts/persona_kawaii.mdx";
 import personaMemoPrompt from "./prompts/persona_memo.mdx";
 import planModeReminder from "./prompts/plan_mode_reminder.txt";
@@ -37,7 +36,6 @@ export const INTERRUPT_RECOVERY_ALERT = interruptRecoveryAlert;
 
 export const MEMORY_PROMPTS: Record<string, string> = {
   "persona.mdx": personaPrompt,
-  "persona_claude.mdx": personaClaudePrompt,
   "persona_kawaii.mdx": personaKawaiiPrompt,
   "persona_memo.mdx": personaMemoPrompt,
   "human.mdx": humanPrompt,
