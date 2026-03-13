@@ -12,6 +12,9 @@ on:
         description: "Max concurrent tasks"
         default: "4"
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   regression:
     runs-on: ubuntu-latest
@@ -26,6 +29,8 @@ jobs:
 
       - name: Setup Python + uv
         uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: false
 
       - name: Create venv and install deps
         run: |
@@ -90,6 +95,8 @@ jobs:
 
       - name: Setup Python + uv
         uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: false
 
       - name: Generate report and update GitHub Issue
         env:
