@@ -2,10 +2,10 @@
 // Generates session context system reminder for the first message of each CLI session
 // Contains device/environment information only. Agent metadata is in agentMetadata.ts.
 
-import { execSync } from "node:child_process";
 import { platform } from "node:os";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "../../constants";
 import { getVersion } from "../../version";
+import { gatherGitContextSnapshot } from "./gitContext";
 
 /**
  * Get the current local time in a human-readable format
@@ -41,17 +41,6 @@ export function getDeviceType(): string {
 }
 
 /**
- * Safely execute a git command, returning null on failure
- */
-function safeGitExec(command: string, cwd: string): string | null {
-  try {
-    return execSync(command, { cwd, encoding: "utf-8", stdio: "pipe" }).trim();
-  } catch {
-    return null;
-  }
-}
-
-/**
  * Gather git information if in a git repository
  * Returns truncated commits (3) and status (20 lines)
  * Each field is gathered independently with fallbacks
@@ -61,41 +50,25 @@ function getGitInfo(): {
   branch?: string;
   recentCommits?: string;
   status?: string;
+  gitUser?: string;
 } {
-  const cwd = process.cwd();
+  const git = gatherGitContextSnapshot({
+    recentCommitLimit: 3,
+    recentCommitFormat: "%h %s (%an)",
+    statusLineLimit: 20,
+  });
 
-  try {
-    // Check if we're in a git repo
-    execSync("git rev-parse --git-dir", { cwd, stdio: "pipe" });
-
-    // Get current branch (with fallback)
-    const branch = safeGitExec("git branch --show-current", cwd) ?? "(unknown)";
-
-    // Get recent commits (3 commits with author, with fallback)
-    const recentCommits =
-      safeGitExec('git log --format="%h %s (%an)" -3', cwd) ??
-      "(failed to get commits)";
-
-    // Get git status (truncate to 20 lines, with fallback)
-    const fullStatus =
-      safeGitExec("git status --short", cwd) ?? "(failed to get status)";
-    const statusLines = fullStatus.split("\n");
-    let status = fullStatus;
-    if (statusLines.length > 20) {
-      status =
-        statusLines.slice(0, 20).join("\n") +
-        `\n... and ${statusLines.length - 20} more files`;
-    }
-
-    return {
-      isGitRepo: true,
-      branch,
-      recentCommits,
-      status: status || "(clean working tree)",
-    };
-  } catch {
+  if (!git.isGitRepo) {
     return { isGitRepo: false };
   }
+
+  return {
+    isGitRepo: true,
+    branch: git.branch ?? "(unknown)",
+    recentCommits: git.recentCommits ?? "(failed to get commits)",
+    status: git.status || "(clean working tree)",
+    gitUser: git.gitUser ?? "(not configured)",
+  };
 }
 
 /**
@@ -146,6 +119,7 @@ The user has just initiated a new connection via the [Letta Code CLI client](htt
     // Add git info if available
     if (gitInfo.isGitRepo) {
       context += `- **Git repository**: Yes (branch: ${gitInfo.branch})
+- **Git user**: ${gitInfo.gitUser}
 
 ### Recent Commits
 \`\`\`

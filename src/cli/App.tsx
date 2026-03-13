@@ -230,7 +230,7 @@ import { parsePatchOperations } from "./helpers/formatArgsDisplay";
 import {
   buildInitMessage,
   fireAutoInit,
-  gatherGitContext,
+  gatherInitGitContext,
 } from "./helpers/initCommand";
 import {
   getReflectionSettings,
@@ -9531,7 +9531,7 @@ export default function App({
               true,
             );
 
-            const gitContext = gatherGitContext();
+            const { context: gitContext } = gatherInitGitContext();
             const memoryDir = settingsManager.isMemfsEnabled(agentId)
               ? getMemoryFilesystemRoot(agentId)
               : undefined;
