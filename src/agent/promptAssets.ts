@@ -14,13 +14,14 @@ import planModeReminder from "./prompts/plan_mode_reminder.txt";
 import projectPrompt from "./prompts/project.mdx";
 import rememberPrompt from "./prompts/remember.md";
 import skillCreatorModePrompt from "./prompts/skill_creator_mode.md";
+import sleeptimePersona from "./prompts/sleeptime.md";
 import sourceClaudePrompt from "./prompts/source_claude.md";
 import sourceCodexPrompt from "./prompts/source_codex.md";
 import sourceGeminiPrompt from "./prompts/source_gemini.md";
 
 import stylePrompt from "./prompts/style.mdx";
-import systemPromptBlocksAddon from "./prompts/system_prompt_blocks.txt";
-import systemPromptMemfsAddon from "./prompts/system_prompt_memfs.txt";
+import systemPromptBlocksAddon from "./prompts/system_prompt_blocks.md";
+import systemPromptMemfsAddon from "./prompts/system_prompt_memfs.md";
 
 export const SYSTEM_PROMPT = lettaPrompt;
 export const SYSTEM_PROMPT_BLOCKS_ADDON = systemPromptBlocksAddon;
@@ -33,6 +34,7 @@ export const MEMORY_CHECK_REMINDER = memoryCheckReminder;
 export const APPROVAL_RECOVERY_PROMPT = approvalRecoveryAlert;
 export const AUTO_INIT_REMINDER = autoInitReminder;
 export const INTERRUPT_RECOVERY_ALERT = interruptRecoveryAlert;
+export const SLEEPTIME_MEMORY_PERSONA = sleeptimePersona;
 
 export const MEMORY_PROMPTS: Record<string, string> = {
   "persona.mdx": personaPrompt,

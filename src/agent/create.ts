@@ -24,9 +24,9 @@ import {
   type MemoryPromptMode,
   resolveAndBuildSystemPrompt,
   resolveSystemPrompt,
+  SLEEPTIME_MEMORY_PERSONA,
   swapMemoryAddon,
 } from "./promptAssets";
-import { SLEEPTIME_MEMORY_PERSONA } from "./prompts/sleeptime";
 
 /**
  * Describes where a memory block came from
