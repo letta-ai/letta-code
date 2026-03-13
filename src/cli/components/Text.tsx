@@ -37,6 +37,13 @@ function looksLikeMojibake(value: string): boolean {
       }
     }
 
+    // A lone multi-byte lead with even one valid continuation is mojibake
+    if (byte >= 0xc2 && byte <= 0xf4) {
+      if (i + 1 < value.length && isContinuationByte(value.charCodeAt(i + 1))) {
+        sawUtf8Sequence = true;
+      }
+    }
+
     if (byte >= 0xf0 && byte <= 0xf4) {
       if (
         i + 3 < value.length &&
