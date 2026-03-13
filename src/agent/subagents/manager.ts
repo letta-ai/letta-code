@@ -534,6 +534,9 @@ export function buildSubagentArgs(
     // Create new agent (original behavior)
     args.push("--new-agent", "--system", type);
     args.push("--tags", `type:${type}`);
+    // Default all newly spawned subagents to non-memfs mode.
+    // This avoids memfs startup overhead unless explicitly enabled elsewhere.
+    args.push("--no-memfs");
     if (model) {
       args.push("--model", model);
     }
@@ -575,9 +578,6 @@ export function buildSubagentArgs(
   if (!isDeployingExisting) {
     if (config.memoryBlocks === "none") {
       args.push("--init-blocks", "none");
-      if (config.mode === "stateless") {
-        args.push("--no-memfs");
-      }
     } else if (
       Array.isArray(config.memoryBlocks) &&
       config.memoryBlocks.length > 0
