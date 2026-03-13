@@ -22,15 +22,13 @@ describe("ensureLettaIgnoreFile", () => {
     ensureLettaIgnoreFile(testDir.path);
     expect(existsSync(filePath)).toBe(true);
 
-    const content = readFileSync(filePath, "utf-8");
-    // Common patterns should be present only as comments, not as active patterns
-    expect(content).toContain("# package-lock.json");
-    expect(content).toContain("# *.log");
-    expect(content).toContain("# .DS_Store");
-    expect(content).toContain("# node_modules");
-    // No active patterns — the file is a blank slate
+    // Common patterns are active by default
     const activePatterns = readLettaIgnorePatterns(testDir.path);
-    expect(activePatterns).toEqual([]);
+    expect(activePatterns).toContain("node_modules");
+    expect(activePatterns).toContain("dist");
+    expect(activePatterns).toContain(".git");
+    expect(activePatterns).toContain("*.log");
+    expect(activePatterns).toContain("package-lock.json");
   });
 
   test("does not overwrite existing .lettaignore", () => {

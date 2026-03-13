@@ -5,51 +5,49 @@ const DEFAULT_LETTAIGNORE = `\
 # .lettaignore — Letta Code file index exclusions
 #
 # Files and directories matching these patterns are excluded from the @ file
-# search index and disk scan fallback. Add a pattern per line to opt out of
-# indexing; remove or comment a line to bring it back.
+# search index and disk scan fallback. Comment out or remove a line to bring
+# it back into search results. Add new patterns to exclude more.
 #
 # Syntax: one pattern per line, supports globs (e.g. *.log, src/generated/**)
 # Lines starting with # are comments.
 #
-# Common patterns (uncomment to enable):
-#
 # --- Dependency directories ---
-# node_modules
-# bower_components
-# vendor
-#
+node_modules
+bower_components
+vendor
+
 # --- Build outputs ---
-# dist
-# build
-# out
-# coverage
-# target
-# .next
-# .nuxt
-#
+dist
+build
+out
+coverage
+target
+.next
+.nuxt
+
 # --- Python ---
-# venv
-# .venv
-# __pycache__
-# .tox
-#
+venv
+.venv
+__pycache__
+.tox
+
 # --- Version control & tooling ---
-# .git
-# .cache
-#
+.git
+.cache
+
 # --- Lock files ---
-# package-lock.json
-# yarn.lock
-# pnpm-lock.yaml
-# poetry.lock
-# Cargo.lock
-#
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+poetry.lock
+Cargo.lock
+
 # --- Logs ---
-# *.log
-#
+*.log
+
 # --- OS artifacts ---
-# .DS_Store
-# Thumbs.db
+.DS_Store
+Thumbs.db
 `;
 
 /**
