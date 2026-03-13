@@ -13,6 +13,23 @@ import {
   labelFromRelativePath,
   renderMemoryFilesystemTree,
 } from "../../agent/memoryFilesystem";
+import { DIRECTORY_LIMIT_ENV } from "../../utils/directoryLimits";
+
+const DIRECTORY_LIMIT_ENV_KEYS = Object.values(DIRECTORY_LIMIT_ENV);
+const ORIGINAL_DIRECTORY_ENV = Object.fromEntries(
+  DIRECTORY_LIMIT_ENV_KEYS.map((key) => [key, process.env[key]]),
+) as Record<string, string | undefined>;
+
+function restoreDirectoryLimitEnv(): void {
+  for (const key of DIRECTORY_LIMIT_ENV_KEYS) {
+    const original = ORIGINAL_DIRECTORY_ENV[key];
+    if (original === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = original;
+    }
+  }
+}
 
 // Helper to create a mock client
 function createMockClient(options: {
@@ -114,6 +131,10 @@ describe("labelFromRelativePath", () => {
 });
 
 describe("renderMemoryFilesystemTree", () => {
+  afterEach(() => {
+    restoreDirectoryLimitEnv();
+  });
+
   test("renders empty tree", () => {
     const tree = renderMemoryFilesystemTree([], []);
     expect(tree).toContain("/memory/");
@@ -144,6 +165,52 @@ describe("renderMemoryFilesystemTree", () => {
     expect(tree).toContain("project-ideas.md");
     // Should NOT have user/ directory anymore
     expect(tree).not.toContain("user/");
+  });
+
+  test("truncates very large trees and includes a notice", () => {
+    const detachedLabels = Array.from({ length: 2_000 }, (_, idx) => {
+      return `notes/topic-${String(idx).padStart(4, "0")}`;
+    });
+
+    const tree = renderMemoryFilesystemTree([], detachedLabels, {
+      maxLines: 50,
+      maxChars: 2_000,
+    });
+
+    const lines = tree.split("\n");
+    expect(lines.length).toBeLessThanOrEqual(50);
+    expect(tree.length).toBeLessThanOrEqual(2_000);
+    expect(tree).toContain("[Tree truncated: showing");
+    expect(tree).toContain("omitted.");
+  });
+
+  test("uses env overrides for default tree limits", () => {
+    process.env[DIRECTORY_LIMIT_ENV.memfsTreeMaxLines] = "20";
+    process.env[DIRECTORY_LIMIT_ENV.memfsTreeMaxChars] = "500";
+
+    const detachedLabels = Array.from({ length: 2_000 }, (_, idx) => {
+      return `notes/topic-${String(idx).padStart(4, "0")}`;
+    });
+
+    const tree = renderMemoryFilesystemTree([], detachedLabels);
+    const lines = tree.split("\n");
+    expect(lines.length).toBeLessThanOrEqual(20);
+    expect(tree.length).toBeLessThanOrEqual(500);
+    expect(tree).toContain("[Tree truncated: showing");
+  });
+
+  test("falls back to defaults for invalid env overrides", () => {
+    process.env[DIRECTORY_LIMIT_ENV.memfsTreeMaxLines] = "invalid";
+    process.env[DIRECTORY_LIMIT_ENV.memfsTreeMaxChars] = "-1";
+
+    const detachedLabels = Array.from({ length: 2_000 }, (_, idx) => {
+      return `notes/topic-${String(idx).padStart(4, "0")}`;
+    });
+
+    const tree = renderMemoryFilesystemTree([], detachedLabels);
+    // Default max lines is 500; ensure invalid env did not force tiny values.
+    expect(tree.split("\n").length).toBeGreaterThan(100);
+    expect(tree).toContain("[Tree truncated: showing");
   });
 });
 

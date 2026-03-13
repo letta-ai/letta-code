@@ -1,11 +1,32 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { promises as fs } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { list_dir } from "../tools/impl/ListDirCodex.js";
+import { DIRECTORY_LIMIT_ENV } from "../utils/directoryLimits";
+
+const DIRECTORY_LIMIT_ENV_KEYS = Object.values(DIRECTORY_LIMIT_ENV);
+const ORIGINAL_DIRECTORY_ENV = Object.fromEntries(
+  DIRECTORY_LIMIT_ENV_KEYS.map((key) => [key, process.env[key]]),
+) as Record<string, string | undefined>;
+
+function restoreDirectoryLimitEnv(): void {
+  for (const key of DIRECTORY_LIMIT_ENV_KEYS) {
+    const original = ORIGINAL_DIRECTORY_ENV[key];
+    if (original === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = original;
+    }
+  }
+}
 
 describe("list_dir codex tool", () => {
   let tempDir: string;
+
+  afterEach(() => {
+    restoreDirectoryLimitEnv();
+  });
 
   async function setupTempDir(): Promise<string> {
     if (!tempDir) {
@@ -140,6 +161,13 @@ describe("list_dir codex tool", () => {
     );
   });
 
+  test("throws error for very large offset", async () => {
+    const dir = await setupTempDir();
+    await expect(list_dir({ dir_path: dir, offset: 10_001 })).rejects.toThrow(
+      "offset must be less than or equal to 10,000",
+    );
+  });
+
   test("throws error for limit < 1", async () => {
     const dir = await setupTempDir();
     await expect(list_dir({ dir_path: dir, limit: 0 })).rejects.toThrow(
@@ -163,5 +191,62 @@ describe("list_dir codex tool", () => {
     // Should only have the header line
     const lines = result.content.split("\n").filter((l) => l.trim() !== "");
     expect(lines.length).toBe(1);
+  });
+
+  test("caps oversized limit/depth requests and reports capping", async () => {
+    const structure: Record<string, string | null> = {};
+    for (let i = 0; i < 260; i++) {
+      structure[`file-${String(i).padStart(4, "0")}.txt`] = String(i);
+    }
+
+    const dir = await createStructure(structure);
+    const result = await list_dir({
+      dir_path: dir,
+      limit: 1000,
+      depth: 99,
+    });
+
+    expect(result.content).toContain(
+      "[Request capped: limit=1000->200, depth=99->5]",
+    );
+    expect(result.content).toContain("More than 200 entries found");
+  });
+
+  test("uses env overrides for list_dir caps", async () => {
+    process.env[DIRECTORY_LIMIT_ENV.listDirMaxLimit] = "3";
+    process.env[DIRECTORY_LIMIT_ENV.listDirMaxDepth] = "2";
+    process.env[DIRECTORY_LIMIT_ENV.listDirMaxOffset] = "99";
+    process.env[DIRECTORY_LIMIT_ENV.listDirMaxCollectedEntries] = "99";
+
+    const structure: Record<string, string | null> = {};
+    for (let i = 0; i < 25; i++) {
+      structure[`file-${String(i).padStart(4, "0")}.txt`] = String(i);
+    }
+    const dir = await createStructure(structure);
+
+    const result = await list_dir({ dir_path: dir, limit: 50, depth: 10 });
+
+    expect(result.content).toContain(
+      "[Request capped: limit=50->3, depth=10->2]",
+    );
+    expect(result.content).toContain("More than 3 entries found");
+  });
+
+  test("falls back to defaults for invalid list_dir env overrides", async () => {
+    process.env[DIRECTORY_LIMIT_ENV.listDirMaxLimit] = "invalid";
+    process.env[DIRECTORY_LIMIT_ENV.listDirMaxDepth] = "-1";
+
+    const structure: Record<string, string | null> = {};
+    for (let i = 0; i < 260; i++) {
+      structure[`file-${String(i).padStart(4, "0")}.txt`] = String(i);
+    }
+    const dir = await createStructure(structure);
+
+    const result = await list_dir({ dir_path: dir, limit: 1000, depth: 99 });
+
+    // Defaults should still apply when env values are invalid.
+    expect(result.content).toContain(
+      "[Request capped: limit=1000->200, depth=99->5]",
+    );
   });
 });

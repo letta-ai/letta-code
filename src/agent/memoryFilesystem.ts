@@ -10,11 +10,21 @@
 import { existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { DIRECTORY_LIMIT_DEFAULTS, getDirectoryLimits } from "../utils/directoryLimits";
 
 export const MEMORY_FS_ROOT = ".letta";
 export const MEMORY_FS_AGENTS_DIR = "agents";
 export const MEMORY_FS_MEMORY_DIR = "memory";
 export const MEMORY_SYSTEM_DIR = "system";
+export const MEMORY_TREE_MAX_LINES =
+  DIRECTORY_LIMIT_DEFAULTS.memfsTreeMaxLines;
+export const MEMORY_TREE_MAX_CHARS =
+  DIRECTORY_LIMIT_DEFAULTS.memfsTreeMaxChars;
+
+export interface MemoryTreeRenderOptions {
+  maxLines?: number;
+  maxChars?: number;
+}
 
 // ----- Directory helpers -----
 
@@ -69,6 +79,7 @@ export function labelFromRelativePath(relativePath: string): string {
 export function renderMemoryFilesystemTree(
   systemLabels: string[],
   detachedLabels: string[],
+  options: MemoryTreeRenderOptions = {},
 ): string {
   type TreeNode = { children: Map<string, TreeNode>; isFile: boolean };
 
@@ -112,22 +123,73 @@ export function renderMemoryFilesystemTree(
     });
   };
 
-  const lines: string[] = ["/memory/"];
+  const limits = getDirectoryLimits();
+  const maxLines = Math.max(2, options.maxLines ?? limits.memfsTreeMaxLines);
+  const maxChars = Math.max(128, options.maxChars ?? limits.memfsTreeMaxChars);
 
-  const render = (node: TreeNode, prefix: string) => {
-    const entries = sortedEntries(node);
-    entries.forEach(([name, child], index) => {
-      const isLast = index === entries.length - 1;
-      const branch = isLast ? "└──" : "├──";
-      lines.push(`${prefix}${branch} ${name}${child.isFile ? "" : "/"}`);
+  const rootLine = "/memory/";
+  const lines: string[] = [rootLine];
+  let totalChars = rootLine.length;
+
+  const countTreeEntries = (node: TreeNode): number => {
+    let total = 0;
+    for (const [, child] of node.children) {
+      total += 1;
       if (child.children.size > 0) {
-        const nextPrefix = `${prefix}${isLast ? "    " : "│   "}`;
-        render(child, nextPrefix);
+        total += countTreeEntries(child);
       }
-    });
+    }
+    return total;
   };
 
-  render(root, "");
+  const canAppendLine = (line: string): boolean => {
+    const nextLineCount = lines.length + 1;
+    const nextCharCount = totalChars + 1 + line.length;
+    return nextLineCount <= maxLines && nextCharCount <= maxChars;
+  };
+
+  const render = (node: TreeNode, prefix: string): boolean => {
+    const entries = sortedEntries(node);
+    for (const [index, [name, child]] of entries.entries()) {
+      const isLast = index === entries.length - 1;
+      const branch = isLast ? "└──" : "├──";
+      const line = `${prefix}${branch} ${name}${child.isFile ? "" : "/"}`;
+      if (!canAppendLine(line)) {
+        return false;
+      }
+      lines.push(line);
+      totalChars += 1 + line.length;
+      if (child.children.size > 0) {
+        const nextPrefix = `${prefix}${isLast ? "    " : "│   "}`;
+        if (!render(child, nextPrefix)) {
+          return false;
+        }
+      }
+    }
+
+    return true;
+  };
+
+  const totalEntries = countTreeEntries(root);
+  const fullyRendered = render(root, "");
+
+  if (!fullyRendered) {
+    while (lines.length > 1) {
+      const shownEntries = Math.max(0, lines.length - 1); // Exclude /memory/
+      const omittedEntries = Math.max(1, totalEntries - shownEntries);
+      const notice = `[Tree truncated: showing ${shownEntries.toLocaleString()} of ${totalEntries.toLocaleString()} entries. ${omittedEntries.toLocaleString()} omitted.]`;
+
+      if (canAppendLine(notice)) {
+        lines.push(notice);
+        break;
+      }
+
+      const removed = lines.pop();
+      if (removed) {
+        totalChars -= 1 + removed.length;
+      }
+    }
+  }
 
   return lines.join("\n");
 }
