@@ -3,7 +3,7 @@ import type { RecompileAgentSystemPromptOptions } from "../../agent/modify";
 import { handleMemorySubagentCompletion } from "../../cli/helpers/memorySubagentCompletion";
 
 const recompileAgentSystemPromptMock = mock(
-  (_conversationId: string, _opts?: RecompileAgentSystemPromptOptions) =>
+  (_conversationId: string, _opts: RecompileAgentSystemPromptOptions) =>
     Promise.resolve("compiled-system-prompt"),
 );
 
@@ -19,7 +19,7 @@ describe("memory subagent recompile handling", () => {
   beforeEach(() => {
     recompileAgentSystemPromptMock.mockReset();
     recompileAgentSystemPromptMock.mockImplementation(
-      (_agentId: string, _opts?: RecompileAgentSystemPromptOptions) =>
+      (_agentId: string, _opts: RecompileAgentSystemPromptOptions) =>
         Promise.resolve("compiled-system-prompt"),
     );
   });
@@ -42,10 +42,9 @@ describe("memory subagent recompile handling", () => {
     expect(message).toBe(
       "Built a memory palace of you. Visit it with /palace.",
     );
-    expect(recompileAgentSystemPromptMock).toHaveBeenCalledWith(
-      "conv-init-1",
-      {},
-    );
+    expect(recompileAgentSystemPromptMock).toHaveBeenCalledWith("conv-init-1", {
+      agentId: "agent-init-1",
+    });
   });
 
   test("passes agent id when recompiling the default conversation", async () => {
@@ -176,7 +175,11 @@ describe("memory subagent recompile handling", () => {
       "Reflected on /palace, the halls remember more now.",
     );
     expect(recompileAgentSystemPromptMock).toHaveBeenCalledTimes(2);
-    expect(recompileAgentSystemPromptMock).toHaveBeenCalledWith("conv-a", {});
-    expect(recompileAgentSystemPromptMock).toHaveBeenCalledWith("conv-b", {});
+    expect(recompileAgentSystemPromptMock).toHaveBeenCalledWith("conv-a", {
+      agentId: "agent-shared",
+    });
+    expect(recompileAgentSystemPromptMock).toHaveBeenCalledWith("conv-b", {
+      agentId: "agent-shared",
+    });
   });
 });

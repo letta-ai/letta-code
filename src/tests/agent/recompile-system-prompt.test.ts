@@ -16,6 +16,7 @@ describe("recompileAgentSystemPrompt", () => {
     const compiledPrompt = await recompileAgentSystemPrompt(
       "conv-123",
       {
+        agentId: "agent-123",
         dryRun: true,
       },
       client,
@@ -63,14 +64,20 @@ describe("recompileAgentSystemPrompt", () => {
       },
     };
 
-    await recompileAgentSystemPrompt("['default']", {}, client);
+    await recompileAgentSystemPrompt(
+      "['default']",
+      {
+        agentId: "agent-123",
+      },
+      client,
+    );
 
     expect(conversationsRecompileMock).toHaveBeenCalledWith("['default']", {
       dry_run: undefined,
     });
   });
 
-  test("throws when default conversation recompile lacks agent id", async () => {
+  test("throws when default conversation recompile has empty agent id", async () => {
     const conversationsRecompileMock = mock(
       (_conversationId: string, _params?: Record<string, unknown>) =>
         Promise.resolve("compiled-system-prompt"),
@@ -82,7 +89,7 @@ describe("recompileAgentSystemPrompt", () => {
     };
 
     await expect(
-      recompileAgentSystemPrompt("default", {}, client),
+      recompileAgentSystemPrompt("default", { agentId: "" }, client),
     ).rejects.toThrow(
       'recompileAgentSystemPrompt requires options.agentId when conversationId is "default"',
     );

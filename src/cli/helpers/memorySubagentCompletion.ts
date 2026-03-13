@@ -7,7 +7,7 @@ export type MemorySubagentType = "init" | "reflection";
 
 type RecompileAgentSystemPromptFn = (
   conversationId: string,
-  options?: RecompileAgentSystemPromptOptions,
+  options: RecompileAgentSystemPromptOptions,
 ) => Promise<string>;
 
 export interface MemorySubagentCompletionArgs {
@@ -47,7 +47,7 @@ export async function handleMemorySubagentCompletion(
           do {
             deps.recompileQueuedByConversation.delete(conversationId);
             await recompileAgentSystemPromptFn(conversationId, {
-              ...(conversationId === "default" ? { agentId } : {}),
+              agentId,
             });
           } while (deps.recompileQueuedByConversation.has(conversationId));
         })().finally(() => {

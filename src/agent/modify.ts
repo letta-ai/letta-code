@@ -271,12 +271,8 @@ export async function updateConversationLLMConfig(
 }
 
 export interface RecompileAgentSystemPromptOptions {
+  agentId: string;
   dryRun?: boolean;
-  /**
-   * Required when recompiling the special "default" conversation route.
-   * Passed as body param `agent_id` for agent-direct mode.
-   */
-  agentId?: string;
 }
 
 interface ConversationSystemPromptRecompileClient {
@@ -302,26 +298,24 @@ interface ConversationSystemPromptRecompileClient {
  */
 export async function recompileAgentSystemPrompt(
   conversationId: string,
-  options: RecompileAgentSystemPromptOptions = {},
+  options: RecompileAgentSystemPromptOptions,
   clientOverride?: ConversationSystemPromptRecompileClient,
 ): Promise<string> {
   const client = (clientOverride ??
     (await getClient())) as ConversationSystemPromptRecompileClient;
-  if (conversationId === "default") {
-    if (!options.agentId) {
-      throw new Error(
-        'recompileAgentSystemPrompt requires options.agentId when conversationId is "default"',
-      );
-    }
-
-    return client.conversations.recompile("default", {
-      dry_run: options.dryRun,
-      agent_id: options.agentId,
-    });
+  if (conversationId === "default" && !options.agentId) {
+    throw new Error(
+      'recompileAgentSystemPrompt requires options.agentId when conversationId is "default"',
+    );
   }
 
-  return client.conversations.recompile(conversationId, {
+  const params = {
     dry_run: options.dryRun,
+    ...(conversationId === "default" ? { agent_id: options.agentId } : {}),
+  };
+
+  return client.conversations.recompile(conversationId, {
+    ...params,
   });
 }
 
