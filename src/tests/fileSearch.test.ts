@@ -20,6 +20,14 @@ beforeEach(() => {
   writeFileSync(join(TEST_DIR, "src/App.tsx"), "export default App");
   writeFileSync(join(TEST_DIR, "src/components/Button.tsx"), "export Button");
   writeFileSync(join(TEST_DIR, "tests/app.test.ts"), "test()");
+
+  // Provide a .lettaignore so exclusions work when the cwd is changed to TEST_DIR.
+  mkdirSync(join(TEST_DIR, ".letta"), { recursive: true });
+  writeFileSync(
+    join(TEST_DIR, ".letta", ".lettaignore"),
+    "node_modules\nvenv\n.venv\n__pycache__\n.letta\n",
+    "utf-8",
+  );
 });
 
 afterEach(() => {

@@ -37,6 +37,15 @@ beforeEach(() => {
   writeFileSync(join(TEST_DIR, "src/components/Input.tsx"), "export Input");
   writeFileSync(join(TEST_DIR, "tests/app.test.ts"), "test()");
 
+  // Provide a .lettaignore so the file index respects exclusions.
+  // .letta itself is listed so this directory doesn't affect entry counts.
+  mkdirSync(join(TEST_DIR, ".letta"), { recursive: true });
+  writeFileSync(
+    join(TEST_DIR, ".letta", ".lettaignore"),
+    "node_modules\n.git\nvenv\n.venv\n__pycache__\ndist\nbuild\n.letta\n",
+    "utf-8",
+  );
+
   process.chdir(TEST_DIR);
 });
 

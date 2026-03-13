@@ -1,8 +1,37 @@
-import { describe, expect, test } from "bun:test";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  test,
+} from "bun:test";
+import { mkdirSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import {
   shouldExcludeEntry,
   shouldHardExcludeEntry,
 } from "../../cli/helpers/fileSearchConfig";
+
+// These tests rely on there being NO .letta/.lettaignore in the working
+// directory — they verify that nothing is excluded unless the user explicitly
+// opts in via .letta/.lettaignore.  Each test therefore runs from a fresh
+// temporary directory that contains no ignore file.
+
+let testDir: string;
+let originalCwd: string;
+
+beforeEach(() => {
+  originalCwd = process.cwd();
+  testDir = join(tmpdir(), `letta-fsc-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  mkdirSync(testDir, { recursive: true });
+  process.chdir(testDir);
+});
+
+afterEach(() => {
+  process.chdir(originalCwd);
+  rmSync(testDir, { recursive: true, force: true });
+});
 
 // ---------------------------------------------------------------------------
 // shouldExcludeEntry — driven by .lettaignore only (no hardcoded defaults)
@@ -10,8 +39,7 @@ import {
 
 describe("shouldExcludeEntry", () => {
   describe("no hardcoded defaults", () => {
-    // Previously hardcoded entries are no longer excluded by default.
-    // Users must opt in via .lettaignore.
+    // Without a .lettaignore, none of these entries are excluded.
     const formerlyHardcoded = [
       "node_modules",
       "bower_components",

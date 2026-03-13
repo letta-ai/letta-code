@@ -4,36 +4,70 @@ import {
   readLettaIgnorePatterns,
 } from "./ignoredDirectories";
 
+interface CwdConfig {
+  nameMatchers: picomatch.Matcher[];
+  pathMatchers: picomatch.Matcher[];
+}
+
 /**
- * Pre-compiled matchers from .lettaignore, split by whether the pattern
- * is name-based (no slash → match against entry name) or path-based
- * (contains slash → match against the full relative path).
- * Compiled once at module load for performance.
+ * Cache of compiled matchers keyed by absolute cwd path.
+ * Compiled once per unique cwd for performance, re-built when cwd changes.
  */
-const { nameMatchers, pathMatchers } = (() => {
-  // Create .lettaignore with a commented-out template if the project doesn't
-  // have one yet. Must run before readLettaIgnorePatterns() so the file exists
-  // when we read it.
-  ensureLettaIgnoreFile();
-  const patterns = readLettaIgnorePatterns();
+const cwdConfigCache = new Map<string, CwdConfig>();
+
+function buildConfig(cwd: string): CwdConfig {
+  const patterns = readLettaIgnorePatterns(cwd);
   const nameMatchers: picomatch.Matcher[] = [];
   const pathMatchers: picomatch.Matcher[] = [];
 
   for (const raw of patterns) {
     const normalized = raw.replace(/\/$/, ""); // strip trailing slash
     if (normalized.includes("/")) {
+      // Path-based patterns: match against the full relative path
       pathMatchers.push(picomatch(normalized, { dot: true }));
     } else {
-      nameMatchers.push(picomatch(normalized, { dot: true }));
+      // Name-based patterns: match against the entry basename, case-insensitively
+      // so that e.g. "node_modules" also matches "Node_Modules" on case-sensitive FSes.
+      nameMatchers.push(picomatch(normalized, { dot: true, nocase: true }));
     }
   }
 
   return { nameMatchers, pathMatchers };
+}
+
+/**
+ * Returns the compiled matchers for the current working directory.
+ * Builds and caches on first access per cwd; returns cached result thereafter.
+ */
+function getConfig(): CwdConfig {
+  const cwd = process.cwd();
+  const cached = cwdConfigCache.get(cwd);
+  if (cached) return cached;
+
+  const config = buildConfig(cwd);
+  cwdConfigCache.set(cwd, config);
+  return config;
+}
+
+// On module load: ensure .lettaignore exists for the initial cwd and prime the cache.
+(() => {
+  const cwd = process.cwd();
+  ensureLettaIgnoreFile(cwd);
+  cwdConfigCache.set(cwd, buildConfig(cwd));
 })();
 
 /**
+ * Invalidate the cached config for a given directory so it is re-read on the
+ * next call to shouldExcludeEntry / shouldHardExcludeEntry. Call this after
+ * writing or deleting .letta/.lettaignore in that directory.
+ */
+export function invalidateFileSearchConfig(cwd: string = process.cwd()): void {
+  cwdConfigCache.delete(cwd);
+}
+
+/**
  * Returns true if the given entry should be excluded from the file index.
- * Applies patterns from .lettaignore only — there are no hardcoded defaults.
+ * Applies patterns from .letta/.lettaignore for the current working directory.
  *
  * Use this when building the index. For disk scan fallback paths, use
  * shouldHardExcludeEntry() which matches against entry names only.
@@ -46,6 +80,8 @@ export function shouldExcludeEntry(
   name: string,
   relativePath?: string,
 ): boolean {
+  const { nameMatchers, pathMatchers } = getConfig();
+
   // Name-based .lettaignore patterns (e.g. *.log, vendor)
   if (nameMatchers.length > 0 && nameMatchers.some((m) => m(name))) return true;
 
@@ -68,5 +104,6 @@ export function shouldExcludeEntry(
  * @param name - The entry's basename (e.g. "node_modules", "dist")
  */
 export function shouldHardExcludeEntry(name: string): boolean {
+  const { nameMatchers } = getConfig();
   return nameMatchers.length > 0 && nameMatchers.some((m) => m(name));
 }

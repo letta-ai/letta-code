@@ -34,6 +34,7 @@ __pycache__
 # --- Version control & tooling ---
 .git
 .cache
+.letta
 
 # --- Lock files ---
 package-lock.json
