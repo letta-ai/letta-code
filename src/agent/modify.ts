@@ -274,20 +274,9 @@ export interface RecompileAgentSystemPromptOptions {
   dryRun?: boolean;
   /**
    * Required when recompiling the special "default" conversation route.
-   * Used to resolve the default conversation via the agent endpoint.
+   * Passed as body param `agent_id` for agent-direct mode.
    */
   agentId?: string;
-}
-
-interface AgentSystemPromptRecompileClient {
-  agents: {
-    recompile: (
-      agentId: string,
-      params: {
-        dry_run?: boolean;
-      },
-    ) => Promise<string>;
-  };
 }
 
 interface ConversationSystemPromptRecompileClient {
@@ -302,9 +291,6 @@ interface ConversationSystemPromptRecompileClient {
   };
 }
 
-type SystemPromptRecompileClient = ConversationSystemPromptRecompileClient &
-  Partial<AgentSystemPromptRecompileClient>;
-
 /**
  * Recompile an agent's system prompt after memory writes so server-side prompt
  * state picks up the latest memory content.
@@ -317,23 +303,15 @@ type SystemPromptRecompileClient = ConversationSystemPromptRecompileClient &
 export async function recompileAgentSystemPrompt(
   conversationId: string,
   options: RecompileAgentSystemPromptOptions = {},
-  clientOverride?: SystemPromptRecompileClient,
+  clientOverride?: ConversationSystemPromptRecompileClient,
 ): Promise<string> {
   const client = (clientOverride ??
-    (await getClient())) as SystemPromptRecompileClient;
+    (await getClient())) as ConversationSystemPromptRecompileClient;
   if (conversationId === "default") {
     if (!options.agentId) {
       throw new Error(
         'recompileAgentSystemPrompt requires options.agentId when conversationId is "default"',
       );
-    }
-
-    // Prefer the agent endpoint for compatibility with servers that don't yet
-    // support default-conversation recompiles via the conversation endpoint.
-    if (client.agents?.recompile) {
-      return client.agents.recompile(options.agentId, {
-        dry_run: options.dryRun,
-      });
     }
 
     return client.conversations.recompile("default", {
