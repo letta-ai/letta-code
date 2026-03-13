@@ -1,16 +1,43 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   shouldExcludeEntry,
   shouldHardExcludeEntry,
 } from "../../cli/helpers/fileSearchConfig";
 
+// These tests rely on there being NO .letta/.lettaignore in the working
+// directory — they verify that nothing is excluded unless the user explicitly
+// opts in via .letta/.lettaignore.  Each test therefore runs from a fresh
+// temporary directory that contains no ignore file.
+
+let testDir: string;
+let originalCwd: string;
+
+beforeEach(() => {
+  originalCwd = process.cwd();
+  testDir = join(
+    tmpdir(),
+    `letta-fsc-test-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+  );
+  mkdirSync(testDir, { recursive: true });
+  process.chdir(testDir);
+});
+
+afterEach(() => {
+  process.chdir(originalCwd);
+  rmSync(testDir, { recursive: true, force: true });
+});
+
 // ---------------------------------------------------------------------------
-// shouldExcludeEntry — hardcoded defaults
+// shouldExcludeEntry — driven by .lettaignore only (no hardcoded defaults)
 // ---------------------------------------------------------------------------
 
 describe("shouldExcludeEntry", () => {
-  describe("hardcoded defaults", () => {
-    const hardcoded = [
+  describe("no hardcoded defaults", () => {
+    // Without a .lettaignore, none of these entries are excluded.
+    const formerlyHardcoded = [
       "node_modules",
       "bower_components",
       "dist",
@@ -28,18 +55,11 @@ describe("shouldExcludeEntry", () => {
       ".cache",
     ];
 
-    for (const name of hardcoded) {
-      test(`excludes "${name}"`, () => {
-        expect(shouldExcludeEntry(name)).toBe(true);
+    for (const name of formerlyHardcoded) {
+      test(`does not exclude "${name}" without a .lettaignore entry`, () => {
+        expect(shouldExcludeEntry(name)).toBe(false);
       });
     }
-
-    test("exclusion is case-insensitive", () => {
-      expect(shouldExcludeEntry("Node_Modules")).toBe(true);
-      expect(shouldExcludeEntry("DIST")).toBe(true);
-      expect(shouldExcludeEntry("BUILD")).toBe(true);
-      expect(shouldExcludeEntry(".GIT")).toBe(true);
-    });
   });
 
   describe("non-excluded entries", () => {
@@ -59,19 +79,14 @@ describe("shouldExcludeEntry", () => {
 });
 
 // ---------------------------------------------------------------------------
-// shouldHardExcludeEntry — hardcoded only, no .lettaignore
+// shouldHardExcludeEntry — driven by .lettaignore name patterns only
 // ---------------------------------------------------------------------------
 
 describe("shouldHardExcludeEntry", () => {
-  test("excludes hardcoded defaults", () => {
-    expect(shouldHardExcludeEntry("node_modules")).toBe(true);
-    expect(shouldHardExcludeEntry(".git")).toBe(true);
-    expect(shouldHardExcludeEntry("dist")).toBe(true);
-  });
-
-  test("exclusion is case-insensitive", () => {
-    expect(shouldHardExcludeEntry("Node_Modules")).toBe(true);
-    expect(shouldHardExcludeEntry("DIST")).toBe(true);
+  test("does not exclude previously hardcoded entries without a .lettaignore entry", () => {
+    expect(shouldHardExcludeEntry("node_modules")).toBe(false);
+    expect(shouldHardExcludeEntry(".git")).toBe(false);
+    expect(shouldHardExcludeEntry("dist")).toBe(false);
   });
 
   test("does not exclude normal entries", () => {
