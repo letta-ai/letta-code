@@ -14,6 +14,7 @@ import {
 } from "../../agent/memoryFilesystem";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "../../constants";
 import { settingsManager } from "../../settings-manager";
+import { gatherGitContextSnapshot } from "./gitContext";
 import { getSnapshot as getSubagentSnapshot } from "./subagentState";
 
 // ── Guard ──────────────────────────────────────────────────
@@ -30,67 +31,42 @@ export function hasActiveInitSubagent(): boolean {
 // ── Git context ────────────────────────────────────────────
 
 export function gatherGitContext(): string {
+  const { context } = gatherInitGitContext();
+  return context;
+}
+
+function gatherInitGitContext(): { context: string; identity: string } {
   try {
-    const cwd = process.cwd();
+    const git = gatherGitContextSnapshot({
+      recentCommitLimit: 10,
+    });
+    if (!git.isGitRepo) {
+      return {
+        context: "(not a git repository)",
+        identity: "",
+      };
+    }
 
-    try {
-      execSync("git rev-parse --git-dir", { cwd, stdio: "pipe" });
-
-      const branch = execSync("git branch --show-current", {
-        cwd,
-        encoding: "utf-8",
-      }).trim();
-      const mainBranch = execSync(
-        "git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@' || echo 'main'",
-        { cwd, encoding: "utf-8", shell: "/bin/bash" },
-      ).trim();
-      const status = execSync("git status --short", {
-        cwd,
-        encoding: "utf-8",
-      }).trim();
-      const recentCommits = execSync(
-        "git log --oneline -10 2>/dev/null || echo 'No commits yet'",
-        { cwd, encoding: "utf-8" },
-      ).trim();
-
-      return `
-- branch: ${branch}
-- main: ${mainBranch}
-- status: ${status || "(clean)"}
+    return {
+      context: `
+- branch: ${git.branch ?? "(unknown)"}
+- main: ${git.mainBranch ?? "main"}
+- status: ${git.status || "(clean)"}
 
 Recent commits:
-${recentCommits}
-`;
-    } catch {
-      return "(not a git repository)";
-    }
+${git.recentCommits || "No commits yet"}
+`,
+      identity: git.gitUser ?? "",
+    };
   } catch {
-    // execSync import failed (shouldn't happen with static import, but be safe)
-    return "";
+    return {
+      context: "",
+      identity: "",
+    };
   }
 }
 
 // ── Shallow init (background subagent) ───────────────────
-
-/** Gather git identity for the local user. */
-function gatherGitIdentity(): string {
-  const cwd = process.cwd();
-  try {
-    const userName = execSync("git config user.name 2>/dev/null || true", {
-      cwd,
-      encoding: "utf-8",
-    }).trim();
-    const userEmail = execSync("git config user.email 2>/dev/null || true", {
-      cwd,
-      encoding: "utf-8",
-    }).trim();
-
-    if (userName || userEmail) return `${userName} <${userEmail}>`;
-    return "";
-  } catch {
-    return "";
-  }
-}
 
 /** Read existing memory files from the local filesystem. */
 function gatherExistingMemory(agentId: string): string {
@@ -258,8 +234,7 @@ export async function fireAutoInit(
   if (hasActiveInitSubagent()) return false;
   if (!settingsManager.isMemfsEnabled(agentId)) return false;
 
-  const gitContext = gatherGitContext();
-  const gitIdentity = gatherGitIdentity();
+  const gitDetails = gatherInitGitContext();
   const existingMemory = gatherExistingMemory(agentId);
   const dirListing = gatherDirListing();
 
@@ -267,8 +242,8 @@ export async function fireAutoInit(
     agentId,
     workingDirectory: process.cwd(),
     memoryDir: getMemoryFilesystemRoot(agentId),
-    gitContext,
-    gitIdentity,
+    gitContext: gitDetails.context,
+    gitIdentity: gitDetails.identity,
     existingMemory,
     dirListing,
   });
