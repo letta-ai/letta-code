@@ -19,11 +19,11 @@ import sourceCodexPrompt from "./prompts/source_codex.md";
 import sourceGeminiPrompt from "./prompts/source_gemini.md";
 
 import stylePrompt from "./prompts/style.mdx";
+import systemPromptBlocksAddon from "./prompts/system_prompt_blocks.txt";
 import systemPromptMemfsAddon from "./prompts/system_prompt_memfs.txt";
-import systemPromptMemoryAddon from "./prompts/system_prompt_memory.txt";
 
 export const SYSTEM_PROMPT = lettaPrompt;
-export const SYSTEM_PROMPT_MEMORY_ADDON = systemPromptMemoryAddon;
+export const SYSTEM_PROMPT_BLOCKS_ADDON = systemPromptBlocksAddon;
 export const SYSTEM_PROMPT_MEMFS_ADDON = systemPromptMemfsAddon;
 export const PLAN_MODE_REMINDER = planModeReminder;
 
@@ -184,7 +184,7 @@ export function buildSystemPrompt(
   const addon =
     memoryMode === "memfs"
       ? SYSTEM_PROMPT_MEMFS_ADDON
-      : SYSTEM_PROMPT_MEMORY_ADDON;
+      : SYSTEM_PROMPT_BLOCKS_ADDON;
   return `${preset.content.trimEnd()}\n\n${addon.trimStart()}`.trim();
 }
 
@@ -200,7 +200,7 @@ export function swapMemoryAddon(
   let result = systemPrompt;
   // Strip all existing addons (replaceAll handles duplicates)
   for (const addon of [
-    SYSTEM_PROMPT_MEMORY_ADDON.trim(),
+    SYSTEM_PROMPT_BLOCKS_ADDON.trim(),
     SYSTEM_PROMPT_MEMFS_ADDON.trim(),
   ]) {
     result = result.replaceAll(addon, "");
@@ -221,7 +221,7 @@ export function swapMemoryAddon(
   // Compact blank lines and append target addon
   result = result.replace(/\n{3,}/g, "\n\n").trimEnd();
   const target =
-    mode === "memfs" ? SYSTEM_PROMPT_MEMFS_ADDON : SYSTEM_PROMPT_MEMORY_ADDON;
+    mode === "memfs" ? SYSTEM_PROMPT_MEMFS_ADDON : SYSTEM_PROMPT_BLOCKS_ADDON;
   return `${result}\n\n${target.trimStart()}`.trim();
 }
 
