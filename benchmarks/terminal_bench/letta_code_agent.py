@@ -19,9 +19,9 @@ _SETTINGS_AGENT_ID_KEYS = ("agent_id", "default_agent_id", "lastAgent", "last_ag
 
 # Provider keywords used to select the right system prompt for the CLI.
 _PROVIDER_SYSTEM_MAP = {
-    "letta-claude": ("opus", "sonnet", "haiku", "claude"),
-    "letta-codex": ("gpt", "o1-", "o3-"),
-    "letta-gemini": ("gemini",),
+    "source-claude": ("opus", "sonnet", "haiku", "claude"),
+    "source-codex": ("gpt", "o1-", "o3-"),
+    "source-gemini": ("gemini",),
 }
 
 
