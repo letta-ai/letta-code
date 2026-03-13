@@ -33,7 +33,7 @@ export interface RuntimeEnvelope {
   idempotency_key: string;
 }
 
-export type DevicePermissionModeV2 =
+export type DevicePermissionMode =
   | "bypass-all"
   | "default"
   | "plan"
@@ -50,9 +50,9 @@ export interface BackgroundProcessSummary {
 /**
  * Bottom-bar and device execution context state.
  */
-export interface DeviceStatusV2 {
+export interface DeviceStatus {
   current_connection_id: string | null;
-  current_permission_mode: DevicePermissionModeV2;
+  current_permission_mode: DevicePermissionMode;
   current_working_directory: string | null;
   letta_code_version: string | null;
   current_toolset: string[];
@@ -60,7 +60,7 @@ export interface DeviceStatusV2 {
   background_processes: BackgroundProcessSummary[];
 }
 
-export type LoopStatusV2 =
+export type LoopStatus =
   | "SENDING_API_REQUEST"
   | "WAITING_FOR_API_RESPONSE"
   | "RETRYING_API_REQUEST"
@@ -70,7 +70,7 @@ export type LoopStatusV2 =
   | "WAITING_ON_APPROVAL"
   | "WAITING_ON_INPUT";
 
-export interface QueueMessageV2 {
+export interface QueueMessage {
   id: string;
   source: "user" | "task_notification" | "subagent" | "system";
   kind: "message" | "task_notification" | "approval_result" | "overlay_action";
@@ -81,26 +81,26 @@ export interface QueueMessageV2 {
  * Loop state is intentionally small and finite.
  * Message-level details are projected from runtime deltas.
  */
-export interface LoopStateV2 {
-  status: LoopStatusV2;
-  queue: QueueMessageV2[];
+export interface LoopState {
+  status: LoopStatus;
+  queue: QueueMessage[];
   active_run_ids: string[];
 }
 
-export interface DeviceStatusUpdateMessageV2 extends RuntimeEnvelope {
+export interface DeviceStatusUpdateMessage extends RuntimeEnvelope {
   type: "device_status_update";
-  device_status: DeviceStatusV2;
+  device_status: DeviceStatus;
 }
 
-export interface LoopStatusUpdateMessageV2 extends RuntimeEnvelope {
+export interface LoopStatusUpdateMessage extends RuntimeEnvelope {
   type: "loop_status_update";
-  loop_status: LoopStateV2;
+  loop_status: LoopState;
 }
 
 /**
  * Message-level delta with explicit identity fields required by UIs.
  */
-export interface MessageDeltaV2 {
+export interface MessageDelta {
   id: string;
   date: string; // ISO8601
   message_type: LettaStreamingResponse["message_type"] | "system_message";
@@ -113,12 +113,12 @@ export interface MessageDeltaV2 {
 /**
  * Canonical approval request/response deltas for approval UI state.
  */
-export interface ControlRequestDeltaV2 {
+export interface ControlRequestDelta {
   request_id: string;
   request: Record<string, unknown>;
 }
 
-export interface ControlResponseDeltaV2 {
+export interface ControlResponseDelta {
   request_id: string;
   subtype: "success" | "error";
   response?: Record<string, unknown>;
@@ -128,7 +128,7 @@ export interface ControlResponseDeltaV2 {
 /**
  * Canonical client-side tool lifecycle deltas for tool timers.
  */
-export interface ClientToolStartDeltaV2 {
+export interface ClientToolStartDelta {
   tool_call_id: string;
   tool_name: string;
   run_id?: string | null;
@@ -136,7 +136,7 @@ export interface ClientToolStartDeltaV2 {
   input?: Record<string, unknown>;
 }
 
-export interface ClientToolCompleteDeltaV2 {
+export interface ClientToolCompleteDelta {
   tool_call_id: string;
   run_id?: string | null;
   status: "success" | "error";
@@ -147,14 +147,14 @@ export interface ClientToolCompleteDeltaV2 {
 /**
  * Canonical command lifecycle deltas for slash-command/task command projection.
  */
-export interface CommandStartDeltaV2 {
+export interface CommandStartDelta {
   command_id: string;
   command_name: string;
   started_at_ms: number;
   args?: Record<string, unknown>;
 }
 
-export interface CommandCompleteDeltaV2 {
+export interface CommandCompleteDelta {
   command_id: string;
   command_name: string;
   finished_at_ms: number;
@@ -165,7 +165,7 @@ export interface CommandCompleteDeltaV2 {
 /**
  * Retry/error/status deltas surfaced in TUI and chat timeline.
  */
-export interface RetryNoticeDeltaV2 {
+export interface RetryNoticeDelta {
   reason: string;
   attempt: number;
   max_attempts: number;
@@ -173,7 +173,7 @@ export interface RetryNoticeDeltaV2 {
   run_id?: string | null;
 }
 
-export interface RuntimeErrorPrintDeltaV2 {
+export interface RuntimeErrorPrintDelta {
   message: string;
   stop_reason?: string;
   run_id?: string | null;
@@ -181,17 +181,17 @@ export interface RuntimeErrorPrintDeltaV2 {
   detail?: string;
 }
 
-export interface StatusPrintDeltaV2 {
+export interface StatusPrintDelta {
   message: string;
   level: "info" | "success" | "warning";
 }
 
-export interface UnknownDeltaV2 {
+export interface UnknownDelta {
   original_type: string;
   payload: Record<string, unknown>;
 }
 
-export type RuntimeDeltaTypeV2 =
+export type RuntimeDeltaType =
   | "message_delta"
   | "control_request"
   | "control_response"
@@ -204,44 +204,44 @@ export type RuntimeDeltaTypeV2 =
   | "status_print"
   | "unknown";
 
-export type RuntimeDeltaPayloadByTypeV2 = {
-  message_delta: MessageDeltaV2;
-  control_request: ControlRequestDeltaV2;
-  control_response: ControlResponseDeltaV2;
-  client_side_tool_start: ClientToolStartDeltaV2;
-  client_side_tool_complete: ClientToolCompleteDeltaV2;
-  command_start: CommandStartDeltaV2;
-  command_complete: CommandCompleteDeltaV2;
-  retry_notice: RetryNoticeDeltaV2;
-  runtime_error_print: RuntimeErrorPrintDeltaV2;
-  status_print: StatusPrintDeltaV2;
-  unknown: UnknownDeltaV2;
+export type RuntimeDeltaPayloadByType = {
+  message_delta: MessageDelta;
+  control_request: ControlRequestDelta;
+  control_response: ControlResponseDelta;
+  client_side_tool_start: ClientToolStartDelta;
+  client_side_tool_complete: ClientToolCompleteDelta;
+  command_start: CommandStartDelta;
+  command_complete: CommandCompleteDelta;
+  retry_notice: RetryNoticeDelta;
+  runtime_error_print: RuntimeErrorPrintDelta;
+  status_print: StatusPrintDelta;
+  unknown: UnknownDelta;
 };
 
-export type RuntimeDeltaMessageV2 = {
-  [K in RuntimeDeltaTypeV2]: RuntimeEnvelope & {
+export type RuntimeDeltaMessage = {
+  [K in RuntimeDeltaType]: RuntimeEnvelope & {
     type: "runtime_delta";
     delta_type: K;
-    delta: RuntimeDeltaPayloadByTypeV2[K];
+    delta: RuntimeDeltaPayloadByType[K];
   };
-}[RuntimeDeltaTypeV2];
+}[RuntimeDeltaType];
 
 /**
  * Optional full snapshot for bootstrap/reconnect.
  */
-export interface RuntimeStateSnapshotV2 {
-  messages: MessageDeltaV2[];
-  device_status: DeviceStatusV2 | null;
-  loop_status: LoopStateV2 | null;
+export interface RuntimeStateSnapshot {
+  messages: MessageDelta[];
+  device_status: DeviceStatus | null;
+  loop_status: LoopState | null;
 }
 
-export interface RuntimeStateSnapshotMessageV2 extends RuntimeEnvelope {
+export interface RuntimeStateSnapshotMessage extends RuntimeEnvelope {
   type: "runtime_state_snapshot";
-  snapshot: RuntimeStateSnapshotV2;
+  snapshot: RuntimeStateSnapshot;
 }
 
-export type WsProtocolMessageV2 =
-  | DeviceStatusUpdateMessageV2
-  | LoopStatusUpdateMessageV2
-  | RuntimeDeltaMessageV2
-  | RuntimeStateSnapshotMessageV2;
+export type WsProtocolMessage =
+  | DeviceStatusUpdateMessage
+  | LoopStatusUpdateMessage
+  | RuntimeDeltaMessage
+  | RuntimeStateSnapshotMessage;
