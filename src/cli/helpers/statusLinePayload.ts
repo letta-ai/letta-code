@@ -18,6 +18,9 @@ export interface StatusLinePayloadBuildInput {
   totalOutputTokens?: number;
   contextWindowSize?: number;
   usedContextTokens?: number;
+  stepCount?: number;
+  memfsEnabled?: boolean;
+  memfsDirectory?: string | null;
   permissionMode?: string;
   networkPhase?: "upload" | "download" | "error" | null;
   terminalWidth?: number;
@@ -82,6 +85,11 @@ export interface StatusLinePayload {
     id: string | null;
     name: string | null;
   };
+  step_count: number;
+  memfs: {
+    enabled: boolean;
+    memory_dir: string | null;
+  };
   permission_mode: string | null;
   network_phase: "upload" | "download" | "error" | null;
   terminal_width: number | null;
@@ -128,6 +136,7 @@ export function buildStatusLinePayload(
     0,
     Math.floor(input.usedContextTokens ?? 0),
   );
+  const stepCount = Math.max(0, Math.floor(input.stepCount ?? 0));
 
   const percentages =
     contextWindowSize > 0
@@ -174,6 +183,11 @@ export function buildStatusLinePayload(
     agent: {
       id: input.agentId ?? null,
       name: input.agentName ?? null,
+    },
+    step_count: stepCount,
+    memfs: {
+      enabled: input.memfsEnabled ?? false,
+      memory_dir: input.memfsDirectory ?? null,
     },
     permission_mode: input.permissionMode ?? null,
     network_phase: input.networkPhase ?? null,
