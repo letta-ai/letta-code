@@ -15,10 +15,8 @@ describe("recompileAgentSystemPrompt", () => {
 
     const compiledPrompt = await recompileAgentSystemPrompt(
       "conv-123",
-      {
-        agentId: "agent-123",
-        dryRun: true,
-      },
+      "agent-123",
+      true,
       client,
     );
 
@@ -40,13 +38,7 @@ describe("recompileAgentSystemPrompt", () => {
       },
     };
 
-    await recompileAgentSystemPrompt(
-      "default",
-      {
-        agentId: "agent-123",
-      },
-      client,
-    );
+    await recompileAgentSystemPrompt("default", "agent-123", undefined, client);
 
     expect(conversationsRecompileMock).toHaveBeenCalledWith("default", {
       dry_run: undefined,
@@ -67,9 +59,8 @@ describe("recompileAgentSystemPrompt", () => {
 
     await recompileAgentSystemPrompt(
       "['default']",
-      {
-        agentId: "agent-123",
-      },
+      "agent-123",
+      undefined,
       client,
     );
 
@@ -91,8 +82,8 @@ describe("recompileAgentSystemPrompt", () => {
     };
 
     await expect(
-      recompileAgentSystemPrompt("default", { agentId: "" }, client),
-    ).rejects.toThrow("recompileAgentSystemPrompt requires options.agentId");
+      recompileAgentSystemPrompt("default", "", undefined, client),
+    ).rejects.toThrow("recompileAgentSystemPrompt requires agentId");
     expect(conversationsRecompileMock).not.toHaveBeenCalled();
   });
 });

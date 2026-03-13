@@ -270,23 +270,20 @@ export async function updateConversationLLMConfig(
   return client.conversations.update(conversationId, payload);
 }
 
-export interface RecompileAgentSystemPromptOptions {
-  agentId: string;
-  dryRun?: boolean;
-}
-
 /**
  * Recompile an agent's system prompt after memory writes so server-side prompt
  * state picks up the latest memory content.
  *
  * @param conversationId - The conversation whose prompt should be recompiled
- * @param options - Optional dry-run control
+ * @param agentId - Agent id for the parent conversation
+ * @param dryRun - Optional dry-run control
  * @param clientOverride - Optional injected client for tests
  * @returns The compiled system prompt returned by the API
  */
 export async function recompileAgentSystemPrompt(
   conversationId: string,
-  options: RecompileAgentSystemPromptOptions,
+  agentId: string,
+  dryRun?: boolean,
   clientOverride?: {
     conversations: {
       recompile: (
@@ -304,13 +301,13 @@ export async function recompileAgentSystemPrompt(
     undefined
   >;
 
-  if (!options.agentId) {
-    throw new Error("recompileAgentSystemPrompt requires options.agentId");
+  if (!agentId) {
+    throw new Error("recompileAgentSystemPrompt requires agentId");
   }
 
   const params = {
-    dry_run: options.dryRun,
-    agent_id: options.agentId,
+    dry_run: dryRun,
+    agent_id: agentId,
   };
 
   return client.conversations.recompile(conversationId, params);
