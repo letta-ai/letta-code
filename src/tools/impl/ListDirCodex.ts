@@ -210,13 +210,16 @@ async function collectEntries(
     dirEntries.sort((a, b) => a.entry.name.localeCompare(b.entry.name));
 
     const visibleEntries = dirEntries.slice(0, maxChildrenPerDir);
-    const omittedEntries = Math.max(0, dirEntries.length - visibleEntries.length);
+    const omittedEntries = Math.max(
+      0,
+      dirEntries.length - visibleEntries.length,
+    );
 
     if (omittedEntries > 0) {
       hitFolderTruncation = true;
 
       const omittedSortKey = formatEntryName(
-        (prefix ? `${prefix}/` : "") + "\uffff-omitted",
+        `${prefix ? `${prefix}/` : ""}\uffff-omitted`,
       );
       const omittedDepth = prefix ? prefix.split(path.sep).length : 0;
 

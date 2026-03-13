@@ -10,16 +10,17 @@
 import { existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { DIRECTORY_LIMIT_DEFAULTS, getDirectoryLimits } from "../utils/directoryLimits";
+import {
+  DIRECTORY_LIMIT_DEFAULTS,
+  getDirectoryLimits,
+} from "../utils/directoryLimits";
 
 export const MEMORY_FS_ROOT = ".letta";
 export const MEMORY_FS_AGENTS_DIR = "agents";
 export const MEMORY_FS_MEMORY_DIR = "memory";
 export const MEMORY_SYSTEM_DIR = "system";
-export const MEMORY_TREE_MAX_LINES =
-  DIRECTORY_LIMIT_DEFAULTS.memfsTreeMaxLines;
-export const MEMORY_TREE_MAX_CHARS =
-  DIRECTORY_LIMIT_DEFAULTS.memfsTreeMaxChars;
+export const MEMORY_TREE_MAX_LINES = DIRECTORY_LIMIT_DEFAULTS.memfsTreeMaxLines;
+export const MEMORY_TREE_MAX_CHARS = DIRECTORY_LIMIT_DEFAULTS.memfsTreeMaxChars;
 export const MEMORY_TREE_MAX_CHILDREN_PER_DIR =
   DIRECTORY_LIMIT_DEFAULTS.memfsTreeMaxChildrenPerDir;
 
