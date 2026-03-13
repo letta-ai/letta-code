@@ -16,7 +16,7 @@ import {
   type StreamRequestContext,
 } from "../../agent/message";
 import { telemetry } from "../../telemetry";
-import { debugWarn } from "../../utils/debug";
+import { debugLog, debugWarn } from "../../utils/debug";
 import { formatDuration, logTiming } from "../../utils/timing";
 
 import {
@@ -57,7 +57,7 @@ export type DrainStreamHook = (
   | undefined
   | Promise<DrainStreamHookResult | undefined>;
 
-type DrainResult = {
+export type DrainResult = {
   stopReason: StopReasonType;
   lastRunId?: string | null;
   lastSeqId?: number | null;
@@ -101,7 +101,7 @@ function parseRunCreatedAtMs(run: Run): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-async function discoverFallbackRunIdWithTimeout(
+export async function discoverFallbackRunIdWithTimeout(
   client: RunsListClient,
   ctx: StreamRequestContext,
 ): Promise<string | null> {
@@ -512,6 +512,9 @@ export async function drainStreamWithResume(
   );
 
   let runIdToResume = result.lastRunId ?? null;
+  let runIdSource: "stream_chunk" | "discovery" | null = result.lastRunId
+    ? "stream_chunk"
+    : null;
 
   // If the stream failed before exposing run_id, try to discover the latest
   // running/created run for this conversation that was created after send start.
@@ -523,13 +526,25 @@ export async function drainStreamWithResume(
     !abortSignal.aborted
   ) {
     try {
+      debugLog(
+        "stream",
+        "Mid-stream resume: attempting run discovery (conv=%s, agent=%s)",
+        streamRequestContext.conversationId,
+        streamRequestContext.agentId,
+      );
       const client = await lazyClient();
       runIdToResume = await discoverFallbackRunIdWithTimeout(
         client,
         streamRequestContext,
       );
+      debugLog(
+        "stream",
+        "Mid-stream resume: run discovery result: %s",
+        runIdToResume ?? "none",
+      );
       if (runIdToResume) {
         result.lastRunId = runIdToResume;
+        runIdSource = "discovery";
       }
     } catch (lookupError) {
       const lookupErrorMsg =
@@ -574,6 +589,21 @@ export async function drainStreamWithResume(
       },
     );
 
+    debugLog(
+      "stream",
+      "Mid-stream resume: fetching run stream (source=%s, runId=%s, lastSeqId=%s)",
+      runIdSource ?? "unknown",
+      runIdToResume,
+      result.lastSeqId ?? 0,
+    );
+
+    debugLog(
+      "stream",
+      "Mid-stream resume: attempting resume (runId=%s, lastSeqId=%s)",
+      runIdToResume,
+      result.lastSeqId ?? 0,
+    );
+
     try {
       const client = await lazyClient();
 
@@ -613,6 +643,12 @@ export async function drainStreamWithResume(
 
       // Use the resume result (should have proper stop_reason now)
       // Clear the original stream error since we recovered
+      debugLog(
+        "stream",
+        "Mid-stream resume succeeded (runId=%s, stopReason=%s)",
+        runIdToResume,
+        resumeResult.stopReason,
+      );
       result = resumeResult;
 
       // The resumed stream uses a fresh streamProcessor that won't have
@@ -635,6 +671,12 @@ export async function drainStreamWithResume(
         resumeError instanceof Error
           ? resumeError.message
           : String(resumeError);
+      debugLog(
+        "stream",
+        "Mid-stream resume failed (runId=%s): %s",
+        runIdToResume,
+        resumeErrorMsg,
+      );
       telemetry.trackError(
         "stream_resume_failed",
         resumeErrorMsg,
@@ -655,6 +697,11 @@ export async function drainStreamWithResume(
 
     // Only log if we actually skipped for a reason (i.e., we didn't enter the resume branch above)
     if (skipReasons.length > 0) {
+      debugLog(
+        "stream",
+        "Mid-stream resume skipped: %s",
+        skipReasons.join(", "),
+      );
       telemetry.trackError(
         "stream_resume_skipped",
         `${result.fallbackError || "Stream error (no client-side detail)"} [skip: ${skipReasons.join(", ")}]`,
