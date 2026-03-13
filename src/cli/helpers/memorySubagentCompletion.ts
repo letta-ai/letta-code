@@ -5,7 +5,6 @@ export type MemorySubagentType = "init" | "reflection";
 type RecompileAgentSystemPromptFn = (
   conversationId: string,
   agentId: string,
-  dryRun?: boolean,
 ) => Promise<string>;
 
 export interface MemorySubagentCompletionArgs {

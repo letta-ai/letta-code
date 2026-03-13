@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { handleMemorySubagentCompletion } from "../../cli/helpers/memorySubagentCompletion";
 
 const recompileAgentSystemPromptMock = mock(
-  (_conversationId: string, _agentId: string, _dryRun?: boolean) =>
+  (_conversationId: string, _agentId: string) =>
     Promise.resolve("compiled-system-prompt"),
 );
 
@@ -18,7 +18,7 @@ describe("memory subagent recompile handling", () => {
   beforeEach(() => {
     recompileAgentSystemPromptMock.mockReset();
     recompileAgentSystemPromptMock.mockImplementation(
-      (_conversationId: string, _agentId: string, _dryRun?: boolean) =>
+      (_conversationId: string, _agentId: string) =>
         Promise.resolve("compiled-system-prompt"),
     );
   });
