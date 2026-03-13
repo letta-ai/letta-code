@@ -20,10 +20,13 @@ export const MEMORY_TREE_MAX_LINES =
   DIRECTORY_LIMIT_DEFAULTS.memfsTreeMaxLines;
 export const MEMORY_TREE_MAX_CHARS =
   DIRECTORY_LIMIT_DEFAULTS.memfsTreeMaxChars;
+export const MEMORY_TREE_MAX_CHILDREN_PER_DIR =
+  DIRECTORY_LIMIT_DEFAULTS.memfsTreeMaxChildrenPerDir;
 
 export interface MemoryTreeRenderOptions {
   maxLines?: number;
   maxChars?: number;
+  maxChildrenPerDir?: number;
 }
 
 // ----- Directory helpers -----
@@ -126,6 +129,10 @@ export function renderMemoryFilesystemTree(
   const limits = getDirectoryLimits();
   const maxLines = Math.max(2, options.maxLines ?? limits.memfsTreeMaxLines);
   const maxChars = Math.max(128, options.maxChars ?? limits.memfsTreeMaxChars);
+  const maxChildrenPerDir = Math.max(
+    1,
+    options.maxChildrenPerDir ?? limits.memfsTreeMaxChildrenPerDir,
+  );
 
   const rootLine = "/memory/";
   const lines: string[] = [rootLine];
@@ -150,18 +157,40 @@ export function renderMemoryFilesystemTree(
 
   const render = (node: TreeNode, prefix: string): boolean => {
     const entries = sortedEntries(node);
-    for (const [index, [name, child]] of entries.entries()) {
-      const isLast = index === entries.length - 1;
+    const visibleEntries = entries.slice(0, maxChildrenPerDir);
+    const omittedEntries = Math.max(0, entries.length - visibleEntries.length);
+
+    const renderItems: Array<
+      | { kind: "entry"; name: string; child: TreeNode }
+      | { kind: "omitted"; omittedCount: number }
+    > = visibleEntries.map(([name, child]) => ({
+      kind: "entry",
+      name,
+      child,
+    }));
+
+    if (omittedEntries > 0) {
+      renderItems.push({ kind: "omitted", omittedCount: omittedEntries });
+    }
+
+    for (const [index, item] of renderItems.entries()) {
+      const isLast = index === renderItems.length - 1;
       const branch = isLast ? "└──" : "├──";
-      const line = `${prefix}${branch} ${name}${child.isFile ? "" : "/"}`;
+      const line =
+        item.kind === "entry"
+          ? `${prefix}${branch} ${item.name}${item.child.isFile ? "" : "/"}`
+          : `${prefix}${branch} … (${item.omittedCount.toLocaleString()} more entries)`;
+
       if (!canAppendLine(line)) {
         return false;
       }
+
       lines.push(line);
       totalChars += 1 + line.length;
-      if (child.children.size > 0) {
+
+      if (item.kind === "entry" && item.child.children.size > 0) {
         const nextPrefix = `${prefix}${isLast ? "    " : "│   "}`;
-        if (!render(child, nextPrefix)) {
+        if (!render(item.child, nextPrefix)) {
           return false;
         }
       }

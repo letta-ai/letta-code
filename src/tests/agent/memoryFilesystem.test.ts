@@ -184,6 +184,38 @@ describe("renderMemoryFilesystemTree", () => {
     expect(tree).toContain("omitted.");
   });
 
+  test("truncates within wide folders and adds an omission marker", () => {
+    const detachedLabels = Array.from({ length: 200 }, (_, idx) => {
+      return `notes/topic-${String(idx).padStart(4, "0")}`;
+    });
+
+    const tree = renderMemoryFilesystemTree([], detachedLabels, {
+      maxLines: 500,
+      maxChars: 20_000,
+      maxChildrenPerDir: 5,
+    });
+
+    expect(tree).toContain("… (195 more entries)");
+    expect(tree).not.toContain("topic-0199.md");
+    expect(tree).not.toContain("[Tree truncated: showing");
+  });
+
+  test("uses env overrides for per-folder child caps", () => {
+    process.env[DIRECTORY_LIMIT_ENV.memfsTreeMaxChildrenPerDir] = "3";
+
+    const detachedLabels = Array.from({ length: 10 }, (_, idx) => {
+      return `notes/topic-${String(idx).padStart(4, "0")}`;
+    });
+
+    const tree = renderMemoryFilesystemTree([], detachedLabels, {
+      maxLines: 500,
+      maxChars: 20_000,
+    });
+
+    expect(tree).toContain("… (7 more entries)");
+    expect(tree).not.toContain("topic-0009.md");
+  });
+
   test("uses env overrides for default tree limits", () => {
     process.env[DIRECTORY_LIMIT_ENV.memfsTreeMaxLines] = "20";
     process.env[DIRECTORY_LIMIT_ENV.memfsTreeMaxChars] = "500";
@@ -207,7 +239,9 @@ describe("renderMemoryFilesystemTree", () => {
       return `notes/topic-${String(idx).padStart(4, "0")}`;
     });
 
-    const tree = renderMemoryFilesystemTree([], detachedLabels);
+    const tree = renderMemoryFilesystemTree([], detachedLabels, {
+      maxChildrenPerDir: 10_000,
+    });
     // Default max lines is 500; ensure invalid env did not force tiny values.
     expect(tree.split("\n").length).toBeGreaterThan(100);
     expect(tree).toContain("[Tree truncated: showing");

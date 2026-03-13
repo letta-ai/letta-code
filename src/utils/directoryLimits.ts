@@ -5,28 +5,34 @@
 export const DIRECTORY_LIMIT_ENV = {
   memfsTreeMaxLines: "LETTA_MEMFS_TREE_MAX_LINES",
   memfsTreeMaxChars: "LETTA_MEMFS_TREE_MAX_CHARS",
+  memfsTreeMaxChildrenPerDir: "LETTA_MEMFS_TREE_MAX_CHILDREN_PER_DIR",
   listDirMaxLimit: "LETTA_LIST_DIR_MAX_LIMIT",
   listDirMaxDepth: "LETTA_LIST_DIR_MAX_DEPTH",
   listDirMaxOffset: "LETTA_LIST_DIR_MAX_OFFSET",
   listDirMaxCollectedEntries: "LETTA_LIST_DIR_MAX_COLLECTED_ENTRIES",
+  listDirMaxChildrenPerDir: "LETTA_LIST_DIR_MAX_CHILDREN_PER_DIR",
 } as const;
 
 export const DIRECTORY_LIMIT_DEFAULTS = {
   memfsTreeMaxLines: 500,
   memfsTreeMaxChars: 20_000,
+  memfsTreeMaxChildrenPerDir: 50,
   listDirMaxLimit: 200,
   listDirMaxDepth: 5,
   listDirMaxOffset: 10_000,
   listDirMaxCollectedEntries: 12_000,
+  listDirMaxChildrenPerDir: 50,
 } as const;
 
 export interface DirectoryLimits {
   memfsTreeMaxLines: number;
   memfsTreeMaxChars: number;
+  memfsTreeMaxChildrenPerDir: number;
   listDirMaxLimit: number;
   listDirMaxDepth: number;
   listDirMaxOffset: number;
   listDirMaxCollectedEntries: number;
+  listDirMaxChildrenPerDir: number;
 }
 
 function parsePositiveIntEnv(
@@ -67,6 +73,12 @@ export function getDirectoryLimits(
       128,
       5_000_000,
     ),
+    memfsTreeMaxChildrenPerDir: parsePositiveIntEnv(
+      env[DIRECTORY_LIMIT_ENV.memfsTreeMaxChildrenPerDir],
+      DIRECTORY_LIMIT_DEFAULTS.memfsTreeMaxChildrenPerDir,
+      1,
+      5_000,
+    ),
     listDirMaxLimit: parsePositiveIntEnv(
       env[DIRECTORY_LIMIT_ENV.listDirMaxLimit],
       DIRECTORY_LIMIT_DEFAULTS.listDirMaxLimit,
@@ -90,6 +102,12 @@ export function getDirectoryLimits(
       DIRECTORY_LIMIT_DEFAULTS.listDirMaxCollectedEntries,
       10,
       2_000_000,
+    ),
+    listDirMaxChildrenPerDir: parsePositiveIntEnv(
+      env[DIRECTORY_LIMIT_ENV.listDirMaxChildrenPerDir],
+      DIRECTORY_LIMIT_DEFAULTS.listDirMaxChildrenPerDir,
+      1,
+      5_000,
     ),
   };
 }

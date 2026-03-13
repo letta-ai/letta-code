@@ -28,6 +28,21 @@ describe("list_dir codex tool", () => {
     restoreDirectoryLimitEnv();
   });
 
+  test("uses env overrides for per-folder child cap", async () => {
+    process.env[DIRECTORY_LIMIT_ENV.listDirMaxChildrenPerDir] = "3";
+
+    const structure: Record<string, string | null> = {};
+    for (let i = 0; i < 10; i++) {
+      structure[`file-${String(i).padStart(4, "0")}.txt`] = String(i);
+    }
+    const dir = await createStructure(structure);
+
+    const result = await list_dir({ dir_path: dir, limit: 200, depth: 2 });
+
+    expect(result.content).toContain("… (7 more entries)");
+    expect(result.content).not.toContain("file-0009.txt");
+  });
+
   async function setupTempDir(): Promise<string> {
     if (!tempDir) {
       tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "list-dir-test-"));
@@ -209,7 +224,21 @@ describe("list_dir codex tool", () => {
     expect(result.content).toContain(
       "[Request capped: limit=1000->200, depth=99->5]",
     );
-    expect(result.content).toContain("More than 200 entries found");
+    expect(result.content).toMatch(/… \([\d,]+ more entries\)/);
+    expect(result.content).toContain("More than 51 entries found");
+  });
+
+  test("truncates large folders in-place with omission markers", async () => {
+    const structure: Record<string, string | null> = {};
+    for (let i = 0; i < 60; i++) {
+      structure[`file-${String(i).padStart(4, "0")}.txt`] = String(i);
+    }
+
+    const dir = await createStructure(structure);
+    const result = await list_dir({ dir_path: dir, limit: 200, depth: 2 });
+
+    expect(result.content).toMatch(/… \([\d,]+ more entries\)/);
+    expect(result.content).not.toContain("file-0059.txt");
   });
 
   test("uses env overrides for list_dir caps", async () => {
