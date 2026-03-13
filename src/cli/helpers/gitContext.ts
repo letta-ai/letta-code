@@ -1,12 +1,5 @@
 import { execFileSync } from "node:child_process";
 
-export interface GitStatusSummary {
-  staged: number;
-  unstaged: number;
-  untracked: number;
-  total: number;
-}
-
 export interface GitContextSnapshot {
   isGitRepo: boolean;
   repoRoot: string | null;
@@ -17,7 +10,6 @@ export interface GitContextSnapshot {
   aheadCount: number | null;
   behindCount: number | null;
   status: string | null;
-  statusSummary: GitStatusSummary | null;
   recentCommits: string | null;
   recentContributors: string[] | null;
   gitUser: string | null;
@@ -56,41 +48,6 @@ function truncateLines(value: string, maxLines: number): string {
     lines.slice(0, maxLines).join("\n") +
     `\n... and ${lines.length - maxLines} more files`
   );
-}
-
-function summarizeStatus(status: string | null): GitStatusSummary | null {
-  if (!status) {
-    return null;
-  }
-
-  let staged = 0;
-  let unstaged = 0;
-  let untracked = 0;
-
-  for (const line of status.split("\n")) {
-    if (!line) continue;
-
-    if (line.startsWith("??")) {
-      untracked += 1;
-      continue;
-    }
-
-    const indexState = line[0];
-    const worktreeState = line[1];
-    if (indexState && indexState !== " " && indexState !== "?") {
-      staged += 1;
-    }
-    if (worktreeState && worktreeState !== " " && worktreeState !== "?") {
-      unstaged += 1;
-    }
-  }
-
-  return {
-    staged,
-    unstaged,
-    untracked,
-    total: staged + unstaged + untracked,
-  };
 }
 
 function parseAheadBehind(value: string | null): {
@@ -162,7 +119,6 @@ export function gatherGitContextSnapshot(
       aheadCount: null,
       behindCount: null,
       status: null,
-      statusSummary: null,
       recentCommits: null,
       recentContributors: null,
       gitUser: null,
@@ -189,7 +145,6 @@ export function gatherGitContextSnapshot(
     : (originHead ?? "main");
 
   const fullStatus = runGit(["status", "--short"], cwd);
-  const statusSummary = summarizeStatus(fullStatus);
   const status =
     typeof fullStatus === "string" && options.statusLineLimit
       ? truncateLines(fullStatus, options.statusLineLimit)
@@ -226,7 +181,6 @@ export function gatherGitContextSnapshot(
     aheadCount,
     behindCount,
     status,
-    statusSummary,
     recentCommits,
     recentContributors:
       recentContributors.length > 0 ? recentContributors : null,

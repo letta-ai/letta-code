@@ -50,10 +50,6 @@ export function gatherInitGitContext(): { context: string; identity: string } {
       }
       return `${git.upstream} (ahead ${git.aheadCount}, behind ${git.behindCount})`;
     })();
-    const summaryText = (() => {
-      if (!git.statusSummary) return "(unknown)";
-      return `${git.statusSummary.staged} staged, ${git.statusSummary.unstaged} unstaged, ${git.statusSummary.untracked} untracked`;
-    })();
     const contributorText =
       git.recentContributors?.join(", ") ?? "(unknown contributors)";
 
@@ -64,7 +60,6 @@ export function gatherInitGitContext(): { context: string; identity: string } {
 - main: ${git.mainBranch ?? "main"}
 - head: ${git.head ?? "(unknown)"}
 - upstream: ${upstreamText}
-- change_summary: ${summaryText}
 - contributors: ${contributorText}
 - status: ${git.status || "(clean)"}
 

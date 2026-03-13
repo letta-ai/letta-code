@@ -53,7 +53,6 @@ function getGitInfo(): {
   upstream?: string;
   aheadCount?: number | null;
   behindCount?: number | null;
-  changeSummary?: string;
   recentCommits?: string;
   recentContributors?: string;
   status?: string;
@@ -76,10 +75,6 @@ function getGitInfo(): {
     }
     return `${git.upstream} (ahead ${git.aheadCount}, behind ${git.behindCount})`;
   })();
-  const changeSummary = (() => {
-    if (!git.statusSummary) return "(unknown)";
-    return `${git.statusSummary.staged} staged, ${git.statusSummary.unstaged} unstaged, ${git.statusSummary.untracked} untracked`;
-  })();
 
   return {
     isGitRepo: true,
@@ -89,7 +84,6 @@ function getGitInfo(): {
     upstream: upstreamText,
     aheadCount: git.aheadCount,
     behindCount: git.behindCount,
-    changeSummary,
     recentCommits: git.recentCommits ?? "(failed to get commits)",
     recentContributors: git.recentContributors?.join(", ") ?? "(unknown)",
     status: git.status || "(clean working tree)",
@@ -148,7 +142,6 @@ The user has just initiated a new connection via the [Letta Code CLI client](htt
 - **Repository root**: ${gitInfo.repoRoot}
 - **HEAD**: ${gitInfo.head}
 - **Tracking**: ${gitInfo.upstream}
-- **Working tree summary**: ${gitInfo.changeSummary}
 - **Git user**: ${gitInfo.gitUser}
 - **Recent contributors**: ${gitInfo.recentContributors}
 
