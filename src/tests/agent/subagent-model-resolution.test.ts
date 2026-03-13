@@ -121,7 +121,7 @@ describe("resolveSubagentLauncher", () => {
 });
 
 describe("buildSubagentArgs", () => {
-  const baseConfig: Omit<SubagentConfig, "mode"> = {
+  const baseConfig: SubagentConfig = {
     name: "test-subagent",
     description: "test",
     systemPrompt: "test prompt",
@@ -129,28 +129,11 @@ describe("buildSubagentArgs", () => {
     recommendedModel: "inherit",
     skills: [],
     memoryBlocks: "none",
+    mode: "stateful",
   };
 
-  test("adds --no-memfs for stateless subagents with memoryBlocks none", () => {
-    const args = buildSubagentArgs(
-      "test-subagent",
-      { ...baseConfig, mode: "stateless" },
-      null,
-      "hello",
-    );
-
-    expect(args).toContain("--init-blocks");
-    expect(args).toContain("none");
-    expect(args).toContain("--no-memfs");
-  });
-
-  test("adds --no-memfs for stateful subagents with memoryBlocks none", () => {
-    const args = buildSubagentArgs(
-      "test-subagent",
-      { ...baseConfig, mode: "stateful" },
-      null,
-      "hello",
-    );
+  test("adds --no-memfs for newly spawned subagents by default", () => {
+    const args = buildSubagentArgs("test-subagent", baseConfig, null, "hello");
 
     expect(args).toContain("--init-blocks");
     expect(args).toContain("none");
@@ -160,7 +143,7 @@ describe("buildSubagentArgs", () => {
   test("does not force --no-memfs when deploying an existing subagent agent", () => {
     const args = buildSubagentArgs(
       "test-subagent",
-      { ...baseConfig, mode: "stateful" },
+      baseConfig,
       null,
       "hello",
       "agent-existing",
