@@ -1,0 +1,99 @@
+name: Terminal-Bench Regression
+
+on:
+  schedule:
+    - cron: "0 8 * * 1,4" # Monday + Thursday 8am UTC
+  workflow_dispatch:
+    inputs:
+      model:
+        description: "Override model (blank = run both defaults)"
+        default: ""
+      concurrency:
+        description: "Max concurrent tasks"
+        default: "4"
+
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        model: [sonnet-4.6-low, gpt-5-minimal]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Python + uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Install Harbor
+        run: uv pip install --system "harbor>=0.1.45" "litellm>=1.0.0"
+
+      - name: Configure Modal
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+        run: |
+          printf '[letta]\ntoken_id = "%s"\ntoken_secret = "%s"\nactive = true\nenvironment = "terminal-bench"\nimage_builder_version = "2025.06"\n' \
+            "$MODAL_TOKEN_ID" "$MODAL_TOKEN_SECRET" > ~/.modal.toml
+
+      - name: Run regression tasks
+        env:
+          LETTA_API_KEY: ${{ secrets.LETTA_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          # Build --task-name flags from regression-tasks.txt
+          TASK_FLAGS=""
+          while IFS= read -r task; do
+            [[ "$task" =~ ^#.*$ || -z "$task" ]] && continue
+            TASK_FLAGS="$TASK_FLAGS --task-name $task"
+          done < benchmarks/terminal_bench/regression-tasks.txt
+
+          harbor run \
+            --dataset terminal-bench@2.0 \
+            --agent-import-path benchmarks.terminal_bench.letta_code_agent:LettaCode \
+            --model "${{ matrix.model }}" \
+            --env modal \
+            --n-concurrent ${{ inputs.concurrency || '4' }} \
+            --job-name "regression-${{ matrix.model }}-$(date +%Y%m%d)" \
+            $TASK_FLAGS
+
+      - name: Upload results artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tb-results-${{ matrix.model }}
+          path: jobs/
+
+  report:
+    needs: regression
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Download all result artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: results/
+
+      - name: Setup Python + uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Generate report and update GitHub Issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          GITHUB_SERVER_URL: ${{ github.server_url }}
+        run: |
+          python benchmarks/terminal_bench/report.py \
+            --results-dir results/ \
+            --baseline benchmarks/terminal_bench/baseline.json \
+            --repo "${{ github.repository }}"

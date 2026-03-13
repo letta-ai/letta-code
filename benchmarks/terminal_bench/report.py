@@ -1,0 +1,271 @@
+#!/usr/bin/env python3
+"""Parse Harbor job results and report regressions via GitHub Issue.
+
+Usage:
+    python report.py --results-dir results/ --baseline baseline.json --repo owner/repo
+
+Expects Harbor job output structure under results-dir:
+    results/
+      tb-results-<model>/
+        jobs/
+          <job-name>/
+            result.json
+            <task-name>/
+              result.json        # trial result with reward
+              verifier/
+                reward.txt       # 0.0 or 1.0
+"""
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+
+def parse_job_results(results_dir: Path) -> dict[str, dict[str, bool]]:
+    """Parse Harbor job results into {model: {task: passed}}."""
+    model_results: dict[str, dict[str, bool]] = {}
+
+    for artifact_dir in sorted(results_dir.iterdir()):
+        if not artifact_dir.is_dir():
+            continue
+
+        # Artifact name: tb-results-<model>
+        dir_name = artifact_dir.name
+        if dir_name.startswith("tb-results-"):
+            model = dir_name[len("tb-results-"):]
+        else:
+            model = dir_name
+
+        tasks: dict[str, bool] = {}
+
+        # Look for job directories — Harbor puts them under jobs/
+        jobs_dir = artifact_dir / "jobs"
+        if not jobs_dir.exists():
+            # Artifacts might be flat (just the job contents)
+            jobs_dir = artifact_dir
+
+        for job_dir in sorted(jobs_dir.iterdir()):
+            if not job_dir.is_dir():
+                continue
+
+            # Each subdirectory of the job is a trial (task)
+            for trial_dir in sorted(job_dir.iterdir()):
+                if not trial_dir.is_dir():
+                    continue
+
+                # Skip non-trial dirs like config.json
+                task_name = trial_dir.name
+
+                # Try verifier/reward.txt first
+                reward_file = trial_dir / "verifier" / "reward.txt"
+                if reward_file.exists():
+                    try:
+                        reward = float(reward_file.read_text().strip())
+                        tasks[task_name] = reward >= 1.0
+                        continue
+                    except (ValueError, OSError):
+                        pass
+
+                # Fall back to result.json
+                result_file = trial_dir / "result.json"
+                if result_file.exists():
+                    try:
+                        result = json.loads(result_file.read_text())
+                        reward = result.get("reward", result.get("score", 0))
+                        tasks[task_name] = float(reward) >= 1.0
+                    except (json.JSONDecodeError, ValueError, OSError):
+                        tasks[task_name] = False
+
+        if tasks:
+            model_results[model] = tasks
+
+    return model_results
+
+
+def compute_pass_rate(tasks: dict[str, bool]) -> float:
+    """Compute pass rate from task results."""
+    if not tasks:
+        return 0.0
+    return sum(1 for v in tasks.values() if v) / len(tasks)
+
+
+def load_baseline(baseline_path: Path) -> dict:
+    """Load baseline.json, returning empty dict if missing or empty."""
+    if not baseline_path.exists():
+        return {}
+    try:
+        data = json.loads(baseline_path.read_text())
+        return data if isinstance(data, dict) and data else {}
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def build_report(
+    model_results: dict[str, dict[str, bool]],
+    baseline: dict,
+) -> tuple[str, bool]:
+    """Build a markdown report and determine if there's a regression.
+
+    Returns (markdown_body, has_regression).
+    """
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    lines = [
+        f"## Terminal-Bench Regression Report — {now}",
+        "",
+    ]
+
+    has_regression = False
+
+    for model, tasks in sorted(model_results.items()):
+        pass_rate = compute_pass_rate(tasks)
+        passed = sum(1 for v in tasks.values() if v)
+        total = len(tasks)
+
+        # Compare to baseline
+        baseline_model = baseline.get(model, {})
+        baseline_rate = baseline_model.get("pass_rate")
+        baseline_tasks = baseline_model.get("tasks", {})
+
+        delta_str = ""
+        if baseline_rate is not None:
+            delta = pass_rate - baseline_rate
+            if delta < -0.10:
+                has_regression = True
+                delta_str = f" | **{delta:+.0%} from baseline** :red_circle:"
+            elif delta < 0:
+                delta_str = f" | {delta:+.0%} from baseline :warning:"
+            elif delta > 0:
+                delta_str = f" | {delta:+.0%} from baseline :white_check_mark:"
+
+        lines.append(f"### `{model}` — {passed}/{total} ({pass_rate:.0%}){delta_str}")
+        lines.append("")
+        lines.append("| Task | Result | Baseline |")
+        lines.append("|------|--------|----------|")
+
+        for task_name, passed_now in sorted(tasks.items()):
+            result_emoji = ":white_check_mark:" if passed_now else ":x:"
+            baseline_val = baseline_tasks.get(task_name)
+
+            if baseline_val is None:
+                baseline_str = "—"
+            elif baseline_val:
+                baseline_str = ":white_check_mark:"
+            else:
+                baseline_str = ":x:"
+
+            # Flag regressions: was passing, now failing
+            regression_marker = ""
+            if baseline_val is True and not passed_now:
+                regression_marker = " **REGRESSION**"
+                has_regression = True
+
+            lines.append(f"| {task_name} | {result_emoji}{regression_marker} | {baseline_str} |")
+
+        lines.append("")
+
+    if not model_results:
+        lines.append("No results found. Check workflow logs.")
+        lines.append("")
+
+    # Add workflow link
+    run_url = os.environ.get("GITHUB_SERVER_URL", "https://github.com")
+    repo = os.environ.get("GITHUB_REPOSITORY", "")
+    run_id = os.environ.get("GITHUB_RUN_ID", "")
+    if repo and run_id:
+        lines.append(f"[Workflow run]({run_url}/{repo}/actions/runs/{run_id})")
+        lines.append("")
+
+    return "\n".join(lines), has_regression
+
+
+def update_github_issue(repo: str, title: str, body: str) -> None:
+    """Create or update a GitHub Issue with the given title and body.
+
+    Uses `gh` CLI which must be authenticated via GH_TOKEN env var.
+    """
+    # Search for existing issue
+    result = subprocess.run(
+        ["gh", "issue", "list", "--repo", repo, "--search", f'"{title}" in:title', "--state", "open", "--json", "number", "--limit", "1"],
+        capture_output=True,
+        text=True,
+    )
+
+    existing_number = None
+    if result.returncode == 0 and result.stdout.strip():
+        try:
+            issues = json.loads(result.stdout)
+            if issues:
+                existing_number = issues[0]["number"]
+        except (json.JSONDecodeError, KeyError, IndexError):
+            pass
+
+    if existing_number:
+        # Update existing issue with a comment
+        subprocess.run(
+            ["gh", "issue", "comment", str(existing_number), "--repo", repo, "--body", body],
+            check=True,
+        )
+        print(f"Updated issue #{existing_number}")
+    else:
+        # Create new issue
+        result = subprocess.run(
+            ["gh", "issue", "create", "--repo", repo, "--title", title, "--body", body, "--label", "benchmark"],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0:
+            print(f"Created issue: {result.stdout.strip()}")
+        else:
+            # Label might not exist — retry without it
+            subprocess.run(
+                ["gh", "issue", "create", "--repo", repo, "--title", title, "--body", body],
+                check=True,
+            )
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Report Terminal-Bench regression results")
+    parser.add_argument("--results-dir", required=True, type=Path, help="Directory with downloaded artifacts")
+    parser.add_argument("--baseline", required=True, type=Path, help="Path to baseline.json")
+    parser.add_argument("--repo", required=True, help="GitHub repo (owner/repo)")
+    args = parser.parse_args()
+
+    model_results = parse_job_results(args.results_dir)
+    baseline = load_baseline(args.baseline)
+
+    if not model_results:
+        print("WARNING: No results parsed from artifacts.")
+        print(f"Contents of {args.results_dir}:")
+        for p in sorted(args.results_dir.rglob("*")):
+            print(f"  {p}")
+        sys.exit(1)
+
+    body, has_regression = build_report(model_results, baseline)
+
+    # Print report to stdout
+    print(body)
+
+    # Update GitHub Issue
+    gh_token = os.environ.get("GH_TOKEN")
+    if gh_token:
+        update_github_issue(
+            repo=args.repo,
+            title="Terminal-Bench Regression Tracker",
+            body=body,
+        )
+    else:
+        print("GH_TOKEN not set — skipping GitHub Issue update")
+
+    if has_regression:
+        print("\n:red_circle: REGRESSION DETECTED — failing workflow")
+        sys.exit(1)
+    else:
+        print("\nNo regressions detected.")
+
+
+if __name__ == "__main__":
+    main()
