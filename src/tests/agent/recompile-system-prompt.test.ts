@@ -3,13 +3,13 @@ import { recompileAgentSystemPrompt } from "../../agent/modify";
 
 describe("recompileAgentSystemPrompt", () => {
   test("calls the conversation recompile endpoint with mapped params", async () => {
-    const agentsRecompileMock = mock(
+    const conversationsRecompileMock = mock(
       (_conversationId: string, _params?: Record<string, unknown>) =>
         Promise.resolve("compiled-system-prompt"),
     );
     const client = {
       conversations: {
-        recompile: agentsRecompileMock,
+        recompile: conversationsRecompileMock,
       },
     };
 
@@ -22,18 +22,25 @@ describe("recompileAgentSystemPrompt", () => {
     );
 
     expect(compiledPrompt).toBe("compiled-system-prompt");
-    expect(agentsRecompileMock).toHaveBeenCalledWith("conv-123", {
+    expect(conversationsRecompileMock).toHaveBeenCalledWith("conv-123", {
       dry_run: true,
     });
   });
 
-  test("passes agent_id for default conversation recompiles", async () => {
-    const agentsRecompileMock = mock(
+  test("uses agent recompile endpoint for default conversation recompiles", async () => {
+    const conversationsRecompileMock = mock(
       (_conversationId: string, _params?: Record<string, unknown>) =>
+        Promise.resolve("compiled-system-prompt"),
+    );
+    const agentsRecompileMock = mock(
+      (_agentId: string, _params?: Record<string, unknown>) =>
         Promise.resolve("compiled-system-prompt"),
     );
     const client = {
       conversations: {
+        recompile: conversationsRecompileMock,
+      },
+      agents: {
         recompile: agentsRecompileMock,
       },
     };
@@ -46,20 +53,51 @@ describe("recompileAgentSystemPrompt", () => {
       client,
     );
 
-    expect(agentsRecompileMock).toHaveBeenCalledWith("default", {
+    expect(agentsRecompileMock).toHaveBeenCalledWith("agent-123", {
       dry_run: undefined,
-      agent_id: "agent-123",
     });
+    expect(conversationsRecompileMock).not.toHaveBeenCalled();
+  });
+
+  test("passes non-default conversation ids through unchanged", async () => {
+    const conversationsRecompileMock = mock(
+      (_conversationId: string, _params?: Record<string, unknown>) =>
+        Promise.resolve("compiled-system-prompt"),
+    );
+    const agentsRecompileMock = mock(
+      (_agentId: string, _params?: Record<string, unknown>) =>
+        Promise.resolve("compiled-system-prompt"),
+    );
+    const client = {
+      conversations: {
+        recompile: conversationsRecompileMock,
+      },
+      agents: {
+        recompile: agentsRecompileMock,
+      },
+    };
+
+    await recompileAgentSystemPrompt("['default']", {}, client);
+
+    expect(conversationsRecompileMock).toHaveBeenCalledWith("['default']", {
+      dry_run: undefined,
+    });
+    expect(agentsRecompileMock).not.toHaveBeenCalled();
   });
 
   test("throws when default conversation recompile lacks agent id", async () => {
-    const agentsRecompileMock = mock(
+    const conversationsRecompileMock = mock(
       (_conversationId: string, _params?: Record<string, unknown>) =>
         Promise.resolve("compiled-system-prompt"),
     );
     const client = {
       conversations: {
-        recompile: agentsRecompileMock,
+        recompile: conversationsRecompileMock,
+      },
+      agents: {
+        recompile: mock((_agentId: string, _params?: Record<string, unknown>) =>
+          Promise.resolve("compiled-system-prompt"),
+        ),
       },
     };
 
@@ -68,6 +106,31 @@ describe("recompileAgentSystemPrompt", () => {
     ).rejects.toThrow(
       'recompileAgentSystemPrompt requires options.agentId when conversationId is "default"',
     );
-    expect(agentsRecompileMock).not.toHaveBeenCalled();
+    expect(conversationsRecompileMock).not.toHaveBeenCalled();
+  });
+
+  test("falls back to conversation endpoint for default when agent endpoint is unavailable", async () => {
+    const conversationsRecompileMock = mock(
+      (_conversationId: string, _params?: Record<string, unknown>) =>
+        Promise.resolve("compiled-system-prompt"),
+    );
+    const client = {
+      conversations: {
+        recompile: conversationsRecompileMock,
+      },
+    };
+
+    await recompileAgentSystemPrompt(
+      "default",
+      {
+        agentId: "agent-123",
+      },
+      client,
+    );
+
+    expect(conversationsRecompileMock).toHaveBeenCalledWith("default", {
+      dry_run: undefined,
+      agent_id: "agent-123",
+    });
   });
 });
