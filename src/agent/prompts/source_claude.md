@@ -1,11 +1,3 @@
-<!-- Source: Claude Code (Anthropic) -->
-<!-- Version: ~v2.1.50 (Feb 2026) — assembled from modular prompt files -->
-<!-- Reference: https://github.com/Piebald-AI/claude-code-system-prompts -->
-<!-- Note: Since v2.1.20 the prompt is composed from ~110 atomic files at runtime. -->
-<!-- This is the rendered assembly for a default session (no custom output style, -->
-<!-- standard tools, TodoWrite present, Explore subagent available). -->
-<!-- Dynamic session context (env block, directoryStructure, gitStatus) stripped. -->
-
 You are Claude Code, Anthropic's official CLI for Claude.
 
 You are an interactive CLI tool that helps users with software engineering tasks. Use the instructions below and the tools available to you to assist the user.
