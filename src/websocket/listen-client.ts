@@ -63,6 +63,8 @@ import { settingsManager } from "../settings-manager";
 import { isInteractiveApprovalTool } from "../tools/interactivePolicy";
 import { loadTools } from "../tools/manager";
 import type {
+  ApprovalReceivedMessage,
+  ApprovalRequestedMessage,
   AutoApprovalMessage,
   CancelAckMessage,
   CanUseToolResponse,
@@ -77,6 +79,8 @@ import type {
   RetryMessage,
   StopReasonType,
   SyncCompleteMessage,
+  ToolExecutionFinishedMessage,
+  ToolExecutionStartedMessage,
   TranscriptBackfillMessage,
   TranscriptSupplementMessage,
 } from "../types/protocol";
@@ -286,6 +290,7 @@ interface StateResponseMessage {
   is_processing: boolean;
   last_stop_reason: string | null;
   control_response_capable: boolean;
+  tool_lifecycle_capable: boolean;
   active_run: {
     run_id: string | null;
     agent_id: string | null;
@@ -1385,6 +1390,7 @@ function buildStateResponse(
     is_processing: runtime.isProcessing,
     last_stop_reason: runtime.lastStopReason,
     control_response_capable: true,
+    tool_lifecycle_capable: true,
     active_run: {
       run_id: runtime.activeRunId,
       agent_id: runtime.activeAgentId,
@@ -1536,6 +1542,10 @@ function sendControlMessageOverWebSocket(
 
 export type WsProtocolEvent =
   | MessageWire
+  | ApprovalRequestedMessage
+  | ApprovalReceivedMessage
+  | ToolExecutionStartedMessage
+  | ToolExecutionFinishedMessage
   | AutoApprovalMessage
   | CancelAckMessage
   | ErrorMessage
@@ -1946,6 +1956,54 @@ function emitInterruptToolReturnMessage(
       uuid: `${uuidPrefix}-${crypto.randomUUID()}`,
       conversation_id: runtime.activeConversationId ?? undefined,
     } as unknown as MessageWire);
+  }
+}
+
+function emitToolExecutionStartedEvents(
+  socket: WebSocket,
+  runtime: ListenerRuntime,
+  params: {
+    toolCallIds: string[];
+    runId?: string | null;
+    agentId?: string;
+    conversationId?: string;
+  },
+): void {
+  for (const toolCallId of params.toolCallIds) {
+    emitToWS(socket, {
+      type: "tool_execution_started",
+      tool_call_id: toolCallId,
+      ...(params.runId ? { run_id: params.runId } : {}),
+      session_id: runtime.sessionId,
+      uuid: `tool-exec-started-${toolCallId}`,
+      agent_id: params.agentId,
+      conversation_id: params.conversationId,
+    });
+  }
+}
+
+function emitToolExecutionFinishedEvents(
+  socket: WebSocket,
+  runtime: ListenerRuntime,
+  params: {
+    approvals: ApprovalResult[] | null;
+    runId?: string | null;
+    agentId?: string;
+    conversationId?: string;
+  },
+): void {
+  const toolReturns = extractInterruptToolReturns(params.approvals);
+  for (const toolReturn of toolReturns) {
+    emitToWS(socket, {
+      type: "tool_execution_finished",
+      tool_call_id: toolReturn.tool_call_id,
+      status: toolReturn.status,
+      ...(params.runId ? { run_id: params.runId } : {}),
+      session_id: runtime.sessionId,
+      uuid: `tool-exec-finished-${toolReturn.tool_call_id}`,
+      agent_id: params.agentId,
+      conversation_id: params.conversationId,
+    });
   }
 }
 
@@ -3690,6 +3748,8 @@ async function handleIncomingMessage(
             ac.parsedArgs,
             turnWorkingDirectory,
           );
+          const lifecycleRunId =
+            runId || runtime.activeRunId || msgRunIds[msgRunIds.length - 1];
 
           const controlRequest: ControlRequest = {
             type: "control_request",
@@ -3706,6 +3766,18 @@ async function handleIncomingMessage(
             agent_id: agentId,
             conversation_id: conversationId,
           };
+
+          emitToWS(socket, {
+            type: "approval_requested",
+            request_id: requestId,
+            tool_call_id: ac.approval.toolCallId,
+            tool_name: ac.approval.toolName,
+            ...(lifecycleRunId ? { run_id: lifecycleRunId } : {}),
+            session_id: runtime.sessionId,
+            uuid: `approval-requested-${ac.approval.toolCallId}`,
+            agent_id: agentId,
+            conversation_id: conversationId,
+          });
 
           const responseBody = await requestApprovalOverWS(
             runtime,
@@ -3742,21 +3814,58 @@ async function handleIncomingMessage(
                 agent_id: agentId,
                 conversation_id: conversationId,
               } as AutoApprovalMessage);
+              emitToWS(socket, {
+                type: "approval_received",
+                request_id: requestId,
+                tool_call_id: ac.approval.toolCallId,
+                decision: "allow",
+                reason: "Approved via WebSocket",
+                ...(lifecycleRunId ? { run_id: lifecycleRunId } : {}),
+                session_id: runtime.sessionId,
+                uuid: `approval-received-${ac.approval.toolCallId}`,
+                agent_id: agentId,
+                conversation_id: conversationId,
+              });
             } else {
               decisions.push({
                 type: "deny",
                 approval: ac.approval,
                 reason: response?.message || "Denied via WebSocket",
               });
+              emitToWS(socket, {
+                type: "approval_received",
+                request_id: requestId,
+                tool_call_id: ac.approval.toolCallId,
+                decision: "deny",
+                reason: response?.message || "Denied via WebSocket",
+                ...(lifecycleRunId ? { run_id: lifecycleRunId } : {}),
+                session_id: runtime.sessionId,
+                uuid: `approval-received-${ac.approval.toolCallId}`,
+                agent_id: agentId,
+                conversation_id: conversationId,
+              });
             }
           } else {
+            const denyReason =
+              responseBody.subtype === "error"
+                ? responseBody.error
+                : "Unknown error";
             decisions.push({
               type: "deny",
               approval: ac.approval,
-              reason:
-                responseBody.subtype === "error"
-                  ? responseBody.error
-                  : "Unknown error",
+              reason: denyReason,
+            });
+            emitToWS(socket, {
+              type: "approval_received",
+              request_id: requestId,
+              tool_call_id: ac.approval.toolCallId,
+              decision: "deny",
+              reason: denyReason,
+              ...(lifecycleRunId ? { run_id: lifecycleRunId } : {}),
+              session_id: runtime.sessionId,
+              uuid: `approval-received-${ac.approval.toolCallId}`,
+              agent_id: agentId,
+              conversation_id: conversationId,
             });
           }
         }
@@ -3771,6 +3880,14 @@ async function handleIncomingMessage(
         )
         .map((decision) => decision.approval.toolCallId);
       runtime.activeExecutingToolCallIds = [...lastExecutingToolCallIds];
+      const executionRunId =
+        runId || runtime.activeRunId || msgRunIds[msgRunIds.length - 1];
+      emitToolExecutionStartedEvents(socket, runtime, {
+        toolCallIds: lastExecutingToolCallIds,
+        runId: executionRunId,
+        agentId,
+        conversationId,
+      });
 
       // Execute approved/denied tools
       const executionResults = await executeApprovalBatch(
@@ -3788,6 +3905,12 @@ async function handleIncomingMessage(
           executionResults,
           lastExecutingToolCallIds,
         );
+      emitToolExecutionFinishedEvents(socket, runtime, {
+        approvals: persistedExecutionResults,
+        runId: executionRunId,
+        agentId,
+        conversationId,
+      });
       lastExecutionResults = persistedExecutionResults;
       // WS-first parity: publish tool-return terminal outcomes immediately on
       // normal approval execution, before continuation stream send.
@@ -3850,6 +3973,12 @@ async function handleIncomingMessage(
         conversationId,
       });
       if (approvalsForEmission) {
+        emitToolExecutionFinishedEvents(socket, runtime, {
+          approvals: approvalsForEmission,
+          runId: runtime.activeRunId || msgRunIds[msgRunIds.length - 1],
+          agentId: agentId || "",
+          conversationId,
+        });
         emitInterruptToolReturnMessage(
           socket,
           runtime,

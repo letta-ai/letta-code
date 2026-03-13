@@ -177,6 +177,65 @@ export interface StreamEvent extends MessageEnvelope {
 }
 
 // ═══════════════════════════════════════════════════════════════
+// TOOL LIFECYCLE EVENTS
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Informational lifecycle event emitted when the runtime asks for user approval
+ * for a specific tool call.
+ *
+ * NOTE:
+ * - `control_request` remains the canonical UI trigger for approval state.
+ * - This event is telemetry/lifecycle only and should not replace
+ *   `control_request` in UI reducers.
+ */
+export interface ApprovalRequestedMessage extends MessageEnvelope {
+  type: "approval_requested";
+  request_id: string;
+  tool_call_id: string;
+  tool_name: string;
+  run_id?: string;
+}
+
+/**
+ * Informational lifecycle event emitted after an approval request receives
+ * a decision.
+ *
+ * NOTE:
+ * - `control_request` + `control_response` remain canonical for approval flow.
+ * - This event is telemetry/lifecycle only.
+ */
+export interface ApprovalReceivedMessage extends MessageEnvelope {
+  type: "approval_received";
+  request_id: string;
+  tool_call_id: string;
+  decision: "allow" | "deny";
+  reason?: string;
+  run_id?: string;
+}
+
+/**
+ * Emitted when local execution starts for a previously approved tool call.
+ * This is authoritative for starting tool-running timers in device clients.
+ */
+export interface ToolExecutionStartedMessage extends MessageEnvelope {
+  type: "tool_execution_started";
+  tool_call_id: string;
+  run_id?: string;
+}
+
+/**
+ * Emitted when local execution finishes for a previously started tool call.
+ * This is authoritative for stopping tool-running timers in device clients.
+ */
+export interface ToolExecutionFinishedMessage extends MessageEnvelope {
+  type: "tool_execution_finished";
+  tool_call_id: string;
+  status: "success" | "error";
+  run_id?: string;
+}
+
+// ═══════════════════════════════════════════════════════════════
 // AUTO APPROVAL
 // ═══════════════════════════════════════════════════════════════
 
@@ -778,6 +837,10 @@ export type WireMessage =
   | SystemMessage
   | ContentMessage
   | StreamEvent
+  | ApprovalRequestedMessage
+  | ApprovalReceivedMessage
+  | ToolExecutionStartedMessage
+  | ToolExecutionFinishedMessage
   | AutoApprovalMessage
   | CancelAckMessage
   | ErrorMessage
