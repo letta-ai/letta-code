@@ -77,6 +77,7 @@ USAGE
 
   # maintenance
   letta update          Manually check for updates and install if available
+  letta logout          Clear stored auth credentials (re-auth on next launch)
   letta memfs ...       Memory filesystem subcommands (JSON-only)
   letta agents ...      Agents subcommands (JSON-only)
   letta messages ...    Messages subcommands (JSON-only)
