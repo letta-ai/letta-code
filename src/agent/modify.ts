@@ -275,7 +275,7 @@ export interface RecompileAgentSystemPromptOptions {
   dryRun?: boolean;
 }
 
-interface ConversationSystemPromptRecompileClient {
+type ConversationSystemPromptRecompileClient = {
   conversations: {
     recompile: (
       conversationId: string,
@@ -285,7 +285,7 @@ interface ConversationSystemPromptRecompileClient {
       },
     ) => Promise<string>;
   };
-}
+};
 
 /**
  * Recompile an agent's system prompt after memory writes so server-side prompt
@@ -303,15 +303,13 @@ export async function recompileAgentSystemPrompt(
 ): Promise<string> {
   const client = (clientOverride ??
     (await getClient())) as ConversationSystemPromptRecompileClient;
-  if (conversationId === "default" && !options.agentId) {
-    throw new Error(
-      'recompileAgentSystemPrompt requires options.agentId when conversationId is "default"',
-    );
+  if (!options.agentId) {
+    throw new Error("recompileAgentSystemPrompt requires options.agentId");
   }
 
   const params = {
     dry_run: options.dryRun,
-    ...(conversationId === "default" ? { agent_id: options.agentId } : {}),
+    agent_id: options.agentId,
   };
 
   return client.conversations.recompile(conversationId, {
