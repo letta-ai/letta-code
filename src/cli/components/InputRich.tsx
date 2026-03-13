@@ -228,7 +228,6 @@ const InputFooter = memo(function InputFooter({
   ctrlCPressed,
   escapePressed,
   isBashMode,
-  bashExitArmed,
   modeName,
   modeColor,
   modeGlyph,
@@ -248,7 +247,6 @@ const InputFooter = memo(function InputFooter({
   ctrlCPressed: boolean;
   escapePressed: boolean;
   isBashMode: boolean;
-  bashExitArmed: boolean;
   modeName: string | null;
   modeColor: string | null;
   modeGlyph?: string | null;
@@ -383,9 +381,7 @@ const InputFooter = memo(function InputFooter({
             <Text color={colors.bash.prompt}>⏵⏵ bash mode</Text>
             <Text color={colors.bash.prompt} dimColor>
               {" "}
-              {bashExitArmed
-                ? "(backspace again to exit)"
-                : "(backspace to exit)"}
+              (backspace to exit)
             </Text>
           </Text>
         ) : statusLineText ? (
@@ -1604,7 +1600,6 @@ export function Input({
                 ctrlCPressed={ctrlCPressed}
                 escapePressed={escapePressed}
                 isBashMode={isBashMode}
-                bashExitArmed={bashExitArmed}
                 modeName={modeInfo?.name ?? null}
                 modeColor={modeInfo?.color ?? null}
                 modeGlyph={modeInfo?.glyph ?? null}
@@ -1637,7 +1632,6 @@ export function Input({
     messageQueue,
     interactionEnabled,
     isBashMode,
-    bashExitArmed,
     horizontalLine,
     contentWidth,
     value,
