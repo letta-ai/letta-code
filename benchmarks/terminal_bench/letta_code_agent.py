@@ -103,13 +103,9 @@ class LettaCode(BaseInstalledAgent):
         return flags
 
     def _find_events_text(self) -> str:
-        """Return events JSONL content from the local logs directory.
-
-        Looks for both the raw download name (``{ts}.events.jsonl``) and
-        the renamed copy (``letta_events_{ts}.jsonl``).
-        """
+        """Return events JSONL content from the local logs directory."""
         logs_dir = Path(self.logs_dir)
-        events_files = sorted(logs_dir.glob("*.events.jsonl")) + sorted(logs_dir.glob("letta_events_*.jsonl"))
+        events_files = sorted(logs_dir.glob("*.events.jsonl"))
         if not events_files:
             return ""
         return events_files[0].read_text()
@@ -206,7 +202,11 @@ class LettaCode(BaseInstalledAgent):
         run_error: Exception | None = None
 
         async def _capture_settings_after_delay() -> None:
-            """Snapshot settings.local.json shortly after the agent starts."""
+            """Snapshot agent ID from settings shortly after the agent starts.
+
+            This is a safety net for timeouts: if run() is cancelled before
+            reaching the post-run log collection, we still have the agent ID.
+            """
             try:
                 await asyncio.sleep(1.0)
                 out = await environment.exec(
@@ -215,7 +215,7 @@ class LettaCode(BaseInstalledAgent):
                 )
                 mid_agent_id = self._extract_agent_id_from_settings(out.stdout or "")
                 if mid_agent_id:
-                    (logs_dir / f"letta_agent_id_{ts}_mid.txt").write_text(mid_agent_id)
+                    (logs_dir / f"letta_agent_id_{ts}.txt").write_text(mid_agent_id)
             except Exception:
                 pass
 
@@ -235,16 +235,12 @@ class LettaCode(BaseInstalledAgent):
         except Exception as e:
             run_error = e
 
-        # --- collect logs -------------------------------------------------
+        # --- extract agent id & export -------------------------------------
+        # Harbor already downloads /logs/agent/{ts}.* to self.logs_dir,
+        # so we only need to fetch the events in-memory for agent ID extraction.
         agent_id: str | None = None
-        events_text: str = ""
         try:
             events_text = await self._download_file(environment, f"{base}.events.jsonl")
-            (logs_dir / f"letta_events_{ts}.jsonl").write_text(events_text)
-
-            stderr_text = await self._download_file(environment, f"{base}.stderr.log")
-            if stderr_text.strip():
-                (logs_dir / f"letta_stderr_{ts}.log").write_text(stderr_text)
 
             settings_text = await self._download_file(environment, ".letta/settings.local.json")
             agent_id = self._extract_agent_id_from_settings(settings_text)
