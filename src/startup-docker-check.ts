@@ -38,7 +38,7 @@ export async function startDockerVersionCheck(): Promise<void> {
     // Check if version is below minimum
     if (isVersionBelow(serverVersion, MINIMUM_DOCKER_VERSION)) {
       console.warn(
-        `\n⚠️  Warning: Your Docker image is outdated (v${serverVersion}). Minimum recommended: v${MINIMUM_DOCKER_VERSION}.\n   Please update with: docker pull letta/letta-server:latest\n`,
+        `\n⚠️  Warning: Your Docker image is outdated (v${serverVersion}). Minimum recommended: v${MINIMUM_DOCKER_VERSION}.\n   Please update with: docker pull letta/letta:latest\n`,
       );
     }
   } catch {
