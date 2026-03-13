@@ -30,12 +30,7 @@ export function hasActiveInitSubagent(): boolean {
 
 // ── Git context ────────────────────────────────────────────
 
-export function gatherGitContext(): string {
-  const { context } = gatherInitGitContext();
-  return context;
-}
-
-function gatherInitGitContext(): { context: string; identity: string } {
+export function gatherInitGitContext(): { context: string; identity: string } {
   try {
     const git = gatherGitContextSnapshot({
       recentCommitLimit: 10,

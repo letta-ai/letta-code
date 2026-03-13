@@ -40,7 +40,7 @@ describe("init wiring", () => {
     const helperSource = readSource("../../cli/helpers/initCommand.ts");
 
     expect(helperSource).toContain("export function hasActiveInitSubagent(");
-    expect(helperSource).toContain("export function gatherGitContext()");
+    expect(helperSource).toContain("export function gatherInitGitContext()");
     expect(helperSource).toContain("export function buildShallowInitPrompt(");
     expect(helperSource).toContain("export function buildInitMessage(");
   });
