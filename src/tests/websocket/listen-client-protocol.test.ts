@@ -330,6 +330,12 @@ describe("listen-client state_response control protocol", () => {
     expect(snapshot.control_response_capable).toBe(true);
   });
 
+  test("advertises tool lifecycle capability for device clients", () => {
+    const runtime = __listenClientTestUtils.createRuntime();
+    const snapshot = __listenClientTestUtils.buildStateResponse(runtime, 2);
+    expect(snapshot.tool_lifecycle_capable).toBe(true);
+  });
+
   test("includes the effective working directory", () => {
     const runtime = __listenClientTestUtils.createRuntime();
     const snapshot = __listenClientTestUtils.buildStateResponse(runtime, 1);
@@ -817,6 +823,70 @@ describe("listen-client emitToWS adapter", () => {
     expect(runtime.sessionId).toMatch(/^listen-/);
     // Verify it's a UUID format after the prefix
     expect(runtime.sessionId.length).toBeGreaterThan(10);
+  });
+
+  test("emits approval lifecycle events", () => {
+    const socket = new MockSocket(WebSocket.OPEN);
+    const requested = {
+      type: "approval_requested" as const,
+      request_id: "perm-tool-1",
+      tool_call_id: "tool-1",
+      tool_name: "Bash",
+      run_id: "run-1",
+      session_id: "listen-test",
+      uuid: "approval-requested-1",
+    };
+    const received = {
+      type: "approval_received" as const,
+      request_id: "perm-tool-1",
+      tool_call_id: "tool-1",
+      decision: "allow" as const,
+      reason: "Approved via WebSocket",
+      run_id: "run-1",
+      session_id: "listen-test",
+      uuid: "approval-received-1",
+    };
+
+    __listenClientTestUtils.emitToWS(socket as unknown as WebSocket, requested);
+    __listenClientTestUtils.emitToWS(socket as unknown as WebSocket, received);
+
+    expect(socket.sentPayloads).toHaveLength(2);
+    const sentRequested = JSON.parse(socket.sentPayloads[0] as string);
+    const sentReceived = JSON.parse(socket.sentPayloads[1] as string);
+    expect(sentRequested.type).toBe("approval_requested");
+    expect(sentRequested.request_id).toBe("perm-tool-1");
+    expect(sentReceived.type).toBe("approval_received");
+    expect(sentReceived.decision).toBe("allow");
+  });
+
+  test("emits tool execution lifecycle events", () => {
+    const socket = new MockSocket(WebSocket.OPEN);
+    const started = {
+      type: "tool_execution_started" as const,
+      tool_call_id: "tool-2",
+      run_id: "run-2",
+      session_id: "listen-test",
+      uuid: "tool-exec-started-2",
+    };
+    const finished = {
+      type: "tool_execution_finished" as const,
+      tool_call_id: "tool-2",
+      status: "success" as const,
+      run_id: "run-2",
+      session_id: "listen-test",
+      uuid: "tool-exec-finished-2",
+    };
+
+    __listenClientTestUtils.emitToWS(socket as unknown as WebSocket, started);
+    __listenClientTestUtils.emitToWS(socket as unknown as WebSocket, finished);
+
+    expect(socket.sentPayloads).toHaveLength(2);
+    const sentStarted = JSON.parse(socket.sentPayloads[0] as string);
+    const sentFinished = JSON.parse(socket.sentPayloads[1] as string);
+    expect(sentStarted.type).toBe("tool_execution_started");
+    expect(sentStarted.tool_call_id).toBe("tool-2");
+    expect(sentFinished.type).toBe("tool_execution_finished");
+    expect(sentFinished.status).toBe("success");
   });
 });
 
