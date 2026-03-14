@@ -54,21 +54,13 @@ jobs:
         run: |
           source .venv/bin/activate
 
-          # Build --task-name flags from regression-tasks.txt
-          TASK_FLAGS=""
-          while IFS= read -r task; do
-            [[ "$task" =~ ^#.*$ || -z "$task" ]] && continue
-            TASK_FLAGS="$TASK_FLAGS --task-name $task"
-          done < benchmarks/terminal_bench/regression-tasks.txt
-
           harbor run \
             --dataset terminal-bench@2.0 \
             --agent-import-path benchmarks.terminal_bench.letta_code_agent:LettaCode \
             --model "${{ matrix.model }}" \
             --env modal \
             --n-concurrent ${{ inputs.concurrency || '4' }} \
-            --job-name "regression-${{ matrix.model }}-$(date +%Y%m%d)" \
-            $TASK_FLAGS
+            --job-name "regression-${{ matrix.model }}-$(date +%Y%m%d)"
 
       - name: Upload results artifact
         if: always()
