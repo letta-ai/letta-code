@@ -1397,6 +1397,7 @@ function emitProtocolV2Message(
     emitted_at: new Date().toISOString(),
     idempotency_key: `${message.type}:${eventSeq}:${crypto.randomUUID()}`,
   } as WsProtocolMessage;
+  console.log(`[Listen V2] Emitting ${message.type} (seq=${eventSeq})`);
   safeEmitWsEvent("send", "protocol", outbound);
   socket.send(JSON.stringify(outbound));
 }
@@ -2669,7 +2670,9 @@ async function connectWithRetry(
     }
 
     if (parsed.type === "input") {
+      console.log(`[Listen V2] Received input command, kind=${parsed.payload?.kind}`);
       if (runtime !== activeRuntime || runtime.intentionallyClosed) {
+        console.log(`[Listen V2] Dropping input: runtime mismatch or closed`);
         return;
       }
 
