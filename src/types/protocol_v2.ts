@@ -15,10 +15,8 @@ import type {
 } from "../tools/impl/process_manager";
 import type { ToolsetName, ToolsetPreference } from "../tools/toolset";
 import type {
-  CanUseToolResponse,
   ControlRequest,
   ControlResponse,
-  ControlResponseBody,
   ErrorMessage,
   MessageWire,
   QueueLifecycleEvent,
@@ -226,6 +224,33 @@ export interface StreamDeltaMessage extends RuntimeEnvelope {
   delta: StreamDelta;
 }
 
+export interface ApprovalResponseAllow {
+  behavior: "allow";
+  updatedInput?: Record<string, unknown> | null;
+  updatedPermissions?: unknown[];
+}
+
+export interface ApprovalResponseDeny {
+  behavior: "deny";
+  message: string;
+}
+
+export type ApprovalResponseDecision =
+  | ApprovalResponseAllow
+  | ApprovalResponseDeny;
+
+export type ApprovalResponseBody =
+  | {
+      subtype: "success";
+      request_id: string;
+      response?: ApprovalResponseDecision | Record<string, unknown>;
+    }
+  | {
+      subtype: "error";
+      request_id: string;
+      error: string;
+    };
+
 /**
  * Controller -> execution-environment commands.
  * In v2, the WS server accepts only:
@@ -236,12 +261,11 @@ export interface StreamDeltaMessage extends RuntimeEnvelope {
 export interface InputCreateMessagePayload {
   kind: "create_message";
   messages: Array<MessageCreate & { client_message_id?: string }>;
-  supports_control_response?: boolean;
 }
 
 export interface InputApprovalResponsePayload {
   kind: "approval_response";
-  response: ControlResponseBody;
+  response: ApprovalResponseBody;
 }
 
 export type InputPayload =
@@ -284,10 +308,4 @@ export type WsProtocolMessage =
   | LoopStatusUpdateMessage
   | StreamDeltaMessage;
 
-export type {
-  CanUseToolResponse,
-  ControlRequest,
-  ControlResponseBody,
-  ResultSubtype,
-  StopReasonType,
-};
+export type { ControlRequest, ResultSubtype, StopReasonType };

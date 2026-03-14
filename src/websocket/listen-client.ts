@@ -64,10 +64,10 @@ import { isInteractiveApprovalTool } from "../tools/interactivePolicy";
 import { getToolNames, loadTools } from "../tools/manager";
 import type {
   AbortMessageCommand,
-  CanUseToolResponse,
+  ApprovalResponseBody,
+  ApprovalResponseDecision,
   ChangeDeviceStateCommand,
   ControlRequest,
-  ControlResponseBody,
   DeviceStatus,
   DeviceStatusUpdateMessage,
   InputCommand,
@@ -145,7 +145,7 @@ type InvalidInputCommand = {
 type ParsedServerMessage = ServerMessage | InvalidInputCommand;
 
 type PendingApprovalResolver = {
-  resolve: (response: ControlResponseBody) => void;
+  resolve: (response: ApprovalResponseBody) => void;
   reject: (reason: Error) => void;
   controlRequest?: ControlRequest;
 };
@@ -749,7 +749,7 @@ function stopRuntime(
 
 function isValidControlResponseBody(
   value: unknown,
-): value is ControlResponseBody {
+): value is ApprovalResponseBody {
   if (!value || typeof value !== "object") {
     return false;
   }
@@ -2451,7 +2451,7 @@ async function sendMessageStreamWithRetry(
 
 export function resolvePendingApprovalResolver(
   runtime: ListenerRuntime,
-  response: ControlResponseBody,
+  response: ApprovalResponseBody,
 ): boolean {
   const requestId = response.request_id;
   if (typeof requestId !== "string" || requestId.length === 0) {
@@ -2497,12 +2497,12 @@ export function requestApprovalOverWS(
   socket: WebSocket,
   requestId: string,
   controlRequest: ControlRequest,
-): Promise<ControlResponseBody> {
+): Promise<ApprovalResponseBody> {
   if (socket.readyState !== WebSocket.OPEN) {
     return Promise.reject(new Error("WebSocket not open"));
   }
 
-  return new Promise<ControlResponseBody>((resolve, reject) => {
+  return new Promise<ApprovalResponseBody>((resolve, reject) => {
     runtime.pendingApprovalResolvers.set(requestId, {
       resolve,
       reject,
@@ -3564,7 +3564,7 @@ async function handleIncomingMessage(
 
           if (responseBody.subtype === "success") {
             const response = responseBody.response as
-              | CanUseToolResponse
+              | ApprovalResponseDecision
               | undefined;
             if (response?.behavior === "allow") {
               const finalApproval = response.updatedInput

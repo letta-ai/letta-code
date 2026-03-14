@@ -7,7 +7,10 @@ import WebSocket from "ws";
 import { buildConversationMessagesCreateRequestBody } from "../../agent/message";
 import { INTERRUPTED_BY_USER } from "../../constants";
 import type { MessageQueueItem } from "../../queue/queueRuntime";
-import type { ControlRequest, ControlResponseBody } from "../../types/protocol";
+import type {
+  ApprovalResponseBody,
+  ControlRequest,
+} from "../../types/protocol_v2";
 import {
   __listenClientTestUtils,
   parseServerMessage,
@@ -58,7 +61,7 @@ function makeControlRequest(requestId: string): ControlRequest {
   };
 }
 
-function makeSuccessResponse(requestId: string): ControlResponseBody {
+function makeSuccessResponse(requestId: string): ApprovalResponseBody {
   return {
     subtype: "success",
     request_id: requestId,
@@ -243,10 +246,10 @@ describe("listen-client approval resolver wiring", () => {
 
   test("cleanup rejects all pending resolvers", async () => {
     const runtime = __listenClientTestUtils.createRuntime();
-    const first = new Promise<ControlResponseBody>((resolve, reject) => {
+    const first = new Promise<ApprovalResponseBody>((resolve, reject) => {
       runtime.pendingApprovalResolvers.set("perm-a", { resolve, reject });
     });
-    const second = new Promise<ControlResponseBody>((resolve, reject) => {
+    const second = new Promise<ApprovalResponseBody>((resolve, reject) => {
       runtime.pendingApprovalResolvers.set("perm-b", { resolve, reject });
     });
 
@@ -258,7 +261,7 @@ describe("listen-client approval resolver wiring", () => {
 
   test("stopRuntime rejects pending resolvers even when callbacks are suppressed", async () => {
     const runtime = __listenClientTestUtils.createRuntime();
-    const pending = new Promise<ControlResponseBody>((resolve, reject) => {
+    const pending = new Promise<ApprovalResponseBody>((resolve, reject) => {
       runtime.pendingApprovalResolvers.set("perm-stop", { resolve, reject });
     });
     const socket = new MockSocket(WebSocket.OPEN);
