@@ -1,5 +1,6 @@
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
+import { getDirectoryLimits } from "../../utils/directoryLimits.js";
 import { validateRequiredParams } from "./validation.js";
 
 const MAX_ENTRY_LENGTH = 500;
@@ -20,7 +21,12 @@ interface DirEntry {
   name: string; // Full relative path for sorting
   displayName: string; // Just the filename for display
   depth: number; // Indentation depth
-  kind: "directory" | "file" | "symlink" | "other";
+  kind: "directory" | "file" | "symlink" | "other" | "omitted";
+}
+
+interface CollectEntriesResult {
+  hitCollectionCap: boolean;
+  hitFolderTruncation: boolean;
 }
 
 /**
@@ -31,6 +37,7 @@ export async function list_dir(
   args: ListDirCodexArgs,
 ): Promise<ListDirCodexResult> {
   validateRequiredParams(args, ["dir_path"], "list_dir");
+  const limits = getDirectoryLimits();
 
   const { dir_path, offset = 1, limit = 25, depth = 2 } = args;
   const userCwd = process.env.USER_CWD || process.cwd();
@@ -42,6 +49,12 @@ export async function list_dir(
     throw new Error("offset must be a 1-indexed entry number");
   }
 
+  if (offset > limits.listDirMaxOffset) {
+    throw new Error(
+      `offset must be less than or equal to ${limits.listDirMaxOffset.toLocaleString()}`,
+    );
+  }
+
   if (limit < 1) {
     throw new Error("limit must be greater than zero");
   }
@@ -50,8 +63,24 @@ export async function list_dir(
     throw new Error("depth must be greater than zero");
   }
 
-  const entries = await listDirSlice(resolvedPath, offset, limit, depth);
+  const effectiveLimit = Math.min(limit, limits.listDirMaxLimit);
+  const effectiveDepth = Math.min(depth, limits.listDirMaxDepth);
+
+  const entries = await listDirSlice(
+    resolvedPath,
+    offset,
+    effectiveLimit,
+    effectiveDepth,
+    limits.listDirMaxCollectedEntries,
+    limits.listDirMaxChildrenPerDir,
+  );
   const output = [`Absolute path: ${resolvedPath}`, ...entries];
+
+  if (effectiveLimit !== limit || effectiveDepth !== depth) {
+    output.push(
+      `[Request capped: limit=${limit}->${effectiveLimit}, depth=${depth}->${effectiveDepth}]`,
+    );
+  }
 
   return { content: output.join("\n") };
 }
@@ -64,9 +93,20 @@ async function listDirSlice(
   offset: number,
   limit: number,
   maxDepth: number,
+  maxCollectedEntries: number,
+  maxChildrenPerDir: number,
 ): Promise<string[]> {
   const entries: DirEntry[] = [];
-  await collectEntries(dirPath, "", maxDepth, entries);
+  const maxEntriesToCollect = Math.min(offset + limit, maxCollectedEntries);
+
+  const { hitCollectionCap, hitFolderTruncation } = await collectEntries(
+    dirPath,
+    "",
+    maxDepth,
+    entries,
+    maxEntriesToCollect,
+    maxChildrenPerDir,
+  );
 
   if (entries.length === 0) {
     return [];
@@ -90,7 +130,7 @@ async function listDirSlice(
     formatted.push(formatEntryLine(entry));
   }
 
-  if (endIndex < entries.length) {
+  if (endIndex < entries.length || hitCollectionCap || hitFolderTruncation) {
     formatted.push(`More than ${cappedLimit} entries found`);
   }
 
@@ -105,12 +145,19 @@ async function collectEntries(
   relativePrefix: string,
   remainingDepth: number,
   entries: DirEntry[],
-): Promise<void> {
+  maxEntriesToCollect: number,
+  maxChildrenPerDir: number,
+): Promise<CollectEntriesResult> {
   const queue: Array<{ absPath: string; prefix: string; depth: number }> = [
     { absPath: dirPath, prefix: relativePrefix, depth: remainingDepth },
   ];
+  let hitFolderTruncation = false;
 
   while (queue.length > 0) {
+    if (entries.length >= maxEntriesToCollect) {
+      return { hitCollectionCap: true, hitFolderTruncation };
+    }
+
     const current = queue.shift();
     if (!current) break;
     const { absPath, prefix, depth } = current;
@@ -162,7 +209,38 @@ async function collectEntries(
     // Sort entries alphabetically
     dirEntries.sort((a, b) => a.entry.name.localeCompare(b.entry.name));
 
-    for (const item of dirEntries) {
+    const visibleEntries = dirEntries.slice(0, maxChildrenPerDir);
+    const omittedEntries = Math.max(
+      0,
+      dirEntries.length - visibleEntries.length,
+    );
+
+    if (omittedEntries > 0) {
+      hitFolderTruncation = true;
+
+      const omittedSortKey = formatEntryName(
+        `${prefix ? `${prefix}/` : ""}\uffff-omitted`,
+      );
+      const omittedDepth = prefix ? prefix.split(path.sep).length : 0;
+
+      visibleEntries.push({
+        absPath,
+        relativePath: prefix,
+        kind: "omitted",
+        entry: {
+          name: omittedSortKey,
+          displayName: `… (${omittedEntries.toLocaleString()} more entries)`,
+          depth: omittedDepth,
+          kind: "omitted",
+        },
+      });
+    }
+
+    for (const item of visibleEntries) {
+      if (entries.length >= maxEntriesToCollect) {
+        return { hitCollectionCap: true, hitFolderTruncation };
+      }
+
       // Queue subdirectories for traversal if depth allows
       if (item.kind === "directory" && depth > 1) {
         queue.push({
@@ -174,6 +252,8 @@ async function collectEntries(
       entries.push(item.entry);
     }
   }
+
+  return { hitCollectionCap: false, hitFolderTruncation };
 }
 
 /**
@@ -213,6 +293,8 @@ function formatEntryLine(entry: DirEntry): string {
       break;
     case "other":
       name += "?";
+      break;
+    case "omitted":
       break;
     default:
       // "file" type has no suffix
