@@ -133,7 +133,7 @@ def build_report(
         delta_str = ""
         if baseline_rate is not None:
             delta = pass_rate - baseline_rate
-            if delta < -0.10:
+            if delta < -0.05:
                 has_regression = True
                 delta_str = f" | **{delta:+.0%} from baseline** :red_circle:"
             elif delta < 0:
@@ -197,6 +197,10 @@ def build_report(
     run_id = os.environ.get("GITHUB_RUN_ID", "")
     if repo and run_id:
         lines.append(f"[Workflow run]({run_url}/{repo}/actions/runs/{run_id})")
+        lines.append("")
+
+    if has_regression:
+        lines.append("cc @devanshrj")
         lines.append("")
 
     return "\n".join(lines), has_regression
