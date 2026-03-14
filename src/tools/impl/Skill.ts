@@ -4,8 +4,8 @@ import { dirname, join } from "node:path";
 import { getCurrentAgentId, getSkillsDirectory } from "../../agent/context";
 import {
   GLOBAL_SKILLS_DIR,
-  getAgentSkillsDir,
   getBundledSkills,
+  getEffectiveAgentSkillsDir,
   SKILLS_DIR,
 } from "../../agent/skills";
 import { queueSkillContent } from "./skillContentRegistry";
@@ -62,7 +62,7 @@ async function readSkillContent(
   // 2. Try agent skills directory (if agentId provided)
   if (agentId) {
     const agentSkillPath = join(
-      getAgentSkillsDir(agentId),
+      getEffectiveAgentSkillsDir(agentId),
       skillId,
       "SKILL.md",
     );

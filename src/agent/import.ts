@@ -65,8 +65,8 @@ export async function importAgentFromFile(
   let skills: string[] | undefined;
 
   if (!options.stripSkills) {
-    const { getAgentSkillsDir } = await import("./skills");
-    const skillsDir = getAgentSkillsDir(agentId);
+    const { getEffectiveAgentSkillsDir } = await import("./skills");
+    const skillsDir = getEffectiveAgentSkillsDir(agentId);
     skills = await extractSkillsFromAf(resolvedPath, skillsDir);
   }
 

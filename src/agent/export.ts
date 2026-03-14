@@ -1,6 +1,6 @@
 import { readdir, readFile } from "node:fs/promises";
 import { relative, resolve } from "node:path";
-import { getAgentSkillsDir } from "./skills";
+import { getEffectiveAgentSkillsDir } from "./skills";
 
 export interface SkillSchema {
   name: string;
@@ -25,7 +25,7 @@ export async function packageSkills(
   const dirsToCheck = skillsDir
     ? [skillsDir]
     : [
-        agentId && getAgentSkillsDir(agentId),
+        agentId && getEffectiveAgentSkillsDir(agentId),
         resolve(process.cwd(), ".skills"), // Project-local
         resolve(process.env.HOME || "~", ".letta", "skills"), // Global
       ].filter((dir): dir is string => Boolean(dir));
