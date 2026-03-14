@@ -72,20 +72,22 @@ interface AgentRowProps {
 const AgentRow = memo(
   ({ agent, isLast, expanded, condensed = false }: AgentRowProps) => {
     const { treeChar, continueChar } = getTreeChars(isLast);
+    const rowIndent = "  ";
+    const statusIndent = "   ";
+    const expandedToolIndent = "    ";
     const columns = useTerminalWidth();
-    const gutterWidth = 8; // indent (3) + continueChar (2) + status indent (3)
+    const gutterWidth =
+      rowIndent.length + continueChar.length + statusIndent.length;
     const contentWidth = Math.max(0, columns - gutterWidth);
 
     const isRunning = agent.status === "pending" || agent.status === "running";
+    const toolCount = getSubagentToolCount(agent);
     const shouldDim = isRunning && !agent.isBackground;
-    const showStats = !(agent.isBackground && isRunning);
+    const showStats =
+      !(agent.isBackground && isRunning) && !(isRunning && toolCount === 0);
     const hideBackgroundStatusLine =
       agent.isBackground && isRunning && !agent.agentURL;
-    const stats = formatStats(
-      getSubagentToolCount(agent),
-      agent.totalTokens,
-      isRunning,
-    );
+    const stats = formatStats(toolCount, agent.totalTokens, isRunning);
     const modelDisplay = getSubagentModelDisplay(agent.model);
     const lastTool = agent.toolCalls[agent.toolCalls.length - 1];
 
@@ -99,9 +101,9 @@ const AgentRow = memo(
         <Box flexDirection="column">
           {/* Main row: tree char + description + type + model (no stats) */}
           <Box flexDirection="row">
-            <Text>
+            <Text wrap="truncate-end">
               <Text color={colors.subagent.treeChar}>
-                {"   "}
+                {rowIndent}
                 {treeChar}{" "}
               </Text>
               <Text bold={!shouldDim} dimColor={shouldDim}>
@@ -133,18 +135,20 @@ const AgentRow = memo(
           {!hideBackgroundStatusLine && (
             <Box flexDirection="row">
               <Text color={colors.subagent.treeChar}>
-                {"   "}
+                {rowIndent}
                 {continueChar}
               </Text>
-              <Text dimColor>{"   "}</Text>
+              <Text dimColor>{statusIndent}</Text>
               {agent.status === "error" ? (
                 <Text color={colors.subagent.error}>Error</Text>
               ) : isComplete ? (
                 <Text dimColor>Done</Text>
               ) : agent.isBackground ? (
                 <Text dimColor>Running in the background</Text>
-              ) : (
+              ) : lastTool ? (
                 <Text dimColor>Running...</Text>
+              ) : (
+                <Text dimColor>Launching...</Text>
               )}
             </Box>
           )}
@@ -157,9 +161,9 @@ const AgentRow = memo(
       <Box flexDirection="column">
         {/* Main row: tree char + description + type + model + stats */}
         <Box flexDirection="row">
-          <Text>
+          <Text wrap="truncate-end">
             <Text color={colors.subagent.treeChar}>
-              {"   "}
+              {rowIndent}
               {treeChar}{" "}
             </Text>
             <Text bold={!shouldDim} dimColor={shouldDim}>
@@ -196,7 +200,7 @@ const AgentRow = memo(
         {agent.agentURL && (
           <Box flexDirection="row">
             <Text color={colors.subagent.treeChar}>
-              {"   "}
+              {rowIndent}
               {continueChar} ⎿{" "}
             </Text>
             <Text dimColor>{"Subagent: "}</Text>
@@ -211,11 +215,11 @@ const AgentRow = memo(
             return (
               <Box key={tc.id} flexDirection="row">
                 <Text color={colors.subagent.treeChar}>
-                  {"   "}
+                  {rowIndent}
                   {continueChar}
                 </Text>
                 <Text dimColor>
-                  {"     "}
+                  {expandedToolIndent}
                   {tc.name}({formattedArgs})
                 </Text>
               </Box>
@@ -228,20 +232,20 @@ const AgentRow = memo(
             {agent.status === "completed" ? (
               <>
                 <Text color={colors.subagent.treeChar}>
-                  {"   "}
+                  {rowIndent}
                   {continueChar}
                 </Text>
-                <Text dimColor>{"   Done"}</Text>
+                <Text dimColor>{`${statusIndent}Done`}</Text>
               </>
             ) : agent.status === "error" ? (
               <>
                 <Box width={gutterWidth} flexShrink={0}>
                   <Text>
                     <Text color={colors.subagent.treeChar}>
-                      {"   "}
+                      {rowIndent}
                       {continueChar}
                     </Text>
-                    <Text dimColor>{"   "}</Text>
+                    <Text dimColor>{statusIndent}</Text>
                   </Text>
                 </Box>
                 <Box flexGrow={1} width={contentWidth}>
@@ -253,29 +257,31 @@ const AgentRow = memo(
             ) : agent.isBackground ? (
               <Text>
                 <Text color={colors.subagent.treeChar}>
-                  {"   "}
+                  {rowIndent}
                   {continueChar}
                 </Text>
-                <Text dimColor>{"   Running in the background"}</Text>
+                <Text
+                  dimColor
+                >{`${statusIndent}Running in the background`}</Text>
               </Text>
             ) : lastTool ? (
               <>
                 <Text color={colors.subagent.treeChar}>
-                  {"   "}
+                  {rowIndent}
                   {continueChar}
                 </Text>
                 <Text dimColor>
-                  {"   "}
+                  {statusIndent}
                   {lastTool.name}
                 </Text>
               </>
             ) : (
               <>
                 <Text color={colors.subagent.treeChar}>
-                  {"   "}
+                  {rowIndent}
                   {continueChar}
                 </Text>
-                <Text dimColor>{"   Starting..."}</Text>
+                <Text dimColor>{`${statusIndent}Launching...`}</Text>
               </>
             )}
           </Box>
