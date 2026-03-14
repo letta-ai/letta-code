@@ -22,7 +22,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        model: [sonnet-4.6-low, gpt-5-minimal]
+        model: [sonnet-4.6-xhigh, gpt-5.3-codex-xhigh]
     steps:
       - name: Checkout
         uses: actions/checkout@v6
