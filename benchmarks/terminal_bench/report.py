@@ -141,7 +141,8 @@ def build_report(
             elif delta > 0:
                 delta_str = f" | {delta:+.0%} from baseline :white_check_mark:"
 
-        lines.append(f"### `{model}` — {passed}/{total} ({pass_rate:.0%}){delta_str}")
+        lines.append(f"<details>")
+        lines.append(f"<summary><strong>{model}</strong> — {passed}/{total} ({pass_rate:.0%}){delta_str}</summary>")
         lines.append("")
 
         # Categorize tasks
@@ -182,6 +183,9 @@ def build_report(
         if not regressions and not improvements and not new_tasks:
             lines.append("No changes from baseline.")
             lines.append("")
+
+        lines.append("</details>")
+        lines.append("")
 
     if not model_results:
         lines.append("No results found. Check workflow logs.")
