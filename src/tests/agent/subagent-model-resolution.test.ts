@@ -253,6 +253,24 @@ describe("resolveSubagentModel", () => {
     expect(result).toBe("letta/auto");
   });
 
+  test("uses auto-fast default for free tier when available", async () => {
+    const result = await resolveSubagentModel({
+      billingTier: "free",
+      availableHandles: new Set(["letta/auto-fast", "letta/auto"]),
+    });
+
+    expect(result).toBe("letta/auto-fast");
+  });
+
+  test("free tier falls back to auto when auto-fast is unavailable", async () => {
+    const result = await resolveSubagentModel({
+      billingTier: "free",
+      availableHandles: new Set(["letta/auto"]),
+    });
+
+    expect(result).toBe("letta/auto");
+  });
+
   test("falls back when auto is unavailable", async () => {
     const result = await resolveSubagentModel({
       recommendedModel: "anthropic/test-model",

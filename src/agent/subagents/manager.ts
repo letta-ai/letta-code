@@ -178,6 +178,13 @@ export async function resolveSubagentModel(options: {
     }
   };
 
+  // Free-tier default for subagents: auto-fast, when available.
+  const freeTierDefaultHandle =
+    billingTier?.toLowerCase() === "free" ? resolveModel("auto-fast") : null;
+  if (freeTierDefaultHandle && (await isAvailable(freeTierDefaultHandle))) {
+    return freeTierDefaultHandle;
+  }
+
   // Global default for subagents: auto, when available.
   const defaultHandle = getDefaultModelForTier(billingTier);
   if (defaultHandle && (await isAvailable(defaultHandle))) {
