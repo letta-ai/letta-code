@@ -10,7 +10,7 @@ on:
         default: ""
       concurrency:
         description: "Max concurrent tasks"
-        default: "4"
+        default: "10"
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -59,7 +59,7 @@ jobs:
             --agent-import-path benchmarks.terminal_bench.letta_code_agent:LettaCode \
             --model "${{ matrix.model }}" \
             --env modal \
-            --n-concurrent ${{ inputs.concurrency || '4' }} \
+            --n-concurrent ${{ inputs.concurrency || '10' }} \
             --job-name "regression-${{ matrix.model }}-$(date +%Y%m%d)"
 
       - name: Upload results artifact
