@@ -29,10 +29,8 @@ _DEFAULT_SYSTEM = "source-claude"
 
 # Map Letta Code model handles to litellm model names for cost calculation.
 _LITELLM_MODEL_MAP: dict[str, str] = {
-    "sonnet-4.6-low": "anthropic/claude-sonnet-4-6",
     "sonnet-4.6-xhigh": "anthropic/claude-sonnet-4-6",
     "gpt-5.3-codex-xhigh": "openai/gpt-5.3-codex",
-    "gpt-5-minimal": "openai/gpt-5",
 }
 
 
