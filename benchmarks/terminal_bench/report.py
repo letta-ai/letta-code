@@ -143,29 +143,45 @@ def build_report(
 
         lines.append(f"### `{model}` — {passed}/{total} ({pass_rate:.0%}){delta_str}")
         lines.append("")
-        lines.append("| Task | Result | Baseline |")
-        lines.append("|------|--------|----------|")
+
+        # Categorize tasks
+        regressions = []  # was passing, now failing
+        improvements = []  # was failing, now passing
+        new_tasks = []  # not in baseline
 
         for task_name, passed_now in sorted(tasks.items()):
-            result_emoji = ":white_check_mark:" if passed_now else ":x:"
             baseline_val = baseline_tasks.get(task_name)
-
             if baseline_val is None:
-                baseline_str = "—"
-            elif baseline_val:
-                baseline_str = ":white_check_mark:"
-            else:
-                baseline_str = ":x:"
-
-            # Flag regressions: was passing, now failing
-            regression_marker = ""
-            if baseline_val is True and not passed_now:
-                regression_marker = " **REGRESSION**"
+                new_tasks.append((task_name, passed_now))
+            elif baseline_val and not passed_now:
+                regressions.append(task_name)
                 has_regression = True
+            elif not baseline_val and passed_now:
+                improvements.append(task_name)
 
-            lines.append(f"| {task_name} | {result_emoji}{regression_marker} | {baseline_str} |")
+        if regressions:
+            lines.append(f"**Regressions ({len(regressions)}):**")
+            for t in regressions:
+                lines.append(f"- :red_circle: {t}")
+            lines.append("")
 
-        lines.append("")
+        if improvements:
+            lines.append(f"**Improvements ({len(improvements)}):**")
+            for t in improvements:
+                lines.append(f"- :white_check_mark: {t}")
+            lines.append("")
+
+        if new_tasks:
+            new_passed = sum(1 for _, p in new_tasks if p)
+            lines.append(f"**New tasks ({new_passed}/{len(new_tasks)} passed):**")
+            for t, p in new_tasks:
+                emoji = ":white_check_mark:" if p else ":x:"
+                lines.append(f"- {emoji} {t}")
+            lines.append("")
+
+        if not regressions and not improvements and not new_tasks:
+            lines.append("No changes from baseline.")
+            lines.append("")
 
     if not model_results:
         lines.append("No results found. Check workflow logs.")
