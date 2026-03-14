@@ -114,6 +114,8 @@ const GLOBAL_LOCK_TOOLS = new Set([
   "KillBash",
   "run_shell_command",
   "RunShellCommand",
+  // Memory tool (file + git side effects)
+  "memory",
   "shell_command",
   "shell",
   "ShellCommand",
