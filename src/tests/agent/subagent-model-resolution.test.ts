@@ -244,33 +244,39 @@ describe("resolveSubagentModel", () => {
     expect(result).toBe("lc-anthropic/parent-model");
   });
 
-  test("uses GLM-5 default for free tier even when subagent recommends another model", async () => {
+  test("uses auto default when available", async () => {
     const result = await resolveSubagentModel({
       recommendedModel: "sonnet-4.5",
-      billingTier: "free",
-      availableHandles: new Set(["zai/glm-5"]),
+      availableHandles: new Set(["letta/auto", "anthropic/test-model"]),
     });
 
-    expect(result).toBe("zai/glm-5");
+    expect(result).toBe("letta/auto");
   });
 
-  test("keeps inherit behavior for free tier", async () => {
+  test("falls back when auto is unavailable", async () => {
+    const result = await resolveSubagentModel({
+      recommendedModel: "anthropic/test-model",
+      availableHandles: new Set(["anthropic/test-model"]),
+    });
+
+    expect(result).toBe("anthropic/test-model");
+  });
+
+  test("keeps inherit behavior when auto is unavailable", async () => {
     const result = await resolveSubagentModel({
       recommendedModel: "inherit",
       parentModelHandle: "openai/gpt-5",
-      billingTier: "free",
       availableHandles: new Set(["openai/gpt-5"]),
     });
 
     expect(result).toBe("openai/gpt-5");
   });
 
-  test("user-provided model still overrides free-tier default", async () => {
+  test("user-provided model still overrides default auto", async () => {
     const result = await resolveSubagentModel({
       userModel: "openai/gpt-5",
       recommendedModel: "sonnet-4.5",
-      billingTier: "free",
-      availableHandles: new Set(["zai/glm-5", "openai/gpt-5"]),
+      availableHandles: new Set(["letta/auto", "openai/gpt-5"]),
     });
 
     expect(result).toBe("openai/gpt-5");

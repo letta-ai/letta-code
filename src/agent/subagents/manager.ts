@@ -165,12 +165,6 @@ export async function resolveSubagentModel(options: {
     recommendedHandle = resolveModel(recommendedModel);
   }
 
-  // Free-tier users should default subagents to GLM-5 instead of provider-specific
-  // recommendations like Sonnet.
-  if (recommendedModel !== "inherit" && billingTier?.toLowerCase() === "free") {
-    recommendedHandle = getDefaultModelForTier(billingTier);
-  }
-
   let availableHandles: Set<string> | null = options.availableHandles ?? null;
   const isAvailable = async (handle: string): Promise<boolean> => {
     try {
@@ -183,6 +177,12 @@ export async function resolveSubagentModel(options: {
       return false;
     }
   };
+
+  // Global default for subagents: auto, when available.
+  const defaultHandle = getDefaultModelForTier(billingTier);
+  if (defaultHandle && (await isAvailable(defaultHandle))) {
+    return defaultHandle;
+  }
 
   if (parentModelHandle) {
     const parentProvider = getProviderPrefix(parentModelHandle);
