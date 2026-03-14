@@ -170,6 +170,14 @@ const AgentRow = memo(
                   <Text dimColor>{statusIndent}</Text>
                   <Text dimColor>Running...</Text>
                 </>
+              ) : agent.agentURL ? (
+                <>
+                  <Text color={colors.subagent.treeChar}>
+                    {rowIndent}
+                    {continueChar}
+                  </Text>
+                  <Text dimColor>{`${statusIndent}Thinking`}</Text>
+                </>
               ) : (
                 <>
                   <Text color={colors.subagent.treeChar}>
@@ -303,6 +311,14 @@ const AgentRow = memo(
                   {statusIndent}
                   {lastTool.name}
                 </Text>
+              </>
+            ) : agent.agentURL ? (
+              <>
+                <Text color={colors.subagent.treeChar}>
+                  {rowIndent}
+                  {continueChar}
+                </Text>
+                <Text dimColor>{`${statusIndent}Thinking`}</Text>
               </>
             ) : (
               <>
