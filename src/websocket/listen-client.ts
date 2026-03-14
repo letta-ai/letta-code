@@ -77,7 +77,6 @@ import type {
   LoopStatus,
   LoopStatusUpdateMessage,
   QueueMessage,
-  ResultSubtype,
   RetryMessage,
   RuntimeScope,
   StatusMessage,
@@ -419,64 +418,13 @@ function createRuntime(): ListenerRuntime {
     callbacks: {
       onEnqueued: (item, queueLen) => {
         runtime.pendingTurns = queueLen;
-        if (runtime.socket?.readyState === WebSocket.OPEN) {
-          const content = item.kind === "message" ? item.content : item.text;
-          emitLegacyStreamEvent(
-            runtime.socket,
-            {
-              type: "queue_item_enqueued",
-              id: item.id,
-              item_id: item.id,
-              client_message_id: item.clientMessageId ?? `cm-${item.id}`,
-              source: item.source,
-              kind: item.kind,
-              content,
-              enqueued_at: new Date(item.enqueuedAt).toISOString(),
-              queue_len: queueLen,
-              session_id: runtime.sessionId,
-              uuid: `q-enq-${item.id}`,
-              ...getQueueItemScope(item),
-            },
-            runtime,
-          );
-        }
         emitRuntimeStateUpdates(runtime, getQueueItemScope(item));
       },
       onDequeued: (batch) => {
         runtime.pendingTurns = batch.queueLenAfter;
-        if (runtime.socket?.readyState === WebSocket.OPEN) {
-          emitLegacyStreamEvent(
-            runtime.socket,
-            {
-              type: "queue_batch_dequeued",
-              batch_id: batch.batchId,
-              item_ids: batch.items.map((i) => i.id),
-              merged_count: batch.mergedCount,
-              queue_len_after: batch.queueLenAfter,
-              session_id: runtime.sessionId,
-              uuid: `q-deq-${batch.batchId}`,
-              ...getQueueItemsScope(batch.items),
-            },
-            runtime,
-          );
-        }
         emitRuntimeStateUpdates(runtime, getQueueItemsScope(batch.items));
       },
       onBlocked: (reason, queueLen) => {
-        if (runtime.socket?.readyState === WebSocket.OPEN) {
-          emitLegacyStreamEvent(
-            runtime.socket,
-            {
-              type: "queue_blocked",
-              reason,
-              queue_len: queueLen,
-              session_id: runtime.sessionId,
-              uuid: `q-blk-${crypto.randomUUID()}`,
-              ...getQueueItemScope(runtime.queueRuntime.items[0]),
-            },
-            runtime,
-          );
-        }
         emitRuntimeStateUpdates(
           runtime,
           getQueueItemScope(runtime.queueRuntime.items[0]),
@@ -484,41 +432,11 @@ function createRuntime(): ListenerRuntime {
       },
       onCleared: (reason, clearedCount, items) => {
         runtime.pendingTurns = 0;
-        if (runtime.socket?.readyState === WebSocket.OPEN) {
-          emitLegacyStreamEvent(
-            runtime.socket,
-            {
-              type: "queue_cleared",
-              reason,
-              cleared_count: clearedCount,
-              session_id: runtime.sessionId,
-              uuid: `q-clr-${crypto.randomUUID()}`,
-              ...getQueueItemsScope(items),
-            },
-            runtime,
-          );
-        }
         emitRuntimeStateUpdates(runtime, getQueueItemsScope(items));
       },
       onDropped: (item, reason, queueLen) => {
         runtime.pendingTurns = queueLen;
         runtime.queuedMessagesByItemId.delete(item.id);
-        if (runtime.socket?.readyState === WebSocket.OPEN) {
-          emitLegacyStreamEvent(
-            runtime.socket,
-            {
-              type: "queue_item_dropped",
-              id: item.id,
-              item_id: item.id,
-              reason,
-              queue_len: queueLen,
-              session_id: runtime.sessionId,
-              uuid: `q-drp-${item.id}`,
-              ...getQueueItemScope(item),
-            },
-            runtime,
-          );
-        }
         emitRuntimeStateUpdates(runtime, getQueueItemScope(item));
       },
     },
@@ -1591,20 +1509,6 @@ function emitStatusDelta(
   });
 }
 
-function stripLegacyEnvelope(
-  payload: Record<string, unknown>,
-): Record<string, unknown> {
-  const {
-    session_id: _sessionId,
-    uuid: _uuid,
-    event_seq: _eventSeq,
-    agent_id: _agentId,
-    conversation_id: _conversationId,
-    ...rest
-  } = payload;
-  return rest;
-}
-
 function emitStreamDelta(
   socket: WebSocket,
   runtime: ListenerRuntime | null,
@@ -1622,104 +1526,6 @@ function emitStreamDelta(
     delta,
   };
   emitProtocolV2Message(socket, runtime, message, scope);
-}
-
-function emitCancelAck(
-  socket: WebSocket,
-  runtime: ListenerRuntime,
-  params: {
-    requestId: string;
-    accepted: boolean;
-    reason?: string;
-    runId?: string | null;
-    agentId?: string | null;
-    conversationId?: string | null;
-  },
-): void {
-  emitLegacyStreamEvent(
-    socket,
-    {
-      type: "cancel_ack",
-      request_id: params.requestId,
-      accepted: params.accepted,
-      reason: params.reason,
-      run_id: params.runId ?? runtime.activeRunId,
-      agent_id: params.agentId ?? runtime.activeAgentId ?? undefined,
-      conversation_id:
-        params.conversationId ?? runtime.activeConversationId ?? undefined,
-      session_id: runtime.sessionId,
-      uuid: `cancel-ack-${params.requestId}`,
-    },
-    runtime,
-  );
-}
-
-function emitTurnResult(
-  socket: WebSocket,
-  runtime: ListenerRuntime,
-  params: {
-    subtype: ResultSubtype;
-    agentId: string;
-    conversationId: string;
-    durationMs: number;
-    numTurns: number;
-    runIds: string[];
-    stopReason?: StopReasonType;
-  },
-): void {
-  emitLegacyStreamEvent(
-    socket,
-    {
-      type: "result",
-      subtype: params.subtype,
-      agent_id: params.agentId,
-      conversation_id: params.conversationId,
-      duration_ms: params.durationMs,
-      duration_api_ms: 0,
-      num_turns: params.numTurns,
-      result: null,
-      run_ids: params.runIds,
-      usage: null,
-      ...(params.stopReason ? { stop_reason: params.stopReason } : {}),
-      session_id: runtime.sessionId,
-      uuid: `result-${crypto.randomUUID()}`,
-    },
-    runtime,
-  );
-}
-
-// ── Typed protocol event adapter ────────────────────────────────
-
-export type WsProtocolEvent =
-  | StreamDelta
-  | (Record<string, unknown> & { type: string });
-
-/**
- * Single adapter for all outbound typed protocol events.
- * Passthrough for now — provides a seam for future filtering/versioning/redacting.
- */
-function emitLegacyStreamEvent(
-  socket: WebSocket,
-  event: WsProtocolEvent,
-  runtimeOverride: ListenerRuntime | null = activeRuntime,
-): void {
-  const runtime = runtimeOverride ?? activeRuntime;
-  const eventRecord = event as unknown as Record<string, unknown>;
-  emitStreamDelta(
-    socket,
-    runtime,
-    stripLegacyEnvelope(eventRecord) as unknown as StreamDelta,
-    {
-      agent_id:
-        (typeof eventRecord.agent_id === "string"
-          ? eventRecord.agent_id
-          : null) ?? runtime?.activeAgentId,
-      conversation_id:
-        (typeof eventRecord.conversation_id === "string"
-          ? eventRecord.conversation_id
-          : null) ?? runtime?.activeConversationId,
-    },
-  );
 }
 
 const LLM_API_ERROR_MAX_RETRIES = 3;
@@ -2910,12 +2716,6 @@ async function connectWithRetry(
       const hasActiveTurn = runtime.isProcessing;
 
       if (!hasActiveTurn && !hasPendingApprovals) {
-        emitCancelAck(socket, runtime, {
-          requestId,
-          accepted: false,
-          reason: "no_active_turn",
-          runId: requestedRunId,
-        });
         return;
       }
 
@@ -2972,11 +2772,6 @@ async function connectWithRetry(
           });
       }
 
-      emitCancelAck(socket, runtime, {
-        requestId,
-        accepted: true,
-        runId: requestedRunId,
-      });
       scheduleQueuePump(runtime, socket, opts);
       return;
     }
@@ -2993,7 +2788,7 @@ async function connectWithRetry(
       reason: reason.toString(),
     });
 
-    // Single authoritative queue_cleared emission for all close paths
+    // Single authoritative queue clear for all close paths
     // (intentional and unintentional). Must fire before early returns.
     runtime.queuedMessagesByItemId.clear();
     runtime.queueRuntime.clear("shutdown");
@@ -3293,14 +3088,6 @@ async function handleIncomingMessage(
           conversation_id: conversationId,
         });
 
-        emitTurnResult(socket, runtime, {
-          subtype: "success",
-          agentId,
-          conversationId,
-          durationMs: performance.now() - msgStartTime,
-          numTurns: msgTurnCount,
-          runIds: msgRunIds,
-        });
         break;
       }
 
@@ -3318,15 +3105,6 @@ async function handleIncomingMessage(
           conversation_id: conversationId,
         });
 
-        emitTurnResult(socket, runtime, {
-          subtype: "interrupted",
-          agentId,
-          conversationId,
-          durationMs: performance.now() - msgStartTime,
-          numTurns: msgTurnCount,
-          runIds: msgRunIds,
-          stopReason: "cancelled",
-        });
         break;
       }
 
@@ -3419,15 +3197,6 @@ async function handleIncomingMessage(
             conversation_id: conversationId,
           });
 
-          emitTurnResult(socket, runtime, {
-            subtype: "interrupted",
-            agentId,
-            conversationId,
-            durationMs: performance.now() - msgStartTime,
-            numTurns: msgTurnCount,
-            runIds: msgRunIds,
-            stopReason: "cancelled",
-          });
           break;
         }
 
@@ -3454,15 +3223,6 @@ async function handleIncomingMessage(
           agentId,
           conversationId,
         });
-        emitTurnResult(socket, runtime, {
-          subtype: "error",
-          agentId,
-          conversationId,
-          durationMs: performance.now() - msgStartTime,
-          numTurns: msgTurnCount,
-          runIds: msgRunIds,
-          stopReason: effectiveStopReason,
-        });
         break;
       }
 
@@ -3487,15 +3247,6 @@ async function handleIncomingMessage(
           isTerminal: true,
           agentId,
           conversationId,
-        });
-        emitTurnResult(socket, runtime, {
-          subtype: "error",
-          agentId,
-          conversationId,
-          durationMs: performance.now() - msgStartTime,
-          numTurns: msgTurnCount,
-          runIds: msgRunIds,
-          stopReason: "error",
         });
         break;
       }
@@ -3769,15 +3520,6 @@ async function handleIncomingMessage(
         conversation_id: conversationId,
       });
 
-      emitTurnResult(socket, runtime, {
-        subtype: "interrupted",
-        agentId: agentId || "",
-        conversationId,
-        durationMs: performance.now() - msgStartTime,
-        numTurns: msgTurnCount,
-        runIds: msgRunIds,
-        stopReason: "cancelled",
-      });
       return;
     }
 
@@ -3801,16 +3543,6 @@ async function handleIncomingMessage(
       agentId: agentId || undefined,
       conversationId,
     });
-    emitTurnResult(socket, runtime, {
-      subtype: "error",
-      agentId: agentId || "",
-      conversationId,
-      durationMs: performance.now() - msgStartTime,
-      numTurns: msgTurnCount,
-      runIds: msgRunIds,
-      stopReason: "error",
-    });
-
     if (process.env.DEBUG) {
       console.error("[Listen] Error handling message:", error);
     }
@@ -3848,8 +3580,6 @@ export const __listenClientTestUtils = {
   buildDeviceStatus,
   buildLoopStatus,
   handleCwdChange,
-  emitLegacyStreamEvent,
-  emitCancelAck,
   getConversationWorkingDirectory,
   rememberPendingApprovalBatchIds,
   resolvePendingApprovalBatchId,

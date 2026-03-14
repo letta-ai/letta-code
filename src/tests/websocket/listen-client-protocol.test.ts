@@ -314,7 +314,7 @@ describe("listen-client requestApprovalOverWS", () => {
 });
 
 describe("listen-client conversation-scoped protocol events", () => {
-  test("queue lifecycle events are emitted as stream_delta with runtime scope", () => {
+  test("queue enqueue/block updates loop status with runtime scope instead of stream_delta", () => {
     const runtime = __listenClientTestUtils.createRuntime();
     const socket = new MockSocket(WebSocket.OPEN);
     runtime.socket = socket as unknown as WebSocket;
@@ -335,50 +335,25 @@ describe("listen-client conversation-scoped protocol events", () => {
     const outbound = socket.sentPayloads.map((payload) =>
       JSON.parse(payload as string),
     );
-    const enqueued = outbound.find(
+    const queueStatus = outbound.find(
       (payload) =>
-        payload.type === "stream_delta" &&
-        payload.delta?.type === "queue_item_enqueued",
+        payload.type === "update_loop_status" &&
+        payload.runtime.agent_id === "agent-default" &&
+        payload.runtime.conversation_id === "default" &&
+        payload.loop_status?.queue?.length === 1,
     );
-    expect(enqueued).toBeDefined();
-    expect(enqueued.runtime.agent_id).toBe("agent-default");
-    expect(enqueued.runtime.conversation_id).toBe("default");
-
-    const blocked = outbound.find(
-      (payload) =>
-        payload.type === "stream_delta" &&
-        payload.delta?.type === "queue_blocked",
-    );
-    expect(blocked).toBeDefined();
-    expect(blocked.runtime.agent_id).toBe("agent-default");
-    expect(blocked.runtime.conversation_id).toBe("default");
+    expect(queueStatus).toBeDefined();
+    expect(
+      outbound.some(
+        (payload) =>
+          payload.type === "stream_delta" &&
+          typeof payload.delta?.type === "string" &&
+          payload.delta.type.startsWith("queue_"),
+      ),
+    ).toBe(false);
   });
 
-  test("cancel_ack is projected through stream_delta with scoped runtime", () => {
-    const runtime = __listenClientTestUtils.createRuntime();
-    const socket = new MockSocket(WebSocket.OPEN);
-    runtime.activeAgentId = "agent-123";
-    runtime.activeConversationId = "default";
-    runtime.activeRunId = "run-123";
-
-    __listenClientTestUtils.emitCancelAck(
-      socket as unknown as WebSocket,
-      runtime,
-      {
-        requestId: "cancel-1",
-        accepted: true,
-      },
-    );
-
-    const sent = JSON.parse(socket.sentPayloads[0] as string);
-    expect(sent.type).toBe("stream_delta");
-    expect(sent.runtime.agent_id).toBe("agent-123");
-    expect(sent.runtime.conversation_id).toBe("default");
-    expect(sent.delta.type).toBe("cancel_ack");
-    expect(sent.delta.run_id).toBe("run-123");
-  });
-
-  test("queue_batch_dequeued keeps scope through stream_delta runtime envelope", () => {
+  test("queue dequeue keeps scope through update_loop_status runtime envelope", () => {
     const runtime = __listenClientTestUtils.createRuntime();
     const socket = new MockSocket(WebSocket.OPEN);
     runtime.socket = socket as unknown as WebSocket;
@@ -400,12 +375,13 @@ describe("listen-client conversation-scoped protocol events", () => {
     );
     const dequeued = outbound.find(
       (payload) =>
-        payload.type === "stream_delta" &&
-        payload.delta?.type === "queue_batch_dequeued",
+        payload.type === "update_loop_status" &&
+        payload.runtime.agent_id === "agent-xyz" &&
+        payload.runtime.conversation_id === "conv-xyz" &&
+        Array.isArray(payload.loop_status?.queue) &&
+        payload.loop_status.queue.length === 0,
     );
     expect(dequeued).toBeDefined();
-    expect(dequeued.runtime.agent_id).toBe("agent-xyz");
-    expect(dequeued.runtime.conversation_id).toBe("conv-xyz");
   });
 });
 
@@ -772,51 +748,7 @@ describe("listen-client approval recovery batch correlation", () => {
   });
 });
 
-describe("listen-client legacy stream adapter", () => {
-  test("projects legacy deltas through stream_delta when socket is OPEN", () => {
-    const runtime = __listenClientTestUtils.createRuntime();
-    const socket = new MockSocket(WebSocket.OPEN);
-    const event = {
-      type: "cancel_ack" as const,
-      request_id: "cancel-1",
-      accepted: true,
-      session_id: "listen-test",
-      uuid: "test-uuid",
-    };
-
-    __listenClientTestUtils.emitLegacyStreamEvent(
-      socket as unknown as WebSocket,
-      event,
-      runtime,
-    );
-
-    expect(socket.sentPayloads).toHaveLength(1);
-    const sent = JSON.parse(socket.sentPayloads[0] as string);
-    expect(sent.type).toBe("stream_delta");
-    expect(sent.delta.type).toBe("cancel_ack");
-    expect(sent.delta.request_id).toBe("cancel-1");
-  });
-
-  test("does not send when socket is CLOSED", () => {
-    const runtime = __listenClientTestUtils.createRuntime();
-    const socket = new MockSocket(WebSocket.CLOSED);
-    const event = {
-      type: "cancel_ack" as const,
-      request_id: "cancel-1",
-      accepted: true,
-      session_id: "listen-test",
-      uuid: "test-uuid",
-    };
-
-    __listenClientTestUtils.emitLegacyStreamEvent(
-      socket as unknown as WebSocket,
-      event,
-      runtime,
-    );
-
-    expect(socket.sentPayloads).toHaveLength(0);
-  });
-
+describe("listen-client runtime metadata", () => {
   test("runtime sessionId is stable and uses listen- prefix", () => {
     const runtime = __listenClientTestUtils.createRuntime();
     expect(runtime.sessionId).toMatch(/^listen-/);

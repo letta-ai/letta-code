@@ -350,10 +350,4 @@ export type WsProtocolMessage =
   | LoopStatusUpdateMessage
   | StreamDeltaMessage;
 
-/**
- * Temporary helper type used internally by listen-client until the later
- * listener cleanup removes synthetic result messages entirely.
- */
-export type ResultSubtype = "success" | "interrupted" | "error";
-
 export type { StopReasonType };
