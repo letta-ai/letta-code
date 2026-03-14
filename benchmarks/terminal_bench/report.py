@@ -25,9 +25,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
-def parse_job_results(results_dir: Path) -> dict[str, dict[str, bool]]:
-    """Parse Harbor job results into {model: {task: passed}}."""
-    model_results: dict[str, dict[str, bool]] = {}
+def parse_job_results(results_dir: Path) -> dict[str, dict]:
+    """Parse Harbor job results into {model: {tasks: {task: passed}, cost: {..}}}."""
+    model_results: dict[str, dict] = {}
 
     for artifact_dir in sorted(results_dir.iterdir()):
         if not artifact_dir.is_dir():
@@ -41,6 +41,9 @@ def parse_job_results(results_dir: Path) -> dict[str, dict[str, bool]]:
             model = dir_name
 
         tasks: dict[str, bool] = {}
+        total_cost = 0.0
+        total_prompt_tokens = 0
+        total_completion_tokens = 0
 
         # Look for job directories — Harbor puts them under jobs/
         jobs_dir = artifact_dir / "jobs"
@@ -66,22 +69,40 @@ def parse_job_results(results_dir: Path) -> dict[str, dict[str, bool]]:
                     try:
                         reward = float(reward_file.read_text().strip())
                         tasks[task_name] = reward >= 1.0
-                        continue
                     except (ValueError, OSError):
                         pass
 
-                # Fall back to result.json
-                result_file = trial_dir / "result.json"
-                if result_file.exists():
+                if task_name not in tasks:
+                    # Fall back to result.json
+                    result_file = trial_dir / "result.json"
+                    if result_file.exists():
+                        try:
+                            result = json.loads(result_file.read_text())
+                            reward = result.get("reward", result.get("score", 0))
+                            tasks[task_name] = float(reward) >= 1.0
+                        except (json.JSONDecodeError, ValueError, OSError):
+                            tasks[task_name] = False
+
+                # Collect cost from usage.json
+                usage_file = trial_dir / "usage.json"
+                if usage_file.exists():
                     try:
-                        result = json.loads(result_file.read_text())
-                        reward = result.get("reward", result.get("score", 0))
-                        tasks[task_name] = float(reward) >= 1.0
-                    except (json.JSONDecodeError, ValueError, OSError):
-                        tasks[task_name] = False
+                        usage = json.loads(usage_file.read_text())
+                        total_cost += usage.get("cost_usd", 0.0)
+                        total_prompt_tokens += usage.get("prompt_tokens", 0)
+                        total_completion_tokens += usage.get("completion_tokens", 0)
+                    except (json.JSONDecodeError, OSError):
+                        pass
 
         if tasks:
-            model_results[model] = tasks
+            model_results[model] = {
+                "tasks": tasks,
+                "cost": {
+                    "cost_usd": round(total_cost, 2),
+                    "prompt_tokens": total_prompt_tokens,
+                    "completion_tokens": total_completion_tokens,
+                },
+            }
 
     return model_results
 
@@ -105,7 +126,7 @@ def load_baseline(baseline_path: Path) -> dict:
 
 
 def build_report(
-    model_results: dict[str, dict[str, bool]],
+    model_results: dict[str, dict],
     baseline: dict,
 ) -> tuple[str, bool]:
     """Build a markdown report and determine if there's a regression.
@@ -120,7 +141,9 @@ def build_report(
 
     has_regression = False
 
-    for model, tasks in sorted(model_results.items()):
+    for model, data in sorted(model_results.items()):
+        tasks = data["tasks"]
+        cost = data.get("cost", {})
         pass_rate = compute_pass_rate(tasks)
         passed = sum(1 for v in tasks.values() if v)
         total = len(tasks)
@@ -141,8 +164,13 @@ def build_report(
             elif delta > 0:
                 delta_str = f" | {delta:+.0%} from baseline :white_check_mark:"
 
+        cost_str = ""
+        cost_usd = cost.get("cost_usd", 0)
+        if cost_usd > 0:
+            cost_str = f" | ${cost_usd:.2f}"
+
         lines.append(f"<details>")
-        lines.append(f"<summary><strong>{model}</strong> — {passed}/{total} ({pass_rate:.0%}){delta_str}</summary>")
+        lines.append(f"<summary><strong>{model}</strong> — {passed}/{total} ({pass_rate:.0%}){delta_str}{cost_str}</summary>")
         lines.append("")
 
         # Categorize tasks
