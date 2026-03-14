@@ -29,7 +29,7 @@ Weekly regression tests for Letta Code on [Terminal-Bench 2.0](https://github.co
 ## Manual trigger
 
 ```bash
-gh workflow run terminal-bench-regression.yml --ref main -f concurrency=4
+gh workflow run terminal-bench-regression.yml --ref main -f concurrency=10
 ```
 
 ## Required secrets
