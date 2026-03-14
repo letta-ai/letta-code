@@ -25,6 +25,7 @@ import {
 } from "../helpers/subagentDisplay.js";
 import {
   getSnapshot,
+  getSubagentToolCount,
   type SubagentState,
   subscribe,
   toggleExpanded,
@@ -81,7 +82,7 @@ const AgentRow = memo(
     const hideBackgroundStatusLine =
       agent.isBackground && isRunning && !agent.agentURL;
     const stats = formatStats(
-      agent.toolCalls.length,
+      getSubagentToolCount(agent),
       agent.totalTokens,
       isRunning,
     );

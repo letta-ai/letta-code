@@ -23,6 +23,8 @@ export interface SubagentState {
   status: "pending" | "running" | "completed" | "error";
   agentURL: string | null;
   toolCalls: ToolCall[];
+  // Monotonic counter to avoid transient regressions in rendered tool usage.
+  maxToolCallsSeen?: number;
   totalTokens: number;
   durationMs: number;
   error?: string;
@@ -121,6 +123,7 @@ export function registerSubagent(
     status: "pending",
     agentURL: null,
     toolCalls: [],
+    maxToolCallsSeen: 0,
     totalTokens: 0,
     durationMs: 0,
     startTime: Date.now(),
@@ -148,8 +151,13 @@ export function updateSubagent(
     updates.status = "running";
   }
 
+  const currentMax = agent.maxToolCallsSeen ?? agent.toolCalls.length;
+  const nextToolCalls = updates.toolCalls ?? agent.toolCalls;
+  const requestedMax = updates.maxToolCallsSeen ?? 0;
+  const nextMax = Math.max(currentMax, nextToolCalls.length, requestedMax);
+
   // Create a new object to ensure React.memo detects the change
-  const updatedAgent = { ...agent, ...updates };
+  const updatedAgent = { ...agent, ...updates, maxToolCallsSeen: nextMax };
   store.agents.set(id, updatedAgent);
   notifyListeners();
 }
@@ -176,6 +184,10 @@ export function addToolCall(
       ...agent.toolCalls,
       { id: toolCallId, name: toolName, args: toolArgs },
     ],
+    maxToolCallsSeen: Math.max(
+      agent.maxToolCallsSeen ?? agent.toolCalls.length,
+      agent.toolCalls.length + 1,
+    ),
   };
   store.agents.set(subagentId, updatedAgent);
   notifyListeners();
@@ -198,9 +210,19 @@ export function completeSubagent(
     error: result.error,
     durationMs: Date.now() - agent.startTime,
     totalTokens: result.totalTokens ?? agent.totalTokens,
+    maxToolCallsSeen: Math.max(
+      agent.maxToolCallsSeen ?? agent.toolCalls.length,
+      agent.toolCalls.length,
+    ),
   } as SubagentState;
   store.agents.set(id, updatedAgent);
   notifyListeners();
+}
+
+export function getSubagentToolCount(
+  agent: Pick<SubagentState, "toolCalls" | "maxToolCallsSeen">,
+): number {
+  return Math.max(agent.toolCalls.length, agent.maxToolCallsSeen ?? 0);
 }
 
 /**
