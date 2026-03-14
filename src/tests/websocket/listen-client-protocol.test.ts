@@ -84,7 +84,7 @@ describe("listen-client parseServerMessage", () => {
     expect(parsed?.type).toBe("input");
   });
 
-  test("rejects invalid input approval_response payloads", () => {
+  test("classifies invalid input approval_response payloads", () => {
     const missingResponse = parseServerMessage(
       Buffer.from(
         JSON.stringify({
@@ -94,7 +94,8 @@ describe("listen-client parseServerMessage", () => {
         }),
       ),
     );
-    expect(missingResponse).toBeNull();
+    expect(missingResponse).not.toBeNull();
+    expect(missingResponse?.type).toBe("__invalid_input");
 
     const missingRequestId = parseServerMessage(
       Buffer.from(
@@ -108,7 +109,22 @@ describe("listen-client parseServerMessage", () => {
         }),
       ),
     );
-    expect(missingRequestId).toBeNull();
+    expect(missingRequestId).not.toBeNull();
+    expect(missingRequestId?.type).toBe("__invalid_input");
+  });
+
+  test("classifies unknown input payload kinds for explicit protocol rejection", () => {
+    const unknownKind = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "input",
+          runtime: { agent_id: "agent-1", conversation_id: "default" },
+          payload: { kind: "slash_command", command: "/model" },
+        }),
+      ),
+    );
+    expect(unknownKind).not.toBeNull();
+    expect(unknownKind?.type).toBe("__invalid_input");
   });
 
   test("accepts input create_message and change_device_state", () => {

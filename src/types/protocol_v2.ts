@@ -2,12 +2,10 @@
  * Protocol V2 (alpha hard-cut contract)
  *
  * This file defines the runtime-scoped websocket contract for device-mode UIs.
- * It is intentionally additive and isolated from protocol.ts so we can migrate
- * listener emitters/consumers in controlled steps.
+ * It is intentionally a hard cut from protocol.ts for alpha listener transport.
  */
 
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
-import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import type { Skill } from "../agent/skills";
 import type { CommandFinishedEvent } from "../cli/commands/runner";
 import type { PermissionMode } from "../permissions/mode";
@@ -102,6 +100,9 @@ export type BackgroundProcessSummary =
  */
 export interface DeviceStatus {
   current_connection_id: string | null;
+  connection_name: string | null;
+  is_online: boolean;
+  is_processing: boolean;
   current_permission_mode: DevicePermissionMode;
   current_working_directory: string | null;
   letta_code_version: string | null;
@@ -110,6 +111,10 @@ export interface DeviceStatus {
   current_loaded_tools: string[];
   current_available_skills: AvailableSkillSummary[];
   background_processes: BackgroundProcessSummary[];
+  pending_control_requests: Array<{
+    request_id: string;
+    request: ControlRequest["request"];
+  }>;
 }
 
 export type LoopStatus =
@@ -230,9 +235,7 @@ export interface StreamDeltaMessage extends RuntimeEnvelope {
  */
 export interface InputCreateMessagePayload {
   kind: "create_message";
-  messages: Array<
-    (MessageCreate & { client_message_id?: string }) | ApprovalCreate
-  >;
+  messages: Array<MessageCreate & { client_message_id?: string }>;
   supports_control_response?: boolean;
 }
 

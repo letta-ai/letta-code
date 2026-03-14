@@ -61,7 +61,7 @@ import {
 } from "../reminders/state";
 import { settingsManager } from "../settings-manager";
 import { isInteractiveApprovalTool } from "../tools/interactivePolicy";
-import { loadTools } from "../tools/manager";
+import { getToolNames, loadTools } from "../tools/manager";
 import type {
   AbortMessageCommand,
   CanUseToolResponse,
@@ -137,6 +137,12 @@ type InboundMessagePayload =
   | ApprovalCreate;
 
 type ServerMessage = WsProtocolCommand;
+type InvalidInputCommand = {
+  type: "__invalid_input";
+  runtime: RuntimeScope;
+  reason: string;
+};
+type ParsedServerMessage = ServerMessage | InvalidInputCommand;
 
 type PendingApprovalResolver = {
   resolve: (response: ControlResponseBody) => void;
@@ -184,6 +190,8 @@ type ListenerRuntime = {
   onWsEvent?: StartListenerOptions["onWsEvent"];
   /** Prevent duplicate concurrent pending-approval recovery passes. */
   isRecoveringApprovals: boolean;
+  /** Canonical loop phase for update_loop_status emission. */
+  loopStatus: LoopStatus;
   /**
    * Correlates pending approval tool_call_ids to the originating dequeued batch.
    * Used to preserve run attachment continuity across approval recovery.
@@ -397,6 +405,7 @@ function createRuntime(): ListenerRuntime {
     activeAbortController: null,
     cancelRequested: false,
     isRecoveringApprovals: false,
+    loopStatus: "WAITING_ON_INPUT",
     pendingApprovalBatchByToolCallId: new Map<string, string>(),
     pendingInterruptedResults: null,
     pendingInterruptedContext: null,
@@ -715,6 +724,7 @@ function stopRuntime(
   runtime.pendingInterruptedContext = null;
   runtime.pendingInterruptedToolCallIds = null;
   runtime.activeExecutingToolCallIds = [];
+  runtime.loopStatus = "WAITING_ON_INPUT";
   runtime.continuationEpoch++;
 
   if (!runtime.socket) {
@@ -797,6 +807,58 @@ function isInputCommand(value: unknown): value is InputCommand {
   return false;
 }
 
+function getInvalidInputReason(value: unknown): {
+  runtime: RuntimeScope;
+  reason: string;
+} | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const candidate = value as {
+    type?: unknown;
+    runtime?: unknown;
+    payload?: unknown;
+  };
+  if (candidate.type !== "input" || !isRuntimeScope(candidate.runtime)) {
+    return null;
+  }
+  if (!candidate.payload || typeof candidate.payload !== "object") {
+    return {
+      runtime: candidate.runtime,
+      reason: "Protocol violation: input.payload must be an object",
+    };
+  }
+  const payload = candidate.payload as {
+    kind?: unknown;
+    messages?: unknown;
+    response?: unknown;
+  };
+  if (payload.kind === "create_message") {
+    if (!Array.isArray(payload.messages)) {
+      return {
+        runtime: candidate.runtime,
+        reason:
+          "Protocol violation: input.kind=create_message requires payload.messages[]",
+      };
+    }
+    return null;
+  }
+  if (payload.kind === "approval_response") {
+    if (!isValidControlResponseBody(payload.response)) {
+      return {
+        runtime: candidate.runtime,
+        reason:
+          "Protocol violation: input.kind=approval_response requires payload.response with subtype and request_id",
+      };
+    }
+    return null;
+  }
+  return {
+    runtime: candidate.runtime,
+    reason: `Unsupported input payload kind: ${String(payload.kind)}`,
+  };
+}
+
 function isChangeDeviceStateCommand(
   value: unknown,
 ): value is ChangeDeviceStateCommand {
@@ -865,7 +927,7 @@ function isAbortMessageCommand(value: unknown): value is AbortMessageCommand {
 
 export function parseServerMessage(
   data: WebSocket.RawData,
-): ServerMessage | null {
+): ParsedServerMessage | null {
   try {
     const raw = typeof data === "string" ? data : data.toString();
     const parsed = JSON.parse(raw) as unknown;
@@ -875,6 +937,14 @@ export function parseServerMessage(
       isAbortMessageCommand(parsed)
     ) {
       return parsed;
+    }
+    const invalidInput = getInvalidInputReason(parsed);
+    if (invalidInput) {
+      return {
+        type: "__invalid_input",
+        runtime: invalidInput.runtime,
+        reason: invalidInput.reason,
+      };
     }
     return null;
   } catch {
@@ -1222,9 +1292,37 @@ function buildDeviceStatus(
   const scopedConversationId = normalizeConversationId(
     runtimeScope.conversation_id,
   );
+  const toolsetPreference = (() => {
+    if (!scopedAgentId) {
+      return "auto" as const;
+    }
+    try {
+      return settingsManager.getToolsetPreference(scopedAgentId);
+    } catch {
+      // Tests and early boot can query status before settings are initialized.
+      return "auto" as const;
+    }
+  })();
+  const pendingControlRequests = Array.from(
+    runtime.pendingApprovalResolvers.values(),
+  )
+    .map((pending) => pending.controlRequest)
+    .filter(
+      (
+        request,
+      ): request is NonNullable<PendingApprovalResolver["controlRequest"]> =>
+        !!request,
+    )
+    .map((request) => ({
+      request_id: request.request_id,
+      request: request.request,
+    }));
 
   return {
     current_connection_id: runtime.connectionId,
+    connection_name: runtime.connectionName,
+    is_online: runtime.socket?.readyState === WebSocket.OPEN,
+    is_processing: runtime.isProcessing,
     current_permission_mode: permissionMode.getMode(),
     current_working_directory: getConversationWorkingDirectory(
       runtime,
@@ -1232,28 +1330,18 @@ function buildDeviceStatus(
       scopedConversationId,
     ),
     letta_code_version: process.env.npm_package_version || null,
-    current_toolset: null,
-    current_toolset_preference: "auto",
-    current_loaded_tools: [],
+    current_toolset: toolsetPreference === "auto" ? null : toolsetPreference,
+    current_toolset_preference: toolsetPreference,
+    current_loaded_tools: getToolNames(),
     current_available_skills: [],
     background_processes: [],
+    pending_control_requests: pendingControlRequests,
   };
 }
 
 function buildLoopStatus(runtime: ListenerRuntime): LoopState {
-  let status: LoopStatus = "WAITING_ON_INPUT";
-  if (runtime.pendingApprovalResolvers.size > 0) {
-    status = "WAITING_ON_APPROVAL";
-  } else if (runtime.activeExecutingToolCallIds.length > 0) {
-    status = "EXECUTING_CLIENT_SIDE_TOOL";
-  } else if (runtime.isRecoveringApprovals) {
-    status = "RETRYING_API_REQUEST";
-  } else if (runtime.isProcessing) {
-    status = "PROCESSING_API_RESPONSE";
-  }
-
   return {
-    status,
+    status: runtime.loopStatus,
     queue: runtime.queueRuntime.items.map((item) => ({
       id: item.id,
       client_message_id: item.clientMessageId ?? `cm-${item.id}`,
@@ -1264,6 +1352,21 @@ function buildLoopStatus(runtime: ListenerRuntime): LoopState {
     })),
     active_run_ids: runtime.activeRunId ? [runtime.activeRunId] : [],
   };
+}
+
+function setLoopStatus(
+  runtime: ListenerRuntime,
+  status: LoopStatus,
+  scope?: {
+    agent_id?: string | null;
+    conversation_id?: string | null;
+  },
+): void {
+  if (runtime.loopStatus === status) {
+    return;
+  }
+  runtime.loopStatus = status;
+  emitLoopStatusIfOpen(runtime, scope);
 }
 
 function emitProtocolV2Message(
@@ -2192,6 +2295,11 @@ async function sendMessageStreamWithRetry(
     if (abortSignal?.aborted) {
       throw new Error("Cancelled by user");
     }
+    runtime.isRecoveringApprovals = false;
+    setLoopStatus(runtime, "WAITING_FOR_API_RESPONSE", {
+      agent_id: runtime.activeAgentId,
+      conversation_id: conversationId,
+    });
 
     try {
       return await sendMessageStream(
@@ -2223,6 +2331,11 @@ async function sendMessageStreamWithRetry(
       );
 
       if (action === "resolve_approval_pending") {
+        runtime.isRecoveringApprovals = true;
+        setLoopStatus(runtime, "RETRYING_API_REQUEST", {
+          agent_id: runtime.activeAgentId,
+          conversation_id: conversationId,
+        });
         // Abort check first — don't let recovery mask a user cancel
         if (abortSignal?.aborted) throw new Error("Cancelled by user");
 
@@ -2251,6 +2364,11 @@ async function sendMessageStreamWithRetry(
       }
 
       if (action === "retry_transient") {
+        runtime.isRecoveringApprovals = true;
+        setLoopStatus(runtime, "RETRYING_API_REQUEST", {
+          agent_id: runtime.activeAgentId,
+          conversation_id: conversationId,
+        });
         const attempt = transientRetries + 1;
         const retryAfterMs =
           preStreamError instanceof APIError
@@ -2286,6 +2404,11 @@ async function sendMessageStreamWithRetry(
       }
 
       if (action === "retry_conversation_busy") {
+        runtime.isRecoveringApprovals = true;
+        setLoopStatus(runtime, "RETRYING_API_REQUEST", {
+          agent_id: runtime.activeAgentId,
+          conversation_id: conversationId,
+        });
         // TODO: Add pre-stream resume logic for parity with App.tsx.
         // Before waiting, attempt to discover the in-flight run via
         // discoverFallbackRunIdWithTimeout() and resume its stream with
@@ -2340,6 +2463,12 @@ export function resolvePendingApprovalResolver(
   }
 
   runtime.pendingApprovalResolvers.delete(requestId);
+  if (runtime.pendingApprovalResolvers.size === 0) {
+    setLoopStatus(
+      runtime,
+      runtime.isProcessing ? "PROCESSING_API_RESPONSE" : "WAITING_ON_INPUT",
+    );
+  }
   pending.resolve(response);
   emitLoopStatusIfOpen(runtime);
   emitDeviceStatusIfOpen(runtime);
@@ -2354,6 +2483,10 @@ export function rejectPendingApprovalResolvers(
     pending.reject(new Error(reason));
   }
   runtime.pendingApprovalResolvers.clear();
+  setLoopStatus(
+    runtime,
+    runtime.isProcessing ? "PROCESSING_API_RESPONSE" : "WAITING_ON_INPUT",
+  );
   emitLoopStatusIfOpen(runtime);
   emitDeviceStatusIfOpen(runtime);
 }
@@ -2374,12 +2507,19 @@ export function requestApprovalOverWS(
       reject,
       controlRequest,
     });
+    setLoopStatus(runtime, "WAITING_ON_APPROVAL");
     emitLoopStatusIfOpen(runtime);
     emitDeviceStatusIfOpen(runtime);
     try {
       sendControlMessageOverWebSocket(socket, controlRequest, runtime);
     } catch (error) {
       runtime.pendingApprovalResolvers.delete(requestId);
+      if (runtime.pendingApprovalResolvers.size === 0) {
+        setLoopStatus(
+          runtime,
+          runtime.isProcessing ? "PROCESSING_API_RESPONSE" : "WAITING_ON_INPUT",
+        );
+      }
       emitLoopStatusIfOpen(runtime);
       emitDeviceStatusIfOpen(runtime);
       reject(error instanceof Error ? error : new Error(String(error)));
@@ -2492,7 +2632,7 @@ async function connectWithRetry(
     }, 30000);
   });
 
-  socket.on("message", (data: WebSocket.RawData) => {
+  socket.on("message", async (data: WebSocket.RawData) => {
     const raw = data.toString();
     const parsed = parseServerMessage(data);
     if (parsed) {
@@ -2511,6 +2651,20 @@ async function connectWithRetry(
     }
 
     if (!parsed) {
+      return;
+    }
+
+    if (parsed.type === "__invalid_input") {
+      emitStreamDelta(
+        socket,
+        runtime,
+        {
+          type: "error",
+          message: parsed.reason,
+          stop_reason: "error",
+        } as unknown as StreamDelta,
+        parsed.runtime,
+      );
       return;
     }
 
@@ -2630,21 +2784,37 @@ async function connectWithRetry(
           parsed.runtime.conversation_id ??
           undefined,
       };
-      if (parsed.payload.mode) {
-        handleModeChange({ mode: parsed.payload.mode }, socket, runtime, scope);
+      const shouldTrackCommand =
+        !runtime.isProcessing && runtime.pendingApprovalResolvers.size === 0;
+      if (shouldTrackCommand) {
+        setLoopStatus(runtime, "EXECUTING_COMMAND", scope);
       }
-      if (parsed.payload.cwd) {
-        void handleCwdChange(
-          {
-            agentId: scope.agent_id ?? null,
-            conversationId: scope.conversation_id ?? null,
-            cwd: parsed.payload.cwd,
-          },
-          socket,
-          runtime,
-        );
-      } else if (!parsed.payload.mode) {
-        emitDeviceStatusUpdate(socket, runtime, scope);
+      try {
+        if (parsed.payload.mode) {
+          handleModeChange(
+            { mode: parsed.payload.mode },
+            socket,
+            runtime,
+            scope,
+          );
+        }
+        if (parsed.payload.cwd) {
+          await handleCwdChange(
+            {
+              agentId: scope.agent_id ?? null,
+              conversationId: scope.conversation_id ?? null,
+              cwd: parsed.payload.cwd,
+            },
+            socket,
+            runtime,
+          );
+        } else if (!parsed.payload.mode) {
+          emitDeviceStatusUpdate(socket, runtime, scope);
+        }
+      } finally {
+        if (shouldTrackCommand) {
+          setLoopStatus(runtime, "WAITING_ON_INPUT", scope);
+        }
       }
       return;
     }
@@ -2852,6 +3022,10 @@ async function handleIncomingMessage(
   runtime.activeRunId = null;
   runtime.activeRunStartedAt = new Date().toISOString();
   runtime.activeExecutingToolCallIds = [];
+  setLoopStatus(runtime, "SENDING_API_REQUEST", {
+    agent_id: agentId ?? null,
+    conversation_id: conversationId,
+  });
   emitRuntimeStateUpdates(runtime, {
     agent_id: agentId ?? null,
     conversation_id: conversationId,
@@ -2860,6 +3034,7 @@ async function handleIncomingMessage(
   try {
     if (!agentId) {
       runtime.isProcessing = false;
+      setLoopStatus(runtime, "WAITING_ON_INPUT");
       clearActiveRunState(runtime);
       emitRuntimeStateUpdates(runtime);
       return;
@@ -2942,6 +3117,10 @@ async function handleIncomingMessage(
       runtime,
       runtime.activeAbortController.signal,
     );
+    setLoopStatus(runtime, "PROCESSING_API_RESPONSE", {
+      agent_id: agentId,
+      conversation_id: conversationId,
+    });
 
     turnToolContextId = getStreamToolContextId(
       stream as Stream<LettaStreamingResponse>,
@@ -3027,6 +3206,10 @@ async function handleIncomingMessage(
       if (stopReason === "end_turn") {
         runtime.lastStopReason = "end_turn";
         runtime.isProcessing = false;
+        setLoopStatus(runtime, "WAITING_ON_INPUT", {
+          agent_id: agentId,
+          conversation_id: conversationId,
+        });
         clearActiveRunState(runtime);
         emitRuntimeStateUpdates(runtime, {
           agent_id: agentId,
@@ -3048,6 +3231,10 @@ async function handleIncomingMessage(
       if (stopReason === "cancelled") {
         runtime.lastStopReason = "cancelled";
         runtime.isProcessing = false;
+        setLoopStatus(runtime, "WAITING_ON_INPUT", {
+          agent_id: agentId,
+          conversation_id: conversationId,
+        });
         clearActiveRunState(runtime);
         emitRuntimeStateUpdates(runtime, {
           agent_id: agentId,
@@ -3113,6 +3300,10 @@ async function handleIncomingMessage(
             currentInput = rebuildInputWithFreshDenials(currentInput, [], "");
           }
 
+          setLoopStatus(runtime, "SENDING_API_REQUEST", {
+            agent_id: agentId,
+            conversation_id: conversationId,
+          });
           stream = await sendMessageStreamWithRetry(
             conversationId,
             currentInput,
@@ -3121,6 +3312,10 @@ async function handleIncomingMessage(
             runtime,
             runtime.activeAbortController.signal,
           );
+          setLoopStatus(runtime, "PROCESSING_API_RESPONSE", {
+            agent_id: agentId,
+            conversation_id: conversationId,
+          });
           turnToolContextId = getStreamToolContextId(
             stream as Stream<LettaStreamingResponse>,
           );
@@ -3140,6 +3335,10 @@ async function handleIncomingMessage(
         if (effectiveStopReason === "cancelled") {
           runtime.lastStopReason = "cancelled";
           runtime.isProcessing = false;
+          setLoopStatus(runtime, "WAITING_ON_INPUT", {
+            agent_id: agentId,
+            conversation_id: conversationId,
+          });
           clearActiveRunState(runtime);
           emitRuntimeStateUpdates(runtime, {
             agent_id: agentId,
@@ -3160,6 +3359,10 @@ async function handleIncomingMessage(
 
         runtime.lastStopReason = effectiveStopReason;
         runtime.isProcessing = false;
+        setLoopStatus(runtime, "WAITING_ON_INPUT", {
+          agent_id: agentId,
+          conversation_id: conversationId,
+        });
         clearActiveRunState(runtime);
         emitRuntimeStateUpdates(runtime, {
           agent_id: agentId,
@@ -3196,6 +3399,10 @@ async function handleIncomingMessage(
         // Unexpected: requires_approval but no approvals
         runtime.lastStopReason = "error";
         runtime.isProcessing = false;
+        setLoopStatus(runtime, "WAITING_ON_INPUT", {
+          agent_id: agentId,
+          conversation_id: conversationId,
+        });
         clearActiveRunState(runtime);
         emitRuntimeStateUpdates(runtime, {
           agent_id: agentId,
@@ -3301,6 +3508,10 @@ async function handleIncomingMessage(
       // Handle tools that need user input
       if (needsUserInput.length > 0) {
         runtime.lastStopReason = "requires_approval";
+        setLoopStatus(runtime, "WAITING_ON_APPROVAL", {
+          agent_id: agentId,
+          conversation_id: conversationId,
+        });
 
         // Block in-loop via the control protocol for all device approvals.
         for (const ac of needsUserInput) {
@@ -3442,6 +3653,10 @@ async function handleIncomingMessage(
         )
         .map((decision) => decision.approval.toolCallId);
       runtime.activeExecutingToolCallIds = [...lastExecutingToolCallIds];
+      setLoopStatus(runtime, "EXECUTING_CLIENT_SIDE_TOOL", {
+        agent_id: agentId,
+        conversation_id: conversationId,
+      });
       emitRuntimeStateUpdates(runtime, {
         agent_id: agentId,
         conversation_id: conversationId,
@@ -3502,6 +3717,10 @@ async function handleIncomingMessage(
           approvals: persistedExecutionResults,
         },
       ];
+      setLoopStatus(runtime, "SENDING_API_REQUEST", {
+        agent_id: agentId,
+        conversation_id: conversationId,
+      });
       stream = await sendMessageStreamWithRetry(
         conversationId,
         currentInput,
@@ -3510,6 +3729,10 @@ async function handleIncomingMessage(
         runtime,
         runtime.activeAbortController.signal,
       );
+      setLoopStatus(runtime, "PROCESSING_API_RESPONSE", {
+        agent_id: agentId,
+        conversation_id: conversationId,
+      });
 
       // Results were successfully submitted to the backend — clear both so a
       // cancel during the subsequent stream drain won't queue already-sent
@@ -3559,6 +3782,10 @@ async function handleIncomingMessage(
 
       runtime.lastStopReason = "cancelled";
       runtime.isProcessing = false;
+      setLoopStatus(runtime, "WAITING_ON_INPUT", {
+        agent_id: agentId || null,
+        conversation_id: conversationId,
+      });
       clearActiveRunState(runtime);
       emitRuntimeStateUpdates(runtime, {
         agent_id: agentId || null,
@@ -3579,6 +3806,10 @@ async function handleIncomingMessage(
 
     runtime.lastStopReason = "error";
     runtime.isProcessing = false;
+    setLoopStatus(runtime, "WAITING_ON_INPUT", {
+      agent_id: agentId || null,
+      conversation_id: conversationId,
+    });
     clearActiveRunState(runtime);
     emitRuntimeStateUpdates(runtime, {
       agent_id: agentId || null,
@@ -3641,7 +3872,9 @@ async function handleIncomingMessage(
   } finally {
     runtime.activeAbortController = null;
     runtime.cancelRequested = false;
+    runtime.isRecoveringApprovals = false;
     runtime.activeExecutingToolCallIds = [];
+    setLoopStatus(runtime, "WAITING_ON_INPUT");
     emitRuntimeStateUpdates(runtime);
   }
 }
