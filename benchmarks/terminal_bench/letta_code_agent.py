@@ -27,6 +27,12 @@ _PROVIDER_SYSTEM_MAP = {
 }
 _DEFAULT_SYSTEM = "source-claude"
 
+# Map Letta Code model handles to litellm model names for cost calculation.
+_LITELLM_MODEL_MAP: dict[str, str] = {
+    "sonnet-4.6-xhigh": "anthropic/claude-sonnet-4-6",
+    "gpt-5.3-codex-xhigh": "openai/gpt-5.3-codex",
+}
+
 
 class LettaCode(BaseInstalledAgent):
     """Run Letta Code CLI inside a harbor environment."""
@@ -194,9 +200,10 @@ class LettaCode(BaseInstalledAgent):
 
     def _populate_usage(self, events_text: str, context: AgentContext) -> None:
         """Extract usage from events and populate context + write usage.json."""
-        model_name = self.model_name or os.environ.get("LETTA_MODEL", "").strip()
+        raw_model = self.model_name or os.environ.get("LETTA_MODEL", "").strip()
+        litellm_model = _LITELLM_MODEL_MAP.get(raw_model, raw_model)
         usage = self._extract_usage_from_events(events_text)
-        cost = self._calculate_cost(model_name, usage)
+        cost = self._calculate_cost(litellm_model, usage)
 
         context.n_input_tokens = usage["prompt_tokens"] or None
         context.n_output_tokens = usage["completion_tokens"] or None
