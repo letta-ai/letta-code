@@ -157,6 +157,7 @@ export async function resolveSubagentModel(options: {
 }): Promise<string | null> {
   const { userModel, recommendedModel, parentModelHandle, billingTier } =
     options;
+  const isFreeTier = billingTier?.toLowerCase() === "free";
 
   if (userModel) return userModel;
 
@@ -179,16 +180,17 @@ export async function resolveSubagentModel(options: {
   };
 
   // Free-tier default for subagents: auto-fast, when available.
-  const freeTierDefaultHandle =
-    billingTier?.toLowerCase() === "free" ? resolveModel("auto-fast") : null;
+  const freeTierDefaultHandle = isFreeTier ? resolveModel("auto-fast") : null;
   if (freeTierDefaultHandle && (await isAvailable(freeTierDefaultHandle))) {
     return freeTierDefaultHandle;
   }
 
-  // Global default for subagents: auto, when available.
-  const defaultHandle = getDefaultModelForTier(billingTier);
-  if (defaultHandle && (await isAvailable(defaultHandle))) {
-    return defaultHandle;
+  // Free-tier fallback default: auto, when available.
+  if (isFreeTier) {
+    const defaultHandle = getDefaultModelForTier(billingTier);
+    if (defaultHandle && (await isAvailable(defaultHandle))) {
+      return defaultHandle;
+    }
   }
 
   if (parentModelHandle) {
@@ -229,6 +231,12 @@ export async function resolveSubagentModel(options: {
 
   if (recommendedHandle && (await isAvailable(recommendedHandle))) {
     return recommendedHandle;
+  }
+
+  // Non-free fallback default: auto, when available.
+  const defaultHandle = getDefaultModelForTier(billingTier);
+  if (defaultHandle && (await isAvailable(defaultHandle))) {
+    return defaultHandle;
   }
 
   return recommendedHandle;
