@@ -17,12 +17,17 @@ import type {
 } from "../tools/impl/process_manager";
 import type { ToolsetName, ToolsetPreference } from "../tools/toolset";
 import type {
+  CanUseToolResponse,
   ControlRequest,
   ControlResponse,
+  ControlResponseBody,
   ErrorMessage,
   MessageWire,
+  QueueLifecycleEvent,
   QueueRuntimeItemWire,
+  ResultSubtype,
   RetryMessage,
+  StopReasonType,
   ToolExecutionFinishedMessage,
   ToolExecutionStartedMessage,
 } from "./protocol";
@@ -53,7 +58,6 @@ export interface RuntimeEnvelope {
 }
 
 type ProtocolEnvelopeKeys =
-  | "type"
   | "session_id"
   | "uuid"
   | "event_seq"
@@ -182,6 +186,8 @@ export type RuntimeErrorPrintDelta = ProtocolPayload<ErrorMessage> & {
   is_terminal: boolean;
 };
 
+export type QueueLifecycleDelta = ProtocolPayload<QueueLifecycleEvent>;
+
 export interface StatusPrintDelta {
   message: string;
   level: "info" | "success" | "warning";
@@ -206,6 +212,7 @@ export type StreamDelta =
   | CommandCompleteDelta
   | RetryNoticeDelta
   | RuntimeErrorPrintDelta
+  | QueueLifecycleDelta
   | StatusPrintDelta
   | UnknownDelta;
 
@@ -217,18 +224,44 @@ export interface StreamDeltaMessage extends RuntimeEnvelope {
 /**
  * Controller -> execution-environment commands.
  * In v2, the WS server accepts only:
- * - send_message (create message payload)
+ * - input (chat-loop ingress envelope)
+ * - change_device_state (device runtime mutation)
  * - abort_message (abort request)
  */
-export interface SendMessageCommand {
-  type: "send_message";
+export interface InputCreateMessagePayload {
+  kind: "create_message";
+  messages: Array<
+    (MessageCreate & { client_message_id?: string }) | ApprovalCreate
+  >;
+  supports_control_response?: boolean;
+}
+
+export interface InputApprovalResponsePayload {
+  kind: "approval_response";
+  response: ControlResponseBody;
+}
+
+export type InputPayload =
+  | InputCreateMessagePayload
+  | InputApprovalResponsePayload;
+
+export interface InputCommand {
+  type: "input";
   runtime: RuntimeScope;
-  payload: {
-    messages: Array<
-      (MessageCreate & { client_message_id?: string }) | ApprovalCreate
-    >;
-    supports_control_response?: boolean;
-  };
+  payload: InputPayload;
+}
+
+export interface ChangeDeviceStatePayload {
+  mode?: DevicePermissionMode;
+  cwd?: string;
+  agent_id?: string | null;
+  conversation_id?: string | null;
+}
+
+export interface ChangeDeviceStateCommand {
+  type: "change_device_state";
+  runtime: RuntimeScope;
+  payload: ChangeDeviceStatePayload;
 }
 
 export interface AbortMessageCommand {
@@ -238,9 +271,20 @@ export interface AbortMessageCommand {
   run_id?: string | null;
 }
 
-export type WsProtocolCommand = SendMessageCommand | AbortMessageCommand;
+export type WsProtocolCommand =
+  | InputCommand
+  | ChangeDeviceStateCommand
+  | AbortMessageCommand;
 
 export type WsProtocolMessage =
   | DeviceStatusUpdateMessage
   | LoopStatusUpdateMessage
   | StreamDeltaMessage;
+
+export type {
+  CanUseToolResponse,
+  ControlRequest,
+  ControlResponseBody,
+  ResultSubtype,
+  StopReasonType,
+};

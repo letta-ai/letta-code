@@ -67,49 +67,71 @@ function makeSuccessResponse(requestId: string): ControlResponseBody {
 }
 
 describe("listen-client parseServerMessage", () => {
-  test("parses valid control_response with required fields", () => {
+  test("parses valid input approval_response command", () => {
     const parsed = parseServerMessage(
       Buffer.from(
         JSON.stringify({
-          type: "control_response",
-          response: { subtype: "success", request_id: "perm-1" },
+          type: "input",
+          runtime: { agent_id: "agent-1", conversation_id: "default" },
+          payload: {
+            kind: "approval_response",
+            response: { subtype: "success", request_id: "perm-1" },
+          },
         }),
       ),
     );
     expect(parsed).not.toBeNull();
-    expect(parsed?.type).toBe("control_response");
+    expect(parsed?.type).toBe("input");
   });
 
-  test("rejects invalid control_response payloads", () => {
+  test("rejects invalid input approval_response payloads", () => {
     const missingResponse = parseServerMessage(
-      Buffer.from(JSON.stringify({ type: "control_response" })),
+      Buffer.from(
+        JSON.stringify({
+          type: "input",
+          runtime: { agent_id: "agent-1", conversation_id: "default" },
+          payload: { kind: "approval_response" },
+        }),
+      ),
     );
     expect(missingResponse).toBeNull();
 
     const missingRequestId = parseServerMessage(
       Buffer.from(
         JSON.stringify({
-          type: "control_response",
-          response: { subtype: "success" },
+          type: "input",
+          runtime: { agent_id: "agent-1", conversation_id: "default" },
+          payload: {
+            kind: "approval_response",
+            response: { subtype: "success" },
+          },
         }),
       ),
     );
     expect(missingRequestId).toBeNull();
   });
 
-  test("keeps backward compatibility for message, pong, mode_change", () => {
+  test("accepts input create_message and change_device_state", () => {
     const msg = parseServerMessage(
-      Buffer.from(JSON.stringify({ type: "message", messages: [] })),
+      Buffer.from(
+        JSON.stringify({
+          type: "input",
+          runtime: { agent_id: "agent-1", conversation_id: "default" },
+          payload: { kind: "create_message", messages: [] },
+        }),
+      ),
     );
-    const pong = parseServerMessage(
-      Buffer.from(JSON.stringify({ type: "pong" })),
+    const changeDeviceState = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "change_device_state",
+          runtime: { agent_id: "agent-1", conversation_id: "default" },
+          payload: { mode: "default" },
+        }),
+      ),
     );
-    const modeChange = parseServerMessage(
-      Buffer.from(JSON.stringify({ type: "mode_change", mode: "default" })),
-    );
-    expect(msg?.type).toBe("message");
-    expect(pong?.type).toBe("pong");
-    expect(modeChange?.type).toBe("mode_change");
+    expect(msg?.type).toBe("input");
+    expect(changeDeviceState?.type).toBe("change_device_state");
   });
 
   test("parses abort_message as the canonical abort command", () => {
@@ -117,6 +139,7 @@ describe("listen-client parseServerMessage", () => {
       Buffer.from(
         JSON.stringify({
           type: "abort_message",
+          runtime: { agent_id: "agent-1", conversation_id: "default" },
           request_id: "abort-1",
           run_id: "run-1",
         }),
@@ -272,7 +295,7 @@ describe("listen-client requestApprovalOverWS", () => {
 });
 
 describe("listen-client conversation-scoped protocol events", () => {
-  test("queue lifecycle events carry agent_id and conversation_id from the queued item", () => {
+  test("queue lifecycle events are emitted as stream_delta with runtime scope", () => {
     const runtime = __listenClientTestUtils.createRuntime();
     const socket = new MockSocket(WebSocket.OPEN);
     runtime.socket = socket as unknown as WebSocket;
@@ -290,18 +313,29 @@ describe("listen-client conversation-scoped protocol events", () => {
 
     runtime.queueRuntime.tryDequeue("runtime_busy");
 
-    const enqueued = JSON.parse(socket.sentPayloads[0] as string);
-    expect(enqueued.type).toBe("queue_item_enqueued");
-    expect(enqueued.agent_id).toBe("agent-default");
-    expect(enqueued.conversation_id).toBe("default");
+    const outbound = socket.sentPayloads.map((payload) =>
+      JSON.parse(payload as string),
+    );
+    const enqueued = outbound.find(
+      (payload) =>
+        payload.type === "stream_delta" &&
+        payload.delta?.type === "queue_item_enqueued",
+    );
+    expect(enqueued).toBeDefined();
+    expect(enqueued.runtime.agent_id).toBe("agent-default");
+    expect(enqueued.runtime.conversation_id).toBe("default");
 
-    const blocked = JSON.parse(socket.sentPayloads[1] as string);
-    expect(blocked.type).toBe("queue_blocked");
-    expect(blocked.agent_id).toBe("agent-default");
-    expect(blocked.conversation_id).toBe("default");
+    const blocked = outbound.find(
+      (payload) =>
+        payload.type === "stream_delta" &&
+        payload.delta?.type === "queue_blocked",
+    );
+    expect(blocked).toBeDefined();
+    expect(blocked.runtime.agent_id).toBe("agent-default");
+    expect(blocked.runtime.conversation_id).toBe("default");
   });
 
-  test("cancel_ack includes agent_id and conversation_id", () => {
+  test("cancel_ack is projected through stream_delta with scoped runtime", () => {
     const runtime = __listenClientTestUtils.createRuntime();
     const socket = new MockSocket(WebSocket.OPEN);
     runtime.activeAgentId = "agent-123";
@@ -318,13 +352,14 @@ describe("listen-client conversation-scoped protocol events", () => {
     );
 
     const sent = JSON.parse(socket.sentPayloads[0] as string);
-    expect(sent.type).toBe("cancel_ack");
-    expect(sent.agent_id).toBe("agent-123");
-    expect(sent.conversation_id).toBe("default");
-    expect(sent.run_id).toBe("run-123");
+    expect(sent.type).toBe("stream_delta");
+    expect(sent.runtime.agent_id).toBe("agent-123");
+    expect(sent.runtime.conversation_id).toBe("default");
+    expect(sent.delta.type).toBe("cancel_ack");
+    expect(sent.delta.run_id).toBe("run-123");
   });
 
-  test("queue_batch_dequeued keeps the batch scope", () => {
+  test("queue_batch_dequeued keeps scope through stream_delta runtime envelope", () => {
     const runtime = __listenClientTestUtils.createRuntime();
     const socket = new MockSocket(WebSocket.OPEN);
     runtime.socket = socket as unknown as WebSocket;
@@ -339,42 +374,42 @@ describe("listen-client conversation-scoped protocol events", () => {
     };
 
     runtime.queueRuntime.enqueue(input);
-
     runtime.queueRuntime.tryDequeue(null);
 
-    const dequeued = JSON.parse(socket.sentPayloads[1] as string);
-    expect(dequeued.type).toBe("queue_batch_dequeued");
-    expect(dequeued.agent_id).toBe("agent-xyz");
-    expect(dequeued.conversation_id).toBe("conv-xyz");
+    const outbound = socket.sentPayloads.map((payload) =>
+      JSON.parse(payload as string),
+    );
+    const dequeued = outbound.find(
+      (payload) =>
+        payload.type === "stream_delta" &&
+        payload.delta?.type === "queue_batch_dequeued",
+    );
+    expect(dequeued).toBeDefined();
+    expect(dequeued.runtime.agent_id).toBe("agent-xyz");
+    expect(dequeued.runtime.conversation_id).toBe("conv-xyz");
   });
 });
 
-describe("listen-client state_response control protocol", () => {
-  test("always advertises control_response capability", () => {
+describe("listen-client v2 status builders", () => {
+  test("buildLoopStatus defaults to WAITING_ON_INPUT with no active run", () => {
     const runtime = __listenClientTestUtils.createRuntime();
-    const snapshot = __listenClientTestUtils.buildStateResponse(runtime, 1);
-    expect(snapshot.control_response_capable).toBe(true);
+    const loopStatus = __listenClientTestUtils.buildLoopStatus(runtime);
+    expect(loopStatus.status).toBe("WAITING_ON_INPUT");
+    expect(loopStatus.active_run_ids).toEqual([]);
+    expect(loopStatus.queue).toEqual([]);
   });
 
-  test("advertises tool lifecycle capability for device clients", () => {
+  test("buildDeviceStatus includes the effective working directory", () => {
     const runtime = __listenClientTestUtils.createRuntime();
-    const snapshot = __listenClientTestUtils.buildStateResponse(runtime, 2);
-    expect(snapshot.tool_lifecycle_capable).toBe(true);
+    const deviceStatus = __listenClientTestUtils.buildDeviceStatus(runtime);
+    expect(typeof deviceStatus.current_working_directory).toBe("string");
+    expect(
+      (deviceStatus.current_working_directory ?? "").length,
+    ).toBeGreaterThan(0);
+    expect(deviceStatus.current_toolset_preference).toBe("auto");
   });
 
-  test("includes the effective working directory", () => {
-    const runtime = __listenClientTestUtils.createRuntime();
-    const snapshot = __listenClientTestUtils.buildStateResponse(runtime, 1);
-
-    expect(typeof snapshot.cwd).toBe("string");
-    expect(snapshot.cwd.length).toBeGreaterThan(0);
-    expect(snapshot.configured_cwd).toBe(snapshot.cwd);
-    expect(snapshot.active_turn_cwd).toBeNull();
-    expect(snapshot.cwd_agent_id).toBeNull();
-    expect(snapshot.cwd_conversation_id).toBe("default");
-  });
-
-  test("scopes configured and active cwd to the requested agent and conversation", () => {
+  test("scopes working directory to requested agent and conversation", () => {
     const runtime = __listenClientTestUtils.createRuntime();
     __listenClientTestUtils.setConversationWorkingDirectory(
       runtime,
@@ -388,36 +423,23 @@ describe("listen-client state_response control protocol", () => {
       "default",
       "/repo/b",
     );
-    runtime.activeAgentId = "agent-a";
-    runtime.activeConversationId = "conv-a";
-    runtime.activeWorkingDirectory = "/repo/a";
 
-    const activeSnapshot = __listenClientTestUtils.buildStateResponse(
-      runtime,
-      2,
-      "agent-a",
-      "conv-a",
-    );
-    expect(activeSnapshot.configured_cwd).toBe("/repo/a");
-    expect(activeSnapshot.active_turn_cwd).toBe("/repo/a");
-    expect(activeSnapshot.cwd_agent_id).toBe("agent-a");
-    expect(activeSnapshot.cwd_conversation_id).toBe("conv-a");
+    const activeStatus = __listenClientTestUtils.buildDeviceStatus(runtime, {
+      agent_id: "agent-a",
+      conversation_id: "conv-a",
+    });
+    expect(activeStatus.current_working_directory).toBe("/repo/a");
 
-    const defaultSnapshot = __listenClientTestUtils.buildStateResponse(
-      runtime,
-      3,
-      "agent-b",
-      "default",
-    );
-    expect(defaultSnapshot.configured_cwd).toBe("/repo/b");
-    expect(defaultSnapshot.active_turn_cwd).toBeNull();
-    expect(defaultSnapshot.cwd_agent_id).toBe("agent-b");
-    expect(defaultSnapshot.cwd_conversation_id).toBe("default");
+    const defaultStatus = __listenClientTestUtils.buildDeviceStatus(runtime, {
+      agent_id: "agent-b",
+      conversation_id: "default",
+    });
+    expect(defaultStatus.current_working_directory).toBe("/repo/b");
   });
 });
 
 describe("listen-client cwd change handling", () => {
-  test("resolves relative cwd changes against the conversation cwd and preserves active turn cwd", async () => {
+  test("resolves relative cwd changes against the conversation cwd and emits update_device_status", async () => {
     const runtime = __listenClientTestUtils.createRuntime();
     const socket = new MockSocket(WebSocket.OPEN);
     const tempRoot = await mkdtemp(join(os.tmpdir(), "letta-listen-cwd-"));
@@ -442,7 +464,6 @@ describe("listen-client cwd change handling", () => {
 
       await __listenClientTestUtils.handleCwdChange(
         {
-          type: "change_cwd",
           agentId: "agent-1",
           conversationId: "conv-1",
           cwd: "../client",
@@ -459,28 +480,22 @@ describe("listen-client cwd change handling", () => {
         ),
       ).toBe(normalizedClientDir);
 
-      expect(socket.sentPayloads).toHaveLength(2);
-      const changed = JSON.parse(socket.sentPayloads[0] as string);
-      expect(changed.type).toBe("cwd_changed");
-      expect(changed.success).toBe(true);
-      expect(changed.agent_id).toBe("agent-1");
-      expect(changed.cwd).toBe(normalizedClientDir);
-      expect(changed.conversation_id).toBe("conv-1");
-
-      const snapshot = JSON.parse(socket.sentPayloads[1] as string);
-      expect(snapshot.type).toBe("state_response");
-      expect(snapshot.configured_cwd).toBe(normalizedClientDir);
-      expect(snapshot.active_turn_cwd).toBe(normalizedServerDir);
-      expect(snapshot.cwd_agent_id).toBe("agent-1");
-      expect(snapshot.cwd_conversation_id).toBe("conv-1");
+      expect(socket.sentPayloads).toHaveLength(1);
+      const updated = JSON.parse(socket.sentPayloads[0] as string);
+      expect(updated.type).toBe("update_device_status");
+      expect(updated.runtime.agent_id).toBe("agent-1");
+      expect(updated.runtime.conversation_id).toBe("conv-1");
+      expect(updated.device_status.current_working_directory).toBe(
+        normalizedClientDir,
+      );
     } finally {
       await rm(tempRoot, { recursive: true, force: true });
     }
   });
 });
 
-describe("listen-client state_response pending interrupt snapshot", () => {
-  test("includes queued interrupted tool returns for refresh hydration", () => {
+describe("listen-client interrupt queue projection", () => {
+  test("consumes queued interrupted tool returns with tool ids", () => {
     const runtime = __listenClientTestUtils.createRuntime();
 
     __listenClientTestUtils.populateInterruptQueue(runtime, {
@@ -491,23 +506,31 @@ describe("listen-client state_response pending interrupt snapshot", () => {
       conversationId: "conv-1",
     });
 
-    const snapshot = __listenClientTestUtils.buildStateResponse(runtime, 17);
-
-    expect(snapshot.pending_interrupt).toEqual({
-      agent_id: "agent-1",
-      conversation_id: "conv-1",
-      interrupted_tool_call_ids: ["call-running-1"],
-      tool_returns: [
-        {
-          tool_call_id: "call-running-1",
-          status: "error",
-          tool_return: INTERRUPTED_BY_USER,
-        },
-      ],
-    });
+    const consumed = __listenClientTestUtils.consumeInterruptQueue(
+      runtime,
+      "agent-1",
+      "conv-1",
+    );
+    expect(consumed).not.toBeNull();
+    expect(consumed?.interruptedToolCallIds).toEqual(["call-running-1"]);
+    expect(consumed?.approvalMessage.approvals).toEqual([
+      {
+        type: "tool",
+        tool_call_id: "call-running-1",
+        status: "error",
+        tool_return: INTERRUPTED_BY_USER,
+      },
+    ]);
+    expect(
+      __listenClientTestUtils.consumeInterruptQueue(
+        runtime,
+        "agent-1",
+        "conv-1",
+      ),
+    ).toBeNull();
   });
 
-  test("does not expose pending approval denials as interrupted tool state", () => {
+  test("approval-denial fallback does not set interrupted tool ids", () => {
     const runtime = __listenClientTestUtils.createRuntime();
 
     __listenClientTestUtils.populateInterruptQueue(runtime, {
@@ -518,9 +541,18 @@ describe("listen-client state_response pending interrupt snapshot", () => {
       conversationId: "conv-1",
     });
 
-    const snapshot = __listenClientTestUtils.buildStateResponse(runtime, 18);
-
-    expect(snapshot.pending_interrupt).toBeNull();
+    const consumed = __listenClientTestUtils.consumeInterruptQueue(
+      runtime,
+      "agent-1",
+      "conv-1",
+    );
+    expect(consumed).not.toBeNull();
+    expect(consumed?.interruptedToolCallIds).toEqual([]);
+    expect(consumed?.approvalMessage.approvals[0]).toMatchObject({
+      type: "approval",
+      tool_call_id: "call-awaiting-approval",
+      approve: false,
+    });
   });
 });
 
@@ -634,9 +666,10 @@ describe("listen-client capability-gated approval flow", () => {
 
     expect(socket.sentPayloads).toHaveLength(1);
     const sent = JSON.parse(socket.sentPayloads[0] as string);
-    expect(sent.type).toBe("control_request");
-    expect(sent.request_id).toBe(requestId);
-    expect(sent.request.subtype).toBe("can_use_tool");
+    expect(sent.type).toBe("stream_delta");
+    expect(sent.delta.type).toBe("control_request");
+    expect(sent.delta.request_id).toBe(requestId);
+    expect(sent.delta.request.subtype).toBe("can_use_tool");
 
     // Cleanup
     rejectPendingApprovalResolvers(runtime, "test cleanup");
@@ -717,7 +750,8 @@ describe("listen-client approval recovery batch correlation", () => {
 });
 
 describe("listen-client emitToWS adapter", () => {
-  test("sends event when socket is OPEN", () => {
+  test("sends stream_delta when socket is OPEN", () => {
+    const runtime = __listenClientTestUtils.createRuntime();
     const socket = new MockSocket(WebSocket.OPEN);
     const event = {
       type: "error" as const,
@@ -727,16 +761,21 @@ describe("listen-client emitToWS adapter", () => {
       uuid: "test-uuid",
     };
 
-    __listenClientTestUtils.emitToWS(socket as unknown as WebSocket, event);
+    __listenClientTestUtils.emitToWS(
+      socket as unknown as WebSocket,
+      event,
+      runtime,
+    );
 
     expect(socket.sentPayloads).toHaveLength(1);
     const sent = JSON.parse(socket.sentPayloads[0] as string);
-    expect(sent.type).toBe("error");
-    expect(sent.message).toBe("test error");
-    expect(sent.session_id).toBe("listen-test");
+    expect(sent.type).toBe("stream_delta");
+    expect(sent.delta.type).toBe("error");
+    expect(sent.delta.message).toBe("test error");
   });
 
   test("does not send when socket is CLOSED", () => {
+    const runtime = __listenClientTestUtils.createRuntime();
     const socket = new MockSocket(WebSocket.CLOSED);
     const event = {
       type: "error" as const,
@@ -746,112 +785,23 @@ describe("listen-client emitToWS adapter", () => {
       uuid: "test-uuid",
     };
 
-    __listenClientTestUtils.emitToWS(socket as unknown as WebSocket, event);
+    __listenClientTestUtils.emitToWS(
+      socket as unknown as WebSocket,
+      event,
+      runtime,
+    );
 
     expect(socket.sentPayloads).toHaveLength(0);
-  });
-
-  test("emits RecoveryMessage with recovery_type", () => {
-    const socket = new MockSocket(WebSocket.OPEN);
-    const event: Parameters<typeof __listenClientTestUtils.emitToWS>[1] = {
-      type: "recovery",
-      recovery_type: "approval_pending",
-      message: "Detected pending approval conflict",
-      session_id: "listen-abc",
-      uuid: "recovery-123",
-    };
-
-    __listenClientTestUtils.emitToWS(socket as unknown as WebSocket, event);
-
-    expect(socket.sentPayloads).toHaveLength(1);
-    const sent = JSON.parse(socket.sentPayloads[0] as string);
-    expect(sent.type).toBe("recovery");
-    expect(sent.recovery_type).toBe("approval_pending");
-    expect(sent.session_id).toBe("listen-abc");
-  });
-
-  test("emits AutoApprovalMessage with tool_call shape", () => {
-    const socket = new MockSocket(WebSocket.OPEN);
-    const event = {
-      type: "auto_approval" as const,
-      tool_call: {
-        name: "Write",
-        tool_call_id: "call-123",
-        arguments: '{"file_path": "/test.ts"}',
-      },
-      reason: "auto-approved",
-      matched_rule: "auto-approved",
-      session_id: "listen-test",
-      uuid: "auto-approval-call-123",
-    };
-
-    __listenClientTestUtils.emitToWS(socket as unknown as WebSocket, event);
-
-    expect(socket.sentPayloads).toHaveLength(1);
-    const sent = JSON.parse(socket.sentPayloads[0] as string);
-    expect(sent.type).toBe("auto_approval");
-    expect(sent.tool_call.name).toBe("Write");
-    expect(sent.tool_call.tool_call_id).toBe("call-123");
-  });
-
-  test("emits RetryMessage with attempt/delay details", () => {
-    const socket = new MockSocket(WebSocket.OPEN);
-    const event = {
-      type: "retry" as const,
-      reason: "llm_api_error" as const,
-      attempt: 1,
-      max_attempts: 3,
-      delay_ms: 1000,
-      session_id: "listen-test",
-      uuid: "retry-123",
-    };
-
-    __listenClientTestUtils.emitToWS(socket as unknown as WebSocket, event);
-
-    expect(socket.sentPayloads).toHaveLength(1);
-    const sent = JSON.parse(socket.sentPayloads[0] as string);
-    expect(sent.type).toBe("retry");
-    expect(sent.attempt).toBe(1);
-    expect(sent.max_attempts).toBe(3);
-    expect(sent.delay_ms).toBe(1000);
-  });
-
-  test("emits rich ResultMessage with full metadata", () => {
-    const socket = new MockSocket(WebSocket.OPEN);
-    const event = {
-      type: "result" as const,
-      subtype: "success" as const,
-      agent_id: "agent-123",
-      conversation_id: "conv-456",
-      duration_ms: 1500,
-      duration_api_ms: 0,
-      num_turns: 2,
-      result: null,
-      run_ids: ["run-1", "run-2"],
-      usage: null,
-      session_id: "listen-test",
-      uuid: "result-123",
-    };
-
-    __listenClientTestUtils.emitToWS(socket as unknown as WebSocket, event);
-
-    expect(socket.sentPayloads).toHaveLength(1);
-    const sent = JSON.parse(socket.sentPayloads[0] as string);
-    expect(sent.type).toBe("result");
-    expect(sent.subtype).toBe("success");
-    expect(sent.agent_id).toBe("agent-123");
-    expect(sent.num_turns).toBe(2);
-    expect(sent.run_ids).toEqual(["run-1", "run-2"]);
   });
 
   test("runtime sessionId is stable and uses listen- prefix", () => {
     const runtime = __listenClientTestUtils.createRuntime();
     expect(runtime.sessionId).toMatch(/^listen-/);
-    // Verify it's a UUID format after the prefix
     expect(runtime.sessionId.length).toBeGreaterThan(10);
   });
 
-  test("emits approval lifecycle events", () => {
+  test("projects lifecycle deltas through stream_delta", () => {
+    const runtime = __listenClientTestUtils.createRuntime();
     const socket = new MockSocket(WebSocket.OPEN);
     const requested = {
       type: "approval_requested" as const,
@@ -862,39 +812,7 @@ describe("listen-client emitToWS adapter", () => {
       session_id: "listen-test",
       uuid: "approval-requested-1",
     };
-    const received = {
-      type: "approval_received" as const,
-      request_id: "perm-tool-1",
-      tool_call_id: "tool-1",
-      decision: "allow" as const,
-      reason: "Approved via WebSocket",
-      run_id: "run-1",
-      session_id: "listen-test",
-      uuid: "approval-received-1",
-    };
-
-    __listenClientTestUtils.emitToWS(socket as unknown as WebSocket, requested);
-    __listenClientTestUtils.emitToWS(socket as unknown as WebSocket, received);
-
-    expect(socket.sentPayloads).toHaveLength(2);
-    const sentRequested = JSON.parse(socket.sentPayloads[0] as string);
-    const sentReceived = JSON.parse(socket.sentPayloads[1] as string);
-    expect(sentRequested.type).toBe("approval_requested");
-    expect(sentRequested.request_id).toBe("perm-tool-1");
-    expect(sentReceived.type).toBe("approval_received");
-    expect(sentReceived.decision).toBe("allow");
-  });
-
-  test("emits tool execution lifecycle events", () => {
-    const socket = new MockSocket(WebSocket.OPEN);
-    const started = {
-      type: "tool_execution_started" as const,
-      tool_call_id: "tool-2",
-      run_id: "run-2",
-      session_id: "listen-test",
-      uuid: "tool-exec-started-2",
-    };
-    const finished = {
+    const toolFinished = {
       type: "tool_execution_finished" as const,
       tool_call_id: "tool-2",
       status: "success" as const,
@@ -903,16 +821,25 @@ describe("listen-client emitToWS adapter", () => {
       uuid: "tool-exec-finished-2",
     };
 
-    __listenClientTestUtils.emitToWS(socket as unknown as WebSocket, started);
-    __listenClientTestUtils.emitToWS(socket as unknown as WebSocket, finished);
+    __listenClientTestUtils.emitToWS(
+      socket as unknown as WebSocket,
+      requested,
+      runtime,
+    );
+    __listenClientTestUtils.emitToWS(
+      socket as unknown as WebSocket,
+      toolFinished,
+      runtime,
+    );
 
     expect(socket.sentPayloads).toHaveLength(2);
-    const sentStarted = JSON.parse(socket.sentPayloads[0] as string);
-    const sentFinished = JSON.parse(socket.sentPayloads[1] as string);
-    expect(sentStarted.type).toBe("tool_execution_started");
-    expect(sentStarted.tool_call_id).toBe("tool-2");
-    expect(sentFinished.type).toBe("tool_execution_finished");
-    expect(sentFinished.status).toBe("success");
+    const sentRequested = JSON.parse(socket.sentPayloads[0] as string);
+    const sentToolFinished = JSON.parse(socket.sentPayloads[1] as string);
+    expect(sentRequested.type).toBe("stream_delta");
+    expect(sentRequested.delta.type).toBe("approval_requested");
+    expect(sentToolFinished.type).toBe("stream_delta");
+    expect(sentToolFinished.delta.type).toBe("tool_execution_finished");
+    expect(sentToolFinished.delta.status).toBe("success");
   });
 });
 
