@@ -87,7 +87,7 @@ const AgentRow = memo(
       !(agent.isBackground && isRunning) && !(isRunning && toolCount === 0);
     const hideBackgroundStatusLine =
       agent.isBackground && isRunning && !agent.agentURL;
-    const stats = formatStats(toolCount, agent.totalTokens, isRunning);
+    const stats = formatStats(toolCount, agent.totalTokens);
     const modelDisplay = getSubagentModelDisplay(agent.model);
     const lastTool = agent.toolCalls[agent.toolCalls.length - 1];
 
@@ -134,57 +134,36 @@ const AgentRow = memo(
           {/* Simple status line */}
           {!hideBackgroundStatusLine && (
             <Box flexDirection="row">
-              {agent.status === "error" ? (
-                <>
-                  <Text color={colors.subagent.treeChar}>
-                    {rowIndent}
-                    {continueChar}
-                  </Text>
-                  <Text dimColor>{statusIndent}</Text>
-                  <Text color={colors.subagent.error}>Error</Text>
-                </>
-              ) : isComplete ? (
-                <>
-                  <Text color={colors.subagent.treeChar}>
-                    {rowIndent}
-                    {continueChar}
-                  </Text>
-                  <Text dimColor>{statusIndent}</Text>
-                  <Text dimColor>Done</Text>
-                </>
-              ) : agent.isBackground ? (
-                <>
-                  <Text color={colors.subagent.treeChar}>
-                    {rowIndent}
-                    {continueChar}
-                  </Text>
-                  <Text dimColor>{statusIndent}</Text>
-                  <Text dimColor>Running in the background</Text>
-                </>
-              ) : lastTool ? (
-                <>
-                  <Text color={colors.subagent.treeChar}>
-                    {rowIndent}
-                    {continueChar}
-                  </Text>
-                  <Text dimColor>{statusIndent}</Text>
-                  <Text dimColor>Running...</Text>
-                </>
-              ) : agent.agentURL ? (
-                <>
-                  <Text color={colors.subagent.treeChar}>
-                    {rowIndent}
-                    {continueChar}
-                  </Text>
-                  <Text dimColor>{`${statusIndent}Thinking`}</Text>
-                </>
-              ) : (
+              {!agent.agentURL &&
+              !lastTool &&
+              !isComplete &&
+              agent.status !== "error" &&
+              !agent.isBackground ? (
                 <>
                   <Text color={colors.subagent.treeChar}>
                     {rowIndent}
                     {continueChar} ⎿{" "}
                   </Text>
                   <Text dimColor>Launching...</Text>
+                </>
+              ) : (
+                <>
+                  <Text color={colors.subagent.treeChar}>
+                    {rowIndent}
+                    {continueChar}
+                  </Text>
+                  <Text dimColor>{statusIndent}</Text>
+                  {agent.status === "error" ? (
+                    <Text color={colors.subagent.error}>Error</Text>
+                  ) : isComplete ? (
+                    <Text dimColor>Done</Text>
+                  ) : agent.isBackground ? (
+                    <Text dimColor>Running in the background</Text>
+                  ) : lastTool ? (
+                    <Text dimColor>Running...</Text>
+                  ) : (
+                    <Text dimColor>Thinking</Text>
+                  )}
                 </>
               )}
             </Box>
@@ -266,15 +245,7 @@ const AgentRow = memo(
         {/* Status line */}
         {!hideBackgroundStatusLine && (
           <Box flexDirection="row">
-            {agent.status === "completed" ? (
-              <>
-                <Text color={colors.subagent.treeChar}>
-                  {rowIndent}
-                  {continueChar}
-                </Text>
-                <Text dimColor>{`${statusIndent}Done`}</Text>
-              </>
-            ) : agent.status === "error" ? (
+            {agent.status === "error" ? (
               <>
                 <Box width={gutterWidth} flexShrink={0}>
                   <Text>
@@ -291,17 +262,18 @@ const AgentRow = memo(
                   </Text>
                 </Box>
               </>
-            ) : agent.isBackground ? (
-              <Text>
+            ) : !agent.agentURL &&
+              !lastTool &&
+              agent.status !== "completed" &&
+              !agent.isBackground ? (
+              <>
                 <Text color={colors.subagent.treeChar}>
                   {rowIndent}
-                  {continueChar}
+                  {continueChar} ⎿{" "}
                 </Text>
-                <Text
-                  dimColor
-                >{`${statusIndent}Running in the background`}</Text>
-              </Text>
-            ) : lastTool ? (
+                <Text dimColor>Launching...</Text>
+              </>
+            ) : (
               <>
                 <Text color={colors.subagent.treeChar}>
                   {rowIndent}
@@ -309,24 +281,14 @@ const AgentRow = memo(
                 </Text>
                 <Text dimColor>
                   {statusIndent}
-                  {lastTool.name}
+                  {agent.status === "completed"
+                    ? "Done"
+                    : agent.isBackground
+                      ? "Running in the background"
+                      : lastTool
+                        ? lastTool.name
+                        : "Thinking"}
                 </Text>
-              </>
-            ) : agent.agentURL ? (
-              <>
-                <Text color={colors.subagent.treeChar}>
-                  {rowIndent}
-                  {continueChar}
-                </Text>
-                <Text dimColor>{`${statusIndent}Thinking`}</Text>
-              </>
-            ) : (
-              <>
-                <Text color={colors.subagent.treeChar}>
-                  {rowIndent}
-                  {continueChar} ⎿{" "}
-                </Text>
-                <Text dimColor>Launching...</Text>
               </>
             )}
           </Box>

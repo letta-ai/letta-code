@@ -68,7 +68,7 @@ const AgentRow = memo(({ agent, isLast }: AgentRowProps) => {
   const showStats = !(agent.isBackground && isRunning);
   const hideBackgroundStatusLine =
     agent.isBackground && isRunning && !agent.agentURL;
-  const stats = formatStats(agent.toolCount, agent.totalTokens, isRunning);
+  const stats = formatStats(agent.toolCount, agent.totalTokens);
   const modelDisplay = getSubagentModelDisplay(agent.model);
 
   return (
@@ -125,15 +125,7 @@ const AgentRow = memo(({ agent, isLast }: AgentRowProps) => {
       {/* Status line */}
       {!hideBackgroundStatusLine && (
         <Box flexDirection="row">
-          {agent.status === "completed" && !agent.isBackground ? (
-            <>
-              <Text color={colors.subagent.treeChar}>
-                {rowIndent}
-                {continueChar}
-              </Text>
-              <Text dimColor>{`${statusIndent}Done`}</Text>
-            </>
-          ) : agent.status === "error" ? (
+          {agent.status === "error" ? (
             <>
               <Box width={gutterWidth} flexShrink={0}>
                 <Text>
@@ -156,7 +148,12 @@ const AgentRow = memo(({ agent, isLast }: AgentRowProps) => {
                 {rowIndent}
                 {continueChar}
               </Text>
-              <Text dimColor>{`${statusIndent}Running in the background`}</Text>
+              <Text dimColor>
+                {statusIndent}
+                {agent.status === "completed" && !agent.isBackground
+                  ? "Done"
+                  : "Running in the background"}
+              </Text>
             </>
           )}
         </Box>

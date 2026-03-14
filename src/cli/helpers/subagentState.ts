@@ -24,7 +24,7 @@ export interface SubagentState {
   agentURL: string | null;
   toolCalls: ToolCall[];
   // Monotonic counter to avoid transient regressions in rendered tool usage.
-  maxToolCallsSeen?: number;
+  maxToolCallsSeen: number;
   totalTokens: number;
   durationMs: number;
   error?: string;
@@ -151,10 +151,19 @@ export function updateSubagent(
     updates.status = "running";
   }
 
-  const currentMax = agent.maxToolCallsSeen ?? agent.toolCalls.length;
   const nextToolCalls = updates.toolCalls ?? agent.toolCalls;
-  const requestedMax = updates.maxToolCallsSeen ?? 0;
-  const nextMax = Math.max(currentMax, nextToolCalls.length, requestedMax);
+  const nextMax = Math.max(
+    agent.maxToolCallsSeen,
+    nextToolCalls.length,
+    updates.maxToolCallsSeen ?? 0,
+  );
+
+  // Skip no-op updates to avoid unnecessary re-renders
+  const keys = Object.keys(updates) as (keyof typeof updates)[];
+  const isNoop =
+    keys.every((k) => agent[k] === updates[k]) &&
+    nextMax === agent.maxToolCallsSeen;
+  if (isNoop) return;
 
   // Create a new object to ensure React.memo detects the change
   const updatedAgent = { ...agent, ...updates, maxToolCallsSeen: nextMax };
@@ -185,7 +194,7 @@ export function addToolCall(
       { id: toolCallId, name: toolName, args: toolArgs },
     ],
     maxToolCallsSeen: Math.max(
-      agent.maxToolCallsSeen ?? agent.toolCalls.length,
+      agent.maxToolCallsSeen,
       agent.toolCalls.length + 1,
     ),
   };
@@ -210,10 +219,7 @@ export function completeSubagent(
     error: result.error,
     durationMs: Date.now() - agent.startTime,
     totalTokens: result.totalTokens ?? agent.totalTokens,
-    maxToolCallsSeen: Math.max(
-      agent.maxToolCallsSeen ?? agent.toolCalls.length,
-      agent.toolCalls.length,
-    ),
+    maxToolCallsSeen: Math.max(agent.maxToolCallsSeen, agent.toolCalls.length),
   } as SubagentState;
   store.agents.set(id, updatedAgent);
   notifyListeners();
@@ -222,7 +228,7 @@ export function completeSubagent(
 export function getSubagentToolCount(
   agent: Pick<SubagentState, "toolCalls" | "maxToolCallsSeen">,
 ): number {
-  return Math.max(agent.toolCalls.length, agent.maxToolCallsSeen ?? 0);
+  return Math.max(agent.toolCalls.length, agent.maxToolCallsSeen);
 }
 
 /**
