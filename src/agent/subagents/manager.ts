@@ -680,6 +680,12 @@ async function executeSubagent(
       },
     });
 
+    // Consider execution "running" once the child process has successfully spawned.
+    // This avoids waiting on subagent init events (e.g. agentURL) to reflect progress.
+    proc.once("spawn", () => {
+      updateSubagent(subagentId, { status: "running" });
+    });
+
     // Set up abort handler to kill the child process
     let wasAborted = false;
     const abortHandler = () => {
@@ -708,6 +714,14 @@ async function executeSubagent(
       crlfDelay: Number.POSITIVE_INFINITY,
     });
 
+    let rlClosed = false;
+    const rlClosedPromise = new Promise<void>((resolve) => {
+      rl.once("close", () => {
+        rlClosed = true;
+        resolve();
+      });
+    });
+
     rl.on("line", (line: string) => {
       stdoutChunks.push(Buffer.from(`${line}\n`));
       processStreamEvent(line, state, subagentId);
@@ -722,6 +736,13 @@ async function executeSubagent(
       proc.on("close", resolve);
       proc.on("error", () => resolve(null));
     });
+
+    // Ensure all stdout lines have been processed before completing.
+    // Without this, late tool events can be dropped before Task marks completion.
+    if (!rlClosed) {
+      rl.close();
+    }
+    await rlClosedPromise;
 
     // Clean up abort listener
     signal?.removeEventListener("abort", abortHandler);
