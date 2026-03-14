@@ -2,7 +2,7 @@ name: Terminal-Bench Regression
 
 on:
   schedule:
-    - cron: "0 8 * * 1,4" # Monday + Thursday 8am UTC
+    - cron: "0 12 * * 1" # Monday 5am PT (12pm UTC)
   workflow_dispatch:
     inputs:
       model:
