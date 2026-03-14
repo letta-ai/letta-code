@@ -2,31 +2,13 @@
  * Protocol V2 (alpha hard-cut contract)
  *
  * This file defines the runtime-scoped websocket contract for device-mode UIs.
- * It is intentionally a hard cut from protocol.ts for alpha listener transport.
+ * It is intentionally self-defined and does not import transport/event shapes
+ * from the legacy protocol.ts surface.
  */
 
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
-import type { Skill } from "../agent/skills";
-import type { CommandFinishedEvent } from "../cli/commands/runner";
-import type { PermissionMode } from "../permissions/mode";
-import type {
-  BackgroundProcess,
-  BackgroundTask,
-} from "../tools/impl/process_manager";
-import type { ToolsetName, ToolsetPreference } from "../tools/toolset";
-import type {
-  ControlRequest,
-  ControlResponse,
-  ErrorMessage,
-  MessageWire,
-  QueueLifecycleEvent,
-  QueueRuntimeItemWire,
-  ResultSubtype,
-  RetryMessage,
-  StopReasonType,
-  ToolExecutionFinishedMessage,
-  ToolExecutionStartedMessage,
-} from "./protocol";
+import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
+import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
 
 /**
  * Runtime identity for all state and delta events.
@@ -38,60 +20,104 @@ export interface RuntimeScope {
 
 /**
  * Base envelope shared by all v2 websocket messages.
- *
- * event_seq:
- * - Monotonic per runtime scope
- * - Used for ordering + gap detection
- *
- * idempotency_key:
- * - Stable unique key for dedupe on reconnect/replay
  */
 export interface RuntimeEnvelope {
   runtime: RuntimeScope;
   event_seq: number;
-  emitted_at: string; // ISO8601
+  emitted_at: string;
   idempotency_key: string;
 }
 
-type ProtocolEnvelopeKeys =
-  | "session_id"
-  | "uuid"
-  | "event_seq"
-  | "agent_id"
-  | "conversation_id";
+export type DevicePermissionMode =
+  | "default"
+  | "acceptEdits"
+  | "plan"
+  | "bypassPermissions";
 
-type ProtocolPayload<T> = Omit<T, ProtocolEnvelopeKeys>;
+export type ToolsetName =
+  | "codex"
+  | "codex_snake"
+  | "default"
+  | "gemini"
+  | "gemini_snake"
+  | "none";
 
-export type DevicePermissionMode = PermissionMode;
+export type ToolsetPreference = ToolsetName | "auto";
 
-export type AvailableSkillSummary = Pick<
-  Skill,
-  "id" | "name" | "description" | "path" | "source"
->;
+export interface AvailableSkillSummary {
+  id: string;
+  name: string;
+  description: string;
+  path: string;
+  source: "bundled" | "global" | "agent" | "project";
+}
 
 export interface BashBackgroundProcessSummary {
   process_id: string;
   kind: "bash";
-  command: BackgroundProcess["command"];
+  command: string;
   started_at_ms: number | null;
-  status: BackgroundProcess["status"];
-  exit_code: BackgroundProcess["exitCode"];
+  status: string;
+  exit_code: number | null;
 }
 
 export interface AgentTaskBackgroundProcessSummary {
   process_id: string;
   kind: "agent_task";
-  task_type: BackgroundTask["subagentType"];
-  description: BackgroundTask["description"];
+  task_type: string;
+  description: string;
   started_at_ms: number;
-  status: BackgroundTask["status"];
-  subagent_id: BackgroundTask["subagentId"];
-  error?: BackgroundTask["error"];
+  status: string;
+  subagent_id: string | null;
+  error?: string;
 }
 
 export type BackgroundProcessSummary =
   | BashBackgroundProcessSummary
   | AgentTaskBackgroundProcessSummary;
+
+export interface DiffHunkLine {
+  type: "context" | "add" | "remove";
+  content: string;
+}
+
+export interface DiffHunk {
+  oldStart: number;
+  oldLines: number;
+  newStart: number;
+  newLines: number;
+  lines: DiffHunkLine[];
+}
+
+export type DiffPreview =
+  | { mode: "advanced"; fileName: string; hunks: DiffHunk[] }
+  | { mode: "fallback"; fileName: string; reason: string }
+  | { mode: "unpreviewable"; fileName: string; reason: string };
+
+export interface CanUseToolControlRequestBody {
+  subtype: "can_use_tool";
+  tool_name: string;
+  input: Record<string, unknown>;
+  tool_call_id: string;
+  permission_suggestions: string[];
+  blocked_path: string | null;
+  diffs?: DiffPreview[];
+}
+
+export type ControlRequestBody = CanUseToolControlRequestBody;
+
+export interface ControlRequest {
+  type: "control_request";
+  request_id: string;
+  request: ControlRequestBody;
+  agent_id?: string;
+  conversation_id?: string;
+}
+
+export interface PendingControlRequest {
+  request_id: string;
+  request: ControlRequestBody;
+}
 
 /**
  * Bottom-bar and device execution context state.
@@ -109,10 +135,7 @@ export interface DeviceStatus {
   current_loaded_tools: string[];
   current_available_skills: AvailableSkillSummary[];
   background_processes: BackgroundProcessSummary[];
-  pending_control_requests: Array<{
-    request_id: string;
-    request: ControlRequest["request"];
-  }>;
+  pending_control_requests: PendingControlRequest[];
 }
 
 export type LoopStatus =
@@ -125,7 +148,26 @@ export type LoopStatus =
   | "WAITING_ON_APPROVAL"
   | "WAITING_ON_INPUT";
 
-export type QueueMessage = QueueRuntimeItemWire;
+export type QueueMessageKind =
+  | "message"
+  | "task_notification"
+  | "approval_result"
+  | "overlay_action";
+
+export type QueueMessageSource =
+  | "user"
+  | "task_notification"
+  | "subagent"
+  | "system";
+
+export interface QueueMessage {
+  id: string;
+  client_message_id: string;
+  kind: QueueMessageKind;
+  source: QueueMessageSource;
+  content: MessageCreate["content"] | string;
+  enqueued_at: string;
+}
 
 /**
  * Loop state is intentionally small and finite.
@@ -148,105 +190,106 @@ export interface LoopStatusUpdateMessage extends RuntimeEnvelope {
 }
 
 /**
- * Canonical stream chunk payload.
- * Identity fields (id/date/otid/run_id/seq_id) are carried directly on the
- * message chunk when present in the upstream Letta response type.
+ * Standard Letta message delta forwarded through the stream channel.
  */
-export type MessageDelta = ProtocolPayload<MessageWire>;
+export type MessageDelta = { type: "message" } & LettaStreamingResponse;
 
-/**
- * Canonical approval request/response deltas for approval UI state.
- */
-export type ControlRequestDelta = ProtocolPayload<ControlRequest>;
+export interface UmiLifecycleMessageBase {
+  id: string;
+  date: string;
+  message_type: string;
+  run_id?: string;
+}
 
-export type ControlResponseDelta = ProtocolPayload<ControlResponse>;
+export interface ClientToolStartMessage extends UmiLifecycleMessageBase {
+  message_type: "client_tool_start";
+  tool_call_id: string;
+}
 
-/**
- * Canonical client-side tool lifecycle deltas for tool timers.
- */
-export type ClientToolStartDelta = ProtocolPayload<ToolExecutionStartedMessage>;
+export interface ClientToolEndMessage extends UmiLifecycleMessageBase {
+  message_type: "client_tool_end";
+  tool_call_id: string;
+  status: "success" | "error";
+}
 
-export type ClientToolCompleteDelta =
-  ProtocolPayload<ToolExecutionFinishedMessage>;
+export interface CommandStartMessage extends UmiLifecycleMessageBase {
+  message_type: "command_start";
+  command_id: string;
+  input: string;
+}
 
-/**
- * Canonical command lifecycle deltas for slash-command/task command projection.
- */
-export type CommandStartDelta = Pick<CommandFinishedEvent, "id" | "input"> & {
-  started_at_ms: number;
-};
+export interface CommandEndMessage extends UmiLifecycleMessageBase {
+  message_type: "command_end";
+  command_id: string;
+  input: string;
+  output: string;
+  success: boolean;
+  dim_output?: boolean;
+  preformatted?: boolean;
+}
 
-export type CommandCompleteDelta = CommandFinishedEvent & {
-  finished_at_ms: number;
-};
-
-/**
- * Retry/error/status deltas surfaced in TUI and chat timeline.
- */
-export type RetryNoticeDelta = ProtocolPayload<RetryMessage>;
-
-export type RuntimeErrorPrintDelta = ProtocolPayload<ErrorMessage> & {
-  is_terminal: boolean;
-};
-
-export type QueueLifecycleDelta = ProtocolPayload<QueueLifecycleEvent>;
-
-export interface StatusPrintDelta {
+export interface StatusMessage extends UmiLifecycleMessageBase {
+  message_type: "status";
   message: string;
   level: "info" | "success" | "warning";
 }
 
-export interface UnknownDelta {
-  original_type: string;
-  payload: Record<string, unknown>;
+export interface RetryMessage extends UmiLifecycleMessageBase {
+  message_type: "retry";
+  reason: StopReasonType;
+  attempt: number;
+  max_attempts: number;
+  delay_ms: number;
+}
+
+export interface LoopErrorMessage extends UmiLifecycleMessageBase {
+  message_type: "loop_error";
+  message: string;
+  stop_reason: StopReasonType;
+  is_terminal: boolean;
+  api_error?: LettaStreamingResponse.LettaErrorMessage;
 }
 
 /**
- * Expanded message-delta union (Letta message deltas + runtime lifecycle deltas).
+ * Expanded message-delta union.
  * stream_delta is the only message stream event the WS server emits in v2.
  */
 export type StreamDelta =
   | MessageDelta
-  | ControlRequestDelta
-  | ControlResponseDelta
-  | ClientToolStartDelta
-  | ClientToolCompleteDelta
-  | CommandStartDelta
-  | CommandCompleteDelta
-  | RetryNoticeDelta
-  | RuntimeErrorPrintDelta
-  | QueueLifecycleDelta
-  | StatusPrintDelta
-  | UnknownDelta;
+  | ClientToolStartMessage
+  | ClientToolEndMessage
+  | CommandStartMessage
+  | CommandEndMessage
+  | StatusMessage
+  | RetryMessage
+  | LoopErrorMessage;
 
 export interface StreamDeltaMessage extends RuntimeEnvelope {
   type: "stream_delta";
   delta: StreamDelta;
 }
 
-export interface ApprovalResponseAllow {
+export interface ApprovalResponseAllowDecision {
   behavior: "allow";
-  updatedInput?: Record<string, unknown> | null;
-  updatedPermissions?: unknown[];
+  updated_input?: Record<string, unknown> | null;
+  updated_permissions?: string[];
 }
 
-export interface ApprovalResponseDeny {
+export interface ApprovalResponseDenyDecision {
   behavior: "deny";
   message: string;
 }
 
 export type ApprovalResponseDecision =
-  | ApprovalResponseAllow
-  | ApprovalResponseDeny;
+  | ApprovalResponseAllowDecision
+  | ApprovalResponseDenyDecision;
 
 export type ApprovalResponseBody =
   | {
-      subtype: "success";
       request_id: string;
-      response?: ApprovalResponseDecision | Record<string, unknown>;
+      decision: ApprovalResponseDecision;
     }
   | {
-      subtype: "error";
       request_id: string;
       error: string;
     };
@@ -263,10 +306,9 @@ export interface InputCreateMessagePayload {
   messages: Array<MessageCreate & { client_message_id?: string }>;
 }
 
-export interface InputApprovalResponsePayload {
+export type InputApprovalResponsePayload = {
   kind: "approval_response";
-  response: ApprovalResponseBody;
-}
+} & ApprovalResponseBody;
 
 export type InputPayload =
   | InputCreateMessagePayload
@@ -308,4 +350,10 @@ export type WsProtocolMessage =
   | LoopStatusUpdateMessage
   | StreamDeltaMessage;
 
-export type { ControlRequest, ResultSubtype, StopReasonType };
+/**
+ * Temporary helper type used internally by listen-client until the later
+ * listener cleanup removes synthetic result messages entirely.
+ */
+export type ResultSubtype = "success" | "interrupted" | "error";
+
+export type { StopReasonType };

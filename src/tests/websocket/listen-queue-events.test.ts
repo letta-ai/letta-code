@@ -23,13 +23,16 @@ import type {
   QueueItem,
 } from "../../queue/queueRuntime";
 import { QueueRuntime } from "../../queue/queueRuntime";
-import type { QueueLifecycleEvent } from "../../types/protocol";
 import type { WsProtocolEvent } from "../../websocket/listen-client";
 
-// ── Type-level assertion: QueueLifecycleEvent ⊆ WsProtocolEvent ──
-// Imports the real WsProtocolEvent from listen-client. If QueueLifecycleEvent
-// is ever removed from that union, this assertion fails at compile time.
-type _AssertAssignable = QueueLifecycleEvent extends WsProtocolEvent
+// ── Type-level assertion: generic legacy event payloads are still accepted by
+// emitToWS while queue lifecycle remains on the old passthrough path. Commit 4
+// removes queue lifecycle from stream_delta entirely.
+type _AssertAssignable = {
+  type: "queue_item_enqueued";
+  item_id: string;
+  queue_len: number;
+} extends WsProtocolEvent
   ? true
   : never;
 const _typeCheck: _AssertAssignable = true;

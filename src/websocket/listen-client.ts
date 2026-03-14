@@ -747,7 +747,7 @@ function stopRuntime(
   }
 }
 
-function isValidControlResponseBody(
+function isValidApprovalResponseBody(
   value: unknown,
 ): value is ApprovalResponseBody {
   if (!value || typeof value !== "object") {
@@ -755,13 +755,42 @@ function isValidControlResponseBody(
   }
 
   const maybeResponse = value as {
-    subtype?: unknown;
     request_id?: unknown;
+    decision?: unknown;
+    error?: unknown;
   };
-  return (
-    typeof maybeResponse.subtype === "string" &&
-    typeof maybeResponse.request_id === "string"
-  );
+  if (typeof maybeResponse.request_id !== "string") {
+    return false;
+  }
+  if (maybeResponse.error !== undefined) {
+    return typeof maybeResponse.error === "string";
+  }
+  if (!maybeResponse.decision || typeof maybeResponse.decision !== "object") {
+    return false;
+  }
+  const decision = maybeResponse.decision as {
+    behavior?: unknown;
+    message?: unknown;
+    updated_input?: unknown;
+    updated_permissions?: unknown;
+  };
+  if (decision.behavior === "allow") {
+    const hasUpdatedInput =
+      decision.updated_input === undefined ||
+      decision.updated_input === null ||
+      typeof decision.updated_input === "object";
+    const hasUpdatedPermissions =
+      decision.updated_permissions === undefined ||
+      (Array.isArray(decision.updated_permissions) &&
+        decision.updated_permissions.every(
+          (entry) => typeof entry === "string",
+        ));
+    return hasUpdatedInput && hasUpdatedPermissions;
+  }
+  if (decision.behavior === "deny") {
+    return typeof decision.message === "string";
+  }
+  return false;
 }
 
 function isRuntimeScope(value: unknown): value is RuntimeScope {
@@ -796,13 +825,15 @@ function isInputCommand(value: unknown): value is InputCommand {
   const payload = candidate.payload as {
     kind?: unknown;
     messages?: unknown;
-    response?: unknown;
+    request_id?: unknown;
+    decision?: unknown;
+    error?: unknown;
   };
   if (payload.kind === "create_message") {
     return Array.isArray(payload.messages);
   }
   if (payload.kind === "approval_response") {
-    return isValidControlResponseBody(payload.response);
+    return isValidApprovalResponseBody(payload);
   }
   return false;
 }
@@ -831,7 +862,9 @@ function getInvalidInputReason(value: unknown): {
   const payload = candidate.payload as {
     kind?: unknown;
     messages?: unknown;
-    response?: unknown;
+    request_id?: unknown;
+    decision?: unknown;
+    error?: unknown;
   };
   if (payload.kind === "create_message") {
     if (!Array.isArray(payload.messages)) {
@@ -844,11 +877,11 @@ function getInvalidInputReason(value: unknown): {
     return null;
   }
   if (payload.kind === "approval_response") {
-    if (!isValidControlResponseBody(payload.response)) {
+    if (!isValidApprovalResponseBody(payload)) {
       return {
         runtime: candidate.runtime,
         reason:
-          "Protocol violation: input.kind=approval_response requires payload.response with subtype and request_id",
+          "Protocol violation: input.kind=approval_response requires payload.request_id and either payload.decision or payload.error",
       };
     }
     return null;
@@ -2670,14 +2703,16 @@ async function connectWithRetry(
     }
 
     if (parsed.type === "input") {
-      console.log(`[Listen V2] Received input command, kind=${parsed.payload?.kind}`);
+      console.log(
+        `[Listen V2] Received input command, kind=${parsed.payload?.kind}`,
+      );
       if (runtime !== activeRuntime || runtime.intentionallyClosed) {
         console.log(`[Listen V2] Dropping input: runtime mismatch or closed`);
         return;
       }
 
       if (parsed.payload.kind === "approval_response") {
-        if (resolvePendingApprovalResolver(runtime, parsed.payload.response)) {
+        if (resolvePendingApprovalResolver(runtime, parsed.payload)) {
           scheduleQueuePump(runtime, socket, opts);
         }
         return;
@@ -3562,15 +3597,13 @@ async function handleIncomingMessage(
             controlRequest,
           );
 
-          if (responseBody.subtype === "success") {
-            const response = responseBody.response as
-              | ApprovalResponseDecision
-              | undefined;
-            if (response?.behavior === "allow") {
-              const finalApproval = response.updatedInput
+          if ("decision" in responseBody) {
+            const response = responseBody.decision as ApprovalResponseDecision;
+            if (response.behavior === "allow") {
+              const finalApproval = response.updated_input
                 ? {
                     ...ac.approval,
-                    toolArgs: JSON.stringify(response.updatedInput),
+                    toolArgs: JSON.stringify(response.updated_input),
                   }
                 : ac.approval;
               decisions.push({ type: "approve", approval: finalApproval });
@@ -3622,10 +3655,7 @@ async function handleIncomingMessage(
               });
             }
           } else {
-            const denyReason =
-              responseBody.subtype === "error"
-                ? responseBody.error
-                : "Unknown error";
+            const denyReason = responseBody.error;
             decisions.push({
               type: "deny",
               approval: ac.approval,

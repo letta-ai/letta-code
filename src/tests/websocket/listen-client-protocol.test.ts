@@ -63,9 +63,8 @@ function makeControlRequest(requestId: string): ControlRequest {
 
 function makeSuccessResponse(requestId: string): ApprovalResponseBody {
   return {
-    subtype: "success",
     request_id: requestId,
-    response: { behavior: "allow" },
+    decision: { behavior: "allow" },
   };
 }
 
@@ -78,7 +77,8 @@ describe("listen-client parseServerMessage", () => {
           runtime: { agent_id: "agent-1", conversation_id: "default" },
           payload: {
             kind: "approval_response",
-            response: { subtype: "success", request_id: "perm-1" },
+            request_id: "perm-1",
+            decision: { behavior: "allow" },
           },
         }),
       ),
@@ -107,7 +107,7 @@ describe("listen-client parseServerMessage", () => {
           runtime: { agent_id: "agent-1", conversation_id: "default" },
           payload: {
             kind: "approval_response",
-            response: { subtype: "success" },
+            decision: { behavior: "allow" },
           },
         }),
       ),
@@ -201,8 +201,8 @@ describe("listen-client approval resolver wiring", () => {
     );
     expect(resolved).toBe(true);
     await expect(pending).resolves.toMatchObject({
-      subtype: "success",
       request_id: requestId,
+      decision: { behavior: "allow" },
     });
     expect(runtime.pendingApprovalResolvers.size).toBe(0);
   });
@@ -576,7 +576,7 @@ describe("listen-client interrupt queue projection", () => {
 });
 
 describe("listen-client capability-gated approval flow", () => {
-  test("control_response with allow + updatedInput rewrites tool args", async () => {
+  test("approval_response with allow + updated_input rewrites tool args", async () => {
     const runtime = __listenClientTestUtils.createRuntime();
     const socket = new MockSocket(WebSocket.OPEN);
     const requestId = "perm-update-test";
@@ -588,32 +588,34 @@ describe("listen-client capability-gated approval flow", () => {
       makeControlRequest(requestId),
     );
 
-    // Simulate control_response with updatedInput
+    // Simulate approval_response with updated_input
     resolvePendingApprovalResolver(runtime, {
-      subtype: "success",
       request_id: requestId,
-      response: {
+      decision: {
         behavior: "allow",
-        updatedInput: { file_path: "/updated/path.ts", content: "new content" },
+        updated_input: {
+          file_path: "/updated/path.ts",
+          content: "new content",
+        },
       },
     });
 
     const response = await pending;
-    expect(response.subtype).toBe("success");
-    if (response.subtype === "success") {
-      const canUseToolResponse = response.response as {
+    expect("decision" in response).toBe(true);
+    if ("decision" in response) {
+      const canUseToolResponse = response.decision as {
         behavior: string;
-        updatedInput?: Record<string, unknown>;
+        updated_input?: Record<string, unknown>;
       };
       expect(canUseToolResponse.behavior).toBe("allow");
-      expect(canUseToolResponse.updatedInput).toEqual({
+      expect(canUseToolResponse.updated_input).toEqual({
         file_path: "/updated/path.ts",
         content: "new content",
       });
     }
   });
 
-  test("control_response with deny includes reason", async () => {
+  test("approval_response with deny includes reason", async () => {
     const runtime = __listenClientTestUtils.createRuntime();
     const socket = new MockSocket(WebSocket.OPEN);
     const requestId = "perm-deny-test";
@@ -626,15 +628,14 @@ describe("listen-client capability-gated approval flow", () => {
     );
 
     resolvePendingApprovalResolver(runtime, {
-      subtype: "success",
       request_id: requestId,
-      response: { behavior: "deny", message: "User declined" },
+      decision: { behavior: "deny", message: "User declined" },
     });
 
     const response = await pending;
-    expect(response.subtype).toBe("success");
-    if (response.subtype === "success") {
-      const canUseToolResponse = response.response as {
+    expect("decision" in response).toBe(true);
+    if ("decision" in response) {
+      const canUseToolResponse = response.decision as {
         behavior: string;
         message?: string;
       };
@@ -643,7 +644,7 @@ describe("listen-client capability-gated approval flow", () => {
     }
   });
 
-  test("error response from WS triggers denial path", async () => {
+  test("approval_response error triggers denial path", async () => {
     const runtime = __listenClientTestUtils.createRuntime();
     const socket = new MockSocket(WebSocket.OPEN);
     const requestId = "perm-error-test";
@@ -656,14 +657,13 @@ describe("listen-client capability-gated approval flow", () => {
     );
 
     resolvePendingApprovalResolver(runtime, {
-      subtype: "error",
       request_id: requestId,
       error: "Internal server error",
     });
 
     const response = await pending;
-    expect(response.subtype).toBe("error");
-    if (response.subtype === "error") {
+    expect("error" in response).toBe(true);
+    if ("error" in response) {
       expect(response.error).toBe("Internal server error");
     }
   });
