@@ -1,4 +1,4 @@
-import type { QueueBlockedReason } from "../../types/protocol";
+import type { QueueBlockedReason } from "../../queue/queueRuntime";
 
 export type ListenerQueueGatingConditions = {
   isProcessing: boolean;

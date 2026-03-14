@@ -26,7 +26,7 @@ import { QueueRuntime } from "../../queue/queueRuntime";
 import type { WsProtocolEvent } from "../../websocket/listen-client";
 
 // ── Type-level assertion: generic legacy event payloads are still accepted by
-// emitToWS while queue lifecycle remains on the old passthrough path. Commit 4
+// the temporary legacy stream adapter while queue lifecycle remains on the old passthrough path. Commit 4
 // removes queue lifecycle from stream_delta entirely.
 type _AssertAssignable = {
   type: "queue_item_enqueued";

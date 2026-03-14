@@ -668,14 +668,11 @@ describe("listen-client capability-gated approval flow", () => {
     }
   });
 
-  test("outbound control_request is sent through sendControlMessageOverWebSocket (not raw socket.send)", () => {
+  test("requestApprovalOverWS exposes the control request through device status instead of stream_delta", () => {
     const runtime = __listenClientTestUtils.createRuntime();
     const socket = new MockSocket(WebSocket.OPEN);
     const requestId = "perm-adapter-test";
 
-    // requestApprovalOverWS uses sendControlMessageOverWebSocket internally
-    // which ultimately calls socket.send — but goes through the adapter stub.
-    // We verify the message was sent with the correct shape.
     void requestApprovalOverWS(
       runtime,
       socket as unknown as WebSocket,
@@ -683,12 +680,19 @@ describe("listen-client capability-gated approval flow", () => {
       makeControlRequest(requestId),
     ).catch(() => {});
 
-    expect(socket.sentPayloads).toHaveLength(1);
-    const sent = JSON.parse(socket.sentPayloads[0] as string);
-    expect(sent.type).toBe("stream_delta");
-    expect(sent.delta.type).toBe("control_request");
-    expect(sent.delta.request_id).toBe(requestId);
-    expect(sent.delta.request.subtype).toBe("can_use_tool");
+    expect(socket.sentPayloads).toHaveLength(2);
+    const [loopStatus, deviceStatus] = socket.sentPayloads.map((payload) =>
+      JSON.parse(payload as string),
+    );
+    expect(loopStatus.type).toBe("update_loop_status");
+    expect(loopStatus.loop_status.status).toBe("WAITING_ON_APPROVAL");
+    expect(deviceStatus.type).toBe("update_device_status");
+    expect(deviceStatus.device_status.pending_control_requests).toEqual([
+      {
+        request_id: requestId,
+        request: makeControlRequest(requestId).request,
+      },
+    ]);
 
     // Cleanup
     rejectPendingApprovalResolvers(runtime, "test cleanup");
@@ -768,19 +772,19 @@ describe("listen-client approval recovery batch correlation", () => {
   });
 });
 
-describe("listen-client emitToWS adapter", () => {
-  test("sends stream_delta when socket is OPEN", () => {
+describe("listen-client legacy stream adapter", () => {
+  test("projects legacy deltas through stream_delta when socket is OPEN", () => {
     const runtime = __listenClientTestUtils.createRuntime();
     const socket = new MockSocket(WebSocket.OPEN);
     const event = {
-      type: "error" as const,
-      message: "test error",
-      stop_reason: "error" as const,
+      type: "cancel_ack" as const,
+      request_id: "cancel-1",
+      accepted: true,
       session_id: "listen-test",
       uuid: "test-uuid",
     };
 
-    __listenClientTestUtils.emitToWS(
+    __listenClientTestUtils.emitLegacyStreamEvent(
       socket as unknown as WebSocket,
       event,
       runtime,
@@ -789,22 +793,22 @@ describe("listen-client emitToWS adapter", () => {
     expect(socket.sentPayloads).toHaveLength(1);
     const sent = JSON.parse(socket.sentPayloads[0] as string);
     expect(sent.type).toBe("stream_delta");
-    expect(sent.delta.type).toBe("error");
-    expect(sent.delta.message).toBe("test error");
+    expect(sent.delta.type).toBe("cancel_ack");
+    expect(sent.delta.request_id).toBe("cancel-1");
   });
 
   test("does not send when socket is CLOSED", () => {
     const runtime = __listenClientTestUtils.createRuntime();
     const socket = new MockSocket(WebSocket.CLOSED);
     const event = {
-      type: "error" as const,
-      message: "test error",
-      stop_reason: "error" as const,
+      type: "cancel_ack" as const,
+      request_id: "cancel-1",
+      accepted: true,
       session_id: "listen-test",
       uuid: "test-uuid",
     };
 
-    __listenClientTestUtils.emitToWS(
+    __listenClientTestUtils.emitLegacyStreamEvent(
       socket as unknown as WebSocket,
       event,
       runtime,
@@ -817,48 +821,6 @@ describe("listen-client emitToWS adapter", () => {
     const runtime = __listenClientTestUtils.createRuntime();
     expect(runtime.sessionId).toMatch(/^listen-/);
     expect(runtime.sessionId.length).toBeGreaterThan(10);
-  });
-
-  test("projects lifecycle deltas through stream_delta", () => {
-    const runtime = __listenClientTestUtils.createRuntime();
-    const socket = new MockSocket(WebSocket.OPEN);
-    const requested = {
-      type: "approval_requested" as const,
-      request_id: "perm-tool-1",
-      tool_call_id: "tool-1",
-      tool_name: "Bash",
-      run_id: "run-1",
-      session_id: "listen-test",
-      uuid: "approval-requested-1",
-    };
-    const toolFinished = {
-      type: "tool_execution_finished" as const,
-      tool_call_id: "tool-2",
-      status: "success" as const,
-      run_id: "run-2",
-      session_id: "listen-test",
-      uuid: "tool-exec-finished-2",
-    };
-
-    __listenClientTestUtils.emitToWS(
-      socket as unknown as WebSocket,
-      requested,
-      runtime,
-    );
-    __listenClientTestUtils.emitToWS(
-      socket as unknown as WebSocket,
-      toolFinished,
-      runtime,
-    );
-
-    expect(socket.sentPayloads).toHaveLength(2);
-    const sentRequested = JSON.parse(socket.sentPayloads[0] as string);
-    const sentToolFinished = JSON.parse(socket.sentPayloads[1] as string);
-    expect(sentRequested.type).toBe("stream_delta");
-    expect(sentRequested.delta.type).toBe("approval_requested");
-    expect(sentToolFinished.type).toBe("stream_delta");
-    expect(sentToolFinished.delta.type).toBe("tool_execution_finished");
-    expect(sentToolFinished.delta.status).toBe("success");
   });
 });
 

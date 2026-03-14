@@ -67,6 +67,8 @@ import type {
   ApprovalResponseBody,
   ApprovalResponseDecision,
   ChangeDeviceStateCommand,
+  ClientToolEndMessage,
+  ClientToolStartMessage,
   ControlRequest,
   DeviceStatus,
   DeviceStatusUpdateMessage,
@@ -76,6 +78,7 @@ import type {
   LoopStatusUpdateMessage,
   QueueMessage,
   ResultSubtype,
+  RetryMessage,
   RuntimeScope,
   StopReasonType,
   StreamDelta,
@@ -254,16 +257,13 @@ function handleModeChange(
       console.log(`[Listen] Mode changed to: ${msg.mode}`);
     }
   } catch (error) {
-    emitStreamDelta(
-      socket,
-      runtime,
-      {
-        type: "error",
-        message: error instanceof Error ? error.message : "Mode change failed",
-        stop_reason: "error",
-      } as unknown as StreamDelta,
-      scope,
-    );
+    emitLoopErrorDelta(socket, runtime, {
+      message: error instanceof Error ? error.message : "Mode change failed",
+      stopReason: "error",
+      isTerminal: false,
+      agentId: scope?.agent_id,
+      conversationId: scope?.conversation_id,
+    });
 
     if (process.env.DEBUG) {
       console.error("[Listen] Mode change failed:", error);
@@ -327,26 +327,16 @@ async function handleCwdChange(
       conversation_id: conversationId,
     });
   } catch (error) {
-    emitStreamDelta(
-      socket,
-      runtime,
-      {
-        type: "error",
-        error:
-          error instanceof Error
-            ? error.message
-            : "Working directory change failed",
-        message:
-          error instanceof Error
-            ? error.message
-            : "Working directory change failed",
-        stop_reason: "error",
-      } as unknown as StreamDelta,
-      {
-        agent_id: agentId,
-        conversation_id: conversationId,
-      },
-    );
+    emitLoopErrorDelta(socket, runtime, {
+      message:
+        error instanceof Error
+          ? error.message
+          : "Working directory change failed",
+      stopReason: "error",
+      isTerminal: false,
+      agentId,
+      conversationId,
+    });
   }
 }
 
@@ -430,7 +420,7 @@ function createRuntime(): ListenerRuntime {
         runtime.pendingTurns = queueLen;
         if (runtime.socket?.readyState === WebSocket.OPEN) {
           const content = item.kind === "message" ? item.content : item.text;
-          emitToWS(
+          emitLegacyStreamEvent(
             runtime.socket,
             {
               type: "queue_item_enqueued",
@@ -454,7 +444,7 @@ function createRuntime(): ListenerRuntime {
       onDequeued: (batch) => {
         runtime.pendingTurns = batch.queueLenAfter;
         if (runtime.socket?.readyState === WebSocket.OPEN) {
-          emitToWS(
+          emitLegacyStreamEvent(
             runtime.socket,
             {
               type: "queue_batch_dequeued",
@@ -473,7 +463,7 @@ function createRuntime(): ListenerRuntime {
       },
       onBlocked: (reason, queueLen) => {
         if (runtime.socket?.readyState === WebSocket.OPEN) {
-          emitToWS(
+          emitLegacyStreamEvent(
             runtime.socket,
             {
               type: "queue_blocked",
@@ -494,7 +484,7 @@ function createRuntime(): ListenerRuntime {
       onCleared: (reason, clearedCount, items) => {
         runtime.pendingTurns = 0;
         if (runtime.socket?.readyState === WebSocket.OPEN) {
-          emitToWS(
+          emitLegacyStreamEvent(
             runtime.socket,
             {
               type: "queue_cleared",
@@ -513,7 +503,7 @@ function createRuntime(): ListenerRuntime {
         runtime.pendingTurns = queueLen;
         runtime.queuedMessagesByItemId.delete(item.id);
         if (runtime.socket?.readyState === WebSocket.OPEN) {
-          emitToWS(
+          emitLegacyStreamEvent(
             runtime.socket,
             {
               type: "queue_item_dropped",
@@ -1495,6 +1485,89 @@ function emitDeviceStatusIfOpen(
   }
 }
 
+function createLifecycleMessageBase<TMessageType extends string>(
+  messageType: TMessageType,
+  runId?: string | null,
+): {
+  id: string;
+  date: string;
+  message_type: TMessageType;
+  run_id?: string;
+} {
+  return {
+    id: `message-${crypto.randomUUID()}`,
+    date: new Date().toISOString(),
+    message_type: messageType,
+    ...(runId ? { run_id: runId } : {}),
+  };
+}
+
+function emitCanonicalMessageDelta(
+  socket: WebSocket,
+  runtime: ListenerRuntime | null,
+  delta: StreamDelta,
+  scope?: {
+    agent_id?: string | null;
+    conversation_id?: string | null;
+  },
+): void {
+  emitStreamDelta(socket, runtime, delta, scope);
+}
+
+function emitLoopErrorDelta(
+  socket: WebSocket,
+  runtime: ListenerRuntime | null,
+  params: {
+    message: string;
+    stopReason: StopReasonType;
+    isTerminal: boolean;
+    runId?: string | null;
+    agentId?: string | null;
+    conversationId?: string | null;
+  },
+): void {
+  emitCanonicalMessageDelta(
+    socket,
+    runtime,
+    {
+      ...createLifecycleMessageBase("loop_error", params.runId),
+      message: params.message,
+      stop_reason: params.stopReason,
+      is_terminal: params.isTerminal,
+    } as StreamDelta,
+    {
+      agent_id: params.agentId,
+      conversation_id: params.conversationId,
+    },
+  );
+}
+
+function emitRetryDelta(
+  socket: WebSocket,
+  runtime: ListenerRuntime,
+  params: {
+    reason: StopReasonType;
+    attempt: number;
+    maxAttempts: number;
+    delayMs: number;
+    runId?: string | null;
+    agentId?: string | null;
+    conversationId?: string | null;
+  },
+): void {
+  const delta: RetryMessage = {
+    ...createLifecycleMessageBase("retry", params.runId),
+    reason: params.reason,
+    attempt: params.attempt,
+    max_attempts: params.maxAttempts,
+    delay_ms: params.delayMs,
+  };
+  emitCanonicalMessageDelta(socket, runtime, delta, {
+    agent_id: params.agentId,
+    conversation_id: params.conversationId,
+  });
+}
+
 function stripLegacyEnvelope(
   payload: Record<string, unknown>,
 ): Record<string, unknown> {
@@ -1540,7 +1613,7 @@ function emitCancelAck(
     conversationId?: string | null;
   },
 ): void {
-  emitToWS(
+  emitLegacyStreamEvent(
     socket,
     {
       type: "cancel_ack",
@@ -1571,7 +1644,7 @@ function emitTurnResult(
     stopReason?: StopReasonType;
   },
 ): void {
-  emitToWS(
+  emitLegacyStreamEvent(
     socket,
     {
       type: "result",
@@ -1592,28 +1665,6 @@ function emitTurnResult(
   );
 }
 
-function sendControlMessageOverWebSocket(
-  socket: WebSocket,
-  payload: ControlRequest,
-  runtime: ListenerRuntime | null = activeRuntime,
-): void {
-  const record = payload as unknown as Record<string, unknown>;
-  emitStreamDelta(
-    socket,
-    runtime,
-    stripLegacyEnvelope(record) as unknown as StreamDelta,
-    {
-      agent_id:
-        (typeof record.agent_id === "string" ? record.agent_id : null) ??
-        runtime?.activeAgentId,
-      conversation_id:
-        (typeof record.conversation_id === "string"
-          ? record.conversation_id
-          : null) ?? runtime?.activeConversationId,
-    },
-  );
-}
-
 // ── Typed protocol event adapter ────────────────────────────────
 
 export type WsProtocolEvent =
@@ -1624,7 +1675,7 @@ export type WsProtocolEvent =
  * Single adapter for all outbound typed protocol events.
  * Passthrough for now — provides a seam for future filtering/versioning/redacting.
  */
-function emitToWS(
+function emitLegacyStreamEvent(
   socket: WebSocket,
   event: WsProtocolEvent,
   runtimeOverride: ListenerRuntime | null = activeRuntime,
@@ -1969,15 +2020,18 @@ function emitInterruptToolReturnMessage(
 
   const resolvedRunId = runId ?? runtime.activeRunId ?? undefined;
   for (const toolReturn of toolReturns) {
-    emitToWS(
+    emitCanonicalMessageDelta(
       socket,
+      runtime,
       {
         type: "message",
         message_type: "tool_return_message",
-        id: `message-${crypto.randomUUID()}`,
+        id: `message-${uuidPrefix}-${crypto.randomUUID()}`,
         date: new Date().toISOString(),
         run_id: resolvedRunId,
-        agent_id: runtime.activeAgentId ?? undefined,
+        status: toolReturn.status,
+        tool_call_id: toolReturn.tool_call_id,
+        tool_return: toolReturn.tool_return,
         tool_returns: [
           {
             tool_call_id: toolReturn.tool_call_id,
@@ -1987,11 +2041,11 @@ function emitInterruptToolReturnMessage(
             ...(toolReturn.stderr ? { stderr: toolReturn.stderr } : {}),
           },
         ],
-        session_id: runtime.sessionId,
-        uuid: `${uuidPrefix}-${crypto.randomUUID()}`,
+      },
+      {
+        agent_id: runtime.activeAgentId ?? undefined,
         conversation_id: runtime.activeConversationId ?? undefined,
       },
-      runtime,
     );
   }
 }
@@ -2007,19 +2061,14 @@ function emitToolExecutionStartedEvents(
   },
 ): void {
   for (const toolCallId of params.toolCallIds) {
-    emitToWS(
-      socket,
-      {
-        type: "tool_execution_started",
-        tool_call_id: toolCallId,
-        ...(params.runId ? { run_id: params.runId } : {}),
-        session_id: runtime.sessionId,
-        uuid: `tool-exec-started-${toolCallId}`,
-        agent_id: params.agentId,
-        conversation_id: params.conversationId,
-      },
-      runtime,
-    );
+    const delta: ClientToolStartMessage = {
+      ...createLifecycleMessageBase("client_tool_start", params.runId),
+      tool_call_id: toolCallId,
+    };
+    emitCanonicalMessageDelta(socket, runtime, delta, {
+      agent_id: params.agentId,
+      conversation_id: params.conversationId,
+    });
   }
 }
 
@@ -2035,20 +2084,15 @@ function emitToolExecutionFinishedEvents(
 ): void {
   const toolReturns = extractInterruptToolReturns(params.approvals);
   for (const toolReturn of toolReturns) {
-    emitToWS(
-      socket,
-      {
-        type: "tool_execution_finished",
-        tool_call_id: toolReturn.tool_call_id,
-        status: toolReturn.status,
-        ...(params.runId ? { run_id: params.runId } : {}),
-        session_id: runtime.sessionId,
-        uuid: `tool-exec-finished-${toolReturn.tool_call_id}`,
-        agent_id: params.agentId,
-        conversation_id: params.conversationId,
-      },
-      runtime,
-    );
+    const delta: ClientToolEndMessage = {
+      ...createLifecycleMessageBase("client_tool_end", params.runId),
+      tool_call_id: toolReturn.tool_call_id,
+      status: toolReturn.status,
+    };
+    emitCanonicalMessageDelta(socket, runtime, delta, {
+      agent_id: params.agentId,
+      conversation_id: params.conversationId,
+    });
   }
 }
 
@@ -2418,16 +2462,13 @@ async function sendMessageStreamWithRetry(
         });
         transientRetries = attempt;
 
-        emitToWS(socket, {
-          type: "retry",
-          reason: "llm_api_error",
+        emitRetryDelta(socket, runtime, {
+          reason: "error",
           attempt,
-          max_attempts: LLM_API_ERROR_MAX_RETRIES,
-          delay_ms: delayMs,
-          session_id: runtime.sessionId,
-          uuid: `retry-${crypto.randomUUID()}`,
-          agent_id: runtime.activeAgentId ?? undefined,
-          conversation_id: conversationId,
+          maxAttempts: LLM_API_ERROR_MAX_RETRIES,
+          delayMs,
+          agentId: runtime.activeAgentId ?? undefined,
+          conversationId,
         });
 
         await new Promise((resolve) => setTimeout(resolve, delayMs));
@@ -2457,16 +2498,13 @@ async function sendMessageStreamWithRetry(
         });
         conversationBusyRetries = attempt;
 
-        emitToWS(socket, {
-          type: "retry",
+        emitRetryDelta(socket, runtime, {
           reason: "error",
           attempt,
-          max_attempts: MAX_CONVERSATION_BUSY_RETRIES,
-          delay_ms: delayMs,
-          session_id: runtime.sessionId,
-          uuid: `retry-${crypto.randomUUID()}`,
-          agent_id: runtime.activeAgentId ?? undefined,
-          conversation_id: conversationId,
+          maxAttempts: MAX_CONVERSATION_BUSY_RETRIES,
+          delayMs,
+          agentId: runtime.activeAgentId ?? undefined,
+          conversationId,
         });
 
         await new Promise((resolve) => setTimeout(resolve, delayMs));
@@ -2544,20 +2582,6 @@ export function requestApprovalOverWS(
     setLoopStatus(runtime, "WAITING_ON_APPROVAL");
     emitLoopStatusIfOpen(runtime);
     emitDeviceStatusIfOpen(runtime);
-    try {
-      sendControlMessageOverWebSocket(socket, controlRequest, runtime);
-    } catch (error) {
-      runtime.pendingApprovalResolvers.delete(requestId);
-      if (runtime.pendingApprovalResolvers.size === 0) {
-        setLoopStatus(
-          runtime,
-          runtime.isProcessing ? "PROCESSING_API_RESPONSE" : "WAITING_ON_INPUT",
-        );
-      }
-      emitLoopStatusIfOpen(runtime);
-      emitDeviceStatusIfOpen(runtime);
-      reject(error instanceof Error ? error : new Error(String(error)));
-    }
   });
 }
 
@@ -2689,16 +2713,13 @@ async function connectWithRetry(
     }
 
     if (parsed.type === "__invalid_input") {
-      emitStreamDelta(
-        socket,
-        runtime,
-        {
-          type: "error",
-          message: parsed.reason,
-          stop_reason: "error",
-        } as unknown as StreamDelta,
-        parsed.runtime,
-      );
+      emitLoopErrorDelta(socket, runtime, {
+        message: parsed.reason,
+        stopReason: "error",
+        isTerminal: false,
+        agentId: parsed.runtime.agent_id,
+        conversationId: parsed.runtime.conversation_id,
+      });
       return;
     }
 
@@ -2720,16 +2741,13 @@ async function connectWithRetry(
 
       const inputPayload = parsed.payload;
       if (inputPayload.kind !== "create_message") {
-        emitStreamDelta(
-          socket,
-          runtime,
-          {
-            type: "error",
-            message: `Unsupported input payload kind: ${String((inputPayload as { kind?: unknown }).kind)}`,
-            stop_reason: "error",
-          } as unknown as StreamDelta,
-          parsed.runtime,
-        );
+        emitLoopErrorDelta(socket, runtime, {
+          message: `Unsupported input payload kind: ${String((inputPayload as { kind?: unknown }).kind)}`,
+          stopReason: "error",
+          isTerminal: false,
+          agentId: parsed.runtime.agent_id,
+          conversationId: parsed.runtime.conversation_id,
+        });
         return;
       }
 
@@ -2744,17 +2762,14 @@ async function connectWithRetry(
           "type" in payload && payload.type === "approval",
       );
       if (hasApprovalPayload) {
-        emitStreamDelta(
-          socket,
-          runtime,
-          {
-            type: "error",
-            message:
-              "Protocol violation: approval payloads are not allowed in input.kind=create_message. Use input.kind=approval_response.",
-            stop_reason: "error",
-          } as unknown as StreamDelta,
-          parsed.runtime,
-        );
+        emitLoopErrorDelta(socket, runtime, {
+          message:
+            "Protocol violation: approval payloads are not allowed in input.kind=create_message. Use input.kind=approval_response.",
+          stopReason: "error",
+          isTerminal: false,
+          agentId: parsed.runtime.agent_id,
+          conversationId: parsed.runtime.conversation_id,
+        });
         return;
       }
 
@@ -3199,37 +3214,34 @@ async function handleIncomingMessage(
           // Emit in-stream errors
           if (errorInfo) {
             latestErrorText = errorInfo.message || latestErrorText;
-            emitToWS(socket, {
-              type: "error",
+            emitLoopErrorDelta(socket, runtime, {
               message: errorInfo.message || "Stream error",
-              stop_reason: (errorInfo.error_type as StopReasonType) || "error",
-              run_id: runId || errorInfo.run_id,
-              session_id: runtime.sessionId,
-              uuid: `error-${crypto.randomUUID()}`,
-              agent_id: agentId,
-              conversation_id: conversationId,
+              stopReason: (errorInfo.error_type as StopReasonType) || "error",
+              isTerminal: false,
+              runId: runId || errorInfo.run_id,
+              agentId,
+              conversationId,
             });
           }
 
           // Emit chunk as MessageWire for protocol consumers
           if (shouldOutput) {
-            const chunkWithIds = chunk as typeof chunk & {
-              otid?: string;
-              id?: string;
-            };
             const normalizedChunk = normalizeToolReturnWireMessage(
               chunk as unknown as Record<string, unknown>,
             );
             if (normalizedChunk) {
-              emitToWS(socket, {
-                ...normalizedChunk,
-                type: "message",
-                session_id: runtime.sessionId,
-                uuid:
-                  chunkWithIds.otid || chunkWithIds.id || crypto.randomUUID(),
-                agent_id: agentId,
-                conversation_id: conversationId,
-              });
+              emitCanonicalMessageDelta(
+                socket,
+                runtime,
+                {
+                  ...normalizedChunk,
+                  type: "message",
+                } as StreamDelta,
+                {
+                  agent_id: agentId,
+                  conversation_id: conversationId,
+                },
+              );
             }
           }
 
@@ -3308,7 +3320,7 @@ async function handleIncomingMessage(
           })
         ) {
           postStopApprovalRecoveryRetries += 1;
-          emitToWS(socket, {
+          emitLegacyStreamEvent(socket, {
             type: "recovery",
             recovery_type: "approval_pending",
             message:
@@ -3317,7 +3329,6 @@ async function handleIncomingMessage(
             session_id: runtime.sessionId,
             uuid: `recovery-${crypto.randomUUID()}`,
             agent_id: agentId,
-            conversation_id: conversationId,
           });
 
           try {
@@ -3410,15 +3421,13 @@ async function handleIncomingMessage(
         const errorMessage =
           errorDetail || `Unexpected stop reason: ${stopReason}`;
 
-        emitToWS(socket, {
-          type: "error",
+        emitLoopErrorDelta(socket, runtime, {
           message: errorMessage,
-          stop_reason: effectiveStopReason,
-          run_id: runId,
-          session_id: runtime.sessionId,
-          uuid: `error-${crypto.randomUUID()}`,
-          agent_id: agentId,
-          conversation_id: conversationId,
+          stopReason: effectiveStopReason,
+          isTerminal: true,
+          runId: runId,
+          agentId,
+          conversationId,
         });
         emitTurnResult(socket, runtime, {
           subtype: "error",
@@ -3447,14 +3456,12 @@ async function handleIncomingMessage(
           conversation_id: conversationId,
         });
 
-        emitToWS(socket, {
-          type: "error",
+        emitLoopErrorDelta(socket, runtime, {
           message: "requires_approval stop returned no approvals",
-          stop_reason: "error",
-          session_id: runtime.sessionId,
-          uuid: `error-${crypto.randomUUID()}`,
-          agent_id: agentId,
-          conversation_id: conversationId,
+          stopReason: "error",
+          isTerminal: true,
+          agentId,
+          conversationId,
         });
         emitTurnResult(socket, runtime, {
           subtype: "error",
@@ -3510,27 +3517,6 @@ async function handleIncomingMessage(
             reason: string;
           };
 
-      // Emit auto-approval events for auto-allowed tools
-      for (const ac of autoAllowed) {
-        emitToWS(socket, {
-          type: "auto_approval",
-          tool_call: {
-            name: ac.approval.toolName,
-            tool_call_id: ac.approval.toolCallId,
-            arguments: ac.approval.toolArgs,
-          },
-          reason: ac.permission.reason || "auto-approved",
-          matched_rule:
-            "matchedRule" in ac.permission && ac.permission.matchedRule
-              ? ac.permission.matchedRule
-              : "auto-approved",
-          session_id: runtime.sessionId,
-          uuid: `auto-approval-${ac.approval.toolCallId}`,
-          agent_id: agentId,
-          conversation_id: conversationId,
-        });
-      }
-
       const decisions: Decision[] = [
         ...autoAllowed.map((ac) => ({
           type: "approve" as const,
@@ -3559,9 +3545,6 @@ async function handleIncomingMessage(
             ac.parsedArgs,
             turnWorkingDirectory,
           );
-          const lifecycleRunId =
-            runId || runtime.activeRunId || msgRunIds[msgRunIds.length - 1];
-
           const controlRequest: ControlRequest = {
             type: "control_request",
             request_id: requestId,
@@ -3577,18 +3560,6 @@ async function handleIncomingMessage(
             agent_id: agentId,
             conversation_id: conversationId,
           };
-
-          emitToWS(socket, {
-            type: "approval_requested",
-            request_id: requestId,
-            tool_call_id: ac.approval.toolCallId,
-            tool_name: ac.approval.toolName,
-            ...(lifecycleRunId ? { run_id: lifecycleRunId } : {}),
-            session_id: runtime.sessionId,
-            uuid: `approval-requested-${ac.approval.toolCallId}`,
-            agent_id: agentId,
-            conversation_id: conversationId,
-          });
 
           const responseBody = await requestApprovalOverWS(
             runtime,
@@ -3607,51 +3578,11 @@ async function handleIncomingMessage(
                   }
                 : ac.approval;
               decisions.push({ type: "approve", approval: finalApproval });
-
-              // Emit auto-approval event for WS-callback-approved tool
-              emitToWS(socket, {
-                type: "auto_approval",
-                tool_call: {
-                  name: finalApproval.toolName,
-                  tool_call_id: finalApproval.toolCallId,
-                  arguments: finalApproval.toolArgs,
-                },
-                reason: "Approved via WebSocket",
-                matched_rule: "canUseTool callback",
-                session_id: runtime.sessionId,
-                uuid: `auto-approval-${ac.approval.toolCallId}`,
-                agent_id: agentId,
-                conversation_id: conversationId,
-              });
-              emitToWS(socket, {
-                type: "approval_received",
-                request_id: requestId,
-                tool_call_id: ac.approval.toolCallId,
-                decision: "allow",
-                reason: "Approved via WebSocket",
-                ...(lifecycleRunId ? { run_id: lifecycleRunId } : {}),
-                session_id: runtime.sessionId,
-                uuid: `approval-received-${ac.approval.toolCallId}`,
-                agent_id: agentId,
-                conversation_id: conversationId,
-              });
             } else {
               decisions.push({
                 type: "deny",
                 approval: ac.approval,
                 reason: response?.message || "Denied via WebSocket",
-              });
-              emitToWS(socket, {
-                type: "approval_received",
-                request_id: requestId,
-                tool_call_id: ac.approval.toolCallId,
-                decision: "deny",
-                reason: response?.message || "Denied via WebSocket",
-                ...(lifecycleRunId ? { run_id: lifecycleRunId } : {}),
-                session_id: runtime.sessionId,
-                uuid: `approval-received-${ac.approval.toolCallId}`,
-                agent_id: agentId,
-                conversation_id: conversationId,
               });
             }
           } else {
@@ -3660,18 +3591,6 @@ async function handleIncomingMessage(
               type: "deny",
               approval: ac.approval,
               reason: denyReason,
-            });
-            emitToWS(socket, {
-              type: "approval_received",
-              request_id: requestId,
-              tool_call_id: ac.approval.toolCallId,
-              decision: "deny",
-              reason: denyReason,
-              ...(lifecycleRunId ? { run_id: lifecycleRunId } : {}),
-              session_id: runtime.sessionId,
-              uuid: `approval-received-${ac.approval.toolCallId}`,
-              agent_id: agentId,
-              conversation_id: conversationId,
             });
           }
         }
@@ -3864,30 +3783,28 @@ async function handleIncomingMessage(
           errorPayload.body = error.error as Record<string, unknown>;
         }
       }
-      emitStreamDelta(
+      emitLegacyStreamEvent(
         socket,
-        runtime,
         {
           type: "run_request_error",
           error: errorPayload,
           batch_id: dequeuedBatchId,
-        } as unknown as StreamDelta,
-        {
           agent_id: agentId,
           conversation_id: conversationId,
+          session_id: runtime.sessionId,
+          uuid: `run-request-error-${crypto.randomUUID()}`,
         },
+        runtime,
       );
     }
 
     const errorMessage = error instanceof Error ? error.message : String(error);
-    emitToWS(socket, {
-      type: "error",
+    emitLoopErrorDelta(socket, runtime, {
       message: errorMessage,
-      stop_reason: "error",
-      session_id: runtime.sessionId,
-      uuid: `error-${crypto.randomUUID()}`,
-      agent_id: agentId || undefined,
-      conversation_id: conversationId,
+      stopReason: "error",
+      isTerminal: true,
+      agentId: agentId || undefined,
+      conversationId,
     });
     emitTurnResult(socket, runtime, {
       subtype: "error",
@@ -3938,7 +3855,7 @@ export const __listenClientTestUtils = {
   buildDeviceStatus,
   buildLoopStatus,
   handleCwdChange,
-  emitToWS,
+  emitLegacyStreamEvent,
   emitCancelAck,
   getConversationWorkingDirectory,
   rememberPendingApprovalBatchIds,
