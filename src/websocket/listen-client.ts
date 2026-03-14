@@ -80,6 +80,7 @@ import type {
   ResultSubtype,
   RetryMessage,
   RuntimeScope,
+  StatusMessage,
   StopReasonType,
   StreamDelta,
   StreamDeltaMessage,
@@ -1561,6 +1562,28 @@ function emitRetryDelta(
     attempt: params.attempt,
     max_attempts: params.maxAttempts,
     delay_ms: params.delayMs,
+  };
+  emitCanonicalMessageDelta(socket, runtime, delta, {
+    agent_id: params.agentId,
+    conversation_id: params.conversationId,
+  });
+}
+
+function emitStatusDelta(
+  socket: WebSocket,
+  runtime: ListenerRuntime | null,
+  params: {
+    message: string;
+    level: StatusMessage["level"];
+    runId?: string | null;
+    agentId?: string | null;
+    conversationId?: string | null;
+  },
+): void {
+  const delta: StatusMessage = {
+    ...createLifecycleMessageBase("status", params.runId),
+    message: params.message,
+    level: params.level,
   };
   emitCanonicalMessageDelta(socket, runtime, delta, {
     agent_id: params.agentId,
@@ -3087,9 +3110,13 @@ async function handleIncomingMessage(
   try {
     if (!agentId) {
       runtime.isProcessing = false;
-      setLoopStatus(runtime, "WAITING_ON_INPUT");
+      setLoopStatus(runtime, "WAITING_ON_INPUT", {
+        conversation_id: conversationId,
+      });
       clearActiveRunState(runtime);
-      emitRuntimeStateUpdates(runtime);
+      emitRuntimeStateUpdates(runtime, {
+        conversation_id: conversationId,
+      });
       return;
     }
 
@@ -3320,15 +3347,13 @@ async function handleIncomingMessage(
           })
         ) {
           postStopApprovalRecoveryRetries += 1;
-          emitLegacyStreamEvent(socket, {
-            type: "recovery",
-            recovery_type: "approval_pending",
+          emitStatusDelta(socket, runtime, {
             message:
               "Recovering from stale approval conflict after interrupted/reconnected turn",
-            run_id: runId || msgRunIds[msgRunIds.length - 1] || undefined,
-            session_id: runtime.sessionId,
-            uuid: `recovery-${crypto.randomUUID()}`,
-            agent_id: agentId,
+            level: "warning",
+            runId: runId || msgRunIds[msgRunIds.length - 1] || undefined,
+            agentId,
+            conversationId,
           });
 
           try {
@@ -3768,36 +3793,6 @@ async function handleIncomingMessage(
       conversation_id: conversationId,
     });
 
-    // If no run_id was ever observed, surface a run-request error delta.
-    if (msgRunIds.length === 0) {
-      const errorPayload: {
-        status?: number;
-        body?: Record<string, unknown>;
-        message?: string;
-      } = {
-        message: error instanceof Error ? error.message : String(error),
-      };
-      if (error instanceof APIError) {
-        errorPayload.status = error.status;
-        if (error.error && typeof error.error === "object") {
-          errorPayload.body = error.error as Record<string, unknown>;
-        }
-      }
-      emitLegacyStreamEvent(
-        socket,
-        {
-          type: "run_request_error",
-          error: errorPayload,
-          batch_id: dequeuedBatchId,
-          agent_id: agentId,
-          conversation_id: conversationId,
-          session_id: runtime.sessionId,
-          uuid: `run-request-error-${crypto.randomUUID()}`,
-        },
-        runtime,
-      );
-    }
-
     const errorMessage = error instanceof Error ? error.message : String(error);
     emitLoopErrorDelta(socket, runtime, {
       message: errorMessage,
@@ -3824,8 +3819,6 @@ async function handleIncomingMessage(
     runtime.cancelRequested = false;
     runtime.isRecoveringApprovals = false;
     runtime.activeExecutingToolCallIds = [];
-    setLoopStatus(runtime, "WAITING_ON_INPUT");
-    emitRuntimeStateUpdates(runtime);
   }
 }
 
