@@ -727,6 +727,8 @@ function getDefaultDecision(
     "SearchFileContent",
     "WriteTodos",
     "ReadManyFiles",
+    // client-side memory tool is mutating + git side effects
+    // and should require approval by default
   ];
 
   if (autoAllowTools.includes(toolName)) {
