@@ -1,11 +1,13 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   appendTranscriptDeltaJsonl,
   buildAutoReflectionPayload,
+  buildParentMemorySnapshot,
+  buildReflectionSubagentPrompt,
   finalizeAutoReflectionPayload,
   getReflectionTranscriptPaths,
 } from "../../cli/helpers/reflectionTranscript";
@@ -127,5 +129,75 @@ describe("reflectionTranscript helper", () => {
 
     const payloadText = await readFile(secondAttempt.payloadPath, "utf-8");
     expect(payloadText).toContain("<assistant>second</assistant>");
+  });
+
+  test("buildParentMemorySnapshot renders tree descriptions and system <memory> blocks", async () => {
+    const memoryDir = join(testRoot, "memory");
+    await mkdir(join(memoryDir, "system"), { recursive: true });
+    await mkdir(join(memoryDir, "reference"), { recursive: true });
+    await mkdir(join(memoryDir, "skills", "bird"), { recursive: true });
+
+    await writeFile(
+      join(memoryDir, "system", "human.md"),
+      "---\ndescription: User context\n---\nDr. Wooders prefers direct answers.\n",
+      "utf-8",
+    );
+    await writeFile(
+      join(memoryDir, "reference", "project.md"),
+      "---\ndescription: Project notes\n---\nletta-code CLI details\n",
+      "utf-8",
+    );
+    await writeFile(
+      join(memoryDir, "skills", "bird", "SKILL.md"),
+      "---\nname: bird\ndescription: X/Twitter CLI for posting\n---\nThis body should not be inlined into parent memory.\n",
+      "utf-8",
+    );
+
+    const snapshot = await buildParentMemorySnapshot(memoryDir);
+
+    expect(snapshot).toContain("<parent_memory>");
+    expect(snapshot).toContain("<memory_filesystem>");
+    expect(snapshot).toContain("/memory/");
+    expect(snapshot).toContain("system/");
+    expect(snapshot).toContain("reference/");
+    expect(snapshot).toContain("skills/");
+    expect(snapshot).toContain("project.md (Project notes)");
+    expect(snapshot).toContain("SKILL.md (X/Twitter CLI for posting)");
+
+    expect(snapshot).toContain("<memory>");
+    expect(snapshot).toContain(`<path>${memoryDir}/system/human.md</path>`);
+    expect(snapshot).toContain("Dr. Wooders prefers direct answers.");
+    expect(snapshot).toContain("</memory>");
+
+    expect(snapshot).not.toContain(
+      `<path>${memoryDir}/reference/project.md</path>`,
+    );
+    expect(snapshot).not.toContain("letta-code CLI details");
+    expect(snapshot).not.toContain(
+      "This body should not be inlined into parent memory.",
+    );
+    expect(snapshot).toContain("</parent_memory>");
+  });
+
+  test("buildReflectionSubagentPrompt uses expanded reflection instructions", () => {
+    const prompt = buildReflectionSubagentPrompt({
+      transcriptPath: "/tmp/transcript.txt",
+      memoryDir: "/tmp/memory",
+      cwd: "/tmp/work",
+      parentMemory: "<parent_memory>snapshot</parent_memory>",
+    });
+
+    expect(prompt).toContain("Review the conversation transcript");
+    expect(prompt).toContain("Your current working directory is: /tmp/work");
+    expect(prompt).toContain(
+      "The current conversation transcript has been saved",
+    );
+    expect(prompt).toContain(
+      "In-context memory (in the parent agent's system prompt) is stored in the `system/` folder and are rendered in <memory> tags below.",
+    );
+    expect(prompt).toContain(
+      "Additional memory files (such as skills and external memory) may also be read and modified.",
+    );
+    expect(prompt).toContain("<parent_memory>snapshot</parent_memory>");
   });
 });
