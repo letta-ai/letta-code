@@ -4,7 +4,7 @@
  */
 
 import { existsSync } from "node:fs";
-import { mkdir, readdir, realpath, stat, writeFile } from "node:fs/promises";
+import { mkdir, realpath, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 import { APIError } from "@letta-ai/letta-client/core/error";
@@ -61,37 +61,34 @@ import {
 } from "../reminders/state";
 import { settingsManager } from "../settings-manager";
 import { isInteractiveApprovalTool } from "../tools/interactivePolicy";
-import { loadTools } from "../tools/manager";
+import { getToolNames, loadTools } from "../tools/manager";
 import type {
-  ApprovalReceivedMessage,
-  ApprovalRequestedMessage,
-  AutoApprovalMessage,
-  CancelAckMessage,
-  CanUseToolResponse,
+  AbortMessageCommand,
+  ApprovalResponseBody,
+  ApprovalResponseDecision,
+  ChangeDeviceStateCommand,
+  ClientToolEndMessage,
+  ClientToolStartMessage,
   ControlRequest,
-  ControlResponseBody,
-  ErrorMessage,
-  MessageWire,
-  ResultMessage as ProtocolResultMessage,
-  QueueLifecycleEvent,
-  QueueSnapshotMessage,
-  RecoveryMessage,
+  DeviceStatus,
+  DeviceStatusUpdateMessage,
+  InputCommand,
+  LoopState,
+  LoopStatus,
+  LoopStatusUpdateMessage,
+  QueueMessage,
+  QueueUpdateMessage,
   RetryMessage,
+  RuntimeScope,
+  StatusMessage,
   StopReasonType,
-  SyncCompleteMessage,
-  ToolExecutionFinishedMessage,
-  ToolExecutionStartedMessage,
-  TranscriptBackfillMessage,
-  TranscriptSupplementMessage,
-} from "../types/protocol";
+  StreamDelta,
+  StreamDeltaMessage,
+  WsProtocolCommand,
+  WsProtocolMessage,
+} from "../types/protocol_v2";
 import { getListenerBlockedReason } from "./helpers/listenerQueueAdapter";
-import {
-  handleTerminalInput,
-  handleTerminalKill,
-  handleTerminalResize,
-  handleTerminalSpawn,
-  killAllTerminals,
-} from "./terminalHandler";
+import { killAllTerminals } from "./terminalHandler";
 
 interface StartListenerOptions {
   connectionId: string;
@@ -120,21 +117,6 @@ interface StartListenerOptions {
   ) => void;
 }
 
-interface PingMessage {
-  type: "ping";
-}
-
-interface PongMessage {
-  type: "pong";
-}
-
-interface StatusMessage {
-  type: "status";
-  currentMode: "default" | "acceptEdits" | "plan" | "bypassPermissions";
-  lastStopReason: string | null;
-  isProcessing: boolean;
-}
-
 interface IncomingMessage {
   type: "message";
   agentId?: string;
@@ -144,223 +126,30 @@ interface IncomingMessage {
   >;
 }
 
-interface RunStartedMessage {
-  type: "run_started";
-  runId: string;
-  batch_id: string;
-  event_seq?: number;
-  session_id?: string;
-  agent_id?: string;
-  conversation_id?: string;
-}
-
-interface RunRequestErrorMessage {
-  type: "run_request_error";
-  error: {
-    status?: number;
-    body?: Record<string, unknown>;
-    message?: string;
-  };
-  batch_id?: string;
-  event_seq?: number;
-  session_id?: string;
-  agent_id?: string;
-  conversation_id?: string;
-}
-
-interface ModeChangeMessage {
-  type: "mode_change";
+interface ModeChangePayload {
   mode: "default" | "acceptEdits" | "plan" | "bypassPermissions";
-}
-
-interface WsControlResponse {
-  type: "control_response";
-  response: ControlResponseBody;
-}
-
-interface ModeChangedMessage {
-  type: "mode_changed";
-  mode: "default" | "acceptEdits" | "plan" | "bypassPermissions";
-  success: boolean;
-  error?: string;
-  event_seq?: number;
-  session_id?: string;
-}
-
-interface GetStatusMessage {
-  type: "get_status";
-}
-
-interface GetStateMessage {
-  type: "get_state";
-  agentId?: string | null;
-  conversationId?: string | null;
 }
 
 interface ChangeCwdMessage {
-  type: "change_cwd";
   agentId?: string | null;
   conversationId?: string | null;
   cwd: string;
-}
-
-interface ListFoldersInDirectoryMessage {
-  type: "list_folders_in_directory";
-  path: string;
-  agentId?: string | null;
-  conversationId?: string | null;
-}
-
-interface ListFoldersInDirectoryResponseMessage {
-  type: "list_folders_in_directory_response";
-  path: string;
-  folders: string[];
-  hasMore: boolean;
-  success: boolean;
-  error?: string;
-  event_seq?: number;
-  session_id?: string;
-}
-
-interface CancelRunMessage {
-  type: "cancel_run";
-  request_id?: string;
-  run_id?: string | null;
-}
-
-interface TerminalSpawnMessage {
-  type: "terminal_spawn";
-  terminal_id: string;
-  cols: number;
-  rows: number;
-  agentId?: string | null;
-  conversationId?: string | null;
-}
-
-interface TerminalInputMessage {
-  type: "terminal_input";
-  terminal_id: string;
-  data: string;
-}
-
-interface TerminalResizeMessage {
-  type: "terminal_resize";
-  terminal_id: string;
-  cols: number;
-  rows: number;
-}
-
-interface TerminalKillMessage {
-  type: "terminal_kill";
-  terminal_id: string;
-}
-
-interface RecoverPendingApprovalsMessage {
-  type: "recover_pending_approvals";
-  agentId?: string;
-  conversationId?: string;
 }
 
 type InboundMessagePayload =
   | (MessageCreate & { client_message_id?: string })
   | ApprovalCreate;
 
-interface StatusResponseMessage {
-  type: "status_response";
-  currentMode: "default" | "acceptEdits" | "plan" | "bypassPermissions";
-  lastStopReason: string | null;
-  isProcessing: boolean;
-  event_seq?: number;
-  session_id?: string;
-}
-
-interface StateResponseMessage {
-  type: "state_response";
-  schema_version: 1;
-  session_id: string;
-  snapshot_id: string;
-  generated_at: string;
-  state_seq: number;
-  cwd: string;
-  configured_cwd: string;
-  active_turn_cwd: string | null;
-  cwd_agent_id: string | null;
-  cwd_conversation_id: string | null;
-  mode: "default" | "acceptEdits" | "plan" | "bypassPermissions";
-  is_processing: boolean;
-  last_stop_reason: string | null;
-  control_response_capable: boolean;
-  tool_lifecycle_capable: boolean;
-  active_run: {
-    run_id: string | null;
-    agent_id: string | null;
-    conversation_id: string | null;
-    started_at: string | null;
-  };
-  pending_control_requests: Array<{
-    request_id: string;
-    request: ControlRequest["request"];
-  }>;
-  pending_interrupt: {
-    agent_id: string;
-    conversation_id: string;
-    interrupted_tool_call_ids: string[];
-    tool_returns: InterruptToolReturn[];
-  } | null;
-  queue: {
-    queue_len: number;
-    pending_turns: number;
-    items: Array<{
-      id: string;
-      client_message_id: string;
-      kind: string;
-      source: string;
-      content: unknown;
-      enqueued_at: string;
-    }>;
-  };
-  event_seq?: number;
-}
-
-interface CwdChangedMessage {
-  type: "cwd_changed";
-  agent_id: string | null;
-  conversation_id: string;
-  cwd: string;
-  success: boolean;
-  error?: string;
-  event_seq?: number;
-  session_id?: string;
-}
-
-type ServerMessage =
-  | PongMessage
-  | StatusMessage
-  | IncomingMessage
-  | ModeChangeMessage
-  | GetStatusMessage
-  | GetStateMessage
-  | ChangeCwdMessage
-  | ListFoldersInDirectoryMessage
-  | CancelRunMessage
-  | RecoverPendingApprovalsMessage
-  | WsControlResponse
-  | TerminalSpawnMessage
-  | TerminalInputMessage
-  | TerminalResizeMessage
-  | TerminalKillMessage;
-type ClientMessage =
-  | PingMessage
-  | RunStartedMessage
-  | RunRequestErrorMessage
-  | ModeChangedMessage
-  | CwdChangedMessage
-  | ListFoldersInDirectoryResponseMessage
-  | StatusResponseMessage
-  | StateResponseMessage;
+type ServerMessage = WsProtocolCommand;
+type InvalidInputCommand = {
+  type: "__invalid_input";
+  runtime: RuntimeScope;
+  reason: string;
+};
+type ParsedServerMessage = ServerMessage | InvalidInputCommand;
 
 type PendingApprovalResolver = {
-  resolve: (response: ControlResponseBody) => void;
+  resolve: (response: ApprovalResponseBody) => void;
   reject: (reason: Error) => void;
   controlRequest?: ControlRequest;
 };
@@ -389,7 +178,7 @@ type ListenerRuntime = {
   activeRunStartedAt: string | null;
   /** Abort controller for the currently active message turn. */
   activeAbortController: AbortController | null;
-  /** True when a cancel_run request has been issued for the active turn. */
+  /** True when an abort_message request has been issued for the active turn. */
   cancelRequested: boolean;
   /** Queue lifecycle tracking — parallel tracking layer, does not affect message processing. */
   queueRuntime: QueueRuntime;
@@ -399,12 +188,20 @@ type ListenerRuntime = {
   queuePumpActive: boolean;
   /** Dedupes queue pump scheduling onto messageQueue chain. */
   queuePumpScheduled: boolean;
+  /** Coalesces rapid queue mutations into a single update_queue emit. */
+  queueEmitScheduled: boolean;
+  pendingQueueEmitScope?: {
+    agent_id?: string | null;
+    conversation_id?: string | null;
+  };
   /** Queue backlog metric for state snapshot visibility. */
   pendingTurns: number;
   /** Optional debug hook for WS event logging. */
   onWsEvent?: StartListenerOptions["onWsEvent"];
   /** Prevent duplicate concurrent pending-approval recovery passes. */
   isRecoveringApprovals: boolean;
+  /** Canonical loop phase for update_loop_status emission. */
+  loopStatus: LoopStatus;
   /**
    * Correlates pending approval tool_call_ids to the originating dequeued batch.
    * Used to preserve run attachment continuity across approval recovery.
@@ -433,6 +230,8 @@ type ListenerRuntime = {
   reminderState: SharedReminderState;
   bootWorkingDirectory: string;
   workingDirectoryByConversation: Map<string, string>;
+  connectionId: string | null;
+  connectionName: string | null;
 };
 
 // Listen mode supports one active connection per process.
@@ -441,7 +240,15 @@ let activeRuntime: ListenerRuntime | null = null;
 /**
  * Handle mode change request from cloud
  */
-function handleModeChange(msg: ModeChangeMessage, socket: WebSocket): void {
+function handleModeChange(
+  msg: ModeChangePayload,
+  socket: WebSocket,
+  runtime: ListenerRuntime,
+  scope?: {
+    agent_id?: string | null;
+    conversation_id?: string | null;
+  },
+): void {
   try {
     permissionMode.setMode(msg.mode);
 
@@ -451,23 +258,18 @@ function handleModeChange(msg: ModeChangeMessage, socket: WebSocket): void {
       permissionMode.setPlanFilePath(planFilePath);
     }
 
-    // Send success acknowledgment
-    sendClientMessage(socket, {
-      type: "mode_changed",
-      mode: msg.mode,
-      success: true,
-    });
+    emitDeviceStatusUpdate(socket, runtime, scope);
 
     if (process.env.DEBUG) {
       console.log(`[Listen] Mode changed to: ${msg.mode}`);
     }
   } catch (error) {
-    // Send failure acknowledgment
-    sendClientMessage(socket, {
-      type: "mode_changed",
-      mode: msg.mode,
-      success: false,
-      error: error instanceof Error ? error.message : "Mode change failed",
+    emitLoopErrorDelta(socket, runtime, {
+      message: error instanceof Error ? error.message : "Mode change failed",
+      stopReason: "error",
+      isTerminal: false,
+      agentId: scope?.agent_id,
+      conversationId: scope?.conversation_id,
     });
 
     if (process.env.DEBUG) {
@@ -527,93 +329,21 @@ async function handleCwdChange(
       conversationId,
       normalizedPath,
     );
-    sendClientMessage(
-      socket,
-      {
-        type: "cwd_changed",
-        agent_id: agentId,
-        conversation_id: conversationId,
-        cwd: normalizedPath,
-        success: true,
-      },
-      runtime,
-    );
-    sendStateSnapshot(socket, runtime, agentId, conversationId);
+    emitDeviceStatusUpdate(socket, runtime, {
+      agent_id: agentId,
+      conversation_id: conversationId,
+    });
   } catch (error) {
-    sendClientMessage(
-      socket,
-      {
-        type: "cwd_changed",
-        agent_id: agentId,
-        conversation_id: conversationId,
-        cwd: msg.cwd,
-        success: false,
-        error:
-          error instanceof Error
-            ? error.message
-            : "Working directory change failed",
-      },
-      runtime,
-    );
-  }
-}
-
-const MAX_LIST_FOLDERS = 100;
-
-async function handleListFoldersInDirectory(
-  msg: ListFoldersInDirectoryMessage,
-  socket: WebSocket,
-  runtime: ListenerRuntime,
-): Promise<void> {
-  try {
-    const requestedPath = msg.path?.trim();
-    if (!requestedPath) {
-      throw new Error("Path cannot be empty");
-    }
-
-    const resolvedPath = path.isAbsolute(requestedPath)
-      ? requestedPath
-      : path.resolve(process.cwd(), requestedPath);
-    const normalizedPath = await realpath(resolvedPath);
-    const stats = await stat(normalizedPath);
-    if (!stats.isDirectory()) {
-      throw new Error(`Not a directory: ${normalizedPath}`);
-    }
-
-    const entries = await readdir(normalizedPath, { withFileTypes: true });
-    const allFolders = entries
-      .filter((e) => e.isDirectory() && !e.name.startsWith("."))
-      .map((e) => e.name)
-      .sort();
-
-    const folders = allFolders.slice(0, MAX_LIST_FOLDERS);
-    const hasMore = allFolders.length > MAX_LIST_FOLDERS;
-
-    sendClientMessage(
-      socket,
-      {
-        type: "list_folders_in_directory_response",
-        path: normalizedPath,
-        folders,
-        hasMore,
-        success: true,
-      },
-      runtime,
-    );
-  } catch (error) {
-    sendClientMessage(
-      socket,
-      {
-        type: "list_folders_in_directory_response",
-        path: msg.path,
-        folders: [],
-        hasMore: false,
-        success: false,
-        error:
-          error instanceof Error ? error.message : "Failed to list folders",
-      },
-      runtime,
-    );
+    emitLoopErrorDelta(socket, runtime, {
+      message:
+        error instanceof Error
+          ? error.message
+          : "Working directory change failed",
+      stopReason: "error",
+      isTerminal: false,
+      agentId,
+      conversationId,
+    });
   }
 }
 
@@ -672,6 +402,7 @@ function createRuntime(): ListenerRuntime {
     activeAbortController: null,
     cancelRequested: false,
     isRecoveringApprovals: false,
+    loopStatus: "WAITING_ON_INPUT",
     pendingApprovalBatchByToolCallId: new Map<string, string>(),
     pendingInterruptedResults: null,
     pendingInterruptedContext: null,
@@ -681,9 +412,13 @@ function createRuntime(): ListenerRuntime {
     reminderState: createSharedReminderState(),
     bootWorkingDirectory,
     workingDirectoryByConversation: loadPersistedCwdMap(),
+    connectionId: null,
+    connectionName: null,
     queuedMessagesByItemId: new Map<string, IncomingMessage>(),
     queuePumpActive: false,
     queuePumpScheduled: false,
+    queueEmitScheduled: false,
+    pendingQueueEmitScope: undefined,
     pendingTurns: 0,
     // queueRuntime assigned below — needs runtime ref in callbacks
     queueRuntime: null as unknown as QueueRuntime,
@@ -692,79 +427,33 @@ function createRuntime(): ListenerRuntime {
     callbacks: {
       onEnqueued: (item, queueLen) => {
         runtime.pendingTurns = queueLen;
-        if (runtime.socket?.readyState === WebSocket.OPEN) {
-          const content = item.kind === "message" ? item.content : item.text;
-          emitToWS(runtime.socket, {
-            type: "queue_item_enqueued",
-            id: item.id,
-            item_id: item.id,
-            client_message_id: item.clientMessageId ?? `cm-${item.id}`,
-            source: item.source,
-            kind: item.kind,
-            content,
-            enqueued_at: new Date(item.enqueuedAt).toISOString(),
-            queue_len: queueLen,
-            session_id: runtime.sessionId,
-            uuid: `q-enq-${item.id}`,
-            ...getQueueItemScope(item),
-          });
-        }
+        const scope = getQueueItemScope(item);
+        emitRuntimeStateUpdates(runtime, scope);
+        scheduleQueueEmit(runtime, scope);
       },
       onDequeued: (batch) => {
         runtime.pendingTurns = batch.queueLenAfter;
-        if (runtime.socket?.readyState === WebSocket.OPEN) {
-          emitToWS(runtime.socket, {
-            type: "queue_batch_dequeued",
-            batch_id: batch.batchId,
-            item_ids: batch.items.map((i) => i.id),
-            merged_count: batch.mergedCount,
-            queue_len_after: batch.queueLenAfter,
-            session_id: runtime.sessionId,
-            uuid: `q-deq-${batch.batchId}`,
-            ...getQueueItemsScope(batch.items),
-          });
-        }
+        const scope = getQueueItemsScope(batch.items);
+        emitRuntimeStateUpdates(runtime, scope);
+        scheduleQueueEmit(runtime, scope);
       },
       onBlocked: (reason, queueLen) => {
-        if (runtime.socket?.readyState === WebSocket.OPEN) {
-          emitToWS(runtime.socket, {
-            type: "queue_blocked",
-            reason,
-            queue_len: queueLen,
-            session_id: runtime.sessionId,
-            uuid: `q-blk-${crypto.randomUUID()}`,
-            ...getQueueItemScope(runtime.queueRuntime.items[0]),
-          });
-        }
+        const scope = getQueueItemScope(runtime.queueRuntime.items[0]);
+        emitRuntimeStateUpdates(runtime, scope);
+        scheduleQueueEmit(runtime, scope);
       },
       onCleared: (reason, clearedCount, items) => {
         runtime.pendingTurns = 0;
-        if (runtime.socket?.readyState === WebSocket.OPEN) {
-          emitToWS(runtime.socket, {
-            type: "queue_cleared",
-            reason,
-            cleared_count: clearedCount,
-            session_id: runtime.sessionId,
-            uuid: `q-clr-${crypto.randomUUID()}`,
-            ...getQueueItemsScope(items),
-          });
-        }
+        const scope = getQueueItemsScope(items);
+        emitRuntimeStateUpdates(runtime, scope);
+        scheduleQueueEmit(runtime, scope);
       },
       onDropped: (item, reason, queueLen) => {
         runtime.pendingTurns = queueLen;
         runtime.queuedMessagesByItemId.delete(item.id);
-        if (runtime.socket?.readyState === WebSocket.OPEN) {
-          emitToWS(runtime.socket, {
-            type: "queue_item_dropped",
-            id: item.id,
-            item_id: item.id,
-            reason,
-            queue_len: queueLen,
-            session_id: runtime.sessionId,
-            uuid: `q-drp-${item.id}`,
-            ...getQueueItemScope(item),
-          });
-        }
+        const scope = getQueueItemScope(item);
+        emitRuntimeStateUpdates(runtime, scope);
+        scheduleQueueEmit(runtime, scope);
       },
     },
   });
@@ -867,6 +556,17 @@ function clearActiveRunState(runtime: ListenerRuntime): void {
   runtime.activeAbortController = null;
 }
 
+function emitRuntimeStateUpdates(
+  runtime: ListenerRuntime,
+  scope?: {
+    agent_id?: string | null;
+    conversation_id?: string | null;
+  },
+): void {
+  emitLoopStatusIfOpen(runtime, scope);
+  emitDeviceStatusIfOpen(runtime, scope);
+}
+
 function rememberPendingApprovalBatchIds(
   runtime: ListenerRuntime,
   pendingApprovals: Array<{ toolCallId: string }>,
@@ -949,6 +649,7 @@ function stopRuntime(
   runtime.pendingInterruptedContext = null;
   runtime.pendingInterruptedToolCallIds = null;
   runtime.activeExecutingToolCallIds = [];
+  runtime.loopStatus = "WAITING_ON_INPUT";
   runtime.continuationEpoch++;
 
   if (!runtime.socket) {
@@ -971,52 +672,237 @@ function stopRuntime(
   }
 }
 
-function isValidControlResponseBody(
+function isValidApprovalResponseBody(
   value: unknown,
-): value is ControlResponseBody {
+): value is ApprovalResponseBody {
   if (!value || typeof value !== "object") {
     return false;
   }
 
   const maybeResponse = value as {
-    subtype?: unknown;
     request_id?: unknown;
+    decision?: unknown;
+    error?: unknown;
   };
+  if (typeof maybeResponse.request_id !== "string") {
+    return false;
+  }
+  if (maybeResponse.error !== undefined) {
+    return typeof maybeResponse.error === "string";
+  }
+  if (!maybeResponse.decision || typeof maybeResponse.decision !== "object") {
+    return false;
+  }
+  const decision = maybeResponse.decision as {
+    behavior?: unknown;
+    message?: unknown;
+    updated_input?: unknown;
+    updated_permissions?: unknown;
+  };
+  if (decision.behavior === "allow") {
+    const hasUpdatedInput =
+      decision.updated_input === undefined ||
+      decision.updated_input === null ||
+      typeof decision.updated_input === "object";
+    const hasUpdatedPermissions =
+      decision.updated_permissions === undefined ||
+      (Array.isArray(decision.updated_permissions) &&
+        decision.updated_permissions.every(
+          (entry) => typeof entry === "string",
+        ));
+    return hasUpdatedInput && hasUpdatedPermissions;
+  }
+  if (decision.behavior === "deny") {
+    return typeof decision.message === "string";
+  }
+  return false;
+}
+
+function isRuntimeScope(value: unknown): value is RuntimeScope {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const candidate = value as { agent_id?: unknown; conversation_id?: unknown };
   return (
-    typeof maybeResponse.subtype === "string" &&
-    typeof maybeResponse.request_id === "string"
+    typeof candidate.agent_id === "string" &&
+    candidate.agent_id.length > 0 &&
+    typeof candidate.conversation_id === "string" &&
+    candidate.conversation_id.length > 0
   );
+}
+
+function isInputCommand(value: unknown): value is InputCommand {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const candidate = value as {
+    type?: unknown;
+    runtime?: unknown;
+    payload?: unknown;
+  };
+  if (candidate.type !== "input" || !isRuntimeScope(candidate.runtime)) {
+    return false;
+  }
+  if (!candidate.payload || typeof candidate.payload !== "object") {
+    return false;
+  }
+
+  const payload = candidate.payload as {
+    kind?: unknown;
+    messages?: unknown;
+    request_id?: unknown;
+    decision?: unknown;
+    error?: unknown;
+  };
+  if (payload.kind === "create_message") {
+    return Array.isArray(payload.messages);
+  }
+  if (payload.kind === "approval_response") {
+    return isValidApprovalResponseBody(payload);
+  }
+  return false;
+}
+
+function getInvalidInputReason(value: unknown): {
+  runtime: RuntimeScope;
+  reason: string;
+} | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const candidate = value as {
+    type?: unknown;
+    runtime?: unknown;
+    payload?: unknown;
+  };
+  if (candidate.type !== "input" || !isRuntimeScope(candidate.runtime)) {
+    return null;
+  }
+  if (!candidate.payload || typeof candidate.payload !== "object") {
+    return {
+      runtime: candidate.runtime,
+      reason: "Protocol violation: input.payload must be an object",
+    };
+  }
+  const payload = candidate.payload as {
+    kind?: unknown;
+    messages?: unknown;
+    request_id?: unknown;
+    decision?: unknown;
+    error?: unknown;
+  };
+  if (payload.kind === "create_message") {
+    if (!Array.isArray(payload.messages)) {
+      return {
+        runtime: candidate.runtime,
+        reason:
+          "Protocol violation: input.kind=create_message requires payload.messages[]",
+      };
+    }
+    return null;
+  }
+  if (payload.kind === "approval_response") {
+    if (!isValidApprovalResponseBody(payload)) {
+      return {
+        runtime: candidate.runtime,
+        reason:
+          "Protocol violation: input.kind=approval_response requires payload.request_id and either payload.decision or payload.error",
+      };
+    }
+    return null;
+  }
+  return {
+    runtime: candidate.runtime,
+    reason: `Unsupported input payload kind: ${String(payload.kind)}`,
+  };
+}
+
+function isChangeDeviceStateCommand(
+  value: unknown,
+): value is ChangeDeviceStateCommand {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const candidate = value as {
+    type?: unknown;
+    runtime?: unknown;
+    payload?: unknown;
+  };
+  if (
+    candidate.type !== "change_device_state" ||
+    !isRuntimeScope(candidate.runtime)
+  ) {
+    return false;
+  }
+  if (!candidate.payload || typeof candidate.payload !== "object") {
+    return false;
+  }
+  const payload = candidate.payload as {
+    mode?: unknown;
+    cwd?: unknown;
+    agent_id?: unknown;
+    conversation_id?: unknown;
+  };
+  const hasMode =
+    payload.mode === undefined || typeof payload.mode === "string";
+  const hasCwd = payload.cwd === undefined || typeof payload.cwd === "string";
+  const hasAgentId =
+    payload.agent_id === undefined ||
+    payload.agent_id === null ||
+    typeof payload.agent_id === "string";
+  const hasConversationId =
+    payload.conversation_id === undefined ||
+    payload.conversation_id === null ||
+    typeof payload.conversation_id === "string";
+  return hasMode && hasCwd && hasAgentId && hasConversationId;
+}
+
+function isAbortMessageCommand(value: unknown): value is AbortMessageCommand {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const candidate = value as {
+    type?: unknown;
+    runtime?: unknown;
+    request_id?: unknown;
+    run_id?: unknown;
+  };
+  if (
+    candidate.type !== "abort_message" ||
+    !isRuntimeScope(candidate.runtime)
+  ) {
+    return false;
+  }
+  const hasRequestId =
+    candidate.request_id === undefined ||
+    typeof candidate.request_id === "string";
+  const hasRunId =
+    candidate.run_id === undefined ||
+    candidate.run_id === null ||
+    typeof candidate.run_id === "string";
+  return hasRequestId && hasRunId;
 }
 
 export function parseServerMessage(
   data: WebSocket.RawData,
-): ServerMessage | null {
+): ParsedServerMessage | null {
   try {
     const raw = typeof data === "string" ? data : data.toString();
-    const parsed = JSON.parse(raw) as { type?: string; response?: unknown };
+    const parsed = JSON.parse(raw) as unknown;
     if (
-      parsed.type === "pong" ||
-      parsed.type === "status" ||
-      parsed.type === "message" ||
-      parsed.type === "mode_change" ||
-      parsed.type === "get_status" ||
-      parsed.type === "get_state" ||
-      parsed.type === "change_cwd" ||
-      parsed.type === "list_folders_in_directory" ||
-      parsed.type === "terminal_spawn" ||
-      parsed.type === "terminal_input" ||
-      parsed.type === "terminal_resize" ||
-      parsed.type === "terminal_kill" ||
-      parsed.type === "cancel_run" ||
-      parsed.type === "recover_pending_approvals"
+      isInputCommand(parsed) ||
+      isChangeDeviceStateCommand(parsed) ||
+      isAbortMessageCommand(parsed)
     ) {
-      return parsed as ServerMessage;
+      return parsed;
     }
-    if (
-      parsed.type === "control_response" &&
-      isValidControlResponseBody(parsed.response)
-    ) {
-      return parsed as ServerMessage;
+    const invalidInput = getInvalidInputReason(parsed);
+    if (invalidInput) {
+      return {
+        type: "__invalid_input",
+        runtime: invalidInput.runtime,
+        reason: invalidInput.reason,
+      };
     }
     return null;
   } catch {
@@ -1045,7 +931,7 @@ function nextEventSeq(runtime: ListenerRuntime | null): number | null {
   return runtime.eventSeqCounter;
 }
 
-function getQueueItemContent(item: QueueItem): unknown {
+function getQueueItemContent(item: QueueItem): QueueMessage["content"] {
   return item.kind === "message" ? item.content : item.text;
 }
 
@@ -1290,6 +1176,10 @@ async function drainQueuedMessages(
         continue;
       }
 
+      // Emit the user message as a stream_delta so the web can display it
+      // immediately when the turn starts (before the API call).
+      emitDequeuedUserMessage(socket, runtime, queuedTurn, dequeuedBatch);
+
       opts.onStatusChange?.("receiving", opts.connectionId);
       await handleIncomingMessage(
         queuedTurn,
@@ -1332,25 +1222,94 @@ function scheduleQueuePump(
     });
 }
 
-function buildStateResponse(
-  runtime: ListenerRuntime,
-  stateSeq: number,
-  agentId?: string | null,
-  conversationId?: string | null,
-): StateResponseMessage {
-  const scopedAgentId = normalizeCwdAgentId(agentId);
-  const scopedConversationId = normalizeConversationId(conversationId);
-  const configuredWorkingDirectory = getConversationWorkingDirectory(
-    runtime,
-    scopedAgentId,
-    scopedConversationId,
+function resolveRuntimeScope(
+  runtime: ListenerRuntime | null,
+  params?: {
+    agent_id?: string | null;
+    conversation_id?: string | null;
+  },
+): RuntimeScope {
+  const resolvedAgentId =
+    normalizeCwdAgentId(params?.agent_id) ??
+    runtime?.activeAgentId ??
+    "__unknown_agent__";
+  const resolvedConversationId = normalizeConversationId(
+    params?.conversation_id ?? runtime?.activeConversationId,
   );
-  const activeTurnWorkingDirectory =
-    runtime.activeAgentId === scopedAgentId &&
-    runtime.activeConversationId === scopedConversationId
-      ? runtime.activeWorkingDirectory
-      : null;
-  const queueItems = runtime.queueRuntime.items.map((item) => ({
+  return {
+    agent_id: resolvedAgentId,
+    conversation_id: resolvedConversationId,
+  };
+}
+
+function buildDeviceStatus(
+  runtime: ListenerRuntime,
+  params?: {
+    agent_id?: string | null;
+    conversation_id?: string | null;
+  },
+): DeviceStatus {
+  const runtimeScope = resolveRuntimeScope(runtime, params);
+  const scopedAgentId = normalizeCwdAgentId(runtimeScope.agent_id);
+  const scopedConversationId = normalizeConversationId(
+    runtimeScope.conversation_id,
+  );
+  const toolsetPreference = (() => {
+    if (!scopedAgentId) {
+      return "auto" as const;
+    }
+    try {
+      return settingsManager.getToolsetPreference(scopedAgentId);
+    } catch {
+      // Tests and early boot can query status before settings are initialized.
+      return "auto" as const;
+    }
+  })();
+  const pendingControlRequests = Array.from(
+    runtime.pendingApprovalResolvers.values(),
+  )
+    .map((pending) => pending.controlRequest)
+    .filter(
+      (
+        request,
+      ): request is NonNullable<PendingApprovalResolver["controlRequest"]> =>
+        !!request,
+    )
+    .map((request) => ({
+      request_id: request.request_id,
+      request: request.request,
+    }));
+
+  return {
+    current_connection_id: runtime.connectionId,
+    connection_name: runtime.connectionName,
+    is_online: runtime.socket?.readyState === WebSocket.OPEN,
+    is_processing: runtime.isProcessing,
+    current_permission_mode: permissionMode.getMode(),
+    current_working_directory: getConversationWorkingDirectory(
+      runtime,
+      scopedAgentId,
+      scopedConversationId,
+    ),
+    letta_code_version: process.env.npm_package_version || null,
+    current_toolset: toolsetPreference === "auto" ? null : toolsetPreference,
+    current_toolset_preference: toolsetPreference,
+    current_loaded_tools: getToolNames(),
+    current_available_skills: [],
+    background_processes: [],
+    pending_control_requests: pendingControlRequests,
+  };
+}
+
+function buildLoopStatus(runtime: ListenerRuntime): LoopState {
+  return {
+    status: runtime.loopStatus,
+    active_run_ids: runtime.activeRunId ? [runtime.activeRunId] : [],
+  };
+}
+
+function buildQueueSnapshot(runtime: ListenerRuntime): QueueMessage[] {
+  return runtime.queueRuntime.items.map((item) => ({
     id: item.id,
     client_message_id: item.clientMessageId ?? `cm-${item.id}`,
     kind: item.kind,
@@ -1358,229 +1317,368 @@ function buildStateResponse(
     content: getQueueItemContent(item),
     enqueued_at: new Date(item.enqueuedAt).toISOString(),
   }));
+}
 
-  const pendingControlRequests = Array.from(
-    runtime.pendingApprovalResolvers.entries(),
-  ).flatMap(([requestId, pending]) => {
-    if (!pending.controlRequest) {
-      return [];
-    }
-    return [
-      {
-        request_id: requestId,
-        request: pending.controlRequest.request,
-      },
-    ];
+function setLoopStatus(
+  runtime: ListenerRuntime,
+  status: LoopStatus,
+  scope?: {
+    agent_id?: string | null;
+    conversation_id?: string | null;
+  },
+): void {
+  if (runtime.loopStatus === status) {
+    return;
+  }
+  runtime.loopStatus = status;
+  emitLoopStatusIfOpen(runtime, scope);
+}
+
+function emitProtocolV2Message(
+  socket: WebSocket,
+  runtime: ListenerRuntime | null,
+  message: Omit<
+    WsProtocolMessage,
+    "runtime" | "event_seq" | "emitted_at" | "idempotency_key"
+  >,
+  scope?: {
+    agent_id?: string | null;
+    conversation_id?: string | null;
+  },
+): void {
+  if (socket.readyState !== WebSocket.OPEN) {
+    return;
+  }
+  const eventSeq = nextEventSeq(runtime);
+  if (eventSeq === null) {
+    return;
+  }
+
+  const runtimeScope = resolveRuntimeScope(runtime, scope);
+  const outbound: WsProtocolMessage = {
+    ...message,
+    runtime: runtimeScope,
+    event_seq: eventSeq,
+    emitted_at: new Date().toISOString(),
+    idempotency_key: `${message.type}:${eventSeq}:${crypto.randomUUID()}`,
+  } as WsProtocolMessage;
+  console.log(`[Listen V2] Emitting ${message.type} (seq=${eventSeq})`);
+  safeEmitWsEvent("send", "protocol", outbound);
+  socket.send(JSON.stringify(outbound));
+}
+
+function emitDeviceStatusUpdate(
+  socket: WebSocket,
+  runtime: ListenerRuntime,
+  scope?: {
+    agent_id?: string | null;
+    conversation_id?: string | null;
+  },
+): void {
+  const message: Omit<
+    DeviceStatusUpdateMessage,
+    "runtime" | "event_seq" | "emitted_at" | "idempotency_key"
+  > = {
+    type: "update_device_status",
+    device_status: buildDeviceStatus(runtime, scope),
+  };
+  emitProtocolV2Message(socket, runtime, message, scope);
+}
+
+function emitLoopStatusUpdate(
+  socket: WebSocket,
+  runtime: ListenerRuntime,
+  scope?: {
+    agent_id?: string | null;
+    conversation_id?: string | null;
+  },
+): void {
+  const message: Omit<
+    LoopStatusUpdateMessage,
+    "runtime" | "event_seq" | "emitted_at" | "idempotency_key"
+  > = {
+    type: "update_loop_status",
+    loop_status: buildLoopStatus(runtime),
+  };
+  emitProtocolV2Message(socket, runtime, message, scope);
+}
+
+function emitLoopStatusIfOpen(
+  runtime: ListenerRuntime,
+  scope?: {
+    agent_id?: string | null;
+    conversation_id?: string | null;
+  },
+): void {
+  if (runtime.socket?.readyState === WebSocket.OPEN) {
+    emitLoopStatusUpdate(runtime.socket, runtime, scope);
+  }
+}
+
+function emitDeviceStatusIfOpen(
+  runtime: ListenerRuntime,
+  scope?: {
+    agent_id?: string | null;
+    conversation_id?: string | null;
+  },
+): void {
+  if (runtime.socket?.readyState === WebSocket.OPEN) {
+    emitDeviceStatusUpdate(runtime.socket, runtime, scope);
+  }
+}
+
+function emitQueueUpdate(
+  socket: WebSocket,
+  runtime: ListenerRuntime,
+  scope?: {
+    agent_id?: string | null;
+    conversation_id?: string | null;
+  },
+): void {
+  const message: Omit<
+    QueueUpdateMessage,
+    "runtime" | "event_seq" | "emitted_at" | "idempotency_key"
+  > = {
+    type: "update_queue",
+    queue: buildQueueSnapshot(runtime),
+  };
+  emitProtocolV2Message(socket, runtime, message, scope);
+}
+
+const SYSTEM_REMINDER_RE = /<system-reminder>[\s\S]*?<\/system-reminder>/g;
+
+function isSystemReminderPart(part: unknown): boolean {
+  if (!part || typeof part !== "object") return false;
+  if (!("type" in part) || (part as { type: string }).type !== "text")
+    return false;
+  if (!("text" in part) || typeof (part as { text: string }).text !== "string")
+    return false;
+  const trimmed = (part as { text: string }).text.trim();
+  return (
+    trimmed.startsWith("<system-reminder>") &&
+    trimmed.endsWith("</system-reminder>")
+  );
+}
+
+/**
+ * Emit a synthetic user_message stream_delta when a queued turn is about to
+ * be submitted to the API. This lets the web display the user message
+ * immediately in the transcript without waiting for a poll or API echo.
+ *
+ * Preserves the original content format (string → string, array → array)
+ * and strips system-reminder content before emitting.
+ *
+ * The client_message_id from the original submit payload is used as the otid
+ * so that the optimistic message (if any) gets deduplicated.
+ */
+function emitDequeuedUserMessage(
+  socket: WebSocket,
+  runtime: ListenerRuntime,
+  incoming: IncomingMessage,
+  batch: DequeuedBatch,
+): void {
+  const firstUserPayload = incoming.messages.find(
+    (payload): payload is MessageCreate & { client_message_id?: string } =>
+      "content" in payload,
+  );
+  if (!firstUserPayload) return;
+
+  const rawContent = firstUserPayload.content;
+  let content: MessageCreate["content"];
+
+  if (typeof rawContent === "string") {
+    // String content — strip system-reminder blocks via regex
+    content = rawContent.replace(SYSTEM_REMINDER_RE, "").trim();
+  } else if (Array.isArray(rawContent)) {
+    // Array content — filter out system-reminder text parts
+    content = rawContent.filter((part) => !isSystemReminderPart(part));
+  } else {
+    return;
+  }
+
+  // Check if there's meaningful content left
+  const hasContent =
+    typeof content === "string"
+      ? content.length > 0
+      : Array.isArray(content) && content.length > 0;
+  if (!hasContent) return;
+
+  const otid = firstUserPayload.client_message_id ?? batch.batchId;
+
+  emitCanonicalMessageDelta(socket, runtime, {
+    type: "message",
+    id: `user-msg-${crypto.randomUUID()}`,
+    date: new Date().toISOString(),
+    message_type: "user_message",
+    content,
+    otid,
+  } as StreamDelta, {
+    agent_id: incoming.agentId,
+    conversation_id: incoming.conversationId,
   });
+}
 
+function emitQueueUpdateIfOpen(
+  runtime: ListenerRuntime,
+  scope?: {
+    agent_id?: string | null;
+    conversation_id?: string | null;
+  },
+): void {
+  if (runtime.socket?.readyState === WebSocket.OPEN) {
+    emitQueueUpdate(runtime.socket, runtime, scope);
+  }
+}
+
+/**
+ * Coalesces rapid queue mutations into a single `update_queue` emit.
+ * Uses `queueMicrotask` so that enqueue + immediate dequeue within the
+ * same tick produce only one WS message with the final queue state,
+ * preventing a visible flash of transient queue items.
+ */
+function scheduleQueueEmit(
+  runtime: ListenerRuntime,
+  scope?: {
+    agent_id?: string | null;
+    conversation_id?: string | null;
+  },
+): void {
+  // Last writer wins — keep the most recent scope
+  runtime.pendingQueueEmitScope = scope;
+
+  if (runtime.queueEmitScheduled) return;
+  runtime.queueEmitScheduled = true;
+
+  queueMicrotask(() => {
+    runtime.queueEmitScheduled = false;
+    const emitScope = runtime.pendingQueueEmitScope;
+    runtime.pendingQueueEmitScope = undefined;
+    emitQueueUpdateIfOpen(runtime, emitScope);
+  });
+}
+
+function createLifecycleMessageBase<TMessageType extends string>(
+  messageType: TMessageType,
+  runId?: string | null,
+): {
+  id: string;
+  date: string;
+  message_type: TMessageType;
+  run_id?: string;
+} {
   return {
-    type: "state_response",
-    schema_version: 1,
-    session_id: runtime.sessionId,
-    snapshot_id: `snapshot-${crypto.randomUUID()}`,
-    generated_at: new Date().toISOString(),
-    state_seq: stateSeq,
-    event_seq: stateSeq,
-    cwd: configuredWorkingDirectory,
-    configured_cwd: configuredWorkingDirectory,
-    active_turn_cwd: activeTurnWorkingDirectory,
-    cwd_agent_id: scopedAgentId,
-    cwd_conversation_id: scopedConversationId,
-    mode: permissionMode.getMode(),
-    is_processing: runtime.isProcessing,
-    last_stop_reason: runtime.lastStopReason,
-    control_response_capable: true,
-    tool_lifecycle_capable: true,
-    active_run: {
-      run_id: runtime.activeRunId,
-      agent_id: runtime.activeAgentId,
-      conversation_id: runtime.activeConversationId,
-      started_at: runtime.activeRunStartedAt,
-    },
-    pending_control_requests: pendingControlRequests,
-    pending_interrupt: buildPendingInterruptState(runtime),
-    queue: {
-      queue_len: runtime.queueRuntime.length,
-      pending_turns: runtime.pendingTurns,
-      items: queueItems,
-    },
+    id: `message-${crypto.randomUUID()}`,
+    date: new Date().toISOString(),
+    message_type: messageType,
+    ...(runId ? { run_id: runId } : {}),
   };
 }
 
-function sendStateSnapshot(
+function emitCanonicalMessageDelta(
   socket: WebSocket,
-  runtime: ListenerRuntime,
-  agentId?: string | null,
-  conversationId?: string | null,
+  runtime: ListenerRuntime | null,
+  delta: StreamDelta,
+  scope?: {
+    agent_id?: string | null;
+    conversation_id?: string | null;
+  },
 ): void {
-  const stateSeq = nextEventSeq(runtime);
-  if (stateSeq === null) {
-    return;
-  }
-  const stateResponse = buildStateResponse(
-    runtime,
-    stateSeq,
-    agentId,
-    conversationId,
-  );
-  sendClientMessage(socket, stateResponse, runtime);
+  emitStreamDelta(socket, runtime, delta, scope);
 }
 
-function emitCancelAck(
+function emitLoopErrorDelta(
   socket: WebSocket,
-  runtime: ListenerRuntime,
+  runtime: ListenerRuntime | null,
   params: {
-    requestId: string;
-    accepted: boolean;
-    reason?: string;
+    message: string;
+    stopReason: StopReasonType;
+    isTerminal: boolean;
     runId?: string | null;
     agentId?: string | null;
     conversationId?: string | null;
   },
 ): void {
-  emitToWS(socket, {
-    type: "cancel_ack",
-    request_id: params.requestId,
-    accepted: params.accepted,
-    reason: params.reason,
-    run_id: params.runId ?? runtime.activeRunId,
-    agent_id: params.agentId ?? runtime.activeAgentId ?? undefined,
-    conversation_id:
-      params.conversationId ?? runtime.activeConversationId ?? undefined,
-    session_id: runtime.sessionId,
-    uuid: `cancel-ack-${params.requestId}`,
-  } as CancelAckMessage);
+  emitCanonicalMessageDelta(
+    socket,
+    runtime,
+    {
+      ...createLifecycleMessageBase("loop_error", params.runId),
+      message: params.message,
+      stop_reason: params.stopReason,
+      is_terminal: params.isTerminal,
+    } as StreamDelta,
+    {
+      agent_id: params.agentId,
+      conversation_id: params.conversationId,
+    },
+  );
 }
 
-function emitTurnResult(
+function emitRetryDelta(
   socket: WebSocket,
   runtime: ListenerRuntime,
   params: {
-    subtype: ProtocolResultMessage["subtype"];
-    agentId: string;
-    conversationId: string;
-    durationMs: number;
-    numTurns: number;
-    runIds: string[];
-    stopReason?: StopReasonType;
+    reason: StopReasonType;
+    attempt: number;
+    maxAttempts: number;
+    delayMs: number;
+    runId?: string | null;
+    agentId?: string | null;
+    conversationId?: string | null;
   },
 ): void {
-  emitToWS(socket, {
-    type: "result",
-    subtype: params.subtype,
+  const delta: RetryMessage = {
+    ...createLifecycleMessageBase("retry", params.runId),
+    reason: params.reason,
+    attempt: params.attempt,
+    max_attempts: params.maxAttempts,
+    delay_ms: params.delayMs,
+  };
+  emitCanonicalMessageDelta(socket, runtime, delta, {
     agent_id: params.agentId,
     conversation_id: params.conversationId,
-    duration_ms: params.durationMs,
-    duration_api_ms: 0,
-    num_turns: params.numTurns,
-    result: null,
-    run_ids: params.runIds,
-    usage: null,
-    ...(params.stopReason ? { stop_reason: params.stopReason } : {}),
-    session_id: runtime.sessionId,
-    uuid: `result-${crypto.randomUUID()}`,
   });
 }
 
-function sendClientMessage(
+function emitStatusDelta(
   socket: WebSocket,
-  payload: ClientMessage,
-  runtime: ListenerRuntime | null = activeRuntime,
+  runtime: ListenerRuntime | null,
+  params: {
+    message: string;
+    level: StatusMessage["level"];
+    runId?: string | null;
+    agentId?: string | null;
+    conversationId?: string | null;
+  },
 ): void {
-  if (socket.readyState === WebSocket.OPEN) {
-    let outbound = payload as unknown as Record<string, unknown>;
-    if (payload.type !== "ping") {
-      const hasEventSeq = typeof outbound.event_seq === "number";
-      if (!hasEventSeq) {
-        const eventSeq = nextEventSeq(runtime);
-        if (eventSeq !== null) {
-          outbound = {
-            ...outbound,
-            event_seq: eventSeq,
-            session_id:
-              typeof outbound.session_id === "string"
-                ? outbound.session_id
-                : runtime?.sessionId,
-          };
-        }
-      } else if (
-        typeof outbound.session_id !== "string" &&
-        runtime?.sessionId
-      ) {
-        outbound = {
-          ...outbound,
-          session_id: runtime.sessionId,
-        };
-      }
-    }
-    safeEmitWsEvent("send", "client", outbound);
-    socket.send(JSON.stringify(outbound));
-  }
+  const delta: StatusMessage = {
+    ...createLifecycleMessageBase("status", params.runId),
+    message: params.message,
+    level: params.level,
+  };
+  emitCanonicalMessageDelta(socket, runtime, delta, {
+    agent_id: params.agentId,
+    conversation_id: params.conversationId,
+  });
 }
 
-function sendControlMessageOverWebSocket(
+function emitStreamDelta(
   socket: WebSocket,
-  payload: ControlRequest,
-  runtime: ListenerRuntime | null = activeRuntime,
+  runtime: ListenerRuntime | null,
+  delta: StreamDelta,
+  scope?: {
+    agent_id?: string | null;
+    conversation_id?: string | null;
+  },
 ): void {
-  // Central hook for protocol-only outbound WS messages so future
-  // filtering/mutation can be added without touching approval flow.
-  const eventSeq = nextEventSeq(runtime);
-  const outbound =
-    eventSeq === null
-      ? payload
-      : {
-          ...payload,
-          event_seq: eventSeq,
-          session_id: runtime?.sessionId,
-        };
-  safeEmitWsEvent("send", "control", outbound);
-  socket.send(JSON.stringify(outbound));
-}
-
-// ── Typed protocol event adapter ────────────────────────────────
-
-export type WsProtocolEvent =
-  | MessageWire
-  | ApprovalRequestedMessage
-  | ApprovalReceivedMessage
-  | ToolExecutionStartedMessage
-  | ToolExecutionFinishedMessage
-  | AutoApprovalMessage
-  | CancelAckMessage
-  | ErrorMessage
-  | RetryMessage
-  | RecoveryMessage
-  | ProtocolResultMessage
-  | QueueLifecycleEvent
-  | TranscriptBackfillMessage
-  | QueueSnapshotMessage
-  | SyncCompleteMessage
-  | TranscriptSupplementMessage;
-
-/**
- * Single adapter for all outbound typed protocol events.
- * Passthrough for now — provides a seam for future filtering/versioning/redacting.
- */
-function emitToWS(socket: WebSocket, event: WsProtocolEvent): void {
-  if (socket.readyState === WebSocket.OPEN) {
-    const runtime = activeRuntime;
-    const eventSeq = nextEventSeq(runtime);
-    const eventRecord = event as unknown as Record<string, unknown>;
-    const outbound =
-      eventSeq === null
-        ? eventRecord
-        : {
-            ...eventRecord,
-            event_seq: eventSeq,
-            session_id:
-              typeof eventRecord.session_id === "string"
-                ? eventRecord.session_id
-                : runtime?.sessionId,
-          };
-    safeEmitWsEvent("send", "protocol", outbound);
-    socket.send(JSON.stringify(outbound));
-  }
+  const message: Omit<
+    StreamDeltaMessage,
+    "runtime" | "event_seq" | "emitted_at" | "idempotency_key"
+  > = {
+    type: "stream_delta",
+    delta,
+  };
+  emitProtocolV2Message(socket, runtime, message, scope);
 }
 
 const LLM_API_ERROR_MAX_RETRIES = 3;
@@ -1643,38 +1741,6 @@ function asToolReturnStatus(value: unknown): "success" | "error" | null {
     return value;
   }
   return null;
-}
-
-function buildPendingInterruptState(
-  runtime: ListenerRuntime,
-): StateResponseMessage["pending_interrupt"] {
-  const context = runtime.pendingInterruptedContext;
-  const approvals = runtime.pendingInterruptedResults;
-  const interruptedToolCallIds = runtime.pendingInterruptedToolCallIds;
-  if (
-    !context ||
-    !approvals ||
-    approvals.length === 0 ||
-    !interruptedToolCallIds ||
-    interruptedToolCallIds.length === 0
-  ) {
-    return null;
-  }
-
-  const interruptedSet = new Set(interruptedToolCallIds);
-  const toolReturns = extractInterruptToolReturns(approvals).filter(
-    (toolReturn) => interruptedSet.has(toolReturn.tool_call_id),
-  );
-  if (toolReturns.length === 0) {
-    return null;
-  }
-
-  return {
-    agent_id: context.agentId,
-    conversation_id: context.conversationId,
-    interrupted_tool_call_ids: [...interruptedToolCallIds],
-    tool_returns: toolReturns,
-  };
 }
 
 function normalizeToolReturnValue(value: unknown): string {
@@ -1936,26 +2002,33 @@ function emitInterruptToolReturnMessage(
 
   const resolvedRunId = runId ?? runtime.activeRunId ?? undefined;
   for (const toolReturn of toolReturns) {
-    emitToWS(socket, {
-      type: "message",
-      message_type: "tool_return_message",
-      id: `message-${crypto.randomUUID()}`,
-      date: new Date().toISOString(),
-      run_id: resolvedRunId,
-      agent_id: runtime.activeAgentId ?? undefined,
-      tool_returns: [
-        {
-          tool_call_id: toolReturn.tool_call_id,
-          status: toolReturn.status,
-          tool_return: toolReturn.tool_return,
-          ...(toolReturn.stdout ? { stdout: toolReturn.stdout } : {}),
-          ...(toolReturn.stderr ? { stderr: toolReturn.stderr } : {}),
-        },
-      ],
-      session_id: runtime.sessionId,
-      uuid: `${uuidPrefix}-${crypto.randomUUID()}`,
-      conversation_id: runtime.activeConversationId ?? undefined,
-    } as unknown as MessageWire);
+    emitCanonicalMessageDelta(
+      socket,
+      runtime,
+      {
+        type: "message",
+        message_type: "tool_return_message",
+        id: `message-${uuidPrefix}-${crypto.randomUUID()}`,
+        date: new Date().toISOString(),
+        run_id: resolvedRunId,
+        status: toolReturn.status,
+        tool_call_id: toolReturn.tool_call_id,
+        tool_return: toolReturn.tool_return,
+        tool_returns: [
+          {
+            tool_call_id: toolReturn.tool_call_id,
+            status: toolReturn.status,
+            tool_return: toolReturn.tool_return,
+            ...(toolReturn.stdout ? { stdout: toolReturn.stdout } : {}),
+            ...(toolReturn.stderr ? { stderr: toolReturn.stderr } : {}),
+          },
+        ],
+      },
+      {
+        agent_id: runtime.activeAgentId ?? undefined,
+        conversation_id: runtime.activeConversationId ?? undefined,
+      },
+    );
   }
 }
 
@@ -1970,12 +2043,11 @@ function emitToolExecutionStartedEvents(
   },
 ): void {
   for (const toolCallId of params.toolCallIds) {
-    emitToWS(socket, {
-      type: "tool_execution_started",
+    const delta: ClientToolStartMessage = {
+      ...createLifecycleMessageBase("client_tool_start", params.runId),
       tool_call_id: toolCallId,
-      ...(params.runId ? { run_id: params.runId } : {}),
-      session_id: runtime.sessionId,
-      uuid: `tool-exec-started-${toolCallId}`,
+    };
+    emitCanonicalMessageDelta(socket, runtime, delta, {
       agent_id: params.agentId,
       conversation_id: params.conversationId,
     });
@@ -1994,13 +2066,12 @@ function emitToolExecutionFinishedEvents(
 ): void {
   const toolReturns = extractInterruptToolReturns(params.approvals);
   for (const toolReturn of toolReturns) {
-    emitToWS(socket, {
-      type: "tool_execution_finished",
+    const delta: ClientToolEndMessage = {
+      ...createLifecycleMessageBase("client_tool_end", params.runId),
       tool_call_id: toolReturn.tool_call_id,
       status: toolReturn.status,
-      ...(params.runId ? { run_id: params.runId } : {}),
-      session_id: runtime.sessionId,
-      uuid: `tool-exec-finished-${toolReturn.tool_call_id}`,
+    };
+    emitCanonicalMessageDelta(socket, runtime, delta, {
       agent_id: params.agentId,
       conversation_id: params.conversationId,
     });
@@ -2284,6 +2355,11 @@ async function sendMessageStreamWithRetry(
     if (abortSignal?.aborted) {
       throw new Error("Cancelled by user");
     }
+    runtime.isRecoveringApprovals = false;
+    setLoopStatus(runtime, "WAITING_FOR_API_RESPONSE", {
+      agent_id: runtime.activeAgentId,
+      conversation_id: conversationId,
+    });
 
     try {
       return await sendMessageStream(
@@ -2315,6 +2391,11 @@ async function sendMessageStreamWithRetry(
       );
 
       if (action === "resolve_approval_pending") {
+        runtime.isRecoveringApprovals = true;
+        setLoopStatus(runtime, "RETRYING_API_REQUEST", {
+          agent_id: runtime.activeAgentId,
+          conversation_id: conversationId,
+        });
         // Abort check first — don't let recovery mask a user cancel
         if (abortSignal?.aborted) throw new Error("Cancelled by user");
 
@@ -2343,6 +2424,11 @@ async function sendMessageStreamWithRetry(
       }
 
       if (action === "retry_transient") {
+        runtime.isRecoveringApprovals = true;
+        setLoopStatus(runtime, "RETRYING_API_REQUEST", {
+          agent_id: runtime.activeAgentId,
+          conversation_id: conversationId,
+        });
         const attempt = transientRetries + 1;
         const retryAfterMs =
           preStreamError instanceof APIError
@@ -2358,17 +2444,14 @@ async function sendMessageStreamWithRetry(
         });
         transientRetries = attempt;
 
-        emitToWS(socket, {
-          type: "retry",
-          reason: "llm_api_error",
+        emitRetryDelta(socket, runtime, {
+          reason: "error",
           attempt,
-          max_attempts: LLM_API_ERROR_MAX_RETRIES,
-          delay_ms: delayMs,
-          session_id: runtime.sessionId,
-          uuid: `retry-${crypto.randomUUID()}`,
-          agent_id: runtime.activeAgentId ?? undefined,
-          conversation_id: conversationId,
-        } as RetryMessage);
+          maxAttempts: LLM_API_ERROR_MAX_RETRIES,
+          delayMs,
+          agentId: runtime.activeAgentId ?? undefined,
+          conversationId,
+        });
 
         await new Promise((resolve) => setTimeout(resolve, delayMs));
         if (abortSignal?.aborted) {
@@ -2378,6 +2461,11 @@ async function sendMessageStreamWithRetry(
       }
 
       if (action === "retry_conversation_busy") {
+        runtime.isRecoveringApprovals = true;
+        setLoopStatus(runtime, "RETRYING_API_REQUEST", {
+          agent_id: runtime.activeAgentId,
+          conversation_id: conversationId,
+        });
         // TODO: Add pre-stream resume logic for parity with App.tsx.
         // Before waiting, attempt to discover the in-flight run via
         // discoverFallbackRunIdWithTimeout() and resume its stream with
@@ -2392,17 +2480,14 @@ async function sendMessageStreamWithRetry(
         });
         conversationBusyRetries = attempt;
 
-        emitToWS(socket, {
-          type: "retry",
+        emitRetryDelta(socket, runtime, {
           reason: "error",
           attempt,
-          max_attempts: MAX_CONVERSATION_BUSY_RETRIES,
-          delay_ms: delayMs,
-          session_id: runtime.sessionId,
-          uuid: `retry-${crypto.randomUUID()}`,
-          agent_id: runtime.activeAgentId ?? undefined,
-          conversation_id: conversationId,
-        } as RetryMessage);
+          maxAttempts: MAX_CONVERSATION_BUSY_RETRIES,
+          delayMs,
+          agentId: runtime.activeAgentId ?? undefined,
+          conversationId,
+        });
 
         await new Promise((resolve) => setTimeout(resolve, delayMs));
         if (abortSignal?.aborted) {
@@ -2419,7 +2504,7 @@ async function sendMessageStreamWithRetry(
 
 export function resolvePendingApprovalResolver(
   runtime: ListenerRuntime,
-  response: ControlResponseBody,
+  response: ApprovalResponseBody,
 ): boolean {
   const requestId = response.request_id;
   if (typeof requestId !== "string" || requestId.length === 0) {
@@ -2432,7 +2517,15 @@ export function resolvePendingApprovalResolver(
   }
 
   runtime.pendingApprovalResolvers.delete(requestId);
+  if (runtime.pendingApprovalResolvers.size === 0) {
+    setLoopStatus(
+      runtime,
+      runtime.isProcessing ? "PROCESSING_API_RESPONSE" : "WAITING_ON_INPUT",
+    );
+  }
   pending.resolve(response);
+  emitLoopStatusIfOpen(runtime);
+  emitDeviceStatusIfOpen(runtime);
   return true;
 }
 
@@ -2444,6 +2537,12 @@ export function rejectPendingApprovalResolvers(
     pending.reject(new Error(reason));
   }
   runtime.pendingApprovalResolvers.clear();
+  setLoopStatus(
+    runtime,
+    runtime.isProcessing ? "PROCESSING_API_RESPONSE" : "WAITING_ON_INPUT",
+  );
+  emitLoopStatusIfOpen(runtime);
+  emitDeviceStatusIfOpen(runtime);
 }
 
 export function requestApprovalOverWS(
@@ -2451,285 +2550,21 @@ export function requestApprovalOverWS(
   socket: WebSocket,
   requestId: string,
   controlRequest: ControlRequest,
-): Promise<ControlResponseBody> {
+): Promise<ApprovalResponseBody> {
   if (socket.readyState !== WebSocket.OPEN) {
     return Promise.reject(new Error("WebSocket not open"));
   }
 
-  return new Promise<ControlResponseBody>((resolve, reject) => {
+  return new Promise<ApprovalResponseBody>((resolve, reject) => {
     runtime.pendingApprovalResolvers.set(requestId, {
       resolve,
       reject,
       controlRequest,
     });
-    try {
-      sendControlMessageOverWebSocket(socket, controlRequest);
-    } catch (error) {
-      runtime.pendingApprovalResolvers.delete(requestId);
-      reject(error instanceof Error ? error : new Error(String(error)));
-    }
+    setLoopStatus(runtime, "WAITING_ON_APPROVAL");
+    emitLoopStatusIfOpen(runtime);
+    emitDeviceStatusIfOpen(runtime);
   });
-}
-
-async function recoverPendingApprovals(
-  runtime: ListenerRuntime,
-  socket: WebSocket,
-  msg: RecoverPendingApprovalsMessage,
-): Promise<void> {
-  console.debug(
-    "[listener] recover_pending_approvals received",
-    JSON.stringify({
-      agentId: msg.agentId,
-      conversationId: msg.conversationId ?? null,
-      isProcessing: runtime.isProcessing,
-      isRecovering: runtime.isRecoveringApprovals,
-      batchMapSize: runtime.pendingApprovalBatchByToolCallId.size,
-    }),
-  );
-
-  if (runtime.isProcessing || runtime.isRecoveringApprovals) {
-    return;
-  }
-
-  runtime.isRecoveringApprovals = true;
-  try {
-    const agentId = msg.agentId;
-    if (!agentId) {
-      return;
-    }
-
-    const requestedConversationId = msg.conversationId || undefined;
-    const conversationId = requestedConversationId ?? "default";
-    const recoveryAgentId = normalizeCwdAgentId(agentId);
-    const recoveryWorkingDirectory =
-      runtime.activeAgentId === recoveryAgentId &&
-      runtime.activeConversationId === conversationId &&
-      runtime.activeWorkingDirectory
-        ? runtime.activeWorkingDirectory
-        : getConversationWorkingDirectory(
-            runtime,
-            recoveryAgentId,
-            conversationId,
-          );
-
-    const client = await getClient();
-    const agent = await client.agents.retrieve(agentId);
-
-    let resumeData: Awaited<ReturnType<typeof getResumeData>>;
-    try {
-      resumeData = await getResumeData(client, agent, requestedConversationId, {
-        includeMessageHistory: false,
-      });
-    } catch (error) {
-      if (
-        error instanceof APIError &&
-        (error.status === 404 || error.status === 422)
-      ) {
-        return;
-      }
-      throw error;
-    }
-
-    const pendingApprovals = resumeData.pendingApprovals || [];
-    if (pendingApprovals.length === 0) {
-      return;
-    }
-
-    const recoveryBatchId = resolveRecoveryBatchId(runtime, pendingApprovals);
-    if (!recoveryBatchId) {
-      emitToWS(socket, {
-        type: "error",
-        message:
-          "Unable to recover pending approvals: ambiguous batch correlation",
-        stop_reason: "error",
-        session_id: runtime.sessionId,
-        uuid: `error-${crypto.randomUUID()}`,
-        agent_id: agentId,
-        conversation_id: conversationId,
-      });
-      runtime.lastStopReason = "requires_approval";
-      return;
-    }
-
-    type Decision =
-      | {
-          type: "approve";
-          approval: {
-            toolCallId: string;
-            toolName: string;
-            toolArgs: string;
-          };
-        }
-      | {
-          type: "deny";
-          approval: {
-            toolCallId: string;
-            toolName: string;
-            toolArgs: string;
-          };
-          reason: string;
-        };
-
-    const { autoAllowed, autoDenied, needsUserInput } = await classifyApprovals(
-      pendingApprovals,
-      {
-        alwaysRequiresUserInput: isInteractiveApprovalTool,
-        treatAskAsDeny: false,
-        requireArgsForAutoApprove: true,
-        workingDirectory: recoveryWorkingDirectory,
-      },
-    );
-
-    for (const ac of autoAllowed) {
-      emitToWS(socket, {
-        type: "auto_approval",
-        tool_call: {
-          name: ac.approval.toolName,
-          tool_call_id: ac.approval.toolCallId,
-          arguments: ac.approval.toolArgs,
-        },
-        reason: ac.permission.reason || "auto-approved",
-        matched_rule:
-          "matchedRule" in ac.permission && ac.permission.matchedRule
-            ? ac.permission.matchedRule
-            : "auto-approved",
-        session_id: runtime.sessionId,
-        uuid: `auto-approval-${ac.approval.toolCallId}`,
-        agent_id: agentId,
-        conversation_id: conversationId,
-      } as AutoApprovalMessage);
-    }
-
-    const decisions: Decision[] = [
-      ...autoAllowed.map((ac) => ({
-        type: "approve" as const,
-        approval: ac.approval,
-      })),
-      ...autoDenied.map((ac) => ({
-        type: "deny" as const,
-        approval: ac.approval,
-        reason: ac.denyReason || ac.permission.reason || "Permission denied",
-      })),
-    ];
-
-    if (needsUserInput.length > 0) {
-      // Reflect approval-wait state in runtime snapshot while control
-      // requests are pending, so state_response queries see
-      // requires_approval even during the WS round-trip.
-      runtime.lastStopReason = "requires_approval";
-
-      for (const ac of needsUserInput) {
-        const requestId = `perm-${ac.approval.toolCallId}`;
-        const diffs = await computeDiffPreviews(
-          ac.approval.toolName,
-          ac.parsedArgs,
-          recoveryWorkingDirectory,
-        );
-
-        const controlRequest: ControlRequest = {
-          type: "control_request",
-          request_id: requestId,
-          request: {
-            subtype: "can_use_tool",
-            tool_name: ac.approval.toolName,
-            input: ac.parsedArgs,
-            tool_call_id: ac.approval.toolCallId,
-            permission_suggestions: [],
-            blocked_path: null,
-            ...(diffs.length > 0 ? { diffs } : {}),
-          },
-          agent_id: agentId,
-          conversation_id: conversationId,
-        };
-
-        const responseBody = await requestApprovalOverWS(
-          runtime,
-          socket,
-          requestId,
-          controlRequest,
-        );
-
-        if (responseBody.subtype === "success") {
-          const response = responseBody.response as
-            | CanUseToolResponse
-            | undefined;
-          if (response?.behavior === "allow") {
-            const finalApproval = response.updatedInput
-              ? {
-                  ...ac.approval,
-                  toolArgs: JSON.stringify(response.updatedInput),
-                }
-              : ac.approval;
-            decisions.push({ type: "approve", approval: finalApproval });
-
-            emitToWS(socket, {
-              type: "auto_approval",
-              tool_call: {
-                name: finalApproval.toolName,
-                tool_call_id: finalApproval.toolCallId,
-                arguments: finalApproval.toolArgs,
-              },
-              reason: "Approved via WebSocket",
-              matched_rule: "canUseTool callback",
-              session_id: runtime.sessionId,
-              uuid: `auto-approval-${ac.approval.toolCallId}`,
-              agent_id: agentId,
-              conversation_id: conversationId,
-            } as AutoApprovalMessage);
-          } else {
-            decisions.push({
-              type: "deny",
-              approval: ac.approval,
-              reason: response?.message || "Denied via WebSocket",
-            });
-          }
-        } else {
-          decisions.push({
-            type: "deny",
-            approval: ac.approval,
-            reason:
-              responseBody.subtype === "error"
-                ? responseBody.error
-                : "Unknown error",
-          });
-        }
-      }
-    }
-
-    if (decisions.length === 0) {
-      runtime.lastStopReason = "requires_approval";
-      return;
-    }
-
-    const executionResults = await executeApprovalBatch(decisions, undefined, {
-      workingDirectory: recoveryWorkingDirectory,
-    });
-    clearPendingApprovalBatchIds(
-      runtime,
-      decisions.map((decision) => decision.approval),
-    );
-
-    await handleIncomingMessage(
-      {
-        type: "message",
-        agentId,
-        conversationId,
-        messages: [
-          {
-            type: "approval",
-            approvals: executionResults,
-          },
-        ],
-      },
-      socket,
-      runtime,
-      undefined,
-      undefined,
-      recoveryBatchId,
-    );
-  } finally {
-    runtime.isRecoveringApprovals = false;
-  }
 }
 
 /**
@@ -2745,6 +2580,8 @@ export async function startListenerClient(
 
   const runtime = createRuntime();
   runtime.onWsEvent = opts.onWsEvent;
+  runtime.connectionId = opts.connectionId;
+  runtime.connectionName = opts.connectionName;
   activeRuntime = runtime;
 
   await connectWithRetry(runtime, opts);
@@ -2825,19 +2662,17 @@ async function connectWithRetry(
     runtime.hasSuccessfulConnection = true;
     opts.onConnected(opts.connectionId);
 
-    // Send current mode state to cloud for UI sync
-    sendClientMessage(socket, {
-      type: "mode_changed",
-      mode: permissionMode.getMode(),
-      success: true,
-    });
+    emitDeviceStatusUpdate(socket, runtime);
+    emitLoopStatusUpdate(socket, runtime);
 
     runtime.heartbeatInterval = setInterval(() => {
-      sendClientMessage(socket, { type: "ping" });
+      if (socket.readyState === WebSocket.OPEN) {
+        socket.ping();
+      }
     }, 30000);
   });
 
-  socket.on("message", (data: WebSocket.RawData) => {
+  socket.on("message", async (data: WebSocket.RawData) => {
     const raw = data.toString();
     const parsed = parseServerMessage(data);
     if (parsed) {
@@ -2859,99 +2694,167 @@ async function connectWithRetry(
       return;
     }
 
-    if (parsed.type === "control_response") {
-      if (runtime !== activeRuntime || runtime.intentionallyClosed) {
-        return;
-      }
-      if (resolvePendingApprovalResolver(runtime, parsed.response)) {
-        scheduleQueuePump(runtime, socket, opts);
-      }
-      return;
-    }
-
-    // Handle status updates from cloud (response to ping)
-    if (parsed.type === "status") {
-      if (runtime !== activeRuntime || runtime.intentionallyClosed) {
-        return;
-      }
-
-      // Update runtime state from cloud's view
-      // Only update lastStopReason if we're not currently processing
-      if (!runtime.isProcessing && parsed.lastStopReason !== undefined) {
-        runtime.lastStopReason = parsed.lastStopReason;
-      }
-      return;
-    }
-
-    // Handle mode change messages immediately (not queued)
-    if (parsed.type === "mode_change") {
-      handleModeChange(parsed, socket);
-      return;
-    }
-
-    if (parsed.type === "change_cwd") {
-      if (runtime !== activeRuntime || runtime.intentionallyClosed) {
-        return;
-      }
-
-      void handleCwdChange(parsed, socket, runtime);
-      return;
-    }
-
-    if (parsed.type === "list_folders_in_directory") {
-      if (runtime !== activeRuntime || runtime.intentionallyClosed) {
-        return;
-      }
-
-      void handleListFoldersInDirectory(parsed, socket, runtime);
-      return;
-    }
-
-    // Handle terminal (PTY) messages
-    if (parsed.type === "terminal_spawn") {
-      if (runtime !== activeRuntime || runtime.intentionallyClosed) {
-        return;
-      }
-      const cwd = getConversationWorkingDirectory(
-        runtime,
-        parsed.agentId,
-        parsed.conversationId,
-      );
-      handleTerminalSpawn(parsed, socket, cwd);
-      return;
-    }
-
-    if (parsed.type === "terminal_input") {
-      handleTerminalInput(parsed);
-      return;
-    }
-
-    if (parsed.type === "terminal_resize") {
-      handleTerminalResize(parsed);
-      return;
-    }
-
-    if (parsed.type === "terminal_kill") {
-      handleTerminalKill(parsed);
-      return;
-    }
-
-    // Handle status request from cloud (immediate response)
-    if (parsed.type === "get_status") {
-      if (runtime !== activeRuntime || runtime.intentionallyClosed) {
-        return;
-      }
-
-      sendClientMessage(socket, {
-        type: "status_response",
-        currentMode: permissionMode.getMode(),
-        lastStopReason: runtime.lastStopReason,
-        isProcessing: runtime.isProcessing,
+    if (parsed.type === "__invalid_input") {
+      emitLoopErrorDelta(socket, runtime, {
+        message: parsed.reason,
+        stopReason: "error",
+        isTerminal: false,
+        agentId: parsed.runtime.agent_id,
+        conversationId: parsed.runtime.conversation_id,
       });
       return;
     }
 
-    if (parsed.type === "cancel_run") {
+    if (parsed.type === "input") {
+      console.log(
+        `[Listen V2] Received input command, kind=${parsed.payload?.kind}`,
+      );
+      if (runtime !== activeRuntime || runtime.intentionallyClosed) {
+        console.log(`[Listen V2] Dropping input: runtime mismatch or closed`);
+        return;
+      }
+
+      if (parsed.payload.kind === "approval_response") {
+        if (resolvePendingApprovalResolver(runtime, parsed.payload)) {
+          scheduleQueuePump(runtime, socket, opts);
+        }
+        return;
+      }
+
+      const inputPayload = parsed.payload;
+      if (inputPayload.kind !== "create_message") {
+        emitLoopErrorDelta(socket, runtime, {
+          message: `Unsupported input payload kind: ${String((inputPayload as { kind?: unknown }).kind)}`,
+          stopReason: "error",
+          isTerminal: false,
+          agentId: parsed.runtime.agent_id,
+          conversationId: parsed.runtime.conversation_id,
+        });
+        return;
+      }
+
+      const incoming: IncomingMessage = {
+        type: "message",
+        agentId: parsed.runtime.agent_id,
+        conversationId: parsed.runtime.conversation_id,
+        messages: inputPayload.messages,
+      };
+      const hasApprovalPayload = incoming.messages.some(
+        (payload): payload is ApprovalCreate =>
+          "type" in payload && payload.type === "approval",
+      );
+      if (hasApprovalPayload) {
+        emitLoopErrorDelta(socket, runtime, {
+          message:
+            "Protocol violation: approval payloads are not allowed in input.kind=create_message. Use input.kind=approval_response.",
+          stopReason: "error",
+          isTerminal: false,
+          agentId: parsed.runtime.agent_id,
+          conversationId: parsed.runtime.conversation_id,
+        });
+        return;
+      }
+
+      if (shouldQueueInboundMessage(incoming)) {
+        const firstUserPayload = incoming.messages.find(
+          (
+            payload,
+          ): payload is MessageCreate & { client_message_id?: string } =>
+            "content" in payload,
+        );
+        if (firstUserPayload) {
+          const enqueuedItem = runtime.queueRuntime.enqueue({
+            kind: "message",
+            source: "user",
+            content: firstUserPayload.content,
+            clientMessageId:
+              firstUserPayload.client_message_id ??
+              `cm-submit-${crypto.randomUUID()}`,
+            agentId: parsed.runtime.agent_id,
+            conversationId: parsed.runtime.conversation_id || "default",
+          } as Parameters<typeof runtime.queueRuntime.enqueue>[0]);
+          if (enqueuedItem) {
+            runtime.queuedMessagesByItemId.set(enqueuedItem.id, incoming);
+          }
+        }
+        scheduleQueuePump(runtime, socket, opts);
+        return;
+      }
+
+      runtime.messageQueue = runtime.messageQueue
+        .then(async () => {
+          if (runtime !== activeRuntime || runtime.intentionallyClosed) {
+            return;
+          }
+          opts.onStatusChange?.("receiving", opts.connectionId);
+          await handleIncomingMessage(
+            incoming,
+            socket,
+            runtime,
+            opts.onStatusChange,
+            opts.connectionId,
+          );
+          opts.onStatusChange?.("idle", opts.connectionId);
+          scheduleQueuePump(runtime, socket, opts);
+        })
+        .catch((error: unknown) => {
+          if (process.env.DEBUG) {
+            console.error("[Listen] Error handling queued input:", error);
+          }
+          opts.onStatusChange?.("idle", opts.connectionId);
+          scheduleQueuePump(runtime, socket, opts);
+        });
+      return;
+    }
+
+    if (parsed.type === "change_device_state") {
+      if (runtime !== activeRuntime || runtime.intentionallyClosed) {
+        return;
+      }
+      const scope = {
+        agent_id:
+          parsed.payload.agent_id ?? parsed.runtime.agent_id ?? undefined,
+        conversation_id:
+          parsed.payload.conversation_id ??
+          parsed.runtime.conversation_id ??
+          undefined,
+      };
+      const shouldTrackCommand =
+        !runtime.isProcessing && runtime.pendingApprovalResolvers.size === 0;
+      if (shouldTrackCommand) {
+        setLoopStatus(runtime, "EXECUTING_COMMAND", scope);
+      }
+      try {
+        if (parsed.payload.mode) {
+          handleModeChange(
+            { mode: parsed.payload.mode },
+            socket,
+            runtime,
+            scope,
+          );
+        }
+        if (parsed.payload.cwd) {
+          await handleCwdChange(
+            {
+              agentId: scope.agent_id ?? null,
+              conversationId: scope.conversation_id ?? null,
+              cwd: parsed.payload.cwd,
+            },
+            socket,
+            runtime,
+          );
+        } else if (!parsed.payload.mode) {
+          emitDeviceStatusUpdate(socket, runtime, scope);
+        }
+      } finally {
+        if (shouldTrackCommand) {
+          setLoopStatus(runtime, "WAITING_ON_INPUT", scope);
+        }
+      }
+      return;
+    }
+
+    if (parsed.type === "abort_message") {
       if (runtime !== activeRuntime || runtime.intentionallyClosed) {
         return;
       }
@@ -2959,19 +2862,13 @@ async function connectWithRetry(
       const requestId =
         typeof parsed.request_id === "string" && parsed.request_id.length > 0
           ? parsed.request_id
-          : `cancel-${crypto.randomUUID()}`;
+          : `abort-${crypto.randomUUID()}`;
       const requestedRunId =
         typeof parsed.run_id === "string" ? parsed.run_id : runtime.activeRunId;
       const hasPendingApprovals = runtime.pendingApprovalResolvers.size > 0;
       const hasActiveTurn = runtime.isProcessing;
 
       if (!hasActiveTurn && !hasPendingApprovals) {
-        emitCancelAck(socket, runtime, {
-          requestId,
-          accepted: false,
-          reason: "no_active_turn",
-          runId: requestedRunId,
-        });
         return;
       }
 
@@ -3028,171 +2925,8 @@ async function connectWithRetry(
           });
       }
 
-      emitCancelAck(socket, runtime, {
-        requestId,
-        accepted: true,
-        runId: requestedRunId,
-      });
       scheduleQueuePump(runtime, socket, opts);
       return;
-    }
-
-    if (parsed.type === "get_state") {
-      if (runtime !== activeRuntime || runtime.intentionallyClosed) {
-        return;
-      }
-      const requestedConversationId = normalizeConversationId(
-        parsed.conversationId,
-      );
-      const requestedAgentId = normalizeCwdAgentId(parsed.agentId);
-
-      // If we're blocked on an approval callback, don't queue behind the
-      // pending turn; respond immediately so refreshed clients can render the
-      // approval card needed to unblock execution.
-      if (runtime.pendingApprovalResolvers.size > 0) {
-        sendStateSnapshot(
-          socket,
-          runtime,
-          requestedAgentId,
-          requestedConversationId,
-        );
-        return;
-      }
-
-      // Serialize snapshot generation with the same message queue used for
-      // message processing so reconnect snapshots cannot race in-flight turns.
-      runtime.messageQueue = runtime.messageQueue
-        .then(async () => {
-          if (runtime !== activeRuntime || runtime.intentionallyClosed) {
-            return;
-          }
-
-          sendStateSnapshot(
-            socket,
-            runtime,
-            requestedAgentId,
-            requestedConversationId,
-          );
-        })
-        .catch((error: unknown) => {
-          if (process.env.DEBUG) {
-            console.error("[Listen] Error handling queued get_state:", error);
-          }
-        });
-      return;
-    }
-
-    if (parsed.type === "recover_pending_approvals") {
-      if (runtime !== activeRuntime || runtime.intentionallyClosed) {
-        return;
-      }
-
-      // Serialize recovery with normal message handling to avoid concurrent
-      // handleIncomingMessage execution when user messages arrive concurrently.
-      runtime.messageQueue = runtime.messageQueue
-        .then(async () => {
-          try {
-            if (runtime !== activeRuntime || runtime.intentionallyClosed) {
-              return;
-            }
-
-            await recoverPendingApprovals(runtime, socket, parsed);
-          } catch (error) {
-            const errorMessage =
-              error instanceof Error ? error.message : String(error);
-            emitToWS(socket, {
-              type: "error",
-              message: `Pending approval recovery failed: ${errorMessage}`,
-              stop_reason: "error",
-              session_id: runtime.sessionId,
-              uuid: `error-${crypto.randomUUID()}`,
-              agent_id: runtime.activeAgentId ?? undefined,
-              conversation_id: runtime.activeConversationId ?? undefined,
-            });
-          } finally {
-            scheduleQueuePump(runtime, socket, opts);
-          }
-        })
-        .catch((error: unknown) => {
-          if (process.env.DEBUG) {
-            console.error(
-              "[Listen] Error handling queued pending approval recovery:",
-              error,
-            );
-          }
-        });
-      return;
-    }
-
-    // Handle incoming messages (queued for sequential processing)
-    if (parsed.type === "message") {
-      const hasApprovalPayload = parsed.messages.some(
-        (payload): payload is ApprovalCreate =>
-          "type" in payload && payload.type === "approval",
-      );
-      if (hasApprovalPayload) {
-        emitToWS(socket, {
-          type: "error",
-          message:
-            "Protocol violation: device websocket no longer accepts approval payloads inside message frames. Send control_response instead.",
-          stop_reason: "error",
-          session_id: runtime.sessionId,
-          uuid: `error-${crypto.randomUUID()}`,
-          agent_id: runtime.activeAgentId ?? undefined,
-          conversation_id: runtime.activeConversationId ?? undefined,
-        });
-        return;
-      }
-
-      if (shouldQueueInboundMessage(parsed)) {
-        const firstUserPayload = parsed.messages.find(
-          (
-            payload,
-          ): payload is MessageCreate & { client_message_id?: string } =>
-            "content" in payload,
-        );
-        if (firstUserPayload) {
-          const enqueuedItem = runtime.queueRuntime.enqueue({
-            kind: "message",
-            source: "user",
-            content: firstUserPayload.content,
-            clientMessageId:
-              firstUserPayload.client_message_id ??
-              `cm-submit-${crypto.randomUUID()}`,
-            agentId: parsed.agentId ?? undefined,
-            conversationId: parsed.conversationId || "default",
-          } as Parameters<typeof runtime.queueRuntime.enqueue>[0]);
-          if (enqueuedItem) {
-            runtime.queuedMessagesByItemId.set(enqueuedItem.id, parsed);
-          }
-        }
-        scheduleQueuePump(runtime, socket, opts);
-        return;
-      }
-
-      runtime.messageQueue = runtime.messageQueue
-        .then(async () => {
-          if (runtime !== activeRuntime || runtime.intentionallyClosed) {
-            return;
-          }
-          opts.onStatusChange?.("receiving", opts.connectionId);
-          await handleIncomingMessage(
-            parsed,
-            socket,
-            runtime,
-            opts.onStatusChange,
-            opts.connectionId,
-          );
-          opts.onStatusChange?.("idle", opts.connectionId);
-          scheduleQueuePump(runtime, socket, opts);
-        })
-        .catch((error: unknown) => {
-          if (process.env.DEBUG) {
-            console.error("[Listen] Error handling queued message:", error);
-          }
-          opts.onStatusChange?.("idle", opts.connectionId);
-          scheduleQueuePump(runtime, socket, opts);
-        });
     }
   });
 
@@ -3207,7 +2941,7 @@ async function connectWithRetry(
       reason: reason.toString(),
     });
 
-    // Single authoritative queue_cleared emission for all close paths
+    // Single authoritative queue clear for all close paths
     // (intentional and unintentional). Must fire before early returns.
     runtime.queuedMessagesByItemId.clear();
     runtime.queueRuntime.clear("shutdown");
@@ -3312,11 +3046,25 @@ async function handleIncomingMessage(
   runtime.activeRunId = null;
   runtime.activeRunStartedAt = new Date().toISOString();
   runtime.activeExecutingToolCallIds = [];
+  setLoopStatus(runtime, "SENDING_API_REQUEST", {
+    agent_id: agentId ?? null,
+    conversation_id: conversationId,
+  });
+  emitRuntimeStateUpdates(runtime, {
+    agent_id: agentId ?? null,
+    conversation_id: conversationId,
+  });
 
   try {
     if (!agentId) {
       runtime.isProcessing = false;
+      setLoopStatus(runtime, "WAITING_ON_INPUT", {
+        conversation_id: conversationId,
+      });
       clearActiveRunState(runtime);
+      emitRuntimeStateUpdates(runtime, {
+        conversation_id: conversationId,
+      });
       return;
     }
 
@@ -3397,6 +3145,10 @@ async function handleIncomingMessage(
       runtime,
       runtime.activeAbortController.signal,
     );
+    setLoopStatus(runtime, "PROCESSING_API_RESPONSE", {
+      agent_id: agentId,
+      conversation_id: conversationId,
+    });
 
     turnToolContextId = getStreamToolContextId(
       stream as Stream<LettaStreamingResponse>,
@@ -3427,10 +3179,7 @@ async function handleIncomingMessage(
             if (!runIdSent) {
               runIdSent = true;
               msgRunIds.push(maybeRunId);
-              sendClientMessage(socket, {
-                type: "run_started",
-                runId: maybeRunId,
-                batch_id: dequeuedBatchId,
+              emitLoopStatusUpdate(socket, runtime, {
                 agent_id: agentId,
                 conversation_id: conversationId,
               });
@@ -3440,37 +3189,34 @@ async function handleIncomingMessage(
           // Emit in-stream errors
           if (errorInfo) {
             latestErrorText = errorInfo.message || latestErrorText;
-            emitToWS(socket, {
-              type: "error",
+            emitLoopErrorDelta(socket, runtime, {
               message: errorInfo.message || "Stream error",
-              stop_reason: (errorInfo.error_type as StopReasonType) || "error",
-              run_id: runId || errorInfo.run_id,
-              session_id: runtime.sessionId,
-              uuid: `error-${crypto.randomUUID()}`,
-              agent_id: agentId,
-              conversation_id: conversationId,
+              stopReason: (errorInfo.error_type as StopReasonType) || "error",
+              isTerminal: false,
+              runId: runId || errorInfo.run_id,
+              agentId,
+              conversationId,
             });
           }
 
           // Emit chunk as MessageWire for protocol consumers
           if (shouldOutput) {
-            const chunkWithIds = chunk as typeof chunk & {
-              otid?: string;
-              id?: string;
-            };
             const normalizedChunk = normalizeToolReturnWireMessage(
               chunk as unknown as Record<string, unknown>,
             );
             if (normalizedChunk) {
-              emitToWS(socket, {
-                ...normalizedChunk,
-                type: "message",
-                session_id: runtime.sessionId,
-                uuid:
-                  chunkWithIds.otid || chunkWithIds.id || crypto.randomUUID(),
-                agent_id: agentId,
-                conversation_id: conversationId,
-              } as unknown as MessageWire);
+              emitCanonicalMessageDelta(
+                socket,
+                runtime,
+                {
+                  ...normalizedChunk,
+                  type: "message",
+                } as StreamDelta,
+                {
+                  agent_id: agentId,
+                  conversation_id: conversationId,
+                },
+              );
             }
           }
 
@@ -3485,16 +3231,16 @@ async function handleIncomingMessage(
       if (stopReason === "end_turn") {
         runtime.lastStopReason = "end_turn";
         runtime.isProcessing = false;
-        clearActiveRunState(runtime);
-
-        emitTurnResult(socket, runtime, {
-          subtype: "success",
-          agentId,
-          conversationId,
-          durationMs: performance.now() - msgStartTime,
-          numTurns: msgTurnCount,
-          runIds: msgRunIds,
+        setLoopStatus(runtime, "WAITING_ON_INPUT", {
+          agent_id: agentId,
+          conversation_id: conversationId,
         });
+        clearActiveRunState(runtime);
+        emitRuntimeStateUpdates(runtime, {
+          agent_id: agentId,
+          conversation_id: conversationId,
+        });
+
         break;
       }
 
@@ -3502,17 +3248,16 @@ async function handleIncomingMessage(
       if (stopReason === "cancelled") {
         runtime.lastStopReason = "cancelled";
         runtime.isProcessing = false;
-        clearActiveRunState(runtime);
-
-        emitTurnResult(socket, runtime, {
-          subtype: "interrupted",
-          agentId,
-          conversationId,
-          durationMs: performance.now() - msgStartTime,
-          numTurns: msgTurnCount,
-          runIds: msgRunIds,
-          stopReason: "cancelled",
+        setLoopStatus(runtime, "WAITING_ON_INPUT", {
+          agent_id: agentId,
+          conversation_id: conversationId,
         });
+        clearActiveRunState(runtime);
+        emitRuntimeStateUpdates(runtime, {
+          agent_id: agentId,
+          conversation_id: conversationId,
+        });
+
         break;
       }
 
@@ -3533,17 +3278,14 @@ async function handleIncomingMessage(
           })
         ) {
           postStopApprovalRecoveryRetries += 1;
-          emitToWS(socket, {
-            type: "recovery",
-            recovery_type: "approval_pending",
+          emitStatusDelta(socket, runtime, {
             message:
               "Recovering from stale approval conflict after interrupted/reconnected turn",
-            run_id: runId || msgRunIds[msgRunIds.length - 1] || undefined,
-            session_id: runtime.sessionId,
-            uuid: `recovery-${crypto.randomUUID()}`,
-            agent_id: agentId,
-            conversation_id: conversationId,
-          } as RecoveryMessage);
+            level: "warning",
+            runId: runId || msgRunIds[msgRunIds.length - 1] || undefined,
+            agentId,
+            conversationId,
+          });
 
           try {
             const client = await getClient();
@@ -3563,6 +3305,10 @@ async function handleIncomingMessage(
             currentInput = rebuildInputWithFreshDenials(currentInput, [], "");
           }
 
+          setLoopStatus(runtime, "SENDING_API_REQUEST", {
+            agent_id: agentId,
+            conversation_id: conversationId,
+          });
           stream = await sendMessageStreamWithRetry(
             conversationId,
             currentInput,
@@ -3571,6 +3317,10 @@ async function handleIncomingMessage(
             runtime,
             runtime.activeAbortController.signal,
           );
+          setLoopStatus(runtime, "PROCESSING_API_RESPONSE", {
+            agent_id: agentId,
+            conversation_id: conversationId,
+          });
           turnToolContextId = getStreamToolContextId(
             stream as Stream<LettaStreamingResponse>,
           );
@@ -3590,45 +3340,41 @@ async function handleIncomingMessage(
         if (effectiveStopReason === "cancelled") {
           runtime.lastStopReason = "cancelled";
           runtime.isProcessing = false;
-          clearActiveRunState(runtime);
-
-          emitTurnResult(socket, runtime, {
-            subtype: "interrupted",
-            agentId,
-            conversationId,
-            durationMs: performance.now() - msgStartTime,
-            numTurns: msgTurnCount,
-            runIds: msgRunIds,
-            stopReason: "cancelled",
+          setLoopStatus(runtime, "WAITING_ON_INPUT", {
+            agent_id: agentId,
+            conversation_id: conversationId,
           });
+          clearActiveRunState(runtime);
+          emitRuntimeStateUpdates(runtime, {
+            agent_id: agentId,
+            conversation_id: conversationId,
+          });
+
           break;
         }
 
         runtime.lastStopReason = effectiveStopReason;
         runtime.isProcessing = false;
+        setLoopStatus(runtime, "WAITING_ON_INPUT", {
+          agent_id: agentId,
+          conversation_id: conversationId,
+        });
         clearActiveRunState(runtime);
+        emitRuntimeStateUpdates(runtime, {
+          agent_id: agentId,
+          conversation_id: conversationId,
+        });
 
         const errorMessage =
           errorDetail || `Unexpected stop reason: ${stopReason}`;
 
-        emitToWS(socket, {
-          type: "error",
+        emitLoopErrorDelta(socket, runtime, {
           message: errorMessage,
-          stop_reason: effectiveStopReason,
-          run_id: runId,
-          session_id: runtime.sessionId,
-          uuid: `error-${crypto.randomUUID()}`,
-          agent_id: agentId,
-          conversation_id: conversationId,
-        });
-        emitTurnResult(socket, runtime, {
-          subtype: "error",
+          stopReason: effectiveStopReason,
+          isTerminal: true,
+          runId: runId,
           agentId,
           conversationId,
-          durationMs: performance.now() - msgStartTime,
-          numTurns: msgTurnCount,
-          runIds: msgRunIds,
-          stopReason: effectiveStopReason,
         });
         break;
       }
@@ -3638,25 +3384,22 @@ async function handleIncomingMessage(
         // Unexpected: requires_approval but no approvals
         runtime.lastStopReason = "error";
         runtime.isProcessing = false;
-        clearActiveRunState(runtime);
-
-        emitToWS(socket, {
-          type: "error",
-          message: "requires_approval stop returned no approvals",
-          stop_reason: "error",
-          session_id: runtime.sessionId,
-          uuid: `error-${crypto.randomUUID()}`,
+        setLoopStatus(runtime, "WAITING_ON_INPUT", {
           agent_id: agentId,
           conversation_id: conversationId,
         });
-        emitTurnResult(socket, runtime, {
-          subtype: "error",
+        clearActiveRunState(runtime);
+        emitRuntimeStateUpdates(runtime, {
+          agent_id: agentId,
+          conversation_id: conversationId,
+        });
+
+        emitLoopErrorDelta(socket, runtime, {
+          message: "requires_approval stop returned no approvals",
+          stopReason: "error",
+          isTerminal: true,
           agentId,
           conversationId,
-          durationMs: performance.now() - msgStartTime,
-          numTurns: msgTurnCount,
-          runIds: msgRunIds,
-          stopReason: "error",
         });
         break;
       }
@@ -3703,27 +3446,6 @@ async function handleIncomingMessage(
             reason: string;
           };
 
-      // Emit auto-approval events for auto-allowed tools
-      for (const ac of autoAllowed) {
-        emitToWS(socket, {
-          type: "auto_approval",
-          tool_call: {
-            name: ac.approval.toolName,
-            tool_call_id: ac.approval.toolCallId,
-            arguments: ac.approval.toolArgs,
-          },
-          reason: ac.permission.reason || "auto-approved",
-          matched_rule:
-            "matchedRule" in ac.permission && ac.permission.matchedRule
-              ? ac.permission.matchedRule
-              : "auto-approved",
-          session_id: runtime.sessionId,
-          uuid: `auto-approval-${ac.approval.toolCallId}`,
-          agent_id: agentId,
-          conversation_id: conversationId,
-        } as AutoApprovalMessage);
-      }
-
       const decisions: Decision[] = [
         ...autoAllowed.map((ac) => ({
           type: "approve" as const,
@@ -3739,6 +3461,10 @@ async function handleIncomingMessage(
       // Handle tools that need user input
       if (needsUserInput.length > 0) {
         runtime.lastStopReason = "requires_approval";
+        setLoopStatus(runtime, "WAITING_ON_APPROVAL", {
+          agent_id: agentId,
+          conversation_id: conversationId,
+        });
 
         // Block in-loop via the control protocol for all device approvals.
         for (const ac of needsUserInput) {
@@ -3748,9 +3474,6 @@ async function handleIncomingMessage(
             ac.parsedArgs,
             turnWorkingDirectory,
           );
-          const lifecycleRunId =
-            runId || runtime.activeRunId || msgRunIds[msgRunIds.length - 1];
-
           const controlRequest: ControlRequest = {
             type: "control_request",
             request_id: requestId,
@@ -3767,18 +3490,6 @@ async function handleIncomingMessage(
             conversation_id: conversationId,
           };
 
-          emitToWS(socket, {
-            type: "approval_requested",
-            request_id: requestId,
-            tool_call_id: ac.approval.toolCallId,
-            tool_name: ac.approval.toolName,
-            ...(lifecycleRunId ? { run_id: lifecycleRunId } : {}),
-            session_id: runtime.sessionId,
-            uuid: `approval-requested-${ac.approval.toolCallId}`,
-            agent_id: agentId,
-            conversation_id: conversationId,
-          });
-
           const responseBody = await requestApprovalOverWS(
             runtime,
             socket,
@@ -3786,86 +3497,29 @@ async function handleIncomingMessage(
             controlRequest,
           );
 
-          if (responseBody.subtype === "success") {
-            const response = responseBody.response as
-              | CanUseToolResponse
-              | undefined;
-            if (response?.behavior === "allow") {
-              const finalApproval = response.updatedInput
+          if ("decision" in responseBody) {
+            const response = responseBody.decision as ApprovalResponseDecision;
+            if (response.behavior === "allow") {
+              const finalApproval = response.updated_input
                 ? {
                     ...ac.approval,
-                    toolArgs: JSON.stringify(response.updatedInput),
+                    toolArgs: JSON.stringify(response.updated_input),
                   }
                 : ac.approval;
               decisions.push({ type: "approve", approval: finalApproval });
-
-              // Emit auto-approval event for WS-callback-approved tool
-              emitToWS(socket, {
-                type: "auto_approval",
-                tool_call: {
-                  name: finalApproval.toolName,
-                  tool_call_id: finalApproval.toolCallId,
-                  arguments: finalApproval.toolArgs,
-                },
-                reason: "Approved via WebSocket",
-                matched_rule: "canUseTool callback",
-                session_id: runtime.sessionId,
-                uuid: `auto-approval-${ac.approval.toolCallId}`,
-                agent_id: agentId,
-                conversation_id: conversationId,
-              } as AutoApprovalMessage);
-              emitToWS(socket, {
-                type: "approval_received",
-                request_id: requestId,
-                tool_call_id: ac.approval.toolCallId,
-                decision: "allow",
-                reason: "Approved via WebSocket",
-                ...(lifecycleRunId ? { run_id: lifecycleRunId } : {}),
-                session_id: runtime.sessionId,
-                uuid: `approval-received-${ac.approval.toolCallId}`,
-                agent_id: agentId,
-                conversation_id: conversationId,
-              });
             } else {
               decisions.push({
                 type: "deny",
                 approval: ac.approval,
                 reason: response?.message || "Denied via WebSocket",
               });
-              emitToWS(socket, {
-                type: "approval_received",
-                request_id: requestId,
-                tool_call_id: ac.approval.toolCallId,
-                decision: "deny",
-                reason: response?.message || "Denied via WebSocket",
-                ...(lifecycleRunId ? { run_id: lifecycleRunId } : {}),
-                session_id: runtime.sessionId,
-                uuid: `approval-received-${ac.approval.toolCallId}`,
-                agent_id: agentId,
-                conversation_id: conversationId,
-              });
             }
           } else {
-            const denyReason =
-              responseBody.subtype === "error"
-                ? responseBody.error
-                : "Unknown error";
+            const denyReason = responseBody.error;
             decisions.push({
               type: "deny",
               approval: ac.approval,
               reason: denyReason,
-            });
-            emitToWS(socket, {
-              type: "approval_received",
-              request_id: requestId,
-              tool_call_id: ac.approval.toolCallId,
-              decision: "deny",
-              reason: denyReason,
-              ...(lifecycleRunId ? { run_id: lifecycleRunId } : {}),
-              session_id: runtime.sessionId,
-              uuid: `approval-received-${ac.approval.toolCallId}`,
-              agent_id: agentId,
-              conversation_id: conversationId,
             });
           }
         }
@@ -3880,6 +3534,14 @@ async function handleIncomingMessage(
         )
         .map((decision) => decision.approval.toolCallId);
       runtime.activeExecutingToolCallIds = [...lastExecutingToolCallIds];
+      setLoopStatus(runtime, "EXECUTING_CLIENT_SIDE_TOOL", {
+        agent_id: agentId,
+        conversation_id: conversationId,
+      });
+      emitRuntimeStateUpdates(runtime, {
+        agent_id: agentId,
+        conversation_id: conversationId,
+      });
       const executionRunId =
         runId || runtime.activeRunId || msgRunIds[msgRunIds.length - 1];
       emitToolExecutionStartedEvents(socket, runtime, {
@@ -3936,6 +3598,10 @@ async function handleIncomingMessage(
           approvals: persistedExecutionResults,
         },
       ];
+      setLoopStatus(runtime, "SENDING_API_REQUEST", {
+        agent_id: agentId,
+        conversation_id: conversationId,
+      });
       stream = await sendMessageStreamWithRetry(
         conversationId,
         currentInput,
@@ -3944,6 +3610,10 @@ async function handleIncomingMessage(
         runtime,
         runtime.activeAbortController.signal,
       );
+      setLoopStatus(runtime, "PROCESSING_API_RESPONSE", {
+        agent_id: agentId,
+        conversation_id: conversationId,
+      });
 
       // Results were successfully submitted to the backend — clear both so a
       // cancel during the subsequent stream drain won't queue already-sent
@@ -3952,6 +3622,10 @@ async function handleIncomingMessage(
       lastExecutingToolCallIds = [];
       lastNeedsUserInputToolCallIds = [];
       runtime.activeExecutingToolCallIds = [];
+      emitRuntimeStateUpdates(runtime, {
+        agent_id: agentId,
+        conversation_id: conversationId,
+      });
 
       turnToolContextId = getStreamToolContextId(
         stream as Stream<LettaStreamingResponse>,
@@ -3989,71 +3663,46 @@ async function handleIncomingMessage(
 
       runtime.lastStopReason = "cancelled";
       runtime.isProcessing = false;
-      clearActiveRunState(runtime);
-
-      emitTurnResult(socket, runtime, {
-        subtype: "interrupted",
-        agentId: agentId || "",
-        conversationId,
-        durationMs: performance.now() - msgStartTime,
-        numTurns: msgTurnCount,
-        runIds: msgRunIds,
-        stopReason: "cancelled",
+      setLoopStatus(runtime, "WAITING_ON_INPUT", {
+        agent_id: agentId || null,
+        conversation_id: conversationId,
       });
+      clearActiveRunState(runtime);
+      emitRuntimeStateUpdates(runtime, {
+        agent_id: agentId || null,
+        conversation_id: conversationId,
+      });
+
       return;
     }
 
     runtime.lastStopReason = "error";
     runtime.isProcessing = false;
-    clearActiveRunState(runtime);
-
-    // If no run_started was ever sent, the initial POST failed (e.g. 429, 402).
-    // Emit run_request_error so the web UI can correlate with the optimistic run.
-    if (msgRunIds.length === 0) {
-      const errorPayload: RunRequestErrorMessage["error"] = {
-        message: error instanceof Error ? error.message : String(error),
-      };
-      if (error instanceof APIError) {
-        errorPayload.status = error.status;
-        if (error.error && typeof error.error === "object") {
-          errorPayload.body = error.error as Record<string, unknown>;
-        }
-      }
-      sendClientMessage(socket, {
-        type: "run_request_error",
-        error: errorPayload,
-        batch_id: dequeuedBatchId,
-        agent_id: agentId,
-        conversation_id: conversationId,
-      });
-    }
-
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    emitToWS(socket, {
-      type: "error",
-      message: errorMessage,
-      stop_reason: "error",
-      session_id: runtime.sessionId,
-      uuid: `error-${crypto.randomUUID()}`,
-      agent_id: agentId || undefined,
+    setLoopStatus(runtime, "WAITING_ON_INPUT", {
+      agent_id: agentId || null,
       conversation_id: conversationId,
     });
-    emitTurnResult(socket, runtime, {
-      subtype: "error",
-      agentId: agentId || "",
-      conversationId,
-      durationMs: performance.now() - msgStartTime,
-      numTurns: msgTurnCount,
-      runIds: msgRunIds,
-      stopReason: "error",
+    clearActiveRunState(runtime);
+    emitRuntimeStateUpdates(runtime, {
+      agent_id: agentId || null,
+      conversation_id: conversationId,
     });
 
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    emitLoopErrorDelta(socket, runtime, {
+      message: errorMessage,
+      stopReason: "error",
+      isTerminal: true,
+      agentId: agentId || undefined,
+      conversationId,
+    });
     if (process.env.DEBUG) {
       console.error("[Listen] Error handling message:", error);
     }
   } finally {
     runtime.activeAbortController = null;
     runtime.cancelRequested = false;
+    runtime.isRecoveringApprovals = false;
     runtime.activeExecutingToolCallIds = [];
   }
 }
@@ -4081,10 +3730,10 @@ export function stopListenerClient(): void {
 export const __listenClientTestUtils = {
   createRuntime,
   stopRuntime,
-  buildStateResponse,
+  buildDeviceStatus,
+  buildLoopStatus,
+  buildQueueSnapshot,
   handleCwdChange,
-  emitToWS,
-  emitCancelAck,
   getConversationWorkingDirectory,
   rememberPendingApprovalBatchIds,
   resolvePendingApprovalBatchId,

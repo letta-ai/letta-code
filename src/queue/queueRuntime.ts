@@ -1,13 +1,33 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
-import type {
-  QueueBlockedReason,
-  QueueClearedReason,
-  QueueItemDroppedReason,
-  QueueItemKind,
-  QueueItemSource,
-} from "../types/protocol";
 
-export type { QueueBlockedReason, QueueClearedReason, QueueItemKind };
+export type QueueBlockedReason =
+  | "streaming"
+  | "pending_approvals"
+  | "overlay_open"
+  | "command_running"
+  | "interrupt_in_progress"
+  | "runtime_busy";
+
+export type QueueClearedReason =
+  | "processed"
+  | "error"
+  | "cancelled"
+  | "shutdown"
+  | "stale_generation";
+
+export type QueueItemDroppedReason = "buffer_limit" | "stale_generation";
+
+export type QueueItemKind =
+  | "message"
+  | "task_notification"
+  | "approval_result"
+  | "overlay_action";
+
+export type QueueItemSource =
+  | "user"
+  | "task_notification"
+  | "subagent"
+  | "system";
 
 // ── Item types ───────────────────────────────────────────────────
 
