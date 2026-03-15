@@ -16,6 +16,7 @@ import type {
 } from "@letta-ai/letta-client/resources/agents/messages";
 import WebSocket from "ws";
 import {
+  type ApprovalDecision,
   type ApprovalResult,
   executeApprovalBatch,
 } from "../agent/approval-execution";
@@ -38,6 +39,7 @@ import { createBuffers } from "../cli/helpers/accumulator";
 import { classifyApprovals } from "../cli/helpers/approvalClassification";
 import { resizeImageIfNeeded } from "../cli/helpers/imageResize";
 import { generatePlanFilePath } from "../cli/helpers/planName";
+import type { ApprovalRequest } from "../cli/helpers/stream";
 import { drainStreamWithResume } from "../cli/helpers/stream";
 import { INTERRUPTED_BY_USER } from "../constants";
 import { computeDiffPreviews } from "../helpers/diffPreview";
@@ -76,6 +78,7 @@ import type {
   LoopState,
   LoopStatus,
   LoopStatusUpdateMessage,
+  PendingControlRequest,
   QueueMessage,
   QueueUpdateMessage,
   RetryMessage,
@@ -84,6 +87,7 @@ import type {
   StopReasonType,
   StreamDelta,
   StreamDeltaMessage,
+  SyncCommand,
   WsProtocolCommand,
   WsProtocolMessage,
 } from "../types/protocol_v2";
@@ -154,6 +158,19 @@ type PendingApprovalResolver = {
   controlRequest?: ControlRequest;
 };
 
+type RecoveredPendingApproval = {
+  approval: ApprovalRequest;
+  controlRequest: ControlRequest;
+};
+
+type RecoveredApprovalState = {
+  agentId: string;
+  conversationId: string;
+  approvalsByRequestId: Map<string, RecoveredPendingApproval>;
+  pendingRequestIds: Set<string>;
+  responsesByRequestId: Map<string, ApprovalResponseBody>;
+};
+
 type ListenerRuntime = {
   socket: WebSocket | null;
   heartbeatInterval: NodeJS.Timeout | null;
@@ -162,6 +179,7 @@ type ListenerRuntime = {
   hasSuccessfulConnection: boolean;
   messageQueue: Promise<void>;
   pendingApprovalResolvers: Map<string, PendingApprovalResolver>;
+  recoveredApprovalState: RecoveredApprovalState | null;
   /** Stable session ID for MessageEnvelope-based emissions (scoped to runtime lifecycle). */
   sessionId: string;
   /** Monotonic event sequence for all outbound status/protocol events. */
@@ -390,6 +408,7 @@ function createRuntime(): ListenerRuntime {
     hasSuccessfulConnection: false,
     messageQueue: Promise.resolve(),
     pendingApprovalResolvers: new Map(),
+    recoveredApprovalState: null,
     sessionId: `listen-${crypto.randomUUID()}`,
     eventSeqCounter: 0,
     lastStopReason: null,
@@ -437,18 +456,18 @@ function createRuntime(): ListenerRuntime {
         emitRuntimeStateUpdates(runtime, scope);
         scheduleQueueEmit(runtime, scope);
       },
-      onBlocked: (reason, queueLen) => {
+      onBlocked: (_reason, _queueLen) => {
         const scope = getQueueItemScope(runtime.queueRuntime.items[0]);
         emitRuntimeStateUpdates(runtime, scope);
         scheduleQueueEmit(runtime, scope);
       },
-      onCleared: (reason, clearedCount, items) => {
+      onCleared: (_reason, _clearedCount, items) => {
         runtime.pendingTurns = 0;
         const scope = getQueueItemsScope(items);
         emitRuntimeStateUpdates(runtime, scope);
         scheduleQueueEmit(runtime, scope);
       },
-      onDropped: (item, reason, queueLen) => {
+      onDropped: (item, _reason, queueLen) => {
         runtime.pendingTurns = queueLen;
         runtime.queuedMessagesByItemId.delete(item.id);
         const scope = getQueueItemScope(item);
@@ -554,6 +573,89 @@ function clearActiveRunState(runtime: ListenerRuntime): void {
   runtime.activeRunId = null;
   runtime.activeRunStartedAt = null;
   runtime.activeAbortController = null;
+}
+
+function clearRecoveredApprovalState(runtime: ListenerRuntime): void {
+  runtime.recoveredApprovalState = null;
+}
+
+function getRecoveredApprovalStateForScope(
+  runtime: ListenerRuntime,
+  params?: {
+    agent_id?: string | null;
+    conversation_id?: string | null;
+  },
+): RecoveredApprovalState | null {
+  const scopedAgentId = resolveScopedAgentId(runtime, params);
+  if (!scopedAgentId) {
+    return null;
+  }
+  const scopedConversationId = resolveScopedConversationId(runtime, params);
+  const recovered = runtime.recoveredApprovalState;
+  if (!recovered) {
+    return null;
+  }
+  return recovered.agentId === scopedAgentId &&
+    recovered.conversationId === scopedConversationId
+    ? recovered
+    : null;
+}
+
+function getPendingControlRequests(
+  runtime: ListenerRuntime,
+  params?: {
+    agent_id?: string | null;
+    conversation_id?: string | null;
+  },
+): PendingControlRequest[] {
+  const scopedAgentId = resolveScopedAgentId(runtime, params);
+  const scopedConversationId = resolveScopedConversationId(runtime, params);
+  const requests: PendingControlRequest[] = [];
+
+  for (const pending of runtime.pendingApprovalResolvers.values()) {
+    const request = pending.controlRequest;
+    if (!request) continue;
+    if (
+      scopedAgentId &&
+      (request.agent_id ?? scopedAgentId) !== scopedAgentId
+    ) {
+      continue;
+    }
+    if (
+      scopedConversationId &&
+      (request.conversation_id ?? scopedConversationId) !== scopedConversationId
+    ) {
+      continue;
+    }
+    requests.push({
+      request_id: request.request_id,
+      request: request.request,
+    });
+  }
+
+  const recovered = getRecoveredApprovalStateForScope(runtime, params);
+  if (recovered) {
+    for (const requestId of recovered.pendingRequestIds) {
+      const entry = recovered.approvalsByRequestId.get(requestId);
+      if (!entry) continue;
+      requests.push({
+        request_id: entry.controlRequest.request_id,
+        request: entry.controlRequest.request,
+      });
+    }
+  }
+
+  return requests;
+}
+
+function getPendingControlRequestCount(
+  runtime: ListenerRuntime,
+  params?: {
+    agent_id?: string | null;
+    conversation_id?: string | null;
+  },
+): number {
+  return getPendingControlRequests(runtime, params).length;
 }
 
 function emitRuntimeStateUpdates(
@@ -883,6 +985,17 @@ function isAbortMessageCommand(value: unknown): value is AbortMessageCommand {
   return hasRequestId && hasRunId;
 }
 
+function isSyncCommand(value: unknown): value is SyncCommand {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const candidate = value as {
+    type?: unknown;
+    runtime?: unknown;
+  };
+  return candidate.type === "sync" && isRuntimeScope(candidate.runtime);
+}
+
 export function parseServerMessage(
   data: WebSocket.RawData,
 ): ParsedServerMessage | null {
@@ -892,7 +1005,8 @@ export function parseServerMessage(
     if (
       isInputCommand(parsed) ||
       isChangeDeviceStateCommand(parsed) ||
-      isAbortMessageCommand(parsed)
+      isAbortMessageCommand(parsed) ||
+      isSyncCommand(parsed)
     ) {
       return parsed;
     }
@@ -1131,9 +1245,12 @@ function shouldQueueInboundMessage(parsed: IncomingMessage): boolean {
 function computeListenerQueueBlockedReason(
   runtime: ListenerRuntime,
 ): QueueBlockedReason | null {
+  const activeScope = resolveRuntimeScope(runtime);
   return getListenerBlockedReason({
     isProcessing: runtime.isProcessing,
-    pendingApprovalsLen: runtime.pendingApprovalResolvers.size,
+    pendingApprovalsLen: activeScope
+      ? getPendingControlRequestCount(runtime, activeScope)
+      : 0,
     cancelRequested: runtime.cancelRequested,
     isRecoveringApprovals: runtime.isRecoveringApprovals,
   });
@@ -1282,21 +1399,6 @@ function buildDeviceStatus(
       return "auto" as const;
     }
   })();
-  const pendingControlRequests = Array.from(
-    runtime.pendingApprovalResolvers.values(),
-  )
-    .map((pending) => pending.controlRequest)
-    .filter(
-      (
-        request,
-      ): request is NonNullable<PendingApprovalResolver["controlRequest"]> =>
-        !!request,
-    )
-    .map((request) => ({
-      request_id: request.request_id,
-      request: request.request,
-    }));
-
   return {
     current_connection_id: runtime.connectionId,
     connection_name: runtime.connectionName,
@@ -1314,13 +1416,26 @@ function buildDeviceStatus(
     current_loaded_tools: getToolNames(),
     current_available_skills: [],
     background_processes: [],
-    pending_control_requests: pendingControlRequests,
+    pending_control_requests: getPendingControlRequests(runtime, params),
   };
 }
 
-function buildLoopStatus(runtime: ListenerRuntime): LoopState {
+function buildLoopStatus(
+  runtime: ListenerRuntime,
+  params?: {
+    agent_id?: string | null;
+    conversation_id?: string | null;
+  },
+): LoopState {
+  const recovered = getRecoveredApprovalStateForScope(runtime, params);
+  const status =
+    recovered &&
+    recovered.pendingRequestIds.size > 0 &&
+    runtime.loopStatus === "WAITING_ON_INPUT"
+      ? "WAITING_ON_APPROVAL"
+      : runtime.loopStatus;
   return {
-    status: runtime.loopStatus,
+    status,
     active_run_ids: runtime.activeRunId ? [runtime.activeRunId] : [],
   };
 }
@@ -1417,7 +1532,7 @@ function emitLoopStatusUpdate(
     "runtime" | "event_seq" | "emitted_at" | "idempotency_key"
   > = {
     type: "update_loop_status",
-    loop_status: buildLoopStatus(runtime),
+    loop_status: buildLoopStatus(runtime, scope),
   };
   emitProtocolV2Message(socket, runtime, message, scope);
 }
@@ -1552,6 +1667,16 @@ function emitQueueUpdateIfOpen(
   if (runtime.socket?.readyState === WebSocket.OPEN) {
     emitQueueUpdate(runtime.socket, runtime, scope);
   }
+}
+
+function emitStateSync(
+  socket: WebSocket,
+  runtime: ListenerRuntime,
+  scope: RuntimeScope,
+): void {
+  emitDeviceStatusUpdate(socket, runtime, scope);
+  emitLoopStatusUpdate(socket, runtime, scope);
+  emitQueueUpdate(socket, runtime, scope);
 }
 
 /**
@@ -2357,6 +2482,275 @@ async function resolveStaleApprovals(
   }
 }
 
+function parseApprovalInput(toolArgs: string): Record<string, unknown> {
+  if (!toolArgs) return {};
+  try {
+    const parsed = JSON.parse(toolArgs) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+async function recoverApprovalStateForSync(
+  runtime: ListenerRuntime,
+  scope: RuntimeScope,
+): Promise<void> {
+  if (
+    runtime.pendingApprovalResolvers.size > 0 &&
+    runtime.activeAgentId === scope.agent_id &&
+    resolveScopedConversationId(runtime, {
+      conversation_id: runtime.activeConversationId,
+    }) === scope.conversation_id
+  ) {
+    clearRecoveredApprovalState(runtime);
+    return;
+  }
+
+  const client = await getClient();
+  let agent: Awaited<ReturnType<typeof client.agents.retrieve>>;
+  try {
+    agent = await client.agents.retrieve(scope.agent_id);
+  } catch (error) {
+    if (
+      error instanceof APIError &&
+      (error.status === 404 || error.status === 422)
+    ) {
+      clearRecoveredApprovalState(runtime);
+      return;
+    }
+    throw error;
+  }
+
+  let resumeData: Awaited<ReturnType<typeof getResumeData>>;
+  try {
+    resumeData = await getResumeData(client, agent, scope.conversation_id, {
+      includeMessageHistory: false,
+    });
+  } catch (error) {
+    if (
+      error instanceof APIError &&
+      (error.status === 404 || error.status === 422)
+    ) {
+      clearRecoveredApprovalState(runtime);
+      return;
+    }
+    throw error;
+  }
+
+  const pendingApprovals = resumeData.pendingApprovals ?? [];
+  if (pendingApprovals.length === 0) {
+    clearRecoveredApprovalState(runtime);
+    return;
+  }
+
+  const approvalsByRequestId = new Map<string, RecoveredPendingApproval>();
+  await Promise.all(
+    pendingApprovals.map(async (approval) => {
+      const requestId = `perm-${approval.toolCallId}`;
+      const input = parseApprovalInput(approval.toolArgs);
+      const diffs = await computeDiffPreviews(
+        approval.toolName,
+        input,
+        getConversationWorkingDirectory(
+          runtime,
+          scope.agent_id,
+          scope.conversation_id,
+        ),
+      );
+
+      approvalsByRequestId.set(requestId, {
+        approval,
+        controlRequest: {
+          type: "control_request",
+          request_id: requestId,
+          request: {
+            subtype: "can_use_tool",
+            tool_name: approval.toolName,
+            input,
+            tool_call_id: approval.toolCallId,
+            permission_suggestions: [],
+            blocked_path: null,
+            ...(diffs.length > 0 ? { diffs } : {}),
+          },
+          agent_id: scope.agent_id,
+          conversation_id: scope.conversation_id,
+        },
+      });
+    }),
+  );
+
+  runtime.recoveredApprovalState = {
+    agentId: scope.agent_id,
+    conversationId: scope.conversation_id,
+    approvalsByRequestId,
+    pendingRequestIds: new Set(approvalsByRequestId.keys()),
+    responsesByRequestId: new Map(),
+  };
+}
+
+async function resolveRecoveredApprovalResponse(
+  runtime: ListenerRuntime,
+  socket: WebSocket,
+  opts: StartListenerOptions,
+  response: ApprovalResponseBody,
+): Promise<boolean> {
+  const requestId = response.request_id;
+  if (typeof requestId !== "string" || requestId.length === 0) {
+    return false;
+  }
+
+  const recovered = runtime.recoveredApprovalState;
+  if (!recovered || !recovered.approvalsByRequestId.has(requestId)) {
+    return false;
+  }
+
+  recovered.responsesByRequestId.set(requestId, response);
+  recovered.pendingRequestIds.delete(requestId);
+
+  if (recovered.pendingRequestIds.size > 0) {
+    emitRuntimeStateUpdates(runtime, {
+      agent_id: recovered.agentId,
+      conversation_id: recovered.conversationId,
+    });
+    return true;
+  }
+
+  const decisions: ApprovalDecision[] = [];
+  for (const [id, entry] of recovered.approvalsByRequestId) {
+    const approvalResponse = recovered.responsesByRequestId.get(id);
+    if (!approvalResponse) {
+      continue;
+    }
+
+    if ("decision" in approvalResponse) {
+      const decision = approvalResponse.decision as ApprovalResponseDecision;
+      if (decision.behavior === "allow") {
+        decisions.push({
+          type: "approve",
+          approval: decision.updated_input
+            ? {
+                ...entry.approval,
+                toolArgs: JSON.stringify(decision.updated_input),
+              }
+            : entry.approval,
+        });
+      } else {
+        decisions.push({
+          type: "deny",
+          approval: entry.approval,
+          reason: decision.message || "Denied via WebSocket",
+        });
+      }
+    } else {
+      decisions.push({
+        type: "deny",
+        approval: entry.approval,
+        reason: approvalResponse.error,
+      });
+    }
+  }
+
+  const scope = {
+    agent_id: recovered.agentId,
+    conversation_id: recovered.conversationId,
+  } as const;
+  const approvedToolCallIds = decisions
+    .filter(
+      (decision): decision is Extract<ApprovalDecision, { type: "approve" }> =>
+        decision.type === "approve",
+    )
+    .map((decision) => decision.approval.toolCallId);
+
+  // Mirror the normal approval loop behavior:
+  // the approval is resolved immediately from the UI's perspective, then the
+  // approved tool transitions into execution / processing state.
+  recovered.pendingRequestIds.clear();
+  emitRuntimeStateUpdates(runtime, scope);
+
+  runtime.isProcessing = true;
+  runtime.activeAgentId = recovered.agentId;
+  runtime.activeConversationId = recovered.conversationId;
+  runtime.activeWorkingDirectory = getConversationWorkingDirectory(
+    runtime,
+    recovered.agentId,
+    recovered.conversationId,
+  );
+  runtime.activeExecutingToolCallIds = [...approvedToolCallIds];
+  setLoopStatus(runtime, "EXECUTING_CLIENT_SIDE_TOOL", scope);
+  emitRuntimeStateUpdates(runtime, scope);
+  emitToolExecutionStartedEvents(socket, runtime, {
+    toolCallIds: approvedToolCallIds,
+    runId: runtime.activeRunId ?? undefined,
+    agentId: recovered.agentId,
+    conversationId: recovered.conversationId,
+  });
+  try {
+    const approvalResults = await executeApprovalBatch(decisions, undefined, {
+      workingDirectory: getConversationWorkingDirectory(
+        runtime,
+        recovered.agentId,
+        recovered.conversationId,
+      ),
+    });
+
+    emitToolExecutionFinishedEvents(socket, runtime, {
+      approvals: approvalResults,
+      runId: runtime.activeRunId ?? undefined,
+      agentId: recovered.agentId,
+      conversationId: recovered.conversationId,
+    });
+    emitInterruptToolReturnMessage(
+      socket,
+      runtime,
+      approvalResults,
+      runtime.activeRunId ?? undefined,
+      "tool-return",
+    );
+
+    setLoopStatus(runtime, "SENDING_API_REQUEST", scope);
+    emitRuntimeStateUpdates(runtime, scope);
+
+    await handleIncomingMessage(
+      {
+        type: "message",
+        agentId: recovered.agentId,
+        conversationId: recovered.conversationId,
+        messages: [
+          {
+            type: "approval",
+            approvals: approvalResults,
+          },
+        ],
+      },
+      socket,
+      runtime,
+      opts.onStatusChange,
+      opts.connectionId,
+      `batch-recovered-${crypto.randomUUID()}`,
+    );
+
+    clearRecoveredApprovalState(runtime);
+    return true;
+  } catch (error) {
+    recovered.pendingRequestIds = new Set(
+      recovered.approvalsByRequestId.keys(),
+    );
+    recovered.responsesByRequestId.clear();
+    runtime.isProcessing = false;
+    runtime.activeExecutingToolCallIds = [];
+    setLoopStatus(runtime, "WAITING_ON_INPUT", scope);
+    clearActiveRunState(runtime);
+    emitRuntimeStateUpdates(runtime, {
+      agent_id: recovered.agentId,
+      conversation_id: recovered.conversationId,
+    });
+    throw error;
+  }
+}
+
 /**
  * Wrap sendMessageStream with pre-stream error handling (retry/recovery).
  * Mirrors headless bidirectional mode's pre-stream error handling.
@@ -2729,6 +3123,19 @@ async function connectWithRetry(
       return;
     }
 
+    if (parsed.type === "sync") {
+      console.log(
+        `[Listen V2] Received sync command for runtime=${parsed.runtime.agent_id}/${parsed.runtime.conversation_id}`,
+      );
+      if (runtime !== activeRuntime || runtime.intentionallyClosed) {
+        console.log(`[Listen V2] Dropping sync: runtime mismatch or closed`);
+        return;
+      }
+      await recoverApprovalStateForSync(runtime, parsed.runtime);
+      emitStateSync(socket, runtime, parsed.runtime);
+      return;
+    }
+
     if (parsed.type === "input") {
       console.log(
         `[Listen V2] Received input command, kind=${parsed.payload?.kind}`,
@@ -2740,6 +3147,17 @@ async function connectWithRetry(
 
       if (parsed.payload.kind === "approval_response") {
         if (resolvePendingApprovalResolver(runtime, parsed.payload)) {
+          scheduleQueuePump(runtime, socket, opts);
+          return;
+        }
+        if (
+          await resolveRecoveredApprovalResponse(
+            runtime,
+            socket,
+            opts,
+            parsed.payload,
+          )
+        ) {
           scheduleQueuePump(runtime, socket, opts);
         }
         return;
@@ -2844,7 +3262,8 @@ async function connectWithRetry(
           undefined,
       };
       const shouldTrackCommand =
-        !runtime.isProcessing && runtime.pendingApprovalResolvers.size === 0;
+        !runtime.isProcessing &&
+        getPendingControlRequestCount(runtime, scope) === 0;
       if (shouldTrackCommand) {
         setLoopStatus(runtime, "EXECUTING_COMMAND", scope);
       }
@@ -2883,13 +3302,11 @@ async function connectWithRetry(
         return;
       }
 
-      const requestId =
-        typeof parsed.request_id === "string" && parsed.request_id.length > 0
-          ? parsed.request_id
-          : `abort-${crypto.randomUUID()}`;
-      const requestedRunId =
-        typeof parsed.run_id === "string" ? parsed.run_id : runtime.activeRunId;
-      const hasPendingApprovals = runtime.pendingApprovalResolvers.size > 0;
+      const hasPendingApprovals =
+        getPendingControlRequestCount(runtime, {
+          agent_id: parsed.runtime.agent_id,
+          conversation_id: parsed.runtime.conversation_id,
+        }) > 0;
       const hasActiveTurn = runtime.isProcessing;
 
       if (!hasActiveTurn && !hasPendingApprovals) {
@@ -3050,8 +3467,6 @@ async function handleIncomingMessage(
     normalizedAgentId,
     conversationId,
   );
-  const msgStartTime = performance.now();
-  let msgTurnCount = 0;
   const msgRunIds: string[] = [];
   let postStopApprovalRecoveryRetries = 0;
 
@@ -3184,7 +3599,6 @@ async function handleIncomingMessage(
     // Approval loop: continue until end_turn or error
     // eslint-disable-next-line no-constant-condition
     while (true) {
-      msgTurnCount++;
       runIdSent = false;
       let latestErrorText: string | null = null;
       const result = await drainStreamWithResume(
@@ -3777,4 +4191,5 @@ export const __listenClientTestUtils = {
   shouldAttemptPostStopApprovalRecovery,
   normalizeMessageContentImages,
   normalizeInboundMessages,
+  emitStateSync,
 };

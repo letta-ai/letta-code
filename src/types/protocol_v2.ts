@@ -351,10 +351,16 @@ export interface AbortMessageCommand {
   run_id?: string | null;
 }
 
+export interface SyncCommand {
+  type: "sync";
+  runtime: RuntimeScope;
+}
+
 export type WsProtocolCommand =
   | InputCommand
   | ChangeDeviceStateCommand
-  | AbortMessageCommand;
+  | AbortMessageCommand
+  | SyncCommand;
 
 export type WsProtocolMessage =
   | DeviceStatusUpdateMessage
