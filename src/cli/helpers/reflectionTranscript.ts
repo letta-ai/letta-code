@@ -8,18 +8,12 @@ import {
 } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  labelFromRelativePath,
-  MEMORY_SYSTEM_DIR,
-  renderMemoryFilesystemTree,
-} from "../../agent/memoryFilesystem";
+import { MEMORY_SYSTEM_DIR } from "../../agent/memoryFilesystem";
 import { parseFrontmatter } from "../../utils/frontmatter";
 import { type Line, linesToTranscript } from "./accumulator";
 
 const TRANSCRIPT_ROOT_ENV = "LETTA_TRANSCRIPT_ROOT";
 const DEFAULT_TRANSCRIPT_DIR = "transcripts";
-const AUTO_REFLECTION_MAX_JSONL_LINES = 400;
-const AUTO_REFLECTION_MAX_JSONL_CHARS = 200_000;
 
 interface ReflectionTranscriptState {
   auto_cursor_line: number;
@@ -64,18 +58,23 @@ export interface ReflectionPromptInput {
 export function buildReflectionSubagentPrompt(
   input: ReflectionPromptInput,
 ): string {
-  const lines = [
-    "Review the conversation transcript and update memory files.",
-    `The current conversation transcript has been saved to: ${input.transcriptPath}`,
-    `The primary agent's memory filesystem is located at: ${input.memoryDir}`,
-  ];
+  const lines: string[] = [];
+
   if (input.cwd) {
     lines.push(`Your current working directory is: ${input.cwd}`);
+    lines.push("");
   }
+
+  lines.push(
+    `Review the conversation transcript and update memory files. The current conversation transcript has been saved to: ${input.transcriptPath}`,
+    "",
+    `The primary agent's memory filesystem is located at: ${input.memoryDir}`,
+    "In-context memory (in the parent agent's system prompt) is stored in the `system/` folder and are rendered in <memory> tags below. Modification to files in `system/` will edit the parent agent's system prompt.",
+    "Additional memory files (such as skills and external memory) may also be read and modified.",
+    "",
+  );
+
   if (input.parentMemory) {
-    lines.push(
-      "Parent memory is provided inline below. Use this snapshot directly so you do not need to spend turns reading memory files first.",
-    );
     lines.push(input.parentMemory);
   }
   return lines.join("\n");
@@ -87,14 +86,8 @@ interface ParentMemoryFile {
   description?: string;
 }
 
-const MEMORY_SKILLS_DIR = "skills";
-
 function isSystemMemoryFile(relativePath: string): boolean {
   return relativePath.startsWith(`${MEMORY_SYSTEM_DIR}/`);
-}
-
-function isSkillMemoryFile(relativePath: string): boolean {
-  return relativePath.startsWith(`${MEMORY_SKILLS_DIR}/`);
 }
 
 async function collectParentMemoryFiles(
@@ -157,19 +150,68 @@ async function collectParentMemoryFiles(
 }
 
 function buildParentMemoryTree(files: ParentMemoryFile[]): string {
-  const systemLabels: string[] = [];
-  const detachedLabels: string[] = [];
+  type TreeNode = {
+    children: Map<string, TreeNode>;
+    isFile: boolean;
+    description?: string;
+  };
+
+  const makeNode = (): TreeNode => ({ children: new Map(), isFile: false });
+  const root = makeNode();
 
   for (const file of files) {
-    const label = labelFromRelativePath(file.relativePath);
-    if (file.relativePath.startsWith(`${MEMORY_SYSTEM_DIR}/`)) {
-      systemLabels.push(label.slice(`${MEMORY_SYSTEM_DIR}/`.length));
-      continue;
+    const normalizedPath = file.relativePath.replace(/\\/g, "/");
+    const parts = normalizedPath.split("/");
+    let current = root;
+
+    for (const [index, part] of parts.entries()) {
+      if (!current.children.has(part)) {
+        current.children.set(part, makeNode());
+      }
+      current = current.children.get(part) as TreeNode;
+      if (index === parts.length - 1) {
+        current.isFile = true;
+        if (file.description && !isSystemMemoryFile(normalizedPath)) {
+          current.description = file.description;
+        }
+      }
     }
-    detachedLabels.push(label);
   }
 
-  return renderMemoryFilesystemTree(systemLabels, detachedLabels);
+  if (!root.children.has(MEMORY_SYSTEM_DIR)) {
+    root.children.set(MEMORY_SYSTEM_DIR, makeNode());
+  }
+
+  const sortedEntries = (node: TreeNode) =>
+    Array.from(node.children.entries()).sort(
+      ([nameA, nodeA], [nameB, nodeB]) => {
+        if (nodeA.isFile !== nodeB.isFile) {
+          return nodeA.isFile ? 1 : -1;
+        }
+        return nameA.localeCompare(nameB);
+      },
+    );
+
+  const lines: string[] = ["/memory/"];
+
+  const render = (node: TreeNode, prefix: string) => {
+    const entries = sortedEntries(node);
+    for (const [index, [name, child]] of entries.entries()) {
+      const isLast = index === entries.length - 1;
+      const branch = isLast ? "└──" : "├──";
+      const suffix = child.isFile ? "" : "/";
+      const description = child.description ? ` (${child.description})` : "";
+      lines.push(`${prefix}${branch} ${name}${suffix}${description}`);
+      if (child.children.size > 0) {
+        const nextPrefix = `${prefix}${isLast ? "    " : "│   "}`;
+        render(child, nextPrefix);
+      }
+    }
+  };
+
+  render(root, "");
+
+  return lines.join("\n");
 }
 
 export async function buildParentMemorySnapshot(
@@ -179,9 +221,6 @@ export async function buildParentMemorySnapshot(
   const tree = buildParentMemoryTree(files);
   const systemFiles = files.filter((file) =>
     isSystemMemoryFile(file.relativePath),
-  );
-  const skillFiles = files.filter((file) =>
-    isSkillMemoryFile(file.relativePath),
   );
 
   const lines = [
@@ -194,22 +233,13 @@ export async function buildParentMemorySnapshot(
   if (files.length === 0) {
     lines.push("(no memory markdown files found)");
   } else {
-    lines.push("<system_memory>");
     for (const file of systemFiles) {
-      lines.push(`<path=${file.relativePath}>`);
+      const normalizedPath = file.relativePath.replace(/\\/g, "/");
+      const absolutePath = `${memoryDir.replace(/\\/g, "/")}/${normalizedPath}`;
+      lines.push("<memory>");
+      lines.push(`<path>${absolutePath}</path>`);
       lines.push(file.content);
-      lines.push("</path>");
-    }
-    lines.push("</system_memory>");
-
-    if (skillFiles.length > 0) {
-      lines.push("<skill_descriptions>");
-      for (const file of skillFiles) {
-        lines.push(`<path=${file.relativePath}>`);
-        lines.push(file.description || "(no description)");
-        lines.push("</path>");
-      }
-      lines.push("</skill_descriptions>");
+      lines.push("</memory>");
     }
   }
 
@@ -429,26 +459,7 @@ export async function buildAutoReflectionPayload(
     return null;
   }
 
-  const remainingLines = lines.slice(cursorLine);
-  const snapshotLines: string[] = [];
-  let snapshotChars = 0;
-  for (const line of remainingLines) {
-    if (snapshotLines.length >= AUTO_REFLECTION_MAX_JSONL_LINES) {
-      break;
-    }
-    if (
-      snapshotLines.length > 0 &&
-      snapshotChars + line.length > AUTO_REFLECTION_MAX_JSONL_CHARS
-    ) {
-      break;
-    }
-    snapshotLines.push(line);
-    snapshotChars += line.length;
-  }
-
-  if (snapshotLines.length === 0) {
-    return null;
-  }
+  const snapshotLines = lines.slice(cursorLine);
 
   const entries = snapshotLines
     .map((line) => parseJsonLine<TranscriptEntry>(line))
@@ -466,7 +477,7 @@ export async function buildAutoReflectionPayload(
 
   return {
     payloadPath,
-    endSnapshotLine: cursorLine + snapshotLines.length,
+    endSnapshotLine: lines.length,
   };
 }
 

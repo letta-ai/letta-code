@@ -131,49 +131,7 @@ describe("reflectionTranscript helper", () => {
     expect(payloadText).toContain("<assistant>second</assistant>");
   });
 
-  test("auto payload is chunked and advances cursor incrementally", async () => {
-    const bigText = "x".repeat(30_000);
-    for (let i = 0; i < 12; i += 1) {
-      await appendTranscriptDeltaJsonl(agentId, conversationId, [
-        { kind: "user", id: `u-${i}`, text: `${i}:${bigText}` },
-      ]);
-    }
-
-    const firstPayload = await buildAutoReflectionPayload(
-      agentId,
-      conversationId,
-    );
-    expect(firstPayload).not.toBeNull();
-    if (!firstPayload) return;
-
-    await finalizeAutoReflectionPayload(
-      agentId,
-      conversationId,
-      firstPayload.payloadPath,
-      firstPayload.endSnapshotLine,
-      true,
-    );
-
-    const paths = getReflectionTranscriptPaths(agentId, conversationId);
-    const afterFirstRaw = await readFile(paths.statePath, "utf-8");
-    const afterFirst = JSON.parse(afterFirstRaw) as {
-      auto_cursor_line: number;
-    };
-    expect(afterFirst.auto_cursor_line).toBeLessThan(12);
-    expect(afterFirst.auto_cursor_line).toBeGreaterThan(0);
-
-    const secondPayload = await buildAutoReflectionPayload(
-      agentId,
-      conversationId,
-    );
-    expect(secondPayload).not.toBeNull();
-    if (!secondPayload) return;
-    expect(secondPayload.endSnapshotLine).toBeGreaterThan(
-      afterFirst.auto_cursor_line,
-    );
-  });
-
-  test("buildParentMemorySnapshot inlines system content and skill descriptions", async () => {
+  test("buildParentMemorySnapshot renders tree descriptions and system <memory> blocks", async () => {
     const memoryDir = join(testRoot, "memory");
     await mkdir(join(memoryDir, "system"), { recursive: true });
     await mkdir(join(memoryDir, "reference"), { recursive: true });
@@ -203,24 +161,25 @@ describe("reflectionTranscript helper", () => {
     expect(snapshot).toContain("system/");
     expect(snapshot).toContain("reference/");
     expect(snapshot).toContain("skills/");
+    expect(snapshot).toContain("project.md (Project notes)");
+    expect(snapshot).toContain("SKILL.md (X/Twitter CLI for posting)");
 
-    expect(snapshot).toContain("<system_memory>");
-    expect(snapshot).toContain("<path=system/human.md>");
+    expect(snapshot).toContain("<memory>");
+    expect(snapshot).toContain(`<path>${memoryDir}/system/human.md</path>`);
     expect(snapshot).toContain("Dr. Wooders prefers direct answers.");
+    expect(snapshot).toContain("</memory>");
 
-    expect(snapshot).not.toContain("<path=reference/project.md>");
+    expect(snapshot).not.toContain(
+      `<path>${memoryDir}/reference/project.md</path>`,
+    );
     expect(snapshot).not.toContain("letta-code CLI details");
-
-    expect(snapshot).toContain("<skill_descriptions>");
-    expect(snapshot).toContain("<path=skills/bird/SKILL.md>");
-    expect(snapshot).toContain("X/Twitter CLI for posting");
     expect(snapshot).not.toContain(
       "This body should not be inlined into parent memory.",
     );
     expect(snapshot).toContain("</parent_memory>");
   });
 
-  test("buildReflectionSubagentPrompt embeds parent memory when provided", () => {
+  test("buildReflectionSubagentPrompt uses expanded reflection instructions", () => {
     const prompt = buildReflectionSubagentPrompt({
       transcriptPath: "/tmp/transcript.txt",
       memoryDir: "/tmp/memory",
@@ -229,10 +188,16 @@ describe("reflectionTranscript helper", () => {
     });
 
     expect(prompt).toContain("Review the conversation transcript");
+    expect(prompt).toContain("Your current working directory is: /tmp/work");
     expect(prompt).toContain(
       "The current conversation transcript has been saved",
     );
-    expect(prompt).toContain("Parent memory is provided inline below");
+    expect(prompt).toContain(
+      "In-context memory (in the parent agent's system prompt) is stored in the `system/` folder and are rendered in <memory> tags below.",
+    );
+    expect(prompt).toContain(
+      "Additional memory files (such as skills and external memory) may also be read and modified.",
+    );
     expect(prompt).toContain("<parent_memory>snapshot</parent_memory>");
   });
 });
