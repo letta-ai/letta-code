@@ -145,8 +145,8 @@ export function WelcomeScreen({
             ? tildePath
             : getLoadingMessage(loadingState, !!continueSession)}
         </Text>
-        {/* Row 4: memfs warning if not enabled */}
-        {loadingState === "ready" && !memfsEnabled && (
+        {/* Row 4: memfs warning if not enabled (skip for self-hosted servers) */}
+        {loadingState === "ready" && !memfsEnabled && authMethod !== "url" && (
           <Text color="yellow">
             Warning: Context repositories are not enabled for this agent. Run
             /memfs enable to enable.
