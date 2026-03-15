@@ -260,6 +260,7 @@ import { resolveReasoningTabToggleCommand } from "./helpers/reasoningTabToggle";
 import {
   appendTranscriptDeltaJsonl,
   buildAutoReflectionPayload,
+  buildParentMemorySnapshot,
   buildReflectionSubagentPrompt,
   finalizeAutoReflectionPayload,
 } from "./helpers/reflectionTranscript";
@@ -9435,10 +9436,12 @@ export default function App({
             }
 
             const memoryDir = getMemoryFilesystemRoot(agentId);
+            const parentMemory = await buildParentMemorySnapshot(memoryDir);
             const reflectionPrompt = buildReflectionSubagentPrompt({
               transcriptPath: autoPayload.payloadPath,
               memoryDir,
               cwd: process.cwd(),
+              parentMemory,
             });
 
             const { spawnBackgroundSubagentTask } = await import(
@@ -9799,10 +9802,12 @@ ${SYSTEM_REMINDER_CLOSE}
           }
 
           const memoryDir = getMemoryFilesystemRoot(agentId);
+          const parentMemory = await buildParentMemorySnapshot(memoryDir);
           const reflectionPrompt = buildReflectionSubagentPrompt({
             transcriptPath: autoPayload.payloadPath,
             memoryDir,
             cwd: process.cwd(),
+            parentMemory,
           });
 
           const { spawnBackgroundSubagentTask } = await import(
