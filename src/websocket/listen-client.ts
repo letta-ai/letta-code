@@ -1222,20 +1222,40 @@ function scheduleQueuePump(
     });
 }
 
+function resolveScopedAgentId(
+  runtime: ListenerRuntime | null,
+  params?: {
+    agent_id?: string | null;
+  },
+): string | null {
+  return (
+    normalizeCwdAgentId(params?.agent_id) ?? runtime?.activeAgentId ?? null
+  );
+}
+
+function resolveScopedConversationId(
+  runtime: ListenerRuntime | null,
+  params?: {
+    conversation_id?: string | null;
+  },
+): string {
+  return normalizeConversationId(
+    params?.conversation_id ?? runtime?.activeConversationId,
+  );
+}
+
 function resolveRuntimeScope(
   runtime: ListenerRuntime | null,
   params?: {
     agent_id?: string | null;
     conversation_id?: string | null;
   },
-): RuntimeScope {
-  const resolvedAgentId =
-    normalizeCwdAgentId(params?.agent_id) ??
-    runtime?.activeAgentId ??
-    "__unknown_agent__";
-  const resolvedConversationId = normalizeConversationId(
-    params?.conversation_id ?? runtime?.activeConversationId,
-  );
+): RuntimeScope | null {
+  const resolvedAgentId = resolveScopedAgentId(runtime, params);
+  if (!resolvedAgentId) {
+    return null;
+  }
+  const resolvedConversationId = resolveScopedConversationId(runtime, params);
   return {
     agent_id: resolvedAgentId,
     conversation_id: resolvedConversationId,
@@ -1249,11 +1269,8 @@ function buildDeviceStatus(
     conversation_id?: string | null;
   },
 ): DeviceStatus {
-  const runtimeScope = resolveRuntimeScope(runtime, params);
-  const scopedAgentId = normalizeCwdAgentId(runtimeScope.agent_id);
-  const scopedConversationId = normalizeConversationId(
-    runtimeScope.conversation_id,
-  );
+  const scopedAgentId = resolveScopedAgentId(runtime, params);
+  const scopedConversationId = resolveScopedConversationId(runtime, params);
   const toolsetPreference = (() => {
     if (!scopedAgentId) {
       return "auto" as const;
@@ -1349,12 +1366,14 @@ function emitProtocolV2Message(
   if (socket.readyState !== WebSocket.OPEN) {
     return;
   }
+  const runtimeScope = resolveRuntimeScope(runtime, scope);
+  if (!runtimeScope) {
+    return;
+  }
   const eventSeq = nextEventSeq(runtime);
   if (eventSeq === null) {
     return;
   }
-
-  const runtimeScope = resolveRuntimeScope(runtime, scope);
   const outbound: WsProtocolMessage = {
     ...message,
     runtime: runtimeScope,
@@ -1505,17 +1524,22 @@ function emitDequeuedUserMessage(
 
   const otid = firstUserPayload.client_message_id ?? batch.batchId;
 
-  emitCanonicalMessageDelta(socket, runtime, {
-    type: "message",
-    id: `user-msg-${crypto.randomUUID()}`,
-    date: new Date().toISOString(),
-    message_type: "user_message",
-    content,
-    otid,
-  } as StreamDelta, {
-    agent_id: incoming.agentId,
-    conversation_id: incoming.conversationId,
-  });
+  emitCanonicalMessageDelta(
+    socket,
+    runtime,
+    {
+      type: "message",
+      id: `user-msg-${crypto.randomUUID()}`,
+      date: new Date().toISOString(),
+      message_type: "user_message",
+      content,
+      otid,
+    } as StreamDelta,
+    {
+      agent_id: incoming.agentId,
+      conversation_id: incoming.conversationId,
+    },
+  );
 }
 
 function emitQueueUpdateIfOpen(
@@ -3730,9 +3754,12 @@ export function stopListenerClient(): void {
 export const __listenClientTestUtils = {
   createRuntime,
   stopRuntime,
+  resolveRuntimeScope,
   buildDeviceStatus,
   buildLoopStatus,
   buildQueueSnapshot,
+  emitDeviceStatusUpdate,
+  emitLoopStatusUpdate,
   handleCwdChange,
   getConversationWorkingDirectory,
   rememberPendingApprovalBatchIds,

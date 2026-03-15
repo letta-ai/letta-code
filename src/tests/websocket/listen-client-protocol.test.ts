@@ -414,6 +414,59 @@ describe("listen-client v2 status builders", () => {
     expect(deviceStatus.current_toolset_preference).toBe("auto");
   });
 
+  test("resolveRuntimeScope returns null until a real runtime is bound", () => {
+    const runtime = __listenClientTestUtils.createRuntime();
+    expect(__listenClientTestUtils.resolveRuntimeScope(runtime)).toBeNull();
+
+    runtime.activeAgentId = "agent-1";
+    runtime.activeConversationId = "default";
+    expect(__listenClientTestUtils.resolveRuntimeScope(runtime)).toEqual({
+      agent_id: "agent-1",
+      conversation_id: "default",
+    });
+  });
+
+  test("does not emit bootstrap status updates with __unknown_agent__ runtime", () => {
+    const runtime = __listenClientTestUtils.createRuntime();
+    const socket = new MockSocket(WebSocket.OPEN);
+
+    __listenClientTestUtils.emitDeviceStatusUpdate(
+      socket as unknown as WebSocket,
+      runtime,
+    );
+    __listenClientTestUtils.emitLoopStatusUpdate(
+      socket as unknown as WebSocket,
+      runtime,
+    );
+
+    expect(socket.sentPayloads).toHaveLength(0);
+
+    runtime.activeAgentId = "agent-1";
+    runtime.activeConversationId = "default";
+
+    __listenClientTestUtils.emitDeviceStatusUpdate(
+      socket as unknown as WebSocket,
+      runtime,
+    );
+    __listenClientTestUtils.emitLoopStatusUpdate(
+      socket as unknown as WebSocket,
+      runtime,
+    );
+
+    const outbound = socket.sentPayloads.map((payload) =>
+      JSON.parse(payload as string),
+    );
+    expect(outbound).toHaveLength(2);
+    expect(outbound[0].runtime).toEqual({
+      agent_id: "agent-1",
+      conversation_id: "default",
+    });
+    expect(outbound[1].runtime).toEqual({
+      agent_id: "agent-1",
+      conversation_id: "default",
+    });
+  });
+
   test("scopes working directory to requested agent and conversation", () => {
     const runtime = __listenClientTestUtils.createRuntime();
     __listenClientTestUtils.setConversationWorkingDirectory(
