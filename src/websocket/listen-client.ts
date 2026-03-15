@@ -188,6 +188,12 @@ type ListenerRuntime = {
   queuePumpActive: boolean;
   /** Dedupes queue pump scheduling onto messageQueue chain. */
   queuePumpScheduled: boolean;
+  /** Coalesces rapid queue mutations into a single update_queue emit. */
+  queueEmitScheduled: boolean;
+  pendingQueueEmitScope?: {
+    agent_id?: string | null;
+    conversation_id?: string | null;
+  };
   /** Queue backlog metric for state snapshot visibility. */
   pendingTurns: number;
   /** Optional debug hook for WS event logging. */
@@ -411,6 +417,8 @@ function createRuntime(): ListenerRuntime {
     queuedMessagesByItemId: new Map<string, IncomingMessage>(),
     queuePumpActive: false,
     queuePumpScheduled: false,
+    queueEmitScheduled: false,
+    pendingQueueEmitScope: undefined,
     pendingTurns: 0,
     // queueRuntime assigned below — needs runtime ref in callbacks
     queueRuntime: null as unknown as QueueRuntime,
@@ -421,31 +429,31 @@ function createRuntime(): ListenerRuntime {
         runtime.pendingTurns = queueLen;
         const scope = getQueueItemScope(item);
         emitRuntimeStateUpdates(runtime, scope);
-        emitQueueUpdateIfOpen(runtime, scope);
+        scheduleQueueEmit(runtime, scope);
       },
       onDequeued: (batch) => {
         runtime.pendingTurns = batch.queueLenAfter;
         const scope = getQueueItemsScope(batch.items);
         emitRuntimeStateUpdates(runtime, scope);
-        emitQueueUpdateIfOpen(runtime, scope);
+        scheduleQueueEmit(runtime, scope);
       },
       onBlocked: (reason, queueLen) => {
         const scope = getQueueItemScope(runtime.queueRuntime.items[0]);
         emitRuntimeStateUpdates(runtime, scope);
-        emitQueueUpdateIfOpen(runtime, scope);
+        scheduleQueueEmit(runtime, scope);
       },
       onCleared: (reason, clearedCount, items) => {
         runtime.pendingTurns = 0;
         const scope = getQueueItemsScope(items);
         emitRuntimeStateUpdates(runtime, scope);
-        emitQueueUpdateIfOpen(runtime, scope);
+        scheduleQueueEmit(runtime, scope);
       },
       onDropped: (item, reason, queueLen) => {
         runtime.pendingTurns = queueLen;
         runtime.queuedMessagesByItemId.delete(item.id);
         const scope = getQueueItemScope(item);
         emitRuntimeStateUpdates(runtime, scope);
-        emitQueueUpdateIfOpen(runtime, scope);
+        scheduleQueueEmit(runtime, scope);
       },
     },
   });
@@ -1520,6 +1528,33 @@ function emitQueueUpdateIfOpen(
   if (runtime.socket?.readyState === WebSocket.OPEN) {
     emitQueueUpdate(runtime.socket, runtime, scope);
   }
+}
+
+/**
+ * Coalesces rapid queue mutations into a single `update_queue` emit.
+ * Uses `queueMicrotask` so that enqueue + immediate dequeue within the
+ * same tick produce only one WS message with the final queue state,
+ * preventing a visible flash of transient queue items.
+ */
+function scheduleQueueEmit(
+  runtime: ListenerRuntime,
+  scope?: {
+    agent_id?: string | null;
+    conversation_id?: string | null;
+  },
+): void {
+  // Last writer wins — keep the most recent scope
+  runtime.pendingQueueEmitScope = scope;
+
+  if (runtime.queueEmitScheduled) return;
+  runtime.queueEmitScheduled = true;
+
+  queueMicrotask(() => {
+    runtime.queueEmitScheduled = false;
+    const emitScope = runtime.pendingQueueEmitScope;
+    runtime.pendingQueueEmitScope = undefined;
+    emitQueueUpdateIfOpen(runtime, emitScope);
+  });
 }
 
 function createLifecycleMessageBase<TMessageType extends string>(

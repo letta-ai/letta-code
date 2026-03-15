@@ -314,7 +314,7 @@ describe("listen-client requestApprovalOverWS", () => {
 });
 
 describe("listen-client conversation-scoped protocol events", () => {
-  test("queue enqueue/block updates loop status with runtime scope instead of stream_delta", () => {
+  test("queue enqueue/block updates loop status with runtime scope instead of stream_delta", async () => {
     const runtime = __listenClientTestUtils.createRuntime();
     const socket = new MockSocket(WebSocket.OPEN);
     runtime.socket = socket as unknown as WebSocket;
@@ -331,6 +331,9 @@ describe("listen-client conversation-scoped protocol events", () => {
     expect(item).not.toBeNull();
 
     runtime.queueRuntime.tryDequeue("runtime_busy");
+
+    // Flush microtask queue (update_queue is debounced via queueMicrotask)
+    await Promise.resolve();
 
     const outbound = socket.sentPayloads.map((payload) =>
       JSON.parse(payload as string),
@@ -353,7 +356,7 @@ describe("listen-client conversation-scoped protocol events", () => {
     ).toBe(false);
   });
 
-  test("queue dequeue keeps scope through update_loop_status runtime envelope", () => {
+  test("queue dequeue keeps scope through update_queue runtime envelope", async () => {
     const runtime = __listenClientTestUtils.createRuntime();
     const socket = new MockSocket(WebSocket.OPEN);
     runtime.socket = socket as unknown as WebSocket;
@@ -370,9 +373,14 @@ describe("listen-client conversation-scoped protocol events", () => {
     runtime.queueRuntime.enqueue(input);
     runtime.queueRuntime.tryDequeue(null);
 
+    // Flush microtask queue (update_queue is debounced via queueMicrotask)
+    await Promise.resolve();
+
     const outbound = socket.sentPayloads.map((payload) =>
       JSON.parse(payload as string),
     );
+    // With microtask coalescing, enqueue + dequeue in same tick
+    // produces a single update_queue with the final state (0 items)
     const dequeued = outbound.find(
       (payload) =>
         payload.type === "update_queue" &&
