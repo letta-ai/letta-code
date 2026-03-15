@@ -335,14 +335,14 @@ describe("listen-client conversation-scoped protocol events", () => {
     const outbound = socket.sentPayloads.map((payload) =>
       JSON.parse(payload as string),
     );
-    const queueStatus = outbound.find(
+    const queueUpdate = outbound.find(
       (payload) =>
-        payload.type === "update_loop_status" &&
+        payload.type === "update_queue" &&
         payload.runtime.agent_id === "agent-default" &&
         payload.runtime.conversation_id === "default" &&
-        payload.loop_status?.queue?.length === 1,
+        payload.queue?.length === 1,
     );
-    expect(queueStatus).toBeDefined();
+    expect(queueUpdate).toBeDefined();
     expect(
       outbound.some(
         (payload) =>
@@ -375,11 +375,11 @@ describe("listen-client conversation-scoped protocol events", () => {
     );
     const dequeued = outbound.find(
       (payload) =>
-        payload.type === "update_loop_status" &&
+        payload.type === "update_queue" &&
         payload.runtime.agent_id === "agent-xyz" &&
         payload.runtime.conversation_id === "conv-xyz" &&
-        Array.isArray(payload.loop_status?.queue) &&
-        payload.loop_status.queue.length === 0,
+        Array.isArray(payload.queue) &&
+        payload.queue.length === 0,
     );
     expect(dequeued).toBeDefined();
   });
@@ -391,7 +391,9 @@ describe("listen-client v2 status builders", () => {
     const loopStatus = __listenClientTestUtils.buildLoopStatus(runtime);
     expect(loopStatus.status).toBe("WAITING_ON_INPUT");
     expect(loopStatus.active_run_ids).toEqual([]);
-    expect(loopStatus.queue).toEqual([]);
+    // queue is now separate from loopStatus — verify via buildQueueSnapshot
+    const queueSnapshot = __listenClientTestUtils.buildQueueSnapshot(runtime);
+    expect(queueSnapshot).toEqual([]);
   });
 
   test("buildDeviceStatus includes the effective working directory", () => {

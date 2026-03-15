@@ -172,10 +172,11 @@ export interface QueueMessage {
 /**
  * Loop state is intentionally small and finite.
  * Message-level details are projected from runtime deltas.
+ *
+ * Queue state is delivered separately via `update_queue` messages.
  */
 export interface LoopState {
   status: LoopStatus;
-  queue: QueueMessage[];
   active_run_ids: string[];
 }
 
@@ -187,6 +188,16 @@ export interface DeviceStatusUpdateMessage extends RuntimeEnvelope {
 export interface LoopStatusUpdateMessage extends RuntimeEnvelope {
   type: "update_loop_status";
   loop_status: LoopState;
+}
+
+/**
+ * Full snapshot of the turn queue.
+ * Emitted on every queue mutation (enqueue, dequeue, clear, drop).
+ * Queue is typically 0-5 items so full snapshot is cheap and idempotent.
+ */
+export interface QueueUpdateMessage extends RuntimeEnvelope {
+  type: "update_queue";
+  queue: QueueMessage[];
 }
 
 /**
@@ -348,6 +359,7 @@ export type WsProtocolCommand =
 export type WsProtocolMessage =
   | DeviceStatusUpdateMessage
   | LoopStatusUpdateMessage
+  | QueueUpdateMessage
   | StreamDeltaMessage;
 
 export type { StopReasonType };

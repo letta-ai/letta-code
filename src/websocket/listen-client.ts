@@ -77,6 +77,7 @@ import type {
   LoopStatus,
   LoopStatusUpdateMessage,
   QueueMessage,
+  QueueUpdateMessage,
   RetryMessage,
   RuntimeScope,
   StatusMessage,
@@ -418,26 +419,33 @@ function createRuntime(): ListenerRuntime {
     callbacks: {
       onEnqueued: (item, queueLen) => {
         runtime.pendingTurns = queueLen;
-        emitRuntimeStateUpdates(runtime, getQueueItemScope(item));
+        const scope = getQueueItemScope(item);
+        emitRuntimeStateUpdates(runtime, scope);
+        emitQueueUpdateIfOpen(runtime, scope);
       },
       onDequeued: (batch) => {
         runtime.pendingTurns = batch.queueLenAfter;
-        emitRuntimeStateUpdates(runtime, getQueueItemsScope(batch.items));
+        const scope = getQueueItemsScope(batch.items);
+        emitRuntimeStateUpdates(runtime, scope);
+        emitQueueUpdateIfOpen(runtime, scope);
       },
       onBlocked: (reason, queueLen) => {
-        emitRuntimeStateUpdates(
-          runtime,
-          getQueueItemScope(runtime.queueRuntime.items[0]),
-        );
+        const scope = getQueueItemScope(runtime.queueRuntime.items[0]);
+        emitRuntimeStateUpdates(runtime, scope);
+        emitQueueUpdateIfOpen(runtime, scope);
       },
       onCleared: (reason, clearedCount, items) => {
         runtime.pendingTurns = 0;
-        emitRuntimeStateUpdates(runtime, getQueueItemsScope(items));
+        const scope = getQueueItemsScope(items);
+        emitRuntimeStateUpdates(runtime, scope);
+        emitQueueUpdateIfOpen(runtime, scope);
       },
       onDropped: (item, reason, queueLen) => {
         runtime.pendingTurns = queueLen;
         runtime.queuedMessagesByItemId.delete(item.id);
-        emitRuntimeStateUpdates(runtime, getQueueItemScope(item));
+        const scope = getQueueItemScope(item);
+        emitRuntimeStateUpdates(runtime, scope);
+        emitQueueUpdateIfOpen(runtime, scope);
       },
     },
   });
@@ -1160,6 +1168,10 @@ async function drainQueuedMessages(
         continue;
       }
 
+      // Emit the user message as a stream_delta so the web can display it
+      // immediately when the turn starts (before the API call).
+      emitDequeuedUserMessage(socket, runtime, queuedTurn, dequeuedBatch);
+
       opts.onStatusChange?.("receiving", opts.connectionId);
       await handleIncomingMessage(
         queuedTurn,
@@ -1284,16 +1296,19 @@ function buildDeviceStatus(
 function buildLoopStatus(runtime: ListenerRuntime): LoopState {
   return {
     status: runtime.loopStatus,
-    queue: runtime.queueRuntime.items.map((item) => ({
-      id: item.id,
-      client_message_id: item.clientMessageId ?? `cm-${item.id}`,
-      kind: item.kind,
-      source: item.source,
-      content: getQueueItemContent(item),
-      enqueued_at: new Date(item.enqueuedAt).toISOString(),
-    })),
     active_run_ids: runtime.activeRunId ? [runtime.activeRunId] : [],
   };
+}
+
+function buildQueueSnapshot(runtime: ListenerRuntime): QueueMessage[] {
+  return runtime.queueRuntime.items.map((item) => ({
+    id: item.id,
+    client_message_id: item.clientMessageId ?? `cm-${item.id}`,
+    kind: item.kind,
+    source: item.source,
+    content: getQueueItemContent(item),
+    enqueued_at: new Date(item.enqueuedAt).toISOString(),
+  }));
 }
 
 function setLoopStatus(
@@ -1401,6 +1416,109 @@ function emitDeviceStatusIfOpen(
 ): void {
   if (runtime.socket?.readyState === WebSocket.OPEN) {
     emitDeviceStatusUpdate(runtime.socket, runtime, scope);
+  }
+}
+
+function emitQueueUpdate(
+  socket: WebSocket,
+  runtime: ListenerRuntime,
+  scope?: {
+    agent_id?: string | null;
+    conversation_id?: string | null;
+  },
+): void {
+  const message: Omit<
+    QueueUpdateMessage,
+    "runtime" | "event_seq" | "emitted_at" | "idempotency_key"
+  > = {
+    type: "update_queue",
+    queue: buildQueueSnapshot(runtime),
+  };
+  emitProtocolV2Message(socket, runtime, message, scope);
+}
+
+const SYSTEM_REMINDER_RE = /<system-reminder>[\s\S]*?<\/system-reminder>/g;
+
+function isSystemReminderPart(part: unknown): boolean {
+  if (!part || typeof part !== "object") return false;
+  if (!("type" in part) || (part as { type: string }).type !== "text")
+    return false;
+  if (!("text" in part) || typeof (part as { text: string }).text !== "string")
+    return false;
+  const trimmed = (part as { text: string }).text.trim();
+  return (
+    trimmed.startsWith("<system-reminder>") &&
+    trimmed.endsWith("</system-reminder>")
+  );
+}
+
+/**
+ * Emit a synthetic user_message stream_delta when a queued turn is about to
+ * be submitted to the API. This lets the web display the user message
+ * immediately in the transcript without waiting for a poll or API echo.
+ *
+ * Preserves the original content format (string → string, array → array)
+ * and strips system-reminder content before emitting.
+ *
+ * The client_message_id from the original submit payload is used as the otid
+ * so that the optimistic message (if any) gets deduplicated.
+ */
+function emitDequeuedUserMessage(
+  socket: WebSocket,
+  runtime: ListenerRuntime,
+  incoming: IncomingMessage,
+  batch: DequeuedBatch,
+): void {
+  const firstUserPayload = incoming.messages.find(
+    (payload): payload is MessageCreate & { client_message_id?: string } =>
+      "content" in payload,
+  );
+  if (!firstUserPayload) return;
+
+  const rawContent = firstUserPayload.content;
+  let content: MessageCreate["content"];
+
+  if (typeof rawContent === "string") {
+    // String content — strip system-reminder blocks via regex
+    content = rawContent.replace(SYSTEM_REMINDER_RE, "").trim();
+  } else if (Array.isArray(rawContent)) {
+    // Array content — filter out system-reminder text parts
+    content = rawContent.filter((part) => !isSystemReminderPart(part));
+  } else {
+    return;
+  }
+
+  // Check if there's meaningful content left
+  const hasContent =
+    typeof content === "string"
+      ? content.length > 0
+      : Array.isArray(content) && content.length > 0;
+  if (!hasContent) return;
+
+  const otid = firstUserPayload.client_message_id ?? batch.batchId;
+
+  emitCanonicalMessageDelta(socket, runtime, {
+    type: "message",
+    id: `user-msg-${crypto.randomUUID()}`,
+    date: new Date().toISOString(),
+    message_type: "user_message",
+    content,
+    otid,
+  } as StreamDelta, {
+    agent_id: incoming.agentId,
+    conversation_id: incoming.conversationId,
+  });
+}
+
+function emitQueueUpdateIfOpen(
+  runtime: ListenerRuntime,
+  scope?: {
+    agent_id?: string | null;
+    conversation_id?: string | null;
+  },
+): void {
+  if (runtime.socket?.readyState === WebSocket.OPEN) {
+    emitQueueUpdate(runtime.socket, runtime, scope);
   }
 }
 
@@ -3579,6 +3697,7 @@ export const __listenClientTestUtils = {
   stopRuntime,
   buildDeviceStatus,
   buildLoopStatus,
+  buildQueueSnapshot,
   handleCwdChange,
   getConversationWorkingDirectory,
   rememberPendingApprovalBatchIds,
