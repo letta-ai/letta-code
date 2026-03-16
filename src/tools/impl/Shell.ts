@@ -1,3 +1,4 @@
+import { existsSync, statSync } from "node:fs";
 import * as path from "node:path";
 import { getShellEnv } from "./shellEnv.js";
 import { buildShellLaunchers } from "./shellLaunchers.js";
@@ -76,11 +77,13 @@ export async function shell(args: ShellArgs): Promise<ShellResult> {
   }
 
   const timeout = timeout_ms ?? DEFAULT_TIMEOUT;
-  const cwd = workdir
+  const defaultCwd = process.env.USER_CWD || process.cwd();
+  const requestedCwd = workdir
     ? path.isAbsolute(workdir)
       ? workdir
-      : path.resolve(process.env.USER_CWD || process.cwd(), workdir)
-    : process.env.USER_CWD || process.cwd();
+      : path.resolve(defaultCwd, workdir)
+    : defaultCwd;
+  const cwd = isUsableDirectory(requestedCwd) ? requestedCwd : defaultCwd;
 
   const context: SpawnContext = {
     command,
@@ -129,6 +132,14 @@ function arraysEqual(a: string[], b: string[]): boolean {
     if (a[i] !== b[i]) return false;
   }
   return true;
+}
+
+function isUsableDirectory(candidate: string): boolean {
+  try {
+    return existsSync(candidate) && statSync(candidate).isDirectory();
+  } catch {
+    return false;
+  }
 }
 
 function isShellExecutableName(name: string): boolean {

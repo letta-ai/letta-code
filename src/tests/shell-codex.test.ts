@@ -153,6 +153,18 @@ describe("shell codex tool", () => {
   });
 
   test.skipIf(isWindows)(
+    "falls back to the default cwd when workdir does not exist",
+    async () => {
+      const result = await shell({
+        command: ["pwd"],
+        workdir: "/definitely/missing/path",
+      });
+
+      expect(result.output).toBe(process.env.USER_CWD || process.cwd());
+    },
+  );
+
+  test.skipIf(isWindows)(
     "handles command that produces multi-line output",
     async () => {
       const result = await shell({
