@@ -1,10 +1,10 @@
 import { hostname } from "node:os";
 import Letta from "@letta-ai/letta-client";
-import packageJson from "../../package.json";
 import { LETTA_CLOUD_API_URL, refreshAccessToken } from "../auth/oauth";
 import { settingsManager } from "../settings-manager";
 import { isDebugEnabled } from "../utils/debug";
 import { createTimingFetch, isTimingsEnabled } from "../utils/timing";
+import { getLettaCodeDefaultHeaders } from "../agent/http-headers";
 
 const SDK_DIAGNOSTIC_MAX_LEN = 400;
 const SDK_DIAGNOSTIC_MAX_LINES = 4;
@@ -189,10 +189,7 @@ export async function getClient() {
     apiKey,
     baseURL,
     logger: sdkLogger,
-    defaultHeaders: {
-      "X-Letta-Source": "letta-code",
-      "User-Agent": `letta-code/${packageJson.version}`,
-    },
+    defaultHeaders: getLettaCodeDefaultHeaders(),
     // Use instrumented fetch for timing logs when LETTA_DEBUG_TIMINGS is enabled
     ...(isTimingsEnabled() && { fetch: createTimingFetch(fetch) }),
   });

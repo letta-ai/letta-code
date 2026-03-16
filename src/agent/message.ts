@@ -9,11 +9,13 @@ import type {
   LettaStreamingResponse,
 } from "@letta-ai/letta-client/resources/agents/messages";
 import type { MessageCreateParams as ConversationMessageCreateParams } from "@letta-ai/letta-client/resources/conversations/messages";
+import { randomUUID } from "node:crypto";
 import {
   type ClientTool,
   captureToolExecutionContext,
   waitForToolsetReady,
 } from "../tools/manager";
+import { telemetry } from "../telemetry";
 import { isTimingsEnabled } from "../utils/timing";
 import {
   type ApprovalNormalizationOptions,
@@ -21,6 +23,7 @@ import {
 } from "./approval-result-normalization";
 import { getClient } from "./client";
 import { buildClientSkillsPayload } from "./clientSkills";
+import { mergeW3CBaggageHeaders } from "./http-headers";
 
 const streamRequestStartTimes = new WeakMap<object, number>();
 const streamToolContextIds = new WeakMap<object, string>();
@@ -28,6 +31,7 @@ export type StreamRequestContext = {
   conversationId: string;
   resolvedConversationId: string;
   agentId: string | null;
+  turnId: string;
   requestStartedAtMs: number;
 };
 const streamRequestContexts = new WeakMap<object, StreamRequestContext>();
@@ -128,6 +132,15 @@ export async function sendMessageStream(
     });
 
   const resolvedConversationId = conversationId;
+  const turnId = randomUUID();
+  const baggage = mergeW3CBaggageHeaders(
+    requestOptions.headers?.baggage ?? requestOptions.headers?.Baggage,
+    {
+      "lc.session_id": telemetry.getSessionId(),
+      "lc.turn_id": turnId,
+      "lc.source": "letta-code",
+    },
+  );
   const requestBody = buildConversationMessagesCreateRequestBody(
     conversationId,
     messages,
@@ -171,6 +184,7 @@ export async function sendMessageStream(
       ...requestOptions,
       headers: {
         ...((requestOptions.headers as Record<string, string>) ?? {}),
+        ...(baggage ? { baggage } : {}),
         ...extraHeaders,
       },
     },
@@ -184,6 +198,7 @@ export async function sendMessageStream(
     conversationId,
     resolvedConversationId,
     agentId: opts.agentId ?? null,
+    turnId,
     requestStartedAtMs,
   });
 
