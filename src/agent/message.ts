@@ -14,7 +14,7 @@ import {
   captureToolExecutionContext,
   waitForToolsetReady,
 } from "../tools/manager";
-import { debugLog, debugWarn } from "../utils/debug";
+import { debugLog, debugWarn, isDebugEnabled } from "../utils/debug";
 import { isTimingsEnabled } from "../utils/timing";
 import {
   type ApprovalNormalizationOptions,
@@ -138,7 +138,7 @@ export async function sendMessageStream(
     clientSkills,
   );
 
-  if (process.env.DEBUG) {
+  if (isDebugEnabled()) {
     console.log(
       `[DEBUG] sendMessageStream: conversationId=${conversationId}, agentId=${opts.agentId ?? "(none)"}`,
     );

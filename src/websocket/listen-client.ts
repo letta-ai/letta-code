@@ -84,6 +84,7 @@ import type {
   TranscriptBackfillMessage,
   TranscriptSupplementMessage,
 } from "../types/protocol";
+import { isDebugEnabled } from "../utils/debug";
 import { getListenerBlockedReason } from "./helpers/listenerQueueAdapter";
 import {
   handleTerminalInput,
@@ -458,7 +459,7 @@ function handleModeChange(msg: ModeChangeMessage, socket: WebSocket): void {
       success: true,
     });
 
-    if (process.env.DEBUG) {
+    if (isDebugEnabled()) {
       console.log(`[Listen] Mode changed to: ${msg.mode}`);
     }
   } catch (error) {
@@ -470,7 +471,7 @@ function handleModeChange(msg: ModeChangeMessage, socket: WebSocket): void {
       error: error instanceof Error ? error.message : "Mode change failed",
     });
 
-    if (process.env.DEBUG) {
+    if (isDebugEnabled()) {
       console.error("[Listen] Mode change failed:", error);
     }
   }
@@ -1325,7 +1326,7 @@ function scheduleQueuePump(
     })
     .catch((error: unknown) => {
       runtime.queuePumpScheduled = false;
-      if (process.env.DEBUG) {
+      if (isDebugEnabled()) {
         console.error("[Listen] Error in queue pump:", error);
       }
       opts.onStatusChange?.("idle", opts.connectionId);
@@ -2115,7 +2116,7 @@ function populateInterruptQueue(
     return true;
   }
 
-  if (process.env.DEBUG) {
+  if (isDebugEnabled()) {
     console.warn(
       "[Listen] Cancel during approval loop but no tool_call_ids available " +
         "for interrupted queue — next turn may hit pre-stream conflict. " +
@@ -2849,7 +2850,7 @@ async function connectWithRetry(
         raw,
       });
     }
-    if (process.env.DEBUG) {
+    if (isDebugEnabled()) {
       console.log(
         `[Listen] Received message: ${JSON.stringify(parsed, null, 2)}`,
       );
@@ -3075,7 +3076,7 @@ async function connectWithRetry(
           );
         })
         .catch((error: unknown) => {
-          if (process.env.DEBUG) {
+          if (isDebugEnabled()) {
             console.error("[Listen] Error handling queued get_state:", error);
           }
         });
@@ -3114,7 +3115,7 @@ async function connectWithRetry(
           }
         })
         .catch((error: unknown) => {
-          if (process.env.DEBUG) {
+          if (isDebugEnabled()) {
             console.error(
               "[Listen] Error handling queued pending approval recovery:",
               error,
@@ -3187,7 +3188,7 @@ async function connectWithRetry(
           scheduleQueuePump(runtime, socket, opts);
         })
         .catch((error: unknown) => {
-          if (process.env.DEBUG) {
+          if (isDebugEnabled()) {
             console.error("[Listen] Error handling queued message:", error);
           }
           opts.onStatusChange?.("idle", opts.connectionId);
@@ -3212,7 +3213,7 @@ async function connectWithRetry(
     runtime.queuedMessagesByItemId.clear();
     runtime.queueRuntime.clear("shutdown");
 
-    if (process.env.DEBUG) {
+    if (isDebugEnabled()) {
       console.log(
         `[Listen] WebSocket disconnected (code: ${code}, reason: ${reason.toString()})`,
       );
@@ -3230,7 +3231,7 @@ async function connectWithRetry(
 
     // 1008: Environment not found - need to re-register
     if (code === 1008) {
-      if (process.env.DEBUG) {
+      if (isDebugEnabled()) {
         console.log("[Listen] Environment not found, re-registering...");
       }
       // Stop retry loop and signal that we need to re-register
@@ -3261,7 +3262,7 @@ async function connectWithRetry(
       type: "_ws_error",
       message: error.message,
     });
-    if (process.env.DEBUG) {
+    if (isDebugEnabled()) {
       console.error("[Listen] WebSocket error:", error);
     }
     // Error triggers close(), which handles retry logic.
@@ -3320,7 +3321,7 @@ async function handleIncomingMessage(
       return;
     }
 
-    if (process.env.DEBUG) {
+    if (isDebugEnabled()) {
       console.log(
         `[Listen] Handling message: agentId=${agentId}, requestedConversationId=${requestedConversationId}, conversationId=${conversationId}`,
       );
@@ -4048,7 +4049,7 @@ async function handleIncomingMessage(
       stopReason: "error",
     });
 
-    if (process.env.DEBUG) {
+    if (isDebugEnabled()) {
       console.error("[Listen] Error handling message:", error);
     }
   } finally {

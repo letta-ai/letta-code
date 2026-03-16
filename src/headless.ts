@@ -120,7 +120,7 @@ import type {
   StreamEvent,
   SystemInitMessage,
 } from "./types/protocol";
-import { debugLog, debugWarn } from "./utils/debug";
+import { debugLog, debugWarn, isDebugEnabled } from "./utils/debug";
 import {
   markMilestone,
   measureSinceMilestone,
@@ -1493,7 +1493,7 @@ ${SYSTEM_REMINDER_CLOSE}
       agentId: agent.id,
       skillSources: resolvedSkillSources,
       logger: (message) => {
-        if (process.env.DEBUG) {
+        if (isDebugEnabled()) {
           console.warn(`[DEBUG] ${message}`);
         }
       },
