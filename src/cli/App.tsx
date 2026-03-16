@@ -67,9 +67,11 @@ import {
   INTERRUPT_RECOVERY_ALERT,
   shouldRecommendDefaultPrompt,
 } from "../agent/promptAssets";
+import { reconcileExistingAgentState } from "../agent/reconcileExistingAgentState";
 import { recordSessionEnd } from "../agent/sessionHistory";
 import { SessionStats } from "../agent/stats";
 import {
+  DEFAULT_SUMMARIZATION_MODEL,
   INTERRUPTED_BY_USER,
   MEMFS_CONFLICT_CHECK_INTERVAL,
   SYSTEM_ALERT_CLOSE,
@@ -3146,11 +3148,14 @@ export default function App({
   // Fetch llmConfig when agent is ready
   useEffect(() => {
     if (loadingState === "ready" && agentId && agentId !== "loading") {
+      let cancelled = false;
+
       const fetchConfig = async () => {
         try {
           const { getClient } = await import("../agent/client");
           const client = await getClient();
           const agent = await client.agents.retrieve(agentId);
+
           setAgentState(agent);
           setLlmConfig(agent.llm_config);
           setAgentDescription(agent.description ?? null);
@@ -3212,8 +3217,11 @@ export default function App({
             setCurrentSystemPromptId("custom");
           }
           // Get last message timestamp from agent state if available
-          const lastRunCompletion = (agent as { last_run_completion?: string })
-            .last_run_completion;
+          const lastRunCompletion = (
+            agent as {
+              last_run_completion?: string;
+            }
+          ).last_run_completion;
           setAgentLastRunAt(lastRunCompletion ?? null);
 
           // Derive model ID from llm_config for ModelSelector
@@ -3259,11 +3267,38 @@ export default function App({
             await forceToolsetSwitch(persistedToolsetPreference, agentId);
             setCurrentToolset(persistedToolsetPreference);
           }
+
+          void reconcileExistingAgentState(client, agent)
+            .then((reconcileResult) => {
+              if (!reconcileResult.updated || cancelled) {
+                return;
+              }
+              if (agentIdRef.current !== agent.id) {
+                return;
+              }
+
+              setAgentState(reconcileResult.agent);
+              setAgentDescription(reconcileResult.agent.description ?? null);
+            })
+            .catch((reconcileError) => {
+              debugWarn(
+                "agent-config",
+                `Failed to reconcile existing agent settings for ${agentId}: ${
+                  reconcileError instanceof Error
+                    ? reconcileError.message
+                    : String(reconcileError)
+                }`,
+              );
+            });
         } catch (error) {
           debugLog("agent-config", "Error fetching agent config: %O", error);
         }
       };
       fetchConfig();
+
+      return () => {
+        cancelled = true;
+      };
     }
   }, [loadingState, agentId]);
 
@@ -8294,6 +8329,9 @@ export default function App({
               ? {
                   compaction_settings: {
                     mode: modeArg,
+                    model:
+                      agentStateRef.current?.compaction_settings?.model?.trim() ||
+                      DEFAULT_SUMMARIZATION_MODEL,
                   },
                 }
               : undefined;
@@ -11785,14 +11823,15 @@ ${SYSTEM_REMINDER_CLOSE}
         try {
           const client = await getClient();
           // Spread existing compaction_settings to preserve model/other fields,
-          // only override the mode. If no existing settings, use empty model
-          // string which tells the backend to use its default lightweight model.
+          // only override the mode. If no model is configured, default to
+          // letta/auto so compaction uses a consistent summarization model.
           const existing = agentState?.compaction_settings;
+          const existingModel = existing?.model?.trim();
 
           await client.agents.update(agentId, {
             compaction_settings: {
-              model: existing?.model ?? "",
               ...existing,
+              model: existingModel || DEFAULT_SUMMARIZATION_MODEL,
               mode: mode as
                 | "all"
                 | "sliding_window"

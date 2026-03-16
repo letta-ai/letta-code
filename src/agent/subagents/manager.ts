@@ -157,18 +157,13 @@ export async function resolveSubagentModel(options: {
 }): Promise<string | null> {
   const { userModel, recommendedModel, parentModelHandle, billingTier } =
     options;
+  const isFreeTier = billingTier?.toLowerCase() === "free";
 
   if (userModel) return userModel;
 
   let recommendedHandle: string | null = null;
   if (recommendedModel && recommendedModel !== "inherit") {
     recommendedHandle = resolveModel(recommendedModel);
-  }
-
-  // Free-tier users should default subagents to GLM-5 instead of provider-specific
-  // recommendations like Sonnet.
-  if (recommendedModel !== "inherit" && billingTier?.toLowerCase() === "free") {
-    recommendedHandle = getDefaultModelForTier(billingTier);
   }
 
   let availableHandles: Set<string> | null = options.availableHandles ?? null;
@@ -183,6 +178,20 @@ export async function resolveSubagentModel(options: {
       return false;
     }
   };
+
+  // Free-tier default for subagents: auto-fast, when available.
+  const freeTierDefaultHandle = isFreeTier ? resolveModel("auto-fast") : null;
+  if (freeTierDefaultHandle && (await isAvailable(freeTierDefaultHandle))) {
+    return freeTierDefaultHandle;
+  }
+
+  // Free-tier fallback default: auto, when available.
+  if (isFreeTier) {
+    const defaultHandle = getDefaultModelForTier(billingTier);
+    if (defaultHandle && (await isAvailable(defaultHandle))) {
+      return defaultHandle;
+    }
+  }
 
   if (parentModelHandle) {
     const parentProvider = getProviderPrefix(parentModelHandle);
@@ -222,6 +231,12 @@ export async function resolveSubagentModel(options: {
 
   if (recommendedHandle && (await isAvailable(recommendedHandle))) {
     return recommendedHandle;
+  }
+
+  // Non-free fallback default: auto, when available.
+  const defaultHandle = getDefaultModelForTier(billingTier);
+  if (defaultHandle && (await isAvailable(defaultHandle))) {
+    return defaultHandle;
   }
 
   return recommendedHandle;

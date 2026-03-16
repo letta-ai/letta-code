@@ -3,12 +3,12 @@ import { describe, expect, test } from "bun:test";
 import { getDefaultModel, getDefaultModelForTier } from "../../agent/model";
 
 describe("getDefaultModelForTier", () => {
-  test("returns GLM-5 for free tier", () => {
-    expect(getDefaultModelForTier("free")).toBe("zai/glm-5");
+  test("returns the default model for free tier", () => {
+    expect(getDefaultModelForTier("free")).toBe(getDefaultModel());
   });
 
   test("is case-insensitive for free tier", () => {
-    expect(getDefaultModelForTier("FrEe")).toBe("zai/glm-5");
+    expect(getDefaultModelForTier("FrEe")).toBe(getDefaultModel());
   });
 
   test("returns standard default for non-free tiers", () => {
