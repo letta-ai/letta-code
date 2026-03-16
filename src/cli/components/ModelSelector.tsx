@@ -684,14 +684,18 @@ export function ModelSelector({
       return "All models currently available for this account";
     }
     if (cat === "supported") {
-      return "Recommended Letta API models currently available for this account";
+      return isFreeTier
+        ? "Upgrade your account to access more models"
+        : "Recommended Letta API models currently available for this account";
     }
     if (cat === "byok")
       return "Recommended models via your connected API keys (use /connect to add more)";
     if (cat === "byok-all")
       return "All models via your connected API keys (use /connect to add more)";
     if (cat === "all") {
-      return "All Letta API models currently available for this account";
+      return isFreeTier
+        ? "Upgrade your account to access more models"
+        : "All Letta API models currently available for this account";
     }
     return "All Letta API models currently available for this account";
   };
@@ -783,6 +787,11 @@ export function ModelSelector({
             const actualIndex = startIndex + index;
             const isSelected = actualIndex === selectedIndex;
             const isCurrent = model.id === currentModelId;
+            // Show lock for non-free models when on free tier (only for Letta API tabs)
+            const showLock =
+              isFreeTier &&
+              !model.free &&
+              (category === "supported" || category === "all");
 
             return (
               <Box key={model.id} flexDirection="row">
@@ -793,6 +802,7 @@ export function ModelSelector({
                 >
                   {isSelected ? "> " : "  "}
                 </Text>
+                {showLock && <Text dimColor>🔒 </Text>}
                 <Text
                   bold={isSelected}
                   color={
