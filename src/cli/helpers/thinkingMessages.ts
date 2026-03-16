@@ -44,11 +44,11 @@ const THINKING_VERBS = [
 ] as const;
 
 export const THINKING_TIPS = [
-  "Use /remember <note> to save a durable preference or project fact.",
+  "Use /remember [instructions] to remember something from the conversation.",
   "Use /palace to inspect your agent's memory palace.",
-  "Use /reflect to run a background agent that reflects and creates memories.",
-  "Use /search <query> to find relevant context across past conversations.",
-  "Use /init to bootstrap or reorganize your memory system.",
+  "Use /reflect to launch a background reflection agent to update memory.",
+  "Use /search [query] to search messages across all agents.",
+  "Use /init to initialize (or re-init) your agent's memory.",
 ] as const;
 
 type ThinkingVerb = (typeof THINKING_VERBS)[number];
