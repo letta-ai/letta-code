@@ -3631,11 +3631,12 @@ async function sendApprovalContinuationWithRetry(
             abortSignal,
           );
           if (
+            drainResult &&
             getApprovalContinuationRecoveryDisposition(drainResult) ===
-            "handled"
+              "handled"
           ) {
             finalizeHandledRecoveryTurn(runtime, socket, {
-              drainResult: drainResult!,
+              drainResult,
               agentId: runtime.activeAgentId,
               conversationId,
             });

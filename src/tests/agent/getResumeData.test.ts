@@ -4,12 +4,16 @@ import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents"
 import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
 import { getResumeData } from "../../agent/check-approval";
 
-function makeAgent(overrides: Partial<AgentState> = {}): AgentState {
+type ResumeAgentState = AgentState & {
+  in_context_message_ids?: string[] | null;
+};
+
+function makeAgent(overrides: Partial<ResumeAgentState> = {}): AgentState {
   return {
     id: "agent-test",
     message_ids: ["msg-last"],
     ...overrides,
-  } as AgentState;
+  } as ResumeAgentState;
 }
 
 function makeApprovalMessage(id = "msg-last"): Message {
@@ -90,18 +94,51 @@ describe("getResumeData", () => {
 
     const resume = await getResumeData(
       client,
-      makeAgent({ message_ids: ["msg-last"] }),
+      makeAgent({
+        message_ids: ["msg-last"],
+        in_context_message_ids: ["msg-last"],
+      }),
       "default",
       { includeMessageHistory: false },
     );
 
-    expect(messagesRetrieve).toHaveBeenCalledTimes(0);
-    expect(agentsList).toHaveBeenCalledTimes(1);
+    expect(messagesRetrieve).toHaveBeenCalledTimes(1);
+    expect(agentsList).toHaveBeenCalledTimes(0);
     expect(resume.pendingApprovals).toHaveLength(1);
     expect(resume.messageHistory).toEqual([]);
   });
 
-  test("default conversation resume ignores stale agent.message_ids and uses default conversation stream", async () => {
+  test("default conversation resume uses in-context ids instead of stale agent.message_ids", async () => {
+    const agentsList = mock(async () => ({
+      getPaginatedItems: () => [makeApprovalMessage("msg-default-latest")],
+    }));
+    const messagesRetrieve = mock(async () => [
+      makeApprovalMessage("msg-live"),
+    ]);
+
+    const client = {
+      agents: { messages: { list: agentsList } },
+      messages: { retrieve: messagesRetrieve },
+    } as unknown as Letta;
+
+    const resume = await getResumeData(
+      client,
+      makeAgent({
+        message_ids: ["msg-stale"],
+        in_context_message_ids: ["msg-live"],
+      }),
+      "default",
+      { includeMessageHistory: false },
+    );
+
+    expect(messagesRetrieve).toHaveBeenCalledWith("msg-live");
+    expect(messagesRetrieve).toHaveBeenCalledTimes(1);
+    expect(agentsList).toHaveBeenCalledTimes(0);
+    expect(resume.pendingApprovals).toHaveLength(1);
+    expect(resume.pendingApprovals[0]?.toolCallId).toBe("tool-1");
+  });
+
+  test("default conversation falls back to default conversation stream when in-context ids are unavailable", async () => {
     const agentsList = mock(async () => ({
       getPaginatedItems: () => [makeApprovalMessage("msg-default-latest")],
     }));
@@ -114,13 +151,13 @@ describe("getResumeData", () => {
 
     const resume = await getResumeData(
       client,
-      makeAgent({ message_ids: ["msg-stale"] }),
+      makeAgent({ in_context_message_ids: [] }),
       "default",
       { includeMessageHistory: false },
     );
 
-    expect(agentsList).toHaveBeenCalledTimes(1);
     expect(messagesRetrieve).toHaveBeenCalledTimes(0);
+    expect(agentsList).toHaveBeenCalledTimes(1);
     expect(resume.pendingApprovals).toHaveLength(1);
     expect(resume.pendingApprovals[0]?.toolCallId).toBe("tool-1");
   });
@@ -145,9 +182,13 @@ describe("getResumeData", () => {
       messages: { retrieve: messagesRetrieve },
     } as unknown as Letta;
 
-    const resume = await getResumeData(client, makeAgent(), "default");
+    const resume = await getResumeData(
+      client,
+      makeAgent({ in_context_message_ids: ["msg-last"] }),
+      "default",
+    );
 
-    expect(messagesRetrieve).toHaveBeenCalledTimes(0);
+    expect(messagesRetrieve).toHaveBeenCalledTimes(1);
     expect(agentsList).toHaveBeenCalledTimes(1);
     expect(resume.pendingApprovals).toHaveLength(0);
     expect(resume.messageHistory.length).toBeGreaterThan(0);
