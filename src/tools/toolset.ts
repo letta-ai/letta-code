@@ -1,3 +1,4 @@
+import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import { getClient } from "../agent/client";
 import { resolveModel } from "../agent/model";
 import { toolFilter } from "./filter";
@@ -216,6 +217,53 @@ export async function reattachMemoryTool(
     console.warn(
       `Warning: Failed to reattach memory tool: ${err instanceof Error ? err.message : String(err)}`,
     );
+  }
+}
+
+type PersistedToolRule = NonNullable<AgentState["tool_rules"]>[number];
+
+interface AgentWithToolsAndRules {
+  tags?: string[] | null;
+  tool_rules?: PersistedToolRule[];
+}
+
+export function shouldClearPersistedToolRules(
+  agent: AgentWithToolsAndRules,
+): boolean {
+  return (
+    agent.tags?.includes("origin:letta-code") === true &&
+    (agent.tool_rules?.length ?? 0) > 0
+  );
+}
+
+export async function clearPersistedClientToolRules(
+  agentId: string,
+): Promise<{ removedToolNames: string[] } | null> {
+  const client = await getClient();
+
+  try {
+    const agentWithTools = (await client.agents.retrieve(agentId, {
+      include: ["agent.tools"],
+    })) as AgentWithToolsAndRules;
+    if (!shouldClearPersistedToolRules(agentWithTools)) {
+      return null;
+    }
+    const existingRules = agentWithTools.tool_rules || [];
+
+    await client.agents.update(agentId, {
+      tool_rules: [],
+    });
+
+    return {
+      removedToolNames: existingRules
+        .map((rule) => rule.tool_name)
+        .filter((name): name is string => typeof name === "string"),
+    };
+  } catch (err) {
+    console.warn(
+      `Warning: Failed to clear persisted client tool rules: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return null;
   }
 }
 

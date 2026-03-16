@@ -5,14 +5,16 @@
       "handle": "letta/auto",
       "label": "Auto (Beta)",
       "description": "Automatically select the best model",
-      "isFeatured": true
+      "isFeatured": true,
+      "free": true
     },
     {
       "id": "auto-fast",
       "handle": "letta/auto-fast",
       "label": "Auto Fast (Beta)",
       "description": "Automatically select the best fast model",
-      "isFeatured": true
+      "isFeatured": true,
+      "free": true
     },
     {
       "id": "sonnet",

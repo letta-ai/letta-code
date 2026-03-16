@@ -1,6 +1,0 @@
-# Terminal-Bench regression task subset for Letta Code
-# These tasks are run on a schedule to detect regressions.
-# Criteria: fast (<10 min), diverse capabilities, deterministic.
-# Adjust based on known Letta Code pass rates.
-
-cancel-async-tasks

@@ -1,7 +1,8 @@
 // src/utils/debug.ts
 // Debug logging utility.
 //
-// Screen output: controlled by LETTA_DEBUG=1 (or LETTA_DEBUG_FILE for a custom path).
+// Screen output: controlled by LETTA_DEBUG=1 (or DEBUG=1 for legacy compatibility),
+// or LETTA_DEBUG_FILE for a custom path.
 // File output:   always written to ~/.letta/logs/debug/{agent-id}/{session-id}.log
 //                once debugLogFile.init() has been called.  Before init, lines are
 //                silently dropped (no file path yet).
@@ -23,12 +24,18 @@ import { format } from "node:util";
 // ---------------------------------------------------------------------------
 
 /**
- * Check if debug mode is enabled via LETTA_DEBUG env var
- * Set LETTA_DEBUG=1 or LETTA_DEBUG=true to enable debug logging
+ * Check if debug mode is enabled via LETTA_DEBUG env var.
+ * Also accepts DEBUG=1|true for legacy compatibility.
  */
 export function isDebugEnabled(): boolean {
-  const debug = process.env.LETTA_DEBUG;
-  return debug === "1" || debug === "true";
+  const lettaDebug = process.env.LETTA_DEBUG;
+  const legacyDebug = process.env.DEBUG;
+  return (
+    lettaDebug === "1" ||
+    lettaDebug === "true" ||
+    legacyDebug === "1" ||
+    legacyDebug === "true"
+  );
 }
 
 function getDebugFile(): string | null {

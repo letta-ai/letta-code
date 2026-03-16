@@ -14,6 +14,7 @@ import KillBashDescription from "./descriptions/KillBash.md";
 import ListDirCodexDescription from "./descriptions/ListDirCodex.md";
 import ListDirectoryGeminiDescription from "./descriptions/ListDirectoryGemini.md";
 import LSDescription from "./descriptions/LS.md";
+import MemoryDescription from "./descriptions/Memory.md";
 import MultiEditDescription from "./descriptions/MultiEdit.md";
 import ReadDescription from "./descriptions/Read.md";
 import ReadFileCodexDescription from "./descriptions/ReadFileCodex.md";
@@ -51,6 +52,7 @@ import { kill_bash } from "./impl/KillBash";
 import { list_dir } from "./impl/ListDirCodex";
 import { list_directory } from "./impl/ListDirectoryGemini";
 import { ls } from "./impl/LS";
+import { memory } from "./impl/Memory";
 import { multi_edit } from "./impl/MultiEdit";
 import { read } from "./impl/Read";
 import { read_file } from "./impl/ReadFileCodex";
@@ -88,6 +90,7 @@ import KillBashSchema from "./schemas/KillBash.json";
 import ListDirCodexSchema from "./schemas/ListDirCodex.json";
 import ListDirectoryGeminiSchema from "./schemas/ListDirectoryGemini.json";
 import LSSchema from "./schemas/LS.json";
+import MemorySchema from "./schemas/Memory.json";
 import MultiEditSchema from "./schemas/MultiEdit.json";
 import ReadSchema from "./schemas/Read.json";
 import ReadFileCodexSchema from "./schemas/ReadFileCodex.json";
@@ -178,6 +181,11 @@ const toolDefinitions = {
     schema: LSSchema,
     description: LSDescription.trim(),
     impl: ls as unknown as ToolImplementation,
+  },
+  memory: {
+    schema: MemorySchema,
+    description: MemoryDescription.trim(),
+    impl: memory as unknown as ToolImplementation,
   },
   MultiEdit: {
     schema: MultiEditSchema,

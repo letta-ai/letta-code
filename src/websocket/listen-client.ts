@@ -97,6 +97,7 @@ import type {
   WsProtocolCommand,
   WsProtocolMessage,
 } from "../types/protocol_v2";
+import { isDebugEnabled } from "../utils/debug";
 import { getListenerBlockedReason } from "./helpers/listenerQueueAdapter";
 import { killAllTerminals } from "./terminalHandler";
 
@@ -284,7 +285,7 @@ function handleModeChange(
 
     emitDeviceStatusUpdate(socket, runtime, scope);
 
-    if (process.env.DEBUG) {
+    if (isDebugEnabled()) {
       console.log(`[Listen] Mode changed to: ${msg.mode}`);
     }
   } catch (error) {
@@ -296,7 +297,7 @@ function handleModeChange(
       conversationId: scope?.conversation_id,
     });
 
-    if (process.env.DEBUG) {
+    if (isDebugEnabled()) {
       console.error("[Listen] Mode change failed:", error);
     }
   }
@@ -1346,7 +1347,7 @@ function scheduleQueuePump(
     })
     .catch((error: unknown) => {
       runtime.queuePumpScheduled = false;
-      if (process.env.DEBUG) {
+      if (isDebugEnabled()) {
         console.error("[Listen] Error in queue pump:", error);
       }
       opts.onStatusChange?.("idle", opts.connectionId);
@@ -2714,7 +2715,7 @@ function populateInterruptQueue(
     return true;
   }
 
-  if (process.env.DEBUG) {
+  if (isDebugEnabled()) {
     console.warn(
       "[Listen] Cancel during approval loop but no tool_call_ids available " +
         "for interrupted queue — next turn may hit pre-stream conflict. " +
@@ -3920,7 +3921,7 @@ async function connectWithRetry(
         raw,
       });
     }
-    if (process.env.DEBUG) {
+    if (isDebugEnabled()) {
       console.log(
         `[Listen] Received message: ${JSON.stringify(parsed, null, 2)}`,
       );
@@ -4223,7 +4224,7 @@ async function connectWithRetry(
     runtime.queuedMessagesByItemId.clear();
     runtime.queueRuntime.clear("shutdown");
 
-    if (process.env.DEBUG) {
+    if (isDebugEnabled()) {
       console.log(
         `[Listen] WebSocket disconnected (code: ${code}, reason: ${reason.toString()})`,
       );
@@ -4241,7 +4242,7 @@ async function connectWithRetry(
 
     // 1008: Environment not found - need to re-register
     if (code === 1008) {
-      if (process.env.DEBUG) {
+      if (isDebugEnabled()) {
         console.log("[Listen] Environment not found, re-registering...");
       }
       // Stop retry loop and signal that we need to re-register
@@ -4272,7 +4273,7 @@ async function connectWithRetry(
       type: "_ws_error",
       message: error.message,
     });
-    if (process.env.DEBUG) {
+    if (isDebugEnabled()) {
       console.error("[Listen] WebSocket error:", error);
     }
     // Error triggers close(), which handles retry logic.
@@ -4350,7 +4351,7 @@ async function handleIncomingMessage(
       return;
     }
 
-    if (process.env.DEBUG) {
+    if (isDebugEnabled()) {
       console.log(
         `[Listen] Handling message: agentId=${agentId}, requestedConversationId=${requestedConversationId}, conversationId=${conversationId}`,
       );
@@ -5216,7 +5217,7 @@ async function handleIncomingMessage(
       agentId: agentId || undefined,
       conversationId,
     });
-    if (process.env.DEBUG) {
+    if (isDebugEnabled()) {
       console.error("[Listen] Error handling message:", error);
     }
   } finally {

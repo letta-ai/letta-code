@@ -6,7 +6,7 @@ import { APIError } from "@letta-ai/letta-client/core/error";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
 import type { ApprovalRequest } from "../cli/helpers/stream";
-import { debugWarn } from "../utils/debug";
+import { debugWarn, isDebugEnabled } from "../utils/debug";
 
 // Backfill should feel like "the last turn(s)", not "the last N raw messages".
 // Tool-heavy turns can generate many tool_call/tool_return messages that would
@@ -472,6 +472,11 @@ export async function getResumeData(
           );
           if (includeMessageHistory && isBackfillEnabled()) {
             messages = defaultConversationMessages;
+          }
+          if (isDebugEnabled()) {
+            console.log(
+              `[DEBUG] conversations.messages.list(default, agent_id=${agent.id}) returned ${defaultConversationMessages.length} messages`,
+            );
           }
         } catch (backfillError) {
           debugWarn(

@@ -35,6 +35,7 @@ const mockGetClient = mock(() =>
 
 mock.module("../../agent/client", () => ({
   getClient: mockGetClient,
+  getServerUrl: () => "http://localhost:8283",
 }));
 
 const { detachMemoryTools } = await import("../../tools/toolset");
