@@ -14,6 +14,7 @@ import {
   captureToolExecutionContext,
   waitForToolsetReady,
 } from "../tools/manager";
+import { debugLog, debugWarn } from "../utils/debug";
 import { isTimingsEnabled } from "../utils/timing";
 import {
   type ApprovalNormalizationOptions,
@@ -24,6 +25,26 @@ import { buildClientSkillsPayload } from "./clientSkills";
 
 const streamRequestStartTimes = new WeakMap<object, number>();
 const streamToolContextIds = new WeakMap<object, string>();
+
+function inferSendMessageOrigin(): string {
+  const stack = new Error().stack;
+  if (!stack) return "unknown";
+
+  const frames = stack
+    .split("\n")
+    .slice(1)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+
+  const originFrame = frames.find(
+    (line) =>
+      !line.includes("sendMessageStream") &&
+      !line.includes("src/agent/message.ts"),
+  );
+
+  return originFrame ?? "unknown";
+}
+
 export type StreamRequestContext = {
   conversationId: string;
   resolvedConversationId: string;
@@ -56,6 +77,7 @@ export type SendMessageStreamOptions = {
   agentId?: string; // Required when conversationId is "default"
   approvalNormalization?: ApprovalNormalizationOptions;
   workingDirectory?: string;
+  debugSource?: string;
 };
 
 export function buildConversationMessagesCreateRequestBody(
@@ -164,16 +186,73 @@ export async function sendMessageStream(
     extraHeaders["X-Experimental-OpenAI-Responses-Websocket"] = "true";
   }
 
-  const stream = await client.conversations.messages.create(
+  const messageSummary = messages
+    .map((item) => {
+      if (item.type === "approval") {
+        return `approval:${item.approvals?.length ?? 0}`;
+      }
+      if (item.type !== "message") {
+        return `unknown:${item.type}`;
+      }
+      const content = item.content;
+      if (typeof content === "string") {
+        return `message:str:${content.length}`;
+      }
+      return `message:parts:${content.length}`;
+    })
+    .join(",");
+
+  const debugSource = opts.debugSource ?? "unknown";
+  const debugOrigin = inferSendMessageOrigin();
+  const requestUuid = `${requestStartedAtMs}-${Math.random().toString(36).slice(2, 8)}`;
+  debugLog(
+    "send-message-stream",
+    "request_start request_id=%s source=%s origin=%s conversation_id=%s agent_id=%s messages=%s stream_tokens=%s background=%s max_retries=%s",
+    requestUuid,
+    debugSource,
+    debugOrigin,
     resolvedConversationId,
-    requestBody,
-    {
-      ...requestOptions,
-      headers: {
-        ...((requestOptions.headers as Record<string, string>) ?? {}),
-        ...extraHeaders,
+    opts.agentId ?? "none",
+    messageSummary || "(empty)",
+    opts.streamTokens ?? true,
+    opts.background ?? true,
+    requestOptions.maxRetries ?? "default",
+  );
+
+  let stream: Stream<LettaStreamingResponse>;
+  try {
+    stream = await client.conversations.messages.create(
+      resolvedConversationId,
+      requestBody,
+      {
+        ...requestOptions,
+        headers: {
+          ...((requestOptions.headers as Record<string, string>) ?? {}),
+          ...extraHeaders,
+        },
       },
-    },
+    );
+  } catch (error) {
+    debugWarn(
+      "send-message-stream",
+      "request_error request_id=%s source=%s origin=%s conversation_id=%s status=%s error=%s",
+      requestUuid,
+      debugSource,
+      debugOrigin,
+      resolvedConversationId,
+      (error as { status?: number })?.status ?? "none",
+      error instanceof Error ? error.message : String(error),
+    );
+    throw error;
+  }
+
+  debugLog(
+    "send-message-stream",
+    "request_ok request_id=%s source=%s origin=%s conversation_id=%s",
+    requestUuid,
+    debugSource,
+    debugOrigin,
+    resolvedConversationId,
   );
 
   if (requestStartTime !== undefined) {
