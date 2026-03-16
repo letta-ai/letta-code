@@ -2511,6 +2511,7 @@ export default function App({
     contextWindowSize,
     usedContextTokens: contextTrackerRef.current.lastContextTokens,
     stepCount: sessionStatsSnapshot.usage.stepCount,
+    turnCount: contextTrackerRef.current.currentTurnId,
     memfsEnabled,
     memfsDirectory,
     permissionMode: uiPermissionMode,
@@ -7625,6 +7626,7 @@ export default function App({
                     usedContextTokens:
                       contextTrackerRef.current.lastContextTokens,
                     stepCount: stats.usage.stepCount,
+                    turnCount: contextTrackerRef.current.currentTurnId,
                     memfsEnabled:
                       agentId !== "loading"
                         ? settingsManager.isMemfsEnabled(agentId)

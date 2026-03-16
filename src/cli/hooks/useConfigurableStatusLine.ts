@@ -37,6 +37,7 @@ export interface StatusLineInputs {
   contextWindowSize?: number;
   usedContextTokens?: number;
   stepCount?: number;
+  turnCount?: number;
   memfsEnabled?: boolean;
   memfsDirectory?: string | null;
   permissionMode?: string;
@@ -83,6 +84,7 @@ function toPayloadInput(inputs: StatusLineInputs): StatusLinePayloadBuildInput {
     contextWindowSize: inputs.contextWindowSize,
     usedContextTokens: inputs.usedContextTokens,
     stepCount: inputs.stepCount,
+    turnCount: inputs.turnCount,
     memfsEnabled: inputs.memfsEnabled,
     memfsDirectory: inputs.memfsDirectory,
     permissionMode: inputs.permissionMode,

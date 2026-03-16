@@ -19,6 +19,7 @@ export interface StatusLinePayloadBuildInput {
   contextWindowSize?: number;
   usedContextTokens?: number;
   stepCount?: number;
+  turnCount?: number;
   memfsEnabled?: boolean;
   memfsDirectory?: string | null;
   permissionMode?: string;
@@ -86,6 +87,7 @@ export interface StatusLinePayload {
     name: string | null;
   };
   step_count: number;
+  turn_count: number;
   memfs: {
     enabled: boolean;
     memory_dir: string | null;
@@ -137,6 +139,7 @@ export function buildStatusLinePayload(
     Math.floor(input.usedContextTokens ?? 0),
   );
   const stepCount = Math.max(0, Math.floor(input.stepCount ?? 0));
+  const turnCount = Math.max(0, Math.floor(input.turnCount ?? 0));
 
   const percentages =
     contextWindowSize > 0
@@ -185,6 +188,7 @@ export function buildStatusLinePayload(
       name: input.agentName ?? null,
     },
     step_count: stepCount,
+    turn_count: turnCount,
     memfs: {
       enabled: input.memfsEnabled ?? false,
       memory_dir: input.memfsDirectory ?? null,

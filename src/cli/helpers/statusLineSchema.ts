@@ -16,6 +16,7 @@ export const STATUSLINE_NATIVE_FIELDS: StatusLineFieldSpec[] = [
   { path: "agent.id" },
   { path: "agent.name" },
   { path: "step_count" },
+  { path: "turn_count" },
   { path: "memfs.enabled" },
   { path: "memfs.memory_dir" },
   { path: "cost.total_duration_ms" },
