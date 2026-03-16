@@ -139,23 +139,30 @@ export async function sendMessageStream(
   );
 
   if (isDebugEnabled()) {
-    console.log(
-      `[DEBUG] sendMessageStream: conversationId=${conversationId}, agentId=${opts.agentId ?? "(none)"}`,
+    debugLog(
+      "agent-message",
+      "sendMessageStream: conversationId=%s, agentId=%s",
+      conversationId,
+      opts.agentId ?? "(none)",
     );
 
     const formattedSkills = clientSkills.map(
       (skill) => `${skill.name} (${skill.location})`,
     );
-    console.log(
-      `[DEBUG] sendMessageStream: client_skills (${clientSkills.length}) ${
-        formattedSkills.length > 0 ? formattedSkills.join(", ") : "(none)"
-      }`,
+    debugLog(
+      "agent-message",
+      "sendMessageStream: client_skills (%d) %s",
+      clientSkills.length,
+      formattedSkills.length > 0 ? formattedSkills.join(", ") : "(none)",
     );
 
     if (clientSkillDiscoveryErrors.length > 0) {
       for (const error of clientSkillDiscoveryErrors) {
-        console.warn(
-          `[DEBUG] sendMessageStream: client_skills discovery error at ${error.path}: ${error.message}`,
+        debugWarn(
+          "agent-message",
+          "sendMessageStream: client_skills discovery error at %s: %s",
+          error.path,
+          error.message,
         );
       }
     }
