@@ -1811,6 +1811,24 @@ function emitStatusDelta(
   });
 }
 
+export function emitInterruptedStatusDelta(
+  socket: WebSocket,
+  runtime: ListenerRuntime | null,
+  params: {
+    runId?: string | null;
+    agentId?: string | null;
+    conversationId?: string | null;
+  },
+): void {
+  emitStatusDelta(socket, runtime, {
+    message: "Interrupted",
+    level: "warning",
+    runId: params.runId,
+    agentId: params.agentId ?? undefined,
+    conversationId: params.conversationId ?? undefined,
+  });
+}
+
 function emitStreamDelta(
   socket: WebSocket,
   runtime: ListenerRuntime | null,
@@ -3348,6 +3366,14 @@ async function connectWithRetry(
         rejectPendingApprovalResolvers(runtime, "Cancelled by user");
       }
 
+      if (!hasActiveTurn && hasPendingApprovals) {
+        emitInterruptedStatusDelta(socket, runtime, {
+          runId: runtime.activeRunId,
+          agentId: parsed.runtime.agent_id,
+          conversationId: parsed.runtime.conversation_id,
+        });
+      }
+
       // Backend cancel parity with TUI (App.tsx:5932-5941).
       // Fire-and-forget — local cancel + queued results are the primary mechanism.
       const cancelConversationId = runtime.activeConversationId;
@@ -3686,6 +3712,11 @@ async function handleIncomingMessage(
       if (stopReason === "cancelled") {
         runtime.lastStopReason = "cancelled";
         runtime.isProcessing = false;
+        emitInterruptedStatusDelta(socket, runtime, {
+          runId: runId || runtime.activeRunId,
+          agentId,
+          conversationId,
+        });
         setLoopStatus(runtime, "WAITING_ON_INPUT", {
           agent_id: agentId,
           conversation_id: conversationId,
@@ -3778,6 +3809,11 @@ async function handleIncomingMessage(
         if (effectiveStopReason === "cancelled") {
           runtime.lastStopReason = "cancelled";
           runtime.isProcessing = false;
+          emitInterruptedStatusDelta(socket, runtime, {
+            runId: runId || runtime.activeRunId,
+            agentId,
+            conversationId,
+          });
           setLoopStatus(runtime, "WAITING_ON_INPUT", {
             agent_id: agentId,
             conversation_id: conversationId,
@@ -4101,6 +4137,11 @@ async function handleIncomingMessage(
 
       runtime.lastStopReason = "cancelled";
       runtime.isProcessing = false;
+      emitInterruptedStatusDelta(socket, runtime, {
+        runId: runtime.activeRunId || msgRunIds[msgRunIds.length - 1],
+        agentId: agentId || null,
+        conversationId,
+      });
       setLoopStatus(runtime, "WAITING_ON_INPUT", {
         agent_id: agentId || null,
         conversation_id: conversationId,
@@ -4185,6 +4226,7 @@ export const __listenClientTestUtils = {
   consumeInterruptQueue,
   extractInterruptToolReturns,
   emitInterruptToolReturnMessage,
+  emitInterruptedStatusDelta,
   getInterruptApprovalsForEmission,
   normalizeToolReturnWireMessage,
   normalizeExecutionResultsForInterruptParity,

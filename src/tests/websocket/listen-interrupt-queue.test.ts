@@ -210,6 +210,8 @@ describe("extractInterruptToolReturns", () => {
   test("emitInterruptToolReturnMessage emits deterministic per-tool terminal messages", () => {
     const runtime = createRuntime();
     const socket = new MockSocket(WebSocket.OPEN) as unknown as WebSocket;
+    runtime.activeAgentId = "agent-1";
+    runtime.activeConversationId = "default";
     const approvals: ApprovalResult[] = [
       {
         type: "tool",

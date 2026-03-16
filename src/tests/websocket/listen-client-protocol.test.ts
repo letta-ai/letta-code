@@ -13,6 +13,7 @@ import type {
 } from "../../types/protocol_v2";
 import {
   __listenClientTestUtils,
+  emitInterruptedStatusDelta,
   parseServerMessage,
   rejectPendingApprovalResolvers,
   requestApprovalOverWS,
@@ -654,6 +655,33 @@ describe("listen-client cwd change handling", () => {
     } finally {
       await rm(tempRoot, { recursive: true, force: true });
     }
+  });
+});
+
+describe("listen-client interrupt status delta emission", () => {
+  test("emits a canonical Interrupted status message", () => {
+    const runtime = __listenClientTestUtils.createRuntime();
+    const socket = new MockSocket(WebSocket.OPEN);
+
+    emitInterruptedStatusDelta(socket as unknown as WebSocket, runtime, {
+      runId: "run-1",
+      agentId: "agent-1",
+      conversationId: "default",
+    });
+
+    expect(socket.sentPayloads).toHaveLength(1);
+    const payload = JSON.parse(socket.sentPayloads[0] ?? "{}");
+    expect(payload.type).toBe("stream_delta");
+    expect(payload.delta).toMatchObject({
+      message_type: "status",
+      message: "Interrupted",
+      level: "warning",
+      run_id: "run-1",
+    });
+    expect(payload.runtime).toMatchObject({
+      agent_id: "agent-1",
+      conversation_id: "default",
+    });
   });
 });
 
