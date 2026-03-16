@@ -446,35 +446,12 @@ export async function getResumeData(
         messageHistory: prepareMessageHistory(messages),
       };
     } else {
-      // Use agent messages API for "default" conversation or when no conversation ID
-      // (agent's primary message history without explicit conversation isolation)
-      inContextMessageIds = agent.message_ids;
-
-      if (!inContextMessageIds || inContextMessageIds.length === 0) {
-        debugWarn(
-          "check-approval",
-          "No in-context messages (default/agent API) - no pending approvals",
-        );
-        // No in-context messages = empty default conversation, don't show random history
-        return {
-          pendingApproval: null,
-          pendingApprovals: [],
-          messageHistory: [],
-        };
-      }
-
-      // Fetch the last in-context message directly by ID
-      // (We already checked inContextMessageIds.length > 0 above)
-      const lastInContextId = inContextMessageIds.at(-1);
-      if (!lastInContextId) {
-        throw new Error("Expected at least one in-context message");
-      }
-      const retrievedMessages = await client.messages.retrieve(lastInContextId);
-
-      // Fetch message history for backfill through the default conversation route.
-      // Default conversation uses the "default" sentinel plus agent_id as a query param.
-      // Wrapped in try/catch so backfill failures don't crash the CLI (e.g., older servers
-      // may not support this pattern)
+      // For the default conversation, use the same message stream surface that
+      // live sends go through (`conversations.messages.create("default", { agent_id })`).
+      // `agent.message_ids` can lag or point at a different branch than the
+      // actual default-conversation timeline, which causes stale approval
+      // recovery after reconnect/restart.
+      let defaultConversationMessages: Message[] = [];
       if (includeMessageHistory && isBackfillEnabled()) {
         try {
           const messagesPage = await client.agents.messages.list(agent.id, {
@@ -482,33 +459,73 @@ export async function getResumeData(
             limit: BACKFILL_PAGE_LIMIT,
             order: "desc",
           });
-          messages = sortChronological(messagesPage.getPaginatedItems());
-
-          if (process.env.DEBUG) {
-            console.log(
-              `[DEBUG] conversations.messages.list(default, agent_id=${agent.id}) returned ${messages.length} messages`,
-            );
-          }
+          defaultConversationMessages = sortChronological(
+            messagesPage.getPaginatedItems(),
+          );
+          messages = defaultConversationMessages;
         } catch (backfillError) {
           debugWarn(
             "check-approval",
             `Failed to load message history: ${backfillError instanceof Error ? backfillError.message : String(backfillError)}`,
           );
         }
+      } else {
+        try {
+          const messagesPage = await client.agents.messages.list(agent.id, {
+            conversation_id: "default",
+            limit: BACKFILL_PAGE_LIMIT,
+            order: "desc",
+          });
+          defaultConversationMessages = sortChronological(
+            messagesPage.getPaginatedItems(),
+          );
+        } catch (listError) {
+          debugWarn(
+            "check-approval",
+            `Failed to load default conversation messages: ${listError instanceof Error ? listError.message : String(listError)}`,
+          );
+        }
       }
 
-      // Find the approval_request_message variant if it exists
+      if (process.env.DEBUG) {
+        console.log(
+          `[DEBUG] default conversation message stream returned ${defaultConversationMessages.length} messages for agent_id=${agent.id}`,
+        );
+      }
+
+      if (defaultConversationMessages.length === 0) {
+        debugWarn(
+          "check-approval",
+          "No messages in default conversation stream - no pending approvals",
+        );
+        return {
+          pendingApproval: null,
+          pendingApprovals: [],
+          messageHistory: [],
+        };
+      }
+
+      const lastDefaultMessage =
+        defaultConversationMessages[defaultConversationMessages.length - 1];
+      const latestMessageId = lastDefaultMessage?.id;
+      const latestMessageVariants = latestMessageId
+        ? defaultConversationMessages.filter(
+            (msg) => msg.id === latestMessageId,
+          )
+        : [];
       const messageToCheck =
-        retrievedMessages.find(
+        latestMessageVariants.find(
           (msg) => msg.message_type === "approval_request_message",
-        ) ?? retrievedMessages[0];
+        ) ??
+        latestMessageVariants[latestMessageVariants.length - 1] ??
+        lastDefaultMessage;
 
       if (messageToCheck) {
         debugWarn(
           "check-approval",
           `Found last in-context message: ${messageToCheck.id} (type: ${messageToCheck.message_type})` +
-            (retrievedMessages.length > 1
-              ? ` - had ${retrievedMessages.length} variants`
+            (latestMessageVariants.length > 1
+              ? ` - had ${latestMessageVariants.length} variants`
               : ""),
         );
 
@@ -524,7 +541,7 @@ export async function getResumeData(
       } else {
         debugWarn(
           "check-approval",
-          `Last in-context message ${lastInContextId} not found via retrieve (default/agent API)`,
+          "Last default conversation message not found after list()",
         );
       }
 

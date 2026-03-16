@@ -30,10 +30,12 @@ import {
   getPreStreamErrorAction,
   getRetryDelayMs,
   isApprovalPendingError,
+  isEmptyResponseRetryable,
   isInvalidToolCallIdsError,
   parseRetryAfterHeaderMs,
   rebuildInputWithFreshDenials,
   shouldAttemptApprovalRecovery,
+  shouldRetryRunMetadataError,
 } from "../agent/turn-recovery-policy";
 import { createBuffers } from "../cli/helpers/accumulator";
 import { classifyApprovals } from "../cli/helpers/approvalClassification";
@@ -41,7 +43,10 @@ import { getRetryStatusMessage } from "../cli/helpers/errorFormatter";
 import { resizeImageIfNeeded } from "../cli/helpers/imageResize";
 import { generatePlanFilePath } from "../cli/helpers/planName";
 import type { ApprovalRequest } from "../cli/helpers/stream";
-import { drainStreamWithResume } from "../cli/helpers/stream";
+import {
+  discoverFallbackRunIdWithTimeout,
+  drainStreamWithResume,
+} from "../cli/helpers/stream";
 import { INTERRUPTED_BY_USER } from "../constants";
 import { computeDiffPreviews } from "../helpers/diffPreview";
 import { permissionMode } from "../permissions/mode";
@@ -573,6 +578,19 @@ function clearActiveRunState(runtime: ListenerRuntime): void {
 
 function clearRecoveredApprovalState(runtime: ListenerRuntime): void {
   runtime.recoveredApprovalState = null;
+}
+
+function clearRecoveredApprovalStateForScope(
+  runtime: ListenerRuntime,
+  params?: {
+    agent_id?: string | null;
+    conversation_id?: string | null;
+  },
+): void {
+  const recovered = getRecoveredApprovalStateForScope(runtime, params);
+  if (recovered) {
+    clearRecoveredApprovalState(runtime);
+  }
 }
 
 function getRecoveredApprovalStateForScope(
@@ -1847,8 +1865,21 @@ function emitStreamDelta(
 }
 
 const LLM_API_ERROR_MAX_RETRIES = 3;
+const EMPTY_RESPONSE_MAX_RETRIES = 2;
 const MAX_PRE_STREAM_RECOVERY = 2;
 const MAX_POST_STOP_APPROVAL_RECOVERY = 2;
+const NO_AWAITING_APPROVAL_DETAIL_FRAGMENT =
+  "no tool call is currently awaiting approval";
+
+function isApprovalToolCallDesyncError(detail: unknown): boolean {
+  if (isInvalidToolCallIdsError(detail) || isApprovalPendingError(detail)) {
+    return true;
+  }
+  return (
+    typeof detail === "string" &&
+    detail.toLowerCase().includes(NO_AWAITING_APPROVAL_DETAIL_FRAGMENT)
+  );
+}
 
 function shouldAttemptPostStopApprovalRecovery(params: {
   stopReason: string | null | undefined;
@@ -1857,12 +1888,9 @@ function shouldAttemptPostStopApprovalRecovery(params: {
   runErrorDetail: string | null;
   latestErrorText: string | null;
 }): boolean {
-  const invalidToolCallIdsDetected =
-    isInvalidToolCallIdsError(params.runErrorDetail) ||
-    isInvalidToolCallIdsError(params.latestErrorText);
-  const approvalPendingDetected =
-    isApprovalPendingError(params.runErrorDetail) ||
-    isApprovalPendingError(params.latestErrorText);
+  const approvalDesyncDetected =
+    isApprovalToolCallDesyncError(params.runErrorDetail) ||
+    isApprovalToolCallDesyncError(params.latestErrorText);
 
   // Heuristic fallback:
   // If the stream stops with generic "error" before any run_id was emitted,
@@ -1871,12 +1899,178 @@ function shouldAttemptPostStopApprovalRecovery(params: {
     params.stopReason === "error" && params.runIdsSeen === 0;
 
   return shouldAttemptApprovalRecovery({
-    approvalPendingDetected:
-      invalidToolCallIdsDetected ||
-      approvalPendingDetected ||
-      genericNoRunError,
+    approvalPendingDetected: approvalDesyncDetected || genericNoRunError,
     retries: params.retries,
     maxRetries: MAX_POST_STOP_APPROVAL_RECOVERY,
+  });
+}
+
+async function isRetriablePostStopError(
+  stopReason: StopReasonType,
+  lastRunId: string | null | undefined,
+): Promise<boolean> {
+  if (stopReason === "llm_api_error") {
+    return true;
+  }
+
+  const nonRetriableReasons: StopReasonType[] = [
+    "cancelled",
+    "requires_approval",
+    "max_steps",
+    "max_tokens_exceeded",
+    "context_window_overflow_in_system_prompt",
+    "end_turn",
+    "tool_rule",
+    "no_tool_call",
+  ];
+  if (nonRetriableReasons.includes(stopReason)) {
+    return false;
+  }
+
+  if (!lastRunId) {
+    return false;
+  }
+
+  try {
+    const client = await getClient();
+    const run = await client.runs.retrieve(lastRunId);
+    const metaError = run.metadata?.error as
+      | {
+          error_type?: string;
+          detail?: string;
+          error?: { error_type?: string; detail?: string };
+        }
+      | undefined;
+
+    const errorType = metaError?.error_type ?? metaError?.error?.error_type;
+    const detail = metaError?.detail ?? metaError?.error?.detail ?? "";
+    return shouldRetryRunMetadataError(errorType, detail);
+  } catch {
+    return false;
+  }
+}
+
+async function drainRecoveryStreamWithEmission(
+  recoveryStream: Stream<LettaStreamingResponse>,
+  socket: WebSocket,
+  runtime: ListenerRuntime,
+  params: {
+    agentId?: string | null;
+    conversationId: string;
+    abortSignal: AbortSignal;
+  },
+): Promise<Awaited<ReturnType<typeof drainStreamWithResume>>> {
+  let recoveryRunIdSent = false;
+
+  return drainStreamWithResume(
+    recoveryStream,
+    createBuffers(params.agentId || ""),
+    () => {},
+    params.abortSignal,
+    undefined,
+    ({ chunk, shouldOutput, errorInfo }) => {
+      const maybeRunId = (chunk as { run_id?: unknown }).run_id;
+      if (typeof maybeRunId === "string") {
+        if (runtime.activeRunId !== maybeRunId) {
+          runtime.activeRunId = maybeRunId;
+        }
+        if (!recoveryRunIdSent) {
+          recoveryRunIdSent = true;
+          emitLoopStatusUpdate(socket, runtime, {
+            agent_id: params.agentId ?? undefined,
+            conversation_id: params.conversationId,
+          });
+        }
+      }
+
+      if (errorInfo) {
+        emitLoopErrorDelta(socket, runtime, {
+          message: errorInfo.message || "Stream error",
+          stopReason: (errorInfo.error_type as StopReasonType) || "error",
+          isTerminal: false,
+          runId: runtime.activeRunId || errorInfo.run_id,
+          agentId: params.agentId ?? undefined,
+          conversationId: params.conversationId,
+        });
+      }
+
+      if (shouldOutput) {
+        const normalizedChunk = normalizeToolReturnWireMessage(
+          chunk as unknown as Record<string, unknown>,
+        );
+        if (normalizedChunk) {
+          emitCanonicalMessageDelta(
+            socket,
+            runtime,
+            {
+              ...normalizedChunk,
+              type: "message",
+            } as StreamDelta,
+            {
+              agent_id: params.agentId ?? undefined,
+              conversation_id: params.conversationId,
+            },
+          );
+        }
+      }
+
+      return undefined;
+    },
+  );
+}
+
+function finalizeHandledRecoveryTurn(
+  runtime: ListenerRuntime,
+  socket: WebSocket,
+  params: {
+    drainResult: Awaited<ReturnType<typeof drainStreamWithResume>>;
+    agentId?: string | null;
+    conversationId: string;
+  },
+): void {
+  const scope = {
+    agent_id: params.agentId ?? null,
+    conversation_id: params.conversationId,
+  };
+
+  if (params.drainResult.stopReason === "end_turn") {
+    runtime.lastStopReason = "end_turn";
+    runtime.isProcessing = false;
+    setLoopStatus(runtime, "WAITING_ON_INPUT", scope);
+    clearActiveRunState(runtime);
+    emitRuntimeStateUpdates(runtime, scope);
+    return;
+  }
+
+  if (params.drainResult.stopReason === "cancelled") {
+    runtime.lastStopReason = "cancelled";
+    runtime.isProcessing = false;
+    emitInterruptedStatusDelta(socket, runtime, {
+      runId: runtime.activeRunId,
+      agentId: params.agentId ?? undefined,
+      conversationId: params.conversationId,
+    });
+    setLoopStatus(runtime, "WAITING_ON_INPUT", scope);
+    clearActiveRunState(runtime);
+    emitRuntimeStateUpdates(runtime, scope);
+    return;
+  }
+
+  const terminalStopReason =
+    (params.drainResult.stopReason as StopReasonType) || "error";
+  runtime.lastStopReason = terminalStopReason;
+  runtime.isProcessing = false;
+  setLoopStatus(runtime, "WAITING_ON_INPUT", scope);
+  const runId = runtime.activeRunId;
+  clearActiveRunState(runtime);
+  emitRuntimeStateUpdates(runtime, scope);
+  emitLoopErrorDelta(socket, runtime, {
+    message: `Recovery continuation ended unexpectedly: ${terminalStopReason}`,
+    stopReason: terminalStopReason,
+    isTerminal: true,
+    runId: runId || undefined,
+    agentId: params.agentId ?? undefined,
+    conversationId: params.conversationId,
   });
 }
 
@@ -1980,6 +2174,135 @@ function normalizeExecutionResultsForInterruptParity(
   return normalizeApprovalResultsForPersistence(executionResults, {
     interruptedToolCallIds: executingToolCallIds,
   });
+}
+
+function collectApprovalResultToolCallIds(
+  approvals: ApprovalResult[],
+): string[] {
+  return approvals
+    .map((approval) => {
+      if (
+        approval &&
+        typeof approval === "object" &&
+        "tool_call_id" in approval &&
+        typeof approval.tool_call_id === "string"
+      ) {
+        return approval.tool_call_id;
+      }
+      return null;
+    })
+    .filter((toolCallId): toolCallId is string => !!toolCallId);
+}
+
+function collectDecisionToolCallIds(
+  decisions: Array<{
+    approval: {
+      toolCallId: string;
+    };
+  }>,
+): string[] {
+  return decisions
+    .map((decision) => decision.approval.toolCallId)
+    .filter((toolCallId) => toolCallId.length > 0);
+}
+
+function validateApprovalResultIds(
+  decisions: Array<{
+    approval: {
+      toolCallId: string;
+    };
+  }>,
+  approvals: ApprovalResult[],
+): void {
+  if (!process.env.DEBUG) {
+    return;
+  }
+
+  const expectedIds = new Set(collectDecisionToolCallIds(decisions));
+  const sendingIds = new Set(collectApprovalResultToolCallIds(approvals));
+  const setsEqual =
+    expectedIds.size === sendingIds.size &&
+    [...expectedIds].every((toolCallId) => sendingIds.has(toolCallId));
+
+  if (setsEqual) {
+    return;
+  }
+
+  console.error(
+    "[Listen][DEBUG] Approval ID mismatch detected",
+    JSON.stringify(
+      {
+        expected: [...expectedIds],
+        sending: [...sendingIds],
+      },
+      null,
+      2,
+    ),
+  );
+  throw new Error("Approval ID mismatch - refusing to send mismatched IDs");
+}
+
+async function debugLogApprovalResumeState(
+  runtime: ListenerRuntime,
+  params: {
+    agentId: string;
+    conversationId: string;
+    expectedToolCallIds: string[];
+    sentToolCallIds: string[];
+  },
+): Promise<void> {
+  if (!process.env.DEBUG) {
+    return;
+  }
+
+  try {
+    const client = await getClient();
+    const agent = await client.agents.retrieve(params.agentId);
+    const isExplicitConversation =
+      params.conversationId.length > 0 && params.conversationId !== "default";
+    const lastInContextId = isExplicitConversation
+      ? ((
+          await client.conversations.retrieve(params.conversationId)
+        ).in_context_message_ids?.at(-1) ?? null)
+      : (agent.message_ids?.at(-1) ?? null);
+    const lastInContextMessages = lastInContextId
+      ? await client.messages.retrieve(lastInContextId)
+      : [];
+    const resumeData = await getResumeData(
+      client,
+      agent,
+      params.conversationId,
+      {
+        includeMessageHistory: false,
+      },
+    );
+
+    console.log(
+      "[Listen][DEBUG] Post-approval continuation resume snapshot",
+      JSON.stringify(
+        {
+          conversationId: params.conversationId,
+          activeRunId: runtime.activeRunId,
+          expectedToolCallIds: params.expectedToolCallIds,
+          sentToolCallIds: params.sentToolCallIds,
+          pendingApprovalToolCallIds: (resumeData.pendingApprovals ?? []).map(
+            (approval) => approval.toolCallId,
+          ),
+          lastInContextMessageId: lastInContextId,
+          lastInContextMessageTypes: lastInContextMessages.map(
+            (message) => message.message_type,
+          ),
+        },
+        null,
+        2,
+      ),
+    );
+  } catch (error) {
+    console.warn(
+      "[Listen][DEBUG] Failed to capture post-approval resume snapshot:",
+      error instanceof Error ? error.message : String(error),
+    );
+  }
 }
 
 function extractCanonicalToolReturnsFromWire(
@@ -2406,14 +2729,48 @@ function consumeInterruptQueue(
     };
   }
 
+  const queuedToolCallIds = collectApprovalResultToolCallIds(
+    runtime.pendingInterruptedResults,
+  );
+
   // Atomic clear — always, regardless of context match.
   // Stale results for wrong context are discarded, not retried.
   runtime.pendingInterruptedResults = null;
   runtime.pendingInterruptedContext = null;
   runtime.pendingInterruptedToolCallIds = null;
-  runtime.pendingApprovalBatchByToolCallId.clear();
+  for (const toolCallId of queuedToolCallIds) {
+    runtime.pendingApprovalBatchByToolCallId.delete(toolCallId);
+  }
 
   return result;
+}
+
+function stashRecoveredApprovalInterrupts(
+  runtime: ListenerRuntime,
+  recovered: RecoveredApprovalState,
+): boolean {
+  const approvals = [...recovered.approvalsByRequestId.values()].map(
+    (entry) => entry.approval,
+  );
+  if (approvals.length === 0) {
+    clearRecoveredApprovalState(runtime);
+    return false;
+  }
+
+  runtime.pendingInterruptedResults = approvals.map((approval) => ({
+    type: "approval" as const,
+    tool_call_id: approval.toolCallId,
+    approve: false,
+    reason: "User interrupted the stream",
+  }));
+  runtime.pendingInterruptedContext = {
+    agentId: recovered.agentId,
+    conversationId: recovered.conversationId,
+    continuationEpoch: runtime.continuationEpoch,
+  };
+  runtime.pendingInterruptedToolCallIds = null;
+  clearRecoveredApprovalState(runtime);
+  return true;
 }
 
 /**
@@ -2423,9 +2780,10 @@ function consumeInterruptQueue(
  */
 async function resolveStaleApprovals(
   runtime: ListenerRuntime,
+  socket: WebSocket,
   abortSignal: AbortSignal,
-): Promise<void> {
-  if (!runtime.activeAgentId) return;
+): Promise<Awaited<ReturnType<typeof drainStreamWithResume>> | null> {
+  if (!runtime.activeAgentId) return null;
 
   const client = await getClient();
   let agent: Awaited<ReturnType<typeof client.agents.retrieve>>;
@@ -2434,7 +2792,7 @@ async function resolveStaleApprovals(
   } catch (err) {
     // 404 = agent deleted, 422 = invalid ID — both mean nothing to recover
     if (err instanceof APIError && (err.status === 404 || err.status === 422)) {
-      return;
+      return null;
     }
     throw err;
   }
@@ -2451,51 +2809,216 @@ async function resolveStaleApprovals(
   } catch (err) {
     // getResumeData rethrows 404/422 for conversations — treat as no approvals
     if (err instanceof APIError && (err.status === 404 || err.status === 422)) {
-      return;
+      return null;
     }
     throw err;
   }
 
-  const pendingApprovals = resumeData.pendingApprovals || [];
-  if (pendingApprovals.length === 0) return;
+  let pendingApprovals = resumeData.pendingApprovals || [];
+  if (pendingApprovals.length === 0) return null;
   if (abortSignal.aborted) throw new Error("Cancelled");
 
-  const denialResults: ApprovalResult[] = pendingApprovals.map((approval) => ({
-    type: "approval" as const,
-    tool_call_id: approval.toolCallId,
-    approve: false,
-    reason: "Auto-denied during pre-stream approval recovery",
-  }));
-
   const recoveryConversationId = runtime.activeConversationId || "default";
-  const recoveryStream = await sendMessageStream(
-    recoveryConversationId,
-    [{ type: "approval", approvals: denialResults }],
-    {
-      agentId: runtime.activeAgentId,
-      streamTokens: true,
-      background: true,
-      workingDirectory:
-        runtime.activeWorkingDirectory ??
-        getConversationWorkingDirectory(
+  const recoveryWorkingDirectory =
+    runtime.activeWorkingDirectory ??
+    getConversationWorkingDirectory(
+      runtime,
+      runtime.activeAgentId,
+      recoveryConversationId,
+    );
+  const scope = {
+    agent_id: runtime.activeAgentId,
+    conversation_id: recoveryConversationId,
+  } as const;
+
+  while (pendingApprovals.length > 0) {
+    const recoveryBatchId = resolveRecoveryBatchId(runtime, pendingApprovals);
+    if (!recoveryBatchId) {
+      throw new Error(
+        "Ambiguous pending approval batch mapping during recovery",
+      );
+    }
+    rememberPendingApprovalBatchIds(runtime, pendingApprovals, recoveryBatchId);
+
+    const { autoAllowed, autoDenied, needsUserInput } = await classifyApprovals(
+      pendingApprovals,
+      {
+        alwaysRequiresUserInput: isInteractiveApprovalTool,
+        requireArgsForAutoApprove: true,
+        missingNameReason: "Tool call incomplete - missing name",
+        workingDirectory: recoveryWorkingDirectory,
+      },
+    );
+
+    const decisions: ApprovalDecision[] = [
+      ...autoAllowed.map((ac) => ({
+        type: "approve" as const,
+        approval: ac.approval,
+      })),
+      ...autoDenied.map((ac) => ({
+        type: "deny" as const,
+        approval: ac.approval,
+        reason: ac.denyReason || ac.permission.reason || "Permission denied",
+      })),
+    ];
+
+    if (needsUserInput.length > 0) {
+      runtime.lastStopReason = "requires_approval";
+      setLoopStatus(runtime, "WAITING_ON_APPROVAL", scope);
+      emitRuntimeStateUpdates(runtime, scope);
+
+      for (const ac of needsUserInput) {
+        if (abortSignal.aborted) throw new Error("Cancelled");
+
+        const requestId = `perm-${ac.approval.toolCallId}`;
+        const diffs = await computeDiffPreviews(
+          ac.approval.toolName,
+          ac.parsedArgs,
+          recoveryWorkingDirectory,
+        );
+        const controlRequest: ControlRequest = {
+          type: "control_request",
+          request_id: requestId,
+          request: {
+            subtype: "can_use_tool",
+            tool_name: ac.approval.toolName,
+            input: ac.parsedArgs,
+            tool_call_id: ac.approval.toolCallId,
+            permission_suggestions: [],
+            blocked_path: null,
+            ...(diffs.length > 0 ? { diffs } : {}),
+          },
+          agent_id: runtime.activeAgentId,
+          conversation_id: recoveryConversationId,
+        };
+
+        const responseBody = await requestApprovalOverWS(
           runtime,
-          runtime.activeAgentId,
-          recoveryConversationId,
-        ),
-    },
-    { maxRetries: 0, signal: abortSignal },
-  );
+          socket,
+          requestId,
+          controlRequest,
+        );
 
-  const drainResult = await drainStreamWithResume(
-    recoveryStream as Stream<LettaStreamingResponse>,
-    createBuffers(runtime.activeAgentId),
-    () => {},
-    abortSignal,
-  );
+        if ("decision" in responseBody) {
+          const response = responseBody.decision as ApprovalResponseDecision;
+          if (response.behavior === "allow") {
+            decisions.push({
+              type: "approve",
+              approval: response.updated_input
+                ? {
+                    ...ac.approval,
+                    toolArgs: JSON.stringify(response.updated_input),
+                  }
+                : ac.approval,
+            });
+          } else {
+            decisions.push({
+              type: "deny",
+              approval: ac.approval,
+              reason: response.message || "Denied via WebSocket",
+            });
+          }
+        } else {
+          decisions.push({
+            type: "deny",
+            approval: ac.approval,
+            reason: responseBody.error,
+          });
+        }
+      }
+    }
 
-  if (drainResult.stopReason === "error") {
-    throw new Error("Pre-stream approval recovery drain ended with error");
+    if (decisions.length === 0) {
+      clearPendingApprovalBatchIds(runtime, pendingApprovals);
+      return null;
+    }
+
+    const approvedToolCallIds = decisions
+      .filter(
+        (
+          decision,
+        ): decision is Extract<ApprovalDecision, { type: "approve" }> =>
+          decision.type === "approve",
+      )
+      .map((decision) => decision.approval.toolCallId);
+
+    runtime.activeExecutingToolCallIds = [...approvedToolCallIds];
+    setLoopStatus(runtime, "EXECUTING_CLIENT_SIDE_TOOL", scope);
+    emitRuntimeStateUpdates(runtime, scope);
+    emitToolExecutionStartedEvents(socket, runtime, {
+      toolCallIds: approvedToolCallIds,
+      runId: runtime.activeRunId ?? undefined,
+      agentId: runtime.activeAgentId,
+      conversationId: recoveryConversationId,
+    });
+
+    try {
+      const approvalResults = await executeApprovalBatch(decisions, undefined, {
+        abortSignal,
+        workingDirectory: recoveryWorkingDirectory,
+      });
+      emitToolExecutionFinishedEvents(socket, runtime, {
+        approvals: approvalResults,
+        runId: runtime.activeRunId ?? undefined,
+        agentId: runtime.activeAgentId,
+        conversationId: recoveryConversationId,
+      });
+      emitInterruptToolReturnMessage(
+        socket,
+        runtime,
+        approvalResults,
+        runtime.activeRunId ?? undefined,
+        "tool-return",
+      );
+
+      const recoveryStream = await sendApprovalContinuationWithRetry(
+        recoveryConversationId,
+        [{ type: "approval", approvals: approvalResults }],
+        {
+          agentId: runtime.activeAgentId,
+          streamTokens: true,
+          background: true,
+          workingDirectory: recoveryWorkingDirectory,
+        },
+        socket,
+        runtime,
+        abortSignal,
+        { allowApprovalRecovery: false },
+      );
+      if (!recoveryStream) {
+        throw new Error(
+          "Approval recovery send resolved without a continuation stream",
+        );
+      }
+
+      const drainResult = await drainRecoveryStreamWithEmission(
+        recoveryStream as Stream<LettaStreamingResponse>,
+        socket,
+        runtime,
+        {
+          agentId: runtime.activeAgentId,
+          conversationId: recoveryConversationId,
+          abortSignal,
+        },
+      );
+
+      if (drainResult.stopReason === "error") {
+        throw new Error("Pre-stream approval recovery drain ended with error");
+      }
+      clearPendingApprovalBatchIds(
+        runtime,
+        decisions.map((decision) => decision.approval),
+      );
+      if (drainResult.stopReason !== "requires_approval") {
+        return drainResult;
+      }
+      pendingApprovals = drainResult.approvals || [];
+    } finally {
+      runtime.activeExecutingToolCallIds = [];
+    }
   }
+
+  return null;
 }
 
 function parseApprovalInput(toolArgs: string): Record<string, unknown> {
@@ -2514,13 +3037,21 @@ async function recoverApprovalStateForSync(
   runtime: ListenerRuntime,
   scope: RuntimeScope,
 ): Promise<void> {
-  if (
-    runtime.pendingApprovalResolvers.size > 0 &&
+  const sameActiveScope =
     runtime.activeAgentId === scope.agent_id &&
     resolveScopedConversationId(runtime, {
       conversation_id: runtime.activeConversationId,
-    }) === scope.conversation_id
+    }) === scope.conversation_id;
+
+  if (
+    sameActiveScope &&
+    (runtime.isProcessing || runtime.loopStatus !== "WAITING_ON_INPUT")
   ) {
+    clearRecoveredApprovalState(runtime);
+    return;
+  }
+
+  if (runtime.pendingApprovalResolvers.size > 0 && sameActiveScope) {
     clearRecoveredApprovalState(runtime);
     return;
   }
@@ -2703,8 +3234,11 @@ async function resolveRecoveredApprovalResponse(
     agentId: recovered.agentId,
     conversationId: recovered.conversationId,
   });
+  const recoveryAbortController = new AbortController();
+  runtime.activeAbortController = recoveryAbortController;
   try {
     const approvalResults = await executeApprovalBatch(decisions, undefined, {
+      abortSignal: recoveryAbortController.signal,
       workingDirectory: getConversationWorkingDirectory(
         runtime,
         recovered.agentId,
@@ -2726,6 +3260,7 @@ async function resolveRecoveredApprovalResponse(
       "tool-return",
     );
 
+    runtime.activeAbortController = null;
     setLoopStatus(runtime, "SENDING_API_REQUEST", scope);
     emitRuntimeStateUpdates(runtime, scope);
 
@@ -2755,6 +3290,7 @@ async function resolveRecoveredApprovalResponse(
       recovered.approvalsByRequestId.keys(),
     );
     recovered.responsesByRequestId.clear();
+    runtime.activeAbortController = null;
     runtime.isProcessing = false;
     runtime.activeExecutingToolCallIds = [];
     setLoopStatus(runtime, "WAITING_ON_INPUT", scope);
@@ -2783,6 +3319,7 @@ async function sendMessageStreamWithRetry(
   let conversationBusyRetries = 0;
   let preStreamRecoveryAttempts = 0;
   const MAX_CONVERSATION_BUSY_RETRIES = 3;
+  const requestStartedAtMs = Date.now();
 
   // eslint-disable-next-line no-constant-condition
   while (true) {
@@ -2824,7 +3361,11 @@ async function sendMessageStreamWithRetry(
         },
       );
 
-      if (action === "resolve_approval_pending") {
+      const approvalConflictDetected =
+        action === "resolve_approval_pending" ||
+        isApprovalToolCallDesyncError(errorDetail);
+
+      if (approvalConflictDetected) {
         runtime.isRecoveringApprovals = true;
         setLoopStatus(runtime, "RETRYING_API_REQUEST", {
           agent_id: runtime.activeAgentId,
@@ -2841,7 +3382,7 @@ async function sendMessageStreamWithRetry(
         ) {
           preStreamRecoveryAttempts++;
           try {
-            await resolveStaleApprovals(runtime, abortSignal);
+            await resolveStaleApprovals(runtime, socket, abortSignal);
             continue; // Retry send after resolving
           } catch (_recoveryError) {
             if (abortSignal.aborted) throw new Error("Cancelled by user");
@@ -2853,7 +3394,7 @@ async function sendMessageStreamWithRetry(
         const detail = await fetchRunErrorDetail(runtime.activeRunId);
         throw new Error(
           detail ||
-            `Pre-stream approval conflict (resolve_approval_pending) after ${preStreamRecoveryAttempts} recovery attempts`,
+            `Pre-stream approval conflict after ${preStreamRecoveryAttempts} recovery attempts`,
         );
       }
 
@@ -2904,13 +3445,41 @@ async function sendMessageStreamWithRetry(
           agent_id: runtime.activeAgentId,
           conversation_id: conversationId,
         });
-        // TODO: Add pre-stream resume logic for parity with App.tsx.
-        // Before waiting, attempt to discover the in-flight run via
-        // discoverFallbackRunIdWithTimeout() and resume its stream with
-        // client.runs.messages.stream() + drainStream(). This avoids
-        // blind wait/retry cycles when the server already created a run
-        // from the original request. See App.tsx retry_conversation_busy
-        // handler for reference implementation.
+        try {
+          const client = await getClient();
+          const discoveredRunId = await discoverFallbackRunIdWithTimeout(
+            client,
+            {
+              conversationId,
+              resolvedConversationId: conversationId,
+              agentId: runtime.activeAgentId,
+              requestStartedAtMs,
+            },
+          );
+
+          if (discoveredRunId) {
+            if (abortSignal?.aborted) {
+              throw new Error("Cancelled by user");
+            }
+            return await client.runs.messages.stream(discoveredRunId, {
+              starting_after: 0,
+              batch_size: 1000,
+            });
+          }
+        } catch (resumeError) {
+          if (abortSignal?.aborted) {
+            throw new Error("Cancelled by user");
+          }
+          if (process.env.DEBUG) {
+            console.warn(
+              "[Listen] Pre-stream resume failed, falling back to wait/retry:",
+              resumeError instanceof Error
+                ? resumeError.message
+                : String(resumeError),
+            );
+          }
+        }
+
         const attempt = conversationBusyRetries + 1;
         const delayMs = getRetryDelayMs({
           category: "conversation_busy",
@@ -2936,6 +3505,189 @@ async function sendMessageStreamWithRetry(
       }
 
       // rethrow unrecoverable errors
+      throw preStreamError;
+    }
+  }
+}
+
+async function sendApprovalContinuationWithRetry(
+  conversationId: string,
+  messages: Parameters<typeof sendMessageStream>[1],
+  opts: Parameters<typeof sendMessageStream>[2],
+  socket: WebSocket,
+  runtime: ListenerRuntime,
+  abortSignal?: AbortSignal,
+  retryOptions: {
+    allowApprovalRecovery?: boolean;
+  } = {},
+): Promise<Awaited<ReturnType<typeof sendMessageStream>> | null> {
+  const allowApprovalRecovery = retryOptions.allowApprovalRecovery ?? true;
+  let transientRetries = 0;
+  let conversationBusyRetries = 0;
+  let preStreamRecoveryAttempts = 0;
+  const MAX_CONVERSATION_BUSY_RETRIES = 3;
+  const requestStartedAtMs = Date.now();
+
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    if (abortSignal?.aborted) {
+      throw new Error("Cancelled by user");
+    }
+    runtime.isRecoveringApprovals = false;
+    setLoopStatus(runtime, "WAITING_FOR_API_RESPONSE", {
+      agent_id: runtime.activeAgentId,
+      conversation_id: conversationId,
+    });
+
+    try {
+      return await sendMessageStream(
+        conversationId,
+        messages,
+        opts,
+        abortSignal
+          ? { maxRetries: 0, signal: abortSignal }
+          : { maxRetries: 0 },
+      );
+    } catch (preStreamError) {
+      if (abortSignal?.aborted) {
+        throw new Error("Cancelled by user");
+      }
+
+      const errorDetail = extractConflictDetail(preStreamError);
+      const action = getPreStreamErrorAction(
+        errorDetail,
+        conversationBusyRetries,
+        MAX_CONVERSATION_BUSY_RETRIES,
+        {
+          status:
+            preStreamError instanceof APIError
+              ? preStreamError.status
+              : undefined,
+          transientRetries,
+          maxTransientRetries: LLM_API_ERROR_MAX_RETRIES,
+        },
+      );
+
+      const approvalConflictDetected =
+        action === "resolve_approval_pending" ||
+        isApprovalToolCallDesyncError(errorDetail);
+
+      if (approvalConflictDetected) {
+        runtime.isRecoveringApprovals = true;
+        setLoopStatus(runtime, "RETRYING_API_REQUEST", {
+          agent_id: runtime.activeAgentId,
+          conversation_id: conversationId,
+        });
+
+        if (
+          allowApprovalRecovery &&
+          abortSignal &&
+          preStreamRecoveryAttempts < MAX_PRE_STREAM_RECOVERY
+        ) {
+          preStreamRecoveryAttempts++;
+          const drainResult = await resolveStaleApprovals(
+            runtime,
+            socket,
+            abortSignal,
+          );
+          if (drainResult) {
+            finalizeHandledRecoveryTurn(runtime, socket, {
+              drainResult,
+              agentId: runtime.activeAgentId,
+              conversationId,
+            });
+            return null;
+          }
+        }
+
+        const detail = await fetchRunErrorDetail(runtime.activeRunId);
+        throw new Error(
+          detail ||
+            `Approval continuation conflict after ${preStreamRecoveryAttempts} recovery attempts`,
+        );
+      }
+
+      if (action === "retry_transient") {
+        runtime.isRecoveringApprovals = true;
+        setLoopStatus(runtime, "RETRYING_API_REQUEST", {
+          agent_id: runtime.activeAgentId,
+          conversation_id: conversationId,
+        });
+        const attempt = transientRetries + 1;
+        const retryAfterMs =
+          preStreamError instanceof APIError
+            ? parseRetryAfterHeaderMs(
+                preStreamError.headers?.get("retry-after"),
+              )
+            : null;
+        const delayMs = getRetryDelayMs({
+          category: "transient_provider",
+          attempt,
+          detail: errorDetail,
+          retryAfterMs,
+        });
+        transientRetries = attempt;
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        if (abortSignal?.aborted) {
+          throw new Error("Cancelled by user");
+        }
+        continue;
+      }
+
+      if (action === "retry_conversation_busy") {
+        conversationBusyRetries += 1;
+        runtime.isRecoveringApprovals = true;
+        setLoopStatus(runtime, "RETRYING_API_REQUEST", {
+          agent_id: runtime.activeAgentId,
+          conversation_id: conversationId,
+        });
+
+        try {
+          const client = await getClient();
+          const discoveredRunId = await discoverFallbackRunIdWithTimeout(
+            client,
+            {
+              conversationId,
+              resolvedConversationId: conversationId,
+              agentId: runtime.activeAgentId,
+              requestStartedAtMs,
+            },
+          );
+
+          if (discoveredRunId) {
+            if (abortSignal?.aborted) {
+              throw new Error("Cancelled by user");
+            }
+            return await client.runs.messages.stream(discoveredRunId, {
+              starting_after: 0,
+              batch_size: 1000,
+            });
+          }
+        } catch (resumeError) {
+          if (abortSignal?.aborted) {
+            throw new Error("Cancelled by user");
+          }
+          if (process.env.DEBUG) {
+            console.warn(
+              "[Listen] Approval continuation pre-stream resume failed, falling back to wait/retry:",
+              resumeError instanceof Error
+                ? resumeError.message
+                : String(resumeError),
+            );
+          }
+        }
+
+        const retryDelayMs = getRetryDelayMs({
+          category: "conversation_busy",
+          attempt: conversationBusyRetries,
+        });
+        await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+        if (abortSignal?.aborted) {
+          throw new Error("Cancelled by user");
+        }
+        continue;
+      }
+
       throw preStreamError;
     }
   }
@@ -3365,6 +4117,16 @@ async function connectWithRetry(
       ) {
         runtime.activeAbortController.abort();
       }
+      const recoveredApprovalState = getRecoveredApprovalStateForScope(
+        runtime,
+        {
+          agent_id: parsed.runtime.agent_id,
+          conversation_id: parsed.runtime.conversation_id,
+        },
+      );
+      if (recoveredApprovalState && !hasActiveTurn) {
+        stashRecoveredApprovalInterrupts(runtime, recoveredApprovalState);
+      }
       if (hasPendingApprovals) {
         rejectPendingApprovalResolvers(runtime, "Cancelled by user");
       }
@@ -3498,6 +4260,9 @@ async function handleIncomingMessage(
   );
   const msgRunIds: string[] = [];
   let postStopApprovalRecoveryRetries = 0;
+  let llmApiErrorRetries = 0;
+  let emptyResponseRetries = 0;
+  let lastApprovalContinuationAccepted = false;
 
   // Track last approval-loop state for cancel-time queueing (Phase 1.2).
   // Hoisted before try so the cancel catch block can access them.
@@ -3515,6 +4280,10 @@ async function handleIncomingMessage(
   runtime.activeRunStartedAt = new Date().toISOString();
   runtime.activeExecutingToolCallIds = [];
   setLoopStatus(runtime, "SENDING_API_REQUEST", {
+    agent_id: agentId ?? null,
+    conversation_id: conversationId,
+  });
+  clearRecoveredApprovalStateForScope(runtime, {
     agent_id: agentId ?? null,
     conversation_id: conversationId,
   });
@@ -3591,28 +4360,51 @@ async function handleIncomingMessage(
     }
 
     let currentInput = messagesToSend;
-    const sendOptions: Parameters<typeof sendMessageStream>[2] = {
+    let pendingNormalizationInterruptedToolCallIds = [
+      ...queuedInterruptedToolCallIds,
+    ];
+    const buildSendOptions = (): Parameters<typeof sendMessageStream>[2] => ({
       agentId,
       streamTokens: true,
       background: true,
       workingDirectory: turnWorkingDirectory,
-      ...(queuedInterruptedToolCallIds.length > 0
+      ...(pendingNormalizationInterruptedToolCallIds.length > 0
         ? {
             approvalNormalization: {
-              interruptedToolCallIds: queuedInterruptedToolCallIds,
+              interruptedToolCallIds:
+                pendingNormalizationInterruptedToolCallIds,
             },
           }
         : {}),
-    };
+    });
 
-    let stream = await sendMessageStreamWithRetry(
-      conversationId,
-      currentInput,
-      sendOptions,
-      socket,
-      runtime,
-      runtime.activeAbortController.signal,
-    );
+    const isPureApprovalContinuation =
+      currentInput.length === 1 &&
+      currentInput[0] !== undefined &&
+      "type" in currentInput[0] &&
+      currentInput[0].type === "approval";
+
+    let stream = isPureApprovalContinuation
+      ? await sendApprovalContinuationWithRetry(
+          conversationId,
+          currentInput,
+          buildSendOptions(),
+          socket,
+          runtime,
+          runtime.activeAbortController.signal,
+        )
+      : await sendMessageStreamWithRetry(
+          conversationId,
+          currentInput,
+          buildSendOptions(),
+          socket,
+          runtime,
+          runtime.activeAbortController.signal,
+        );
+    if (!stream) {
+      return;
+    }
+    pendingNormalizationInterruptedToolCallIds = [];
     setLoopStatus(runtime, "PROCESSING_API_RESPONSE", {
       agent_id: agentId,
       conversation_id: conversationId,
@@ -3693,6 +4485,7 @@ async function handleIncomingMessage(
 
       const stopReason = result.stopReason;
       const approvals = result.approvals || [];
+      lastApprovalContinuationAccepted = false;
 
       // Case 1: Turn ended normally
       if (stopReason === "end_turn") {
@@ -3735,9 +4528,11 @@ async function handleIncomingMessage(
 
       // Case 3: Error (or cancel-induced error)
       if (stopReason !== "requires_approval") {
-        const errorDetail = await fetchRunErrorDetail(
-          runId || runtime.activeRunId || msgRunIds[msgRunIds.length - 1],
-        ).catch(() => null);
+        const lastRunId =
+          runId || runtime.activeRunId || msgRunIds[msgRunIds.length - 1];
+        const errorDetail = await fetchRunErrorDetail(lastRunId).catch(
+          () => null,
+        );
 
         if (
           !runtime.cancelRequested &&
@@ -3781,14 +4576,183 @@ async function handleIncomingMessage(
             agent_id: agentId,
             conversation_id: conversationId,
           });
-          stream = await sendMessageStreamWithRetry(
-            conversationId,
-            currentInput,
-            sendOptions,
-            socket,
-            runtime,
-            runtime.activeAbortController.signal,
+          stream =
+            currentInput.length === 1 &&
+            currentInput[0] !== undefined &&
+            "type" in currentInput[0] &&
+            currentInput[0].type === "approval"
+              ? await sendApprovalContinuationWithRetry(
+                  conversationId,
+                  currentInput,
+                  buildSendOptions(),
+                  socket,
+                  runtime,
+                  runtime.activeAbortController.signal,
+                )
+              : await sendMessageStreamWithRetry(
+                  conversationId,
+                  currentInput,
+                  buildSendOptions(),
+                  socket,
+                  runtime,
+                  runtime.activeAbortController.signal,
+                );
+          if (!stream) {
+            return;
+          }
+          pendingNormalizationInterruptedToolCallIds = [];
+          setLoopStatus(runtime, "PROCESSING_API_RESPONSE", {
+            agent_id: agentId,
+            conversation_id: conversationId,
+          });
+          turnToolContextId = getStreamToolContextId(
+            stream as Stream<LettaStreamingResponse>,
           );
+          continue;
+        }
+
+        if (
+          isEmptyResponseRetryable(
+            stopReason === "llm_api_error" ? "llm_error" : undefined,
+            errorDetail,
+            emptyResponseRetries,
+            EMPTY_RESPONSE_MAX_RETRIES,
+          )
+        ) {
+          emptyResponseRetries += 1;
+          const attempt = emptyResponseRetries;
+          const delayMs = getRetryDelayMs({
+            category: "empty_response",
+            attempt,
+          });
+
+          if (attempt >= EMPTY_RESPONSE_MAX_RETRIES) {
+            currentInput = [
+              ...currentInput,
+              {
+                type: "message" as const,
+                role: "system" as const,
+                content:
+                  "<system-reminder>The previous response was empty. Please provide a response with either text content or a tool call.</system-reminder>",
+              },
+            ];
+          }
+
+          emitRetryDelta(socket, runtime, {
+            message: `Empty LLM response, retrying (attempt ${attempt}/${EMPTY_RESPONSE_MAX_RETRIES})...`,
+            reason: "llm_api_error",
+            attempt,
+            maxAttempts: EMPTY_RESPONSE_MAX_RETRIES,
+            delayMs,
+            runId: lastRunId || undefined,
+            agentId,
+            conversationId,
+          });
+
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
+          if (runtime.activeAbortController.signal.aborted) {
+            throw new Error("Cancelled by user");
+          }
+
+          setLoopStatus(runtime, "SENDING_API_REQUEST", {
+            agent_id: agentId,
+            conversation_id: conversationId,
+          });
+          stream =
+            currentInput.length === 1 &&
+            currentInput[0] !== undefined &&
+            "type" in currentInput[0] &&
+            currentInput[0].type === "approval"
+              ? await sendApprovalContinuationWithRetry(
+                  conversationId,
+                  currentInput,
+                  buildSendOptions(),
+                  socket,
+                  runtime,
+                  runtime.activeAbortController.signal,
+                )
+              : await sendMessageStreamWithRetry(
+                  conversationId,
+                  currentInput,
+                  buildSendOptions(),
+                  socket,
+                  runtime,
+                  runtime.activeAbortController.signal,
+                );
+          if (!stream) {
+            return;
+          }
+          pendingNormalizationInterruptedToolCallIds = [];
+          setLoopStatus(runtime, "PROCESSING_API_RESPONSE", {
+            agent_id: agentId,
+            conversation_id: conversationId,
+          });
+          turnToolContextId = getStreamToolContextId(
+            stream as Stream<LettaStreamingResponse>,
+          );
+          continue;
+        }
+
+        const retriable = await isRetriablePostStopError(
+          (stopReason as StopReasonType) || "error",
+          lastRunId,
+        );
+        if (retriable && llmApiErrorRetries < LLM_API_ERROR_MAX_RETRIES) {
+          llmApiErrorRetries += 1;
+          const attempt = llmApiErrorRetries;
+          const delayMs = getRetryDelayMs({
+            category: "transient_provider",
+            attempt,
+            detail: errorDetail,
+          });
+          const retryMessage =
+            getRetryStatusMessage(errorDetail) ||
+            `LLM API error encountered, retrying (attempt ${attempt}/${LLM_API_ERROR_MAX_RETRIES})...`;
+          emitRetryDelta(socket, runtime, {
+            message: retryMessage,
+            reason: "llm_api_error",
+            attempt,
+            maxAttempts: LLM_API_ERROR_MAX_RETRIES,
+            delayMs,
+            runId: lastRunId || undefined,
+            agentId,
+            conversationId,
+          });
+
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
+          if (runtime.activeAbortController.signal.aborted) {
+            throw new Error("Cancelled by user");
+          }
+
+          setLoopStatus(runtime, "SENDING_API_REQUEST", {
+            agent_id: agentId,
+            conversation_id: conversationId,
+          });
+          stream =
+            currentInput.length === 1 &&
+            currentInput[0] !== undefined &&
+            "type" in currentInput[0] &&
+            currentInput[0].type === "approval"
+              ? await sendApprovalContinuationWithRetry(
+                  conversationId,
+                  currentInput,
+                  buildSendOptions(),
+                  socket,
+                  runtime,
+                  runtime.activeAbortController.signal,
+                )
+              : await sendMessageStreamWithRetry(
+                  conversationId,
+                  currentInput,
+                  buildSendOptions(),
+                  socket,
+                  runtime,
+                  runtime.activeAbortController.signal,
+                );
+          if (!stream) {
+            return;
+          }
+          pendingNormalizationInterruptedToolCallIds = [];
           setLoopStatus(runtime, "PROCESSING_API_RESPONSE", {
             agent_id: agentId,
             conversation_id: conversationId,
@@ -3893,6 +4857,7 @@ async function handleIncomingMessage(
           alwaysRequiresUserInput: isInteractiveApprovalTool,
           treatAskAsDeny: false, // Let cloud UI handle approvals
           requireArgsForAutoApprove: true,
+          missingNameReason: "Tool call incomplete - missing name",
           workingDirectory: turnWorkingDirectory,
         });
 
@@ -4044,6 +5009,14 @@ async function handleIncomingMessage(
           executionResults,
           lastExecutingToolCallIds,
         );
+      validateApprovalResultIds(
+        decisions.map((decision) => ({
+          approval: {
+            toolCallId: decision.approval.toolCallId,
+          },
+        })),
+        persistedExecutionResults,
+      );
       emitToolExecutionFinishedEvents(socket, runtime, {
         approvals: persistedExecutionResults,
         runId: executionRunId,
@@ -4063,11 +5036,6 @@ async function handleIncomingMessage(
           undefined,
         "tool-return",
       );
-      clearPendingApprovalBatchIds(
-        runtime,
-        decisions.map((decision) => decision.approval),
-      );
-
       // Create fresh approval stream for next iteration
       currentInput = [
         {
@@ -4079,25 +5047,46 @@ async function handleIncomingMessage(
         agent_id: agentId,
         conversation_id: conversationId,
       });
-      stream = await sendMessageStreamWithRetry(
+      stream = await sendApprovalContinuationWithRetry(
         conversationId,
         currentInput,
-        sendOptions,
+        buildSendOptions(),
         socket,
         runtime,
         runtime.activeAbortController.signal,
       );
+      if (!stream) {
+        return;
+      }
+      pendingNormalizationInterruptedToolCallIds = [];
+      clearPendingApprovalBatchIds(
+        runtime,
+        decisions.map((decision) => decision.approval),
+      );
+      await debugLogApprovalResumeState(runtime, {
+        agentId,
+        conversationId,
+        expectedToolCallIds: collectDecisionToolCallIds(
+          decisions.map((decision) => ({
+            approval: {
+              toolCallId: decision.approval.toolCallId,
+            },
+          })),
+        ),
+        sentToolCallIds: collectApprovalResultToolCallIds(
+          persistedExecutionResults,
+        ),
+      });
       setLoopStatus(runtime, "PROCESSING_API_RESPONSE", {
         agent_id: agentId,
         conversation_id: conversationId,
       });
 
-      // Results were successfully submitted to the backend — clear both so a
-      // cancel during the subsequent stream drain won't queue already-sent
-      // results (Path A) or re-deny already-resolved tool calls (Path B).
-      lastExecutionResults = null;
-      lastExecutingToolCallIds = [];
-      lastNeedsUserInputToolCallIds = [];
+      // The continuation request has been accepted by the backend, but do not
+      // drop the local approval snapshots until that continuation stream yields
+      // a stable stop. Catch/interrupt paths still need to distinguish
+      // "already submitted" from "not yet submitted".
+      lastApprovalContinuationAccepted = true;
       runtime.activeExecutingToolCallIds = [];
       emitRuntimeStateUpdates(runtime, {
         agent_id: agentId,
@@ -4110,32 +5099,35 @@ async function handleIncomingMessage(
     }
   } catch (error) {
     if (runtime.cancelRequested) {
-      // Queue interrupted tool-call resolutions for the next message turn.
-      populateInterruptQueue(runtime, {
-        lastExecutionResults,
-        lastExecutingToolCallIds,
-        lastNeedsUserInputToolCallIds,
-        agentId: agentId || "",
-        conversationId,
-      });
-      const approvalsForEmission = getInterruptApprovalsForEmission(runtime, {
-        lastExecutionResults,
-        agentId: agentId || "",
-        conversationId,
-      });
-      if (approvalsForEmission) {
-        emitToolExecutionFinishedEvents(socket, runtime, {
-          approvals: approvalsForEmission,
-          runId: runtime.activeRunId || msgRunIds[msgRunIds.length - 1],
+      if (!lastApprovalContinuationAccepted) {
+        // Queue interrupted tool-call resolutions for the next message turn
+        // only if the approval continuation has not yet been accepted.
+        populateInterruptQueue(runtime, {
+          lastExecutionResults,
+          lastExecutingToolCallIds,
+          lastNeedsUserInputToolCallIds,
           agentId: agentId || "",
           conversationId,
         });
-        emitInterruptToolReturnMessage(
-          socket,
-          runtime,
-          approvalsForEmission,
-          runtime.activeRunId || msgRunIds[msgRunIds.length - 1] || undefined,
-        );
+        const approvalsForEmission = getInterruptApprovalsForEmission(runtime, {
+          lastExecutionResults,
+          agentId: agentId || "",
+          conversationId,
+        });
+        if (approvalsForEmission) {
+          emitToolExecutionFinishedEvents(socket, runtime, {
+            approvals: approvalsForEmission,
+            runId: runtime.activeRunId || msgRunIds[msgRunIds.length - 1],
+            agentId: agentId || "",
+            conversationId,
+          });
+          emitInterruptToolReturnMessage(
+            socket,
+            runtime,
+            approvalsForEmission,
+            runtime.activeRunId || msgRunIds[msgRunIds.length - 1] || undefined,
+          );
+        }
       }
 
       runtime.lastStopReason = "cancelled";
@@ -4227,6 +5219,7 @@ export const __listenClientTestUtils = {
   populateInterruptQueue,
   setConversationWorkingDirectory,
   consumeInterruptQueue,
+  stashRecoveredApprovalInterrupts,
   extractInterruptToolReturns,
   emitInterruptToolReturnMessage,
   emitInterruptedStatusDelta,
@@ -4237,5 +5230,7 @@ export const __listenClientTestUtils = {
   shouldAttemptPostStopApprovalRecovery,
   normalizeMessageContentImages,
   normalizeInboundMessages,
+  recoverApprovalStateForSync,
+  clearRecoveredApprovalStateForScope,
   emitStateSync,
 };

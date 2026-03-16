@@ -74,7 +74,9 @@ describe("getResumeData", () => {
     const conversationsList = mock(async () => ({
       getPaginatedItems: () => [],
     }));
-    const agentsList = mock(async () => ({ items: [] }));
+    const agentsList = mock(async () => ({
+      getPaginatedItems: () => [makeApprovalMessage()],
+    }));
     const messagesRetrieve = mock(async () => [makeApprovalMessage()]);
 
     const client = {
@@ -93,10 +95,34 @@ describe("getResumeData", () => {
       { includeMessageHistory: false },
     );
 
-    expect(messagesRetrieve).toHaveBeenCalledTimes(1);
-    expect(agentsList).toHaveBeenCalledTimes(0);
+    expect(messagesRetrieve).toHaveBeenCalledTimes(0);
+    expect(agentsList).toHaveBeenCalledTimes(1);
     expect(resume.pendingApprovals).toHaveLength(1);
     expect(resume.messageHistory).toEqual([]);
+  });
+
+  test("default conversation resume ignores stale agent.message_ids and uses default conversation stream", async () => {
+    const agentsList = mock(async () => ({
+      getPaginatedItems: () => [makeApprovalMessage("msg-default-latest")],
+    }));
+    const messagesRetrieve = mock(async () => [makeUserMessage("msg-stale")]);
+
+    const client = {
+      agents: { messages: { list: agentsList } },
+      messages: { retrieve: messagesRetrieve },
+    } as unknown as Letta;
+
+    const resume = await getResumeData(
+      client,
+      makeAgent({ message_ids: ["msg-stale"] }),
+      "default",
+      { includeMessageHistory: false },
+    );
+
+    expect(agentsList).toHaveBeenCalledTimes(1);
+    expect(messagesRetrieve).toHaveBeenCalledTimes(0);
+    expect(resume.pendingApprovals).toHaveLength(1);
+    expect(resume.pendingApprovals[0]?.toolCallId).toBe("tool-1");
   });
 
   test("default behavior keeps backfill enabled when options are omitted", async () => {
@@ -121,7 +147,7 @@ describe("getResumeData", () => {
 
     const resume = await getResumeData(client, makeAgent(), "default");
 
-    expect(messagesRetrieve).toHaveBeenCalledTimes(1);
+    expect(messagesRetrieve).toHaveBeenCalledTimes(0);
     expect(agentsList).toHaveBeenCalledTimes(1);
     expect(resume.pendingApprovals).toHaveLength(0);
     expect(resume.messageHistory.length).toBeGreaterThan(0);

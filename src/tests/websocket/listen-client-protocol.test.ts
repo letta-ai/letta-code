@@ -573,6 +573,62 @@ describe("listen-client v2 status builders", () => {
     });
   });
 
+  test("sync ignores backend recovered approvals while a live turn is already processing", async () => {
+    const runtime = __listenClientTestUtils.createRuntime();
+    runtime.isProcessing = true;
+    runtime.loopStatus = "PROCESSING_API_RESPONSE";
+    runtime.activeAgentId = "agent-1";
+    runtime.activeConversationId = "default";
+    runtime.recoveredApprovalState = {
+      agentId: "agent-1",
+      conversationId: "default",
+      approvalsByRequestId: new Map([
+        [
+          "perm-stale",
+          {
+            approval: {} as never,
+            controlRequest: makeControlRequest("perm-stale"),
+          },
+        ],
+      ]),
+      pendingRequestIds: new Set(["perm-stale"]),
+      responsesByRequestId: new Map(),
+    };
+
+    await __listenClientTestUtils.recoverApprovalStateForSync?.(runtime, {
+      agent_id: "agent-1",
+      conversation_id: "default",
+    });
+
+    expect(runtime.recoveredApprovalState).toBeNull();
+  });
+
+  test("starting a live turn clears stale recovered approvals for the same scope", () => {
+    const runtime = __listenClientTestUtils.createRuntime();
+    runtime.recoveredApprovalState = {
+      agentId: "agent-1",
+      conversationId: "default",
+      approvalsByRequestId: new Map([
+        [
+          "perm-stale",
+          {
+            approval: {} as never,
+            controlRequest: makeControlRequest("perm-stale"),
+          },
+        ],
+      ]),
+      pendingRequestIds: new Set(["perm-stale"]),
+      responsesByRequestId: new Map(),
+    };
+
+    __listenClientTestUtils.clearRecoveredApprovalStateForScope(runtime, {
+      agent_id: "agent-1",
+      conversation_id: "default",
+    });
+
+    expect(runtime.recoveredApprovalState).toBeNull();
+  });
+
   test("scopes working directory to requested agent and conversation", () => {
     const runtime = __listenClientTestUtils.createRuntime();
     __listenClientTestUtils.setConversationWorkingDirectory(
@@ -744,6 +800,68 @@ describe("listen-client interrupt queue projection", () => {
       tool_call_id: "call-awaiting-approval",
       approve: false,
     });
+  });
+
+  test("recovered approvals are stashed as denials on interrupt", () => {
+    const runtime = __listenClientTestUtils.createRuntime();
+    runtime.recoveredApprovalState = {
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      approvalsByRequestId: new Map([
+        [
+          "perm-tool-1",
+          {
+            approval: {
+              toolCallId: "tool-1",
+              toolName: "Bash",
+              toolArgs: '{"command":"ls"}',
+            },
+            controlRequest: makeControlRequest("perm-tool-1"),
+          },
+        ],
+        [
+          "perm-tool-2",
+          {
+            approval: {
+              toolCallId: "tool-2",
+              toolName: "Bash",
+              toolArgs: '{"command":"pwd"}',
+            },
+            controlRequest: makeControlRequest("perm-tool-2"),
+          },
+        ],
+      ]),
+      pendingRequestIds: new Set(["perm-tool-1", "perm-tool-2"]),
+      responsesByRequestId: new Map(),
+    };
+
+    const stashed = __listenClientTestUtils.stashRecoveredApprovalInterrupts(
+      runtime,
+      runtime.recoveredApprovalState,
+    );
+
+    expect(stashed).toBe(true);
+    expect(runtime.recoveredApprovalState).toBeNull();
+
+    const consumed = __listenClientTestUtils.consumeInterruptQueue(
+      runtime,
+      "agent-1",
+      "conv-1",
+    );
+    expect(consumed?.approvalMessage.approvals).toEqual([
+      {
+        type: "approval",
+        tool_call_id: "tool-1",
+        approve: false,
+        reason: "User interrupted the stream",
+      },
+      {
+        type: "approval",
+        tool_call_id: "tool-2",
+        approve: false,
+        reason: "User interrupted the stream",
+      },
+    ]);
   });
 });
 
