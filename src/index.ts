@@ -1793,6 +1793,19 @@ async function main(): Promise<void> {
           }
         }
 
+        const startupAgentId = agent.id;
+        void import("./tools/toolset")
+          .then(({ clearPersistedClientToolRules }) =>
+            clearPersistedClientToolRules(startupAgentId),
+          )
+          .then((cleanup) => {
+            if (cleanup && process.env.DEBUG) {
+              console.warn(
+                `[startup] Cleared persisted client tool rules for ${startupAgentId}: ${cleanup.removedToolNames.join(", ")}`,
+              );
+            }
+          });
+
         // Handle conversation: either resume existing or create new
         // Using definite assignment assertion - all branches below either set this or exit/throw
         let conversationIdToUse!: string;

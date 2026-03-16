@@ -1042,6 +1042,18 @@ export async function handleHeadlessCommand(
     }
   }
 
+  void import("./tools/toolset")
+    .then(({ clearPersistedClientToolRules }) =>
+      clearPersistedClientToolRules(agent.id),
+    )
+    .then((cleanup) => {
+      if (cleanup && process.env.DEBUG) {
+        console.warn(
+          `[headless startup] Cleared persisted client tool rules for ${agent.id}: ${cleanup.removedToolNames.join(", ")}`,
+        );
+      }
+    });
+
   try {
     effectiveReflectionSettings = await applyReflectionOverrides(
       agent.id,
