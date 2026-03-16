@@ -25,6 +25,7 @@ import { buildClientSkillsPayload } from "./clientSkills";
 
 const streamRequestStartTimes = new WeakMap<object, number>();
 const streamToolContextIds = new WeakMap<object, string>();
+const lastSentClientSkillsFingerprintByConversation = new Map<string, string>();
 
 export type StreamRequestContext = {
   conversationId: string;
@@ -59,6 +60,41 @@ export type SendMessageStreamOptions = {
   approvalNormalization?: ApprovalNormalizationOptions;
   workingDirectory?: string;
 };
+
+type ClientSkillsPayload = NonNullable<
+  ConversationMessageCreateParams["client_skills"]
+>;
+
+type SelectedClientSkillsForRequest = {
+  clientSkillsForRequest: ClientSkillsPayload;
+  stateKey: string;
+  fingerprintToPersist: string | null;
+};
+
+export function selectClientSkillsForRequest(
+  conversationId: string,
+  agentId: string | undefined,
+  clientSkills: ClientSkillsPayload,
+  previousFingerprints: Map<string, string> =
+    lastSentClientSkillsFingerprintByConversation,
+): SelectedClientSkillsForRequest {
+  const stateKey = `${agentId ?? ""}:${conversationId}`;
+  const fingerprint = JSON.stringify(clientSkills);
+
+  if (previousFingerprints.get(stateKey) === fingerprint) {
+    return {
+      clientSkillsForRequest: [],
+      stateKey,
+      fingerprintToPersist: null,
+    };
+  }
+
+  return {
+    clientSkillsForRequest: clientSkills,
+    stateKey,
+    fingerprintToPersist: fingerprint,
+  };
+}
 
 export function buildConversationMessagesCreateRequestBody(
   conversationId: string,
@@ -128,6 +164,11 @@ export async function sendMessageStream(
     await buildClientSkillsPayload({
       agentId: opts.agentId,
     });
+  const {
+    clientSkillsForRequest,
+    stateKey: clientSkillsStateKey,
+    fingerprintToPersist: clientSkillsFingerprintToPersist,
+  } = selectClientSkillsForRequest(conversationId, opts.agentId, clientSkills);
 
   const resolvedConversationId = conversationId;
   const requestBody = buildConversationMessagesCreateRequestBody(
@@ -135,7 +176,7 @@ export async function sendMessageStream(
     messages,
     opts,
     clientTools,
-    clientSkills,
+    clientSkillsForRequest,
   );
 
   if (process.env.DEBUG) {
@@ -143,11 +184,11 @@ export async function sendMessageStream(
       `[DEBUG] sendMessageStream: conversationId=${conversationId}, agentId=${opts.agentId ?? "(none)"}`,
     );
 
-    const formattedSkills = clientSkills.map(
+    const formattedSkills = clientSkillsForRequest.map(
       (skill) => `${skill.name} (${skill.location})`,
     );
     console.log(
-      `[DEBUG] sendMessageStream: client_skills (${clientSkills.length}) ${
+      `[DEBUG] sendMessageStream: client_skills discovered=${clientSkills.length} sent=${clientSkillsForRequest.length} ${
         formattedSkills.length > 0 ? formattedSkills.join(", ") : "(none)"
       }`,
     );
@@ -222,6 +263,13 @@ export async function sendMessageStream(
     "request_ok conversation_id=%s",
     resolvedConversationId,
   );
+
+  if (clientSkillsFingerprintToPersist !== null) {
+    lastSentClientSkillsFingerprintByConversation.set(
+      clientSkillsStateKey,
+      clientSkillsFingerprintToPersist,
+    );
+  }
 
   if (requestStartTime !== undefined) {
     streamRequestStartTimes.set(stream as object, requestStartTime);
