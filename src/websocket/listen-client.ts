@@ -1426,7 +1426,11 @@ function buildDeviceStatus(
 ): DeviceStatus {
   const scopedAgentId = resolveScopedAgentId(runtime, params);
   const scopedConversationId = resolveScopedConversationId(runtime, params);
-  const scopeActive = isScopeCurrentlyActive(runtime, scopedAgentId, scopedConversationId);
+  const scopeActive = isScopeCurrentlyActive(
+    runtime,
+    scopedAgentId,
+    scopedConversationId,
+  );
   const toolsetPreference = (() => {
     if (!scopedAgentId) {
       return "auto" as const;
@@ -1468,7 +1472,11 @@ function buildLoopStatus(
 ): LoopState {
   const scopedAgentId = resolveScopedAgentId(runtime, params);
   const scopedConversationId = resolveScopedConversationId(runtime, params);
-  const scopeActive = isScopeCurrentlyActive(runtime, scopedAgentId, scopedConversationId);
+  const scopeActive = isScopeCurrentlyActive(
+    runtime,
+    scopedAgentId,
+    scopedConversationId,
+  );
 
   // If the requested scope is NOT the one currently executing, report idle.
   if (!scopeActive) {
@@ -1653,7 +1661,11 @@ function emitQueueUpdate(
 ): void {
   const scopedAgentId = resolveScopedAgentId(runtime, scope);
   const scopedConversationId = resolveScopedConversationId(runtime, scope);
-  const scopeActive = isScopeCurrentlyActive(runtime, scopedAgentId, scopedConversationId);
+  const scopeActive = isScopeCurrentlyActive(
+    runtime,
+    scopedAgentId,
+    scopedConversationId,
+  );
 
   const message: Omit<
     QueueUpdateMessage,
