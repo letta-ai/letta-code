@@ -1,41 +1,137 @@
 ---
 name: dispatching-coding-agents
-description: Dispatch stateless coding agents which lack memory, but have isolated context and run in a different harness (Claude Code or Codex). Use these other agents when you need help for especially difficult tasks (for example, if you are looping or hitting a wall) or need a second opinion. 
+description: Dispatch stateless coding agents (Claude Code or Codex) via Bash. Use when you're stuck, need a second opinion, or need parallel research on a hard problem. They have no memory — you must provide all context.
 ---
 
 # Dispatching Coding Agents
 
-You can shell out to **Claude Code** (`claude`) and **Codex** (`codex`) as stateless sub-agents via Bash. They have full filesystem and tool access but **zero memory** — you must provide all necessary context in the prompt.
+You can shell out to **Claude Code** (`claude`) and **Codex** (`codex`) as stateless sub-agents via Bash. They have full filesystem and tool access but **zero memory** — every session starts from scratch.
 
-## Using Claude Code and Codex as subagents
-Claude Code and Codex are highly optimized coding agents, but are re-born with each new session. Think of them like a brilliant intern that showed up today. They know nothing, but may sometimes have a fresher perspective in part due to their naivety. In addition, their complete clueleness means you can give them just the right amount of context to maximize performance with minimal context bloat. 
+**Always dispatch with `run_in_background: true`** on the Bash call so you can keep working while they run. Check results later with `TaskOutput`. Don't sit idle waiting for a subagent.
 
-You are the experienced agent manager that interfaces with the user, and has already learned about the user and their work through experience and the ability to form memories and learn. When using Claude Code or Codex as subagents, you need to provide them with any context they might need for them to perform their best. This includes: 
-* **Detailed task desription**: Explain exactly what you need them to to. Be specific - tell them exactly what to investigate or implement and what files to look at. 
-* **Relevant context**: Provide any relevant filepaths (e.g. parts of the code, reference materials) and important high-level context (e.g. details about the code architecture)
-* **High level guidance**: Communicate any preferences or general guidance that you are aware of. Help them avoid having to be corrected by the user. 
+## The Core Mental Model
 
-Remember, they wont know anything unless you provide the information to them. Once you have initiated a session, you can continue interacting the the same session which will persist the same context and message histories (though the subagent's context may eventaully be compacted). Creating a new session will wipe all messages. If subagents ask for clarification or require feedback, respond to them in the same session to avoid losing the conversation. 
+Claude Code and Codex are highly optimized coding agents, but are re-born with each new session. Think of them like a brilliant intern that showed up today. They know nothing, but may sometimes have a fresher perspective in part due to their naivety. In addition, their complete cluelessness means you can give them just the right amount of context to maximize performance with minimal context bloat.
 
-## Deciding on which subagent to use
-Different agents have different strength and weaknesses. Choose your subagent's configuration accordingly. You should update your memory with observations about how these agents perform for the tasks you give them to rely on your own analysis over time. Below are initial recommendations for agents: 
+You are the experienced manager that interfaces with the user, with persistent memory of their preferences, the codebase, past decisions, and hard-won lessons. Your job is to distill that knowledge into a prompt that lets these capable-but-clueless agents do their best work. They won't know anything you don't tell them:
 
-Codex (Codex 5.3) 
-* Strengths: Frontier reasoning, excellent at debugging, best option for the hardest tasks
-* Weaknesses: Slow with long trajectories, designed primarily for coding, compactions can destroy trajectories
+- **Specific task**: Not "look into the auth system" but "trace the request flow from `POST /v1/agents/{id}/messages` in `routers/v1/agents.py` through to the LLM call in `letta/llm_api/`. Cite files and line numbers."
+- **File paths and architecture**: Tell them exactly where to look and how pieces connect. They will wander aimlessly without this.
+- **Preferences and constraints**: Code style, error handling patterns, things the user has corrected you on. Save them from making mistakes you already learned from.
+- **What you've already tried**: If you're dispatching because you're stuck, this prevents them from rediscovering your dead ends.
 
-Codex (GPT 5.4) 
-* Strengths: Easier for humans to understand, general-purpose, faster 
-* Weaknesses: More likely to make silly errors than Codex 5.3
+Their cluelessness is also an advantage — you can give them just the right amount of context to maximize performance with minimal noise. But anything you don't tell them, they don't know.
 
-Claude Code (Opus 4.6) 
-* Strengths: Excellent writer, understands vague instructions, excellent for coding but also general-purpose
-* Weaknesses: Tends to generate "slop", writing excessive quantities of code unnecessary
+If a subagent needs clarification or asks a question, respond in the same session (see Session Resumption below) — don't start a new session or you'll lose the conversation context.
 
-## Learning from your subagents
-Once your subagents have completed, you can use the `history-analyzer` subagent to access past Claude Code and Codex sessions and see if they have discovered anything potentially relevant for future tasks, or to evaluate their performance to inform future subagent invocations. 
+## When to Dispatch (and When Not To)
 
-## Invoking coding subagents
+### Dispatch for:
+- **Hard debugging** — you've been looping on a problem and need fresh eyes
+- **Second opinions** — you want validation before a risky change
+- **Parallel research** — investigate multiple hypotheses simultaneously
+- **Large-scope investigation** — tracing a flow across many files in an unfamiliar area
+- **Code review** — have another agent review your diff or plan
+
+### Don't dispatch for:
+- Simple file reads, greps, or small edits — faster to do yourself
+- Anything that takes less than ~3 minutes of direct work
+- Tasks where you already know exactly what to do
+- When context transfer would take longer than just doing the task
+
+## Choosing an Agent and Model
+
+Different agents have different strengths. Track what works in your memory over time — your own observations are more valuable than these defaults.
+
+### Categories
+
+**Codex:**
+- `gpt-5.3-codex` — Frontier reasoning. Best for the hardest debugging and complex tasks.
+  - Strengths: Best reasoning, excellent at debugging, best option for the hardest tasks
+  - Weaknesses: Slow with long trajectories, compactions can destroy trajectories
+- `gpt-5.4` — Latest frontier model. Fast and general-purpose.
+  - Strengths: Easier for humans to understand, general-purpose, faster
+  - Weaknesses: More likely to make silly errors than gpt-5.3-codex
+
+**Claude Code:**
+- `opus` — Excellent writer. Best for docs, refactors, open-ended tasks, and vague instructions.
+  - Strengths: Excellent writer, understands vague instructions, excellent for coding but also general-purpose
+  - Weaknesses: Tends to generate "slop", writing excessive quantities of code unnecessarily. Can hang on large repos.
+
+### Cost and speed tradeoffs
+- Frontier models (`gpt-5.3-codex`, Opus) are slower and more expensive — use for tasks that justify it
+- Fast models (`gpt-5.4`) are good for quick checks and simple tasks
+- Use `--max-budget-usd N` (Claude Code) to cap spend on exploratory tasks
+
+### Known quirks
+- **Claude Code can hang on large repos** with unrestricted tools — consider `--allowedTools "Read Grep Glob"` (no Bash) and shorter timeouts for research tasks
+- **Codex compactions can destroy long trajectories** — for very long tasks, prefer multiple shorter sessions over one marathon
+- **Opus tends to over-generate** — produces more code than necessary. Good for exploration, verify before applying.
+
+## Prompting Subagents
+
+### Prompt template
+```
+TASK: [one-sentence summary]
+
+CONTEXT:
+- Repo: [path]
+- Key files: [list specific files and what they contain]
+- Architecture: [brief relevant context]
+
+WHAT TO DO:
+[specific, step-by-step instructions]
+
+CONSTRAINTS:
+- [any preferences, patterns to follow, things to avoid]
+- [what you've already tried, if dispatching because stuck]
+
+OUTPUT:
+[what you want back — a diff, a list of files, a root cause analysis, etc.]
+```
+
+### What makes a good prompt
+- **Be specific about files** — "look at `src/agent/message.ts` lines 40-80" not "look at the message handling code"
+- **State the output format** — "return a bullet list of findings" vs. leaving it open-ended
+- **Include constraints** — if the user prefers certain patterns, say so explicitly
+- **Provide what you've tried** — when dispatching because you're stuck, this prevents them from repeating your dead ends
+
+## Dispatch Patterns
+
+### Parallel research — multiple perspectives
+Run Claude Code and Codex simultaneously on the same question via separate Bash calls in a single message (use `run_in_background: true`). Compare results for higher confidence.
+
+### Background dispatch — keep working while they run
+Use `run_in_background: true` on the Bash call to dispatch async. Continue your own work, then check results with `TaskOutput` when ready.
+
+### Deep investigation — frontier models
+For hard problems, use the strongest available models:
+```bash
+codex exec "YOUR PROMPT" -m gpt-5.3-codex --full-auto -C /path/to/repo
+```
+
+### Code review — cross-agent validation
+Have one agent write code or create a plan, then dispatch another to review:
+```bash
+claude -p "Review the following diff for correctness, edge cases, and missed error handling:\n\n$(git diff)" \
+  --model opus --dangerously-skip-permissions
+```
+
+### Get outside feedback on your work
+Write your plan or analysis to a file, then ask a subagent to critique it:
+```bash
+claude -p "Read /tmp/my-plan.md and critique it. What am I missing? What could go wrong?" \
+  --model opus --dangerously-skip-permissions -C /path/to/repo
+```
+
+## Handling Failures
+
+- **Timeout**: If an agent times out (especially Claude Code on large repos), try: (1) a shorter, more focused prompt, (2) restricting tools with `--allowedTools`, (3) switching to Codex which handles large repos better
+- **Garbage output**: If results are incoherent, the prompt was probably too vague. Rewrite with more specific file paths and clearer instructions.
+- **Session errors**: Claude Code can hit "stale approval from interrupted session" — `--dangerously-skip-permissions` prevents this. If Codex errors, start a fresh `exec` session.
+- **Compaction mid-task**: If a Codex session runs long enough to compact, it may lose earlier context. Break long tasks into smaller sequential sessions.
+
+## CLI Reference
 
 ### Claude Code
 
@@ -43,156 +139,80 @@ Once your subagents have completed, you can use the `history-analyzer` subagent 
 claude -p "YOUR PROMPT" --model MODEL --dangerously-skip-permissions
 ```
 
-- `-p` / `--print`: non-interactive mode, prints response and exits
-- `--dangerously-skip-permissions`: use in trusted repos to skip approval prompts. Without this, killed/timed-out sessions can leave stale approval state that blocks future runs with "stale approval from interrupted session" errors.
-- `--model MODEL`: alias (`sonnet`, `opus`) or full name (`claude-sonnet-4-6`)
-- `--effort LEVEL`: `low`, `medium`, `high` — controls reasoning depth
-- `--append-system-prompt "..."`: inject additional system instructions
-- `--allowedTools "Bash Edit Read"`: restrict available tools
-- `--max-budget-usd N`: cap spend for the invocation
-- `-C DIR`: set working directory
-
-Example — research task with Opus:
-```bash
-claude -p "Trace the request flow from POST /agents/{id}/messages through to the LLM call. Cite files and line numbers." \
-  --model opus --dangerously-skip-permissions -C /path/to/repo
-```
+| Flag | Purpose |
+|------|---------|
+| `-p` / `--print` | Non-interactive mode, prints response and exits |
+| `--dangerously-skip-permissions` | Skip approval prompts (prevents stale approval errors on timeout) |
+| `--model MODEL` | Alias (`sonnet`, `opus`) or full name (`claude-sonnet-4-6`) |
+| `--effort LEVEL` | `low`, `medium`, `high` — controls reasoning depth |
+| `--append-system-prompt "..."` | Inject additional system instructions |
+| `--allowedTools "Bash Edit Read"` | Restrict available tools |
+| `--max-budget-usd N` | Cap spend for the invocation |
+| `-C DIR` | Set working directory |
+| `--output-format json` | Structured output with `session_id`, `cost_usd`, `duration_ms` |
 
 ### Codex
 
 ```bash
-codex exec "YOUR PROMPT" -m codex-5.3 --full-auto
+codex exec "YOUR PROMPT" -m gpt-5.3-codex --full-auto
 ```
 
-- `exec`: non-interactive mode
-- `-m MODEL`: prefer `codex-5.3` (frontier), also `gpt-5.2`, `o3`
-- `--full-auto`: auto-approve commands in sandbox (equivalent to `-a on-request --sandbox workspace-write`)
-- `-C DIR`: set working directory
-- `--search`: enable web search tool
+| Flag | Purpose |
+|------|---------|
+| `exec` | Non-interactive mode |
+| `-m MODEL` | `gpt-5.3-codex` (frontier), `gpt-5.4` (fast), `gpt-5.3-codex-spark` (ultra-fast), `gpt-5.2-codex`, `gpt-5.2` |
+| `--full-auto` | Auto-approve all commands in sandbox |
+| `-C DIR` | Set working directory |
+| `--search` | Enable web search tool |
 
-Example — research task:
-```bash
-codex exec "Find all places where system prompt is recompiled. Cite files and line numbers." \
-  -m codex-5.3 --full-auto -C /path/to/repo
-```
+## Session Management
 
-## Session Resumption
+Both CLIs persist full session data (tool calls, reasoning, files read) to disk. The Bash output you see is just the final summary — the local session file is much richer.
 
-Both CLIs persist sessions to disk. Use resumption to continue a line of investigation.
+### Session storage paths
 
-### Claude Code
+**Claude Code:** `~/.claude/projects/<encoded-path>/<session-id>.jsonl`
+- `<encoded-path>` = working directory with `/` replaced by `-` (e.g. `/Users/foo/repos/bar` becomes `-Users-foo-repos-bar`)
+- Use `--output-format json` to get the `session_id` in the response
 
-```bash
-# Resume by session ID
-claude -r SESSION_ID -p "Follow up: now check if..."
+**Codex:** `~/.codex/sessions/<year>/<month>/<day>/rollout-*-<session-id>.jsonl`
+- Session ID is printed in output header: `session id: <uuid>`
+- Extract with: `grep "^session id:" output | awk '{print $3}'`
 
-# Continue most recent session in current directory
-claude -c -p "Also check..."
+### Resuming sessions
 
-# Fork a session (new ID, keeps history)
-claude -r SESSION_ID --fork-session -p "Try a different approach..."
-```
-
-### Codex
-
-```bash
-# Resume by session ID (interactive)
-codex resume SESSION_ID "Follow up prompt"
-
-# Resume most recent session
-codex resume --last "Follow up prompt"
-
-# Fork a session (new ID, keeps history)
-codex fork SESSION_ID "Try a different approach"
-codex fork --last "Try a different approach"
-```
-
-Note: Codex `resume` and `fork` launch interactive sessions, not non-interactive `exec`. For non-interactive follow-ups with Codex, start a fresh `exec` and include relevant context from the previous session in the prompt.
-
-## Capturing Session IDs
-
-When you dispatch a task, capture the session ID so you can access the full session history later. The Bash output you get back is just the final summary — the full session (intermediate tool calls, files read, reasoning) is stored locally and contains much richer data.
-
-### Claude Code
-
-Use `--output-format json` to get structured output including the session ID:
-```bash
-claude -p "YOUR PROMPT" --model opus --dangerously-skip-permissions --output-format json 2>&1
-```
-The JSON response includes `session_id`, `cost_usd`, `duration_ms`, `num_turns`, and `result`.
-
-Session files are stored at:
-```
-~/.claude/projects/<encoded-path>/<session-id>.jsonl
-```
-Where `<encoded-path>` is the working directory with `/` replaced by `-` (e.g. `/Users/foo/repos/bar` → `-Users-foo-repos-bar`).
-
-### Codex
-
-Codex prints the session ID in its output header:
-```
-session id: 019c9b76-fff4-7f40-a895-a58daa3c74c6
-```
-Extract it with: `grep "^session id:" output | awk '{print $3}'`
-
-Session files are stored at:
-```
-~/.codex/sessions/<year>/<month>/<day>/rollout-*.jsonl
-```
-
-## Session History
-
-Both CLIs persist full session data (tool calls, reasoning, files read) locally. This is richer than the summarized output you get back in Bash.
-
-### Where sessions are stored
+Use session resumption to continue a line of investigation without re-providing all context:
 
 **Claude Code:**
+```bash
+claude -r SESSION_ID -p "Follow up: now check if..."    # Resume by ID
+claude -c -p "Also check..."                             # Continue most recent
+claude -r SESSION_ID --fork-session -p "Try differently" # Fork (new ID, keeps history)
 ```
-~/.claude/projects/<encoded-path>/<session-id>.jsonl
-```
-Where `<encoded-path>` is the working directory with `/` replaced by `-` (e.g. `/Users/foo/repos/bar` → `-Users-foo-repos-bar`). Use `--output-format json` to get the `session_id` in structured output.
 
 **Codex:**
-```
-~/.codex/sessions/<year>/<month>/<day>/rollout-*-<session-id>.jsonl
-```
-The session ID is printed in the output header: `session id: <uuid>`.
-
-### When to analyze sessions
-
-**Don't** run history-analyzer after every dispatch — the reflection agent already captures insights from your conversation naturally, and single-session analysis tends to produce overly detailed memory that's better represented by the code itself.
-
-**Do** use `history-analyzer` for its intended purpose: **bulk migration** when bootstrapping memory from months of accumulated Claude Code/Codex history (e.g. during `/init`). For that, see the `migrating-from-codex-and-claude-code` skill.
-
-Session files are useful for:
-- **Resuming** a line of investigation (see Session Resumption above)
-- **Reviewing** what an agent actually did (read the JSONL directly)
-- **Bulk migration** during `/init` when you have no existing memory
-
-## Dispatch Patterns
-
-### Parallel research — get multiple perspectives
-
-Run Claude Code and Codex simultaneously on the same question via separate Bash calls in a single message. Compare results for higher confidence.
-
-### Deep investigation — use frontier models
-
-For hard problems, use the strongest available models:
-- Codex: `-m codex-5.3` (preferred — strong reasoning, good with large repos)
-- Claude Code: `--model opus`
-
-### Code review — cross-agent validation
-
-Have one agent write code or create a plan (in a `.md` file), then dispatch the other to review it:
 ```bash
-claude -p "Review the changes in this diff for correctness and edge cases: $(git diff)" --model opus
+codex resume SESSION_ID "Follow up prompt"    # Resume by ID (interactive)
+codex resume --last "Follow up prompt"        # Resume most recent
+codex fork SESSION_ID "Try a different approach"  # Fork session
 ```
 
-### Get outside feedback
-Ask a subagent for feedback on your plan file, or provide it with instructions on how to view your message history to ask for outside feedback. 
+Note: Codex `resume` and `fork` are interactive, not non-interactive. For non-interactive follow-ups with Codex, start a fresh `exec` and include relevant context from the previous session.
+
+### When to analyze past sessions
+
+**Don't** run `history-analyzer` after every dispatch — your reflection agent already captures insights naturally, and single-session analysis produces overly detailed notes.
+
+**Do** use `history-analyzer` for **bulk migration** when bootstrapping memory from months of accumulated history (e.g. during `/init`). See the `migrating-from-codex-and-claude-code` skill.
+
+Direct uses for session files:
+- **Resume** an investigation (see above)
+- **Review** what an agent actually did (read the JSONL file directly)
+- **Bulk migration** when setting up a new agent
 
 ## Timeouts
 
-Set appropriate Bash timeouts for these calls — they can take a while:
-- Research/analysis: `timeout: 300000` (5 min)
+Set Bash timeouts appropriate to the task:
+- Quick checks / reviews: `timeout: 120000` (2 min)
+- Research / analysis: `timeout: 300000` (5 min)
 - Implementation: `timeout: 600000` (10 min)
