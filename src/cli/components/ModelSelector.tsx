@@ -159,6 +159,7 @@ export function ModelSelector({
     () => getModelCategories(billingTier, isSelfHosted),
     [billingTier, isSelfHosted],
   );
+  const isFreeTier = billingTier === "free";
   const defaultCategory = modelCategories[0] ?? "supported";
 
   const [category, setCategory] = useState<ModelCategory>(defaultCategory);
