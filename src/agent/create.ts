@@ -6,7 +6,7 @@ import type {
   AgentState,
   AgentType,
 } from "@letta-ai/letta-client/resources/agents/agents";
-import { DEFAULT_AGENT_NAME } from "../constants";
+import { DEFAULT_AGENT_NAME, DEFAULT_SUMMARIZATION_MODEL } from "../constants";
 import { settingsManager } from "../settings-manager";
 import { getModelContextWindow } from "./available-models";
 import { getClient, getServerUrl } from "./client";
@@ -221,44 +221,8 @@ export async function createAgent(
   // Only attach server-side tools to the agent.
   // Client-side tools (Read, Write, Bash, etc.) are passed via client_tools at runtime,
   // NOT attached to the agent. This is the new pattern - no more stub tool registration.
-  const { isOpenAIModel } = await import("../tools/manager");
-  const baseMemoryTool = isOpenAIModel(modelHandle)
-    ? "memory_apply_patch"
-    : "memory";
-  const defaultBaseTools = options.baseTools ?? [
-    baseMemoryTool,
-    "web_search",
-    "fetch_webpage",
-  ];
-
-  let toolNames = [...defaultBaseTools];
-
-  // Fallback: if server doesn't have memory_apply_patch, use legacy memory tool
-  if (toolNames.includes("memory_apply_patch")) {
-    try {
-      const resp = await client.tools.list({ name: "memory_apply_patch" });
-      const hasMemoryApplyPatch =
-        Array.isArray(resp.items) && resp.items.length > 0;
-      if (!hasMemoryApplyPatch) {
-        console.warn(
-          "memory_apply_patch tool not found on server; falling back to 'memory' tool",
-        );
-        toolNames = toolNames.map((n) =>
-          n === "memory_apply_patch" ? "memory" : n,
-        );
-      }
-    } catch (err) {
-      // If the capability check fails for any reason, conservatively fall back to 'memory'
-      console.warn(
-        `Unable to verify memory_apply_patch availability (falling back to 'memory'): ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-      );
-      toolNames = toolNames.map((n) =>
-        n === "memory_apply_patch" ? "memory" : n,
-      );
-    }
-  }
+  const defaultBaseTools = options.baseTools ?? ["web_search", "fetch_webpage"];
+  const toolNames = [...defaultBaseTools];
 
   // Determine which memory blocks to use:
   // 1. If options.memoryBlocks is provided, use those (custom blocks and/or block references)
@@ -403,6 +367,9 @@ export async function createAgent(
     initial_message_sequence: [],
     parallel_tool_calls: parallelToolCallsVal,
     enable_sleeptime: enableSleeptimeVal,
+    compaction_settings: {
+      model: DEFAULT_SUMMARIZATION_MODEL,
+    },
   };
 
   const createWithTools = (tools: string[]) =>
@@ -416,8 +383,6 @@ export async function createAgent(
     toolNames,
     addBaseToolsToServer,
   );
-
-  // Note: Preflight check above falls back to 'memory' when 'memory_apply_patch' is unavailable.
 
   // Apply updateArgs if provided (e.g., context_window, reasoning_effort, verbosity, etc.).
   // Also apply tier defaults from models.json when the caller explicitly selected a model.
