@@ -115,10 +115,9 @@ export async function shell(args: ShellArgs): Promise<ShellResult> {
 
 function buildFallbackCommands(command: string[]): string[][] {
   if (!command.length) return [];
-  const first = command[0];
-  if (!first) return [];
-  if (!isShellExecutableName(first)) return [];
-  const script = extractShellScript(command);
+  const shellIndex = findShellExecutableIndex(command);
+  if (shellIndex === null) return [];
+  const script = extractShellScript(command, shellIndex);
   if (!script) return [];
   const launchers = buildShellLaunchers(script);
   return launchers.filter((launcher) => !arraysEqual(launcher, command));
@@ -149,8 +148,33 @@ function isShellExecutableName(name: string): boolean {
   return false;
 }
 
-function extractShellScript(command: string[]): string | null {
+function isEnvExecutableName(name: string): boolean {
+  const normalized = name.replace(/\\/g, "/").toLowerCase();
+  return normalized === "env" || normalized.endsWith("/env");
+}
+
+function findShellExecutableIndex(command: string[]): number | null {
+  const first = command[0];
+  if (!first) return null;
+  if (isShellExecutableName(first)) return 0;
+  if (!isEnvExecutableName(first)) return null;
+
   for (let i = 1; i < command.length; i += 1) {
+    const token = command[i];
+    if (!token) continue;
+    if (token.startsWith("-")) continue;
+    if (/^[A-Za-z_][A-Za-z0-9_]*=.*/.test(token)) continue;
+    return isShellExecutableName(token) ? i : null;
+  }
+
+  return null;
+}
+
+function extractShellScript(
+  command: string[],
+  shellIndex: number,
+): string | null {
+  for (let i = shellIndex + 1; i < command.length; i += 1) {
     const token = command[i];
     if (!token) continue;
     const normalized = token.toLowerCase();
