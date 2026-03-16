@@ -101,6 +101,7 @@ import {
   registerExternalTools,
   setExternalToolExecutor,
 } from "./tools/manager";
+import { clearPersistedClientToolRules } from "./tools/toolset";
 import type {
   AutoApprovalMessage,
   BootstrapSessionStateRequest,
@@ -119,7 +120,7 @@ import type {
   StreamEvent,
   SystemInitMessage,
 } from "./types/protocol";
-import { debugLog } from "./utils/debug";
+import { debugLog, debugWarn } from "./utils/debug";
 import {
   markMilestone,
   measureSinceMilestone,
@@ -1041,6 +1042,31 @@ export async function handleHeadlessCommand(
       }
     }
   }
+
+  const startupAgentId = agent.id;
+  void clearPersistedClientToolRules(startupAgentId)
+    .then((cleanup) => {
+      if (cleanup) {
+        const count = cleanup.removedToolNames.length;
+        const names = cleanup.removedToolNames.join(", ");
+        debugLog(
+          "headless startup",
+          `Cleared ${count} persisted client tool rule${count === 1 ? "" : "s"} for ${startupAgentId}${count > 0 ? `: ${names}` : ""}`,
+        );
+        return;
+      }
+
+      debugLog(
+        "headless startup",
+        `No persisted client tool rules to clear for ${startupAgentId}`,
+      );
+    })
+    .catch((error) => {
+      debugWarn(
+        "headless startup",
+        `Failed to clear persisted client tool rules for ${startupAgentId}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    });
 
   try {
     effectiveReflectionSettings = await applyReflectionOverrides(
