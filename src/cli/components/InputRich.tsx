@@ -477,6 +477,7 @@ const StreamingStatus = memo(function StreamingStatus({
   tokenCount,
   elapsedBaseMs,
   thinkingMessage,
+  includeSystemPromptUpgradeTip,
   agentName,
   interruptRequested,
   networkPhase,
@@ -488,6 +489,7 @@ const StreamingStatus = memo(function StreamingStatus({
   tokenCount: number;
   elapsedBaseMs: number;
   thinkingMessage: string;
+  includeSystemPromptUpgradeTip: boolean;
   agentName: string | null | undefined;
   interruptRequested: boolean;
   networkPhase: "upload" | "download" | "error" | null;
@@ -584,14 +586,14 @@ const StreamingStatus = memo(function StreamingStatus({
   useEffect(() => {
     if (streaming && visible) {
       if (!tipInitializedRef.current) {
-        setTipMessage(getRandomThinkingTip());
+        setTipMessage(getRandomThinkingTip({ includeSystemPromptUpgradeTip }));
         tipInitializedRef.current = true;
       }
       return;
     }
 
     tipInitializedRef.current = false;
-  }, [streaming, visible]);
+  }, [streaming, visible, includeSystemPromptUpgradeTip]);
 
   const estimatedTokens = charsToTokens(tokenCount);
   const totalElapsedMs = elapsedBaseMs + elapsedMs;
@@ -724,6 +726,7 @@ export function Input({
   tokenCount,
   elapsedBaseMs = 0,
   thinkingMessage,
+  includeSystemPromptUpgradeTip = true,
   onSubmit,
   onBashSubmit,
   bashRunning = false,
@@ -766,6 +769,7 @@ export function Input({
   tokenCount: number;
   elapsedBaseMs?: number;
   thinkingMessage: string;
+  includeSystemPromptUpgradeTip?: boolean;
   onSubmit: (message?: string) => Promise<{ submitted: boolean }>;
   onBashSubmit?: (command: string) => Promise<void>;
   bashRunning?: boolean;
@@ -1713,6 +1717,7 @@ export function Input({
         tokenCount={tokenCount}
         elapsedBaseMs={elapsedBaseMs}
         thinkingMessage={thinkingMessage}
+        includeSystemPromptUpgradeTip={includeSystemPromptUpgradeTip}
         agentName={agentName}
         interruptRequested={interruptRequested}
         networkPhase={networkPhase}

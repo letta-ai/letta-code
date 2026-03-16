@@ -43,9 +43,12 @@ const THINKING_VERBS = [
   "internalizing",
 ] as const;
 
+export const SYSTEM_PROMPT_UPGRADE_TIP =
+  "Use /system to upgrade to the latest default prompt.";
+
 export const THINKING_TIPS = [
   "Use /remember [instructions] to remember something from the conversation.",
-  "Use /system to upgrade to the latest default prompt.",
+  SYSTEM_PROMPT_UPGRADE_TIP,
   "Use /palace to inspect your agent's memory palace.",
   "Use /reflect to launch a background reflection agent to update memory.",
   "Use /search [query] to search messages across all agents.",
@@ -132,6 +135,22 @@ export function getRandomThinkingMessage(agentName?: string | null): string {
   return verb.charAt(0).toUpperCase() + verb.slice(1);
 }
 
-export function getRandomThinkingTip(): string {
-  return getRandomTip();
+export function getRandomThinkingTip(options?: {
+  includeSystemPromptUpgradeTip?: boolean;
+}): string {
+  const includeSystemPromptUpgradeTip =
+    options?.includeSystemPromptUpgradeTip ?? true;
+
+  if (includeSystemPromptUpgradeTip) {
+    return getRandomTip();
+  }
+
+  const tipPool = THINKING_TIPS.filter(
+    (tip) => tip !== SYSTEM_PROMPT_UPGRADE_TIP,
+  );
+  if (tipPool.length === 0) {
+    return "";
+  }
+  const index = Math.floor(Math.random() * tipPool.length);
+  return tipPool[index] ?? "";
 }

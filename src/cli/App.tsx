@@ -63,7 +63,10 @@ import {
   getModelShortName,
   type ModelReasoningEffort,
 } from "../agent/model";
-import { INTERRUPT_RECOVERY_ALERT } from "../agent/promptAssets";
+import {
+  INTERRUPT_RECOVERY_ALERT,
+  shouldRecommendDefaultPrompt,
+} from "../agent/promptAssets";
 import { recordSessionEnd } from "../agent/sessionHistory";
 import { SessionStats } from "../agent/stats";
 import {
@@ -977,6 +980,16 @@ export default function App({
   const updateAgentName = useCallback((name: string) => {
     setAgentState((prev) => (prev ? { ...prev, name } : prev));
   }, []);
+
+  // Check if the current agent would benefit from switching to the default prompt.
+  // Used to conditionally include the /system tip in streaming tip rotation.
+  const shouldShowDefaultPromptTip = useCallback(() => {
+    if (!agentState?.id || !agentState.system) return false;
+    const memMode = settingsManager.isMemfsEnabled(agentState.id)
+      ? "memfs"
+      : ("standard" as const);
+    return shouldRecommendDefaultPrompt(agentState.system, memMode);
+  }, [agentState]);
 
   const projectDirectory = process.cwd();
 
@@ -13477,6 +13490,7 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
                 tokenCount={trajectoryTokenDisplay}
                 elapsedBaseMs={liveTrajectoryElapsedBaseMs}
                 thinkingMessage={thinkingMessage}
+                includeSystemPromptUpgradeTip={shouldShowDefaultPromptTip()}
                 onSubmit={onSubmit}
                 onBashSubmit={handleBashSubmit}
                 bashRunning={bashRunning}
