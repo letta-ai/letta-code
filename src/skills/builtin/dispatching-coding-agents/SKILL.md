@@ -1,23 +1,41 @@
 ---
 name: dispatching-coding-agents
-description: Dispatch tasks to Claude Code and Codex CLI agents via Bash. Use when you want a second opinion, need to parallelize research across models, or face a hard coding problem that benefits from a stateless agent with frontier reasoning. Covers non-interactive execution, model selection, session resumption, and the history-analyzer subagent for accessing their past sessions.
+description: Dispatch stateless coding agents which lack memory, but have isolated context and run in a different harness (Claude Code or Codex). Use these other agents when you need help for especially difficult tasks (for example, if you are looping or hitting a wall) or need a second opinion. 
 ---
 
 # Dispatching Coding Agents
 
 You can shell out to **Claude Code** (`claude`) and **Codex** (`codex`) as stateless sub-agents via Bash. They have full filesystem and tool access but **zero memory** — you must provide all necessary context in the prompt.
 
-## Philosophy
+## Using Claude Code and Codex as subagents
+Claude Code and Codex are highly optimized coding agents, but are re-born with each new session. Think of them like a brilliant intern that showed up today. They know nothing, but may sometimes have a fresher perspective in part due to their naivety. In addition, their complete clueleness means you can give them just the right amount of context to maximize performance with minimal context bloat. 
 
-You are the experienced manager with persistent memory. Claude Code and Codex are high-intellect but stateless — reborn fresh every invocation. Your job:
+You are the experienced agent manager that interfaces with the user, and has already learned about the user and their work through experience and the ability to form memories and learn. When using Claude Code or Codex as subagents, you need to provide them with any context they might need for them to perform their best. This includes: 
+* **Detailed task desription**: Explain exactly what you need them to to. Be specific - tell them exactly what to investigate or implement and what files to look at. 
+* **Relevant context**: Provide any relevant filepaths (e.g. parts of the code, reference materials) and important high-level context (e.g. details about the code architecture)
+* **High level guidance**: Communicate any preferences or general guidance that you are aware of. Help them avoid having to be corrected by the user. 
 
-1. **Provide context** — include relevant file paths, architecture context, and constraints from your memory
-2. **Be specific** — tell them exactly what to investigate or implement, and what files to look at
-3. **Run async when possible** — use `run_in_background: true` on Bash calls to avoid blocking
-4. **Learn from results** — track which models/agents perform better on which tasks, and update memory
-5. **Mine their history** — use the `history-analyzer` subagent to access past Claude Code and Codex sessions
+Remember, they wont know anything unless you provide the information to them. Once you have initiated a session, you can continue interacting the the same session which will persist the same context and message histories (though the subagent's context may eventaully be compacted). Creating a new session will wipe all messages. If subagents ask for clarification or require feedback, respond to them in the same session to avoid losing the conversation. 
 
-## Non-Interactive Execution
+## Deciding on which subagent to use
+Different agents have different strength and weaknesses. Choose your subagent's configuration accordingly. You should update your memory with observations about how these agents perform for the tasks you give them to rely on your own analysis over time. Below are initial recommendations for agents: 
+
+Codex (Codex 5.3) 
+* Strengths: Frontier reasoning, excellent at debugging, best option for the hardest tasks
+* Weaknesses: Slow with long trajectories, designed primarily for coding, compactions can destroy trajectories
+
+Codex (GPT 5.4) 
+* Strengths: Easier for humans to understand, general-purpose, faster 
+* Weaknesses: More likely to make silly errors than Codex 5.3
+
+Claude Code (Opus 4.6) 
+* Strengths: Excellent writer, understands vague instructions, excellent for coding but also general-purpose
+* Weaknesses: Tends to generate "slop", writing excessive quantities of code unnecessary
+
+## Learning from your subagents
+Once your subagents have completed, you can use the `history-analyzer` subagent to access past Claude Code and Codex sessions and see if they have discovered anything potentially relevant for future tasks, or to evaluate their performance to inform future subagent invocations. 
+
+## Invoking coding subagents
 
 ### Claude Code
 
@@ -165,28 +183,16 @@ For hard problems, use the strongest available models:
 
 ### Code review — cross-agent validation
 
-Have one agent write code, then dispatch the other to review it:
+Have one agent write code or create a plan (in a `.md` file), then dispatch the other to review it:
 ```bash
 claude -p "Review the changes in this diff for correctness and edge cases: $(git diff)" --model opus
 ```
 
-### Scoped implementation — sandboxed changes
-
-Use Codex with `--full-auto` or Claude Code with `--dangerously-skip-permissions` (in trusted repos only) for autonomous implementation tasks. Always review their changes via `git diff` before committing.
+### Get outside feedback
+Ask a subagent for feedback on your plan file, or provide it with instructions on how to view your message history to ask for outside feedback. 
 
 ## Timeouts
 
 Set appropriate Bash timeouts for these calls — they can take a while:
 - Research/analysis: `timeout: 300000` (5 min)
 - Implementation: `timeout: 600000` (10 min)
-
-## Strengths & Weaknesses (update as you learn)
-
-Track observations about model/agent performance in memory. Initial heuristics:
-
-| Agent | Strengths | Weaknesses |
-|-------|-----------|------------|
-| Codex (Codex-5.3) | Frontier reasoning, handles large repos well, reliable with --full-auto | Most expensive |
-| Codex (GPT-5.2) | Strong reasoning, good code search | Slightly less capable than 5.3 |
-| Claude Code (Sonnet) | Fast, actionable output with concrete code samples | Less thorough on edge cases |
-| Claude Code (Opus) | Deep analysis, nuanced reasoning | Can hang on large repos with tool use, needs --dangerously-skip-permissions |
