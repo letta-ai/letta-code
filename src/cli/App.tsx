@@ -3056,8 +3056,11 @@ export default function App({
       const isResumingConversation =
         resumedExistingConversation || messageHistory.length > 0;
       if (isDebugEnabled()) {
-        console.log(
-          `[DEBUG] Header: resumedExistingConversation=${resumedExistingConversation}, messageHistory.length=${messageHistory.length}`,
+        debugLog(
+          "app",
+          "Header: resumedExistingConversation=%o, messageHistory.length=%d",
+          resumedExistingConversation,
+          messageHistory.length,
         );
       }
       const headerMessage = isResumingConversation

@@ -133,6 +133,7 @@ describe("reflectionTranscript helper", () => {
 
   test("buildParentMemorySnapshot renders tree descriptions and system <memory> blocks", async () => {
     const memoryDir = join(testRoot, "memory");
+    const normalizedMemoryDir = memoryDir.replace(/\\/g, "/");
     await mkdir(join(memoryDir, "system"), { recursive: true });
     await mkdir(join(memoryDir, "reference"), { recursive: true });
     await mkdir(join(memoryDir, "skills", "bird"), { recursive: true });
@@ -165,12 +166,14 @@ describe("reflectionTranscript helper", () => {
     expect(snapshot).toContain("SKILL.md (X/Twitter CLI for posting)");
 
     expect(snapshot).toContain("<memory>");
-    expect(snapshot).toContain(`<path>${memoryDir}/system/human.md</path>`);
+    expect(snapshot).toContain(
+      `<path>${normalizedMemoryDir}/system/human.md</path>`,
+    );
     expect(snapshot).toContain("Dr. Wooders prefers direct answers.");
     expect(snapshot).toContain("</memory>");
 
     expect(snapshot).not.toContain(
-      `<path>${memoryDir}/reference/project.md</path>`,
+      `<path>${normalizedMemoryDir}/reference/project.md</path>`,
     );
     expect(snapshot).not.toContain("letta-code CLI details");
     expect(snapshot).not.toContain(
