@@ -1394,6 +1394,29 @@ function resolveRuntimeScope(
   };
 }
 
+/**
+ * Returns true when the requested scope matches the conversation that is
+ * currently executing on the device.  When the device is idle (not processing)
+ * every scope is trivially "active" — the flag is only meaningful while a run
+ * is in progress, so we return `true` for the idle case to let callers report
+ * the real (idle) device state rather than a synthetic zero state.
+ */
+function isScopeCurrentlyActive(
+  runtime: ListenerRuntime,
+  agentId: string | null,
+  conversationId: string,
+): boolean {
+  if (!runtime.isProcessing) return true;
+
+  const activeAgent = runtime.activeAgentId;
+  const activeConvo = normalizeConversationId(runtime.activeConversationId);
+
+  if (agentId && activeAgent && agentId !== activeAgent) return false;
+  if (conversationId !== activeConvo) return false;
+
+  return true;
+}
+
 function buildDeviceStatus(
   runtime: ListenerRuntime,
   params?: {
@@ -1403,6 +1426,7 @@ function buildDeviceStatus(
 ): DeviceStatus {
   const scopedAgentId = resolveScopedAgentId(runtime, params);
   const scopedConversationId = resolveScopedConversationId(runtime, params);
+  const scopeActive = isScopeCurrentlyActive(runtime, scopedAgentId, scopedConversationId);
   const toolsetPreference = (() => {
     if (!scopedAgentId) {
       return "auto" as const;
@@ -1418,7 +1442,7 @@ function buildDeviceStatus(
     current_connection_id: runtime.connectionId,
     connection_name: runtime.connectionName,
     is_online: runtime.socket?.readyState === WebSocket.OPEN,
-    is_processing: runtime.isProcessing,
+    is_processing: scopeActive && runtime.isProcessing,
     current_permission_mode: permissionMode.getMode(),
     current_working_directory: getConversationWorkingDirectory(
       runtime,
@@ -1442,6 +1466,15 @@ function buildLoopStatus(
     conversation_id?: string | null;
   },
 ): LoopState {
+  const scopedAgentId = resolveScopedAgentId(runtime, params);
+  const scopedConversationId = resolveScopedConversationId(runtime, params);
+  const scopeActive = isScopeCurrentlyActive(runtime, scopedAgentId, scopedConversationId);
+
+  // If the requested scope is NOT the one currently executing, report idle.
+  if (!scopeActive) {
+    return { status: "WAITING_ON_INPUT", active_run_ids: [] };
+  }
+
   const recovered = getRecoveredApprovalStateForScope(runtime, params);
   const status =
     recovered &&
@@ -1618,12 +1651,16 @@ function emitQueueUpdate(
     conversation_id?: string | null;
   },
 ): void {
+  const scopedAgentId = resolveScopedAgentId(runtime, scope);
+  const scopedConversationId = resolveScopedConversationId(runtime, scope);
+  const scopeActive = isScopeCurrentlyActive(runtime, scopedAgentId, scopedConversationId);
+
   const message: Omit<
     QueueUpdateMessage,
     "runtime" | "event_seq" | "emitted_at" | "idempotency_key"
   > = {
     type: "update_queue",
-    queue: buildQueueSnapshot(runtime),
+    queue: scopeActive ? buildQueueSnapshot(runtime) : [],
   };
   emitProtocolV2Message(socket, runtime, message, scope);
 }
