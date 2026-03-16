@@ -49,7 +49,7 @@ import { startStartupAutoUpdateCheck } from "./startup-auto-update";
 import { telemetry } from "./telemetry";
 import { loadTools } from "./tools/manager";
 import { clearPersistedClientToolRules } from "./tools/toolset";
-import { debugLog, debugWarn } from "./utils/debug";
+import { debugLog, debugWarn, isDebugEnabled } from "./utils/debug";
 import { markMilestone } from "./utils/timing";
 
 // Stable empty array constants to prevent new references on every render
@@ -777,7 +777,7 @@ async function main(): Promise<void> {
       const message =
         err instanceof Error ? err.message : "An unexpected error occurred";
       console.error(`\nError: ${message}`);
-      if (process.env.DEBUG) {
+      if (isDebugEnabled()) {
         console.error(err);
       }
       process.exit(1);
@@ -1824,7 +1824,7 @@ async function main(): Promise<void> {
         let conversationIdToUse!: string;
 
         // Debug: log resume flag status
-        if (process.env.DEBUG) {
+        if (isDebugEnabled()) {
           console.log(`[DEBUG] shouldContinue=${shouldContinue}`);
           console.log(`[DEBUG] shouldResume=${shouldResume}`);
           console.log(
@@ -1865,7 +1865,7 @@ async function main(): Promise<void> {
             settingsManager.getLocalLastSession(process.cwd()) ??
             settingsManager.getGlobalLastSession();
 
-          if (process.env.DEBUG) {
+          if (isDebugEnabled()) {
             console.log(`[DEBUG] lastSession=${JSON.stringify(lastSession)}`);
             console.log(`[DEBUG] agent.id=${agent.id}`);
           }
@@ -2029,7 +2029,7 @@ async function main(): Promise<void> {
         // Handle errors gracefully without showing raw stack traces
         const message = formatErrorDetails(err);
         console.error(`\nError during initialization: ${message}`);
-        if (process.env.DEBUG) {
+        if (isDebugEnabled()) {
           console.error(err);
         }
         process.exit(1);

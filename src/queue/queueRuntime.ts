@@ -6,6 +6,7 @@ import type {
   QueueItemKind,
   QueueItemSource,
 } from "../types/protocol";
+import { isDebugEnabled } from "../utils/debug";
 
 export type { QueueBlockedReason, QueueClearedReason, QueueItemKind };
 
@@ -362,7 +363,7 @@ export class QueueRuntime {
         ...args,
       );
     } catch (err) {
-      if (process.env.DEBUG) {
+      if (isDebugEnabled()) {
         console.error(`[QueueRuntime] callback "${name}" threw:`, err);
       }
     }
