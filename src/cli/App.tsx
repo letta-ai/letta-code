@@ -7858,6 +7858,49 @@ export default function App({
           return { submitted: true };
         }
 
+        // Special handling for /recompile command - recompile agent + current conversation
+        if (trimmed === "/recompile") {
+          const cmd = commandRunner.start(
+            trimmed,
+            "Recompiling agent and conversation...",
+          );
+
+          setCommandRunning(true);
+
+          try {
+            const client = await getClient();
+            const currentConversationId = conversationIdRef.current;
+
+            await client.agents.recompile(agentId, {
+              update_timestamp: true,
+            });
+
+            const conversationParams =
+              currentConversationId === "default"
+                ? { agent_id: agentId }
+                : undefined;
+            await client.conversations.recompile(
+              currentConversationId,
+              conversationParams,
+            );
+
+            cmd.finish(
+              [
+                "Recompiled current agent and conversation.",
+                "(warning: this will evict the cache and increase costs)",
+              ].join("\n"),
+              true,
+            );
+          } catch (error) {
+            const errorDetails = formatErrorDetails(error, agentId);
+            cmd.fail(`Failed: ${errorDetails}`);
+          } finally {
+            setCommandRunning(false);
+          }
+
+          return { submitted: true };
+        }
+
         // Special handling for /exit command - exit without stats
         if (trimmed === "/exit") {
           const cmd = commandRunner.start(trimmed, "See ya!");

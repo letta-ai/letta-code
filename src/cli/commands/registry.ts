@@ -270,6 +270,15 @@ export const commands: Record<string, Command> = {
       return "Fetching context usage...";
     },
   },
+  "/recompile": {
+    desc: "Recompile current agent + conversation (warning: this will evict the cache and increase costs)",
+    order: 33.6,
+    noArgs: true,
+    handler: () => {
+      // Handled specially in App.tsx
+      return "Recompiling agent and conversation...";
+    },
+  },
   "/feedback": {
     desc: "Send feedback to the Letta team",
     order: 34,
