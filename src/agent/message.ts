@@ -26,25 +26,6 @@ import { buildClientSkillsPayload } from "./clientSkills";
 const streamRequestStartTimes = new WeakMap<object, number>();
 const streamToolContextIds = new WeakMap<object, string>();
 
-function inferSendMessageOrigin(): string {
-  const stack = new Error().stack;
-  if (!stack) return "unknown";
-
-  const frames = stack
-    .split("\n")
-    .slice(1)
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0);
-
-  const originFrame = frames.find(
-    (line) =>
-      !line.includes("sendMessageStream") &&
-      !line.includes("src/agent/message.ts"),
-  );
-
-  return originFrame ?? "unknown";
-}
-
 export type StreamRequestContext = {
   conversationId: string;
   resolvedConversationId: string;
@@ -201,13 +182,9 @@ export async function sendMessageStream(
     })
     .join(",");
 
-  const debugOrigin = inferSendMessageOrigin();
-  const requestUuid = `${requestStartedAtMs}-${Math.random().toString(36).slice(2, 8)}`;
   debugLog(
     "send-message-stream",
-    "request_start request_id=%s origin=%s conversation_id=%s agent_id=%s messages=%s stream_tokens=%s background=%s max_retries=%s",
-    requestUuid,
-    debugOrigin,
+    "request_start conversation_id=%s agent_id=%s messages=%s stream_tokens=%s background=%s max_retries=%s",
     resolvedConversationId,
     opts.agentId ?? "none",
     messageSummary || "(empty)",
@@ -232,9 +209,7 @@ export async function sendMessageStream(
   } catch (error) {
     debugWarn(
       "send-message-stream",
-      "request_error request_id=%s origin=%s conversation_id=%s status=%s error=%s",
-      requestUuid,
-      debugOrigin,
+      "request_error conversation_id=%s status=%s error=%s",
       resolvedConversationId,
       (error as { status?: number })?.status ?? "none",
       error instanceof Error ? error.message : String(error),
@@ -244,9 +219,7 @@ export async function sendMessageStream(
 
   debugLog(
     "send-message-stream",
-    "request_ok request_id=%s origin=%s conversation_id=%s",
-    requestUuid,
-    debugOrigin,
+    "request_ok conversation_id=%s",
     resolvedConversationId,
   );
 
