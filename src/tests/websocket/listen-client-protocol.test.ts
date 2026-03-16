@@ -992,6 +992,38 @@ describe("listen-client retry delta emission", () => {
   });
 });
 
+describe("listen-client queue event emission", () => {
+  test("queue enqueue/dequeue emits queue snapshots without loop-status jitter", async () => {
+    const runtime = __listenClientTestUtils.createRuntime();
+    const socket = new MockSocket();
+    runtime.socket = socket as unknown as WebSocket;
+
+    runtime.queueRuntime.enqueue({
+      kind: "message",
+      source: "user",
+      content: "hello",
+      clientMessageId: "cm-1",
+      agentId: "agent-1",
+      conversationId: "default",
+    } as Parameters<typeof runtime.queueRuntime.enqueue>[0]);
+
+    await Promise.resolve();
+
+    const dequeued = runtime.queueRuntime.consumeItems(1);
+    expect(dequeued).not.toBeNull();
+
+    await Promise.resolve();
+
+    const payloadTypes = socket.sentPayloads.map((payload) => {
+      const parsed = JSON.parse(payload) as { type: string };
+      return parsed.type;
+    });
+
+    expect(payloadTypes.length).toBeGreaterThan(0);
+    expect(new Set(payloadTypes)).toEqual(new Set(["update_queue"]));
+  });
+});
+
 describe("listen-client post-stop approval recovery policy", () => {
   test("retries when run detail indicates invalid tool call IDs", () => {
     const shouldRecover =

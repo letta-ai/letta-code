@@ -448,31 +448,26 @@ function createRuntime(): ListenerRuntime {
       onEnqueued: (item, queueLen) => {
         runtime.pendingTurns = queueLen;
         const scope = getQueueItemScope(item);
-        emitRuntimeStateUpdates(runtime, scope);
         scheduleQueueEmit(runtime, scope);
       },
       onDequeued: (batch) => {
         runtime.pendingTurns = batch.queueLenAfter;
         const scope = getQueueItemsScope(batch.items);
-        emitRuntimeStateUpdates(runtime, scope);
         scheduleQueueEmit(runtime, scope);
       },
       onBlocked: (_reason, _queueLen) => {
         const scope = getQueueItemScope(runtime.queueRuntime.items[0]);
-        emitRuntimeStateUpdates(runtime, scope);
         scheduleQueueEmit(runtime, scope);
       },
       onCleared: (_reason, _clearedCount, items) => {
         runtime.pendingTurns = 0;
         const scope = getQueueItemsScope(items);
-        emitRuntimeStateUpdates(runtime, scope);
         scheduleQueueEmit(runtime, scope);
       },
       onDropped: (item, _reason, queueLen) => {
         runtime.pendingTurns = queueLen;
         runtime.queuedMessagesByItemId.delete(item.id);
         const scope = getQueueItemScope(item);
-        emitRuntimeStateUpdates(runtime, scope);
         scheduleQueueEmit(runtime, scope);
       },
     },
