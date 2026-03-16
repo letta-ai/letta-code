@@ -1825,10 +1825,12 @@ async function main(): Promise<void> {
 
         // Debug: log resume flag status
         if (isDebugEnabled()) {
-          console.log(`[DEBUG] shouldContinue=${shouldContinue}`);
-          console.log(`[DEBUG] shouldResume=${shouldResume}`);
-          console.log(
-            `[DEBUG] specifiedConversationId=${specifiedConversationId}`,
+          debugLog("startup", "shouldContinue=%o", shouldContinue);
+          debugLog("startup", "shouldResume=%o", shouldResume);
+          debugLog(
+            "startup",
+            "specifiedConversationId=%s",
+            specifiedConversationId,
           );
         }
 
@@ -1866,8 +1868,8 @@ async function main(): Promise<void> {
             settingsManager.getGlobalLastSession();
 
           if (isDebugEnabled()) {
-            console.log(`[DEBUG] lastSession=${JSON.stringify(lastSession)}`);
-            console.log(`[DEBUG] agent.id=${agent.id}`);
+            debugLog("startup", "lastSession=%s", JSON.stringify(lastSession));
+            debugLog("startup", "agent.id=%s", agent.id);
           }
 
           let resumedSuccessfully = false;

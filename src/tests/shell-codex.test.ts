@@ -34,6 +34,22 @@ describe("shell codex tool", () => {
     expect(result.output).toContain("hello from bash");
   });
 
+  test.skipIf(isWindows)(
+    "falls back when env-wrapped shell launcher is missing",
+    async () => {
+      const result = await shell({
+        command: [
+          "/definitely-missing/env",
+          "bash",
+          "-lc",
+          "echo env-fallback",
+        ],
+      });
+
+      expect(result.output).toContain("env-fallback");
+    },
+  );
+
   test("handles arguments with spaces correctly", async () => {
     // This is the key test for execvp semantics - args with spaces
     // should NOT be split
@@ -135,6 +151,18 @@ describe("shell codex tool", () => {
       }
     }
   });
+
+  test.skipIf(isWindows)(
+    "falls back to the default cwd when workdir does not exist",
+    async () => {
+      const result = await shell({
+        command: ["pwd"],
+        workdir: "/definitely/missing/path",
+      });
+
+      expect(result.output).toBe(process.env.USER_CWD || process.cwd());
+    },
+  );
 
   test.skipIf(isWindows)(
     "handles command that produces multi-line output",
