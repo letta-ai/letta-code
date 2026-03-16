@@ -48,16 +48,16 @@ export const SYSTEM_PROMPT_UPGRADE_TIP =
 
 export const THINKING_TIPS = [
   "Use /remember [instructions] to remember something from the conversation.",
-  SYSTEM_PROMPT_UPGRADE_TIP,
   "Use /palace to inspect your agent's memory palace.",
   "Use /reflect to launch a background reflection agent to update memory.",
   "Use /search [query] to search messages across all agents.",
   "Use /init to initialize (or re-init) your agent's memory.",
 ] as const;
 
-const THINKING_TIPS_WITHOUT_SYSTEM_UPGRADE = THINKING_TIPS.filter(
-  (tip) => tip !== SYSTEM_PROMPT_UPGRADE_TIP,
-);
+const THINKING_TIPS_WITH_SYSTEM_UPGRADE = [
+  ...THINKING_TIPS,
+  SYSTEM_PROMPT_UPGRADE_TIP,
+];
 
 type ThinkingVerb = (typeof THINKING_VERBS)[number];
 
@@ -139,8 +139,8 @@ export function getRandomThinkingTip(options?: {
 }): string {
   const tipPool =
     (options?.includeSystemPromptUpgradeTip ?? true)
-      ? THINKING_TIPS
-      : THINKING_TIPS_WITHOUT_SYSTEM_UPGRADE;
+      ? THINKING_TIPS_WITH_SYSTEM_UPGRADE
+      : THINKING_TIPS;
   if (tipPool.length === 0) {
     return "";
   }
