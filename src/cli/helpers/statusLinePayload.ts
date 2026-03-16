@@ -18,6 +18,12 @@ export interface StatusLinePayloadBuildInput {
   totalOutputTokens?: number;
   contextWindowSize?: number;
   usedContextTokens?: number;
+  stepCount?: number;
+  turnCount?: number;
+  reflectionMode?: "off" | "step-count" | "compaction-event" | null;
+  reflectionStepCount?: number;
+  memfsEnabled?: boolean;
+  memfsDirectory?: string | null;
   permissionMode?: string;
   networkPhase?: "upload" | "download" | "error" | null;
   terminalWidth?: number;
@@ -82,6 +88,16 @@ export interface StatusLinePayload {
     id: string | null;
     name: string | null;
   };
+  step_count: number;
+  turn_count: number;
+  reflection: {
+    mode: "off" | "step-count" | "compaction-event" | null;
+    step_count: number;
+  };
+  memfs: {
+    enabled: boolean;
+    memory_dir: string | null;
+  };
   permission_mode: string | null;
   network_phase: "upload" | "download" | "error" | null;
   terminal_width: number | null;
@@ -127,6 +143,12 @@ export function buildStatusLinePayload(
   const usedContextTokens = Math.max(
     0,
     Math.floor(input.usedContextTokens ?? 0),
+  );
+  const stepCount = Math.max(0, Math.floor(input.stepCount ?? 0));
+  const turnCount = Math.max(0, Math.floor(input.turnCount ?? 0));
+  const reflectionStepCount = Math.max(
+    0,
+    Math.floor(input.reflectionStepCount ?? 0),
   );
 
   const percentages =
@@ -174,6 +196,16 @@ export function buildStatusLinePayload(
     agent: {
       id: input.agentId ?? null,
       name: input.agentName ?? null,
+    },
+    step_count: stepCount,
+    turn_count: turnCount,
+    reflection: {
+      mode: input.reflectionMode ?? null,
+      step_count: reflectionStepCount,
+    },
+    memfs: {
+      enabled: input.memfsEnabled ?? false,
+      memory_dir: input.memfsDirectory ?? null,
     },
     permission_mode: input.permissionMode ?? null,
     network_phase: input.networkPhase ?? null,

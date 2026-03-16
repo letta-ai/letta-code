@@ -36,6 +36,12 @@ export interface StatusLineInputs {
   totalOutputTokens?: number;
   contextWindowSize?: number;
   usedContextTokens?: number;
+  stepCount?: number;
+  turnCount?: number;
+  reflectionMode?: "off" | "step-count" | "compaction-event" | null;
+  reflectionStepCount?: number;
+  memfsEnabled?: boolean;
+  memfsDirectory?: string | null;
   permissionMode?: string;
   networkPhase?: "upload" | "download" | "error" | null;
   terminalWidth?: number;
@@ -79,6 +85,12 @@ function toPayloadInput(inputs: StatusLineInputs): StatusLinePayloadBuildInput {
     totalOutputTokens: inputs.totalOutputTokens,
     contextWindowSize: inputs.contextWindowSize,
     usedContextTokens: inputs.usedContextTokens,
+    stepCount: inputs.stepCount,
+    turnCount: inputs.turnCount,
+    reflectionMode: inputs.reflectionMode,
+    reflectionStepCount: inputs.reflectionStepCount,
+    memfsEnabled: inputs.memfsEnabled,
+    memfsDirectory: inputs.memfsDirectory,
     permissionMode: inputs.permissionMode,
     networkPhase: inputs.networkPhase,
     terminalWidth: inputs.terminalWidth,
