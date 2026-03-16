@@ -183,6 +183,7 @@ const TOOL_PERMISSIONS: Record<ToolName, { requiresApproval: boolean }> = {
   KillBash: { requiresApproval: true },
   TaskStop: { requiresApproval: true },
   LS: { requiresApproval: false },
+  memory: { requiresApproval: true },
   MultiEdit: { requiresApproval: true },
   Read: { requiresApproval: false },
   view_image: { requiresApproval: false },

@@ -16,6 +16,7 @@ import {
   completeSubagent,
   generateSubagentId,
   getSnapshot as getSubagentSnapshot,
+  getSubagentToolCount,
   registerSubagent,
 } from "../../cli/helpers/subagentState.js";
 import { formatTaskNotification } from "../../cli/helpers/taskNotifications.js";
@@ -293,9 +294,9 @@ export function spawnBackgroundSubagentTask(
 
       if (!silentCompletion) {
         const subagentSnapshot = getSubagentSnapshotFn();
-        const toolUses = subagentSnapshot.agents.find(
+        const subagentEntry = subagentSnapshot.agents.find(
           (agent) => agent.id === subagentId,
-        )?.toolCalls.length;
+        );
         const durationMs = Math.max(0, Date.now() - bgTask.startTime.getTime());
 
         const fullResult = result.success
@@ -317,7 +318,10 @@ export function spawnBackgroundSubagentTask(
           outputFile,
           usage: {
             totalTokens: result.totalTokens,
-            toolUses,
+            toolUses:
+              subagentEntry === undefined
+                ? undefined
+                : getSubagentToolCount(subagentEntry),
             durationMs,
           },
         });
@@ -361,9 +365,9 @@ export function spawnBackgroundSubagentTask(
 
       if (!silentCompletion) {
         const subagentSnapshot = getSubagentSnapshotFn();
-        const toolUses = subagentSnapshot.agents.find(
+        const subagentEntry = subagentSnapshot.agents.find(
           (agent) => agent.id === subagentId,
-        )?.toolCalls.length;
+        );
         const durationMs = Math.max(0, Date.now() - bgTask.startTime.getTime());
         const notificationXml = formatTaskNotificationFn({
           taskId,
@@ -372,7 +376,10 @@ export function spawnBackgroundSubagentTask(
           result: errorMessage,
           outputFile,
           usage: {
-            toolUses,
+            toolUses:
+              subagentEntry === undefined
+                ? undefined
+                : getSubagentToolCount(subagentEntry),
             durationMs,
           },
         });

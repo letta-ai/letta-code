@@ -25,9 +25,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
-def parse_job_results(results_dir: Path) -> dict[str, dict[str, bool]]:
-    """Parse Harbor job results into {model: {task: passed}}."""
-    model_results: dict[str, dict[str, bool]] = {}
+def parse_job_results(results_dir: Path) -> dict[str, dict]:
+    """Parse Harbor job results into {model: {tasks: {task: passed}, cost: {..}}}."""
+    model_results: dict[str, dict] = {}
 
     for artifact_dir in sorted(results_dir.iterdir()):
         if not artifact_dir.is_dir():
@@ -41,6 +41,9 @@ def parse_job_results(results_dir: Path) -> dict[str, dict[str, bool]]:
             model = dir_name
 
         tasks: dict[str, bool] = {}
+        total_cost = 0.0
+        total_prompt_tokens = 0
+        total_completion_tokens = 0
 
         # Look for job directories — Harbor puts them under jobs/
         jobs_dir = artifact_dir / "jobs"
@@ -66,22 +69,40 @@ def parse_job_results(results_dir: Path) -> dict[str, dict[str, bool]]:
                     try:
                         reward = float(reward_file.read_text().strip())
                         tasks[task_name] = reward >= 1.0
-                        continue
                     except (ValueError, OSError):
                         pass
 
-                # Fall back to result.json
-                result_file = trial_dir / "result.json"
-                if result_file.exists():
+                if task_name not in tasks:
+                    # Fall back to result.json
+                    result_file = trial_dir / "result.json"
+                    if result_file.exists():
+                        try:
+                            result = json.loads(result_file.read_text())
+                            reward = result.get("reward", result.get("score", 0))
+                            tasks[task_name] = float(reward) >= 1.0
+                        except (json.JSONDecodeError, ValueError, OSError):
+                            tasks[task_name] = False
+
+                # Collect cost from usage.json
+                usage_file = trial_dir / "usage.json"
+                if usage_file.exists():
                     try:
-                        result = json.loads(result_file.read_text())
-                        reward = result.get("reward", result.get("score", 0))
-                        tasks[task_name] = float(reward) >= 1.0
-                    except (json.JSONDecodeError, ValueError, OSError):
-                        tasks[task_name] = False
+                        usage = json.loads(usage_file.read_text())
+                        total_cost += usage.get("cost_usd", 0.0)
+                        total_prompt_tokens += usage.get("prompt_tokens", 0)
+                        total_completion_tokens += usage.get("completion_tokens", 0)
+                    except (json.JSONDecodeError, OSError):
+                        pass
 
         if tasks:
-            model_results[model] = tasks
+            model_results[model] = {
+                "tasks": tasks,
+                "cost": {
+                    "cost_usd": round(total_cost, 2),
+                    "prompt_tokens": total_prompt_tokens,
+                    "completion_tokens": total_completion_tokens,
+                },
+            }
 
     return model_results
 
@@ -105,7 +126,7 @@ def load_baseline(baseline_path: Path) -> dict:
 
 
 def build_report(
-    model_results: dict[str, dict[str, bool]],
+    model_results: dict[str, dict],
     baseline: dict,
 ) -> tuple[str, bool]:
     """Build a markdown report and determine if there's a regression.
@@ -120,7 +141,9 @@ def build_report(
 
     has_regression = False
 
-    for model, tasks in sorted(model_results.items()):
+    for model, data in sorted(model_results.items()):
+        tasks = data["tasks"]
+        cost = data.get("cost", {})
         pass_rate = compute_pass_rate(tasks)
         passed = sum(1 for v in tasks.values() if v)
         total = len(tasks)
@@ -133,7 +156,7 @@ def build_report(
         delta_str = ""
         if baseline_rate is not None:
             delta = pass_rate - baseline_rate
-            if delta < -0.10:
+            if delta < -0.05:
                 has_regression = True
                 delta_str = f" | **{delta:+.0%} from baseline** :red_circle:"
             elif delta < 0:
@@ -141,30 +164,55 @@ def build_report(
             elif delta > 0:
                 delta_str = f" | {delta:+.0%} from baseline :white_check_mark:"
 
-        lines.append(f"### `{model}` — {passed}/{total} ({pass_rate:.0%}){delta_str}")
+        cost_str = ""
+        cost_usd = cost.get("cost_usd", 0)
+        if cost_usd > 0:
+            cost_str = f" | ${cost_usd:.2f}"
+
+        lines.append(f"<details>")
+        lines.append(f"<summary><strong>{model}</strong> — {passed}/{total} ({pass_rate:.0%}){delta_str}{cost_str}</summary>")
         lines.append("")
-        lines.append("| Task | Result | Baseline |")
-        lines.append("|------|--------|----------|")
+
+        # Categorize tasks
+        regressions = []  # was passing, now failing
+        improvements = []  # was failing, now passing
+        new_tasks = []  # not in baseline
 
         for task_name, passed_now in sorted(tasks.items()):
-            result_emoji = ":white_check_mark:" if passed_now else ":x:"
             baseline_val = baseline_tasks.get(task_name)
-
             if baseline_val is None:
-                baseline_str = "—"
-            elif baseline_val:
-                baseline_str = ":white_check_mark:"
-            else:
-                baseline_str = ":x:"
-
-            # Flag regressions: was passing, now failing
-            regression_marker = ""
-            if baseline_val is True and not passed_now:
-                regression_marker = " **REGRESSION**"
+                new_tasks.append((task_name, passed_now))
+            elif baseline_val and not passed_now:
+                regressions.append(task_name)
                 has_regression = True
+            elif not baseline_val and passed_now:
+                improvements.append(task_name)
 
-            lines.append(f"| {task_name} | {result_emoji}{regression_marker} | {baseline_str} |")
+        if regressions:
+            lines.append(f"**Regressions ({len(regressions)}):**")
+            for t in regressions:
+                lines.append(f"- :red_circle: {t}")
+            lines.append("")
 
+        if improvements:
+            lines.append(f"**Improvements ({len(improvements)}):**")
+            for t in improvements:
+                lines.append(f"- :white_check_mark: {t}")
+            lines.append("")
+
+        if new_tasks:
+            new_passed = sum(1 for _, p in new_tasks if p)
+            lines.append(f"**New tasks ({new_passed}/{len(new_tasks)} passed):**")
+            for t, p in new_tasks:
+                emoji = ":white_check_mark:" if p else ":x:"
+                lines.append(f"- {emoji} {t}")
+            lines.append("")
+
+        if not regressions and not improvements and not new_tasks:
+            lines.append("No changes from baseline.")
+            lines.append("")
+
+        lines.append("</details>")
         lines.append("")
 
     if not model_results:
@@ -177,6 +225,10 @@ def build_report(
     run_id = os.environ.get("GITHUB_RUN_ID", "")
     if repo and run_id:
         lines.append(f"[Workflow run]({run_url}/{repo}/actions/runs/{run_id})")
+        lines.append("")
+
+    if has_regression:
+        lines.append("cc @devanshrj")
         lines.append("")
 
     return "\n".join(lines), has_regression

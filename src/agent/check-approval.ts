@@ -6,7 +6,7 @@ import { APIError } from "@letta-ai/letta-client/core/error";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
 import type { ApprovalRequest } from "../cli/helpers/stream";
-import { debugWarn } from "../utils/debug";
+import { debugWarn, isDebugEnabled } from "../utils/debug";
 
 // Backfill should feel like "the last turn(s)", not "the last N raw messages".
 // Tool-heavy turns can generate many tool_call/tool_return messages that would
@@ -339,6 +339,9 @@ export async function getResumeData(
 ): Promise<ResumeData> {
   try {
     const includeMessageHistory = options.includeMessageHistory ?? true;
+    const agentWithInContext = agent as AgentState & {
+      in_context_message_ids?: string[] | null;
+    };
     let inContextMessageIds: string[] | null | undefined;
     let messages: Message[] = [];
 
@@ -446,45 +449,81 @@ export async function getResumeData(
         messageHistory: prepareMessageHistory(messages),
       };
     } else {
-      // For the default conversation, use the same message stream surface that
-      // live sends go through (`conversations.messages.create("default", { agent_id })`).
-      // `agent.message_ids` can lag or point at a different branch than the
-      // actual default-conversation timeline, which causes stale approval
-      // recovery after reconnect/restart.
+      // For the default conversation, use the agent's in-context message IDs as
+      // the primary anchor, mirroring the explicit-conversation path. Fall back
+      // to the default-conversation message stream only when that anchor is not
+      // available, and keep using the stream for backfill/history.
+      inContextMessageIds = agentWithInContext.in_context_message_ids;
+      const lastInContextId = inContextMessageIds?.at(-1);
       let defaultConversationMessages: Message[] = [];
-      if (includeMessageHistory && isBackfillEnabled()) {
+      if ((includeMessageHistory && isBackfillEnabled()) || !lastInContextId) {
+        const listLimit =
+          includeMessageHistory && isBackfillEnabled()
+            ? BACKFILL_PAGE_LIMIT
+            : 1;
         try {
           const messagesPage = await client.agents.messages.list(agent.id, {
             conversation_id: "default",
-            limit: BACKFILL_PAGE_LIMIT,
+            limit: listLimit,
             order: "desc",
           });
           defaultConversationMessages = sortChronological(
             messagesPage.getPaginatedItems(),
           );
-          messages = defaultConversationMessages;
+          if (includeMessageHistory && isBackfillEnabled()) {
+            messages = defaultConversationMessages;
+          }
+          if (isDebugEnabled()) {
+            console.log(
+              `[DEBUG] conversations.messages.list(default, agent_id=${agent.id}) returned ${defaultConversationMessages.length} messages`,
+            );
+          }
         } catch (backfillError) {
           debugWarn(
             "check-approval",
             `Failed to load message history: ${backfillError instanceof Error ? backfillError.message : String(backfillError)}`,
           );
         }
-      } else {
-        try {
-          const messagesPage = await client.agents.messages.list(agent.id, {
-            conversation_id: "default",
-            limit: BACKFILL_PAGE_LIMIT,
-            order: "desc",
-          });
-          defaultConversationMessages = sortChronological(
-            messagesPage.getPaginatedItems(),
-          );
-        } catch (listError) {
+      }
+
+      if (lastInContextId) {
+        const retrievedMessages =
+          await client.messages.retrieve(lastInContextId);
+        const messageToCheck =
+          retrievedMessages.find(
+            (msg) => msg.message_type === "approval_request_message",
+          ) ?? retrievedMessages[0];
+
+        if (messageToCheck) {
           debugWarn(
             "check-approval",
-            `Failed to load default conversation messages: ${listError instanceof Error ? listError.message : String(listError)}`,
+            `Found last in-context message: ${messageToCheck.id} (type: ${messageToCheck.message_type})` +
+              (retrievedMessages.length > 1
+                ? ` - had ${retrievedMessages.length} variants`
+                : ""),
+          );
+
+          if (messageToCheck.message_type === "approval_request_message") {
+            const { pendingApproval, pendingApprovals } =
+              extractApprovals(messageToCheck);
+            return {
+              pendingApproval,
+              pendingApprovals,
+              messageHistory: prepareMessageHistory(messages),
+            };
+          }
+        } else {
+          debugWarn(
+            "check-approval",
+            `Last in-context message ${lastInContextId} not found via retrieve`,
           );
         }
+
+        return {
+          pendingApproval: null,
+          pendingApprovals: [],
+          messageHistory: prepareMessageHistory(messages),
+        };
       }
 
       if (process.env.DEBUG) {

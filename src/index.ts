@@ -48,7 +48,8 @@ import { settingsManager } from "./settings-manager";
 import { startStartupAutoUpdateCheck } from "./startup-auto-update";
 import { telemetry } from "./telemetry";
 import { loadTools } from "./tools/manager";
-import { debugLog } from "./utils/debug";
+import { clearPersistedClientToolRules } from "./tools/toolset";
+import { debugLog, debugWarn, isDebugEnabled } from "./utils/debug";
 import { markMilestone } from "./utils/timing";
 
 // Stable empty array constants to prevent new references on every render
@@ -776,7 +777,7 @@ async function main(): Promise<void> {
       const message =
         err instanceof Error ? err.message : "An unexpected error occurred";
       console.error(`\nError: ${message}`);
-      if (process.env.DEBUG) {
+      if (isDebugEnabled()) {
         console.error(err);
       }
       process.exit(1);
@@ -1793,12 +1794,37 @@ async function main(): Promise<void> {
           }
         }
 
+        const startupAgentId = agent.id;
+        void clearPersistedClientToolRules(startupAgentId)
+          .then((cleanup) => {
+            if (cleanup) {
+              const count = cleanup.removedToolNames.length;
+              const names = cleanup.removedToolNames.join(", ");
+              debugLog(
+                "startup",
+                `Cleared ${count} persisted client tool rule${count === 1 ? "" : "s"} for ${startupAgentId}${count > 0 ? `: ${names}` : ""}`,
+              );
+              return;
+            }
+
+            debugLog(
+              "startup",
+              `No persisted client tool rules to clear for ${startupAgentId}`,
+            );
+          })
+          .catch((error) => {
+            debugWarn(
+              "startup",
+              `Failed to clear persisted client tool rules for ${startupAgentId}: ${error instanceof Error ? error.message : String(error)}`,
+            );
+          });
+
         // Handle conversation: either resume existing or create new
         // Using definite assignment assertion - all branches below either set this or exit/throw
         let conversationIdToUse!: string;
 
         // Debug: log resume flag status
-        if (process.env.DEBUG) {
+        if (isDebugEnabled()) {
           console.log(`[DEBUG] shouldContinue=${shouldContinue}`);
           console.log(`[DEBUG] shouldResume=${shouldResume}`);
           console.log(
@@ -1839,7 +1865,7 @@ async function main(): Promise<void> {
             settingsManager.getLocalLastSession(process.cwd()) ??
             settingsManager.getGlobalLastSession();
 
-          if (process.env.DEBUG) {
+          if (isDebugEnabled()) {
             console.log(`[DEBUG] lastSession=${JSON.stringify(lastSession)}`);
             console.log(`[DEBUG] agent.id=${agent.id}`);
           }
@@ -2003,7 +2029,7 @@ async function main(): Promise<void> {
         // Handle errors gracefully without showing raw stack traces
         const message = formatErrorDetails(err);
         console.error(`\nError during initialization: ${message}`);
-        if (process.env.DEBUG) {
+        if (isDebugEnabled()) {
           console.error(err);
         }
         process.exit(1);

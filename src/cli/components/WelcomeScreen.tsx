@@ -113,6 +113,11 @@ export function WelcomeScreen({
         ? "API key auth"
         : "OAuth";
 
+  // Check if memfs (context repositories) is enabled for this agent
+  const memfsEnabled = agentState?.id
+    ? settingsManager.isMemfsEnabled(agentState.id)
+    : true; // Don't warn while agent is still loading
+
   return (
     <Box flexDirection="row" marginTop={1}>
       {/* Left column: Logo */}
@@ -140,6 +145,13 @@ export function WelcomeScreen({
             ? tildePath
             : getLoadingMessage(loadingState, !!continueSession)}
         </Text>
+        {/* Row 4: memfs warning if not enabled (skip for self-hosted servers) */}
+        {loadingState === "ready" && !memfsEnabled && authMethod !== "url" && (
+          <Text color="yellow">
+            Warning: Context repositories are not enabled for this agent. Run
+            /memfs enable to enable.
+          </Text>
+        )}
       </Box>
     </Box>
   );

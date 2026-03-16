@@ -97,6 +97,7 @@ import type {
   WsProtocolCommand,
   WsProtocolMessage,
 } from "../types/protocol_v2";
+import { isDebugEnabled } from "../utils/debug";
 import { getListenerBlockedReason } from "./helpers/listenerQueueAdapter";
 import { killAllTerminals } from "./terminalHandler";
 
@@ -284,7 +285,7 @@ function handleModeChange(
 
     emitDeviceStatusUpdate(socket, runtime, scope);
 
-    if (process.env.DEBUG) {
+    if (isDebugEnabled()) {
       console.log(`[Listen] Mode changed to: ${msg.mode}`);
     }
   } catch (error) {
@@ -296,7 +297,7 @@ function handleModeChange(
       conversationId: scope?.conversation_id,
     });
 
-    if (process.env.DEBUG) {
+    if (isDebugEnabled()) {
       console.error("[Listen] Mode change failed:", error);
     }
   }
@@ -1346,7 +1347,7 @@ function scheduleQueuePump(
     })
     .catch((error: unknown) => {
       runtime.queuePumpScheduled = false;
-      if (process.env.DEBUG) {
+      if (isDebugEnabled()) {
         console.error("[Listen] Error in queue pump:", error);
       }
       opts.onStatusChange?.("idle", opts.connectionId);
@@ -1465,6 +1466,26 @@ function buildQueueSnapshot(runtime: ListenerRuntime): QueueMessage[] {
   }));
 }
 
+function isApprovalOnlyInput(
+  input: Array<MessageCreate | ApprovalCreate>,
+): boolean {
+  return (
+    input.length === 1 &&
+    input[0] !== undefined &&
+    "type" in input[0] &&
+    input[0].type === "approval"
+  );
+}
+
+function markAwaitingAcceptedApprovalContinuationRunId(
+  runtime: ListenerRuntime,
+  input: Array<MessageCreate | ApprovalCreate>,
+): void {
+  if (isApprovalOnlyInput(input)) {
+    runtime.activeRunId = null;
+  }
+}
+
 function setLoopStatus(
   runtime: ListenerRuntime,
   status: LoopStatus,
@@ -1510,9 +1531,23 @@ function emitProtocolV2Message(
     emitted_at: new Date().toISOString(),
     idempotency_key: `${message.type}:${eventSeq}:${crypto.randomUUID()}`,
   } as WsProtocolMessage;
+  try {
+    socket.send(JSON.stringify(outbound));
+  } catch (error) {
+    console.error(
+      `[Listen V2] Failed to emit ${message.type} (seq=${eventSeq})`,
+      error,
+    );
+    safeEmitWsEvent("send", "lifecycle", {
+      type: "_ws_send_error",
+      message_type: message.type,
+      event_seq: eventSeq,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return;
+  }
   console.log(`[Listen V2] Emitting ${message.type} (seq=${eventSeq})`);
   safeEmitWsEvent("send", "protocol", outbound);
-  socket.send(JSON.stringify(outbound));
 }
 
 function emitDeviceStatusUpdate(
@@ -2147,6 +2182,12 @@ function normalizeToolReturnValue(value: unknown): string {
   }
 }
 
+function getApprovalContinuationRecoveryDisposition(
+  drainResult: Awaited<ReturnType<typeof drainStreamWithResume>> | null,
+): "handled" | "retry" {
+  return drainResult ? "handled" : "retry";
+}
+
 function normalizeInterruptedApprovalsForQueue(
   approvals: ApprovalResult[] | null,
   interruptedToolCallIds: string[],
@@ -2674,7 +2715,7 @@ function populateInterruptQueue(
     return true;
   }
 
-  if (process.env.DEBUG) {
+  if (isDebugEnabled()) {
     console.warn(
       "[Listen] Cancel during approval loop but no tool_call_ids available " +
         "for interrupted queue — next turn may hit pre-stream conflict. " +
@@ -3590,7 +3631,11 @@ async function sendApprovalContinuationWithRetry(
             socket,
             abortSignal,
           );
-          if (drainResult) {
+          if (
+            drainResult &&
+            getApprovalContinuationRecoveryDisposition(drainResult) ===
+              "handled"
+          ) {
             finalizeHandledRecoveryTurn(runtime, socket, {
               drainResult,
               agentId: runtime.activeAgentId,
@@ -3598,6 +3643,7 @@ async function sendApprovalContinuationWithRetry(
             });
             return null;
           }
+          continue;
         }
 
         const detail = await fetchRunErrorDetail(runtime.activeRunId);
@@ -3875,7 +3921,7 @@ async function connectWithRetry(
         raw,
       });
     }
-    if (process.env.DEBUG) {
+    if (isDebugEnabled()) {
       console.log(
         `[Listen] Received message: ${JSON.stringify(parsed, null, 2)}`,
       );
@@ -4178,7 +4224,7 @@ async function connectWithRetry(
     runtime.queuedMessagesByItemId.clear();
     runtime.queueRuntime.clear("shutdown");
 
-    if (process.env.DEBUG) {
+    if (isDebugEnabled()) {
       console.log(
         `[Listen] WebSocket disconnected (code: ${code}, reason: ${reason.toString()})`,
       );
@@ -4196,7 +4242,7 @@ async function connectWithRetry(
 
     // 1008: Environment not found - need to re-register
     if (code === 1008) {
-      if (process.env.DEBUG) {
+      if (isDebugEnabled()) {
         console.log("[Listen] Environment not found, re-registering...");
       }
       // Stop retry loop and signal that we need to re-register
@@ -4227,7 +4273,7 @@ async function connectWithRetry(
       type: "_ws_error",
       message: error.message,
     });
-    if (process.env.DEBUG) {
+    if (isDebugEnabled()) {
       console.error("[Listen] WebSocket error:", error);
     }
     // Error triggers close(), which handles retry logic.
@@ -4305,7 +4351,7 @@ async function handleIncomingMessage(
       return;
     }
 
-    if (process.env.DEBUG) {
+    if (isDebugEnabled()) {
       console.log(
         `[Listen] Handling message: agentId=${agentId}, requestedConversationId=${requestedConversationId}, conversationId=${conversationId}`,
       );
@@ -4378,11 +4424,7 @@ async function handleIncomingMessage(
         : {}),
     });
 
-    const isPureApprovalContinuation =
-      currentInput.length === 1 &&
-      currentInput[0] !== undefined &&
-      "type" in currentInput[0] &&
-      currentInput[0].type === "approval";
+    const isPureApprovalContinuation = isApprovalOnlyInput(currentInput);
 
     let stream = isPureApprovalContinuation
       ? await sendApprovalContinuationWithRetry(
@@ -4405,6 +4447,7 @@ async function handleIncomingMessage(
       return;
     }
     pendingNormalizationInterruptedToolCallIds = [];
+    markAwaitingAcceptedApprovalContinuationRunId(runtime, currentInput);
     setLoopStatus(runtime, "PROCESSING_API_RESPONSE", {
       agent_id: agentId,
       conversation_id: conversationId,
@@ -4601,6 +4644,7 @@ async function handleIncomingMessage(
             return;
           }
           pendingNormalizationInterruptedToolCallIds = [];
+          markAwaitingAcceptedApprovalContinuationRunId(runtime, currentInput);
           setLoopStatus(runtime, "PROCESSING_API_RESPONSE", {
             agent_id: agentId,
             conversation_id: conversationId,
@@ -4683,6 +4727,7 @@ async function handleIncomingMessage(
             return;
           }
           pendingNormalizationInterruptedToolCallIds = [];
+          markAwaitingAcceptedApprovalContinuationRunId(runtime, currentInput);
           setLoopStatus(runtime, "PROCESSING_API_RESPONSE", {
             agent_id: agentId,
             conversation_id: conversationId,
@@ -4753,6 +4798,7 @@ async function handleIncomingMessage(
             return;
           }
           pendingNormalizationInterruptedToolCallIds = [];
+          markAwaitingAcceptedApprovalContinuationRunId(runtime, currentInput);
           setLoopStatus(runtime, "PROCESSING_API_RESPONSE", {
             agent_id: agentId,
             conversation_id: conversationId,
@@ -5077,6 +5123,7 @@ async function handleIncomingMessage(
           persistedExecutionResults,
         ),
       });
+      markAwaitingAcceptedApprovalContinuationRunId(runtime, currentInput);
       setLoopStatus(runtime, "PROCESSING_API_RESPONSE", {
         agent_id: agentId,
         conversation_id: conversationId,
@@ -5170,7 +5217,7 @@ async function handleIncomingMessage(
       agentId: agentId || undefined,
       conversationId,
     });
-    if (process.env.DEBUG) {
+    if (isDebugEnabled()) {
       console.error("[Listen] Error handling message:", error);
     }
   } finally {
@@ -5228,6 +5275,8 @@ export const __listenClientTestUtils = {
   normalizeToolReturnWireMessage,
   normalizeExecutionResultsForInterruptParity,
   shouldAttemptPostStopApprovalRecovery,
+  getApprovalContinuationRecoveryDisposition,
+  markAwaitingAcceptedApprovalContinuationRunId,
   normalizeMessageContentImages,
   normalizeInboundMessages,
   recoverApprovalStateForSync,

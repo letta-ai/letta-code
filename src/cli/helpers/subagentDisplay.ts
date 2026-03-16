@@ -12,22 +12,15 @@ import { formatCompact } from "./format";
  *
  * @param toolCount - Number of tool calls
  * @param totalTokens - Total tokens used (0 or undefined means no data available)
- * @param isRunning - If true, shows "—" for tokens (since usage is only available at end)
  */
-export function formatStats(
-  toolCount: number,
-  totalTokens: number,
-  isRunning = false,
-): string {
+export function formatStats(toolCount: number, totalTokens: number): string {
   const toolStr = `${toolCount} tool use${toolCount !== 1 ? "s" : ""}`;
 
-  // Only show token count if we have actual data (not running and totalTokens > 0)
-  const hasTokenData = !isRunning && totalTokens > 0;
-  if (!hasTokenData) {
-    return toolStr;
+  if (totalTokens > 0) {
+    return `${toolStr} · ${formatCompact(totalTokens)} tokens`;
   }
 
-  return `${toolStr} · ${formatCompact(totalTokens)} tokens`;
+  return toolStr;
 }
 
 /**

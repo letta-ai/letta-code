@@ -1,0 +1,57 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "command": {
+      "type": "string",
+      "enum": ["str_replace", "insert", "delete", "rename", "create"],
+      "description": "Memory operation to perform"
+    },
+    "reason": {
+      "type": "string",
+      "description": "Required commit message for this memory change. Used as the git commit message."
+    },
+    "path": {
+      "type": "string",
+      "description": "Target memory file path relative to memory root (e.g. system/contacts.md)"
+    },
+    "old_path": {
+      "type": "string",
+      "description": "Source memory file path for rename operations (e.g. system/temp.md)"
+    },
+    "new_path": {
+      "type": "string",
+      "description": "Destination memory file path for rename operations (e.g. system/permanent.md)"
+    },
+    "old_string": {
+      "type": "string",
+      "description": "Text to replace in str_replace"
+    },
+    "new_string": {
+      "type": "string",
+      "description": "Replacement text for str_replace"
+    },
+    "insert_line": {
+      "type": "number",
+      "description": "1-indexed line number for insert"
+    },
+    "insert_text": {
+      "type": "string",
+      "description": "Text to insert"
+    },
+    "description": {
+      "type": "string",
+      "description": "Block description (required for create, or used with rename + path to update description)"
+    },
+    "file_text": {
+      "type": "string",
+      "description": "Initial block content for create"
+    },
+    "limit": {
+      "type": "number",
+      "description": "Optional positive integer limit for create"
+    }
+  },
+  "required": ["command", "reason"],
+  "additionalProperties": false
+}

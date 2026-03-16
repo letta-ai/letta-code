@@ -121,7 +121,12 @@ import {
 } from "../tools/manager";
 import type { ToolsetName, ToolsetPreference } from "../tools/toolset";
 import { formatToolsetName } from "../tools/toolset-labels";
-import { debugLog, debugLogFile, debugWarn } from "../utils/debug";
+import {
+  debugLog,
+  debugLogFile,
+  debugWarn,
+  isDebugEnabled,
+} from "../utils/debug";
 import { getVersion } from "../version";
 import {
   handleMcpAdd,
@@ -260,6 +265,7 @@ import { resolveReasoningTabToggleCommand } from "./helpers/reasoningTabToggle";
 import {
   appendTranscriptDeltaJsonl,
   buildAutoReflectionPayload,
+  buildParentMemorySnapshot,
   buildReflectionSubagentPrompt,
   finalizeAutoReflectionPayload,
 } from "./helpers/reflectionTranscript";
@@ -3049,7 +3055,7 @@ export default function App({
       const agentName = agentState?.name || "Unnamed Agent";
       const isResumingConversation =
         resumedExistingConversation || messageHistory.length > 0;
-      if (process.env.DEBUG) {
+      if (isDebugEnabled()) {
         console.log(
           `[DEBUG] Header: resumedExistingConversation=${resumedExistingConversation}, messageHistory.length=${messageHistory.length}`,
         );
@@ -4720,7 +4726,7 @@ export default function App({
                 })
                 .catch((err) => {
                   // Silently ignore - not critical
-                  if (process.env.DEBUG) {
+                  if (isDebugEnabled()) {
                     console.error(
                       "[DEBUG] Failed to set conversation summary:",
                       err,
@@ -9435,10 +9441,12 @@ export default function App({
             }
 
             const memoryDir = getMemoryFilesystemRoot(agentId);
+            const parentMemory = await buildParentMemorySnapshot(memoryDir);
             const reflectionPrompt = buildReflectionSubagentPrompt({
               transcriptPath: autoPayload.payloadPath,
               memoryDir,
               cwd: process.cwd(),
+              parentMemory,
             });
 
             const { spawnBackgroundSubagentTask } = await import(
@@ -9799,10 +9807,12 @@ ${SYSTEM_REMINDER_CLOSE}
           }
 
           const memoryDir = getMemoryFilesystemRoot(agentId);
+          const parentMemory = await buildParentMemorySnapshot(memoryDir);
           const reflectionPrompt = buildReflectionSubagentPrompt({
             transcriptPath: autoPayload.payloadPath,
             memoryDir,
             cwd: process.cwd(),
+            parentMemory,
           });
 
           const { spawnBackgroundSubagentTask } = await import(

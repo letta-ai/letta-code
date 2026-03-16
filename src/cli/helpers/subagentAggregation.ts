@@ -5,7 +5,11 @@
 
 import type { StaticSubagent } from "../components/SubagentGroupStatic.js";
 import type { Line } from "./accumulator.js";
-import { getSubagentByToolCallId, getSubagents } from "./subagentState.js";
+import {
+  getSubagentByToolCallId,
+  getSubagents,
+  getSubagentToolCount,
+} from "./subagentState.js";
 import { isTaskTool } from "./toolNameMapping.js";
 
 /**
@@ -133,7 +137,7 @@ export function createSubagentGroupItem(
         status: subagent.isBackground
           ? "running"
           : (subagent.status as "completed" | "error"),
-        toolCount: subagent.toolCalls.length,
+        toolCount: getSubagentToolCount(subagent),
         totalTokens: subagent.totalTokens,
         agentURL: subagent.agentURL,
         error: subagent.error,

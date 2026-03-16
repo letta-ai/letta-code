@@ -56,8 +56,11 @@ interface AgentRowProps {
 
 const AgentRow = memo(({ agent, isLast }: AgentRowProps) => {
   const { treeChar, continueChar } = getTreeChars(isLast);
+  const rowIndent = "  ";
+  const statusIndent = "   ";
   const columns = useTerminalWidth();
-  const gutterWidth = 8; // indent (3) + continueChar (2) + status indent (3)
+  const gutterWidth =
+    rowIndent.length + continueChar.length + statusIndent.length;
   const contentWidth = Math.max(0, columns - gutterWidth);
 
   const isRunning = agent.status === "running";
@@ -65,16 +68,16 @@ const AgentRow = memo(({ agent, isLast }: AgentRowProps) => {
   const showStats = !(agent.isBackground && isRunning);
   const hideBackgroundStatusLine =
     agent.isBackground && isRunning && !agent.agentURL;
-  const stats = formatStats(agent.toolCount, agent.totalTokens, isRunning);
+  const stats = formatStats(agent.toolCount, agent.totalTokens);
   const modelDisplay = getSubagentModelDisplay(agent.model);
 
   return (
     <Box flexDirection="column">
       {/* Main row: tree char + description + type + model + stats */}
       <Box flexDirection="row">
-        <Text>
+        <Text wrap="truncate-end">
           <Text color={colors.subagent.treeChar}>
-            {"   "}
+            {rowIndent}
             {treeChar}{" "}
           </Text>
           <Text bold={!shouldDim} dimColor={shouldDim}>
@@ -111,7 +114,7 @@ const AgentRow = memo(({ agent, isLast }: AgentRowProps) => {
       {agent.agentURL && (
         <Box flexDirection="row">
           <Text color={colors.subagent.treeChar}>
-            {"   "}
+            {rowIndent}
             {continueChar} ⎿{" "}
           </Text>
           <Text dimColor>{"Subagent: "}</Text>
@@ -122,23 +125,15 @@ const AgentRow = memo(({ agent, isLast }: AgentRowProps) => {
       {/* Status line */}
       {!hideBackgroundStatusLine && (
         <Box flexDirection="row">
-          {agent.status === "completed" && !agent.isBackground ? (
-            <>
-              <Text color={colors.subagent.treeChar}>
-                {"   "}
-                {continueChar}
-              </Text>
-              <Text dimColor>{"   Done"}</Text>
-            </>
-          ) : agent.status === "error" ? (
+          {agent.status === "error" ? (
             <>
               <Box width={gutterWidth} flexShrink={0}>
                 <Text>
                   <Text color={colors.subagent.treeChar}>
-                    {"   "}
+                    {rowIndent}
                     {continueChar}
                   </Text>
-                  <Text dimColor>{"   "}</Text>
+                  <Text dimColor>{statusIndent}</Text>
                 </Text>
               </Box>
               <Box flexGrow={1} width={contentWidth}>
@@ -150,10 +145,15 @@ const AgentRow = memo(({ agent, isLast }: AgentRowProps) => {
           ) : (
             <>
               <Text color={colors.subagent.treeChar}>
-                {"   "}
+                {rowIndent}
                 {continueChar}
               </Text>
-              <Text dimColor>{"   Running in the background"}</Text>
+              <Text dimColor>
+                {statusIndent}
+                {agent.status === "completed" && !agent.isBackground
+                  ? "Done"
+                  : "Running in the background"}
+              </Text>
             </>
           )}
         </Box>

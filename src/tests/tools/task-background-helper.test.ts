@@ -46,6 +46,7 @@ describe("spawnBackgroundSubagentTask", () => {
       { id: "tc-1", name: "Read", args: "{}" },
       { id: "tc-2", name: "Edit", args: "{}" },
     ],
+    maxToolCallsSeen: 2,
     totalTokens: 0,
     durationMs: 0,
     startTime: Date.now(),
