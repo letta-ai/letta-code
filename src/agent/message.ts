@@ -77,7 +77,6 @@ export type SendMessageStreamOptions = {
   agentId?: string; // Required when conversationId is "default"
   approvalNormalization?: ApprovalNormalizationOptions;
   workingDirectory?: string;
-  debugSource?: string;
 };
 
 export function buildConversationMessagesCreateRequestBody(
@@ -202,14 +201,12 @@ export async function sendMessageStream(
     })
     .join(",");
 
-  const debugSource = opts.debugSource ?? "unknown";
   const debugOrigin = inferSendMessageOrigin();
   const requestUuid = `${requestStartedAtMs}-${Math.random().toString(36).slice(2, 8)}`;
   debugLog(
     "send-message-stream",
-    "request_start request_id=%s source=%s origin=%s conversation_id=%s agent_id=%s messages=%s stream_tokens=%s background=%s max_retries=%s",
+    "request_start request_id=%s origin=%s conversation_id=%s agent_id=%s messages=%s stream_tokens=%s background=%s max_retries=%s",
     requestUuid,
-    debugSource,
     debugOrigin,
     resolvedConversationId,
     opts.agentId ?? "none",
@@ -235,9 +232,8 @@ export async function sendMessageStream(
   } catch (error) {
     debugWarn(
       "send-message-stream",
-      "request_error request_id=%s source=%s origin=%s conversation_id=%s status=%s error=%s",
+      "request_error request_id=%s origin=%s conversation_id=%s status=%s error=%s",
       requestUuid,
-      debugSource,
       debugOrigin,
       resolvedConversationId,
       (error as { status?: number })?.status ?? "none",
@@ -248,9 +244,8 @@ export async function sendMessageStream(
 
   debugLog(
     "send-message-stream",
-    "request_ok request_id=%s source=%s origin=%s conversation_id=%s",
+    "request_ok request_id=%s origin=%s conversation_id=%s",
     requestUuid,
-    debugSource,
     debugOrigin,
     resolvedConversationId,
   );
