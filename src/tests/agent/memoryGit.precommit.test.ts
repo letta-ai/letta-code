@@ -290,6 +290,60 @@ describe("pre-commit hook: read_only protection", () => {
   });
 });
 
+describe("pre-commit hook: required file protection", () => {
+  /** Seed system/persona.md so it exists for protection tests */
+  function seedPersona(): void {
+    const hookPath = join(tempDir, ".git", "hooks", "pre-commit");
+    rmSync(hookPath);
+    writeAndStage(
+      "memory/system/persona.md",
+      `${VALID_FM}I'm a coding assistant.\n`,
+    );
+    tryCommit();
+    writeFileSync(hookPath, PRE_COMMIT_HOOK_SCRIPT, { mode: 0o755 });
+  }
+
+  test("rejects deleting a required file", () => {
+    seedPersona();
+    git("rm memory/system/persona.md");
+    const result = tryCommit();
+    expect(result.success).toBe(false);
+    expect(result.output).toContain("required file");
+    expect(result.output).toContain("cannot be deleted");
+  });
+
+  test("rejects renaming a required file", () => {
+    seedPersona();
+    git("mv memory/system/persona.md memory/system/old-persona.md");
+    const result = tryCommit();
+    expect(result.success).toBe(false);
+    expect(result.output).toContain("required file");
+    expect(result.output).toContain("cannot be renamed");
+  });
+
+  test("rejects emptying a required file body", () => {
+    seedPersona();
+    writeAndStage(
+      "memory/system/persona.md",
+      "---\ndescription: Who I am\nlimit: 20000\n---\n\n   \n",
+    );
+    const result = tryCommit();
+    expect(result.success).toBe(false);
+    expect(result.output).toContain("required file");
+    expect(result.output).toContain("cannot have empty content");
+  });
+
+  test("allows modifying a required file with non-empty body", () => {
+    seedPersona();
+    writeAndStage(
+      "memory/system/persona.md",
+      `${VALID_FM}Updated persona content.\n`,
+    );
+    const result = tryCommit();
+    expect(result.success).toBe(true);
+  });
+});
+
 describe("pre-commit hook: non-memory files", () => {
   test("ignores non-memory files", () => {
     writeAndStage("README.md", "---\nbogus: true\n---\n\nThis is fine.\n");

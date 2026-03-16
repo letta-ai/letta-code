@@ -163,6 +163,7 @@ export const PRE_COMMIT_HOOK_SCRIPT = `#!/usr/bin/env bash
 AGENT_EDITABLE_KEYS="description limit"
 PROTECTED_KEYS="read_only"
 ALL_KNOWN_KEYS="description limit read_only"
+REQUIRED_FILES="memory/system/persona.md"
 errors=""
 
 # Helper: extract a frontmatter value from content
@@ -281,7 +282,39 @@ for file in $(git diff --cached --name-only --diff-filter=ACM | grep '^memory/.*
       fi
     done
   fi
+
+  # Check required files are not emptied (body must be non-whitespace)
+  for req in $REQUIRED_FILES; do
+    if [ "$file" = "$req" ]; then
+      body=$(echo "$staged" | tail -n +$((closing_line + 2)))
+      trimmed=$(echo "$body" | tr -d '[:space:]')
+      if [ -z "$trimmed" ]; then
+        errors="$errors\\\\n  $file: is a required file and cannot have empty content"
+      fi
+      break
+    fi
+  done
 done
+
+# Check required files are not deleted or renamed away
+while IFS=$'\\t' read -r status old_path new_path; do
+  case "$status" in
+    D)
+      for req in $REQUIRED_FILES; do
+        if [ "$old_path" = "$req" ]; then
+          errors="$errors\\\\n  $old_path: is a required file and cannot be deleted"
+        fi
+      done
+      ;;
+    R*)
+      for req in $REQUIRED_FILES; do
+        if [ "$old_path" = "$req" ]; then
+          errors="$errors\\\\n  $old_path: is a required file and cannot be renamed"
+        fi
+      done
+      ;;
+  esac
+done < <(git diff --cached --name-status)
 
 if [ -n "$errors" ]; then
   echo "Frontmatter validation failed:"
