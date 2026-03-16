@@ -5,10 +5,7 @@ import type {
   LettaStreamingResponse,
 } from "@letta-ai/letta-client/resources/agents/messages";
 import type WebSocket from "ws";
-import {
-  type ApprovalResult,
-  executeApprovalBatch,
-} from "../../agent/approval-execution";
+import type { ApprovalResult } from "../../agent/approval-execution";
 import { fetchRunErrorDetail } from "../../agent/approval-recovery";
 import { getResumeData } from "../../agent/check-approval";
 import { getClient } from "../../agent/client";
@@ -22,31 +19,16 @@ import {
   rebuildInputWithFreshDenials,
 } from "../../agent/turn-recovery-policy";
 import { createBuffers } from "../../cli/helpers/accumulator";
-import { classifyApprovals } from "../../cli/helpers/approvalClassification";
 import { getRetryStatusMessage } from "../../cli/helpers/errorFormatter";
 import { drainStreamWithResume } from "../../cli/helpers/stream";
-import { computeDiffPreviews } from "../../helpers/diffPreview";
 import {
   buildSharedReminderParts,
   prependReminderPartsToContent,
 } from "../../reminders/engine";
 import { buildListenReminderContext } from "../../reminders/listenContext";
 import { getPlanModeReminder } from "../../reminders/planModeReminder";
-import { isInteractiveApprovalTool } from "../../tools/interactivePolicy";
-import type {
-  ApprovalResponseDecision,
-  ControlRequest,
-  StopReasonType,
-  StreamDelta,
-} from "../../types/protocol_v2";
+import type { StopReasonType, StreamDelta } from "../../types/protocol_v2";
 import { isDebugEnabled } from "../../utils/debug";
-import {
-  clearPendingApprovalBatchIds,
-  collectApprovalResultToolCallIds,
-  collectDecisionToolCallIds,
-  requestApprovalOverWS,
-  validateApprovalResultIds,
-} from "./approval";
 import {
   EMPTY_RESPONSE_MAX_RETRIES,
   LLM_API_ERROR_MAX_RETRIES,
@@ -56,9 +38,7 @@ import {
   consumeInterruptQueue,
   emitInterruptToolReturnMessage,
   emitToolExecutionFinishedEvents,
-  emitToolExecutionStartedEvents,
   getInterruptApprovalsForEmission,
-  normalizeExecutionResultsForInterruptParity,
   normalizeToolReturnWireMessage,
   populateInterruptQueue,
 } from "./interrupts";
@@ -73,7 +53,6 @@ import {
   setLoopStatus,
 } from "./protocol-outbound";
 import {
-  debugLogApprovalResumeState,
   isRetriablePostStopError,
   shouldAttemptPostStopApprovalRecovery,
 } from "./recovery";
@@ -88,6 +67,7 @@ import {
   sendApprovalContinuationWithRetry,
   sendMessageStreamWithRetry,
 } from "./send";
+import { handleApprovalStop } from "./turn-approval";
 import type { IncomingMessage, ListenerRuntime } from "./types";
 
 export async function handleIncomingMessage(
@@ -655,267 +635,35 @@ export async function handleIncomingMessage(
         break;
       }
 
-      if (approvals.length === 0) {
-        runtime.lastStopReason = "error";
-        runtime.isProcessing = false;
-        setLoopStatus(runtime, "WAITING_ON_INPUT", {
-          agent_id: agentId,
-          conversation_id: conversationId,
-        });
-        clearActiveRunState(runtime);
-        emitRuntimeStateUpdates(runtime, {
-          agent_id: agentId,
-          conversation_id: conversationId,
-        });
-
-        emitLoopErrorDelta(socket, runtime, {
-          message: "requires_approval stop returned no approvals",
-          stopReason: "error",
-          isTerminal: true,
-          agentId,
-          conversationId,
-        });
-        break;
-      }
-
-      clearPendingApprovalBatchIds(runtime, approvals);
-      // Persist origin correlation for this approval wait so a later recovery
-      // can continue the same dequeued-turn run block.
-      // Reset first so a replayed approval set cannot accumulate stale tool ids.
-      // Then store the current approval wait's batch mapping.
-      // This preserves existing semantics while keeping the map bounded.
-      //
-      // Note: `rememberPendingApprovalBatchIds` lives in approval.ts.
-      const { rememberPendingApprovalBatchIds } = await import("./approval");
-      rememberPendingApprovalBatchIds(runtime, approvals, dequeuedBatchId);
-
-      const { autoAllowed, autoDenied, needsUserInput } =
-        await classifyApprovals(approvals, {
-          alwaysRequiresUserInput: isInteractiveApprovalTool,
-          treatAskAsDeny: false,
-          requireArgsForAutoApprove: true,
-          missingNameReason: "Tool call incomplete - missing name",
-          workingDirectory: turnWorkingDirectory,
-        });
-
-      lastNeedsUserInputToolCallIds = needsUserInput.map(
-        (ac) => ac.approval.toolCallId,
-      );
-      lastExecutionResults = null;
-
-      type Decision =
-        | {
-            type: "approve";
-            approval: {
-              toolCallId: string;
-              toolName: string;
-              toolArgs: string;
-            };
-          }
-        | {
-            type: "deny";
-            approval: {
-              toolCallId: string;
-              toolName: string;
-              toolArgs: string;
-            };
-            reason: string;
-          };
-
-      const decisions: Decision[] = [
-        ...autoAllowed.map((ac) => ({
-          type: "approve" as const,
-          approval: ac.approval,
-        })),
-        ...autoDenied.map((ac) => ({
-          type: "deny" as const,
-          approval: ac.approval,
-          reason: ac.denyReason || ac.permission.reason || "Permission denied",
-        })),
-      ];
-
-      if (needsUserInput.length > 0) {
-        runtime.lastStopReason = "requires_approval";
-        setLoopStatus(runtime, "WAITING_ON_APPROVAL", {
-          agent_id: agentId,
-          conversation_id: conversationId,
-        });
-
-        for (const ac of needsUserInput) {
-          const requestId = `perm-${ac.approval.toolCallId}`;
-          const diffs = await computeDiffPreviews(
-            ac.approval.toolName,
-            ac.parsedArgs,
-            turnWorkingDirectory,
-          );
-          const controlRequest: ControlRequest = {
-            type: "control_request",
-            request_id: requestId,
-            request: {
-              subtype: "can_use_tool",
-              tool_name: ac.approval.toolName,
-              input: ac.parsedArgs,
-              tool_call_id: ac.approval.toolCallId,
-              permission_suggestions: [],
-              blocked_path: null,
-              ...(diffs.length > 0 ? { diffs } : {}),
-            },
-            agent_id: agentId,
-            conversation_id: conversationId,
-          };
-
-          const responseBody = await requestApprovalOverWS(
-            runtime,
-            socket,
-            requestId,
-            controlRequest,
-          );
-
-          if ("decision" in responseBody) {
-            const response = responseBody.decision as ApprovalResponseDecision;
-            if (response.behavior === "allow") {
-              const finalApproval = response.updated_input
-                ? {
-                    ...ac.approval,
-                    toolArgs: JSON.stringify(response.updated_input),
-                  }
-                : ac.approval;
-              decisions.push({ type: "approve", approval: finalApproval });
-            } else {
-              decisions.push({
-                type: "deny",
-                approval: ac.approval,
-                reason: response?.message || "Denied via WebSocket",
-              });
-            }
-          } else {
-            const denyReason = responseBody.error;
-            decisions.push({
-              type: "deny",
-              approval: ac.approval,
-              reason: denyReason,
-            });
-          }
-        }
-      }
-
-      lastExecutingToolCallIds = decisions
-        .filter(
-          (decision): decision is Extract<Decision, { type: "approve" }> =>
-            decision.type === "approve",
-        )
-        .map((decision) => decision.approval.toolCallId);
-      runtime.activeExecutingToolCallIds = [...lastExecutingToolCallIds];
-      setLoopStatus(runtime, "EXECUTING_CLIENT_SIDE_TOOL", {
-        agent_id: agentId,
-        conversation_id: conversationId,
-      });
-      emitRuntimeStateUpdates(runtime, {
-        agent_id: agentId,
-        conversation_id: conversationId,
-      });
-      const executionRunId =
-        runId || runtime.activeRunId || msgRunIds[msgRunIds.length - 1];
-      emitToolExecutionStartedEvents(socket, runtime, {
-        toolCallIds: lastExecutingToolCallIds,
-        runId: executionRunId,
-        agentId,
-        conversationId,
-      });
-
-      const executionResults = await executeApprovalBatch(
-        decisions,
-        undefined,
-        {
-          toolContextId: turnToolContextId ?? undefined,
-          abortSignal: runtime.activeAbortController.signal,
-          workingDirectory: turnWorkingDirectory,
-        },
-      );
-      const persistedExecutionResults =
-        normalizeExecutionResultsForInterruptParity(
-          runtime,
-          executionResults,
-          lastExecutingToolCallIds,
-        );
-      validateApprovalResultIds(
-        decisions.map((decision) => ({
-          approval: {
-            toolCallId: decision.approval.toolCallId,
-          },
-        })),
-        persistedExecutionResults,
-      );
-      emitToolExecutionFinishedEvents(socket, runtime, {
-        approvals: persistedExecutionResults,
-        runId: executionRunId,
-        agentId,
-        conversationId,
-      });
-      lastExecutionResults = persistedExecutionResults;
-      emitInterruptToolReturnMessage(
-        socket,
+      const approvalResult = await handleApprovalStop({
+        approvals,
         runtime,
-        persistedExecutionResults,
-        runtime.activeRunId ||
-          runId ||
-          msgRunIds[msgRunIds.length - 1] ||
-          undefined,
-        "tool-return",
-      );
-      currentInput = [
-        {
-          type: "approval",
-          approvals: persistedExecutionResults,
-        },
-      ];
-      setLoopStatus(runtime, "SENDING_API_REQUEST", {
-        agent_id: agentId,
-        conversation_id: conversationId,
-      });
-      stream = await sendApprovalContinuationWithRetry(
+        socket,
+        agentId,
         conversationId,
+        turnWorkingDirectory,
+        dequeuedBatchId,
+        runId,
+        msgRunIds,
         currentInput,
-        buildSendOptions(),
-        socket,
-        runtime,
-        runtime.activeAbortController.signal,
-      );
-      if (!stream) {
+        pendingNormalizationInterruptedToolCallIds,
+        turnToolContextId,
+        buildSendOptions,
+      });
+      if (approvalResult.terminated || !approvalResult.stream) {
         return;
       }
-      pendingNormalizationInterruptedToolCallIds = [];
-      clearPendingApprovalBatchIds(
-        runtime,
-        decisions.map((decision) => decision.approval),
-      );
-      await debugLogApprovalResumeState(runtime, {
-        agentId,
-        conversationId,
-        expectedToolCallIds: collectDecisionToolCallIds(
-          decisions.map((decision) => ({
-            approval: {
-              toolCallId: decision.approval.toolCallId,
-            },
-          })),
-        ),
-        sentToolCallIds: collectApprovalResultToolCallIds(
-          persistedExecutionResults,
-        ),
-      });
-      markAwaitingAcceptedApprovalContinuationRunId(runtime, currentInput);
-      setLoopStatus(runtime, "PROCESSING_API_RESPONSE", {
-        agent_id: agentId,
-        conversation_id: conversationId,
-      });
-
-      lastApprovalContinuationAccepted = true;
-      runtime.activeExecutingToolCallIds = [];
-      emitRuntimeStateUpdates(runtime, {
-        agent_id: agentId,
-        conversation_id: conversationId,
-      });
-
+      stream = approvalResult.stream;
+      currentInput = approvalResult.currentInput;
+      pendingNormalizationInterruptedToolCallIds =
+        approvalResult.pendingNormalizationInterruptedToolCallIds;
+      turnToolContextId = approvalResult.turnToolContextId;
+      lastExecutionResults = approvalResult.lastExecutionResults;
+      lastExecutingToolCallIds = approvalResult.lastExecutingToolCallIds;
+      lastNeedsUserInputToolCallIds =
+        approvalResult.lastNeedsUserInputToolCallIds;
+      lastApprovalContinuationAccepted =
+        approvalResult.lastApprovalContinuationAccepted;
       turnToolContextId = getStreamToolContextId(
         stream as Stream<LettaStreamingResponse>,
       );
