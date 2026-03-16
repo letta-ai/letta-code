@@ -531,7 +531,6 @@ const StreamingStatus = memo(function StreamingStatus({
   const [shimmerOffset, setShimmerOffset] = useState(-3);
   const [elapsedMs, setElapsedMs] = useState(0);
   const [tipMessage, setTipMessage] = useState("");
-  const tipInitializedRef = useRef(false);
   const streamStartRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -585,14 +584,8 @@ const StreamingStatus = memo(function StreamingStatus({
 
   useEffect(() => {
     if (streaming && visible) {
-      if (!tipInitializedRef.current) {
-        setTipMessage(getRandomThinkingTip({ includeSystemPromptUpgradeTip }));
-        tipInitializedRef.current = true;
-      }
-      return;
+      setTipMessage(getRandomThinkingTip({ includeSystemPromptUpgradeTip }));
     }
-
-    tipInitializedRef.current = false;
   }, [streaming, visible, includeSystemPromptUpgradeTip]);
 
   const estimatedTokens = charsToTokens(tokenCount);

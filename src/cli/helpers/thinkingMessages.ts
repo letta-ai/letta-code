@@ -55,6 +55,10 @@ export const THINKING_TIPS = [
   "Use /init to initialize (or re-init) your agent's memory.",
 ] as const;
 
+const THINKING_TIPS_WITHOUT_SYSTEM_UPGRADE = THINKING_TIPS.filter(
+  (tip) => tip !== SYSTEM_PROMPT_UPGRADE_TIP,
+);
+
 type ThinkingVerb = (typeof THINKING_VERBS)[number];
 
 const PAST_TENSE_VERBS: Record<ThinkingVerb, string> = {
@@ -107,11 +111,6 @@ function getRandomVerb(): string {
   return THINKING_VERBS[index] ?? "thinking";
 }
 
-function getRandomTip(): string {
-  const index = Math.floor(Math.random() * THINKING_TIPS.length);
-  return THINKING_TIPS[index] ?? "";
-}
-
 // Get a random thinking verb phrase (e.g., "is thinking", "is processing")
 export function getRandomThinkingVerb(): string {
   return `is ${getRandomVerb()}`;
@@ -138,16 +137,10 @@ export function getRandomThinkingMessage(agentName?: string | null): string {
 export function getRandomThinkingTip(options?: {
   includeSystemPromptUpgradeTip?: boolean;
 }): string {
-  const includeSystemPromptUpgradeTip =
-    options?.includeSystemPromptUpgradeTip ?? true;
-
-  if (includeSystemPromptUpgradeTip) {
-    return getRandomTip();
-  }
-
-  const tipPool = THINKING_TIPS.filter(
-    (tip) => tip !== SYSTEM_PROMPT_UPGRADE_TIP,
-  );
+  const tipPool =
+    (options?.includeSystemPromptUpgradeTip ?? true)
+      ? THINKING_TIPS
+      : THINKING_TIPS_WITHOUT_SYSTEM_UPGRADE;
   if (tipPool.length === 0) {
     return "";
   }

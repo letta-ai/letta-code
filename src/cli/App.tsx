@@ -983,7 +983,7 @@ export default function App({
 
   // Check if the current agent would benefit from switching to the default prompt.
   // Used to conditionally include the /system tip in streaming tip rotation.
-  const shouldShowDefaultPromptTip = useCallback(() => {
+  const includeSystemPromptUpgradeTip = useMemo(() => {
     if (!agentState?.id || !agentState.system) return false;
     const memMode = settingsManager.isMemfsEnabled(agentState.id)
       ? "memfs"
@@ -13490,7 +13490,7 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
                 tokenCount={trajectoryTokenDisplay}
                 elapsedBaseMs={liveTrajectoryElapsedBaseMs}
                 thinkingMessage={thinkingMessage}
-                includeSystemPromptUpgradeTip={shouldShowDefaultPromptTip()}
+                includeSystemPromptUpgradeTip={includeSystemPromptUpgradeTip}
                 onSubmit={onSubmit}
                 onBashSubmit={handleBashSubmit}
                 bashRunning={bashRunning}
