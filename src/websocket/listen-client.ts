@@ -37,6 +37,7 @@ import {
 } from "../agent/turn-recovery-policy";
 import { createBuffers } from "../cli/helpers/accumulator";
 import { classifyApprovals } from "../cli/helpers/approvalClassification";
+import { getRetryStatusMessage } from "../cli/helpers/errorFormatter";
 import { resizeImageIfNeeded } from "../cli/helpers/imageResize";
 import { generatePlanFilePath } from "../cli/helpers/planName";
 import type { ApprovalRequest } from "../cli/helpers/stream";
@@ -1767,6 +1768,7 @@ function emitRetryDelta(
   socket: WebSocket,
   runtime: ListenerRuntime,
   params: {
+    message: string;
     reason: StopReasonType;
     attempt: number;
     maxAttempts: number;
@@ -1778,6 +1780,7 @@ function emitRetryDelta(
 ): void {
   const delta: RetryMessage = {
     ...createLifecycleMessageBase("retry", params.runId),
+    message: params.message,
     reason: params.reason,
     attempt: params.attempt,
     max_attempts: params.maxAttempts,
@@ -2880,14 +2883,18 @@ async function sendMessageStreamWithRetry(
         });
         transientRetries = attempt;
 
-        emitRetryDelta(socket, runtime, {
-          reason: "error",
-          attempt,
-          maxAttempts: LLM_API_ERROR_MAX_RETRIES,
-          delayMs,
-          agentId: runtime.activeAgentId ?? undefined,
-          conversationId,
-        });
+        const retryMessage = getRetryStatusMessage(errorDetail);
+        if (retryMessage) {
+          emitRetryDelta(socket, runtime, {
+            message: retryMessage,
+            reason: "error",
+            attempt,
+            maxAttempts: LLM_API_ERROR_MAX_RETRIES,
+            delayMs,
+            agentId: runtime.activeAgentId ?? undefined,
+            conversationId,
+          });
+        }
 
         await new Promise((resolve) => setTimeout(resolve, delayMs));
         if (abortSignal?.aborted) {
@@ -2917,6 +2924,7 @@ async function sendMessageStreamWithRetry(
         conversationBusyRetries = attempt;
 
         emitRetryDelta(socket, runtime, {
+          message: "Conversation is busy, waiting and retrying…",
           reason: "error",
           attempt,
           maxAttempts: MAX_CONVERSATION_BUSY_RETRIES,
@@ -4227,6 +4235,7 @@ export const __listenClientTestUtils = {
   extractInterruptToolReturns,
   emitInterruptToolReturnMessage,
   emitInterruptedStatusDelta,
+  emitRetryDelta,
   getInterruptApprovalsForEmission,
   normalizeToolReturnWireMessage,
   normalizeExecutionResultsForInterruptParity,

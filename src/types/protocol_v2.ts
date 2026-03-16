@@ -247,6 +247,7 @@ export interface StatusMessage extends UmiLifecycleMessageBase {
 
 export interface RetryMessage extends UmiLifecycleMessageBase {
   message_type: "retry";
+  message: string;
   reason: StopReasonType;
   attempt: number;
   max_attempts: number;

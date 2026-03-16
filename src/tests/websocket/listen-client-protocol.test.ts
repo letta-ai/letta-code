@@ -952,6 +952,46 @@ describe("listen-client runtime metadata", () => {
   });
 });
 
+describe("listen-client retry delta emission", () => {
+  test("emits retry message text alongside structured retry metadata", () => {
+    const runtime = __listenClientTestUtils.createRuntime();
+    runtime.activeAgentId = "agent-1";
+    runtime.activeConversationId = "default";
+    const socket = new MockSocket();
+
+    __listenClientTestUtils.emitRetryDelta(
+      socket as unknown as WebSocket,
+      runtime,
+      {
+        message: "Anthropic API is overloaded, retrying...",
+        reason: "error",
+        attempt: 1,
+        maxAttempts: 3,
+        delayMs: 1000,
+        agentId: "agent-1",
+        conversationId: "default",
+      },
+    );
+
+    expect(socket.sentPayloads).toHaveLength(1);
+    const [firstPayload] = socket.sentPayloads;
+    expect(firstPayload).toBeDefined();
+    const payload = JSON.parse(firstPayload as string) as {
+      type: string;
+      delta: Record<string, unknown>;
+    };
+    expect(payload.type).toBe("stream_delta");
+    expect(payload.delta).toMatchObject({
+      message_type: "retry",
+      message: "Anthropic API is overloaded, retrying...",
+      reason: "error",
+      attempt: 1,
+      max_attempts: 3,
+      delay_ms: 1000,
+    });
+  });
+});
+
 describe("listen-client post-stop approval recovery policy", () => {
   test("retries when run detail indicates invalid tool call IDs", () => {
     const shouldRecover =
