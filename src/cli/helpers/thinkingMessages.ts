@@ -45,6 +45,7 @@ const THINKING_VERBS = [
 
 export const THINKING_TIPS = [
   "Use /remember [instructions] to remember something from the conversation.",
+  "Use /system to upgrade to the latest default prompt.",
   "Use /palace to inspect your agent's memory palace.",
   "Use /reflect to launch a background reflection agent to update memory.",
   "Use /search [query] to search messages across all agents.",

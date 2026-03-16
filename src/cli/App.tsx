@@ -63,10 +63,7 @@ import {
   getModelShortName,
   type ModelReasoningEffort,
 } from "../agent/model";
-import {
-  INTERRUPT_RECOVERY_ALERT,
-  shouldRecommendDefaultPrompt,
-} from "../agent/promptAssets";
+import { INTERRUPT_RECOVERY_ALERT } from "../agent/promptAssets";
 import { recordSessionEnd } from "../agent/sessionHistory";
 import { SessionStats } from "../agent/stats";
 import {
@@ -980,15 +977,6 @@ export default function App({
   const updateAgentName = useCallback((name: string) => {
     setAgentState((prev) => (prev ? { ...prev, name } : prev));
   }, []);
-
-  // Check if the current agent would benefit from switching to the default prompt
-  const shouldShowDefaultPromptTip = useCallback(() => {
-    if (!agentState?.id || !agentState.system) return false;
-    const memMode = settingsManager.isMemfsEnabled(agentState.id)
-      ? "memfs"
-      : ("standard" as const);
-    return shouldRecommendDefaultPrompt(agentState.system, memMode);
-  }, [agentState]);
 
   const projectDirectory = process.cwd();
 
@@ -3079,8 +3067,6 @@ export default function App({
         ? `Resuming conversation with **${agentName}**`
         : `Starting new conversation with **${agentName}**`;
 
-      const showPromptTip = shouldShowDefaultPromptTip();
-
       // Command hints - vary based on agent state:
       // - Resuming: show /new (they may want a fresh conversation)
       // - New session + unpinned: show /pin (they should save their agent)
@@ -3092,9 +3078,6 @@ export default function App({
             "→ **/new**       start a new conversation",
             "→ **/init**      initialize your agent's memory",
             "→ **/remember**  teach your agent",
-            ...(showPromptTip
-              ? ["→ **/system**    upgrade to the latest default prompt"]
-              : []),
           ]
         : isPinned
           ? [
@@ -3103,9 +3086,6 @@ export default function App({
               "→ **/memory**    view your agent's memory",
               "→ **/init**      initialize your agent's memory",
               "→ **/remember**  teach your agent",
-              ...(showPromptTip
-                ? ["→ **/system**    upgrade to the latest default prompt"]
-                : []),
             ]
           : [
               "→ **/agents**    list all agents",
@@ -3113,9 +3093,6 @@ export default function App({
               "→ **/pin**       save + name your agent",
               "→ **/init**      initialize your agent's memory",
               "→ **/remember**  teach your agent",
-              ...(showPromptTip
-                ? ["→ **/system**    upgrade to the latest default prompt"]
-                : []),
             ];
 
       // Build status lines with optional release notes above header
@@ -3151,7 +3128,6 @@ export default function App({
     agentProvenance,
     resumedExistingConversation,
     releaseNotes,
-    shouldShowDefaultPromptTip,
   ]);
 
   // Fetch llmConfig when agent is ready
@@ -13075,9 +13051,6 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
           ? `Starting new conversation with **${agentName}**`
           : "Creating a new agent";
 
-      // Only show prompt tip for existing agents, not brand new ones
-      const showPromptTip = continueSession && shouldShowDefaultPromptTip();
-
       // Command hints - for pinned agents show /memory, for unpinned show /pin
       const commandHints = isPinned
         ? [
@@ -13086,9 +13059,6 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
             "→ **/memory**    view your agent's memory",
             "→ **/init**      initialize your agent's memory",
             "→ **/remember**  teach your agent",
-            ...(showPromptTip
-              ? ["→ **/system**    upgrade to the latest default prompt"]
-              : []),
           ]
         : [
             "→ **/agents**    list all agents",
@@ -13096,9 +13066,6 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
             "→ **/pin**       save + name your agent",
             "→ **/init**      initialize your agent's memory",
             "→ **/remember**  teach your agent",
-            ...(showPromptTip
-              ? ["→ **/system**    upgrade to the latest default prompt"]
-              : []),
           ];
 
       // Build status lines with optional release notes above header
@@ -13133,7 +13100,6 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
     agentState,
     refreshDerived,
     releaseNotes,
-    shouldShowDefaultPromptTip,
   ]);
 
   const liveTrajectorySnapshot =
