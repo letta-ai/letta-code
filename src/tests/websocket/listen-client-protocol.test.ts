@@ -289,6 +289,32 @@ describe("listen-client approval resolver wiring", () => {
   });
 });
 
+describe("listen-client protocol emission", () => {
+  test("does not throw when protocol emission send fails", () => {
+    const runtime = __listenClientTestUtils.createRuntime();
+    const socket = new MockSocket(WebSocket.OPEN);
+    runtime.activeAgentId = "agent-1";
+    runtime.activeConversationId = "default";
+    socket.sendImpl = () => {
+      throw new Error("socket send failed");
+    };
+    const originalConsoleError = console.error;
+    console.error = () => {};
+
+    try {
+      expect(() =>
+        __listenClientTestUtils.emitDeviceStatusUpdate(
+          socket as unknown as WebSocket,
+          runtime,
+        ),
+      ).not.toThrow();
+      expect(socket.sentPayloads).toHaveLength(0);
+    } finally {
+      console.error = originalConsoleError;
+    }
+  });
+});
+
 describe("listen-client requestApprovalOverWS", () => {
   test("rejects immediately when socket is not open", async () => {
     const runtime = __listenClientTestUtils.createRuntime();
@@ -1194,6 +1220,55 @@ describe("listen-client post-stop approval recovery policy", () => {
       });
 
     expect(shouldRecover).toBe(false);
+  });
+});
+
+describe("listen-client approval continuation recovery disposition", () => {
+  test("retries the original continuation when recovery handled nothing", () => {
+    expect(
+      __listenClientTestUtils.getApprovalContinuationRecoveryDisposition(null),
+    ).toBe("retry");
+  });
+
+  test("treats drained recovery turns as handled", () => {
+    expect(
+      __listenClientTestUtils.getApprovalContinuationRecoveryDisposition({
+        stopReason: "end_turn",
+        lastRunId: "run-1",
+        apiDurationMs: 0,
+      }),
+    ).toBe("handled");
+  });
+});
+
+describe("listen-client approval continuation run handoff", () => {
+  test("clears stale active run ids once an approval continuation is accepted", () => {
+    const runtime = __listenClientTestUtils.createRuntime();
+    runtime.activeRunId = "run-1";
+
+    __listenClientTestUtils.markAwaitingAcceptedApprovalContinuationRunId(
+      runtime,
+      [{ type: "approval", approvals: [] }],
+    );
+
+    expect(runtime.activeRunId).toBeNull();
+  });
+
+  test("preserves active run ids for non-approval sends", () => {
+    const runtime = __listenClientTestUtils.createRuntime();
+    runtime.activeRunId = "run-1";
+
+    __listenClientTestUtils.markAwaitingAcceptedApprovalContinuationRunId(
+      runtime,
+      [
+        {
+          role: "user",
+          content: "hello",
+        },
+      ],
+    );
+
+    expect(runtime.activeRunId).toBe("run-1");
   });
 });
 

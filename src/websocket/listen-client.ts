@@ -1465,6 +1465,26 @@ function buildQueueSnapshot(runtime: ListenerRuntime): QueueMessage[] {
   }));
 }
 
+function isApprovalOnlyInput(
+  input: Array<MessageCreate | ApprovalCreate>,
+): boolean {
+  return (
+    input.length === 1 &&
+    input[0] !== undefined &&
+    "type" in input[0] &&
+    input[0].type === "approval"
+  );
+}
+
+function markAwaitingAcceptedApprovalContinuationRunId(
+  runtime: ListenerRuntime,
+  input: Array<MessageCreate | ApprovalCreate>,
+): void {
+  if (isApprovalOnlyInput(input)) {
+    runtime.activeRunId = null;
+  }
+}
+
 function setLoopStatus(
   runtime: ListenerRuntime,
   status: LoopStatus,
@@ -1510,9 +1530,23 @@ function emitProtocolV2Message(
     emitted_at: new Date().toISOString(),
     idempotency_key: `${message.type}:${eventSeq}:${crypto.randomUUID()}`,
   } as WsProtocolMessage;
+  try {
+    socket.send(JSON.stringify(outbound));
+  } catch (error) {
+    console.error(
+      `[Listen V2] Failed to emit ${message.type} (seq=${eventSeq})`,
+      error,
+    );
+    safeEmitWsEvent("send", "lifecycle", {
+      type: "_ws_send_error",
+      message_type: message.type,
+      event_seq: eventSeq,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return;
+  }
   console.log(`[Listen V2] Emitting ${message.type} (seq=${eventSeq})`);
   safeEmitWsEvent("send", "protocol", outbound);
-  socket.send(JSON.stringify(outbound));
 }
 
 function emitDeviceStatusUpdate(
@@ -2145,6 +2179,12 @@ function normalizeToolReturnValue(value: unknown): string {
   } catch {
     return String(value);
   }
+}
+
+function getApprovalContinuationRecoveryDisposition(
+  drainResult: Awaited<ReturnType<typeof drainStreamWithResume>> | null,
+): "handled" | "retry" {
+  return drainResult ? "handled" : "retry";
 }
 
 function normalizeInterruptedApprovalsForQueue(
@@ -3590,14 +3630,18 @@ async function sendApprovalContinuationWithRetry(
             socket,
             abortSignal,
           );
-          if (drainResult) {
+          if (
+            getApprovalContinuationRecoveryDisposition(drainResult) ===
+            "handled"
+          ) {
             finalizeHandledRecoveryTurn(runtime, socket, {
-              drainResult,
+              drainResult: drainResult!,
               agentId: runtime.activeAgentId,
               conversationId,
             });
             return null;
           }
+          continue;
         }
 
         const detail = await fetchRunErrorDetail(runtime.activeRunId);
@@ -4378,11 +4422,7 @@ async function handleIncomingMessage(
         : {}),
     });
 
-    const isPureApprovalContinuation =
-      currentInput.length === 1 &&
-      currentInput[0] !== undefined &&
-      "type" in currentInput[0] &&
-      currentInput[0].type === "approval";
+    const isPureApprovalContinuation = isApprovalOnlyInput(currentInput);
 
     let stream = isPureApprovalContinuation
       ? await sendApprovalContinuationWithRetry(
@@ -4405,6 +4445,7 @@ async function handleIncomingMessage(
       return;
     }
     pendingNormalizationInterruptedToolCallIds = [];
+    markAwaitingAcceptedApprovalContinuationRunId(runtime, currentInput);
     setLoopStatus(runtime, "PROCESSING_API_RESPONSE", {
       agent_id: agentId,
       conversation_id: conversationId,
@@ -4601,6 +4642,7 @@ async function handleIncomingMessage(
             return;
           }
           pendingNormalizationInterruptedToolCallIds = [];
+          markAwaitingAcceptedApprovalContinuationRunId(runtime, currentInput);
           setLoopStatus(runtime, "PROCESSING_API_RESPONSE", {
             agent_id: agentId,
             conversation_id: conversationId,
@@ -4683,6 +4725,7 @@ async function handleIncomingMessage(
             return;
           }
           pendingNormalizationInterruptedToolCallIds = [];
+          markAwaitingAcceptedApprovalContinuationRunId(runtime, currentInput);
           setLoopStatus(runtime, "PROCESSING_API_RESPONSE", {
             agent_id: agentId,
             conversation_id: conversationId,
@@ -4753,6 +4796,7 @@ async function handleIncomingMessage(
             return;
           }
           pendingNormalizationInterruptedToolCallIds = [];
+          markAwaitingAcceptedApprovalContinuationRunId(runtime, currentInput);
           setLoopStatus(runtime, "PROCESSING_API_RESPONSE", {
             agent_id: agentId,
             conversation_id: conversationId,
@@ -5077,6 +5121,7 @@ async function handleIncomingMessage(
           persistedExecutionResults,
         ),
       });
+      markAwaitingAcceptedApprovalContinuationRunId(runtime, currentInput);
       setLoopStatus(runtime, "PROCESSING_API_RESPONSE", {
         agent_id: agentId,
         conversation_id: conversationId,
@@ -5228,6 +5273,8 @@ export const __listenClientTestUtils = {
   normalizeToolReturnWireMessage,
   normalizeExecutionResultsForInterruptParity,
   shouldAttemptPostStopApprovalRecovery,
+  getApprovalContinuationRecoveryDisposition,
+  markAwaitingAcceptedApprovalContinuationRunId,
   normalizeMessageContentImages,
   normalizeInboundMessages,
   recoverApprovalStateForSync,
