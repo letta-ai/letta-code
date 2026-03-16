@@ -1,0 +1,216 @@
+import type WebSocket from "ws";
+import type {
+  AbortMessageCommand,
+  ChangeDeviceStateCommand,
+  InputCommand,
+  RuntimeScope,
+  SyncCommand,
+  WsProtocolCommand,
+} from "../../types/protocol_v2";
+import { isValidApprovalResponseBody } from "./approval";
+import type { InvalidInputCommand, ParsedServerMessage } from "./types";
+
+function isRuntimeScope(value: unknown): value is RuntimeScope {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const candidate = value as { agent_id?: unknown; conversation_id?: unknown };
+  return (
+    typeof candidate.agent_id === "string" &&
+    candidate.agent_id.length > 0 &&
+    typeof candidate.conversation_id === "string" &&
+    candidate.conversation_id.length > 0
+  );
+}
+
+function isInputCommand(value: unknown): value is InputCommand {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const candidate = value as {
+    type?: unknown;
+    runtime?: unknown;
+    payload?: unknown;
+  };
+  if (candidate.type !== "input" || !isRuntimeScope(candidate.runtime)) {
+    return false;
+  }
+  if (!candidate.payload || typeof candidate.payload !== "object") {
+    return false;
+  }
+
+  const payload = candidate.payload as {
+    kind?: unknown;
+    messages?: unknown;
+    request_id?: unknown;
+    decision?: unknown;
+    error?: unknown;
+  };
+  if (payload.kind === "create_message") {
+    return Array.isArray(payload.messages);
+  }
+  if (payload.kind === "approval_response") {
+    return isValidApprovalResponseBody(payload);
+  }
+  return false;
+}
+
+function getInvalidInputReason(value: unknown): {
+  runtime: RuntimeScope;
+  reason: string;
+} | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const candidate = value as {
+    type?: unknown;
+    runtime?: unknown;
+    payload?: unknown;
+  };
+  if (candidate.type !== "input" || !isRuntimeScope(candidate.runtime)) {
+    return null;
+  }
+  if (!candidate.payload || typeof candidate.payload !== "object") {
+    return {
+      runtime: candidate.runtime,
+      reason: "Protocol violation: input.payload must be an object",
+    };
+  }
+  const payload = candidate.payload as {
+    kind?: unknown;
+    messages?: unknown;
+    request_id?: unknown;
+    decision?: unknown;
+    error?: unknown;
+  };
+  if (payload.kind === "create_message") {
+    if (!Array.isArray(payload.messages)) {
+      return {
+        runtime: candidate.runtime,
+        reason:
+          "Protocol violation: input.kind=create_message requires payload.messages[]",
+      };
+    }
+    return null;
+  }
+  if (payload.kind === "approval_response") {
+    if (!isValidApprovalResponseBody(payload)) {
+      return {
+        runtime: candidate.runtime,
+        reason:
+          "Protocol violation: input.kind=approval_response requires payload.request_id and either payload.decision or payload.error",
+      };
+    }
+    return null;
+  }
+  return {
+    runtime: candidate.runtime,
+    reason: `Unsupported input payload kind: ${String(payload.kind)}`,
+  };
+}
+
+function isChangeDeviceStateCommand(
+  value: unknown,
+): value is ChangeDeviceStateCommand {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const candidate = value as {
+    type?: unknown;
+    runtime?: unknown;
+    payload?: unknown;
+  };
+  if (
+    candidate.type !== "change_device_state" ||
+    !isRuntimeScope(candidate.runtime)
+  ) {
+    return false;
+  }
+  if (!candidate.payload || typeof candidate.payload !== "object") {
+    return false;
+  }
+  const payload = candidate.payload as {
+    mode?: unknown;
+    cwd?: unknown;
+    agent_id?: unknown;
+    conversation_id?: unknown;
+  };
+  const hasMode =
+    payload.mode === undefined || typeof payload.mode === "string";
+  const hasCwd = payload.cwd === undefined || typeof payload.cwd === "string";
+  const hasAgentId =
+    payload.agent_id === undefined ||
+    payload.agent_id === null ||
+    typeof payload.agent_id === "string";
+  const hasConversationId =
+    payload.conversation_id === undefined ||
+    payload.conversation_id === null ||
+    typeof payload.conversation_id === "string";
+  return hasMode && hasCwd && hasAgentId && hasConversationId;
+}
+
+function isAbortMessageCommand(value: unknown): value is AbortMessageCommand {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const candidate = value as {
+    type?: unknown;
+    runtime?: unknown;
+    request_id?: unknown;
+    run_id?: unknown;
+  };
+  if (
+    candidate.type !== "abort_message" ||
+    !isRuntimeScope(candidate.runtime)
+  ) {
+    return false;
+  }
+  const hasRequestId =
+    candidate.request_id === undefined ||
+    typeof candidate.request_id === "string";
+  const hasRunId =
+    candidate.run_id === undefined ||
+    candidate.run_id === null ||
+    typeof candidate.run_id === "string";
+  return hasRequestId && hasRunId;
+}
+
+function isSyncCommand(value: unknown): value is SyncCommand {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const candidate = value as {
+    type?: unknown;
+    runtime?: unknown;
+  };
+  return candidate.type === "sync" && isRuntimeScope(candidate.runtime);
+}
+
+export function parseServerMessage(
+  data: WebSocket.RawData,
+): ParsedServerMessage | null {
+  try {
+    const raw = typeof data === "string" ? data : data.toString();
+    const parsed = JSON.parse(raw) as unknown;
+    if (
+      isInputCommand(parsed) ||
+      isChangeDeviceStateCommand(parsed) ||
+      isAbortMessageCommand(parsed) ||
+      isSyncCommand(parsed)
+    ) {
+      return parsed as WsProtocolCommand;
+    }
+    const invalidInput = getInvalidInputReason(parsed);
+    if (invalidInput) {
+      const invalidMessage: InvalidInputCommand = {
+        type: "__invalid_input",
+        runtime: invalidInput.runtime,
+        reason: invalidInput.reason,
+      };
+      return invalidMessage;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
