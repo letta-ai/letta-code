@@ -2487,6 +2487,7 @@ export default function App({
   // Configurable status line hook
   const sessionStatsSnapshot = sessionStatsRef.current.getSnapshot();
   const contextWindowSize = llmConfigRef.current?.context_window;
+  const reflectionSettings = getReflectionSettings();
   const memfsEnabled = settingsManager.isMemfsEnabled(agentId);
   const memfsDirectory =
     memfsEnabled && agentId && agentId !== "loading"
@@ -2512,6 +2513,8 @@ export default function App({
     usedContextTokens: contextTrackerRef.current.lastContextTokens,
     stepCount: sessionStatsSnapshot.usage.stepCount,
     turnCount: contextTrackerRef.current.currentTurnId,
+    reflectionMode: reflectionSettings.trigger,
+    reflectionStepCount: reflectionSettings.stepCount,
     memfsEnabled,
     memfsDirectory,
     permissionMode: uiPermissionMode,
@@ -7627,6 +7630,8 @@ export default function App({
                       contextTrackerRef.current.lastContextTokens,
                     stepCount: stats.usage.stepCount,
                     turnCount: contextTrackerRef.current.currentTurnId,
+                    reflectionMode: getReflectionSettings().trigger,
+                    reflectionStepCount: getReflectionSettings().stepCount,
                     memfsEnabled:
                       agentId !== "loading"
                         ? settingsManager.isMemfsEnabled(agentId)

@@ -21,6 +21,8 @@ describe("statusLinePayload", () => {
       usedContextTokens: 40_000,
       stepCount: 7,
       turnCount: 3,
+      reflectionMode: "step-count",
+      reflectionStepCount: 10,
       memfsEnabled: true,
       memfsDirectory: "/Users/test/.letta/agents/agent-123/memory",
       permissionMode: "default",
@@ -37,6 +39,8 @@ describe("statusLinePayload", () => {
     expect(payload.context_window.remaining_percentage).toBe(80);
     expect(payload.step_count).toBe(7);
     expect(payload.turn_count).toBe(3);
+    expect(payload.reflection.mode).toBe("step-count");
+    expect(payload.reflection.step_count).toBe(10);
     expect(payload.memfs.enabled).toBe(true);
     expect(payload.memfs.memory_dir).toBe(
       "/Users/test/.letta/agents/agent-123/memory",
@@ -57,6 +61,8 @@ describe("statusLinePayload", () => {
     expect(payload.vim).toBeNull();
     expect(payload.step_count).toBe(0);
     expect(payload.turn_count).toBe(0);
+    expect(payload.reflection.mode).toBeNull();
+    expect(payload.reflection.step_count).toBe(0);
     expect(payload.memfs.enabled).toBe(false);
     expect(payload.memfs.memory_dir).toBeNull();
     expect(payload.cost.total_cost_usd).toBeNull();

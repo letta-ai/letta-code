@@ -20,6 +20,8 @@ export interface StatusLinePayloadBuildInput {
   usedContextTokens?: number;
   stepCount?: number;
   turnCount?: number;
+  reflectionMode?: "off" | "step-count" | "compaction-event" | null;
+  reflectionStepCount?: number;
   memfsEnabled?: boolean;
   memfsDirectory?: string | null;
   permissionMode?: string;
@@ -88,6 +90,10 @@ export interface StatusLinePayload {
   };
   step_count: number;
   turn_count: number;
+  reflection: {
+    mode: "off" | "step-count" | "compaction-event" | null;
+    step_count: number;
+  };
   memfs: {
     enabled: boolean;
     memory_dir: string | null;
@@ -140,6 +146,10 @@ export function buildStatusLinePayload(
   );
   const stepCount = Math.max(0, Math.floor(input.stepCount ?? 0));
   const turnCount = Math.max(0, Math.floor(input.turnCount ?? 0));
+  const reflectionStepCount = Math.max(
+    0,
+    Math.floor(input.reflectionStepCount ?? 0),
+  );
 
   const percentages =
     contextWindowSize > 0
@@ -189,6 +199,10 @@ export function buildStatusLinePayload(
     },
     step_count: stepCount,
     turn_count: turnCount,
+    reflection: {
+      mode: input.reflectionMode ?? null,
+      step_count: reflectionStepCount,
+    },
     memfs: {
       enabled: input.memfsEnabled ?? false,
       memory_dir: input.memfsDirectory ?? null,
