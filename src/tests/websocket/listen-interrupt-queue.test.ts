@@ -210,6 +210,8 @@ describe("extractInterruptToolReturns", () => {
   test("emitInterruptToolReturnMessage emits deterministic per-tool terminal messages", () => {
     const runtime = createRuntime();
     const socket = new MockSocket(WebSocket.OPEN) as unknown as WebSocket;
+    runtime.activeAgentId = "agent-1";
+    runtime.activeConversationId = "default";
     const approvals: ApprovalResult[] = [
       {
         type: "tool",
@@ -231,32 +233,45 @@ describe("extractInterruptToolReturns", () => {
       JSON.parse(raw),
     );
     const toolReturnFrames = parsed.filter(
-      (payload) => payload.message_type === "tool_return_message",
+      (payload) =>
+        payload.type === "stream_delta" &&
+        payload.delta?.message_type === "tool_return_message",
     );
 
     expect(toolReturnFrames).toHaveLength(2);
     expect(toolReturnFrames[0]).toMatchObject({
-      run_id: "run-1",
+      delta: {
+        run_id: "run-1",
+        tool_returns: [
+          { tool_call_id: "call-a", status: "success", tool_return: "704" },
+        ],
+      },
+    });
+    expect(toolReturnFrames[1]).toMatchObject({
+      delta: {
+        run_id: "run-1",
+        tool_returns: [
+          {
+            tool_call_id: "call-b",
+            status: "error",
+            tool_return: "User interrupted the stream",
+          },
+        ],
+      },
+    });
+    expect(toolReturnFrames[0].delta).toMatchObject({
       tool_returns: [
         { tool_call_id: "call-a", status: "success", tool_return: "704" },
       ],
     });
-    expect(toolReturnFrames[1]).toMatchObject({
-      run_id: "run-1",
-      tool_returns: [
-        {
-          tool_call_id: "call-b",
-          status: "error",
-          tool_return: "User interrupted the stream",
-        },
-      ],
-    });
-    expect(toolReturnFrames[0]).not.toHaveProperty("tool_call_id");
-    expect(toolReturnFrames[0]).not.toHaveProperty("status");
-    expect(toolReturnFrames[0]).not.toHaveProperty("tool_return");
-    expect(toolReturnFrames[1]).not.toHaveProperty("tool_call_id");
-    expect(toolReturnFrames[1]).not.toHaveProperty("status");
-    expect(toolReturnFrames[1]).not.toHaveProperty("tool_return");
+    expect(toolReturnFrames[0].delta.tool_call_id).toBe("call-a");
+    expect(toolReturnFrames[0].delta.status).toBe("success");
+    expect(toolReturnFrames[0].delta.tool_return).toBe("704");
+    expect(toolReturnFrames[1].delta.tool_call_id).toBe("call-b");
+    expect(toolReturnFrames[1].delta.status).toBe("error");
+    expect(toolReturnFrames[1].delta.tool_return).toBe(
+      "User interrupted the stream",
+    );
   });
 });
 
@@ -791,9 +806,8 @@ describe("stale Path-B IDs: clearing after successful send prevents re-denial", 
 describe("cancel-induced stop reason reclassification", () => {
   /**
    * Mirrors the effectiveStopReason computation from the Case 3 stream path.
-   * Both the legacy (sendClientMessage) and modern (emitToWS) branches now
-   * use effectiveStopReason — this test verifies the reclassification logic
-   * that both branches depend on.
+   * Both the legacy and canonical listener branches use effectiveStopReason.
+   * This test verifies the reclassification logic those branches depend on.
    */
   function computeEffectiveStopReason(
     cancelRequested: boolean,

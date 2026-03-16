@@ -7,10 +7,9 @@
  *  - Single message: enqueued → dequeued, no blocked, real queue_len
  *  - Two rapid synchronous arrivals: second gets blocked(runtime_busy)
  *    because pendingTurns is incremented before the .then() chain
- *  - Connection close: queue_cleared("shutdown") emitted once
- *  - Per-turn error: no queue_cleared — queue continues for remaining turns
+ *  - Connection close: queue clear still happens once in QueueRuntime
+ *  - Per-turn error: no queue clear — queue continues for remaining turns
  *  - ApprovalCreate payloads (no `content` field) are not enqueued
- *  - QueueLifecycleEvent is assignable to WsProtocolEvent (type-level)
  */
 
 import { describe, expect, test } from "bun:test";
@@ -23,17 +22,6 @@ import type {
   QueueItem,
 } from "../../queue/queueRuntime";
 import { QueueRuntime } from "../../queue/queueRuntime";
-import type { QueueLifecycleEvent } from "../../types/protocol";
-import type { WsProtocolEvent } from "../../websocket/listen-client";
-
-// ── Type-level assertion: QueueLifecycleEvent ⊆ WsProtocolEvent ──
-// Imports the real WsProtocolEvent from listen-client. If QueueLifecycleEvent
-// is ever removed from that union, this assertion fails at compile time.
-type _AssertAssignable = QueueLifecycleEvent extends WsProtocolEvent
-  ? true
-  : never;
-const _typeCheck: _AssertAssignable = true;
-void _typeCheck; // suppress unused warning
 
 // ── Helpers ───────────────────────────────────────────────────────
 
@@ -264,7 +252,7 @@ describe("ApprovalCreate payloads", () => {
 });
 
 describe("connection close", () => {
-  test("clear(shutdown) emits queue_cleared exactly once for intentional close", () => {
+  test("clear(shutdown) reports a single clear callback for intentional close", () => {
     const { q, rec } = buildRuntime();
     q.clear("shutdown");
     expect(rec.cleared).toHaveLength(1);
@@ -302,13 +290,13 @@ describe("per-turn error — no queue_cleared", () => {
     // First turn: simulate error — finally still runs
     simulateTurnStart(q, turns, arrival1, skipIds);
     simulateTurnEnd(q, turns); // error path still hits finally
-    expect(rec.cleared).toHaveLength(0); // no queue_cleared
+    expect(rec.cleared).toHaveLength(0); // no queue clear
 
     // Second callback no-ops; first turn already consumed coalesced batch.
     simulateTurnStart(q, turns, arrival2, skipIds);
     expect(rec.dequeued).toHaveLength(1);
     simulateTurnEnd(q, turns);
     expect(turns.value).toBe(0);
-    expect(rec.cleared).toHaveLength(0); // still no queue_cleared
+    expect(rec.cleared).toHaveLength(0); // still no queue clear
   });
 });

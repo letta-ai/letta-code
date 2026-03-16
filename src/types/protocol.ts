@@ -366,6 +366,35 @@ export type QueueItemKind =
   | "overlay_action";
 
 /**
+ * Canonical queue item wire shape used by listener state snapshots
+ * and queue lifecycle transport events.
+ */
+export interface QueueRuntimeItemWire {
+  /** Stable queue item identifier. */
+  id: string;
+  /** Correlates this queue item back to the originating client submit payload. */
+  client_message_id: string;
+  kind: QueueItemKind;
+  source: QueueItemSource;
+  /** Full queue item content; renderers may truncate for display. */
+  content: MessageCreate["content"] | string;
+  /** ISO8601 UTC enqueue timestamp. */
+  enqueued_at: string;
+}
+
+/**
+ * Queue item shape used by static queue_snapshot events.
+ * Includes legacy item_id for compatibility and allows optional expanded fields.
+ */
+export interface QueueSnapshotItem
+  extends Omit<Partial<QueueRuntimeItemWire>, "kind" | "source"> {
+  /** @deprecated Use `id` when present. */
+  item_id: string;
+  kind: QueueItemKind;
+  source: QueueItemSource;
+}
+
+/**
  * Emitted synchronously when an item enters the queue.
  * A queue item is a discrete, submitted unit of work (post-Enter for user
  * messages, or a delivered notification/result for system sources).
@@ -377,13 +406,13 @@ export interface QueueItemEnqueuedEvent extends MessageEnvelope {
   /** @deprecated Use `id`. */
   item_id: string;
   /** Correlates this queue item back to the originating client submit payload. */
-  client_message_id: string;
+  client_message_id: QueueRuntimeItemWire["client_message_id"];
   source: QueueItemSource;
   kind: QueueItemKind;
   /** Full queue item content; renderers may truncate for display. */
-  content?: MessageCreate["content"] | string;
+  content?: QueueRuntimeItemWire["content"];
   /** ISO8601 UTC enqueue timestamp. */
-  enqueued_at?: string;
+  enqueued_at?: QueueRuntimeItemWire["enqueued_at"];
   queue_len: number;
 }
 
@@ -782,14 +811,7 @@ export interface TranscriptBackfillMessage extends MessageEnvelope {
 export interface QueueSnapshotMessage extends MessageEnvelope {
   type: "queue_snapshot";
   /** Items currently in the queue, in enqueue order. */
-  items: Array<{
-    /** Stable queue item identifier. Preferred field. */
-    id?: string;
-    /** @deprecated Use `id`. */
-    item_id: string;
-    kind: QueueItemKind;
-    source: QueueItemSource;
-  }>;
+  items: QueueSnapshotItem[];
 }
 
 /**

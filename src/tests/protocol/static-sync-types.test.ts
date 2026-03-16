@@ -2,7 +2,7 @@
  * Tests for the static transcript sync protocol types (LSS1).
  *
  * Verifies structural correctness, discriminant exhaustiveness, and
- * membership in WireMessage / WsProtocolEvent unions.
+ * membership in the legacy WireMessage union.
  */
 
 import { describe, expect, test } from "bun:test";
@@ -13,7 +13,6 @@ import type {
   TranscriptSupplementMessage,
   WireMessage,
 } from "../../types/protocol";
-import type { WsProtocolEvent } from "../../websocket/listen-client";
 
 // ── Helpers ───────────────────────────────────────────────────────
 
@@ -178,45 +177,6 @@ describe("WireMessage union membership", () => {
 
   test("TranscriptSupplementMessage is assignable to WireMessage", () => {
     const msg: WireMessage = {
-      ...ENVELOPE,
-      type: "transcript_supplement",
-      messages: [],
-    };
-    expect(msg.type).toBe("transcript_supplement");
-  });
-});
-
-describe("WsProtocolEvent union membership", () => {
-  test("TranscriptBackfillMessage is assignable to WsProtocolEvent", () => {
-    const msg: WsProtocolEvent = {
-      ...ENVELOPE,
-      type: "transcript_backfill",
-      messages: [],
-      is_final: true,
-    };
-    expect(msg.type).toBe("transcript_backfill");
-  });
-
-  test("QueueSnapshotMessage is assignable to WsProtocolEvent", () => {
-    const msg: WsProtocolEvent = {
-      ...ENVELOPE,
-      type: "queue_snapshot",
-      items: [],
-    };
-    expect(msg.type).toBe("queue_snapshot");
-  });
-
-  test("SyncCompleteMessage is assignable to WsProtocolEvent", () => {
-    const msg: WsProtocolEvent = {
-      ...ENVELOPE,
-      type: "sync_complete",
-      had_pending_turn: false,
-    };
-    expect(msg.type).toBe("sync_complete");
-  });
-
-  test("TranscriptSupplementMessage is assignable to WsProtocolEvent", () => {
-    const msg: WsProtocolEvent = {
       ...ENVELOPE,
       type: "transcript_supplement",
       messages: [],

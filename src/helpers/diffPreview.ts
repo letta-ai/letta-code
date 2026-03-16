@@ -6,7 +6,7 @@
 
 import path, { basename } from "node:path";
 import type { AdvancedDiffResult, AdvancedHunk } from "../cli/helpers/diff";
-import type { DiffHunk, DiffHunkLine, DiffPreview } from "../types/protocol";
+import type { DiffHunk, DiffHunkLine, DiffPreview } from "../types/protocol_v2";
 
 function parseHunkLinePrefix(raw: string): DiffHunkLine | null {
   if (raw.length === 0) {
