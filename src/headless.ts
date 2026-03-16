@@ -2941,28 +2941,17 @@ async function runBidirectionalMode(
         })),
       ];
 
+      // In headless recovery mode, auto-deny approvals that would require user
+      // input. Calling requestPermission() here would block waiting for a
+      // response that will never come, causing a timeout.
       for (const ac of needsUserInput) {
-        const permResponse = await requestPermission(
-          ac.approval.toolCallId,
-          ac.approval.toolName,
-          ac.parsedArgs,
-        );
-
-        if (permResponse.decision === "allow") {
-          const finalApproval = permResponse.updatedInput
-            ? {
-                ...ac.approval,
-                toolArgs: JSON.stringify(permResponse.updatedInput),
-              }
-            : ac.approval;
-          decisions.push({ type: "approve", approval: finalApproval });
-        } else {
-          decisions.push({
-            type: "deny",
-            approval: ac.approval,
-            reason: permResponse.reason || "Denied by SDK callback",
-          });
-        }
+        decisions.push({
+          type: "deny",
+          approval: ac.approval,
+          reason:
+            ac.denyReason ||
+            "Auto-denied during recovery - tool requires interactive approval",
+        });
       }
 
       if (decisions.length === 0) {
