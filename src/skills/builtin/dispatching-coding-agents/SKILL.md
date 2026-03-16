@@ -5,22 +5,20 @@ description: Dispatch stateless coding agents (Claude Code or Codex) via Bash. U
 
 # Dispatching Coding Agents
 
-You can shell out to **Claude Code** (`claude`) and **Codex** (`codex`) as stateless sub-agents via Bash. They have full filesystem and tool access but **zero memory** — every session starts from scratch.
+You can shell out to **Claude Code** (`claude`) and **Codex** (`codex`) as stateless sub-agents via Bash. They have filesystem and tool access (scope depends on sandbox/approval settings) but **zero memory** — every session starts from scratch.
 
-**Always dispatch with `run_in_background: true`** on the Bash call so you can keep working while they run. Check results later with `TaskOutput`. Don't sit idle waiting for a subagent.
+**Default to `run_in_background: true`** on the Bash call so you can keep working while they run. Check results later with `TaskOutput`. Don't sit idle waiting for a subagent.
 
 ## The Core Mental Model
 
-Claude Code and Codex are highly optimized coding agents, but are re-born with each new session. Think of them like a brilliant intern that showed up today. They know nothing, but may sometimes have a fresher perspective in part due to their naivety. In addition, their complete cluelessness means you can give them just the right amount of context to maximize performance with minimal context bloat.
+Claude Code and Codex are highly optimized coding agents, but are re-born with each new session. Think of them like a brilliant intern that showed up today. Provide them with the right instructions and context to help them succeed and avoid having to re-learn things that you've learned.
 
-You are the experienced manager that interfaces with the user, with persistent memory of their preferences, the codebase, past decisions, and hard-won lessons. Your job is to distill that knowledge into a prompt that lets these capable-but-clueless agents do their best work. They won't know anything you don't tell them:
+You are the experienced manager with persistent memory of the user's preferences, the codebase, past decisions, and hard-won lessons. **Give them context, not a plan.** They won't know anything you don't tell them:
 
-- **Specific task**: Not "look into the auth system" but "trace the request flow from `POST /v1/agents/{id}/messages` in `routers/v1/agents.py` through to the LLM call in `letta/llm_api/`. Cite files and line numbers."
+- **Specific task**: Be precise about what you need — not "look into the auth system" but "trace the request flow from the messages endpoint through to the LLM call, cite files and line numbers."
 - **File paths and architecture**: Tell them exactly where to look and how pieces connect. They will wander aimlessly without this.
 - **Preferences and constraints**: Code style, error handling patterns, things the user has corrected you on. Save them from making mistakes you already learned from.
 - **What you've already tried**: If you're dispatching because you're stuck, this prevents them from rediscovering your dead ends.
-
-Their cluelessness is also an advantage — you can give them just the right amount of context to maximize performance with minimal noise. But anything you don't tell them, they don't know.
 
 If a subagent needs clarification or asks a question, respond in the same session (see Session Resumption below) — don't start a new session or you'll lose the conversation context.
 
@@ -80,7 +78,7 @@ CONTEXT:
 - Architecture: [brief relevant context]
 
 WHAT TO DO:
-[specific, step-by-step instructions]
+[what you need done — be precise, but let them figure out the approach]
 
 CONSTRAINTS:
 - [any preferences, patterns to follow, things to avoid]
@@ -113,6 +111,11 @@ codex exec "YOUR PROMPT" -m gpt-5.3-codex --full-auto -C /path/to/repo
 ### Code review — cross-agent validation
 Have one agent write code or create a plan, then dispatch another to review:
 ```bash
+# Codex has a native review command:
+codex review --uncommitted    # Review all local changes
+codex exec review "Focus on error handling and edge cases" -m gpt-5.4 --full-auto
+
+# Claude Code — pass the diff inline:
 claude -p "Review the following diff for correctness, edge cases, and missed error handling:\n\n$(git diff)" \
   --model opus --dangerously-skip-permissions
 ```
@@ -164,6 +167,7 @@ codex exec "YOUR PROMPT" -m gpt-5.3-codex --full-auto
 | `--full-auto` | Auto-approve all commands in sandbox |
 | `-C DIR` | Set working directory |
 | `--search` | Enable web search tool |
+| `review` | Native code review — `codex review --uncommitted` or `codex exec review "prompt"` |
 
 ## Session Management
 
@@ -192,12 +196,14 @@ claude -r SESSION_ID --fork-session -p "Try differently" # Fork (new ID, keeps h
 
 **Codex:**
 ```bash
-codex resume SESSION_ID "Follow up prompt"    # Resume by ID (interactive)
-codex resume --last "Follow up prompt"        # Resume most recent
-codex fork SESSION_ID "Try a different approach"  # Fork session
+codex exec resume SESSION_ID "Follow up prompt"  # Resume by ID (non-interactive)
+codex exec resume --last "Follow up prompt"      # Resume most recent (non-interactive)
+codex resume SESSION_ID "Follow up prompt"       # Resume by ID (interactive)
+codex resume --last "Follow up prompt"           # Resume most recent (interactive)
+codex fork SESSION_ID "Try a different approach" # Fork session (interactive)
 ```
 
-Note: Codex `resume` and `fork` are interactive, not non-interactive. For non-interactive follow-ups with Codex, start a fresh `exec` and include relevant context from the previous session.
+Note: `codex exec resume` works non-interactively. `codex resume` and `codex fork` are interactive only.
 
 ### When to analyze past sessions
 
