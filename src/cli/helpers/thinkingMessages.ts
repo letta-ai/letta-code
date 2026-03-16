@@ -43,6 +43,9 @@ const THINKING_VERBS = [
   "internalizing",
 ] as const;
 
+export const SYSTEM_PROMPT_UPGRADE_TIP =
+  "Use /system to upgrade to the latest default prompt.";
+
 export const THINKING_TIPS = [
   "Use /remember [instructions] to remember something from the conversation.",
   "Use /palace to inspect your agent's memory palace.",
@@ -50,6 +53,11 @@ export const THINKING_TIPS = [
   "Use /search [query] to search messages across all agents.",
   "Use /init to initialize (or re-init) your agent's memory.",
 ] as const;
+
+const THINKING_TIPS_WITH_SYSTEM_UPGRADE = [
+  ...THINKING_TIPS,
+  SYSTEM_PROMPT_UPGRADE_TIP,
+];
 
 type ThinkingVerb = (typeof THINKING_VERBS)[number];
 
@@ -103,11 +111,6 @@ function getRandomVerb(): string {
   return THINKING_VERBS[index] ?? "thinking";
 }
 
-function getRandomTip(): string {
-  const index = Math.floor(Math.random() * THINKING_TIPS.length);
-  return THINKING_TIPS[index] ?? "";
-}
-
 // Get a random thinking verb phrase (e.g., "is thinking", "is processing")
 export function getRandomThinkingVerb(): string {
   return `is ${getRandomVerb()}`;
@@ -131,6 +134,16 @@ export function getRandomThinkingMessage(agentName?: string | null): string {
   return verb.charAt(0).toUpperCase() + verb.slice(1);
 }
 
-export function getRandomThinkingTip(): string {
-  return getRandomTip();
+export function getRandomThinkingTip(options?: {
+  includeSystemPromptUpgradeTip?: boolean;
+}): string {
+  const tipPool =
+    (options?.includeSystemPromptUpgradeTip ?? true)
+      ? THINKING_TIPS_WITH_SYSTEM_UPGRADE
+      : THINKING_TIPS;
+  if (tipPool.length === 0) {
+    return "";
+  }
+  const index = Math.floor(Math.random() * tipPool.length);
+  return tipPool[index] ?? "";
 }
