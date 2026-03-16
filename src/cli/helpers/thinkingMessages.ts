@@ -43,6 +43,10 @@ const THINKING_VERBS = [
   "internalizing",
 ] as const;
 
+export const THINKING_TIPS = [
+  "Use /btw to ask a quick side question without interrupting Claude's current work",
+] as const;
+
 type ThinkingVerb = (typeof THINKING_VERBS)[number];
 
 const PAST_TENSE_VERBS: Record<ThinkingVerb, string> = {
@@ -95,6 +99,11 @@ function getRandomVerb(): string {
   return THINKING_VERBS[index] ?? "thinking";
 }
 
+function getRandomTip(): string {
+  const index = Math.floor(Math.random() * THINKING_TIPS.length);
+  return THINKING_TIPS[index] ?? "";
+}
+
 // Get a random thinking verb phrase (e.g., "is thinking", "is processing")
 export function getRandomThinkingVerb(): string {
   return `is ${getRandomVerb()}`;
@@ -116,4 +125,8 @@ export function getRandomThinkingMessage(agentName?: string | null): string {
 
   // Fallback to capitalized verb if no agent name
   return verb.charAt(0).toUpperCase() + verb.slice(1);
+}
+
+export function getRandomThinkingTip(): string {
+  return getRandomTip();
 }

@@ -37,6 +37,7 @@ import {
   getSnapshot as getSubagentSnapshot,
   subscribe as subscribeToSubagents,
 } from "../helpers/subagentState.js";
+import { getRandomThinkingTip } from "../helpers/thinkingMessages";
 import { BlinkingSpinner } from "./BlinkingSpinner.js";
 import { colors } from "./colors";
 import { InputAssist } from "./InputAssist";
@@ -527,6 +528,8 @@ const StreamingStatus = memo(function StreamingStatus({
 
   const [shimmerOffset, setShimmerOffset] = useState(-3);
   const [elapsedMs, setElapsedMs] = useState(0);
+  const [tipMessage, setTipMessage] = useState("");
+  const tipInitializedRef = useRef(false);
   const streamStartRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -576,6 +579,18 @@ const StreamingStatus = memo(function StreamingStatus({
     }
     streamStartRef.current = null;
     setElapsedMs(0);
+  }, [streaming, visible]);
+
+  useEffect(() => {
+    if (streaming && visible) {
+      if (!tipInitializedRef.current) {
+        setTipMessage(getRandomThinkingTip());
+        tipInitializedRef.current = true;
+      }
+      return;
+    }
+
+    tipInitializedRef.current = false;
   }, [streaming, visible]);
 
   const estimatedTokens = charsToTokens(tokenCount);
@@ -650,33 +665,46 @@ const StreamingStatus = memo(function StreamingStatus({
       hintColor(" (") + hintBold("esc") + hintColor(` to interrupt${suffix}`)
     );
   }, [interruptRequested, statusHintSuffix]);
+  const tipLineText = useMemo(() => {
+    return truncateEnd(`⎿  Tip: ${tipMessage}`, statusContentWidth);
+  }, [tipMessage, statusContentWidth]);
 
   if (!streaming || !visible) {
     return null;
   }
 
   return (
-    <Box flexDirection="row" marginBottom={1}>
-      <Box width={2} flexShrink={0}>
-        <Text color={colors.status.processing}>
-          {animate ? <Spinner type="layer" /> : "●"}
-        </Text>
-      </Box>
-      <Box width={statusContentWidth} flexShrink={0} flexDirection="row">
-        <Box width={messageColumnWidth} flexShrink={0}>
-          <ShimmerText
-            boldPrefix={agentName || undefined}
-            message={thinkingMessage}
-            shimmerOffset={animate ? shimmerOffset : -3}
-            wrap="truncate-end"
-          />
+    <Box flexDirection="column" marginBottom={1}>
+      <Box flexDirection="row">
+        <Box width={2} flexShrink={0}>
+          <Text color={colors.status.processing}>
+            {animate ? <Spinner type="layer" /> : "●"}
+          </Text>
         </Box>
-        {hintColumnWidth > 0 && (
-          <Box width={hintColumnWidth} flexShrink={0}>
-            <Text wrap="truncate-end">{statusHintText}</Text>
+        <Box width={statusContentWidth} flexShrink={0} flexDirection="row">
+          <Box width={messageColumnWidth} flexShrink={0}>
+            <ShimmerText
+              boldPrefix={agentName || undefined}
+              message={thinkingMessage}
+              shimmerOffset={animate ? shimmerOffset : -3}
+              wrap="truncate-end"
+            />
           </Box>
-        )}
-        <Box flexGrow={1} />
+          {hintColumnWidth > 0 && (
+            <Box width={hintColumnWidth} flexShrink={0}>
+              <Text wrap="truncate-end">{statusHintText}</Text>
+            </Box>
+          )}
+          <Box flexGrow={1} />
+        </Box>
+      </Box>
+      <Box flexDirection="row">
+        <Box width={2} flexShrink={0} />
+        <Box width={statusContentWidth} flexShrink={0}>
+          <Text color={colors.subagent.hint} wrap="truncate-end">
+            {tipLineText}
+          </Text>
+        </Box>
       </Box>
     </Box>
   );
