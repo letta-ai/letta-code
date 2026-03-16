@@ -28,10 +28,8 @@ mock.module("../../agent/client", () => ({
   getServerUrl: () => "http://localhost:8283",
 }));
 
-const {
-  clearPersistedClientToolRules,
-  shouldClearPersistedToolRules,
-} = await import("../../tools/toolset");
+const { clearPersistedClientToolRules, shouldClearPersistedToolRules } =
+  await import("../../tools/toolset");
 
 describe("client tool rule cleanup", () => {
   beforeEach(() => {
