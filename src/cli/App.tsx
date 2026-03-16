@@ -2518,7 +2518,7 @@ export default function App({
     contextWindowSize,
     usedContextTokens: contextTrackerRef.current.lastContextTokens,
     stepCount: sessionStatsSnapshot.usage.stepCount,
-    turnCount: contextTrackerRef.current.currentTurnId,
+    turnCount: sharedReminderStateRef.current.turnCount,
     reflectionMode: reflectionSettings.trigger,
     reflectionStepCount: reflectionSettings.stepCount,
     memfsEnabled,
@@ -7638,7 +7638,7 @@ export default function App({
                     usedContextTokens:
                       contextTrackerRef.current.lastContextTokens,
                     stepCount: stats.usage.stepCount,
-                    turnCount: contextTrackerRef.current.currentTurnId,
+                    turnCount: sharedReminderStateRef.current.turnCount,
                     reflectionMode: getReflectionSettings().trigger,
                     reflectionStepCount: getReflectionSettings().stepCount,
                     memfsEnabled:
