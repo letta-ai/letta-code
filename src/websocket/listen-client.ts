@@ -3858,7 +3858,7 @@ async function connectWithRetry(
 
     runtime.heartbeatInterval = setInterval(() => {
       if (socket.readyState === WebSocket.OPEN) {
-        socket.ping();
+        socket.send(JSON.stringify({ type: "ping" }));
       }
     }, 30000);
   });
