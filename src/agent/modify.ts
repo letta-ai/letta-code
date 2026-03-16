@@ -9,6 +9,7 @@ import type {
 } from "@letta-ai/letta-client/resources/agents/agents";
 import type { Conversation } from "@letta-ai/letta-client/resources/conversations/conversations";
 import { OPENAI_CODEX_PROVIDER_NAME } from "../providers/openai-codex-provider";
+import { debugLog } from "../utils/debug";
 import { getModelContextWindow } from "./available-models";
 import { getClient } from "./client";
 
@@ -386,7 +387,7 @@ export async function updateAgentSystemPrompt(
       memoryMode,
     );
 
-    console.debug("[modify] systemPromptContent:", systemPromptContent);
+    debugLog("modify", "systemPromptContent: %s", systemPromptContent);
 
     const updateResult = await updateAgentSystemPromptRaw(
       agentId,
