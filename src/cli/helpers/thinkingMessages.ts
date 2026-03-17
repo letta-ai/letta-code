@@ -1,5 +1,5 @@
 // Machine god AI themed thinking verbs
-const THINKING_VERBS = [
+const THINKING_VERBS = Object.freeze([
   "thinking",
   "processing",
   "computing",
@@ -41,15 +41,15 @@ const THINKING_VERBS = [
   "remembering",
   "absorbing",
   "internalizing",
-] as const;
+] as const);
 
-export const THINKING_TIPS = [
+export const THINKING_TIPS = Object.freeze([
   "Use /remember [instructions] to remember something from the conversation.",
   "Use /palace to inspect your agent's memory palace.",
   "Use /reflect to launch a background reflection agent to update memory.",
   "Use /search [query] to search messages across all agents.",
   "Use /init to initialize (or re-init) your agent's memory.",
-] as const;
+] as const);
 
 type ThinkingVerb = (typeof THINKING_VERBS)[number];
 
@@ -105,7 +105,7 @@ function getRandomVerb(): string {
 
 function getRandomTip(): string {
   const index = Math.floor(Math.random() * THINKING_TIPS.length);
-  return THINKING_TIPS[index] ?? "";
+  return THINKING_TIPS[index] ?? THINKING_TIPS[0] ?? "";
 }
 
 // Get a random thinking verb phrase (e.g., "is thinking", "is processing")
