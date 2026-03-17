@@ -1401,7 +1401,9 @@ async function main(): Promise<void> {
           case "create": {
             const { ensureDefaultAgents } = await import("./agent/defaults");
             try {
-              const defaultAgent = await ensureDefaultAgents(client);
+              const defaultAgent = await ensureDefaultAgents(client, {
+                preferredModel: model,
+              });
               if (defaultAgent) {
                 setSelectedGlobalAgentId(defaultAgent.id);
                 setLoadingState("assembling");

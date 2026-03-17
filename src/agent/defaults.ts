@@ -8,8 +8,10 @@
 import type { Letta } from "@letta-ai/letta-client";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import { settingsManager } from "../settings-manager";
+import { getServerUrl } from "./client";
 import { type CreateAgentOptions, createAgent } from "./create";
 import { parseMdxFrontmatter } from "./memory";
+import { getDefaultModel, resolveModel } from "./model";
 import { MEMORY_PROMPTS } from "./promptAssets";
 
 // Tags used to identify default agents
@@ -47,6 +49,80 @@ export const DEFAULT_AGENT_CONFIGS: Record<string, CreateAgentOptions> = {
   },
 };
 
+function isSelfHostedServer(): boolean {
+  return !getServerUrl().includes("api.letta.com");
+}
+
+export function selectDefaultAgentModel(params: {
+  preferredModel?: string;
+  isSelfHosted: boolean;
+  availableHandles?: Iterable<string>;
+}): string | undefined {
+  const { preferredModel, isSelfHosted, availableHandles } = params;
+  const resolvedPreferred =
+    typeof preferredModel === "string" && preferredModel.length > 0
+      ? (resolveModel(preferredModel) ?? preferredModel)
+      : undefined;
+
+  if (!isSelfHosted) {
+    return resolvedPreferred;
+  }
+
+  const handles = availableHandles ? new Set(availableHandles) : null;
+  if (!handles) {
+    return resolvedPreferred;
+  }
+
+  if (resolvedPreferred && handles.has(resolvedPreferred)) {
+    return resolvedPreferred;
+  }
+
+  const firstNonAutoHandle = Array.from(handles).find(
+    (handle) => handle !== "letta/auto" && handle !== "letta/auto-fast",
+  );
+  if (firstNonAutoHandle) {
+    return firstNonAutoHandle;
+  }
+
+  const defaultHandle = getDefaultModel();
+  if (handles.has(defaultHandle)) {
+    return defaultHandle;
+  }
+
+  return Array.from(handles)[0];
+}
+
+async function resolveDefaultAgentModel(
+  client: Letta,
+  preferredModel?: string,
+): Promise<string | undefined> {
+  if (!isSelfHostedServer()) {
+    return selectDefaultAgentModel({
+      preferredModel,
+      isSelfHosted: false,
+    });
+  }
+
+  try {
+    const availableHandles = new Set(
+      (await client.models.list())
+        .map((model) => model.handle)
+        .filter((handle): handle is string => typeof handle === "string"),
+    );
+
+    return selectDefaultAgentModel({
+      preferredModel,
+      isSelfHosted: true,
+      availableHandles,
+    });
+  } catch {
+    return selectDefaultAgentModel({
+      preferredModel,
+      isSelfHosted: true,
+    });
+  }
+}
+
 /**
  * Add a tag to an existing agent.
  */
@@ -81,6 +157,9 @@ async function addTagToAgent(
  */
 export async function ensureDefaultAgents(
   client: Letta,
+  options?: {
+    preferredModel?: string;
+  },
 ): Promise<AgentState | null> {
   if (!settingsManager.shouldCreateDefaultAgents()) {
     return null;
@@ -95,6 +174,7 @@ export async function ensureDefaultAgents(
 
     const { agent } = await createAgent({
       ...DEFAULT_AGENT_CONFIGS.memo,
+      model: await resolveDefaultAgentModel(client, options?.preferredModel),
       memoryPromptMode: willAutoEnableMemfs ? "memfs" : undefined,
     });
     await addTagToAgent(client, agent.id, MEMO_TAG);

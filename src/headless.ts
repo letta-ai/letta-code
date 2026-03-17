@@ -870,7 +870,9 @@ export async function handleHeadlessCommand(
   // Priority 7: Fresh user with no LRU - create default agent
   if (!agent) {
     const { ensureDefaultAgents } = await import("./agent/defaults");
-    const defaultAgent = await ensureDefaultAgents(client);
+    const defaultAgent = await ensureDefaultAgents(client, {
+      preferredModel: model,
+    });
     if (defaultAgent) {
       agent = defaultAgent;
     }
