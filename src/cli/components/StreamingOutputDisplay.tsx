@@ -1,6 +1,7 @@
 import { Box } from "ink";
 import { memo, useEffect, useState } from "react";
 import type { StreamingState } from "../helpers/accumulator";
+import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { Text } from "./Text";
 
 interface StreamingOutputDisplayProps {
@@ -15,6 +16,7 @@ interface StreamingOutputDisplayProps {
  */
 export const StreamingOutputDisplay = memo(
   ({ streaming, showInterruptHint }: StreamingOutputDisplayProps) => {
+    const columns = useTerminalWidth();
     // Force re-render every second for elapsed timer
     const [, forceUpdate] = useState(0);
     useEffect(() => {
@@ -25,6 +27,17 @@ export const StreamingOutputDisplay = memo(
     const elapsed = Math.floor((Date.now() - streaming.startTime) / 1000);
     const { tailLines, totalLineCount } = streaming;
     const hiddenCount = Math.max(0, totalLineCount - tailLines.length);
+    const contentWidth = Math.max(10, columns - 5);
+
+    const clipToWidth = (text: string): string => {
+      if (text.length <= contentWidth) {
+        return text;
+      }
+      if (contentWidth <= 1) {
+        return "…";
+      }
+      return `${text.slice(0, contentWidth - 1)}…`;
+    };
 
     const firstLine = tailLines[0];
     const interruptHint = showInterruptHint ? " (esc to interrupt)" : "";
@@ -47,7 +60,7 @@ export const StreamingOutputDisplay = memo(
             dimColor={!firstLine.isStderr}
             color={firstLine.isStderr ? "red" : undefined}
           >
-            {firstLine.text}
+            {clipToWidth(firstLine.text)}
           </Text>
         </Box>
         {/* Remaining lines with indent (5 spaces to align with content after bracket) */}
@@ -59,7 +72,7 @@ export const StreamingOutputDisplay = memo(
             color={line.isStderr ? "red" : undefined}
           >
             {"     "}
-            {line.text}
+            {clipToWidth(line.text)}
           </Text>
         ))}
         {/* Hidden count + elapsed time */}

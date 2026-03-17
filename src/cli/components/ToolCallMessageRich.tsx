@@ -102,6 +102,8 @@ import { StreamingOutputDisplay } from "./StreamingOutputDisplay";
 import { SyntaxHighlightedCommand } from "./SyntaxHighlightedCommand";
 import { TodoRenderer } from "./TodoRenderer.js";
 
+const LIVE_SHELL_ARGS_MAX_LINES = 2;
+
 type ToolCallLine = {
   kind: "tool_call";
   id: string;
@@ -932,6 +934,11 @@ export const ToolCallMessage = memo(
                         showPrompt={false}
                         prefix="("
                         suffix=")"
+                        maxLines={LIVE_SHELL_ARGS_MAX_LINES}
+                        maxColumns={Math.max(
+                          10,
+                          rightWidth - displayName.length,
+                        )}
                       />
                     </Box>
                   ) : args ? (

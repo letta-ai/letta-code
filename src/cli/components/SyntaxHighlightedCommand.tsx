@@ -14,12 +14,48 @@ type Props = {
   showPrompt?: boolean;
   prefix?: string;
   suffix?: string;
+  maxLines?: number;
+  maxColumns?: number;
+  showTruncationHint?: boolean;
 };
 
 type ShellSyntaxPalette = typeof colors.shellSyntax;
 
 /** Styled text span with a resolved color. */
 export type StyledSpan = { text: string; color: string };
+
+type ClippedSpans = {
+  spans: StyledSpan[];
+  clipped: boolean;
+};
+
+function clipStyledSpans(
+  spans: StyledSpan[],
+  maxColumns: number,
+): ClippedSpans {
+  if (maxColumns <= 0) {
+    return { spans: [], clipped: spans.length > 0 };
+  }
+
+  let remaining = maxColumns;
+  const clipped: StyledSpan[] = [];
+
+  for (const span of spans) {
+    if (remaining <= 0) {
+      return { spans: clipped, clipped: true };
+    }
+    if (span.text.length <= remaining) {
+      clipped.push(span);
+      remaining -= span.text.length;
+      continue;
+    }
+
+    clipped.push({ text: span.text.slice(0, remaining), color: span.color });
+    return { spans: clipped, clipped: true };
+  }
+
+  return { spans: clipped, clipped: false };
+}
 
 /** Map file extension to a lowlight language name. */
 const EXT_TO_LANG: Record<string, string> = {
@@ -317,13 +353,47 @@ export function highlightCode(
 }
 
 export const SyntaxHighlightedCommand = memo(
-  ({ command, showPrompt = true, prefix, suffix }: Props) => {
+  ({
+    command,
+    showPrompt = true,
+    prefix,
+    suffix,
+    maxLines,
+    maxColumns,
+    showTruncationHint = false,
+  }: Props) => {
     const palette = colors.shellSyntax;
-    const lines = highlightCommand(command, palette);
+    const highlightedLines = highlightCommand(command, palette);
+
+    const hasLineCap = typeof maxLines === "number" && maxLines >= 0;
+    const visibleLines = hasLineCap
+      ? highlightedLines.slice(0, maxLines)
+      : highlightedLines;
+    const hiddenLineCount = Math.max(
+      0,
+      highlightedLines.length - visibleLines.length,
+    );
+
+    const renderedLines: StyledSpan[][] = [];
+    let anyColumnClipping = false;
+    for (let i = 0; i < visibleLines.length; i++) {
+      const spans = visibleLines[i] ?? [];
+      if (typeof maxColumns === "number") {
+        const prefixLen = i === 0 && prefix ? prefix.length : 0;
+        const suffixLen =
+          i === visibleLines.length - 1 && suffix ? suffix.length : 0;
+        const textBudget = Math.max(0, maxColumns - prefixLen - suffixLen);
+        const clipped = clipStyledSpans(spans, textBudget);
+        renderedLines.push(clipped.spans);
+        anyColumnClipping = anyColumnClipping || clipped.clipped;
+      } else {
+        renderedLines.push(spans);
+      }
+    }
 
     return (
       <Box flexDirection="column">
-        {lines.map((spans, lineIdx) => {
+        {renderedLines.map((spans, lineIdx) => {
           const lineKey = spans.map((s) => s.text).join("");
           return (
             <Box key={`${lineIdx}:${lineKey}`}>
@@ -339,11 +409,17 @@ export const SyntaxHighlightedCommand = memo(
                     {span.text}
                   </Text>
                 ))}
-                {lineIdx === lines.length - 1 && suffix ? suffix : null}
+                {lineIdx === renderedLines.length - 1 && suffix ? suffix : null}
               </Text>
             </Box>
           );
         })}
+        {showTruncationHint && hiddenLineCount > 0 && (
+          <Text dimColor>{`… +${hiddenLineCount} more lines`}</Text>
+        )}
+        {showTruncationHint && hiddenLineCount === 0 && anyColumnClipping && (
+          <Text dimColor>… output clipped</Text>
+        )}
       </Box>
     );
   },
