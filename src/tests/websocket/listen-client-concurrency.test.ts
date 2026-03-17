@@ -487,4 +487,88 @@ describe("listen-client multi-worker concurrency", () => {
     );
     expect(deviceStatusB.pending_control_requests).toHaveLength(0);
   });
+
+  test("queue dispatch respects conversation runtime boundaries", async () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    __listenClientTestUtils.setActiveRuntime(listener);
+    const runtimeA = __listenClientTestUtils.getOrCreateScopedRuntime(
+      listener,
+      "agent-1",
+      "conv-a",
+    );
+    const runtimeB = __listenClientTestUtils.getOrCreateScopedRuntime(
+      listener,
+      "agent-1",
+      "conv-b",
+    );
+    const socket = new MockSocket();
+    const processed: string[] = [];
+
+    const enqueueTurn = (
+      runtime: (typeof runtimeA | typeof runtimeB) & {
+        queueRuntime: {
+          enqueue: (item: {
+            kind: "message";
+            source: "user";
+            content: string;
+            clientMessageId: string;
+            agentId: string;
+            conversationId: string;
+          }) => { id: string } | null;
+        };
+      },
+      conversationId: string,
+      text: string,
+    ) => {
+      const item = runtime.queueRuntime.enqueue({
+        kind: "message",
+        source: "user",
+        content: text,
+        clientMessageId: `cm-${conversationId}`,
+        agentId: "agent-1",
+        conversationId,
+      });
+      if (!item) {
+        throw new Error("Expected queued item to be created");
+      }
+      runtime.queuedMessagesByItemId.set(
+        item.id,
+        makeIncomingMessage("agent-1", conversationId, text),
+      );
+    };
+
+    enqueueTurn(runtimeA, "conv-a", "queued a");
+    enqueueTurn(runtimeB, "conv-b", "queued b");
+
+    const processQueuedTurn = mock(
+      async (queuedTurn: { conversationId?: string }) => {
+        processed.push(queuedTurn.conversationId ?? "missing");
+      },
+    );
+    const opts = {
+      connectionId: "conn-1",
+      onStatusChange: undefined,
+    } as never;
+
+    __listenClientTestUtils.scheduleQueuePump(
+      runtimeA,
+      socket as unknown as WebSocket,
+      opts,
+      processQueuedTurn,
+    );
+    __listenClientTestUtils.scheduleQueuePump(
+      runtimeB,
+      socket as unknown as WebSocket,
+      opts,
+      processQueuedTurn,
+    );
+
+    await waitFor(() => processed.length === 2);
+
+    expect(processed.sort()).toEqual(["conv-a", "conv-b"]);
+    expect(runtimeA.queueRuntime.length).toBe(0);
+    expect(runtimeB.queueRuntime.length).toBe(0);
+    expect(runtimeA.queuedMessagesByItemId.size).toBe(0);
+    expect(runtimeB.queuedMessagesByItemId.size).toBe(0);
+  });
 });

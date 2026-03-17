@@ -1123,6 +1123,7 @@ export { emitInterruptedStatusDelta } from "./protocol-outbound";
 export const __listenClientTestUtils = {
   createRuntime: createLegacyTestRuntime,
   createListenerRuntime: createRuntime,
+  getOrCreateScopedRuntime,
   stopRuntime: (
     runtime: ListenerRuntime | ConversationRuntime,
     suppressCallbacks: boolean,
@@ -1159,6 +1160,7 @@ export const __listenClientTestUtils = {
   normalizeMessageContentImages,
   normalizeInboundMessages,
   handleIncomingMessage,
+  scheduleQueuePump,
   recoverApprovalStateForSync,
   clearRecoveredApprovalStateForScope: (
     runtime: ListenerRuntime | ConversationRuntime,
