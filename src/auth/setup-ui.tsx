@@ -13,6 +13,9 @@ import { pollForToken, requestDeviceCode } from "./oauth";
 
 type SetupMode = "menu" | "device-code" | "auth-code" | "self-host" | "done";
 
+const AUTH_LOGIN_LABEL = "Login to Letta Code";
+const AUTH_LOGO_ANIMATE = false;
+
 interface SetupUIProps {
   onComplete: () => void;
 }
@@ -140,9 +143,12 @@ export function SetupUI({ onComplete }: SetupUIProps) {
   if (mode === "device-code") {
     return (
       <Box flexDirection="column" padding={1}>
-        <AnimatedLogo color={colors.welcome.accent} animate={false} />
+        <AnimatedLogo
+          color={colors.welcome.accent}
+          animate={AUTH_LOGO_ANIMATE}
+        />
         <Text> </Text>
-        <Text bold>Login to Letta Platform</Text>
+        <Text bold>{AUTH_LOGIN_LABEL}</Text>
         <Text> </Text>
         <Text dimColor>Opening browser for authorization...</Text>
         <Text> </Text>
@@ -162,7 +168,7 @@ export function SetupUI({ onComplete }: SetupUIProps) {
   // Main menu
   return (
     <Box flexDirection="column" padding={1}>
-      <AnimatedLogo color={colors.welcome.accent} />
+      <AnimatedLogo color={colors.welcome.accent} animate={AUTH_LOGO_ANIMATE} />
       <Text> </Text>
       <Text bold>Welcome to Letta Code!</Text>
       <Text> </Text>
@@ -174,7 +180,8 @@ export function SetupUI({ onComplete }: SetupUIProps) {
             selectedOption === 0 ? colors.selector.itemHighlighted : undefined
           }
         >
-          {selectedOption === 0 ? "> " : "  "}Login to Letta Platform
+          {selectedOption === 0 ? "> " : "  "}
+          {AUTH_LOGIN_LABEL}
         </Text>
       </Box>
       <Box>
