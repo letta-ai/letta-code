@@ -924,6 +924,8 @@ async function connectWithRetry(
         conversationRuntime,
         "WebSocket disconnected",
       );
+      clearConversationRuntimeState(conversationRuntime);
+      evictConversationRuntimeIfIdle(conversationRuntime);
     }
 
     if (runtime.intentionallyClosed) {
