@@ -77,7 +77,8 @@ describe("init wiring", () => {
     memoryDir: "/tmp/test/.memory",
     gitContext: "- branch: main\n- status: (clean)",
     gitIdentity: "Test User <test@example.com>",
-    existingMemory: "(empty)",
+    existingMemoryPaths: [] as string[],
+    existingMemory: "",
     dirListing: "README.md\npackage.json\nsrc",
   };
 

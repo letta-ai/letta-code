@@ -63,11 +63,15 @@ ${git.recentCommits || "No commits yet"}
 // ── Shallow init (background subagent) ───────────────────
 
 /** Read existing memory files from the local filesystem. */
-function gatherExistingMemory(agentId: string): string {
+function gatherExistingMemory(agentId: string): {
+  paths: string[];
+  contents: string;
+} {
   const systemDir = getMemorySystemDir(agentId);
-  if (!existsSync(systemDir)) return "(empty)";
+  if (!existsSync(systemDir)) return { paths: [], contents: "" };
 
-  const files: string[] = [];
+  const paths: string[] = [];
+  const sections: string[] = [];
   function walk(dir: string, prefix: string): void {
     try {
       for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -77,7 +81,8 @@ function gatherExistingMemory(agentId: string): string {
         } else if (entry.name.endsWith(".md")) {
           try {
             const content = readFileSync(join(dir, entry.name), "utf-8");
-            files.push(`── ${rel}\n${content.slice(0, 2000)}`);
+            paths.push(rel);
+            sections.push(`── ${rel}\n${content.slice(0, 2000)}`);
           } catch {
             // skip unreadable files
           }
@@ -88,7 +93,7 @@ function gatherExistingMemory(agentId: string): string {
     }
   }
   walk(systemDir, "");
-  return files.length > 0 ? files.join("\n\n") : "(empty)";
+  return { paths, contents: sections.join("\n\n") };
 }
 
 /** Batch-check which paths are gitignored. Falls back to a hardcoded set. */
@@ -184,6 +189,7 @@ export function buildShallowInitPrompt(args: {
   memoryDir: string;
   gitContext: string;
   gitIdentity: string;
+  existingMemoryPaths: string[];
   existingMemory: string;
   dirListing: string;
 }): string {
@@ -210,7 +216,7 @@ ${args.dirListing}
 
 ## Existing Memory
 
-${args.existingMemory}
+${args.existingMemoryPaths.length > 0 ? `Paths:\n${args.existingMemoryPaths.map((p) => `- ${p}`).join("\n")}\n\nContents:\n${args.existingMemory}` : "(empty)"}
 `.trim();
 }
 
@@ -229,7 +235,7 @@ export async function fireAutoInit(
   if (!settingsManager.isMemfsEnabled(agentId)) return false;
 
   const gitDetails = gatherInitGitContext();
-  const existingMemory = gatherExistingMemory(agentId);
+  const existing = gatherExistingMemory(agentId);
   const dirListing = gatherDirListing();
 
   const initPrompt = buildShallowInitPrompt({
@@ -238,7 +244,8 @@ export async function fireAutoInit(
     memoryDir: getMemoryFilesystemRoot(agentId),
     gitContext: gitDetails.context,
     gitIdentity: gitDetails.identity,
-    existingMemory,
+    existingMemoryPaths: existing.paths,
+    existingMemory: existing.contents,
     dirListing,
   });
 
