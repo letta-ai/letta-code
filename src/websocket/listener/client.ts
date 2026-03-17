@@ -16,6 +16,7 @@ import { type DequeuedBatch, QueueRuntime } from "../../queue/queueRuntime";
 import { createSharedReminderState } from "../../reminders/state";
 import { settingsManager } from "../../settings-manager";
 import { loadTools } from "../../tools/manager";
+import type { ApprovalResponseBody } from "../../types/protocol_v2";
 import { isDebugEnabled } from "../../utils/debug";
 import { killAllTerminals } from "../terminalHandler";
 import {
@@ -235,6 +236,112 @@ function resolveRuntimeForApprovalRequest(
   return listener.conversationRuntimes.get(runtimeKey) ?? null;
 }
 
+type ProcessQueuedTurn = (
+  queuedTurn: IncomingMessage,
+  dequeuedBatch: DequeuedBatch,
+) => Promise<void>;
+
+async function handleApprovalResponseInput(
+  listener: ListenerRuntime,
+  params: {
+    runtime: {
+      agent_id?: string | null;
+      conversation_id?: string | null;
+    };
+    response: ApprovalResponseBody;
+    socket: WebSocket;
+    opts: {
+      onStatusChange?: StartListenerOptions["onStatusChange"];
+      connectionId?: string;
+    };
+    processQueuedTurn: ProcessQueuedTurn;
+  },
+  deps: {
+    resolveRuntimeForApprovalRequest: (
+      listener: ListenerRuntime,
+      requestId?: string | null,
+    ) => ConversationRuntime | null;
+    resolvePendingApprovalResolver: (
+      runtime: ConversationRuntime,
+      response: ApprovalResponseBody,
+    ) => boolean;
+    getOrCreateScopedRuntime: (
+      listener: ListenerRuntime,
+      agentId?: string | null,
+      conversationId?: string | null,
+    ) => ConversationRuntime;
+    resolveRecoveredApprovalResponse: (
+      runtime: ConversationRuntime,
+      socket: WebSocket,
+      response: ApprovalResponseBody,
+      processTurn: typeof handleIncomingMessage,
+      opts?: {
+        onStatusChange?: StartListenerOptions["onStatusChange"];
+        connectionId?: string;
+      },
+    ) => Promise<boolean>;
+    scheduleQueuePump: (
+      runtime: ConversationRuntime,
+      socket: WebSocket,
+      opts: StartListenerOptions,
+      processQueuedTurn: ProcessQueuedTurn,
+    ) => void;
+  } = {
+    resolveRuntimeForApprovalRequest,
+    resolvePendingApprovalResolver,
+    getOrCreateScopedRuntime,
+    resolveRecoveredApprovalResponse,
+    scheduleQueuePump,
+  },
+): Promise<boolean> {
+  const approvalRuntime = deps.resolveRuntimeForApprovalRequest(
+    listener,
+    params.response.request_id,
+  );
+  if (
+    approvalRuntime &&
+    deps.resolvePendingApprovalResolver(approvalRuntime, params.response)
+  ) {
+    deps.scheduleQueuePump(
+      approvalRuntime,
+      params.socket,
+      params.opts as StartListenerOptions,
+      params.processQueuedTurn,
+    );
+    return true;
+  }
+
+  const targetRuntime =
+    approvalRuntime ??
+    deps.getOrCreateScopedRuntime(
+      listener,
+      params.runtime.agent_id,
+      params.runtime.conversation_id,
+    );
+  if (
+    await deps.resolveRecoveredApprovalResponse(
+      targetRuntime,
+      params.socket,
+      params.response,
+      handleIncomingMessage,
+      {
+        onStatusChange: params.opts.onStatusChange,
+        connectionId: params.opts.connectionId,
+      },
+    )
+  ) {
+    deps.scheduleQueuePump(
+      targetRuntime,
+      params.socket,
+      params.opts as StartListenerOptions,
+      params.processQueuedTurn,
+    );
+    return true;
+  }
+
+  return false;
+}
+
 async function handleCwdChange(
   msg: ChangeCwdMessage,
   socket: WebSocket,
@@ -436,7 +543,7 @@ async function connectWithRetry(
   });
 
   runtime.socket = socket;
-  const processQueuedTurn = async (
+  const processQueuedTurn: ProcessQueuedTurn = async (
     queuedTurn: IncomingMessage,
     dequeuedBatch: DequeuedBatch,
   ): Promise<void> => {
@@ -537,37 +644,19 @@ async function connectWithRetry(
       }
 
       if (parsed.payload.kind === "approval_response") {
-        const approvalRuntime = resolveRuntimeForApprovalRequest(
-          runtime,
-          parsed.payload.request_id,
-        );
         if (
-          approvalRuntime &&
-          resolvePendingApprovalResolver(approvalRuntime, parsed.payload)
-        ) {
-          scheduleQueuePump(approvalRuntime, socket, opts, processQueuedTurn);
-          return;
-        }
-        if (
-          await resolveRecoveredApprovalResponse(
-            approvalRuntime ??
-              getOrCreateScopedRuntime(
-                runtime,
-                parsed.runtime.agent_id,
-                parsed.runtime.conversation_id,
-              ),
+          await handleApprovalResponseInput(runtime, {
+            runtime: parsed.runtime,
+            response: parsed.payload,
             socket,
-            parsed.payload,
-            handleIncomingMessage,
-            {
+            opts: {
               onStatusChange: opts.onStatusChange,
               connectionId: opts.connectionId,
             },
-          )
+            processQueuedTurn,
+          })
         ) {
-          if (approvalRuntime) {
-            scheduleQueuePump(approvalRuntime, socket, opts, processQueuedTurn);
-          }
+          return;
         }
         return;
       }
@@ -1160,6 +1249,7 @@ export const __listenClientTestUtils = {
   normalizeMessageContentImages,
   normalizeInboundMessages,
   handleIncomingMessage,
+  handleApprovalResponseInput,
   scheduleQueuePump,
   recoverApprovalStateForSync,
   clearRecoveredApprovalStateForScope: (

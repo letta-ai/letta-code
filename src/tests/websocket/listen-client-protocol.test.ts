@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, mock, test } from "bun:test";
 import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import os from "node:os";
 import { join } from "node:path";
@@ -1012,6 +1012,64 @@ describe("listen-client capability-gated approval flow", () => {
 
     // Cleanup
     rejectPendingApprovalResolvers(runtime, "test cleanup");
+  });
+
+  test("handled recovered approval responses reschedule queue pumping for the fallback scoped runtime", async () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const targetRuntime =
+      __listenClientTestUtils.getOrCreateConversationRuntime(
+        listener,
+        "agent-1",
+        "default",
+      );
+    const socket = new MockSocket(WebSocket.OPEN);
+    const scheduleQueuePumpMock = mock(() => {});
+    const resolveRecoveredApprovalResponseMock = mock(async () => true);
+
+    const handled = await __listenClientTestUtils.handleApprovalResponseInput(
+      listener,
+      {
+        runtime: { agent_id: "agent-1", conversation_id: "default" },
+        response: {
+          request_id: "perm-recovered",
+          decision: { behavior: "allow" },
+        },
+        socket: socket as unknown as WebSocket,
+        opts: {
+          onStatusChange: undefined,
+          connectionId: "conn-1",
+        },
+        processQueuedTurn: async () => {},
+      },
+      {
+        resolveRuntimeForApprovalRequest: () => null,
+        resolvePendingApprovalResolver: () => false,
+        getOrCreateScopedRuntime: () => targetRuntime,
+        resolveRecoveredApprovalResponse: resolveRecoveredApprovalResponseMock,
+        scheduleQueuePump: scheduleQueuePumpMock,
+      },
+    );
+
+    expect(handled).toBe(true);
+    expect(resolveRecoveredApprovalResponseMock).toHaveBeenCalledWith(
+      targetRuntime,
+      socket,
+      {
+        request_id: "perm-recovered",
+        decision: { behavior: "allow" },
+      },
+      expect.any(Function),
+      {
+        onStatusChange: undefined,
+        connectionId: "conn-1",
+      },
+    );
+    expect(scheduleQueuePumpMock).toHaveBeenCalledWith(
+      targetRuntime,
+      socket,
+      expect.objectContaining({ connectionId: "conn-1" }),
+      expect.any(Function),
+    );
   });
 });
 
