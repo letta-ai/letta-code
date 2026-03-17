@@ -56,6 +56,31 @@ export interface StatusLineInputs {
 /** ASCII Record Separator used to split left/right column output. */
 const RS = "\x1e";
 
+export interface RefreshIntervalPlan {
+  shouldClearExistingInterval: boolean;
+  shouldArmInterval: boolean;
+  nextRefreshIntervalMs: number | null;
+}
+
+export function buildRefreshIntervalPlan(
+  armedRefreshIntervalMs: number | null,
+  desiredRefreshIntervalMs: number | null,
+): RefreshIntervalPlan {
+  if (armedRefreshIntervalMs === desiredRefreshIntervalMs) {
+    return {
+      shouldClearExistingInterval: false,
+      shouldArmInterval: false,
+      nextRefreshIntervalMs: armedRefreshIntervalMs,
+    };
+  }
+
+  return {
+    shouldClearExistingInterval: armedRefreshIntervalMs !== null,
+    shouldArmInterval: desiredRefreshIntervalMs !== null,
+    nextRefreshIntervalMs: desiredRefreshIntervalMs,
+  };
+}
+
 export interface StatusLineState {
   text: string;
   rightText: string;
@@ -116,6 +141,8 @@ export function useConfigurableStatusLine(
   const refreshIntervalRef = useRef<ReturnType<typeof setInterval> | null>(
     null,
   );
+  const armedRefreshIntervalMsRef = useRef<number | null>(null);
+  const scheduleDebouncedRunRef = useRef<() => void>(() => {});
 
   useEffect(() => {
     inputsRef.current = inputs;
@@ -133,7 +160,30 @@ export function useConfigurableStatusLine(
       clearInterval(refreshIntervalRef.current);
       refreshIntervalRef.current = null;
     }
+    armedRefreshIntervalMsRef.current = null;
   }, []);
+
+  const reconcileRefreshInterval = useCallback(
+    (config: NormalizedStatusLineConfig | null) => {
+      const desiredRefreshIntervalMs = config?.refreshIntervalMs ?? null;
+      const plan = buildRefreshIntervalPlan(
+        armedRefreshIntervalMsRef.current,
+        desiredRefreshIntervalMs,
+      );
+
+      if (plan.shouldClearExistingInterval) {
+        clearRefreshInterval();
+      }
+
+      if (plan.shouldArmInterval && plan.nextRefreshIntervalMs !== null) {
+        refreshIntervalRef.current = setInterval(() => {
+          scheduleDebouncedRunRef.current();
+        }, plan.nextRefreshIntervalMs);
+        armedRefreshIntervalMsRef.current = plan.nextRefreshIntervalMs;
+      }
+    },
+    [clearRefreshInterval],
+  );
 
   const resolveActiveConfig = useCallback(() => {
     const workingDirectory = inputsRef.current.currentDirectory;
@@ -151,14 +201,16 @@ export function useConfigurableStatusLine(
       setText("");
       setRightText("");
       setPadding(0);
+      reconcileRefreshInterval(null);
       return null;
     }
 
     configRef.current = config;
     setActive(true);
     setPadding(config.padding);
+    reconcileRefreshInterval(config);
     return config;
-  }, []);
+  }, [reconcileRefreshInterval]);
 
   const executeNow = useCallback(async () => {
     const config = configRef.current ?? resolveActiveConfig();
@@ -223,6 +275,11 @@ export function useConfigurableStatusLine(
 
   const triggerVersion = inputs.triggerVersion;
 
+  // Keep polling callbacks pointed at the latest debounced scheduler.
+  useEffect(() => {
+    scheduleDebouncedRunRef.current = scheduleDebouncedRun;
+  }, [scheduleDebouncedRun]);
+
   // Event-driven trigger updates.
   useEffect(() => {
     // tie this effect explicitly to triggerVersion for lint + semantics
@@ -232,18 +289,11 @@ export function useConfigurableStatusLine(
 
   const currentDirectory = inputs.currentDirectory;
 
-  // Re-resolve config and optional polling whenever working directory changes.
+  // Re-resolve config whenever working directory changes.
   useEffect(() => {
     // tie this effect explicitly to currentDirectory for lint + semantics
     void currentDirectory;
-    const config = resolveActiveConfig();
-
-    clearRefreshInterval();
-    if (config?.refreshIntervalMs) {
-      refreshIntervalRef.current = setInterval(() => {
-        scheduleDebouncedRun();
-      }, config.refreshIntervalMs);
-    }
+    resolveActiveConfig();
 
     return () => {
       clearRefreshInterval();
@@ -255,7 +305,6 @@ export function useConfigurableStatusLine(
     clearDebounceTimer,
     clearRefreshInterval,
     resolveActiveConfig,
-    scheduleDebouncedRun,
     currentDirectory,
   ]);
 

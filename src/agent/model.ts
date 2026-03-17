@@ -77,6 +77,10 @@ export function resolveModel(modelIdentifier: string): string | null {
  * Get the default model handle
  */
 export function getDefaultModel(): string {
+  // Prefer Auto when available in models.json.
+  const autoModel = resolveModel("auto");
+  if (autoModel) return autoModel;
+
   const defaultModel = models.find((m) => m.isDefault);
   if (defaultModel) return defaultModel.handle;
 
@@ -89,17 +93,12 @@ export function getDefaultModel(): string {
 
 /**
  * Get the default model handle based on billing tier.
- * Free tier users get GLM-5, everyone else gets the standard default.
+ * All tiers use the same default selection path.
  * @param billingTier - The user's billing tier (e.g., "free", "pro", "enterprise")
  * @returns The model handle to use as default
  */
 export function getDefaultModelForTier(billingTier?: string | null): string {
-  // Free tier gets GLM-5.
-  if (billingTier?.toLowerCase() === "free") {
-    const freeDefault = models.find((m) => m.id === "glm-5");
-    if (freeDefault) return freeDefault.handle;
-  }
-  // Everyone else (pro, enterprise, unknown) gets the standard default
+  void billingTier;
   return getDefaultModel();
 }
 

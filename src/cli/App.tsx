@@ -67,9 +67,11 @@ import {
   INTERRUPT_RECOVERY_ALERT,
   shouldRecommendDefaultPrompt,
 } from "../agent/promptAssets";
+import { reconcileExistingAgentState } from "../agent/reconcileExistingAgentState";
 import { recordSessionEnd } from "../agent/sessionHistory";
 import { SessionStats } from "../agent/stats";
 import {
+  DEFAULT_SUMMARIZATION_MODEL,
   INTERRUPTED_BY_USER,
   MEMFS_CONFLICT_CHECK_INTERVAL,
   SYSTEM_ALERT_CLOSE,
@@ -981,8 +983,9 @@ export default function App({
     setAgentState((prev) => (prev ? { ...prev, name } : prev));
   }, []);
 
-  // Check if the current agent would benefit from switching to the default prompt
-  const shouldShowDefaultPromptTip = useCallback(() => {
+  // Check if the current agent would benefit from switching to the default prompt.
+  // Used to conditionally include the /system tip in streaming tip rotation.
+  const includeSystemPromptUpgradeTip = useMemo(() => {
     if (!agentState?.id || !agentState.system) return false;
     const memMode = settingsManager.isMemfsEnabled(agentState.id)
       ? "memfs"
@@ -2518,7 +2521,7 @@ export default function App({
     contextWindowSize,
     usedContextTokens: contextTrackerRef.current.lastContextTokens,
     stepCount: sessionStatsSnapshot.usage.stepCount,
-    turnCount: contextTrackerRef.current.currentTurnId,
+    turnCount: sharedReminderStateRef.current.turnCount,
     reflectionMode: reflectionSettings.trigger,
     reflectionStepCount: reflectionSettings.stepCount,
     memfsEnabled,
@@ -3079,8 +3082,6 @@ export default function App({
         ? `Resuming conversation with **${agentName}**`
         : `Starting new conversation with **${agentName}**`;
 
-      const showPromptTip = shouldShowDefaultPromptTip();
-
       // Command hints - vary based on agent state:
       // - Resuming: show /new (they may want a fresh conversation)
       // - New session + unpinned: show /pin (they should save their agent)
@@ -3092,9 +3093,6 @@ export default function App({
             "→ **/new**       start a new conversation",
             "→ **/init**      initialize your agent's memory",
             "→ **/remember**  teach your agent",
-            ...(showPromptTip
-              ? ["→ **/system**    upgrade to the latest default prompt"]
-              : []),
           ]
         : isPinned
           ? [
@@ -3103,9 +3101,6 @@ export default function App({
               "→ **/memory**    view your agent's memory",
               "→ **/init**      initialize your agent's memory",
               "→ **/remember**  teach your agent",
-              ...(showPromptTip
-                ? ["→ **/system**    upgrade to the latest default prompt"]
-                : []),
             ]
           : [
               "→ **/agents**    list all agents",
@@ -3113,9 +3108,6 @@ export default function App({
               "→ **/pin**       save + name your agent",
               "→ **/init**      initialize your agent's memory",
               "→ **/remember**  teach your agent",
-              ...(showPromptTip
-                ? ["→ **/system**    upgrade to the latest default prompt"]
-                : []),
             ];
 
       // Build status lines with optional release notes above header
@@ -3151,17 +3143,19 @@ export default function App({
     agentProvenance,
     resumedExistingConversation,
     releaseNotes,
-    shouldShowDefaultPromptTip,
   ]);
 
   // Fetch llmConfig when agent is ready
   useEffect(() => {
     if (loadingState === "ready" && agentId && agentId !== "loading") {
+      let cancelled = false;
+
       const fetchConfig = async () => {
         try {
           const { getClient } = await import("../agent/client");
           const client = await getClient();
           const agent = await client.agents.retrieve(agentId);
+
           setAgentState(agent);
           setLlmConfig(agent.llm_config);
           setAgentDescription(agent.description ?? null);
@@ -3223,8 +3217,11 @@ export default function App({
             setCurrentSystemPromptId("custom");
           }
           // Get last message timestamp from agent state if available
-          const lastRunCompletion = (agent as { last_run_completion?: string })
-            .last_run_completion;
+          const lastRunCompletion = (
+            agent as {
+              last_run_completion?: string;
+            }
+          ).last_run_completion;
           setAgentLastRunAt(lastRunCompletion ?? null);
 
           // Derive model ID from llm_config for ModelSelector
@@ -3270,11 +3267,38 @@ export default function App({
             await forceToolsetSwitch(persistedToolsetPreference, agentId);
             setCurrentToolset(persistedToolsetPreference);
           }
+
+          void reconcileExistingAgentState(client, agent)
+            .then((reconcileResult) => {
+              if (!reconcileResult.updated || cancelled) {
+                return;
+              }
+              if (agentIdRef.current !== agent.id) {
+                return;
+              }
+
+              setAgentState(reconcileResult.agent);
+              setAgentDescription(reconcileResult.agent.description ?? null);
+            })
+            .catch((reconcileError) => {
+              debugWarn(
+                "agent-config",
+                `Failed to reconcile existing agent settings for ${agentId}: ${
+                  reconcileError instanceof Error
+                    ? reconcileError.message
+                    : String(reconcileError)
+                }`,
+              );
+            });
         } catch (error) {
           debugLog("agent-config", "Error fetching agent config: %O", error);
         }
       };
       fetchConfig();
+
+      return () => {
+        cancelled = true;
+      };
     }
   }, [loadingState, agentId]);
 
@@ -7638,7 +7662,7 @@ export default function App({
                     usedContextTokens:
                       contextTrackerRef.current.lastContextTokens,
                     stepCount: stats.usage.stepCount,
-                    turnCount: contextTrackerRef.current.currentTurnId,
+                    turnCount: sharedReminderStateRef.current.turnCount,
                     reflectionMode: getReflectionSettings().trigger,
                     reflectionStepCount: getReflectionSettings().stepCount,
                     memfsEnabled:
@@ -7830,6 +7854,49 @@ export default function App({
             false,
             true,
           );
+
+          return { submitted: true };
+        }
+
+        // Special handling for /recompile command - recompile agent + current conversation
+        if (trimmed === "/recompile") {
+          const cmd = commandRunner.start(
+            trimmed,
+            "Recompiling agent and conversation...",
+          );
+
+          setCommandRunning(true);
+
+          try {
+            const client = await getClient();
+            const currentConversationId = conversationIdRef.current;
+
+            await client.agents.recompile(agentId, {
+              update_timestamp: true,
+            });
+
+            const conversationParams =
+              currentConversationId === "default"
+                ? { agent_id: agentId }
+                : undefined;
+            await client.conversations.recompile(
+              currentConversationId,
+              conversationParams,
+            );
+
+            cmd.finish(
+              [
+                "Recompiled current agent and conversation.",
+                "(warning: this will evict the cache and increase costs)",
+              ].join("\n"),
+              true,
+            );
+          } catch (error) {
+            const errorDetails = formatErrorDetails(error, agentId);
+            cmd.fail(`Failed: ${errorDetails}`);
+          } finally {
+            setCommandRunning(false);
+          }
 
           return { submitted: true };
         }
@@ -8305,6 +8372,9 @@ export default function App({
               ? {
                   compaction_settings: {
                     mode: modeArg,
+                    model:
+                      agentStateRef.current?.compaction_settings?.model?.trim() ||
+                      DEFAULT_SUMMARIZATION_MODEL,
                   },
                 }
               : undefined;
@@ -11796,14 +11866,15 @@ ${SYSTEM_REMINDER_CLOSE}
         try {
           const client = await getClient();
           // Spread existing compaction_settings to preserve model/other fields,
-          // only override the mode. If no existing settings, use empty model
-          // string which tells the backend to use its default lightweight model.
+          // only override the mode. If no model is configured, default to
+          // letta/auto so compaction uses a consistent summarization model.
           const existing = agentState?.compaction_settings;
+          const existingModel = existing?.model?.trim();
 
           await client.agents.update(agentId, {
             compaction_settings: {
-              model: existing?.model ?? "",
               ...existing,
+              model: existingModel || DEFAULT_SUMMARIZATION_MODEL,
               mode: mode as
                 | "all"
                 | "sliding_window"
@@ -13075,9 +13146,6 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
           ? `Starting new conversation with **${agentName}**`
           : "Creating a new agent";
 
-      // Only show prompt tip for existing agents, not brand new ones
-      const showPromptTip = continueSession && shouldShowDefaultPromptTip();
-
       // Command hints - for pinned agents show /memory, for unpinned show /pin
       const commandHints = isPinned
         ? [
@@ -13086,9 +13154,6 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
             "→ **/memory**    view your agent's memory",
             "→ **/init**      initialize your agent's memory",
             "→ **/remember**  teach your agent",
-            ...(showPromptTip
-              ? ["→ **/system**    upgrade to the latest default prompt"]
-              : []),
           ]
         : [
             "→ **/agents**    list all agents",
@@ -13096,9 +13161,6 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
             "→ **/pin**       save + name your agent",
             "→ **/init**      initialize your agent's memory",
             "→ **/remember**  teach your agent",
-            ...(showPromptTip
-              ? ["→ **/system**    upgrade to the latest default prompt"]
-              : []),
           ];
 
       // Build status lines with optional release notes above header
@@ -13133,7 +13195,6 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
     agentState,
     refreshDerived,
     releaseNotes,
-    shouldShowDefaultPromptTip,
   ]);
 
   const liveTrajectorySnapshot =
@@ -13511,6 +13572,7 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
                 tokenCount={trajectoryTokenDisplay}
                 elapsedBaseMs={liveTrajectoryElapsedBaseMs}
                 thinkingMessage={thinkingMessage}
+                includeSystemPromptUpgradeTip={includeSystemPromptUpgradeTip}
                 onSubmit={onSubmit}
                 onBashSubmit={handleBashSubmit}
                 bashRunning={bashRunning}
