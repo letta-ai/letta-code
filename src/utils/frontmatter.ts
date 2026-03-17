@@ -31,11 +31,20 @@ export function parseFrontmatter(content: string): {
   frontmatter: Record<string, string | string[]>;
   body: string;
 } {
+  // Normalize common cross-platform file encodings so frontmatter parsing
+  // works for user-authored files in .letta/agents/.
+  // - Strip UTF-8 BOM when present
+  // - Normalize CRLF (and lone CR) to LF
+  const normalized = content
+    .replace(/^\uFEFF/, "")
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n");
+
   const frontmatterRegex = /^---\n([\s\S]*?)\n---\n([\s\S]*)$/;
-  const match = content.match(frontmatterRegex);
+  const match = normalized.match(frontmatterRegex);
 
   if (!match || !match[1] || !match[2]) {
-    return { frontmatter: {}, body: content };
+    return { frontmatter: {}, body: normalized };
   }
 
   const frontmatterText = match[1];
