@@ -308,7 +308,6 @@ function createRuntime(): ListenerRuntime {
     connectionName: null,
     conversationRuntimes: new Map(),
     approvalRuntimeKeyByRequestId: new Map(),
-    runRuntimeKeyByRunId: new Map(),
     lastEmittedStatus: null,
   };
 }
@@ -945,7 +944,6 @@ function createLegacyTestRuntime(): ConversationRuntime & {
   hasSuccessfulConnection: boolean;
   conversationRuntimes: ListenerRuntime["conversationRuntimes"];
   approvalRuntimeKeyByRequestId: ListenerRuntime["approvalRuntimeKeyByRequestId"];
-  runRuntimeKeyByRunId: ListenerRuntime["runRuntimeKeyByRunId"];
   lastEmittedStatus: ListenerRuntime["lastEmittedStatus"];
 } {
   const listener = createRuntime();
@@ -973,7 +971,6 @@ function createLegacyTestRuntime(): ConversationRuntime & {
     hasSuccessfulConnection: boolean;
     conversationRuntimes: ListenerRuntime["conversationRuntimes"];
     approvalRuntimeKeyByRequestId: ListenerRuntime["approvalRuntimeKeyByRequestId"];
-    runRuntimeKeyByRunId: ListenerRuntime["runRuntimeKeyByRunId"];
     lastEmittedStatus: ListenerRuntime["lastEmittedStatus"];
   };
   for (const [prop, getSet] of Object.entries({
@@ -1084,12 +1081,6 @@ function createLegacyTestRuntime(): ConversationRuntime & {
       get: () => listener.approvalRuntimeKeyByRequestId,
       set: (value: ListenerRuntime["approvalRuntimeKeyByRequestId"]) => {
         listener.approvalRuntimeKeyByRequestId = value;
-      },
-    },
-    runRuntimeKeyByRunId: {
-      get: () => listener.runRuntimeKeyByRunId,
-      set: (value: ListenerRuntime["runRuntimeKeyByRunId"]) => {
-        listener.runRuntimeKeyByRunId = value;
       },
     },
     lastEmittedStatus: {

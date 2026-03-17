@@ -152,7 +152,6 @@ export type ListenerRuntime = {
   connectionName: string | null;
   conversationRuntimes: Map<string, ConversationRuntime>;
   approvalRuntimeKeyByRequestId: Map<string, string>;
-  runRuntimeKeyByRunId: Map<string, string>;
   lastEmittedStatus: "idle" | "receiving" | "processing" | null;
 };
 
