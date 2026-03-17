@@ -104,7 +104,11 @@ mock.module("../../agent/approval-recovery", () => ({
 }));
 
 const listenClientModule = await import("../../websocket/listen-client");
-const { __listenClientTestUtils } = listenClientModule;
+const {
+  __listenClientTestUtils,
+  requestApprovalOverWS,
+  resolvePendingApprovalResolver,
+} = listenClientModule;
 
 class MockSocket {
   readyState: number;
@@ -292,5 +296,195 @@ describe("listen-client multi-worker concurrency", () => {
     expect(runtimeA.activeAbortController.signal.aborted).toBe(true);
     expect(runtimeB.activeAbortController.signal.aborted).toBe(false);
     expect(runtimeB.cancelRequested).toBe(false);
+  });
+
+  test("approval waits and resolver routing stay isolated per conversation", async () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const runtimeA = __listenClientTestUtils.getOrCreateConversationRuntime(
+      listener,
+      "agent-1",
+      "conv-a",
+    );
+    const runtimeB = __listenClientTestUtils.getOrCreateConversationRuntime(
+      listener,
+      "agent-1",
+      "conv-b",
+    );
+    const socket = new MockSocket();
+
+    const pendingA = requestApprovalOverWS(
+      runtimeA,
+      socket as unknown as WebSocket,
+      "perm-a",
+      {
+        type: "control_request",
+        request_id: "perm-a",
+        request: {
+          subtype: "can_use_tool",
+          tool_name: "Bash",
+          input: {},
+          tool_call_id: "call-a",
+          permission_suggestions: [],
+          blocked_path: null,
+        },
+      },
+    );
+    const pendingB = requestApprovalOverWS(
+      runtimeB,
+      socket as unknown as WebSocket,
+      "perm-b",
+      {
+        type: "control_request",
+        request_id: "perm-b",
+        request: {
+          subtype: "can_use_tool",
+          tool_name: "Bash",
+          input: {},
+          tool_call_id: "call-b",
+          permission_suggestions: [],
+          blocked_path: null,
+        },
+      },
+    );
+
+    expect(listener.approvalRuntimeKeyByRequestId.get("perm-a")).toBe(
+      runtimeA.key,
+    );
+    expect(listener.approvalRuntimeKeyByRequestId.get("perm-b")).toBe(
+      runtimeB.key,
+    );
+
+    const statusAWhilePending = __listenClientTestUtils.buildLoopStatus(
+      listener,
+      {
+        agent_id: "agent-1",
+        conversation_id: "conv-a",
+      },
+    );
+    const statusBWhilePending = __listenClientTestUtils.buildLoopStatus(
+      listener,
+      {
+        agent_id: "agent-1",
+        conversation_id: "conv-b",
+      },
+    );
+    expect(statusAWhilePending.status).toBe("WAITING_ON_APPROVAL");
+    expect(statusBWhilePending.status).toBe("WAITING_ON_APPROVAL");
+
+    expect(
+      resolvePendingApprovalResolver(runtimeA, {
+        request_id: "perm-a",
+        decision: { behavior: "allow" },
+      }),
+    ).toBe(true);
+
+    await expect(pendingA).resolves.toMatchObject({
+      request_id: "perm-a",
+      decision: { behavior: "allow" },
+    });
+    expect(runtimeA.pendingApprovalResolvers.size).toBe(0);
+    expect(runtimeB.pendingApprovalResolvers.size).toBe(1);
+    expect(listener.approvalRuntimeKeyByRequestId.has("perm-a")).toBe(false);
+    expect(listener.approvalRuntimeKeyByRequestId.get("perm-b")).toBe(
+      runtimeB.key,
+    );
+
+    const statusAAfterResolve = __listenClientTestUtils.buildLoopStatus(
+      listener,
+      {
+        agent_id: "agent-1",
+        conversation_id: "conv-a",
+      },
+    );
+    const statusBAfterResolve = __listenClientTestUtils.buildLoopStatus(
+      listener,
+      {
+        agent_id: "agent-1",
+        conversation_id: "conv-b",
+      },
+    );
+    expect(statusAAfterResolve.status).toBe("WAITING_ON_INPUT");
+    expect(statusBAfterResolve.status).toBe("WAITING_ON_APPROVAL");
+
+    expect(
+      resolvePendingApprovalResolver(runtimeB, {
+        request_id: "perm-b",
+        decision: { behavior: "allow" },
+      }),
+    ).toBe(true);
+    await expect(pendingB).resolves.toMatchObject({
+      request_id: "perm-b",
+      decision: { behavior: "allow" },
+    });
+  });
+
+  test("recovered approval state does not leak across conversation scopes", () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const runtimeA = __listenClientTestUtils.getOrCreateConversationRuntime(
+      listener,
+      "agent-1",
+      "conv-a",
+    );
+    __listenClientTestUtils.getOrCreateConversationRuntime(
+      listener,
+      "agent-1",
+      "conv-b",
+    );
+
+    runtimeA.recoveredApprovalState = {
+      agentId: "agent-1",
+      conversationId: "conv-a",
+      approvalsByRequestId: new Map([
+        [
+          "perm-a",
+          {
+            approval: {
+              toolCallId: "call-a",
+              toolName: "Bash",
+              toolArgs: "{}",
+            },
+            controlRequest: {
+              type: "control_request",
+              request_id: "perm-a",
+              request: {
+                subtype: "can_use_tool",
+                tool_name: "Bash",
+                input: {},
+                tool_call_id: "call-a",
+                permission_suggestions: [],
+                blocked_path: null,
+              },
+            },
+          },
+        ],
+      ]),
+      pendingRequestIds: new Set(["perm-a"]),
+      responsesByRequestId: new Map(),
+    };
+
+    const loopStatusA = __listenClientTestUtils.buildLoopStatus(listener, {
+      agent_id: "agent-1",
+      conversation_id: "conv-a",
+    });
+    const loopStatusB = __listenClientTestUtils.buildLoopStatus(listener, {
+      agent_id: "agent-1",
+      conversation_id: "conv-b",
+    });
+    const deviceStatusA = __listenClientTestUtils.buildDeviceStatus(listener, {
+      agent_id: "agent-1",
+      conversation_id: "conv-a",
+    });
+    const deviceStatusB = __listenClientTestUtils.buildDeviceStatus(listener, {
+      agent_id: "agent-1",
+      conversation_id: "conv-b",
+    });
+
+    expect(loopStatusA.status).toBe("WAITING_ON_APPROVAL");
+    expect(loopStatusB.status).toBe("WAITING_ON_INPUT");
+    expect(deviceStatusA.pending_control_requests).toHaveLength(1);
+    expect(deviceStatusA.pending_control_requests[0]?.request_id).toBe(
+      "perm-a",
+    );
+    expect(deviceStatusB.pending_control_requests).toHaveLength(0);
   });
 });
