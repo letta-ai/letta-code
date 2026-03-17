@@ -9,6 +9,7 @@ import {
   emitLoopStatusIfOpen,
   setLoopStatus,
 } from "./protocol-outbound";
+import { evictConversationRuntimeIfIdle } from "./runtime";
 import type { ConversationRuntime } from "./types";
 
 export function rememberPendingApprovalBatchIds(
@@ -208,6 +209,7 @@ export function resolvePendingApprovalResolver(
     agent_id: runtime.agentId,
     conversation_id: runtime.conversationId,
   });
+  evictConversationRuntimeIfIdle(runtime);
   return true;
 }
 
@@ -237,6 +239,7 @@ export function rejectPendingApprovalResolvers(
     agent_id: runtime.agentId,
     conversation_id: runtime.conversationId,
   });
+  evictConversationRuntimeIfIdle(runtime);
 }
 
 export function requestApprovalOverWS(

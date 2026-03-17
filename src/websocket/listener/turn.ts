@@ -59,6 +59,7 @@ import {
 import {
   clearActiveRunState,
   clearRecoveredApprovalStateForScope,
+  evictConversationRuntimeIfIdle,
 } from "./runtime";
 import { normalizeCwdAgentId } from "./scope";
 import {
@@ -745,5 +746,6 @@ export async function handleIncomingMessage(
     runtime.cancelRequested = false;
     runtime.isRecoveringApprovals = false;
     runtime.activeExecutingToolCallIds = [];
+    evictConversationRuntimeIfIdle(runtime);
   }
 }

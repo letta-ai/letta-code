@@ -9,7 +9,13 @@ import type {
 import { mergeQueuedTurnInput } from "../../queue/turnQueueRuntime";
 import { getListenerBlockedReason } from "../helpers/listenerQueueAdapter";
 import { emitDequeuedUserMessage } from "./protocol-outbound";
-import { getActiveRuntime, getPendingControlRequestCount } from "./runtime";
+import {
+  emitListenerStatus,
+  evictConversationRuntimeIfIdle,
+  getActiveRuntime,
+  getListenerStatus,
+  getPendingControlRequestCount,
+} from "./runtime";
 import { resolveRuntimeScope } from "./scope";
 import type {
   ConversationRuntime,
@@ -303,12 +309,28 @@ async function drainQueuedMessages(
 
       emitDequeuedUserMessage(socket, runtime, queuedTurn, dequeuedBatch);
 
-      opts.onStatusChange?.("receiving", opts.connectionId);
+      const preTurnStatus =
+        getListenerStatus(runtime.listener) === "processing"
+          ? "processing"
+          : "receiving";
+      if (
+        opts.connectionId &&
+        runtime.listener.lastEmittedStatus !== preTurnStatus
+      ) {
+        runtime.listener.lastEmittedStatus = preTurnStatus;
+        opts.onStatusChange?.(preTurnStatus, opts.connectionId);
+      }
       await processQueuedTurn(queuedTurn, dequeuedBatch);
-      opts.onStatusChange?.("idle", opts.connectionId);
+      emitListenerStatus(
+        runtime.listener,
+        opts.onStatusChange,
+        opts.connectionId,
+      );
+      evictConversationRuntimeIfIdle(runtime);
     }
   } finally {
     runtime.queuePumpActive = false;
+    evictConversationRuntimeIfIdle(runtime);
   }
 }
 
@@ -339,6 +361,11 @@ export function scheduleQueuePump(
     .catch((error: unknown) => {
       runtime.queuePumpScheduled = false;
       console.error("[Listen] Error in queue pump:", error);
-      opts.onStatusChange?.("idle", opts.connectionId);
+      emitListenerStatus(
+        runtime.listener,
+        opts.onStatusChange,
+        opts.connectionId,
+      );
+      evictConversationRuntimeIfIdle(runtime);
     });
 }

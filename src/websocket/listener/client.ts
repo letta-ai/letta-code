@@ -79,7 +79,10 @@ import {
   clearConversationRuntimeState,
   clearRecoveredApprovalStateForScope,
   clearRuntimeTimers,
+  emitListenerStatus,
+  evictConversationRuntimeIfIdle,
   getActiveRuntime,
+  getListenerStatus,
   getOrCreateConversationRuntime,
   getPendingControlRequestCount,
   getRecoveredApprovalStateForScope,
@@ -143,37 +146,6 @@ function handleModeChange(
   }
 }
 
-function getListenerStatus(
-  listener: ListenerRuntime,
-): "idle" | "receiving" | "processing" {
-  let hasPendingTurns = false;
-  for (const runtime of listener.conversationRuntimes.values()) {
-    if (runtime.isProcessing || runtime.isRecoveringApprovals) {
-      return "processing";
-    }
-    if (runtime.pendingTurns > 0) {
-      hasPendingTurns = true;
-    }
-  }
-  return hasPendingTurns ? "receiving" : "idle";
-}
-
-function emitListenerStatus(
-  listener: ListenerRuntime,
-  onStatusChange: StartListenerOptions["onStatusChange"] | undefined,
-  connectionId: string | undefined,
-): void {
-  if (!connectionId) {
-    return;
-  }
-  const status = getListenerStatus(listener);
-  if (listener.lastEmittedStatus === status) {
-    return;
-  }
-  listener.lastEmittedStatus = status;
-  onStatusChange?.(status, connectionId);
-}
-
 function ensureConversationQueueRuntime(
   listener: ListenerRuntime,
   runtime: ConversationRuntime,
@@ -200,11 +172,13 @@ function ensureConversationQueueRuntime(
       onCleared: (_reason, _clearedCount, items) => {
         runtime.pendingTurns = 0;
         scheduleQueueEmit(listener, getQueueItemsScope(items));
+        evictConversationRuntimeIfIdle(runtime);
       },
       onDropped: (item, _reason, queueLen) => {
         runtime.pendingTurns = queueLen;
         runtime.queuedMessagesByItemId.delete(item.id);
         scheduleQueueEmit(listener, getQueueItemScope(item));
+        evictConversationRuntimeIfIdle(runtime);
       },
     },
   });
@@ -436,6 +410,8 @@ function stopRuntime(
       conversationRuntime.queueRuntime.clear("shutdown");
     }
   }
+  runtime.conversationRuntimes.clear();
+  runtime.approvalRuntimeKeyByRequestId.clear();
 
   if (!runtime.socket) {
     return;
@@ -571,8 +547,19 @@ async function connectWithRetry(
     runtime.hasSuccessfulConnection = true;
     opts.onConnected(opts.connectionId);
 
-    emitDeviceStatusUpdate(socket, runtime);
-    emitLoopStatusUpdate(socket, runtime);
+    if (runtime.conversationRuntimes.size === 0) {
+      emitDeviceStatusUpdate(socket, runtime);
+      emitLoopStatusUpdate(socket, runtime);
+    } else {
+      for (const conversationRuntime of runtime.conversationRuntimes.values()) {
+        const scope = {
+          agent_id: conversationRuntime.agentId,
+          conversation_id: conversationRuntime.conversationId,
+        };
+        emitDeviceStatusUpdate(socket, conversationRuntime, scope);
+        emitLoopStatusUpdate(socket, conversationRuntime, scope);
+      }
+    }
 
     runtime.heartbeatInterval = setInterval(() => {
       if (socket.readyState === WebSocket.OPEN) {

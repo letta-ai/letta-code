@@ -9,6 +9,7 @@ import type {
   ConversationRuntime,
   ListenerRuntime,
   RecoveredApprovalState,
+  StartListenerOptions,
 } from "./types";
 
 let activeRuntime: ListenerRuntime | null = null;
@@ -50,6 +51,85 @@ export function clearRuntimeTimers(runtime: ListenerRuntime): void {
     clearInterval(runtime.heartbeatInterval);
     runtime.heartbeatInterval = null;
   }
+}
+
+export function evictConversationRuntimeIfIdle(
+  runtime: ConversationRuntime,
+): boolean {
+  if (
+    runtime.isProcessing ||
+    runtime.isRecoveringApprovals ||
+    runtime.queuePumpActive ||
+    runtime.queuePumpScheduled ||
+    runtime.pendingTurns > 0 ||
+    runtime.pendingApprovalResolvers.size > 0 ||
+    runtime.pendingApprovalBatchByToolCallId.size > 0 ||
+    runtime.recoveredApprovalState !== null ||
+    runtime.pendingInterruptedResults !== null ||
+    runtime.pendingInterruptedContext !== null ||
+    runtime.activeExecutingToolCallIds.length > 0 ||
+    (runtime.pendingInterruptedToolCallIds?.length ?? 0) > 0 ||
+    runtime.activeRunId !== null ||
+    runtime.activeRunStartedAt !== null ||
+    runtime.activeAbortController !== null ||
+    runtime.cancelRequested ||
+    runtime.queuedMessagesByItemId.size > 0 ||
+    runtime.queueRuntime?.length > 0
+  ) {
+    return false;
+  }
+
+  if (runtime.listener.conversationRuntimes.get(runtime.key) !== runtime) {
+    return false;
+  }
+
+  runtime.listener.conversationRuntimes.delete(runtime.key);
+  for (const [requestId, runtimeKey] of runtime.listener
+    .approvalRuntimeKeyByRequestId) {
+    if (runtimeKey === runtime.key) {
+      runtime.listener.approvalRuntimeKeyByRequestId.delete(requestId);
+    }
+  }
+  if (
+    runtime.listener.pendingQueueEmitScope?.agent_id === runtime.agentId &&
+    normalizeConversationId(
+      runtime.listener.pendingQueueEmitScope?.conversation_id,
+    ) === runtime.conversationId
+  ) {
+    runtime.listener.pendingQueueEmitScope = undefined;
+  }
+  return true;
+}
+
+export function getListenerStatus(
+  listener: ListenerRuntime,
+): "idle" | "receiving" | "processing" {
+  let hasPendingTurns = false;
+  for (const runtime of listener.conversationRuntimes.values()) {
+    if (runtime.isProcessing || runtime.isRecoveringApprovals) {
+      return "processing";
+    }
+    if (runtime.pendingTurns > 0) {
+      hasPendingTurns = true;
+    }
+  }
+  return hasPendingTurns ? "receiving" : "idle";
+}
+
+export function emitListenerStatus(
+  listener: ListenerRuntime,
+  onStatusChange: StartListenerOptions["onStatusChange"] | undefined,
+  connectionId: string | undefined,
+): void {
+  if (!connectionId) {
+    return;
+  }
+  const status = getListenerStatus(listener);
+  if (listener.lastEmittedStatus === status) {
+    return;
+  }
+  listener.lastEmittedStatus = status;
+  onStatusChange?.(status, connectionId);
 }
 
 export function getConversationRuntimeKey(
@@ -138,6 +218,7 @@ export function clearRecoveredApprovalState(
   runtime: ConversationRuntime,
 ): void {
   runtime.recoveredApprovalState = null;
+  evictConversationRuntimeIfIdle(runtime);
 }
 
 export function clearConversationRuntimeState(

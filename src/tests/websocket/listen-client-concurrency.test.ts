@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import WebSocket from "ws";
 import { permissionMode } from "../../permissions/mode";
+import type { MessageQueueItem } from "../../queue/queueRuntime";
 
 type MockStream = {
   conversationId: string;
@@ -570,5 +571,61 @@ describe("listen-client multi-worker concurrency", () => {
     expect(runtimeB.queueRuntime.length).toBe(0);
     expect(runtimeA.queuedMessagesByItemId.size).toBe(0);
     expect(runtimeB.queuedMessagesByItemId.size).toBe(0);
+  });
+
+  test("queue pump status callbacks stay aggregate when another conversation is busy", async () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    __listenClientTestUtils.setActiveRuntime(listener);
+    const runtimeA = __listenClientTestUtils.getOrCreateScopedRuntime(
+      listener,
+      "agent-1",
+      "conv-a",
+    );
+    const runtimeB = __listenClientTestUtils.getOrCreateScopedRuntime(
+      listener,
+      "agent-1",
+      "conv-b",
+    );
+    const socket = new MockSocket();
+    const statuses: string[] = [];
+
+    runtimeA.isProcessing = true;
+    runtimeA.loopStatus = "PROCESSING_API_RESPONSE";
+
+    const queueInput = {
+      kind: "message",
+      source: "user",
+      content: "queued b",
+      clientMessageId: "cm-b",
+      agentId: "agent-1",
+      conversationId: "conv-b",
+    } satisfies Omit<MessageQueueItem, "id" | "enqueuedAt">;
+    const item = runtimeB.queueRuntime.enqueue(queueInput);
+    if (!item) {
+      throw new Error("Expected queued item to be created");
+    }
+    runtimeB.queuedMessagesByItemId.set(
+      item.id,
+      makeIncomingMessage("agent-1", "conv-b", "queued b"),
+    );
+
+    __listenClientTestUtils.scheduleQueuePump(
+      runtimeB,
+      socket as unknown as WebSocket,
+      {
+        connectionId: "conn-1",
+        onStatusChange: (status: "idle" | "receiving" | "processing") => {
+          statuses.push(status);
+        },
+      } as never,
+      async () => {},
+    );
+
+    await waitFor(() => runtimeB.queueRuntime.length === 0);
+
+    expect(statuses).not.toContain("idle");
+    expect(statuses.every((status) => status === "processing")).toBe(true);
+    expect(listener.conversationRuntimes.has(runtimeB.key)).toBe(false);
+    expect(listener.conversationRuntimes.has(runtimeA.key)).toBe(true);
   });
 });

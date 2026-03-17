@@ -465,6 +465,24 @@ describe("listen-client v2 status builders", () => {
     });
   });
 
+  test("resolveRuntimeScope does not guess another conversation when multiple runtimes exist", () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const runtimeA = __listenClientTestUtils.getOrCreateConversationRuntime(
+      listener,
+      "agent-1",
+      "conv-a",
+    );
+    __listenClientTestUtils.getOrCreateConversationRuntime(
+      listener,
+      "agent-1",
+      "conv-b",
+    );
+
+    runtimeA.isProcessing = true;
+
+    expect(__listenClientTestUtils.resolveRuntimeScope(listener)).toBeNull();
+  });
+
   test("does not emit bootstrap status updates with __unknown_agent__ runtime", () => {
     const runtime = __listenClientTestUtils.createRuntime();
     const socket = new MockSocket(WebSocket.OPEN);
@@ -681,6 +699,72 @@ describe("listen-client v2 status builders", () => {
       conversation_id: "default",
     });
     expect(defaultStatus.current_working_directory).toBe("/repo/b");
+  });
+
+  test("scoped loop status is not suppressed just because another conversation is processing", () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const runtimeA = __listenClientTestUtils.getOrCreateConversationRuntime(
+      listener,
+      "agent-1",
+      "conv-a",
+    );
+    const runtimeB = __listenClientTestUtils.getOrCreateConversationRuntime(
+      listener,
+      "agent-1",
+      "conv-b",
+    );
+
+    runtimeA.isProcessing = true;
+    runtimeA.loopStatus = "PROCESSING_API_RESPONSE";
+    runtimeB.loopStatus = "WAITING_ON_APPROVAL";
+
+    expect(
+      __listenClientTestUtils.buildLoopStatus(listener, {
+        agent_id: "agent-1",
+        conversation_id: "conv-b",
+      }),
+    ).toEqual({
+      status: "WAITING_ON_APPROVAL",
+      active_run_ids: [],
+    });
+  });
+
+  test("scoped queue snapshots are not suppressed just because another conversation is processing", () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const runtimeA = __listenClientTestUtils.getOrCreateScopedRuntime(
+      listener,
+      "agent-1",
+      "conv-a",
+    );
+    const runtimeB = __listenClientTestUtils.getOrCreateScopedRuntime(
+      listener,
+      "agent-1",
+      "conv-b",
+    );
+
+    runtimeA.isProcessing = true;
+    runtimeA.loopStatus = "PROCESSING_API_RESPONSE";
+    const queueInput = {
+      kind: "message",
+      source: "user",
+      content: "queued b",
+      clientMessageId: "cm-b",
+      agentId: "agent-1",
+      conversationId: "conv-b",
+    } satisfies Omit<MessageQueueItem, "id" | "enqueuedAt">;
+    runtimeB.queueRuntime.enqueue(queueInput);
+
+    expect(
+      __listenClientTestUtils.buildQueueSnapshot(listener, {
+        agent_id: "agent-1",
+        conversation_id: "conv-b",
+      }),
+    ).toEqual([
+      expect.objectContaining({
+        client_message_id: "cm-b",
+        kind: "message",
+      }),
+    ]);
   });
 });
 

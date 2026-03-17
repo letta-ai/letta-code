@@ -1,5 +1,14 @@
 import type { RuntimeScope } from "../../types/protocol_v2";
-import type { ListenerRuntime } from "./types";
+import type { ConversationRuntime, ListenerRuntime } from "./types";
+
+function getOnlyConversationRuntime(
+  runtime: ListenerRuntime | null,
+): ConversationRuntime | null {
+  if (!runtime || runtime.conversationRuntimes.size !== 1) {
+    return null;
+  }
+  return runtime.conversationRuntimes.values().next().value ?? null;
+}
 
 export function normalizeCwdAgentId(agentId?: string | null): string | null {
   return agentId && agentId.length > 0 ? agentId : null;
@@ -26,12 +35,7 @@ export function resolveScopedAgentId(
   if (explicitAgentId) {
     return explicitAgentId;
   }
-  for (const conversationRuntime of runtime.conversationRuntimes.values()) {
-    if (conversationRuntime.isProcessing) {
-      return conversationRuntime.agentId;
-    }
-  }
-  return null;
+  return getOnlyConversationRuntime(runtime)?.agentId ?? null;
 }
 
 export function resolveScopedConversationId(
@@ -46,12 +50,10 @@ export function resolveScopedConversationId(
   if (params?.conversation_id) {
     return normalizeConversationId(params.conversation_id);
   }
-  for (const conversationRuntime of runtime.conversationRuntimes.values()) {
-    if (conversationRuntime.isProcessing) {
-      return conversationRuntime.conversationId;
-    }
-  }
-  return "default";
+  return (
+    getOnlyConversationRuntime(runtime)?.conversationId ??
+    normalizeConversationId(params?.conversation_id)
+  );
 }
 
 export function resolveRuntimeScope(
@@ -70,24 +72,4 @@ export function resolveRuntimeScope(
     agent_id: resolvedAgentId,
     conversation_id: resolvedConversationId,
   };
-}
-
-export function isScopeCurrentlyActive(
-  runtime: ListenerRuntime,
-  agentId: string | null,
-  conversationId: string,
-): boolean {
-  const scopedKey = `agent:${agentId ?? "__unknown__"}::conversation:${normalizeConversationId(
-    conversationId,
-  )}`;
-  const scopedRuntime = runtime.conversationRuntimes.get(scopedKey);
-  if (scopedRuntime?.isProcessing) {
-    return true;
-  }
-  for (const conversationRuntime of runtime.conversationRuntimes.values()) {
-    if (conversationRuntime.isProcessing) {
-      return false;
-    }
-  }
-  return true;
 }

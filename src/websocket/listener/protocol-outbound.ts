@@ -30,7 +30,6 @@ import {
   safeEmitWsEvent,
 } from "./runtime";
 import {
-  isScopeCurrentlyActive,
   resolveRuntimeScope,
   resolveScopedAgentId,
   resolveScopedConversationId,
@@ -106,11 +105,6 @@ export function buildDeviceStatus(
   const scope = getScopeForRuntime(runtime, params);
   const scopedAgentId = resolveScopedAgentId(listener, scope);
   const scopedConversationId = resolveScopedConversationId(listener, scope);
-  const scopeActive = isScopeCurrentlyActive(
-    listener,
-    scopedAgentId,
-    scopedConversationId,
-  );
   const conversationRuntime = getConversationRuntime(
     listener,
     scopedAgentId,
@@ -130,7 +124,7 @@ export function buildDeviceStatus(
     current_connection_id: listener.connectionId,
     connection_name: listener.connectionName,
     is_online: listener.socket?.readyState === WebSocket.OPEN,
-    is_processing: scopeActive && !!conversationRuntime?.isProcessing,
+    is_processing: !!conversationRuntime?.isProcessing,
     current_permission_mode: permissionMode.getMode(),
     current_working_directory: getConversationWorkingDirectory(
       listener,
@@ -161,16 +155,6 @@ export function buildLoopStatus(
   const scope = getScopeForRuntime(runtime, params);
   const scopedAgentId = resolveScopedAgentId(listener, scope);
   const scopedConversationId = resolveScopedConversationId(listener, scope);
-  const scopeActive = isScopeCurrentlyActive(
-    listener,
-    scopedAgentId,
-    scopedConversationId,
-  );
-
-  if (!scopeActive) {
-    return { status: "WAITING_ON_INPUT", active_run_ids: [] };
-  }
-
   const conversationRuntime = getConversationRuntime(
     listener,
     scopedAgentId,
@@ -361,23 +345,12 @@ export function emitQueueUpdate(
     return;
   }
   const resolvedScope = getScopeForRuntime(runtime, scope);
-  const scopedAgentId = resolveScopedAgentId(listener, resolvedScope);
-  const scopedConversationId = resolveScopedConversationId(
-    listener,
-    resolvedScope,
-  );
-  const scopeActive = isScopeCurrentlyActive(
-    listener,
-    scopedAgentId,
-    scopedConversationId,
-  );
-
   const message: Omit<
     QueueUpdateMessage,
     "runtime" | "event_seq" | "emitted_at" | "idempotency_key"
   > = {
     type: "update_queue",
-    queue: scopeActive ? buildQueueSnapshot(runtime, resolvedScope) : [],
+    queue: buildQueueSnapshot(runtime, resolvedScope),
   };
   emitProtocolV2Message(socket, runtime, message, resolvedScope);
 }
