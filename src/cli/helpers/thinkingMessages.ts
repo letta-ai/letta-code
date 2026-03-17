@@ -1,5 +1,5 @@
 // Machine god AI themed thinking verbs
-const THINKING_VERBS = [
+const THINKING_VERBS = Object.freeze([
   "thinking",
   "processing",
   "computing",
@@ -41,23 +41,23 @@ const THINKING_VERBS = [
   "remembering",
   "absorbing",
   "internalizing",
-] as const;
+] as const);
 
 export const SYSTEM_PROMPT_UPGRADE_TIP =
   "Use /system to upgrade to the latest default prompt.";
 
-export const THINKING_TIPS = [
+export const THINKING_TIPS = Object.freeze([
   "Use /remember [instructions] to remember something from the conversation.",
   "Use /palace to inspect your agent's memory palace.",
   "Use /reflect to launch a background reflection agent to update memory.",
   "Use /search [query] to search messages across all agents.",
   "Use /init to initialize (or re-init) your agent's memory.",
-] as const;
+] as const);
 
-const THINKING_TIPS_WITH_SYSTEM_UPGRADE = [
+const THINKING_TIPS_WITH_SYSTEM_UPGRADE = Object.freeze([
   ...THINKING_TIPS,
   SYSTEM_PROMPT_UPGRADE_TIP,
-];
+] as const);
 
 type ThinkingVerb = (typeof THINKING_VERBS)[number];
 
@@ -141,9 +141,6 @@ export function getRandomThinkingTip(options?: {
     (options?.includeSystemPromptUpgradeTip ?? true)
       ? THINKING_TIPS_WITH_SYSTEM_UPGRADE
       : THINKING_TIPS;
-  if (tipPool.length === 0) {
-    return "";
-  }
   const index = Math.floor(Math.random() * tipPool.length);
-  return tipPool[index] ?? "";
+  return tipPool[index] ?? tipPool[0] ?? THINKING_TIPS[0] ?? "";
 }

@@ -23,21 +23,51 @@ import type {
 import { SYSTEM_REMINDER_RE } from "./constants";
 import { getConversationWorkingDirectory } from "./cwd";
 import {
+  getConversationRuntime,
   getPendingControlRequests,
   getRecoveredApprovalStateForScope,
   nextEventSeq,
   safeEmitWsEvent,
 } from "./runtime";
 import {
-  isScopeCurrentlyActive,
   resolveRuntimeScope,
   resolveScopedAgentId,
   resolveScopedConversationId,
 } from "./scope";
-import type { IncomingMessage, ListenerRuntime } from "./types";
+import type {
+  ConversationRuntime,
+  IncomingMessage,
+  ListenerRuntime,
+} from "./types";
+
+type RuntimeCarrier = ListenerRuntime | ConversationRuntime | null;
+
+function getListenerRuntime(runtime: RuntimeCarrier): ListenerRuntime | null {
+  if (!runtime) return null;
+  return "listener" in runtime ? runtime.listener : runtime;
+}
+
+function getScopeForRuntime(
+  runtime: RuntimeCarrier,
+  scope?: {
+    agent_id?: string | null;
+    conversation_id?: string | null;
+  },
+): {
+  agent_id?: string | null;
+  conversation_id?: string | null;
+} {
+  if (runtime && "listener" in runtime) {
+    return {
+      agent_id: scope?.agent_id ?? runtime.agentId,
+      conversation_id: scope?.conversation_id ?? runtime.conversationId,
+    };
+  }
+  return scope ?? {};
+}
 
 export function emitRuntimeStateUpdates(
-  runtime: ListenerRuntime,
+  runtime: RuntimeCarrier,
   scope?: {
     agent_id?: string | null;
     conversation_id?: string | null;
@@ -48,16 +78,35 @@ export function emitRuntimeStateUpdates(
 }
 
 export function buildDeviceStatus(
-  runtime: ListenerRuntime,
+  runtime: RuntimeCarrier,
   params?: {
     agent_id?: string | null;
     conversation_id?: string | null;
   },
 ): DeviceStatus {
-  const scopedAgentId = resolveScopedAgentId(runtime, params);
-  const scopedConversationId = resolveScopedConversationId(runtime, params);
-  const scopeActive = isScopeCurrentlyActive(
-    runtime,
+  const listener = getListenerRuntime(runtime);
+  if (!listener) {
+    return {
+      current_connection_id: null,
+      connection_name: null,
+      is_online: false,
+      is_processing: false,
+      current_permission_mode: permissionMode.getMode(),
+      current_working_directory: process.cwd(),
+      letta_code_version: process.env.npm_package_version || null,
+      current_toolset: null,
+      current_toolset_preference: "auto",
+      current_loaded_tools: getToolNames(),
+      current_available_skills: [],
+      background_processes: [],
+      pending_control_requests: [],
+    };
+  }
+  const scope = getScopeForRuntime(runtime, params);
+  const scopedAgentId = resolveScopedAgentId(listener, scope);
+  const scopedConversationId = resolveScopedConversationId(listener, scope);
+  const conversationRuntime = getConversationRuntime(
+    listener,
     scopedAgentId,
     scopedConversationId,
   );
@@ -72,13 +121,13 @@ export function buildDeviceStatus(
     }
   })();
   return {
-    current_connection_id: runtime.connectionId,
-    connection_name: runtime.connectionName,
-    is_online: runtime.socket?.readyState === WebSocket.OPEN,
-    is_processing: scopeActive && runtime.isProcessing,
+    current_connection_id: listener.connectionId,
+    connection_name: listener.connectionName,
+    is_online: listener.socket?.readyState === WebSocket.OPEN,
+    is_processing: !!conversationRuntime?.isProcessing,
     current_permission_mode: permissionMode.getMode(),
     current_working_directory: getConversationWorkingDirectory(
-      runtime,
+      listener,
       scopedAgentId,
       scopedConversationId,
     ),
@@ -88,44 +137,62 @@ export function buildDeviceStatus(
     current_loaded_tools: getToolNames(),
     current_available_skills: [],
     background_processes: [],
-    pending_control_requests: getPendingControlRequests(runtime, params),
+    pending_control_requests: getPendingControlRequests(listener, scope),
   };
 }
 
 export function buildLoopStatus(
-  runtime: ListenerRuntime,
+  runtime: RuntimeCarrier,
   params?: {
     agent_id?: string | null;
     conversation_id?: string | null;
   },
 ): LoopState {
-  const scopedAgentId = resolveScopedAgentId(runtime, params);
-  const scopedConversationId = resolveScopedConversationId(runtime, params);
-  const scopeActive = isScopeCurrentlyActive(
-    runtime,
+  const listener = getListenerRuntime(runtime);
+  if (!listener) {
+    return { status: "WAITING_ON_INPUT", active_run_ids: [] };
+  }
+  const scope = getScopeForRuntime(runtime, params);
+  const scopedAgentId = resolveScopedAgentId(listener, scope);
+  const scopedConversationId = resolveScopedConversationId(listener, scope);
+  const conversationRuntime = getConversationRuntime(
+    listener,
     scopedAgentId,
     scopedConversationId,
   );
-
-  if (!scopeActive) {
-    return { status: "WAITING_ON_INPUT", active_run_ids: [] };
-  }
-
-  const recovered = getRecoveredApprovalStateForScope(runtime, params);
+  const recovered = getRecoveredApprovalStateForScope(listener, scope);
   const status =
     recovered &&
     recovered.pendingRequestIds.size > 0 &&
-    runtime.loopStatus === "WAITING_ON_INPUT"
+    conversationRuntime?.loopStatus === "WAITING_ON_INPUT"
       ? "WAITING_ON_APPROVAL"
-      : runtime.loopStatus;
+      : (conversationRuntime?.loopStatus ?? "WAITING_ON_INPUT");
   return {
     status,
-    active_run_ids: runtime.activeRunId ? [runtime.activeRunId] : [],
+    active_run_ids: conversationRuntime?.activeRunId
+      ? [conversationRuntime.activeRunId]
+      : [],
   };
 }
 
-export function buildQueueSnapshot(runtime: ListenerRuntime): QueueMessage[] {
-  return runtime.queueRuntime.items.map((item) => ({
+export function buildQueueSnapshot(
+  runtime: RuntimeCarrier,
+  params?: {
+    agent_id?: string | null;
+    conversation_id?: string | null;
+  },
+): QueueMessage[] {
+  const listener = getListenerRuntime(runtime);
+  if (!listener) {
+    return [];
+  }
+  const scope = getScopeForRuntime(runtime, params);
+  const conversationRuntime = getConversationRuntime(
+    listener,
+    resolveScopedAgentId(listener, scope),
+    resolveScopedConversationId(listener, scope),
+  );
+  return (conversationRuntime?.queueRuntime.items ?? []).map((item) => ({
     id: item.id,
     client_message_id: item.clientMessageId ?? `cm-${item.id}`,
     kind: item.kind,
@@ -136,7 +203,7 @@ export function buildQueueSnapshot(runtime: ListenerRuntime): QueueMessage[] {
 }
 
 export function setLoopStatus(
-  runtime: ListenerRuntime,
+  runtime: ConversationRuntime,
   status: LoopStatus,
   scope?: {
     agent_id?: string | null;
@@ -152,7 +219,7 @@ export function setLoopStatus(
 
 export function emitProtocolV2Message(
   socket: WebSocket,
-  runtime: ListenerRuntime | null,
+  runtime: RuntimeCarrier,
   message: Omit<
     WsProtocolMessage,
     "runtime" | "event_seq" | "emitted_at" | "idempotency_key"
@@ -165,11 +232,15 @@ export function emitProtocolV2Message(
   if (socket.readyState !== WebSocket.OPEN) {
     return;
   }
-  const runtimeScope = resolveRuntimeScope(runtime, scope);
+  const listener = getListenerRuntime(runtime);
+  const runtimeScope = resolveRuntimeScope(
+    listener,
+    getScopeForRuntime(runtime, scope),
+  );
   if (!runtimeScope) {
     return;
   }
-  const eventSeq = nextEventSeq(runtime);
+  const eventSeq = nextEventSeq(listener);
   if (eventSeq === null) {
     return;
   }
@@ -201,7 +272,7 @@ export function emitProtocolV2Message(
 
 export function emitDeviceStatusUpdate(
   socket: WebSocket,
-  runtime: ListenerRuntime,
+  runtime: RuntimeCarrier,
   scope?: {
     agent_id?: string | null;
     conversation_id?: string | null;
@@ -219,7 +290,7 @@ export function emitDeviceStatusUpdate(
 
 export function emitLoopStatusUpdate(
   socket: WebSocket,
-  runtime: ListenerRuntime,
+  runtime: RuntimeCarrier,
   scope?: {
     agent_id?: string | null;
     conversation_id?: string | null;
@@ -236,53 +307,52 @@ export function emitLoopStatusUpdate(
 }
 
 export function emitLoopStatusIfOpen(
-  runtime: ListenerRuntime,
+  runtime: RuntimeCarrier,
   scope?: {
     agent_id?: string | null;
     conversation_id?: string | null;
   },
 ): void {
-  if (runtime.socket?.readyState === WebSocket.OPEN) {
-    emitLoopStatusUpdate(runtime.socket, runtime, scope);
+  const listener = getListenerRuntime(runtime);
+  if (listener?.socket?.readyState === WebSocket.OPEN) {
+    emitLoopStatusUpdate(listener.socket, runtime, scope);
   }
 }
 
 export function emitDeviceStatusIfOpen(
-  runtime: ListenerRuntime,
+  runtime: RuntimeCarrier,
   scope?: {
     agent_id?: string | null;
     conversation_id?: string | null;
   },
 ): void {
-  if (runtime.socket?.readyState === WebSocket.OPEN) {
-    emitDeviceStatusUpdate(runtime.socket, runtime, scope);
+  const listener = getListenerRuntime(runtime);
+  if (listener?.socket?.readyState === WebSocket.OPEN) {
+    emitDeviceStatusUpdate(listener.socket, runtime, scope);
   }
 }
 
 export function emitQueueUpdate(
   socket: WebSocket,
-  runtime: ListenerRuntime,
+  runtime: RuntimeCarrier,
   scope?: {
     agent_id?: string | null;
     conversation_id?: string | null;
   },
 ): void {
-  const scopedAgentId = resolveScopedAgentId(runtime, scope);
-  const scopedConversationId = resolveScopedConversationId(runtime, scope);
-  const scopeActive = isScopeCurrentlyActive(
-    runtime,
-    scopedAgentId,
-    scopedConversationId,
-  );
-
+  const listener = getListenerRuntime(runtime);
+  if (!listener) {
+    return;
+  }
+  const resolvedScope = getScopeForRuntime(runtime, scope);
   const message: Omit<
     QueueUpdateMessage,
     "runtime" | "event_seq" | "emitted_at" | "idempotency_key"
   > = {
     type: "update_queue",
-    queue: scopeActive ? buildQueueSnapshot(runtime) : [],
+    queue: buildQueueSnapshot(runtime, resolvedScope),
   };
-  emitProtocolV2Message(socket, runtime, message, scope);
+  emitProtocolV2Message(socket, runtime, message, resolvedScope);
 }
 
 export function isSystemReminderPart(part: unknown): boolean {
@@ -305,7 +375,7 @@ export function isSystemReminderPart(part: unknown): boolean {
 
 export function emitDequeuedUserMessage(
   socket: WebSocket,
-  runtime: ListenerRuntime,
+  runtime: RuntimeCarrier,
   incoming: IncomingMessage,
   batch: DequeuedBatch,
 ): void {
@@ -353,20 +423,21 @@ export function emitDequeuedUserMessage(
 }
 
 export function emitQueueUpdateIfOpen(
-  runtime: ListenerRuntime,
+  runtime: RuntimeCarrier,
   scope?: {
     agent_id?: string | null;
     conversation_id?: string | null;
   },
 ): void {
-  if (runtime.socket?.readyState === WebSocket.OPEN) {
-    emitQueueUpdate(runtime.socket, runtime, scope);
+  const listener = getListenerRuntime(runtime);
+  if (listener?.socket?.readyState === WebSocket.OPEN) {
+    emitQueueUpdate(listener.socket, runtime, scope);
   }
 }
 
 export function emitStateSync(
   socket: WebSocket,
-  runtime: ListenerRuntime,
+  runtime: RuntimeCarrier,
   scope: RuntimeScope,
 ): void {
   emitDeviceStatusUpdate(socket, runtime, scope);
@@ -413,7 +484,7 @@ export function createLifecycleMessageBase<TMessageType extends string>(
 
 export function emitCanonicalMessageDelta(
   socket: WebSocket,
-  runtime: ListenerRuntime | null,
+  runtime: RuntimeCarrier,
   delta: StreamDelta,
   scope?: {
     agent_id?: string | null;
@@ -425,7 +496,7 @@ export function emitCanonicalMessageDelta(
 
 export function emitLoopErrorDelta(
   socket: WebSocket,
-  runtime: ListenerRuntime | null,
+  runtime: RuntimeCarrier,
   params: {
     message: string;
     stopReason: StopReasonType;
@@ -453,7 +524,7 @@ export function emitLoopErrorDelta(
 
 export function emitRetryDelta(
   socket: WebSocket,
-  runtime: ListenerRuntime,
+  runtime: RuntimeCarrier,
   params: {
     message: string;
     reason: StopReasonType;
@@ -481,7 +552,7 @@ export function emitRetryDelta(
 
 export function emitStatusDelta(
   socket: WebSocket,
-  runtime: ListenerRuntime | null,
+  runtime: RuntimeCarrier,
   params: {
     message: string;
     level: StatusMessage["level"];
@@ -503,7 +574,7 @@ export function emitStatusDelta(
 
 export function emitInterruptedStatusDelta(
   socket: WebSocket,
-  runtime: ListenerRuntime | null,
+  runtime: RuntimeCarrier,
   params: {
     runId?: string | null;
     agentId?: string | null;
@@ -521,7 +592,7 @@ export function emitInterruptedStatusDelta(
 
 export function emitStreamDelta(
   socket: WebSocket,
-  runtime: ListenerRuntime | null,
+  runtime: RuntimeCarrier,
   delta: StreamDelta,
   scope?: {
     agent_id?: string | null;

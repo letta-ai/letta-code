@@ -20,6 +20,8 @@ import {
 
 const {
   createRuntime,
+  createListenerRuntime,
+  getOrCreateConversationRuntime,
   stopRuntime,
   rememberPendingApprovalBatchIds,
   populateInterruptQueue,
@@ -100,17 +102,28 @@ describe("stopRuntime teardown", () => {
   });
 
   test("increments continuationEpoch on each stop", () => {
-    const runtime = createRuntime();
-    runtime.socket = new MockSocket(WebSocket.OPEN) as unknown as WebSocket;
+    const listener = createListenerRuntime();
+    listener.socket = new MockSocket(WebSocket.OPEN) as unknown as WebSocket;
 
-    expect(runtime.continuationEpoch).toBe(0);
-    stopRuntime(runtime, true);
-    expect(runtime.continuationEpoch).toBe(1);
+    const runtimeA = getOrCreateConversationRuntime(
+      listener,
+      "agent-1",
+      "conv-1",
+    );
+    const runtimeB = getOrCreateConversationRuntime(
+      listener,
+      "agent-2",
+      "conv-2",
+    );
 
-    runtime.socket = new MockSocket(WebSocket.OPEN) as unknown as WebSocket;
-    runtime.intentionallyClosed = false;
-    stopRuntime(runtime, true);
-    expect(runtime.continuationEpoch).toBe(2);
+    expect(runtimeA.continuationEpoch).toBe(0);
+    expect(runtimeB.continuationEpoch).toBe(0);
+
+    stopRuntime(listener, true);
+
+    expect(runtimeA.continuationEpoch).toBe(1);
+    expect(runtimeB.continuationEpoch).toBe(1);
+    expect(listener.conversationRuntimes.size).toBe(0);
   });
 });
 

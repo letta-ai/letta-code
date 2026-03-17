@@ -40,7 +40,7 @@ import {
   markAwaitingAcceptedApprovalContinuationRunId,
   sendApprovalContinuationWithRetry,
 } from "./send";
-import type { ListenerRuntime } from "./types";
+import type { ConversationRuntime } from "./types";
 
 type Decision =
   | {
@@ -79,7 +79,7 @@ export async function handleApprovalStop(params: {
     toolName: string;
     toolArgs: string;
   }>;
-  runtime: ListenerRuntime;
+  runtime: ConversationRuntime;
   socket: WebSocket;
   agentId: string;
   conversationId: string;
@@ -121,8 +121,6 @@ export async function handleApprovalStop(params: {
       agent_id: agentId,
       conversation_id: conversationId,
     });
-    runtime.activeAgentId = null;
-    runtime.activeConversationId = null;
     runtime.activeWorkingDirectory = null;
     runtime.activeRunId = null;
     runtime.activeRunStartedAt = null;

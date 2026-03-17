@@ -44,8 +44,8 @@ import {
 } from "./protocol-outbound";
 import { clearActiveRunState, clearRecoveredApprovalState } from "./runtime";
 import type {
+  ConversationRuntime,
   IncomingMessage,
-  ListenerRuntime,
   RecoveredPendingApproval,
 } from "./types";
 
@@ -128,7 +128,7 @@ export async function isRetriablePostStopError(
 export async function drainRecoveryStreamWithEmission(
   recoveryStream: Stream<LettaStreamingResponse>,
   socket: WebSocket,
-  runtime: ListenerRuntime,
+  runtime: ConversationRuntime,
   params: {
     agentId?: string | null;
     conversationId: string;
@@ -195,7 +195,7 @@ export async function drainRecoveryStreamWithEmission(
 }
 
 export function finalizeHandledRecoveryTurn(
-  runtime: ListenerRuntime,
+  runtime: ConversationRuntime,
   socket: WebSocket,
   params: {
     drainResult: Awaited<ReturnType<typeof drainStreamWithResume>>;
@@ -256,7 +256,7 @@ export function getApprovalContinuationRecoveryDisposition(
 }
 
 export async function debugLogApprovalResumeState(
-  runtime: ListenerRuntime,
+  runtime: ConversationRuntime,
   params: {
     agentId: string;
     conversationId: string;
@@ -319,12 +319,12 @@ export async function debugLogApprovalResumeState(
 }
 
 export async function recoverApprovalStateForSync(
-  runtime: ListenerRuntime,
+  runtime: ConversationRuntime,
   scope: { agent_id: string; conversation_id: string },
 ): Promise<void> {
   const sameActiveScope =
-    runtime.activeAgentId === scope.agent_id &&
-    runtime.activeConversationId === scope.conversation_id;
+    runtime.agentId === scope.agent_id &&
+    runtime.conversationId === scope.conversation_id;
 
   if (
     sameActiveScope &&
@@ -385,7 +385,7 @@ export async function recoverApprovalStateForSync(
         approval.toolName,
         input,
         getConversationWorkingDirectory(
-          runtime,
+          runtime.listener,
           scope.agent_id,
           scope.conversation_id,
         ),
@@ -422,13 +422,13 @@ export async function recoverApprovalStateForSync(
 }
 
 export async function resolveRecoveredApprovalResponse(
-  runtime: ListenerRuntime,
+  runtime: ConversationRuntime,
   socket: WebSocket,
   response: ApprovalResponseBody,
   processTurn: (
     msg: IncomingMessage,
     socket: WebSocket,
-    runtime: ListenerRuntime,
+    runtime: ConversationRuntime,
     onStatusChange?: (
       status: "idle" | "receiving" | "processing",
       connectionId: string,
@@ -515,10 +515,8 @@ export async function resolveRecoveredApprovalResponse(
   emitRuntimeStateUpdates(runtime, scope);
 
   runtime.isProcessing = true;
-  runtime.activeAgentId = recovered.agentId;
-  runtime.activeConversationId = recovered.conversationId;
   runtime.activeWorkingDirectory = getConversationWorkingDirectory(
-    runtime,
+    runtime.listener,
     recovered.agentId,
     recovered.conversationId,
   );
@@ -537,7 +535,7 @@ export async function resolveRecoveredApprovalResponse(
     const approvalResults = await executeApprovalBatch(decisions, undefined, {
       abortSignal: recoveryAbortController.signal,
       workingDirectory: getConversationWorkingDirectory(
-        runtime,
+        runtime.listener,
         recovered.agentId,
         recovered.conversationId,
       ),

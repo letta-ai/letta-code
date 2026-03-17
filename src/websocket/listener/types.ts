@@ -96,21 +96,16 @@ export type RecoveredApprovalState = {
   responsesByRequestId: Map<string, ApprovalResponseBody>;
 };
 
-export type ListenerRuntime = {
-  socket: WebSocket | null;
-  heartbeatInterval: NodeJS.Timeout | null;
-  reconnectTimeout: NodeJS.Timeout | null;
-  intentionallyClosed: boolean;
-  hasSuccessfulConnection: boolean;
+export type ConversationRuntime = {
+  listener: ListenerRuntime;
+  key: string;
+  agentId: string | null;
+  conversationId: string;
   messageQueue: Promise<void>;
   pendingApprovalResolvers: Map<string, PendingApprovalResolver>;
   recoveredApprovalState: RecoveredApprovalState | null;
-  sessionId: string;
-  eventSeqCounter: number;
   lastStopReason: string | null;
   isProcessing: boolean;
-  activeAgentId: string | null;
-  activeConversationId: string | null;
   activeWorkingDirectory: string | null;
   activeRunId: string | null;
   activeRunStartedAt: string | null;
@@ -120,13 +115,7 @@ export type ListenerRuntime = {
   queuedMessagesByItemId: Map<string, IncomingMessage>;
   queuePumpActive: boolean;
   queuePumpScheduled: boolean;
-  queueEmitScheduled: boolean;
-  pendingQueueEmitScope?: {
-    agent_id?: string | null;
-    conversation_id?: string | null;
-  };
   pendingTurns: number;
-  onWsEvent?: StartListenerOptions["onWsEvent"];
   isRecoveringApprovals: boolean;
   loopStatus: LoopStatus;
   pendingApprovalBatchByToolCallId: Map<string, string>;
@@ -139,11 +128,31 @@ export type ListenerRuntime = {
   continuationEpoch: number;
   activeExecutingToolCallIds: string[];
   pendingInterruptedToolCallIds: string[] | null;
+};
+
+export type ListenerRuntime = {
+  socket: WebSocket | null;
+  heartbeatInterval: NodeJS.Timeout | null;
+  reconnectTimeout: NodeJS.Timeout | null;
+  intentionallyClosed: boolean;
+  hasSuccessfulConnection: boolean;
+  sessionId: string;
+  eventSeqCounter: number;
+  lastStopReason: string | null;
+  queueEmitScheduled: boolean;
+  pendingQueueEmitScope?: {
+    agent_id?: string | null;
+    conversation_id?: string | null;
+  };
+  onWsEvent?: StartListenerOptions["onWsEvent"];
   reminderState: SharedReminderState;
   bootWorkingDirectory: string;
   workingDirectoryByConversation: Map<string, string>;
   connectionId: string | null;
   connectionName: string | null;
+  conversationRuntimes: Map<string, ConversationRuntime>;
+  approvalRuntimeKeyByRequestId: Map<string, string>;
+  lastEmittedStatus: "idle" | "receiving" | "processing" | null;
 };
 
 export interface InterruptPopulateInput {

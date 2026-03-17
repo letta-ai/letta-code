@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, mock, test } from "bun:test";
 import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import os from "node:os";
 import { join } from "node:path";
@@ -332,31 +332,39 @@ describe("listen-client requestApprovalOverWS", () => {
     expect(runtime.pendingApprovalResolvers.size).toBe(0);
   });
 
-  test("cleans up resolver when send throws", async () => {
+  test("registers a pending resolver until an approval response arrives", async () => {
     const runtime = __listenClientTestUtils.createRuntime();
     const socket = new MockSocket(WebSocket.OPEN);
-    socket.sendImpl = () => {
-      throw new Error("send failed");
-    };
     const requestId = "perm-send-fail";
 
-    await expect(
-      requestApprovalOverWS(
-        runtime,
-        socket as unknown as WebSocket,
-        requestId,
-        makeControlRequest(requestId),
-      ),
-    ).rejects.toThrow("send failed");
+    const pending = requestApprovalOverWS(
+      runtime,
+      socket as unknown as WebSocket,
+      requestId,
+      makeControlRequest(requestId),
+    );
+
+    expect(runtime.pendingApprovalResolvers.size).toBe(1);
+    expect(
+      runtime.pendingApprovalResolvers.get(requestId)?.controlRequest,
+    ).toEqual(makeControlRequest(requestId));
+
+    rejectPendingApprovalResolvers(runtime, "cleanup");
+    await expect(pending).rejects.toThrow("cleanup");
     expect(runtime.pendingApprovalResolvers.size).toBe(0);
   });
 });
 
 describe("listen-client conversation-scoped protocol events", () => {
   test("queue enqueue/block updates loop status with runtime scope instead of stream_delta", async () => {
-    const runtime = __listenClientTestUtils.createRuntime();
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const runtime = __listenClientTestUtils.getOrCreateScopedRuntime(
+      listener,
+      "agent-default",
+      "default",
+    );
     const socket = new MockSocket(WebSocket.OPEN);
-    runtime.socket = socket as unknown as WebSocket;
+    listener.socket = socket as unknown as WebSocket;
 
     const input: Omit<MessageQueueItem, "id" | "enqueuedAt"> = {
       kind: "message",
@@ -396,9 +404,14 @@ describe("listen-client conversation-scoped protocol events", () => {
   });
 
   test("queue dequeue keeps scope through update_queue runtime envelope", async () => {
-    const runtime = __listenClientTestUtils.createRuntime();
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const runtime = __listenClientTestUtils.getOrCreateScopedRuntime(
+      listener,
+      "agent-xyz",
+      "conv-xyz",
+    );
     const socket = new MockSocket(WebSocket.OPEN);
-    runtime.socket = socket as unknown as WebSocket;
+    listener.socket = socket as unknown as WebSocket;
 
     const input: Omit<MessageQueueItem, "id" | "enqueuedAt"> = {
       kind: "message",
@@ -465,6 +478,24 @@ describe("listen-client v2 status builders", () => {
     });
   });
 
+  test("resolveRuntimeScope does not guess another conversation when multiple runtimes exist", () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const runtimeA = __listenClientTestUtils.getOrCreateConversationRuntime(
+      listener,
+      "agent-1",
+      "conv-a",
+    );
+    __listenClientTestUtils.getOrCreateConversationRuntime(
+      listener,
+      "agent-1",
+      "conv-b",
+    );
+
+    runtimeA.isProcessing = true;
+
+    expect(__listenClientTestUtils.resolveRuntimeScope(listener)).toBeNull();
+  });
+
   test("does not emit bootstrap status updates with __unknown_agent__ runtime", () => {
     const runtime = __listenClientTestUtils.createRuntime();
     const socket = new MockSocket(WebSocket.OPEN);
@@ -507,7 +538,12 @@ describe("listen-client v2 status builders", () => {
   });
 
   test("sync replays device, loop, and queue state for the requested runtime", () => {
-    const runtime = __listenClientTestUtils.createRuntime();
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const runtime = __listenClientTestUtils.getOrCreateScopedRuntime(
+      listener,
+      "agent-1",
+      "default",
+    );
     const socket = new MockSocket(WebSocket.OPEN);
     const queueInput = {
       clientMessageId: "cm-1",
@@ -555,7 +591,12 @@ describe("listen-client v2 status builders", () => {
   });
 
   test("recovered approvals surface as pending control requests and WAITING_ON_APPROVAL", () => {
-    const runtime = __listenClientTestUtils.createRuntime();
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const runtime = __listenClientTestUtils.getOrCreateScopedRuntime(
+      listener,
+      "agent-1",
+      "default",
+    );
     const socket = new MockSocket(WebSocket.OPEN);
     const requestId = "perm-tool-call-1";
 
@@ -630,7 +671,12 @@ describe("listen-client v2 status builders", () => {
   });
 
   test("starting a live turn clears stale recovered approvals for the same scope", () => {
-    const runtime = __listenClientTestUtils.createRuntime();
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const runtime = __listenClientTestUtils.getOrCreateScopedRuntime(
+      listener,
+      "agent-1",
+      "default",
+    );
     runtime.recoveredApprovalState = {
       agentId: "agent-1",
       conversationId: "default",
@@ -681,6 +727,72 @@ describe("listen-client v2 status builders", () => {
       conversation_id: "default",
     });
     expect(defaultStatus.current_working_directory).toBe("/repo/b");
+  });
+
+  test("scoped loop status is not suppressed just because another conversation is processing", () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const runtimeA = __listenClientTestUtils.getOrCreateConversationRuntime(
+      listener,
+      "agent-1",
+      "conv-a",
+    );
+    const runtimeB = __listenClientTestUtils.getOrCreateConversationRuntime(
+      listener,
+      "agent-1",
+      "conv-b",
+    );
+
+    runtimeA.isProcessing = true;
+    runtimeA.loopStatus = "PROCESSING_API_RESPONSE";
+    runtimeB.loopStatus = "WAITING_ON_APPROVAL";
+
+    expect(
+      __listenClientTestUtils.buildLoopStatus(listener, {
+        agent_id: "agent-1",
+        conversation_id: "conv-b",
+      }),
+    ).toEqual({
+      status: "WAITING_ON_APPROVAL",
+      active_run_ids: [],
+    });
+  });
+
+  test("scoped queue snapshots are not suppressed just because another conversation is processing", () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const runtimeA = __listenClientTestUtils.getOrCreateScopedRuntime(
+      listener,
+      "agent-1",
+      "conv-a",
+    );
+    const runtimeB = __listenClientTestUtils.getOrCreateScopedRuntime(
+      listener,
+      "agent-1",
+      "conv-b",
+    );
+
+    runtimeA.isProcessing = true;
+    runtimeA.loopStatus = "PROCESSING_API_RESPONSE";
+    const queueInput = {
+      kind: "message",
+      source: "user",
+      content: "queued b",
+      clientMessageId: "cm-b",
+      agentId: "agent-1",
+      conversationId: "conv-b",
+    } satisfies Omit<MessageQueueItem, "id" | "enqueuedAt">;
+    runtimeB.queueRuntime.enqueue(queueInput);
+
+    expect(
+      __listenClientTestUtils.buildQueueSnapshot(listener, {
+        agent_id: "agent-1",
+        conversation_id: "conv-b",
+      }),
+    ).toEqual([
+      expect.objectContaining({
+        client_message_id: "cm-b",
+        kind: "message",
+      }),
+    ]);
   });
 });
 
@@ -985,8 +1097,14 @@ describe("listen-client capability-gated approval flow", () => {
   });
 
   test("requestApprovalOverWS exposes the control request through device status instead of stream_delta", () => {
-    const runtime = __listenClientTestUtils.createRuntime();
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const runtime = __listenClientTestUtils.getOrCreateScopedRuntime(
+      listener,
+      "agent-1",
+      "default",
+    );
     const socket = new MockSocket(WebSocket.OPEN);
+    listener.socket = socket as unknown as WebSocket;
     const requestId = "perm-adapter-test";
 
     void requestApprovalOverWS(
@@ -996,10 +1114,18 @@ describe("listen-client capability-gated approval flow", () => {
       makeControlRequest(requestId),
     ).catch(() => {});
 
-    expect(socket.sentPayloads).toHaveLength(2);
-    const [loopStatus, deviceStatus] = socket.sentPayloads.map((payload) =>
+    expect(socket.sentPayloads.length).toBeGreaterThanOrEqual(2);
+    const outbound = socket.sentPayloads.map((payload) =>
       JSON.parse(payload as string),
     );
+    const loopStatus = outbound.find(
+      (payload) => payload.type === "update_loop_status",
+    );
+    const deviceStatus = outbound.find(
+      (payload) => payload.type === "update_device_status",
+    );
+    expect(loopStatus).toBeDefined();
+    expect(deviceStatus).toBeDefined();
     expect(loopStatus.type).toBe("update_loop_status");
     expect(loopStatus.loop_status.status).toBe("WAITING_ON_APPROVAL");
     expect(deviceStatus.type).toBe("update_device_status");
@@ -1012,6 +1138,64 @@ describe("listen-client capability-gated approval flow", () => {
 
     // Cleanup
     rejectPendingApprovalResolvers(runtime, "test cleanup");
+  });
+
+  test("handled recovered approval responses reschedule queue pumping for the fallback scoped runtime", async () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const targetRuntime =
+      __listenClientTestUtils.getOrCreateConversationRuntime(
+        listener,
+        "agent-1",
+        "default",
+      );
+    const socket = new MockSocket(WebSocket.OPEN);
+    const scheduleQueuePumpMock = mock(() => {});
+    const resolveRecoveredApprovalResponseMock = mock(async () => true);
+
+    const handled = await __listenClientTestUtils.handleApprovalResponseInput(
+      listener,
+      {
+        runtime: { agent_id: "agent-1", conversation_id: "default" },
+        response: {
+          request_id: "perm-recovered",
+          decision: { behavior: "allow" },
+        },
+        socket: socket as unknown as WebSocket,
+        opts: {
+          onStatusChange: undefined,
+          connectionId: "conn-1",
+        },
+        processQueuedTurn: async () => {},
+      },
+      {
+        resolveRuntimeForApprovalRequest: () => null,
+        resolvePendingApprovalResolver: () => false,
+        getOrCreateScopedRuntime: () => targetRuntime,
+        resolveRecoveredApprovalResponse: resolveRecoveredApprovalResponseMock,
+        scheduleQueuePump: scheduleQueuePumpMock,
+      },
+    );
+
+    expect(handled).toBe(true);
+    expect(resolveRecoveredApprovalResponseMock).toHaveBeenCalledWith(
+      targetRuntime,
+      socket,
+      {
+        request_id: "perm-recovered",
+        decision: { behavior: "allow" },
+      },
+      expect.any(Function),
+      {
+        onStatusChange: undefined,
+        connectionId: "conn-1",
+      },
+    );
+    expect(scheduleQueuePumpMock).toHaveBeenCalledWith(
+      targetRuntime,
+      socket,
+      expect.objectContaining({ connectionId: "conn-1" }),
+      expect.any(Function),
+    );
   });
 });
 

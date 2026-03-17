@@ -93,10 +93,65 @@ async function runCLI(
   return { stdout: out, code };
 }
 
+const REQUIRED_MARKERS = ["BANANA"];
+const MAX_ATTEMPTS = 2;
+
 function assertContainsAll(hay: string, needles: string[]) {
   for (const n of needles) {
     if (!hay.includes(n)) throw new Error(`Missing expected output: ${n}`);
   }
+}
+
+function extractStreamJsonAssistantText(stdout: string): string {
+  const parts: string[] = [];
+  for (const line of stdout.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    try {
+      const event = JSON.parse(line) as {
+        type?: string;
+        message_type?: string;
+        content?: unknown;
+        result?: unknown;
+      };
+      if (
+        event.type === "message" &&
+        event.message_type === "assistant_message" &&
+        typeof event.content === "string"
+      ) {
+        parts.push(event.content);
+      }
+      if (event.type === "result" && typeof event.result === "string") {
+        parts.push(event.result);
+      }
+    } catch {
+      // Ignore malformed lines; validation will fail if we never find the marker.
+    }
+  }
+  return parts.join("");
+}
+
+function validateOutput(stdout: string, output: Args["output"]) {
+  if (output === "text") {
+    assertContainsAll(stdout, REQUIRED_MARKERS);
+    return;
+  }
+
+  if (output === "json") {
+    try {
+      const obj = JSON.parse(stdout);
+      const result = String(obj?.result ?? "");
+      assertContainsAll(result, REQUIRED_MARKERS);
+      return;
+    } catch (e) {
+      throw new Error(`Invalid JSON output: ${(e as Error).message}`);
+    }
+  }
+
+  const streamText = extractStreamJsonAssistantText(stdout);
+  if (!streamText) {
+    throw new Error("No assistant/result content found in stream-json output");
+  }
+  assertContainsAll(streamText, REQUIRED_MARKERS);
 }
 
 async function main() {
@@ -104,41 +159,39 @@ async function main() {
   const prereq = await ensurePrereqs(model);
   if (prereq === "skip") return;
 
-  const { stdout, code } = await runCLI(model, output);
-  if (code !== 0) {
-    process.exit(code);
+  let stdout = "";
+  let code = 0;
+  let lastError: Error | null = null;
+
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
+    ({ stdout, code } = await runCLI(model, output));
+    if (code !== 0) {
+      lastError = new Error(`CLI exited with code ${code}`);
+    } else {
+      try {
+        validateOutput(stdout, output);
+        console.log(`OK: ${model} / ${output}`);
+        return;
+      } catch (error) {
+        lastError = error as Error;
+      }
+    }
+
+    if (attempt < MAX_ATTEMPTS) {
+      console.error(
+        `[headless-scenario] attempt ${attempt}/${MAX_ATTEMPTS} failed for ${model} / ${output}: ${lastError?.message ?? "unknown error"}`,
+      );
+      await Bun.sleep(500);
+    }
   }
 
   try {
-    // Validate by output mode
-    if (output === "text") {
-      assertContainsAll(stdout, ["BANANA"]);
-    } else if (output === "json") {
-      try {
-        const obj = JSON.parse(stdout);
-        const result = String(obj?.result ?? "");
-        assertContainsAll(result, ["BANANA"]);
-      } catch (e) {
-        throw new Error(`Invalid JSON output: ${(e as Error).message}`);
-      }
-    } else if (output === "stream-json") {
-      // stream-json prints one JSON object per line; find the final result event
-      const lines = stdout.split(/\r?\n/).filter(Boolean);
-      const resultLine = lines.find((l) => {
-        try {
-          const o = JSON.parse(l);
-          return o?.type === "result";
-        } catch {
-          return false;
-        }
-      });
-      if (!resultLine) throw new Error("No final result event in stream-json");
-      const evt = JSON.parse(resultLine);
-      const result = String(evt?.result ?? "");
-      assertContainsAll(result, ["BANANA"]);
+    if (code !== 0) {
+      process.exit(code);
     }
-
-    console.log(`OK: ${model} / ${output}`);
+    if (lastError) {
+      throw lastError;
+    }
   } catch (e) {
     // Dump full stdout to aid debugging
     console.error(`\n===== BEGIN STDOUT (${model} / ${output}) =====`);

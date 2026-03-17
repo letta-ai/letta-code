@@ -9,10 +9,11 @@ import {
   emitLoopStatusIfOpen,
   setLoopStatus,
 } from "./protocol-outbound";
-import type { ListenerRuntime } from "./types";
+import { evictConversationRuntimeIfIdle } from "./runtime";
+import type { ConversationRuntime } from "./types";
 
 export function rememberPendingApprovalBatchIds(
-  runtime: ListenerRuntime,
+  runtime: ConversationRuntime,
   pendingApprovals: Array<{ toolCallId: string }>,
   batchId: string,
 ): void {
@@ -27,7 +28,7 @@ export function rememberPendingApprovalBatchIds(
 }
 
 export function resolvePendingApprovalBatchId(
-  runtime: ListenerRuntime,
+  runtime: ConversationRuntime,
   pendingApprovals: Array<{ toolCallId: string }>,
 ): string | null {
   const batchIds = new Set<string>();
@@ -47,7 +48,7 @@ export function resolvePendingApprovalBatchId(
 }
 
 export function resolveRecoveryBatchId(
-  runtime: ListenerRuntime,
+  runtime: ConversationRuntime,
   pendingApprovals: Array<{ toolCallId: string }>,
 ): string | null {
   if (runtime.pendingApprovalBatchByToolCallId.size === 0) {
@@ -57,7 +58,7 @@ export function resolveRecoveryBatchId(
 }
 
 export function clearPendingApprovalBatchIds(
-  runtime: ListenerRuntime,
+  runtime: ConversationRuntime,
   approvals: Array<{ toolCallId: string }>,
 ): void {
   for (const approval of approvals) {
@@ -178,7 +179,7 @@ export function validateApprovalResultIds(
 }
 
 export function resolvePendingApprovalResolver(
-  runtime: ListenerRuntime,
+  runtime: ConversationRuntime,
   response: ApprovalResponseBody,
 ): boolean {
   const requestId = response.request_id;
@@ -192,6 +193,7 @@ export function resolvePendingApprovalResolver(
   }
 
   runtime.pendingApprovalResolvers.delete(requestId);
+  runtime.listener.approvalRuntimeKeyByRequestId.delete(requestId);
   if (runtime.pendingApprovalResolvers.size === 0) {
     setLoopStatus(
       runtime,
@@ -199,29 +201,49 @@ export function resolvePendingApprovalResolver(
     );
   }
   pending.resolve(response);
-  emitLoopStatusIfOpen(runtime);
-  emitDeviceStatusIfOpen(runtime);
+  emitLoopStatusIfOpen(runtime.listener, {
+    agent_id: runtime.agentId,
+    conversation_id: runtime.conversationId,
+  });
+  emitDeviceStatusIfOpen(runtime.listener, {
+    agent_id: runtime.agentId,
+    conversation_id: runtime.conversationId,
+  });
+  evictConversationRuntimeIfIdle(runtime);
   return true;
 }
 
 export function rejectPendingApprovalResolvers(
-  runtime: ListenerRuntime,
+  runtime: ConversationRuntime,
   reason: string,
 ): void {
   for (const [, pending] of runtime.pendingApprovalResolvers) {
     pending.reject(new Error(reason));
   }
   runtime.pendingApprovalResolvers.clear();
+  for (const [requestId, runtimeKey] of runtime.listener
+    .approvalRuntimeKeyByRequestId) {
+    if (runtimeKey === runtime.key) {
+      runtime.listener.approvalRuntimeKeyByRequestId.delete(requestId);
+    }
+  }
   setLoopStatus(
     runtime,
     runtime.isProcessing ? "PROCESSING_API_RESPONSE" : "WAITING_ON_INPUT",
   );
-  emitLoopStatusIfOpen(runtime);
-  emitDeviceStatusIfOpen(runtime);
+  emitLoopStatusIfOpen(runtime.listener, {
+    agent_id: runtime.agentId,
+    conversation_id: runtime.conversationId,
+  });
+  emitDeviceStatusIfOpen(runtime.listener, {
+    agent_id: runtime.agentId,
+    conversation_id: runtime.conversationId,
+  });
+  evictConversationRuntimeIfIdle(runtime);
 }
 
 export function requestApprovalOverWS(
-  runtime: ListenerRuntime,
+  runtime: ConversationRuntime,
   socket: WebSocket,
   requestId: string,
   controlRequest: ControlRequest,
@@ -236,9 +258,16 @@ export function requestApprovalOverWS(
       reject,
       controlRequest,
     });
+    runtime.listener.approvalRuntimeKeyByRequestId.set(requestId, runtime.key);
     setLoopStatus(runtime, "WAITING_ON_APPROVAL");
-    emitLoopStatusIfOpen(runtime);
-    emitDeviceStatusIfOpen(runtime);
+    emitLoopStatusIfOpen(runtime.listener, {
+      agent_id: runtime.agentId,
+      conversation_id: runtime.conversationId,
+    });
+    emitDeviceStatusIfOpen(runtime.listener, {
+      agent_id: runtime.agentId,
+      conversation_id: runtime.conversationId,
+    });
   });
 }
 

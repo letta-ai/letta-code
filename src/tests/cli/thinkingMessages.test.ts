@@ -50,7 +50,9 @@ describe("Thinking messages", () => {
   });
 
   test("returns a tip from the configured tip list", () => {
-    const tip = getRandomThinkingTip();
+    const tip = getRandomThinkingTip({
+      includeSystemPromptUpgradeTip: false,
+    });
 
     expect(tip.length).toBeGreaterThan(0);
     expect((THINKING_TIPS as readonly string[]).includes(tip)).toBe(true);

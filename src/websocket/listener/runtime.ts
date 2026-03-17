@@ -1,6 +1,16 @@
 import type { PendingControlRequest } from "../../types/protocol_v2";
-import { resolveScopedAgentId, resolveScopedConversationId } from "./scope";
-import type { ListenerRuntime, RecoveredApprovalState } from "./types";
+import {
+  normalizeConversationId,
+  normalizeCwdAgentId,
+  resolveScopedAgentId,
+  resolveScopedConversationId,
+} from "./scope";
+import type {
+  ConversationRuntime,
+  ListenerRuntime,
+  RecoveredApprovalState,
+  StartListenerOptions,
+} from "./types";
 
 let activeRuntime: ListenerRuntime | null = null;
 
@@ -43,17 +53,195 @@ export function clearRuntimeTimers(runtime: ListenerRuntime): void {
   }
 }
 
-export function clearActiveRunState(runtime: ListenerRuntime): void {
-  runtime.activeAgentId = null;
-  runtime.activeConversationId = null;
+export function evictConversationRuntimeIfIdle(
+  runtime: ConversationRuntime,
+): boolean {
+  if (
+    runtime.isProcessing ||
+    runtime.isRecoveringApprovals ||
+    runtime.queuePumpActive ||
+    runtime.queuePumpScheduled ||
+    runtime.pendingTurns > 0 ||
+    runtime.pendingApprovalResolvers.size > 0 ||
+    runtime.pendingApprovalBatchByToolCallId.size > 0 ||
+    runtime.recoveredApprovalState !== null ||
+    runtime.pendingInterruptedResults !== null ||
+    runtime.pendingInterruptedContext !== null ||
+    runtime.activeExecutingToolCallIds.length > 0 ||
+    (runtime.pendingInterruptedToolCallIds?.length ?? 0) > 0 ||
+    runtime.activeRunId !== null ||
+    runtime.activeRunStartedAt !== null ||
+    runtime.activeAbortController !== null ||
+    runtime.cancelRequested ||
+    runtime.queuedMessagesByItemId.size > 0 ||
+    runtime.queueRuntime?.length > 0
+  ) {
+    return false;
+  }
+
+  if (runtime.listener.conversationRuntimes.get(runtime.key) !== runtime) {
+    return false;
+  }
+
+  runtime.listener.conversationRuntimes.delete(runtime.key);
+  for (const [requestId, runtimeKey] of runtime.listener
+    .approvalRuntimeKeyByRequestId) {
+    if (runtimeKey === runtime.key) {
+      runtime.listener.approvalRuntimeKeyByRequestId.delete(requestId);
+    }
+  }
+  if (
+    runtime.listener.pendingQueueEmitScope?.agent_id === runtime.agentId &&
+    normalizeConversationId(
+      runtime.listener.pendingQueueEmitScope?.conversation_id,
+    ) === runtime.conversationId
+  ) {
+    runtime.listener.pendingQueueEmitScope = undefined;
+  }
+  return true;
+}
+
+export function getListenerStatus(
+  listener: ListenerRuntime,
+): "idle" | "receiving" | "processing" {
+  let hasPendingTurns = false;
+  for (const runtime of listener.conversationRuntimes.values()) {
+    if (runtime.isProcessing || runtime.isRecoveringApprovals) {
+      return "processing";
+    }
+    if (runtime.pendingTurns > 0) {
+      hasPendingTurns = true;
+    }
+  }
+  return hasPendingTurns ? "receiving" : "idle";
+}
+
+export function emitListenerStatus(
+  listener: ListenerRuntime,
+  onStatusChange: StartListenerOptions["onStatusChange"] | undefined,
+  connectionId: string | undefined,
+): void {
+  if (!connectionId) {
+    return;
+  }
+  const status = getListenerStatus(listener);
+  if (listener.lastEmittedStatus === status) {
+    return;
+  }
+  listener.lastEmittedStatus = status;
+  onStatusChange?.(status, connectionId);
+}
+
+export function getConversationRuntimeKey(
+  agentId?: string | null,
+  conversationId?: string | null,
+): string {
+  const normalizedConversationId = normalizeConversationId(conversationId);
+  const normalizedAgentId = normalizeCwdAgentId(agentId);
+  return `agent:${normalizedAgentId ?? "__unknown__"}::conversation:${normalizedConversationId}`;
+}
+
+export function createConversationRuntime(
+  listener: ListenerRuntime,
+  agentId?: string | null,
+  conversationId?: string | null,
+): ConversationRuntime {
+  const normalizedAgentId = normalizeCwdAgentId(agentId);
+  const normalizedConversationId = normalizeConversationId(conversationId);
+  const conversationRuntime: ConversationRuntime = {
+    listener,
+    key: getConversationRuntimeKey(normalizedAgentId, normalizedConversationId),
+    agentId: normalizedAgentId,
+    conversationId: normalizedConversationId,
+    messageQueue: Promise.resolve(),
+    pendingApprovalResolvers: new Map(),
+    recoveredApprovalState: null,
+    lastStopReason: null,
+    isProcessing: false,
+    activeWorkingDirectory: null,
+    activeRunId: null,
+    activeRunStartedAt: null,
+    activeAbortController: null,
+    cancelRequested: false,
+    queueRuntime: null as unknown as ConversationRuntime["queueRuntime"],
+    queuedMessagesByItemId: new Map(),
+    queuePumpActive: false,
+    queuePumpScheduled: false,
+    pendingTurns: 0,
+    isRecoveringApprovals: false,
+    loopStatus: "WAITING_ON_INPUT",
+    pendingApprovalBatchByToolCallId: new Map(),
+    pendingInterruptedResults: null,
+    pendingInterruptedContext: null,
+    continuationEpoch: 0,
+    activeExecutingToolCallIds: [],
+    pendingInterruptedToolCallIds: null,
+  };
+  listener.conversationRuntimes.set(
+    conversationRuntime.key,
+    conversationRuntime,
+  );
+  return conversationRuntime;
+}
+
+export function getConversationRuntime(
+  listener: ListenerRuntime,
+  agentId?: string | null,
+  conversationId?: string | null,
+): ConversationRuntime | null {
+  return (
+    listener.conversationRuntimes.get(
+      getConversationRuntimeKey(agentId, conversationId),
+    ) ?? null
+  );
+}
+
+export function getOrCreateConversationRuntime(
+  listener: ListenerRuntime,
+  agentId?: string | null,
+  conversationId?: string | null,
+): ConversationRuntime {
+  return (
+    getConversationRuntime(listener, agentId, conversationId) ??
+    createConversationRuntime(listener, agentId, conversationId)
+  );
+}
+
+export function clearActiveRunState(runtime: ConversationRuntime): void {
   runtime.activeWorkingDirectory = null;
   runtime.activeRunId = null;
   runtime.activeRunStartedAt = null;
   runtime.activeAbortController = null;
 }
 
-export function clearRecoveredApprovalState(runtime: ListenerRuntime): void {
+export function clearRecoveredApprovalState(
+  runtime: ConversationRuntime,
+): void {
   runtime.recoveredApprovalState = null;
+  evictConversationRuntimeIfIdle(runtime);
+}
+
+export function clearConversationRuntimeState(
+  runtime: ConversationRuntime,
+): void {
+  runtime.cancelRequested = true;
+  if (
+    runtime.activeAbortController &&
+    !runtime.activeAbortController.signal.aborted
+  ) {
+    runtime.activeAbortController.abort();
+  }
+  runtime.pendingApprovalBatchByToolCallId.clear();
+  runtime.pendingInterruptedResults = null;
+  runtime.pendingInterruptedContext = null;
+  runtime.pendingInterruptedToolCallIds = null;
+  runtime.activeExecutingToolCallIds = [];
+  runtime.loopStatus = "WAITING_ON_INPUT";
+  runtime.continuationEpoch += 1;
+  runtime.pendingTurns = 0;
+  runtime.queuePumpActive = false;
+  runtime.queuePumpScheduled = false;
+  clearActiveRunState(runtime);
 }
 
 export function getRecoveredApprovalStateForScope(
@@ -68,7 +256,12 @@ export function getRecoveredApprovalStateForScope(
     return null;
   }
   const scopedConversationId = resolveScopedConversationId(runtime, params);
-  const recovered = runtime.recoveredApprovalState;
+  const conversationRuntime = getConversationRuntime(
+    runtime,
+    scopedAgentId,
+    scopedConversationId,
+  );
+  const recovered = conversationRuntime?.recoveredApprovalState;
   if (!recovered) {
     return null;
   }
@@ -85,9 +278,18 @@ export function clearRecoveredApprovalStateForScope(
     conversation_id?: string | null;
   },
 ): void {
-  const recovered = getRecoveredApprovalStateForScope(runtime, params);
-  if (recovered) {
-    clearRecoveredApprovalState(runtime);
+  const scopedAgentId = resolveScopedAgentId(runtime, params);
+  if (!scopedAgentId) {
+    return;
+  }
+  const scopedConversationId = resolveScopedConversationId(runtime, params);
+  const conversationRuntime = getConversationRuntime(
+    runtime,
+    scopedAgentId,
+    scopedConversationId,
+  );
+  if (conversationRuntime?.recoveredApprovalState) {
+    clearRecoveredApprovalState(conversationRuntime);
   }
 }
 
@@ -100,30 +302,27 @@ export function getPendingControlRequests(
 ): PendingControlRequest[] {
   const scopedAgentId = resolveScopedAgentId(runtime, params);
   const scopedConversationId = resolveScopedConversationId(runtime, params);
+  const conversationRuntime = getConversationRuntime(
+    runtime,
+    scopedAgentId,
+    scopedConversationId,
+  );
   const requests: PendingControlRequest[] = [];
 
-  for (const pending of runtime.pendingApprovalResolvers.values()) {
+  if (!conversationRuntime) {
+    return requests;
+  }
+
+  for (const pending of conversationRuntime.pendingApprovalResolvers.values()) {
     const request = pending.controlRequest;
     if (!request) continue;
-    if (
-      scopedAgentId &&
-      (request.agent_id ?? scopedAgentId) !== scopedAgentId
-    ) {
-      continue;
-    }
-    if (
-      scopedConversationId &&
-      (request.conversation_id ?? scopedConversationId) !== scopedConversationId
-    ) {
-      continue;
-    }
     requests.push({
       request_id: request.request_id,
       request: request.request,
     });
   }
 
-  const recovered = getRecoveredApprovalStateForScope(runtime, params);
+  const recovered = conversationRuntime.recoveredApprovalState;
   if (recovered) {
     for (const requestId of recovered.pendingRequestIds) {
       const entry = recovered.approvalsByRequestId.get(requestId);
