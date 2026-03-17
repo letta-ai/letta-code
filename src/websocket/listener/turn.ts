@@ -68,12 +68,12 @@ import {
   sendMessageStreamWithRetry,
 } from "./send";
 import { handleApprovalStop } from "./turn-approval";
-import type { IncomingMessage, ListenerRuntime } from "./types";
+import type { ConversationRuntime, IncomingMessage } from "./types";
 
 export async function handleIncomingMessage(
   msg: IncomingMessage,
   socket: WebSocket,
-  runtime: ListenerRuntime,
+  runtime: ConversationRuntime,
   onStatusChange?: (
     status: "idle" | "receiving" | "processing",
     connectionId: string,
@@ -86,7 +86,7 @@ export async function handleIncomingMessage(
   const conversationId = requestedConversationId ?? "default";
   const normalizedAgentId = normalizeCwdAgentId(agentId);
   const turnWorkingDirectory = getConversationWorkingDirectory(
-    runtime,
+    runtime.listener,
     normalizedAgentId,
     conversationId,
   );
@@ -103,8 +103,6 @@ export async function handleIncomingMessage(
   runtime.isProcessing = true;
   runtime.cancelRequested = false;
   runtime.activeAbortController = new AbortController();
-  runtime.activeAgentId = agentId ?? null;
-  runtime.activeConversationId = conversationId;
   runtime.activeWorkingDirectory = turnWorkingDirectory;
   runtime.activeRunId = null;
   runtime.activeRunStartedAt = new Date().toISOString();
@@ -113,7 +111,7 @@ export async function handleIncomingMessage(
     agent_id: agentId ?? null,
     conversation_id: conversationId,
   });
-  clearRecoveredApprovalStateForScope(runtime, {
+  clearRecoveredApprovalStateForScope(runtime.listener, {
     agent_id: agentId ?? null,
     conversation_id: conversationId,
   });
@@ -174,7 +172,7 @@ export async function handleIncomingMessage(
       const { parts: reminderParts } = await buildSharedReminderParts(
         buildListenReminderContext({
           agentId: agentId || "",
-          state: runtime.reminderState,
+          state: runtime.listener.reminderState,
           resolvePlanModeReminder: getPlanModeReminder,
         }),
       );

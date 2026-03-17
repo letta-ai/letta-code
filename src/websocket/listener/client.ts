@@ -75,9 +75,11 @@ import {
   shouldAttemptPostStopApprovalRecovery,
 } from "./recovery";
 import {
+  clearConversationRuntimeState,
   clearRecoveredApprovalStateForScope,
   clearRuntimeTimers,
   getActiveRuntime,
+  getOrCreateConversationRuntime,
   getPendingControlRequestCount,
   getRecoveredApprovalStateForScope,
   safeEmitWsEvent,
@@ -92,6 +94,7 @@ import { markAwaitingAcceptedApprovalContinuationRunId } from "./send";
 import { handleIncomingMessage } from "./turn";
 import type {
   ChangeCwdMessage,
+  ConversationRuntime,
   IncomingMessage,
   ListenerRuntime,
   ModeChangePayload,
@@ -139,15 +142,108 @@ function handleModeChange(
   }
 }
 
+function getListenerStatus(
+  listener: ListenerRuntime,
+): "idle" | "receiving" | "processing" {
+  let hasPendingTurns = false;
+  for (const runtime of listener.conversationRuntimes.values()) {
+    if (runtime.isProcessing || runtime.isRecoveringApprovals) {
+      return "processing";
+    }
+    if (runtime.pendingTurns > 0) {
+      hasPendingTurns = true;
+    }
+  }
+  return hasPendingTurns ? "receiving" : "idle";
+}
+
+function emitListenerStatus(
+  listener: ListenerRuntime,
+  onStatusChange: StartListenerOptions["onStatusChange"] | undefined,
+  connectionId: string | undefined,
+): void {
+  if (!connectionId) {
+    return;
+  }
+  const status = getListenerStatus(listener);
+  if (listener.lastEmittedStatus === status) {
+    return;
+  }
+  listener.lastEmittedStatus = status;
+  onStatusChange?.(status, connectionId);
+}
+
+function ensureConversationQueueRuntime(
+  listener: ListenerRuntime,
+  runtime: ConversationRuntime,
+): ConversationRuntime {
+  if (runtime.queueRuntime) {
+    return runtime;
+  }
+  runtime.queueRuntime = new QueueRuntime({
+    callbacks: {
+      onEnqueued: (item, queueLen) => {
+        runtime.pendingTurns = queueLen;
+        scheduleQueueEmit(listener, getQueueItemScope(item));
+      },
+      onDequeued: (batch) => {
+        runtime.pendingTurns = batch.queueLenAfter;
+        scheduleQueueEmit(listener, getQueueItemsScope(batch.items));
+      },
+      onBlocked: () => {
+        scheduleQueueEmit(listener, {
+          agent_id: runtime.agentId,
+          conversation_id: runtime.conversationId,
+        });
+      },
+      onCleared: (_reason, _clearedCount, items) => {
+        runtime.pendingTurns = 0;
+        scheduleQueueEmit(listener, getQueueItemsScope(items));
+      },
+      onDropped: (item, _reason, queueLen) => {
+        runtime.pendingTurns = queueLen;
+        runtime.queuedMessagesByItemId.delete(item.id);
+        scheduleQueueEmit(listener, getQueueItemScope(item));
+      },
+    },
+  });
+  return runtime;
+}
+
+function getOrCreateScopedRuntime(
+  listener: ListenerRuntime,
+  agentId?: string | null,
+  conversationId?: string | null,
+): ConversationRuntime {
+  return ensureConversationQueueRuntime(
+    listener,
+    getOrCreateConversationRuntime(listener, agentId, conversationId),
+  );
+}
+
+function resolveRuntimeForApprovalRequest(
+  listener: ListenerRuntime,
+  requestId?: string | null,
+): ConversationRuntime | null {
+  if (!requestId) {
+    return null;
+  }
+  const runtimeKey = listener.approvalRuntimeKeyByRequestId.get(requestId);
+  if (!runtimeKey) {
+    return null;
+  }
+  return listener.conversationRuntimes.get(runtimeKey) ?? null;
+}
+
 async function handleCwdChange(
   msg: ChangeCwdMessage,
   socket: WebSocket,
-  runtime: ListenerRuntime,
+  runtime: ConversationRuntime,
 ): Promise<void> {
   const conversationId = normalizeConversationId(msg.conversationId);
   const agentId = normalizeCwdAgentId(msg.agentId);
   const currentWorkingDirectory = getConversationWorkingDirectory(
-    runtime,
+    runtime.listener,
     agentId,
     conversationId,
   );
@@ -168,7 +264,7 @@ async function handleCwdChange(
     }
 
     setConversationWorkingDirectory(
-      runtime,
+      runtime.listener,
       agentId,
       conversationId,
       normalizedPath,
@@ -193,78 +289,28 @@ async function handleCwdChange(
 
 function createRuntime(): ListenerRuntime {
   const bootWorkingDirectory = process.env.USER_CWD || process.cwd();
-  const runtime: ListenerRuntime = {
+  return {
     socket: null,
     heartbeatInterval: null,
     reconnectTimeout: null,
     intentionallyClosed: false,
     hasSuccessfulConnection: false,
-    messageQueue: Promise.resolve(),
-    pendingApprovalResolvers: new Map(),
-    recoveredApprovalState: null,
     sessionId: `listen-${crypto.randomUUID()}`,
     eventSeqCounter: 0,
     lastStopReason: null,
-    isProcessing: false,
-    activeAgentId: null,
-    activeConversationId: null,
-    activeWorkingDirectory: null,
-    activeRunId: null,
-    activeRunStartedAt: null,
-    activeAbortController: null,
-    cancelRequested: false,
-    isRecoveringApprovals: false,
-    loopStatus: "WAITING_ON_INPUT",
-    pendingApprovalBatchByToolCallId: new Map<string, string>(),
-    pendingInterruptedResults: null,
-    pendingInterruptedContext: null,
-    continuationEpoch: 0,
-    activeExecutingToolCallIds: [],
-    pendingInterruptedToolCallIds: null,
+    queueEmitScheduled: false,
+    pendingQueueEmitScope: undefined,
+    onWsEvent: undefined,
     reminderState: createSharedReminderState(),
     bootWorkingDirectory,
     workingDirectoryByConversation: loadPersistedCwdMap(),
     connectionId: null,
     connectionName: null,
-    queuedMessagesByItemId: new Map<string, IncomingMessage>(),
-    queuePumpActive: false,
-    queuePumpScheduled: false,
-    queueEmitScheduled: false,
-    pendingQueueEmitScope: undefined,
-    pendingTurns: 0,
-    // queueRuntime assigned below — needs runtime ref in callbacks
-    queueRuntime: null as unknown as QueueRuntime,
+    conversationRuntimes: new Map(),
+    approvalRuntimeKeyByRequestId: new Map(),
+    runRuntimeKeyByRunId: new Map(),
+    lastEmittedStatus: null,
   };
-  runtime.queueRuntime = new QueueRuntime({
-    callbacks: {
-      onEnqueued: (item, queueLen) => {
-        runtime.pendingTurns = queueLen;
-        const scope = getQueueItemScope(item);
-        scheduleQueueEmit(runtime, scope);
-      },
-      onDequeued: (batch) => {
-        runtime.pendingTurns = batch.queueLenAfter;
-        const scope = getQueueItemsScope(batch.items);
-        scheduleQueueEmit(runtime, scope);
-      },
-      onBlocked: (_reason, _queueLen) => {
-        const scope = getQueueItemScope(runtime.queueRuntime.items[0]);
-        scheduleQueueEmit(runtime, scope);
-      },
-      onCleared: (_reason, _clearedCount, items) => {
-        runtime.pendingTurns = 0;
-        const scope = getQueueItemsScope(items);
-        scheduleQueueEmit(runtime, scope);
-      },
-      onDropped: (item, _reason, queueLen) => {
-        runtime.pendingTurns = queueLen;
-        runtime.queuedMessagesByItemId.delete(item.id);
-        const scope = getQueueItemScope(item);
-        scheduleQueueEmit(runtime, scope);
-      },
-    },
-  });
-  return runtime;
 }
 
 function stopRuntime(
@@ -272,24 +318,18 @@ function stopRuntime(
   suppressCallbacks: boolean,
 ): void {
   runtime.intentionallyClosed = true;
-  runtime.cancelRequested = true;
-  if (
-    runtime.activeAbortController &&
-    !runtime.activeAbortController.signal.aborted
-  ) {
-    runtime.activeAbortController.abort();
-  }
   clearRuntimeTimers(runtime);
-  rejectPendingApprovalResolvers(runtime, "Listener runtime stopped");
-  runtime.pendingApprovalBatchByToolCallId.clear();
-
-  // Clear interrupted queue on true teardown to prevent cross-session leakage.
-  runtime.pendingInterruptedResults = null;
-  runtime.pendingInterruptedContext = null;
-  runtime.pendingInterruptedToolCallIds = null;
-  runtime.activeExecutingToolCallIds = [];
-  runtime.loopStatus = "WAITING_ON_INPUT";
-  runtime.continuationEpoch++;
+  for (const conversationRuntime of runtime.conversationRuntimes.values()) {
+    rejectPendingApprovalResolvers(
+      conversationRuntime,
+      "Listener runtime stopped",
+    );
+    clearConversationRuntimeState(conversationRuntime);
+    if (conversationRuntime.queueRuntime) {
+      conversationRuntime.queuedMessagesByItemId.clear();
+      conversationRuntime.queueRuntime.clear("shutdown");
+    }
+  }
 
   if (!runtime.socket) {
     return;
@@ -401,10 +441,15 @@ async function connectWithRetry(
     queuedTurn: IncomingMessage,
     dequeuedBatch: DequeuedBatch,
   ): Promise<void> => {
+    const scopedRuntime = getOrCreateScopedRuntime(
+      runtime,
+      queuedTurn.agentId,
+      queuedTurn.conversationId,
+    );
     await handleIncomingMessage(
       queuedTurn,
       socket,
-      runtime,
+      scopedRuntime,
       opts.onStatusChange,
       opts.connectionId,
       dequeuedBatch.batchId,
@@ -471,7 +516,14 @@ async function connectWithRetry(
         console.log(`[Listen V2] Dropping sync: runtime mismatch or closed`);
         return;
       }
-      await recoverApprovalStateForSync(runtime, parsed.runtime);
+      await recoverApprovalStateForSync(
+        getOrCreateScopedRuntime(
+          runtime,
+          parsed.runtime.agent_id,
+          parsed.runtime.conversation_id,
+        ),
+        parsed.runtime,
+      );
       emitStateSync(socket, runtime, parsed.runtime);
       return;
     }
@@ -486,13 +538,25 @@ async function connectWithRetry(
       }
 
       if (parsed.payload.kind === "approval_response") {
-        if (resolvePendingApprovalResolver(runtime, parsed.payload)) {
-          scheduleQueuePump(runtime, socket, opts, processQueuedTurn);
+        const approvalRuntime = resolveRuntimeForApprovalRequest(
+          runtime,
+          parsed.payload.request_id,
+        );
+        if (
+          approvalRuntime &&
+          resolvePendingApprovalResolver(approvalRuntime, parsed.payload)
+        ) {
+          scheduleQueuePump(approvalRuntime, socket, opts, processQueuedTurn);
           return;
         }
         if (
           await resolveRecoveredApprovalResponse(
-            runtime,
+            approvalRuntime ??
+              getOrCreateScopedRuntime(
+                runtime,
+                parsed.runtime.agent_id,
+                parsed.runtime.conversation_id,
+              ),
             socket,
             parsed.payload,
             handleIncomingMessage,
@@ -502,7 +566,9 @@ async function connectWithRetry(
             },
           )
         ) {
-          scheduleQueuePump(runtime, socket, opts, processQueuedTurn);
+          if (approvalRuntime) {
+            scheduleQueuePump(approvalRuntime, socket, opts, processQueuedTurn);
+          }
         }
         return;
       }
@@ -541,6 +607,12 @@ async function connectWithRetry(
         return;
       }
 
+      const scopedRuntime = getOrCreateScopedRuntime(
+        runtime,
+        incoming.agentId,
+        incoming.conversationId,
+      );
+
       if (shouldQueueInboundMessage(incoming)) {
         const firstUserPayload = incoming.messages.find(
           (
@@ -549,7 +621,7 @@ async function connectWithRetry(
             "content" in payload,
         );
         if (firstUserPayload) {
-          const enqueuedItem = runtime.queueRuntime.enqueue({
+          const enqueuedItem = scopedRuntime.queueRuntime.enqueue({
             kind: "message",
             source: "user",
             content: firstUserPayload.content,
@@ -558,37 +630,37 @@ async function connectWithRetry(
               `cm-submit-${crypto.randomUUID()}`,
             agentId: parsed.runtime.agent_id,
             conversationId: parsed.runtime.conversation_id || "default",
-          } as Parameters<typeof runtime.queueRuntime.enqueue>[0]);
+          } as Parameters<typeof scopedRuntime.queueRuntime.enqueue>[0]);
           if (enqueuedItem) {
-            runtime.queuedMessagesByItemId.set(enqueuedItem.id, incoming);
+            scopedRuntime.queuedMessagesByItemId.set(enqueuedItem.id, incoming);
           }
         }
-        scheduleQueuePump(runtime, socket, opts, processQueuedTurn);
+        scheduleQueuePump(scopedRuntime, socket, opts, processQueuedTurn);
         return;
       }
 
-      runtime.messageQueue = runtime.messageQueue
+      scopedRuntime.messageQueue = scopedRuntime.messageQueue
         .then(async () => {
           if (runtime !== getActiveRuntime() || runtime.intentionallyClosed) {
             return;
           }
-          opts.onStatusChange?.("receiving", opts.connectionId);
+          emitListenerStatus(runtime, opts.onStatusChange, opts.connectionId);
           await handleIncomingMessage(
             incoming,
             socket,
-            runtime,
+            scopedRuntime,
             opts.onStatusChange,
             opts.connectionId,
           );
-          opts.onStatusChange?.("idle", opts.connectionId);
-          scheduleQueuePump(runtime, socket, opts, processQueuedTurn);
+          emitListenerStatus(runtime, opts.onStatusChange, opts.connectionId);
+          scheduleQueuePump(scopedRuntime, socket, opts, processQueuedTurn);
         })
         .catch((error: unknown) => {
           if (process.env.DEBUG) {
             console.error("[Listen] Error handling queued input:", error);
           }
-          opts.onStatusChange?.("idle", opts.connectionId);
-          scheduleQueuePump(runtime, socket, opts, processQueuedTurn);
+          emitListenerStatus(runtime, opts.onStatusChange, opts.connectionId);
+          scheduleQueuePump(scopedRuntime, socket, opts, processQueuedTurn);
         });
       return;
     }
@@ -605,11 +677,16 @@ async function connectWithRetry(
           parsed.runtime.conversation_id ??
           undefined,
       };
+      const scopedRuntime = getOrCreateScopedRuntime(
+        runtime,
+        scope.agent_id,
+        scope.conversation_id,
+      );
       const shouldTrackCommand =
-        !runtime.isProcessing &&
+        !scopedRuntime.isProcessing &&
         getPendingControlRequestCount(runtime, scope) === 0;
       if (shouldTrackCommand) {
-        setLoopStatus(runtime, "EXECUTING_COMMAND", scope);
+        setLoopStatus(scopedRuntime, "EXECUTING_COMMAND", scope);
       }
       try {
         if (parsed.payload.mode) {
@@ -628,14 +705,14 @@ async function connectWithRetry(
               cwd: parsed.payload.cwd,
             },
             socket,
-            runtime,
+            scopedRuntime,
           );
         } else if (!parsed.payload.mode) {
           emitDeviceStatusUpdate(socket, runtime, scope);
         }
       } finally {
         if (shouldTrackCommand) {
-          setLoopStatus(runtime, "WAITING_ON_INPUT", scope);
+          setLoopStatus(scopedRuntime, "WAITING_ON_INPUT", scope);
         }
       }
       return;
@@ -651,42 +728,47 @@ async function connectWithRetry(
           agent_id: parsed.runtime.agent_id,
           conversation_id: parsed.runtime.conversation_id,
         }) > 0;
-      const hasActiveTurn = runtime.isProcessing;
+      const scopedRuntime = getOrCreateScopedRuntime(
+        runtime,
+        parsed.runtime.agent_id,
+        parsed.runtime.conversation_id,
+      );
+      const hasActiveTurn = scopedRuntime.isProcessing;
 
       if (!hasActiveTurn && !hasPendingApprovals) {
         return;
       }
 
-      runtime.cancelRequested = true;
+      scopedRuntime.cancelRequested = true;
       // Eager interrupt capture parity with App/headless:
       // if tool execution is currently in-flight, queue explicit interrupted
       // tool results immediately at cancel time (before async catch paths).
       if (
-        runtime.activeExecutingToolCallIds.length > 0 &&
-        (!runtime.pendingInterruptedResults ||
-          runtime.pendingInterruptedResults.length === 0)
+        scopedRuntime.activeExecutingToolCallIds.length > 0 &&
+        (!scopedRuntime.pendingInterruptedResults ||
+          scopedRuntime.pendingInterruptedResults.length === 0)
       ) {
-        runtime.pendingInterruptedResults =
-          runtime.activeExecutingToolCallIds.map((toolCallId) => ({
+        scopedRuntime.pendingInterruptedResults =
+          scopedRuntime.activeExecutingToolCallIds.map((toolCallId) => ({
             type: "tool",
             tool_call_id: toolCallId,
             tool_return: INTERRUPTED_BY_USER,
             status: "error",
           }));
-        runtime.pendingInterruptedContext = {
-          agentId: runtime.activeAgentId || "",
-          conversationId: runtime.activeConversationId || "default",
-          continuationEpoch: runtime.continuationEpoch,
+        scopedRuntime.pendingInterruptedContext = {
+          agentId: scopedRuntime.agentId || "",
+          conversationId: scopedRuntime.conversationId,
+          continuationEpoch: scopedRuntime.continuationEpoch,
         };
-        runtime.pendingInterruptedToolCallIds = [
-          ...runtime.activeExecutingToolCallIds,
+        scopedRuntime.pendingInterruptedToolCallIds = [
+          ...scopedRuntime.activeExecutingToolCallIds,
         ];
       }
       if (
-        runtime.activeAbortController &&
-        !runtime.activeAbortController.signal.aborted
+        scopedRuntime.activeAbortController &&
+        !scopedRuntime.activeAbortController.signal.aborted
       ) {
-        runtime.activeAbortController.abort();
+        scopedRuntime.activeAbortController.abort();
       }
       const recoveredApprovalState = getRecoveredApprovalStateForScope(
         runtime,
@@ -696,15 +778,15 @@ async function connectWithRetry(
         },
       );
       if (recoveredApprovalState && !hasActiveTurn) {
-        stashRecoveredApprovalInterrupts(runtime, recoveredApprovalState);
+        stashRecoveredApprovalInterrupts(scopedRuntime, recoveredApprovalState);
       }
       if (hasPendingApprovals) {
-        rejectPendingApprovalResolvers(runtime, "Cancelled by user");
+        rejectPendingApprovalResolvers(scopedRuntime, "Cancelled by user");
       }
 
       if (!hasActiveTurn && hasPendingApprovals) {
-        emitInterruptedStatusDelta(socket, runtime, {
-          runId: runtime.activeRunId,
+        emitInterruptedStatusDelta(socket, scopedRuntime, {
+          runId: scopedRuntime.activeRunId,
           agentId: parsed.runtime.agent_id,
           conversationId: parsed.runtime.conversation_id,
         });
@@ -712,8 +794,8 @@ async function connectWithRetry(
 
       // Backend cancel parity with TUI (App.tsx:5932-5941).
       // Fire-and-forget — local cancel + queued results are the primary mechanism.
-      const cancelConversationId = runtime.activeConversationId;
-      const cancelAgentId = runtime.activeAgentId;
+      const cancelConversationId = scopedRuntime.conversationId;
+      const cancelAgentId = scopedRuntime.agentId;
       if (cancelAgentId) {
         getClient()
           .then((client) => {
@@ -728,7 +810,7 @@ async function connectWithRetry(
           });
       }
 
-      scheduleQueuePump(runtime, socket, opts, processQueuedTurn);
+      scheduleQueuePump(scopedRuntime, socket, opts, processQueuedTurn);
       return;
     }
   });
@@ -746,8 +828,12 @@ async function connectWithRetry(
 
     // Single authoritative queue clear for all close paths
     // (intentional and unintentional). Must fire before early returns.
-    runtime.queuedMessagesByItemId.clear();
-    runtime.queueRuntime.clear("shutdown");
+    for (const conversationRuntime of runtime.conversationRuntimes.values()) {
+      conversationRuntime.queuedMessagesByItemId.clear();
+      if (conversationRuntime.queueRuntime) {
+        conversationRuntime.queueRuntime.clear("shutdown");
+      }
+    }
 
     if (isDebugEnabled()) {
       console.log(
@@ -758,7 +844,12 @@ async function connectWithRetry(
     clearRuntimeTimers(runtime);
     killAllTerminals();
     runtime.socket = null;
-    rejectPendingApprovalResolvers(runtime, "WebSocket disconnected");
+    for (const conversationRuntime of runtime.conversationRuntimes.values()) {
+      rejectPendingApprovalResolvers(
+        conversationRuntime,
+        "WebSocket disconnected",
+      );
+    }
 
     if (runtime.intentionallyClosed) {
       opts.onDisconnected();
@@ -825,6 +916,211 @@ export function stopListenerClient(): void {
   stopRuntime(runtime, true);
 }
 
+function asListenerRuntimeForTests(
+  runtime: ListenerRuntime | ConversationRuntime,
+): ListenerRuntime {
+  return "listener" in runtime ? runtime.listener : runtime;
+}
+
+function createLegacyTestRuntime(): ConversationRuntime & {
+  activeAgentId: string | null;
+  activeConversationId: string;
+  socket: WebSocket | null;
+  workingDirectoryByConversation: Map<string, string>;
+  bootWorkingDirectory: string;
+  connectionId: string | null;
+  connectionName: string | null;
+  sessionId: string;
+  eventSeqCounter: number;
+  queueEmitScheduled: boolean;
+  pendingQueueEmitScope?: {
+    agent_id?: string | null;
+    conversation_id?: string | null;
+  };
+  onWsEvent?: StartListenerOptions["onWsEvent"];
+  reminderState: ListenerRuntime["reminderState"];
+  reconnectTimeout: NodeJS.Timeout | null;
+  heartbeatInterval: NodeJS.Timeout | null;
+  intentionallyClosed: boolean;
+  hasSuccessfulConnection: boolean;
+  conversationRuntimes: ListenerRuntime["conversationRuntimes"];
+  approvalRuntimeKeyByRequestId: ListenerRuntime["approvalRuntimeKeyByRequestId"];
+  runRuntimeKeyByRunId: ListenerRuntime["runRuntimeKeyByRunId"];
+  lastEmittedStatus: ListenerRuntime["lastEmittedStatus"];
+} {
+  const listener = createRuntime();
+  const runtime = getOrCreateScopedRuntime(listener, null, "default");
+  const bridge = runtime as ConversationRuntime & {
+    activeAgentId: string | null;
+    activeConversationId: string;
+    socket: WebSocket | null;
+    workingDirectoryByConversation: Map<string, string>;
+    bootWorkingDirectory: string;
+    connectionId: string | null;
+    connectionName: string | null;
+    sessionId: string;
+    eventSeqCounter: number;
+    queueEmitScheduled: boolean;
+    pendingQueueEmitScope?: {
+      agent_id?: string | null;
+      conversation_id?: string | null;
+    };
+    onWsEvent?: StartListenerOptions["onWsEvent"];
+    reminderState: ListenerRuntime["reminderState"];
+    reconnectTimeout: NodeJS.Timeout | null;
+    heartbeatInterval: NodeJS.Timeout | null;
+    intentionallyClosed: boolean;
+    hasSuccessfulConnection: boolean;
+    conversationRuntimes: ListenerRuntime["conversationRuntimes"];
+    approvalRuntimeKeyByRequestId: ListenerRuntime["approvalRuntimeKeyByRequestId"];
+    runRuntimeKeyByRunId: ListenerRuntime["runRuntimeKeyByRunId"];
+    lastEmittedStatus: ListenerRuntime["lastEmittedStatus"];
+  };
+  for (const [prop, getSet] of Object.entries({
+    socket: {
+      get: () => listener.socket,
+      set: (value: WebSocket | null) => {
+        listener.socket = value;
+      },
+    },
+    workingDirectoryByConversation: {
+      get: () => listener.workingDirectoryByConversation,
+      set: (value: Map<string, string>) => {
+        listener.workingDirectoryByConversation = value;
+      },
+    },
+    bootWorkingDirectory: {
+      get: () => listener.bootWorkingDirectory,
+      set: (value: string) => {
+        listener.bootWorkingDirectory = value;
+      },
+    },
+    connectionId: {
+      get: () => listener.connectionId,
+      set: (value: string | null) => {
+        listener.connectionId = value;
+      },
+    },
+    connectionName: {
+      get: () => listener.connectionName,
+      set: (value: string | null) => {
+        listener.connectionName = value;
+      },
+    },
+    sessionId: {
+      get: () => listener.sessionId,
+      set: (value: string) => {
+        listener.sessionId = value;
+      },
+    },
+    eventSeqCounter: {
+      get: () => listener.eventSeqCounter,
+      set: (value: number) => {
+        listener.eventSeqCounter = value;
+      },
+    },
+    queueEmitScheduled: {
+      get: () => listener.queueEmitScheduled,
+      set: (value: boolean) => {
+        listener.queueEmitScheduled = value;
+      },
+    },
+    pendingQueueEmitScope: {
+      get: () => listener.pendingQueueEmitScope,
+      set: (
+        value:
+          | {
+              agent_id?: string | null;
+              conversation_id?: string | null;
+            }
+          | undefined,
+      ) => {
+        listener.pendingQueueEmitScope = value;
+      },
+    },
+    onWsEvent: {
+      get: () => listener.onWsEvent,
+      set: (value: StartListenerOptions["onWsEvent"] | undefined) => {
+        listener.onWsEvent = value;
+      },
+    },
+    reminderState: {
+      get: () => listener.reminderState,
+      set: (value: ListenerRuntime["reminderState"]) => {
+        listener.reminderState = value;
+      },
+    },
+    reconnectTimeout: {
+      get: () => listener.reconnectTimeout,
+      set: (value: NodeJS.Timeout | null) => {
+        listener.reconnectTimeout = value;
+      },
+    },
+    heartbeatInterval: {
+      get: () => listener.heartbeatInterval,
+      set: (value: NodeJS.Timeout | null) => {
+        listener.heartbeatInterval = value;
+      },
+    },
+    intentionallyClosed: {
+      get: () => listener.intentionallyClosed,
+      set: (value: boolean) => {
+        listener.intentionallyClosed = value;
+      },
+    },
+    hasSuccessfulConnection: {
+      get: () => listener.hasSuccessfulConnection,
+      set: (value: boolean) => {
+        listener.hasSuccessfulConnection = value;
+      },
+    },
+    conversationRuntimes: {
+      get: () => listener.conversationRuntimes,
+      set: (value: ListenerRuntime["conversationRuntimes"]) => {
+        listener.conversationRuntimes = value;
+      },
+    },
+    approvalRuntimeKeyByRequestId: {
+      get: () => listener.approvalRuntimeKeyByRequestId,
+      set: (value: ListenerRuntime["approvalRuntimeKeyByRequestId"]) => {
+        listener.approvalRuntimeKeyByRequestId = value;
+      },
+    },
+    runRuntimeKeyByRunId: {
+      get: () => listener.runRuntimeKeyByRunId,
+      set: (value: ListenerRuntime["runRuntimeKeyByRunId"]) => {
+        listener.runRuntimeKeyByRunId = value;
+      },
+    },
+    lastEmittedStatus: {
+      get: () => listener.lastEmittedStatus,
+      set: (value: ListenerRuntime["lastEmittedStatus"]) => {
+        listener.lastEmittedStatus = value;
+      },
+    },
+    activeAgentId: {
+      get: () => runtime.agentId,
+      set: (value: string | null) => {
+        runtime.agentId = value;
+      },
+    },
+    activeConversationId: {
+      get: () => runtime.conversationId,
+      set: (value: string) => {
+        runtime.conversationId = value;
+      },
+    },
+  })) {
+    Object.defineProperty(bridge, prop, {
+      configurable: true,
+      enumerable: false,
+      get: getSet.get,
+      set: getSet.set,
+    });
+  }
+  return bridge;
+}
+
 export {
   rejectPendingApprovalResolvers,
   requestApprovalOverWS,
@@ -834,8 +1130,15 @@ export { parseServerMessage } from "./protocol-inbound";
 export { emitInterruptedStatusDelta } from "./protocol-outbound";
 
 export const __listenClientTestUtils = {
-  createRuntime,
-  stopRuntime,
+  createRuntime: createLegacyTestRuntime,
+  createListenerRuntime: createRuntime,
+  stopRuntime: (
+    runtime: ListenerRuntime | ConversationRuntime,
+    suppressCallbacks: boolean,
+  ) => stopRuntime(asListenerRuntimeForTests(runtime), suppressCallbacks),
+  setActiveRuntime,
+  getListenerStatus,
+  getOrCreateConversationRuntime,
   resolveRuntimeScope,
   buildDeviceStatus,
   buildLoopStatus,
@@ -864,7 +1167,18 @@ export const __listenClientTestUtils = {
   markAwaitingAcceptedApprovalContinuationRunId,
   normalizeMessageContentImages,
   normalizeInboundMessages,
+  handleIncomingMessage,
   recoverApprovalStateForSync,
-  clearRecoveredApprovalStateForScope,
+  clearRecoveredApprovalStateForScope: (
+    runtime: ListenerRuntime | ConversationRuntime,
+    scope?: {
+      agent_id?: string | null;
+      conversation_id?: string | null;
+    },
+  ) =>
+    clearRecoveredApprovalStateForScope(
+      asListenerRuntimeForTests(runtime),
+      scope,
+    ),
   emitStateSync,
 };

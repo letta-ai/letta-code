@@ -19,9 +19,19 @@ export function resolveScopedAgentId(
     agent_id?: string | null;
   },
 ): string | null {
-  return (
-    normalizeCwdAgentId(params?.agent_id) ?? runtime?.activeAgentId ?? null
-  );
+  if (!runtime) {
+    return normalizeCwdAgentId(params?.agent_id) ?? null;
+  }
+  const explicitAgentId = normalizeCwdAgentId(params?.agent_id);
+  if (explicitAgentId) {
+    return explicitAgentId;
+  }
+  for (const conversationRuntime of runtime.conversationRuntimes.values()) {
+    if (conversationRuntime.isProcessing) {
+      return conversationRuntime.agentId;
+    }
+  }
+  return null;
 }
 
 export function resolveScopedConversationId(
@@ -30,9 +40,18 @@ export function resolveScopedConversationId(
     conversation_id?: string | null;
   },
 ): string {
-  return normalizeConversationId(
-    params?.conversation_id ?? runtime?.activeConversationId,
-  );
+  if (!runtime) {
+    return normalizeConversationId(params?.conversation_id);
+  }
+  if (params?.conversation_id) {
+    return normalizeConversationId(params.conversation_id);
+  }
+  for (const conversationRuntime of runtime.conversationRuntimes.values()) {
+    if (conversationRuntime.isProcessing) {
+      return conversationRuntime.conversationId;
+    }
+  }
+  return "default";
 }
 
 export function resolveRuntimeScope(
@@ -58,13 +77,17 @@ export function isScopeCurrentlyActive(
   agentId: string | null,
   conversationId: string,
 ): boolean {
-  if (!runtime.isProcessing) return true;
-
-  const activeAgent = runtime.activeAgentId;
-  const activeConvo = normalizeConversationId(runtime.activeConversationId);
-
-  if (agentId && activeAgent && agentId !== activeAgent) return false;
-  if (conversationId !== activeConvo) return false;
-
+  const scopedKey = `agent:${agentId ?? "__unknown__"}::conversation:${normalizeConversationId(
+    conversationId,
+  )}`;
+  const scopedRuntime = runtime.conversationRuntimes.get(scopedKey);
+  if (scopedRuntime?.isProcessing) {
+    return true;
+  }
+  for (const conversationRuntime of runtime.conversationRuntimes.values()) {
+    if (conversationRuntime.isProcessing) {
+      return false;
+    }
+  }
   return true;
 }

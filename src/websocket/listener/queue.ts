@@ -12,9 +12,9 @@ import { emitDequeuedUserMessage } from "./protocol-outbound";
 import { getActiveRuntime, getPendingControlRequestCount } from "./runtime";
 import { resolveRuntimeScope } from "./scope";
 import type {
+  ConversationRuntime,
   InboundMessagePayload,
   IncomingMessage,
-  ListenerRuntime,
   StartListenerOptions,
 } from "./types";
 
@@ -188,7 +188,7 @@ function getPrimaryQueueMessageItem(items: QueueItem[]): QueueItem | null {
 }
 
 function buildQueuedTurnMessage(
-  runtime: ListenerRuntime,
+  runtime: ConversationRuntime,
   batch: DequeuedBatch,
 ): IncomingMessage | null {
   const primaryItem = getPrimaryQueueMessageItem(batch.items);
@@ -241,13 +241,16 @@ export function shouldQueueInboundMessage(parsed: IncomingMessage): boolean {
 }
 
 function computeListenerQueueBlockedReason(
-  runtime: ListenerRuntime,
+  runtime: ConversationRuntime,
 ): QueueBlockedReason | null {
-  const activeScope = resolveRuntimeScope(runtime);
+  const activeScope = resolveRuntimeScope(runtime.listener, {
+    agent_id: runtime.agentId,
+    conversation_id: runtime.conversationId,
+  });
   return getListenerBlockedReason({
     isProcessing: runtime.isProcessing,
     pendingApprovalsLen: activeScope
-      ? getPendingControlRequestCount(runtime, activeScope)
+      ? getPendingControlRequestCount(runtime.listener, activeScope)
       : 0,
     cancelRequested: runtime.cancelRequested,
     isRecoveringApprovals: runtime.isRecoveringApprovals,
@@ -255,7 +258,7 @@ function computeListenerQueueBlockedReason(
 }
 
 async function drainQueuedMessages(
-  runtime: ListenerRuntime,
+  runtime: ConversationRuntime,
   socket: WebSocket,
   opts: StartListenerOptions,
   processQueuedTurn: (
@@ -270,7 +273,10 @@ async function drainQueuedMessages(
   runtime.queuePumpActive = true;
   try {
     while (true) {
-      if (runtime !== getActiveRuntime() || runtime.intentionallyClosed) {
+      if (
+        runtime.listener !== getActiveRuntime() ||
+        runtime.listener.intentionallyClosed
+      ) {
         return;
       }
 
@@ -307,7 +313,7 @@ async function drainQueuedMessages(
 }
 
 export function scheduleQueuePump(
-  runtime: ListenerRuntime,
+  runtime: ConversationRuntime,
   socket: WebSocket,
   opts: StartListenerOptions,
   processQueuedTurn: (
@@ -322,7 +328,10 @@ export function scheduleQueuePump(
   runtime.messageQueue = runtime.messageQueue
     .then(async () => {
       runtime.queuePumpScheduled = false;
-      if (runtime !== getActiveRuntime() || runtime.intentionallyClosed) {
+      if (
+        runtime.listener !== getActiveRuntime() ||
+        runtime.listener.intentionallyClosed
+      ) {
         return;
       }
       await drainQueuedMessages(runtime, socket, opts, processQueuedTurn);

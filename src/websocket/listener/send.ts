@@ -52,7 +52,7 @@ import {
   getApprovalContinuationRecoveryDisposition,
   isApprovalToolCallDesyncError,
 } from "./recovery";
-import type { ListenerRuntime } from "./types";
+import type { ConversationRuntime } from "./types";
 
 export function isApprovalOnlyInput(
   input: Array<MessageCreate | ApprovalCreate>,
@@ -66,7 +66,7 @@ export function isApprovalOnlyInput(
 }
 
 export function markAwaitingAcceptedApprovalContinuationRunId(
-  runtime: ListenerRuntime,
+  runtime: ConversationRuntime,
   input: Array<MessageCreate | ApprovalCreate>,
 ): void {
   if (isApprovalOnlyInput(input)) {
@@ -80,16 +80,16 @@ export function markAwaitingAcceptedApprovalContinuationRunId(
  * touch pendingInterruptedResults (that's exclusively owned by handleIncomingMessage).
  */
 async function resolveStaleApprovals(
-  runtime: ListenerRuntime,
+  runtime: ConversationRuntime,
   socket: WebSocket,
   abortSignal: AbortSignal,
 ): Promise<Awaited<ReturnType<typeof drainRecoveryStreamWithEmission>> | null> {
-  if (!runtime.activeAgentId) return null;
+  if (!runtime.agentId) return null;
 
   const client = await getClient();
   let agent: Awaited<ReturnType<typeof client.agents.retrieve>>;
   try {
-    agent = await client.agents.retrieve(runtime.activeAgentId);
+    agent = await client.agents.retrieve(runtime.agentId);
   } catch (err) {
     if (err instanceof APIError && (err.status === 404 || err.status === 422)) {
       return null;
@@ -97,9 +97,7 @@ async function resolveStaleApprovals(
     throw err;
   }
   const requestedConversationId =
-    runtime.activeConversationId && runtime.activeConversationId !== "default"
-      ? runtime.activeConversationId
-      : undefined;
+    runtime.conversationId !== "default" ? runtime.conversationId : undefined;
 
   let resumeData: Awaited<ReturnType<typeof getResumeData>>;
   try {
@@ -117,16 +115,16 @@ async function resolveStaleApprovals(
   if (pendingApprovals.length === 0) return null;
   if (abortSignal.aborted) throw new Error("Cancelled");
 
-  const recoveryConversationId = runtime.activeConversationId || "default";
+  const recoveryConversationId = runtime.conversationId;
   const recoveryWorkingDirectory =
     runtime.activeWorkingDirectory ??
     getConversationWorkingDirectory(
-      runtime,
-      runtime.activeAgentId,
+      runtime.listener,
+      runtime.agentId,
       recoveryConversationId,
     );
   const scope = {
-    agent_id: runtime.activeAgentId,
+    agent_id: runtime.agentId,
     conversation_id: recoveryConversationId,
   } as const;
 
@@ -187,7 +185,7 @@ async function resolveStaleApprovals(
             blocked_path: null,
             ...(diffs.length > 0 ? { diffs } : {}),
           },
-          agent_id: runtime.activeAgentId,
+          agent_id: runtime.agentId,
           conversation_id: recoveryConversationId,
         };
 
@@ -246,7 +244,7 @@ async function resolveStaleApprovals(
     emitToolExecutionStartedEvents(socket, runtime, {
       toolCallIds: approvedToolCallIds,
       runId: runtime.activeRunId ?? undefined,
-      agentId: runtime.activeAgentId,
+      agentId: runtime.agentId ?? undefined,
       conversationId: recoveryConversationId,
     });
 
@@ -258,7 +256,7 @@ async function resolveStaleApprovals(
       emitToolExecutionFinishedEvents(socket, runtime, {
         approvals: approvalResults,
         runId: runtime.activeRunId ?? undefined,
-        agentId: runtime.activeAgentId,
+        agentId: runtime.agentId ?? undefined,
         conversationId: recoveryConversationId,
       });
       emitInterruptToolReturnMessage(
@@ -273,7 +271,7 @@ async function resolveStaleApprovals(
         recoveryConversationId,
         [{ type: "approval", approvals: approvalResults }],
         {
-          agentId: runtime.activeAgentId,
+          agentId: runtime.agentId ?? undefined,
           streamTokens: true,
           background: true,
           workingDirectory: recoveryWorkingDirectory,
@@ -294,7 +292,7 @@ async function resolveStaleApprovals(
         socket,
         runtime,
         {
-          agentId: runtime.activeAgentId,
+          agentId: runtime.agentId ?? undefined,
           conversationId: recoveryConversationId,
           abortSignal,
         },
@@ -324,7 +322,7 @@ export async function sendMessageStreamWithRetry(
   messages: Parameters<typeof sendMessageStream>[1],
   opts: Parameters<typeof sendMessageStream>[2],
   socket: WebSocket,
-  runtime: ListenerRuntime,
+  runtime: ConversationRuntime,
   abortSignal?: AbortSignal,
 ): Promise<Awaited<ReturnType<typeof sendMessageStream>>> {
   let transientRetries = 0;
@@ -340,7 +338,7 @@ export async function sendMessageStreamWithRetry(
     }
     runtime.isRecoveringApprovals = false;
     setLoopStatus(runtime, "WAITING_FOR_API_RESPONSE", {
-      agent_id: runtime.activeAgentId,
+      agent_id: runtime.agentId,
       conversation_id: conversationId,
     });
 
@@ -380,7 +378,7 @@ export async function sendMessageStreamWithRetry(
       if (approvalConflictDetected) {
         runtime.isRecoveringApprovals = true;
         setLoopStatus(runtime, "RETRYING_API_REQUEST", {
-          agent_id: runtime.activeAgentId,
+          agent_id: runtime.agentId,
           conversation_id: conversationId,
         });
         if (abortSignal?.aborted) throw new Error("Cancelled by user");
@@ -408,7 +406,7 @@ export async function sendMessageStreamWithRetry(
       if (action === "retry_transient") {
         runtime.isRecoveringApprovals = true;
         setLoopStatus(runtime, "RETRYING_API_REQUEST", {
-          agent_id: runtime.activeAgentId,
+          agent_id: runtime.agentId,
           conversation_id: conversationId,
         });
         const attempt = transientRetries + 1;
@@ -434,7 +432,7 @@ export async function sendMessageStreamWithRetry(
             attempt,
             maxAttempts: LLM_API_ERROR_MAX_RETRIES,
             delayMs,
-            agentId: runtime.activeAgentId ?? undefined,
+            agentId: runtime.agentId ?? undefined,
             conversationId,
           });
         }
@@ -449,7 +447,7 @@ export async function sendMessageStreamWithRetry(
       if (action === "retry_conversation_busy") {
         runtime.isRecoveringApprovals = true;
         setLoopStatus(runtime, "RETRYING_API_REQUEST", {
-          agent_id: runtime.activeAgentId,
+          agent_id: runtime.agentId,
           conversation_id: conversationId,
         });
         try {
@@ -459,7 +457,7 @@ export async function sendMessageStreamWithRetry(
             {
               conversationId,
               resolvedConversationId: conversationId,
-              agentId: runtime.activeAgentId,
+              agentId: runtime.agentId ?? null,
               requestStartedAtMs,
             },
           );
@@ -500,7 +498,7 @@ export async function sendMessageStreamWithRetry(
           attempt,
           maxAttempts: MAX_CONVERSATION_BUSY_RETRIES,
           delayMs,
-          agentId: runtime.activeAgentId ?? undefined,
+          agentId: runtime.agentId ?? undefined,
           conversationId,
         });
 
@@ -521,7 +519,7 @@ export async function sendApprovalContinuationWithRetry(
   messages: Parameters<typeof sendMessageStream>[1],
   opts: Parameters<typeof sendMessageStream>[2],
   socket: WebSocket,
-  runtime: ListenerRuntime,
+  runtime: ConversationRuntime,
   abortSignal?: AbortSignal,
   retryOptions: {
     allowApprovalRecovery?: boolean;
@@ -541,7 +539,7 @@ export async function sendApprovalContinuationWithRetry(
     }
     runtime.isRecoveringApprovals = false;
     setLoopStatus(runtime, "WAITING_FOR_API_RESPONSE", {
-      agent_id: runtime.activeAgentId,
+      agent_id: runtime.agentId,
       conversation_id: conversationId,
     });
 
@@ -581,7 +579,7 @@ export async function sendApprovalContinuationWithRetry(
       if (approvalConflictDetected) {
         runtime.isRecoveringApprovals = true;
         setLoopStatus(runtime, "RETRYING_API_REQUEST", {
-          agent_id: runtime.activeAgentId,
+          agent_id: runtime.agentId,
           conversation_id: conversationId,
         });
 
@@ -603,7 +601,7 @@ export async function sendApprovalContinuationWithRetry(
           ) {
             finalizeHandledRecoveryTurn(runtime, socket, {
               drainResult,
-              agentId: runtime.activeAgentId,
+              agentId: runtime.agentId ?? undefined,
               conversationId,
             });
             return null;
@@ -621,7 +619,7 @@ export async function sendApprovalContinuationWithRetry(
       if (action === "retry_transient") {
         runtime.isRecoveringApprovals = true;
         setLoopStatus(runtime, "RETRYING_API_REQUEST", {
-          agent_id: runtime.activeAgentId,
+          agent_id: runtime.agentId,
           conversation_id: conversationId,
         });
         const attempt = transientRetries + 1;
@@ -649,7 +647,7 @@ export async function sendApprovalContinuationWithRetry(
         conversationBusyRetries += 1;
         runtime.isRecoveringApprovals = true;
         setLoopStatus(runtime, "RETRYING_API_REQUEST", {
-          agent_id: runtime.activeAgentId,
+          agent_id: runtime.agentId,
           conversation_id: conversationId,
         });
 
@@ -660,7 +658,7 @@ export async function sendApprovalContinuationWithRetry(
             {
               conversationId,
               resolvedConversationId: conversationId,
-              agentId: runtime.activeAgentId,
+              agentId: runtime.agentId ?? null,
               requestStartedAtMs,
             },
           );

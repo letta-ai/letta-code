@@ -14,9 +14,9 @@ import {
 } from "./protocol-outbound";
 import { clearRecoveredApprovalState } from "./runtime";
 import type {
+  ConversationRuntime,
   InterruptPopulateInput,
   InterruptToolReturn,
-  ListenerRuntime,
   RecoveredApprovalState,
 } from "./types";
 
@@ -87,7 +87,7 @@ export function normalizeInterruptedApprovalsForQueue(
 }
 
 export function normalizeExecutionResultsForInterruptParity(
-  runtime: ListenerRuntime,
+  runtime: ConversationRuntime,
   executionResults: ApprovalResult[],
   executingToolCallIds: string[],
 ): ApprovalResult[] {
@@ -273,7 +273,7 @@ export function extractInterruptToolReturns(
 
 export function emitInterruptToolReturnMessage(
   socket: WebSocket,
-  runtime: ListenerRuntime,
+  runtime: ConversationRuntime,
   approvals: ApprovalResult[] | null,
   runId?: string | null,
   uuidPrefix: string = "interrupt-tool-return",
@@ -308,8 +308,8 @@ export function emitInterruptToolReturnMessage(
         ],
       },
       {
-        agent_id: runtime.activeAgentId ?? undefined,
-        conversation_id: runtime.activeConversationId ?? undefined,
+        agent_id: runtime.agentId ?? undefined,
+        conversation_id: runtime.conversationId,
       },
     );
   }
@@ -317,7 +317,7 @@ export function emitInterruptToolReturnMessage(
 
 export function emitToolExecutionStartedEvents(
   socket: WebSocket,
-  runtime: ListenerRuntime,
+  runtime: ConversationRuntime,
   params: {
     toolCallIds: string[];
     runId?: string | null;
@@ -339,7 +339,7 @@ export function emitToolExecutionStartedEvents(
 
 export function emitToolExecutionFinishedEvents(
   socket: WebSocket,
-  runtime: ListenerRuntime,
+  runtime: ConversationRuntime,
   params: {
     approvals: ApprovalResult[] | null;
     runId?: string | null;
@@ -362,7 +362,7 @@ export function emitToolExecutionFinishedEvents(
 }
 
 export function getInterruptApprovalsForEmission(
-  runtime: ListenerRuntime,
+  runtime: ConversationRuntime,
   params: {
     lastExecutionResults: ApprovalResult[] | null;
     agentId: string;
@@ -391,7 +391,7 @@ export function getInterruptApprovalsForEmission(
 }
 
 export function populateInterruptQueue(
-  runtime: ListenerRuntime,
+  runtime: ConversationRuntime,
   input: InterruptPopulateInput,
 ): boolean {
   const shouldPopulate =
@@ -467,7 +467,7 @@ export function populateInterruptQueue(
 }
 
 export function consumeInterruptQueue(
-  runtime: ListenerRuntime,
+  runtime: ConversationRuntime,
   agentId: string,
   conversationId: string,
 ): {
@@ -519,7 +519,7 @@ export function consumeInterruptQueue(
 }
 
 export function stashRecoveredApprovalInterrupts(
-  runtime: ListenerRuntime,
+  runtime: ConversationRuntime,
   recovered: RecoveredApprovalState,
 ): boolean {
   const approvals = [...recovered.approvalsByRequestId.values()].map(
