@@ -400,6 +400,71 @@
       }
     },
     {
+      "id": "gpt-5.4-mini-plus-pro-none",
+      "handle": "chatgpt-plus-pro/gpt-5.4-mini",
+      "label": "GPT-5.4 Mini (ChatGPT)",
+      "description": "GPT-5.4 Mini (no reasoning) via ChatGPT Plus/Pro",
+      "updateArgs": {
+        "reasoning_effort": "none",
+        "verbosity": "low",
+        "context_window": 272000,
+        "max_output_tokens": 128000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "gpt-5.4-mini-plus-pro-low",
+      "handle": "chatgpt-plus-pro/gpt-5.4-mini",
+      "label": "GPT-5.4 Mini (ChatGPT)",
+      "description": "GPT-5.4 Mini (low reasoning) via ChatGPT Plus/Pro",
+      "updateArgs": {
+        "reasoning_effort": "low",
+        "verbosity": "low",
+        "context_window": 272000,
+        "max_output_tokens": 128000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "gpt-5.4-mini-plus-pro-medium",
+      "handle": "chatgpt-plus-pro/gpt-5.4-mini",
+      "label": "GPT-5.4 Mini (ChatGPT)",
+      "description": "GPT-5.4 Mini (med reasoning) via ChatGPT Plus/Pro",
+      "updateArgs": {
+        "reasoning_effort": "medium",
+        "verbosity": "low",
+        "context_window": 272000,
+        "max_output_tokens": 128000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "gpt-5.4-mini-plus-pro-high",
+      "handle": "chatgpt-plus-pro/gpt-5.4-mini",
+      "label": "GPT-5.4 Mini (ChatGPT)",
+      "description": "GPT-5.4 Mini (high reasoning) via ChatGPT Plus/Pro",
+      "updateArgs": {
+        "reasoning_effort": "high",
+        "verbosity": "low",
+        "context_window": 272000,
+        "max_output_tokens": 128000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "gpt-5.4-mini-plus-pro-xhigh",
+      "handle": "chatgpt-plus-pro/gpt-5.4-mini",
+      "label": "GPT-5.4 Mini (ChatGPT)",
+      "description": "GPT-5.4 Mini (max reasoning) via ChatGPT Plus/Pro",
+      "updateArgs": {
+        "reasoning_effort": "xhigh",
+        "verbosity": "low",
+        "context_window": 272000,
+        "max_output_tokens": 128000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
       "id": "gpt-5.3-codex-plus-pro-none",
       "handle": "chatgpt-plus-pro/gpt-5.3-codex",
       "label": "GPT-5.3 Codex (ChatGPT)",
@@ -955,6 +1020,137 @@
       "updateArgs": {
         "reasoning_effort": "xhigh",
         "verbosity": "medium",
+        "context_window": 272000,
+        "max_output_tokens": 128000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "gpt-5.4-mini-none",
+      "handle": "openai/gpt-5.4-mini",
+      "label": "GPT-5.4 Mini",
+      "description": "Fast, efficient GPT-5.4 variant (no reasoning)",
+      "updateArgs": {
+        "reasoning_effort": "none",
+        "verbosity": "low",
+        "context_window": 272000,
+        "max_output_tokens": 128000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "gpt-5.4-mini-low",
+      "handle": "openai/gpt-5.4-mini",
+      "label": "GPT-5.4 Mini",
+      "description": "Fast, efficient GPT-5.4 variant (low reasoning)",
+      "updateArgs": {
+        "reasoning_effort": "low",
+        "verbosity": "low",
+        "context_window": 272000,
+        "max_output_tokens": 128000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "gpt-5.4-mini-medium",
+      "handle": "openai/gpt-5.4-mini",
+      "label": "GPT-5.4 Mini",
+      "description": "Fast, efficient GPT-5.4 variant (med reasoning)",
+      "isFeatured": true,
+      "updateArgs": {
+        "reasoning_effort": "medium",
+        "verbosity": "low",
+        "context_window": 272000,
+        "max_output_tokens": 128000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "gpt-5.4-mini-high",
+      "handle": "openai/gpt-5.4-mini",
+      "label": "GPT-5.4 Mini",
+      "description": "Fast, efficient GPT-5.4 variant (high reasoning)",
+      "updateArgs": {
+        "reasoning_effort": "high",
+        "verbosity": "low",
+        "context_window": 272000,
+        "max_output_tokens": 128000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "gpt-5.4-mini-xhigh",
+      "handle": "openai/gpt-5.4-mini",
+      "label": "GPT-5.4 Mini",
+      "description": "Fast, efficient GPT-5.4 variant (max reasoning)",
+      "updateArgs": {
+        "reasoning_effort": "xhigh",
+        "verbosity": "low",
+        "context_window": 272000,
+        "max_output_tokens": 128000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "gpt-5.4-nano-none",
+      "handle": "openai/gpt-5.4-nano",
+      "label": "GPT-5.4 Nano",
+      "description": "Smallest, cheapest GPT-5.4 variant (no reasoning)",
+      "updateArgs": {
+        "reasoning_effort": "none",
+        "verbosity": "low",
+        "context_window": 272000,
+        "max_output_tokens": 128000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "gpt-5.4-nano-low",
+      "handle": "openai/gpt-5.4-nano",
+      "label": "GPT-5.4 Nano",
+      "description": "Smallest, cheapest GPT-5.4 variant (low reasoning)",
+      "updateArgs": {
+        "reasoning_effort": "low",
+        "verbosity": "low",
+        "context_window": 272000,
+        "max_output_tokens": 128000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "gpt-5.4-nano-medium",
+      "handle": "openai/gpt-5.4-nano",
+      "label": "GPT-5.4 Nano",
+      "description": "Smallest, cheapest GPT-5.4 variant (med reasoning)",
+      "updateArgs": {
+        "reasoning_effort": "medium",
+        "verbosity": "low",
+        "context_window": 272000,
+        "max_output_tokens": 128000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "gpt-5.4-nano-high",
+      "handle": "openai/gpt-5.4-nano",
+      "label": "GPT-5.4 Nano",
+      "description": "Smallest, cheapest GPT-5.4 variant (high reasoning)",
+      "updateArgs": {
+        "reasoning_effort": "high",
+        "verbosity": "low",
+        "context_window": 272000,
+        "max_output_tokens": 128000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "gpt-5.4-nano-xhigh",
+      "handle": "openai/gpt-5.4-nano",
+      "label": "GPT-5.4 Nano",
+      "description": "Smallest, cheapest GPT-5.4 variant (max reasoning)",
+      "updateArgs": {
+        "reasoning_effort": "xhigh",
+        "verbosity": "low",
         "context_window": 272000,
         "max_output_tokens": 128000,
         "parallel_tool_calls": true
