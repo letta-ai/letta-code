@@ -84,6 +84,7 @@ import {
   runPreCompactHooks,
   runSessionEndHooks,
   runSessionStartHooks,
+  runPreToolUseHooks,
   runStopHooks,
   runUserPromptSubmitHooks,
 } from "../hooks";
@@ -12690,13 +12691,51 @@ ${SYSTEM_REMINDER_CLOSE}
   );
 
   // Guard ExitPlanMode:
+  // - Run PreToolUse hooks first — if hooks block (exit 2), auto-deny; if hooks pass (exit 0), auto-approve
+  // - If no hooks matched, fall through to normal UI approval flow
   // - If not in plan mode, allow graceful continuation when we still have a known plan file path
   // - Otherwise reject with an expiry message
   // - If in plan mode but no plan file exists, keep planning
+  const preApprovalHookCheckedRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     const currentIndex = approvalResults.length;
     const approval = pendingApprovals[currentIndex];
     if (approval?.toolName === "ExitPlanMode") {
+      // Run PreToolUse hooks before showing the approval dialog.
+      // If hooks handle the decision (block or approve), skip the UI entirely.
+      if (!preApprovalHookCheckedRef.current.has(approval.toolCallId)) {
+        preApprovalHookCheckedRef.current.add(approval.toolCallId);
+        (async () => {
+          try {
+            const toolInput = JSON.parse(approval.toolArgs || "{}");
+            const hookResult = await runPreToolUseHooks(
+              "ExitPlanMode",
+              toolInput,
+              approval.toolCallId,
+              process.env.USER_CWD || process.cwd(),
+              agentId,
+            );
+            if (hookResult.blocked) {
+              const feedback =
+                hookResult.feedback.join("\n") || "Blocked by PreToolUse hook";
+              handlePlanKeepPlanning(feedback);
+              return;
+            }
+            if (hookResult.results.length > 0) {
+              // Hooks existed and all passed — auto-approve, skip the dialog
+              handlePlanApprove();
+              return;
+            }
+            // No hooks matched — fall through handled by next render cycle
+          } catch {
+            // Hook execution failed — fall through to normal approval UI
+          }
+        })();
+        // Return immediately — let the async hook decide before showing UI.
+        // If hooks don't handle it, the effect will re-fire on next state change.
+        return;
+      }
+
       const mode = permissionMode.getMode();
       const activePlanPath = permissionMode.getPlanFilePath();
       const fallbackPlanPath = lastPlanFilePathRef.current;
@@ -12780,6 +12819,7 @@ ${SYSTEM_REMINDER_CLOSE}
     handlePlanKeepPlanning,
     refreshDerived,
     queueApprovalResults,
+    agentId,
   ]);
 
   const handleQuestionSubmit = useCallback(
