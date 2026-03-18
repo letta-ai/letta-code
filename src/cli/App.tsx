@@ -556,6 +556,7 @@ const NON_STATE_COMMANDS = new Set([
   "/download",
   "/statusline",
   "/reasoning-tab",
+  "/secret",
 ]);
 
 // Check if a command is interactive (opens overlay, should not be queued)

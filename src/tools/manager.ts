@@ -15,6 +15,7 @@ import {
 import { OPENAI_CODEX_PROVIDER_NAME } from "../providers/openai-codex-provider";
 import { telemetry } from "../telemetry";
 import { debugLog } from "../utils/debug";
+import { substituteSecretsInArgs } from "./secret-substitution";
 import { TOOL_DEFINITIONS, type ToolName } from "./toolDefinitions";
 
 /**
@@ -1324,6 +1325,9 @@ export async function executeTool(
       if (options?.onOutput) {
         enhancedArgs = { ...enhancedArgs, onOutput: options.onOutput };
       }
+
+      // Substitute $SECRET_NAME patterns with actual secret values
+      enhancedArgs = substituteSecretsInArgs(enhancedArgs);
     }
 
     // Inject toolCallId and abort signal for Task tool
