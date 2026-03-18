@@ -1,5 +1,5 @@
 import { Box, useInput } from "ink";
-import { memo, useCallback, useEffect, useState } from "react";
+import { memo, useCallback, useState } from "react";
 import { generateAndOpenPlanViewer } from "../../web/generate-plan-viewer";
 import { useProgressIndicator } from "../hooks/useProgressIndicator";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
@@ -73,14 +73,10 @@ export const StaticPlanApproval = memo(
 
     const customOptionIndex = showAcceptEditsOption ? 2 : 1;
     const maxOptionIndex = customOptionIndex;
-    const isOnCustomOption = selectedOption === customOptionIndex;
+    const effectiveSelectedOption = Math.min(selectedOption, maxOptionIndex);
+    const isOnCustomOption = effectiveSelectedOption === customOptionIndex;
     const customOptionPlaceholder =
       "Type here to tell Letta Code what to change";
-
-    // Clamp selected option when option set changes.
-    useEffect(() => {
-      setSelectedOption((prev) => Math.min(prev, maxOptionIndex));
-    }, [maxOptionIndex]);
 
     useInput(
       (input, key) => {
@@ -134,11 +130,11 @@ export const StaticPlanApproval = memo(
 
         // When on regular options
         if (key.return) {
-          if (selectedOption === 0 && showAcceptEditsOption) {
+          if (effectiveSelectedOption === 0 && showAcceptEditsOption) {
             onApproveAndAcceptEdits();
           } else if (
-            selectedOption === 1 ||
-            (selectedOption === 0 && !showAcceptEditsOption)
+            effectiveSelectedOption === 1 ||
+            (effectiveSelectedOption === 0 && !showAcceptEditsOption)
           ) {
             onApprove();
           }
@@ -188,17 +184,21 @@ export const StaticPlanApproval = memo(
             <Box width={5} flexShrink={0}>
               <Text
                 color={
-                  selectedOption === 0 ? colors.approval.header : undefined
+                  effectiveSelectedOption === 0
+                    ? colors.approval.header
+                    : undefined
                 }
               >
-                {selectedOption === 0 ? "❯" : " "} 1.
+                {effectiveSelectedOption === 0 ? "❯" : " "} 1.
               </Text>
             </Box>
             <Box flexGrow={1} width={Math.max(0, columns - 5)}>
               <Text
                 wrap="wrap"
                 color={
-                  selectedOption === 0 ? colors.approval.header : undefined
+                  effectiveSelectedOption === 0
+                    ? colors.approval.header
+                    : undefined
                 }
               >
                 {showAcceptEditsOption
@@ -214,17 +214,21 @@ export const StaticPlanApproval = memo(
               <Box width={5} flexShrink={0}>
                 <Text
                   color={
-                    selectedOption === 1 ? colors.approval.header : undefined
+                    effectiveSelectedOption === 1
+                      ? colors.approval.header
+                      : undefined
                   }
                 >
-                  {selectedOption === 1 ? "❯" : " "} 2.
+                  {effectiveSelectedOption === 1 ? "❯" : " "} 2.
                 </Text>
               </Box>
               <Box flexGrow={1} width={Math.max(0, columns - 5)}>
                 <Text
                   wrap="wrap"
                   color={
-                    selectedOption === 1 ? colors.approval.header : undefined
+                    effectiveSelectedOption === 1
+                      ? colors.approval.header
+                      : undefined
                   }
                 >
                   Yes, and manually approve edits
