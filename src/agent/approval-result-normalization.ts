@@ -4,6 +4,10 @@ import { INTERRUPTED_BY_USER } from "../constants";
 import type { ApprovalResult } from "./approval-execution";
 
 type OutgoingMessage = MessageCreate | ApprovalCreate;
+type ToolReturnContent = Extract<
+  ApprovalResult,
+  { type: "tool" }
+>["tool_return"];
 
 export type ApprovalNormalizationOptions = {
   /**
@@ -47,6 +51,26 @@ function normalizeToolReturnText(value: unknown): string {
   }
 }
 
+function isToolReturnContent(value: unknown): value is ToolReturnContent {
+  if (typeof value === "string") return true;
+  if (!Array.isArray(value)) return false;
+
+  return value.every(
+    (part) =>
+      !!part &&
+      typeof part === "object" &&
+      "type" in part &&
+      (((part as { type?: unknown }).type === "text" &&
+        "text" in part &&
+        typeof (part as { text?: unknown }).text === "string") ||
+        ((part as { type?: unknown }).type === "image" &&
+          "data" in part &&
+          typeof (part as { data?: unknown }).data === "string" &&
+          "mimeType" in part &&
+          typeof (part as { mimeType?: unknown }).mimeType === "string")),
+  );
+}
+
 export function normalizeApprovalResultsForPersistence(
   approvals: ApprovalResult[] | null | undefined,
   options: ApprovalNormalizationOptions = {},
@@ -56,6 +80,39 @@ export function normalizeApprovalResultsForPersistence(
   const interruptedSet = new Set(options.interruptedToolCallIds ?? []);
 
   return approvals.map((approval) => {
+    if (
+      approval &&
+      typeof approval === "object" &&
+      "type" in approval &&
+      approval.type === "approval" &&
+      "approve" in approval &&
+      approval.approve === true &&
+      "tool_return" in approval &&
+      isToolReturnContent(approval.tool_return)
+    ) {
+      return {
+        type: "tool",
+        tool_call_id:
+          "tool_call_id" in approval &&
+          typeof approval.tool_call_id === "string"
+            ? approval.tool_call_id
+            : "",
+        tool_return: approval.tool_return,
+        status:
+          "status" in approval && approval.status === "error"
+            ? "error"
+            : "success",
+        stdout:
+          "stdout" in approval && Array.isArray(approval.stdout)
+            ? approval.stdout
+            : undefined,
+        stderr:
+          "stderr" in approval && Array.isArray(approval.stderr)
+            ? approval.stderr
+            : undefined,
+      } satisfies ApprovalResult;
+    }
+
     if (
       !approval ||
       typeof approval !== "object" ||
