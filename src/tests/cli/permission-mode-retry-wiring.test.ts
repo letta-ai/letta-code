@@ -189,4 +189,48 @@ describe("permission mode retry wiring", () => {
     expect(segment).toContain("if (planFilePath) {");
     expect(segment).toContain("lastPlanFilePathRef.current = planFilePath;");
   });
+
+  test("restores bypassPermissions when it was active before plan approval", () => {
+    const source = readAppSource();
+
+    const start = source.indexOf("const handlePlanApprove = useCallback(");
+    const end = source.indexOf(
+      "useEffect(() => {\n    const currentIndex = approvalResults.length;",
+      start,
+    );
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+
+    const segment = source.slice(start, end);
+    expect(segment).toContain(
+      "const previousMode = permissionMode.getModeBeforePlan();",
+    );
+    expect(segment).toContain('previousMode === "bypassPermissions"');
+    expect(segment).toContain('"bypassPermissions"');
+  });
+
+  test("does not auto-approve ExitPlanMode in bypassPermissions mode", () => {
+    const source = readAppSource();
+
+    const guardStart = source.indexOf("Guard ExitPlanMode:");
+    expect(guardStart).toBeGreaterThan(-1);
+
+    const guardEnd = source.indexOf(
+      "const handleQuestionSubmit = useCallback(",
+    );
+    expect(guardEnd).toBeGreaterThan(guardStart);
+
+    const segment = source.slice(guardStart, guardEnd);
+    const modeGuardStart = segment.indexOf('if (mode !== "plan") {');
+    const modeGuardEnd = segment.indexOf(
+      "// Plan mode state was lost and no plan file is recoverable",
+    );
+    expect(modeGuardStart).toBeGreaterThan(-1);
+    expect(modeGuardEnd).toBeGreaterThan(modeGuardStart);
+
+    const modeGuard = segment.slice(modeGuardStart, modeGuardEnd);
+    expect(modeGuard).toContain("if (hasUsablePlan) {");
+    expect(modeGuard).toContain("let user manually approve");
+    expect(modeGuard).not.toContain("handlePlanApprove()");
+  });
 });
