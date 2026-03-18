@@ -12967,7 +12967,7 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
   // Guard EnterPlanMode:
   // When in bypassPermissions (YOLO) mode, auto-approve EnterPlanMode and stay
   // in YOLO — the agent gets plan instructions but keeps full permissions.
-  // The existing ExitPlanMode guard then auto-approves the exit too.
+  // ExitPlanMode still requires explicit user approval.
   useEffect(() => {
     const currentIndex = approvalResults.length;
     const approval = pendingApprovals[currentIndex];

@@ -1,5 +1,5 @@
 import { Box, useInput } from "ink";
-import { memo, useCallback, useState } from "react";
+import { memo, useCallback, useEffect, useState } from "react";
 import { generateAndOpenPlanViewer } from "../../web/generate-plan-viewer";
 import { useProgressIndicator } from "../hooks/useProgressIndicator";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
@@ -12,6 +12,7 @@ type Props = {
   onApproveAndAcceptEdits: () => void;
   onKeepPlanning: (reason: string) => void;
   onCancel: () => void; // For CTRL-C to queue denial (like other approval screens)
+  showAcceptEditsOption?: boolean;
   isFocused?: boolean;
   planContent?: string;
   planFilePath?: string;
@@ -35,6 +36,7 @@ export const StaticPlanApproval = memo(
     onApproveAndAcceptEdits,
     onKeepPlanning,
     onCancel,
+    showAcceptEditsOption = true,
     isFocused = true,
     planContent,
     planFilePath,
@@ -69,11 +71,16 @@ export const StaticPlanApproval = memo(
         });
     }, [planContent, planFilePath, agentName]);
 
-    const customOptionIndex = 2;
+    const customOptionIndex = showAcceptEditsOption ? 2 : 1;
     const maxOptionIndex = customOptionIndex;
     const isOnCustomOption = selectedOption === customOptionIndex;
     const customOptionPlaceholder =
       "Type here to tell Letta Code what to change";
+
+    // Clamp selected option when option set changes.
+    useEffect(() => {
+      setSelectedOption((prev) => Math.min(prev, maxOptionIndex));
+    }, [maxOptionIndex]);
 
     useInput(
       (input, key) => {
@@ -127,9 +134,12 @@ export const StaticPlanApproval = memo(
 
         // When on regular options
         if (key.return) {
-          if (selectedOption === 0) {
+          if (selectedOption === 0 && showAcceptEditsOption) {
             onApproveAndAcceptEdits();
-          } else if (selectedOption === 1) {
+          } else if (
+            selectedOption === 1 ||
+            (selectedOption === 0 && !showAcceptEditsOption)
+          ) {
             onApprove();
           }
           return;
@@ -141,10 +151,14 @@ export const StaticPlanApproval = memo(
 
         // Number keys for quick selection (only for fixed options, not custom text input)
         if (input === "1") {
-          onApproveAndAcceptEdits();
+          if (showAcceptEditsOption) {
+            onApproveAndAcceptEdits();
+          } else {
+            onApprove();
+          }
           return;
         }
-        if (input === "2") {
+        if (showAcceptEditsOption && input === "2") {
           onApprove();
           return;
         }
@@ -169,7 +183,7 @@ export const StaticPlanApproval = memo(
 
         {/* Options */}
         <Box marginTop={1} flexDirection="column">
-          {/* Option 1: Yes, and auto-accept edits */}
+          {/* Option 1 */}
           <Box flexDirection="row">
             <Box width={5} flexShrink={0}>
               <Text
@@ -187,33 +201,37 @@ export const StaticPlanApproval = memo(
                   selectedOption === 0 ? colors.approval.header : undefined
                 }
               >
-                Yes, and auto-accept edits
+                {showAcceptEditsOption
+                  ? "Yes, and auto-accept edits"
+                  : "Yes, proceed (keep current mode)"}
               </Text>
             </Box>
           </Box>
 
           {/* Option 2: Yes, and manually approve edits */}
-          <Box flexDirection="row">
-            <Box width={5} flexShrink={0}>
-              <Text
-                color={
-                  selectedOption === 1 ? colors.approval.header : undefined
-                }
-              >
-                {selectedOption === 1 ? "❯" : " "} 2.
-              </Text>
+          {showAcceptEditsOption && (
+            <Box flexDirection="row">
+              <Box width={5} flexShrink={0}>
+                <Text
+                  color={
+                    selectedOption === 1 ? colors.approval.header : undefined
+                  }
+                >
+                  {selectedOption === 1 ? "❯" : " "} 2.
+                </Text>
+              </Box>
+              <Box flexGrow={1} width={Math.max(0, columns - 5)}>
+                <Text
+                  wrap="wrap"
+                  color={
+                    selectedOption === 1 ? colors.approval.header : undefined
+                  }
+                >
+                  Yes, and manually approve edits
+                </Text>
+              </Box>
             </Box>
-            <Box flexGrow={1} width={Math.max(0, columns - 5)}>
-              <Text
-                wrap="wrap"
-                color={
-                  selectedOption === 1 ? colors.approval.header : undefined
-                }
-              >
-                Yes, and manually approve edits
-              </Text>
-            </Box>
-          </Box>
+          )}
 
           {/* Option 3: Custom input */}
           <Box flexDirection="row">
@@ -221,7 +239,7 @@ export const StaticPlanApproval = memo(
               <Text
                 color={isOnCustomOption ? colors.approval.header : undefined}
               >
-                {isOnCustomOption ? "❯" : " "} 3.
+                {isOnCustomOption ? "❯" : " "} {customOptionIndex + 1}.
               </Text>
             </Box>
             <Box flexGrow={1} width={Math.max(0, columns - 5)}>
