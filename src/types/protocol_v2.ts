@@ -357,11 +357,40 @@ export interface SyncCommand {
   runtime: RuntimeScope;
 }
 
+export interface TerminalSpawnCommand {
+  type: "terminal_spawn";
+  terminal_id: string;
+  cols: number;
+  rows: number;
+}
+
+export interface TerminalInputCommand {
+  type: "terminal_input";
+  terminal_id: string;
+  data: string;
+}
+
+export interface TerminalResizeCommand {
+  type: "terminal_resize";
+  terminal_id: string;
+  cols: number;
+  rows: number;
+}
+
+export interface TerminalKillCommand {
+  type: "terminal_kill";
+  terminal_id: string;
+}
+
 export type WsProtocolCommand =
   | InputCommand
   | ChangeDeviceStateCommand
   | AbortMessageCommand
-  | SyncCommand;
+  | SyncCommand
+  | TerminalSpawnCommand
+  | TerminalInputCommand
+  | TerminalResizeCommand
+  | TerminalKillCommand;
 
 export type WsProtocolMessage =
   | DeviceStatusUpdateMessage

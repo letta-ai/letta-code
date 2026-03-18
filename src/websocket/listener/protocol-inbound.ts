@@ -5,6 +5,10 @@ import type {
   InputCommand,
   RuntimeScope,
   SyncCommand,
+  TerminalInputCommand,
+  TerminalKillCommand,
+  TerminalResizeCommand,
+  TerminalSpawnCommand,
   WsProtocolCommand,
 } from "../../types/protocol_v2";
 import { isValidApprovalResponseBody } from "./approval";
@@ -186,6 +190,56 @@ function isSyncCommand(value: unknown): value is SyncCommand {
   return candidate.type === "sync" && isRuntimeScope(candidate.runtime);
 }
 
+function isTerminalSpawnCommand(value: unknown): value is TerminalSpawnCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    terminal_id?: unknown;
+    cols?: unknown;
+    rows?: unknown;
+  };
+  return (
+    c.type === "terminal_spawn" &&
+    typeof c.terminal_id === "string" &&
+    typeof c.cols === "number" &&
+    typeof c.rows === "number"
+  );
+}
+
+function isTerminalInputCommand(value: unknown): value is TerminalInputCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as { type?: unknown; terminal_id?: unknown; data?: unknown };
+  return (
+    c.type === "terminal_input" &&
+    typeof c.terminal_id === "string" &&
+    typeof c.data === "string"
+  );
+}
+
+function isTerminalResizeCommand(
+  value: unknown,
+): value is TerminalResizeCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    terminal_id?: unknown;
+    cols?: unknown;
+    rows?: unknown;
+  };
+  return (
+    c.type === "terminal_resize" &&
+    typeof c.terminal_id === "string" &&
+    typeof c.cols === "number" &&
+    typeof c.rows === "number"
+  );
+}
+
+function isTerminalKillCommand(value: unknown): value is TerminalKillCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as { type?: unknown; terminal_id?: unknown };
+  return c.type === "terminal_kill" && typeof c.terminal_id === "string";
+}
+
 export function parseServerMessage(
   data: WebSocket.RawData,
 ): ParsedServerMessage | null {
@@ -196,7 +250,11 @@ export function parseServerMessage(
       isInputCommand(parsed) ||
       isChangeDeviceStateCommand(parsed) ||
       isAbortMessageCommand(parsed) ||
-      isSyncCommand(parsed)
+      isSyncCommand(parsed) ||
+      isTerminalSpawnCommand(parsed) ||
+      isTerminalInputCommand(parsed) ||
+      isTerminalResizeCommand(parsed) ||
+      isTerminalKillCommand(parsed)
     ) {
       return parsed as WsProtocolCommand;
     }

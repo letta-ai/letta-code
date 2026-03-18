@@ -17,7 +17,13 @@ import { settingsManager } from "../../settings-manager";
 import { loadTools } from "../../tools/manager";
 import type { ApprovalResponseBody } from "../../types/protocol_v2";
 import { isDebugEnabled } from "../../utils/debug";
-import { killAllTerminals } from "../terminalHandler";
+import {
+  handleTerminalInput,
+  handleTerminalKill,
+  handleTerminalResize,
+  handleTerminalSpawn,
+  killAllTerminals,
+} from "../terminalHandler";
 import {
   clearPendingApprovalBatchIds,
   rejectPendingApprovalResolvers,
@@ -915,6 +921,27 @@ async function connectWithRetry(
       }
 
       scheduleQueuePump(scopedRuntime, socket, opts, processQueuedTurn);
+      return;
+    }
+
+    // ── Terminal commands (no runtime scope required) ──────────────────
+    if (parsed.type === "terminal_spawn") {
+      handleTerminalSpawn(parsed, socket, runtime.bootWorkingDirectory);
+      return;
+    }
+
+    if (parsed.type === "terminal_input") {
+      handleTerminalInput(parsed);
+      return;
+    }
+
+    if (parsed.type === "terminal_resize") {
+      handleTerminalResize(parsed);
+      return;
+    }
+
+    if (parsed.type === "terminal_kill") {
+      handleTerminalKill(parsed);
       return;
     }
   });
