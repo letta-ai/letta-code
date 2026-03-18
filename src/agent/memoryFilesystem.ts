@@ -264,6 +264,14 @@ export async function applyMemfsFlags(
     }
   }
 
+  // Sync any pre-existing secrets to the memory block so the agent sees them.
+  if (isEnabled) {
+    const { syncSecretsToMemoryBlock } = await import(
+      "../utils/secretsStore"
+    );
+    syncSecretsToMemoryBlock(getMemoryFilesystemRoot(agentId));
+  }
+
   const action =
     memfsFlag || shouldAutoEnableFromTag
       ? "enabled"

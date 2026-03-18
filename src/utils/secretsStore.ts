@@ -122,8 +122,8 @@ export function clearSecretsCache(): void {
  * This creates/updates $MEMORY_DIR/system/secrets.md with available secret names.
  * Called after set/delete operations.
  */
-export function syncSecretsToMemoryBlock(): void {
-  const memoryDir = process.env.MEMORY_DIR;
+export function syncSecretsToMemoryBlock(memoryDirOverride?: string): void {
+  const memoryDir = memoryDirOverride ?? process.env.MEMORY_DIR;
   if (!memoryDir) {
     // No memory directory configured (might be in headless mode)
     return;
