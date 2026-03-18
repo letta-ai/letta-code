@@ -1177,6 +1177,8 @@ export default function App({
       | { type: "deny"; approval: ApprovalRequest; reason: string }
     >
   >([]);
+  const lastAutoApprovedEnterPlanToolCallIdRef = useRef<string | null>(null);
+  const lastAutoHandledExitPlanToolCallIdRef = useRef<string | null>(null);
   const [isExecutingTool, setIsExecutingTool] = useState(false);
   const [queuedApprovalResults, setQueuedApprovalResults] = useState<
     ApprovalResult[] | null
@@ -12697,6 +12699,12 @@ ${SYSTEM_REMINDER_CLOSE}
     const currentIndex = approvalResults.length;
     const approval = pendingApprovals[currentIndex];
     if (approval?.toolName === "ExitPlanMode") {
+      if (
+        lastAutoHandledExitPlanToolCallIdRef.current === approval.toolCallId
+      ) {
+        return;
+      }
+
       const mode = permissionMode.getMode();
       const activePlanPath = permissionMode.getPlanFilePath();
       const fallbackPlanPath = lastPlanFilePathRef.current;
@@ -12706,6 +12714,7 @@ ${SYSTEM_REMINDER_CLOSE}
         if (mode === "bypassPermissions") {
           if (hasUsablePlan) {
             // YOLO mode with a plan file — auto-approve ExitPlanMode.
+            lastAutoHandledExitPlanToolCallIdRef.current = approval.toolCallId;
             handlePlanApprove();
             return;
           }
@@ -12734,6 +12743,7 @@ ${SYSTEM_REMINDER_CLOSE}
         buffersRef.current.order.push(statusId);
 
         // Queue denial to send with next message (same pattern as handleCancelApprovals)
+        lastAutoHandledExitPlanToolCallIdRef.current = approval.toolCallId;
         const denialResults = [
           {
             type: "approval" as const,
@@ -12764,6 +12774,7 @@ ${SYSTEM_REMINDER_CLOSE}
 
       // Mode is plan: require an existing plan file (active or fallback)
       if (!hasUsablePlan) {
+        lastAutoHandledExitPlanToolCallIdRef.current = approval.toolCallId;
         const planFilePath = activePlanPath ?? fallbackPlanPath;
         const plansDir = join(homedir(), ".letta", "plans");
         handlePlanKeepPlanning(
@@ -12959,6 +12970,12 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
     const approval = pendingApprovals[currentIndex];
     if (approval?.toolName === "EnterPlanMode") {
       if (permissionMode.getMode() === "bypassPermissions") {
+        if (
+          lastAutoApprovedEnterPlanToolCallIdRef.current === approval.toolCallId
+        ) {
+          return;
+        }
+        lastAutoApprovedEnterPlanToolCallIdRef.current = approval.toolCallId;
         handleEnterPlanModeApprove(true);
       }
     }
