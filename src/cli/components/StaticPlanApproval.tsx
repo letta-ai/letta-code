@@ -200,7 +200,7 @@ export const StaticPlanApproval = memo(
               >
                 {showAcceptEditsOption
                   ? "Yes, and auto-accept edits"
-                  : "Yes, proceed (keep current mode)"}
+                  : "Yes, proceed (bypassPermissions / yolo mode)"}
               </Text>
             </Box>
           </Box>
