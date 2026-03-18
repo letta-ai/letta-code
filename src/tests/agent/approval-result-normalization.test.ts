@@ -90,6 +90,60 @@ describe("normalizeApprovalResultsForPersistence", () => {
       status: "error",
     });
   });
+
+  test("prepends verbose approval comment to string tool returns", () => {
+    const approvals: ApprovalResult[] = [
+      {
+        type: "tool",
+        tool_call_id: "call-4",
+        tool_return: "bash output",
+        status: "success",
+        reason: "Ship it",
+      } as ApprovalResult,
+    ];
+
+    const normalized = normalizeApprovalResultsForPersistence(approvals);
+
+    expect(normalized[0]).toMatchObject({
+      type: "tool",
+      tool_call_id: "call-4",
+      status: "success",
+      tool_return: [
+        {
+          type: "text",
+          text: 'The user approved the tool execution with the following comment: "Ship it"',
+        },
+        { type: "text", text: "bash output" },
+      ],
+    });
+  });
+
+  test("prepends verbose approval comment to structured tool returns", () => {
+    const approvals: ApprovalResult[] = [
+      {
+        type: "tool",
+        tool_call_id: "call-5",
+        tool_return: [{ type: "text", text: "line 1" }],
+        status: "success",
+        reason: "Run exactly this",
+      } as ApprovalResult,
+    ];
+
+    const normalized = normalizeApprovalResultsForPersistence(approvals);
+
+    expect(normalized[0]).toMatchObject({
+      type: "tool",
+      tool_call_id: "call-5",
+      status: "success",
+      tool_return: [
+        {
+          type: "text",
+          text: 'The user approved the tool execution with the following comment: "Run exactly this"',
+        },
+        { type: "text", text: "line 1" },
+      ],
+    });
+  });
 });
 
 describe("normalizeOutgoingApprovalMessages", () => {

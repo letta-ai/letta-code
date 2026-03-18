@@ -1,13 +1,13 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import { INTERRUPTED_BY_USER } from "../constants";
+import type { ToolReturnContent } from "../tools/manager";
 import type { ApprovalResult } from "./approval-execution";
 
 type OutgoingMessage = MessageCreate | ApprovalCreate;
-type ToolReturnContent = Extract<
-  ApprovalResult,
-  { type: "tool" }
->["tool_return"];
+
+const APPROVAL_COMMENT_PREFIX =
+  "The user approved the tool execution with the following comment:";
 
 export type ApprovalNormalizationOptions = {
   /**
@@ -71,6 +71,27 @@ function isToolReturnContent(value: unknown): value is ToolReturnContent {
   );
 }
 
+function prependApprovalComment(
+  toolReturn: ToolReturnContent,
+  reason: string | undefined,
+): ToolReturnContent {
+  const trimmedReason = reason?.trim();
+  if (!trimmedReason) {
+    return toolReturn;
+  }
+
+  const commentPart = {
+    type: "text" as const,
+    text: `${APPROVAL_COMMENT_PREFIX} "${trimmedReason}"`,
+  };
+
+  if (typeof toolReturn === "string") {
+    return [commentPart, { type: "text" as const, text: toolReturn }];
+  }
+
+  return [commentPart, ...toolReturn];
+}
+
 export function normalizeApprovalResultsForPersistence(
   approvals: ApprovalResult[] | null | undefined,
   options: ApprovalNormalizationOptions = {},
@@ -126,6 +147,12 @@ export function normalizeApprovalResultsForPersistence(
       "tool_call_id" in approval && typeof approval.tool_call_id === "string"
         ? approval.tool_call_id
         : "";
+    const toolReturn = prependApprovalComment(
+      approval.tool_return as ToolReturnContent,
+      "reason" in approval && typeof approval.reason === "string"
+        ? approval.reason
+        : undefined,
+    );
 
     const interruptedByStructuredId =
       toolCallId.length > 0 && interruptedSet.has(toolCallId);
@@ -142,7 +169,15 @@ export function normalizeApprovalResultsForPersistence(
     ) {
       return {
         ...approval,
+        tool_return: toolReturn,
         status: "error" as const,
+      };
+    }
+
+    if (toolReturn !== approval.tool_return) {
+      return {
+        ...approval,
+        tool_return: toolReturn,
       };
     }
 
