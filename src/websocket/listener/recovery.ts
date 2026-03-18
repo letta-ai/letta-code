@@ -483,6 +483,7 @@ export async function resolveRecoveredApprovalResponse(
                 toolArgs: JSON.stringify(decision.updated_input),
               }
             : entry.approval,
+          reason: decision.message,
         });
       } else {
         decisions.push({

@@ -1066,6 +1066,7 @@ describe("listen-client capability-gated approval flow", () => {
     if ("decision" in response) {
       const canUseToolResponse = response.decision as {
         behavior: string;
+        message?: string;
         updated_input?: Record<string, unknown>;
       };
       expect(canUseToolResponse.behavior).toBe("allow");
@@ -1073,6 +1074,38 @@ describe("listen-client capability-gated approval flow", () => {
         file_path: "/updated/path.ts",
         content: "new content",
       });
+    }
+  });
+
+  test("approval_response with allow preserves optional comment", async () => {
+    const runtime = __listenClientTestUtils.createRuntime();
+    const socket = new MockSocket(WebSocket.OPEN);
+    const requestId = "perm-allow-comment-test";
+
+    const pending = requestApprovalOverWS(
+      runtime,
+      socket as unknown as WebSocket,
+      requestId,
+      makeControlRequest(requestId),
+    );
+
+    resolvePendingApprovalResolver(runtime, {
+      request_id: requestId,
+      decision: {
+        behavior: "allow",
+        message: "Ship it",
+      },
+    });
+
+    const response = await pending;
+    expect("decision" in response).toBe(true);
+    if ("decision" in response) {
+      const canUseToolResponse = response.decision as {
+        behavior: string;
+        message?: string;
+      };
+      expect(canUseToolResponse.behavior).toBe("allow");
+      expect(canUseToolResponse.message).toBe("Ship it");
     }
   });
 
