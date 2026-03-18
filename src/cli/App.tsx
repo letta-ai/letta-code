@@ -1177,6 +1177,48 @@ export default function App({
       | { type: "deny"; approval: ApprovalRequest; reason: string }
     >
   >([]);
+
+  const autoApproveEnterPlanModeBypassRef = useRef<
+    ((approval: ApprovalRequest) => Promise<void>) | null
+  >(null);
+  const pendingEnterPlanAutoApproveRef = useRef<ApprovalRequest | null>(null);
+  const autoHandleExitPlanModeRef = useRef<
+    ((approvals: ApprovalRequest[]) => boolean) | null
+  >(null);
+
+  const maybeAutoHandleExitPlanMode = useCallback(
+    (approvals: ApprovalRequest[]): boolean =>
+      autoHandleExitPlanModeRef.current?.(approvals) ?? false,
+    [],
+  );
+
+  const autoHandleEnterPlanModeInBypass = useCallback(
+    (approvals: ApprovalRequest[]): boolean => {
+      if (permissionMode.getMode() !== "bypassPermissions") {
+        return false;
+      }
+
+      if (approvals.length !== 1) {
+        return false;
+      }
+
+      const approval = approvals[0];
+      if (!approval || approval.toolName !== "EnterPlanMode") {
+        return false;
+      }
+
+      const runAutoApprove = autoApproveEnterPlanModeBypassRef.current;
+      if (!runAutoApprove) {
+        pendingEnterPlanAutoApproveRef.current = approval;
+        return false;
+      }
+
+      void runAutoApprove(approval);
+      return true;
+    },
+    [],
+  );
+
   const [isExecutingTool, setIsExecutingTool] = useState(false);
   const [queuedApprovalResults, setQueuedApprovalResults] = useState<
     ApprovalResult[] | null
@@ -2926,6 +2968,12 @@ export default function App({
           : [];
 
     if (loadingState === "ready" && approvals.length > 0) {
+      if (maybeAutoHandleExitPlanMode(approvals)) {
+        return;
+      }
+      if (autoHandleEnterPlanModeInBypass(approvals)) {
+        return;
+      }
       // All approvals go through the same flow - UI rendering decides which dialog to show
       setPendingApprovals(approvals);
 
@@ -2954,7 +3002,13 @@ export default function App({
 
       analyzeStartupApprovals();
     }
-  }, [loadingState, startupApproval, startupApprovals]);
+  }, [
+    loadingState,
+    startupApproval,
+    startupApprovals,
+    autoHandleEnterPlanModeInBypass,
+    maybeAutoHandleExitPlanMode,
+  ]);
 
   // Eager commit for ExitPlanMode: Always commit plan preview to staticItems
   // This keeps the dynamic area small (just approval options) to avoid flicker
@@ -4416,6 +4470,17 @@ export default function App({
                     setApprovalContexts([]);
                     queueApprovalResults(null);
 
+                    if (autoHandleEnterPlanModeInBypass(serverApprovals)) {
+                      setStreaming(false);
+                      sendDesktopNotification("Approval needed");
+                      return;
+                    }
+                    if (maybeAutoHandleExitPlanMode(serverApprovals)) {
+                      setStreaming(false);
+                      sendDesktopNotification("Approval needed");
+                      return;
+                    }
+
                     // Set up approval UI with fetched approvals
                     setPendingApprovals(serverApprovals);
 
@@ -5361,7 +5426,22 @@ export default function App({
             }
 
             // Show approval dialog for tools that need user input
-            setPendingApprovals(needsUserInput.map((ac) => ac.approval));
+            const needsUserInputApprovals = needsUserInput.map(
+              (ac) => ac.approval,
+            );
+            if (autoHandleEnterPlanModeInBypass(needsUserInputApprovals)) {
+              setStreaming(false);
+              closeTrajectorySegment();
+              syncTrajectoryElapsedBase();
+              return;
+            }
+            if (maybeAutoHandleExitPlanMode(needsUserInputApprovals)) {
+              setStreaming(false);
+              closeTrajectorySegment();
+              syncTrajectoryElapsedBase();
+              return;
+            }
+            setPendingApprovals(needsUserInputApprovals);
             setApprovalContexts(
               needsUserInput
                 .map((ac) => ac.context)
@@ -5452,6 +5532,17 @@ export default function App({
                 setAutoDeniedApprovals([]);
                 setApprovalContexts([]);
                 queueApprovalResults(null);
+
+                if (autoHandleEnterPlanModeInBypass(serverApprovals)) {
+                  setStreaming(false);
+                  sendDesktopNotification("Approval needed");
+                  return;
+                }
+                if (maybeAutoHandleExitPlanMode(serverApprovals)) {
+                  setStreaming(false);
+                  sendDesktopNotification("Approval needed");
+                  return;
+                }
 
                 // Set up approval UI with fetched approvals
                 setPendingApprovals(serverApprovals);
@@ -6806,7 +6897,14 @@ export default function App({
 
       // If any approvals need user input, show dialog
       if (needsUserInput.length > 0) {
-        setPendingApprovals(needsUserInput.map((ac) => ac.approval));
+        const needsUserInputApprovals = needsUserInput.map((ac) => ac.approval);
+        if (autoHandleEnterPlanModeInBypass(needsUserInputApprovals)) {
+          return { blocked: false };
+        }
+        if (maybeAutoHandleExitPlanMode(needsUserInputApprovals)) {
+          return { blocked: false };
+        }
+        setPendingApprovals(needsUserInputApprovals);
         setApprovalContexts(
           needsUserInput
             .map((ac) => ac.context)
@@ -6947,6 +7045,8 @@ export default function App({
     updateStreamingOutput,
     needsEagerApprovalCheck,
     queueApprovalResults,
+    autoHandleEnterPlanModeInBypass,
+    maybeAutoHandleExitPlanMode,
   ]);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: blanket suppression — same caveat as processConversation above. Omitted deps are mostly refs and stable callbacks, but this hides any genuinely missing reactive deps too.
@@ -8735,6 +8835,16 @@ export default function App({
 
                 // Restore pending approvals if any (fixes #540 for /resume command)
                 if (resumeData.pendingApprovals.length > 0) {
+                  if (
+                    autoHandleEnterPlanModeInBypass(resumeData.pendingApprovals)
+                  ) {
+                    return { submitted: true };
+                  }
+                  if (
+                    maybeAutoHandleExitPlanMode(resumeData.pendingApprovals)
+                  ) {
+                    return { submitted: true };
+                  }
                   setPendingApprovals(resumeData.pendingApprovals);
 
                   // Analyze approval contexts (same logic as startup)
@@ -10372,7 +10482,16 @@ ${SYSTEM_REMINDER_CLOSE}
               }
 
               setStreaming(false);
-              setPendingApprovals(needsUserInput.map((ac) => ac.approval));
+              const needsUserInputApprovals = needsUserInput.map(
+                (ac) => ac.approval,
+              );
+              if (autoHandleEnterPlanModeInBypass(needsUserInputApprovals)) {
+                return { submitted: false };
+              }
+              if (maybeAutoHandleExitPlanMode(needsUserInputApprovals)) {
+                return { submitted: false };
+              }
+              setPendingApprovals(needsUserInputApprovals);
               setApprovalContexts(
                 needsUserInput
                   .map((ac) => ac.context)
@@ -12689,14 +12808,17 @@ ${SYSTEM_REMINDER_CLOSE}
     [pendingApprovals, approvalResults, sendAllResults],
   );
 
-  // Guard ExitPlanMode:
-  // - If not in plan mode, allow graceful continuation when we still have a known plan file path
-  // - Otherwise reject with an expiry message
-  // - If in plan mode but no plan file exists, keep planning
-  useEffect(() => {
-    const currentIndex = approvalResults.length;
-    const approval = pendingApprovals[currentIndex];
-    if (approval?.toolName === "ExitPlanMode") {
+  const autoHandleExitPlanMode = useCallback(
+    (approvals: ApprovalRequest[]): boolean => {
+      if (approvals.length !== 1) {
+        return false;
+      }
+
+      const approval = approvals[0];
+      if (!approval || approval.toolName !== "ExitPlanMode") {
+        return false;
+      }
+
       const mode = permissionMode.getMode();
       const activePlanPath = permissionMode.getPlanFilePath();
       const fallbackPlanPath = lastPlanFilePathRef.current;
@@ -12704,27 +12826,30 @@ ${SYSTEM_REMINDER_CLOSE}
 
       if (mode !== "plan") {
         if (mode === "bypassPermissions") {
-          if (hasUsablePlan) {
-            // YOLO mode with a plan file — auto-approve ExitPlanMode.
-            handlePlanApprove();
-            return;
+          const hasCurrentPlanFile =
+            typeof activePlanPath === "string" &&
+            activePlanPath.length > 0 &&
+            planFileExists(activePlanPath);
+
+          if (hasCurrentPlanFile) {
+            void handlePlanApprove();
+            return true;
           }
-          // YOLO mode but no plan file yet — tell agent to write it first.
-          const planFilePath = activePlanPath ?? fallbackPlanPath;
+
+          const planFilePath = activePlanPath ?? undefined;
           const plansDir = join(homedir(), ".letta", "plans");
-          handlePlanKeepPlanning(
+          void handlePlanKeepPlanning(
             `You must write your plan to a plan file before exiting plan mode.\n` +
               (planFilePath ? `Plan file path: ${planFilePath}\n` : "") +
               `Use a write tool to create your plan in ${plansDir}, then use ExitPlanMode to present the plan to the user.`,
           );
-          return;
-        }
-        if (hasUsablePlan) {
-          // Other modes: keep approval flow alive and let user manually approve.
-          return;
+          return true;
         }
 
-        // Plan mode state was lost and no plan file is recoverable (e.g., CLI restart)
+        if (hasUsablePlan) {
+          return false;
+        }
+
         const statusId = uid("status");
         buffersRef.current.byId.set(statusId, {
           kind: "status",
@@ -12733,7 +12858,6 @@ ${SYSTEM_REMINDER_CLOSE}
         });
         buffersRef.current.order.push(statusId);
 
-        // Queue denial to send with next message (same pattern as handleCancelApprovals)
         const denialResults = [
           {
             type: "approval" as const,
@@ -12744,43 +12868,44 @@ ${SYSTEM_REMINDER_CLOSE}
           },
         ];
         queueApprovalResults(denialResults);
-
-        // Mark tool as cancelled in buffers
         markIncompleteToolsAsCancelled(
           buffersRef.current,
           true,
           "internal_cancel",
         );
         refreshDerived();
-
-        // Clear all approval state (same as handleCancelApprovals)
         setPendingApprovals([]);
         setApprovalContexts([]);
         setApprovalResults([]);
         setAutoHandledResults([]);
         setAutoDeniedApprovals([]);
-        return;
+        return true;
       }
 
-      // Mode is plan: require an existing plan file (active or fallback)
       if (!hasUsablePlan) {
         const planFilePath = activePlanPath ?? fallbackPlanPath;
         const plansDir = join(homedir(), ".letta", "plans");
-        handlePlanKeepPlanning(
+        void handlePlanKeepPlanning(
           `You must write your plan to a plan file before exiting plan mode.\n` +
             (planFilePath ? `Plan file path: ${planFilePath}\n` : "") +
             `Use a write tool to create your plan in ${plansDir}, then use ExitPlanMode to present the plan to the user.`,
         );
+        return true;
       }
-    }
-  }, [
-    pendingApprovals,
-    approvalResults.length,
-    handlePlanApprove,
-    handlePlanKeepPlanning,
-    refreshDerived,
-    queueApprovalResults,
-  ]);
+
+      return false;
+    },
+    [
+      handlePlanApprove,
+      handlePlanKeepPlanning,
+      queueApprovalResults,
+      refreshDerived,
+    ],
+  );
+
+  useEffect(() => {
+    autoHandleExitPlanModeRef.current = autoHandleExitPlanMode;
+  }, [autoHandleExitPlanMode]);
 
   const handleQuestionSubmit = useCallback(
     async (answers: Record<string, string>) => {
@@ -12926,6 +13051,93 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
     ],
   );
 
+  const autoApproveEnterPlanModeBypass = useCallback(
+    async (approval: ApprovalRequest) => {
+      const currentApproval = pendingApprovals[approvalResults.length];
+      if (
+        !currentApproval ||
+        currentApproval.toolCallId !== approval.toolCallId
+      ) {
+        return;
+      }
+
+      const isLast = approvalResults.length + 1 >= pendingApprovals.length;
+
+      const planFilePath = generatePlanFilePath();
+      const applyPatchRelativePath = relative(
+        process.cwd(),
+        planFilePath,
+      ).replace(/\\/g, "/");
+
+      permissionMode.setPlanFilePath(planFilePath);
+      cacheLastPlanFilePath(planFilePath);
+
+      const toolReturn = `Entered plan mode. You should now focus on exploring the codebase and designing an implementation approach.
+
+In plan mode, you should:
+1. Thoroughly explore the codebase to understand existing patterns
+2. Identify similar features and architectural approaches
+3. Consider multiple approaches and their trade-offs
+4. Use AskUserQuestion if you need to clarify the approach
+5. Design a concrete implementation strategy
+6. When ready, use ExitPlanMode to present your plan for approval
+
+Remember: DO NOT write or edit any files yet. This is a read-only exploration and planning phase.
+
+Plan file path: ${planFilePath}
+If using apply_patch, use this exact relative patch path: ${applyPatchRelativePath}`;
+
+      const precomputedResult: ToolExecutionResult = {
+        toolReturn,
+        status: "success",
+      };
+
+      onChunk(buffersRef.current, {
+        message_type: "tool_return_message",
+        id: "dummy",
+        date: new Date().toISOString(),
+        tool_call_id: approval.toolCallId,
+        tool_return: toolReturn,
+        status: "success",
+        stdout: null,
+        stderr: null,
+      });
+
+      setThinkingMessage(getRandomThinkingVerb());
+      refreshDerived();
+
+      const decision = {
+        type: "approve" as const,
+        approval,
+        precomputedResult,
+      };
+
+      if (isLast) {
+        setIsExecutingTool(true);
+        await sendAllResults(decision);
+      } else {
+        setApprovalResults((prev) => [...prev, decision]);
+      }
+    },
+    [
+      approvalResults,
+      pendingApprovals,
+      cacheLastPlanFilePath,
+      refreshDerived,
+      sendAllResults,
+    ],
+  );
+
+  useEffect(() => {
+    autoApproveEnterPlanModeBypassRef.current = autoApproveEnterPlanModeBypass;
+
+    const pendingApproval = pendingEnterPlanAutoApproveRef.current;
+    if (pendingApproval) {
+      pendingEnterPlanAutoApproveRef.current = null;
+      void autoApproveEnterPlanModeBypass(pendingApproval);
+    }
+  }, [autoApproveEnterPlanModeBypass]);
+
   const handleEnterPlanModeReject = useCallback(async () => {
     const currentIndex = approvalResults.length;
     const approval = pendingApprovals[currentIndex];
@@ -12949,20 +13161,6 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
       setApprovalResults((prev) => [...prev, decision]);
     }
   }, [pendingApprovals, approvalResults, sendAllResults]);
-
-  // Guard EnterPlanMode:
-  // When in bypassPermissions (YOLO) mode, auto-approve EnterPlanMode and stay
-  // in YOLO — the agent gets plan instructions but keeps full permissions.
-  // The existing ExitPlanMode guard then auto-approves the exit too.
-  useEffect(() => {
-    const currentIndex = approvalResults.length;
-    const approval = pendingApprovals[currentIndex];
-    if (approval?.toolName === "EnterPlanMode") {
-      if (permissionMode.getMode() === "bypassPermissions") {
-        handleEnterPlanModeApprove(true);
-      }
-    }
-  }, [pendingApprovals, approvalResults.length, handleEnterPlanModeApprove]);
 
   // Live area shows only in-progress items
   // biome-ignore lint/correctness/useExhaustiveDependencies: staticItems.length and deferredCommitAt are intentional triggers to recompute when items are promoted to static or deferred commits complete
@@ -14003,6 +14201,20 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
 
                       // Restore pending approvals if any (fixes #540 for ConversationSelector)
                       if (resumeData.pendingApprovals.length > 0) {
+                        if (
+                          autoHandleEnterPlanModeInBypass(
+                            resumeData.pendingApprovals,
+                          )
+                        ) {
+                          return;
+                        }
+                        if (
+                          maybeAutoHandleExitPlanMode(
+                            resumeData.pendingApprovals,
+                          )
+                        ) {
+                          return;
+                        }
                         setPendingApprovals(resumeData.pendingApprovals);
 
                         // Analyze approval contexts (same logic as startup)
@@ -14299,6 +14511,20 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
 
                       // Restore pending approvals if any
                       if (resumeData.pendingApprovals.length > 0) {
+                        if (
+                          autoHandleEnterPlanModeInBypass(
+                            resumeData.pendingApprovals,
+                          )
+                        ) {
+                          return;
+                        }
+                        if (
+                          maybeAutoHandleExitPlanMode(
+                            resumeData.pendingApprovals,
+                          )
+                        ) {
+                          return;
+                        }
                         setPendingApprovals(resumeData.pendingApprovals);
                         try {
                           const contexts = await Promise.all(
