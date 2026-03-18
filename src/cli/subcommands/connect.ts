@@ -10,6 +10,7 @@ import {
   isConnectApiKeyProvider,
   isConnectBedrockProvider,
   isConnectOAuthProvider,
+  isConnectZaiBaseProvider,
   listConnectProvidersForHelp,
   listConnectProviderTokens,
   resolveConnectProvider,
@@ -261,6 +262,14 @@ export async function runConnectSubcommand(
   if (isConnectApiKeyProvider(provider)) {
     let apiKey =
       readStringOption(parsed.values["api-key"]) ?? restPositionals[0] ?? "";
+    if (!apiKey && isConnectZaiBaseProvider(provider)) {
+      io.stdout(
+        "Do you have a Z.ai Coding plan?\n" +
+          "  • Coding plan:  letta connect zai-coding [--api-key <key>]\n" +
+          "  • Regular API:  letta connect zai [--api-key <key>]",
+      );
+      return 0;
+    }
     if (!apiKey) {
       if (!io.isTTY()) {
         io.stderr(
