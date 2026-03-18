@@ -1,6 +1,7 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import WebSocket from "ws";
 import { permissionMode } from "../../permissions/mode";
+import { getConversationPermissionModeState } from "./permissionMode";
 import type { DequeuedBatch } from "../../queue/queueRuntime";
 import { settingsManager } from "../../settings-manager";
 import { getToolNames } from "../../tools/manager";
@@ -120,12 +121,18 @@ export function buildDeviceStatus(
       return "auto" as const;
     }
   })();
+  // Read mode from the persistent ListenerRuntime map (outlives ConversationRuntime).
+  const conversationPermissionModeState = getConversationPermissionModeState(
+    listener,
+    scopedAgentId,
+    scopedConversationId,
+  );
   return {
     current_connection_id: listener.connectionId,
     connection_name: listener.connectionName,
     is_online: listener.socket?.readyState === WebSocket.OPEN,
     is_processing: !!conversationRuntime?.isProcessing,
-    current_permission_mode: permissionMode.getMode(),
+    current_permission_mode: conversationPermissionModeState.mode,
     current_working_directory: getConversationWorkingDirectory(
       listener,
       scopedAgentId,

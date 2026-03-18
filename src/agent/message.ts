@@ -11,6 +11,7 @@ import type {
 import type { MessageCreateParams as ConversationMessageCreateParams } from "@letta-ai/letta-client/resources/conversations/messages";
 import {
   type ClientTool,
+  type PermissionModeState,
   captureToolExecutionContext,
   waitForToolsetReady,
 } from "../tools/manager";
@@ -58,6 +59,9 @@ export type SendMessageStreamOptions = {
   agentId?: string; // Required when conversationId is "default"
   approvalNormalization?: ApprovalNormalizationOptions;
   workingDirectory?: string;
+  /** Per-conversation permission mode state. When provided, tool execution uses
+   *  this scoped state instead of the global permissionMode singleton. */
+  permissionModeState?: PermissionModeState;
 };
 
 export function buildConversationMessagesCreateRequestBody(
@@ -123,6 +127,7 @@ export async function sendMessageStream(
   await waitForToolsetReady();
   const { clientTools, contextId } = captureToolExecutionContext(
     opts.workingDirectory,
+    opts.permissionModeState,
   );
   const { clientSkills, errors: clientSkillDiscoveryErrors } =
     await buildClientSkillsPayload({

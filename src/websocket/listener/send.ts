@@ -21,6 +21,7 @@ import {
   parseRetryAfterHeaderMs,
 } from "../../agent/turn-recovery-policy";
 import { classifyApprovals } from "../../cli/helpers/approvalClassification";
+import { getConversationPermissionModeState } from "./permissionMode";
 import { getRetryStatusMessage } from "../../cli/helpers/errorFormatter";
 import { discoverFallbackRunIdWithTimeout } from "../../cli/helpers/stream";
 import { computeDiffPreviews } from "../../helpers/diffPreview";
@@ -144,6 +145,11 @@ async function resolveStaleApprovals(
         requireArgsForAutoApprove: true,
         missingNameReason: "Tool call incomplete - missing name",
         workingDirectory: recoveryWorkingDirectory,
+        permissionModeState: getConversationPermissionModeState(
+          runtime.listener,
+          runtime.agentId,
+          runtime.conversationId,
+        ),
       },
     );
 
