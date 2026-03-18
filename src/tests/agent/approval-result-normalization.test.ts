@@ -8,6 +8,26 @@ import {
 import { INTERRUPTED_BY_USER } from "../../constants";
 
 describe("normalizeApprovalResultsForPersistence", () => {
+  test("converts legacy approved approval payloads with tool_return into tool results", () => {
+    const approvals: ApprovalResult[] = [
+      {
+        type: "approval",
+        tool_call_id: "call-legacy",
+        approve: true,
+        tool_return: "legacy result",
+      } as unknown as ApprovalResult,
+    ];
+
+    const normalized = normalizeApprovalResultsForPersistence(approvals);
+
+    expect(normalized[0]).toMatchObject({
+      type: "tool",
+      tool_call_id: "call-legacy",
+      tool_return: "legacy result",
+      status: "success",
+    });
+  });
+
   test("forces status=error for structured interrupted tool_call_ids", () => {
     const approvals: ApprovalResult[] = [
       {
@@ -73,6 +93,31 @@ describe("normalizeApprovalResultsForPersistence", () => {
 });
 
 describe("normalizeOutgoingApprovalMessages", () => {
+  test("canonicalizes malformed approved approval payloads before sending", () => {
+    const approvalMessage: ApprovalCreate = {
+      type: "approval",
+      approvals: [
+        {
+          type: "approval",
+          tool_call_id: "call-legacy",
+          approve: true,
+          tool_return: "legacy result",
+        } as unknown as ApprovalResult,
+      ],
+    };
+
+    const messages = normalizeOutgoingApprovalMessages([approvalMessage]);
+    const normalizedApproval = messages[0] as ApprovalCreate;
+    const approvals = normalizedApproval.approvals ?? [];
+
+    expect(approvals[0]).toMatchObject({
+      type: "tool",
+      tool_call_id: "call-legacy",
+      tool_return: "legacy result",
+      status: "success",
+    });
+  });
+
   test("normalizes approvals and preserves non-approval messages", () => {
     const approvalMessage: ApprovalCreate = {
       type: "approval",

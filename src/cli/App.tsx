@@ -10332,10 +10332,12 @@ ${SYSTEM_REMINDER_CLOSE}
                 // (can't use state here as it won't be available until next render)
                 const recoveryApprovalResults = [
                   ...autoAllowedResults.map((ar) => ({
-                    type: "approval" as const,
+                    type: "tool" as const,
                     tool_call_id: ar.toolCallId,
-                    approve: true,
                     tool_return: ar.result.toolReturn,
+                    status: ar.result.status,
+                    stdout: ar.result.stdout,
+                    stderr: ar.result.stderr,
                   })),
                   ...autoDeniedResults,
                 ];
