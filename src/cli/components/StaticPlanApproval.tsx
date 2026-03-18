@@ -130,12 +130,9 @@ export const StaticPlanApproval = memo(
 
         // When on regular options
         if (key.return) {
-          if (effectiveSelectedOption === 0 && showAcceptEditsOption) {
+          if (showAcceptEditsOption && effectiveSelectedOption === 0) {
             onApproveAndAcceptEdits();
-          } else if (
-            effectiveSelectedOption === 1 ||
-            (effectiveSelectedOption === 0 && !showAcceptEditsOption)
-          ) {
+          } else {
             onApprove();
           }
           return;
