@@ -1,6 +1,6 @@
 import path from "node:path";
-import { normalizeConversationId, normalizeCwdAgentId } from "./scope";
 import { loadRemoteSettings, saveRemoteSettings } from "./remote-settings";
+import { normalizeConversationId, normalizeCwdAgentId } from "./scope";
 import type { ListenerRuntime } from "./types";
 
 export function getWorkingDirectoryScopeKey(

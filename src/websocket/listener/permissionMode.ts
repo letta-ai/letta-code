@@ -118,9 +118,7 @@ function persistPermissionModeMap(
     // If currently in plan mode, persist the effective mode as modeBeforePlan
     // so we don't restore into plan mode (plan file path is ephemeral).
     const modeToSave: PermissionMode =
-      state.mode === "plan"
-        ? (state.modeBeforePlan ?? "default")
-        : state.mode;
+      state.mode === "plan" ? (state.modeBeforePlan ?? "default") : state.mode;
 
     // Skip entries that are just "default" with no context — lean map.
     if (modeToSave === "default" && state.modeBeforePlan === null) {
