@@ -48,6 +48,7 @@ import {
 } from "./permissionMode";
 import {
   emitCanonicalMessageDelta,
+  emitDeviceStatusIfOpen,
   emitInterruptedStatusDelta,
   emitLoopErrorDelta,
   emitLoopStatusUpdate,
@@ -768,6 +769,18 @@ export async function handleIncomingMessage(
       conversationId,
       turnPermissionModeState,
     );
+
+    // Emit a corrected device status now that the permission mode is synced.
+    // The emitRuntimeStateUpdates() calls earlier in the turn read from the map
+    // before setConversationPermissionModeState() ran, so they emitted a stale
+    // current_permission_mode. This final emission sends the correct value,
+    // ensuring the web UI (and desktop) always reflect mode changes from
+    // EnterPlanMode/ExitPlanMode and that mid-turn web permission changes
+    // are not reverted by a stale emission at turn end.
+    emitDeviceStatusIfOpen(runtime, {
+      agent_id: agentId || null,
+      conversation_id: conversationId,
+    });
 
     runtime.activeAbortController = null;
     runtime.cancelRequested = false;
