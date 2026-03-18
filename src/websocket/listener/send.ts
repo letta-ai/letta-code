@@ -213,6 +213,7 @@ async function resolveStaleApprovals(
                     toolArgs: JSON.stringify(response.updated_input),
                   }
                 : ac.approval,
+              reason: response.message,
             });
           } else {
             decisions.push({

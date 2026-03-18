@@ -50,6 +50,7 @@ type Decision =
         toolName: string;
         toolArgs: string;
       };
+      reason?: string;
     }
   | {
       type: "deny";
@@ -230,7 +231,11 @@ export async function handleApprovalStop(params: {
                 toolArgs: JSON.stringify(response.updated_input),
               }
             : ac.approval;
-          decisions.push({ type: "approve", approval: finalApproval });
+          decisions.push({
+            type: "approve",
+            approval: finalApproval,
+            reason: response.message,
+          });
         } else {
           decisions.push({
             type: "deny",

@@ -283,6 +283,7 @@ export interface StreamDeltaMessage extends RuntimeEnvelope {
 
 export interface ApprovalResponseAllowDecision {
   behavior: "allow";
+  message?: string;
   updated_input?: Record<string, unknown> | null;
   updated_permissions?: string[];
 }

@@ -94,6 +94,8 @@ export function isValidApprovalResponseBody(
     updated_permissions?: unknown;
   };
   if (decision.behavior === "allow") {
+    const hasMessage =
+      decision.message === undefined || typeof decision.message === "string";
     const hasUpdatedInput =
       decision.updated_input === undefined ||
       decision.updated_input === null ||
@@ -104,7 +106,7 @@ export function isValidApprovalResponseBody(
         decision.updated_permissions.every(
           (entry) => typeof entry === "string",
         ));
-    return hasUpdatedInput && hasUpdatedPermissions;
+    return hasMessage && hasUpdatedInput && hasUpdatedPermissions;
   }
   if (decision.behavior === "deny") {
     return typeof decision.message === "string";

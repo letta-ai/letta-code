@@ -170,6 +170,7 @@ export type ApprovalDecision =
   | {
       type: "approve";
       approval: ApprovalRequest;
+      reason?: string;
       // If set, skip executeTool and use this result (for fancy UI tools)
       precomputedResult?: ToolExecutionResult;
     }
