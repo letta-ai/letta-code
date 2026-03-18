@@ -266,7 +266,11 @@ class PermissionModeManager {
         : this.getPlanFilePath();
     switch (effectiveMode) {
       case "bypassPermissions":
-        // Auto-allow everything (except explicit deny rules checked earlier)
+        // ExitPlanMode always requires human approval, even in yolo mode
+        if (toolName === "ExitPlanMode" || toolName === "exit_plan_mode") {
+          return null;
+        }
+        // Auto-allow everything else (except explicit deny rules checked earlier)
         return "allow";
 
       case "acceptEdits":

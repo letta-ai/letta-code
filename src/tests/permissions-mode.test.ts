@@ -66,6 +66,42 @@ test("bypassPermissions mode - allows all tools", () => {
   expect(writeResult.decision).toBe("allow");
 });
 
+test("bypassPermissions mode - ExitPlanMode always requires approval", () => {
+  permissionMode.setMode("bypassPermissions");
+
+  const permissions: PermissionRules = {
+    allow: [],
+    deny: [],
+    ask: [],
+  };
+
+  // ExitPlanMode should NOT be auto-approved in yolo mode
+  const exitResult = checkPermission(
+    "ExitPlanMode",
+    {},
+    permissions,
+    "/Users/test/project",
+  );
+  expect(exitResult.decision).toBe("ask");
+
+  const exitSnakeResult = checkPermission(
+    "exit_plan_mode",
+    {},
+    permissions,
+    "/Users/test/project",
+  );
+  expect(exitSnakeResult.decision).toBe("ask");
+
+  // EnterPlanMode should still be auto-approved
+  const enterResult = checkPermission(
+    "EnterPlanMode",
+    {},
+    permissions,
+    "/Users/test/project",
+  );
+  expect(enterResult.decision).toBe("allow");
+});
+
 test("bypassPermissions mode - does NOT override deny rules", () => {
   permissionMode.setMode("bypassPermissions");
 
