@@ -150,7 +150,10 @@ export type ListenerRuntime = {
   bootWorkingDirectory: string;
   workingDirectoryByConversation: Map<string, string>;
   /** Per-conversation permission mode state. Mirrors workingDirectoryByConversation. */
-  permissionModeByConversation: Map<string, import("./permissionMode").ConversationPermissionModeState>;
+  permissionModeByConversation: Map<
+    string,
+    import("./permissionMode").ConversationPermissionModeState
+  >;
   connectionId: string | null;
   connectionName: string | null;
   conversationRuntimes: Map<string, ConversationRuntime>;

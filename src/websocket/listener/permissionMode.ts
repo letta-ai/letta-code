@@ -6,8 +6,9 @@
  *   ephemeral ConversationRuntime, which gets evicted between turns).
  * - A scope key derived from agentId + conversationId is used as the map key.
  */
-import { permissionMode as globalPermissionMode } from "../../permissions/mode";
+
 import type { PermissionMode } from "../../permissions/mode";
+import { permissionMode as globalPermissionMode } from "../../permissions/mode";
 import { normalizeConversationId, normalizeCwdAgentId } from "./scope";
 import type { ListenerRuntime } from "./types";
 

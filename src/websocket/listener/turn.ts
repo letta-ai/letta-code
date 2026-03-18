@@ -43,6 +43,10 @@ import {
   populateInterruptQueue,
 } from "./interrupts";
 import {
+  getConversationPermissionModeState,
+  setConversationPermissionModeState,
+} from "./permissionMode";
+import {
   emitCanonicalMessageDelta,
   emitInterruptedStatusDelta,
   emitLoopErrorDelta,
@@ -62,10 +66,6 @@ import {
   evictConversationRuntimeIfIdle,
 } from "./runtime";
 import { normalizeCwdAgentId } from "./scope";
-import {
-  getConversationPermissionModeState,
-  setConversationPermissionModeState,
-} from "./permissionMode";
 import {
   isApprovalOnlyInput,
   markAwaitingAcceptedApprovalContinuationRunId,

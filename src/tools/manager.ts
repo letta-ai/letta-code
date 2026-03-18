@@ -1,6 +1,5 @@
 import { getDisplayableToolReturn } from "../agent/approval-execution";
 import { getModelInfo } from "../agent/model";
-import { permissionMode as globalPermissionMode, type PermissionMode } from "../permissions/mode";
 import { getAllSubagentConfigs } from "../agent/subagents";
 import { refreshFileIndex } from "../cli/helpers/fileIndex";
 import { INTERRUPTED_BY_USER } from "../constants";
@@ -9,6 +8,10 @@ import {
   runPostToolUseHooks,
   runPreToolUseHooks,
 } from "../hooks";
+import {
+  permissionMode as globalPermissionMode,
+  type PermissionMode,
+} from "../permissions/mode";
 import { OPENAI_CODEX_PROVIDER_NAME } from "../providers/openai-codex-provider";
 import { telemetry } from "../telemetry";
 import { debugLog } from "../utils/debug";
@@ -1347,7 +1350,10 @@ export async function executeTool(
       "exit_plan_mode",
     ]);
     if (PLAN_MODE_TOOL_NAMES.has(internalName) && options?.toolContextId) {
-      enhancedArgs = { ...enhancedArgs, _executionContextId: options.toolContextId };
+      enhancedArgs = {
+        ...enhancedArgs,
+        _executionContextId: options.toolContextId,
+      };
     }
 
     const result = await withExecutionWorkingDirectory(workingDirectory, () =>

@@ -11,10 +11,6 @@ import WebSocket from "ws";
 import { getClient } from "../../agent/client";
 import { generatePlanFilePath } from "../../cli/helpers/planName";
 import { INTERRUPTED_BY_USER } from "../../constants";
-import {
-  getConversationPermissionModeState,
-  setConversationPermissionModeState,
-} from "./permissionMode";
 import { type DequeuedBatch, QueueRuntime } from "../../queue/queueRuntime";
 import { createSharedReminderState } from "../../reminders/state";
 import { settingsManager } from "../../settings-manager";
@@ -50,6 +46,10 @@ import {
   populateInterruptQueue,
   stashRecoveredApprovalInterrupts,
 } from "./interrupts";
+import {
+  getConversationPermissionModeState,
+  setConversationPermissionModeState,
+} from "./permissionMode";
 import { parseServerMessage } from "./protocol-inbound";
 import {
   buildDeviceStatus,

@@ -29,7 +29,8 @@ export async function enter_plan_mode(
   if (scopedState) {
     if (scopedState.mode !== "plan" || !scopedState.planFilePath) {
       const planFilePath = generatePlanFilePath();
-      scopedState.modeBeforePlan = scopedState.modeBeforePlan ?? scopedState.mode;
+      scopedState.modeBeforePlan =
+        scopedState.modeBeforePlan ?? scopedState.mode;
       scopedState.mode = "plan";
       scopedState.planFilePath = planFilePath;
     }
@@ -44,7 +45,8 @@ export async function enter_plan_mode(
     }
   }
 
-  const planFilePath = scopedState?.planFilePath ?? permissionMode.getPlanFilePath();
+  const planFilePath =
+    scopedState?.planFilePath ?? permissionMode.getPlanFilePath();
   const cwd = process.env.USER_CWD || process.cwd();
   const applyPatchRelativePath = planFilePath
     ? relative(cwd, planFilePath).replace(/\\/g, "/")

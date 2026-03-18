@@ -4,6 +4,7 @@
 import { relative, resolve } from "node:path";
 import { getCurrentAgentId } from "../agent/context";
 import { runPermissionRequestHooks } from "../hooks";
+import type { PermissionModeState } from "../tools/manager";
 import { canonicalToolName, isShellToolName } from "./canonical";
 import { cliPermissions } from "./cli";
 import {
@@ -13,7 +14,6 @@ import {
   matchesToolPattern,
 } from "./matcher";
 import { permissionMode } from "./mode";
-import type { PermissionModeState } from "../tools/manager";
 import { isMemoryDirCommand, isReadOnlyShellCommand } from "./readOnlyShell";
 import { sessionPermissions } from "./session";
 import type {

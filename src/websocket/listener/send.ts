@@ -21,7 +21,6 @@ import {
   parseRetryAfterHeaderMs,
 } from "../../agent/turn-recovery-policy";
 import { classifyApprovals } from "../../cli/helpers/approvalClassification";
-import { getConversationPermissionModeState } from "./permissionMode";
 import { getRetryStatusMessage } from "../../cli/helpers/errorFormatter";
 import { discoverFallbackRunIdWithTimeout } from "../../cli/helpers/stream";
 import { computeDiffPreviews } from "../../helpers/diffPreview";
@@ -42,6 +41,7 @@ import {
   emitToolExecutionFinishedEvents,
   emitToolExecutionStartedEvents,
 } from "./interrupts";
+import { getConversationPermissionModeState } from "./permissionMode";
 import {
   emitRetryDelta,
   emitRuntimeStateUpdates,

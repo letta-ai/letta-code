@@ -11,8 +11,8 @@ import type {
 import type { MessageCreateParams as ConversationMessageCreateParams } from "@letta-ai/letta-client/resources/conversations/messages";
 import {
   type ClientTool,
-  type PermissionModeState,
   captureToolExecutionContext,
+  type PermissionModeState,
   waitForToolsetReady,
 } from "../tools/manager";
 import { debugLog, debugWarn, isDebugEnabled } from "../utils/debug";

@@ -1,7 +1,6 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import WebSocket from "ws";
 import { permissionMode } from "../../permissions/mode";
-import { getConversationPermissionModeState } from "./permissionMode";
 import type { DequeuedBatch } from "../../queue/queueRuntime";
 import { settingsManager } from "../../settings-manager";
 import { getToolNames } from "../../tools/manager";
@@ -23,6 +22,7 @@ import type {
 } from "../../types/protocol_v2";
 import { SYSTEM_REMINDER_RE } from "./constants";
 import { getConversationWorkingDirectory } from "./cwd";
+import { getConversationPermissionModeState } from "./permissionMode";
 import {
   getConversationRuntime,
   getPendingControlRequests,
