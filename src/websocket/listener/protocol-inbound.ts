@@ -192,7 +192,12 @@ function isSyncCommand(value: unknown): value is SyncCommand {
 
 function isTerminalSpawnCommand(value: unknown): value is TerminalSpawnCommand {
   if (!value || typeof value !== "object") return false;
-  const c = value as { type?: unknown; terminal_id?: unknown; cols?: unknown; rows?: unknown };
+  const c = value as {
+    type?: unknown;
+    terminal_id?: unknown;
+    cols?: unknown;
+    rows?: unknown;
+  };
   return (
     c.type === "terminal_spawn" &&
     typeof c.terminal_id === "string" &&
@@ -211,9 +216,16 @@ function isTerminalInputCommand(value: unknown): value is TerminalInputCommand {
   );
 }
 
-function isTerminalResizeCommand(value: unknown): value is TerminalResizeCommand {
+function isTerminalResizeCommand(
+  value: unknown,
+): value is TerminalResizeCommand {
   if (!value || typeof value !== "object") return false;
-  const c = value as { type?: unknown; terminal_id?: unknown; cols?: unknown; rows?: unknown };
+  const c = value as {
+    type?: unknown;
+    terminal_id?: unknown;
+    cols?: unknown;
+    rows?: unknown;
+  };
   return (
     c.type === "terminal_resize" &&
     typeof c.terminal_id === "string" &&
