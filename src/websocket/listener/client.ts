@@ -48,6 +48,7 @@ import {
 } from "./interrupts";
 import {
   getConversationPermissionModeState,
+  loadPersistedPermissionModeMap,
   setConversationPermissionModeState,
 } from "./permissionMode";
 import { parseServerMessage } from "./protocol-inbound";
@@ -412,7 +413,7 @@ function createRuntime(): ListenerRuntime {
     reminderState: createSharedReminderState(),
     bootWorkingDirectory,
     workingDirectoryByConversation: loadPersistedCwdMap(),
-    permissionModeByConversation: new Map(),
+    permissionModeByConversation: loadPersistedPermissionModeMap(),
     connectionId: null,
     connectionName: null,
     conversationRuntimes: new Map(),
