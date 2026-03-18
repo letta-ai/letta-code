@@ -6,6 +6,7 @@ import { SyntaxHighlightedCommand } from "../SyntaxHighlightedCommand";
 import { Text } from "../Text";
 
 const SOLID_LINE = "─";
+const BASH_PREVIEW_MAX_LINES = 3;
 
 type Props = {
   command: string;
@@ -37,7 +38,12 @@ export const BashPreview = memo(({ command, description }: Props) => {
 
       {/* Command preview */}
       <Box paddingLeft={2} flexDirection="column">
-        <SyntaxHighlightedCommand command={command} />
+        <SyntaxHighlightedCommand
+          command={command}
+          maxLines={BASH_PREVIEW_MAX_LINES}
+          maxColumns={Math.max(10, columns - 2)}
+          showTruncationHint
+        />
         {description && <Text dimColor>{description}</Text>}
       </Box>
     </>

@@ -28,6 +28,7 @@ type Props = {
 
 // Horizontal line character for Claude Code style
 const SOLID_LINE = "─";
+const BASH_PREVIEW_MAX_LINES = 3;
 
 /**
  * InlineBashApproval - Renders bash/shell approval UI inline (Claude Code style)
@@ -152,7 +153,12 @@ export const InlineBashApproval = memo(
 
           {/* Command preview */}
           <Box paddingLeft={2} flexDirection="column">
-            <SyntaxHighlightedCommand command={bashInfo.command} />
+            <SyntaxHighlightedCommand
+              command={bashInfo.command}
+              maxLines={BASH_PREVIEW_MAX_LINES}
+              maxColumns={Math.max(10, columns - 2)}
+              showTruncationHint
+            />
             {bashInfo.description && (
               <Box marginTop={1}>
                 <Text dimColor>{bashInfo.description}</Text>
@@ -161,7 +167,7 @@ export const InlineBashApproval = memo(
           </Box>
         </>
       ),
-      [bashInfo.command, bashInfo.description, solidLine],
+      [bashInfo.command, bashInfo.description, solidLine, columns],
     );
 
     // Hint text based on state

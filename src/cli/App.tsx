@@ -584,6 +584,7 @@ const APPROVAL_PREVIEW_BUFFER = 4;
 const MIN_WRAP_WIDTH = 10;
 const TEXT_WRAP_GUTTER = 6;
 const DIFF_WRAP_GUTTER = 12;
+const SHELL_PREVIEW_MAX_LINES = 3;
 
 function countWrappedLines(text: string, width: number): number {
   if (!text) return 0;
@@ -2611,7 +2612,10 @@ export default function App({
         }
 
         let lines = 3; // solid line + header + blank line
-        lines += countWrappedLines(command, wrapWidth);
+        lines += Math.min(
+          countWrappedLines(command, wrapWidth),
+          SHELL_PREVIEW_MAX_LINES,
+        );
         if (description) {
           lines += countWrappedLines(description, wrapWidth);
         }
