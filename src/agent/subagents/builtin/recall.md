@@ -3,7 +3,7 @@ name: recall
 description: Search conversation history to recall past discussions, decisions, and context
 tools: Bash, Read, TaskOutput
 skills: searching-messages
-model: haiku
+model: auto-fast
 memoryBlocks: none
 mode: stateless
 ---
