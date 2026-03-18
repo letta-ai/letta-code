@@ -2,6 +2,7 @@
   "models": [
     {
       "id": "auto",
+      "isDefault": true,
       "handle": "letta/auto",
       "label": "Auto",
       "description": "Automatically select the best model",
@@ -21,7 +22,6 @@
       "handle": "anthropic/claude-sonnet-4-6",
       "label": "Sonnet 4.6",
       "description": "Anthropic's new Sonnet model (high reasoning)",
-      "isDefault": true,
       "isFeatured": true,
       "updateArgs": {
         "context_window": 200000,
