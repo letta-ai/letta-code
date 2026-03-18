@@ -1,9 +1,11 @@
 import { relative } from "node:path";
 import { generatePlanFilePath } from "../../cli/helpers/planName";
 import { permissionMode } from "../../permissions/mode";
+import { getExecutionContextPermissionModeState } from "../manager";
 
 interface EnterPlanModeArgs {
-  [key: string]: never;
+  /** Injected by executeTool — do not pass manually */
+  _executionContextId?: string;
 }
 
 interface EnterPlanModeResult {
@@ -11,22 +13,40 @@ interface EnterPlanModeResult {
 }
 
 export async function enter_plan_mode(
-  _args: EnterPlanModeArgs,
+  args: EnterPlanModeArgs,
 ): Promise<EnterPlanModeResult> {
+  // Resolve the permission mode state: prefer the per-conversation scoped
+  // state when an execution context is present (listener/remote mode);
+  // fall back to a wrapper around the global singleton for local/CLI mode.
+  const scopedState = args._executionContextId
+    ? getExecutionContextPermissionModeState(args._executionContextId)
+    : undefined;
+
   // Normally this is handled by handleEnterPlanModeApprove in the UI layer,
   // which sets up state and returns a precomputed result (so this function
   // never runs). But if the generic approval flow is used for any reason,
   // we need to set up state here as a defensive fallback.
-  if (
-    permissionMode.getMode() !== "plan" ||
-    !permissionMode.getPlanFilePath()
-  ) {
-    const planFilePath = generatePlanFilePath();
-    permissionMode.setMode("plan");
-    permissionMode.setPlanFilePath(planFilePath);
+  if (scopedState) {
+    if (scopedState.mode !== "plan" || !scopedState.planFilePath) {
+      const planFilePath = generatePlanFilePath();
+      scopedState.modeBeforePlan =
+        scopedState.modeBeforePlan ?? scopedState.mode;
+      scopedState.mode = "plan";
+      scopedState.planFilePath = planFilePath;
+    }
+  } else {
+    if (
+      permissionMode.getMode() !== "plan" ||
+      !permissionMode.getPlanFilePath()
+    ) {
+      const planFilePath = generatePlanFilePath();
+      permissionMode.setMode("plan");
+      permissionMode.setPlanFilePath(planFilePath);
+    }
   }
 
-  const planFilePath = permissionMode.getPlanFilePath();
+  const planFilePath =
+    scopedState?.planFilePath ?? permissionMode.getPlanFilePath();
   const cwd = process.env.USER_CWD || process.cwd();
   const applyPatchRelativePath = planFilePath
     ? relative(cwd, planFilePath).replace(/\\/g, "/")

@@ -41,6 +41,7 @@ import {
   emitToolExecutionFinishedEvents,
   emitToolExecutionStartedEvents,
 } from "./interrupts";
+import { getConversationPermissionModeState } from "./permissionMode";
 import {
   emitRetryDelta,
   emitRuntimeStateUpdates,
@@ -144,6 +145,11 @@ async function resolveStaleApprovals(
         requireArgsForAutoApprove: true,
         missingNameReason: "Tool call incomplete - missing name",
         workingDirectory: recoveryWorkingDirectory,
+        permissionModeState: getConversationPermissionModeState(
+          runtime.listener,
+          runtime.agentId,
+          runtime.conversationId,
+        ),
       },
     );
 

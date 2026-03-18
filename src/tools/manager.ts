@@ -8,6 +8,10 @@ import {
   runPostToolUseHooks,
   runPreToolUseHooks,
 } from "../hooks";
+import {
+  permissionMode as globalPermissionMode,
+  type PermissionMode,
+} from "../permissions/mode";
 import { OPENAI_CODEX_PROVIDER_NAME } from "../providers/openai-codex-provider";
 import { telemetry } from "../telemetry";
 import { debugLog } from "../utils/debug";
@@ -303,11 +307,25 @@ function getSwitchLock(): SwitchLockState {
 const toolRegistry = getRegistry();
 let toolExecutionContextCounter = 0;
 
+/**
+ * Mutable, shared-by-reference permission mode state.
+ * Stored in each ToolExecutionContextSnapshot so tools like EnterPlanMode
+ * and ExitPlanMode can update the mode without touching the global singleton.
+ * Listener mode populates this from ConversationRuntime; CLI mode uses a
+ * wrapper around the global permissionMode singleton.
+ */
+export type PermissionModeState = {
+  mode: PermissionMode;
+  planFilePath: string | null;
+  modeBeforePlan: PermissionMode | null;
+};
+
 type ToolExecutionContextSnapshot = {
   toolRegistry: ToolRegistry;
   externalTools: Map<string, ExternalToolDefinition>;
   externalExecutor?: ExternalToolExecutor;
   workingDirectory: string;
+  permissionModeState: PermissionModeState;
 };
 
 export type CapturedToolExecutionContext = {
@@ -344,6 +362,17 @@ function getExecutionContextById(
   contextId: string,
 ): ToolExecutionContextSnapshot | undefined {
   return getExecutionContexts().get(contextId);
+}
+
+/**
+ * Returns the mutable PermissionModeState for an execution context.
+ * EnterPlanMode / ExitPlanMode use this to update the per-conversation
+ * state without touching the global singleton.
+ */
+export function getExecutionContextPermissionModeState(
+  contextId: string,
+): PermissionModeState | undefined {
+  return getExecutionContextById(contextId)?.permissionModeState;
 }
 
 export function clearCapturedToolExecutionContexts(): void {
@@ -618,12 +647,37 @@ export function getClientToolsFromRegistry(): ClientTool[] {
  */
 export function captureToolExecutionContext(
   workingDirectory: string = process.env.USER_CWD || process.cwd(),
+  permissionModeState?: PermissionModeState,
 ): CapturedToolExecutionContext {
+  // When no scoped state is provided (local/CLI mode), create a live proxy to
+  // the global singleton so EnterPlanMode/ExitPlanMode still work correctly.
+  const effectivePermissionModeState: PermissionModeState =
+    permissionModeState ?? {
+      get mode() {
+        return globalPermissionMode.getMode();
+      },
+      set mode(value: PermissionMode) {
+        globalPermissionMode.setMode(value);
+      },
+      get planFilePath() {
+        return globalPermissionMode.getPlanFilePath();
+      },
+      set planFilePath(value: string | null) {
+        globalPermissionMode.setPlanFilePath(value);
+      },
+      get modeBeforePlan() {
+        return globalPermissionMode.getModeBeforePlan();
+      },
+      set modeBeforePlan(_value: PermissionMode | null) {
+        // managed internally by globalPermissionMode
+      },
+    };
   const snapshot: ToolExecutionContextSnapshot = {
     toolRegistry: new Map(toolRegistry),
     externalTools: new Map(getExternalToolsRegistry()),
     externalExecutor: getExternalToolExecutor(),
     workingDirectory,
+    permissionModeState: effectivePermissionModeState,
   };
   const contextId = saveExecutionContext(snapshot);
 
@@ -699,6 +753,7 @@ export async function checkToolPermission(
   toolName: string,
   toolArgs: ToolArgs,
   workingDirectory: string = process.cwd(),
+  permissionModeStateArg?: PermissionModeState,
 ): Promise<{
   decision: "allow" | "deny" | "ask";
   matchedRule?: string;
@@ -713,6 +768,7 @@ export async function checkToolPermission(
     toolArgs,
     permissions,
     workingDirectory,
+    permissionModeStateArg,
   );
 }
 
@@ -1283,6 +1339,21 @@ export async function executeTool(
     // Inject toolCallId for Skill tool (used for skill content registry)
     if (internalName === "Skill" && options?.toolCallId) {
       enhancedArgs = { ...enhancedArgs, toolCallId: options.toolCallId };
+    }
+
+    // Inject the execution context id for plan-mode tools so they can update
+    // the per-conversation PermissionModeState without touching the global singleton.
+    const PLAN_MODE_TOOL_NAMES = new Set([
+      "EnterPlanMode",
+      "enter_plan_mode",
+      "ExitPlanMode",
+      "exit_plan_mode",
+    ]);
+    if (PLAN_MODE_TOOL_NAMES.has(internalName) && options?.toolContextId) {
+      enhancedArgs = {
+        ...enhancedArgs,
+        _executionContextId: options.toolContextId,
+      };
     }
 
     const result = await withExecutionWorkingDirectory(workingDirectory, () =>

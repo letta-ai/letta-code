@@ -22,6 +22,7 @@ import type {
 } from "../../types/protocol_v2";
 import { SYSTEM_REMINDER_RE } from "./constants";
 import { getConversationWorkingDirectory } from "./cwd";
+import { getConversationPermissionModeState } from "./permissionMode";
 import {
   getConversationRuntime,
   getPendingControlRequests,
@@ -120,12 +121,18 @@ export function buildDeviceStatus(
       return "auto" as const;
     }
   })();
+  // Read mode from the persistent ListenerRuntime map (outlives ConversationRuntime).
+  const conversationPermissionModeState = getConversationPermissionModeState(
+    listener,
+    scopedAgentId,
+    scopedConversationId,
+  );
   return {
     current_connection_id: listener.connectionId,
     connection_name: listener.connectionName,
     is_online: listener.socket?.readyState === WebSocket.OPEN,
     is_processing: !!conversationRuntime?.isProcessing,
-    current_permission_mode: permissionMode.getMode(),
+    current_permission_mode: conversationPermissionModeState.mode,
     current_working_directory: getConversationWorkingDirectory(
       listener,
       scopedAgentId,

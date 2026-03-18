@@ -11,7 +11,6 @@ import WebSocket from "ws";
 import { getClient } from "../../agent/client";
 import { generatePlanFilePath } from "../../cli/helpers/planName";
 import { INTERRUPTED_BY_USER } from "../../constants";
-import { permissionMode } from "../../permissions/mode";
 import { type DequeuedBatch, QueueRuntime } from "../../queue/queueRuntime";
 import { createSharedReminderState } from "../../reminders/state";
 import { settingsManager } from "../../settings-manager";
@@ -47,6 +46,10 @@ import {
   populateInterruptQueue,
   stashRecoveredApprovalInterrupts,
 } from "./interrupts";
+import {
+  getConversationPermissionModeState,
+  setConversationPermissionModeState,
+} from "./permissionMode";
 import { parseServerMessage } from "./protocol-inbound";
 import {
   buildDeviceStatus,
@@ -106,7 +109,10 @@ import type {
 } from "./types";
 
 /**
- * Handle mode change request from cloud
+ * Handle mode change request from cloud.
+ * Stores the new mode in ListenerRuntime.permissionModeByConversation so
+ * each agent/conversation is isolated and the state outlives the ephemeral
+ * ConversationRuntime (which gets evicted between turns).
  */
 function handleModeChange(
   msg: ModeChangePayload,
@@ -118,13 +124,34 @@ function handleModeChange(
   },
 ): void {
   try {
-    permissionMode.setMode(msg.mode);
+    const agentId = scope?.agent_id ?? null;
+    const conversationId = scope?.conversation_id ?? "default";
+    const current = getConversationPermissionModeState(
+      runtime,
+      agentId,
+      conversationId,
+    );
 
-    // If entering plan mode, generate and set plan file path
-    if (msg.mode === "plan" && !permissionMode.getPlanFilePath()) {
-      const planFilePath = generatePlanFilePath();
-      permissionMode.setPlanFilePath(planFilePath);
+    const next = { ...current };
+
+    // Track previous mode so ExitPlanMode can restore it
+    if (msg.mode === "plan" && current.mode !== "plan") {
+      next.modeBeforePlan = current.mode;
     }
+    next.mode = msg.mode;
+
+    // Generate plan file path when entering plan mode
+    if (msg.mode === "plan" && !current.planFilePath) {
+      next.planFilePath = generatePlanFilePath();
+    }
+
+    // Clear plan-related state when leaving plan mode
+    if (msg.mode !== "plan") {
+      next.planFilePath = null;
+      next.modeBeforePlan = null;
+    }
+
+    setConversationPermissionModeState(runtime, agentId, conversationId, next);
 
     emitDeviceStatusUpdate(socket, runtime, scope);
 
@@ -385,6 +412,7 @@ function createRuntime(): ListenerRuntime {
     reminderState: createSharedReminderState(),
     bootWorkingDirectory,
     workingDirectoryByConversation: loadPersistedCwdMap(),
+    permissionModeByConversation: new Map(),
     connectionId: null,
     connectionName: null,
     conversationRuntimes: new Map(),
@@ -1004,6 +1032,7 @@ function createLegacyTestRuntime(): ConversationRuntime & {
   activeConversationId: string;
   socket: WebSocket | null;
   workingDirectoryByConversation: Map<string, string>;
+  permissionModeByConversation: ListenerRuntime["permissionModeByConversation"];
   bootWorkingDirectory: string;
   connectionId: string | null;
   connectionName: string | null;
@@ -1031,6 +1060,7 @@ function createLegacyTestRuntime(): ConversationRuntime & {
     activeConversationId: string;
     socket: WebSocket | null;
     workingDirectoryByConversation: Map<string, string>;
+    permissionModeByConversation: ListenerRuntime["permissionModeByConversation"];
     bootWorkingDirectory: string;
     connectionId: string | null;
     connectionName: string | null;
@@ -1062,6 +1092,12 @@ function createLegacyTestRuntime(): ConversationRuntime & {
       get: () => listener.workingDirectoryByConversation,
       set: (value: Map<string, string>) => {
         listener.workingDirectoryByConversation = value;
+      },
+    },
+    permissionModeByConversation: {
+      get: () => listener.permissionModeByConversation,
+      set: (value: ListenerRuntime["permissionModeByConversation"]) => {
+        listener.permissionModeByConversation = value;
       },
     },
     bootWorkingDirectory: {

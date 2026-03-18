@@ -84,6 +84,7 @@ export async function handleApprovalStop(params: {
   agentId: string;
   conversationId: string;
   turnWorkingDirectory: string;
+  turnPermissionModeState: import("../../tools/manager").PermissionModeState;
   dequeuedBatchId: string;
   runId?: string;
   msgRunIds: string[];
@@ -101,6 +102,7 @@ export async function handleApprovalStop(params: {
     agentId,
     conversationId,
     turnWorkingDirectory,
+    turnPermissionModeState,
     dequeuedBatchId,
     runId,
     msgRunIds,
@@ -161,6 +163,7 @@ export async function handleApprovalStop(params: {
       requireArgsForAutoApprove: true,
       missingNameReason: "Tool call incomplete - missing name",
       workingDirectory: turnWorkingDirectory,
+      permissionModeState: turnPermissionModeState,
     },
   );
 

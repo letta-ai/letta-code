@@ -246,15 +246,25 @@ class PermissionModeManager {
   }
 
   /**
-   * Check if a tool should be auto-allowed based on current mode
-   * Returns null if mode doesn't apply to this tool
+   * Check if a tool should be auto-allowed based on current mode.
+   * Accepts explicit `mode` and `planFilePath` overrides so callers with a
+   * scoped PermissionModeState (listener/remote mode) can bypass the global
+   * singleton without requiring a temporary mutation of global state.
+   * Returns null if mode doesn't apply to this tool.
    */
   checkModeOverride(
     toolName: string,
     toolArgs?: Record<string, unknown>,
     workingDirectory: string = process.cwd(),
+    modeOverride?: PermissionMode,
+    planFilePathOverride?: string | null,
   ): "allow" | "deny" | null {
-    switch (this.currentMode) {
+    const effectiveMode = modeOverride ?? this.currentMode;
+    const effectivePlanFilePath =
+      planFilePathOverride !== undefined
+        ? planFilePathOverride
+        : this.getPlanFilePath();
+    switch (effectiveMode) {
       case "bypassPermissions":
         // Auto-allow everything (except explicit deny rules checked earlier)
         return "allow";

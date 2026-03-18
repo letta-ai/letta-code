@@ -1,5 +1,9 @@
 import type { ApprovalContext } from "../../permissions/analyzer";
-import { checkToolPermission, getToolSchema } from "../../tools/manager";
+import {
+  checkToolPermission,
+  getToolSchema,
+  type PermissionModeState,
+} from "../../tools/manager";
 import { safeJsonParseOr } from "./safeJsonParse";
 import type { ApprovalRequest } from "./streamProcessor";
 
@@ -33,6 +37,7 @@ export type ClassifyApprovalsOptions<TContext = ApprovalContext | null> = {
   requireArgsForAutoApprove?: boolean;
   missingArgsReason?: (missing: string[]) => string;
   workingDirectory?: string;
+  permissionModeState?: PermissionModeState;
 };
 
 export async function getMissingRequiredArgs(
@@ -80,6 +85,7 @@ export async function classifyApprovals<TContext = ApprovalContext | null>(
       toolName,
       parsedArgs,
       opts.workingDirectory,
+      opts.permissionModeState,
     );
     const context = opts.getContext
       ? await opts.getContext(toolName, parsedArgs, opts.workingDirectory)

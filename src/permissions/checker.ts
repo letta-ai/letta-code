@@ -4,6 +4,7 @@
 import { relative, resolve } from "node:path";
 import { getCurrentAgentId } from "../agent/context";
 import { runPermissionRequestHooks } from "../hooks";
+import type { PermissionModeState } from "../tools/manager";
 import { canonicalToolName, isShellToolName } from "./canonical";
 import { cliPermissions } from "./cli";
 import {
@@ -133,6 +134,7 @@ export function checkPermission(
   toolArgs: ToolArgs,
   permissions: PermissionRules,
   workingDirectory: string = process.cwd(),
+  modeState?: PermissionModeState,
 ): PermissionCheckResult {
   const engine: PermissionEngine = isPermissionsV2Enabled() ? "v2" : "v1";
   const primary = checkPermissionForEngine(
@@ -141,6 +143,7 @@ export function checkPermission(
     toolArgs,
     permissions,
     workingDirectory,
+    modeState,
   );
 
   let result: PermissionCheckResult = primary.result;
@@ -170,6 +173,7 @@ export function checkPermission(
       toolArgs,
       permissions,
       workingDirectory,
+      modeState,
     );
 
     const mismatch =
@@ -244,6 +248,7 @@ function checkPermissionForEngine(
   toolArgs: ToolArgs,
   permissions: PermissionRules,
   workingDirectory: string,
+  modeState?: PermissionModeState,
 ): { result: PermissionCheckResult; trace: PermissionCheckTrace } {
   const canonicalTool = canonicalToolName(toolName);
   const queryTool = engine === "v2" ? canonicalTool : toolName;
@@ -298,22 +303,27 @@ function checkPermissionForEngine(
     }
   }
 
+  // Use the scoped permission mode state when available (listener/remote mode),
+  // otherwise fall back to the global singleton (local/CLI mode).
+  const effectiveMode = modeState?.mode ?? permissionMode.getMode();
+  const effectivePlanFilePath =
+    modeState?.planFilePath ?? permissionMode.getPlanFilePath();
   const modeOverride = permissionMode.checkModeOverride(
     toolName,
     toolArgs,
     workingDirectory,
+    effectiveMode,
+    effectivePlanFilePath,
   );
   if (modeOverride) {
-    const currentMode = permissionMode.getMode();
-    let reason = `Permission mode: ${currentMode}`;
-    if (currentMode === "plan" && modeOverride === "deny") {
-      const planFilePath = permissionMode.getPlanFilePath();
-      const applyPatchRelativePath = planFilePath
-        ? relative(workingDirectory, planFilePath).replace(/\\/g, "/")
+    let reason = `Permission mode: ${effectiveMode}`;
+    if (effectiveMode === "plan" && modeOverride === "deny") {
+      const applyPatchRelativePath = effectivePlanFilePath
+        ? relative(workingDirectory, effectivePlanFilePath).replace(/\\/g, "/")
         : null;
       reason =
         `Plan mode is active. You can only use read-only tools (Read, Grep, Glob, etc.) and write to the plan file. ` +
-        `Write your plan to: ${planFilePath || "(error: plan file path not configured)"}. ` +
+        `Write your plan to: ${effectivePlanFilePath || "(error: plan file path not configured)"}. ` +
         (applyPatchRelativePath
           ? `If using apply_patch, use this exact relative path in patch headers: ${applyPatchRelativePath}. `
           : "") +
@@ -323,7 +333,7 @@ function checkPermissionForEngine(
     return {
       result: {
         decision: modeOverride,
-        matchedRule: `${currentMode} mode`,
+        matchedRule: `${effectiveMode} mode`,
         reason,
       },
       trace,
@@ -765,6 +775,7 @@ export async function checkPermissionWithHooks(
   toolArgs: ToolArgs,
   permissions: PermissionRules,
   workingDirectory: string = process.cwd(),
+  modeState?: PermissionModeState,
 ): Promise<PermissionCheckResult> {
   // First, check permission using normal rules
   const result = checkPermission(
@@ -772,6 +783,7 @@ export async function checkPermissionWithHooks(
     toolArgs,
     permissions,
     workingDirectory,
+    modeState,
   );
 
   // If decision is "ask", run PermissionRequest hooks to see if they auto-allow/deny

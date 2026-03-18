@@ -43,6 +43,10 @@ import {
   populateInterruptQueue,
 } from "./interrupts";
 import {
+  getConversationPermissionModeState,
+  setConversationPermissionModeState,
+} from "./permissionMode";
+import {
   emitCanonicalMessageDelta,
   emitInterruptedStatusDelta,
   emitLoopErrorDelta,
@@ -91,6 +95,18 @@ export async function handleIncomingMessage(
     normalizedAgentId,
     conversationId,
   );
+
+  // Build a mutable permission mode state object for this turn, seeded from the
+  // persistent ListenerRuntime map. Tool implementations (EnterPlanMode, ExitPlanMode)
+  // mutate it in place; we sync the final value back to the map after the turn.
+  const turnPermissionModeState = {
+    ...getConversationPermissionModeState(
+      runtime.listener,
+      normalizedAgentId,
+      conversationId,
+    ),
+  };
+
   const msgRunIds: string[] = [];
   let postStopApprovalRecoveryRetries = 0;
   let llmApiErrorRetries = 0;
@@ -197,6 +213,7 @@ export async function handleIncomingMessage(
       streamTokens: true,
       background: true,
       workingDirectory: turnWorkingDirectory,
+      permissionModeState: turnPermissionModeState,
       ...(pendingNormalizationInterruptedToolCallIds.length > 0
         ? {
             approvalNormalization: {
@@ -641,6 +658,7 @@ export async function handleIncomingMessage(
         agentId,
         conversationId,
         turnWorkingDirectory,
+        turnPermissionModeState,
         dequeuedBatchId,
         runId,
         msgRunIds,
@@ -742,6 +760,15 @@ export async function handleIncomingMessage(
       console.error("[Listen] Error handling message:", error);
     }
   } finally {
+    // Sync any permission mode changes made by tools (EnterPlanMode/ExitPlanMode)
+    // back to the persistent ListenerRuntime map so the state survives eviction.
+    setConversationPermissionModeState(
+      runtime.listener,
+      normalizedAgentId,
+      conversationId,
+      turnPermissionModeState,
+    );
+
     runtime.activeAbortController = null;
     runtime.cancelRequested = false;
     runtime.isRecoveringApprovals = false;

@@ -3,6 +3,7 @@ import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/mes
 import type WebSocket from "ws";
 import type { ApprovalResult } from "../../agent/approval-execution";
 import type { ApprovalRequest } from "../../cli/helpers/stream";
+
 import type {
   DequeuedBatch,
   QueueBlockedReason,
@@ -148,6 +149,11 @@ export type ListenerRuntime = {
   reminderState: SharedReminderState;
   bootWorkingDirectory: string;
   workingDirectoryByConversation: Map<string, string>;
+  /** Per-conversation permission mode state. Mirrors workingDirectoryByConversation. */
+  permissionModeByConversation: Map<
+    string,
+    import("./permissionMode").ConversationPermissionModeState
+  >;
   connectionId: string | null;
   connectionName: string | null;
   conversationRuntimes: Map<string, ConversationRuntime>;
