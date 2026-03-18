@@ -1,11 +1,7 @@
-import { existsSync } from "node:fs";
-import { mkdir, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
 import path from "node:path";
+import { loadRemoteSettings, saveRemoteSettings } from "./remote-settings";
 import { normalizeConversationId, normalizeCwdAgentId } from "./scope";
 import type { ListenerRuntime } from "./types";
-
-const shouldPersistCwd = process.env.PERSIST_CWD === "1";
 
 export function getWorkingDirectoryScopeKey(
   agentId?: string | null,
@@ -32,20 +28,23 @@ export function getConversationWorkingDirectory(
   );
 }
 
+/**
+ * @deprecated - the legacy path is only read for one-time migration in remote-settings.ts
+ */
 export function getCwdCachePath(): string {
-  return path.join(homedir(), ".letta", "cwd-cache.json");
+  return path.join(
+    process.env.HOME ?? require("node:os").homedir(),
+    ".letta",
+    "cwd-cache.json",
+  );
 }
 
 export function loadPersistedCwdMap(): Map<string, string> {
-  if (!shouldPersistCwd) return new Map();
   try {
-    const cachePath = getCwdCachePath();
-    if (!existsSync(cachePath)) return new Map();
-    const raw = require("node:fs").readFileSync(cachePath, "utf-8") as string;
-    const parsed = JSON.parse(raw) as Record<string, string>;
+    const settings = loadRemoteSettings();
     const map = new Map<string, string>();
-    for (const [key, value] of Object.entries(parsed)) {
-      if (typeof value === "string" && existsSync(value)) {
+    if (settings.cwdMap) {
+      for (const [key, value] of Object.entries(settings.cwdMap)) {
         map.set(key, value);
       }
     }
@@ -56,14 +55,7 @@ export function loadPersistedCwdMap(): Map<string, string> {
 }
 
 export function persistCwdMap(map: Map<string, string>): void {
-  if (!shouldPersistCwd) return;
-  const cachePath = getCwdCachePath();
-  const obj: Record<string, string> = Object.fromEntries(map);
-  void mkdir(path.dirname(cachePath), { recursive: true })
-    .then(() => writeFile(cachePath, JSON.stringify(obj, null, 2)))
-    .catch(() => {
-      // Silently ignore write failures.
-    });
+  saveRemoteSettings({ cwdMap: Object.fromEntries(map) });
 }
 
 export function setConversationWorkingDirectory(

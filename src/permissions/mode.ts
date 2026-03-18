@@ -260,7 +260,7 @@ class PermissionModeManager {
     planFilePathOverride?: string | null,
   ): "allow" | "deny" | null {
     const effectiveMode = modeOverride ?? this.currentMode;
-    const effectivePlanFilePath =
+    const _effectivePlanFilePath =
       planFilePathOverride !== undefined
         ? planFilePathOverride
         : this.getPlanFilePath();
