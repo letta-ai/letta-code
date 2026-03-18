@@ -194,6 +194,39 @@ describe("listen-client parseServerMessage", () => {
   });
 });
 
+describe("listen-client permission mode scope keys", () => {
+  test("falls back from legacy default key and migrates to agent-scoped key", () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+
+    // Simulate a pre-existing/legacy persisted entry without agent binding.
+    listener.permissionModeByConversation.set(
+      "agent:__unknown__::conversation:default",
+      {
+        mode: "acceptEdits",
+        planFilePath: null,
+        modeBeforePlan: null,
+      },
+    );
+
+    const status = __listenClientTestUtils.buildDeviceStatus(listener, {
+      agent_id: "agent-123",
+      conversation_id: "default",
+    });
+
+    expect(status.current_permission_mode).toBe("acceptEdits");
+    expect(
+      listener.permissionModeByConversation.has(
+        "agent:agent-123::conversation:default",
+      ),
+    ).toBe(true);
+    expect(
+      listener.permissionModeByConversation.has(
+        "agent:__unknown__::conversation:default",
+      ),
+    ).toBe(false);
+  });
+});
+
 describe("listen-client approval resolver wiring", () => {
   test("resolves matching pending resolver", async () => {
     const runtime = __listenClientTestUtils.createRuntime();
