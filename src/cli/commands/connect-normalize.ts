@@ -9,6 +9,7 @@ export type ConnectProviderCanonical =
   | "anthropic"
   | "openai"
   | "zai"
+  | "zai-coding"
   | "minimax"
   | "gemini"
   | "openrouter"
@@ -20,6 +21,7 @@ const ALIAS_TO_CANONICAL: Record<string, ConnectProviderCanonical> = {
   anthropic: "anthropic",
   openai: "openai",
   zai: "zai",
+  "zai-coding": "zai-coding",
   minimax: "minimax",
   gemini: "gemini",
   openrouter: "openrouter",
@@ -31,6 +33,7 @@ const CANONICAL_ORDER: ConnectProviderCanonical[] = [
   "anthropic",
   "openai",
   "zai",
+  "zai-coding",
   "minimax",
   "gemini",
   "openrouter",
@@ -40,7 +43,8 @@ const CANONICAL_ORDER: ConnectProviderCanonical[] = [
 function canonicalToByokId(
   canonical: ConnectProviderCanonical,
 ): ByokProviderId {
-  return canonical === "chatgpt" ? "codex" : canonical;
+  if (canonical === "chatgpt") return "codex";
+  return canonical;
 }
 
 export interface ResolvedConnectProvider {
@@ -112,4 +116,10 @@ export function isConnectApiKeyProvider(
   return (
     !isConnectOAuthProvider(provider) && !isConnectBedrockProvider(provider)
   );
+}
+
+export function isConnectZaiBaseProvider(
+  provider: ResolvedConnectProvider,
+): boolean {
+  return provider.canonical === "zai";
 }
