@@ -66,7 +66,7 @@ Letta Code is a general purpose CLI for interacting with Letta agents
 
 USAGE
   # interactive TUI
-  letta                 Resume default conversation (OG single-threaded experience)
+  letta                 Resume last conversation for this project
   letta --new           Create a new conversation (for concurrent sessions)
   letta --continue      Resume last session (agent + conversation) directly
   letta --resume        Open agent selector UI to pick agent/conversation
@@ -1374,9 +1374,10 @@ async function main(): Promise<void> {
         const { resolveStartupTarget } = await import(
           "./agent/resolve-startup-agent"
         );
+        const localSession = settingsManager.getLocalLastSession(process.cwd());
         const target = resolveStartupTarget({
           localAgentId,
-          localConversationId: null, // DEFAULT PATH always uses default conv
+          localConversationId: localSession?.conversationId ?? null,
           localAgentExists,
           globalAgentId,
           globalAgentExists,
@@ -1391,8 +1392,9 @@ async function main(): Promise<void> {
             if (cachedAgent && cachedAgent.id === target.agentId) {
               setValidatedAgent(cachedAgent);
             }
-            // Don't set selectedConversationId — DEFAULT PATH uses default conv.
-            // Conversation restoration is handled by --continue path instead.
+            if (target.conversationId && !forceNewConversation) {
+              setSelectedConversationId(target.conversationId);
+            }
             setLoadingState("assembling");
             return;
           case "select":
@@ -1918,7 +1920,7 @@ async function main(): Promise<void> {
             process.exit(1);
           }
         } else if (selectedConversationId) {
-          // User selected a specific conversation from the --resume selector
+          // Conversation selected from --resume selector or auto-restored from local project settings
           try {
             setLoadingState("checking");
             const data = await getResumeData(
@@ -1934,10 +1936,18 @@ async function main(): Promise<void> {
               error instanceof APIError &&
               (error.status === 404 || error.status === 422)
             ) {
-              console.error(`Conversation ${selectedConversationId} not found`);
-              process.exit(1);
+              // Conversation no longer exists — fall back to default conversation
+              console.warn(
+                `Previous conversation ${selectedConversationId} not found, falling back to default`,
+              );
+              conversationIdToUse = "default";
+              setLoadingState("checking");
+              const data = await getResumeData(client, agent, "default");
+              setResumeData(data);
+              setResumedExistingConversation(data.messageHistory.length > 0);
+            } else {
+              throw error;
             }
-            throw error;
           }
         } else if (forceNewConversation) {
           // --new flag: create a new conversation (for concurrent sessions)
