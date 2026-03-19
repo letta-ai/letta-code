@@ -164,8 +164,7 @@ function isChangeDeviceStateCommand(
     payload.conversation_id === undefined ||
     payload.conversation_id === null ||
     typeof payload.conversation_id === "string";
-  const hasGitOp =
-    payload.git_op === undefined || isGitOp(payload.git_op);
+  const hasGitOp = payload.git_op === undefined || isGitOp(payload.git_op);
   return hasMode && hasCwd && hasAgentId && hasConversationId && hasGitOp;
 }
 

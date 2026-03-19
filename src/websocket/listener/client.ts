@@ -42,6 +42,7 @@ import {
   loadPersistedCwdMap,
   setConversationWorkingDirectory,
 } from "./cwd";
+import { handleGitOp, searchBranches } from "./git";
 import {
   consumeInterruptQueue,
   emitInterruptToolReturnMessage,
@@ -52,7 +53,6 @@ import {
   populateInterruptQueue,
   stashRecoveredApprovalInterrupts,
 } from "./interrupts";
-import { handleGitOp, searchBranches } from "./git";
 import {
   getConversationPermissionModeState,
   loadPersistedPermissionModeMap,
@@ -864,7 +864,11 @@ async function connectWithRetry(
             scope,
           );
         }
-        if (!parsed.payload.cwd && !parsed.payload.git_op && !parsed.payload.mode) {
+        if (
+          !parsed.payload.cwd &&
+          !parsed.payload.git_op &&
+          !parsed.payload.mode
+        ) {
           emitDeviceStatusUpdate(socket, runtime, scope);
         }
       } finally {

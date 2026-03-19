@@ -45,11 +45,7 @@ function getRecentBranches(
   currentBranch: string | null,
 ): string[] {
   const raw = runGit(
-    [
-      "branch",
-      "--sort=-committerdate",
-      "--format=%(refname:short)",
-    ],
+    ["branch", "--sort=-committerdate", "--format=%(refname:short)"],
     cwd,
   );
 
@@ -70,13 +66,13 @@ function getRecentBranches(
  * the query. If query is empty, returns all local branches.
  */
 export function searchBranches(query: string, cwd: string): string[] {
-  const pattern = query.length > 0 ? `*${query}*` : '*';
+  const pattern = query.length > 0 ? `*${query}*` : "*";
   const raw = runGit(
     [
-      'branch',
-      '--sort=-committerdate',
-      '--format=%(refname:short)',
-      '--list',
+      "branch",
+      "--sort=-committerdate",
+      "--format=%(refname:short)",
+      "--list",
       pattern,
     ],
     cwd,
@@ -87,7 +83,7 @@ export function searchBranches(query: string, cwd: string): string[] {
   }
 
   return raw
-    .split('\n')
+    .split("\n")
     .map((b) => b.trim())
     .filter((b) => b.length > 0);
 }
@@ -126,8 +122,7 @@ export function handleGitOp(op: GitOp, cwd: string): GitOpResult {
 
     return { success: false, error: `Unknown git op kind` };
   } catch (err) {
-    const message =
-      err instanceof Error ? err.message : "Git operation failed";
+    const message = err instanceof Error ? err.message : "Git operation failed";
     // execFileSync throws with stderr in message — extract the useful part
     const stderr = (err as { stderr?: string }).stderr;
     return {
