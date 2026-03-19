@@ -1374,9 +1374,10 @@ async function main(): Promise<void> {
         const { resolveStartupTarget } = await import(
           "./agent/resolve-startup-agent"
         );
+        const localSession = settingsManager.getLocalLastSession(process.cwd());
         const target = resolveStartupTarget({
           localAgentId,
-          localConversationId: null, // DEFAULT PATH always uses default conv
+          localConversationId: localSession?.conversationId ?? null,
           localAgentExists,
           globalAgentId,
           globalAgentExists,
@@ -1391,8 +1392,9 @@ async function main(): Promise<void> {
             if (cachedAgent && cachedAgent.id === target.agentId) {
               setValidatedAgent(cachedAgent);
             }
-            // Don't set selectedConversationId — DEFAULT PATH uses default conv.
-            // Conversation restoration is handled by --continue path instead.
+            if (target.conversationId) {
+              setSelectedConversationId(target.conversationId);
+            }
             setLoadingState("assembling");
             return;
           case "select":
