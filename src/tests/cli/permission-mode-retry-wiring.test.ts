@@ -168,6 +168,7 @@ describe("permission mode retry wiring", () => {
     expect(segment).toContain(
       'permissionMode.getMode() === "bypassPermissions"',
     );
+    expect(segment).toContain("shouldAutoApproveEnterPlanMode()");
     expect(segment).toContain("handleEnterPlanModeApprove(true)");
   });
 
@@ -209,7 +210,7 @@ describe("permission mode retry wiring", () => {
     expect(segment).toContain('"bypassPermissions"');
   });
 
-  test("does not auto-approve ExitPlanMode in bypassPermissions mode", () => {
+  test("ExitPlanMode auto-approve in bypassPermissions mode is policy-driven", () => {
     const source = readAppSource();
 
     const guardStart = source.indexOf("Guard ExitPlanMode:");
@@ -229,8 +230,11 @@ describe("permission mode retry wiring", () => {
     expect(modeGuardEnd).toBeGreaterThan(modeGuardStart);
 
     const modeGuard = segment.slice(modeGuardStart, modeGuardEnd);
-    expect(modeGuard).toContain("if (hasUsablePlan) {");
+    expect(modeGuard).toContain('if (mode === "bypassPermissions")');
+    expect(modeGuard).toContain(
+      "hasUsablePlan && shouldAutoApproveExitPlanMode()",
+    );
+    expect(modeGuard).toContain("handlePlanApprove()");
     expect(modeGuard).toContain("let user manually approve");
-    expect(modeGuard).not.toContain("handlePlanApprove()");
   });
 });

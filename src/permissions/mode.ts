@@ -266,7 +266,8 @@ class PermissionModeManager {
         : this.getPlanFilePath();
     switch (effectiveMode) {
       case "bypassPermissions":
-        // ExitPlanMode always requires human approval, even in yolo mode
+        // ExitPlanMode should still flow through the approval pipeline so the
+        // interactive/headless policy layer can decide whether to auto-approve it.
         if (toolName === "ExitPlanMode" || toolName === "exit_plan_mode") {
           return null;
         }
