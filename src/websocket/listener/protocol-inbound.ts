@@ -2,6 +2,7 @@ import type WebSocket from "ws";
 import type {
   AbortMessageCommand,
   ChangeDeviceStateCommand,
+  GitOp,
   InputCommand,
   RuntimeScope,
   SyncCommand,
@@ -113,6 +114,17 @@ function getInvalidInputReason(value: unknown): {
   };
 }
 
+function isGitOp(value: unknown): value is GitOp {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const op = value as { kind?: unknown; branch?: unknown };
+  if (typeof op.branch !== "string" || op.branch.length === 0) {
+    return false;
+  }
+  return op.kind === "checkout" || op.kind === "create_branch";
+}
+
 function isChangeDeviceStateCommand(
   value: unknown,
 ): value is ChangeDeviceStateCommand {
@@ -138,6 +150,7 @@ function isChangeDeviceStateCommand(
     cwd?: unknown;
     agent_id?: unknown;
     conversation_id?: unknown;
+    git_op?: unknown;
   };
   const hasMode =
     payload.mode === undefined || typeof payload.mode === "string";
@@ -150,7 +163,9 @@ function isChangeDeviceStateCommand(
     payload.conversation_id === undefined ||
     payload.conversation_id === null ||
     typeof payload.conversation_id === "string";
-  return hasMode && hasCwd && hasAgentId && hasConversationId;
+  const hasGitOp =
+    payload.git_op === undefined || isGitOp(payload.git_op);
+  return hasMode && hasCwd && hasAgentId && hasConversationId && hasGitOp;
 }
 
 function isAbortMessageCommand(value: unknown): value is AbortMessageCommand {

@@ -22,6 +22,7 @@ import type {
 } from "../../types/protocol_v2";
 import { SYSTEM_REMINDER_RE } from "./constants";
 import { getConversationWorkingDirectory } from "./cwd";
+import { getGitContext } from "./git";
 import { getConversationPermissionModeState } from "./permissionMode";
 import {
   getConversationRuntime,
@@ -101,6 +102,7 @@ export function buildDeviceStatus(
       current_available_skills: [],
       background_processes: [],
       pending_control_requests: [],
+      git_context: null,
     };
   }
   const scope = getScopeForRuntime(runtime, params);
@@ -127,17 +129,18 @@ export function buildDeviceStatus(
     scopedAgentId,
     scopedConversationId,
   );
+  const currentWorkingDirectory = getConversationWorkingDirectory(
+    listener,
+    scopedAgentId,
+    scopedConversationId,
+  );
   return {
     current_connection_id: listener.connectionId,
     connection_name: listener.connectionName,
     is_online: listener.socket?.readyState === WebSocket.OPEN,
     is_processing: !!conversationRuntime?.isProcessing,
     current_permission_mode: conversationPermissionModeState.mode,
-    current_working_directory: getConversationWorkingDirectory(
-      listener,
-      scopedAgentId,
-      scopedConversationId,
-    ),
+    current_working_directory: currentWorkingDirectory,
     letta_code_version: process.env.npm_package_version || null,
     current_toolset: toolsetPreference === "auto" ? null : toolsetPreference,
     current_toolset_preference: toolsetPreference,
@@ -145,6 +148,7 @@ export function buildDeviceStatus(
     current_available_skills: [],
     background_processes: [],
     pending_control_requests: getPendingControlRequests(listener, scope),
+    git_context: getGitContext(currentWorkingDirectory),
   };
 }
 

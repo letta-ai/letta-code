@@ -76,6 +76,33 @@ export type BackgroundProcessSummary =
   | BashBackgroundProcessSummary
   | AgentTaskBackgroundProcessSummary;
 
+/**
+ * Git repository state for the current working directory.
+ * Included in DeviceStatus; null when not a git repo or git is unavailable.
+ */
+export interface GitContext {
+  /** Current branch name. Null on detached HEAD or a repo with no commits. */
+  branch: string | null;
+  /** Up to 10 local branches sorted by most-recently-committed, excluding the current branch. */
+  recent_branches: string[];
+}
+
+/**
+ * Git branch operations dispatched via change_device_state.
+ */
+export interface GitCheckoutOp {
+  kind: "checkout";
+  branch: string;
+}
+
+export interface GitCreateBranchOp {
+  kind: "create_branch";
+  /** New branch name; created from HEAD and immediately checked out. */
+  branch: string;
+}
+
+export type GitOp = GitCheckoutOp | GitCreateBranchOp;
+
 export interface DiffHunkLine {
   type: "context" | "add" | "remove";
   content: string;
@@ -136,6 +163,8 @@ export interface DeviceStatus {
   current_available_skills: AvailableSkillSummary[];
   background_processes: BackgroundProcessSummary[];
   pending_control_requests: PendingControlRequest[];
+  /** Git repository state for the current working directory. Null if not a git repo. */
+  git_context: GitContext | null;
 }
 
 export type LoopStatus =
@@ -338,6 +367,8 @@ export interface ChangeDeviceStatePayload {
   cwd?: string;
   agent_id?: string | null;
   conversation_id?: string | null;
+  /** Git operation to perform in the current conversation's working directory. */
+  git_op?: GitOp;
 }
 
 export interface ChangeDeviceStateCommand {

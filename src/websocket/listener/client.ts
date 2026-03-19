@@ -52,6 +52,7 @@ import {
   populateInterruptQueue,
   stashRecoveredApprovalInterrupts,
 } from "./interrupts";
+import { handleGitOp } from "./git";
 import {
   getConversationPermissionModeState,
   loadPersistedPermissionModeMap,
@@ -400,6 +401,43 @@ async function handleCwdChange(
       conversationId,
     });
   }
+}
+
+/**
+ * Handle a git branch operation (checkout or create_branch) from cloud.
+ * Runs synchronously in the conversation's current working directory.
+ * Emits an updated device status on success (reflecting the new branch),
+ * or a loop error delta on failure.
+ */
+function handleGitOpChange(
+  op: Parameters<typeof handleGitOp>[0],
+  socket: WebSocket,
+  runtime: ConversationRuntime,
+  scope: { agent_id?: string | null; conversation_id?: string | null },
+): void {
+  const agentId = normalizeCwdAgentId(scope.agent_id ?? null);
+  const conversationId = normalizeConversationId(scope.conversation_id);
+  const cwd = getConversationWorkingDirectory(
+    runtime.listener,
+    agentId,
+    conversationId,
+  );
+
+  const result = handleGitOp(op, cwd);
+
+  if (!result.success) {
+    emitLoopErrorDelta(socket, runtime, {
+      message: result.error ?? "Git operation failed",
+      stopReason: "error",
+      isTerminal: false,
+      agentId: scope.agent_id,
+      conversationId: scope.conversation_id,
+    });
+    return;
+  }
+
+  // Emit updated device status so the client reflects the new branch immediately.
+  emitDeviceStatusUpdate(socket, runtime, scope);
 }
 
 function createRuntime(): ListenerRuntime {
@@ -817,7 +855,16 @@ async function connectWithRetry(
             socket,
             scopedRuntime,
           );
-        } else if (!parsed.payload.mode) {
+        }
+        if (parsed.payload.git_op) {
+          handleGitOpChange(
+            parsed.payload.git_op,
+            socket,
+            scopedRuntime,
+            scope,
+          );
+        }
+        if (!parsed.payload.cwd && !parsed.payload.git_op && !parsed.payload.mode) {
           emitDeviceStatusUpdate(socket, runtime, scope);
         }
       } finally {
