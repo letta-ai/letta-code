@@ -14,6 +14,25 @@ cd letta-code
 Requirements:
 * [Bun](https://bun.com/docs/installation)
 
+### Installing Bun
+
+Bun can be installed via the official installer or via npm:
+
+**Option 1: Official installer (recommended)**
+```bash
+curl -fsSL https://bun.sh/install | bash
+```
+
+**Option 2: Via npm**
+```bash
+npm install -g bun
+```
+
+Verify installation:
+```bash
+bun --version
+```
+
 ### Run directly from source (dev workflow)
 ```bash
 # install deps
