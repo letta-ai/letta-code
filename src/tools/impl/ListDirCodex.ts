@@ -1,9 +1,13 @@
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
+import { getDirectoryLimits } from "../../utils/directoryLimits.js";
 import { validateRequiredParams } from "./validation.js";
 
 const MAX_ENTRY_LENGTH = 500;
 const INDENTATION_SPACES = 2;
+const DEFAULT_OFFSET = 1;
+const DEFAULT_LIMIT = 25;
+const DEFAULT_DEPTH = 2;
 
 interface ListDirCodexArgs {
   dir_path: string;
@@ -20,38 +24,76 @@ interface DirEntry {
   name: string; // Full relative path for sorting
   displayName: string; // Just the filename for display
   depth: number; // Indentation depth
-  kind: "directory" | "file" | "symlink" | "other";
+  kind: "directory" | "file" | "symlink" | "other" | "omitted";
+}
+
+interface CollectEntriesResult {
+  hitCollectionCap: boolean;
+  hitFolderTruncation: boolean;
 }
 
 /**
  * Codex-style list_dir tool.
- * Lists entries with pagination (offset/limit) and depth control.
+ * Lists entries with pagination and depth control.
+ *
+ * Defaults:
+ * - offset: 1 (1-indexed)
+ * - limit: 25
+ * - depth: 2 (immediate children + one nested level)
  */
 export async function list_dir(
   args: ListDirCodexArgs,
 ): Promise<ListDirCodexResult> {
   validateRequiredParams(args, ["dir_path"], "list_dir");
+  const limits = getDirectoryLimits();
 
-  const { dir_path, offset = 1, limit = 25, depth = 2 } = args;
+  const {
+    dir_path,
+    offset = DEFAULT_OFFSET,
+    limit = DEFAULT_LIMIT,
+    depth = DEFAULT_DEPTH,
+  } = args;
   const userCwd = process.env.USER_CWD || process.cwd();
   const resolvedPath = path.isAbsolute(dir_path)
     ? dir_path
     : path.resolve(userCwd, dir_path);
 
-  if (offset < 1) {
-    throw new Error("offset must be a 1-indexed entry number");
+  if (!Number.isInteger(offset) || offset < 1) {
+    throw new Error("offset must be a positive integer (1-indexed)");
   }
 
-  if (limit < 1) {
-    throw new Error("limit must be greater than zero");
+  if (offset > limits.listDirMaxOffset) {
+    throw new Error(
+      `offset must be less than or equal to ${limits.listDirMaxOffset.toLocaleString()}`,
+    );
   }
 
-  if (depth < 1) {
-    throw new Error("depth must be greater than zero");
+  if (!Number.isInteger(limit) || limit < 1) {
+    throw new Error("limit must be a positive integer");
   }
 
-  const entries = await listDirSlice(resolvedPath, offset, limit, depth);
+  if (!Number.isInteger(depth) || depth < 1) {
+    throw new Error("depth must be a positive integer");
+  }
+
+  const effectiveLimit = Math.min(limit, limits.listDirMaxLimit);
+  const effectiveDepth = Math.min(depth, limits.listDirMaxDepth);
+
+  const entries = await listDirSlice(
+    resolvedPath,
+    offset,
+    effectiveLimit,
+    effectiveDepth,
+    limits.listDirMaxCollectedEntries,
+    limits.listDirMaxChildrenPerDir,
+  );
   const output = [`Absolute path: ${resolvedPath}`, ...entries];
+
+  if (effectiveLimit !== limit || effectiveDepth !== depth) {
+    output.push(
+      `[Request capped: limit=${limit}->${effectiveLimit}, depth=${depth}->${effectiveDepth}]`,
+    );
+  }
 
   return { content: output.join("\n") };
 }
@@ -64,9 +106,21 @@ async function listDirSlice(
   offset: number,
   limit: number,
   maxDepth: number,
+  maxCollectedEntries: number,
+  maxChildrenPerDir: number,
 ): Promise<string[]> {
   const entries: DirEntry[] = [];
-  await collectEntries(dirPath, "", maxDepth, entries);
+  // Collect one extra entry when possible so callers can tell if more data exists.
+  const maxEntriesToCollect = Math.min(offset + limit, maxCollectedEntries);
+
+  const { hitCollectionCap, hitFolderTruncation } = await collectEntries(
+    dirPath,
+    "",
+    maxDepth,
+    entries,
+    maxEntriesToCollect,
+    maxChildrenPerDir,
+  );
 
   if (entries.length === 0) {
     return [];
@@ -74,7 +128,9 @@ async function listDirSlice(
 
   const startIndex = offset - 1;
   if (startIndex >= entries.length) {
-    throw new Error("offset exceeds directory entry count");
+    throw new Error(
+      `offset exceeds available entries in current view (max offset: ${entries.length.toLocaleString()})`,
+    );
   }
 
   const remainingEntries = entries.length - startIndex;
@@ -91,7 +147,11 @@ async function listDirSlice(
   }
 
   if (endIndex < entries.length) {
-    formatted.push(`More than ${cappedLimit} entries found`);
+    formatted.push(
+      `More entries available. Use offset=${endIndex + 1} to continue.`,
+    );
+  } else if (hitCollectionCap || hitFolderTruncation) {
+    formatted.push("More entries may exist beyond the current truncated view.");
   }
 
   return formatted;
@@ -105,12 +165,19 @@ async function collectEntries(
   relativePrefix: string,
   remainingDepth: number,
   entries: DirEntry[],
-): Promise<void> {
+  maxEntriesToCollect: number,
+  maxChildrenPerDir: number,
+): Promise<CollectEntriesResult> {
   const queue: Array<{ absPath: string; prefix: string; depth: number }> = [
     { absPath: dirPath, prefix: relativePrefix, depth: remainingDepth },
   ];
+  let hitFolderTruncation = false;
 
   while (queue.length > 0) {
+    if (entries.length >= maxEntriesToCollect) {
+      return { hitCollectionCap: true, hitFolderTruncation };
+    }
+
     const current = queue.shift();
     if (!current) break;
     const { absPath, prefix, depth } = current;
@@ -162,7 +229,38 @@ async function collectEntries(
     // Sort entries alphabetically
     dirEntries.sort((a, b) => a.entry.name.localeCompare(b.entry.name));
 
-    for (const item of dirEntries) {
+    const visibleEntries = dirEntries.slice(0, maxChildrenPerDir);
+    const omittedEntries = Math.max(
+      0,
+      dirEntries.length - visibleEntries.length,
+    );
+
+    if (omittedEntries > 0) {
+      hitFolderTruncation = true;
+
+      const omittedSortKey = formatEntryName(
+        `${prefix ? `${prefix}/` : ""}\uffff-omitted`,
+      );
+      const omittedDepth = prefix ? prefix.split(path.sep).length : 0;
+
+      visibleEntries.push({
+        absPath,
+        relativePath: prefix,
+        kind: "omitted",
+        entry: {
+          name: omittedSortKey,
+          displayName: `… (${omittedEntries.toLocaleString()} more entries)`,
+          depth: omittedDepth,
+          kind: "omitted",
+        },
+      });
+    }
+
+    for (const item of visibleEntries) {
+      if (entries.length >= maxEntriesToCollect) {
+        return { hitCollectionCap: true, hitFolderTruncation };
+      }
+
       // Queue subdirectories for traversal if depth allows
       if (item.kind === "directory" && depth > 1) {
         queue.push({
@@ -174,6 +272,8 @@ async function collectEntries(
       entries.push(item.entry);
     }
   }
+
+  return { hitCollectionCap: false, hitFolderTruncation };
 }
 
 /**
@@ -213,6 +313,8 @@ function formatEntryLine(entry: DirEntry): string {
       break;
     case "other":
       name += "?";
+      break;
+    case "omitted":
       break;
     default:
       // "file" type has no suffix
