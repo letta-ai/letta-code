@@ -354,6 +354,13 @@ export function ConversationSelector({
         setCursor(newCursor);
         setHasMore(newCursor !== null);
 
+        // Flip loading off now — list is visible, enrichment happens in background
+        if (isLoadingMore) {
+          setLoadingMore(false);
+        } else {
+          setLoading(false);
+        }
+
         // Phase 2: enrich visible page first, then rest in background
         setEnriching(true);
         const toEnrich = nonEmptyList.filter((c) => !c.enriched);
@@ -397,12 +404,8 @@ export function ConversationSelector({
         setEnriching(false);
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
-      } finally {
-        if (isLoadingMore) {
-          setLoadingMore(false);
-        } else {
-          setLoading(false);
-        }
+        setLoading(false);
+        setLoadingMore(false);
       }
     },
     [agentId, enrichConversation],
