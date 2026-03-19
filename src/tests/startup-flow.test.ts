@@ -25,10 +25,13 @@ async function runCli(
       ...process.env,
       LETTA_CODE_AGENT_ROLE: "subagent",
     };
-    const requiresAuth = args.includes("--new-agent") ||
-                          args.includes("--continue") || args.includes("-c") ||
-                          args.includes("--conversation") || args.includes("-C") ||
-                          args.includes("--import");
+    const requiresAuth =
+      args.includes("--new-agent") ||
+      args.includes("--continue") ||
+      args.includes("-c") ||
+      args.includes("--conversation") ||
+      args.includes("-C") ||
+      args.includes("--import");
     if (requiresAuth && !args.includes("--agent")) {
       delete env.LETTA_API_KEY;
     }

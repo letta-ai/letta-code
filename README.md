@@ -20,8 +20,6 @@ Run `/connect` to configure your own LLM API keys (OpenAI, Anthropic, etc.), and
 To clear stored credentials and force re-authentication, run:
 ```bash
 letta --logout
-# or
-letta logout
 ```
 
 > [!NOTE]

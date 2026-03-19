@@ -82,18 +82,20 @@ async function main() {
 
   try {
     switch (command) {
-      case "list":
+      case "list": {
         await listAgents();
         break;
+      }
 
-      case "delete-all":
+      case "delete-all": {
         const agents = await listAgents();
         if (agents.length > 0) {
           await deleteAllAgents(agents);
         }
         break;
+      }
 
-      case "delete":
+      case "delete": {
         const agentId = process.argv[3];
         if (!agentId) {
           console.error("Error: Agent ID required for delete command");
@@ -110,8 +112,9 @@ async function main() {
 
         await deleteAgent(agentId, agentToDelete.name);
         break;
+      }
 
-      default:
+      default: {
         console.log(`
 Usage: bun run scripts/cleanup-agents.ts <command>
 
@@ -126,6 +129,7 @@ Examples:
   bun run scripts/cleanup-agents.ts delete agent-12345678
         `);
         break;
+      }
     }
   } catch (error) {
     console.error("Error:", error);

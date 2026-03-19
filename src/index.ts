@@ -447,9 +447,6 @@ async function main(): Promise<void> {
   // Handle logout flag
   if (values.logout) {
     await settingsManager.logout();
-    console.log(
-      "Logged out successfully. Stored credentials have been cleared.",
-    );
     process.exit(0);
   }
 
