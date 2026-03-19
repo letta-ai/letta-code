@@ -8157,6 +8157,12 @@ export default function App({
               ...(conversationName && { summary: conversationName }),
             });
 
+
+            // If we created the conversation with an explicit summary, mark it as set
+            // to prevent auto-summary from first user message overwriting it
+            if (conversationName) {
+              hasSetConversationSummaryRef.current = true;
+            }
             await maybeCarryOverActiveConversationModel(conversation.id);
 
             // Update conversationId state
@@ -13943,6 +13949,11 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
                         summary: selectorContext?.summary,
                         messageHistory: resumeData.messageHistory,
                       };
+
+                      // If the conversation already has a summary, prevent auto-summary from overwriting it
+                      if (selectorContext?.summary) {
+                        hasSetConversationSummaryRef.current = true;
+                      }
 
                       settingsManager.setLocalLastSession(
                         { agentId, conversationId: convId },
