@@ -153,8 +153,9 @@ describe("model preset refresh wiring", () => {
       ) ?? [];
     expect(carryOverCalls.length).toBeGreaterThanOrEqual(3);
 
-    const newCmdAnchor = source.indexOf('if (msg.trim() === "/new")');
-    expect(newCmdAnchor).toBeGreaterThanOrEqual(0);
+    const newCmdAnchor = source.indexOf(
+      "const newMatch = msg.trim().match(/^\\/new(?:\\s+(.+))?$/);",
+    );
     const newCmdWindow = source.slice(newCmdAnchor, newCmdAnchor + 1800);
     expect(newCmdWindow).toContain(
       "await maybeCarryOverActiveConversationModel(conversation.id);",
