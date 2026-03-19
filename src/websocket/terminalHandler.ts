@@ -2,25 +2,16 @@
  * PTY terminal handler for listen mode.
  * Manages interactive terminal sessions spawned by the web UI.
  *
- * Uses Bun's native Bun.spawn terminal API when running under Bun,
- * and falls back to node-pty when running under Node.js (e.g. Electron).
+ * Uses node-pty for real PTY support across all runtimes (Bun, Node.js, Electron).
  */
 
 import * as os from "node:os";
 import WebSocket from "ws";
-
-// ── Runtime detection ──────────────────────────────────────────────────────
-const IS_BUN = typeof Bun !== "undefined";
-
-// ── Session types ──────────────────────────────────────────────────────────
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const pty = require("node-pty") as typeof import("node-pty");
 
 interface TerminalSession {
-  write: (data: string) => void;
-  resize: (cols: number, rows: number) => void;
-  close: () => void;
-  kill: () => void;
-  readonly pid: number | undefined;
-  readonly exited: Promise<number>;
+  ptyProcess: import("node-pty").IPty;
   terminalId: string;
   spawnedAt: number;
 }
@@ -49,143 +40,8 @@ function sendTerminalMessage(
   }
 }
 
-// ── Bun spawn ──────────────────────────────────────────────────────────────
-
-function spawnBun(
-  shell: string,
-  cwd: string,
-  cols: number,
-  rows: number,
-  terminal_id: string,
-  socket: WebSocket,
-): TerminalSession {
-  let buffer = "";
-  let flushTimer: ReturnType<typeof setTimeout> | null = null;
-
-  const proc = Bun.spawn([shell], {
-    cwd,
-    env: {
-      ...process.env,
-      TERM: "xterm-256color",
-      COLORTERM: "truecolor",
-    },
-    terminal: {
-      cols: cols || 80,
-      rows: rows || 24,
-      data: (_terminal: unknown, data: Uint8Array) => {
-        buffer += new TextDecoder().decode(data);
-        if (!flushTimer) {
-          flushTimer = setTimeout(() => {
-            if (buffer.length > 0) {
-              sendTerminalMessage(socket, {
-                type: "terminal_output",
-                terminal_id,
-                data: buffer,
-              });
-              buffer = "";
-            }
-            flushTimer = null;
-          }, 16);
-        }
-      },
-    },
-  });
-
-  const terminal = (
-    proc as unknown as {
-      terminal: { write: (d: string) => void; resize: (c: number, r: number) => void; close: () => void };
-    }
-  ).terminal;
-
-  if (!terminal) {
-    throw new Error(
-      "terminal object undefined on proc — Bun.Terminal API unavailable",
-    );
-  }
-
-  return {
-    write: (data) => terminal.write(data),
-    resize: (c, r) => terminal.resize(c, r),
-    close: () => terminal.close(),
-    kill: () => proc.kill(),
-    get pid() { return proc.pid; },
-    exited: proc.exited.then((code) => code ?? 0),
-    terminalId: terminal_id,
-    spawnedAt: Date.now(),
-  };
-}
-
-// ── node-pty spawn ─────────────────────────────────────────────────────────
-
-function spawnNodePty(
-  shell: string,
-  cwd: string,
-  cols: number,
-  rows: number,
-  terminal_id: string,
-  socket: WebSocket,
-): TerminalSession {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const pty = require("node-pty") as typeof import("node-pty");
-
-  let buffer = "";
-  let flushTimer: ReturnType<typeof setTimeout> | null = null;
-
-  const ptyProcess = pty.spawn(shell, [], {
-    name: "xterm-256color",
-    cols: cols || 80,
-    rows: rows || 24,
-    cwd,
-    env: {
-      ...(process.env as Record<string, string>),
-      TERM: "xterm-256color",
-      COLORTERM: "truecolor",
-    },
-  });
-
-  ptyProcess.onData((data) => {
-    buffer += data;
-    if (!flushTimer) {
-      flushTimer = setTimeout(() => {
-        if (buffer.length > 0) {
-          sendTerminalMessage(socket, {
-            type: "terminal_output",
-            terminal_id,
-            data: buffer,
-          });
-          buffer = "";
-        }
-        flushTimer = null;
-      }, 16);
-    }
-  });
-
-  let exitResolve: (code: number) => void;
-  const exited = new Promise<number>((resolve) => {
-    exitResolve = resolve;
-  });
-
-  ptyProcess.onExit(({ exitCode }) => {
-    exitResolve(exitCode ?? 0);
-  });
-
-  return {
-    write: (data) => ptyProcess.write(data),
-    resize: (c, r) => ptyProcess.resize(c, r),
-    close: () => ptyProcess.kill(),
-    kill: () => ptyProcess.kill(),
-    get pid() { return ptyProcess.pid; },
-    exited,
-    terminalId: terminal_id,
-    spawnedAt: Date.now(),
-  };
-}
-
-// ── Public API ─────────────────────────────────────────────────────────────
-
 /**
  * Spawn a new PTY terminal session.
- * Uses Bun.spawn under Bun, node-pty under Node.js / Electron.
  */
 export function handleTerminalSpawn(
   msg: { terminal_id: string; cols: number; rows: number },
@@ -198,23 +54,47 @@ export function handleTerminalSpawn(
 
   const shell = getDefaultShell();
   console.log(
-    `[Terminal] Spawning PTY (${IS_BUN ? "bun" : "node-pty"}): shell=${shell}, cwd=${cwd}, cols=${cols}, rows=${rows}`,
+    `[Terminal] Spawning PTY: shell=${shell}, cwd=${cwd}, cols=${cols}, rows=${rows}`,
   );
 
   try {
-    const session = IS_BUN
-      ? spawnBun(shell, cwd, cols, rows, terminal_id, socket)
-      : spawnNodePty(shell, cwd, cols, rows, terminal_id, socket);
+    let buffer = "";
+    let flushTimer: ReturnType<typeof setTimeout> | null = null;
 
-    terminals.set(terminal_id, session);
-    console.log(
-      `[Terminal] Session stored for terminal_id=${terminal_id}, pid=${session.pid}`,
-    );
+    const ptyProcess = pty.spawn(shell, [], {
+      name: "xterm-256color",
+      cols: cols || 80,
+      rows: rows || 24,
+      cwd,
+      env: {
+        ...(process.env as Record<string, string>),
+        TERM: "xterm-256color",
+        COLORTERM: "truecolor",
+      },
+    });
 
-    const myPid = session.pid;
-    session.exited.then((exitCode) => {
+    ptyProcess.onData((data) => {
+      buffer += data;
+      if (!flushTimer) {
+        flushTimer = setTimeout(() => {
+          if (buffer.length > 0) {
+            sendTerminalMessage(socket, {
+              type: "terminal_output",
+              terminal_id,
+              data: buffer,
+            });
+            buffer = "";
+          }
+          flushTimer = null;
+        }, 16);
+      }
+    });
+
+    const myPid = ptyProcess.pid;
+
+    ptyProcess.onExit(({ exitCode }) => {
       const current = terminals.get(terminal_id);
-      if (current && current.pid === myPid) {
+      if (current && current.ptyProcess.pid === myPid) {
         console.log(
           `[Terminal] PTY exited: terminal_id=${terminal_id}, pid=${myPid}, exitCode=${exitCode}`,
         );
@@ -222,15 +102,25 @@ export function handleTerminalSpawn(
         sendTerminalMessage(socket, {
           type: "terminal_exited",
           terminal_id,
-          exitCode,
+          exitCode: exitCode ?? 0,
         });
       }
     });
 
+    terminals.set(terminal_id, {
+      ptyProcess,
+      terminalId: terminal_id,
+      spawnedAt: Date.now(),
+    });
+
+    console.log(
+      `[Terminal] Session stored for terminal_id=${terminal_id}, pid=${myPid}`,
+    );
+
     sendTerminalMessage(socket, {
       type: "terminal_spawned",
       terminal_id,
-      pid: session.pid,
+      pid: myPid,
     });
   } catch (error) {
     console.error("[Terminal] Failed to spawn PTY:", error);
@@ -249,7 +139,7 @@ export function handleTerminalInput(msg: {
   terminal_id: string;
   data: string;
 }): void {
-  terminals.get(msg.terminal_id)?.write(msg.data);
+  terminals.get(msg.terminal_id)?.ptyProcess.write(msg.data);
 }
 
 /**
@@ -260,7 +150,7 @@ export function handleTerminalResize(msg: {
   cols: number;
   rows: number;
 }): void {
-  terminals.get(msg.terminal_id)?.resize(msg.cols, msg.rows);
+  terminals.get(msg.terminal_id)?.ptyProcess.resize(msg.cols, msg.rows);
 }
 
 /**
@@ -268,6 +158,9 @@ export function handleTerminalResize(msg: {
  */
 export function handleTerminalKill(msg: { terminal_id: string }): void {
   const session = terminals.get(msg.terminal_id);
+  // Ignore kill if the session was spawned very recently (< 2s).
+  // This handles the React Strict Mode race where cleanup's kill arrives
+  // after the remount's spawn due to async WS relay latency.
   if (session && Date.now() - session.spawnedAt < 2000) {
     console.log(
       `[Terminal] Ignoring kill for recently spawned session (age=${Date.now() - session.spawnedAt}ms)`,
@@ -281,15 +174,10 @@ function killTerminal(terminalId: string): void {
   const session = terminals.get(terminalId);
   if (session) {
     console.log(
-      `[Terminal] killTerminal: terminalId=${terminalId}, pid=${session.pid}`,
+      `[Terminal] killTerminal: terminalId=${terminalId}, pid=${session.ptyProcess.pid}`,
     );
     try {
-      session.close();
-    } catch {
-      // may already be closed
-    }
-    try {
-      session.kill();
+      session.ptyProcess.kill();
     } catch {
       // may already be dead
     }
