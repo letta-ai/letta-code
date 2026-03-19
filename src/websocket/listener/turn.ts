@@ -113,6 +113,7 @@ export async function handleIncomingMessage(
   let llmApiErrorRetries = 0;
   let emptyResponseRetries = 0;
   let lastApprovalContinuationAccepted = false;
+  let activeDequeuedBatchId = dequeuedBatchId;
 
   let lastExecutionResults: ApprovalResult[] | null = null;
   let lastExecutingToolCallIds: string[] = [];
@@ -660,7 +661,7 @@ export async function handleIncomingMessage(
         conversationId,
         turnWorkingDirectory,
         turnPermissionModeState,
-        dequeuedBatchId,
+        dequeuedBatchId: activeDequeuedBatchId,
         runId,
         msgRunIds,
         currentInput,
@@ -673,6 +674,7 @@ export async function handleIncomingMessage(
       }
       stream = approvalResult.stream;
       currentInput = approvalResult.currentInput;
+      activeDequeuedBatchId = approvalResult.dequeuedBatchId;
       pendingNormalizationInterruptedToolCallIds =
         approvalResult.pendingNormalizationInterruptedToolCallIds;
       turnToolContextId = approvalResult.turnToolContextId;

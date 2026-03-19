@@ -1,7 +1,12 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import WebSocket from "ws";
+import type { ResumeData } from "../../agent/check-approval";
 import { permissionMode } from "../../permissions/mode";
-import type { MessageQueueItem } from "../../queue/queueRuntime";
+import type {
+  MessageQueueItem,
+  TaskNotificationQueueItem,
+} from "../../queue/queueRuntime";
+import type { IncomingMessage } from "../../websocket/listener/types";
 
 type MockStream = {
   conversationId: string;
@@ -53,12 +58,29 @@ const drainStreamWithResumeMock = mock(
     return defaultDrainResult;
   },
 );
+const retrieveAgentMock = mock(async (agentId: string) => ({ id: agentId }));
 const cancelConversationMock = mock(async (_conversationId: string) => {});
 const getClientMock = mock(async () => ({
+  agents: {
+    retrieve: retrieveAgentMock,
+  },
   conversations: {
     cancel: cancelConversationMock,
   },
 }));
+const getResumeDataMock = mock(
+  async (): Promise<ResumeData> => ({
+    pendingApproval: null,
+    pendingApprovals: [],
+    messageHistory: [],
+  }),
+);
+const classifyApprovalsMock = mock(async () => ({
+  autoAllowed: [],
+  autoDenied: [],
+  needsUserInput: [],
+}));
+const executeApprovalBatchMock = mock(async () => []);
 const fetchRunErrorDetailMock = mock(async () => null);
 const realStreamModule = await import("../../cli/helpers/stream");
 
@@ -98,6 +120,14 @@ mock.module("../../agent/client", () => ({
   getServerUrl: () => "https://example.test",
   clearLastSDKDiagnostic: () => {},
   consumeLastSDKDiagnostic: () => null,
+}));
+
+mock.module("../../cli/helpers/approvalClassification", () => ({
+  classifyApprovals: classifyApprovalsMock,
+}));
+
+mock.module("../../agent/approval-execution", () => ({
+  executeApprovalBatch: executeApprovalBatchMock,
 }));
 
 mock.module("../../agent/approval-recovery", () => ({
@@ -172,6 +202,10 @@ describe("listen-client multi-worker concurrency", () => {
     getStreamToolContextIdMock.mockClear();
     drainStreamWithResumeMock.mockClear();
     getClientMock.mockClear();
+    retrieveAgentMock.mockClear();
+    getResumeDataMock.mockClear();
+    classifyApprovalsMock.mockClear();
+    executeApprovalBatchMock.mockClear();
     cancelConversationMock.mockClear();
     fetchRunErrorDetailMock.mockClear();
     drainHandlers.clear();
@@ -573,6 +607,205 @@ describe("listen-client multi-worker concurrency", () => {
     expect(runtimeB.queuedMessagesByItemId.size).toBe(0);
   });
 
+  test("consumeQueuedTurn only drains the next same-scope queued turn batch", () => {
+    const runtime = __listenClientTestUtils.createRuntime();
+    const messageInput = {
+      kind: "message",
+      source: "user",
+      content: "queued user",
+      clientMessageId: "cm-user",
+      agentId: "agent-1",
+      conversationId: "conv-1",
+    } satisfies Omit<MessageQueueItem, "id" | "enqueuedAt">;
+    const messageItem = runtime.queueRuntime.enqueue(messageInput);
+
+    if (!messageItem) {
+      throw new Error("Expected queued message item");
+    }
+
+    runtime.queuedMessagesByItemId.set(
+      messageItem.id,
+      makeIncomingMessage("agent-1", "conv-1", "queued user"),
+    );
+
+    const taskInput = {
+      kind: "task_notification",
+      source: "system",
+      text: "<task-notification>done</task-notification>",
+      clientMessageId: "cm-task",
+      agentId: "agent-1",
+      conversationId: "conv-1",
+    } satisfies Omit<TaskNotificationQueueItem, "id" | "enqueuedAt">;
+    const taskItem = runtime.queueRuntime.enqueue(taskInput);
+
+    if (!taskItem) {
+      throw new Error("Expected queued task notification item");
+    }
+
+    const otherMessageInput = {
+      kind: "message",
+      source: "user",
+      content: "queued other",
+      clientMessageId: "cm-other",
+      agentId: "agent-1",
+      conversationId: "conv-2",
+    } satisfies Omit<MessageQueueItem, "id" | "enqueuedAt">;
+    const otherMessageItem = runtime.queueRuntime.enqueue(otherMessageInput);
+
+    if (!otherMessageItem) {
+      throw new Error("Expected second queued message item");
+    }
+
+    runtime.queuedMessagesByItemId.set(
+      otherMessageItem.id,
+      makeIncomingMessage("agent-1", "conv-2", "queued other"),
+    );
+
+    const consumed = __listenClientTestUtils.consumeQueuedTurn(runtime);
+
+    expect(consumed).not.toBeNull();
+    expect(
+      consumed?.dequeuedBatch.items.map((item: { id: string }) => item.id),
+    ).toEqual([messageItem.id, taskItem.id]);
+    expect(consumed?.queuedTurn.messages).toEqual([
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "queued user" },
+          { type: "text", text: "\n" },
+          {
+            type: "text",
+            text: "<task-notification>done</task-notification>",
+          },
+        ],
+      },
+    ]);
+    expect(runtime.queueRuntime.length).toBe(1);
+    expect(runtime.queuedMessagesByItemId.has(otherMessageItem.id)).toBe(true);
+  });
+
+  test("resolveStaleApprovals injects queued turns and marks recovery drain as processing", async () => {
+    const runtime = __listenClientTestUtils.createRuntime();
+    runtime.agentId = "agent-1";
+    runtime.conversationId = "conv-1";
+    runtime.activeWorkingDirectory = "/tmp/project";
+    runtime.loopStatus = "WAITING_FOR_API_RESPONSE";
+    const socket = new MockSocket();
+    const drain = createDeferredDrain();
+    drainHandlers.set("conv-1", () => drain.promise);
+
+    const approval = {
+      toolCallId: "tool-call-1",
+      toolName: "Write",
+      toolArgs: '{"file_path":"foo.ts"}',
+    };
+    const approvalResult = {
+      type: "tool",
+      tool_call_id: "tool-call-1",
+      tool_return: "ok",
+      status: "success",
+    };
+
+    getResumeDataMock.mockResolvedValueOnce({
+      pendingApproval: approval,
+      pendingApprovals: [approval],
+      messageHistory: [],
+    });
+    classifyApprovalsMock.mockResolvedValueOnce({
+      autoAllowed: [
+        {
+          approval,
+          parsedArgs: { file_path: "foo.ts" },
+        },
+      ],
+      autoDenied: [],
+      needsUserInput: [],
+    } as never);
+    executeApprovalBatchMock.mockResolvedValueOnce([approvalResult] as never);
+
+    const queuedMessageInput = {
+      kind: "message",
+      source: "user",
+      content: "queued user",
+      clientMessageId: "cm-stale-user",
+      agentId: "agent-1",
+      conversationId: "conv-1",
+    } satisfies Omit<MessageQueueItem, "id" | "enqueuedAt">;
+    const queuedMessageItem = runtime.queueRuntime.enqueue(queuedMessageInput);
+    if (!queuedMessageItem) {
+      throw new Error("Expected stale recovery queued message item");
+    }
+    runtime.queuedMessagesByItemId.set(
+      queuedMessageItem.id,
+      makeIncomingMessage("agent-1", "conv-1", "queued user"),
+    );
+
+    const queuedTaskInput = {
+      kind: "task_notification",
+      source: "system",
+      text: "<task-notification>done</task-notification>",
+      clientMessageId: "cm-stale-task",
+      agentId: "agent-1",
+      conversationId: "conv-1",
+    } satisfies Omit<TaskNotificationQueueItem, "id" | "enqueuedAt">;
+    const queuedTaskItem = runtime.queueRuntime.enqueue(queuedTaskInput);
+    if (!queuedTaskItem) {
+      throw new Error("Expected stale recovery queued task item");
+    }
+
+    const recoveryPromise = __listenClientTestUtils.resolveStaleApprovals(
+      runtime,
+      socket as unknown as WebSocket,
+      new AbortController().signal,
+      { getResumeData: getResumeDataMock },
+    );
+
+    await waitFor(() => sendMessageStreamMock.mock.calls.length === 1);
+    await waitFor(() => drainStreamWithResumeMock.mock.calls.length === 1);
+
+    const continuationMessages = sendMessageStreamMock.mock.calls[0]?.[1] as
+      | Array<Record<string, unknown>>
+      | undefined;
+    expect(continuationMessages).toHaveLength(2);
+    expect(continuationMessages?.[0]).toEqual({
+      type: "approval",
+      approvals: [approvalResult],
+    });
+    expect(continuationMessages?.[1]).toEqual({
+      role: "user",
+      content: [
+        { type: "text", text: "queued user" },
+        { type: "text", text: "\n" },
+        {
+          type: "text",
+          text: "<task-notification>done</task-notification>",
+        },
+      ],
+    });
+    expect(runtime.loopStatus as string).toBe("PROCESSING_API_RESPONSE");
+    expect(runtime.queueRuntime.length).toBe(0);
+    expect(runtime.queuedMessagesByItemId.size).toBe(0);
+    expect(
+      socket.sentPayloads.some(
+        (payload) =>
+          payload.includes("queued user") &&
+          payload.includes("<task-notification>done</task-notification>"),
+      ),
+    ).toBe(true);
+
+    drain.resolve({
+      stopReason: "end_turn",
+      approvals: [],
+      apiDurationMs: 0,
+    });
+
+    await expect(recoveryPromise).resolves.toEqual({
+      stopReason: "end_turn",
+      approvals: [],
+      apiDurationMs: 0,
+    });
+  });
+
   test("queue pump status callbacks stay aggregate when another conversation is busy", async () => {
     const listener = __listenClientTestUtils.createListenerRuntime();
     __listenClientTestUtils.setActiveRuntime(listener);
@@ -627,5 +860,95 @@ describe("listen-client multi-worker concurrency", () => {
     expect(statuses.every((status) => status === "processing")).toBe(true);
     expect(listener.conversationRuntimes.has(runtimeB.key)).toBe(false);
     expect(listener.conversationRuntimes.has(runtimeA.key)).toBe(true);
+  });
+
+  test("change_device_state command holds queued input until the tracked command completes", async () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    __listenClientTestUtils.setActiveRuntime(listener);
+    const runtime = __listenClientTestUtils.getOrCreateScopedRuntime(
+      listener,
+      "agent-1",
+      "conv-a",
+    );
+    const socket = new MockSocket();
+    const processedTurns: string[] = [];
+
+    const queueInput = {
+      kind: "message",
+      source: "user",
+      content: "queued during command",
+      clientMessageId: "cm-command",
+      agentId: "agent-1",
+      conversationId: "conv-a",
+    } satisfies Omit<MessageQueueItem, "id" | "enqueuedAt">;
+    const item = runtime.queueRuntime.enqueue(queueInput);
+    if (!item) {
+      throw new Error("Expected queued item to be created");
+    }
+    runtime.queuedMessagesByItemId.set(
+      item.id,
+      makeIncomingMessage("agent-1", "conv-a", "queued during command"),
+    );
+
+    let releaseCommand!: () => void;
+    const commandHold = new Promise<void>((resolve) => {
+      releaseCommand = resolve;
+    });
+    const processQueuedTurn = async (
+      queuedTurn: IncomingMessage,
+      _dequeuedBatch: unknown,
+    ) => {
+      processedTurns.push(queuedTurn.conversationId ?? "default");
+    };
+
+    const commandPromise = __listenClientTestUtils.handleChangeDeviceStateInput(
+      listener,
+      {
+        command: {
+          type: "change_device_state",
+          runtime: { agent_id: "agent-1", conversation_id: "conv-a" },
+          payload: { cwd: "/tmp/next" },
+        },
+        socket: socket as unknown as WebSocket,
+        opts: {},
+        processQueuedTurn,
+      },
+      {
+        handleCwdChange: async () => {
+          await commandHold;
+        },
+      },
+    );
+
+    await waitFor(() => runtime.loopStatus === "EXECUTING_COMMAND");
+
+    __listenClientTestUtils.scheduleQueuePump(
+      runtime,
+      socket as unknown as WebSocket,
+      {} as never,
+      processQueuedTurn,
+    );
+
+    await waitFor(
+      () =>
+        runtime.queueRuntime.length === 1 &&
+        !runtime.queuePumpScheduled &&
+        !runtime.queuePumpActive,
+    );
+
+    expect(processedTurns).toEqual([]);
+    expect(runtime.queueRuntime.length).toBe(1);
+    expect(runtime.loopStatus).toBe("EXECUTING_COMMAND");
+
+    releaseCommand();
+    await commandPromise;
+
+    await waitFor(
+      () => processedTurns.length === 1 && runtime.queueRuntime.length === 0,
+    );
+
+    expect(processedTurns).toEqual(["conv-a"]);
+    expect(runtime.loopStatus).toBe("WAITING_ON_INPUT");
+    expect(runtime.queuedMessagesByItemId.size).toBe(0);
   });
 });

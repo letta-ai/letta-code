@@ -197,10 +197,7 @@ export function resolvePendingApprovalResolver(
   runtime.pendingApprovalResolvers.delete(requestId);
   runtime.listener.approvalRuntimeKeyByRequestId.delete(requestId);
   if (runtime.pendingApprovalResolvers.size === 0) {
-    setLoopStatus(
-      runtime,
-      runtime.isProcessing ? "PROCESSING_API_RESPONSE" : "WAITING_ON_INPUT",
-    );
+    setLoopStatus(runtime, "WAITING_ON_INPUT");
   }
   pending.resolve(response);
   emitLoopStatusIfOpen(runtime.listener, {
@@ -229,10 +226,7 @@ export function rejectPendingApprovalResolvers(
       runtime.listener.approvalRuntimeKeyByRequestId.delete(requestId);
     }
   }
-  setLoopStatus(
-    runtime,
-    runtime.isProcessing ? "PROCESSING_API_RESPONSE" : "WAITING_ON_INPUT",
-  );
+  setLoopStatus(runtime, "WAITING_ON_INPUT");
   emitLoopStatusIfOpen(runtime.listener, {
     agent_id: runtime.agentId,
     conversation_id: runtime.conversationId,
