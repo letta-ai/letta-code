@@ -272,6 +272,8 @@ export function ConversationSelector({
           agent_id: agentId,
           limit: FETCH_PAGE_SIZE,
           ...(afterCursor && { after: afterCursor }),
+          order: "desc",
+          order_by: "last_run_completion",
         });
 
         // Enrich conversations with message data in parallel
