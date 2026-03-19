@@ -307,6 +307,7 @@ function computeListenerQueueBlockedReason(
     conversation_id: runtime.conversationId,
   });
   return getListenerBlockedReason({
+    loopStatus: runtime.loopStatus,
     isProcessing: runtime.isProcessing,
     pendingApprovalsLen: activeScope
       ? getPendingControlRequestCount(runtime.listener, activeScope)

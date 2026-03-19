@@ -5,6 +5,7 @@ import type {
   MessageQueueItem,
   TaskNotificationQueueItem,
 } from "../../queue/queueRuntime";
+import type { IncomingMessage } from "../../websocket/listener/types";
 
 type MockStream = {
   conversationId: string;
@@ -853,5 +854,95 @@ describe("listen-client multi-worker concurrency", () => {
     expect(statuses.every((status) => status === "processing")).toBe(true);
     expect(listener.conversationRuntimes.has(runtimeB.key)).toBe(false);
     expect(listener.conversationRuntimes.has(runtimeA.key)).toBe(true);
+  });
+
+  test("change_device_state command holds queued input until the tracked command completes", async () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    __listenClientTestUtils.setActiveRuntime(listener);
+    const runtime = __listenClientTestUtils.getOrCreateScopedRuntime(
+      listener,
+      "agent-1",
+      "conv-a",
+    );
+    const socket = new MockSocket();
+    const processedTurns: string[] = [];
+
+    const queueInput = {
+      kind: "message",
+      source: "user",
+      content: "queued during command",
+      clientMessageId: "cm-command",
+      agentId: "agent-1",
+      conversationId: "conv-a",
+    } satisfies Omit<MessageQueueItem, "id" | "enqueuedAt">;
+    const item = runtime.queueRuntime.enqueue(queueInput);
+    if (!item) {
+      throw new Error("Expected queued item to be created");
+    }
+    runtime.queuedMessagesByItemId.set(
+      item.id,
+      makeIncomingMessage("agent-1", "conv-a", "queued during command"),
+    );
+
+    let releaseCommand!: () => void;
+    const commandHold = new Promise<void>((resolve) => {
+      releaseCommand = resolve;
+    });
+    const processQueuedTurn = async (
+      queuedTurn: IncomingMessage,
+      _dequeuedBatch: unknown,
+    ) => {
+      processedTurns.push(queuedTurn.conversationId ?? "default");
+    };
+
+    const commandPromise = __listenClientTestUtils.handleChangeDeviceStateInput(
+      listener,
+      {
+        command: {
+          type: "change_device_state",
+          runtime: { agent_id: "agent-1", conversation_id: "conv-a" },
+          payload: { cwd: "/tmp/next" },
+        },
+        socket: socket as unknown as WebSocket,
+        opts: {},
+        processQueuedTurn,
+      },
+      {
+        handleCwdChange: async () => {
+          await commandHold;
+        },
+      },
+    );
+
+    await waitFor(() => runtime.loopStatus === "EXECUTING_COMMAND");
+
+    __listenClientTestUtils.scheduleQueuePump(
+      runtime,
+      socket as unknown as WebSocket,
+      {} as never,
+      processQueuedTurn,
+    );
+
+    await waitFor(
+      () =>
+        runtime.queueRuntime.length === 1 &&
+        !runtime.queuePumpScheduled &&
+        !runtime.queuePumpActive,
+    );
+
+    expect(processedTurns).toEqual([]);
+    expect(runtime.queueRuntime.length).toBe(1);
+    expect(runtime.loopStatus).toBe("EXECUTING_COMMAND");
+
+    releaseCommand();
+    await commandPromise;
+
+    await waitFor(
+      () => processedTurns.length === 1 && runtime.queueRuntime.length === 0,
+    );
+
+    expect(processedTurns).toEqual(["conv-a"]);
+    expect(runtime.loopStatus).toBe("WAITING_ON_INPUT");
+    expect(runtime.queuedMessagesByItemId.size).toBe(0);
   });
 });
