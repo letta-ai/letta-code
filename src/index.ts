@@ -66,7 +66,7 @@ Letta Code is a general purpose CLI for interacting with Letta agents
 
 USAGE
   # interactive TUI
-  letta                 Resume default conversation (OG single-threaded experience)
+  letta                 Resume last conversation for this project
   letta --new           Create a new conversation (for concurrent sessions)
   letta --resume        Open agent selector UI to pick agent/conversation
   letta --new-agent     Create a new agent directly (skip profile selector)
@@ -1326,7 +1326,7 @@ async function main(): Promise<void> {
             if (cachedAgent && cachedAgent.id === target.agentId) {
               setValidatedAgent(cachedAgent);
             }
-            if (target.conversationId) {
+            if (target.conversationId && !forceNewConversation) {
               setSelectedConversationId(target.conversationId);
             }
             setLoadingState("assembling");
@@ -1768,7 +1768,7 @@ async function main(): Promise<void> {
             throw error;
           }
         } else if (selectedConversationId) {
-          // User selected a specific conversation from the --resume selector
+          // Conversation selected from --resume selector or auto-restored from local project settings
           try {
             setLoadingState("checking");
             const data = await getResumeData(
@@ -1784,10 +1784,18 @@ async function main(): Promise<void> {
               error instanceof APIError &&
               (error.status === 404 || error.status === 422)
             ) {
-              console.error(`Conversation ${selectedConversationId} not found`);
-              process.exit(1);
+              // Conversation no longer exists — fall back to default conversation
+              console.warn(
+                `Previous conversation ${selectedConversationId} not found, falling back to default`,
+              );
+              conversationIdToUse = "default";
+              setLoadingState("checking");
+              const data = await getResumeData(client, agent, "default");
+              setResumeData(data);
+              setResumedExistingConversation(data.messageHistory.length > 0);
+            } else {
+              throw error;
             }
-            throw error;
           }
         } else if (forceNewConversation) {
           // --new flag: create a new conversation (for concurrent sessions)
