@@ -142,18 +142,26 @@ export async function memory(args: MemoryArgs): Promise<MemoryResult> {
     const label = normalizeMemoryLabel(pathArg, "path");
     const filePath = resolveMemoryFilePath(memoryDir, label);
     const relPath = toRepoRelative(memoryDir, filePath);
-    const file = await loadEditableMemoryFile(filePath, pathArg);
 
-    const idx = file.body.indexOf(oldString);
+    // Load raw content and operate on full file (frontmatter + body)
+    const rawContent = await readFile(filePath, "utf8").catch((error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`memory: failed to read ${pathArg}: ${message}`);
+    });
+
+    const idx = rawContent.indexOf(oldString);
     if (idx === -1) {
       throw new Error(
         "memory str_replace: old_string was not found in the target memory block",
       );
     }
 
-    const nextBody = `${file.body.slice(0, idx)}${newString}${file.body.slice(idx + oldString.length)}`;
-    const rendered = renderMemoryFile(file.frontmatter, nextBody);
-    await writeFile(filePath, rendered, "utf8");
+    const nextContent = `${rawContent.slice(0, idx)}${newString}${rawContent.slice(idx + oldString.length)}`;
+
+    // Validate the result is still a valid memory file
+    parseMemoryFile(nextContent);
+
+    await writeFile(filePath, nextContent, "utf8");
     affectedPaths = [relPath];
   } else if (command === "insert") {
     const pathArg = requireString(args.path, "path", "insert");

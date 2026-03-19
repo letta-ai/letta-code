@@ -4,10 +4,10 @@ A convinience tool for memories stored in the memory directory (`$MEMORY_DIR`) t
 Files stored inside of `system/` eventually become part of the agent's system prompt, so are always in the context window and do not need to be re-read. Other files only have metadata in the system prompt, so may need to be explicitly read to be updated. 
 
 Supported operations on memory files:  
-- `str_replace`
+- `str_replace` — operates on full file content including frontmatter
 - `insert`
 - `delete`
-- `rename` (path rename or description update mode)
+- `rename` (path rename only)
 - `create`
 More general operations can be performanced through directory modifying the files. 
 
@@ -19,8 +19,11 @@ Note: absolute paths and `/memories/...` paths are not supported by this client-
 Examples:
 
 ```python
-# Replace text in a memory file 
+# Replace text in a memory file (works in body or frontmatter)
 memory(command="str_replace", reason="Update theme preference", path="system/human/preferences.md", old_string="theme: dark", new_string="theme: light")
+
+# Update frontmatter description
+memory(command="str_replace", reason="Clarify block purpose", path="system/human/prefs/coding.md", old_string="description: Old description", new_string="description: Updated description")
 
 # Insert text at line 5
 memory(command="insert", reason="Add note about meeting", path="reference/history/meeting-notes.md", insert_line=5, insert_text="New note here")
