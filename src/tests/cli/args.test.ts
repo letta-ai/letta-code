@@ -52,7 +52,6 @@ describe("shared CLI arg schema", () => {
   test("rendered OPTIONS help is generated from catalog metadata", () => {
     const help = renderCliOptionsHelp();
     expect(help).toContain("-h, --help");
-    expect(help).toContain("-c, --continue");
     expect(help).toContain("--memfs-startup <m>");
     expect(help).toContain("Default: text");
     expect(help).not.toContain("--run");
@@ -139,18 +138,9 @@ describe("shared CLI arg schema", () => {
 
   test("supports short aliases used by headless and interactive modes", () => {
     const parsed = parseCliArgs(
-      preprocessCliArgs([
-        "node",
-        "script",
-        "-p",
-        "hello",
-        "-c",
-        "-C",
-        "conv-123",
-      ]),
+      preprocessCliArgs(["node", "script", "-p", "hello", "-C", "conv-123"]),
       true,
     );
-    expect(parsed.values.continue).toBe(true);
     expect(parsed.values.conversation).toBe("conv-123");
   });
 });
