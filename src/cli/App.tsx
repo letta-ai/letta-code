@@ -340,7 +340,7 @@ const TOOL_CALL_COMMIT_DEFER_MS = 50;
 const ANIMATION_RESUME_HYSTERESIS_ROWS = 2;
 
 // Eager approval checking is now CONDITIONAL (LET-7101):
-// - Enabled when resuming a session (--resume, --continue, or startupApprovals exist)
+// - Enabled when resuming a session (--resume or startupApprovals exist)
 // - Disabled for normal messages (lazy recovery handles edge cases)
 // This saves ~2s latency per message in the common case.
 

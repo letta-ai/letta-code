@@ -328,27 +328,3 @@ describe("Startup Flow - Integration", () => {
     { timeout: 190000 },
   );
 });
-
-// ============================================================================
-// --continue Tests (depend on LRU state, harder to isolate)
-// ============================================================================
-
-describe("Startup Flow - Continue Flag", () => {
-  test(
-    "--continue with no LRU shows error",
-    async () => {
-      const result = await runCli(
-        ["--continue", "-p", "Say OK", "--output-format", "json"],
-        {
-          timeoutMs: 60000,
-        },
-      );
-
-      // Either succeeds (LRU exists) or fails with specific error
-      if (result.exitCode !== 0) {
-        expect(result.stderr).toContain("No recent session found");
-      }
-    },
-    { timeout: 70000 },
-  );
-});

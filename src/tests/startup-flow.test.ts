@@ -95,15 +95,6 @@ describe("Startup Flow - Flag Conflicts", () => {
     );
   });
 
-  test("--conversation conflicts with --continue", async () => {
-    const result = await runCli(["--conversation", "conv-123", "--continue"], {
-      expectExit: 1,
-    });
-    expect(result.stderr).toContain(
-      "--conversation cannot be used with --continue",
-    );
-  });
-
   test("--conversation conflicts with --import", async () => {
     const result = await runCli(
       ["--conversation", "conv-123", "--import", "test.af"],
@@ -195,14 +186,6 @@ describe("Startup Flow - Smoke", () => {
     );
     expect(result.stderr).toContain("Missing LETTA_API_KEY");
     expect(result.stderr).not.toContain("Unknown option '--memfs-startup'");
-  });
-
-  test("-c alias for --continue is accepted", async () => {
-    const result = await runCli(["-p", "Say OK", "-c"], {
-      expectExit: 1,
-    });
-    expect(result.stderr).toContain("Missing LETTA_API_KEY");
-    expect(result.stderr).not.toContain("Unknown option '-c'");
   });
 
   test("-C alias for --conversation is accepted", async () => {
