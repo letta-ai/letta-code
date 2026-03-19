@@ -77,6 +77,7 @@ USAGE
 
   # maintenance
   letta update          Manually check for updates and install if available
+  letta logout          Clear stored auth credentials (API key and refresh token)
   letta memfs ...       Memory filesystem subcommands (JSON-only)
   letta agents ...      Agents subcommands (JSON-only)
   letta messages ...    Messages subcommands (JSON-only)
@@ -440,6 +441,15 @@ async function main(): Promise<void> {
   // Handle info flag
   if (values.info) {
     await printInfo();
+    process.exit(0);
+  }
+
+  // Handle logout flag
+  if (values.logout) {
+    await settingsManager.logout();
+    console.log(
+      "Logged out successfully. Stored credentials have been cleared.",
+    );
     process.exit(0);
   }
 
