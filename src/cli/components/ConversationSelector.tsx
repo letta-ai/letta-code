@@ -441,23 +441,6 @@ export function ConversationSelector({
       const bracket = <Text dimColor>{"⎿  "}</Text>;
       const indent = "   "; // Same width as "⎿  " for alignment
 
-      // Priority 1: Summary
-      if (conv.summary) {
-        return (
-          <Box flexDirection="row" marginLeft={2}>
-            {bracket}
-            <Text dimColor>
-              👤{" "}
-            </Text>
-            <Text dimColor italic>
-              {conv.summary.length > 57
-                ? `${conv.summary.slice(0, 54)}...`
-                : conv.summary}
-            </Text>
-          </Box>
-        );
-      }
-
       // Priority 2: Preview lines with emoji prefixes
       if (previewLines.length > 0) {
         return (
