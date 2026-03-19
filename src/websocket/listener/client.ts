@@ -105,7 +105,10 @@ import {
   normalizeCwdAgentId,
   resolveRuntimeScope,
 } from "./scope";
-import { markAwaitingAcceptedApprovalContinuationRunId } from "./send";
+import {
+  markAwaitingAcceptedApprovalContinuationRunId,
+  resolveStaleApprovals,
+} from "./send";
 import { handleIncomingMessage } from "./turn";
 import type {
   ChangeCwdMessage,
@@ -1300,6 +1303,7 @@ export const __listenClientTestUtils = {
   shouldAttemptPostStopApprovalRecovery,
   getApprovalContinuationRecoveryDisposition,
   markAwaitingAcceptedApprovalContinuationRunId,
+  resolveStaleApprovals,
   normalizeMessageContentImages,
   normalizeInboundMessages,
   consumeQueuedTurn,

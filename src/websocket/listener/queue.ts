@@ -6,6 +6,7 @@ import type {
   QueueBlockedReason,
   QueueItem,
 } from "../../queue/queueRuntime";
+import { isCoalescable } from "../../queue/queueRuntime";
 import { mergeQueuedTurnInput } from "../../queue/turnQueueRuntime";
 import { getListenerBlockedReason } from "../helpers/listenerQueueAdapter";
 import { emitDequeuedUserMessage } from "./protocol-outbound";
@@ -51,6 +52,13 @@ export function getQueueItemsScope(items: QueueItem[]): {
       (item.conversationId ?? null) === (first.conversationId ?? null),
   );
   return sameScope ? getQueueItemScope(first) : {};
+}
+
+function hasSameQueueScope(a: QueueItem, b: QueueItem): boolean {
+  return (
+    (a.agentId ?? null) === (b.agentId ?? null) &&
+    (a.conversationId ?? null) === (b.conversationId ?? null)
+  );
 }
 
 function mergeDequeuedBatchContent(
@@ -250,8 +258,28 @@ export function consumeQueuedTurn(runtime: ConversationRuntime): {
   dequeuedBatch: DequeuedBatch;
   queuedTurn: IncomingMessage;
 } | null {
-  const queueLen = runtime.queueRuntime.length;
-  if (queueLen === 0) {
+  const queuedItems = runtime.queueRuntime.peek();
+  const firstQueuedItem = queuedItems[0];
+  if (!firstQueuedItem || !isCoalescable(firstQueuedItem.kind)) {
+    return null;
+  }
+
+  let queueLen = 0;
+  let hasMessage = false;
+  for (const item of queuedItems) {
+    if (
+      !isCoalescable(item.kind) ||
+      !hasSameQueueScope(firstQueuedItem, item)
+    ) {
+      break;
+    }
+    queueLen += 1;
+    if (item.kind === "message") {
+      hasMessage = true;
+    }
+  }
+
+  if (!hasMessage || queueLen === 0) {
     return null;
   }
 

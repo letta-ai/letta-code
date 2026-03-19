@@ -56,12 +56,23 @@ const drainStreamWithResumeMock = mock(
     return defaultDrainResult;
   },
 );
+const retrieveAgentMock = mock(async (agentId: string) => ({ id: agentId }));
 const cancelConversationMock = mock(async (_conversationId: string) => {});
 const getClientMock = mock(async () => ({
+  agents: {
+    retrieve: retrieveAgentMock,
+  },
   conversations: {
     cancel: cancelConversationMock,
   },
 }));
+const getResumeDataMock = mock(async () => ({ pendingApprovals: [] }));
+const classifyApprovalsMock = mock(async () => ({
+  autoAllowed: [],
+  autoDenied: [],
+  needsUserInput: [],
+}));
+const executeApprovalBatchMock = mock(async () => []);
 const fetchRunErrorDetailMock = mock(async () => null);
 const realStreamModule = await import("../../cli/helpers/stream");
 
@@ -101,6 +112,18 @@ mock.module("../../agent/client", () => ({
   getServerUrl: () => "https://example.test",
   clearLastSDKDiagnostic: () => {},
   consumeLastSDKDiagnostic: () => null,
+}));
+
+mock.module("../../agent/check-approval", () => ({
+  getResumeData: getResumeDataMock,
+}));
+
+mock.module("../../cli/helpers/approvalClassification", () => ({
+  classifyApprovals: classifyApprovalsMock,
+}));
+
+mock.module("../../agent/approval-execution", () => ({
+  executeApprovalBatch: executeApprovalBatchMock,
 }));
 
 mock.module("../../agent/approval-recovery", () => ({
@@ -175,6 +198,10 @@ describe("listen-client multi-worker concurrency", () => {
     getStreamToolContextIdMock.mockClear();
     drainStreamWithResumeMock.mockClear();
     getClientMock.mockClear();
+    retrieveAgentMock.mockClear();
+    getResumeDataMock.mockClear();
+    classifyApprovalsMock.mockClear();
+    executeApprovalBatchMock.mockClear();
     cancelConversationMock.mockClear();
     fetchRunErrorDetailMock.mockClear();
     drainHandlers.clear();
@@ -576,7 +603,7 @@ describe("listen-client multi-worker concurrency", () => {
     expect(runtimeB.queuedMessagesByItemId.size).toBe(0);
   });
 
-  test("consumeQueuedTurn merges queued user input and task notifications for approval reentry", () => {
+  test("consumeQueuedTurn only drains the next same-scope queued turn batch", () => {
     const runtime = __listenClientTestUtils.createRuntime();
     const messageInput = {
       kind: "message",
@@ -611,6 +638,25 @@ describe("listen-client multi-worker concurrency", () => {
       throw new Error("Expected queued task notification item");
     }
 
+    const otherMessageInput = {
+      kind: "message",
+      source: "user",
+      content: "queued other",
+      clientMessageId: "cm-other",
+      agentId: "agent-1",
+      conversationId: "conv-2",
+    } satisfies Omit<MessageQueueItem, "id" | "enqueuedAt">;
+    const otherMessageItem = runtime.queueRuntime.enqueue(otherMessageInput);
+
+    if (!otherMessageItem) {
+      throw new Error("Expected second queued message item");
+    }
+
+    runtime.queuedMessagesByItemId.set(
+      otherMessageItem.id,
+      makeIncomingMessage("agent-1", "conv-2", "queued other"),
+    );
+
     const consumed = __listenClientTestUtils.consumeQueuedTurn(runtime);
 
     expect(consumed).not.toBeNull();
@@ -630,8 +676,127 @@ describe("listen-client multi-worker concurrency", () => {
         ],
       },
     ]);
+    expect(runtime.queueRuntime.length).toBe(1);
+    expect(runtime.queuedMessagesByItemId.has(otherMessageItem.id)).toBe(true);
+  });
+
+  test("resolveStaleApprovals injects queued turns and marks recovery drain as processing", async () => {
+    const runtime = __listenClientTestUtils.createRuntime();
+    runtime.agentId = "agent-1";
+    runtime.conversationId = "conv-1";
+    runtime.activeWorkingDirectory = "/tmp/project";
+    runtime.loopStatus = "WAITING_FOR_API_RESPONSE";
+    const socket = new MockSocket();
+    const drain = createDeferredDrain();
+    drainHandlers.set("conv-1", () => drain.promise);
+
+    const approval = {
+      toolCallId: "tool-call-1",
+      toolName: "Write",
+      toolArgs: '{"file_path":"foo.ts"}',
+    };
+    const approvalResult = {
+      type: "tool",
+      tool_call_id: "tool-call-1",
+      tool_return: "ok",
+      status: "success",
+    };
+
+    getResumeDataMock.mockResolvedValueOnce({
+      pendingApprovals: [approval],
+    } as never);
+    classifyApprovalsMock.mockResolvedValueOnce({
+      autoAllowed: [
+        {
+          approval,
+          parsedArgs: { file_path: "foo.ts" },
+        },
+      ],
+      autoDenied: [],
+      needsUserInput: [],
+    } as never);
+    executeApprovalBatchMock.mockResolvedValueOnce([approvalResult] as never);
+
+    const queuedMessageInput = {
+      kind: "message",
+      source: "user",
+      content: "queued user",
+      clientMessageId: "cm-stale-user",
+      agentId: "agent-1",
+      conversationId: "conv-1",
+    } satisfies Omit<MessageQueueItem, "id" | "enqueuedAt">;
+    const queuedMessageItem = runtime.queueRuntime.enqueue(queuedMessageInput);
+    if (!queuedMessageItem) {
+      throw new Error("Expected stale recovery queued message item");
+    }
+    runtime.queuedMessagesByItemId.set(
+      queuedMessageItem.id,
+      makeIncomingMessage("agent-1", "conv-1", "queued user"),
+    );
+
+    const queuedTaskInput = {
+      kind: "task_notification",
+      source: "system",
+      text: "<task-notification>done</task-notification>",
+      clientMessageId: "cm-stale-task",
+      agentId: "agent-1",
+      conversationId: "conv-1",
+    } satisfies Omit<TaskNotificationQueueItem, "id" | "enqueuedAt">;
+    const queuedTaskItem = runtime.queueRuntime.enqueue(queuedTaskInput);
+    if (!queuedTaskItem) {
+      throw new Error("Expected stale recovery queued task item");
+    }
+
+    const recoveryPromise = __listenClientTestUtils.resolveStaleApprovals(
+      runtime,
+      socket as unknown as WebSocket,
+      new AbortController().signal,
+    );
+
+    await waitFor(() => sendMessageStreamMock.mock.calls.length === 1);
+    await waitFor(() => drainStreamWithResumeMock.mock.calls.length === 1);
+
+    const continuationMessages = sendMessageStreamMock.mock.calls[0]?.[1] as
+      | Array<Record<string, unknown>>
+      | undefined;
+    expect(continuationMessages).toHaveLength(2);
+    expect(continuationMessages?.[0]).toEqual({
+      type: "approval",
+      approvals: [approvalResult],
+    });
+    expect(continuationMessages?.[1]).toEqual({
+      role: "user",
+      content: [
+        { type: "text", text: "queued user" },
+        { type: "text", text: "\n" },
+        {
+          type: "text",
+          text: "<task-notification>done</task-notification>",
+        },
+      ],
+    });
+    expect(runtime.loopStatus as string).toBe("PROCESSING_API_RESPONSE");
     expect(runtime.queueRuntime.length).toBe(0);
     expect(runtime.queuedMessagesByItemId.size).toBe(0);
+    expect(
+      socket.sentPayloads.some(
+        (payload) =>
+          payload.includes("queued user") &&
+          payload.includes("<task-notification>done</task-notification>"),
+      ),
+    ).toBe(true);
+
+    drain.resolve({
+      stopReason: "end_turn",
+      approvals: [],
+      apiDurationMs: 0,
+    });
+
+    await expect(recoveryPromise).resolves.toEqual({
+      stopReason: "end_turn",
+      approvals: [],
+      apiDurationMs: 0,
+    });
   });
 
   test("queue pump status callbacks stay aggregate when another conversation is busy", async () => {
