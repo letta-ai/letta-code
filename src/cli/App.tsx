@@ -12603,9 +12603,14 @@ ${SYSTEM_REMINDER_CLOSE}
       // acceptEdits/yolo), keep their chosen mode instead of downgrading.
       const currentMode = permissionMode.getMode();
       if (currentMode === "plan") {
-        const restoreMode = acceptEdits
-          ? "acceptEdits"
-          : (permissionMode.getModeBeforePlan() ?? "default");
+        const previousMode = permissionMode.getModeBeforePlan();
+        const restoreMode =
+          // If the user was in YOLO before entering plan mode, always restore it.
+          previousMode === "bypassPermissions"
+            ? "bypassPermissions"
+            : acceptEdits
+              ? "acceptEdits"
+              : (previousMode ?? "default");
         permissionMode.setMode(restoreMode);
         setUiPermissionMode(restoreMode);
       } else {
@@ -12717,13 +12722,12 @@ ${SYSTEM_REMINDER_CLOSE}
       const hasUsablePlan = planFileExists(fallbackPlanPath);
 
       if (mode !== "plan") {
+        if (hasUsablePlan) {
+          // Keep approval flow alive and let user manually approve.
+          return;
+        }
+
         if (mode === "bypassPermissions") {
-          if (hasUsablePlan) {
-            // YOLO mode with a plan file — auto-approve ExitPlanMode.
-            lastAutoHandledExitPlanToolCallIdRef.current = approval.toolCallId;
-            handlePlanApprove();
-            return;
-          }
           // YOLO mode but no plan file yet — tell agent to write it first.
           const planFilePath = activePlanPath ?? fallbackPlanPath;
           const plansDir = join(homedir(), ".letta", "plans");
@@ -12732,10 +12736,6 @@ ${SYSTEM_REMINDER_CLOSE}
               (planFilePath ? `Plan file path: ${planFilePath}\n` : "") +
               `Use a write tool to create your plan in ${plansDir}, then use ExitPlanMode to present the plan to the user.`,
           );
-          return;
-        }
-        if (hasUsablePlan) {
-          // Other modes: keep approval flow alive and let user manually approve.
           return;
         }
 
@@ -12793,7 +12793,6 @@ ${SYSTEM_REMINDER_CLOSE}
   }, [
     pendingApprovals,
     approvalResults.length,
-    handlePlanApprove,
     handlePlanKeepPlanning,
     refreshDerived,
     queueApprovalResults,
@@ -12970,7 +12969,7 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
   // Guard EnterPlanMode:
   // When in bypassPermissions (YOLO) mode, auto-approve EnterPlanMode and stay
   // in YOLO — the agent gets plan instructions but keeps full permissions.
-  // The existing ExitPlanMode guard then auto-approves the exit too.
+  // ExitPlanMode still requires explicit user approval.
   useEffect(() => {
     const currentIndex = approvalResults.length;
     const approval = pendingApprovals[currentIndex];

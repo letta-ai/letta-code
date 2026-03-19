@@ -1,4 +1,5 @@
 import { memo } from "react";
+import { permissionMode } from "../../permissions/mode";
 import type { AdvancedDiffSuccess } from "../helpers/diff";
 import type { ApprovalRequest } from "../helpers/stream";
 import {
@@ -230,12 +231,16 @@ export const ApprovalSwitch = memo(
 
     // 1. ExitPlanMode → StaticPlanApproval
     if (toolName === "ExitPlanMode" && onPlanApprove && onPlanKeepPlanning) {
+      const showAcceptEditsOption =
+        permissionMode.getMode() === "plan" &&
+        permissionMode.getModeBeforePlan() !== "bypassPermissions";
       return (
         <StaticPlanApproval
           onApprove={() => onPlanApprove(false)}
           onApproveAndAcceptEdits={() => onPlanApprove(true)}
           onKeepPlanning={onPlanKeepPlanning}
           onCancel={onCancel ?? (() => {})}
+          showAcceptEditsOption={showAcceptEditsOption}
           isFocused={isFocused}
           planContent={planContent}
           planFilePath={planFilePath}
