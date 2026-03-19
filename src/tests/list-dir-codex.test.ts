@@ -101,12 +101,15 @@ describe("list_dir codex tool", () => {
     // Skip first 2 entries
     const result = await list_dir({ dir_path: dir, offset: 3, limit: 10 });
 
-    // Should not contain first two entries (when sorted alphabetically)
-    const lines = result.content.split("\n");
     // First line is "Absolute path: ..."
+    const lines = result.content.split("\n");
     expect(lines[0]).toContain("Absolute path:");
-    // Remaining lines should be limited entries
-    expect(lines.length).toBeGreaterThan(1);
+
+    // Entries should start at ccc.txt after skipping aaa/bbb
+    expect(result.content).toContain("ccc.txt");
+    expect(result.content).toContain("ddd.txt");
+    expect(result.content).not.toContain("aaa.txt");
+    expect(result.content).not.toContain("bbb.txt");
   });
 
   test("respects limit parameter", async () => {
@@ -120,8 +123,9 @@ describe("list_dir codex tool", () => {
 
     const result = await list_dir({ dir_path: dir, limit: 2 });
 
-    // Should have "More than 2 entries found" message
-    expect(result.content).toContain("More than 2 entries found");
+    expect(result.content).toContain(
+      "More entries available. Use offset=3 to continue.",
+    );
   });
 
   test("respects depth parameter", async () => {
@@ -176,7 +180,14 @@ describe("list_dir codex tool", () => {
   test("throws error for offset < 1", async () => {
     const dir = await setupTempDir();
     await expect(list_dir({ dir_path: dir, offset: 0 })).rejects.toThrow(
-      "offset must be a 1-indexed entry number",
+      "offset must be a positive integer (1-indexed)",
+    );
+  });
+
+  test("throws error for non-integer offset", async () => {
+    const dir = await setupTempDir();
+    await expect(list_dir({ dir_path: dir, offset: 1.5 })).rejects.toThrow(
+      "offset must be a positive integer (1-indexed)",
     );
   });
 
@@ -190,14 +201,28 @@ describe("list_dir codex tool", () => {
   test("throws error for limit < 1", async () => {
     const dir = await setupTempDir();
     await expect(list_dir({ dir_path: dir, limit: 0 })).rejects.toThrow(
-      "limit must be greater than zero",
+      "limit must be a positive integer",
+    );
+  });
+
+  test("throws error for non-integer limit", async () => {
+    const dir = await setupTempDir();
+    await expect(list_dir({ dir_path: dir, limit: 2.5 })).rejects.toThrow(
+      "limit must be a positive integer",
     );
   });
 
   test("throws error for depth < 1", async () => {
     const dir = await setupTempDir();
     await expect(list_dir({ dir_path: dir, depth: 0 })).rejects.toThrow(
-      "depth must be greater than zero",
+      "depth must be a positive integer",
+    );
+  });
+
+  test("throws error for non-integer depth", async () => {
+    const dir = await setupTempDir();
+    await expect(list_dir({ dir_path: dir, depth: 1.2 })).rejects.toThrow(
+      "depth must be a positive integer",
     );
   });
 
@@ -229,7 +254,9 @@ describe("list_dir codex tool", () => {
       "[Request capped: limit=1000->200, depth=99->5]",
     );
     expect(result.content).toMatch(/… \([\d,]+ more entries\)/);
-    expect(result.content).toContain("More than 51 entries found");
+    expect(result.content).toContain(
+      "More entries may exist beyond the current truncated view.",
+    );
   });
 
   test("truncates large folders in-place with omission markers", async () => {
@@ -280,7 +307,9 @@ describe("list_dir codex tool", () => {
 
     const lines = result.content.split("\n").slice(1);
     expect(lines[0]).toBe("… (7 more entries)");
-    expect(result.content).toContain("More than 1 entries found");
+    expect(result.content).toContain(
+      "More entries may exist beyond the current truncated view.",
+    );
   });
 
   test("offset beyond truncated view is rejected", async () => {
@@ -295,7 +324,9 @@ describe("list_dir codex tool", () => {
 
     await expect(
       list_dir({ dir_path: dir, offset: 5, limit: 1, depth: 2 }),
-    ).rejects.toThrow("offset exceeds directory entry count");
+    ).rejects.toThrow(
+      "offset exceeds available entries in current view (max offset: 4)",
+    );
   });
 
   test("does not traverse subdirectories omitted by per-folder cap", async () => {
@@ -332,7 +363,9 @@ describe("list_dir codex tool", () => {
     expect(result.content).toContain(
       "[Request capped: limit=50->3, depth=10->2]",
     );
-    expect(result.content).toContain("More than 3 entries found");
+    expect(result.content).toContain(
+      "More entries available. Use offset=4 to continue.",
+    );
   });
 
   test("falls back to defaults for invalid list_dir env overrides", async () => {

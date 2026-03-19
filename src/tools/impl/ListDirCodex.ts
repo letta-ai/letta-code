@@ -5,6 +5,9 @@ import { validateRequiredParams } from "./validation.js";
 
 const MAX_ENTRY_LENGTH = 500;
 const INDENTATION_SPACES = 2;
+const DEFAULT_OFFSET = 1;
+const DEFAULT_LIMIT = 25;
+const DEFAULT_DEPTH = 2;
 
 interface ListDirCodexArgs {
   dir_path: string;
@@ -31,7 +34,12 @@ interface CollectEntriesResult {
 
 /**
  * Codex-style list_dir tool.
- * Lists entries with pagination (offset/limit) and depth control.
+ * Lists entries with pagination and depth control.
+ *
+ * Defaults:
+ * - offset: 1 (1-indexed)
+ * - limit: 25
+ * - depth: 2 (immediate children + one nested level)
  */
 export async function list_dir(
   args: ListDirCodexArgs,
@@ -39,14 +47,19 @@ export async function list_dir(
   validateRequiredParams(args, ["dir_path"], "list_dir");
   const limits = getDirectoryLimits();
 
-  const { dir_path, offset = 1, limit = 25, depth = 2 } = args;
+  const {
+    dir_path,
+    offset = DEFAULT_OFFSET,
+    limit = DEFAULT_LIMIT,
+    depth = DEFAULT_DEPTH,
+  } = args;
   const userCwd = process.env.USER_CWD || process.cwd();
   const resolvedPath = path.isAbsolute(dir_path)
     ? dir_path
     : path.resolve(userCwd, dir_path);
 
-  if (offset < 1) {
-    throw new Error("offset must be a 1-indexed entry number");
+  if (!Number.isInteger(offset) || offset < 1) {
+    throw new Error("offset must be a positive integer (1-indexed)");
   }
 
   if (offset > limits.listDirMaxOffset) {
@@ -55,12 +68,12 @@ export async function list_dir(
     );
   }
 
-  if (limit < 1) {
-    throw new Error("limit must be greater than zero");
+  if (!Number.isInteger(limit) || limit < 1) {
+    throw new Error("limit must be a positive integer");
   }
 
-  if (depth < 1) {
-    throw new Error("depth must be greater than zero");
+  if (!Number.isInteger(depth) || depth < 1) {
+    throw new Error("depth must be a positive integer");
   }
 
   const effectiveLimit = Math.min(limit, limits.listDirMaxLimit);
@@ -97,6 +110,7 @@ async function listDirSlice(
   maxChildrenPerDir: number,
 ): Promise<string[]> {
   const entries: DirEntry[] = [];
+  // Collect one extra entry when possible so callers can tell if more data exists.
   const maxEntriesToCollect = Math.min(offset + limit, maxCollectedEntries);
 
   const { hitCollectionCap, hitFolderTruncation } = await collectEntries(
@@ -114,7 +128,9 @@ async function listDirSlice(
 
   const startIndex = offset - 1;
   if (startIndex >= entries.length) {
-    throw new Error("offset exceeds directory entry count");
+    throw new Error(
+      `offset exceeds available entries in current view (max offset: ${entries.length.toLocaleString()})`,
+    );
   }
 
   const remainingEntries = entries.length - startIndex;
@@ -130,8 +146,12 @@ async function listDirSlice(
     formatted.push(formatEntryLine(entry));
   }
 
-  if (endIndex < entries.length || hitCollectionCap || hitFolderTruncation) {
-    formatted.push(`More than ${cappedLimit} entries found`);
+  if (endIndex < entries.length) {
+    formatted.push(
+      `More entries available. Use offset=${endIndex + 1} to continue.`,
+    );
+  } else if (hitCollectionCap || hitFolderTruncation) {
+    formatted.push("More entries may exist beyond the current truncated view.");
   }
 
   return formatted;
