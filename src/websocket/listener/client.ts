@@ -72,6 +72,7 @@ import {
   setLoopStatus,
 } from "./protocol-outbound";
 import {
+  consumeQueuedTurn,
   getQueueItemScope,
   getQueueItemsScope,
   normalizeInboundMessages,
@@ -1301,6 +1302,7 @@ export const __listenClientTestUtils = {
   markAwaitingAcceptedApprovalContinuationRunId,
   normalizeMessageContentImages,
   normalizeInboundMessages,
+  consumeQueuedTurn,
   handleIncomingMessage,
   handleApprovalResponseInput,
   scheduleQueuePump,

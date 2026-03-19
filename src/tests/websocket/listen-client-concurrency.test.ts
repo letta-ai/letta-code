@@ -1,7 +1,10 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import WebSocket from "ws";
 import { permissionMode } from "../../permissions/mode";
-import type { MessageQueueItem } from "../../queue/queueRuntime";
+import type {
+  MessageQueueItem,
+  TaskNotificationQueueItem,
+} from "../../queue/queueRuntime";
 
 type MockStream = {
   conversationId: string;
@@ -571,6 +574,64 @@ describe("listen-client multi-worker concurrency", () => {
     expect(runtimeB.queueRuntime.length).toBe(0);
     expect(runtimeA.queuedMessagesByItemId.size).toBe(0);
     expect(runtimeB.queuedMessagesByItemId.size).toBe(0);
+  });
+
+  test("consumeQueuedTurn merges queued user input and task notifications for approval reentry", () => {
+    const runtime = __listenClientTestUtils.createRuntime();
+    const messageInput = {
+      kind: "message",
+      source: "user",
+      content: "queued user",
+      clientMessageId: "cm-user",
+      agentId: "agent-1",
+      conversationId: "conv-1",
+    } satisfies Omit<MessageQueueItem, "id" | "enqueuedAt">;
+    const messageItem = runtime.queueRuntime.enqueue(messageInput);
+
+    if (!messageItem) {
+      throw new Error("Expected queued message item");
+    }
+
+    runtime.queuedMessagesByItemId.set(
+      messageItem.id,
+      makeIncomingMessage("agent-1", "conv-1", "queued user"),
+    );
+
+    const taskInput = {
+      kind: "task_notification",
+      source: "system",
+      text: "<task-notification>done</task-notification>",
+      clientMessageId: "cm-task",
+      agentId: "agent-1",
+      conversationId: "conv-1",
+    } satisfies Omit<TaskNotificationQueueItem, "id" | "enqueuedAt">;
+    const taskItem = runtime.queueRuntime.enqueue(taskInput);
+
+    if (!taskItem) {
+      throw new Error("Expected queued task notification item");
+    }
+
+    const consumed = __listenClientTestUtils.consumeQueuedTurn(runtime);
+
+    expect(consumed).not.toBeNull();
+    expect(
+      consumed?.dequeuedBatch.items.map((item: { id: string }) => item.id),
+    ).toEqual([messageItem.id, taskItem.id]);
+    expect(consumed?.queuedTurn.messages).toEqual([
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "queued user" },
+          { type: "text", text: "\n" },
+          {
+            type: "text",
+            text: "<task-notification>done</task-notification>",
+          },
+        ],
+      },
+    ]);
+    expect(runtime.queueRuntime.length).toBe(0);
+    expect(runtime.queuedMessagesByItemId.size).toBe(0);
   });
 
   test("queue pump status callbacks stay aggregate when another conversation is busy", async () => {

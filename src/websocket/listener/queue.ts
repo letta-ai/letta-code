@@ -246,6 +246,31 @@ export function shouldQueueInboundMessage(parsed: IncomingMessage): boolean {
   return parsed.messages.some((payload) => "content" in payload);
 }
 
+export function consumeQueuedTurn(runtime: ConversationRuntime): {
+  dequeuedBatch: DequeuedBatch;
+  queuedTurn: IncomingMessage;
+} | null {
+  const queueLen = runtime.queueRuntime.length;
+  if (queueLen === 0) {
+    return null;
+  }
+
+  const dequeuedBatch = runtime.queueRuntime.consumeItems(queueLen);
+  if (!dequeuedBatch) {
+    return null;
+  }
+
+  const queuedTurn = buildQueuedTurnMessage(runtime, dequeuedBatch);
+  if (!queuedTurn) {
+    return null;
+  }
+
+  return {
+    dequeuedBatch,
+    queuedTurn,
+  };
+}
+
 function computeListenerQueueBlockedReason(
   runtime: ConversationRuntime,
 ): QueueBlockedReason | null {
@@ -292,20 +317,12 @@ async function drainQueuedMessages(
         return;
       }
 
-      const queueLen = runtime.queueRuntime.length;
-      if (queueLen === 0) {
+      const consumedQueuedTurn = consumeQueuedTurn(runtime);
+      if (!consumedQueuedTurn) {
         return;
       }
 
-      const dequeuedBatch = runtime.queueRuntime.consumeItems(queueLen);
-      if (!dequeuedBatch) {
-        return;
-      }
-
-      const queuedTurn = buildQueuedTurnMessage(runtime, dequeuedBatch);
-      if (!queuedTurn) {
-        continue;
-      }
+      const { dequeuedBatch, queuedTurn } = consumedQueuedTurn;
 
       emitDequeuedUserMessage(socket, runtime, queuedTurn, dequeuedBatch);
 

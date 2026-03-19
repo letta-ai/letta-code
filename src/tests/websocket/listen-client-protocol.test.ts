@@ -228,6 +228,30 @@ describe("listen-client permission mode scope keys", () => {
 });
 
 describe("listen-client approval resolver wiring", () => {
+  test("resolved approvals restore WAITING_ON_INPUT instead of faking processing", () => {
+    const runtime = __listenClientTestUtils.createRuntime();
+    const socket = new MockSocket(WebSocket.OPEN);
+    runtime.isProcessing = true;
+    runtime.loopStatus = "WAITING_ON_APPROVAL";
+
+    void requestApprovalOverWS(
+      runtime,
+      socket as unknown as WebSocket,
+      "perm-status",
+      makeControlRequest("perm-status"),
+    ).catch(() => {});
+
+    expect(runtime.loopStatus).toBe("WAITING_ON_APPROVAL");
+
+    const resolved = resolvePendingApprovalResolver(runtime, {
+      request_id: "perm-status",
+      decision: { behavior: "allow" },
+    });
+
+    expect(resolved).toBe(true);
+    expect(runtime.loopStatus as string).toBe("WAITING_ON_INPUT");
+  });
+
   test("resolves matching pending resolver", async () => {
     const runtime = __listenClientTestUtils.createRuntime();
     const socket = new MockSocket(WebSocket.OPEN);
@@ -303,6 +327,21 @@ describe("listen-client approval resolver wiring", () => {
     expect(runtime.pendingApprovalResolvers.size).toBe(0);
     await expect(first).rejects.toThrow("socket closed");
     await expect(second).rejects.toThrow("socket closed");
+  });
+
+  test("cleanup resets WAITING_ON_INPUT instead of restoring fake processing", async () => {
+    const runtime = __listenClientTestUtils.createRuntime();
+    runtime.isProcessing = true;
+    runtime.loopStatus = "WAITING_ON_APPROVAL";
+
+    const pending = new Promise<ApprovalResponseBody>((resolve, reject) => {
+      runtime.pendingApprovalResolvers.set("perm-cleanup", { resolve, reject });
+    });
+
+    rejectPendingApprovalResolvers(runtime, "socket closed");
+
+    expect(runtime.loopStatus as string).toBe("WAITING_ON_INPUT");
+    await expect(pending).rejects.toThrow("socket closed");
   });
 
   test("stopRuntime rejects pending resolvers even when callbacks are suppressed", async () => {
