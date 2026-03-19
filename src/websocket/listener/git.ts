@@ -64,6 +64,34 @@ function getRecentBranches(
     .slice(0, MAX_RECENT_BRANCHES);
 }
 
+/**
+ * Search local branches by a substring pattern.
+ * Returns all local branches sorted by most-recently-committed that match
+ * the query. If query is empty, returns all local branches.
+ */
+export function searchBranches(query: string, cwd: string): string[] {
+  const pattern = query.length > 0 ? `*${query}*` : '*';
+  const raw = runGit(
+    [
+      'branch',
+      '--sort=-committerdate',
+      '--format=%(refname:short)',
+      '--list',
+      pattern,
+    ],
+    cwd,
+  );
+
+  if (!raw) {
+    return [];
+  }
+
+  return raw
+    .split('\n')
+    .map((b) => b.trim())
+    .filter((b) => b.length > 0);
+}
+
 export interface GitOpResult {
   success: boolean;
   error?: string;

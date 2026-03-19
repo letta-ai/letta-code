@@ -414,6 +414,19 @@ export interface TerminalKillCommand {
   terminal_id: string;
 }
 
+/**
+ * On-demand branch search request from the cloud.
+ * Does not carry a runtime scope — device uses the current conversation CWD.
+ * The device responds with a `search_branches_response` DeviceMessage.
+ */
+export interface SearchBranchesCommand {
+  type: "search_branches";
+  /** Substring to match against branch names. Empty string returns all branches. */
+  query: string;
+  /** Echoed back in the response for correlation. */
+  request_id: string;
+}
+
 export type WsProtocolCommand =
   | InputCommand
   | ChangeDeviceStateCommand
@@ -422,7 +435,8 @@ export type WsProtocolCommand =
   | TerminalSpawnCommand
   | TerminalInputCommand
   | TerminalResizeCommand
-  | TerminalKillCommand;
+  | TerminalKillCommand
+  | SearchBranchesCommand;
 
 export type WsProtocolMessage =
   | DeviceStatusUpdateMessage

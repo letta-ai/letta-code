@@ -52,7 +52,7 @@ import {
   populateInterruptQueue,
   stashRecoveredApprovalInterrupts,
 } from "./interrupts";
-import { handleGitOp } from "./git";
+import { handleGitOp, searchBranches } from "./git";
 import {
   getConversationPermissionModeState,
   loadPersistedPermissionModeMap,
@@ -871,6 +871,33 @@ async function connectWithRetry(
         if (shouldTrackCommand) {
           setLoopStatus(scopedRuntime, "WAITING_ON_INPUT", scope);
         }
+      }
+      return;
+    }
+
+    if (parsed.type === "search_branches") {
+      // Use the active conversation's CWD, falling back to the boot CWD.
+      const cwd = process.env.USER_CWD ?? process.cwd();
+      try {
+        const branches = searchBranches(parsed.query, cwd);
+        socket.send(
+          JSON.stringify({
+            type: "search_branches_response",
+            request_id: parsed.request_id,
+            branches,
+            success: true,
+          }),
+        );
+      } catch (err) {
+        socket.send(
+          JSON.stringify({
+            type: "search_branches_response",
+            request_id: parsed.request_id,
+            branches: [],
+            success: false,
+            error: err instanceof Error ? err.message : "Branch search failed",
+          }),
+        );
       }
       return;
     }
