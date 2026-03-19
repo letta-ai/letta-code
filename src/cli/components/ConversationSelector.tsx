@@ -503,12 +503,14 @@ export function ConversationSelector({
             color={isSelected ? colors.selector.itemHighlighted : undefined}
           >
             {conv.summary
-              ? `${conv.summary.length > 40 ? conv.summary.slice(0, 37) + "..." : conv.summary} (${conv.id})`
+              ? `${conv.summary.length > 40 ? `${conv.summary.slice(0, 37)}...` : conv.summary} (${conv.id})`
               : isDefault
                 ? "default"
                 : conv.id}
           </Text>
-          {!conv.summary && isDefault && <Text dimColor> (agent's default conversation)</Text>}
+          {!conv.summary && isDefault && (
+            <Text dimColor> (agent's default conversation)</Text>
+          )}
           {isCurrent && (
             <Text color={colors.selector.itemCurrent}> (current)</Text>
           )}
