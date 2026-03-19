@@ -17,6 +17,13 @@ Navigate to your project directory and run `letta` (see various command-line opt
 
 Run `/connect` to configure your own LLM API keys (OpenAI, Anthropic, etc.), and use `/model` to swap models.
 
+To clear stored credentials and force re-authentication, run:
+```bash
+letta --logout
+# or
+letta logout
+```
+
 > [!NOTE]
 >  By default, Letta Code will to connect to the [Letta API](https://app.letta.com/). Use `/connect` to use your own LLM API keys and coding plans (Codex, zAI, Minimax) for free. Set `LETTA_BASE_URL` to connect to an external [Docker server](https://docs.letta.com/letta-code/docker).
 
