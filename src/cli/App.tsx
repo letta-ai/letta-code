@@ -8130,10 +8130,14 @@ export default function App({
         }
 
         // Special handling for /new command - start new conversation
-        if (msg.trim() === "/new") {
+        const newMatch = msg.trim().match(/^\/new(?:\s+(.+))?$/);
+        if (newMatch) {
+          const conversationName = newMatch[1]?.trim();
           const cmd = commandRunner.start(
             msg.trim(),
-            "Starting new conversation...",
+            conversationName
+              ? `Starting new conversation: ${conversationName}...`
+              : "Starting new conversation...",
           );
 
           // New conversations should not inherit pending reasoning-tier debounce.
@@ -8150,6 +8154,7 @@ export default function App({
             const conversation = await client.conversations.create({
               agent_id: agentId,
               isolated_block_labels: [...ISOLATED_BLOCK_LABELS],
+              ...(conversationName && { summary: conversationName }),
             });
 
             await maybeCarryOverActiveConversationModel(conversation.id);
