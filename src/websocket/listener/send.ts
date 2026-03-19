@@ -86,8 +86,13 @@ export async function resolveStaleApprovals(
   runtime: ConversationRuntime,
   socket: WebSocket,
   abortSignal: AbortSignal,
+  deps: {
+    getResumeData?: typeof getResumeData;
+  } = {},
 ): Promise<Awaited<ReturnType<typeof drainRecoveryStreamWithEmission>> | null> {
   if (!runtime.agentId) return null;
+
+  const getResumeDataImpl = deps.getResumeData ?? getResumeData;
 
   const client = await getClient();
   let agent: Awaited<ReturnType<typeof client.agents.retrieve>>;
@@ -104,9 +109,14 @@ export async function resolveStaleApprovals(
 
   let resumeData: Awaited<ReturnType<typeof getResumeData>>;
   try {
-    resumeData = await getResumeData(client, agent, requestedConversationId, {
-      includeMessageHistory: false,
-    });
+    resumeData = await getResumeDataImpl(
+      client,
+      agent,
+      requestedConversationId,
+      {
+        includeMessageHistory: false,
+      },
+    );
   } catch (err) {
     if (err instanceof APIError && (err.status === 404 || err.status === 422)) {
       return null;
