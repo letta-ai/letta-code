@@ -9,6 +9,7 @@ import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agen
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import WebSocket from "ws";
 import { getClient } from "../../agent/client";
+import { ensureFileIndex, searchFileIndex } from "../../cli/helpers/fileIndex";
 import { generatePlanFilePath } from "../../cli/helpers/planName";
 import { INTERRUPTED_BY_USER } from "../../constants";
 import { type DequeuedBatch, QueueRuntime } from "../../queue/queueRuntime";
@@ -59,10 +60,6 @@ import {
   setConversationPermissionModeState,
 } from "./permissionMode";
 import { isSearchFilesCommand, parseServerMessage } from "./protocol-inbound";
-import {
-  ensureFileIndex,
-  searchFileIndex,
-} from "../../cli/helpers/fileIndex";
 import {
   buildDeviceStatus,
   buildLoopStatus,
