@@ -1,19 +1,17 @@
 /**
  * /secret command handler for managing secrets.
- * Secrets are stored in ~/.letta/secrets.json and can be referenced
+ * Secrets are stored on the Letta server and can be referenced
  * via $SECRET_NAME syntax in shell commands.
  */
 
 import {
-  deleteSecret,
+  deleteSecretOnServer,
   listSecretNames,
-  setSecret,
+  setSecretOnServer,
 } from "../../utils/secretsStore";
 
 export interface SecretCommandResult {
   output: string;
-  /** Whether to trigger memory block sync */
-  syncMemoryBlock?: boolean;
 }
 
 /**
@@ -21,7 +19,7 @@ export interface SecretCommandResult {
  * Usage:
  *   /secret set KEY value  - Set a secret
  *   /secret list           - List available secret names
- *   /secret delete KEY     - Delete a secret
+ *   /secret unset KEY      - Delete a secret
  */
 export async function handleSecretCommand(
   args: string[],
@@ -50,12 +48,15 @@ export async function handleSecretCommand(
       }
 
       const value = valueParts.join(" ");
-      setSecret(normalizedKey, value);
 
-      return {
-        output: `Secret '$${normalizedKey}' set.`,
-        syncMemoryBlock: true,
-      };
+      try {
+        await setSecretOnServer(normalizedKey, value);
+        return { output: `Secret '$${normalizedKey}' set.` };
+      } catch (error) {
+        return {
+          output: `Failed to set secret: ${error instanceof Error ? error.message : String(error)}`,
+        };
+      }
     }
 
     case "list": {
@@ -74,26 +75,31 @@ export async function handleSecretCommand(
       };
     }
 
+    case "unset":
     case "delete":
     case "remove":
     case "rm": {
       if (!key) {
-        return { output: "Usage: /secret delete KEY" };
+        return { output: "Usage: /secret unset KEY" };
       }
 
       const normalizedKey = key.toUpperCase();
-      const deleted = deleteSecret(normalizedKey);
 
-      if (deleted) {
+      try {
+        const deleted = await deleteSecretOnServer(normalizedKey);
+
+        if (deleted) {
+          return { output: `Secret '$${normalizedKey}' deleted.` };
+        }
+
         return {
-          output: `Secret '$${normalizedKey}' deleted.`,
-          syncMemoryBlock: true,
+          output: `Secret '$${normalizedKey}' not found.\nUse /secret list to see available secrets.`,
+        };
+      } catch (error) {
+        return {
+          output: `Failed to delete secret: ${error instanceof Error ? error.message : String(error)}`,
         };
       }
-
-      return {
-        output: `Secret '$${normalizedKey}' not found.\nUse /secret list to see available secrets.`,
-      };
     }
 
     case undefined:
@@ -104,9 +110,9 @@ export async function handleSecretCommand(
 
   /secret set KEY value   Set a secret (KEY is normalized to uppercase)
   /secret list            List available secret names
-  /secret delete KEY      Delete a secret
+  /secret unset KEY       Delete a secret
 
-Secrets are stored in ~/.letta/secrets.json
+Secrets are stored on the Letta server.
 Use $SECRET_NAME in shell commands to reference them.
 Example: curl -H "Authorization: Bearer $API_KEY" https://api.example.com`,
       };

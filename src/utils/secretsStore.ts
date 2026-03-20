@@ -1,138 +1,138 @@
 /**
- * Secret storage for Letta Code.
- * Stores secrets in ~/.letta/secrets.json and provides
- * substitution for $SECRET_NAME in shell commands.
+ * Server-backed secret storage for Letta Code.
+ * Secrets are stored on the Letta server via the agent secrets API
+ * and cached in memory for fast $SECRET_NAME substitution in shell commands.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { getClient } from "../agent/client";
 
 declare const process: { env: Record<string, string | undefined> };
 
+/** In-memory cache of secrets (populated on startup from server). */
 let cachedSecrets: Record<string, string> | null = null;
 
+/** Stored agent ID, set during initialization. */
+let storedAgentId: string | null = null;
+
+/** Stored memory directory path, set during initialization. */
+let storedMemoryDir: string | null = null;
+
 /**
- * Get the path to the secrets file.
+ * Get the agent ID (set during init, falls back to env).
  */
-export function getSecretsPath(): string {
-  return join(homedir(), ".letta", "secrets.json");
+function getAgentId(): string {
+  const agentId =
+    storedAgentId || process.env.AGENT_ID || process.env.LETTA_AGENT_ID;
+  if (!agentId) {
+    throw new Error("No agent ID available — call initSecretsFromServer first");
+  }
+  return agentId;
 }
 
 /**
- * Load secrets from disk (cached in memory).
+ * Initialize secrets from the server. Call on agent startup.
+ * Fetches secrets via GET /v1/agents/{agent_id}?include=agent.secrets
+ * and populates the in-memory cache.
+ */
+export async function initSecretsFromServer(
+  agentId: string,
+  memoryDir?: string,
+): Promise<void> {
+  storedAgentId = agentId;
+  if (memoryDir) storedMemoryDir = memoryDir;
+  const client = await getClient();
+
+  const agent = await client.agents.retrieve(agentId, {
+    include: ["agent.secrets"],
+  });
+
+  const secrets: Record<string, string> = {};
+  if (agent.secrets && Array.isArray(agent.secrets)) {
+    for (const env of agent.secrets) {
+      if (env.key && env.value) {
+        secrets[env.key] = env.value;
+      }
+    }
+  }
+
+  cachedSecrets = secrets;
+  syncSecretsToMemoryBlock();
+}
+
+/**
+ * Load secrets from the in-memory cache.
+ * Returns an empty object if secrets have not been initialized yet.
  */
 export function loadSecrets(): Record<string, string> {
-  if (cachedSecrets !== null) {
-    return cachedSecrets;
-  }
-
-  const secretsPath = getSecretsPath();
-
-  if (!existsSync(secretsPath)) {
-    cachedSecrets = {};
-    return cachedSecrets;
-  }
-
-  try {
-    const content = readFileSync(secretsPath, "utf-8");
-    const parsed = JSON.parse(content);
-    const secrets = typeof parsed === "object" && parsed !== null ? parsed : {};
-    cachedSecrets = secrets;
-    return secrets;
-  } catch {
-    cachedSecrets = {};
-    return cachedSecrets;
-  }
-}
-
-/**
- * Save secrets to disk.
- */
-export function saveSecrets(secrets: Record<string, string>): void {
-  const secretsPath = getSecretsPath();
-  const secretsDir = join(homedir(), ".letta");
-
-  // Ensure directory exists
-  if (!existsSync(secretsDir)) {
-    mkdirSync(secretsDir, { recursive: true });
-  }
-
-  // Write with restricted permissions
-  const content = JSON.stringify(secrets, null, 2);
-  writeFileSync(secretsPath, content, { mode: 0o600 });
-
-  // Update cache
-  cachedSecrets = { ...secrets };
-}
-
-/**
- * Get a specific secret value.
- */
-export function getSecret(key: string): string | undefined {
-  const secrets = loadSecrets();
-  return secrets[key.toUpperCase()];
-}
-
-/**
- * Set a secret value.
- */
-export function setSecret(key: string, value: string): void {
-  const secrets = loadSecrets();
-  secrets[key.toUpperCase()] = value;
-  saveSecrets(secrets);
-  syncSecretsToMemoryBlock();
-}
-
-/**
- * Delete a secret.
- * @returns true if the secret existed and was deleted
- */
-export function deleteSecret(key: string): boolean {
-  const secrets = loadSecrets();
-  const normalizedKey = key.toUpperCase();
-
-  if (!(normalizedKey in secrets)) {
-    return false;
-  }
-
-  delete secrets[normalizedKey];
-  saveSecrets(secrets);
-  syncSecretsToMemoryBlock();
-  return true;
+  return cachedSecrets ?? {};
 }
 
 /**
  * List all secret names (not values).
  */
 export function listSecretNames(): string[] {
-  const secrets = loadSecrets();
-  return Object.keys(secrets).sort();
+  return Object.keys(loadSecrets()).sort();
 }
 
 /**
- * Clear the in-memory cache (useful for testing).
+ * Set a secret on the server and update the in-memory cache.
+ * PATCH replaces the entire secrets map, so we rebuild from cache.
  */
-export function clearSecretsCache(): void {
-  cachedSecrets = null;
+export async function setSecretOnServer(
+  key: string,
+  value: string,
+): Promise<void> {
+  const client = await getClient();
+  const agentId = getAgentId();
+
+  // Update cache first
+  const secrets = { ...loadSecrets() };
+  secrets[key] = value;
+
+  // PATCH replaces entire map
+  await client.agents.update(agentId, { secrets });
+
+  cachedSecrets = secrets;
+  syncSecretsToMemoryBlock();
 }
 
 /**
- * Sync secrets list to the memory block.
- * This creates/updates $MEMORY_DIR/system/secrets.md with available secret names.
- * Called after set/delete operations.
+ * Delete a secret from the server and update the in-memory cache.
+ * Rebuilds the map without the key and PATCHes.
+ * @returns true if the secret existed and was deleted
  */
-export function syncSecretsToMemoryBlock(memoryDirOverride?: string): void {
-  const memoryDir = memoryDirOverride ?? process.env.MEMORY_DIR;
-  if (!memoryDir) {
-    // No memory directory configured (might be in headless mode)
-    return;
+export async function deleteSecretOnServer(key: string): Promise<boolean> {
+  const secrets = { ...loadSecrets() };
+
+  if (!(key in secrets)) {
+    return false;
   }
+
+  delete secrets[key];
+
+  const client = await getClient();
+  const agentId = getAgentId();
+
+  await client.agents.update(agentId, { secrets });
+
+  cachedSecrets = secrets;
+  syncSecretsToMemoryBlock();
+  return true;
+}
+
+/**
+ * Sync secret names to the memory block so the agent knows which secrets exist.
+ * Writes to $MEMORY_DIR/system/secrets.md (names only, no values).
+ */
+function syncSecretsToMemoryBlock(): void {
+  const memoryDir = storedMemoryDir || process.env.MEMORY_DIR;
+  if (!memoryDir) return;
 
   const names = listSecretNames();
   const secretsFilePath = join(memoryDir, "system", "secrets.md");
 
-  // Build the memory block content
   const description =
     names.length > 0
       ? "Available secrets for shell command substitution"
@@ -141,7 +141,7 @@ export function syncSecretsToMemoryBlock(memoryDirOverride?: string): void {
   const body =
     names.length > 0
       ? `Use \`$SECRET_NAME\` syntax in shell commands to reference these secrets:\n\n${names.map((n) => `- \`$${n}\``).join("\n")}`
-      : "Use /secret set KEY value to add secrets.";
+      : "";
 
   const rendered = `---
 description: ${description}
@@ -152,11 +152,17 @@ description: ${description}
 ${body}
 `;
 
-  // Ensure system directory exists
   const systemDir = dirname(secretsFilePath);
   if (!existsSync(systemDir)) {
     mkdirSync(systemDir, { recursive: true });
   }
 
   writeFileSync(secretsFilePath, rendered, "utf8");
+}
+
+/**
+ * Clear the in-memory cache (useful for testing).
+ */
+export function clearSecretsCache(): void {
+  cachedSecrets = null;
 }

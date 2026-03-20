@@ -257,7 +257,7 @@ export const commands: Record<string, Command> = {
   "/secret": {
     desc: "Manage secrets for shell commands",
     order: 33,
-    args: "<set|list|delete> [key] [value]",
+    args: "<set|list|unset> [key] [value]",
     handler: async (args: string[]) => {
       const result = await handleSecretCommand(args);
       return result.output;

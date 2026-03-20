@@ -264,10 +264,14 @@ export async function applyMemfsFlags(
     }
   }
 
-  // Sync any pre-existing secrets to the memory block so the agent sees them.
+  // Fetch secrets from the server so they're available for $SECRET_NAME substitution.
   if (isEnabled) {
-    const { syncSecretsToMemoryBlock } = await import("../utils/secretsStore");
-    syncSecretsToMemoryBlock(getMemoryFilesystemRoot(agentId));
+    const { initSecretsFromServer } = await import("../utils/secretsStore");
+    try {
+      await initSecretsFromServer(agentId, getMemoryFilesystemRoot(agentId));
+    } catch {
+      // Non-fatal: secrets substitution won't work but agent can still run.
+    }
   }
 
   const action =
