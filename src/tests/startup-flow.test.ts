@@ -27,6 +27,7 @@ async function runCli(
     };
     const requiresAuth =
       args.includes("--new-agent") ||
+      args.includes("--new") ||
       args.includes("--continue") ||
       args.includes("-c") ||
       args.includes("--conversation") ||
