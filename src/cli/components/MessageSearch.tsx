@@ -116,7 +116,7 @@ export function MessageSearch({
   const [searchInput, setSearchInput] = useState(initialQuery ?? "");
   const [activeQuery, setActiveQuery] = useState(initialQuery ?? "");
   const [searchMode, setSearchMode] = useState<SearchMode>("hybrid");
-  const [searchRange, setSearchRange] = useState<SearchRange>("all");
+  const [searchRange, setSearchRange] = useState<SearchRange>("agent");
   const [results, setResults] = useState<MessageSearchResponse>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);

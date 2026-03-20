@@ -8130,10 +8130,14 @@ export default function App({
         }
 
         // Special handling for /new command - start new conversation
-        if (msg.trim() === "/new") {
+        const newMatch = msg.trim().match(/^\/new(?:\s+(.+))?$/);
+        if (newMatch) {
+          const conversationName = newMatch[1]?.trim();
           const cmd = commandRunner.start(
             msg.trim(),
-            "Starting new conversation...",
+            conversationName
+              ? `Starting new conversation: ${conversationName}...`
+              : "Starting new conversation...",
           );
 
           // New conversations should not inherit pending reasoning-tier debounce.
@@ -8150,8 +8154,14 @@ export default function App({
             const conversation = await client.conversations.create({
               agent_id: agentId,
               isolated_block_labels: [...ISOLATED_BLOCK_LABELS],
+              ...(conversationName && { summary: conversationName }),
             });
 
+            // If we created the conversation with an explicit summary, mark it as set
+            // to prevent auto-summary from first user message overwriting it
+            if (conversationName) {
+              hasSetConversationSummaryRef.current = true;
+            }
             await maybeCarryOverActiveConversationModel(conversation.id);
 
             // Update conversationId state
@@ -13938,6 +13948,11 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
                         summary: selectorContext?.summary,
                         messageHistory: resumeData.messageHistory,
                       };
+
+                      // If the conversation already has a summary, prevent auto-summary from overwriting it
+                      if (selectorContext?.summary) {
+                        hasSetConversationSummaryRef.current = true;
+                      }
 
                       settingsManager.setLocalLastSession(
                         { agentId, conversationId: convId },
