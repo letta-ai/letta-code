@@ -45,7 +45,7 @@ interface EnrichedConversation {
 
 const DISPLAY_PAGE_SIZE = 3;
 const FETCH_PAGE_SIZE = 20;
-const ENRICH_MESSAGE_LIMIT = 3; // Only need 3 messages for preview lines
+const ENRICH_MESSAGE_LIMIT = 10; // Need enough to find 3 user/assistant msgs among system/tool noise
 
 /**
  * Format a relative time string from a date
