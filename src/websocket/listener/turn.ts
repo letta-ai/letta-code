@@ -9,6 +9,7 @@ import type { ApprovalResult } from "../../agent/approval-execution";
 import { fetchRunErrorDetail } from "../../agent/approval-recovery";
 import { getResumeData } from "../../agent/check-approval";
 import { getClient } from "../../agent/client";
+import { setConversationId, setCurrentAgentId } from "../../agent/context";
 import {
   getStreamToolContextId,
   type sendMessageStream,
@@ -75,7 +76,6 @@ import {
 } from "./send";
 import { handleApprovalStop } from "./turn-approval";
 import type { ConversationRuntime, IncomingMessage } from "./types";
-import { setCurrentAgentId, setConversationId } from "../../agent/context";
 
 export async function handleIncomingMessage(
   msg: IncomingMessage,
