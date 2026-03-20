@@ -6,6 +6,7 @@ import type {
   InputCommand,
   RuntimeScope,
   SearchBranchesCommand,
+  SearchFilesCommand,
   SyncCommand,
   TerminalInputCommand,
   TerminalKillCommand,
@@ -267,6 +268,18 @@ function isSearchBranchesCommand(
   );
 }
 
+export function isSearchFilesCommand(
+  value: unknown,
+): value is SearchFilesCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as { type?: unknown; query?: unknown; request_id?: unknown };
+  return (
+    c.type === "search_files" &&
+    typeof c.query === "string" &&
+    typeof c.request_id === "string"
+  );
+}
+
 export function parseServerMessage(
   data: WebSocket.RawData,
 ): ParsedServerMessage | null {
@@ -282,7 +295,8 @@ export function parseServerMessage(
       isTerminalInputCommand(parsed) ||
       isTerminalResizeCommand(parsed) ||
       isTerminalKillCommand(parsed) ||
-      isSearchBranchesCommand(parsed)
+      isSearchBranchesCommand(parsed) ||
+      isSearchFilesCommand(parsed)
     ) {
       return parsed as WsProtocolCommand;
     }

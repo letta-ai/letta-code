@@ -58,7 +58,11 @@ import {
   loadPersistedPermissionModeMap,
   setConversationPermissionModeState,
 } from "./permissionMode";
-import { parseServerMessage } from "./protocol-inbound";
+import { isSearchFilesCommand, parseServerMessage } from "./protocol-inbound";
+import {
+  ensureFileIndex,
+  searchFileIndex,
+} from "../../cli/helpers/fileIndex";
 import {
   buildDeviceStatus,
   buildLoopStatus,
@@ -900,6 +904,37 @@ async function connectWithRetry(
             branches: [],
             success: false,
             error: err instanceof Error ? err.message : "Branch search failed",
+          }),
+        );
+      }
+      return;
+    }
+
+    if (isSearchFilesCommand(parsed)) {
+      try {
+        await ensureFileIndex();
+        const files = searchFileIndex({
+          searchDir: ".",
+          pattern: parsed.query,
+          deep: true,
+          maxResults: parsed.max_results ?? 5,
+        });
+        socket.send(
+          JSON.stringify({
+            type: "search_files_response",
+            request_id: parsed.request_id,
+            files,
+            success: true,
+          }),
+        );
+      } catch (err) {
+        socket.send(
+          JSON.stringify({
+            type: "search_files_response",
+            request_id: parsed.request_id,
+            files: [],
+            success: false,
+            error: err instanceof Error ? err.message : "File search failed",
           }),
         );
       }

@@ -427,6 +427,21 @@ export interface SearchBranchesCommand {
   request_id: string;
 }
 
+/**
+ * On-demand file search request from the cloud.
+ * Device searches its in-memory file index and responds with
+ * a `search_files_response` DeviceMessage.
+ */
+export interface SearchFilesCommand {
+  type: "search_files";
+  /** Substring to match against file paths. Empty string returns top files by mtime. */
+  query: string;
+  /** Echoed back in the response for correlation. */
+  request_id: string;
+  /** Maximum number of results to return. Defaults to 5. */
+  max_results?: number;
+}
+
 export type WsProtocolCommand =
   | InputCommand
   | ChangeDeviceStateCommand
@@ -436,7 +451,8 @@ export type WsProtocolCommand =
   | TerminalInputCommand
   | TerminalResizeCommand
   | TerminalKillCommand
-  | SearchBranchesCommand;
+  | SearchBranchesCommand
+  | SearchFilesCommand;
 
 export type WsProtocolMessage =
   | DeviceStatusUpdateMessage
