@@ -1,6 +1,14 @@
 import { execFile as execFileCb } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  readFile,
+  rename,
+  rm,
+  stat,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -10,7 +18,13 @@ import { validateRequiredParams } from "./validation";
 
 const execFile = promisify(execFileCb);
 
-type MemoryCommand = "str_replace" | "insert" | "delete" | "rename" | "create";
+type MemoryCommand =
+  | "str_replace"
+  | "insert"
+  | "delete"
+  | "rename"
+  | "update_description"
+  | "create";
 
 interface MemoryArgs {
   command: MemoryCommand;
@@ -24,7 +38,6 @@ interface MemoryArgs {
   insert_text?: string;
   description?: string;
   file_text?: string;
-  limit?: number;
 }
 
 async function getAgentIdentity(): Promise<{
@@ -101,7 +114,7 @@ export async function memory(args: MemoryArgs): Promise<MemoryResult> {
       "description",
       "create",
     );
-    const label = normalizeMemoryLabel(pathArg, "path");
+    const label = normalizeMemoryLabel(memoryDir, pathArg, "path");
     const filePath = resolveMemoryFilePath(memoryDir, label);
     const relPath = toRepoRelative(memoryDir, filePath);
 
@@ -109,16 +122,11 @@ export async function memory(args: MemoryArgs): Promise<MemoryResult> {
       throw new Error(`memory create: block already exists at ${pathArg}`);
     }
 
-    const limit = args.limit ?? DEFAULT_LIMIT;
-    if (!Number.isInteger(limit) || limit <= 0) {
-      throw new Error("memory create: 'limit' must be a positive integer");
-    }
-
     const body = args.file_text ?? "";
     const rendered = renderMemoryFile(
       {
         description,
-        limit,
+        limit: DEFAULT_LIMIT,
       },
       body,
     );
@@ -139,7 +147,7 @@ export async function memory(args: MemoryArgs): Promise<MemoryResult> {
       "str_replace",
     );
 
-    const label = normalizeMemoryLabel(pathArg, "path");
+    const label = normalizeMemoryLabel(memoryDir, pathArg, "path");
     const filePath = resolveMemoryFilePath(memoryDir, label);
     const relPath = toRepoRelative(memoryDir, filePath);
     const file = await loadEditableMemoryFile(filePath, pathArg);
@@ -166,7 +174,7 @@ export async function memory(args: MemoryArgs): Promise<MemoryResult> {
       throw new Error("memory insert: 'insert_line' must be a number");
     }
 
-    const label = normalizeMemoryLabel(pathArg, "path");
+    const label = normalizeMemoryLabel(memoryDir, pathArg, "path");
     const filePath = resolveMemoryFilePath(memoryDir, label);
     const relPath = toRepoRelative(memoryDir, filePath);
     const file = await loadEditableMemoryFile(filePath, pathArg);
@@ -187,68 +195,66 @@ export async function memory(args: MemoryArgs): Promise<MemoryResult> {
     affectedPaths = [relPath];
   } else if (command === "delete") {
     const pathArg = requireString(args.path, "path", "delete");
-    const label = normalizeMemoryLabel(pathArg, "path");
-    const filePath = resolveMemoryFilePath(memoryDir, label);
-    const relPath = toRepoRelative(memoryDir, filePath);
+    const label = normalizeMemoryLabel(memoryDir, pathArg, "path");
+    const targetPath = resolveMemoryPath(memoryDir, label);
 
-    await loadEditableMemoryFile(filePath, pathArg);
-    await unlink(filePath);
-    affectedPaths = [relPath];
-  } else if (command === "rename") {
-    const hasDescriptionUpdate =
-      typeof args.path === "string" &&
-      args.path.trim().length > 0 &&
-      typeof args.description === "string" &&
-      args.description.trim().length > 0 &&
-      !args.old_path &&
-      !args.new_path;
-
-    if (hasDescriptionUpdate) {
-      const pathArg = requireString(args.path, "path", "rename");
-      const newDescription = requireString(
-        args.description,
-        "description",
-        "rename description update",
-      );
-
-      const label = normalizeMemoryLabel(pathArg, "path");
-      const filePath = resolveMemoryFilePath(memoryDir, label);
-      const relPath = toRepoRelative(memoryDir, filePath);
-      const file = await loadEditableMemoryFile(filePath, pathArg);
-
-      const rendered = renderMemoryFile(
-        {
-          ...file.frontmatter,
-          description: newDescription,
-        },
-        file.body,
-      );
-      await writeFile(filePath, rendered, "utf8");
+    if (existsSync(targetPath) && (await stat(targetPath)).isDirectory()) {
+      const relPath = toRepoRelative(memoryDir, targetPath);
+      await rm(targetPath, { recursive: true, force: false });
       affectedPaths = [relPath];
     } else {
-      const oldPathArg = requireString(args.old_path, "old_path", "rename");
-      const newPathArg = requireString(args.new_path, "new_path", "rename");
+      const filePath = resolveMemoryFilePath(memoryDir, label);
+      const relPath = toRepoRelative(memoryDir, filePath);
 
-      const oldLabel = normalizeMemoryLabel(oldPathArg, "old_path");
-      const newLabel = normalizeMemoryLabel(newPathArg, "new_path");
-
-      const oldFilePath = resolveMemoryFilePath(memoryDir, oldLabel);
-      const newFilePath = resolveMemoryFilePath(memoryDir, newLabel);
-
-      const oldRelPath = toRepoRelative(memoryDir, oldFilePath);
-      const newRelPath = toRepoRelative(memoryDir, newFilePath);
-
-      if (existsSync(newFilePath)) {
-        throw new Error(
-          `memory rename: destination already exists at ${newPathArg}`,
-        );
-      }
-
-      await loadEditableMemoryFile(oldFilePath, oldPathArg);
-      await mkdir(dirname(newFilePath), { recursive: true });
-      await rename(oldFilePath, newFilePath);
-      affectedPaths = [oldRelPath, newRelPath];
+      await loadEditableMemoryFile(filePath, pathArg);
+      await unlink(filePath);
+      affectedPaths = [relPath];
     }
+  } else if (command === "rename") {
+    const oldPathArg = requireString(args.old_path, "old_path", "rename");
+    const newPathArg = requireString(args.new_path, "new_path", "rename");
+
+    const oldLabel = normalizeMemoryLabel(memoryDir, oldPathArg, "old_path");
+    const newLabel = normalizeMemoryLabel(memoryDir, newPathArg, "new_path");
+
+    const oldFilePath = resolveMemoryFilePath(memoryDir, oldLabel);
+    const newFilePath = resolveMemoryFilePath(memoryDir, newLabel);
+
+    const oldRelPath = toRepoRelative(memoryDir, oldFilePath);
+    const newRelPath = toRepoRelative(memoryDir, newFilePath);
+
+    if (existsSync(newFilePath)) {
+      throw new Error(
+        `memory rename: destination already exists at ${newPathArg}`,
+      );
+    }
+
+    await loadEditableMemoryFile(oldFilePath, oldPathArg);
+    await mkdir(dirname(newFilePath), { recursive: true });
+    await rename(oldFilePath, newFilePath);
+    affectedPaths = [oldRelPath, newRelPath];
+  } else if (command === "update_description") {
+    const pathArg = requireString(args.path, "path", "update_description");
+    const newDescription = requireString(
+      args.description,
+      "description",
+      "update_description",
+    );
+
+    const label = normalizeMemoryLabel(memoryDir, pathArg, "path");
+    const filePath = resolveMemoryFilePath(memoryDir, label);
+    const relPath = toRepoRelative(memoryDir, filePath);
+    const file = await loadEditableMemoryFile(filePath, pathArg);
+
+    const rendered = renderMemoryFile(
+      {
+        ...file.frontmatter,
+        description: newDescription,
+      },
+      file.body,
+    );
+    await writeFile(filePath, rendered, "utf8");
+    affectedPaths = [relPath];
   } else {
     throw new Error(`Unsupported memory command: ${command}`);
   }
@@ -309,25 +315,51 @@ function ensureMemoryRepo(memoryDir: string): void {
   }
 }
 
-function normalizeMemoryLabel(inputPath: string, fieldName: string): string {
+function normalizeMemoryLabel(
+  memoryDir: string,
+  inputPath: string,
+  fieldName: string,
+): string {
+  const raw = inputPath.trim();
+  if (!raw) {
+    throw new Error(`memory: '${fieldName}' must be a non-empty string`);
+  }
+
+  if (raw.startsWith("~/") || raw.startsWith("$HOME/")) {
+    throw new Error(
+      `memory: '${fieldName}' must be a memory-relative file path, not a home-relative filesystem path`,
+    );
+  }
+
+  const isWindowsAbsolute = /^[a-zA-Z]:[\\/]/.test(raw);
+  if (isAbsolute(raw) || isWindowsAbsolute) {
+    const absolutePath = resolve(raw);
+    const relToMemory = relative(memoryDir, absolutePath);
+
+    if (
+      relToMemory &&
+      !relToMemory.startsWith("..") &&
+      !isAbsolute(relToMemory)
+    ) {
+      return normalizeRelativeMemoryLabel(relToMemory, fieldName);
+    }
+
+    throw new Error(memoryPrefixError(memoryDir));
+  }
+
+  return normalizeRelativeMemoryLabel(raw, fieldName);
+}
+
+function normalizeRelativeMemoryLabel(
+  inputPath: string,
+  fieldName: string,
+): string {
   const raw = inputPath.trim();
   if (!raw) {
     throw new Error(`memory: '${fieldName}' must be a non-empty string`);
   }
 
   const normalized = raw.replace(/\\/g, "/");
-
-  if (/^[a-zA-Z]:\//.test(normalized)) {
-    throw new Error(
-      `memory: '${fieldName}' must be a memory-relative file path, not an absolute host path`,
-    );
-  }
-
-  if (normalized.startsWith("~/") || normalized.startsWith("$HOME/")) {
-    throw new Error(
-      `memory: '${fieldName}' must be a memory-relative file path, not a home-relative filesystem path`,
-    );
-  }
 
   if (normalized.startsWith("/")) {
     throw new Error(
@@ -365,8 +397,17 @@ function normalizeMemoryLabel(inputPath: string, fieldName: string): string {
   return segments.join("/");
 }
 
+function memoryPrefixError(memoryDir: string): string {
+  return `The memory tool can only be used to modify files in {${memoryDir}} or provided as a relative path`;
+}
+
 function resolveMemoryFilePath(memoryDir: string, label: string): string {
-  const absolute = resolve(memoryDir, `${label}.md`);
+  const absolute = resolveMemoryPath(memoryDir, `${label}.md`);
+  return absolute;
+}
+
+function resolveMemoryPath(memoryDir: string, path: string): string {
+  const absolute = resolve(memoryDir, path);
   const rel = relative(memoryDir, absolute);
   if (rel.startsWith("..") || isAbsolute(rel)) {
     throw new Error("memory: resolved path escapes memory directory");

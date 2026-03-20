@@ -196,7 +196,94 @@ describe("memory tool", () => {
     expect(content).toContain("Sarah: +1-555-0100");
   });
 
-  test("rejects /memories-style paths", async () => {
+  test("accepts absolute file paths under MEMORY_DIR", async () => {
+    const absolutePath = join(memoryDir, "system", "contacts.md");
+
+    await memory({
+      command: "create",
+      reason: "Create contacts via absolute path",
+      path: absolutePath,
+      description: "Contacts memory absolute",
+      file_text: "Timber: good dog",
+    });
+
+    const content = await runGit(memoryDir, [
+      "show",
+      "HEAD:system/contacts.md",
+    ]);
+    expect(content).toContain("description: Contacts memory absolute");
+    expect(content).toContain("Timber: good dog");
+  });
+
+  test("updates frontmatter description via update_description command", async () => {
+    await memory({
+      command: "create",
+      reason: "Create coding prefs",
+      path: "system/human/prefs/coding.md",
+      description: "Old description",
+      file_text: "keep body unchanged",
+    });
+
+    await memory({
+      command: "update_description",
+      reason: "Update coding prefs description",
+      path: "system/human/prefs/coding.md",
+      description: "New description",
+    });
+
+    const content = await runGit(memoryDir, [
+      "show",
+      "HEAD:system/human/prefs/coding.md",
+    ]);
+    expect(content).toContain("description: New description");
+    expect(content).toContain("keep body unchanged");
+  });
+
+  test("rename requires old_path and new_path", async () => {
+    await expect(
+      memory({
+        command: "rename",
+        reason: "should fail",
+        path: "system/contacts.md",
+        description: "Should not update description via rename",
+      } as Parameters<typeof memory>[0]),
+    ).rejects.toThrow(/memory rename: 'old_path' must be a non-empty string/i);
+  });
+
+  test("delete supports recursive directory removal", async () => {
+    await memory({
+      command: "create",
+      reason: "Create draft note one",
+      path: "reference/history/draft-one.md",
+      description: "Draft one",
+      file_text: "one",
+    });
+
+    await memory({
+      command: "create",
+      reason: "Create draft note two",
+      path: "reference/history/draft-two.md",
+      description: "Draft two",
+      file_text: "two",
+    });
+
+    await memory({
+      command: "delete",
+      reason: "Delete history directory",
+      path: "reference/history",
+    });
+
+    const fileTree = await runGit(memoryDir, [
+      "ls-tree",
+      "-r",
+      "--name-only",
+      "HEAD",
+    ]);
+    expect(fileTree).not.toContain("reference/history/draft-one.md");
+    expect(fileTree).not.toContain("reference/history/draft-two.md");
+  });
+
+  test("rejects absolute paths outside MEMORY_DIR", async () => {
     await expect(
       memory({
         command: "create",
@@ -204,6 +291,8 @@ describe("memory tool", () => {
         path: "/memories/contacts",
         description: "Contacts memory",
       }),
-    ).rejects.toThrow(/relative path like system\/contacts\.md/i);
+    ).rejects.toThrow(
+      `The memory tool can only be used to modify files in {${memoryDir}} or provided as a relative path`,
+    );
   });
 });
