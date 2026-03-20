@@ -9,6 +9,7 @@ import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agen
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import WebSocket from "ws";
 import { getClient } from "../../agent/client";
+import { ensureFileIndex, searchFileIndex } from "../../cli/helpers/fileIndex";
 import { generatePlanFilePath } from "../../cli/helpers/planName";
 import { INTERRUPTED_BY_USER } from "../../constants";
 import { type DequeuedBatch, QueueRuntime } from "../../queue/queueRuntime";
@@ -60,7 +61,7 @@ import {
   loadPersistedPermissionModeMap,
   setConversationPermissionModeState,
 } from "./permissionMode";
-import { parseServerMessage } from "./protocol-inbound";
+import { isSearchFilesCommand, parseServerMessage } from "./protocol-inbound";
 import {
   buildDeviceStatus,
   buildLoopStatus,
@@ -990,6 +991,28 @@ async function connectWithRetry(
       }
 
       scheduleQueuePump(scopedRuntime, socket, opts, processQueuedTurn);
+      return;
+    }
+
+    // ── File search (no runtime scope required) ────────────────────────
+    if (isSearchFilesCommand(parsed)) {
+      void (async () => {
+        await ensureFileIndex();
+        const files = searchFileIndex({
+          searchDir: ".",
+          pattern: parsed.query,
+          deep: true,
+          maxResults: parsed.max_results ?? 5,
+        });
+        socket.send(
+          JSON.stringify({
+            type: "search_files_response",
+            request_id: parsed.request_id,
+            files,
+            success: true,
+          }),
+        );
+      })();
       return;
     }
 
