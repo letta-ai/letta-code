@@ -267,7 +267,7 @@ function getModelForToolLoading(
  */
 async function resolveAgentByName(
   name: string,
-): Promise<{ id: string; name: string } | null> {
+): Promise<{ id: string; name: string; agent: AgentState } | null> {
   const client = await getClient();
 
   // Get all pinned agents (local first, then global, deduplicated)
@@ -280,7 +280,7 @@ async function resolveAgentByName(
   }
 
   // Fetch names for all pinned agents and find matches
-  const matches: { id: string; name: string }[] = [];
+  const matches: { id: string; name: string; agent: AgentState }[] = [];
   const normalizedSearchName = name.toLowerCase();
 
   await Promise.all(
@@ -288,7 +288,7 @@ async function resolveAgentByName(
       try {
         const agent = await client.agents.retrieve(id);
         if (agent.name?.toLowerCase() === normalizedSearchName) {
-          matches.push({ id, name: agent.name });
+          matches.push({ id, name: agent.name, agent });
         }
       } catch {
         // Agent not found or error, skip
@@ -731,6 +731,7 @@ async function main(): Promise<void> {
   }
 
   // Validate --name flag
+  let nameResolvedAgent: AgentState | null = null;
   if (specifiedAgentName) {
     if (specifiedAgentId) {
       console.error("Error: --name cannot be used with --agent");
@@ -848,6 +849,7 @@ async function main(): Promise<void> {
       process.exit(1);
     }
     specifiedAgentId = resolved.id;
+    nameResolvedAgent = resolved.agent;
   }
 
   // Set tool filter if provided (controls which tools are loaded)
@@ -950,6 +952,7 @@ async function main(): Promise<void> {
     initBlocks,
     baseTools,
     agentIdArg,
+    preResolvedAgent,
     model,
     systemPromptPreset,
     toolset,
@@ -961,6 +964,7 @@ async function main(): Promise<void> {
     initBlocks?: string[];
     baseTools?: string[];
     agentIdArg: string | null;
+    preResolvedAgent?: AgentState | null;
     model?: string;
     systemPromptPreset?: string;
     toolset?: "auto" | "codex" | "default" | "gemini";
@@ -995,7 +999,7 @@ async function main(): Promise<void> {
     >(null);
     // Cache agent object from Phase 1 validation to avoid redundant re-fetch in Phase 2
     const [validatedAgent, setValidatedAgent] = useState<AgentState | null>(
-      null,
+      preResolvedAgent ?? null,
     );
     // Track agent and conversation for conversation selector (--resume flag)
     const [resumeAgentId, setResumeAgentId] = useState<string | null>(null);
@@ -1274,31 +1278,50 @@ async function main(): Promise<void> {
         // Step 1: Check local project LRU (session helpers centralize legacy fallback)
         // Cache the retrieved agent to avoid redundant re-fetch in init()
         const localAgentId = settingsManager.getLocalLastAgentId(process.cwd());
+        const globalAgentId = settingsManager.getGlobalLastAgentId();
+
+        // Fetch local + global LRU agents in parallel
         let localAgentExists = false;
+        let globalAgentExists = false;
         let cachedAgent: AgentState | null = null;
-        if (localAgentId) {
-          try {
-            cachedAgent = await client.agents.retrieve(localAgentId);
+
+        if (globalAgentId && globalAgentId === localAgentId) {
+          // Same agent — only need one fetch
+          if (localAgentId) {
+            try {
+              cachedAgent = await client.agents.retrieve(localAgentId);
+              localAgentExists = true;
+            } catch {
+              setFailedAgentMessage(
+                `Unable to locate recently used agent ${localAgentId}`,
+              );
+            }
+          }
+          globalAgentExists = localAgentExists;
+        } else {
+          // Different agents — fetch in parallel
+          const [localResult, globalResult] = await Promise.allSettled([
+            localAgentId
+              ? client.agents.retrieve(localAgentId)
+              : Promise.reject(new Error("no local")),
+            globalAgentId
+              ? client.agents.retrieve(globalAgentId)
+              : Promise.reject(new Error("no global")),
+          ]);
+
+          if (localResult.status === "fulfilled") {
             localAgentExists = true;
-          } catch {
+            cachedAgent = localResult.value;
+          } else if (localAgentId) {
             setFailedAgentMessage(
               `Unable to locate recently used agent ${localAgentId}`,
             );
           }
-        }
 
-        // Step 2: Check global LRU (covers directory-switching case)
-        const globalAgentId = settingsManager.getGlobalLastAgentId();
-        let globalAgentExists = false;
-        if (globalAgentId && globalAgentId !== localAgentId) {
-          try {
-            cachedAgent = await client.agents.retrieve(globalAgentId);
+          if (globalResult.status === "fulfilled") {
             globalAgentExists = true;
-          } catch {
-            // Global agent doesn't exist either
+            cachedAgent = globalResult.value;
           }
-        } else if (globalAgentId && globalAgentId === localAgentId) {
-          globalAgentExists = localAgentExists;
         }
 
         // Step 3: Resolve startup target using pure decision logic
@@ -1379,11 +1402,17 @@ async function main(): Promise<void> {
 
         // Priority 1: --agent flag
         if (agentIdArg) {
-          try {
-            await client.agents.retrieve(agentIdArg);
+          // Use cached agent from name resolution if available
+          if (validatedAgent && validatedAgent.id === agentIdArg) {
             resumingAgentId = agentIdArg;
-          } catch {
-            // Agent doesn't exist, will create new later
+          } else {
+            try {
+              const agent = await client.agents.retrieve(agentIdArg);
+              setValidatedAgent(agent);
+              resumingAgentId = agentIdArg;
+            } catch {
+              // Agent doesn't exist, will create new later
+            }
           }
         }
 
@@ -1396,13 +1425,19 @@ async function main(): Promise<void> {
         // This takes precedence over stale LRU since user explicitly chose it
         const shouldCreateNew = forceNew || userRequestedNewAgent;
         if (!resumingAgentId && !shouldCreateNew && selectedGlobalAgentId) {
-          try {
-            await client.agents.retrieve(selectedGlobalAgentId);
+          // Use cached agent from Phase 1 validation if available
+          if (validatedAgent && validatedAgent.id === selectedGlobalAgentId) {
             resumingAgentId = selectedGlobalAgentId;
-          } catch {
-            // Selected agent doesn't exist - show selector again
-            setLoadingState("selecting_global");
-            return;
+          } else {
+            try {
+              const agent = await client.agents.retrieve(selectedGlobalAgentId);
+              setValidatedAgent(agent);
+              resumingAgentId = selectedGlobalAgentId;
+            } catch {
+              // Selected agent doesn't exist - show selector again
+              setLoadingState("selecting_global");
+              return;
+            }
           }
         }
 
@@ -2032,6 +2067,7 @@ async function main(): Promise<void> {
       initBlocks: initBlocks,
       baseTools: baseTools,
       agentIdArg: specifiedAgentId,
+      preResolvedAgent: nameResolvedAgent,
       model: specifiedModel,
       systemPromptPreset: systemPromptPreset,
       toolset: specifiedToolset as

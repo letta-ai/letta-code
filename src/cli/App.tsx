@@ -3158,9 +3158,15 @@ export default function App({
 
       const fetchConfig = async () => {
         try {
+          // Use pre-loaded agent state if available, otherwise fetch
           const { getClient } = await import("../agent/client");
           const client = await getClient();
-          const agent = await client.agents.retrieve(agentId);
+          let agent: AgentState;
+          if (initialAgentState && initialAgentState.id === agentId) {
+            agent = initialAgentState;
+          } else {
+            agent = await client.agents.retrieve(agentId);
+          }
 
           setAgentState(agent);
           setLlmConfig(agent.llm_config);
@@ -3306,7 +3312,7 @@ export default function App({
         cancelled = true;
       };
     }
-  }, [loadingState, agentId]);
+  }, [loadingState, agentId, initialAgentState]);
 
   // Keep effective model state in sync with the active conversation override.
   // biome-ignore lint/correctness/useExhaustiveDependencies: ref.current is intentionally read dynamically
