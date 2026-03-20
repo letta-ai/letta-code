@@ -326,14 +326,12 @@ export function ConversationSelector({
           conversation: conv,
           previewLines: null, // Not loaded yet
           lastActiveAt: conv.updated_at ?? conv.created_at ?? null,
-          messageCount: conv.in_context_message_ids?.length ?? -1,
+          messageCount: -1, // Unknown until enriched
           enriched: false,
         }));
 
-        // Filter out conversations we know are empty from in_context_message_ids
-        const nonEmptyList = unenrichedList.filter(
-          (c) => c.messageCount !== 0,
-        );
+        // Don't filter yet — we'll remove empties after enrichment confirms messageCount
+        const nonEmptyList = unenrichedList;
 
         const newCursor =
           result.length === FETCH_PAGE_SIZE
