@@ -2744,9 +2744,16 @@ export default function App({
   refreshDerivedRef.current = refreshDerived;
 
   const recordCommandReminder = useCallback((event: CommandFinishedEvent) => {
-    const input = event.input.trim();
+    let input = event.input.trim();
     if (!input.startsWith("/")) {
       return;
+    }
+    // Redact secret values so they don't leak into agent context
+    if (/^\/secret\s+set\s+/i.test(input)) {
+      const parts = input.split(/\s+/);
+      if (parts.length >= 4) {
+        input = `${parts[0]} ${parts[1]} ${parts[2]} ***`;
+      }
     }
     enqueueCommandIoReminder(sharedReminderStateRef.current, {
       input,

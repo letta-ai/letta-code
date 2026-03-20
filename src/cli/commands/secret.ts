@@ -110,7 +110,7 @@ export async function handleSecretCommand(
   /secret list            List available secret names
   /secret unset KEY       Unset a secret
 
-Secrets are stored on the Letta server. 
+Secrets are stored on the Letta server and available to the agent via /memory/system/secrets.md.
 The key must be all caps and can include underscores and numbers, but must start with a letter or underscore.
 Your agent can use $SECRET_NAME in shell commands and the value will be substituted at runtime, without the secret value being leaked into agent context.`,
       };
