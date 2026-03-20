@@ -37,16 +37,15 @@ interface PreviewLine {
 // Enriched conversation with message data
 interface EnrichedConversation {
   conversation: Conversation;
-  previewLines: PreviewLine[]; // Last 1-3 user/assistant messages
-  lastActiveAt: string | null;
-  messageCount: number;
+  previewLines: PreviewLine[] | null; // null = not yet loaded
+  lastActiveAt: string | null; // Falls back to updated_at until enriched
+  messageCount: number; // -1 = unknown/loading
+  enriched: boolean; // Whether message data has been fetched
 }
 
 const DISPLAY_PAGE_SIZE = 3;
 const FETCH_PAGE_SIZE = 20;
-// Message fetch limit for preview enrichment — enough to find 3 user/assistant
-// messages among system/tool noise, but not the full 20 (saves payload)
-const ENRICH_MESSAGE_LIMIT = 10;
+const ENRICH_MESSAGE_LIMIT = 20; // Same as original fetch limit
 
 /**
  * Format a relative time string from a date
@@ -220,12 +219,52 @@ export function ConversationSelector({
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [enriching, setEnriching] = useState(false);
 
   // Selection state
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [page, setPage] = useState(0);
 
-  // Load conversations and enrich with message data
+  // Enrich a single conversation with message data, updating state in-place
+  const enrichConversation = useCallback(
+    async (client: Letta, convId: string) => {
+      try {
+        const messages = await client.conversations.messages.list(convId, {
+          limit: ENRICH_MESSAGE_LIMIT,
+          order: "desc",
+        });
+        const chronological = [...messages.getPaginatedItems()].reverse();
+        const stats = getMessageStats(chronological);
+        setConversations((prev) =>
+          prev.map((c) =>
+            c.conversation.id === convId
+              ? {
+                  ...c,
+                  previewLines: stats.previewLines,
+                  lastActiveAt: stats.lastActiveAt || c.lastActiveAt,
+                  messageCount: stats.messageCount,
+                  enriched: true,
+                }
+              : c,
+          ),
+        );
+        return stats.messageCount;
+      } catch {
+        // Mark as enriched even on error so we don't retry
+        setConversations((prev) =>
+          prev.map((c) =>
+            c.conversation.id === convId
+              ? { ...c, previewLines: [], enriched: true }
+              : c,
+          ),
+        );
+        return -1;
+      }
+    },
+    [],
+  );
+
+  // Load conversations — shows list immediately, enriches progressively
   const loadConversations = useCallback(
     async (afterCursor?: string | null) => {
       const isLoadingMore = !!afterCursor;
@@ -240,38 +279,8 @@ export function ConversationSelector({
         const client = clientRef.current || (await getClient());
         clientRef.current = client;
 
-        // Fetch default conversation data (agent's primary message history)
-        // Only fetch on initial load (not when paginating)
-        let defaultConversation: EnrichedConversation | null = null;
-        if (!afterCursor) {
-          try {
-            const defaultMessages = await client.agents.messages.list(agentId, {
-              conversation_id: "default",
-              limit: ENRICH_MESSAGE_LIMIT,
-              order: "desc",
-            });
-            const defaultMsgItems = defaultMessages.getPaginatedItems();
-            if (defaultMsgItems.length > 0) {
-              const defaultStats = getMessageStats(
-                [...defaultMsgItems].reverse(),
-              );
-              defaultConversation = {
-                conversation: {
-                  id: "default",
-                  agent_id: agentId,
-                  created_at: new Date().toISOString(),
-                } as Conversation,
-                previewLines: defaultStats.previewLines,
-                lastActiveAt: defaultStats.lastActiveAt,
-                messageCount: defaultStats.messageCount,
-              };
-            }
-          } catch {
-            // If we can't fetch default messages, just skip showing it
-          }
-        }
-
-        const result = await client.conversations.list({
+        // Phase 1: Fetch conversation list + default messages in parallel
+        const conversationListPromise = client.conversations.list({
           agent_id: agentId,
           limit: FETCH_PAGE_SIZE,
           ...(afterCursor && { after: afterCursor }),
@@ -279,79 +288,143 @@ export function ConversationSelector({
           order_by: "last_run_completion",
         });
 
-        // Enrich conversations with message data in parallel
-        const enrichedConversations = await Promise.all(
-          result.map(async (conv) => {
-            try {
-              // Fetch recent messages to get stats (desc order = newest first)
-              const messages = await client.conversations.messages.list(
-                conv.id,
-                { limit: ENRICH_MESSAGE_LIMIT, order: "desc" },
-              );
-              // Reverse to chronological for getMessageStats (expects oldest-first)
-              const chronologicalMessages = [
-                ...messages.getPaginatedItems(),
-              ].reverse();
-              const stats = getMessageStats(chronologicalMessages);
-              return {
-                conversation: conv,
-                previewLines: stats.previewLines,
-                lastActiveAt: stats.lastActiveAt,
-                messageCount: stats.messageCount,
-              };
-            } catch {
-              // If we fail to fetch messages, show conversation anyway with -1 to indicate error
-              return {
-                conversation: conv,
-                previewLines: [],
-                lastActiveAt: null,
-                messageCount: -1, // Unknown, don't filter out
-              };
-            }
-          }),
-        );
+        // Fetch default conversation in parallel (not sequentially before)
+        const defaultPromise: Promise<EnrichedConversation | null> =
+          !afterCursor
+            ? client.agents.messages
+                .list(agentId, {
+                  conversation_id: "default",
+                  limit: ENRICH_MESSAGE_LIMIT,
+                  order: "desc",
+                })
+                .then((msgs) => {
+                  const items = msgs.getPaginatedItems();
+                  if (items.length === 0) return null;
+                  const stats = getMessageStats([...items].reverse());
+                  return {
+                    conversation: {
+                      id: "default",
+                      agent_id: agentId,
+                      created_at: new Date().toISOString(),
+                    } as Conversation,
+                    previewLines: stats.previewLines,
+                    lastActiveAt: stats.lastActiveAt,
+                    messageCount: stats.messageCount,
+                    enriched: true,
+                  };
+                })
+                .catch(() => null)
+            : Promise.resolve(null);
 
-        // Filter out empty conversations (messageCount === 0)
-        // Keep conversations with messageCount > 0 or -1 (error/unknown)
-        const nonEmptyConversations = enrichedConversations.filter(
-          (c) => c.messageCount !== 0,
-        );
+        const [result, defaultConversation] = await Promise.all([
+          conversationListPromise,
+          defaultPromise,
+        ]);
+
+        // Build unenriched conversation list using data already on the object
+        const unenrichedList: EnrichedConversation[] = result.map((conv) => ({
+          conversation: conv,
+          previewLines: null, // Not loaded yet
+          lastActiveAt: conv.updated_at ?? conv.created_at ?? null,
+          messageCount: -1, // Unknown until enriched
+          enriched: false,
+        }));
+
+        // Don't filter yet — we'll remove empties after enrichment confirms messageCount
+        const nonEmptyList = unenrichedList;
 
         const newCursor =
           result.length === FETCH_PAGE_SIZE
             ? (result[result.length - 1]?.id ?? null)
             : null;
 
+        // Phase 1 render: show conversation list immediately
         if (isLoadingMore) {
-          setConversations((prev) => [...prev, ...nonEmptyConversations]);
+          setConversations((prev) => [...prev, ...nonEmptyList]);
         } else {
-          // Prepend default conversation to the list (if it has messages)
           const allConversations = defaultConversation
-            ? [defaultConversation, ...nonEmptyConversations]
-            : nonEmptyConversations;
+            ? [defaultConversation, ...nonEmptyList]
+            : nonEmptyList;
           setConversations(allConversations);
           setPage(0);
           setSelectedIndex(0);
         }
         setCursor(newCursor);
         setHasMore(newCursor !== null);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : String(err));
-      } finally {
+
+        // Flip loading off now — list is visible, enrichment happens in background
         if (isLoadingMore) {
           setLoadingMore(false);
         } else {
           setLoading(false);
         }
+
+        // Phase 2: enrich visible page first, then rest in background
+        setEnriching(true);
+        const toEnrich = nonEmptyList.filter((c) => !c.enriched);
+        const firstPageItems = toEnrich.slice(0, DISPLAY_PAGE_SIZE);
+        const restItems = toEnrich.slice(DISPLAY_PAGE_SIZE);
+
+        // Enrich first page in parallel
+        const firstPageResults = await Promise.all(
+          firstPageItems.map((c) =>
+            enrichConversation(client, c.conversation.id),
+          ),
+        );
+
+        // Remove conversations that turned out empty after enrichment
+        const emptyConvIds = new Set(
+          firstPageItems
+            .filter((_, i) => firstPageResults[i] === 0)
+            .map((c) => c.conversation.id),
+        );
+        if (emptyConvIds.size > 0) {
+          setConversations((prev) =>
+            prev.filter((c) => !emptyConvIds.has(c.conversation.id)),
+          );
+        }
+
+        // Enrich remaining conversations one by one in background
+        for (const item of restItems) {
+          const count = await enrichConversation(client, item.conversation.id);
+          if (count === 0) {
+            setConversations((prev) =>
+              prev.filter((c) => c.conversation.id !== item.conversation.id),
+            );
+          }
+        }
+
+        setEnriching(false);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+        setLoading(false);
+        setLoadingMore(false);
       }
     },
-    [agentId],
+    [agentId, enrichConversation],
   );
 
   // Initial load
   useEffect(() => {
     loadConversations();
   }, [loadConversations]);
+
+  // Re-enrich when page changes (prioritize newly visible unenriched items)
+  useEffect(() => {
+    const client = clientRef.current;
+    if (!client || loading) return;
+
+    const visibleItems = conversations.slice(
+      page * DISPLAY_PAGE_SIZE,
+      (page + 1) * DISPLAY_PAGE_SIZE,
+    );
+    const unenriched = visibleItems.filter((c) => !c.enriched);
+    if (unenriched.length === 0) return;
+
+    for (const item of unenriched) {
+      enrichConversation(client, item.conversation.id);
+    }
+  }, [page, loading, conversations, enrichConversation]);
 
   // Pagination calculations
   const totalPages = Math.ceil(conversations.length / DISPLAY_PAGE_SIZE);
@@ -444,7 +517,19 @@ export function ConversationSelector({
       const bracket = <Text dimColor>{"⎿  "}</Text>;
       const indent = "   "; // Same width as "⎿  " for alignment
 
-      // Priority 2: Preview lines with emoji prefixes
+      // Still loading message data
+      if (previewLines === null) {
+        return (
+          <Box flexDirection="row" marginLeft={2}>
+            {bracket}
+            <Text dimColor italic>
+              Loading preview...
+            </Text>
+          </Box>
+        );
+      }
+
+      // Has preview lines from messages
       if (previewLines.length > 0) {
         return (
           <>
@@ -558,6 +643,15 @@ export function ConversationSelector({
       {loading && (
         <Box>
           <Text dimColor>Loading conversations...</Text>
+        </Box>
+      )}
+
+      {/* Enriching indicator */}
+      {!loading && enriching && (
+        <Box marginBottom={1}>
+          <Text dimColor italic>
+            Loading previews...
+          </Text>
         </Box>
       )}
 
