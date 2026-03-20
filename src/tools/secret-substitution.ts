@@ -43,3 +43,22 @@ export function substituteSecretsInArgs(
 
   return result;
 }
+
+/**
+ * Scrub secret values from a string, replacing them with $SECRET_NAME.
+ * Used to prevent secret values from leaking into agent context via tool output.
+ */
+export function scrubSecretsFromString(input: string): string {
+  const secrets = loadSecrets();
+  let result = input;
+  // Replace longer values first to avoid partial matches
+  const entries = Object.entries(secrets).sort(
+    ([, a], [, b]) => b.length - a.length,
+  );
+  for (const [name, value] of entries) {
+    if (value.length > 0) {
+      result = result.replaceAll(value, `$${name}`);
+    }
+  }
+  return result;
+}

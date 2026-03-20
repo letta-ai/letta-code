@@ -15,7 +15,10 @@ import {
 import { OPENAI_CODEX_PROVIDER_NAME } from "../providers/openai-codex-provider";
 import { telemetry } from "../telemetry";
 import { debugLog } from "../utils/debug";
-import { substituteSecretsInArgs } from "./secret-substitution";
+import {
+  scrubSecretsFromString,
+  substituteSecretsInArgs,
+} from "./secret-substitution";
 import { TOOL_DEFINITIONS, type ToolName } from "./toolDefinitions";
 
 /**
@@ -1382,7 +1385,30 @@ export async function executeTool(
     const toolStatus = recordResult?.status === "error" ? "error" : "success";
 
     // Flatten the response to plain text
-    const flattenedResponse = flattenToolResponse(result);
+    let flattenedResponse = flattenToolResponse(result);
+
+    // Scrub secret values from tool output so they don't leak into agent context
+    if (STREAMING_SHELL_TOOLS.has(internalName)) {
+      if (typeof flattenedResponse === "string") {
+        flattenedResponse = scrubSecretsFromString(flattenedResponse);
+      } else if (Array.isArray(flattenedResponse)) {
+        flattenedResponse = flattenedResponse.map((block) =>
+          block.type === "text"
+            ? { ...block, text: scrubSecretsFromString(block.text) }
+            : block,
+        );
+      }
+      if (stdout) {
+        for (let i = 0; i < stdout.length; i++) {
+          stdout[i] = scrubSecretsFromString(stdout[i]!);
+        }
+      }
+      if (stderr) {
+        for (let i = 0; i < stderr.length; i++) {
+          stderr[i] = scrubSecretsFromString(stderr[i]!);
+        }
+      }
+    }
 
     // Track tool usage (calculate size for multimodal content)
     const responseSize =
