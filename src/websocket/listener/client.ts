@@ -10,10 +10,6 @@ import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/mes
 import WebSocket from "ws";
 import { getClient } from "../../agent/client";
 import { generatePlanFilePath } from "../../cli/helpers/planName";
-import {
-  subscribe as subscribeToSubagentState,
-  subscribeToStreamEvents as subscribeToSubagentStreamEvents,
-} from "../../cli/helpers/subagentState";
 import { INTERRUPTED_BY_USER } from "../../constants";
 import { type DequeuedBatch, QueueRuntime } from "../../queue/queueRuntime";
 import { createSharedReminderState } from "../../reminders/state";
@@ -75,8 +71,6 @@ import {
   emitLoopStatusUpdate,
   emitRetryDelta,
   emitStateSync,
-  emitStreamDelta,
-  emitSubagentStateIfOpen,
   scheduleQueueEmit,
   setLoopStatus,
 } from "./protocol-outbound";
@@ -711,32 +705,6 @@ async function connectWithRetry(
       }
     }
 
-    // Subscribe to subagent state changes and emit snapshots over WS.
-    // Store the unsubscribe function on the runtime for cleanup on close.
-    runtime._unsubscribeSubagentState?.();
-    runtime._unsubscribeSubagentState = subscribeToSubagentState(() => {
-      emitSubagentStateIfOpen(runtime);
-    });
-
-    // Subscribe to subagent stream events and forward as tagged stream_delta.
-    // Events are raw JSON lines from the subagent's stdout (headless format):
-    //   { type: "message", message_type: "tool_call_message", ...LettaStreamingResponse fields }
-    // These are already MessageDelta-shaped (type:"message" + LettaStreamingResponse).
-    runtime._unsubscribeSubagentStreamEvents?.();
-    runtime._unsubscribeSubagentStreamEvents =
-      subscribeToSubagentStreamEvents((subagentId, event) => {
-        if (socket.readyState !== WebSocket.OPEN) return;
-        // The event has { type: "message", message_type, ...LettaStreamingResponse }
-        // plus extra headless fields (session_id, uuid) that pass through harmlessly.
-        emitStreamDelta(
-          socket,
-          runtime,
-          event as unknown as import("../../types/protocol_v2").StreamDelta,
-          undefined, // scope: falls back to listener's default agent/conversation
-          subagentId,
-        );
-      });
-
     runtime.heartbeatInterval = setInterval(() => {
       if (socket.readyState === WebSocket.OPEN) {
         socket.send(JSON.stringify({ type: "ping" }));
@@ -1075,10 +1043,6 @@ async function connectWithRetry(
 
     clearRuntimeTimers(runtime);
     killAllTerminals();
-    runtime._unsubscribeSubagentState?.();
-    runtime._unsubscribeSubagentState = undefined;
-    runtime._unsubscribeSubagentStreamEvents?.();
-    runtime._unsubscribeSubagentStreamEvents = undefined;
     runtime.socket = null;
     for (const conversationRuntime of runtime.conversationRuntimes.values()) {
       rejectPendingApprovalResolvers(

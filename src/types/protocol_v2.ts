@@ -279,39 +279,6 @@ export type StreamDelta =
 export interface StreamDeltaMessage extends RuntimeEnvelope {
   type: "stream_delta";
   delta: StreamDelta;
-  subagent_id?: string;
-}
-
-/**
- * Subagent state snapshot.
- * Emitted via `update_subagent_state` on every subagent mutation.
- */
-export interface SubagentSnapshotToolCall {
-  id: string;
-  name: string;
-  args: string;
-}
-
-export interface SubagentSnapshot {
-  subagent_id: string;
-  subagent_type: string;
-  description: string;
-  status: "pending" | "running" | "completed" | "error";
-  agent_url: string | null;
-  model?: string;
-  is_background?: boolean;
-  silent?: boolean;
-  tool_call_id?: string;
-  start_time: number;
-  tool_calls: SubagentSnapshotToolCall[];
-  total_tokens: number;
-  duration_ms: number;
-  error?: string;
-}
-
-export interface SubagentStateUpdateMessage extends RuntimeEnvelope {
-  type: "update_subagent_state";
-  subagents: SubagentSnapshot[];
 }
 
 export interface ApprovalResponseAllowDecision {
@@ -430,7 +397,6 @@ export type WsProtocolMessage =
   | DeviceStatusUpdateMessage
   | LoopStatusUpdateMessage
   | QueueUpdateMessage
-  | StreamDeltaMessage
-  | SubagentStateUpdateMessage;
+  | StreamDeltaMessage;
 
 export type { StopReasonType };

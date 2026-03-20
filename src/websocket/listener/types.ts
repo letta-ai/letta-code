@@ -159,10 +159,6 @@ export type ListenerRuntime = {
   conversationRuntimes: Map<string, ConversationRuntime>;
   approvalRuntimeKeyByRequestId: Map<string, string>;
   lastEmittedStatus: "idle" | "receiving" | "processing" | null;
-  /** Unsubscribe from subagent state store (set on socket open, cleared on close). */
-  _unsubscribeSubagentState?: (() => void) | undefined;
-  /** Unsubscribe from subagent stream events (set on socket open, cleared on close). */
-  _unsubscribeSubagentStreamEvents?: (() => void) | undefined;
 };
 
 export interface InterruptPopulateInput {
