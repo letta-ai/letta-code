@@ -9,6 +9,7 @@ import type { ApprovalResult } from "../../agent/approval-execution";
 import { fetchRunErrorDetail } from "../../agent/approval-recovery";
 import { getResumeData } from "../../agent/check-approval";
 import { getClient } from "../../agent/client";
+import { setConversationId, setCurrentAgentId } from "../../agent/context";
 import {
   getStreamToolContextId,
   type sendMessageStream,
@@ -151,6 +152,10 @@ export async function handleIncomingMessage(
       });
       return;
     }
+
+    // Set agent context for tools that need it (e.g., Skill tool)
+    setCurrentAgentId(agentId);
+    setConversationId(conversationId);
 
     if (isDebugEnabled()) {
       console.log(
