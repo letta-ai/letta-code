@@ -1167,6 +1167,13 @@ export function onChunk(
           phase: "running",
         }));
 
+        // context_warning is a one-shot notification — mark finished immediately
+        // so it does not persist in the active (running) render area.
+        if (eventType === "context_warning") {
+          const line = b.byId.get(id);
+          if (line && line.kind === "event") line.phase = "finished";
+        }
+
         // Fire PreCompact hooks when server-side auto-compaction starts
         if (eventType === "compaction") {
           runPreCompactHooks(
