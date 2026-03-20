@@ -31,9 +31,10 @@ type EventLine = {
  * When finished: Shows completed dot with summary
  */
 export const EventMessage = memo(({ line }: { line: EventLine }) => {
-  if (line.eventType === "context_warning") return null;
   const columns = useTerminalWidth();
   const rightWidth = Math.max(0, columns - 2);
+
+  if (line.eventType === "context_warning") return null;
 
   if (line.eventType === "task_notification") {
     const summary = line.summary || "Agent task completed";
