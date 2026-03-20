@@ -144,15 +144,17 @@ export async function memory(args: MemoryArgs): Promise<MemoryResult> {
     const relPath = toRepoRelative(memoryDir, filePath);
     const file = await loadEditableMemoryFile(filePath, pathArg);
 
-    const idx = file.body.indexOf(oldString);
+    const currentText = renderMemoryFile(file.frontmatter, file.body);
+    const idx = currentText.indexOf(oldString);
     if (idx === -1) {
       throw new Error(
         "memory str_replace: old_string was not found in the target memory block",
       );
     }
 
-    const nextBody = `${file.body.slice(0, idx)}${newString}${file.body.slice(idx + oldString.length)}`;
-    const rendered = renderMemoryFile(file.frontmatter, nextBody);
+    const nextText = `${currentText.slice(0, idx)}${newString}${currentText.slice(idx + oldString.length)}`;
+    const nextFile = parseMemoryFile(nextText);
+    const rendered = renderMemoryFile(nextFile.frontmatter, nextFile.body);
     await writeFile(filePath, rendered, "utf8");
     affectedPaths = [relPath];
   } else if (command === "insert") {
