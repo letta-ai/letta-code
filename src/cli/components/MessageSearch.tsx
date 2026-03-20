@@ -128,6 +128,22 @@ export function MessageSearch({
   // Cache results per query+mode+range combination to avoid re-fetching
   const resultsCache = useRef<Map<string, MessageSearchResponse>>(new Map());
 
+  // Warm tpuf cache on mount (fire-and-forget)
+  useEffect(() => {
+    const warmCache = async () => {
+      try {
+        const client = await getClient();
+        await client.post("/v1/messages/search", {
+          body: {},
+          query: { warm_only: true },
+        });
+      } catch {
+        // Silently ignore - cache warm is best-effort
+      }
+    };
+    void warmCache();
+  }, []);
+
   // Get cache key for a specific query+mode+range combination
   const getCacheKey = useCallback(
     (query: string, mode: SearchMode, range: SearchRange) => {
