@@ -44,6 +44,9 @@ interface EnrichedConversation {
 
 const DISPLAY_PAGE_SIZE = 3;
 const FETCH_PAGE_SIZE = 20;
+// Message fetch limit for preview enrichment — enough to find 3 user/assistant
+// messages among system/tool noise, but not the full 20 (saves payload)
+const ENRICH_MESSAGE_LIMIT = 10;
 
 /**
  * Format a relative time string from a date
@@ -244,7 +247,7 @@ export function ConversationSelector({
           try {
             const defaultMessages = await client.agents.messages.list(agentId, {
               conversation_id: "default",
-              limit: 20,
+              limit: ENRICH_MESSAGE_LIMIT,
               order: "desc",
             });
             const defaultMsgItems = defaultMessages.getPaginatedItems();
@@ -283,7 +286,7 @@ export function ConversationSelector({
               // Fetch recent messages to get stats (desc order = newest first)
               const messages = await client.conversations.messages.list(
                 conv.id,
-                { limit: 20, order: "desc" },
+                { limit: ENRICH_MESSAGE_LIMIT, order: "desc" },
               );
               // Reverse to chronological for getMessageStats (expects oldest-first)
               const chronologicalMessages = [
