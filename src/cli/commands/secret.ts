@@ -19,19 +19,19 @@ export interface SecretCommandResult {
  * Usage:
  *   /secret set KEY value  - Set a secret
  *   /secret list           - List available secret names
- *   /secret unset KEY      - Delete a secret
+ *   /secret unset KEY      - Unset a secret
  */
 export async function handleSecretCommand(
   args: string[],
 ): Promise<SecretCommandResult> {
-  const [subcommand, key, ...valueParts] = args;
+  const [subcommand, key, value] = args;
 
   switch (subcommand) {
     case "set": {
       if (!key) {
         return { output: "Usage: /secret set KEY value" };
       }
-      if (valueParts.length === 0) {
+      if (!value) {
         return {
           output:
             "Usage: /secret set KEY value\nProvide a value for the secret.",
@@ -46,8 +46,6 @@ export async function handleSecretCommand(
           output: `Invalid secret name '${key}'. Use uppercase letters, numbers, and underscores only. Must start with a letter or underscore.`,
         };
       }
-
-      const value = valueParts.join(" ");
 
       try {
         await setSecretOnServer(normalizedKey, value);
@@ -89,7 +87,7 @@ export async function handleSecretCommand(
         const deleted = await deleteSecretOnServer(normalizedKey);
 
         if (deleted) {
-          return { output: `Secret '$${normalizedKey}' deleted.` };
+          return { output: `Secret '$${normalizedKey}' unset.` };
         }
 
         return {
@@ -97,7 +95,7 @@ export async function handleSecretCommand(
         };
       } catch (error) {
         return {
-          output: `Failed to delete secret: ${error instanceof Error ? error.message : String(error)}`,
+          output: `Failed to unset secret: ${error instanceof Error ? error.message : String(error)}`,
         };
       }
     }
@@ -110,11 +108,11 @@ export async function handleSecretCommand(
 
   /secret set KEY value   Set a secret (KEY is normalized to uppercase)
   /secret list            List available secret names
-  /secret unset KEY       Delete a secret
+  /secret unset KEY       Unset a secret
 
-Secrets are stored on the Letta server.
-Use $SECRET_NAME in shell commands to reference them.
-Example: curl -H "Authorization: Bearer $API_KEY" https://api.example.com`,
+Secrets are stored on the Letta server. 
+They must be all caps and can include underscores and numbers, but must start with a letter or underscore.
+Your agent can use $SECRET_NAME in shell commands and the value will be substituted at runtime, without the secret value being leaked into context.`,
       };
     }
 

@@ -262,10 +262,8 @@ export async function applyMemfsFlags(
       const result = await pullMemory(agentId);
       pullSummary = result.summary;
     }
-  }
 
-  // Fetch secrets from the server so they're available for $SECRET_NAME substitution.
-  if (isEnabled) {
+    // Fetch secrets from the server so they're available for $SECRET_NAME substitution.
     const { initSecretsFromServer } = await import("../utils/secretsStore");
     try {
       await initSecretsFromServer(agentId, getMemoryFilesystemRoot(agentId));
