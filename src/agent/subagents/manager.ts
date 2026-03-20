@@ -12,6 +12,7 @@ import { createInterface } from "node:readline";
 import { buildChatUrl } from "../../cli/helpers/appUrls";
 import {
   addToolCall,
+  emitStreamEvent,
   updateSubagent,
 } from "../../cli/helpers/subagentState.js";
 import {
@@ -394,6 +395,10 @@ function processStreamEvent(
       case "message":
         if (event.message_type === "approval_request_message") {
           handleApprovalRequestEvent(event, state);
+        } else {
+          // Forward non-approval message events for WS streaming to the web UI.
+          // Approval requests are internal to the subagent's permission flow.
+          emitStreamEvent(subagentId, event);
         }
         break;
 
