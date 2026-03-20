@@ -1496,13 +1496,32 @@ export default function App({
     agentStateRef.current = agentState;
   }, [agentState]);
   const [currentModelId, setCurrentModelId] = useState<string | null>(null);
-  const [tempModelOverride, setTempModelOverride] = useState<string | null>(
+  const [tempModelOverride, _setTempModelOverride] = useState<string | null>(
     null,
   );
+  const [tempModelOverrideContext, setTempModelOverrideContext] = useState<{
+    agentId: string;
+    conversationId: string;
+  }>({ agentId, conversationId });
   const tempModelOverrideRef = useRef<string | null>(null);
-  useEffect(() => {
-    tempModelOverrideRef.current = tempModelOverride;
-  }, [tempModelOverride]);
+  const setTempModelOverride = useCallback((next: string | null) => {
+    tempModelOverrideRef.current = next;
+    _setTempModelOverride(next);
+  }, []);
+
+  // Keep temporary override scoped to the current agent/conversation identity.
+  // This uses render-time state adjustment instead of an Effect.
+  if (
+    tempModelOverrideContext.agentId !== agentId ||
+    tempModelOverrideContext.conversationId !== conversationId
+  ) {
+    setTempModelOverrideContext({ agentId, conversationId });
+    if (tempModelOverride !== null) {
+      setTempModelOverride(null);
+    } else if (tempModelOverrideRef.current !== null) {
+      tempModelOverrideRef.current = null;
+    }
+  }
   // Full model handle for API calls (e.g., "anthropic/claude-sonnet-4-5-20251101")
   const [currentModelHandle, setCurrentModelHandle] = useState<string | null>(
     null,
@@ -1610,23 +1629,6 @@ export default function App({
   // Show compaction messages preference (can be toggled at runtime)
   const [showCompactionsEnabled, _setShowCompactionsEnabled] =
     useState(showCompactions);
-
-  // Clear temporary model override whenever conversation/agent identity changes.
-  // This keeps the override scoped to the current execution context.
-  const previousContextIdentityRef = useRef<{
-    agentId: string;
-    conversationId: string;
-  } | null>(null);
-  useEffect(() => {
-    const prev = previousContextIdentityRef.current;
-    if (
-      prev &&
-      (prev.agentId !== agentId || prev.conversationId !== conversationId)
-    ) {
-      setTempModelOverride(null);
-    }
-    previousContextIdentityRef.current = { agentId, conversationId };
-  }, [agentId, conversationId]);
 
   // Live, approximate token counter (resets each turn)
   const [tokenCount, setTokenCount] = useState(0);
@@ -11759,6 +11761,7 @@ ${SYSTEM_REMINDER_CLOSE}
       resetPendingReasoningCycle,
       withCommandLock,
       setHasConversationModelOverride,
+      setTempModelOverride,
     ],
   );
 
