@@ -61,7 +61,6 @@ const SCENARIOS: ScenarioConfig[] = [
     args: [
       "-p",
       "What is 3+3? Reply with just the number.",
-      "--continue",
       "--yolo",
       "--output-format",
       "json",
@@ -73,7 +72,6 @@ const SCENARIOS: ScenarioConfig[] = [
     args: [
       "-p",
       "What is 5+5? Reply with just the number.",
-      "--continue",
       "--yolo",
       "--output-format",
       "json",

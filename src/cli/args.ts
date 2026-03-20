@@ -36,13 +36,6 @@ export const CLI_FLAG_CATALOG = {
     mode: "both",
     help: { description: "Show current directory, skills, and pinned agents" },
   },
-  continue: {
-    parser: { type: "boolean", short: "c" },
-    mode: "both",
-    help: {
-      description: "Resume last session (agent + conversation) directly",
-    },
-  },
   resume: {
     parser: { type: "boolean", short: "r" },
     mode: "interactive",
