@@ -723,8 +723,8 @@ async function connectWithRetry(
     //   { type: "message", message_type: "tool_call_message", ...LettaStreamingResponse fields }
     // These are already MessageDelta-shaped (type:"message" + LettaStreamingResponse).
     runtime._unsubscribeSubagentStreamEvents?.();
-    runtime._unsubscribeSubagentStreamEvents =
-      subscribeToSubagentStreamEvents((subagentId, event) => {
+    runtime._unsubscribeSubagentStreamEvents = subscribeToSubagentStreamEvents(
+      (subagentId, event) => {
         if (socket.readyState !== WebSocket.OPEN) return;
         // The event has { type: "message", message_type, ...LettaStreamingResponse }
         // plus extra headless fields (session_id, uuid) that pass through harmlessly.
@@ -735,7 +735,8 @@ async function connectWithRetry(
           undefined, // scope: falls back to listener's default agent/conversation
           subagentId,
         );
-      });
+      },
+    );
 
     runtime.heartbeatInterval = setInterval(() => {
       if (socket.readyState === WebSocket.OPEN) {
