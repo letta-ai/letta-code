@@ -33,7 +33,7 @@
     "access": "public"
   },
   "dependencies": {
-    "@letta-ai/letta-client": "^1.7.12",
+    "@letta-ai/letta-client": "1.8.0",
     "glob": "^13.0.0",
     "highlight.js": "^11.11.1",
     "ink-link": "^5.0.0",
