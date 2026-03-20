@@ -75,6 +75,7 @@ import {
 } from "./send";
 import { handleApprovalStop } from "./turn-approval";
 import type { ConversationRuntime, IncomingMessage } from "./types";
+import { setCurrentAgentId, setConversationId } from "../../agent/context";
 
 export async function handleIncomingMessage(
   msg: IncomingMessage,
@@ -151,6 +152,10 @@ export async function handleIncomingMessage(
       });
       return;
     }
+
+    // Set agent context for tools that need it (e.g., Skill tool)
+    setCurrentAgentId(agentId);
+    setConversationId(conversationId);
 
     if (isDebugEnabled()) {
       console.log(
