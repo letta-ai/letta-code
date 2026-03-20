@@ -351,6 +351,49 @@ export function extractConflictDetail(error: unknown): string {
   return "";
 }
 
+/**
+ * Extract run_id from a ConversationBusyError response.
+ *
+ * The server includes run_id in 409 conflict details so clients can
+ * directly attach to the in-flight stream instead of polling.
+ *
+ * Checks structured error fields first, falls back to regex on the
+ * detail string (which contains "run_id=<id>" in the message).
+ */
+export function extractRunIdFromConversationBusyError(
+  error: unknown,
+): string | null {
+  if (!error || typeof error !== "object") return null;
+
+  // Walk known SDK error body shapes looking for run_id field
+  const errObj = (error as Record<string, unknown>).error;
+  if (errObj && typeof errObj === "object") {
+    const outer = errObj as Record<string, unknown>;
+    // e.error.run_id
+    if (typeof outer.run_id === "string") return outer.run_id;
+    // e.error.error.run_id
+    if (outer.error && typeof outer.error === "object") {
+      const nested = outer.error as Record<string, unknown>;
+      if (typeof nested.run_id === "string") return nested.run_id;
+    }
+    // e.error.detail as object with run_id
+    if (outer.detail && typeof outer.detail === "object") {
+      const detail = outer.detail as Record<string, unknown>;
+      if (typeof detail.run_id === "string") return detail.run_id;
+    }
+    // e.error.details as object with run_id
+    if (outer.details && typeof outer.details === "object") {
+      const details = outer.details as Record<string, unknown>;
+      if (typeof details.run_id === "string") return details.run_id;
+    }
+  }
+
+  // Fallback: parse from detail string — server formats as "run_id=<id>"
+  const detail = extractConflictDetail(error);
+  const match = detail.match(/run_id=([a-zA-Z0-9_-]+)/);
+  return match?.[1] ?? null;
+}
+
 // ── Approval payload rebuild ────────────────────────────────────────
 
 export interface PendingApprovalInfo {

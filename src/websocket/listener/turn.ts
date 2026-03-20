@@ -183,7 +183,11 @@ export async function handleIncomingMessage(
       queuedInterruptedToolCallIds = consumed.interruptedToolCallIds;
     }
 
-    messagesToSend.push(...normalizedMessages);
+    messagesToSend.push(
+      ...normalizedMessages.map((m) =>
+        "content" in m && !m.otid ? { ...m, otid: crypto.randomUUID() } : m,
+      ),
+    );
 
     const firstMessage = normalizedMessages[0];
     const isApprovalMessage =

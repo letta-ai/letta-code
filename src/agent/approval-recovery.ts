@@ -19,6 +19,7 @@ export type {
 export {
   classifyPreStreamConflict,
   extractConflictDetail,
+  extractRunIdFromConversationBusyError,
   getPreStreamErrorAction,
   getRetryDelayMs,
   getTransientRetryDelayMs,

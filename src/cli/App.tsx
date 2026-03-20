@@ -1,5 +1,6 @@
 // src/cli/App.tsx
 
+import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join, relative } from "node:path";
@@ -30,6 +31,7 @@ import {
 } from "../agent/approval-execution";
 import {
   extractConflictDetail,
+  extractRunIdFromConversationBusyError,
   fetchRunErrorDetail,
   getPreStreamErrorAction,
   getRetryDelayMs,
@@ -3859,6 +3861,7 @@ export default function App({
                 type: "message",
                 role: "user",
                 content: `${systemMsg}\n\n${newState.originalPrompt}`,
+                otid: randomUUID(),
               },
             ],
             { allowReentry: true },
@@ -4008,6 +4011,10 @@ export default function App({
         const requestStartedAtMs = Date.now();
         let highestSeqIdSeen: number | null = null;
 
+        // Holds a DrainResult from a mid-stream resume so the next iteration
+        // can skip sendMessageStream entirely (avoiding a new server-side run).
+        let pendingResumeResult: DrainResult | null = null;
+
         while (true) {
           // Capture the signal BEFORE any async operations
           // This prevents a race where handleInterrupt nulls the ref during await
@@ -4025,10 +4032,16 @@ export default function App({
             return;
           }
 
+          // Snapshot buffer state before this iteration's stream so we can
+          // reset it cleanly if a mid-stream resume is attempted.
+          const preTurnOrderLength = buffersRef.current.order.length;
+          const preTurnTokenCount = buffersRef.current.tokenCount;
+
           // Inject queued skill content as user message parts (LET-7353)
           // This centralizes skill content injection so all approval-send paths
           // automatically get skill SKILL.md content alongside tool results.
-          {
+          // Skip when resuming an existing run (no new request, so no new input).
+          if (!pendingResumeResult) {
             const { consumeQueuedSkillContent } = await import(
               "../tools/impl/skillContentRegistry"
             );
@@ -4042,6 +4055,7 @@ export default function App({
                     type: "text" as const,
                     text: sc.content,
                   })),
+                  otid: randomUUID(),
                 },
               ];
             }
@@ -4054,129 +4068,186 @@ export default function App({
           let stream: Awaited<ReturnType<typeof sendMessageStream>> | null =
             null;
           let turnToolContextId: string | null = null;
-          let preStreamResumeResult: DrainResult | null = null;
-          try {
-            const nextStream = await sendMessageStream(
-              conversationIdRef.current,
-              currentInput,
-              { agentId: agentIdRef.current },
-            );
-            stream = nextStream;
-            turnToolContextId = getStreamToolContextId(nextStream);
-          } catch (preStreamError) {
-            debugLog(
-              "stream",
-              "Pre-stream error: %s (status=%s)",
-              preStreamError instanceof Error
-                ? preStreamError.message
-                : String(preStreamError),
-              preStreamError instanceof APIError
-                ? preStreamError.status
-                : "none",
-            );
+          // Consume any pending mid-stream resume result; if present, skip
+          // sendMessageStream entirely (the run already exists on the server).
+          let preStreamResumeResult: DrainResult | null = pendingResumeResult;
+          pendingResumeResult = null;
+          if (!preStreamResumeResult) {
+            try {
+              const nextStream = await sendMessageStream(
+                conversationIdRef.current,
+                currentInput,
+                { agentId: agentIdRef.current },
+              );
+              stream = nextStream;
+              turnToolContextId = getStreamToolContextId(nextStream);
+            } catch (preStreamError) {
+              debugLog(
+                "stream",
+                "Pre-stream error: %s (status=%s)",
+                preStreamError instanceof Error
+                  ? preStreamError.message
+                  : String(preStreamError),
+                preStreamError instanceof APIError
+                  ? preStreamError.status
+                  : "none",
+              );
 
-            // Extract error detail using shared helper (handles nested/direct/message shapes)
-            const errorDetail = extractConflictDetail(preStreamError);
+              // Extract error detail using shared helper (handles nested/direct/message shapes)
+              const errorDetail = extractConflictDetail(preStreamError);
 
-            // Route through shared pre-stream conflict classifier (parity with headless.ts)
-            const preStreamAction = getPreStreamErrorAction(
-              errorDetail,
-              conversationBusyRetriesRef.current,
-              CONVERSATION_BUSY_MAX_RETRIES,
-              {
-                status:
-                  preStreamError instanceof APIError
-                    ? preStreamError.status
-                    : undefined,
-                transientRetries: llmApiErrorRetriesRef.current,
-                maxTransientRetries: LLM_API_ERROR_MAX_RETRIES,
-              },
-            );
-
-            // Resolve stale approval conflict: fetch real pending approvals, auto-deny, retry.
-            // Shares llmApiErrorRetriesRef budget with LLM transient-error retries (max 3 per turn).
-            // Resets on each processConversation entry and on success.
-            if (
-              shouldAttemptApprovalRecovery({
-                approvalPendingDetected:
-                  preStreamAction === "resolve_approval_pending",
-                retries: llmApiErrorRetriesRef.current,
-                maxRetries: LLM_API_ERROR_MAX_RETRIES,
-              })
-            ) {
-              llmApiErrorRetriesRef.current += 1;
-              try {
-                const client = await getClient();
-                const agent = await client.agents.retrieve(agentIdRef.current);
-                const { pendingApprovals: existingApprovals } =
-                  await getResumeData(client, agent, conversationIdRef.current);
-                currentInput = rebuildInputWithFreshDenials(
-                  currentInput,
-                  existingApprovals ?? [],
-                  "Auto-denied: stale approval from interrupted session",
-                );
-              } catch {
-                // Fetch failed — strip stale payload and retry plain message
-                currentInput = rebuildInputWithFreshDenials(
-                  currentInput,
-                  [],
-                  "",
-                );
-              }
-              buffersRef.current.interrupted = false;
-              continue;
-            }
-
-            // Check for 409 "conversation busy" error - retry with exponential backoff
-            if (preStreamAction === "retry_conversation_busy") {
-              conversationBusyRetriesRef.current += 1;
-              const retryDelayMs = getRetryDelayMs({
-                category: "conversation_busy",
-                attempt: conversationBusyRetriesRef.current,
-              });
-
-              // Log the conversation-busy error
-              telemetry.trackError(
-                "retry_conversation_busy",
-                formatTelemetryErrorMessage(
-                  errorDetail || "Conversation is busy",
-                ),
-                "pre_stream_retry",
+              // Route through shared pre-stream conflict classifier (parity with headless.ts)
+              const preStreamAction = getPreStreamErrorAction(
+                errorDetail,
+                conversationBusyRetriesRef.current,
+                CONVERSATION_BUSY_MAX_RETRIES,
                 {
-                  httpStatus:
+                  status:
                     preStreamError instanceof APIError
                       ? preStreamError.status
                       : undefined,
-                  modelId: currentModelId || undefined,
+                  transientRetries: llmApiErrorRetriesRef.current,
+                  maxTransientRetries: LLM_API_ERROR_MAX_RETRIES,
                 },
               );
 
-              // Attempt to discover and resume the in-flight run before waiting
-              try {
-                const resumeCtx: StreamRequestContext = {
-                  conversationId: conversationIdRef.current,
-                  resolvedConversationId: conversationIdRef.current,
-                  agentId: agentIdRef.current,
-                  requestStartedAtMs,
-                };
-                debugLog(
-                  "stream",
-                  "Conversation busy: attempting run discovery for resume (conv=%s, agent=%s)",
-                  resumeCtx.conversationId,
-                  resumeCtx.agentId,
-                );
-                const client = await getClient();
-                const discoveredRunId = await discoverFallbackRunIdWithTimeout(
-                  client,
-                  resumeCtx,
-                );
-                debugLog(
-                  "stream",
-                  "Run discovery result: %s",
-                  discoveredRunId ?? "none",
+              // Resolve stale approval conflict: fetch real pending approvals, auto-deny, retry.
+              // Shares llmApiErrorRetriesRef budget with LLM transient-error retries (max 3 per turn).
+              // Resets on each processConversation entry and on success.
+              if (
+                shouldAttemptApprovalRecovery({
+                  approvalPendingDetected:
+                    preStreamAction === "resolve_approval_pending",
+                  retries: llmApiErrorRetriesRef.current,
+                  maxRetries: LLM_API_ERROR_MAX_RETRIES,
+                })
+              ) {
+                llmApiErrorRetriesRef.current += 1;
+                try {
+                  const client = await getClient();
+                  const agent = await client.agents.retrieve(
+                    agentIdRef.current,
+                  );
+                  const { pendingApprovals: existingApprovals } =
+                    await getResumeData(
+                      client,
+                      agent,
+                      conversationIdRef.current,
+                    );
+                  currentInput = rebuildInputWithFreshDenials(
+                    currentInput,
+                    existingApprovals ?? [],
+                    "Auto-denied: stale approval from interrupted session",
+                  );
+                } catch {
+                  // Fetch failed — strip stale payload and retry plain message
+                  currentInput = rebuildInputWithFreshDenials(
+                    currentInput,
+                    [],
+                    "",
+                  );
+                }
+                buffersRef.current.interrupted = false;
+                continue;
+              }
+
+              // Check for 409 "conversation busy" error - retry with exponential backoff
+              if (preStreamAction === "retry_conversation_busy") {
+                conversationBusyRetriesRef.current += 1;
+                const retryDelayMs = getRetryDelayMs({
+                  category: "conversation_busy",
+                  attempt: conversationBusyRetriesRef.current,
+                });
+
+                // Log the conversation-busy error
+                telemetry.trackError(
+                  "retry_conversation_busy",
+                  formatTelemetryErrorMessage(
+                    errorDetail || "Conversation is busy",
+                  ),
+                  "pre_stream_retry",
+                  {
+                    httpStatus:
+                      preStreamError instanceof APIError
+                        ? preStreamError.status
+                        : undefined,
+                    modelId: currentModelId || undefined,
+                  },
                 );
 
-                if (discoveredRunId) {
+                // Attempt to discover and resume the in-flight run before waiting
+                try {
+                  const resumeCtx: StreamRequestContext = {
+                    conversationId: conversationIdRef.current,
+                    resolvedConversationId: conversationIdRef.current,
+                    agentId: agentIdRef.current,
+                    requestStartedAtMs,
+                  };
+                  debugLog(
+                    "stream",
+                    "Conversation busy: attempting run discovery for resume (conv=%s, agent=%s)",
+                    resumeCtx.conversationId,
+                    resumeCtx.agentId,
+                  );
+                  const client = await getClient();
+                  // Prefer run_id from error (server provides it directly),
+                  // fall back to polling if not available
+                  const errorRunId =
+                    extractRunIdFromConversationBusyError(preStreamError);
+                  const discoveredRunId =
+                    errorRunId ??
+                    (await discoverFallbackRunIdWithTimeout(client, resumeCtx));
+                  debugLog(
+                    "stream",
+                    "Run discovery result: %s",
+                    discoveredRunId ?? "none",
+                  );
+
+                  if (discoveredRunId) {
+                    if (signal?.aborted || userCancelledRef.current) {
+                      const isStaleAtAbort =
+                        myGeneration !== conversationGenerationRef.current;
+                      if (!isStaleAtAbort) {
+                        setStreaming(false);
+                      }
+                      return;
+                    }
+
+                    // Found a running run — resume its stream
+                    buffersRef.current.interrupted = false;
+                    buffersRef.current.commitGeneration =
+                      (buffersRef.current.commitGeneration || 0) + 1;
+
+                    const resumeStream = await client.runs.messages.stream(
+                      discoveredRunId,
+                      {
+                        starting_after: 0,
+                        batch_size: 1000,
+                      },
+                    );
+
+                    preStreamResumeResult = await drainStream(
+                      resumeStream,
+                      buffersRef.current,
+                      refreshDerivedThrottled,
+                      signal,
+                      undefined, // no handleFirstMessage on resume
+                      undefined,
+                      contextTrackerRef.current,
+                    );
+                    // Attach the discovered run ID
+                    if (!preStreamResumeResult.lastRunId) {
+                      preStreamResumeResult.lastRunId = discoveredRunId;
+                    }
+                    debugLog(
+                      "stream",
+                      "Pre-stream resume succeeded (runId=%s, stopReason=%s)",
+                      discoveredRunId,
+                      preStreamResumeResult.stopReason,
+                    );
+                    // Fall through — preStreamResumeResult will short-circuit drainStreamWithResume
+                  }
+                } catch (resumeError) {
                   if (signal?.aborted || userCancelledRef.current) {
                     const isStaleAtAbort =
                       myGeneration !== conversationGenerationRef.current;
@@ -4215,48 +4286,106 @@ export default function App({
                   }
                   debugLog(
                     "stream",
-                    "Pre-stream resume succeeded (runId=%s, stopReason=%s)",
-                    discoveredRunId,
-                    preStreamResumeResult.stopReason,
+                    "Pre-stream resume failed, falling back to wait/retry: %s",
+                    resumeError instanceof Error
+                      ? resumeError.message
+                      : String(resumeError),
                   );
-                  // Fall through — preStreamResumeResult will short-circuit drainStreamWithResume
-                }
-              } catch (resumeError) {
-                if (signal?.aborted || userCancelledRef.current) {
-                  const isStaleAtAbort =
-                    myGeneration !== conversationGenerationRef.current;
-                  if (!isStaleAtAbort) {
-                    setStreaming(false);
-                  }
-                  return;
+                  // Fall through to existing wait/retry behavior
                 }
 
-                debugLog(
-                  "stream",
-                  "Pre-stream resume failed, falling back to wait/retry: %s",
-                  resumeError instanceof Error
-                    ? resumeError.message
-                    : String(resumeError),
-                );
-                // Fall through to existing wait/retry behavior
+                // If resume succeeded, skip the wait/retry loop
+                if (!preStreamResumeResult) {
+                  // Show status message
+                  const statusId = uid("status");
+                  buffersRef.current.byId.set(statusId, {
+                    kind: "status",
+                    id: statusId,
+                    lines: ["Conversation is busy, waiting and retrying…"],
+                  });
+                  buffersRef.current.order.push(statusId);
+                  refreshDerived();
+
+                  // Wait with abort checking (same pattern as LLM API error retry)
+                  let cancelled = false;
+                  const startTime = Date.now();
+                  while (Date.now() - startTime < retryDelayMs) {
+                    if (
+                      abortControllerRef.current?.signal.aborted ||
+                      userCancelledRef.current
+                    ) {
+                      cancelled = true;
+                      break;
+                    }
+                    await new Promise((resolve) => setTimeout(resolve, 100));
+                  }
+
+                  // Remove status message
+                  buffersRef.current.byId.delete(statusId);
+                  buffersRef.current.order = buffersRef.current.order.filter(
+                    (id) => id !== statusId,
+                  );
+                  refreshDerived();
+
+                  if (!cancelled) {
+                    // Reset interrupted flag so retry stream chunks are processed
+                    buffersRef.current.interrupted = false;
+                    restorePinnedPermissionMode();
+                    continue;
+                  }
+                }
+                // User pressed ESC - fall through to error handling
               }
 
-              // If resume succeeded, skip the wait/retry loop
-              if (!preStreamResumeResult) {
-                // Show status message
-                const statusId = uid("status");
-                buffersRef.current.byId.set(statusId, {
-                  kind: "status",
-                  id: statusId,
-                  lines: ["Conversation is busy, waiting and retrying…"],
+              // Retry pre-stream transient errors (429/5xx/network) with shared LLM retry budget
+              if (preStreamAction === "retry_transient") {
+                llmApiErrorRetriesRef.current += 1;
+                const attempt = llmApiErrorRetriesRef.current;
+                const retryAfterMs =
+                  preStreamError instanceof APIError
+                    ? parseRetryAfterHeaderMs(
+                        preStreamError.headers?.get("retry-after"),
+                      )
+                    : null;
+                const delayMs = getRetryDelayMs({
+                  category: "transient_provider",
+                  attempt,
+                  detail: errorDetail,
+                  retryAfterMs,
                 });
-                buffersRef.current.order.push(statusId);
-                refreshDerived();
 
-                // Wait with abort checking (same pattern as LLM API error retry)
+                // Log the error that triggered the retry
+                telemetry.trackError(
+                  "retry_pre_stream_transient",
+                  formatTelemetryErrorMessage(
+                    errorDetail || "Pre-stream transient error",
+                  ),
+                  "pre_stream_retry",
+                  {
+                    httpStatus:
+                      preStreamError instanceof APIError
+                        ? preStreamError.status
+                        : undefined,
+                    modelId: currentModelId || undefined,
+                  },
+                );
+
+                const retryStatusMsg = getRetryStatusMessage(errorDetail);
+                const retryStatusId =
+                  retryStatusMsg != null ? uid("status") : null;
+                if (retryStatusId && retryStatusMsg) {
+                  buffersRef.current.byId.set(retryStatusId, {
+                    kind: "status",
+                    id: retryStatusId,
+                    lines: [retryStatusMsg],
+                  });
+                  buffersRef.current.order.push(retryStatusId);
+                  refreshDerived();
+                }
+
                 let cancelled = false;
                 const startTime = Date.now();
-                while (Date.now() - startTime < retryDelayMs) {
+                while (Date.now() - startTime < delayMs) {
                   if (
                     abortControllerRef.current?.signal.aborted ||
                     userCancelledRef.current
@@ -4267,203 +4396,128 @@ export default function App({
                   await new Promise((resolve) => setTimeout(resolve, 100));
                 }
 
-                // Remove status message
-                buffersRef.current.byId.delete(statusId);
-                buffersRef.current.order = buffersRef.current.order.filter(
-                  (id) => id !== statusId,
-                );
-                refreshDerived();
+                if (retryStatusId) {
+                  buffersRef.current.byId.delete(retryStatusId);
+                  buffersRef.current.order = buffersRef.current.order.filter(
+                    (id) => id !== retryStatusId,
+                  );
+                  refreshDerived();
+                }
 
                 if (!cancelled) {
-                  // Reset interrupted flag so retry stream chunks are processed
                   buffersRef.current.interrupted = false;
+                  conversationBusyRetriesRef.current = 0;
                   restorePinnedPermissionMode();
                   continue;
                 }
+                // User pressed ESC - fall through to error handling
               }
-              // User pressed ESC - fall through to error handling
-            }
 
-            // Retry pre-stream transient errors (429/5xx/network) with shared LLM retry budget
-            if (preStreamAction === "retry_transient") {
-              llmApiErrorRetriesRef.current += 1;
-              const attempt = llmApiErrorRetriesRef.current;
-              const retryAfterMs =
-                preStreamError instanceof APIError
-                  ? parseRetryAfterHeaderMs(
-                      preStreamError.headers?.get("retry-after"),
-                    )
-                  : null;
-              const delayMs = getRetryDelayMs({
-                category: "transient_provider",
-                attempt,
-                detail: errorDetail,
-                retryAfterMs,
-              });
+              // Reset conversation busy retry counter on non-busy error
+              conversationBusyRetriesRef.current = 0;
 
-              // Log the error that triggered the retry
-              telemetry.trackError(
-                "retry_pre_stream_transient",
-                formatTelemetryErrorMessage(
-                  errorDetail || "Pre-stream transient error",
-                ),
-                "pre_stream_retry",
-                {
-                  httpStatus:
-                    preStreamError instanceof APIError
-                      ? preStreamError.status
-                      : undefined,
-                  modelId: currentModelId || undefined,
-                },
+              // Check if this is a pre-stream approval desync error
+              const hasApprovalInPayload = currentInput.some(
+                (item) => item?.type === "approval",
               );
 
-              const retryStatusMsg = getRetryStatusMessage(errorDetail);
-              const retryStatusId =
-                retryStatusMsg != null ? uid("status") : null;
-              if (retryStatusId && retryStatusMsg) {
-                buffersRef.current.byId.set(retryStatusId, {
-                  kind: "status",
-                  id: retryStatusId,
-                  lines: [retryStatusMsg],
-                });
-                buffersRef.current.order.push(retryStatusId);
-                refreshDerived();
-              }
-
-              let cancelled = false;
-              const startTime = Date.now();
-              while (Date.now() - startTime < delayMs) {
-                if (
-                  abortControllerRef.current?.signal.aborted ||
-                  userCancelledRef.current
-                ) {
-                  cancelled = true;
-                  break;
-                }
-                await new Promise((resolve) => setTimeout(resolve, 100));
-              }
-
-              if (retryStatusId) {
-                buffersRef.current.byId.delete(retryStatusId);
-                buffersRef.current.order = buffersRef.current.order.filter(
-                  (id) => id !== retryStatusId,
-                );
-                refreshDerived();
-              }
-
-              if (!cancelled) {
-                buffersRef.current.interrupted = false;
-                conversationBusyRetriesRef.current = 0;
-                restorePinnedPermissionMode();
-                continue;
-              }
-              // User pressed ESC - fall through to error handling
-            }
-
-            // Reset conversation busy retry counter on non-busy error
-            conversationBusyRetriesRef.current = 0;
-
-            // Check if this is a pre-stream approval desync error
-            const hasApprovalInPayload = currentInput.some(
-              (item) => item?.type === "approval",
-            );
-
-            if (hasApprovalInPayload) {
-              // "Invalid tool call IDs" means server HAS pending approvals but with different IDs.
-              // We need to fetch the actual pending approvals and show them to the user.
-              if (isInvalidToolCallIdsError(errorDetail)) {
-                try {
-                  const client = await getClient();
-                  const agent = await client.agents.retrieve(
-                    agentIdRef.current,
-                  );
-                  const { pendingApprovals: serverApprovals } =
-                    await getResumeData(
-                      client,
-                      agent,
-                      conversationIdRef.current,
+              if (hasApprovalInPayload) {
+                // "Invalid tool call IDs" means server HAS pending approvals but with different IDs.
+                // We need to fetch the actual pending approvals and show them to the user.
+                if (isInvalidToolCallIdsError(errorDetail)) {
+                  try {
+                    const client = await getClient();
+                    const agent = await client.agents.retrieve(
+                      agentIdRef.current,
                     );
-
-                  if (serverApprovals && serverApprovals.length > 0) {
-                    // Preserve user message from current input (if any)
-                    // Filter out system reminders to avoid re-injecting them
-                    const userMessage = currentInput.find(
-                      (item) => item?.type === "message",
-                    );
-                    if (userMessage && "content" in userMessage) {
-                      const content = userMessage.content;
-                      let textToRestore = "";
-                      if (typeof content === "string") {
-                        textToRestore = stripSystemReminders(content);
-                      } else if (Array.isArray(content)) {
-                        // Extract text parts, filtering out system reminders
-                        textToRestore = content
-                          .filter(
-                            (c): c is { type: "text"; text: string } =>
-                              typeof c === "object" &&
-                              c !== null &&
-                              "type" in c &&
-                              c.type === "text" &&
-                              "text" in c &&
-                              typeof c.text === "string" &&
-                              !c.text.includes(SYSTEM_REMINDER_OPEN) &&
-                              !c.text.includes(SYSTEM_ALERT_OPEN),
-                          )
-                          .map((c) => c.text)
-                          .join("\n");
-                      }
-                      if (textToRestore.trim()) {
-                        setRestoredInput(textToRestore);
-                      }
-                    }
-
-                    // Clear all stale approval state before setting new approvals
-                    setApprovalResults([]);
-                    setAutoHandledResults([]);
-                    setAutoDeniedApprovals([]);
-                    setApprovalContexts([]);
-                    queueApprovalResults(null);
-
-                    // Set up approval UI with fetched approvals
-                    setPendingApprovals(serverApprovals);
-
-                    // Analyze approval contexts (same logic as /resume)
-                    try {
-                      const contexts = await Promise.all(
-                        serverApprovals.map(async (approval) => {
-                          const parsedArgs = safeJsonParseOr<
-                            Record<string, unknown>
-                          >(approval.toolArgs, {});
-                          return await analyzeToolApproval(
-                            approval.toolName,
-                            parsedArgs,
-                          );
-                        }),
+                    const { pendingApprovals: serverApprovals } =
+                      await getResumeData(
+                        client,
+                        agent,
+                        conversationIdRef.current,
                       );
-                      setApprovalContexts(contexts);
-                    } catch {
-                      // If analysis fails, contexts remain empty (will show basic options)
-                    }
 
-                    // Stop streaming and exit - user needs to approve/deny
-                    // (finally block will decrement processingConversationRef)
-                    setStreaming(false);
-                    sendDesktopNotification("Approval needed");
-                    return;
+                    if (serverApprovals && serverApprovals.length > 0) {
+                      // Preserve user message from current input (if any)
+                      // Filter out system reminders to avoid re-injecting them
+                      const userMessage = currentInput.find(
+                        (item) => item?.type === "message",
+                      );
+                      if (userMessage && "content" in userMessage) {
+                        const content = userMessage.content;
+                        let textToRestore = "";
+                        if (typeof content === "string") {
+                          textToRestore = stripSystemReminders(content);
+                        } else if (Array.isArray(content)) {
+                          // Extract text parts, filtering out system reminders
+                          textToRestore = content
+                            .filter(
+                              (c): c is { type: "text"; text: string } =>
+                                typeof c === "object" &&
+                                c !== null &&
+                                "type" in c &&
+                                c.type === "text" &&
+                                "text" in c &&
+                                typeof c.text === "string" &&
+                                !c.text.includes(SYSTEM_REMINDER_OPEN) &&
+                                !c.text.includes(SYSTEM_ALERT_OPEN),
+                            )
+                            .map((c) => c.text)
+                            .join("\n");
+                        }
+                        if (textToRestore.trim()) {
+                          setRestoredInput(textToRestore);
+                        }
+                      }
+
+                      // Clear all stale approval state before setting new approvals
+                      setApprovalResults([]);
+                      setAutoHandledResults([]);
+                      setAutoDeniedApprovals([]);
+                      setApprovalContexts([]);
+                      queueApprovalResults(null);
+
+                      // Set up approval UI with fetched approvals
+                      setPendingApprovals(serverApprovals);
+
+                      // Analyze approval contexts (same logic as /resume)
+                      try {
+                        const contexts = await Promise.all(
+                          serverApprovals.map(async (approval) => {
+                            const parsedArgs = safeJsonParseOr<
+                              Record<string, unknown>
+                            >(approval.toolArgs, {});
+                            return await analyzeToolApproval(
+                              approval.toolName,
+                              parsedArgs,
+                            );
+                          }),
+                        );
+                        setApprovalContexts(contexts);
+                      } catch {
+                        // If analysis fails, contexts remain empty (will show basic options)
+                      }
+
+                      // Stop streaming and exit - user needs to approve/deny
+                      // (finally block will decrement processingConversationRef)
+                      setStreaming(false);
+                      sendDesktopNotification("Approval needed");
+                      return;
+                    }
+                    // No approvals found - fall through to error handling below
+                  } catch {
+                    // Fetch failed - fall through to error handling below
                   }
-                  // No approvals found - fall through to error handling below
-                } catch {
-                  // Fetch failed - fall through to error handling below
                 }
               }
-            }
 
-            // Not a recoverable desync - re-throw to outer catch
-            // (unless pre-stream resume already succeeded)
-            if (!preStreamResumeResult) {
-              throw preStreamError;
+              // Not a recoverable desync - re-throw to outer catch
+              // (unless pre-stream resume already succeeded)
+              if (!preStreamResumeResult) {
+                throw preStreamError;
+              }
             }
-          }
+          } // end if (!preStreamResumeResult) — skip sendMessageStream on mid-stream resume
 
           // Check again after network call - user may have pressed Escape during sendMessageStream
           if (signal?.aborted) {
@@ -4744,6 +4798,7 @@ export default function App({
               refreshDerived();
 
               // Continue conversation with the hook feedback
+              const hookMessageOtid = randomUUID();
               setTimeout(() => {
                 processConversation(
                   [
@@ -4751,6 +4806,7 @@ export default function App({
                       type: "message",
                       role: "user",
                       content: hookMessage,
+                      otid: hookMessageOtid,
                     },
                   ],
                   { allowReentry: true },
@@ -5243,11 +5299,16 @@ export default function App({
                   toolResultsInFlightRef.current = true;
                   await processConversation(
                     [
-                      { type: "approval", approvals: allResults },
+                      {
+                        type: "approval",
+                        approvals: allResults,
+                        otid: randomUUID(),
+                      },
                       {
                         type: "message",
                         role: "user",
                         content: queuedContentParts,
+                        otid: randomUUID(),
                       },
                     ],
                     { allowReentry: true },
@@ -5293,6 +5354,7 @@ export default function App({
                     {
                       type: "approval",
                       approvals: allResults,
+                      otid: randomUUID(),
                     },
                   ],
                   { allowReentry: true },
@@ -5563,6 +5625,7 @@ export default function App({
                   type: "message" as const,
                   role: "system" as const,
                   content: `<system-reminder>The previous response was empty. Please provide a response with either text content or a tool call.</system-reminder>`,
+                  otid: randomUUID(),
                 },
               ];
             }
@@ -5600,6 +5663,77 @@ export default function App({
             retriable &&
             llmApiErrorRetriesRef.current < LLM_API_ERROR_MAX_RETRIES
           ) {
+            // Mid-stream resume: if we have a run ID, replay the existing run's
+            // stream rather than sending a new request (which would create a new
+            // server-side run). Mirrors the pre-stream 409 resume pattern.
+            if (lastRunId && !signal?.aborted && !userCancelledRef.current) {
+              try {
+                const resumeClient = await getClient();
+
+                // Reset partial buffer content added during the dropped stream
+                const idsAdded =
+                  buffersRef.current.order.slice(preTurnOrderLength);
+                for (const id of idsAdded) {
+                  buffersRef.current.byId.delete(id);
+                }
+                buffersRef.current.order.splice(preTurnOrderLength);
+                buffersRef.current.tokenCount = preTurnTokenCount;
+
+                // Clear per-turn streaming state (repopulated by replay)
+                buffersRef.current.pendingToolByRun.clear();
+                buffersRef.current.toolCallIdToLineId.clear();
+                buffersRef.current.lastOtid = null;
+                buffersRef.current.assistantCanonicalByMessageId.clear();
+                buffersRef.current.assistantCanonicalByOtid.clear();
+                buffersRef.current.reasoningCanonicalByMessageId.clear();
+                buffersRef.current.reasoningCanonicalByOtid.clear();
+                buffersRef.current.serverToolCalls.clear();
+                buffersRef.current.approvalsPending = false;
+                buffersRef.current.splitCounters.clear();
+                buffersRef.current.interrupted = false;
+                buffersRef.current.commitGeneration =
+                  (buffersRef.current.commitGeneration || 0) + 1;
+
+                const resumeStream = await resumeClient.runs.messages.stream(
+                  lastRunId,
+                  { starting_after: 0, batch_size: 1000 },
+                );
+
+                const resumeResult = await drainStream(
+                  resumeStream,
+                  buffersRef.current,
+                  refreshDerivedThrottled,
+                  signal,
+                  undefined,
+                  undefined,
+                  contextTrackerRef.current,
+                );
+                if (!resumeResult.lastRunId) {
+                  resumeResult.lastRunId = lastRunId;
+                }
+
+                debugLog(
+                  "stream",
+                  "Mid-stream resume succeeded (runId=%s, stopReason=%s)",
+                  lastRunId,
+                  resumeResult.stopReason,
+                );
+
+                pendingResumeResult = resumeResult;
+                buffersRef.current.interrupted = false;
+                continue;
+              } catch (resumeError) {
+                debugLog(
+                  "stream",
+                  "Mid-stream resume failed, falling back to retry: %s",
+                  resumeError instanceof Error
+                    ? resumeError.message
+                    : String(resumeError),
+                );
+                // Fall through to existing delay + retry
+              }
+            }
+
             llmApiErrorRetriesRef.current += 1;
             const attempt = llmApiErrorRetriesRef.current;
             const delayMs = getRetryDelayMs({
@@ -6932,7 +7066,7 @@ export default function App({
         if (allResults.length > 0) {
           toolResultsInFlightRef.current = true;
           await processConversation([
-            { type: "approval", approvals: allResults },
+            { type: "approval", approvals: allResults, otid: randomUUID() },
           ]);
           toolResultsInFlightRef.current = false;
 
@@ -8036,6 +8170,7 @@ export default function App({
                 type: "message",
                 role: "user",
                 content: buildTextParts(systemMsg, prompt),
+                otid: randomUUID(),
               },
             ]);
           } else {
@@ -9457,6 +9592,7 @@ export default function App({
                 type: "message",
                 role: "user",
                 content: buildTextParts(skillMessage),
+                otid: randomUUID(),
               },
             ]);
           } catch (error) {
@@ -9520,6 +9656,7 @@ export default function App({
                 type: "message",
                 role: "user",
                 content: rememberParts,
+                otid: randomUUID(),
               },
             ]);
           } catch (error) {
@@ -9676,6 +9813,7 @@ export default function App({
                 type: "message",
                 role: "user",
                 content: buildTextParts(initMessage),
+                otid: randomUUID(),
               },
             ]);
           } catch (error) {
@@ -9747,6 +9885,7 @@ export default function App({
                 content: buildTextParts(
                   `${SYSTEM_REMINDER_OPEN}\n${prompt}\n${SYSTEM_REMINDER_CLOSE}`,
                 ),
+                otid: randomUUID(),
               },
             ]);
           } catch (error) {
@@ -10365,12 +10504,14 @@ ${SYSTEM_REMINDER_CLOSE}
                   {
                     type: "approval",
                     approvals: recoveryApprovalResults,
+                    otid: randomUUID(),
                   },
                   {
                     type: "message",
                     role: "user",
                     content:
                       messageContent as unknown as MessageCreate["content"],
+                    otid: randomUUID(),
                   },
                 ];
 
@@ -10646,6 +10787,7 @@ ${SYSTEM_REMINDER_CLOSE}
         type: "message",
         role: "user",
         content: messageContent as unknown as MessageCreate["content"],
+        otid: randomUUID(),
       });
 
       await processConversation(initialInput, {
@@ -10994,6 +11136,7 @@ ${SYSTEM_REMINDER_CLOSE}
               type: "message",
               role: "user",
               content: buildQueuedContentParts(queuedItemsToAppend),
+              otid: randomUUID(),
             });
             refreshDerived();
           } else if (hadNotifications) {
@@ -11263,6 +11406,7 @@ ${SYSTEM_REMINDER_CLOSE}
               {
                 type: "approval",
                 approvals: allResults as ApprovalResult[],
+                otid: randomUUID(),
               },
             ]);
           } finally {
