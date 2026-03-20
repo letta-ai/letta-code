@@ -75,6 +75,14 @@ function isCloudflareEdge52xDetail(detail: unknown): boolean {
   return isCloudflareEdge52xHtmlError(detail);
 }
 
+/**
+ * Explicit classifier for quota-limit style errors that should not use
+ * transient retry logic. Used by client-side fallback paths.
+ */
+export function isQuotaLimitErrorDetail(detail: unknown): boolean {
+  return hasNonRetryableQuotaDetail(detail);
+}
+
 function hasNonRetryableQuotaDetail(detail: unknown): boolean {
   if (typeof detail !== "string") return false;
   const normalized = detail.toLowerCase();
