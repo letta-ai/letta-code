@@ -4,6 +4,7 @@ import type {
   ChangeDeviceStateCommand,
   InputCommand,
   RuntimeScope,
+  SearchFilesCommand,
   SyncCommand,
   TerminalInputCommand,
   TerminalKillCommand,
@@ -240,6 +241,18 @@ function isTerminalKillCommand(value: unknown): value is TerminalKillCommand {
   return c.type === "terminal_kill" && typeof c.terminal_id === "string";
 }
 
+export function isSearchFilesCommand(
+  value: unknown,
+): value is SearchFilesCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as { type?: unknown; query?: unknown; request_id?: unknown };
+  return (
+    c.type === "search_files" &&
+    typeof c.query === "string" &&
+    typeof c.request_id === "string"
+  );
+}
+
 export function parseServerMessage(
   data: WebSocket.RawData,
 ): ParsedServerMessage | null {
@@ -254,7 +267,8 @@ export function parseServerMessage(
       isTerminalSpawnCommand(parsed) ||
       isTerminalInputCommand(parsed) ||
       isTerminalResizeCommand(parsed) ||
-      isTerminalKillCommand(parsed)
+      isTerminalKillCommand(parsed) ||
+      isSearchFilesCommand(parsed)
     ) {
       return parsed as WsProtocolCommand;
     }

@@ -383,6 +383,16 @@ export interface TerminalKillCommand {
   terminal_id: string;
 }
 
+export interface SearchFilesCommand {
+  type: "search_files";
+  /** Substring to match against file paths. Empty string returns top files by mtime. */
+  query: string;
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  /** Maximum number of results to return. Defaults to 5. */
+  max_results?: number;
+}
+
 export type WsProtocolCommand =
   | InputCommand
   | ChangeDeviceStateCommand
@@ -391,7 +401,8 @@ export type WsProtocolCommand =
   | TerminalSpawnCommand
   | TerminalInputCommand
   | TerminalResizeCommand
-  | TerminalKillCommand;
+  | TerminalKillCommand
+  | SearchFilesCommand;
 
 export type WsProtocolMessage =
   | DeviceStatusUpdateMessage
