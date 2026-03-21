@@ -315,6 +315,40 @@ describe("pre-commit hook: skill path guard", () => {
   });
 });
 
+describe("pre-commit hook: top-level layout (no memory/ prefix)", () => {
+  test("validates frontmatter for system files without memory/ prefix", () => {
+    writeAndStage(
+      "system/human.md",
+      "Just plain content\nno frontmatter here\n",
+    );
+    const result = tryCommit();
+    expect(result.success).toBe(false);
+    expect(result.output).toContain("missing frontmatter");
+  });
+
+  test("allows valid frontmatter in system files without memory/ prefix", () => {
+    writeAndStage("system/human.md", `${VALID_FM}Block content here.\n`);
+    const result = tryCommit();
+    expect(result.success).toBe(true);
+  });
+
+  test("validates frontmatter for reference files without memory/ prefix", () => {
+    writeAndStage("reference/notes.md", "No frontmatter\n");
+    const result = tryCommit();
+    expect(result.success).toBe(false);
+    expect(result.output).toContain("missing frontmatter");
+  });
+
+  test("skips SKILL.md files inside skill directories", () => {
+    writeAndStage(
+      "skills/my-skill/SKILL.md",
+      "# My Skill\nNo frontmatter needed.\n",
+    );
+    const result = tryCommit();
+    expect(result.success).toBe(true);
+  });
+});
+
 describe("pre-commit hook: non-memory files", () => {
   test("ignores non-memory files", () => {
     writeAndStage("README.md", "---\nbogus: true\n---\n\nThis is fine.\n");

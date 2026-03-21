@@ -180,7 +180,9 @@ get_fm_value() {
   echo "$content" | tail -n +2 | head -n $((closing_line - 1)) | grep "^$key:" | cut -d: -f2- | sed 's/^ *//;s/ *$//'
 }
 
-for file in $(git diff --cached --name-only --diff-filter=ACM | grep '^memory/.*\\.md$'); do
+# Match .md files under system/ or reference/ (with optional memory/ prefix).
+# Skip skill SKILL.md files — they use a different frontmatter format.
+for file in $(git diff --cached --name-only --diff-filter=ACM | grep -E '^(memory/)?(system|reference)/.*\\.md$'); do
   staged=$(git show ":$file")
 
   # Frontmatter is required
