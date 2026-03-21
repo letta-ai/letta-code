@@ -1468,6 +1468,13 @@ ${SYSTEM_REMINDER_CLOSE}
       otid: randomUUID(),
     },
   ];
+  const refreshCurrentInputOtids = () => {
+    // Terminal stop-reason retries are NEW requests and must not reuse OTIDs.
+    currentInput = currentInput.map((item) => ({
+      ...item,
+      otid: randomUUID(),
+    }));
+  };
 
   // Track lastRunId outside the while loop so it's available in catch block
   let lastKnownRunId: string | null = null;
@@ -2003,6 +2010,8 @@ ${SYSTEM_REMINDER_CLOSE}
           // Exponential backoff before retrying the same input
           await new Promise((resolve) => setTimeout(resolve, delayMs));
 
+          // Post-stream retry creates a new run/request.
+          refreshCurrentInputOtids();
           continue;
         }
       }
@@ -2140,6 +2149,8 @@ ${SYSTEM_REMINDER_CLOSE}
             }
 
             await new Promise((resolve) => setTimeout(resolve, delayMs));
+            // Empty-response retry creates a new run/request.
+            refreshCurrentInputOtids();
             continue;
           }
 
@@ -2173,6 +2184,8 @@ ${SYSTEM_REMINDER_CLOSE}
             }
 
             await new Promise((resolve) => setTimeout(resolve, delayMs));
+            // Post-stream retry creates a new run/request.
+            refreshCurrentInputOtids();
             continue;
           }
         } catch (_e) {

@@ -3871,6 +3871,13 @@ export default function App({
 
       // Copy so we can safely mutate for retry recovery flows
       let currentInput = [...initialInput];
+      const refreshCurrentInputOtids = () => {
+        // Terminal stop-reason retries are NEW requests and must not reuse OTIDs.
+        currentInput = currentInput.map((item) => ({
+          ...item,
+          otid: randomUUID(),
+        }));
+      };
       const allowReentry = options?.allowReentry ?? false;
       const hasApprovalInput = initialInput.some(
         (item) => item.type === "approval",
@@ -4016,10 +4023,6 @@ export default function App({
         const requestStartedAtMs = Date.now();
         let highestSeqIdSeen: number | null = null;
 
-        // Holds a DrainResult from a mid-stream resume so the next iteration
-        // can skip sendMessageStream entirely (avoiding a new server-side run).
-        let pendingResumeResult: DrainResult | null = null;
-
         while (true) {
           // Capture the signal BEFORE any async operations
           // This prevents a race where handleInterrupt nulls the ref during await
@@ -4037,33 +4040,25 @@ export default function App({
             return;
           }
 
-          // Snapshot buffer state before this iteration's stream so we can
-          // reset it cleanly if a mid-stream resume is attempted.
-          const preTurnOrderLength = buffersRef.current.order.length;
-          const preTurnTokenCount = buffersRef.current.tokenCount;
-
           // Inject queued skill content as user message parts (LET-7353)
           // This centralizes skill content injection so all approval-send paths
           // automatically get skill SKILL.md content alongside tool results.
-          // Skip when resuming an existing run (no new request, so no new input).
-          if (!pendingResumeResult) {
-            const { consumeQueuedSkillContent } = await import(
-              "../tools/impl/skillContentRegistry"
-            );
-            const skillContents = consumeQueuedSkillContent();
-            if (skillContents.length > 0) {
-              currentInput = [
-                ...currentInput,
-                {
-                  role: "user",
-                  content: skillContents.map((sc) => ({
-                    type: "text" as const,
-                    text: sc.content,
-                  })),
-                  otid: randomUUID(),
-                },
-              ];
-            }
+          const { consumeQueuedSkillContent } = await import(
+            "../tools/impl/skillContentRegistry"
+          );
+          const skillContents = consumeQueuedSkillContent();
+          if (skillContents.length > 0) {
+            currentInput = [
+              ...currentInput,
+              {
+                role: "user",
+                content: skillContents.map((sc) => ({
+                  type: "text" as const,
+                  text: sc.content,
+                })),
+                otid: randomUUID(),
+              },
+            ];
           }
 
           // Stream one turn - use ref to always get the latest conversationId
@@ -4073,10 +4068,7 @@ export default function App({
           let stream: Awaited<ReturnType<typeof sendMessageStream>> | null =
             null;
           let turnToolContextId: string | null = null;
-          // Consume any pending mid-stream resume result; if present, skip
-          // sendMessageStream entirely (the run already exists on the server).
-          let preStreamResumeResult: DrainResult | null = pendingResumeResult;
-          pendingResumeResult = null;
+          let preStreamResumeResult: DrainResult | null = null;
           if (!preStreamResumeResult) {
             try {
               const nextStream = await sendMessageStream(
@@ -5654,6 +5646,8 @@ export default function App({
             );
             refreshDerived();
 
+            // Empty-response retry starts a new request/run, so refresh OTIDs.
+            refreshCurrentInputOtids();
             buffersRef.current.interrupted = false;
             continue;
           }
@@ -5668,76 +5662,8 @@ export default function App({
             retriable &&
             llmApiErrorRetriesRef.current < LLM_API_ERROR_MAX_RETRIES
           ) {
-            // Mid-stream resume: if we have a run ID, replay the existing run's
-            // stream rather than sending a new request (which would create a new
-            // server-side run). Mirrors the pre-stream 409 resume pattern.
-            if (lastRunId && !signal?.aborted && !userCancelledRef.current) {
-              try {
-                const resumeClient = await getClient();
-
-                // Reset partial buffer content added during the dropped stream
-                const idsAdded =
-                  buffersRef.current.order.slice(preTurnOrderLength);
-                for (const id of idsAdded) {
-                  buffersRef.current.byId.delete(id);
-                }
-                buffersRef.current.order.splice(preTurnOrderLength);
-                buffersRef.current.tokenCount = preTurnTokenCount;
-
-                // Clear per-turn streaming state (repopulated by replay)
-                buffersRef.current.pendingToolByRun.clear();
-                buffersRef.current.toolCallIdToLineId.clear();
-                buffersRef.current.lastOtid = null;
-                buffersRef.current.assistantCanonicalByMessageId.clear();
-                buffersRef.current.assistantCanonicalByOtid.clear();
-                buffersRef.current.reasoningCanonicalByMessageId.clear();
-                buffersRef.current.reasoningCanonicalByOtid.clear();
-                buffersRef.current.serverToolCalls.clear();
-                buffersRef.current.approvalsPending = false;
-                buffersRef.current.splitCounters.clear();
-                buffersRef.current.interrupted = false;
-                buffersRef.current.commitGeneration =
-                  (buffersRef.current.commitGeneration || 0) + 1;
-
-                const resumeStream = await resumeClient.runs.messages.stream(
-                  lastRunId,
-                  { starting_after: 0, batch_size: 1000 },
-                );
-
-                const resumeResult = await drainStream(
-                  resumeStream,
-                  buffersRef.current,
-                  refreshDerivedThrottled,
-                  signal,
-                  undefined,
-                  undefined,
-                  contextTrackerRef.current,
-                );
-                if (!resumeResult.lastRunId) {
-                  resumeResult.lastRunId = lastRunId;
-                }
-
-                debugLog(
-                  "stream",
-                  "Mid-stream resume succeeded (runId=%s, stopReason=%s)",
-                  lastRunId,
-                  resumeResult.stopReason,
-                );
-
-                pendingResumeResult = resumeResult;
-                buffersRef.current.interrupted = false;
-                continue;
-              } catch (resumeError) {
-                debugLog(
-                  "stream",
-                  "Mid-stream resume failed, falling back to retry: %s",
-                  resumeError instanceof Error
-                    ? resumeError.message
-                    : String(resumeError),
-                );
-                // Fall through to existing delay + retry
-              }
-            }
+            // Do NOT replay the same run for terminal post-stream errors
+            // (e.g. llm_api_error). A retry should create a new run.
 
             llmApiErrorRetriesRef.current += 1;
             const attempt = llmApiErrorRetriesRef.current;
@@ -5806,9 +5732,11 @@ export default function App({
             }
 
             if (!cancelled) {
+              // Post-stream retry is a new request/run, so refresh OTIDs.
+              refreshCurrentInputOtids();
               // Reset interrupted flag so retry stream chunks are processed
               buffersRef.current.interrupted = false;
-              // Retry by continuing the while loop (same currentInput)
+              // Retry by continuing the while loop with fresh OTIDs.
               continue;
             }
             // User pressed ESC - fall through to error handling
