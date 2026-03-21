@@ -192,6 +192,7 @@ export function FileAutocomplete({
     onActiveChange,
     lastValidQuery,
     matches[0]?.path,
+    workingDirectory,
   ]);
 
   // Don't show if no "@" in input
