@@ -62,7 +62,9 @@ function getConfig(): CwdConfig {
  * next call to shouldExcludeEntry / shouldHardExcludeEntry. Call this after
  * writing or deleting .letta/.lettaignore in that directory.
  */
-export function invalidateFileSearchConfig(cwd: string = getCurrentWorkingDirectory()): void {
+export function invalidateFileSearchConfig(
+  cwd: string = getCurrentWorkingDirectory(),
+): void {
   cwdConfigCache.delete(cwd);
 }
 
