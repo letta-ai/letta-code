@@ -3953,11 +3953,16 @@ export default function App({
           canInjectInterruptRecovery
         ) {
           currentInput = [
-            ...lastSentInputRef.current,
+            // Refresh OTIDs — this is a new request, not a retry of the interrupted one
+            ...lastSentInputRef.current.map((m) => ({
+              ...m,
+              otid: randomUUID(),
+            })),
             ...currentInput.map((m) =>
               m.type === "message" && m.role === "user"
                 ? {
                     ...m,
+                    otid: randomUUID(),
                     content: [
                       { type: "text" as const, text: INTERRUPT_RECOVERY_ALERT },
                       ...(typeof m.content === "string"
@@ -3965,7 +3970,7 @@ export default function App({
                         : m.content),
                     ],
                   }
-                : m,
+                : { ...m, otid: randomUUID() },
             ),
           ];
           pendingInterruptRecoveryConversationIdRef.current = null;

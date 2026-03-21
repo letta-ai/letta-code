@@ -6,6 +6,7 @@
  * action. No network calls, no React, no stream-json output.
  */
 
+import { randomUUID } from "node:crypto";
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import { isCloudflareEdge52xHtmlError } from "../cli/helpers/errorFormatter";
@@ -411,7 +412,10 @@ export function rebuildInputWithFreshDenials(
   serverApprovals: PendingApprovalInfo[],
   denialReason: string,
 ): Array<MessageCreate | ApprovalCreate> {
-  const stripped = currentInput.filter((item) => item?.type !== "approval");
+  // Refresh OTIDs on all stripped messages — this is a new request, not a retry
+  const stripped = currentInput
+    .filter((item) => item?.type !== "approval")
+    .map((item) => ({ ...item, otid: randomUUID() }));
 
   if (serverApprovals.length > 0) {
     const denials: ApprovalCreate = {
@@ -422,6 +426,7 @@ export function rebuildInputWithFreshDenials(
         approve: false,
         reason: denialReason,
       })),
+      otid: randomUUID(),
     };
     return [denials, ...stripped];
   }
