@@ -212,12 +212,13 @@ export async function drainStream(
   onFirstMessage?: () => void,
   onChunkProcessed?: DrainStreamHook,
   contextTracker?: ContextTracker,
+  seenSeqIdThreshold?: number | null,
 ): Promise<DrainResult> {
   const startTime = performance.now();
   const requestStartTime = getStreamRequestStartTime(stream) ?? startTime;
   let hasLoggedTTFT = false;
 
-  const streamProcessor = new StreamProcessor();
+  const streamProcessor = new StreamProcessor(seenSeqIdThreshold ?? null);
 
   let stopReason: StopReasonType | null = null;
   let hasCalledFirstMessage = false;
@@ -488,6 +489,7 @@ export async function drainStreamWithResume(
   onFirstMessage?: () => void,
   onChunkProcessed?: DrainStreamHook,
   contextTracker?: ContextTracker,
+  seenSeqIdThreshold?: number | null,
 ): Promise<DrainResult> {
   const overallStartTime = performance.now();
   const streamRequestContext = getStreamRequestContext(stream);
@@ -509,6 +511,7 @@ export async function drainStreamWithResume(
     onFirstMessage,
     onChunkProcessed,
     contextTracker,
+    seenSeqIdThreshold,
   );
 
   let runIdToResume = result.lastRunId ?? null;
@@ -639,6 +642,7 @@ export async function drainStreamWithResume(
         undefined,
         onChunkProcessed,
         contextTracker,
+        seenSeqIdThreshold,
       );
 
       // Use the resume result (should have proper stop_reason now)

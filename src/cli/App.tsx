@@ -4006,6 +4006,7 @@ export default function App({
         // Capture once before the retry loop so the temporal filter in
         // discoverFallbackRunIdForResume covers runs created by any attempt.
         const requestStartedAtMs = Date.now();
+        let highestSeqIdSeen: number | null = null;
 
         while (true) {
           // Capture the signal BEFORE any async operations
@@ -4206,6 +4207,7 @@ export default function App({
                     undefined, // no handleFirstMessage on resume
                     undefined,
                     contextTrackerRef.current,
+                    highestSeqIdSeen,
                   );
                   // Attach the discovered run ID
                   if (!preStreamResumeResult.lastRunId) {
@@ -4582,6 +4584,7 @@ export default function App({
                   handleFirstMessage,
                   undefined,
                   contextTrackerRef.current,
+                  highestSeqIdSeen,
                 );
               })();
 
@@ -4591,8 +4594,13 @@ export default function App({
             approvals,
             apiDurationMs,
             lastRunId,
+            lastSeqId,
             fallbackError,
           } = await drainResult;
+
+          if (lastSeqId != null) {
+            highestSeqIdSeen = Math.max(highestSeqIdSeen ?? 0, lastSeqId);
+          }
 
           // Update currentRunId for error reporting in catch block
           currentRunId = lastRunId ?? undefined;
