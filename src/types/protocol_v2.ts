@@ -363,6 +363,8 @@ export interface TerminalSpawnCommand {
   terminal_id: string;
   cols: number;
   rows: number;
+  /** Agent's current working directory. Falls back to bootWorkingDirectory if absent. */
+  cwd?: string;
 }
 
 export interface TerminalInputCommand {
