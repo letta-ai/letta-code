@@ -165,6 +165,12 @@ PROTECTED_KEYS="read_only"
 ALL_KNOWN_KEYS="description limit read_only"
 errors=""
 
+# Skills must always be directories: skills/<name>/SKILL.md
+# Reject legacy flat skill files (both current and legacy repo layouts).
+for file in $(git diff --cached --name-only --diff-filter=ACMR | grep -E '^(memory/)?skills/[^/]+\\.md$' || true); do
+  errors="$errors\\n  $file: invalid skill path (skills must be folders). Use skills/<name>/SKILL.md"
+done
+
 # Helper: extract a frontmatter value from content
 get_fm_value() {
   local content="$1" key="$2"
@@ -174,7 +180,9 @@ get_fm_value() {
   echo "$content" | tail -n +2 | head -n $((closing_line - 1)) | grep "^$key:" | cut -d: -f2- | sed 's/^ *//;s/ *$//'
 }
 
-for file in $(git diff --cached --name-only --diff-filter=ACM | grep '^memory/.*\\.md$'); do
+# Match .md files under system/ or reference/ (with optional memory/ prefix).
+# Skip skill SKILL.md files — they use a different frontmatter format.
+for file in $(git diff --cached --name-only --diff-filter=ACM | grep -E '^(memory/)?(system|reference)/.*\\.md$'); do
   staged=$(git show ":$file")
 
   # Frontmatter is required
