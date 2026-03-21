@@ -57,6 +57,7 @@ export function FileAutocomplete({
   cursorPosition = currentInput.length,
   onSelect,
   onActiveChange,
+  workingDirectory,
 }: AutocompleteProps) {
   const [matches, setMatches] = useState<FileMatch[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -133,7 +134,7 @@ export function FileAutocomplete({
     if (query.length === 0) {
       setIsLoading(true);
       onActiveChange?.(true);
-      searchFiles("", false) // Don't do deep search for empty query
+      searchFiles("", false, workingDirectory) // Don't do deep search for empty query
         .then((results) => {
           setMatches(results);
           setIsLoading(false);
@@ -162,7 +163,7 @@ export function FileAutocomplete({
 
     debounceTimeout.current = setTimeout(() => {
       // Search for matching files (deep search through subdirectories)
-      searchFiles(query, true) // Enable deep search
+      searchFiles(query, true, workingDirectory) // Enable deep search
         .then((results) => {
           setMatches(results);
           setIsLoading(false);

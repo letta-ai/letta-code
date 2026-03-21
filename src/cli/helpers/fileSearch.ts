@@ -1,5 +1,6 @@
 import { readdirSync, statSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
+import { getCurrentWorkingDirectory } from "../../runtime-context.js";
 import { debugLog } from "../../utils/debug";
 import { ensureFileIndex, type FileMatch, searchFileIndex } from "./fileIndex";
 import { shouldHardExcludeEntry } from "./fileSearchConfig";
@@ -43,7 +44,7 @@ function searchDirectoryRecursive(
     for (const entry of entries) {
       try {
         const fullPath = join(dir, entry);
-        const relativePath = relative(process.cwd(), fullPath);
+        const relativePath = relative(getCurrentWorkingDirectory(), fullPath);
 
         if (shouldHardExcludeEntry(entry)) {
           continue;
@@ -97,12 +98,15 @@ function searchDirectoryRecursive(
 export async function searchFiles(
   query: string,
   deep: boolean = false,
+  cwd?: string,
 ): Promise<FileMatch[]> {
   const results: FileMatch[] = [];
 
   try {
+    const userCwd = cwd ?? getCurrentWorkingDirectory();
+
     // Determine the directory to search in
-    let searchDir = process.cwd();
+    let searchDir = userCwd;
     let searchPattern = query;
 
     // Handle explicit relative/absolute paths or directory navigation
@@ -116,7 +120,7 @@ export async function searchFiles(
 
       // Try to resolve the directory path
       try {
-        const resolvedDir = resolve(process.cwd(), dirPart);
+        const resolvedDir = resolve(userCwd, dirPart);
         // Check if the directory exists by trying to read it
         try {
           statSync(resolvedDir);
@@ -137,7 +141,7 @@ export async function searchFiles(
     // Use shallow search to avoid recursively walking the entire subtree.
     const effectiveDeep = deep && searchPattern.length > 0;
 
-    const relativeSearchDir = relative(process.cwd(), searchDir);
+    const relativeSearchDir = relative(userCwd, searchDir);
     const normalizedSearchDir =
       relativeSearchDir === "." ? "" : relativeSearchDir;
     const insideWorkspace =
@@ -146,7 +150,7 @@ export async function searchFiles(
     let indexSearchSucceeded = false;
     if (insideWorkspace) {
       try {
-        await ensureFileIndex();
+        await ensureFileIndex(userCwd);
         results.push(
           ...searchFileIndex({
             searchDir: normalizedSearchDir,
@@ -209,7 +213,7 @@ export async function searchFiles(
             const fullPath = join(searchDir, entry);
             const stats = statSync(fullPath);
 
-            const relativePath = relative(process.cwd(), fullPath);
+            const relativePath = relative(userCwd, fullPath);
 
             results.push({
               path: relativePath,

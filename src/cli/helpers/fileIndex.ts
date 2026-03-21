@@ -10,6 +10,7 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { join, normalize, relative, sep } from "node:path";
+import { getCurrentWorkingDirectory } from "../../runtime-context.js";
 import { debugLog } from "../../utils/debug";
 import { readIntSetting } from "../../utils/lettaSettings";
 import { shouldExcludeEntry } from "./fileSearchConfig";
@@ -55,6 +56,8 @@ let cachedEntries: FileIndexEntry[] = [];
 let cachedEntryPaths = new Set<string>();
 let buildPromise: Promise<void> | null = null;
 let hasCompletedBuild = false;
+/** The CWD for which the current index was built. Used to detect CWD changes. */
+let lastBuiltCwd: string | null = null;
 
 interface FileIndexCache {
   metadata: {
@@ -331,6 +334,7 @@ async function buildDirectory(
   previous: PreviousIndexData | undefined,
   depth: number,
   context: BuildContext,
+  cwd: string,
 ): Promise<string> {
   let dirStats: FsStats;
 
@@ -419,7 +423,7 @@ async function buildDirectory(
     }
 
     const fullPath = join(dir, entry);
-    const entryPath = relative(process.cwd(), fullPath);
+    const entryPath = relative(cwd, fullPath);
 
     if (!entryPath) {
       continue;
@@ -443,6 +447,7 @@ async function buildDirectory(
         previous,
         depth + 1,
         context,
+        cwd,
       );
 
       childHashes.push(`dir:${entry}:${childHash}`);
@@ -476,14 +481,15 @@ async function buildDirectory(
 }
 
 async function buildIndex(
-  previous?: PreviousIndexData,
+  previous: PreviousIndexData | undefined,
+  cwd: string,
 ): Promise<FileIndexBuildResult> {
   const entries: FileIndexEntry[] = [];
   const merkle: MerkleMap = {};
   const statsMap: StatsMap = {};
   const context: BuildContext = { newEntryCount: 0, truncated: false };
   const rootHash = await buildDirectory(
-    process.cwd(),
+    cwd,
     "",
     entries,
     merkle,
@@ -491,6 +497,7 @@ async function buildIndex(
     previous,
     0,
     context,
+    cwd,
   );
 
   entries.sort((a, b) => a.path.localeCompare(b.path));
@@ -523,26 +530,26 @@ function sanitizeWorkspacePath(workspacePath: string): string {
   return sanitized.length === 0 ? "workspace" : sanitized;
 }
 
-function getProjectStorageDir(): string {
+function getProjectStorageDir(cwd: string): string {
   const homeDir = homedir();
-  const sanitizedWorkspace = sanitizeWorkspacePath(process.cwd());
+  const sanitizedWorkspace = sanitizeWorkspacePath(cwd);
   return join(homeDir, ".letta", "projects", sanitizedWorkspace);
 }
 
-function ensureProjectStorageDir(): string {
-  const storageDir = getProjectStorageDir();
+function ensureProjectStorageDir(cwd: string): string {
+  const storageDir = getProjectStorageDir(cwd);
   if (!existsSync(storageDir)) {
     mkdirSync(storageDir, { recursive: true });
   }
   return storageDir;
 }
 
-function getProjectIndexPath(): string {
-  return join(getProjectStorageDir(), PROJECT_INDEX_FILENAME);
+function getProjectIndexPath(cwd: string): string {
+  return join(getProjectStorageDir(cwd), PROJECT_INDEX_FILENAME);
 }
 
-function loadCachedIndex(): FileIndexCache | null {
-  const indexPath = getProjectIndexPath();
+function loadCachedIndex(cwd: string): FileIndexCache | null {
+  const indexPath = getProjectIndexPath(cwd);
   if (!existsSync(indexPath)) {
     return null;
   }
@@ -600,9 +607,9 @@ function loadCachedIndex(): FileIndexCache | null {
   return null;
 }
 
-function cacheProjectIndex(result: FileIndexBuildResult): void {
+function cacheProjectIndex(result: FileIndexBuildResult, cwd: string): void {
   try {
-    const storageDir = ensureProjectStorageDir();
+    const storageDir = ensureProjectStorageDir(cwd);
     const indexPath = join(storageDir, PROJECT_INDEX_FILENAME);
     const payload: FileIndexCache = {
       metadata: {
@@ -645,19 +652,35 @@ function buildCachedEntries(
 
 /**
  * Ensure the file index is built at least once per session.
+ *
+ * Automatically rebuilds if the working directory has changed since the last
+ * build — this handles remote mode where CWD is reassigned per conversation.
+ *
+ * @param cwd - Optional explicit working directory. When omitted, falls back
+ *   to `getCurrentWorkingDirectory()`. Callers that know their CWD (e.g. the
+ *   file autocomplete UI in remote mode) should pass it explicitly so the
+ *   index is always built against the right directory.
  */
-export function ensureFileIndex(): Promise<void> {
+export function ensureFileIndex(cwd?: string): Promise<void> {
+  const effectiveCwd = cwd ?? getCurrentWorkingDirectory();
+
+  // If the CWD changed since the last build, reset so we rebuild for the new directory.
+  if (hasCompletedBuild && lastBuiltCwd !== effectiveCwd) {
+    hasCompletedBuild = false;
+    buildPromise = null;
+  }
+
   if (hasCompletedBuild) return Promise.resolve();
   if (!buildPromise) {
     let currentPromise!: Promise<void>;
     currentPromise = (async () => {
       let succeeded = false;
       try {
-        const diskIndex = loadCachedIndex();
+        const diskIndex = loadCachedIndex(effectiveCwd);
         const previousData = diskIndex
           ? preparePreviousIndexData(diskIndex)
           : undefined;
-        const buildResult = await buildIndex(previousData);
+        const buildResult = await buildIndex(previousData, effectiveCwd);
 
         if (diskIndex && diskIndex.metadata.rootHash === buildResult.rootHash) {
           ({ entries: cachedEntries, paths: cachedEntryPaths } =
@@ -674,7 +697,7 @@ export function ensureFileIndex(): Promise<void> {
           );
         }
 
-        cacheProjectIndex(buildResult);
+        cacheProjectIndex(buildResult, effectiveCwd);
         ({ entries: cachedEntries, paths: cachedEntryPaths } =
           buildCachedEntries(buildResult.entries, buildResult.stats));
         succeeded = true;
@@ -682,7 +705,10 @@ export function ensureFileIndex(): Promise<void> {
         // Only clear buildPromise if it's still ours — refreshFileIndex may
         // have already replaced it with a newer promise.
         if (buildPromise === currentPromise) buildPromise = null;
-        if (succeeded) hasCompletedBuild = true;
+        if (succeeded) {
+          hasCompletedBuild = true;
+          lastBuiltCwd = effectiveCwd;
+        }
       }
     })();
     buildPromise = currentPromise;

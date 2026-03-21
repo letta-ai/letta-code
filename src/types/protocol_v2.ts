@@ -393,6 +393,12 @@ export interface SearchFilesCommand {
   request_id: string;
   /** Maximum number of results to return. Defaults to 5. */
   max_results?: number;
+  /**
+   * Working directory to search within. When provided the index is built (or
+   * reused) for this directory instead of the ambient CWD. Required in remote
+   * mode where the CWD is per-conversation and may differ from the boot CWD.
+   */
+  cwd?: string;
 }
 
 export type WsProtocolCommand =

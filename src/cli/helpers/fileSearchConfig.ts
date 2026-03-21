@@ -1,4 +1,5 @@
 import picomatch from "picomatch";
+import { getCurrentWorkingDirectory } from "../../runtime-context.js";
 import {
   ensureLettaIgnoreFile,
   readLettaIgnorePatterns,
@@ -40,7 +41,7 @@ function buildConfig(cwd: string): CwdConfig {
  * Builds and caches on first access per cwd; returns cached result thereafter.
  */
 function getConfig(): CwdConfig {
-  const cwd = process.cwd();
+  const cwd = getCurrentWorkingDirectory();
   const cached = cwdConfigCache.get(cwd);
   if (cached) return cached;
 
@@ -51,7 +52,7 @@ function getConfig(): CwdConfig {
 
 // On module load: ensure .lettaignore exists for the initial cwd and prime the cache.
 (() => {
-  const cwd = process.cwd();
+  const cwd = getCurrentWorkingDirectory();
   ensureLettaIgnoreFile(cwd);
   cwdConfigCache.set(cwd, buildConfig(cwd));
 })();
@@ -61,7 +62,7 @@ function getConfig(): CwdConfig {
  * next call to shouldExcludeEntry / shouldHardExcludeEntry. Call this after
  * writing or deleting .letta/.lettaignore in that directory.
  */
-export function invalidateFileSearchConfig(cwd: string = process.cwd()): void {
+export function invalidateFileSearchConfig(cwd: string = getCurrentWorkingDirectory()): void {
   cwdConfigCache.delete(cwd);
 }
 

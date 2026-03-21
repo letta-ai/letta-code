@@ -65,6 +65,7 @@ export function InputAssist({
         cursorPosition={cursorPosition}
         onSelect={onFileSelect}
         onActiveChange={onAutocompleteActiveChange}
+        workingDirectory={workingDirectory}
       />
     );
   }

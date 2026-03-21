@@ -997,7 +997,7 @@ async function connectWithRetry(
     // ── File search (no runtime scope required) ────────────────────────
     if (isSearchFilesCommand(parsed)) {
       void (async () => {
-        await ensureFileIndex();
+        await ensureFileIndex(parsed.cwd);
         const files = searchFileIndex({
           searchDir: ".",
           pattern: parsed.query,
