@@ -1018,7 +1018,11 @@ async function connectWithRetry(
 
     // ── Terminal commands (no runtime scope required) ──────────────────
     if (parsed.type === "terminal_spawn") {
-      handleTerminalSpawn(parsed, socket, runtime.bootWorkingDirectory);
+      handleTerminalSpawn(
+        parsed,
+        socket,
+        parsed.cwd ?? runtime.bootWorkingDirectory,
+      );
       return;
     }
 
