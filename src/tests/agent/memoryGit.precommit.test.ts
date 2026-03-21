@@ -290,6 +290,31 @@ describe("pre-commit hook: read_only protection", () => {
   });
 });
 
+describe("pre-commit hook: skill path guard", () => {
+  test("rejects legacy flat skill file in nested memory layout", () => {
+    writeAndStage(
+      "memory/skills/slack-search.md",
+      `${VALID_FM}Legacy flat skill file.\n`,
+    );
+    const result = tryCommit();
+    expect(result.success).toBe(false);
+    expect(result.output).toContain("Use skills/<name>/SKILL.md");
+  });
+
+  test("rejects legacy flat skill file in top-level layout", () => {
+    writeAndStage("skills/slack-search.md", "Legacy flat skill file.\n");
+    const result = tryCommit();
+    expect(result.success).toBe(false);
+    expect(result.output).toContain("Use skills/<name>/SKILL.md");
+  });
+
+  test("allows canonical directory-based skill path", () => {
+    writeAndStage("skills/slack-search/SKILL.md", "# Slack Search\n");
+    const result = tryCommit();
+    expect(result.success).toBe(true);
+  });
+});
+
 describe("pre-commit hook: non-memory files", () => {
   test("ignores non-memory files", () => {
     writeAndStage("README.md", "---\nbogus: true\n---\n\nThis is fine.\n");
