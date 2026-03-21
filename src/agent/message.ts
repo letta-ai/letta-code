@@ -23,6 +23,7 @@ import {
 } from "./approval-result-normalization";
 import { getClient } from "./client";
 import { buildClientSkillsPayload } from "./clientSkills";
+import { ALL_SKILL_SOURCES } from "./skillSources";
 
 const streamRequestStartTimes = new WeakMap<object, number>();
 const streamToolContextIds = new WeakMap<object, string>();
@@ -132,6 +133,7 @@ export async function sendMessageStream(
   const { clientSkills, errors: clientSkillDiscoveryErrors } =
     await buildClientSkillsPayload({
       agentId: opts.agentId,
+      skillSources: ALL_SKILL_SOURCES,
     });
 
   const resolvedConversationId = conversationId;
