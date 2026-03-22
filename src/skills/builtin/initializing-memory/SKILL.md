@@ -16,23 +16,23 @@ If you are running as a background subagent (you cannot use AskUserQuestion):
 - Use reasonable defaults for all preferences
 - Any specific overrides will be provided in your initial prompt
 
-## Your Goal: Explode Into 15-25 Hierarchical Files
+## Your Goal: Explode Into a Hierarchical Memory Structure
 
-Your goal is to **explode** memory into a **deeply hierarchical structure of 15-25 small, focused files**.
+Your goal is to **explode** memory into a **deeply hierarchical structure of small, focused files**.
 
 ### Target Output
 
 | Metric | Target |
 |--------|--------|
-| **Total files** | 15-25 (aim for ~20) |
-| **Max lines per file** | ~40 lines (split if larger) |
-| **Hierarchy depth** | 2-3 levels using `/` naming (e.g., `project/tooling/bun.md`) |
+| **Total files** | Enough focused files to cover distinct concepts without bloating any single file |
+| **File size** | Keep files concise and split when they become unwieldy |
+| **Hierarchy depth** | Use nested `/` paths whenever they improve clarity (e.g., `project/tooling/bun.md`) |
 | **Nesting requirement** | Every new file MUST be nested under a parent using `/` |
 
 **Anti-patterns to avoid:**
-- ❌ Ending with only 3-5 large files
+- ❌ Ending with only a few large files
 - ❌ Flat naming (all files at top level)
-- ❌ Mega-files with 10+ sections
+- ❌ Mega-files with many unrelated sections
 
 ## Memory Filesystem Integration
 
@@ -45,27 +45,27 @@ Your memory is a git-backed filesystem at `~/.letta/agents/<agent-id>/`. The act
 - The filesystem tree (all file paths + metadata) is always visible regardless of location
 - You can use bash commands (`ls`, `mkdir`, `mv`, `git`) to organize files
 - You MUST create a **deeply hierarchical file structure** — flat naming is NOT acceptable
-- **Target: 15-25 files in system/**, with additional reference files outside as needed
+- Create as many files as needed for clarity in `system/`, with additional reference files outside as needed
 
 **MANDATORY principles for hierarchical organization:**
 
 | Requirement | Target |
 |-------------|--------|
-| **Total files** | 15-25 files (aim for ~20) |
-| **Max lines per file** | ~40 lines (split if larger) |
-| **Hierarchy depth** | 2-3 levels using `/` naming |
+| **Total files** | Enough focused files to avoid monoliths while staying maintainable |
+| **File size** | Keep files concise and split when they become unwieldy |
+| **Hierarchy depth** | Use meaningful nesting with `/` naming where it helps organization |
 | **Nesting requirement** | EVERY new file MUST use `/` naming (no flat files) |
 
 **Anti-patterns to avoid:**
-- ❌ Creating only 3-5 large files
+- ❌ Creating only a few large files
 - ❌ Flat naming (all files at top level like `project-commands.md`)
-- ❌ Mega-files with 10+ sections
+- ❌ Mega-files with many unrelated sections
 
 **Rules:**
-- Use **2-3 levels of nesting** for ALL files (e.g., `project/tooling/bun.md`)
-- Keep files **focused and small** (~40 lines max per file)
+- Use clear nested paths for files whenever hierarchy improves discoverability (e.g., `project/tooling/bun.md`)
+- Keep files **focused and concise**
 - Use **descriptive paths** that make sense when you see just the filename
-- Split when a file has **2+ concepts** (be aggressive)
+- Split when a file starts mixing multiple concepts (be aggressive)
 
 **Example target structure (what success looks like):**
 
@@ -93,7 +93,7 @@ system/
     └── behavior.md               # How to behave
 ```
 
-This example has **~20 files** with **3 levels of hierarchy**. Your output should look similar.
+This example is illustrative. Your output should match the project’s actual complexity and the user’s needs.
 
 This approach makes memory more **scannable**, **maintainable**, and **shareable** with other agents.
 
@@ -319,7 +319,7 @@ You should ask these questions at the start (bundle them together in one AskUser
 2. **Identity**: "Which contributor are you?" (You can often infer this from git logs - e.g., if git shows "cpacker" as a top contributor, ask "Are you cpacker?")
 3. **Related repos**: "Are there other repositories I should know about and consider in my research?" (e.g., backend monorepo, shared libraries)
 4. **Historical sessions** (include this question if history data was found in step 2): "I found Claude Code / Codex history on your machine. Should I analyze it to learn your preferences, coding patterns, and project context? This significantly improves how I work with you but uses additional time and tokens." Options: "Yes, analyze history" / "Skip for now". Use "History" as the header.
-5. **Memory updates**: "How often should I check if I should update my memory?" with options "Frequent (every 3-5 turns)" and "Occasional (every 8-10 turns)". This should be a binary question with "Memory" as the header.
+5. **Memory updates**: "How often should I check whether to update memory?" with options "Frequent" and "Occasional". This should be a binary question with "Memory" as the header.
 6. **Communication style**: "Terse or detailed responses?"
 7. **Any specific rules**: "Rules I should always follow?"
 
@@ -364,11 +364,11 @@ mkdir -p ~/.letta/agents/<agent-id>/memory/system/human/prefs
 - **Every new file MUST use `/` naming** - no flat files allowed
 - Use `/` for hierarchy: `project/tooling/testing` (not `project-tooling-testing`)
 - File path determines the memory label: `system/project/overview.md` → label `project/overview`
-- Keep files small and focused (~40 lines max)
+- Keep files small and focused
 - Use **descriptive frontmatter** — the `description` field helps your future self understand each file's purpose
 
 **Checkpoint before proceeding:**
-Count your proposed files. **If you have fewer than 15 files, go back and split more aggressively.**
+Review your proposed files and split further if the structure still feels too flat or monolithic.
 
 **Benefits:**
 - More scannable and maintainable
@@ -376,17 +376,17 @@ Count your proposed files. **If you have fewer than 15 files, go back and split 
 - Natural progressive disclosure (load parent, then drill into children)
 - Works like a file system you're familiar with
 
-### Split Aggressively - Target 15-25 Files
+### Split Aggressively
 
-**Don't create monolithic files.** Your goal is **15-25 total files**. Be aggressive about splitting:
+**Don't create monolithic files.** Be aggressive about splitting when it improves clarity:
 
 **Split when:**
-- A file has **40+ lines** (lower threshold than typical)
-- A file has **2+ distinct concepts** (not 3+, be aggressive)
+- A file becomes long enough that scanning it slows you down
+- A file mixes distinct concepts that would be clearer if separated
 - A section could stand alone as its own file
 - You can name the extracted content with a clear `/` path
 
-If a file is getting long (>40 lines), split it:
+If a file is getting long or conceptually mixed, split it:
 
 **Without memory filesystem** (flat naming - acceptable but not ideal):
 - `project-overview`: High-level description, tech stack, repo links
@@ -402,7 +402,7 @@ If a file is getting long (>40 lines), split it:
 - `project/architecture`: Directory structure, key modules
 - `project/gotchas`: Footguns, things to watch out for
 - **Must further nest**: `project/tooling/testing`, `project/tooling/linting`, `project/tooling/bun`
-- **Target 15-25 files total** - if commands is long, split into `project/commands/dev`, `project/commands/build`, etc.
+- If commands are broad, split into focused files like `project/commands/dev`, `project/commands/build`, etc.
 
 This makes memory more scannable and easier to update and share with other agents.
 
@@ -456,9 +456,9 @@ And add memory files that you think make sense to add (e.g., `project/architectu
 
 9. **Create/update memory structure** (can happen incrementally alongside steps 7-8):
    - **With memfs enabled**: Create a deeply hierarchical file structure using bash commands
-     - Use `mkdir -p` to create subdirectories (2-3 levels deep)
+     - Use `mkdir -p` to create subdirectories as needed
      - Create `.md` files for memory files using `/` naming
-     - **Target 15-25 total files** - be aggressive about splitting
+     - Be aggressive about splitting when it improves clarity
      - Use nested paths like `project/tooling/testing.md` (never flat like `project-testing.md`)
      - **Every new file MUST be nested** under a parent using `/`
      - **Every new file MUST be nested** under a parent using `/`
@@ -466,10 +466,9 @@ And add memory files that you think make sense to add (e.g., `project/architectu
    - **Don't wait until the end** - write findings as you go
    
    **Checkpoint verification:**
-   - After creating files, count them: `ls ~/.letta/agents/<agent-id>/memory/system/ | wc -l`
-   - **If count < 15, you haven't split enough** - go back and split more
-   - Check maximum depth: `find ~/.letta/agents/<agent-id>/memory/system/ -type f | awk -F/ '{print NF}' | sort -n | tail -1`
-   - **Should be 2-3 levels deep** minimum
+   - Review file count and shape: `find ~/.letta/agents/<agent-id>/memory/system/ -type f | wc -l`
+   - Review hierarchy depth: `find ~/.letta/agents/<agent-id>/memory/system/ -type f | awk -F/ '{print NF}' | sort -n | tail -1`
+   - Verify the structure feels appropriately granular and discoverable for this project
 
 10. **Organize incrementally**:
    - Start with a basic structure
@@ -487,14 +486,13 @@ And add memory files that you think make sense to add (e.g., `project/architectu
 
 Before finishing, you MUST do a reflection step. **Your memory files are visible to you in your system prompt right now.** Look at them carefully and ask yourself:
 
-1. **File count check**: 
-   - Count your memory files: `ls ~/.letta/agents/<agent-id>/memory/system/ | wc -l`
-   - **Do you have 15-25 files?** If not, you haven't split enough
-   - Too few files means they're too large - split more aggressively
+1. **File granularity check**: 
+   - Review your memory file set: `find ~/.letta/agents/<agent-id>/memory/system/ -type f | wc -l`
+   - Ask whether any files are still too broad and should be split
 
 2. **Hierarchy check**:
    - Are ALL new files using `/` naming? (e.g., `project/tooling/bun.md`)
-   - Do you have 2-3 levels of nesting minimum?
+   - Is the nesting meaningful for this project?
    - Are there any flat files like `project-commands.md`? **These should be nested**
 
 3. **Redundancy check**: Are there files with overlapping content? Either literally overlapping (due to errors while editing), or semantically/conceptually overlapping?
@@ -545,7 +543,7 @@ cat ~/.letta/agents/<agent-id>/memory/system/persona.md
 ❌ `project_testing.md` (underscore instead of `/`)
 
 ```bash
-# Create deeply nested directory structure (2-3 levels)
+# Create a nested directory structure suited to the content
 mkdir -p ~/.letta/agents/<agent-id>/memory/system/project/{tooling,architecture,conventions}
 mkdir -p ~/.letta/agents/<agent-id>/memory/system/human/prefs
 mkdir -p ~/.letta/agents/<agent-id>/memory/system/persona/behavior
@@ -584,22 +582,22 @@ mv ~/.letta/agents/<agent-id>/memory/system/project/tooling.md \
 
 Before you tell the user you're done, confirm:
 
-- [ ] **File count is 15-25** — Count your files with `ls ~/.letta/agents/<agent-id>/memory/system/ | wc -l`. If < 15, split more.
+- [ ] **File granularity is appropriate** — verify no files are overly broad and split where useful.
 - [ ] **All new files use `/` naming** — No flat files like `my_notes.md` or `project-commands.md`
-- [ ] **Hierarchy is 2-3 levels deep** — e.g., `project/tooling/bun.md`, not just `project.md`
-- [ ] **No file exceeds ~40 lines** — Split larger files
-- [ ] **Each file has one concept** — If 2+ topics, split into 2+ files
+- [ ] **Hierarchy is meaningful** — nested paths should improve discoverability and organization.
+- [ ] **No file is bloated** — split files that are hard to scan quickly.
+- [ ] **Each file stays concept-focused** — split files that combine unrelated topics.
 - [ ] **Every file has real content** — No empty or pointer-only files
 - [ ] **Verify sync**: After creating files, check they appear in your memory files
 
-**If you have fewer than 15 files, you haven't split enough. Go back and split more.**
+**If the structure still feels flat or monolithic, split further until it is clear and maintainable.**
 
 ### Best Practices
 
 1. **Check memfs status first**: Look for `memory_filesystem` section in your system prompt
 2. **Start with directories**: Create the directory structure before populating files
-3. **Use short paths**: Aim for 2-3 levels (e.g., `project/tooling/testing`, not `project/dev/tools/testing/setup`)
-4. **Keep files focused**: Each file should cover one concept (~40 lines max)
+3. **Use practical paths**: prefer clear, readable nesting (e.g., `project/tooling/testing`) over unnecessarily deep paths.
+4. **Keep files focused**: each file should cover a coherent concept and remain easy to scan.
 5. **Every file should have real content** — no empty or pointer-only files
 6. **Be aggressive about splitting**: If in doubt, split. Too many small files is better than too few large ones.
 
@@ -636,15 +634,11 @@ LINES=$(wc -l < ~/.claude/history.jsonl)
 CHUNK_SIZE=$(( LINES / NUM_WORKERS + 1 ))
 split -l $CHUNK_SIZE ~/.claude/history.jsonl "$SPLIT_DIR/claude-"
 
-# Split Codex history (if it exists and is large enough to warrant splitting)
+# Split Codex history if it exists
 if [ -f ~/.codex/history.jsonl ]; then
   LINES=$(wc -l < ~/.codex/history.jsonl)
-  if [ "$LINES" -gt 100 ]; then
-    CHUNK_SIZE=$(( LINES / NUM_WORKERS + 1 ))
-    split -l $CHUNK_SIZE ~/.codex/history.jsonl "$SPLIT_DIR/codex-"
-  else
-    cp ~/.codex/history.jsonl "$SPLIT_DIR/codex-aa"
-  fi
+  CHUNK_SIZE=$(( LINES / NUM_WORKERS + 1 ))
+  split -l $CHUNK_SIZE ~/.codex/history.jsonl "$SPLIT_DIR/codex-"
 fi
 
 # Rename to .jsonl for clarity
@@ -702,12 +696,12 @@ After merging, **read every file in `system/`** and apply editorial judgment:
 
 Workers may have created files that don't fit the ideal hierarchy, or put too much into `system/`. Fix this:
 
-- Split oversized files (>40 lines) into focused sub-files
+- Split oversized or conceptually mixed files into focused sub-files
 - Move reference-quality content (detailed history, background context, evidence trails) to `reference/`
 - Ensure `system/` contains only what you genuinely need in-context: identity, active preferences, current project context, behavioral rules, gotchas
 - Merge near-duplicate files that cover the same topic
 
-**Rule of thumb**: If removing a file from `system/` wouldn't hurt your next 10 responses, it belongs in `reference/`.
+**Rule of thumb**: If removing a file from `system/` wouldn't materially affect near-term responses, it belongs in `reference/`.
 
 **3d. Clean up worktrees and branches:**
 
