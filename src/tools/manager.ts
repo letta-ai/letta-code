@@ -35,6 +35,7 @@ const FILE_MODIFYING_TOOLS = new Set([
   "ShellCommand",
   "shell_command",
   "apply_patch",
+  "memory_apply_patch",
   // Gemini toolset
   "Replace",
   "replace",
@@ -120,7 +121,7 @@ export const OPENAI_DEFAULT_TOOLS: ToolName[] = [
   // TODO(codex-parity): add once request_user_input tool exists in raw codex path.
   // "request_user_input",
   "apply_patch",
-  "memory",
+  "memory_apply_patch",
   "update_plan",
   "view_image",
 ];
@@ -146,7 +147,7 @@ export const OPENAI_PASCAL_TOOLS: ToolName[] = [
   "AskUserQuestion",
   "EnterPlanMode",
   "ExitPlanMode",
-  "memory",
+  "memory_apply_patch",
   "Task",
   "TaskOutput",
   "TaskStop",
@@ -193,6 +194,7 @@ const TOOL_PERMISSIONS: Record<ToolName, { requiresApproval: boolean }> = {
   TaskStop: { requiresApproval: true },
   LS: { requiresApproval: false },
   memory: { requiresApproval: true },
+  memory_apply_patch: { requiresApproval: true },
   MultiEdit: { requiresApproval: true },
   Read: { requiresApproval: false },
   view_image: { requiresApproval: false },

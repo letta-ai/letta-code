@@ -35,6 +35,7 @@ export function getDisplayToolName(rawName: string): string {
   if (rawName === "list_dir") return "LS";
   if (rawName === "grep_files") return "Search";
   if (rawName === "apply_patch") return "Patch";
+  if (rawName === "memory_apply_patch") return "Memory Patch";
 
   // Codex toolset (PascalCase)
   if (rawName === "UpdatePlan") return "Planning";

@@ -59,7 +59,7 @@ function getHeaderText(fileEdit: FileEditInfo): string {
   const t = fileEdit.toolName.toLowerCase();
 
   // Handle patch tools (multi-file)
-  if (t === "apply_patch" || t === "applypatch") {
+  if (t === "apply_patch" || t === "applypatch" || t === "memory_apply_patch") {
     if (fileEdit.patchInput) {
       const operations = parsePatchOperations(fileEdit.patchInput);
       if (operations.length > 1) {

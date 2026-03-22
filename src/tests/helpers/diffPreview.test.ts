@@ -217,6 +217,25 @@ describe("computeDiffPreviews", () => {
     expect(previews.map((p) => p.fileName).sort()).toEqual(["a.txt", "b.txt"]);
   });
 
+  it("returns one preview per file for memory_apply_patch", async () => {
+    const patch = [
+      "*** Begin Patch",
+      "*** Update File: system/a.md",
+      "@@ -1 +1 @@",
+      "-old",
+      "+new",
+      "*** Add File: reference/b.md",
+      "+hello",
+      "*** End Patch",
+    ].join("\n");
+
+    const previews = await computeDiffPreviews("memory_apply_patch", {
+      input: patch,
+    });
+    expect(previews).toHaveLength(2);
+    expect(previews.map((p) => p.fileName).sort()).toEqual(["a.md", "b.md"]);
+  });
+
   it("resolves relative file paths against the provided working directory", async () => {
     const tempRoot = await mkdtemp(
       path.join(os.tmpdir(), "letta-diff-preview-"),
