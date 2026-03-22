@@ -16,9 +16,9 @@ If you are running as a background subagent (you cannot use AskUserQuestion):
 - Use reasonable defaults for all preferences
 - Any specific overrides will be provided in your initial prompt
 
-## Your Goal: Explode Into a Hierarchical Memory Structure
+## Your Goal: Organize Into a Hierarchical Memory Structure
 
-Your goal is to **explode** memory into a **deeply hierarchical structure of small, focused files**.
+Your goal is to **organize** memory into a **deeply hierarchical structure of small, focused files**.
 
 ### Target Output
 
