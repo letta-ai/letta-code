@@ -102,15 +102,11 @@ describe("pre-commit hook: frontmatter required", () => {
 
 describe("pre-commit hook: required fields", () => {
   test("rejects missing description", () => {
-    writeAndStage(
-      "memory/system/bad.md",
-      "---\n---\n\nContent.\n",
-    );
+    writeAndStage("memory/system/bad.md", "---\n---\n\nContent.\n");
     const result = tryCommit();
     expect(result.success).toBe(false);
     expect(result.output).toContain("missing required field 'description'");
   });
-
 
   test("rejects empty description", () => {
     writeAndStage(
