@@ -150,19 +150,20 @@ async function configureLocalCredentialHelper(
  * Rules:
  * - Frontmatter is REQUIRED (must start with ---)
  * - Must be properly closed with ---
- * - Required fields: description (non-empty string), limit (positive integer)
+ * - Required fields: description (non-empty string)
  * - read_only is a PROTECTED field: agent cannot add, remove, or change it.
  *   Files where HEAD has read_only: true cannot be modified at all.
- * - Only allowed agent-editable keys: description, limit
+ * - Only allowed agent-editable key: description
+ * - Legacy key 'limit' is tolerated for backward compatibility
  * - read_only may exist (from server) but agent must not change it
  */
 export const PRE_COMMIT_HOOK_SCRIPT = `#!/usr/bin/env bash
 # Validate frontmatter in staged memory .md files
 # Installed by Letta Code CLI
 
-AGENT_EDITABLE_KEYS="description limit"
+AGENT_EDITABLE_KEYS="description"
 PROTECTED_KEYS="read_only"
-ALL_KNOWN_KEYS="description limit read_only"
+ALL_KNOWN_KEYS="description read_only limit"
 errors=""
 
 # Skills must always be directories: skills/<name>/SKILL.md
@@ -214,7 +215,6 @@ for file in $(git diff --cached --name-only --diff-filter=ACM | grep -E '^(memor
 
   # Track required fields
   has_description=false
-  has_limit=false
 
   # Validate each line
   while IFS= read -r line; do
@@ -255,10 +255,7 @@ for file in $(git diff --cached --name-only --diff-filter=ACM | grep -E '^(memor
     # Validate value types
     case "$key" in
       limit)
-        has_limit=true
-        if ! echo "$value" | grep -qE '^[0-9]+$' || [ "$value" = "0" ]; then
-          errors="$errors\\n  $file: 'limit' must be a positive integer, got '$value'"
-        fi
+        # Legacy field accepted for backward compatibility.
         ;;
       description)
         has_description=true
@@ -272,9 +269,6 @@ for file in $(git diff --cached --name-only --diff-filter=ACM | grep -E '^(memor
   # Check required fields
   if [ "$has_description" = "false" ]; then
     errors="$errors\\n  $file: missing required field 'description'"
-  fi
-  if [ "$has_limit" = "false" ]; then
-    errors="$errors\\n  $file: missing required field 'limit'"
   fi
 
   # Check if protected keys were removed (existed in HEAD but not in staged)
