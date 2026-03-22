@@ -53,7 +53,7 @@ function tryCommit(): { success: boolean; output: string } {
 }
 
 /** Valid frontmatter for convenience */
-const VALID_FM = "---\ndescription: Test block\nlimit: 20000\n---\n\n";
+const VALID_FM = "---\ndescription: Test block\n---\n\n";
 
 beforeEach(() => {
   tempDir = mkdtempSync(join(tmpdir(), "memgit-test-"));
@@ -92,7 +92,7 @@ describe("pre-commit hook: frontmatter required", () => {
   test("rejects unclosed frontmatter", () => {
     writeAndStage(
       "memory/system/broken.md",
-      "---\ndescription: oops\nlimit: 20000\n\nContent without closing ---\n",
+      "---\ndescription: oops\n\nContent without closing ---\n",
     );
     const result = tryCommit();
     expect(result.success).toBe(false);
@@ -104,27 +104,18 @@ describe("pre-commit hook: required fields", () => {
   test("rejects missing description", () => {
     writeAndStage(
       "memory/system/bad.md",
-      "---\nlimit: 20000\n---\n\nContent.\n",
+      "---\n---\n\nContent.\n",
     );
     const result = tryCommit();
     expect(result.success).toBe(false);
     expect(result.output).toContain("missing required field 'description'");
   });
 
-  test("rejects missing limit", () => {
-    writeAndStage(
-      "memory/system/bad.md",
-      "---\ndescription: A block\n---\n\nContent.\n",
-    );
-    const result = tryCommit();
-    expect(result.success).toBe(false);
-    expect(result.output).toContain("missing required field 'limit'");
-  });
 
   test("rejects empty description", () => {
     writeAndStage(
       "memory/system/bad.md",
-      "---\ndescription:\nlimit: 20000\n---\n\nContent.\n",
+      "---\ndescription:\n---\n\nContent.\n",
     );
     const result = tryCommit();
     expect(result.success).toBe(false);
@@ -133,50 +124,10 @@ describe("pre-commit hook: required fields", () => {
 });
 
 describe("pre-commit hook: field validation", () => {
-  test("rejects non-integer limit", () => {
-    writeAndStage(
-      "memory/system/bad.md",
-      "---\ndescription: valid\nlimit: abc\n---\n\nContent.\n",
-    );
-    const result = tryCommit();
-    expect(result.success).toBe(false);
-    expect(result.output).toContain("positive integer");
-  });
-
-  test("rejects zero limit", () => {
-    writeAndStage(
-      "memory/system/bad.md",
-      "---\ndescription: valid\nlimit: 0\n---\n\nContent.\n",
-    );
-    const result = tryCommit();
-    expect(result.success).toBe(false);
-    expect(result.output).toContain("positive integer");
-  });
-
-  test("rejects negative limit", () => {
-    writeAndStage(
-      "memory/system/bad.md",
-      "---\ndescription: valid\nlimit: -5\n---\n\nContent.\n",
-    );
-    const result = tryCommit();
-    expect(result.success).toBe(false);
-    expect(result.output).toContain("positive integer");
-  });
-
-  test("rejects float limit", () => {
-    writeAndStage(
-      "memory/system/bad.md",
-      "---\ndescription: valid\nlimit: 20.5\n---\n\nContent.\n",
-    );
-    const result = tryCommit();
-    expect(result.success).toBe(false);
-    expect(result.output).toContain("positive integer");
-  });
-
-  test("allows limit with trailing whitespace", () => {
+  test("allows legacy limit key for backward compatibility", () => {
     writeAndStage(
       "memory/system/ok.md",
-      "---\ndescription: test\nlimit: 20000  \n---\n\nContent.\n",
+      "---\ndescription: test\nlimit: legacy\n---\n\nContent.\n",
     );
     const result = tryCommit();
     expect(result.success).toBe(true);
@@ -200,7 +151,7 @@ describe("pre-commit hook: read_only protection", () => {
     rmSync(hookPath);
     writeAndStage(
       "memory/system/skills.md",
-      "---\ndescription: Skills\nlimit: 20000\nread_only: true\n---\n\nOriginal.\n",
+      "---\ndescription: Skills\nread_only: true\n---\n\nOriginal.\n",
     );
     tryCommit();
     writeFileSync(hookPath, PRE_COMMIT_HOOK_SCRIPT, { mode: 0o755 });
@@ -208,7 +159,7 @@ describe("pre-commit hook: read_only protection", () => {
     // Second commit: try to modify it
     writeAndStage(
       "memory/system/skills.md",
-      "---\ndescription: Skills\nlimit: 20000\nread_only: true\n---\n\nModified.\n",
+      "---\ndescription: Skills\nread_only: true\n---\n\nModified.\n",
     );
     const result = tryCommit();
     expect(result.success).toBe(false);
@@ -218,7 +169,7 @@ describe("pre-commit hook: read_only protection", () => {
   test("rejects agent adding read_only to new file", () => {
     writeAndStage(
       "memory/system/new.md",
-      "---\ndescription: New block\nlimit: 20000\nread_only: false\n---\n\nContent.\n",
+      "---\ndescription: New block\nread_only: false\n---\n\nContent.\n",
     );
     const result = tryCommit();
     expect(result.success).toBe(false);
@@ -232,7 +183,7 @@ describe("pre-commit hook: read_only protection", () => {
     rmSync(hookPath);
     writeAndStage(
       "memory/system/block.md",
-      "---\ndescription: A block\nlimit: 20000\nread_only: false\n---\n\nContent.\n",
+      "---\ndescription: A block\nread_only: false\n---\n\nContent.\n",
     );
     tryCommit();
     // Re-install hook
@@ -241,7 +192,7 @@ describe("pre-commit hook: read_only protection", () => {
     // Now try to change read_only
     writeAndStage(
       "memory/system/block.md",
-      "---\ndescription: A block\nlimit: 20000\nread_only: true\n---\n\nContent.\n",
+      "---\ndescription: A block\nread_only: true\n---\n\nContent.\n",
     );
     const result = tryCommit();
     expect(result.success).toBe(false);
@@ -254,7 +205,7 @@ describe("pre-commit hook: read_only protection", () => {
     rmSync(hookPath);
     writeAndStage(
       "memory/system/block.md",
-      "---\ndescription: A block\nlimit: 20000\nread_only: false\n---\n\nOriginal.\n",
+      "---\ndescription: A block\nread_only: false\n---\n\nOriginal.\n",
     );
     tryCommit();
     writeFileSync(hookPath, PRE_COMMIT_HOOK_SCRIPT, { mode: 0o755 });
@@ -262,7 +213,7 @@ describe("pre-commit hook: read_only protection", () => {
     // Modify content but keep read_only the same
     writeAndStage(
       "memory/system/block.md",
-      "---\ndescription: A block\nlimit: 20000\nread_only: false\n---\n\nUpdated.\n",
+      "---\ndescription: A block\nread_only: false\n---\n\nUpdated.\n",
     );
     const result = tryCommit();
     expect(result.success).toBe(true);
@@ -274,7 +225,7 @@ describe("pre-commit hook: read_only protection", () => {
     rmSync(hookPath);
     writeAndStage(
       "memory/system/block.md",
-      "---\ndescription: A block\nlimit: 20000\nread_only: false\n---\n\nContent.\n",
+      "---\ndescription: A block\nread_only: false\n---\n\nContent.\n",
     );
     tryCommit();
     writeFileSync(hookPath, PRE_COMMIT_HOOK_SCRIPT, { mode: 0o755 });
@@ -282,7 +233,7 @@ describe("pre-commit hook: read_only protection", () => {
     // Remove read_only from frontmatter
     writeAndStage(
       "memory/system/block.md",
-      "---\ndescription: A block\nlimit: 20000\n---\n\nContent.\n",
+      "---\ndescription: A block\n---\n\nContent.\n",
     );
     const result = tryCommit();
     expect(result.success).toBe(false);
