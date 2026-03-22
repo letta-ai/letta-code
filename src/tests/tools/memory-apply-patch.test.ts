@@ -94,7 +94,6 @@ describe("memory_apply_patch tool", () => {
       "*** Add File: system/contacts.md",
       "+---",
       "+description: Contacts",
-      "+limit: 2000",
       "+---",
       "+Sarah: cofounder",
       "*** End Patch",
@@ -160,7 +159,6 @@ describe("memory_apply_patch tool", () => {
         "*** Add File: system/ro.md",
         "+---",
         "+description: Read only",
-        "+limit: 2000",
         "+read_only: true",
         "+---",
         "+keep",
@@ -222,5 +220,40 @@ describe("memory_apply_patch tool", () => {
       "--pretty=format:%s",
     ]);
     expect(subject).toBe(reason);
+  });
+
+  test("updates files that omit frontmatter limit", async () => {
+    await memory_apply_patch({
+      reason: "seed no-limit memory",
+      input: [
+        "*** Begin Patch",
+        "*** Add File: system/no-limit.md",
+        "+---",
+        "+description: No limit",
+        "+---",
+        "+before",
+        "*** End Patch",
+      ].join("\n"),
+    });
+
+    await memory_apply_patch({
+      reason: "update no-limit memory",
+      input: [
+        "*** Begin Patch",
+        "*** Update File: system/no-limit.md",
+        "@@",
+        "-before",
+        "+after",
+        "*** End Patch",
+      ].join("\n"),
+    });
+
+    const content = await runGit(memoryDir, [
+      "show",
+      "HEAD:system/no-limit.md",
+    ]);
+    expect(content).toContain("description: No limit");
+    expect(content).not.toContain("limit:");
+    expect(content).toContain("after");
   });
 });

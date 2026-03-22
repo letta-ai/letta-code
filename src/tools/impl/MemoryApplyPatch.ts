@@ -17,7 +17,6 @@ import { getCurrentAgentId } from "../../agent/context";
 import { validateRequiredParams } from "./validation";
 
 const execFile = promisify(execFileCb);
-const DEFAULT_LIMIT = 2000;
 
 type ParsedPatchOp =
   | {
@@ -47,7 +46,6 @@ interface Hunk {
 interface ParsedMemoryFile {
   frontmatter: {
     description: string;
-    limit: number;
     read_only?: string;
   };
   body: string;
@@ -446,7 +444,6 @@ function normalizeAddedContent(label: string, rawContent: string): string {
     return renderMemoryFile(
       {
         description: `Memory block ${label}`,
-        limit: DEFAULT_LIMIT,
       },
       rawContent,
     );
@@ -639,7 +636,6 @@ function parseMemoryFile(content: string): ParsedMemoryFile {
   const body = match[2] ?? "";
 
   let description: string | undefined;
-  let limit: number | undefined;
   let readOnly: string | undefined;
 
   for (const line of frontmatterText.split(/\r?\n/)) {
@@ -651,11 +647,6 @@ function parseMemoryFile(content: string): ParsedMemoryFile {
 
     if (key === "description") {
       description = value;
-    } else if (key === "limit") {
-      const parsedLimit = Number.parseInt(value, 10);
-      if (!Number.isNaN(parsedLimit)) {
-        limit = parsedLimit;
-      }
     } else if (key === "read_only") {
       readOnly = value;
     }
@@ -666,16 +657,10 @@ function parseMemoryFile(content: string): ParsedMemoryFile {
       "memory_apply_patch: target file frontmatter is missing 'description'",
     );
   }
-  if (!limit || !Number.isInteger(limit) || limit <= 0) {
-    throw new Error(
-      "memory_apply_patch: target file frontmatter is missing a valid positive 'limit'",
-    );
-  }
 
   return {
     frontmatter: {
       description,
-      limit,
       ...(readOnly !== undefined ? { read_only: readOnly } : {}),
     },
     body,
@@ -683,21 +668,17 @@ function parseMemoryFile(content: string): ParsedMemoryFile {
 }
 
 function renderMemoryFile(
-  frontmatter: { description: string; limit: number; read_only?: string },
+  frontmatter: { description: string; read_only?: string },
   body: string,
 ): string {
   const description = frontmatter.description.trim();
   if (!description) {
     throw new Error("memory_apply_patch: 'description' must not be empty");
   }
-  if (!Number.isInteger(frontmatter.limit) || frontmatter.limit <= 0) {
-    throw new Error("memory_apply_patch: 'limit' must be a positive integer");
-  }
 
   const lines = [
     "---",
     `description: ${sanitizeFrontmatterValue(description)}`,
-    `limit: ${frontmatter.limit}`,
   ];
 
   if (frontmatter.read_only !== undefined) {
