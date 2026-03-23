@@ -291,3 +291,27 @@ Once invoked, follow the instructions from the \`initializing-memory\` skill to 
 ${args.gitContext}
 ${SYSTEM_REMINDER_CLOSE}`;
 }
+
+/** Message for the primary agent via processConversation when user runs /doctor. */
+export function buildDoctorMessage(args: {
+  gitContext: string;
+  memoryDir?: string;
+}): string {
+  const memfsSection = args.memoryDir
+    ? `\n## Memory filesystem\n\nMemory filesystem is enabled. Memory directory: \`${args.memoryDir}\`\n`
+    : "";
+
+  return `${SYSTEM_REMINDER_OPEN}
+The user has requested a memory structure check via /doctor.
+${memfsSection}
+## 1. Invoke the context_doctor skill
+
+Use the \`Skill\` tool with \`skill: "context_doctor"\` to load guidance for memory structure refinement.
+
+## 2. Follow the skill instructions
+
+Once invoked, follow the instructions from the \`context_doctor\` skill.
+
+${args.gitContext}
+${SYSTEM_REMINDER_CLOSE}`;
+}
