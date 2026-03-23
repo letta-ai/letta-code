@@ -189,6 +189,16 @@ export async function computeDiffPreviews(
         }
         // Delete operations don't produce diffs
       }
+    } else if (toolName === "memory_apply_patch" && toolArgs.input) {
+      const operations = parsePatchOperations(toolArgs.input as string);
+      for (const op of operations) {
+        if (op.kind === "add" || op.kind === "update") {
+          const result = parsePatchToAdvancedDiff(op.patchLines, op.path);
+          if (result) {
+            previews.push(toDiffPreview(result, basename(op.path)));
+          }
+        }
+      }
     }
   } catch {
     // Ignore diff computation errors — return whatever we have so far

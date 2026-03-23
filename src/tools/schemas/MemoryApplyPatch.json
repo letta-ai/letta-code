@@ -1,0 +1,16 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "reason": {
+      "type": "string",
+      "description": "Required commit message for this memory patch change. Used as the git commit message."
+    },
+    "input": {
+      "type": "string",
+      "description": "The entire contents of the apply_patch command, constrained to memory files under MEMORY_DIR."
+    }
+  },
+  "required": ["reason", "input"],
+  "additionalProperties": false
+}
