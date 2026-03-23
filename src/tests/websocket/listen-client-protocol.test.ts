@@ -277,6 +277,35 @@ describe("listen-client approval resolver wiring", () => {
     expect(runtime.pendingApprovalResolvers.size).toBe(0);
   });
 
+  test("resolving final approval response restores WAITING_ON_INPUT even while processing stays true", async () => {
+    const runtime = __listenClientTestUtils.createRuntime();
+    const socket = new MockSocket(WebSocket.OPEN);
+    const requestId = "perm-processing";
+
+    runtime.isProcessing = true;
+    runtime.loopStatus = "WAITING_ON_APPROVAL" as never;
+
+    const pending = requestApprovalOverWS(
+      runtime,
+      socket as unknown as WebSocket,
+      requestId,
+      makeControlRequest(requestId),
+    );
+
+    const resolved = resolvePendingApprovalResolver(
+      runtime,
+      makeSuccessResponse(requestId),
+    );
+
+    expect(resolved).toBe(true);
+    await expect(pending).resolves.toMatchObject({
+      request_id: requestId,
+      decision: { behavior: "allow" },
+    });
+    expect(String(runtime.loopStatus)).toBe("WAITING_ON_INPUT");
+    expect(runtime.isProcessing).toBe(true);
+  });
+
   test("ignores non-matching request_id and keeps pending resolver", async () => {
     const runtime = __listenClientTestUtils.createRuntime();
     const socket = new MockSocket(WebSocket.OPEN);
@@ -329,8 +358,9 @@ describe("listen-client approval resolver wiring", () => {
     await expect(second).rejects.toThrow("socket closed");
   });
 
-  test("cleanup resets WAITING_ON_INPUT instead of restoring fake processing", async () => {
+  test("cleanup resets loop status to WAITING_ON_INPUT even while processing stays true", async () => {
     const runtime = __listenClientTestUtils.createRuntime();
+
     runtime.isProcessing = true;
     runtime.loopStatus = "WAITING_ON_APPROVAL";
 
@@ -341,6 +371,7 @@ describe("listen-client approval resolver wiring", () => {
     rejectPendingApprovalResolvers(runtime, "socket closed");
 
     expect(runtime.loopStatus as string).toBe("WAITING_ON_INPUT");
+    expect(runtime.isProcessing).toBe(true);
     await expect(pending).rejects.toThrow("socket closed");
   });
 
@@ -1301,6 +1332,54 @@ describe("listen-client capability-gated approval flow", () => {
       expect.objectContaining({ connectionId: "conn-1" }),
       expect.any(Function),
     );
+  });
+
+  test("stale approval responses after interrupt are benign and do not mutate runtime state", async () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const targetRuntime =
+      __listenClientTestUtils.getOrCreateConversationRuntime(
+        listener,
+        "agent-1",
+        "default",
+      );
+    targetRuntime.cancelRequested = true;
+    targetRuntime.loopStatus = "WAITING_ON_INPUT";
+    targetRuntime.isProcessing = false;
+
+    const socket = new MockSocket(WebSocket.OPEN);
+    const scheduleQueuePumpMock = mock(() => {});
+    const resolveRecoveredApprovalResponseMock = mock(async () => false);
+
+    const handled = await __listenClientTestUtils.handleApprovalResponseInput(
+      listener,
+      {
+        runtime: { agent_id: "agent-1", conversation_id: "default" },
+        response: {
+          request_id: "perm-stale-after-interrupt",
+          decision: { behavior: "allow" },
+        },
+        socket: socket as unknown as WebSocket,
+        opts: {
+          onStatusChange: undefined,
+          connectionId: "conn-1",
+        },
+        processQueuedTurn: async () => {},
+      },
+      {
+        resolveRuntimeForApprovalRequest: () => null,
+        resolvePendingApprovalResolver: () => false,
+        getOrCreateScopedRuntime: () => targetRuntime,
+        resolveRecoveredApprovalResponse: resolveRecoveredApprovalResponseMock,
+        scheduleQueuePump: scheduleQueuePumpMock,
+      },
+    );
+
+    expect(handled).toBe(false);
+    expect(resolveRecoveredApprovalResponseMock).not.toHaveBeenCalled();
+    expect(scheduleQueuePumpMock).not.toHaveBeenCalled();
+    expect(targetRuntime.cancelRequested).toBe(true);
+    expect(targetRuntime.loopStatus).toBe("WAITING_ON_INPUT");
+    expect(targetRuntime.isProcessing).toBe(false);
   });
 });
 

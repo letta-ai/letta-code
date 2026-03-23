@@ -122,6 +122,10 @@ mock.module("../../agent/client", () => ({
   consumeLastSDKDiagnostic: () => null,
 }));
 
+mock.module("../../agent/check-approval", () => ({
+  getResumeData: getResumeDataMock,
+}));
+
 mock.module("../../cli/helpers/approvalClassification", () => ({
   classifyApprovals: classifyApprovalsMock,
 }));
