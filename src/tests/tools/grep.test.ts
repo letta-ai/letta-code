@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { grep } from "../../tools/impl/Grep";
+import { executeTool, loadSpecificTools } from "../../tools/manager";
 import { TestDirectory } from "../helpers/testFs";
 
 describe("Grep tool", () => {
@@ -143,5 +144,62 @@ describe("Grep tool", () => {
         throw error;
       }
     }
+  });
+
+  test("aborts promptly when signal is already aborted", async () => {
+    testDir = new TestDirectory();
+    testDir.createFile("test.txt", "Hello World");
+
+    const abortController = new AbortController();
+    abortController.abort();
+
+    await expect(
+      grep({
+        pattern: "World",
+        path: testDir.path,
+        output_mode: "content",
+        signal: abortController.signal,
+      }),
+    ).rejects.toMatchObject({ name: "AbortError" });
+  });
+
+  test("manager passes signal through to Grep execution", async () => {
+    testDir = new TestDirectory();
+    testDir.createFile("test.txt", "Hello World");
+
+    await loadSpecificTools(["Grep"]);
+
+    const abortController = new AbortController();
+    abortController.abort();
+
+    const result = await executeTool(
+      "Grep",
+      { pattern: "World", path: testDir.path, output_mode: "content" },
+      { signal: abortController.signal },
+    );
+
+    expect(result.status).toBe("error");
+    expect(typeof result.toolReturn).toBe("string");
+    expect(result.toolReturn).toContain("Interrupted by user");
+  });
+
+  test("manager passes signal through to GrepFiles execution", async () => {
+    testDir = new TestDirectory();
+    testDir.createFile("test.txt", "Hello World");
+
+    await loadSpecificTools(["GrepFiles"]);
+
+    const abortController = new AbortController();
+    abortController.abort();
+
+    const result = await executeTool(
+      "GrepFiles",
+      { pattern: "World", path: testDir.path },
+      { signal: abortController.signal },
+    );
+
+    expect(result.status).toBe("error");
+    expect(typeof result.toolReturn).toBe("string");
+    expect(result.toolReturn).toContain("Interrupted by user");
   });
 });
