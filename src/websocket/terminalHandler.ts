@@ -27,6 +27,31 @@ interface TerminalSession {
   spawnedAt: number;
 }
 
+type NodePtyExitEvent = { exitCode?: number; signal?: number };
+
+type NodePtyProcess = {
+  pid: number;
+  write: (data: string) => void;
+  resize: (cols: number, rows: number) => void;
+  kill: () => void;
+  onData: (listener: (data: string) => void) => void;
+  onExit: (listener: (event: NodePtyExitEvent) => void) => void;
+};
+
+type NodePtyModule = {
+  spawn: (
+    file: string,
+    args: string[],
+    options: {
+      name: string;
+      cols: number;
+      rows: number;
+      cwd: string;
+      env: Record<string, string>;
+    },
+  ) => NodePtyProcess;
+};
+
 const terminals = new Map<string, TerminalSession>();
 
 function getDefaultShell(): string {
@@ -160,7 +185,7 @@ function spawnNodePty(
   socket: WebSocket,
 ): TerminalSession {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const pty = require("node-pty") as typeof import("node-pty");
+  const pty = require("node-pty") as NodePtyModule;
 
   const handleData = makeOutputBatcher((data) =>
     sendTerminalMessage(socket, { type: "terminal_output", terminal_id, data }),
@@ -180,7 +205,7 @@ function spawnNodePty(
 
   ptyProcess.onData(handleData);
 
-  ptyProcess.onExit(({ exitCode }) => {
+  ptyProcess.onExit(({ exitCode }: NodePtyExitEvent) => {
     const current = terminals.get(terminal_id);
     if (current && current.pid === ptyProcess.pid) {
       terminals.delete(terminal_id);

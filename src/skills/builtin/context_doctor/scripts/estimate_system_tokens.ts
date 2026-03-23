@@ -1,9 +1,7 @@
 #!/usr/bin/env bun
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import { getClient } from "../../../../agent/client";
 import { settingsManager } from "../../../../settings-manager";
 
@@ -12,12 +10,6 @@ const BYTES_PER_TOKEN = 4;
 type FileEstimate = {
   path: string;
   tokens: number;
-};
-
-type SkillEstimate = {
-  name: string;
-  description: string;
-  location: string;
 };
 
 type ParsedArgs = {
@@ -62,28 +54,6 @@ function normalizePath(value: string): string {
   return value.replaceAll("\\", "/");
 }
 
-function parseFrontmatterDescription(text: string): string | null {
-  if (!text.startsWith("---\n")) {
-    return null;
-  }
-
-  const closing = text.indexOf("\n---\n", 4);
-  if (closing === -1) {
-    return null;
-  }
-
-  const frontmatter = text.slice(4, closing);
-  for (const line of frontmatter.split("\n")) {
-    if (!line.startsWith("description:")) {
-      continue;
-    }
-    const value = line.slice("description:".length).trim();
-    return value.replace(/^['"]|['"]$/g, "") || null;
-  }
-
-  return null;
-}
-
 function walkMarkdownFiles(dir: string): string[] {
   if (!existsSync(dir)) {
     return [];
@@ -110,148 +80,6 @@ function walkMarkdownFiles(dir: string): string[] {
   }
 
   return out;
-}
-
-function buildMemoryFilesystemSection(memoryDir: string): string {
-  const lines: string[] = ["<memory_filesystem>"];
-  const files = walkMarkdownFiles(memoryDir).sort();
-
-  for (const filePath of files) {
-    const rel = normalizePath(filePath.slice(memoryDir.length + 1));
-    let description: string | null = null;
-    try {
-      const text = readFileSync(filePath, "utf8");
-      description = parseFrontmatterDescription(text);
-    } catch {
-      description = null;
-    }
-
-    if (description) {
-      lines.push(`- ${rel} (${description})`);
-    } else {
-      lines.push(`- ${rel}`);
-    }
-  }
-
-  lines.push("</memory_filesystem>");
-  return lines.join("\n");
-}
-
-function parseSkillFromSkillMd(skillMdPath: string): SkillEstimate {
-  const text = readFileSync(skillMdPath, "utf8");
-  const parentName =
-    normalizePath(skillMdPath).split("/").slice(-2)[0] ?? "unknown";
-
-  let name = parentName;
-  let description = "";
-
-  if (text.startsWith("---\n")) {
-    const closing = text.indexOf("\n---\n", 4);
-    if (closing !== -1) {
-      const frontmatter = text.slice(4, closing);
-      for (const line of frontmatter.split("\n")) {
-        if (line.startsWith("name:")) {
-          const parsed = line
-            .slice("name:".length)
-            .trim()
-            .replace(/^['"]|['"]$/g, "");
-          if (parsed) {
-            name = parsed;
-          }
-        } else if (line.startsWith("description:")) {
-          const parsed = line
-            .slice("description:".length)
-            .trim()
-            .replace(/^['"]|['"]$/g, "");
-          if (parsed) {
-            description = parsed;
-          }
-        }
-      }
-    }
-  }
-
-  if (!description) {
-    for (const line of text.split("\n")) {
-      const trimmed = line.trim();
-      if (trimmed && !trimmed.startsWith("#") && trimmed !== "---") {
-        description = trimmed.slice(0, 240);
-        break;
-      }
-    }
-  }
-
-  return { name, description, location: skillMdPath };
-}
-
-function buildAvailableSkillsSection(memoryDir: string): string {
-  const scriptDir = dirname(fileURLToPath(import.meta.url));
-  const repoRoot = resolve(scriptDir, "../../../../..");
-
-  const sources = [
-    join(memoryDir, "skills"),
-    join(homedir(), ".letta/skills"),
-    join(repoRoot, "src/skills/builtin"),
-    join(repoRoot, ".skills"),
-  ];
-
-  const seen = new Set<string>();
-  const skills: SkillEstimate[] = [];
-
-  for (const source of sources) {
-    if (!existsSync(source)) {
-      continue;
-    }
-
-    let entries: ReturnType<typeof readdirSync>;
-    try {
-      entries = readdirSync(source, { withFileTypes: true });
-    } catch {
-      continue;
-    }
-
-    for (const entry of entries) {
-      if (!entry.isDirectory()) {
-        continue;
-      }
-
-      const skillMd = join(source, entry.name, "SKILL.md");
-      if (!existsSync(skillMd)) {
-        continue;
-      }
-
-      const key = normalizePath(skillMd);
-      if (seen.has(key)) {
-        continue;
-      }
-      seen.add(key);
-
-      try {
-        skills.push(parseSkillFromSkillMd(skillMd));
-      } catch {}
-    }
-  }
-
-  const lines: string[] = ["<available_skills>"];
-  for (const skill of skills) {
-    lines.push("<skill>");
-    lines.push(`<name>${skill.name}</name>`);
-    lines.push(`<description>${skill.description}</description>`);
-    lines.push(`<location>${skill.location}</location>`);
-    lines.push("</skill>");
-  }
-  lines.push("</available_skills>");
-  return lines.join("\n");
-}
-
-function buildMemoryMetadataSection(agentId: string): string {
-  return [
-    "<memory_metadata>",
-    `- AGENT_ID: ${agentId}`,
-    "- CONVERSATION_ID: default",
-    "- System prompt last recompiled: unknown",
-    "</memory_metadata>",
-  ].join("\n");
 }
 
 function inferAgentIdFromMemoryDir(memoryDir: string): string | null {
@@ -327,19 +155,7 @@ async function main(): Promise<number> {
     rows.push({ path: rel, tokens: estimateTokens(text) });
   }
 
-  const systemTokens = rows.reduce((sum, row) => sum + row.tokens, 0);
-
-  const generatedSections = [
-    buildMemoryFilesystemSection(memoryDir),
-    buildAvailableSkillsSection(memoryDir),
-    buildMemoryMetadataSection(agentId),
-  ];
-  const generatedTokens = generatedSections.reduce(
-    (sum, section) => sum + estimateTokens(section),
-    0,
-  );
-
-  const estimatedTotalTokens = systemTokens + generatedTokens;
+  const estimatedTotalTokens = rows.reduce((sum, row) => sum + row.tokens, 0);
 
   console.log("Estimated total tokens");
   console.log(`  ${formatNumber(estimatedTotalTokens)}`);
