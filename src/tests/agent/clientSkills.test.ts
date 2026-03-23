@@ -65,7 +65,7 @@ describe("buildClientSkillsPayload", () => {
     expect(result.errors).toEqual([]);
   });
 
-  test("includes .agents/skills as additional project source and lets .skills override", async () => {
+  test("treats .agents/skills as primary and .skills as legacy fallback", async () => {
     const { buildClientSkillsPayload } = await import(
       "../../agent/clientSkills"
     );
@@ -133,9 +133,9 @@ describe("buildClientSkillsPayload", () => {
     });
 
     expect(calls).toHaveLength(2);
-    expect(calls[0]?.path.endsWith("/.agents/skills")).toBe(true);
-    expect(calls[0]?.sources).toEqual(["project"]);
-    expect(calls[1]).toEqual({ path: "/tmp/.skills", sources: ["project"] });
+    expect(calls[0]).toEqual({ path: "/tmp/.skills", sources: ["project"] });
+    expect(calls[1]?.path.endsWith("/.agents/skills")).toBe(true);
+    expect(calls[1]?.sources).toEqual(["project"]);
     expect(result.clientSkills).toEqual([
       {
         name: "agents-only",
@@ -149,8 +149,8 @@ describe("buildClientSkillsPayload", () => {
       },
       {
         name: "shared",
-        description: "from .skills",
-        location: "/tmp/.skills/shared/SKILL.md",
+        description: "from .agents",
+        location: "/tmp/.agents/skills/shared/SKILL.md",
       },
     ]);
     expect(result.errors).toEqual([]);

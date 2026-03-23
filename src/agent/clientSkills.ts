@@ -39,18 +39,18 @@ function toClientSkill(skill: Skill): ClientSkill {
 function resolveSkillDiscoveryContext(
   options: BuildClientSkillsPayloadOptions,
 ): {
-  skillsDirectory: string;
+  legacySkillsDirectory: string;
   skillSources: SkillSource[];
 } {
-  const skillsDirectory =
+  const legacySkillsDirectory =
     options.skillsDirectory ??
     getSkillsDirectory() ??
     join(process.cwd(), SKILLS_DIR);
   const skillSources = options.skillSources ?? getSkillSources();
-  return { skillsDirectory, skillSources };
+  return { legacySkillsDirectory, skillSources };
 }
 
-function getAdditionalProjectSkillsDirectory(): string {
+function getPrimaryProjectSkillsDirectory(): string {
   return join(process.cwd(), ".agents", "skills");
 }
 
@@ -64,26 +64,47 @@ function getAdditionalProjectSkillsDirectory(): string {
 export async function buildClientSkillsPayload(
   options: BuildClientSkillsPayloadOptions = {},
 ): Promise<BuildClientSkillsPayloadResult> {
-  const { skillsDirectory, skillSources } =
+  const { legacySkillsDirectory, skillSources } =
     resolveSkillDiscoveryContext(options);
   const discoverSkillsFn = options.discoverSkillsFn ?? discoverSkills;
   const skillsById = new Map<string, Skill>();
   const errors: SkillDiscoveryError[] = [];
 
+  const primaryProjectSkillsDirectory = getPrimaryProjectSkillsDirectory();
+  const nonProjectSources = skillSources.filter(
+    (source): source is SkillSource => source !== "project",
+  );
+
   const discoveryRuns: Array<{ path: string; sources: SkillSource[] }> = [];
+
+  // For bundled/global/agent sources, use the primary project root.
+  if (nonProjectSources.length > 0) {
+    discoveryRuns.push({
+      path: primaryProjectSkillsDirectory,
+      sources: nonProjectSources,
+    });
+  }
+
   const includeProjectSource = skillSources.includes("project");
-  const additionalProjectSkillsDirectory =
-    getAdditionalProjectSkillsDirectory();
+
+  // Legacy project location (.skills): discovered first so primary path can override.
   if (
     includeProjectSource &&
-    additionalProjectSkillsDirectory !== skillsDirectory
+    legacySkillsDirectory !== primaryProjectSkillsDirectory
   ) {
     discoveryRuns.push({
-      path: additionalProjectSkillsDirectory,
+      path: legacySkillsDirectory,
       sources: ["project"],
     });
   }
-  discoveryRuns.push({ path: skillsDirectory, sources: skillSources });
+
+  // Primary location for project-scoped client skills.
+  if (includeProjectSource) {
+    discoveryRuns.push({
+      path: primaryProjectSkillsDirectory,
+      sources: ["project"],
+    });
+  }
 
   for (const run of discoveryRuns) {
     try {
