@@ -32,7 +32,7 @@ Prompts that are compiled as part of the system prompt (contained in `system/`) 
 
 Use the following script to evaluate the token usage of the system prompt: 
 ```bash
-python3 scripts/estimate_system_tokens.py --memory-dir "$MEMORY_DIR"
+bun scripts/estimate_system_tokens.ts --memory-dir "$MEMORY_DIR"
 ```
 
 **Questions to ask**:
@@ -119,6 +119,14 @@ git commit --author="<AGENT_NAME> <<ACTUAL_AGENT_ID>@letta.com>" -m "fix(doctor)
 
 git push
 ```
+
+### Step 4: Final checklist and message
+Tell the user what issues you identitied, the fixes you made, the commit you made, and also recommend that they run `/recompile` to apply these changes to the current system prompt. 
+
+Before finishing make sure you: 
+- [ ] Resolved all the identified context issues
+- [ ] Pushed your changes successfully 
+- [ ] Told the user to run `/recompile` to refresh the system prompt and apply changes
 
 ## Critical information 
 - **Ask the user about their goals for you, not the implementation**: You understand your own context best, and should follow the guidelines in this document. Do NOT ask the user about their structural preferences - the context is for YOU, not them. Ask them how they want YOU to behave or know instead. 
