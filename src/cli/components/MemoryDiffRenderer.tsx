@@ -22,12 +22,11 @@ export function MemoryDiffRenderer({
   try {
     const args = JSON.parse(argsText);
 
-    // Handle memory_apply_patch tool (unified diff format)
+    // Handle memory_apply_patch tool (codex-style apply_patch input)
     if (toolName === "memory_apply_patch") {
-      const label = args.label || "unknown";
-      const patch = args.patch || "";
+      const patch = typeof args.input === "string" ? args.input : "";
       return (
-        <PatchDiffRenderer label={label} patch={patch} columns={columns} />
+        <PatchDiffRenderer label="memory" patch={patch} columns={columns} />
       );
     }
 
