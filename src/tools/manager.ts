@@ -56,8 +56,13 @@ const SIGNAL_AWARE_TOOLS = new Set([
   "run_shell_command",
   "RunShellCommand",
   "Glob",
+  "Grep",
+  "grep_files",
+  "GrepFiles",
   "glob_gemini",
   "GlobGemini",
+  "search_file_content",
+  "SearchFileContent",
 ]);
 
 // Maps internal tool names to server/model-facing tool names

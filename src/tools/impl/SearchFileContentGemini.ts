@@ -9,6 +9,7 @@ interface SearchFileContentGeminiArgs {
   pattern: string;
   dir_path?: string;
   include?: string;
+  signal?: AbortSignal;
 }
 
 export async function search_file_content(
@@ -20,6 +21,7 @@ export async function search_file_content(
     path: args.dir_path,
     glob: args.include,
     output_mode: "content" as const, // Return actual matching lines, not just file paths
+    signal: args.signal,
   };
 
   const result = await grep(lettaArgs);
