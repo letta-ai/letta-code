@@ -28,7 +28,7 @@ Your system prompt and memory filesystem should be well structured and clear.
 - Do I know when to load which files in my memory filesystem? 
 
 #### System prompt bloat 
-Prompts that are compiled as part of the system prompt (contained in `system/`) should only take up about 10% of the total context size, though this is a recommendation, not a hard requirement. Usually this means about 20k tokens. 
+Prompts that are compiled as part of the system prompt (contained in `system/`) should only take up about 10% of the total context size, though this is a recommendation, not a hard requirement. Usually this means about 15-20k tokens. 
 
 Use the following script to evaluate the token usage of the system prompt: 
 ```bash
