@@ -40,6 +40,15 @@ export const commands: Record<string, Command> = {
       return "Initializing memory...";
     },
   },
+  "/doctor": {
+    desc: "Audit and refine your memory structure",
+    order: 12.1,
+    noArgs: true,
+    handler: () => {
+      // Handled specially in App.tsx to send doctor prompt
+      return "Running memory doctor...";
+    },
+  },
   "/remember": {
     desc: "Remember something from the conversation (/remember [instructions])",
     order: 13,

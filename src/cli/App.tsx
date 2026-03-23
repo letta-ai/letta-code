@@ -235,6 +235,7 @@ import {
 import { formatCompact } from "./helpers/format";
 import { parsePatchOperations } from "./helpers/formatArgsDisplay";
 import {
+  buildDoctorMessage,
   buildInitMessage,
   fireAutoInit,
   gatherInitGitContext,
@@ -9676,6 +9677,51 @@ export default function App({
                 type: "message",
                 role: "user",
                 content: buildTextParts(initMessage),
+              },
+            ]);
+          } catch (error) {
+            const errorDetails = formatErrorDetails(error, agentId);
+            cmd.fail(`Failed: ${errorDetails}`);
+          } finally {
+            setCommandRunning(false);
+          }
+          return { submitted: true };
+        }
+
+        // Special handling for /doctor command
+        if (trimmed === "/doctor") {
+          const cmd = commandRunner.start(msg, "Gathering project context...");
+
+          const approvalCheck = await checkPendingApprovalsForSlashCommand();
+          if (approvalCheck.blocked) {
+            cmd.fail(
+              "Pending approval(s). Resolve approvals before running /doctor.",
+            );
+            return { submitted: false };
+          }
+
+          setCommandRunning(true);
+          try {
+            cmd.finish(
+              "Running memory doctor... I'll ask a few questions to refine memory structure.",
+              true,
+            );
+
+            const { context: gitContext } = gatherInitGitContext();
+            const memoryDir = settingsManager.isMemfsEnabled(agentId)
+              ? getMemoryFilesystemRoot(agentId)
+              : undefined;
+
+            const doctorMessage = buildDoctorMessage({
+              gitContext,
+              memoryDir,
+            });
+
+            await processConversation([
+              {
+                type: "message",
+                role: "user",
+                content: buildTextParts(doctorMessage),
               },
             ]);
           } catch (error) {
