@@ -4232,6 +4232,7 @@ export default function App({
                       undefined,
                       contextTrackerRef.current,
                       highestSeqIdSeen,
+                      true, // isResumeStream
                     );
                     // Attach the discovered run ID
                     if (!preStreamResumeResult.lastRunId) {

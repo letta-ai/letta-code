@@ -213,6 +213,7 @@ export async function drainStream(
   onChunkProcessed?: DrainStreamHook,
   contextTracker?: ContextTracker,
   seenSeqIdThreshold?: number | null,
+  isResumeStream?: boolean,
 ): Promise<DrainResult> {
   const startTime = performance.now();
   const requestStartTime = getStreamRequestStartTime(stream) ?? startTime;
@@ -259,7 +260,6 @@ export async function drainStream(
 
   try {
     for await (const chunk of stream) {
-      // console.log("chunk", chunk);
 
       // Check if abort generation changed (handleInterrupt ran while we were waiting)
       // This catches cases where the abort signal might not propagate correctly
@@ -386,7 +386,11 @@ export async function drainStream(
     // Preserve a stop reason already parsed from stream chunks (e.g. llm_api_error)
     // and only fall back to generic "error" when none is available.
     stopReason = streamProcessor.stopReason || "error";
-    markIncompleteToolsAsCancelled(buffers, true, "stream_error");
+    // skipMarkCurrentLine=true: if a resume follows, the resume stream will
+    // finalize the streaming line with full text. Marking it finished now would
+    // commit truncated content to static (emittedIdsRef) before resume can append.
+    // drainStreamWithResume calls markCurrentLineAsFinished if no resume happens.
+    markIncompleteToolsAsCancelled(buffers, true, "stream_error", true);
     queueMicrotask(refresh);
   } finally {
     // Persist chunk log to disk (one write per stream, not per chunk)
@@ -446,7 +450,9 @@ export async function drainStream(
   const approval: ApprovalRequest | null = approvals[0] || null;
   streamProcessor.pendingApprovals.clear();
 
-  if (stopReason === "requires_approval" && approvals.length === 0) {
+  if (stopReason === "requires_approval" && approvals.length === 0 && !isResumeStream) {
+    // On resume streams, approval chunks are before starting_after and won't be replayed.
+    // drainStreamWithResume carries them over from the original drain — this is expected.
     debugWarn(
       "drainStream",
       "No approvals collected despite requires_approval stop reason",
@@ -577,6 +583,9 @@ export async function drainStreamWithResume(
     abortSignal &&
     !abortSignal.aborted
   ) {
+    // Resume path: markCurrentLineAsFinished was skipped in the catch block.
+    // If resume fails below, we call it in the catch. If no resume condition is
+    // met (else branch), we call it there instead.
     // Preserve original state in case resume needs to merge or fails
     const originalFallbackError = result.fallbackError;
     const originalApprovals = result.approvals;
@@ -643,6 +652,7 @@ export async function drainStreamWithResume(
         onChunkProcessed,
         contextTracker,
         seenSeqIdThreshold,
+        true, // isResumeStream
       );
 
       // Use the resume result (should have proper stop_reason now)
@@ -667,8 +677,9 @@ export async function drainStreamWithResume(
         result.approval = originalApproval;
       }
     } catch (resumeError) {
-      // Resume failed - stick with the error stop_reason
-      // Restore the original stream error for display
+      // Resume failed - finalize the streaming line now (skipped in catch block above)
+      markCurrentLineAsFinished(buffers);
+      // Stick with the error stop_reason and restore the original stream error for display
       result.fallbackError = originalFallbackError;
 
       const resumeErrorMsg =
@@ -701,6 +712,8 @@ export async function drainStreamWithResume(
 
     // Only log if we actually skipped for a reason (i.e., we didn't enter the resume branch above)
     if (skipReasons.length > 0) {
+      // No resume — finalize the streaming line now (was skipped in catch block)
+      markCurrentLineAsFinished(buffers);
       debugLog(
         "stream",
         "Mid-stream resume skipped: %s",

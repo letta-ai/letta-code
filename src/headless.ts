@@ -13,7 +13,7 @@ import type {
 } from "./agent/approval-execution";
 import {
   extractConflictDetail,
-  extractRunIdFromConversationBusyError,
+
   fetchRunErrorDetail,
   getPreStreamErrorAction,
   getRetryDelayMs,
@@ -1581,59 +1581,37 @@ ${SYSTEM_REMINDER_CLOSE}
           continue;
         }
 
-        // Check for 409 "conversation busy" - attempt stream resume using
-        // run_id from error (server now provides it directly), then fall back
-        // to exponential backoff retry if unavailable.
+        // Check for 409 "conversation busy" - wait and retry.
+        // Stream resume is not attempted here: without OTID validation we
+        // cannot confirm the in-flight run belongs to this request (e.g. two
+        // terminals on the same agent). App.tsx handles resume with proper
+        // context via discoverFallbackRunIdWithTimeout.
         if (preStreamAction === "retry_conversation_busy") {
-          const errorRunId =
-            extractRunIdFromConversationBusyError(preStreamError);
+          conversationBusyRetries += 1;
+          const retryDelayMs = getRetryDelayMs({
+            category: "conversation_busy",
+            attempt: conversationBusyRetries,
+          });
 
-          if (errorRunId) {
-            try {
-              const client = await getClient();
-              stream = (await client.runs.messages.stream(errorRunId, {
-                starting_after: 0,
-                batch_size: 1000,
-              })) as Awaited<ReturnType<typeof sendMessageStream>>;
-              conversationBusyRetries = 0;
-              // Fall through to drain — stream is now set to the recovered run
-            } catch {
-              // Resume failed, fall back to backoff
-              conversationBusyRetries += 1;
-              const retryDelayMs = getRetryDelayMs({
-                category: "conversation_busy",
-                attempt: conversationBusyRetries,
-              });
-              await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
-              continue;
-            }
-          } else {
-            conversationBusyRetries += 1;
-            const retryDelayMs = getRetryDelayMs({
-              category: "conversation_busy",
+          if (outputFormat === "stream-json") {
+            const retryMsg: RetryMessage = {
+              type: "retry",
+              reason: "error",
               attempt: conversationBusyRetries,
-            });
-
-            if (outputFormat === "stream-json") {
-              const retryMsg: RetryMessage = {
-                type: "retry",
-                reason: "error",
-                attempt: conversationBusyRetries,
-                max_attempts: CONVERSATION_BUSY_MAX_RETRIES,
-                delay_ms: retryDelayMs,
-                session_id: sessionId,
-                uuid: `retry-conversation-busy-${randomUUID()}`,
-              };
-              console.log(JSON.stringify(retryMsg));
-            } else {
-              console.error(
-                `Conversation is busy, waiting ${Math.round(retryDelayMs / 1000)}s and retrying...`,
-              );
-            }
-
-            await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
-            continue;
+              max_attempts: CONVERSATION_BUSY_MAX_RETRIES,
+              delay_ms: retryDelayMs,
+              session_id: sessionId,
+              uuid: `retry-conversation-busy-${randomUUID()}`,
+            };
+            console.log(JSON.stringify(retryMsg));
+          } else {
+            console.error(
+              `Conversation is busy, waiting ${Math.round(retryDelayMs / 1000)}s and retrying...`,
+            );
           }
+
+          await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+          continue;
         }
 
         if (preStreamAction === "retry_transient") {
