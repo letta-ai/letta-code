@@ -15,8 +15,7 @@ import { isZaiNonRetryableError } from "../cli/helpers/zaiErrors";
 
 const INVALID_TOOL_CALL_IDS_FRAGMENT = "invalid tool call ids";
 const APPROVAL_PENDING_DETAIL_FRAGMENT = "waiting for approval";
-const CONVERSATION_BUSY_DETAIL_FRAGMENT =
-  "another request is currently being processed";
+const CONVERSATION_BUSY_DETAIL_FRAGMENT = "is currently being processed";
 const EMPTY_RESPONSE_DETAIL_FRAGMENT = "empty content in";
 const RETRYABLE_PROVIDER_DETAIL_PATTERNS = [
   "Anthropic API error",
