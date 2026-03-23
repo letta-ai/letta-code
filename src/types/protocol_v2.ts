@@ -395,6 +395,20 @@ export interface SearchFilesCommand {
   max_results?: number;
 }
 
+export interface ListFoldersInDirectoryCommand {
+  type: "list_folders_in_directory";
+  /** Absolute path to list folders in. */
+  path: string;
+}
+
+export interface ReadFileCommand {
+  type: "read_file";
+  /** Absolute path to the file to read. */
+  path: string;
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+}
+
 export type WsProtocolCommand =
   | InputCommand
   | ChangeDeviceStateCommand
@@ -404,7 +418,9 @@ export type WsProtocolCommand =
   | TerminalInputCommand
   | TerminalResizeCommand
   | TerminalKillCommand
-  | SearchFilesCommand;
+  | SearchFilesCommand
+  | ListFoldersInDirectoryCommand
+  | ReadFileCommand;
 
 export type WsProtocolMessage =
   | DeviceStatusUpdateMessage

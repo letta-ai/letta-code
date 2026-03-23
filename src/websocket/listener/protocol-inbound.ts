@@ -3,6 +3,8 @@ import type {
   AbortMessageCommand,
   ChangeDeviceStateCommand,
   InputCommand,
+  ListFoldersInDirectoryCommand,
+  ReadFileCommand,
   RuntimeScope,
   SearchFilesCommand,
   SyncCommand,
@@ -253,6 +255,26 @@ export function isSearchFilesCommand(
   );
 }
 
+export function isListFoldersCommand(
+  value: unknown,
+): value is ListFoldersInDirectoryCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as { type?: unknown; path?: unknown };
+  return c.type === "list_folders_in_directory" && typeof c.path === "string";
+}
+
+export function isReadFileCommand(
+  value: unknown,
+): value is ReadFileCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as { type?: unknown; path?: unknown; request_id?: unknown };
+  return (
+    c.type === "read_file" &&
+    typeof c.path === "string" &&
+    typeof c.request_id === "string"
+  );
+}
+
 export function parseServerMessage(
   data: WebSocket.RawData,
 ): ParsedServerMessage | null {
@@ -268,7 +290,9 @@ export function parseServerMessage(
       isTerminalInputCommand(parsed) ||
       isTerminalResizeCommand(parsed) ||
       isTerminalKillCommand(parsed) ||
-      isSearchFilesCommand(parsed)
+      isSearchFilesCommand(parsed) ||
+      isListFoldersCommand(parsed) ||
+      isReadFileCommand(parsed)
     ) {
       return parsed as WsProtocolCommand;
     }

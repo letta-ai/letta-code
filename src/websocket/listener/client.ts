@@ -61,7 +61,12 @@ import {
   loadPersistedPermissionModeMap,
   setConversationPermissionModeState,
 } from "./permissionMode";
-import { isSearchFilesCommand, parseServerMessage } from "./protocol-inbound";
+import {
+  isListFoldersCommand,
+  isReadFileCommand,
+  isSearchFilesCommand,
+  parseServerMessage,
+} from "./protocol-inbound";
 import {
   buildDeviceStatus,
   buildLoopStatus,
@@ -1012,6 +1017,74 @@ async function connectWithRetry(
             success: true,
           }),
         );
+      })();
+      return;
+    }
+
+    // ── Folder listing (no runtime scope required) ────────────────────
+    if (isListFoldersCommand(parsed)) {
+      void (async () => {
+        try {
+          const { readdir } = await import("node:fs/promises");
+          const entries = await readdir(parsed.path, { withFileTypes: true });
+          const folders = entries
+            .filter((e) => e.isDirectory())
+            .map((e) => e.name)
+            .sort();
+          socket.send(
+            JSON.stringify({
+              type: "list_folders_in_directory_response",
+              path: parsed.path,
+              folders,
+              hasMore: false,
+              success: true,
+            }),
+          );
+        } catch (err) {
+          socket.send(
+            JSON.stringify({
+              type: "list_folders_in_directory_response",
+              path: parsed.path,
+              folders: [],
+              hasMore: false,
+              success: false,
+              error:
+                err instanceof Error ? err.message : "Failed to list folders",
+            }),
+          );
+        }
+      })();
+      return;
+    }
+
+    // ── File reading (no runtime scope required) ─────────────────────
+    if (isReadFileCommand(parsed)) {
+      void (async () => {
+        try {
+          const { readFile } = await import("node:fs/promises");
+          const content = await readFile(parsed.path, "utf-8");
+          socket.send(
+            JSON.stringify({
+              type: "read_file_response",
+              request_id: parsed.request_id,
+              path: parsed.path,
+              content,
+              success: true,
+            }),
+          );
+        } catch (err) {
+          socket.send(
+            JSON.stringify({
+              type: "read_file_response",
+              request_id: parsed.request_id,
+              path: parsed.path,
+              content: null,
+              success: false,
+              error:
+                err instanceof Error ? err.message : "Failed to read file",
+            }),
+          );
+        }
       })();
       return;
     }
