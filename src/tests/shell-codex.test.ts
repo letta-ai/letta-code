@@ -6,6 +6,13 @@ import { shell } from "../tools/impl/Shell.js";
 
 const isWindows = process.platform === "win32";
 
+function getEchoCommand(...args: string[]): string[] {
+  if (isWindows) {
+    return ["cmd.exe", "/c", "echo", ...args];
+  }
+  return ["/usr/bin/env", "echo", ...args];
+}
+
 describe("shell codex tool", () => {
   let tempDir: string;
 
@@ -18,7 +25,7 @@ describe("shell codex tool", () => {
 
   test("executes simple command with execvp-style args", async () => {
     const result = await shell({
-      command: ["echo", "hello", "world"],
+      command: ["/usr/bin/env", "echo", "hello", "world"],
     });
 
     expect(result.output).toBe("hello world");
@@ -54,7 +61,7 @@ describe("shell codex tool", () => {
     // This is the key test for execvp semantics - args with spaces
     // should NOT be split
     const result = await shell({
-      command: ["echo", "hello world", "foo bar"],
+      command: getEchoCommand("hello world", "foo bar"),
     });
 
     expect(result.output).toBe("hello world foo bar");
@@ -180,7 +187,7 @@ describe("shell codex tool", () => {
 
   test("handles special characters in arguments", async () => {
     const result = await shell({
-      command: ["echo", "$HOME", "$(whoami)", "`date`"],
+      command: getEchoCommand("$HOME", "$(whoami)", "`date`"),
     });
 
     // Since we're using execvp-style (not shell expansion),
