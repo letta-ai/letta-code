@@ -50,6 +50,10 @@ function resolveSkillDiscoveryContext(
   return { skillsDirectory, skillSources };
 }
 
+function getAdditionalProjectSkillsDirectory(): string {
+  return join(process.cwd(), ".agents", "skills");
+}
+
 /**
  * Build `client_skills` payload for conversations.messages.create.
  *
@@ -63,39 +67,62 @@ export async function buildClientSkillsPayload(
   const { skillsDirectory, skillSources } =
     resolveSkillDiscoveryContext(options);
   const discoverSkillsFn = options.discoverSkillsFn ?? discoverSkills;
+  const skillsById = new Map<string, Skill>();
+  const errors: SkillDiscoveryError[] = [];
 
-  try {
-    const discovery = await discoverSkillsFn(skillsDirectory, options.agentId, {
-      sources: skillSources,
+  const discoveryRuns: Array<{ path: string; sources: SkillSource[] }> = [];
+  const includeProjectSource = skillSources.includes("project");
+  const additionalProjectSkillsDirectory =
+    getAdditionalProjectSkillsDirectory();
+  if (
+    includeProjectSource &&
+    additionalProjectSkillsDirectory !== skillsDirectory
+  ) {
+    discoveryRuns.push({
+      path: additionalProjectSkillsDirectory,
+      sources: ["project"],
     });
-    const sortedSkills = [...discovery.skills].sort(compareSkills);
-
-    return {
-      clientSkills: sortedSkills.map(toClientSkill),
-      skillPathById: Object.fromEntries(
-        sortedSkills
-          .filter(
-            (skill) => typeof skill.path === "string" && skill.path.length > 0,
-          )
-          .map((skill) => [skill.id, skill.path]),
-      ),
-      errors: discovery.errors,
-    };
-  } catch (error) {
-    const message =
-      error instanceof Error
-        ? error.message
-        : `Unknown error: ${String(error)}`;
-    options.logger?.(`Failed to build client_skills payload: ${message}`);
-    return {
-      clientSkills: [],
-      skillPathById: {},
-      errors: [
-        {
-          path: skillsDirectory,
-          message,
-        },
-      ],
-    };
   }
+  discoveryRuns.push({ path: skillsDirectory, sources: skillSources });
+
+  for (const run of discoveryRuns) {
+    try {
+      const discovery = await discoverSkillsFn(run.path, options.agentId, {
+        sources: run.sources,
+      });
+      errors.push(...discovery.errors);
+      for (const skill of discovery.skills) {
+        skillsById.set(skill.id, skill);
+      }
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : `Unknown error: ${String(error)}`;
+      errors.push({ path: run.path, message });
+    }
+  }
+
+  const sortedSkills = [...skillsById.values()].sort(compareSkills);
+
+  if (errors.length > 0) {
+    const summarizedErrors = errors.map(
+      (error) => `${error.path}: ${error.message}`,
+    );
+    options.logger?.(
+      `Failed to build some client_skills entries: ${summarizedErrors.join("; ")}`,
+    );
+  }
+
+  return {
+    clientSkills: sortedSkills.map(toClientSkill),
+    skillPathById: Object.fromEntries(
+      sortedSkills
+        .filter(
+          (skill) => typeof skill.path === "string" && skill.path.length > 0,
+        )
+        .map((skill) => [skill.id, skill.path]),
+    ),
+    errors,
+  };
 }
