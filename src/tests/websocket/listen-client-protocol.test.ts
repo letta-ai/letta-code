@@ -1376,8 +1376,13 @@ describe("listen-client capability-gated approval flow", () => {
 
     expect(handled).toBe(false);
     expect(resolveRecoveredApprovalResponseMock).not.toHaveBeenCalled();
-    expect(scheduleQueuePumpMock).not.toHaveBeenCalled();
-    expect(targetRuntime.cancelRequested).toBe(true);
+    expect(scheduleQueuePumpMock).toHaveBeenCalledWith(
+      targetRuntime,
+      socket,
+      expect.objectContaining({ connectionId: "conn-1" }),
+      expect.any(Function),
+    );
+    expect(targetRuntime.cancelRequested).toBe(false);
     expect(targetRuntime.loopStatus).toBe("WAITING_ON_INPUT");
     expect(targetRuntime.isProcessing).toBe(false);
   });

@@ -866,6 +866,77 @@ describe("listen-client multi-worker concurrency", () => {
     expect(listener.conversationRuntimes.has(runtimeA.key)).toBe(true);
   });
 
+  test("stale approval response after approval-only interrupt unlatches cancelRequested and allows queue pump", async () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    __listenClientTestUtils.setActiveRuntime(listener);
+    const runtime = __listenClientTestUtils.getOrCreateScopedRuntime(
+      listener,
+      "agent-1",
+      "conv-a",
+    );
+    const socket = new MockSocket();
+
+    runtime.cancelRequested = true;
+    runtime.isProcessing = false;
+    runtime.loopStatus = "WAITING_ON_INPUT";
+
+    const queueInput = {
+      kind: "message",
+      source: "user",
+      content: "queued after stale approval",
+      clientMessageId: "cm-stale-approval",
+      agentId: "agent-1",
+      conversationId: "conv-a",
+    } satisfies Omit<MessageQueueItem, "id" | "enqueuedAt">;
+    const item = runtime.queueRuntime.enqueue(queueInput);
+    if (!item) {
+      throw new Error("Expected queued item to be created");
+    }
+    runtime.queuedMessagesByItemId.set(
+      item.id,
+      makeIncomingMessage("agent-1", "conv-a", "queued after stale approval"),
+    );
+
+    const scheduleQueuePumpMock = mock(() => {
+      __listenClientTestUtils.scheduleQueuePump(
+        runtime,
+        socket as unknown as WebSocket,
+        {} as never,
+        async () => {},
+      );
+    });
+
+    const handled = await __listenClientTestUtils.handleApprovalResponseInput(
+      listener,
+      {
+        runtime: { agent_id: "agent-1", conversation_id: "conv-a" },
+        response: {
+          request_id: "perm-stale-after-approval-only-interrupt",
+          decision: { behavior: "allow" },
+        },
+        socket: socket as unknown as WebSocket,
+        opts: {
+          onStatusChange: undefined,
+          connectionId: "conn-1",
+        },
+        processQueuedTurn: async () => {},
+      },
+      {
+        resolveRuntimeForApprovalRequest: () => null,
+        resolvePendingApprovalResolver: () => false,
+        getOrCreateScopedRuntime: () => runtime,
+        resolveRecoveredApprovalResponse: async () => false,
+        scheduleQueuePump: scheduleQueuePumpMock,
+      },
+    );
+
+    expect(handled).toBe(false);
+    expect(runtime.cancelRequested).toBe(false);
+    expect(scheduleQueuePumpMock).toHaveBeenCalledTimes(1);
+    await waitFor(() => runtime.queuePumpScheduled === false);
+    expect(runtime.queueRuntime.length).toBe(0);
+  });
+
   test("change_device_state command holds queued input until the tracked command completes", async () => {
     const listener = __listenClientTestUtils.createListenerRuntime();
     __listenClientTestUtils.setActiveRuntime(listener);

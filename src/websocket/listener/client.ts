@@ -336,6 +336,13 @@ async function handleApprovalResponseInput(
     );
 
   if (targetRuntime.cancelRequested && !targetRuntime.isProcessing) {
+    targetRuntime.cancelRequested = false;
+    deps.scheduleQueuePump(
+      targetRuntime,
+      params.socket,
+      params.opts as StartListenerOptions,
+      params.processQueuedTurn,
+    );
     return false;
   }
 
@@ -970,6 +977,10 @@ async function connectWithRetry(
           agentId: parsed.runtime.agent_id,
           conversationId: parsed.runtime.conversation_id,
         });
+      }
+
+      if (!hasActiveTurn) {
+        scopedRuntime.cancelRequested = false;
       }
 
       // Backend cancel parity with TUI (App.tsx:5932-5941).
