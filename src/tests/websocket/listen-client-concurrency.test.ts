@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import WebSocket from "ws";
-import type { ResumeData } from "../../agent/check-approval";
 import { permissionMode } from "../../permissions/mode";
 import type {
   MessageQueueItem,
@@ -68,13 +67,6 @@ const getClientMock = mock(async () => ({
     cancel: cancelConversationMock,
   },
 }));
-const getResumeDataMock = mock(
-  async (): Promise<ResumeData> => ({
-    pendingApproval: null,
-    pendingApprovals: [],
-    messageHistory: [],
-  }),
-);
 const classifyApprovalsMock = mock(async () => ({
   autoAllowed: [],
   autoDenied: [],
@@ -120,10 +112,6 @@ mock.module("../../agent/client", () => ({
   getServerUrl: () => "https://example.test",
   clearLastSDKDiagnostic: () => {},
   consumeLastSDKDiagnostic: () => null,
-}));
-
-mock.module("../../agent/check-approval", () => ({
-  getResumeData: getResumeDataMock,
 }));
 
 mock.module("../../cli/helpers/approvalClassification", () => ({
@@ -207,7 +195,6 @@ describe("listen-client multi-worker concurrency", () => {
     drainStreamWithResumeMock.mockClear();
     getClientMock.mockClear();
     retrieveAgentMock.mockClear();
-    getResumeDataMock.mockClear();
     classifyApprovalsMock.mockClear();
     executeApprovalBatchMock.mockClear();
     cancelConversationMock.mockClear();
@@ -710,11 +697,6 @@ describe("listen-client multi-worker concurrency", () => {
       status: "success",
     };
 
-    getResumeDataMock.mockResolvedValueOnce({
-      pendingApproval: approval,
-      pendingApprovals: [approval],
-      messageHistory: [],
-    });
     classifyApprovalsMock.mockResolvedValueOnce({
       autoAllowed: [
         {
@@ -761,7 +743,13 @@ describe("listen-client multi-worker concurrency", () => {
       runtime,
       socket as unknown as WebSocket,
       new AbortController().signal,
-      { getResumeData: getResumeDataMock },
+      {
+        getResumeData: async () => ({
+          pendingApproval: approval,
+          pendingApprovals: [approval],
+          messageHistory: [],
+        }),
+      },
     );
 
     await waitFor(() => sendMessageStreamMock.mock.calls.length === 1);
