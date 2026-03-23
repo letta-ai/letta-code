@@ -767,10 +767,13 @@ describe("listen-client multi-worker concurrency", () => {
       | Array<Record<string, unknown>>
       | undefined;
     expect(continuationMessages).toHaveLength(2);
-    expect(continuationMessages?.[0]).toEqual({
-      type: "approval",
-      approvals: [approvalResult],
-    });
+    expect(continuationMessages?.[0]).toEqual(
+      expect.objectContaining({
+        type: "approval",
+        approvals: [approvalResult],
+        otid: expect.any(String),
+      }),
+    );
     expect(continuationMessages?.[1]).toEqual({
       role: "user",
       content: [
