@@ -4231,6 +4231,7 @@ export default function App({
                       undefined, // no handleFirstMessage on resume
                       undefined,
                       contextTrackerRef.current,
+                      highestSeqIdSeen,
                     );
                     // Attach the discovered run ID
                     if (!preStreamResumeResult.lastRunId) {
@@ -4254,33 +4255,6 @@ export default function App({
                     return;
                   }
 
-                  // Found a running run — resume its stream
-                  buffersRef.current.interrupted = false;
-                  buffersRef.current.commitGeneration =
-                    (buffersRef.current.commitGeneration || 0) + 1;
-
-                  const resumeStream = await client.runs.messages.stream(
-                    discoveredRunId,
-                    {
-                      starting_after: 0,
-                      batch_size: 1000,
-                    },
-                  );
-
-                  preStreamResumeResult = await drainStream(
-                    resumeStream,
-                    buffersRef.current,
-                    refreshDerivedThrottled,
-                    signal,
-                    undefined, // no handleFirstMessage on resume
-                    undefined,
-                    contextTrackerRef.current,
-                    highestSeqIdSeen,
-                  );
-                  // Attach the discovered run ID
-                  if (!preStreamResumeResult.lastRunId) {
-                    preStreamResumeResult.lastRunId = discoveredRunId;
-                  }
                   debugLog(
                     "stream",
                     "Pre-stream resume failed, falling back to wait/retry: %s",
