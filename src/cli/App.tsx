@@ -340,7 +340,7 @@ const TOOL_CALL_COMMIT_DEFER_MS = 50;
 const ANIMATION_RESUME_HYSTERESIS_ROWS = 2;
 
 // Eager approval checking is now CONDITIONAL (LET-7101):
-// - Enabled when resuming a session (--resume, --continue, or startupApprovals exist)
+// - Enabled when resuming a session (--resume or startupApprovals exist)
 // - Disabled for normal messages (lazy recovery handles edge cases)
 // This saves ~2s latency per message in the common case.
 
@@ -4014,6 +4014,7 @@ export default function App({
         // Capture once before the retry loop so the temporal filter in
         // discoverFallbackRunIdForResume covers runs created by any attempt.
         const requestStartedAtMs = Date.now();
+        let highestSeqIdSeen: number | null = null;
 
         while (true) {
           // Capture the signal BEFORE any async operations
@@ -4214,6 +4215,7 @@ export default function App({
                     undefined, // no handleFirstMessage on resume
                     undefined,
                     contextTrackerRef.current,
+                    highestSeqIdSeen,
                   );
                   // Attach the discovered run ID
                   if (!preStreamResumeResult.lastRunId) {
@@ -4590,6 +4592,7 @@ export default function App({
                   handleFirstMessage,
                   undefined,
                   contextTrackerRef.current,
+                  highestSeqIdSeen,
                 );
               })();
 
@@ -4599,8 +4602,13 @@ export default function App({
             approvals,
             apiDurationMs,
             lastRunId,
+            lastSeqId,
             fallbackError,
           } = await drainResult;
+
+          if (lastSeqId != null) {
+            highestSeqIdSeen = Math.max(highestSeqIdSeen ?? 0, lastSeqId);
+          }
 
           // Update currentRunId for error reporting in catch block
           currentRunId = lastRunId ?? undefined;
@@ -8138,10 +8146,14 @@ export default function App({
         }
 
         // Special handling for /new command - start new conversation
-        if (msg.trim() === "/new") {
+        const newMatch = msg.trim().match(/^\/new(?:\s+(.+))?$/);
+        if (newMatch) {
+          const conversationName = newMatch[1]?.trim();
           const cmd = commandRunner.start(
             msg.trim(),
-            "Starting new conversation...",
+            conversationName
+              ? `Starting new conversation: ${conversationName}...`
+              : "Starting new conversation...",
           );
 
           // New conversations should not inherit pending reasoning-tier debounce.
@@ -8158,8 +8170,14 @@ export default function App({
             const conversation = await client.conversations.create({
               agent_id: agentId,
               isolated_block_labels: [...ISOLATED_BLOCK_LABELS],
+              ...(conversationName && { summary: conversationName }),
             });
 
+            // If we created the conversation with an explicit summary, mark it as set
+            // to prevent auto-summary from first user message overwriting it
+            if (conversationName) {
+              hasSetConversationSummaryRef.current = true;
+            }
             await maybeCarryOverActiveConversationModel(conversation.id);
 
             // Update conversationId state
@@ -10340,10 +10358,12 @@ ${SYSTEM_REMINDER_CLOSE}
                 // (can't use state here as it won't be available until next render)
                 const recoveryApprovalResults = [
                   ...autoAllowedResults.map((ar) => ({
-                    type: "approval" as const,
+                    type: "tool" as const,
                     tool_call_id: ar.toolCallId,
-                    approve: true,
                     tool_return: ar.result.toolReturn,
+                    status: ar.result.status,
+                    stdout: ar.result.stdout,
+                    stderr: ar.result.stderr,
                   })),
                   ...autoDeniedResults,
                 ];
@@ -12609,9 +12629,14 @@ ${SYSTEM_REMINDER_CLOSE}
       // acceptEdits/yolo), keep their chosen mode instead of downgrading.
       const currentMode = permissionMode.getMode();
       if (currentMode === "plan") {
-        const restoreMode = acceptEdits
-          ? "acceptEdits"
-          : (permissionMode.getModeBeforePlan() ?? "default");
+        const previousMode = permissionMode.getModeBeforePlan();
+        const restoreMode =
+          // If the user was in YOLO before entering plan mode, always restore it.
+          previousMode === "bypassPermissions"
+            ? "bypassPermissions"
+            : acceptEdits
+              ? "acceptEdits"
+              : (previousMode ?? "default");
         permissionMode.setMode(restoreMode);
         setUiPermissionMode(restoreMode);
       } else {
@@ -12723,13 +12748,12 @@ ${SYSTEM_REMINDER_CLOSE}
       const hasUsablePlan = planFileExists(fallbackPlanPath);
 
       if (mode !== "plan") {
+        if (hasUsablePlan) {
+          // Keep approval flow alive and let user manually approve.
+          return;
+        }
+
         if (mode === "bypassPermissions") {
-          if (hasUsablePlan) {
-            // YOLO mode with a plan file — auto-approve ExitPlanMode.
-            lastAutoHandledExitPlanToolCallIdRef.current = approval.toolCallId;
-            handlePlanApprove();
-            return;
-          }
           // YOLO mode but no plan file yet — tell agent to write it first.
           const planFilePath = activePlanPath ?? fallbackPlanPath;
           const plansDir = join(homedir(), ".letta", "plans");
@@ -12738,10 +12762,6 @@ ${SYSTEM_REMINDER_CLOSE}
               (planFilePath ? `Plan file path: ${planFilePath}\n` : "") +
               `Use a write tool to create your plan in ${plansDir}, then use ExitPlanMode to present the plan to the user.`,
           );
-          return;
-        }
-        if (hasUsablePlan) {
-          // Other modes: keep approval flow alive and let user manually approve.
           return;
         }
 
@@ -12799,7 +12819,6 @@ ${SYSTEM_REMINDER_CLOSE}
   }, [
     pendingApprovals,
     approvalResults.length,
-    handlePlanApprove,
     handlePlanKeepPlanning,
     refreshDerived,
     queueApprovalResults,
@@ -12976,7 +12995,7 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
   // Guard EnterPlanMode:
   // When in bypassPermissions (YOLO) mode, auto-approve EnterPlanMode and stay
   // in YOLO — the agent gets plan instructions but keeps full permissions.
-  // The existing ExitPlanMode guard then auto-approves the exit too.
+  // ExitPlanMode still requires explicit user approval.
   useEffect(() => {
     const currentIndex = approvalResults.length;
     const approval = pendingApprovals[currentIndex];
@@ -13945,6 +13964,11 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
                         summary: selectorContext?.summary,
                         messageHistory: resumeData.messageHistory,
                       };
+
+                      // If the conversation already has a summary, prevent auto-summary from overwriting it
+                      if (selectorContext?.summary) {
+                        hasSetConversationSummaryRef.current = true;
+                      }
 
                       settingsManager.setLocalLastSession(
                         { agentId, conversationId: convId },

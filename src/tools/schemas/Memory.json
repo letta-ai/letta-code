@@ -4,7 +4,14 @@
   "properties": {
     "command": {
       "type": "string",
-      "enum": ["str_replace", "insert", "delete", "rename", "create"],
+      "enum": [
+        "str_replace",
+        "insert",
+        "delete",
+        "rename",
+        "update_description",
+        "create"
+      ],
       "description": "Memory operation to perform"
     },
     "reason": {
@@ -13,15 +20,15 @@
     },
     "path": {
       "type": "string",
-      "description": "Target memory file path relative to memory root (e.g. system/contacts.md)"
+      "description": "Target memory path (file or directory). Accepts relative paths like system/contacts.md or absolute paths under MEMORY_DIR"
     },
     "old_path": {
       "type": "string",
-      "description": "Source memory file path for rename operations (e.g. system/temp.md)"
+      "description": "Source memory file path for rename operations (relative path or absolute path under MEMORY_DIR)"
     },
     "new_path": {
       "type": "string",
-      "description": "Destination memory file path for rename operations (e.g. system/permanent.md)"
+      "description": "Destination memory file path for rename operations (relative path or absolute path under MEMORY_DIR)"
     },
     "old_string": {
       "type": "string",
@@ -41,15 +48,11 @@
     },
     "description": {
       "type": "string",
-      "description": "Block description (required for create, or used with rename + path to update description)"
+      "description": "Block description (required for create and update_description)"
     },
     "file_text": {
       "type": "string",
       "description": "Initial block content for create"
-    },
-    "limit": {
-      "type": "number",
-      "description": "Optional positive integer limit for create"
     }
   },
   "required": ["command", "reason"],

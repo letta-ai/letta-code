@@ -272,6 +272,8 @@ export function ConversationSelector({
           agent_id: agentId,
           limit: FETCH_PAGE_SIZE,
           ...(afterCursor && { after: afterCursor }),
+          order: "desc",
+          order_by: "last_run_completion",
         });
 
         // Enrich conversations with message data in parallel
@@ -439,20 +441,6 @@ export function ConversationSelector({
       const bracket = <Text dimColor>{"⎿  "}</Text>;
       const indent = "   "; // Same width as "⎿  " for alignment
 
-      // Priority 1: Summary
-      if (conv.summary) {
-        return (
-          <Box flexDirection="row" marginLeft={2}>
-            {bracket}
-            <Text dimColor italic>
-              {conv.summary.length > 57
-                ? `${conv.summary.slice(0, 54)}...`
-                : conv.summary}
-            </Text>
-          </Box>
-        );
-      }
-
       // Priority 2: Preview lines with emoji prefixes
       if (previewLines.length > 0) {
         return (
@@ -514,9 +502,15 @@ export function ConversationSelector({
             bold={isSelected}
             color={isSelected ? colors.selector.itemHighlighted : undefined}
           >
-            {isDefault ? "default" : conv.id}
+            {conv.summary
+              ? `${conv.summary.length > 40 ? `${conv.summary.slice(0, 37)}...` : conv.summary} (${conv.id})`
+              : isDefault
+                ? "default"
+                : conv.id}
           </Text>
-          {isDefault && <Text dimColor> (agent's default conversation)</Text>}
+          {!conv.summary && isDefault && (
+            <Text dimColor> (agent's default conversation)</Text>
+          )}
           {isCurrent && (
             <Text color={colors.selector.itemCurrent}> (current)</Text>
           )}

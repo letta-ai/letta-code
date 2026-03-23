@@ -111,6 +111,7 @@ export const ANTHROPIC_DEFAULT_TOOLS: ToolName[] = [
   "TaskStop",
   // "MultiEdit",
   // "LS",
+  "memory",
   "Read",
   "Skill",
   "Task",
@@ -123,6 +124,7 @@ export const OPENAI_DEFAULT_TOOLS: ToolName[] = [
   // TODO(codex-parity): add once request_user_input tool exists in raw codex path.
   // "request_user_input",
   "apply_patch",
+  "memory",
   "update_plan",
   "view_image",
 ];
@@ -133,6 +135,7 @@ export const GEMINI_DEFAULT_TOOLS: ToolName[] = [
   "list_directory",
   "glob_gemini",
   "search_file_content",
+  "memory",
   "replace",
   "write_file_gemini",
   "write_todos",
@@ -147,6 +150,7 @@ export const OPENAI_PASCAL_TOOLS: ToolName[] = [
   "AskUserQuestion",
   "EnterPlanMode",
   "ExitPlanMode",
+  "memory",
   "Task",
   "TaskOutput",
   "TaskStop",
@@ -163,6 +167,7 @@ export const GEMINI_PASCAL_TOOLS: ToolName[] = [
   "AskUserQuestion",
   "EnterPlanMode",
   "ExitPlanMode",
+  "memory",
   "Skill",
   "Task",
   // Standard Gemini tools

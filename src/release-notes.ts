@@ -23,7 +23,7 @@ export const releaseNotes: Record<string, string> = {
 → Read more: https://docs.letta.com/letta-code/changelog#0134`,
   "0.13.0": `🎁 **Letta Code 0.13.0: Introducing Conversations!**
 → Letta Code now starts a new conversation on each startup (memory is shared across all conversations)
-→ Use **/resume** to switch conversations, or run **letta --continue** to continue an existing conversation
+→ Use **/resume** to switch conversations, or run **letta --conv <id>** to continue a specific conversation
 → Read more: https://docs.letta.com/letta-code/changelog#0130`,
 };
 

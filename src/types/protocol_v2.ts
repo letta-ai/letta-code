@@ -283,6 +283,7 @@ export interface StreamDeltaMessage extends RuntimeEnvelope {
 
 export interface ApprovalResponseAllowDecision {
   behavior: "allow";
+  message?: string;
   updated_input?: Record<string, unknown> | null;
   updated_permissions?: string[];
 }
@@ -357,11 +358,53 @@ export interface SyncCommand {
   runtime: RuntimeScope;
 }
 
+export interface TerminalSpawnCommand {
+  type: "terminal_spawn";
+  terminal_id: string;
+  cols: number;
+  rows: number;
+  /** Agent's current working directory. Falls back to bootWorkingDirectory if absent. */
+  cwd?: string;
+}
+
+export interface TerminalInputCommand {
+  type: "terminal_input";
+  terminal_id: string;
+  data: string;
+}
+
+export interface TerminalResizeCommand {
+  type: "terminal_resize";
+  terminal_id: string;
+  cols: number;
+  rows: number;
+}
+
+export interface TerminalKillCommand {
+  type: "terminal_kill";
+  terminal_id: string;
+}
+
+export interface SearchFilesCommand {
+  type: "search_files";
+  /** Substring to match against file paths. Empty string returns top files by mtime. */
+  query: string;
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  /** Maximum number of results to return. Defaults to 5. */
+  max_results?: number;
+}
+
 export type WsProtocolCommand =
   | InputCommand
   | ChangeDeviceStateCommand
   | AbortMessageCommand
-  | SyncCommand;
+  | SyncCommand
+  | TerminalSpawnCommand
+  | TerminalInputCommand
+  | TerminalResizeCommand
+  | TerminalKillCommand
+  | SearchFilesCommand;
 
 export type WsProtocolMessage =
   | DeviceStatusUpdateMessage

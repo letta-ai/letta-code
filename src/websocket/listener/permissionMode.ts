@@ -37,13 +37,36 @@ export function getConversationPermissionModeState(
   conversationId?: string | null,
 ): ConversationPermissionModeState {
   const scopeKey = getPermissionModeScopeKey(agentId, conversationId);
-  return (
-    runtime.permissionModeByConversation.get(scopeKey) ?? {
-      mode: globalPermissionMode.getMode(),
-      planFilePath: null,
-      modeBeforePlan: null,
+  const normalizedConversationId = normalizeConversationId(conversationId);
+
+  const direct = runtime.permissionModeByConversation.get(scopeKey);
+  if (direct) {
+    return direct;
+  }
+
+  // Backward/interop fallback for default-conversation entries that were
+  // keyed without an agent id (agent:__unknown__). If we find one while a
+  // concrete agent id is available, migrate it to the canonical key.
+  if (normalizedConversationId === "default") {
+    const legacyDefaultKey = getPermissionModeScopeKey(null, "default");
+    const legacyDefault =
+      runtime.permissionModeByConversation.get(legacyDefaultKey);
+    if (legacyDefault) {
+      if (normalizeCwdAgentId(agentId)) {
+        runtime.permissionModeByConversation.set(scopeKey, {
+          ...legacyDefault,
+        });
+        runtime.permissionModeByConversation.delete(legacyDefaultKey);
+      }
+      return legacyDefault;
     }
-  );
+  }
+
+  return {
+    mode: globalPermissionMode.getMode(),
+    planFilePath: null,
+    modeBeforePlan: null,
+  };
 }
 
 export function setConversationPermissionModeState(

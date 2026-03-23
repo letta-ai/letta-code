@@ -50,9 +50,16 @@ export const BYOK_PROVIDERS = [
   {
     id: "zai",
     displayName: "zAI API",
-    description: "Connect a zAI key or coding plan",
+    description: "Connect a zAI API key",
     providerType: "zai",
     providerName: "lc-zai",
+  },
+  {
+    id: "zai-coding",
+    displayName: "zAI Coding Plan",
+    description: "Connect a zAI Coding plan key",
+    providerType: "zai_coding",
+    providerName: "lc-zai-coding",
   },
   {
     id: "minimax",

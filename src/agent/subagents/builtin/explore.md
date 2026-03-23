@@ -2,7 +2,7 @@
 name: explore
 description: Fast agent for codebase exploration - finding files, searching code, understanding structure. (Read-Only)
 tools: Glob, Grep, Read, TaskOutput
-model: haiku
+model: auto-fast
 memoryBlocks: human, persona
 mode: stateless
 ---

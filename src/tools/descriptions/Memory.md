@@ -6,15 +6,17 @@ Files stored inside of `system/` eventually become part of the agent's system pr
 Supported operations on memory files:  
 - `str_replace`
 - `insert`
-- `delete`
-- `rename` (path rename or description update mode)
+- `delete` (files, or directories recursively)
+- `rename` (path rename only)
+- `update_description`
 - `create`
 More general operations can be performanced through directory modifying the files. 
 
 Path formats accepted:
 - relative memory file paths (e.g. `system/contacts.md`, `reference/project/team.md`)
+- absolute paths only when they are inside `$MEMORY_DIR`
 
-Note: absolute paths and `/memories/...` paths are not supported by this client-side tool.
+Note: absolute paths outside `$MEMORY_DIR` are rejected.
 
 Examples:
 
@@ -30,6 +32,9 @@ memory(command="delete", reason="Remove stale notes", path="reference/history/ol
 
 # Rename a memory file 
 memory(command="rename", reason="Promote temp notes", old_path="reference/history/temp.md", new_path="reference/history/permanent.md")
+
+# Update a block description
+memory(command="update_description", reason="Clarify coding prefs block", path="system/human/prefs/coding.md", description="Dr. Wooders' coding preferences.")
 
 # Create a block with starting text
 memory(command="create", reason="Track coding preferences", path="system/human/prefs/coding.md", description="The user's coding preferences.", file_text="The user seems to add type hints to all of their Python code.")

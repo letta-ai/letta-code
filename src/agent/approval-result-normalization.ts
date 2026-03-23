@@ -1,9 +1,13 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import { INTERRUPTED_BY_USER } from "../constants";
+import type { ToolReturnContent } from "../tools/manager";
 import type { ApprovalResult } from "./approval-execution";
 
 type OutgoingMessage = MessageCreate | ApprovalCreate;
+
+const APPROVAL_COMMENT_PREFIX =
+  "The user approved the tool execution with the following comment:";
 
 export type ApprovalNormalizationOptions = {
   /**
@@ -47,6 +51,47 @@ function normalizeToolReturnText(value: unknown): string {
   }
 }
 
+function isToolReturnContent(value: unknown): value is ToolReturnContent {
+  if (typeof value === "string") return true;
+  if (!Array.isArray(value)) return false;
+
+  return value.every(
+    (part) =>
+      !!part &&
+      typeof part === "object" &&
+      "type" in part &&
+      (((part as { type?: unknown }).type === "text" &&
+        "text" in part &&
+        typeof (part as { text?: unknown }).text === "string") ||
+        ((part as { type?: unknown }).type === "image" &&
+          "data" in part &&
+          typeof (part as { data?: unknown }).data === "string" &&
+          "mimeType" in part &&
+          typeof (part as { mimeType?: unknown }).mimeType === "string")),
+  );
+}
+
+function prependApprovalComment(
+  toolReturn: ToolReturnContent,
+  reason: string | undefined,
+): ToolReturnContent {
+  const trimmedReason = reason?.trim();
+  if (!trimmedReason) {
+    return toolReturn;
+  }
+
+  const commentPart = {
+    type: "text" as const,
+    text: `${APPROVAL_COMMENT_PREFIX} "${trimmedReason}"`,
+  };
+
+  if (typeof toolReturn === "string") {
+    return [commentPart, { type: "text" as const, text: toolReturn }];
+  }
+
+  return [commentPart, ...toolReturn];
+}
+
 export function normalizeApprovalResultsForPersistence(
   approvals: ApprovalResult[] | null | undefined,
   options: ApprovalNormalizationOptions = {},
@@ -56,6 +101,39 @@ export function normalizeApprovalResultsForPersistence(
   const interruptedSet = new Set(options.interruptedToolCallIds ?? []);
 
   return approvals.map((approval) => {
+    if (
+      approval &&
+      typeof approval === "object" &&
+      "type" in approval &&
+      approval.type === "approval" &&
+      "approve" in approval &&
+      approval.approve === true &&
+      "tool_return" in approval &&
+      isToolReturnContent(approval.tool_return)
+    ) {
+      return {
+        type: "tool",
+        tool_call_id:
+          "tool_call_id" in approval &&
+          typeof approval.tool_call_id === "string"
+            ? approval.tool_call_id
+            : "",
+        tool_return: approval.tool_return,
+        status:
+          "status" in approval && approval.status === "error"
+            ? "error"
+            : "success",
+        stdout:
+          "stdout" in approval && Array.isArray(approval.stdout)
+            ? approval.stdout
+            : undefined,
+        stderr:
+          "stderr" in approval && Array.isArray(approval.stderr)
+            ? approval.stderr
+            : undefined,
+      } satisfies ApprovalResult;
+    }
+
     if (
       !approval ||
       typeof approval !== "object" ||
@@ -69,6 +147,12 @@ export function normalizeApprovalResultsForPersistence(
       "tool_call_id" in approval && typeof approval.tool_call_id === "string"
         ? approval.tool_call_id
         : "";
+    const toolReturn = prependApprovalComment(
+      approval.tool_return as ToolReturnContent,
+      "reason" in approval && typeof approval.reason === "string"
+        ? approval.reason
+        : undefined,
+    );
 
     const interruptedByStructuredId =
       toolCallId.length > 0 && interruptedSet.has(toolCallId);
@@ -85,7 +169,15 @@ export function normalizeApprovalResultsForPersistence(
     ) {
       return {
         ...approval,
+        tool_return: toolReturn,
         status: "error" as const,
+      };
+    }
+
+    if (toolReturn !== approval.tool_return) {
+      return {
+        ...approval,
+        tool_return: toolReturn,
       };
     }
 

@@ -194,7 +194,64 @@ describe("listen-client parseServerMessage", () => {
   });
 });
 
+describe("listen-client permission mode scope keys", () => {
+  test("falls back from legacy default key and migrates to agent-scoped key", () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+
+    // Simulate a pre-existing/legacy persisted entry without agent binding.
+    listener.permissionModeByConversation.set(
+      "agent:__unknown__::conversation:default",
+      {
+        mode: "acceptEdits",
+        planFilePath: null,
+        modeBeforePlan: null,
+      },
+    );
+
+    const status = __listenClientTestUtils.buildDeviceStatus(listener, {
+      agent_id: "agent-123",
+      conversation_id: "default",
+    });
+
+    expect(status.current_permission_mode).toBe("acceptEdits");
+    expect(
+      listener.permissionModeByConversation.has(
+        "agent:agent-123::conversation:default",
+      ),
+    ).toBe(true);
+    expect(
+      listener.permissionModeByConversation.has(
+        "agent:__unknown__::conversation:default",
+      ),
+    ).toBe(false);
+  });
+});
+
 describe("listen-client approval resolver wiring", () => {
+  test("resolved approvals restore WAITING_ON_INPUT instead of faking processing", () => {
+    const runtime = __listenClientTestUtils.createRuntime();
+    const socket = new MockSocket(WebSocket.OPEN);
+    runtime.isProcessing = true;
+    runtime.loopStatus = "WAITING_ON_APPROVAL";
+
+    void requestApprovalOverWS(
+      runtime,
+      socket as unknown as WebSocket,
+      "perm-status",
+      makeControlRequest("perm-status"),
+    ).catch(() => {});
+
+    expect(runtime.loopStatus).toBe("WAITING_ON_APPROVAL");
+
+    const resolved = resolvePendingApprovalResolver(runtime, {
+      request_id: "perm-status",
+      decision: { behavior: "allow" },
+    });
+
+    expect(resolved).toBe(true);
+    expect(runtime.loopStatus as string).toBe("WAITING_ON_INPUT");
+  });
+
   test("resolves matching pending resolver", async () => {
     const runtime = __listenClientTestUtils.createRuntime();
     const socket = new MockSocket(WebSocket.OPEN);
@@ -270,6 +327,21 @@ describe("listen-client approval resolver wiring", () => {
     expect(runtime.pendingApprovalResolvers.size).toBe(0);
     await expect(first).rejects.toThrow("socket closed");
     await expect(second).rejects.toThrow("socket closed");
+  });
+
+  test("cleanup resets WAITING_ON_INPUT instead of restoring fake processing", async () => {
+    const runtime = __listenClientTestUtils.createRuntime();
+    runtime.isProcessing = true;
+    runtime.loopStatus = "WAITING_ON_APPROVAL";
+
+    const pending = new Promise<ApprovalResponseBody>((resolve, reject) => {
+      runtime.pendingApprovalResolvers.set("perm-cleanup", { resolve, reject });
+    });
+
+    rejectPendingApprovalResolvers(runtime, "socket closed");
+
+    expect(runtime.loopStatus as string).toBe("WAITING_ON_INPUT");
+    await expect(pending).rejects.toThrow("socket closed");
   });
 
   test("stopRuntime rejects pending resolvers even when callbacks are suppressed", async () => {
@@ -1033,6 +1105,7 @@ describe("listen-client capability-gated approval flow", () => {
     if ("decision" in response) {
       const canUseToolResponse = response.decision as {
         behavior: string;
+        message?: string;
         updated_input?: Record<string, unknown>;
       };
       expect(canUseToolResponse.behavior).toBe("allow");
@@ -1040,6 +1113,38 @@ describe("listen-client capability-gated approval flow", () => {
         file_path: "/updated/path.ts",
         content: "new content",
       });
+    }
+  });
+
+  test("approval_response with allow preserves optional comment", async () => {
+    const runtime = __listenClientTestUtils.createRuntime();
+    const socket = new MockSocket(WebSocket.OPEN);
+    const requestId = "perm-allow-comment-test";
+
+    const pending = requestApprovalOverWS(
+      runtime,
+      socket as unknown as WebSocket,
+      requestId,
+      makeControlRequest(requestId),
+    );
+
+    resolvePendingApprovalResolver(runtime, {
+      request_id: requestId,
+      decision: {
+        behavior: "allow",
+        message: "Ship it",
+      },
+    });
+
+    const response = await pending;
+    expect("decision" in response).toBe(true);
+    if ("decision" in response) {
+      const canUseToolResponse = response.decision as {
+        behavior: string;
+        message?: string;
+      };
+      expect(canUseToolResponse.behavior).toBe("allow");
+      expect(canUseToolResponse.message).toBe("Ship it");
     }
   });
 

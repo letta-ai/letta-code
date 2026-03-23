@@ -49,7 +49,7 @@ describe("init wiring", () => {
     const content = readSource("../../agent/subagents/builtin/init.md");
 
     expect(content).toContain("name: init");
-    expect(content).toContain("model: haiku");
+    expect(content).toContain("model: auto-fast");
     expect(content).toContain("permissionMode: bypassPermissions");
   });
 
@@ -62,11 +62,11 @@ describe("init wiring", () => {
     expect(indexSource).toContain("initAgentMd");
   });
 
-  test("init.md uses haiku model and no skills", () => {
+  test("init.md uses auto-fast model and no skills", () => {
     const content = readSource("../../agent/subagents/builtin/init.md");
 
     expect(content).toContain("name: init");
-    expect(content).toContain("model: haiku");
+    expect(content).toContain("model: auto-fast");
     expect(content).not.toContain("skills:");
     expect(content).toContain("permissionMode: bypassPermissions");
   });

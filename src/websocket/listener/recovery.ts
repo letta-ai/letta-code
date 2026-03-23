@@ -1,6 +1,10 @@
 import { APIError } from "@letta-ai/letta-client/core/error";
 import type { Stream } from "@letta-ai/letta-client/core/streaming";
-import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
+import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
+import type {
+  ApprovalCreate,
+  LettaStreamingResponse,
+} from "@letta-ai/letta-client/resources/agents/messages";
 import type WebSocket from "ws";
 import {
   type ApprovalDecision,
@@ -36,12 +40,14 @@ import {
 } from "./interrupts";
 import {
   emitCanonicalMessageDelta,
+  emitDequeuedUserMessage,
   emitInterruptedStatusDelta,
   emitLoopErrorDelta,
   emitLoopStatusUpdate,
   emitRuntimeStateUpdates,
   setLoopStatus,
 } from "./protocol-outbound";
+import { consumeQueuedTurn } from "./queue";
 import { clearActiveRunState, clearRecoveredApprovalState } from "./runtime";
 import type {
   ConversationRuntime,
@@ -483,6 +489,7 @@ export async function resolveRecoveredApprovalResponse(
                 toolArgs: JSON.stringify(decision.updated_input),
               }
             : entry.approval,
+          reason: decision.message,
         });
       } else {
         decisions.push({
@@ -559,23 +566,33 @@ export async function resolveRecoveredApprovalResponse(
     setLoopStatus(runtime, "SENDING_API_REQUEST", scope);
     emitRuntimeStateUpdates(runtime, scope);
 
+    const continuationMessages: Array<MessageCreate | ApprovalCreate> = [
+      {
+        type: "approval",
+        approvals: approvalResults,
+      },
+    ];
+    let continuationBatchId = `batch-recovered-${crypto.randomUUID()}`;
+    const consumedQueuedTurn = consumeQueuedTurn(runtime);
+    if (consumedQueuedTurn) {
+      const { dequeuedBatch, queuedTurn } = consumedQueuedTurn;
+      continuationBatchId = dequeuedBatch.batchId;
+      continuationMessages.push(...queuedTurn.messages);
+      emitDequeuedUserMessage(socket, runtime, queuedTurn, dequeuedBatch);
+    }
+
     await processTurn(
       {
         type: "message",
         agentId: recovered.agentId,
         conversationId: recovered.conversationId,
-        messages: [
-          {
-            type: "approval",
-            approvals: approvalResults,
-          },
-        ],
+        messages: continuationMessages,
       },
       socket,
       runtime,
       opts?.onStatusChange,
       opts?.connectionId,
-      `batch-recovered-${crypto.randomUUID()}`,
+      continuationBatchId,
     );
 
     clearRecoveredApprovalState(runtime);

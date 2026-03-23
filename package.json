@@ -1,6 +1,6 @@
 {
   "name": "@letta-ai/letta-code",
-  "version": "0.19.1",
+  "version": "0.19.7",
   "description": "Letta Code is a CLI tool for interacting with stateful Letta agents from the terminal.",
   "type": "module",
   "bin": {
@@ -33,7 +33,7 @@
     "access": "public"
   },
   "dependencies": {
-    "@letta-ai/letta-client": "^1.7.12",
+    "@letta-ai/letta-client": "1.8.0",
     "glob": "^13.0.0",
     "highlight.js": "^11.11.1",
     "ink-link": "^5.0.0",
@@ -68,12 +68,12 @@
     "fix": "bunx --bun @biomejs/biome@2.2.5 check --write src",
     "typecheck": "tsc --noEmit",
     "check": "bun run scripts/check.js",
-    "dev": "LETTA_DEBUG=1 bun --loader:.md=text --loader:.mdx=text --loader:.txt=text run src/index.ts",
+    "dev": "LETTA_DEBUG=${LETTA_DEBUG:-1} bun --loader:.md=text --loader:.mdx=text --loader:.txt=text run src/index.ts",
     "build": "node scripts/postinstall-patches.js && bun run build.js",
     "test:update-chain:manual": "bun run src/tests/update-chain-smoke.ts --mode manual",
     "test:update-chain:startup": "bun run src/tests/update-chain-smoke.ts --mode startup",
     "prepublishOnly": "bun run build",
-    "postinstall": "node scripts/postinstall-patches.js || echo letta: vendor patches skipped"
+    "postinstall": "node scripts/postinstall-patches.js || echo letta: vendor patches skipped && node -e \"try{require('fs').chmodSync(require('path').join(require.resolve('node-pty/package.json'),'../prebuilds/darwin-arm64/spawn-helper'),0o755)}catch(e){}\" || true"
   },
   "lint-staged": {
     "*.{ts,tsx,js,jsx,json}": [

@@ -20,6 +20,7 @@ import {
   isConnectApiKeyProvider,
   isConnectBedrockProvider,
   isConnectOAuthProvider,
+  isConnectZaiBaseProvider,
   listConnectProvidersForHelp,
   listConnectProviderTokens,
   type ResolvedConnectProvider,
@@ -205,6 +206,18 @@ function formatApiKeyUsage(provider: ResolvedConnectProvider): string {
     `Usage: /connect ${provider.canonical} <api_key>`,
     "",
     `Connect to ${provider.byokProvider.displayName} by providing your API key.`,
+  ].join("\n");
+}
+
+function formatZaiCodingPlanPrompt(apiKey?: string): string {
+  const keyHint = apiKey ? ` ${apiKey}` : " <api_key>";
+  return [
+    "Connect to Z.ai",
+    "",
+    "Do you have a Z.ai Coding plan?",
+    "",
+    `  • Coding plan:  /connect zai-coding${keyHint}`,
+    `  • Regular API:  /connect zai${keyHint}`,
   ].join("\n");
 }
 
@@ -501,13 +514,23 @@ export async function handleConnect(
   if (isConnectApiKeyProvider(provider)) {
     const apiKey = parts.slice(2).join("");
     if (!apiKey) {
-      addCommandResult(
-        ctx.buffersRef,
-        ctx.refreshDerived,
-        msg,
-        formatApiKeyUsage(provider),
-        false,
-      );
+      if (isConnectZaiBaseProvider(provider)) {
+        addCommandResult(
+          ctx.buffersRef,
+          ctx.refreshDerived,
+          msg,
+          formatZaiCodingPlanPrompt(),
+          false,
+        );
+      } else {
+        addCommandResult(
+          ctx.buffersRef,
+          ctx.refreshDerived,
+          msg,
+          formatApiKeyUsage(provider),
+          false,
+        );
+      }
       return;
     }
     await handleConnectApiKeyProvider(ctx, msg, provider, apiKey);

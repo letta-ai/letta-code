@@ -170,13 +170,18 @@ export type ApprovalDecision =
   | {
       type: "approve";
       approval: ApprovalRequest;
+      reason?: string;
       // If set, skip executeTool and use this result (for fancy UI tools)
       precomputedResult?: ToolExecutionResult;
     }
   | { type: "deny"; approval: ApprovalRequest; reason: string };
 
+export type ApprovalToolResult = ToolReturn & {
+  reason?: string;
+};
+
 // Align result type with the SDK's expected union for approvals payloads
-export type ApprovalResult = ToolReturn | ApprovalReturn;
+export type ApprovalResult = ApprovalToolResult | ApprovalReturn;
 
 /**
  * Execute a single approval decision and return the result.
@@ -225,6 +230,7 @@ async function executeSingleDecision(
         status: decision.precomputedResult.status,
         stdout: decision.precomputedResult.stdout,
         stderr: decision.precomputedResult.stderr,
+        reason: decision.reason,
       };
     }
 
@@ -283,6 +289,7 @@ async function executeSingleDecision(
         status: toolResult.status,
         stdout: toolResult.stdout,
         stderr: toolResult.stderr,
+        reason: decision.reason,
       };
     } catch (e) {
       const isAbortError =
@@ -308,6 +315,7 @@ async function executeSingleDecision(
         tool_call_id: decision.approval.toolCallId,
         tool_return: errorMessage,
         status: "error",
+        reason: decision.reason,
       };
     }
   }

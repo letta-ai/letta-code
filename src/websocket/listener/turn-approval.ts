@@ -31,10 +31,12 @@ import {
   normalizeExecutionResultsForInterruptParity,
 } from "./interrupts";
 import {
+  emitDequeuedUserMessage,
   emitLoopErrorDelta,
   emitRuntimeStateUpdates,
   setLoopStatus,
 } from "./protocol-outbound";
+import { consumeQueuedTurn } from "./queue";
 import { debugLogApprovalResumeState } from "./recovery";
 import {
   markAwaitingAcceptedApprovalContinuationRunId,
@@ -50,6 +52,7 @@ type Decision =
         toolName: string;
         toolArgs: string;
       };
+      reason?: string;
     }
   | {
       type: "deny";
@@ -65,6 +68,7 @@ export type ApprovalBranchResult = {
   terminated: boolean;
   stream: Stream<LettaStreamingResponse> | null;
   currentInput: Array<MessageCreate | ApprovalCreate>;
+  dequeuedBatchId: string;
   pendingNormalizationInterruptedToolCallIds: string[];
   turnToolContextId: string | null;
   lastExecutionResults: ApprovalResult[] | null;
@@ -143,6 +147,7 @@ export async function handleApprovalStop(params: {
       terminated: true,
       stream: null,
       currentInput,
+      dequeuedBatchId,
       pendingNormalizationInterruptedToolCallIds: [],
       turnToolContextId,
       lastExecutionResults: null,
@@ -230,7 +235,11 @@ export async function handleApprovalStop(params: {
                 toolArgs: JSON.stringify(response.updated_input),
               }
             : ac.approval;
-          decisions.push({ type: "approve", approval: finalApproval });
+          decisions.push({
+            type: "approve",
+            approval: finalApproval,
+            reason: response.message,
+          });
         } else {
           decisions.push({
             type: "deny",
@@ -239,11 +248,10 @@ export async function handleApprovalStop(params: {
           });
         }
       } else {
-        const denyReason = responseBody.error;
         decisions.push({
           type: "deny",
           approval: ac.approval,
-          reason: denyReason,
+          reason: responseBody.error,
         });
       }
     }
@@ -265,9 +273,7 @@ export async function handleApprovalStop(params: {
     conversation_id: conversationId,
   });
   const executionRunId =
-    runId ||
-    runtime.activeRunId ||
-    params.msgRunIds[params.msgRunIds.length - 1];
+    runId || runtime.activeRunId || msgRunIds[msgRunIds.length - 1];
   emitToolExecutionStartedEvents(socket, runtime, {
     toolCallIds: lastExecutingToolCallIds,
     runId: executionRunId,
@@ -310,12 +316,22 @@ export async function handleApprovalStop(params: {
       undefined,
     "tool-return",
   );
+
   const nextInput: Array<MessageCreate | ApprovalCreate> = [
     {
       type: "approval",
       approvals: persistedExecutionResults,
     },
   ];
+  let continuationBatchId = dequeuedBatchId;
+  const consumedQueuedTurn = consumeQueuedTurn(runtime);
+  if (consumedQueuedTurn) {
+    const { dequeuedBatch, queuedTurn } = consumedQueuedTurn;
+    continuationBatchId = dequeuedBatch.batchId;
+    nextInput.push(...queuedTurn.messages);
+    emitDequeuedUserMessage(socket, runtime, queuedTurn, dequeuedBatch);
+  }
+
   setLoopStatus(runtime, "SENDING_API_REQUEST", {
     agent_id: agentId,
     conversation_id: conversationId,
@@ -333,6 +349,7 @@ export async function handleApprovalStop(params: {
       terminated: true,
       stream: null,
       currentInput: nextInput,
+      dequeuedBatchId: continuationBatchId,
       pendingNormalizationInterruptedToolCallIds: [],
       turnToolContextId,
       lastExecutionResults,
@@ -341,6 +358,7 @@ export async function handleApprovalStop(params: {
       lastApprovalContinuationAccepted: false,
     };
   }
+
   clearPendingApprovalBatchIds(
     runtime,
     decisions.map((decision) => decision.approval),
@@ -375,6 +393,7 @@ export async function handleApprovalStop(params: {
     terminated: false,
     stream,
     currentInput: nextInput,
+    dequeuedBatchId: continuationBatchId,
     pendingNormalizationInterruptedToolCallIds: [],
     turnToolContextId: null,
     lastExecutionResults,

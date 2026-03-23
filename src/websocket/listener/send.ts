@@ -43,10 +43,12 @@ import {
 } from "./interrupts";
 import { getConversationPermissionModeState } from "./permissionMode";
 import {
+  emitDequeuedUserMessage,
   emitRetryDelta,
   emitRuntimeStateUpdates,
   setLoopStatus,
 } from "./protocol-outbound";
+import { consumeQueuedTurn } from "./queue";
 import {
   drainRecoveryStreamWithEmission,
   finalizeHandledRecoveryTurn,
@@ -80,12 +82,17 @@ export function markAwaitingAcceptedApprovalContinuationRunId(
  * and auto-denying. This is the Phase 3 bounded recovery mechanism — it does NOT
  * touch pendingInterruptedResults (that's exclusively owned by handleIncomingMessage).
  */
-async function resolveStaleApprovals(
+export async function resolveStaleApprovals(
   runtime: ConversationRuntime,
   socket: WebSocket,
   abortSignal: AbortSignal,
+  deps: {
+    getResumeData?: typeof getResumeData;
+  } = {},
 ): Promise<Awaited<ReturnType<typeof drainRecoveryStreamWithEmission>> | null> {
   if (!runtime.agentId) return null;
+
+  const getResumeDataImpl = deps.getResumeData ?? getResumeData;
 
   const client = await getClient();
   let agent: Awaited<ReturnType<typeof client.agents.retrieve>>;
@@ -102,9 +109,14 @@ async function resolveStaleApprovals(
 
   let resumeData: Awaited<ReturnType<typeof getResumeData>>;
   try {
-    resumeData = await getResumeData(client, agent, requestedConversationId, {
-      includeMessageHistory: false,
-    });
+    resumeData = await getResumeDataImpl(
+      client,
+      agent,
+      requestedConversationId,
+      {
+        includeMessageHistory: false,
+      },
+    );
   } catch (err) {
     if (err instanceof APIError && (err.status === 404 || err.status === 422)) {
       return null;
@@ -213,6 +225,7 @@ async function resolveStaleApprovals(
                     toolArgs: JSON.stringify(response.updated_input),
                   }
                 : ac.approval,
+              reason: response.message,
             });
           } else {
             decisions.push({
@@ -273,9 +286,22 @@ async function resolveStaleApprovals(
         "tool-return",
       );
 
+      const continuationMessages: Array<MessageCreate | ApprovalCreate> = [
+        {
+          type: "approval",
+          approvals: approvalResults,
+        },
+      ];
+      const consumedQueuedTurn = consumeQueuedTurn(runtime);
+      if (consumedQueuedTurn) {
+        const { dequeuedBatch, queuedTurn } = consumedQueuedTurn;
+        continuationMessages.push(...queuedTurn.messages);
+        emitDequeuedUserMessage(socket, runtime, queuedTurn, dequeuedBatch);
+      }
+
       const recoveryStream = await sendApprovalContinuationWithRetry(
         recoveryConversationId,
-        [{ type: "approval", approvals: approvalResults }],
+        continuationMessages,
         {
           agentId: runtime.agentId ?? undefined,
           streamTokens: true,
@@ -292,6 +318,8 @@ async function resolveStaleApprovals(
           "Approval recovery send resolved without a continuation stream",
         );
       }
+
+      setLoopStatus(runtime, "PROCESSING_API_RESPONSE", scope);
 
       const drainResult = await drainRecoveryStreamWithEmission(
         recoveryStream as Stream<LettaStreamingResponse>,

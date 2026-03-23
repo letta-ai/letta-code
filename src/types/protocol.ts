@@ -430,7 +430,7 @@ export interface QueueBatchDequeuedEvent extends MessageEnvelope {
 
 /**
  * Why the queue cannot dequeue right now.
- * - streaming: Agent turn is actively streaming
+ * - streaming: Agent turn is actively running/streaming (request, response, or local tool execution)
  * - pending_approvals: Waiting for HITL approval decisions
  * - overlay_open: Plan mode, AskUserQuestion, or other overlay is active
  * - command_running: Slash command is executing
@@ -723,6 +723,8 @@ export type ControlResponseBody =
 // --- can_use_tool response payloads ---
 export interface CanUseToolResponseAllow {
   behavior: "allow";
+  /** Optional user comment attached to an allow decision */
+  message?: string;
   /** Modified tool input */
   updatedInput?: Record<string, unknown> | null;
   /** TODO: Not implemented - dynamic permission rule updates */

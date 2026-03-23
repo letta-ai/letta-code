@@ -9,7 +9,7 @@ const INTERACTIVE_APPROVAL_TOOLS = new Set([
 
 const RUNTIME_USER_INPUT_TOOLS = new Set(["AskUserQuestion", "ExitPlanMode"]);
 
-const HEADLESS_AUTO_ALLOW_TOOLS = new Set(["EnterPlanMode"]);
+const HEADLESS_AUTO_ALLOW_TOOLS = new Set(["EnterPlanMode", "ExitPlanMode"]);
 
 export function isInteractiveApprovalTool(toolName: string): boolean {
   return INTERACTIVE_APPROVAL_TOOLS.has(toolName);

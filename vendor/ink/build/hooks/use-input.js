@@ -147,21 +147,32 @@ const useInput = (inputHandler, options = {}) => {
                         return;
                     }
                     
-                    // Map keycodes to names
+                    // Map keycodes to names and actual character sequences
                     const csiUKeyMap = {
                         9: 'tab',
                         13: 'return',
                         27: 'escape',
+                        32: 'space',
                         127: 'backspace',
+                    };
+                    const csiUSeqMap = {
+                        9: '\t',
+                        13: '\r',
+                        27: '\x1b',
+                        32: ' ',
+                        127: '\x7f',
                     };
                     
                     let name = csiUKeyMap[keycode] || '';
+                    let seq = csiUSeqMap[keycode] || data;
                     
                     // Handle letter keycodes (a-z: 97-122, A-Z: 65-90)
                     if (!name && keycode >= 97 && keycode <= 122) {
                         name = String.fromCharCode(keycode); // lowercase letter
+                        seq = String.fromCharCode(keycode);
                     } else if (!name && keycode >= 65 && keycode <= 90) {
                         name = String.fromCharCode(keycode + 32); // convert to lowercase
+                        seq = String.fromCharCode(keycode + 32);
                     }
                     
                     if (name) {
@@ -171,7 +182,7 @@ const useInput = (inputHandler, options = {}) => {
                             meta: !!(modifier & 10),
                             shift: !!(modifier & 1),
                             option: false,
-                            sequence: data,
+                            sequence: seq,
                             raw: data,
                         };
                     }

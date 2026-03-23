@@ -11,6 +11,23 @@ import {
   finalizeAutoReflectionPayload,
   getReflectionTranscriptPaths,
 } from "../../cli/helpers/reflectionTranscript";
+import { DIRECTORY_LIMIT_ENV } from "../../utils/directoryLimits";
+
+const DIRECTORY_LIMIT_ENV_KEYS = Object.values(DIRECTORY_LIMIT_ENV);
+const ORIGINAL_DIRECTORY_ENV = Object.fromEntries(
+  DIRECTORY_LIMIT_ENV_KEYS.map((key) => [key, process.env[key]]),
+) as Record<string, string | undefined>;
+
+function restoreDirectoryLimitEnv(): void {
+  for (const key of DIRECTORY_LIMIT_ENV_KEYS) {
+    const original = ORIGINAL_DIRECTORY_ENV[key];
+    if (original === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = original;
+    }
+  }
+}
 
 describe("reflectionTranscript helper", () => {
   const agentId = "agent-test";
@@ -23,6 +40,7 @@ describe("reflectionTranscript helper", () => {
   });
 
   afterEach(async () => {
+    restoreDirectoryLimitEnv();
     delete process.env.LETTA_TRANSCRIPT_ROOT;
     await rm(testRoot, { recursive: true, force: true });
   });
@@ -180,6 +198,35 @@ describe("reflectionTranscript helper", () => {
       "This body should not be inlined into parent memory.",
     );
     expect(snapshot).toContain("</parent_memory>");
+  });
+
+  test("buildParentMemorySnapshot collapses large users directory with omission marker", async () => {
+    process.env[DIRECTORY_LIMIT_ENV.memfsTreeMaxChildrenPerDir] = "3";
+
+    const memoryDir = join(testRoot, "memory-large-users");
+    await mkdir(join(memoryDir, "system"), { recursive: true });
+    await mkdir(join(memoryDir, "users"), { recursive: true });
+
+    await writeFile(
+      join(memoryDir, "system", "human.md"),
+      "---\ndescription: User context\n---\nSystem content\n",
+      "utf-8",
+    );
+
+    for (let idx = 0; idx < 10; idx += 1) {
+      const suffix = String(idx).padStart(2, "0");
+      await writeFile(
+        join(memoryDir, "users", `user_${suffix}.md`),
+        `---\ndescription: User block ${suffix}\n---\ncontent ${suffix}\n`,
+        "utf-8",
+      );
+    }
+
+    const snapshot = await buildParentMemorySnapshot(memoryDir);
+
+    expect(snapshot).toContain("users/");
+    expect(snapshot).toContain("… (7 more entries)");
+    expect(snapshot).not.toContain("user_09.md");
   });
 
   test("buildReflectionSubagentPrompt uses expanded reflection instructions", () => {

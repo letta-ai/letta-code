@@ -94,6 +94,8 @@ export function isValidApprovalResponseBody(
     updated_permissions?: unknown;
   };
   if (decision.behavior === "allow") {
+    const hasMessage =
+      decision.message === undefined || typeof decision.message === "string";
     const hasUpdatedInput =
       decision.updated_input === undefined ||
       decision.updated_input === null ||
@@ -104,7 +106,7 @@ export function isValidApprovalResponseBody(
         decision.updated_permissions.every(
           (entry) => typeof entry === "string",
         ));
-    return hasUpdatedInput && hasUpdatedPermissions;
+    return hasMessage && hasUpdatedInput && hasUpdatedPermissions;
   }
   if (decision.behavior === "deny") {
     return typeof decision.message === "string";
@@ -195,10 +197,7 @@ export function resolvePendingApprovalResolver(
   runtime.pendingApprovalResolvers.delete(requestId);
   runtime.listener.approvalRuntimeKeyByRequestId.delete(requestId);
   if (runtime.pendingApprovalResolvers.size === 0) {
-    setLoopStatus(
-      runtime,
-      runtime.isProcessing ? "PROCESSING_API_RESPONSE" : "WAITING_ON_INPUT",
-    );
+    setLoopStatus(runtime, "WAITING_ON_INPUT");
   }
   pending.resolve(response);
   emitLoopStatusIfOpen(runtime.listener, {
@@ -227,10 +226,7 @@ export function rejectPendingApprovalResolvers(
       runtime.listener.approvalRuntimeKeyByRequestId.delete(requestId);
     }
   }
-  setLoopStatus(
-    runtime,
-    runtime.isProcessing ? "PROCESSING_API_RESPONSE" : "WAITING_ON_INPUT",
-  );
+  setLoopStatus(runtime, "WAITING_ON_INPUT");
   emitLoopStatusIfOpen(runtime.listener, {
     agent_id: runtime.agentId,
     conversation_id: runtime.conversationId,

@@ -367,7 +367,6 @@ export async function handleHeadlessCommand(
     console.error(
       "Error: --resume is for interactive mode only (opens conversation selector).\n" +
         "In headless mode, use:\n" +
-        "  --continue           Resume the last session (agent + conversation)\n" +
         "  --conversation <id>  Resume a specific conversation by ID",
     );
     process.exit(1);
@@ -382,7 +381,6 @@ export async function handleHeadlessCommand(
   let specifiedAgentId = values.agent;
   const specifiedAgentName = values.name;
   let specifiedConversationId = values.conversation;
-  const shouldContinue = values.continue;
   const forceNew = values["new-agent"];
   const systemPromptPreset = values.system;
   const systemCustom = values["system-custom"];
@@ -509,10 +507,6 @@ export async function handleHeadlessCommand(
       );
       process.exit(1);
     }
-    if (shouldContinue) {
-      console.error("Error: --from-agent cannot be used with --continue");
-      process.exit(1);
-    }
     if (forceNew) {
       console.error("Error: --from-agent cannot be used with --new-agent");
       process.exit(1);
@@ -543,20 +537,12 @@ export async function handleHeadlessCommand(
           when: fromAfFile,
           message: "--conversation cannot be used with --import",
         },
-        {
-          when: shouldContinue,
-          message: "--conversation cannot be used with --continue",
-        },
       ],
     });
 
     validateFlagConflicts({
       guard: forceNewConversation,
       checks: [
-        {
-          when: shouldContinue,
-          message: "--new cannot be used with --continue",
-        },
         {
           when: specifiedConversationId,
           message: "--new cannot be used with --conversation",
@@ -585,10 +571,6 @@ export async function handleHeadlessCommand(
           {
             when: specifiedAgentName,
             message: "--import cannot be used with --name",
-          },
-          {
-            when: shouldContinue,
-            message: "--import cannot be used with --continue",
           },
           {
             when: forceNew,
@@ -860,14 +842,7 @@ export async function handleHeadlessCommand(
     }
   }
 
-  // Priority 6: --continue with no agent found → error
-  if (!agent && shouldContinue) {
-    console.error("No recent session found in .letta/ or ~/.letta.");
-    console.error("Run 'letta' to get started.");
-    process.exit(1);
-  }
-
-  // Priority 7: Fresh user with no LRU - create default agent
+  // Priority 6: Fresh user with no LRU - create default agent
   if (!agent) {
     const { ensureDefaultAgents } = await import("./agent/defaults");
     const defaultAgent = await ensureDefaultAgents(client, {
@@ -886,11 +861,7 @@ export async function handleHeadlessCommand(
   markMilestone("HEADLESS_AGENT_RESOLVED");
 
   // Check if we're resuming an existing agent (not creating a new one)
-  const isResumingAgent = !!(
-    specifiedAgentId ||
-    shouldContinue ||
-    (!forceNew && !fromAfFile)
-  );
+  const isResumingAgent = !!(specifiedAgentId || (!forceNew && !fromAfFile));
 
   // If resuming, always refresh model settings from presets to keep
   // preset-derived fields in sync, then apply optional command-line
@@ -1110,45 +1081,6 @@ export async function handleHeadlessCommand(
         );
         process.exit(1);
       }
-    }
-  } else if (shouldContinue) {
-    // Try to resume the last conversation for this agent
-    await settingsManager.loadLocalProjectSettings();
-    const lastSession =
-      settingsManager.getLocalLastSession(process.cwd()) ??
-      settingsManager.getGlobalLastSession();
-
-    if (lastSession && lastSession.agentId === agent.id) {
-      if (lastSession.conversationId === "default") {
-        // "default" is always valid - just use it directly
-        conversationId = "default";
-      } else {
-        // Verify the conversation still exists
-        try {
-          debugLog(
-            "conversations",
-            `retrieve(${lastSession.conversationId}) [headless lastSession resume]`,
-          );
-          await client.conversations.retrieve(lastSession.conversationId);
-          conversationId = lastSession.conversationId;
-        } catch {
-          // Conversation no longer exists - error with helpful message
-          console.error(
-            `Attempting to resume conversation ${lastSession.conversationId}, but conversation was not found.`,
-          );
-          console.error(
-            "Resume the default conversation with 'letta -p ...', view recent conversations with 'letta --resume', or start a new conversation with 'letta -p ... --new'.",
-          );
-          process.exit(1);
-        }
-      }
-    } else {
-      // No matching session - error with helpful message
-      console.error("No previous session found for this agent to resume.");
-      console.error(
-        "Resume the default conversation with 'letta -p ...', or start a new conversation with 'letta -p ... --new'.",
-      );
-      process.exit(1);
     }
   } else if (forceNewConversation) {
     // --new flag: create a new conversation (for concurrent sessions)
@@ -1944,8 +1876,8 @@ ${SYSTEM_REMINDER_CLOSE}
           })),
           ...needsUserInput.map((ac) => {
             // One-shot headless mode has no control channel for interactive
-            // approvals. Match Claude behavior by auto-allowing EnterPlanMode
-            // while denying tools that need runtime user responses.
+            // approvals. Auto-allow plan-mode entry/exit tools, while denying
+            // tools that need runtime user responses.
             if (isHeadlessAutoAllowTool(ac.approval.toolName)) {
               return {
                 type: "approve" as const,

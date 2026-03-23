@@ -21,7 +21,7 @@ describe("interactive tool policy", () => {
 
   test("marks headless auto-allow tools", () => {
     expect(isHeadlessAutoAllowTool("EnterPlanMode")).toBe(true);
+    expect(isHeadlessAutoAllowTool("ExitPlanMode")).toBe(true);
     expect(isHeadlessAutoAllowTool("AskUserQuestion")).toBe(false);
-    expect(isHeadlessAutoAllowTool("ExitPlanMode")).toBe(false);
   });
 });
