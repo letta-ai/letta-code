@@ -41,9 +41,21 @@ export class StreamProcessor {
   public lastSeqId: number | null = null;
   public stopReason: StopReasonType | null = null;
 
+  constructor(private readonly seenSeqIdThreshold: number | null = null) {}
+
   processChunk(chunk: LettaStreamingResponse): ChunkProcessingResult {
     let errorInfo: ErrorInfo | undefined;
     let updatedApproval: ApprovalRequest | undefined;
+
+    if (
+      "seq_id" in chunk &&
+      chunk.seq_id != null &&
+      this.seenSeqIdThreshold != null &&
+      chunk.seq_id <= this.seenSeqIdThreshold
+    ) {
+      return { shouldOutput: false };
+    }
+
     // Store the run_id (for error reporting) and seq_id (for stream resumption)
     // Capture run_id even if seq_id is missing - we need it for error details
     if ("run_id" in chunk && chunk.run_id) {
