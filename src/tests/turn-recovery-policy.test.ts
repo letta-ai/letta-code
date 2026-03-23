@@ -57,6 +57,14 @@ describe("isConversationBusyError", () => {
     ).toBe(true);
   });
 
+  test("detects busy error with run_id (run_id breaks old substring match)", () => {
+    expect(
+      isConversationBusyError(
+        "Cannot send a new message: Another request (run_id=run-abc-123) is currently being processed for this conversation. Please wait for it to complete.",
+      ),
+    ).toBe(true);
+  });
+
   test("rejects approval-pending", () => {
     expect(isConversationBusyError("The agent is waiting for approval")).toBe(
       false,
