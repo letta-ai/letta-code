@@ -183,7 +183,7 @@ export async function grep(args: GrepArgs): Promise<GrepResult> {
       stdout?: string;
       code?: string | number;
     };
-    const code = err.code;
+    const code = err.code !== undefined ? String(err.code) : undefined;
     const message =
       typeof err.message === "string" ? err.message : "Unknown error";
     const isAbortError =
@@ -195,7 +195,7 @@ export async function grep(args: GrepArgs): Promise<GrepResult> {
         name: "AbortError",
       });
     }
-    if (code === 1) {
+    if (code === "1") {
       if (output_mode === "files_with_matches")
         return { output: "No files found", files: 0 };
       if (output_mode === "count")
