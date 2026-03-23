@@ -263,9 +263,7 @@ export function isListFoldersCommand(
   return c.type === "list_folders_in_directory" && typeof c.path === "string";
 }
 
-export function isReadFileCommand(
-  value: unknown,
-): value is ReadFileCommand {
+export function isReadFileCommand(value: unknown): value is ReadFileCommand {
   if (!value || typeof value !== "object") return false;
   const c = value as { type?: unknown; path?: unknown; request_id?: unknown };
   return (

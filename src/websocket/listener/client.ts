@@ -1080,8 +1080,7 @@ async function connectWithRetry(
               path: parsed.path,
               content: null,
               success: false,
-              error:
-                err instanceof Error ? err.message : "Failed to read file",
+              error: err instanceof Error ? err.message : "Failed to read file",
             }),
           );
         }
