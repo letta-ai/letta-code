@@ -53,12 +53,23 @@ const drainStreamWithResumeMock = mock(
     return defaultDrainResult;
   },
 );
+const retrieveAgentMock = mock(async (agentId: string) => ({ id: agentId }));
 const cancelConversationMock = mock(async (_conversationId: string) => {});
 const getClientMock = mock(async () => ({
+  agents: {
+    retrieve: retrieveAgentMock,
+  },
   conversations: {
     cancel: cancelConversationMock,
   },
 }));
+const getResumeDataMock = mock(async () => ({ pendingApprovals: [] }));
+const classifyApprovalsMock = mock(async () => ({
+  autoAllowed: [],
+  autoDenied: [],
+  needsUserInput: [],
+}));
+const executeApprovalBatchMock = mock(async () => []);
 const fetchRunErrorDetailMock = mock(async () => null);
 const realStreamModule = await import("../../cli/helpers/stream");
 
@@ -98,6 +109,18 @@ mock.module("../../agent/client", () => ({
   getServerUrl: () => "https://example.test",
   clearLastSDKDiagnostic: () => {},
   consumeLastSDKDiagnostic: () => null,
+}));
+
+mock.module("../../agent/check-approval", () => ({
+  getResumeData: getResumeDataMock,
+}));
+
+mock.module("../../cli/helpers/approvalClassification", () => ({
+  classifyApprovals: classifyApprovalsMock,
+}));
+
+mock.module("../../agent/approval-execution", () => ({
+  executeApprovalBatch: executeApprovalBatchMock,
 }));
 
 mock.module("../../agent/approval-recovery", () => ({
@@ -172,6 +195,10 @@ describe("listen-client multi-worker concurrency", () => {
     getStreamToolContextIdMock.mockClear();
     drainStreamWithResumeMock.mockClear();
     getClientMock.mockClear();
+    retrieveAgentMock.mockClear();
+    getResumeDataMock.mockClear();
+    classifyApprovalsMock.mockClear();
+    executeApprovalBatchMock.mockClear();
     cancelConversationMock.mockClear();
     fetchRunErrorDetailMock.mockClear();
     drainHandlers.clear();
@@ -627,5 +654,94 @@ describe("listen-client multi-worker concurrency", () => {
     expect(statuses.every((status) => status === "processing")).toBe(true);
     expect(listener.conversationRuntimes.has(runtimeB.key)).toBe(false);
     expect(listener.conversationRuntimes.has(runtimeA.key)).toBe(true);
+  });
+
+  test("change_device_state command holds queued input until the tracked command completes", async () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    __listenClientTestUtils.setActiveRuntime(listener);
+    const runtime = __listenClientTestUtils.getOrCreateScopedRuntime(
+      listener,
+      "agent-1",
+      "conv-a",
+    );
+    const socket = new MockSocket();
+    const processedTurns: string[] = [];
+
+    const queueInput = {
+      kind: "message",
+      source: "user",
+      content: "queued during command",
+      clientMessageId: "cm-command",
+      agentId: "agent-1",
+      conversationId: "conv-a",
+    } satisfies Omit<MessageQueueItem, "id" | "enqueuedAt">;
+    const item = runtime.queueRuntime.enqueue(queueInput);
+    if (!item) {
+      throw new Error("Expected queued item to be created");
+    }
+    runtime.queuedMessagesByItemId.set(
+      item.id,
+      makeIncomingMessage("agent-1", "conv-a", "queued during command"),
+    );
+
+    let releaseCommand!: () => void;
+    const commandHold = new Promise<void>((resolve) => {
+      releaseCommand = resolve;
+    });
+    const processQueuedTurn = async (
+      queuedTurn: { conversationId?: string },
+      _dequeuedBatch?: unknown,
+    ) => {
+      if (typeof queuedTurn.conversationId === "string") {
+        processedTurns.push(queuedTurn.conversationId);
+      }
+    };
+
+    const commandPromise = __listenClientTestUtils.handleChangeDeviceStateInput(
+      listener,
+      {
+        command: {
+          type: "change_device_state",
+          runtime: { agent_id: "agent-1", conversation_id: "conv-a" },
+          payload: { cwd: "/tmp/next" },
+        },
+        socket: socket as unknown as WebSocket,
+        opts: {},
+        processQueuedTurn,
+      },
+      {
+        handleCwdChange: async () => {
+          await commandHold;
+        },
+      },
+    );
+
+    await waitFor(() => runtime.loopStatus === "EXECUTING_COMMAND");
+
+    __listenClientTestUtils.scheduleQueuePump(
+      runtime,
+      socket as unknown as WebSocket,
+      {} as never,
+      processQueuedTurn,
+    );
+
+    await waitFor(
+      () => !runtime.queuePumpScheduled && !runtime.queuePumpActive,
+    );
+
+    expect(processedTurns).toEqual([]);
+    expect(runtime.queueRuntime.length).toBe(1);
+    expect(runtime.loopStatus).toBe("EXECUTING_COMMAND");
+
+    releaseCommand();
+    await commandPromise;
+
+    await waitFor(
+      () => processedTurns.length === 1 && runtime.queueRuntime.length === 0,
+    );
+
+    expect(processedTurns).toEqual(["conv-a"]);
+    expect(runtime.loopStatus).toBe("WAITING_ON_INPUT");
+    expect(runtime.queuedMessagesByItemId.size).toBe(0);
   });
 });

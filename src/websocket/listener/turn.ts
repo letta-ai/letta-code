@@ -113,6 +113,7 @@ export async function handleIncomingMessage(
   let llmApiErrorRetries = 0;
   let emptyResponseRetries = 0;
   let lastApprovalContinuationAccepted = false;
+  let activeDequeuedBatchId = dequeuedBatchId;
 
   let lastExecutionResults: ApprovalResult[] | null = null;
   let lastExecutingToolCallIds: string[] = [];
@@ -120,7 +121,9 @@ export async function handleIncomingMessage(
 
   runtime.isProcessing = true;
   runtime.cancelRequested = false;
-  runtime.activeAbortController = new AbortController();
+  const turnAbortController = new AbortController();
+  runtime.activeAbortController = turnAbortController;
+  const turnAbortSignal = turnAbortController.signal;
   runtime.activeWorkingDirectory = turnWorkingDirectory;
   runtime.activeRunId = null;
   runtime.activeRunStartedAt = new Date().toISOString();
@@ -234,7 +237,7 @@ export async function handleIncomingMessage(
           buildSendOptions(),
           socket,
           runtime,
-          runtime.activeAbortController.signal,
+          turnAbortSignal,
         )
       : await sendMessageStreamWithRetry(
           conversationId,
@@ -242,7 +245,7 @@ export async function handleIncomingMessage(
           buildSendOptions(),
           socket,
           runtime,
-          runtime.activeAbortController.signal,
+          turnAbortSignal,
         );
     if (!stream) {
       return;
@@ -269,7 +272,7 @@ export async function handleIncomingMessage(
         stream as Stream<LettaStreamingResponse>,
         buffers,
         () => {},
-        runtime.activeAbortController.signal,
+        turnAbortSignal,
         undefined,
         ({ chunk, shouldOutput, errorInfo }) => {
           const maybeRunId = (chunk as { run_id?: unknown }).run_id;
@@ -422,7 +425,7 @@ export async function handleIncomingMessage(
                   buildSendOptions(),
                   socket,
                   runtime,
-                  runtime.activeAbortController.signal,
+                  turnAbortSignal,
                 )
               : await sendMessageStreamWithRetry(
                   conversationId,
@@ -430,7 +433,7 @@ export async function handleIncomingMessage(
                   buildSendOptions(),
                   socket,
                   runtime,
-                  runtime.activeAbortController.signal,
+                  turnAbortSignal,
                 );
           if (!stream) {
             return;
@@ -486,7 +489,7 @@ export async function handleIncomingMessage(
           });
 
           await new Promise((resolve) => setTimeout(resolve, delayMs));
-          if (runtime.activeAbortController.signal.aborted) {
+          if (turnAbortSignal.aborted) {
             throw new Error("Cancelled by user");
           }
 
@@ -505,7 +508,7 @@ export async function handleIncomingMessage(
                   buildSendOptions(),
                   socket,
                   runtime,
-                  runtime.activeAbortController.signal,
+                  turnAbortSignal,
                 )
               : await sendMessageStreamWithRetry(
                   conversationId,
@@ -513,7 +516,7 @@ export async function handleIncomingMessage(
                   buildSendOptions(),
                   socket,
                   runtime,
-                  runtime.activeAbortController.signal,
+                  turnAbortSignal,
                 );
           if (!stream) {
             return;
@@ -557,7 +560,7 @@ export async function handleIncomingMessage(
           });
 
           await new Promise((resolve) => setTimeout(resolve, delayMs));
-          if (runtime.activeAbortController.signal.aborted) {
+          if (turnAbortSignal.aborted) {
             throw new Error("Cancelled by user");
           }
 
@@ -576,7 +579,7 @@ export async function handleIncomingMessage(
                   buildSendOptions(),
                   socket,
                   runtime,
-                  runtime.activeAbortController.signal,
+                  turnAbortSignal,
                 )
               : await sendMessageStreamWithRetry(
                   conversationId,
@@ -584,7 +587,7 @@ export async function handleIncomingMessage(
                   buildSendOptions(),
                   socket,
                   runtime,
-                  runtime.activeAbortController.signal,
+                  turnAbortSignal,
                 );
           if (!stream) {
             return;
@@ -660,12 +663,13 @@ export async function handleIncomingMessage(
         conversationId,
         turnWorkingDirectory,
         turnPermissionModeState,
-        dequeuedBatchId,
+        dequeuedBatchId: activeDequeuedBatchId,
         runId,
         msgRunIds,
         currentInput,
         pendingNormalizationInterruptedToolCallIds,
         turnToolContextId,
+        abortSignal: turnAbortSignal,
         buildSendOptions,
       });
       if (approvalResult.terminated || !approvalResult.stream) {
@@ -673,6 +677,7 @@ export async function handleIncomingMessage(
       }
       stream = approvalResult.stream;
       currentInput = approvalResult.currentInput;
+      activeDequeuedBatchId = approvalResult.dequeuedBatchId;
       pendingNormalizationInterruptedToolCallIds =
         approvalResult.pendingNormalizationInterruptedToolCallIds;
       turnToolContextId = approvalResult.turnToolContextId;

@@ -15,7 +15,10 @@ import { type DequeuedBatch, QueueRuntime } from "../../queue/queueRuntime";
 import { createSharedReminderState } from "../../reminders/state";
 import { settingsManager } from "../../settings-manager";
 import { loadTools } from "../../tools/manager";
-import type { ApprovalResponseBody } from "../../types/protocol_v2";
+import type {
+  ApprovalResponseBody,
+  ChangeDeviceStateCommand,
+} from "../../types/protocol_v2";
 import { isDebugEnabled } from "../../utils/debug";
 import {
   handleTerminalInput,
@@ -72,6 +75,7 @@ import {
   setLoopStatus,
 } from "./protocol-outbound";
 import {
+  consumeQueuedTurn,
   getQueueItemScope,
   getQueueItemsScope,
   normalizeInboundMessages,
@@ -104,7 +108,10 @@ import {
   normalizeCwdAgentId,
   resolveRuntimeScope,
 } from "./scope";
-import { markAwaitingAcceptedApprovalContinuationRunId } from "./send";
+import {
+  markAwaitingAcceptedApprovalContinuationRunId,
+  resolveStaleApprovals,
+} from "./send";
 import { handleIncomingMessage } from "./turn";
 import type {
   ChangeCwdMessage,
@@ -326,6 +333,11 @@ async function handleApprovalResponseInput(
       params.runtime.agent_id,
       params.runtime.conversation_id,
     );
+
+  if (targetRuntime.cancelRequested && !targetRuntime.isProcessing) {
+    return false;
+  }
+
   if (
     await deps.resolveRecoveredApprovalResponse(
       targetRuntime,
@@ -348,6 +360,105 @@ async function handleApprovalResponseInput(
   }
 
   return false;
+}
+
+async function handleChangeDeviceStateInput(
+  listener: ListenerRuntime,
+  params: {
+    command: ChangeDeviceStateCommand;
+    socket: WebSocket;
+    opts: {
+      onStatusChange?: StartListenerOptions["onStatusChange"];
+      connectionId?: string;
+    };
+    processQueuedTurn: ProcessQueuedTurn;
+  },
+  deps: Partial<{
+    getActiveRuntime: typeof getActiveRuntime;
+    getOrCreateScopedRuntime: typeof getOrCreateScopedRuntime;
+    getPendingControlRequestCount: typeof getPendingControlRequestCount;
+    setLoopStatus: typeof setLoopStatus;
+    handleModeChange: typeof handleModeChange;
+    handleCwdChange: typeof handleCwdChange;
+    emitDeviceStatusUpdate: typeof emitDeviceStatusUpdate;
+    scheduleQueuePump: typeof scheduleQueuePump;
+  }> = {},
+): Promise<boolean> {
+  const resolvedDeps = {
+    getActiveRuntime,
+    getOrCreateScopedRuntime,
+    getPendingControlRequestCount,
+    setLoopStatus,
+    handleModeChange,
+    handleCwdChange,
+    emitDeviceStatusUpdate,
+    scheduleQueuePump,
+    ...deps,
+  };
+
+  if (
+    listener !== resolvedDeps.getActiveRuntime() ||
+    listener.intentionallyClosed
+  ) {
+    return false;
+  }
+
+  const scope = {
+    agent_id:
+      params.command.payload.agent_id ??
+      params.command.runtime.agent_id ??
+      undefined,
+    conversation_id:
+      params.command.payload.conversation_id ??
+      params.command.runtime.conversation_id ??
+      undefined,
+  };
+  const scopedRuntime = resolvedDeps.getOrCreateScopedRuntime(
+    listener,
+    scope.agent_id,
+    scope.conversation_id,
+  );
+  const shouldTrackCommand =
+    !scopedRuntime.isProcessing &&
+    resolvedDeps.getPendingControlRequestCount(listener, scope) === 0;
+  if (shouldTrackCommand) {
+    resolvedDeps.setLoopStatus(scopedRuntime, "EXECUTING_COMMAND", scope);
+  }
+  try {
+    if (params.command.payload.mode) {
+      resolvedDeps.handleModeChange(
+        { mode: params.command.payload.mode },
+        params.socket,
+        listener,
+        scope,
+      );
+    }
+    if (params.command.payload.cwd) {
+      await resolvedDeps.handleCwdChange(
+        {
+          agentId: scope.agent_id ?? null,
+          conversationId: scope.conversation_id ?? null,
+          cwd: params.command.payload.cwd,
+        },
+        params.socket,
+        scopedRuntime,
+      );
+    } else if (!params.command.payload.mode) {
+      resolvedDeps.emitDeviceStatusUpdate(params.socket, listener, scope);
+    }
+  } finally {
+    if (shouldTrackCommand) {
+      resolvedDeps.setLoopStatus(scopedRuntime, "WAITING_ON_INPUT", scope);
+      resolvedDeps.scheduleQueuePump(
+        scopedRuntime,
+        params.socket,
+        params.opts as StartListenerOptions,
+        params.processQueuedTurn,
+      );
+    }
+  }
+
+  return true;
 }
 
 async function handleCwdChange(
@@ -776,55 +887,15 @@ async function connectWithRetry(
     }
 
     if (parsed.type === "change_device_state") {
-      if (runtime !== getActiveRuntime() || runtime.intentionallyClosed) {
-        return;
-      }
-      const scope = {
-        agent_id:
-          parsed.payload.agent_id ?? parsed.runtime.agent_id ?? undefined,
-        conversation_id:
-          parsed.payload.conversation_id ??
-          parsed.runtime.conversation_id ??
-          undefined,
-      };
-      const scopedRuntime = getOrCreateScopedRuntime(
-        runtime,
-        scope.agent_id,
-        scope.conversation_id,
-      );
-      const shouldTrackCommand =
-        !scopedRuntime.isProcessing &&
-        getPendingControlRequestCount(runtime, scope) === 0;
-      if (shouldTrackCommand) {
-        setLoopStatus(scopedRuntime, "EXECUTING_COMMAND", scope);
-      }
-      try {
-        if (parsed.payload.mode) {
-          handleModeChange(
-            { mode: parsed.payload.mode },
-            socket,
-            runtime,
-            scope,
-          );
-        }
-        if (parsed.payload.cwd) {
-          await handleCwdChange(
-            {
-              agentId: scope.agent_id ?? null,
-              conversationId: scope.conversation_id ?? null,
-              cwd: parsed.payload.cwd,
-            },
-            socket,
-            scopedRuntime,
-          );
-        } else if (!parsed.payload.mode) {
-          emitDeviceStatusUpdate(socket, runtime, scope);
-        }
-      } finally {
-        if (shouldTrackCommand) {
-          setLoopStatus(scopedRuntime, "WAITING_ON_INPUT", scope);
-        }
-      }
+      await handleChangeDeviceStateInput(runtime, {
+        command: parsed,
+        socket,
+        opts: {
+          onStatusChange: opts.onStatusChange,
+          connectionId: opts.connectionId,
+        },
+        processQueuedTurn,
+      });
       return;
     }
 
@@ -874,11 +945,9 @@ async function connectWithRetry(
           ...scopedRuntime.activeExecutingToolCallIds,
         ];
       }
-      if (
-        scopedRuntime.activeAbortController &&
-        !scopedRuntime.activeAbortController.signal.aborted
-      ) {
-        scopedRuntime.activeAbortController.abort();
+      const activeAbortController = scopedRuntime.activeAbortController;
+      if (activeAbortController && !activeAbortController.signal.aborted) {
+        activeAbortController.abort();
       }
       const recoveredApprovalState = getRecoveredApprovalStateForScope(
         runtime,
@@ -1299,10 +1368,13 @@ export const __listenClientTestUtils = {
   shouldAttemptPostStopApprovalRecovery,
   getApprovalContinuationRecoveryDisposition,
   markAwaitingAcceptedApprovalContinuationRunId,
+  resolveStaleApprovals,
   normalizeMessageContentImages,
   normalizeInboundMessages,
+  consumeQueuedTurn,
   handleIncomingMessage,
   handleApprovalResponseInput,
+  handleChangeDeviceStateInput,
   scheduleQueuePump,
   recoverApprovalStateForSync,
   clearRecoveredApprovalStateForScope: (
