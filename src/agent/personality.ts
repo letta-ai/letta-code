@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { parseMdxFrontmatter } from "./memory";
-import { getMemoryRepoDir, pullMemory } from "./memoryGit";
+import { getMemoryRepoDir, pullMemory, pushMemory } from "./memoryGit";
 import { MEMORY_PROMPTS, SYSTEM_PROMPTS } from "./promptAssets";
 
 const execFile = promisify(execFileCb);
@@ -195,25 +195,6 @@ async function hasStagedChanges(
   }
 }
 
-async function pushWithRebaseRetry(cwd: string): Promise<void> {
-  try {
-    await runGit(cwd, ["push"]);
-  } catch (pushError) {
-    await runGit(cwd, ["pull", "--rebase"]);
-    try {
-      await runGit(cwd, ["push"]);
-    } catch (retryError) {
-      const pushMessage =
-        pushError instanceof Error ? pushError.message : String(pushError);
-      const retryMessage =
-        retryError instanceof Error ? retryError.message : String(retryError);
-      throw new Error(
-        `git push failed after retry (${pushMessage}). Retry push failed (${retryMessage}).`,
-      );
-    }
-  }
-}
-
 export async function applyPersonalityToMemory(
   params: ApplyPersonalityToMemoryParams,
 ): Promise<ApplyPersonalityToMemoryResult> {
@@ -271,7 +252,7 @@ export async function applyPersonalityToMemory(
     personaRelativePath,
   ]);
 
-  await pushWithRebaseRetry(repoDir);
+  await pushMemory(params.agentId);
 
   return {
     changed: true,

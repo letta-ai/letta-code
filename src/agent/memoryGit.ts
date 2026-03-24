@@ -374,6 +374,18 @@ export async function pullMemory(
   await configureLocalCredentialHelper(dir, token);
   installPreCommitHook(dir);
 
+  // Stash any uncommitted changes so pull can proceed on a clean tree
+  let stashed = false;
+  try {
+    const { stdout: statusOut } = await runGit(dir, ["status", "--porcelain"]);
+    if (statusOut.trim()) {
+      await runGit(dir, ["stash", "--include-untracked"]);
+      stashed = true;
+    }
+  } catch {
+    // If stash fails, proceed anyway — pull may still work
+  }
+
   try {
     const { stdout, stderr } = await runGit(dir, ["pull", "--ff-only"], token);
     const output = stdout + stderr;
@@ -397,6 +409,59 @@ export async function pullMemory(
         summary: `Pull failed: ${msg}\nHint: verify remote and auth:\n- git -C ${dir} remote -v\n- git -C ${dir} config --get-regexp '^credential\\..*\\.helper$'`,
       };
     }
+  } finally {
+    if (stashed) {
+      try {
+        await runGit(dir, ["stash", "pop"]);
+      } catch {
+        debugWarn("memfs-git", "Failed to pop stash after pull");
+      }
+    }
+  }
+}
+
+/**
+ * Push local memory commits to the server.
+ * Handles auth, retries with rebase on conflict, and gracefully
+ * handles empty remotes (no branch on server yet).
+ */
+export async function pushMemory(agentId: string): Promise<void> {
+  const token = await getAuthToken();
+  const dir = getMemoryRepoDir(agentId);
+
+  await configureLocalCredentialHelper(dir, token);
+
+  try {
+    await runGit(dir, ["push"], token);
+    return;
+  } catch (pushError) {
+    debugWarn(
+      "memfs-git",
+      `Push failed, attempting pull --rebase: ${pushError instanceof Error ? pushError.message : String(pushError)}`,
+    );
+  }
+
+  // Push failed — try pull --rebase then retry push.
+  // The pull itself may fail (e.g. empty remote with no branch), so catch that.
+  try {
+    await runGit(dir, ["pull", "--rebase"], token);
+  } catch (pullError) {
+    debugWarn(
+      "memfs-git",
+      `Pull --rebase also failed (remote may be empty): ${pullError instanceof Error ? pullError.message : String(pullError)}`,
+    );
+    // If pull fails, the push won't succeed either — surface original push error
+    // but don't crash; the commit is saved locally and can be pushed later.
+    return;
+  }
+
+  try {
+    await runGit(dir, ["push"], token);
+  } catch (retryError) {
+    debugWarn(
+      "memfs-git",
+      `Push failed after rebase: ${retryError instanceof Error ? retryError.message : String(retryError)}`,
+    );
   }
 }
 

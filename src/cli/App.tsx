@@ -66,6 +66,7 @@ import {
 import {
   applyPersonalityToMemory,
   detectPersonalityFromPersonaFile,
+  getPersonalityContent,
   getPersonalityOption,
   type PersonalityId,
 } from "../agent/personality";
@@ -11875,10 +11876,71 @@ ${SYSTEM_REMINDER_CLOSE}
           }
 
           setCurrentPersonalityId(personalityId);
-          cmd.finish(
-            `Personality swapped to ${personality.label}. Run \`/compact all\` or \`/new\` to experience the new personality`,
-            true,
-          );
+
+          // Wait for the remote block to pick up the git push
+          cmd.update({
+            output: "Waiting for changes to propagate...",
+            phase: "running",
+          });
+
+          const expectedContent = getPersonalityContent(personalityId).trim();
+          const client = await getClient();
+          const maxWaitMs = 300_000;
+          const pollIntervalMs = 1_000;
+          const start = Date.now();
+          let propagated = false;
+
+          while (Date.now() - start < maxWaitMs) {
+            try {
+              const blockPage = await client.agents.blocks.list(agentId);
+              const block = blockPage.items.find(
+                (b) => b.label === "system/persona",
+              );
+              if (!block) {
+                throw new Error("system/persona block not found on agent");
+              }
+              if (block.value.includes(expectedContent)) {
+                propagated = true;
+                break;
+              }
+            } catch (pollErr) {
+              if (
+                pollErr instanceof Error &&
+                pollErr.message.includes("not found on agent")
+              ) {
+                throw pollErr;
+              }
+              // Transient API error — keep polling
+            }
+            await new Promise((r) => setTimeout(r, pollIntervalMs));
+          }
+
+          if (propagated) {
+            cmd.update({
+              output: "Recompiling agent...",
+              phase: "running",
+            });
+
+            const currentConversationId = conversationIdRef.current;
+            await client.agents.recompile(agentId, {
+              update_timestamp: true,
+            });
+            const conversationParams =
+              currentConversationId === "default"
+                ? { agent_id: agentId }
+                : undefined;
+            await client.conversations.recompile(
+              currentConversationId,
+              conversationParams,
+            );
+
+            cmd.finish(`Personality swapped to ${personality.label}`, true);
+          } else {
+            cmd.finish(
+              `Personality swapped to ${personality.label}. Block propagation timed out — run \`/recompile\` manually`,
+              true,
+            );
+          }
         });
       } catch (error) {
         const errorDetails = formatErrorDetails(error, agentId);
