@@ -46,7 +46,7 @@ const FILE_MODIFYING_TOOLS = new Set([
 ]);
 
 export const TOOL_NAMES = Object.keys(TOOL_DEFINITIONS) as ToolName[];
-const SIGNAL_AWARE_TOOLS = new Set([
+const STREAMING_SHELL_TOOLS = new Set([
   "Bash",
   "BashOutput",
   "TaskOutput",
@@ -56,14 +56,6 @@ const SIGNAL_AWARE_TOOLS = new Set([
   "Shell",
   "run_shell_command",
   "RunShellCommand",
-  "Glob",
-  "Grep",
-  "grep_files",
-  "GrepFiles",
-  "glob_gemini",
-  "GlobGemini",
-  "search_file_content",
-  "SearchFileContent",
 ]);
 
 // Maps internal tool names to server/model-facing tool names
@@ -1332,22 +1324,13 @@ export async function executeTool(
     // Inject options for tools that support them without altering schemas
     let enhancedArgs = args;
 
-    if (SIGNAL_AWARE_TOOLS.has(internalName) && options?.signal) {
-      enhancedArgs = { ...enhancedArgs, signal: options.signal };
-    }
-
-    if (
-      (internalName === "Bash" ||
-        internalName === "BashOutput" ||
-        internalName === "shell_command" ||
-        internalName === "ShellCommand" ||
-        internalName === "shell" ||
-        internalName === "Shell" ||
-        internalName === "run_shell_command" ||
-        internalName === "RunShellCommand") &&
-      options?.onOutput
-    ) {
-      enhancedArgs = { ...enhancedArgs, onOutput: options.onOutput };
+    if (STREAMING_SHELL_TOOLS.has(internalName)) {
+      if (options?.signal) {
+        enhancedArgs = { ...enhancedArgs, signal: options.signal };
+      }
+      if (options?.onOutput) {
+        enhancedArgs = { ...enhancedArgs, onOutput: options.onOutput };
+      }
     }
 
     // Inject toolCallId and abort signal for Task tool

@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { search_file_content } from "../../tools/impl/SearchFileContentGemini";
-import { executeTool, loadSpecificTools } from "../../tools/manager";
 import { TestDirectory } from "../helpers/testFs";
 
 describe("SearchFileContent tool", () => {
@@ -74,41 +73,5 @@ describe("SearchFileContent tool", () => {
     } as Parameters<typeof search_file_content>[0]);
 
     expect(result.message).toContain("Hello World");
-  });
-
-  test("aborts promptly when signal is already aborted", async () => {
-    testDir = new TestDirectory();
-    testDir.createFile("test.txt", "Hello World");
-
-    const abortController = new AbortController();
-    abortController.abort();
-
-    await expect(
-      search_file_content({
-        pattern: "Hello",
-        dir_path: testDir.path,
-        signal: abortController.signal,
-      }),
-    ).rejects.toMatchObject({ name: "AbortError" });
-  });
-
-  test("manager passes signal through to SearchFileContent execution", async () => {
-    testDir = new TestDirectory();
-    testDir.createFile("test.txt", "Hello World");
-
-    await loadSpecificTools(["SearchFileContent"]);
-
-    const abortController = new AbortController();
-    abortController.abort();
-
-    const result = await executeTool(
-      "SearchFileContent",
-      { pattern: "Hello", dir_path: testDir.path },
-      { signal: abortController.signal },
-    );
-
-    expect(result.status).toBe("error");
-    expect(typeof result.toolReturn).toBe("string");
-    expect(result.toolReturn).toContain("Interrupted by user");
   });
 });

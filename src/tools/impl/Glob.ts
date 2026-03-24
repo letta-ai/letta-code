@@ -24,7 +24,6 @@ const rgPath = getRipgrepPath();
 interface GlobArgs {
   pattern: string;
   path?: string;
-  signal?: AbortSignal;
 }
 
 interface GlobResult {
@@ -60,7 +59,7 @@ function applyFileLimit(files: string[], workingDirectory: string): GlobResult {
 
 export async function glob(args: GlobArgs): Promise<GlobResult> {
   validateRequiredParams(args, ["pattern"], "Glob");
-  const { pattern, path: searchPath, signal } = args;
+  const { pattern, path: searchPath } = args;
 
   // Explicit check for undefined/empty pattern (validateRequiredParams only checks key existence)
   if (!pattern) {
@@ -94,7 +93,6 @@ export async function glob(args: GlobArgs): Promise<GlobResult> {
     const { stdout } = await execFileAsync(rgPath, rgArgs, {
       maxBuffer: 50 * 1024 * 1024, // 50MB buffer for large file lists
       cwd: userCwd,
-      signal,
     });
 
     const files = stdout.trim().split("\n").filter(Boolean).sort();
@@ -105,16 +103,6 @@ export async function glob(args: GlobArgs): Promise<GlobResult> {
       stdout?: string;
       code?: string | number;
     };
-
-    const isAbortError =
-      err.name === "AbortError" ||
-      err.code === "ABORT_ERR" ||
-      err.message === "The operation was aborted";
-    if (isAbortError) {
-      throw Object.assign(new Error("The operation was aborted"), {
-        name: "AbortError",
-      });
-    }
 
     // ripgrep exits with code 1 when no files match - that's not an error
     if (err.code === 1 || err.code === "1") {

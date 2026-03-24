@@ -42,6 +42,7 @@ import {
   markAwaitingAcceptedApprovalContinuationRunId,
   sendApprovalContinuationWithRetry,
 } from "./send";
+import { injectQueuedSkillContent } from "./skill-injection";
 import type { ConversationRuntime } from "./types";
 
 type Decision =
@@ -332,13 +333,15 @@ export async function handleApprovalStop(params: {
     emitDequeuedUserMessage(socket, runtime, queuedTurn, dequeuedBatch);
   }
 
+  const nextInputWithSkillContent = injectQueuedSkillContent(nextInput);
+
   setLoopStatus(runtime, "SENDING_API_REQUEST", {
     agent_id: agentId,
     conversation_id: conversationId,
   });
   const stream = await sendApprovalContinuationWithRetry(
     conversationId,
-    nextInput,
+    nextInputWithSkillContent,
     buildSendOptions(),
     socket,
     runtime,
@@ -348,7 +351,7 @@ export async function handleApprovalStop(params: {
     return {
       terminated: true,
       stream: null,
-      currentInput: nextInput,
+      currentInput: nextInputWithSkillContent,
       dequeuedBatchId: continuationBatchId,
       pendingNormalizationInterruptedToolCallIds: [],
       turnToolContextId,
@@ -392,7 +395,7 @@ export async function handleApprovalStop(params: {
   return {
     terminated: false,
     stream,
-    currentInput: nextInput,
+    currentInput: nextInputWithSkillContent,
     dequeuedBatchId: continuationBatchId,
     pendingNormalizationInterruptedToolCallIds: [],
     turnToolContextId: null,

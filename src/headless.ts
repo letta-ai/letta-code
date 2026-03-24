@@ -1316,6 +1316,7 @@ export async function handleHeadlessCommand(
       const approvalInput: ApprovalCreate = {
         type: "approval",
         approvals: executedResults as ApprovalResult[],
+        otid: randomUUID(),
       };
 
       // Inject queued skill content as user message parts (LET-7353)
@@ -1335,6 +1336,7 @@ export async function handleHeadlessCommand(
               type: "text" as const,
               text: sc.content,
             })),
+            otid: randomUUID(),
           });
         }
       }
@@ -1462,8 +1464,16 @@ ${SYSTEM_REMINDER_CLOSE}
     {
       role: "user",
       content: contentParts,
+      otid: randomUUID(),
     },
   ];
+  const refreshCurrentInputOtids = () => {
+    // Terminal stop-reason retries are NEW requests and must not reuse OTIDs.
+    currentInput = currentInput.map((item) => ({
+      ...item,
+      otid: randomUUID(),
+    }));
+  };
 
   // Track lastRunId outside the while loop so it's available in catch block
   let lastKnownRunId: string | null = null;
@@ -1514,6 +1524,7 @@ ${SYSTEM_REMINDER_CLOSE}
                 type: "text" as const,
                 text: sc.content,
               })),
+              otid: randomUUID(),
             },
           ];
         }
@@ -1569,12 +1580,11 @@ ${SYSTEM_REMINDER_CLOSE}
           continue;
         }
 
-        // Check for 409 "conversation busy" error - retry once with delay
-        // TODO: Add pre-stream resume logic for parity with App.tsx.
-        // Before waiting, attempt to discover the in-flight run via
-        // discoverFallbackRunIdWithTimeout() and resume its stream with
-        // client.runs.messages.stream() + drainStream(). See App.tsx
-        // retry_conversation_busy handler for reference implementation.
+        // Check for 409 "conversation busy" - wait and retry.
+        // Stream resume is not attempted here: without OTID validation we
+        // cannot confirm the in-flight run belongs to this request (e.g. two
+        // terminals on the same agent). App.tsx handles resume with proper
+        // context via discoverFallbackRunIdWithTimeout.
         if (preStreamAction === "retry_conversation_busy") {
           conversationBusyRetries += 1;
           const retryDelayMs = getRetryDelayMs({
@@ -1582,11 +1592,10 @@ ${SYSTEM_REMINDER_CLOSE}
             attempt: conversationBusyRetries,
           });
 
-          // Emit retry message for stream-json mode
           if (outputFormat === "stream-json") {
             const retryMsg: RetryMessage = {
               type: "retry",
-              reason: "error", // 409 conversation busy is a pre-stream error
+              reason: "error",
               attempt: conversationBusyRetries,
               max_attempts: CONVERSATION_BUSY_MAX_RETRIES,
               delay_ms: retryDelayMs,
@@ -1600,7 +1609,6 @@ ${SYSTEM_REMINDER_CLOSE}
             );
           }
 
-          // Wait before retry
           await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
           continue;
         }
@@ -1918,12 +1926,12 @@ ${SYSTEM_REMINDER_CLOSE}
         );
 
         // Send all results in one batch
-        currentInput = [
-          {
-            type: "approval",
-            approvals: executedResults as ApprovalResult[],
-          },
-        ];
+        const approvalInputWithOtid = {
+          type: "approval" as const,
+          approvals: executedResults as ApprovalResult[],
+          otid: randomUUID(),
+        };
+        currentInput = [approvalInputWithOtid];
         continue;
       }
 
@@ -1979,6 +1987,8 @@ ${SYSTEM_REMINDER_CLOSE}
           // Exponential backoff before retrying the same input
           await new Promise((resolve) => setTimeout(resolve, delayMs));
 
+          // Post-stream retry creates a new run/request.
+          refreshCurrentInputOtids();
           continue;
         }
       }
@@ -2092,6 +2102,7 @@ ${SYSTEM_REMINDER_CLOSE}
               const nudgeMessage: MessageCreate = {
                 role: "system",
                 content: `<system-reminder>The previous response was empty. Please provide a response with either text content or a tool call.</system-reminder>`,
+                otid: randomUUID(),
               };
               currentInput = [...currentInput, nudgeMessage];
             }
@@ -2115,6 +2126,8 @@ ${SYSTEM_REMINDER_CLOSE}
             }
 
             await new Promise((resolve) => setTimeout(resolve, delayMs));
+            // Empty-response retry creates a new run/request.
+            refreshCurrentInputOtids();
             continue;
           }
 
@@ -2148,6 +2161,8 @@ ${SYSTEM_REMINDER_CLOSE}
             }
 
             await new Promise((resolve) => setTimeout(resolve, delayMs));
+            // Post-stream retry creates a new run/request.
+            refreshCurrentInputOtids();
             continue;
           }
         } catch (_e) {
@@ -2481,6 +2496,7 @@ async function runBidirectionalMode(
       const approvalInput: ApprovalCreate = {
         type: "approval",
         approvals: executedResults as ApprovalResult[],
+        otid: randomUUID(),
       };
 
       const approvalMessages: Array<
@@ -2500,6 +2516,7 @@ async function runBidirectionalMode(
               type: "text" as const,
               text: sc.content,
             })),
+            otid: randomUUID(),
           });
         }
       }
@@ -2902,6 +2919,7 @@ async function runBidirectionalMode(
       const approvalInput: ApprovalCreate = {
         type: "approval",
         approvals: executedResults as ApprovalResult[],
+        otid: randomUUID(),
       };
       const approvalStream = await sendMessageStream(
         targetConversationId,
@@ -3628,12 +3646,12 @@ async function runBidirectionalMode(
             );
 
             // Send approval results back to continue
-            currentInput = [
-              {
-                type: "approval",
-                approvals: executedResults,
-              } as unknown as MessageCreate,
-            ];
+            const approvalInputWithOtid = {
+              type: "approval" as const,
+              approvals: executedResults,
+              otid: randomUUID(),
+            };
+            currentInput = [approvalInputWithOtid as unknown as MessageCreate];
 
             // Continue the loop to process the next stream
             continue;

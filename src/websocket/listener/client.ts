@@ -57,9 +57,9 @@ import {
   stashRecoveredApprovalInterrupts,
 } from "./interrupts";
 import {
-  getConversationPermissionModeState,
+  getOrCreateConversationPermissionModeStateRef,
   loadPersistedPermissionModeMap,
-  setConversationPermissionModeState,
+  persistPermissionModeMapForRuntime,
 } from "./permissionMode";
 import {
   isEnableMemfsCommand,
@@ -148,32 +148,30 @@ function handleModeChange(
   try {
     const agentId = scope?.agent_id ?? null;
     const conversationId = scope?.conversation_id ?? "default";
-    const current = getConversationPermissionModeState(
+    const current = getOrCreateConversationPermissionModeStateRef(
       runtime,
       agentId,
       conversationId,
     );
 
-    const next = { ...current };
-
     // Track previous mode so ExitPlanMode can restore it
     if (msg.mode === "plan" && current.mode !== "plan") {
-      next.modeBeforePlan = current.mode;
+      current.modeBeforePlan = current.mode;
     }
-    next.mode = msg.mode;
+    current.mode = msg.mode;
 
     // Generate plan file path when entering plan mode
     if (msg.mode === "plan" && !current.planFilePath) {
-      next.planFilePath = generatePlanFilePath();
+      current.planFilePath = generatePlanFilePath();
     }
 
     // Clear plan-related state when leaving plan mode
     if (msg.mode !== "plan") {
-      next.planFilePath = null;
-      next.modeBeforePlan = null;
+      current.planFilePath = null;
+      current.modeBeforePlan = null;
     }
 
-    setConversationPermissionModeState(runtime, agentId, conversationId, next);
+    persistPermissionModeMapForRuntime(runtime);
 
     emitDeviceStatusUpdate(socket, runtime, scope);
 
