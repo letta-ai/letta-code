@@ -374,18 +374,6 @@ export async function pullMemory(
   await configureLocalCredentialHelper(dir, token);
   installPreCommitHook(dir);
 
-  // Stash any uncommitted changes so pull can proceed on a clean tree
-  let stashed = false;
-  try {
-    const { stdout: statusOut } = await runGit(dir, ["status", "--porcelain"]);
-    if (statusOut.trim()) {
-      await runGit(dir, ["stash", "--include-untracked"]);
-      stashed = true;
-    }
-  } catch {
-    // If stash fails, proceed anyway — pull may still work
-  }
-
   try {
     const { stdout, stderr } = await runGit(dir, ["pull", "--ff-only"], token);
     const output = stdout + stderr;
@@ -408,14 +396,6 @@ export async function pullMemory(
         updated: false,
         summary: `Pull failed: ${msg}\nHint: verify remote and auth:\n- git -C ${dir} remote -v\n- git -C ${dir} config --get-regexp '^credential\\..*\\.helper$'`,
       };
-    }
-  } finally {
-    if (stashed) {
-      try {
-        await runGit(dir, ["stash", "pop"]);
-      } catch {
-        debugWarn("memfs-git", "Failed to pop stash after pull");
-      }
     }
   }
 }

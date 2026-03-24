@@ -11897,7 +11897,9 @@ ${SYSTEM_REMINDER_CLOSE}
                 (b) => b.label === "system/persona",
               );
               if (!block) {
-                throw new Error("system/persona block not found on agent");
+                throw new Error(
+                  "system/persona block not found on agent. Run `/doctor` to diagnose.",
+                );
               }
               if (block.value.includes(expectedContent)) {
                 propagated = true;
@@ -11934,7 +11936,10 @@ ${SYSTEM_REMINDER_CLOSE}
               conversationParams,
             );
 
-            cmd.finish(`Personality swapped to ${personality.label}`, true);
+            cmd.finish(
+              `Personality swapped to ${personality.label}. Run \`/clear\` to fully swap to the new personality`,
+              true,
+            );
           } else {
             cmd.finish(
               `Personality swapped to ${personality.label}. Block propagation timed out — run \`/recompile\` manually`,

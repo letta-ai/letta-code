@@ -201,9 +201,21 @@ export async function applyPersonalityToMemory(
   const personality = getPersonalityOption(params.personalityId);
   const personalityContent = getPersonalityContent(params.personalityId);
 
+  const repoDir = getMemoryRepoDir(params.agentId);
+
+  // Fail early if the memory repo has uncommitted changes
+  const statusResult = await execFile("git", ["status", "--porcelain"], {
+    cwd: repoDir,
+    timeout: 10_000,
+  });
+  if (statusResult.stdout?.toString().trim()) {
+    throw new Error(
+      "Memory repo has uncommitted changes. Commit or discard them before switching personality.",
+    );
+  }
+
   await pullMemory(params.agentId);
 
-  const repoDir = getMemoryRepoDir(params.agentId);
   const personaRelativePath = getPersonaRelativePathForRepo(repoDir);
   const personaPath = join(repoDir, personaRelativePath);
 
