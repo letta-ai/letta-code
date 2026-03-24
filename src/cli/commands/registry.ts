@@ -1,6 +1,8 @@
 // src/cli/commands/registry.ts
 // Registry of available CLI commands
 
+import { handleSecretCommand } from "./secret";
+
 type CommandHandler = (args: string[]) => Promise<string> | string;
 
 interface Command {
@@ -259,6 +261,15 @@ export const commands: Record<string, Command> = {
     handler: () => {
       // Handled specially in App.tsx to show MCP server selector
       return "Opening MCP server manager...";
+    },
+  },
+  "/secret": {
+    desc: "Manage secrets for shell commands",
+    order: 33,
+    args: "<set|list|unset> [key] [value]",
+    handler: async (args: string[]) => {
+      const result = await handleSecretCommand(args);
+      return result.output;
     },
   },
   "/usage": {

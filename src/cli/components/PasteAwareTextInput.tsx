@@ -456,6 +456,19 @@ export function PasteAwareTextInput({
       caretOffsetRef.current = nextCaret;
     };
 
+    // Move cursor to beginning of input (Home key)
+    const moveCursorToStart = () => {
+      setNudgeCursorOffset(0);
+      caretOffsetRef.current = 0;
+    };
+
+    // Move cursor to end of input (End key)
+    const moveCursorToEnd = () => {
+      const endPos = displayValueRef.current.length;
+      setNudgeCursorOffset(endPos);
+      caretOffsetRef.current = endPos;
+    };
+
     const handleRawInput = (payload: unknown) => {
       if (!focusRef.current) return;
 
@@ -507,6 +520,26 @@ export function PasteAwareTextInput({
       // since we use kitty protocol flag 1 only (no event types).
       // With flag 1, arrows come as ESC[1;modifierD which parseKeypress recognizes.
       // Previously we handled ESC[1;modifier:eventD format (with flag 7) here.
+
+      // Home key: ESC[H (standard) or ESC[1~ (VT100/xterm) or ESCOH (xterm)
+      if (
+        sequence === "\x1b[H" ||
+        sequence === "\x1b[1~" ||
+        sequence === "\x1bOH"
+      ) {
+        moveCursorToStart();
+        return;
+      }
+
+      // End key: ESC[F (standard) or ESC[4~ (VT100/xterm) or ESCOF (xterm)
+      if (
+        sequence === "\x1b[F" ||
+        sequence === "\x1b[4~" ||
+        sequence === "\x1bOF"
+      ) {
+        moveCursorToEnd();
+        return;
+      }
 
       // fn+Delete (forward delete): ESC[3~ - standard ANSI escape sequence
       // With kitty flag 1, modifiers come as ESC[3;modifier~ (no event type).
