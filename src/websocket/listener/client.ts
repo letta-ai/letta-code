@@ -339,6 +339,18 @@ async function handleApprovalResponseInput(
       params.runtime.agent_id,
       params.runtime.conversation_id,
     );
+
+  if (targetRuntime.cancelRequested && !targetRuntime.isProcessing) {
+    targetRuntime.cancelRequested = false;
+    deps.scheduleQueuePump(
+      targetRuntime,
+      params.socket,
+      params.opts as StartListenerOptions,
+      params.processQueuedTurn,
+    );
+    return false;
+  }
+
   if (
     await deps.resolveRecoveredApprovalResponse(
       targetRuntime,
@@ -422,11 +434,9 @@ async function handleChangeDeviceStateInput(
   const shouldTrackCommand =
     !scopedRuntime.isProcessing &&
     resolvedDeps.getPendingControlRequestCount(listener, scope) === 0;
-
   if (shouldTrackCommand) {
     resolvedDeps.setLoopStatus(scopedRuntime, "EXECUTING_COMMAND", scope);
   }
-
   try {
     if (params.command.payload.mode) {
       resolvedDeps.handleModeChange(
@@ -436,7 +446,6 @@ async function handleChangeDeviceStateInput(
         scope,
       );
     }
-
     if (params.command.payload.cwd) {
       await resolvedDeps.handleCwdChange(
         {
@@ -949,11 +958,9 @@ async function connectWithRetry(
           ...scopedRuntime.activeExecutingToolCallIds,
         ];
       }
-      if (
-        scopedRuntime.activeAbortController &&
-        !scopedRuntime.activeAbortController.signal.aborted
-      ) {
-        scopedRuntime.activeAbortController.abort();
+      const activeAbortController = scopedRuntime.activeAbortController;
+      if (activeAbortController && !activeAbortController.signal.aborted) {
+        activeAbortController.abort();
       }
       const recoveredApprovalState = getRecoveredApprovalStateForScope(
         runtime,
@@ -975,6 +982,10 @@ async function connectWithRetry(
           agentId: parsed.runtime.agent_id,
           conversationId: parsed.runtime.conversation_id,
         });
+      }
+
+      if (!hasActiveTurn) {
+        scopedRuntime.cancelRequested = false;
       }
 
       // Backend cancel parity with TUI (App.tsx:5932-5941).

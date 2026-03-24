@@ -122,7 +122,9 @@ export async function handleIncomingMessage(
 
   runtime.isProcessing = true;
   runtime.cancelRequested = false;
-  runtime.activeAbortController = new AbortController();
+  const turnAbortController = new AbortController();
+  runtime.activeAbortController = turnAbortController;
+  const turnAbortSignal = turnAbortController.signal;
   runtime.activeWorkingDirectory = turnWorkingDirectory;
   runtime.activeRunId = null;
   runtime.activeRunStartedAt = new Date().toISOString();
@@ -240,7 +242,7 @@ export async function handleIncomingMessage(
           buildSendOptions(),
           socket,
           runtime,
-          runtime.activeAbortController.signal,
+          turnAbortSignal,
         )
       : await sendMessageStreamWithRetry(
           conversationId,
@@ -248,7 +250,7 @@ export async function handleIncomingMessage(
           buildSendOptions(),
           socket,
           runtime,
-          runtime.activeAbortController.signal,
+          turnAbortSignal,
         );
     if (!stream) {
       return;
@@ -275,7 +277,7 @@ export async function handleIncomingMessage(
         stream as Stream<LettaStreamingResponse>,
         buffers,
         () => {},
-        runtime.activeAbortController.signal,
+        turnAbortSignal,
         undefined,
         ({ chunk, shouldOutput, errorInfo }) => {
           const maybeRunId = (chunk as { run_id?: unknown }).run_id;
@@ -428,7 +430,7 @@ export async function handleIncomingMessage(
                   buildSendOptions(),
                   socket,
                   runtime,
-                  runtime.activeAbortController.signal,
+                  turnAbortSignal,
                 )
               : await sendMessageStreamWithRetry(
                   conversationId,
@@ -436,7 +438,7 @@ export async function handleIncomingMessage(
                   buildSendOptions(),
                   socket,
                   runtime,
-                  runtime.activeAbortController.signal,
+                  turnAbortSignal,
                 );
           if (!stream) {
             return;
@@ -492,7 +494,7 @@ export async function handleIncomingMessage(
           });
 
           await new Promise((resolve) => setTimeout(resolve, delayMs));
-          if (runtime.activeAbortController.signal.aborted) {
+          if (turnAbortSignal.aborted) {
             throw new Error("Cancelled by user");
           }
 
@@ -511,7 +513,7 @@ export async function handleIncomingMessage(
                   buildSendOptions(),
                   socket,
                   runtime,
-                  runtime.activeAbortController.signal,
+                  turnAbortSignal,
                 )
               : await sendMessageStreamWithRetry(
                   conversationId,
@@ -519,7 +521,7 @@ export async function handleIncomingMessage(
                   buildSendOptions(),
                   socket,
                   runtime,
-                  runtime.activeAbortController.signal,
+                  turnAbortSignal,
                 );
           if (!stream) {
             return;
@@ -563,7 +565,7 @@ export async function handleIncomingMessage(
           });
 
           await new Promise((resolve) => setTimeout(resolve, delayMs));
-          if (runtime.activeAbortController.signal.aborted) {
+          if (turnAbortSignal.aborted) {
             throw new Error("Cancelled by user");
           }
 
@@ -582,7 +584,7 @@ export async function handleIncomingMessage(
                   buildSendOptions(),
                   socket,
                   runtime,
-                  runtime.activeAbortController.signal,
+                  turnAbortSignal,
                 )
               : await sendMessageStreamWithRetry(
                   conversationId,
@@ -590,7 +592,7 @@ export async function handleIncomingMessage(
                   buildSendOptions(),
                   socket,
                   runtime,
-                  runtime.activeAbortController.signal,
+                  turnAbortSignal,
                 );
           if (!stream) {
             return;
@@ -672,6 +674,7 @@ export async function handleIncomingMessage(
         currentInput,
         pendingNormalizationInterruptedToolCallIds,
         turnToolContextId,
+        abortSignal: turnAbortSignal,
         buildSendOptions,
       });
       if (approvalResult.terminated || !approvalResult.stream) {
