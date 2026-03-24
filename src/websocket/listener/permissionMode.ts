@@ -31,11 +31,35 @@ export function getPermissionModeScopeKey(
   return `conversation:${normalizedConversationId}`;
 }
 
+function createDefaultPermissionModeState(): ConversationPermissionModeState {
+  return {
+    mode: globalPermissionMode.getMode(),
+    planFilePath: null,
+    modeBeforePlan: null,
+  };
+}
+
+function isPrunableDefaultState(
+  state: ConversationPermissionModeState,
+): boolean {
+  return (
+    state.mode === globalPermissionMode.getMode() &&
+    state.planFilePath === null &&
+    state.modeBeforePlan === null
+  );
+}
+
+/**
+ * Read-only state lookup for a conversation scope.
+ *
+ * This helper is intended for read paths (status rendering, serialization).
+ * It does not materialize new map entries for missing scopes.
+ */
 export function getConversationPermissionModeState(
   runtime: ListenerRuntime,
   agentId?: string | null,
   conversationId?: string | null,
-): ConversationPermissionModeState {
+): Readonly<ConversationPermissionModeState> {
   const scopeKey = getPermissionModeScopeKey(agentId, conversationId);
   const normalizedConversationId = normalizeConversationId(conversationId);
 
@@ -52,42 +76,78 @@ export function getConversationPermissionModeState(
     const legacyDefault =
       runtime.permissionModeByConversation.get(legacyDefaultKey);
     if (legacyDefault) {
-      if (normalizeCwdAgentId(agentId)) {
-        runtime.permissionModeByConversation.set(scopeKey, {
-          ...legacyDefault,
-        });
+      const normalizedAgentId = normalizeCwdAgentId(agentId);
+      if (normalizedAgentId) {
+        runtime.permissionModeByConversation.set(scopeKey, legacyDefault);
         runtime.permissionModeByConversation.delete(legacyDefaultKey);
       }
       return legacyDefault;
     }
   }
 
-  return {
-    mode: globalPermissionMode.getMode(),
-    planFilePath: null,
-    modeBeforePlan: null,
-  };
+  return createDefaultPermissionModeState();
 }
 
-export function setConversationPermissionModeState(
+/**
+ * Returns the canonical mutable state object for a conversation scope.
+ *
+ * This helper materializes missing entries and guarantees stable identity
+ * during a turn so concurrent mode updates (websocket + tool mutations)
+ * apply to the same object reference.
+ */
+export function getOrCreateConversationPermissionModeStateRef(
   runtime: ListenerRuntime,
-  agentId: string | null,
-  conversationId: string,
-  state: ConversationPermissionModeState,
-): void {
+  agentId?: string | null,
+  conversationId?: string | null,
+): ConversationPermissionModeState {
   const scopeKey = getPermissionModeScopeKey(agentId, conversationId);
-  // Only store if different from the global default to keep the map lean.
-  if (
-    state.mode === globalPermissionMode.getMode() &&
-    state.planFilePath === null &&
-    state.modeBeforePlan === null
-  ) {
-    runtime.permissionModeByConversation.delete(scopeKey);
-  } else {
-    runtime.permissionModeByConversation.set(scopeKey, { ...state });
+  const normalizedConversationId = normalizeConversationId(conversationId);
+
+  const direct = runtime.permissionModeByConversation.get(scopeKey);
+  if (direct) {
+    return direct;
   }
 
-  persistPermissionModeMap(runtime.permissionModeByConversation);
+  if (normalizedConversationId === "default") {
+    const legacyDefaultKey = getPermissionModeScopeKey(null, "default");
+    const legacyDefault =
+      runtime.permissionModeByConversation.get(legacyDefaultKey);
+    if (legacyDefault) {
+      const normalizedAgentId = normalizeCwdAgentId(agentId);
+      if (normalizedAgentId) {
+        runtime.permissionModeByConversation.set(scopeKey, legacyDefault);
+        runtime.permissionModeByConversation.delete(legacyDefaultKey);
+      }
+      return legacyDefault;
+    }
+  }
+
+  const created = createDefaultPermissionModeState();
+  runtime.permissionModeByConversation.set(scopeKey, created);
+  return created;
+}
+
+/**
+ * Remove a canonical state entry when it is equivalent to the default state.
+ *
+ * This should be called at turn finalization boundaries, not on each mode
+ * update, to avoid breaking object identity for in-flight turns.
+ */
+export function pruneConversationPermissionModeStateIfDefault(
+  runtime: ListenerRuntime,
+  agentId?: string | null,
+  conversationId?: string | null,
+): boolean {
+  const scopeKey = getPermissionModeScopeKey(agentId, conversationId);
+  const state = runtime.permissionModeByConversation.get(scopeKey);
+  if (!state) {
+    return false;
+  }
+  if (!isPrunableDefaultState(state)) {
+    return false;
+  }
+  runtime.permissionModeByConversation.delete(scopeKey);
+  return true;
 }
 
 /**
@@ -122,6 +182,15 @@ export function loadPersistedPermissionModeMap(): Map<
   } catch {
     return new Map();
   }
+}
+
+/**
+ * Persist permission mode map to remote-settings.json.
+ */
+export function persistPermissionModeMapForRuntime(
+  runtime: ListenerRuntime,
+): void {
+  persistPermissionModeMap(runtime.permissionModeByConversation);
 }
 
 /**
