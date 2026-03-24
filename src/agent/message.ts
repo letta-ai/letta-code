@@ -196,12 +196,14 @@ export async function sendMessageStream(
     })
     .join(",");
 
+  const firstOtid = (messages[0] as Record<string, unknown>)?.otid ?? "none";
   debugLog(
     "send-message-stream",
-    "request_start conversation_id=%s agent_id=%s messages=%s stream_tokens=%s background=%s max_retries=%s",
+    "request_start conversation_id=%s agent_id=%s messages=%s otid=%s stream_tokens=%s background=%s max_retries=%s",
     resolvedConversationId,
     opts.agentId ?? "none",
     messageSummary || "(empty)",
+    firstOtid,
     opts.streamTokens ?? true,
     opts.background ?? true,
     requestOptions.maxRetries ?? "default",
@@ -223,8 +225,9 @@ export async function sendMessageStream(
   } catch (error) {
     debugWarn(
       "send-message-stream",
-      "request_error conversation_id=%s status=%s error=%s",
+      "request_error conversation_id=%s otid=%s status=%s error=%s",
       resolvedConversationId,
+      firstOtid,
       (error as { status?: number })?.status ?? "none",
       error instanceof Error ? error.message : String(error),
     );
@@ -233,8 +236,9 @@ export async function sendMessageStream(
 
   debugLog(
     "send-message-stream",
-    "request_ok conversation_id=%s",
+    "request_ok conversation_id=%s otid=%s",
     resolvedConversationId,
+    firstOtid,
   );
 
   if (requestStartTime !== undefined) {
