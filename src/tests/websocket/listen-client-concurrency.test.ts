@@ -6,6 +6,9 @@ import type {
   MessageQueueItem,
   TaskNotificationQueueItem,
 } from "../../queue/queueRuntime";
+import { queueSkillContent } from "../../tools/impl/skillContentRegistry";
+import { resolveRecoveredApprovalResponse } from "../../websocket/listener/recovery";
+import { injectQueuedSkillContent } from "../../websocket/listener/skill-injection";
 import type { IncomingMessage } from "../../websocket/listener/types";
 
 type MockStream = {
@@ -197,6 +200,8 @@ function makeIncomingMessage(
 
 describe("listen-client multi-worker concurrency", () => {
   beforeEach(() => {
+    queueSkillContent("__test-cleanup__", "__test-cleanup__");
+    injectQueuedSkillContent([]);
     permissionMode.reset();
     sendMessageStreamMock.mockClear();
     getStreamToolContextIdMock.mockClear();
@@ -753,6 +758,11 @@ describe("listen-client multi-worker concurrency", () => {
       throw new Error("Expected stale recovery queued task item");
     }
 
+    queueSkillContent(
+      "tool-call-1",
+      "<searching-messages>stale recovery skill content</searching-messages>",
+    );
+
     const recoveryPromise = __listenClientTestUtils.resolveStaleApprovals(
       runtime,
       socket as unknown as WebSocket,
@@ -766,7 +776,7 @@ describe("listen-client multi-worker concurrency", () => {
     const continuationMessages = sendMessageStreamMock.mock.calls[0]?.[1] as
       | Array<Record<string, unknown>>
       | undefined;
-    expect(continuationMessages).toHaveLength(2);
+    expect(continuationMessages).toHaveLength(3);
     expect(continuationMessages?.[0]).toEqual(
       expect.objectContaining({
         type: "approval",
@@ -784,6 +794,16 @@ describe("listen-client multi-worker concurrency", () => {
           text: "<task-notification>done</task-notification>",
         },
       ],
+    });
+    expect(continuationMessages?.[2]).toEqual({
+      role: "user",
+      content: [
+        {
+          type: "text",
+          text: "<searching-messages>stale recovery skill content</searching-messages>",
+        },
+      ],
+      otid: expect.any(String),
     });
     expect(runtime.loopStatus as string).toBe("PROCESSING_API_RESPONSE");
     expect(runtime.queueRuntime.length).toBe(0);
@@ -806,6 +826,156 @@ describe("listen-client multi-worker concurrency", () => {
       stopReason: "end_turn",
       approvals: [],
       apiDurationMs: 0,
+    });
+  });
+
+  test("interrupt-queue approval continuation appends skill content as trailing user message", async () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    __listenClientTestUtils.setActiveRuntime(listener);
+    const runtime = __listenClientTestUtils.getOrCreateScopedRuntime(
+      listener,
+      "agent-1",
+      "conv-int",
+    );
+    const socket = new MockSocket();
+
+    runtime.pendingInterruptedResults = [
+      {
+        type: "approval",
+        tool_call_id: "call-int",
+        approve: false,
+        reason: "Interrupted by user",
+      },
+    ] as never;
+    runtime.pendingInterruptedContext = {
+      agentId: "agent-1",
+      conversationId: "conv-int",
+      continuationEpoch: runtime.continuationEpoch,
+    };
+    runtime.pendingInterruptedToolCallIds = ["call-int"];
+
+    queueSkillContent(
+      "call-int",
+      "<searching-messages>interrupt path skill content</searching-messages>",
+    );
+
+    await __listenClientTestUtils.handleIncomingMessage(
+      {
+        type: "message",
+        agentId: "agent-1",
+        conversationId: "conv-int",
+        messages: [],
+      } as unknown as IncomingMessage,
+      socket as unknown as WebSocket,
+      runtime,
+    );
+
+    expect(sendMessageStreamMock.mock.calls.length).toBeGreaterThan(0);
+    const firstSendMessages = sendMessageStreamMock.mock.calls[0]?.[1] as
+      | Array<Record<string, unknown>>
+      | undefined;
+
+    expect(firstSendMessages).toHaveLength(2);
+    expect(firstSendMessages?.[0]).toMatchObject({
+      type: "approval",
+      approvals: [
+        {
+          tool_call_id: "call-int",
+          approve: false,
+          reason: "Interrupted by user",
+        },
+      ],
+    });
+    expect(firstSendMessages?.[1]).toEqual({
+      role: "user",
+      content: [
+        {
+          type: "text",
+          text: "<searching-messages>interrupt path skill content</searching-messages>",
+        },
+      ],
+      otid: expect.any(String),
+    });
+  });
+
+  test("recovered approval replay keeps approval-only routing and appends skill content at send boundary", async () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    __listenClientTestUtils.setActiveRuntime(listener);
+    const runtime = __listenClientTestUtils.getOrCreateScopedRuntime(
+      listener,
+      "agent-1",
+      "conv-recovered",
+    );
+    const socket = new MockSocket();
+
+    runtime.recoveredApprovalState = {
+      agentId: "agent-1",
+      conversationId: "conv-recovered",
+      approvalsByRequestId: new Map([
+        [
+          "perm-recovered-1",
+          {
+            approval: {
+              toolCallId: "tool-call-recovered-1",
+              toolName: "Write",
+              toolArgs: '{"file_path":"foo.ts"}',
+            },
+            controlRequest: {
+              type: "control_request",
+              request_id: "perm-recovered-1",
+              request: {
+                subtype: "can_use_tool",
+                tool_name: "Write",
+                input: { file_path: "foo.ts" },
+                tool_call_id: "tool-call-recovered-1",
+                permission_suggestions: [],
+                blocked_path: null,
+              },
+              agent_id: "agent-1",
+              conversation_id: "conv-recovered",
+            },
+          },
+        ],
+      ]),
+      pendingRequestIds: new Set(["perm-recovered-1"]),
+      responsesByRequestId: new Map(),
+    };
+
+    queueSkillContent(
+      "tool-call-recovered-1",
+      "<searching-messages>recovered skill content</searching-messages>",
+    );
+
+    await resolveRecoveredApprovalResponse(
+      runtime,
+      socket as unknown as WebSocket,
+      {
+        request_id: "perm-recovered-1",
+        decision: { behavior: "allow" },
+      },
+      __listenClientTestUtils.handleIncomingMessage,
+      {},
+    );
+
+    expect(sendMessageStreamMock.mock.calls.length).toBeGreaterThan(0);
+    const firstSendMessages = sendMessageStreamMock.mock.calls[0]?.[1] as
+      | Array<Record<string, unknown>>
+      | undefined;
+
+    expect(firstSendMessages).toHaveLength(2);
+    expect(firstSendMessages?.[0]).toMatchObject({
+      type: "approval",
+      approvals: [],
+    });
+    expect(firstSendMessages?.[1]).toEqual({
+      role: "user",
+      content: [
+        {
+          type: "text",
+          text: "<searching-messages>recovered skill content</searching-messages>",
+        },
+      ],
+      otid: expect.any(String),
     });
   });
 
