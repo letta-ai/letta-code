@@ -432,8 +432,12 @@ export async function drainStream(
     markIncompleteToolsAsCancelled(buffers, true, "user_interrupt");
   }
 
-  // Mark the final line as finished now that stream has ended
-  markCurrentLineAsFinished(buffers);
+  // Mark the final line as finished now that stream has ended.
+  // Skip for error stop reason — drainStreamWithResume will finalize after
+  // resume succeeds (or in its catch/else path if no resume is attempted).
+  if (stopReason !== "error") {
+    markCurrentLineAsFinished(buffers);
+  }
   queueMicrotask(refresh);
 
   // Package the approval request(s) at the end.
@@ -604,19 +608,12 @@ export async function drainStreamWithResume(
       },
     );
 
-    debugLog(
+    debugWarn(
       "stream",
-      "Mid-stream resume: fetching run stream (source=%s, runId=%s, lastSeqId=%s)",
+      "[MID-STREAM RESUME] Attempting (runId=%s, lastSeqId=%s, source=%s)",
+      runIdToResume,
+      result.lastSeqId ?? 0,
       runIdSource ?? "unknown",
-      runIdToResume,
-      result.lastSeqId ?? 0,
-    );
-
-    debugLog(
-      "stream",
-      "Mid-stream resume: attempting resume (runId=%s, lastSeqId=%s)",
-      runIdToResume,
-      result.lastSeqId ?? 0,
     );
 
     try {
@@ -660,9 +657,9 @@ export async function drainStreamWithResume(
 
       // Use the resume result (should have proper stop_reason now)
       // Clear the original stream error since we recovered
-      debugLog(
+      debugWarn(
         "stream",
-        "Mid-stream resume succeeded (runId=%s, stopReason=%s)",
+        "[MID-STREAM RESUME] ✅ Success (runId=%s, stopReason=%s)",
         runIdToResume,
         resumeResult.stopReason,
       );
@@ -689,9 +686,9 @@ export async function drainStreamWithResume(
         resumeError instanceof Error
           ? resumeError.message
           : String(resumeError);
-      debugLog(
+      debugWarn(
         "stream",
-        "Mid-stream resume failed (runId=%s): %s",
+        "[MID-STREAM RESUME] ❌ Failed (runId=%s): %s",
         runIdToResume,
         resumeErrorMsg,
       );
