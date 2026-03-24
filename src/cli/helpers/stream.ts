@@ -260,7 +260,6 @@ export async function drainStream(
 
   try {
     for await (const chunk of stream) {
-
       // Check if abort generation changed (handleInterrupt ran while we were waiting)
       // This catches cases where the abort signal might not propagate correctly
       if ((buffers.abortGeneration || 0) !== startAbortGen) {
@@ -450,7 +449,11 @@ export async function drainStream(
   const approval: ApprovalRequest | null = approvals[0] || null;
   streamProcessor.pendingApprovals.clear();
 
-  if (stopReason === "requires_approval" && approvals.length === 0 && !isResumeStream) {
+  if (
+    stopReason === "requires_approval" &&
+    approvals.length === 0 &&
+    !isResumeStream
+  ) {
     // On resume streams, approval chunks are before starting_after and won't be replayed.
     // drainStreamWithResume carries them over from the original drain — this is expected.
     debugWarn(
