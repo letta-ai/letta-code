@@ -467,38 +467,45 @@ export function MessageSearch({
             msgType === "assistant_message" || msgType === "reasoning_message";
           const typeLabel = isAssistant ? "Agent message" : "User message";
           const timestamp = formatLocalTime(msgData.created_at || msgData.date);
-          const emoji = isAssistant ? "👾" : "👤";
 
           return (
             <Box flexDirection="column" paddingX={1}>
-              {/* Full message text in quotes */}
-              <Box paddingLeft={2} marginBottom={1}>
-                <Text>
-                  <Text>"</Text>
-                  <HighlightedText text={fullText} query={activeQuery} />
-                  <Text>"</Text>
-                </Text>
+              {/* Full message text with padding and HighlightedText */}
+              <Box paddingLeft={2} paddingY={1} marginBottom={1}>
+                <HighlightedText text={fullText} query={activeQuery} />
               </Box>
 
-              {/* Metadata */}
-              <Box flexDirection="column" paddingLeft={2}>
+              {/* Metadata list */}
+              <Box flexDirection="column" paddingLeft={2} gap={0}>
                 <Text dimColor>
                   {typeLabel}, sent {timestamp}
                 </Text>
-                <Text dimColor>Agent ID: {msgData.agent_id || "unknown"}</Text>
+                <Box flexDirection="row">
+                  <Text dimColor>Agent ID: </Text>
+                  <Text dimColor>{msgData.agent_id || "unknown"}</Text>
+                </Box>
                 {msgData.conversation_id && (
-                  <Text dimColor>Conversation ID: {msgData.conversation_id}</Text>
+                  <Box flexDirection="row">
+                    <Text dimColor>Conversation ID: </Text>
+                    <Text dimColor>{msgData.conversation_id}</Text>
+                  </Box>
                 )}
               </Box>
 
               <Box height={1} />
 
-              {/* Footer */}
+              {/* Action prompt footer */}
               <Box paddingLeft={2}>
                 <Text dimColor>
-                  {onOpenConversation
-                    ? "Enter to open conversation · Esc cancel"
-                    : "Esc cancel"}
+                  {onOpenConversation ? (
+                    <>
+                      <Text>Enter to open conversation</Text>
+                      <Text> · </Text>
+                      <Text>Esc cancel</Text>
+                    </>
+                  ) : (
+                    <Text>Esc cancel</Text>
+                  )}
                 </Text>
               </Box>
             </Box>
