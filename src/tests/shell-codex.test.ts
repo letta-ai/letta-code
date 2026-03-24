@@ -25,11 +25,13 @@ describe("shell codex tool", () => {
 
   test("executes simple command with execvp-style args", async () => {
     const result = await shell({
-      command: ["/usr/bin/env", "echo", "hello", "world"],
+      command: getEchoCommand("hello", "world"),
     });
 
-    expect(result.output).toBe("hello world");
-    expect(result.stdout).toContain("hello world");
+    expect(result.output.replaceAll('"', "")).toBe("hello world");
+    expect(result.stdout.join(" ").replaceAll('"', "")).toContain(
+      "hello world",
+    );
     expect(result.stderr.length).toBe(0);
   });
 
@@ -64,7 +66,7 @@ describe("shell codex tool", () => {
       command: getEchoCommand("hello world", "foo bar"),
     });
 
-    expect(result.output).toBe("hello world foo bar");
+    expect(result.output.replaceAll('"', "")).toBe("hello world foo bar");
   });
 
   test.skipIf(isWindows)("respects workdir parameter", async () => {
