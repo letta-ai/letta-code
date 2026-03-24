@@ -214,6 +214,7 @@ export async function drainStream(
   contextTracker?: ContextTracker,
   seenSeqIdThreshold?: number | null,
   isResumeStream?: boolean,
+  skipCancelToolsOnError?: boolean,
 ): Promise<DrainResult> {
   const startTime = performance.now();
   const requestStartTime = getStreamRequestStartTime(stream) ?? startTime;
@@ -389,7 +390,16 @@ export async function drainStream(
     // finalize the streaming line with full text. Marking it finished now would
     // commit truncated content to static (emittedIdsRef) before resume can append.
     // drainStreamWithResume calls markCurrentLineAsFinished if no resume happens.
-    markIncompleteToolsAsCancelled(buffers, true, "stream_error", true);
+    //
+    // skipCancelToolsOnError: when drainStreamWithResume will attempt a resume,
+    // don't cancel tool calls yet — the resume stream replays tool_return_message
+    // chunks that overwrite any cancelled state. drainStreamWithResume cancels
+    // tools itself in the failure/no-resume paths.
+    if (skipCancelToolsOnError) {
+      buffers.interrupted = true;
+    } else {
+      markIncompleteToolsAsCancelled(buffers, true, "stream_error", true);
+    }
     queueMicrotask(refresh);
   } finally {
     // Persist chunk log to disk (one write per stream, not per chunk)
@@ -432,8 +442,12 @@ export async function drainStream(
     markIncompleteToolsAsCancelled(buffers, true, "user_interrupt");
   }
 
-  // Mark the final line as finished now that stream has ended
-  markCurrentLineAsFinished(buffers);
+  // Mark the final line as finished now that stream has ended.
+  // Skip for error stop reason — drainStreamWithResume will finalize after
+  // resume succeeds (or in its catch/else path if no resume is attempted).
+  if (stopReason !== "error") {
+    markCurrentLineAsFinished(buffers);
+  }
   queueMicrotask(refresh);
 
   // Package the approval request(s) at the end.
@@ -511,7 +525,10 @@ export async function drainStreamWithResume(
     return _client;
   };
 
-  // Attempt initial drain
+  // Attempt initial drain.
+  // skipCancelToolsOnError=true: don't cancel tool calls on stream error here —
+  // drainStreamWithResume will attempt a resume that replays tool_return_message
+  // chunks. Tools are only cancelled in the failure/no-resume paths below.
   let result = await drainStream(
     stream,
     buffers,
@@ -521,6 +538,8 @@ export async function drainStreamWithResume(
     onChunkProcessed,
     contextTracker,
     seenSeqIdThreshold,
+    false, // isResumeStream
+    true, // skipCancelToolsOnError
   );
 
   let runIdToResume = result.lastRunId ?? null;
@@ -604,19 +623,12 @@ export async function drainStreamWithResume(
       },
     );
 
-    debugLog(
+    debugWarn(
       "stream",
-      "Mid-stream resume: fetching run stream (source=%s, runId=%s, lastSeqId=%s)",
+      "[MID-STREAM RESUME] Attempting (runId=%s, lastSeqId=%s, source=%s)",
+      runIdToResume,
+      result.lastSeqId ?? 0,
       runIdSource ?? "unknown",
-      runIdToResume,
-      result.lastSeqId ?? 0,
-    );
-
-    debugLog(
-      "stream",
-      "Mid-stream resume: attempting resume (runId=%s, lastSeqId=%s)",
-      runIdToResume,
-      result.lastSeqId ?? 0,
     );
 
     try {
@@ -660,9 +672,9 @@ export async function drainStreamWithResume(
 
       // Use the resume result (should have proper stop_reason now)
       // Clear the original stream error since we recovered
-      debugLog(
+      debugWarn(
         "stream",
-        "Mid-stream resume succeeded (runId=%s, stopReason=%s)",
+        "[MID-STREAM RESUME] ✅ Success (runId=%s, stopReason=%s)",
         runIdToResume,
         resumeResult.stopReason,
       );
@@ -670,17 +682,41 @@ export async function drainStreamWithResume(
 
       // The resumed stream uses a fresh streamProcessor that won't have
       // approval_request_message chunks from before the disconnect (they
-      // had seq_id <= lastSeqId). Carry them over from the original drain.
+      // had seq_id <= lastSeqId).
+      //
+      // Two cases:
+      // 1. All approval chunks were before the drop (resume has no approvals):
+      //    carry over the originals unchanged.
+      // 2. Approval args were split across the drop (original has prefix,
+      //    resume has suffix): merge them so the full args string is intact.
       if (
         result.stopReason === "requires_approval" &&
-        (result.approvals?.length ?? 0) === 0 &&
         (originalApprovals?.length ?? 0) > 0
       ) {
-        result.approvals = originalApprovals;
-        result.approval = originalApproval;
+        if ((result.approvals?.length ?? 0) === 0) {
+          // Case 1: full carry-over
+          result.approvals = originalApprovals;
+          result.approval = originalApproval;
+        } else {
+          // Case 2: merge prefix args from original with suffix args from resume
+          result.approvals = (result.approvals ?? []).map((resumeApproval) => {
+            const orig = originalApprovals?.find(
+              (a) => a.toolCallId === resumeApproval.toolCallId,
+            );
+            if (!orig) return resumeApproval;
+            return {
+              ...resumeApproval,
+              toolName: resumeApproval.toolName || orig.toolName,
+              toolArgs: (orig.toolArgs || "") + (resumeApproval.toolArgs || ""),
+            };
+          });
+          result.approval = result.approvals[0] ?? null;
+        }
       }
     } catch (resumeError) {
-      // Resume failed - finalize the streaming line now (skipped in catch block above)
+      // Resume failed - cancel tools and finalize the streaming line now
+      // (both were skipped in the initial drain's catch block above)
+      markIncompleteToolsAsCancelled(buffers, false, "stream_error", true);
       markCurrentLineAsFinished(buffers);
       // Stick with the error stop_reason and restore the original stream error for display
       result.fallbackError = originalFallbackError;
@@ -689,9 +725,9 @@ export async function drainStreamWithResume(
         resumeError instanceof Error
           ? resumeError.message
           : String(resumeError);
-      debugLog(
+      debugWarn(
         "stream",
-        "Mid-stream resume failed (runId=%s): %s",
+        "[MID-STREAM RESUME] ❌ Failed (runId=%s): %s",
         runIdToResume,
         resumeErrorMsg,
       );
@@ -715,7 +751,9 @@ export async function drainStreamWithResume(
 
     // Only log if we actually skipped for a reason (i.e., we didn't enter the resume branch above)
     if (skipReasons.length > 0) {
-      // No resume — finalize the streaming line now (was skipped in catch block)
+      // No resume — cancel tools and finalize the streaming line now
+      // (both were skipped in the initial drain's catch block above)
+      markIncompleteToolsAsCancelled(buffers, false, "stream_error", true);
       markCurrentLineAsFinished(buffers);
       debugLog(
         "stream",
