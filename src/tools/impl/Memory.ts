@@ -273,6 +273,9 @@ export async function memory(args: MemoryArgs): Promise<MemoryResult> {
     };
   }
 
+  // Emit memory_updated push event so web UI auto-refreshes
+  emitMemoryUpdated(affectedPaths);
+
   return {
     message: `Memory ${command} applied and pushed (${commitResult.sha?.slice(0, 7) ?? "unknown"}).`,
   };
@@ -620,4 +623,34 @@ function requireString(
     throw new Error(`memory ${command}: '${field}' must be a non-empty string`);
   }
   return value;
+}
+
+/**
+ * Emit a `memory_updated` push event over the WebSocket so the web UI
+ * can auto-refresh its memory index without polling.
+ */
+function emitMemoryUpdated(affectedPaths: string[]): void {
+  try {
+    // Lazy-import to avoid circular deps — this file is loaded before WS infra
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { getActiveRuntime } = require("../../websocket/listener/runtime") as {
+      getActiveRuntime: () => { socket: { readyState: number; send: (data: string) => void } | null } | null;
+    };
+
+    const runtime = getActiveRuntime();
+    const socket = runtime?.socket;
+    if (!socket || socket.readyState !== 1 /* WebSocket.OPEN */) {
+      return;
+    }
+
+    socket.send(
+      JSON.stringify({
+        type: "memory_updated",
+        affected_paths: affectedPaths,
+        timestamp: Date.now(),
+      }),
+    );
+  } catch {
+    // Best-effort — never break tool execution for a push event
+  }
 }
