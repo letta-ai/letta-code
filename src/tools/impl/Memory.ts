@@ -611,9 +611,12 @@ function emitMemoryUpdated(affectedPaths: string[]): void {
   try {
     // Lazy-import to avoid circular deps — this file is loaded before WS infra
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { getActiveRuntime } = require("../../websocket/listener/runtime") as {
-      getActiveRuntime: () => { socket: { readyState: number; send: (data: string) => void } | null } | null;
-    };
+    const { getActiveRuntime } =
+      require("../../websocket/listener/runtime") as {
+        getActiveRuntime: () => {
+          socket: { readyState: number; send: (data: string) => void } | null;
+        } | null;
+      };
 
     const runtime = getActiveRuntime();
     const socket = runtime?.socket;

@@ -377,7 +377,9 @@ export async function isLettaCloud(): Promise<boolean> {
   const serverUrl = getServerUrl();
 
   return (
-    serverUrl.includes("api.letta.com") || process.env.LETTA_MEMFS_LOCAL === "1" || process.env.LETTA_API_KEY === 'local-desktop'
+    serverUrl.includes("api.letta.com") ||
+    process.env.LETTA_MEMFS_LOCAL === "1" ||
+    process.env.LETTA_API_KEY === "local-desktop"
   );
 }
 

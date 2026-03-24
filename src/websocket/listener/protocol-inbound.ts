@@ -2,9 +2,9 @@ import type WebSocket from "ws";
 import type {
   AbortMessageCommand,
   ChangeDeviceStateCommand,
+  EnableMemfsCommand,
   InputCommand,
   ListInDirectoryCommand,
-  EnableMemfsCommand,
   ListMemoryCommand,
   ReadFileCommand,
   RuntimeScope,
@@ -279,7 +279,11 @@ export function isListMemoryCommand(
   value: unknown,
 ): value is ListMemoryCommand {
   if (!value || typeof value !== "object") return false;
-  const c = value as { type?: unknown; request_id?: unknown; agent_id?: unknown };
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    agent_id?: unknown;
+  };
   return (
     c.type === "list_memory" &&
     typeof c.request_id === "string" &&
@@ -291,7 +295,11 @@ export function isEnableMemfsCommand(
   value: unknown,
 ): value is EnableMemfsCommand {
   if (!value || typeof value !== "object") return false;
-  const c = value as { type?: unknown; request_id?: unknown; agent_id?: unknown };
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    agent_id?: unknown;
+  };
   return (
     c.type === "enable_memfs" &&
     typeof c.request_id === "string" &&

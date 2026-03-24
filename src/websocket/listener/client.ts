@@ -62,8 +62,8 @@ import {
   setConversationPermissionModeState,
 } from "./permissionMode";
 import {
-  isListInDirectoryCommand,
   isEnableMemfsCommand,
+  isListInDirectoryCommand,
   isListMemoryCommand,
   isReadFileCommand,
   isSearchFilesCommand,
@@ -1031,7 +1031,12 @@ async function connectWithRetry(
           const entries = await readdir(parsed.path, { withFileTypes: true });
 
           // Filter out OS/VCS noise before sorting
-          const IGNORED_NAMES = new Set([".DS_Store", ".git", ".gitignore", "Thumbs.db"]);
+          const IGNORED_NAMES = new Set([
+            ".DS_Store",
+            ".git",
+            ".gitignore",
+            "Thumbs.db",
+          ]);
           const sortedEntries = entries
             .filter((e) => !IGNORED_NAMES.has(e.name))
             .sort((a, b) => a.name.localeCompare(b.name));
@@ -1077,9 +1082,7 @@ async function connectWithRetry(
               hasMore: false,
               success: false,
               error:
-                err instanceof Error
-                  ? err.message
-                  : "Failed to list directory",
+                err instanceof Error ? err.message : "Failed to list directory",
             }),
           );
         }
@@ -1125,14 +1128,9 @@ async function connectWithRetry(
           const { getMemoryFilesystemRoot } = await import(
             "../../agent/memoryFilesystem"
           );
-          const {
-            scanMemoryFilesystem,
-            getFileNodes,
-            readFileContent,
-          } = await import("../../agent/memoryScanner");
-          const { parseFrontmatter } = await import(
-            "../../utils/frontmatter"
-          );
+          const { scanMemoryFilesystem, getFileNodes, readFileContent } =
+            await import("../../agent/memoryScanner");
+          const { parseFrontmatter } = await import("../../utils/frontmatter");
 
           const { existsSync } = await import("fs");
           const { join } = await import("path");
@@ -1222,9 +1220,7 @@ async function connectWithRetry(
               total: 0,
               success: false,
               error:
-                err instanceof Error
-                  ? err.message
-                  : "Failed to list memory",
+                err instanceof Error ? err.message : "Failed to list memory",
             }),
           );
         }
@@ -1263,9 +1259,7 @@ async function connectWithRetry(
               request_id: parsed.request_id,
               success: false,
               error:
-                err instanceof Error
-                  ? err.message
-                  : "Failed to enable memfs",
+                err instanceof Error ? err.message : "Failed to enable memfs",
             }),
           );
         }
