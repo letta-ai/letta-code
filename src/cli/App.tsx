@@ -4569,19 +4569,25 @@ export default function App({
             contextTrackerRef.current.currentTurnId++;
           }
 
-          if (!stream) {
-            throw new Error("Expected stream to be set before drain");
-          }
-          const drainResult = drainStreamWithResume(
-            stream,
-            buffersRef.current,
-            refreshDerivedThrottled,
-            signal, // Use captured signal, not ref (which may be nulled by handleInterrupt)
-            handleFirstMessage,
-            undefined,
-            contextTrackerRef.current,
-            highestSeqIdSeen,
-          );
+          const drainResult = preStreamResumeResult
+            ? preStreamResumeResult
+            : (() => {
+                if (!stream) {
+                  throw new Error(
+                    "Expected stream when pre-stream resume did not succeed",
+                  );
+                }
+                return drainStreamWithResume(
+                  stream,
+                  buffersRef.current,
+                  refreshDerivedThrottled,
+                  signal, // Use captured signal, not ref (which may be nulled by handleInterrupt)
+                  handleFirstMessage,
+                  undefined,
+                  contextTrackerRef.current,
+                  highestSeqIdSeen,
+                );
+              })();
 
           const {
             stopReason,
