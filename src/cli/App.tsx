@@ -284,7 +284,6 @@ import { executeStatusLineCommand } from "./helpers/statusLineRuntime";
 import {
   type ApprovalRequest,
   type DrainResult,
-  discoverFallbackRunIdWithTimeout,
   drainStream,
   drainStreamWithResume,
 } from "./helpers/stream";
@@ -4158,76 +4157,66 @@ export default function App({
                 },
               );
 
-              // Attempt to discover and resume the in-flight run before waiting
+              // Attempt to resume the in-flight run via the conversation stream endpoint.
+              // Server resolves: (1) otid lookup, (2) active run fallback.
               try {
-                const resumeCtx: StreamRequestContext = {
-                  conversationId: conversationIdRef.current,
-                  resolvedConversationId: conversationIdRef.current,
-                  agentId: agentIdRef.current,
-                  requestStartedAtMs,
-                };
-                debugLog(
-                  "stream",
-                  "Conversation busy: attempting run discovery for resume (conv=%s, agent=%s)",
-                  resumeCtx.conversationId,
-                  resumeCtx.agentId,
-                );
                 const client = await getClient();
-                const discoveredRunId = await discoverFallbackRunIdWithTimeout(
-                  client,
-                  resumeCtx,
+                const messageOtid = currentInput
+                  .map((item) => (item as Record<string, unknown>).otid)
+                  .find((v): v is string => typeof v === "string");
+                debugLog(
+                  "stream",
+                  "Conversation busy: resuming via stream endpoint (otid=%s)",
+                  messageOtid ?? "none",
+                );
+
+                if (signal?.aborted || userCancelledRef.current) {
+                  const isStaleAtAbort =
+                    myGeneration !== conversationGenerationRef.current;
+                  if (!isStaleAtAbort) {
+                    setStreaming(false);
+                  }
+                  return;
+                }
+
+                const conversationId = conversationIdRef.current ?? "default";
+                const resumeStream = await client.conversations.messages.stream(
+                  conversationId,
+                  // Cast needed until SDK MessageStreamParams includes otid field
+                  {
+                    agent_id:
+                      conversationId === "default"
+                        ? (agentIdRef.current ?? undefined)
+                        : undefined,
+                    otid: messageOtid ?? undefined,
+                    starting_after: 0,
+                    batch_size: 1000,
+                  } as unknown as Parameters<
+                    typeof client.conversations.messages.stream
+                  >[1],
+                );
+
+                // Only reset buffer state after confirming stream is available
+                buffersRef.current.interrupted = false;
+                buffersRef.current.commitGeneration =
+                  (buffersRef.current.commitGeneration || 0) + 1;
+
+                preStreamResumeResult = await drainStream(
+                  resumeStream,
+                  buffersRef.current,
+                  refreshDerivedThrottled,
+                  signal,
+                  undefined, // no handleFirstMessage on resume
+                  undefined,
+                  contextTrackerRef.current,
+                  highestSeqIdSeen,
                 );
                 debugLog(
                   "stream",
-                  "Run discovery result: %s",
-                  discoveredRunId ?? "none",
+                  "Pre-stream resume succeeded (stopReason=%s)",
+                  preStreamResumeResult.stopReason,
                 );
-
-                if (discoveredRunId) {
-                  if (signal?.aborted || userCancelledRef.current) {
-                    const isStaleAtAbort =
-                      myGeneration !== conversationGenerationRef.current;
-                    if (!isStaleAtAbort) {
-                      setStreaming(false);
-                    }
-                    return;
-                  }
-
-                  // Found a running run — resume its stream
-                  buffersRef.current.interrupted = false;
-                  buffersRef.current.commitGeneration =
-                    (buffersRef.current.commitGeneration || 0) + 1;
-
-                  const resumeStream = await client.runs.messages.stream(
-                    discoveredRunId,
-                    {
-                      starting_after: 0,
-                      batch_size: 1000,
-                    },
-                  );
-
-                  preStreamResumeResult = await drainStream(
-                    resumeStream,
-                    buffersRef.current,
-                    refreshDerivedThrottled,
-                    signal,
-                    undefined, // no handleFirstMessage on resume
-                    undefined,
-                    contextTrackerRef.current,
-                    highestSeqIdSeen,
-                  );
-                  // Attach the discovered run ID
-                  if (!preStreamResumeResult.lastRunId) {
-                    preStreamResumeResult.lastRunId = discoveredRunId;
-                  }
-                  debugLog(
-                    "stream",
-                    "Pre-stream resume succeeded (runId=%s, stopReason=%s)",
-                    discoveredRunId,
-                    preStreamResumeResult.stopReason,
-                  );
-                  // Fall through — preStreamResumeResult will short-circuit drainStreamWithResume
-                }
+                // Fall through — preStreamResumeResult will short-circuit drainStreamWithResume
               } catch (resumeError) {
                 if (signal?.aborted || userCancelledRef.current) {
                   const isStaleAtAbort =

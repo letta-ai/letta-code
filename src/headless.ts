@@ -1569,40 +1569,61 @@ ${SYSTEM_REMINDER_CLOSE}
           continue;
         }
 
-        // Check for 409 "conversation busy" error - retry once with delay
-        // TODO: Add pre-stream resume logic for parity with App.tsx.
-        // Before waiting, attempt to discover the in-flight run via
-        // discoverFallbackRunIdWithTimeout() and resume its stream with
-        // client.runs.messages.stream() + drainStream(). See App.tsx
-        // retry_conversation_busy handler for reference implementation.
+        // Check for 409 "conversation busy" - resume via conversation stream endpoint.
+        // Server resolves: (1) otid lookup, (2) active run fallback.
+        // OTID lookup provides server-side request ownership validation.
+        // Falls back to exponential backoff retry if the endpoint fails.
         if (preStreamAction === "retry_conversation_busy") {
-          conversationBusyRetries += 1;
-          const retryDelayMs = getRetryDelayMs({
-            category: "conversation_busy",
-            attempt: conversationBusyRetries,
-          });
+          const messageOtid = currentInput
+            .map((item) => (item as Record<string, unknown>).otid)
+            .find((v): v is string => typeof v === "string");
 
-          // Emit retry message for stream-json mode
-          if (outputFormat === "stream-json") {
-            const retryMsg: RetryMessage = {
-              type: "retry",
-              reason: "error", // 409 conversation busy is a pre-stream error
+          try {
+            const client = await getClient();
+            stream = (await client.conversations.messages.stream(
+              conversationId,
+              // Cast needed until SDK MessageStreamParams includes otid field
+              {
+                agent_id:
+                  conversationId === "default"
+                    ? (agent?.id ?? undefined)
+                    : undefined,
+                otid: messageOtid ?? undefined,
+                starting_after: 0,
+                batch_size: 1000,
+              } as unknown as Parameters<
+                typeof client.conversations.messages.stream
+              >[1],
+            )) as Awaited<ReturnType<typeof sendMessageStream>>;
+            conversationBusyRetries = 0;
+            // Fall through to drain
+          } catch {
+            conversationBusyRetries += 1;
+            const retryDelayMs = getRetryDelayMs({
+              category: "conversation_busy",
               attempt: conversationBusyRetries,
-              max_attempts: CONVERSATION_BUSY_MAX_RETRIES,
-              delay_ms: retryDelayMs,
-              session_id: sessionId,
-              uuid: `retry-conversation-busy-${randomUUID()}`,
-            };
-            console.log(JSON.stringify(retryMsg));
-          } else {
-            console.error(
-              `Conversation is busy, waiting ${Math.round(retryDelayMs / 1000)}s and retrying...`,
-            );
-          }
+            });
 
-          // Wait before retry
-          await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
-          continue;
+            if (outputFormat === "stream-json") {
+              const retryMsg: RetryMessage = {
+                type: "retry",
+                reason: "error",
+                attempt: conversationBusyRetries,
+                max_attempts: CONVERSATION_BUSY_MAX_RETRIES,
+                delay_ms: retryDelayMs,
+                session_id: sessionId,
+                uuid: `retry-conversation-busy-${randomUUID()}`,
+              };
+              console.log(JSON.stringify(retryMsg));
+            } else {
+              console.error(
+                `Conversation is busy, waiting ${Math.round(retryDelayMs / 1000)}s and retrying...`,
+              );
+            }
+
+            await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+            continue;
+          }
         }
 
         if (preStreamAction === "retry_transient") {
