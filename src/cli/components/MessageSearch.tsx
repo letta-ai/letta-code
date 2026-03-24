@@ -105,6 +105,28 @@ function getMessageText(msg: MessageSearchResponse[number]): string {
   return `[${msg.message_type || "unknown"}]`;
 }
 
+/**
+ * Highlight keywords in text
+ */
+function HighlightedText({ text, query }: { text: string; query: string }) {
+  if (!query.trim()) return <Text>{text}</Text>;
+
+  const parts = text.split(new RegExp(`(${query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})`, "gi"));
+  return (
+    <Text>
+      {parts.map((part, i) =>
+        part.toLowerCase() === query.toLowerCase() ? (
+          <Text key={i} bold color={colors.selector.itemHighlighted}>
+            {part}
+          </Text>
+        ) : (
+          <Text key={i}>{part}</Text>
+        ),
+      )}
+    </Text>
+  );
+}
+
 export function MessageSearch({
   onClose,
   initialQuery,
@@ -445,15 +467,18 @@ export function MessageSearch({
             msgType === "assistant_message" || msgType === "reasoning_message";
           const typeLabel = isAssistant ? "Agent message" : "User message";
           const timestamp = formatLocalTime(msgData.created_at || msgData.date);
+          const emoji = isAssistant ? "👾" : "👤";
 
           return (
-            <>
+            <Box flexDirection="column" paddingX={1}>
               {/* Full message text in quotes */}
-              <Box paddingLeft={2}>
-                <Text>"{fullText}"</Text>
+              <Box paddingLeft={2} marginBottom={1}>
+                <Text>
+                  <Text>"</Text>
+                  <HighlightedText text={fullText} query={activeQuery} />
+                  <Text>"</Text>
+                </Text>
               </Box>
-
-              <Box height={1} />
 
               {/* Metadata */}
               <Box flexDirection="column" paddingLeft={2}>
@@ -462,7 +487,7 @@ export function MessageSearch({
                 </Text>
                 <Text dimColor>Agent ID: {msgData.agent_id || "unknown"}</Text>
                 {msgData.conversation_id && (
-                  <Text dimColor>Conv ID: {msgData.conversation_id}</Text>
+                  <Text dimColor>Conversation ID: {msgData.conversation_id}</Text>
                 )}
               </Box>
 
@@ -476,7 +501,7 @@ export function MessageSearch({
                     : "Esc cancel"}
                 </Text>
               </Box>
-            </>
+            </Box>
           );
         })()}
 
@@ -628,12 +653,9 @@ export function MessageSearch({
                     <Text> {emoji} </Text>
                     <Text
                       bold={isSelected}
-                      italic
-                      color={
-                        isSelected ? colors.selector.itemHighlighted : undefined
-                      }
+                      color={isSelected ? colors.selector.itemHighlighted : undefined}
                     >
-                      {displayText}
+                      <HighlightedText text={displayText} query={activeQuery} />
                     </Text>
                   </Box>
                   <Box flexDirection="row" marginLeft={2}>
