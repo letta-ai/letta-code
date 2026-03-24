@@ -1132,8 +1132,8 @@ async function connectWithRetry(
             await import("../../agent/memoryScanner");
           const { parseFrontmatter } = await import("../../utils/frontmatter");
 
-          const { existsSync } = await import("fs");
-          const { join } = await import("path");
+          const { existsSync } = await import("node:fs");
+          const { join } = await import("node:path");
 
           const memoryRoot = getMemoryFilesystemRoot(parsed.agent_id);
 
