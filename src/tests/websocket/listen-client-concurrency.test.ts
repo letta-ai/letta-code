@@ -7,6 +7,7 @@ import type {
   TaskNotificationQueueItem,
 } from "../../queue/queueRuntime";
 import { queueSkillContent } from "../../tools/impl/skillContentRegistry";
+import { resolveRecoveredApprovalResponse } from "../../websocket/listener/recovery";
 import { injectQueuedSkillContent } from "../../websocket/listener/skill-injection";
 import type { IncomingMessage } from "../../websocket/listener/types";
 
@@ -802,6 +803,7 @@ describe("listen-client multi-worker concurrency", () => {
           text: "<searching-messages>stale recovery skill content</searching-messages>",
         },
       ],
+      otid: expect.any(String),
     });
     expect(runtime.loopStatus as string).toBe("PROCESSING_API_RESPONSE");
     expect(runtime.queueRuntime.length).toBe(0);
@@ -892,6 +894,88 @@ describe("listen-client multi-worker concurrency", () => {
           text: "<searching-messages>interrupt path skill content</searching-messages>",
         },
       ],
+      otid: expect.any(String),
+    });
+  });
+
+  test("recovered approval replay keeps approval-only routing and appends skill content at send boundary", async () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    __listenClientTestUtils.setActiveRuntime(listener);
+    const runtime = __listenClientTestUtils.getOrCreateScopedRuntime(
+      listener,
+      "agent-1",
+      "conv-recovered",
+    );
+    const socket = new MockSocket();
+
+    runtime.recoveredApprovalState = {
+      agentId: "agent-1",
+      conversationId: "conv-recovered",
+      approvalsByRequestId: new Map([
+        [
+          "perm-recovered-1",
+          {
+            approval: {
+              toolCallId: "tool-call-recovered-1",
+              toolName: "Write",
+              toolArgs: '{"file_path":"foo.ts"}',
+            },
+            controlRequest: {
+              type: "control_request",
+              request_id: "perm-recovered-1",
+              request: {
+                subtype: "can_use_tool",
+                tool_name: "Write",
+                input: { file_path: "foo.ts" },
+                tool_call_id: "tool-call-recovered-1",
+                permission_suggestions: [],
+                blocked_path: null,
+              },
+              agent_id: "agent-1",
+              conversation_id: "conv-recovered",
+            },
+          },
+        ],
+      ]),
+      pendingRequestIds: new Set(["perm-recovered-1"]),
+      responsesByRequestId: new Map(),
+    };
+
+    queueSkillContent(
+      "tool-call-recovered-1",
+      "<searching-messages>recovered skill content</searching-messages>",
+    );
+
+    await resolveRecoveredApprovalResponse(
+      runtime,
+      socket as unknown as WebSocket,
+      {
+        request_id: "perm-recovered-1",
+        decision: { behavior: "allow" },
+      },
+      __listenClientTestUtils.handleIncomingMessage,
+      {},
+    );
+
+    expect(sendMessageStreamMock.mock.calls.length).toBeGreaterThan(0);
+    const firstSendMessages = sendMessageStreamMock.mock.calls[0]?.[1] as
+      | Array<Record<string, unknown>>
+      | undefined;
+
+    expect(firstSendMessages).toHaveLength(2);
+    expect(firstSendMessages?.[0]).toMatchObject({
+      type: "approval",
+      approvals: [],
+    });
+    expect(firstSendMessages?.[1]).toEqual({
+      role: "user",
+      content: [
+        {
+          type: "text",
+          text: "<searching-messages>recovered skill content</searching-messages>",
+        },
+      ],
+      otid: expect.any(String),
     });
   });
 

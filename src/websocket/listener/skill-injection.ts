@@ -20,6 +20,7 @@ export function injectQueuedSkillContent(
     ...messages,
     {
       role: "user",
+      otid: crypto.randomUUID(),
       content: skillContents.map((sc) => ({
         type: "text" as const,
         text: sc.content,
