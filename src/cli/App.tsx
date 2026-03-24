@@ -11937,7 +11937,7 @@ ${SYSTEM_REMINDER_CLOSE}
             );
 
             cmd.finish(
-              `Personality swapped to ${personality.label}. Run \`/clear\` to fully swap to the new personality`,
+              `Personality swapped to ${personality.label}. Run \`/clear\` or \`/new\` to reset your message history for the personality to take full effect.`,
               true,
             );
           } else {
