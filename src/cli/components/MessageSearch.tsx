@@ -64,6 +64,10 @@ function truncateText(text: string, maxWidth: number): string {
   return `${text.slice(0, maxWidth - 3)}...`;
 }
 
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, (match) => `\\${match}`);
+}
+
 /**
  * Get display text from a message
  */
@@ -111,18 +115,34 @@ function getMessageText(msg: MessageSearchResponse[number]): string {
 function HighlightedText({ text, query }: { text: string; query: string }) {
   if (!query.trim()) return <Text>{text}</Text>;
 
-  const parts = text.split(new RegExp(`(${query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})`, "gi"));
+  const highlightTerms = [
+    ...new Set(query.trim().split(/\s+/).filter(Boolean)),
+  ].sort((a, b) => b.length - a.length);
+
+  if (highlightTerms.length === 0) return <Text>{text}</Text>;
+
+  const parts = text.split(
+    new RegExp(`(${highlightTerms.map(escapeRegExp).join("|")})`, "gi"),
+  );
+
+  let offset = 0;
+
   return (
     <Text>
-      {parts.map((part, i) =>
-        part.toLowerCase() === query.toLowerCase() ? (
-          <Text key={i} bold color={colors.selector.itemHighlighted}>
+      {parts.map((part) => {
+        const key = `${offset}-${part}`;
+        offset += part.length;
+
+        return highlightTerms.some(
+          (term) => part.toLowerCase() === term.toLowerCase(),
+        ) ? (
+          <Text key={key} bold color={colors.selector.itemHighlighted}>
             {part}
           </Text>
         ) : (
-          <Text key={i}>{part}</Text>
-        ),
-      )}
+          <Text key={key}>{part}</Text>
+        );
+      })}
     </Text>
   );
 }
@@ -660,7 +680,9 @@ export function MessageSearch({
                     <Text> {emoji} </Text>
                     <Text
                       bold={isSelected}
-                      color={isSelected ? colors.selector.itemHighlighted : undefined}
+                      color={
+                        isSelected ? colors.selector.itemHighlighted : undefined
+                      }
                     >
                       <HighlightedText text={displayText} query={activeQuery} />
                     </Text>
