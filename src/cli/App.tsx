@@ -10612,6 +10612,7 @@ ${SYSTEM_REMINDER_CLOSE}
           initialInput.push({
             type: "approval",
             approvals: queuedApprovalResults,
+            otid: randomUUID(),
           });
         } else {
           debugWarn(
@@ -10969,7 +10970,11 @@ ${SYSTEM_REMINDER_CLOSE}
           const hadNotifications =
             appendTaskNotificationEvents(queuedNotifications);
           const input: Array<MessageCreate | ApprovalCreate> = [
-            { type: "approval", approvals: allResults as ApprovalResult[] },
+            {
+              type: "approval",
+              approvals: allResults as ApprovalResult[],
+              otid: randomUUID(),
+            },
           ];
           if (queuedItemsToAppend && queuedItemsToAppend.length > 0) {
             const queuedUserText = buildQueuedUserText(queuedItemsToAppend);
