@@ -233,26 +233,6 @@ test("plan mode - allows Read", () => {
   expect(result.matchedRule).toBe("plan mode");
 });
 
-test("plan mode - allows ViewImage", () => {
-  permissionMode.setMode("plan");
-
-  const permissions: PermissionRules = {
-    allow: [],
-    deny: [],
-    ask: [],
-  };
-
-  const result = checkPermission(
-    "ViewImage",
-    { path: "/Users/test/image.png" },
-    permissions,
-    "/Users/test/project",
-  );
-
-  expect(result.decision).toBe("allow");
-  expect(result.matchedRule).toBe("plan mode");
-});
-
 test("plan mode - allows TaskOutput", () => {
   permissionMode.setMode("plan");
 
