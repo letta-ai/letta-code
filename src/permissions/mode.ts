@@ -300,7 +300,7 @@ class PermissionModeManager {
           "Grep",
           "NotebookRead",
           "TodoWrite",
-          // Media tools (read-only)
+          // Image tools (read-only)
           "ViewImage",
           "view_image",
           // Plan mode tools (must allow exit!)
