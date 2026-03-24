@@ -202,7 +202,7 @@ const DynamicPreview: React.FC<DynamicPreviewProps> = ({
     );
   }
 
-  if (t === "apply_patch" || t === "applypatch") {
+  if (t === "apply_patch" || t === "applypatch" || t === "memory_apply_patch") {
     const inputVal = parsedArgs?.input;
     if (typeof inputVal === "string") {
       const operations = parsePatchOperations(inputVal);
@@ -683,7 +683,12 @@ export const ApprovalDialog = memo(function ApprovalDialog({
 
     // For Patch tools - parse hunks directly (patches ARE diffs, no need to recompute)
     const t = approvalRequest.toolName.toLowerCase();
-    if ((t === "apply_patch" || t === "applypatch") && parsedArgs?.input) {
+    if (
+      (t === "apply_patch" ||
+        t === "applypatch" ||
+        t === "memory_apply_patch") &&
+      parsedArgs?.input
+    ) {
       const operations = parsePatchOperations(parsedArgs.input as string);
       for (const op of operations) {
         const key = `${toolCallId}:${op.path}`;
@@ -747,7 +752,11 @@ export const ApprovalDialog = memo(function ApprovalDialog({
     if (!approvalRequest) return "";
     const t = approvalRequest.toolName.toLowerCase();
     // For patch tools, determine header from operation type
-    if (t === "apply_patch" || t === "applypatch") {
+    if (
+      t === "apply_patch" ||
+      t === "applypatch" ||
+      t === "memory_apply_patch"
+    ) {
       if (parsedArgs?.input && typeof parsedArgs.input === "string") {
         const operations = parsePatchOperations(parsedArgs.input);
         if (operations.length > 0) {
@@ -819,7 +828,12 @@ export const ApprovalDialog = memo(function ApprovalDialog({
       }
     }
     // For patch tools, show file path(s) being modified
-    if ((t === "apply_patch" || t === "applypatch") && parsedArgs.input) {
+    if (
+      (t === "apply_patch" ||
+        t === "applypatch" ||
+        t === "memory_apply_patch") &&
+      parsedArgs.input
+    ) {
       const operations = parsePatchOperations(parsedArgs.input as string);
       if (operations.length > 0) {
         const { relative } = require("node:path");
@@ -958,6 +972,7 @@ function getHeaderLabel(toolName: string): string {
   if (t === "list_dir") return "List Files";
   if (t === "grep_files") return "Search in Files";
   if (t === "apply_patch") return "Apply Patch";
+  if (t === "memory_apply_patch") return "Memory Patch";
   if (t === "update_plan") return "Plan update";
   // Codex toolset (PascalCase → lowercased)
   if (t === "shellcommand") return "Shell command";

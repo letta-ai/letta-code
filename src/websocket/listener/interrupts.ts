@@ -471,7 +471,11 @@ export function consumeInterruptQueue(
   agentId: string,
   conversationId: string,
 ): {
-  approvalMessage: { type: "approval"; approvals: ApprovalResult[] };
+  approvalMessage: {
+    type: "approval";
+    approvals: ApprovalResult[];
+    otid?: string;
+  };
   interruptedToolCallIds: string[];
 } | null {
   if (
@@ -483,7 +487,11 @@ export function consumeInterruptQueue(
 
   const ctx = runtime.pendingInterruptedContext;
   let result: {
-    approvalMessage: { type: "approval"; approvals: ApprovalResult[] };
+    approvalMessage: {
+      type: "approval";
+      approvals: ApprovalResult[];
+      otid?: string;
+    };
     interruptedToolCallIds: string[];
   } | null = null;
 
@@ -497,6 +505,7 @@ export function consumeInterruptQueue(
       approvalMessage: {
         type: "approval",
         approvals: runtime.pendingInterruptedResults,
+        otid: crypto.randomUUID(),
       },
       interruptedToolCallIds: runtime.pendingInterruptedToolCallIds
         ? [...runtime.pendingInterruptedToolCallIds]

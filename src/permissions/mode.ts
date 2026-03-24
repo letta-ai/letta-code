@@ -282,6 +282,7 @@ class PermissionModeManager {
             "MultiEdit",
             "NotebookEdit",
             "apply_patch",
+            "memory_apply_patch",
             "replace",
             "write_file",
           ].includes(toolName)
@@ -299,6 +300,9 @@ class PermissionModeManager {
           "Grep",
           "NotebookRead",
           "TodoWrite",
+          // Image tools (read-only)
+          "ViewImage",
+          "view_image",
           // Plan mode tools (must allow exit!)
           "ExitPlanMode",
           "exit_plan_mode",
@@ -339,6 +343,7 @@ class PermissionModeManager {
           // Codex toolset (snake_case and PascalCase)
           "apply_patch",
           "ApplyPatch",
+          "memory_apply_patch",
           // Gemini toolset (snake_case and PascalCase)
           "write_file_gemini",
           "WriteFileGemini",
@@ -362,7 +367,9 @@ class PermissionModeManager {
 
           // ApplyPatch/apply_patch: extract all file directives.
           if (
-            (toolName === "ApplyPatch" || toolName === "apply_patch") &&
+            (toolName === "ApplyPatch" ||
+              toolName === "apply_patch" ||
+              toolName === "memory_apply_patch") &&
             toolArgs?.input
           ) {
             const input = toolArgs.input as string;

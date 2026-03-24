@@ -136,6 +136,7 @@ export interface DeviceStatus {
   current_available_skills: AvailableSkillSummary[];
   background_processes: BackgroundProcessSummary[];
   pending_control_requests: PendingControlRequest[];
+  memory_directory: string | null;
 }
 
 export type LoopStatus =
@@ -395,6 +396,42 @@ export interface SearchFilesCommand {
   max_results?: number;
 }
 
+export interface ListInDirectoryCommand {
+  type: "list_in_directory";
+  /** Absolute path to list entries in. */
+  path: string;
+  /** When true, response includes non-directory entries in `files`. */
+  include_files?: boolean;
+  /** Max entries to return (folders + files combined). */
+  limit?: number;
+  /** Number of entries to skip before returning. */
+  offset?: number;
+}
+
+export interface ReadFileCommand {
+  type: "read_file";
+  /** Absolute path to the file to read. */
+  path: string;
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+}
+
+export interface ListMemoryCommand {
+  type: "list_memory";
+  /** Echoed back in every response chunk for request correlation. */
+  request_id: string;
+  /** The agent whose memory to list. */
+  agent_id: string;
+}
+
+export interface EnableMemfsCommand {
+  type: "enable_memfs";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  /** The agent to enable memfs for. */
+  agent_id: string;
+}
+
 export type WsProtocolCommand =
   | InputCommand
   | ChangeDeviceStateCommand
@@ -404,7 +441,11 @@ export type WsProtocolCommand =
   | TerminalInputCommand
   | TerminalResizeCommand
   | TerminalKillCommand
-  | SearchFilesCommand;
+  | SearchFilesCommand
+  | ListInDirectoryCommand
+  | ReadFileCommand
+  | ListMemoryCommand
+  | EnableMemfsCommand;
 
 export type WsProtocolMessage =
   | DeviceStatusUpdateMessage

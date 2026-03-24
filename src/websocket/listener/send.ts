@@ -41,7 +41,7 @@ import {
   emitToolExecutionFinishedEvents,
   emitToolExecutionStartedEvents,
 } from "./interrupts";
-import { getConversationPermissionModeState } from "./permissionMode";
+import { getOrCreateConversationPermissionModeStateRef } from "./permissionMode";
 import {
   emitDequeuedUserMessage,
   emitRetryDelta,
@@ -55,6 +55,7 @@ import {
   getApprovalContinuationRecoveryDisposition,
   isApprovalToolCallDesyncError,
 } from "./recovery";
+import { injectQueuedSkillContent } from "./skill-injection";
 import type { ConversationRuntime } from "./types";
 
 export function isApprovalOnlyInput(
@@ -157,7 +158,7 @@ export async function resolveStaleApprovals(
         requireArgsForAutoApprove: true,
         missingNameReason: "Tool call incomplete - missing name",
         workingDirectory: recoveryWorkingDirectory,
-        permissionModeState: getConversationPermissionModeState(
+        permissionModeState: getOrCreateConversationPermissionModeStateRef(
           runtime.listener,
           runtime.agentId,
           runtime.conversationId,
@@ -290,6 +291,7 @@ export async function resolveStaleApprovals(
         {
           type: "approval",
           approvals: approvalResults,
+          otid: crypto.randomUUID(),
         },
       ];
       const consumedQueuedTurn = consumeQueuedTurn(runtime);
@@ -299,9 +301,11 @@ export async function resolveStaleApprovals(
         emitDequeuedUserMessage(socket, runtime, queuedTurn, dequeuedBatch);
       }
 
+      const continuationMessagesWithSkillContent =
+        injectQueuedSkillContent(continuationMessages);
       const recoveryStream = await sendApprovalContinuationWithRetry(
         recoveryConversationId,
-        continuationMessages,
+        continuationMessagesWithSkillContent,
         {
           agentId: runtime.agentId ?? undefined,
           streamTokens: true,

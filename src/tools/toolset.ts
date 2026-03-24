@@ -50,27 +50,23 @@ export function deriveToolsetFromModel(
 }
 
 /**
- * Ensures the correct memory tool is attached to the agent based on the model.
- * - OpenAI/Codex models use memory_apply_patch
- * - Claude/Gemini models use memory
+ * Ensures the server-side memory tool is attached to the agent.
+ * Client toolsets may use memory_apply_patch, but server-side base memory tool remains memory.
  *
  * This is a server-side tool swap - client tools are passed via client_tools per-request.
  *
  * @param agentId - The agent ID to update
- * @param modelIdentifier - Model handle to determine which memory tool to use
- * @param useMemoryPatch - Optional override: true = use memory_apply_patch, false = use memory
+ * @param modelIdentifier - Model handle (kept for API compatibility)
+ * @param useMemoryPatch - Unused compatibility parameter
  */
 export async function ensureCorrectMemoryTool(
   agentId: string,
   modelIdentifier: string,
   useMemoryPatch?: boolean,
 ): Promise<void> {
-  const resolvedModel = resolveModel(modelIdentifier) ?? modelIdentifier;
+  void resolveModel(modelIdentifier);
+  void useMemoryPatch;
   const client = await getClient();
-  const shouldUsePatch =
-    useMemoryPatch !== undefined
-      ? useMemoryPatch
-      : isOpenAIModel(resolvedModel);
 
   try {
     // Need full agent state for tool_rules, so use retrieve with include
@@ -89,8 +85,8 @@ export async function ensureCorrectMemoryTool(
     }
 
     // Determine which memory tool we want
-    // Only OpenAI (Codex) uses memory_apply_patch; Claude and Gemini use memory
-    const desiredMemoryTool = shouldUsePatch ? "memory_apply_patch" : "memory";
+    // OpenAI/Codex models use client-side memory_apply_patch now; keep server memory tool as "memory" for all models
+    const desiredMemoryTool = "memory";
     const otherMemoryTool =
       desiredMemoryTool === "memory" ? "memory_apply_patch" : "memory";
 
@@ -184,9 +180,8 @@ export async function reattachMemoryTool(
   agentId: string,
   modelIdentifier: string,
 ): Promise<void> {
-  const resolvedModel = resolveModel(modelIdentifier) ?? modelIdentifier;
+  void resolveModel(modelIdentifier);
   const client = await getClient();
-  const shouldUsePatch = isOpenAIModel(resolvedModel);
 
   try {
     const agentWithTools = await client.agents.retrieve(agentId, {
@@ -196,7 +191,7 @@ export async function reattachMemoryTool(
     const mapByName = new Map(currentTools.map((t) => [t.name, t.id]));
 
     // Determine which memory tool we want
-    const desiredMemoryTool = shouldUsePatch ? "memory_apply_patch" : "memory";
+    const desiredMemoryTool = "memory";
 
     // Already has the tool?
     if (mapByName.has(desiredMemoryTool)) {
@@ -303,8 +298,7 @@ export async function forceToolsetSwitch(
     modelForLoading = "anthropic/claude-sonnet-4";
   }
 
-  // Ensure base memory tool is correct for the toolset
-  // Codex uses memory_apply_patch; Claude and Gemini use memory
+  // Ensure base server memory tool is correct for the toolset
   const useMemoryPatch =
     toolsetName === "codex" || toolsetName === "codex_snake";
   await ensureCorrectMemoryTool(agentId, modelForLoading, useMemoryPatch);
@@ -345,7 +339,7 @@ export async function switchToolsetForModel(
     }
   }
 
-  // Ensure base memory tool is correct for the model
+  // Ensure base server memory tool is attached
   await ensureCorrectMemoryTool(agentId, resolvedModel);
 
   const toolsetName = deriveToolsetFromModel(resolvedModel);

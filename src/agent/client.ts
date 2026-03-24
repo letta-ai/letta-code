@@ -189,6 +189,7 @@ export async function getClient() {
     apiKey,
     baseURL,
     logger: sdkLogger,
+    timeout: 10 * 60 * 1000, // 10 min — letta-code manages cancellation via AbortController; SDK default (60s) is too short
     defaultHeaders: {
       "X-Letta-Source": "letta-code",
       "User-Agent": `letta-code/${packageJson.version}`,
