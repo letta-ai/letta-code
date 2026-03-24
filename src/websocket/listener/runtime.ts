@@ -225,9 +225,11 @@ export function clearConversationRuntimeState(
   runtime: ConversationRuntime,
 ): void {
   runtime.cancelRequested = true;
-  const activeAbortController = runtime.activeAbortController;
-  if (activeAbortController && !activeAbortController.signal.aborted) {
-    activeAbortController.abort();
+  if (
+    runtime.activeAbortController &&
+    !runtime.activeAbortController.signal.aborted
+  ) {
+    runtime.activeAbortController.abort();
   }
   runtime.pendingApprovalBatchByToolCallId.clear();
   runtime.pendingInterruptedResults = null;

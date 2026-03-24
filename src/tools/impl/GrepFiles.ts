@@ -6,7 +6,6 @@ interface GrepFilesArgs {
   include?: string;
   path?: string;
   limit?: number;
-  signal?: AbortSignal;
 }
 
 interface GrepFilesResult {
@@ -27,14 +26,13 @@ export async function grep_files(
 ): Promise<GrepFilesResult> {
   validateRequiredParams(args, ["pattern"], "grep_files");
 
-  const { pattern, include, path, limit = DEFAULT_LIMIT, signal } = args;
+  const { pattern, include, path, limit = DEFAULT_LIMIT } = args;
 
   const grepArgs: GrepArgs = {
     pattern,
     path,
     glob: include,
     output_mode: "files_with_matches",
-    signal,
   };
 
   const result = await grep(grepArgs);

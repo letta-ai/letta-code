@@ -95,7 +95,6 @@ export async function handleApprovalStop(params: {
   currentInput: Array<MessageCreate | ApprovalCreate>;
   pendingNormalizationInterruptedToolCallIds: string[];
   turnToolContextId: string | null;
-  abortSignal: AbortSignal;
   buildSendOptions: () => Parameters<
     typeof sendApprovalContinuationWithRetry
   >[2];
@@ -113,9 +112,13 @@ export async function handleApprovalStop(params: {
     msgRunIds,
     currentInput,
     turnToolContextId,
-    abortSignal,
     buildSendOptions,
   } = params;
+  const abortController = runtime.activeAbortController;
+
+  if (!abortController) {
+    throw new Error("Missing active abort controller during approval handling");
+  }
 
   if (approvals.length === 0) {
     runtime.lastStopReason = "error";
@@ -280,7 +283,7 @@ export async function handleApprovalStop(params: {
 
   const executionResults = await executeApprovalBatch(decisions, undefined, {
     toolContextId: turnToolContextId ?? undefined,
-    abortSignal,
+    abortSignal: abortController.signal,
     workingDirectory: turnWorkingDirectory,
   });
   const persistedExecutionResults = normalizeExecutionResultsForInterruptParity(
@@ -328,6 +331,7 @@ export async function handleApprovalStop(params: {
     nextInput.push(...queuedTurn.messages);
     emitDequeuedUserMessage(socket, runtime, queuedTurn, dequeuedBatch);
   }
+
   setLoopStatus(runtime, "SENDING_API_REQUEST", {
     agent_id: agentId,
     conversation_id: conversationId,
@@ -338,7 +342,7 @@ export async function handleApprovalStop(params: {
     buildSendOptions(),
     socket,
     runtime,
-    abortSignal,
+    abortController.signal,
   );
   if (!stream) {
     return {

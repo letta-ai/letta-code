@@ -11,7 +11,6 @@ interface GlobGeminiArgs {
   case_sensitive?: boolean;
   respect_git_ignore?: boolean;
   respect_gemini_ignore?: boolean;
-  signal?: AbortSignal;
 }
 
 export async function glob_gemini(
@@ -21,7 +20,6 @@ export async function glob_gemini(
   const lettaArgs = {
     pattern: args.pattern,
     path: args.dir_path,
-    signal: args.signal,
   };
 
   const result = await lettaGlob(lettaArgs);

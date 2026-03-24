@@ -12,14 +12,7 @@ export type ListenerQueueGatingConditions = {
 export function getListenerBlockedReason(
   c: ListenerQueueGatingConditions,
 ): QueueBlockedReason | null {
-  if (
-    c.cancelRequested &&
-    (c.isProcessing ||
-      c.isRecoveringApprovals ||
-      c.loopStatus !== "WAITING_ON_INPUT")
-  ) {
-    return "interrupt_in_progress";
-  }
+  if (c.cancelRequested) return "interrupt_in_progress";
   if (c.pendingApprovalsLen > 0) return "pending_approvals";
   if (c.isRecoveringApprovals) return "runtime_busy";
   if (c.loopStatus === "WAITING_ON_APPROVAL") return "pending_approvals";

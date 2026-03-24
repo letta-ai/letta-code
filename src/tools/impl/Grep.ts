@@ -47,7 +47,6 @@ export interface GrepArgs {
   head_limit?: number;
   offset?: number;
   multiline?: boolean;
-  signal?: AbortSignal;
 }
 
 interface GrepResult {
@@ -72,7 +71,6 @@ export async function grep(args: GrepArgs): Promise<GrepResult> {
     head_limit = 100,
     offset = 0,
     multiline,
-    signal,
   } = args;
 
   const userCwd = process.env.USER_CWD || process.cwd();
@@ -104,7 +102,6 @@ export async function grep(args: GrepArgs): Promise<GrepResult> {
     const { stdout } = await execFileAsync(rgPath, rgArgs, {
       maxBuffer: 10 * 1024 * 1024,
       cwd: userCwd,
-      signal,
     });
     if (output_mode === "files_with_matches") {
       const allFiles = stdout.trim().split("\n").filter(Boolean);
@@ -181,21 +178,12 @@ export async function grep(args: GrepArgs): Promise<GrepResult> {
   } catch (error) {
     const err = error as NodeJS.ErrnoException & {
       stdout?: string;
-      code?: string | number;
     };
-    const code = err.code !== undefined ? String(err.code) : undefined;
+    const code = typeof err.code === "number" ? err.code : undefined;
+    const _stdout = typeof err.stdout === "string" ? err.stdout : "";
     const message =
       typeof err.message === "string" ? err.message : "Unknown error";
-    const isAbortError =
-      err.name === "AbortError" ||
-      err.code === "ABORT_ERR" ||
-      err.message === "The operation was aborted";
-    if (isAbortError) {
-      throw Object.assign(new Error("The operation was aborted"), {
-        name: "AbortError",
-      });
-    }
-    if (code === "1") {
+    if (code === 1) {
       if (output_mode === "files_with_matches")
         return { output: "No files found", files: 0 };
       if (output_mode === "count")
