@@ -62,7 +62,9 @@ import {
   persistPermissionModeMapForRuntime,
 } from "./permissionMode";
 import {
-  isListFoldersCommand,
+  isEnableMemfsCommand,
+  isListInDirectoryCommand,
+  isListMemoryCommand,
   isReadFileCommand,
   isSearchFilesCommand,
   parseServerMessage,
@@ -1019,35 +1021,66 @@ async function connectWithRetry(
       return;
     }
 
-    // ── Folder listing (no runtime scope required) ────────────────────
-    if (isListFoldersCommand(parsed)) {
+    // ── Directory listing (no runtime scope required) ──────────────────
+    if (isListInDirectoryCommand(parsed)) {
       void (async () => {
         try {
           const { readdir } = await import("node:fs/promises");
           const entries = await readdir(parsed.path, { withFileTypes: true });
-          const folders = entries
-            .filter((e) => e.isDirectory())
-            .map((e) => e.name)
-            .sort();
-          socket.send(
-            JSON.stringify({
-              type: "list_folders_in_directory_response",
-              path: parsed.path,
-              folders,
-              hasMore: false,
-              success: true,
-            }),
-          );
+
+          // Filter out OS/VCS noise before sorting
+          const IGNORED_NAMES = new Set([
+            ".DS_Store",
+            ".git",
+            ".gitignore",
+            "Thumbs.db",
+          ]);
+          const sortedEntries = entries
+            .filter((e) => !IGNORED_NAMES.has(e.name))
+            .sort((a, b) => a.name.localeCompare(b.name));
+
+          const allFolders: string[] = [];
+          const allFiles: string[] = [];
+          for (const e of sortedEntries) {
+            if (e.isDirectory()) {
+              allFolders.push(e.name);
+            } else if (parsed.include_files) {
+              allFiles.push(e.name);
+            }
+          }
+
+          const total = allFolders.length + allFiles.length;
+          const offset = parsed.offset ?? 0;
+          const limit = parsed.limit ?? total;
+
+          // Paginate over the combined [folders, files] list
+          const combined = [...allFolders, ...allFiles];
+          const page = combined.slice(offset, offset + limit);
+          const folders = page.filter((name) => allFolders.includes(name));
+          const files = page.filter((name) => allFiles.includes(name));
+
+          const response: Record<string, unknown> = {
+            type: "list_in_directory_response",
+            path: parsed.path,
+            folders,
+            hasMore: offset + limit < total,
+            total,
+            success: true,
+          };
+          if (parsed.include_files) {
+            response.files = files;
+          }
+          socket.send(JSON.stringify(response));
         } catch (err) {
           socket.send(
             JSON.stringify({
-              type: "list_folders_in_directory_response",
+              type: "list_in_directory_response",
               path: parsed.path,
               folders: [],
               hasMore: false,
               success: false,
               error:
-                err instanceof Error ? err.message : "Failed to list folders",
+                err instanceof Error ? err.message : "Failed to list directory",
             }),
           );
         }
@@ -1079,6 +1112,152 @@ async function connectWithRetry(
               content: null,
               success: false,
               error: err instanceof Error ? err.message : "Failed to read file",
+            }),
+          );
+        }
+      })();
+      return;
+    }
+
+    // ── Memory index (no runtime scope required) ─────────────────────
+    if (isListMemoryCommand(parsed)) {
+      void (async () => {
+        try {
+          const { getMemoryFilesystemRoot } = await import(
+            "../../agent/memoryFilesystem"
+          );
+          const { scanMemoryFilesystem, getFileNodes, readFileContent } =
+            await import("../../agent/memoryScanner");
+          const { parseFrontmatter } = await import("../../utils/frontmatter");
+
+          const { existsSync } = await import("node:fs");
+          const { join } = await import("node:path");
+
+          const memoryRoot = getMemoryFilesystemRoot(parsed.agent_id);
+
+          // If the memory directory doesn't have a git repo, memfs
+          // hasn't been initialized — tell the UI so it can show the
+          // enable button instead of an empty file list.
+          const memfsInitialized = existsSync(join(memoryRoot, ".git"));
+
+          if (!memfsInitialized) {
+            socket.send(
+              JSON.stringify({
+                type: "list_memory_response",
+                request_id: parsed.request_id,
+                entries: [],
+                done: true,
+                total: 0,
+                success: true,
+                memfs_initialized: false,
+              }),
+            );
+            return;
+          }
+
+          const treeNodes = scanMemoryFilesystem(memoryRoot);
+          const fileNodes = getFileNodes(treeNodes).filter((n) =>
+            n.name.endsWith(".md"),
+          );
+
+          const CHUNK_SIZE = 5;
+          const total = fileNodes.length;
+
+          for (let i = 0; i < total; i += CHUNK_SIZE) {
+            const chunk = fileNodes.slice(i, i + CHUNK_SIZE);
+            const entries = chunk.map((node) => {
+              const raw = readFileContent(node.fullPath);
+              const { frontmatter, body } = parseFrontmatter(raw);
+              const desc = frontmatter.description;
+              return {
+                relative_path: node.relativePath,
+                is_system:
+                  node.relativePath.startsWith("system/") ||
+                  node.relativePath.startsWith("system\\"),
+                description: typeof desc === "string" ? desc : null,
+                content: body,
+                size: body.length,
+              };
+            });
+
+            const done = i + CHUNK_SIZE >= total;
+            socket.send(
+              JSON.stringify({
+                type: "list_memory_response",
+                request_id: parsed.request_id,
+                entries,
+                done,
+                total,
+                success: true,
+                memfs_initialized: true,
+              }),
+            );
+          }
+
+          // Edge case: no files at all (repo exists but empty)
+          if (total === 0) {
+            socket.send(
+              JSON.stringify({
+                type: "list_memory_response",
+                request_id: parsed.request_id,
+                entries: [],
+                done: true,
+                total: 0,
+                success: true,
+                memfs_initialized: true,
+              }),
+            );
+          }
+        } catch (err) {
+          socket.send(
+            JSON.stringify({
+              type: "list_memory_response",
+              request_id: parsed.request_id,
+              entries: [],
+              done: true,
+              total: 0,
+              success: false,
+              error:
+                err instanceof Error ? err.message : "Failed to list memory",
+            }),
+          );
+        }
+      })();
+      return;
+    }
+
+    // ── Enable memfs command ────────────────────────────────────────────
+    if (isEnableMemfsCommand(parsed)) {
+      void (async () => {
+        try {
+          const { applyMemfsFlags } = await import(
+            "../../agent/memoryFilesystem"
+          );
+          const result = await applyMemfsFlags(parsed.agent_id, true, false);
+          socket.send(
+            JSON.stringify({
+              type: "enable_memfs_response",
+              request_id: parsed.request_id,
+              success: true,
+              memory_directory: result.memoryDir,
+            }),
+          );
+          // Push memory_updated so the UI auto-refreshes its file list
+          socket.send(
+            JSON.stringify({
+              type: "memory_updated",
+              affected_paths: ["*"],
+              timestamp: Date.now(),
+            }),
+          );
+        } catch (err) {
+          socket.send(
+            JSON.stringify({
+              type: "enable_memfs_response",
+              request_id: parsed.request_id,
+              success: false,
+              error:
+                err instanceof Error ? err.message : "Failed to enable memfs",
             }),
           );
         }

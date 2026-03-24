@@ -1,5 +1,6 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import WebSocket from "ws";
+import { getMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
 import { permissionMode } from "../../permissions/mode";
 import type { DequeuedBatch } from "../../queue/queueRuntime";
 import { settingsManager } from "../../settings-manager";
@@ -101,6 +102,7 @@ export function buildDeviceStatus(
       current_available_skills: [],
       background_processes: [],
       pending_control_requests: [],
+      memory_directory: null,
     };
   }
   const scope = getScopeForRuntime(runtime, params);
@@ -145,6 +147,9 @@ export function buildDeviceStatus(
     current_available_skills: [],
     background_processes: [],
     pending_control_requests: getPendingControlRequests(listener, scope),
+    memory_directory: scopedAgentId
+      ? getMemoryFilesystemRoot(scopedAgentId)
+      : null,
   };
 }
 

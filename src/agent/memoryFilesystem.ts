@@ -375,8 +375,11 @@ export async function applyMemfsFlags(
 export async function isLettaCloud(): Promise<boolean> {
   const { getServerUrl } = await import("./client");
   const serverUrl = getServerUrl();
+
   return (
-    serverUrl.includes("api.letta.com") || process.env.LETTA_MEMFS_LOCAL === "1"
+    serverUrl.includes("api.letta.com") ||
+    process.env.LETTA_MEMFS_LOCAL === "1" ||
+    process.env.LETTA_API_KEY === "local-desktop"
   );
 }
 
