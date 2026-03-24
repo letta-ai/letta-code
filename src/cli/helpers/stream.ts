@@ -682,14 +682,36 @@ export async function drainStreamWithResume(
 
       // The resumed stream uses a fresh streamProcessor that won't have
       // approval_request_message chunks from before the disconnect (they
-      // had seq_id <= lastSeqId). Carry them over from the original drain.
+      // had seq_id <= lastSeqId).
+      //
+      // Two cases:
+      // 1. All approval chunks were before the drop (resume has no approvals):
+      //    carry over the originals unchanged.
+      // 2. Approval args were split across the drop (original has prefix,
+      //    resume has suffix): merge them so the full args string is intact.
       if (
         result.stopReason === "requires_approval" &&
-        (result.approvals?.length ?? 0) === 0 &&
         (originalApprovals?.length ?? 0) > 0
       ) {
-        result.approvals = originalApprovals;
-        result.approval = originalApproval;
+        if ((result.approvals?.length ?? 0) === 0) {
+          // Case 1: full carry-over
+          result.approvals = originalApprovals;
+          result.approval = originalApproval;
+        } else {
+          // Case 2: merge prefix args from original with suffix args from resume
+          result.approvals = (result.approvals ?? []).map((resumeApproval) => {
+            const orig = originalApprovals?.find(
+              (a) => a.toolCallId === resumeApproval.toolCallId,
+            );
+            if (!orig) return resumeApproval;
+            return {
+              ...resumeApproval,
+              toolName: resumeApproval.toolName || orig.toolName,
+              toolArgs: (orig.toolArgs || "") + (resumeApproval.toolArgs || ""),
+            };
+          });
+          result.approval = result.approvals[0] ?? null;
+        }
       }
     } catch (resumeError) {
       // Resume failed - cancel tools and finalize the streaming line now
