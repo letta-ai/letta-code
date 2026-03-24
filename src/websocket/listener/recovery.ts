@@ -49,6 +49,7 @@ import {
 } from "./protocol-outbound";
 import { consumeQueuedTurn } from "./queue";
 import { clearActiveRunState, clearRecoveredApprovalState } from "./runtime";
+import { injectQueuedSkillContent } from "./skill-injection";
 import type {
   ConversationRuntime,
   IncomingMessage,
@@ -581,12 +582,15 @@ export async function resolveRecoveredApprovalResponse(
       emitDequeuedUserMessage(socket, runtime, queuedTurn, dequeuedBatch);
     }
 
+    const continuationMessagesWithSkillContent =
+      injectQueuedSkillContent(continuationMessages);
+
     await processTurn(
       {
         type: "message",
         agentId: recovered.agentId,
         conversationId: recovered.conversationId,
-        messages: continuationMessages,
+        messages: continuationMessagesWithSkillContent,
       },
       socket,
       runtime,

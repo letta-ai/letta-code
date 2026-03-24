@@ -55,6 +55,7 @@ import {
   getApprovalContinuationRecoveryDisposition,
   isApprovalToolCallDesyncError,
 } from "./recovery";
+import { injectQueuedSkillContent } from "./skill-injection";
 import type { ConversationRuntime } from "./types";
 
 export function isApprovalOnlyInput(
@@ -300,9 +301,11 @@ export async function resolveStaleApprovals(
         emitDequeuedUserMessage(socket, runtime, queuedTurn, dequeuedBatch);
       }
 
+      const continuationMessagesWithSkillContent =
+        injectQueuedSkillContent(continuationMessages);
       const recoveryStream = await sendApprovalContinuationWithRetry(
         recoveryConversationId,
-        continuationMessages,
+        continuationMessagesWithSkillContent,
         {
           agentId: runtime.agentId ?? undefined,
           streamTokens: true,

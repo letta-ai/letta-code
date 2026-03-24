@@ -6,6 +6,8 @@ import type {
   MessageQueueItem,
   TaskNotificationQueueItem,
 } from "../../queue/queueRuntime";
+import { queueSkillContent } from "../../tools/impl/skillContentRegistry";
+import { injectQueuedSkillContent } from "../../websocket/listener/skill-injection";
 import type { IncomingMessage } from "../../websocket/listener/types";
 
 type MockStream = {
@@ -197,6 +199,8 @@ function makeIncomingMessage(
 
 describe("listen-client multi-worker concurrency", () => {
   beforeEach(() => {
+    queueSkillContent("__test-cleanup__", "__test-cleanup__");
+    injectQueuedSkillContent([]);
     permissionMode.reset();
     sendMessageStreamMock.mockClear();
     getStreamToolContextIdMock.mockClear();
@@ -753,6 +757,11 @@ describe("listen-client multi-worker concurrency", () => {
       throw new Error("Expected stale recovery queued task item");
     }
 
+    queueSkillContent(
+      "tool-call-1",
+      "<searching-messages>stale recovery skill content</searching-messages>",
+    );
+
     const recoveryPromise = __listenClientTestUtils.resolveStaleApprovals(
       runtime,
       socket as unknown as WebSocket,
@@ -766,7 +775,7 @@ describe("listen-client multi-worker concurrency", () => {
     const continuationMessages = sendMessageStreamMock.mock.calls[0]?.[1] as
       | Array<Record<string, unknown>>
       | undefined;
-    expect(continuationMessages).toHaveLength(2);
+    expect(continuationMessages).toHaveLength(3);
     expect(continuationMessages?.[0]).toEqual(
       expect.objectContaining({
         type: "approval",
@@ -782,6 +791,15 @@ describe("listen-client multi-worker concurrency", () => {
         {
           type: "text",
           text: "<task-notification>done</task-notification>",
+        },
+      ],
+    });
+    expect(continuationMessages?.[2]).toEqual({
+      role: "user",
+      content: [
+        {
+          type: "text",
+          text: "<searching-messages>stale recovery skill content</searching-messages>",
         },
       ],
     });
@@ -806,6 +824,74 @@ describe("listen-client multi-worker concurrency", () => {
       stopReason: "end_turn",
       approvals: [],
       apiDurationMs: 0,
+    });
+  });
+
+  test("interrupt-queue approval continuation appends skill content as trailing user message", async () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    __listenClientTestUtils.setActiveRuntime(listener);
+    const runtime = __listenClientTestUtils.getOrCreateScopedRuntime(
+      listener,
+      "agent-1",
+      "conv-int",
+    );
+    const socket = new MockSocket();
+
+    runtime.pendingInterruptedResults = [
+      {
+        type: "approval",
+        tool_call_id: "call-int",
+        approve: false,
+        reason: "Interrupted by user",
+      },
+    ] as never;
+    runtime.pendingInterruptedContext = {
+      agentId: "agent-1",
+      conversationId: "conv-int",
+      continuationEpoch: runtime.continuationEpoch,
+    };
+    runtime.pendingInterruptedToolCallIds = ["call-int"];
+
+    queueSkillContent(
+      "call-int",
+      "<searching-messages>interrupt path skill content</searching-messages>",
+    );
+
+    await __listenClientTestUtils.handleIncomingMessage(
+      {
+        type: "message",
+        agentId: "agent-1",
+        conversationId: "conv-int",
+        messages: [],
+      } as unknown as IncomingMessage,
+      socket as unknown as WebSocket,
+      runtime,
+    );
+
+    expect(sendMessageStreamMock.mock.calls.length).toBeGreaterThan(0);
+    const firstSendMessages = sendMessageStreamMock.mock.calls[0]?.[1] as
+      | Array<Record<string, unknown>>
+      | undefined;
+
+    expect(firstSendMessages).toHaveLength(2);
+    expect(firstSendMessages?.[0]).toMatchObject({
+      type: "approval",
+      approvals: [
+        {
+          tool_call_id: "call-int",
+          approve: false,
+          reason: "Interrupted by user",
+        },
+      ],
+    });
+    expect(firstSendMessages?.[1]).toEqual({
+      role: "user",
+      content: [
+        {
+          type: "text",
+          text: "<searching-messages>interrupt path skill content</searching-messages>",
+        },
+      ],
     });
   });
 
