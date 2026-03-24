@@ -185,6 +185,7 @@ get_fm_value() {
 # Skip skill SKILL.md files — they use a different frontmatter format.
 for file in $(git diff --cached --name-only --diff-filter=ACM | grep -E '^(memory/)?(system|reference)/.*\\.md$'); do
   staged=$(git show ":$file")
+  staged=$(printf '%s' "$staged" | tr -d '\r')
 
   # Frontmatter is required
   first_line=$(echo "$staged" | head -1)

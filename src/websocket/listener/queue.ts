@@ -250,10 +250,6 @@ function buildQueuedTurnMessage(
   };
 }
 
-export function shouldQueueInboundMessage(parsed: IncomingMessage): boolean {
-  return parsed.messages.some((payload) => "content" in payload);
-}
-
 export function consumeQueuedTurn(runtime: ConversationRuntime): {
   dequeuedBatch: DequeuedBatch;
   queuedTurn: IncomingMessage;
@@ -279,7 +275,10 @@ export function consumeQueuedTurn(runtime: ConversationRuntime): {
     }
   }
 
-  if (!hasMessage || queueLen === 0) {
+  if (!hasMessage) {
+    return null;
+  }
+  if (queueLen === 0) {
     return null;
   }
 
@@ -297,6 +296,10 @@ export function consumeQueuedTurn(runtime: ConversationRuntime): {
     dequeuedBatch,
     queuedTurn,
   };
+}
+
+export function shouldQueueInboundMessage(parsed: IncomingMessage): boolean {
+  return parsed.messages.some((payload) => "content" in payload);
 }
 
 function computeListenerQueueBlockedReason(
