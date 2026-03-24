@@ -458,7 +458,7 @@ export async function drainStream(
   const approvals: ApprovalRequest[] = allPending.map((a) => ({
     toolCallId: a.toolCallId,
     toolName: a.toolName || "",
-    toolArgs: a.toolArgs || "{}",
+    toolArgs: a.toolArgs || "",
   }));
   const approval: ApprovalRequest | null = approvals[0] || null;
   streamProcessor.pendingApprovals.clear();
