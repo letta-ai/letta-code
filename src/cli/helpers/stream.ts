@@ -771,6 +771,18 @@ export async function drainStreamWithResume(
     }
   }
 
+  // If the initial drain's catch block set buffers.interrupted=true (skipCancelToolsOnError)
+  // but the stream ended with complete requires_approval data (stop_reason chunk arrived
+  // before the drop), no resume is needed — clean up so the approval prompt renders correctly.
+  if (
+    result.stopReason === "requires_approval" &&
+    (result.approvals?.length ?? 0) > 0 &&
+    buffers.interrupted
+  ) {
+    buffers.interrupted = false;
+    markCurrentLineAsFinished(buffers);
+  }
+
   // Update duration to reflect total time (including resume attempt)
   result.apiDurationMs = performance.now() - overallStartTime;
 
