@@ -2,8 +2,10 @@ import type WebSocket from "ws";
 import type {
   AbortMessageCommand,
   ChangeDeviceStateCommand,
+  EnableMemfsCommand,
   InputCommand,
-  ListFoldersInDirectoryCommand,
+  ListInDirectoryCommand,
+  ListMemoryCommand,
   ReadFileCommand,
   RuntimeScope,
   SearchFilesCommand,
@@ -255,12 +257,12 @@ export function isSearchFilesCommand(
   );
 }
 
-export function isListFoldersCommand(
+export function isListInDirectoryCommand(
   value: unknown,
-): value is ListFoldersInDirectoryCommand {
+): value is ListInDirectoryCommand {
   if (!value || typeof value !== "object") return false;
   const c = value as { type?: unknown; path?: unknown };
-  return c.type === "list_folders_in_directory" && typeof c.path === "string";
+  return c.type === "list_in_directory" && typeof c.path === "string";
 }
 
 export function isReadFileCommand(value: unknown): value is ReadFileCommand {
@@ -270,6 +272,38 @@ export function isReadFileCommand(value: unknown): value is ReadFileCommand {
     c.type === "read_file" &&
     typeof c.path === "string" &&
     typeof c.request_id === "string"
+  );
+}
+
+export function isListMemoryCommand(
+  value: unknown,
+): value is ListMemoryCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    agent_id?: unknown;
+  };
+  return (
+    c.type === "list_memory" &&
+    typeof c.request_id === "string" &&
+    typeof c.agent_id === "string"
+  );
+}
+
+export function isEnableMemfsCommand(
+  value: unknown,
+): value is EnableMemfsCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    agent_id?: unknown;
+  };
+  return (
+    c.type === "enable_memfs" &&
+    typeof c.request_id === "string" &&
+    typeof c.agent_id === "string"
   );
 }
 
@@ -289,8 +323,10 @@ export function parseServerMessage(
       isTerminalResizeCommand(parsed) ||
       isTerminalKillCommand(parsed) ||
       isSearchFilesCommand(parsed) ||
-      isListFoldersCommand(parsed) ||
-      isReadFileCommand(parsed)
+      isListInDirectoryCommand(parsed) ||
+      isReadFileCommand(parsed) ||
+      isListMemoryCommand(parsed) ||
+      isEnableMemfsCommand(parsed)
     ) {
       return parsed as WsProtocolCommand;
     }

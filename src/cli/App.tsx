@@ -1,5 +1,6 @@
 // src/cli/App.tsx
 
+import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join, relative } from "node:path";
@@ -52,11 +53,7 @@ import {
   ensureMemoryFilesystemDirs,
   getMemoryFilesystemRoot,
 } from "../agent/memoryFilesystem";
-import {
-  getStreamToolContextId,
-  type StreamRequestContext,
-  sendMessageStream,
-} from "../agent/message";
+import { getStreamToolContextId, sendMessageStream } from "../agent/message";
 import {
   getModelInfo,
   getModelInfoForLlmConfig,
@@ -1903,6 +1900,8 @@ export default function App({
   // Epoch counter to force dequeue effect re-run when refs change but state doesn't
   // Incremented when userCancelledRef is reset while messages are queued
   const [dequeueEpoch, setDequeueEpoch] = useState(0);
+  // Strict lock to ensure dequeue submit path is at-most-once while onSubmit is in flight.
+  const dequeueInFlightRef = useRef(false);
 
   // Track last dequeued message for restoration on error
   // If an error occurs after dequeue, we restore this to the input field (if input is empty)
@@ -3865,6 +3864,7 @@ export default function App({
                 type: "message",
                 role: "user",
                 content: `${systemMsg}\n\n${newState.originalPrompt}`,
+                otid: randomUUID(),
               },
             ],
             { allowReentry: true },
@@ -3874,6 +3874,13 @@ export default function App({
 
       // Copy so we can safely mutate for retry recovery flows
       let currentInput = [...initialInput];
+      const refreshCurrentInputOtids = () => {
+        // Terminal stop-reason retries are NEW requests and must not reuse OTIDs.
+        currentInput = currentInput.map((item) => ({
+          ...item,
+          otid: randomUUID(),
+        }));
+      };
       const allowReentry = options?.allowReentry ?? false;
       const hasApprovalInput = initialInput.some(
         (item) => item.type === "approval",
@@ -3956,11 +3963,16 @@ export default function App({
           canInjectInterruptRecovery
         ) {
           currentInput = [
-            ...lastSentInputRef.current,
+            // Refresh OTIDs — this is a new request, not a retry of the interrupted one
+            ...lastSentInputRef.current.map((m) => ({
+              ...m,
+              otid: randomUUID(),
+            })),
             ...currentInput.map((m) =>
               m.type === "message" && m.role === "user"
                 ? {
                     ...m,
+                    otid: randomUUID(),
                     content: [
                       { type: "text" as const, text: INTERRUPT_RECOVERY_ALERT },
                       ...(typeof m.content === "string"
@@ -3968,7 +3980,7 @@ export default function App({
                         : m.content),
                     ],
                   }
-                : m,
+                : { ...m, otid: randomUUID() },
             ),
           ];
           pendingInterruptRecoveryConversationIdRef.current = null;
@@ -4009,9 +4021,6 @@ export default function App({
           clearCompletedSubagents();
         }
 
-        // Capture once before the retry loop so the temporal filter in
-        // discoverFallbackRunIdForResume covers runs created by any attempt.
-        const requestStartedAtMs = Date.now();
         let highestSeqIdSeen: number | null = null;
 
         while (true) {
@@ -4034,23 +4043,22 @@ export default function App({
           // Inject queued skill content as user message parts (LET-7353)
           // This centralizes skill content injection so all approval-send paths
           // automatically get skill SKILL.md content alongside tool results.
-          {
-            const { consumeQueuedSkillContent } = await import(
-              "../tools/impl/skillContentRegistry"
-            );
-            const skillContents = consumeQueuedSkillContent();
-            if (skillContents.length > 0) {
-              currentInput = [
-                ...currentInput,
-                {
-                  role: "user",
-                  content: skillContents.map((sc) => ({
-                    type: "text" as const,
-                    text: sc.content,
-                  })),
-                },
-              ];
-            }
+          const { consumeQueuedSkillContent } = await import(
+            "../tools/impl/skillContentRegistry"
+          );
+          const skillContents = consumeQueuedSkillContent();
+          if (skillContents.length > 0) {
+            currentInput = [
+              ...currentInput,
+              {
+                role: "user",
+                content: skillContents.map((sc) => ({
+                  type: "text" as const,
+                  text: sc.content,
+                })),
+                otid: randomUUID(),
+              },
+            ];
           }
 
           // Stream one turn - use ref to always get the latest conversationId
@@ -4455,10 +4463,7 @@ export default function App({
             }
 
             // Not a recoverable desync - re-throw to outer catch
-            // (unless pre-stream resume already succeeded)
-            if (!preStreamResumeResult) {
-              throw preStreamError;
-            }
+            throw preStreamError;
           }
 
           // Check again after network call - user may have pressed Escape during sendMessageStream
@@ -4564,25 +4569,19 @@ export default function App({
             contextTrackerRef.current.currentTurnId++;
           }
 
-          const drainResult = preStreamResumeResult
-            ? preStreamResumeResult
-            : (() => {
-                if (!stream) {
-                  throw new Error(
-                    "Expected stream when pre-stream resume did not succeed",
-                  );
-                }
-                return drainStreamWithResume(
-                  stream,
-                  buffersRef.current,
-                  refreshDerivedThrottled,
-                  signal, // Use captured signal, not ref (which may be nulled by handleInterrupt)
-                  handleFirstMessage,
-                  undefined,
-                  contextTrackerRef.current,
-                  highestSeqIdSeen,
-                );
-              })();
+          if (!stream) {
+            throw new Error("Expected stream to be set before drain");
+          }
+          const drainResult = drainStreamWithResume(
+            stream,
+            buffersRef.current,
+            refreshDerivedThrottled,
+            signal, // Use captured signal, not ref (which may be nulled by handleInterrupt)
+            handleFirstMessage,
+            undefined,
+            contextTrackerRef.current,
+            highestSeqIdSeen,
+          );
 
           const {
             stopReason,
@@ -4740,6 +4739,7 @@ export default function App({
               refreshDerived();
 
               // Continue conversation with the hook feedback
+              const hookMessageOtid = randomUUID();
               setTimeout(() => {
                 processConversation(
                   [
@@ -4747,6 +4747,7 @@ export default function App({
                       type: "message",
                       role: "user",
                       content: hookMessage,
+                      otid: hookMessageOtid,
                     },
                   ],
                   { allowReentry: true },
@@ -5239,11 +5240,16 @@ export default function App({
                   toolResultsInFlightRef.current = true;
                   await processConversation(
                     [
-                      { type: "approval", approvals: allResults },
+                      {
+                        type: "approval",
+                        approvals: allResults,
+                        otid: randomUUID(),
+                      },
                       {
                         type: "message",
                         role: "user",
                         content: queuedContentParts,
+                        otid: randomUUID(),
                       },
                     ],
                     { allowReentry: true },
@@ -5289,6 +5295,7 @@ export default function App({
                     {
                       type: "approval",
                       approvals: allResults,
+                      otid: randomUUID(),
                     },
                   ],
                   { allowReentry: true },
@@ -5559,6 +5566,7 @@ export default function App({
                   type: "message" as const,
                   role: "system" as const,
                   content: `<system-reminder>The previous response was empty. Please provide a response with either text content or a tool call.</system-reminder>`,
+                  otid: randomUUID(),
                 },
               ];
             }
@@ -5582,6 +5590,8 @@ export default function App({
             );
             refreshDerived();
 
+            // Empty-response retry starts a new request/run, so refresh OTIDs.
+            refreshCurrentInputOtids();
             buffersRef.current.interrupted = false;
             continue;
           }
@@ -5596,6 +5606,9 @@ export default function App({
             retriable &&
             llmApiErrorRetriesRef.current < LLM_API_ERROR_MAX_RETRIES
           ) {
+            // Do NOT replay the same run for terminal post-stream errors
+            // (e.g. llm_api_error). A retry should create a new run.
+
             llmApiErrorRetriesRef.current += 1;
             const attempt = llmApiErrorRetriesRef.current;
             const delayMs = getRetryDelayMs({
@@ -5663,9 +5676,11 @@ export default function App({
             }
 
             if (!cancelled) {
+              // Post-stream retry is a new request/run, so refresh OTIDs.
+              refreshCurrentInputOtids();
               // Reset interrupted flag so retry stream chunks are processed
               buffersRef.current.interrupted = false;
-              // Retry by continuing the while loop (same currentInput)
+              // Retry by continuing the while loop with fresh OTIDs.
               continue;
             }
             // User pressed ESC - fall through to error handling
@@ -6928,7 +6943,7 @@ export default function App({
         if (allResults.length > 0) {
           toolResultsInFlightRef.current = true;
           await processConversation([
-            { type: "approval", approvals: allResults },
+            { type: "approval", approvals: allResults, otid: randomUUID() },
           ]);
           toolResultsInFlightRef.current = false;
 
@@ -8032,6 +8047,7 @@ export default function App({
                 type: "message",
                 role: "user",
                 content: buildTextParts(systemMsg, prompt),
+                otid: randomUUID(),
               },
             ]);
           } else {
@@ -9453,6 +9469,7 @@ export default function App({
                 type: "message",
                 role: "user",
                 content: buildTextParts(skillMessage),
+                otid: randomUUID(),
               },
             ]);
           } catch (error) {
@@ -9516,6 +9533,7 @@ export default function App({
                 type: "message",
                 role: "user",
                 content: rememberParts,
+                otid: randomUUID(),
               },
             ]);
           } catch (error) {
@@ -9672,6 +9690,7 @@ export default function App({
                 type: "message",
                 role: "user",
                 content: buildTextParts(initMessage),
+                otid: randomUUID(),
               },
             ]);
           } catch (error) {
@@ -9788,6 +9807,7 @@ export default function App({
                 content: buildTextParts(
                   `${SYSTEM_REMINDER_OPEN}\n${prompt}\n${SYSTEM_REMINDER_CLOSE}`,
                 ),
+                otid: randomUUID(),
               },
             ]);
           } catch (error) {
@@ -10406,12 +10426,14 @@ ${SYSTEM_REMINDER_CLOSE}
                   {
                     type: "approval",
                     approvals: recoveryApprovalResults,
+                    otid: randomUUID(),
                   },
                   {
                     type: "message",
                     role: "user",
                     content:
                       messageContent as unknown as MessageCreate["content"],
+                    otid: randomUUID(),
                   },
                 ];
 
@@ -10687,6 +10709,7 @@ ${SYSTEM_REMINDER_CLOSE}
         type: "message",
         role: "user",
         content: messageContent as unknown as MessageCreate["content"],
+        otid: randomUUID(),
       });
 
       await processConversation(initialInput, {
@@ -10756,7 +10779,8 @@ ${SYSTEM_REMINDER_CLOSE}
       !anySelectorOpen && // Don't dequeue while a selector/overlay is open
       !waitingForQueueCancelRef.current && // Don't dequeue while waiting for cancel
       !userCancelledRef.current && // Don't dequeue if user just cancelled
-      !abortControllerRef.current // Don't dequeue while processConversation is still active
+      !abortControllerRef.current && // Don't dequeue while processConversation is still active
+      !dequeueInFlightRef.current // Don't dequeue while previous dequeue submit is still in flight
     ) {
       // consumeItems(n) fires onDequeued → setQueueDisplay(prev => prev.slice(n)).
       const batch = tuiQueueRef.current?.consumeItems(queueLen);
@@ -10786,7 +10810,16 @@ ${SYSTEM_REMINDER_CLOSE}
 
       // Submit via normal flow — overrideContentPartsRef carries rich content parts.
       overrideContentPartsRef.current = queuedContentParts;
-      onSubmitRef.current(concatenatedMessage);
+      // Lock prevents re-entrant dequeue if deps churn before processConversation
+      // sets abortControllerRef (which is the normal long-term gate).
+      dequeueInFlightRef.current = true;
+      void onSubmitRef.current(concatenatedMessage).finally(() => {
+        dequeueInFlightRef.current = false;
+        // If more items arrived while in-flight, bump epoch so the effect re-runs.
+        if ((tuiQueueRef.current?.length ?? 0) > 0) {
+          setDequeueEpoch((e) => e + 1);
+        }
+      });
     } else if (hasAnythingQueued) {
       // Log why dequeue was blocked (useful for debugging stuck queues)
       debugLog(
@@ -11035,6 +11068,7 @@ ${SYSTEM_REMINDER_CLOSE}
               type: "message",
               role: "user",
               content: buildQueuedContentParts(queuedItemsToAppend),
+              otid: randomUUID(),
             });
             refreshDerived();
           } else if (hadNotifications) {
@@ -11304,6 +11338,7 @@ ${SYSTEM_REMINDER_CLOSE}
               {
                 type: "approval",
                 approvals: allResults as ApprovalResult[],
+                otid: randomUUID(),
               },
             ]);
           } finally {
