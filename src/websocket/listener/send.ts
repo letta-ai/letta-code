@@ -290,6 +290,7 @@ export async function resolveStaleApprovals(
         {
           type: "approval",
           approvals: approvalResults,
+          otid: crypto.randomUUID(),
         },
       ];
       const consumedQueuedTurn = consumeQueuedTurn(runtime);
