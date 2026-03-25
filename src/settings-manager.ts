@@ -1144,6 +1144,23 @@ class SettingsManager {
     return this.getGlobalLastAgentId();
   }
 
+  /**
+   * Persist the current session (agent + conversation) to both local and global
+   * settings, plus the legacy lastAgent fields for backwards compat.
+   *
+   * This is the single entry-point every conversation/agent switch should use
+   * instead of calling setLocalLastSession + setGlobalLastSession individually.
+   */
+  persistSession(
+    agentId: string,
+    conversationId: string,
+    workingDirectory: string = process.cwd(),
+  ): void {
+    const session: SessionRef = { agentId, conversationId };
+    this.setLocalLastSession(session, workingDirectory);
+    this.setGlobalLastSession(session);
+  }
+
   // =====================================================================
   // Profile Management Helpers
   // =====================================================================

@@ -1920,14 +1920,7 @@ async function main(): Promise<void> {
         // Save the session (agent + conversation) to settings
         // Skip for subagents - they shouldn't pollute the LRU settings
         if (!isSubagent) {
-          settingsManager.setLocalLastSession(
-            { agentId: agent.id, conversationId: conversationIdToUse },
-            process.cwd(),
-          );
-          settingsManager.setGlobalLastSession({
-            agentId: agent.id,
-            conversationId: conversationIdToUse,
-          });
+          settingsManager.persistSession(agent.id, conversationIdToUse);
         }
 
         setAgentId(agent.id);
