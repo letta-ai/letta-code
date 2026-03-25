@@ -1194,9 +1194,8 @@ export function Input({
   // Handle up/down arrow keys for wrapped text navigation and command history
   useInput((_input, key) => {
     if (!interactionEnabled) return;
-    // Don't interfere with autocomplete navigation, BUT allow history navigation
-    // when we're already browsing history (historyIndex !== -1)
-    if (isAutocompleteActive && historyIndex === -1) {
+    // Don't interfere with autocomplete navigation.
+    if (isAutocompleteActive) {
       return;
     }
 
@@ -1494,6 +1493,21 @@ export function Input({
     setCursorPos(selectedCommand.length);
   }, []);
 
+  const handleAutocompleteActiveChange = useCallback((isActive: boolean) => {
+    setIsAutocompleteActive(isActive);
+
+    if (!isActive) return;
+
+    // Autocomplete owns arrow-key navigation while open. Clear any in-progress
+    // history-navigation state so Down/Up cannot simultaneously mutate the
+    // input draft and the autocomplete selection.
+    setHistoryIndex(-1);
+    setTemporaryInput("");
+    setAtStartBoundary(false);
+    setAtEndBoundary(false);
+    setPreferredColumn(null);
+  }, []);
+
   // Get display name and color for permission mode (ralph modes take precedence)
   // Memoized to prevent unnecessary footer re-renders
   const modeInfo = useMemo<{
@@ -1629,7 +1643,7 @@ export function Input({
                 onFileSelect={handleFileSelect}
                 onCommandSelect={handleCommandSelect}
                 onCommandAutocomplete={handleCommandAutocomplete}
-                onAutocompleteActiveChange={setIsAutocompleteActive}
+                onAutocompleteActiveChange={handleAutocompleteActiveChange}
                 agentId={agentId}
                 agentName={agentName}
                 currentModel={currentModel}
@@ -1691,6 +1705,7 @@ export function Input({
     handleFileSelect,
     handleCommandSelect,
     handleCommandAutocomplete,
+    handleAutocompleteActiveChange,
     agentId,
     agentName,
     serverUrl,
