@@ -1550,10 +1550,20 @@
     },
     {
       "id": "kimi-k2.5",
-      "handle": "openrouter/moonshotai/kimi-k2.5",
+      "handle": "baseten/moonshotai/Kimi-K2.5",
       "label": "Kimi K2.5",
       "description": "Kimi's latest coding model",
       "isFeatured": true,
+      "updateArgs": {
+        "context_window": 262000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "kimi-k2.5",
+      "handle": "openrouter/moonshotai/kimi-k2.5",
+      "label": "Kimi K2.5 (openrouter)",
+      "description": "Kimi's latest coding model",
       "updateArgs": {
         "context_window": 262144,
         "parallel_tool_calls": true
