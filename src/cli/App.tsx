@@ -53,11 +53,7 @@ import {
   ensureMemoryFilesystemDirs,
   getMemoryFilesystemRoot,
 } from "../agent/memoryFilesystem";
-import {
-  getStreamToolContextId,
-  type StreamRequestContext,
-  sendMessageStream,
-} from "../agent/message";
+import { getStreamToolContextId, sendMessageStream } from "../agent/message";
 import {
   getModelInfo,
   getModelInfoForLlmConfig,
@@ -282,7 +278,12 @@ import {
 import { formatStatusLineHelp } from "./helpers/statusLineHelp";
 import { buildStatusLinePayload } from "./helpers/statusLinePayload";
 import { executeStatusLineCommand } from "./helpers/statusLineRuntime";
-import { type ApprovalRequest, drainStreamWithResume } from "./helpers/stream";
+import {
+  type ApprovalRequest,
+  type DrainResult,
+  drainStream,
+  drainStreamWithResume,
+} from "./helpers/stream";
 import {
   collectFinishedTaskToolCalls,
   createSubagentGroupItem,
@@ -4028,9 +4029,6 @@ export default function App({
           clearCompletedSubagents();
         }
 
-        // Capture once before the retry loop so the temporal filter in
-        // discoverFallbackRunIdForResume covers runs created by any attempt.
-        const requestStartedAtMs = Date.now();
         let highestSeqIdSeen: number | null = null;
 
         while (true) {
@@ -4078,6 +4076,7 @@ export default function App({
           let stream: Awaited<ReturnType<typeof sendMessageStream>> | null =
             null;
           let turnToolContextId: string | null = null;
+          let preStreamResumeResult: DrainResult | null = null;
           try {
             const nextStream = await sendMessageStream(
               conversationIdRef.current,
@@ -4174,42 +4173,125 @@ export default function App({
                 },
               );
 
-              // Show status message
-              const statusId = uid("status");
-              buffersRef.current.byId.set(statusId, {
-                kind: "status",
-                id: statusId,
-                lines: ["Conversation is busy, waiting and retrying…"],
-              });
-              buffersRef.current.order.push(statusId);
-              refreshDerived();
+              // Attempt to resume the in-flight run via the conversation stream endpoint.
+              // Server resolves: (1) otid lookup, (2) active run fallback.
+              try {
+                const client = await getClient();
+                const messageOtid = currentInput
+                  .map((item) => (item as Record<string, unknown>).otid)
+                  .find((v): v is string => typeof v === "string");
+                debugLog(
+                  "stream",
+                  "Conversation busy: resuming via stream endpoint (otid=%s)",
+                  messageOtid ?? "none",
+                );
 
-              // Wait with abort checking (same pattern as LLM API error retry)
-              let cancelled = false;
-              const startTime = Date.now();
-              while (Date.now() - startTime < retryDelayMs) {
-                if (
-                  abortControllerRef.current?.signal.aborted ||
-                  userCancelledRef.current
-                ) {
-                  cancelled = true;
-                  break;
+                if (signal?.aborted || userCancelledRef.current) {
+                  const isStaleAtAbort =
+                    myGeneration !== conversationGenerationRef.current;
+                  if (!isStaleAtAbort) {
+                    setStreaming(false);
+                  }
+                  return;
                 }
-                await new Promise((resolve) => setTimeout(resolve, 100));
+
+                const conversationId = conversationIdRef.current ?? "default";
+                const resumeStream = await client.conversations.messages.stream(
+                  conversationId,
+                  // Cast needed until SDK MessageStreamParams includes otid field
+                  {
+                    agent_id:
+                      conversationId === "default"
+                        ? (agentIdRef.current ?? undefined)
+                        : undefined,
+                    otid: messageOtid ?? undefined,
+                    starting_after: 0,
+                    batch_size: 1000,
+                  } as unknown as Parameters<
+                    typeof client.conversations.messages.stream
+                  >[1],
+                );
+
+                // Only reset buffer state after confirming stream is available
+                buffersRef.current.interrupted = false;
+                buffersRef.current.commitGeneration =
+                  (buffersRef.current.commitGeneration || 0) + 1;
+
+                preStreamResumeResult = await drainStream(
+                  resumeStream,
+                  buffersRef.current,
+                  refreshDerivedThrottled,
+                  signal,
+                  undefined, // no handleFirstMessage on resume
+                  undefined,
+                  contextTrackerRef.current,
+                  highestSeqIdSeen,
+                );
+                debugLog(
+                  "stream",
+                  "Pre-stream resume succeeded (stopReason=%s)",
+                  preStreamResumeResult.stopReason,
+                );
+                // Fall through — preStreamResumeResult will short-circuit drainStreamWithResume
+              } catch (resumeError) {
+                if (signal?.aborted || userCancelledRef.current) {
+                  const isStaleAtAbort =
+                    myGeneration !== conversationGenerationRef.current;
+                  if (!isStaleAtAbort) {
+                    setStreaming(false);
+                  }
+                  return;
+                }
+
+                debugLog(
+                  "stream",
+                  "Pre-stream resume failed, falling back to wait/retry: %s",
+                  resumeError instanceof Error
+                    ? resumeError.message
+                    : String(resumeError),
+                );
+                // Fall through to existing wait/retry behavior
               }
 
-              // Remove status message
-              buffersRef.current.byId.delete(statusId);
-              buffersRef.current.order = buffersRef.current.order.filter(
-                (id) => id !== statusId,
-              );
-              refreshDerived();
+              // If resume succeeded, skip the wait/retry loop
+              if (!preStreamResumeResult) {
+                // Show status message
+                const statusId = uid("status");
+                buffersRef.current.byId.set(statusId, {
+                  kind: "status",
+                  id: statusId,
+                  lines: ["Conversation is busy, waiting and retrying…"],
+                });
+                buffersRef.current.order.push(statusId);
+                refreshDerived();
 
-              if (!cancelled) {
-                // Reset interrupted flag so retry stream chunks are processed
-                buffersRef.current.interrupted = false;
-                restorePinnedPermissionMode();
-                continue;
+                // Wait with abort checking (same pattern as LLM API error retry)
+                let cancelled = false;
+                const startTime = Date.now();
+                while (Date.now() - startTime < retryDelayMs) {
+                  if (
+                    abortControllerRef.current?.signal.aborted ||
+                    userCancelledRef.current
+                  ) {
+                    cancelled = true;
+                    break;
+                  }
+                  await new Promise((resolve) => setTimeout(resolve, 100));
+                }
+
+                // Remove status message
+                buffersRef.current.byId.delete(statusId);
+                buffersRef.current.order = buffersRef.current.order.filter(
+                  (id) => id !== statusId,
+                );
+                refreshDerived();
+
+                if (!cancelled) {
+                  // Reset interrupted flag so retry stream chunks are processed
+                  buffersRef.current.interrupted = false;
+                  restorePinnedPermissionMode();
+                  continue;
+                }
               }
               // User pressed ESC - fall through to error handling
             }
@@ -4495,19 +4577,25 @@ export default function App({
             contextTrackerRef.current.currentTurnId++;
           }
 
-          if (!stream) {
-            throw new Error("Expected stream to be set before drain");
-          }
-          const drainResult = drainStreamWithResume(
-            stream,
-            buffersRef.current,
-            refreshDerivedThrottled,
-            signal, // Use captured signal, not ref (which may be nulled by handleInterrupt)
-            handleFirstMessage,
-            undefined,
-            contextTrackerRef.current,
-            highestSeqIdSeen,
-          );
+          const drainResult = preStreamResumeResult
+            ? preStreamResumeResult
+            : (() => {
+                if (!stream) {
+                  throw new Error(
+                    "Expected stream when pre-stream resume did not succeed",
+                  );
+                }
+                return drainStreamWithResume(
+                  stream,
+                  buffersRef.current,
+                  refreshDerivedThrottled,
+                  signal, // Use captured signal, not ref (which may be nulled by handleInterrupt)
+                  handleFirstMessage,
+                  undefined,
+                  contextTrackerRef.current,
+                  highestSeqIdSeen,
+                );
+              })();
 
           const {
             stopReason,

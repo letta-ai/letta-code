@@ -516,6 +516,10 @@ export async function drainStreamWithResume(
 ): Promise<DrainResult> {
   const overallStartTime = performance.now();
   const streamRequestContext = getStreamRequestContext(stream);
+  // Use the message OTID stored in the request context (set from messages[0].otid).
+  // This is the real UUID OTID — distinct from the tool execution context ID
+  // returned by getStreamToolContextId (which is ctx-{ts}-N, not meaningful for resume).
+  const streamOtid = streamRequestContext?.otid ?? null;
 
   let _client: Awaited<ReturnType<typeof getClient>> | undefined;
   const lazyClient = async () => {
@@ -543,12 +547,14 @@ export async function drainStreamWithResume(
   );
 
   let runIdToResume = result.lastRunId ?? null;
-  let runIdSource: "stream_chunk" | "discovery" | null = result.lastRunId
-    ? "stream_chunk"
-    : null;
+  let runIdSource: "stream_chunk" | "discovery" | "otid" | null =
+    result.lastRunId ? "stream_chunk" : null;
 
-  // If the stream failed before exposing run_id, try to discover the latest
-  // running/created run for this conversation that was created after send start.
+  // If the stream failed before exposing run_id, attempt to find the right run.
+  // Prefer OTID-based lookup via the conversations stream endpoint: it lets the
+  // server resolve exactly which run corresponds to this client's message, which
+  // is safe in multi-client scenarios (timestamp heuristic is not).
+  // Fall back to timestamp-based discovery if OTID is unavailable.
   if (
     result.stopReason === "error" &&
     !runIdToResume &&
@@ -556,55 +562,74 @@ export async function drainStreamWithResume(
     abortSignal &&
     !abortSignal.aborted
   ) {
-    try {
+    if (streamOtid) {
+      // OTID path: server resolves the run — no client-side discovery needed.
+      runIdSource = "otid";
       debugLog(
         "stream",
-        "Mid-stream resume: attempting run discovery (conv=%s, agent=%s)",
-        streamRequestContext.conversationId,
-        streamRequestContext.agentId,
+        "Mid-stream resume: will use OTID-based conversations stream (otid=%s)",
+        streamOtid,
       );
-      const client = await lazyClient();
-      runIdToResume = await discoverFallbackRunIdWithTimeout(
-        client,
-        streamRequestContext,
-      );
-      debugLog(
-        "stream",
-        "Mid-stream resume: run discovery result: %s",
-        runIdToResume ?? "none",
-      );
-      if (runIdToResume) {
-        result.lastRunId = runIdToResume;
-        runIdSource = "discovery";
+    } else {
+      // Fallback: timestamp-based run discovery.
+      try {
+        debugLog(
+          "stream",
+          "Mid-stream resume: attempting run discovery (conv=%s, agent=%s)",
+          streamRequestContext.conversationId,
+          streamRequestContext.agentId,
+        );
+        const client = await lazyClient();
+        runIdToResume = await discoverFallbackRunIdWithTimeout(
+          client,
+          streamRequestContext,
+        );
+        debugLog(
+          "stream",
+          "Mid-stream resume: run discovery result: %s",
+          runIdToResume ?? "none",
+        );
+        if (runIdToResume) {
+          result.lastRunId = runIdToResume;
+          runIdSource = "discovery";
+        }
+      } catch (lookupError) {
+        const lookupErrorMsg =
+          lookupError instanceof Error
+            ? lookupError.message
+            : String(lookupError);
+        telemetry.trackError(
+          "stream_resume_lookup_failed",
+          lookupErrorMsg,
+          "stream_resume",
+        );
+        debugWarn(
+          "drainStreamWithResume",
+          "Fallback run_id lookup failed:",
+          lookupError,
+        );
       }
-    } catch (lookupError) {
-      const lookupErrorMsg =
-        lookupError instanceof Error
-          ? lookupError.message
-          : String(lookupError);
-      telemetry.trackError(
-        "stream_resume_lookup_failed",
-        lookupErrorMsg,
-        "stream_resume",
-      );
-
-      debugWarn(
-        "drainStreamWithResume",
-        "Fallback run_id lookup failed:",
-        lookupError,
-      );
     }
   }
 
-  // If stream ended without proper stop_reason and we have resume info, try once to reconnect
+  // If stream ended without proper stop_reason and we have resume info, try once to reconnect.
   // Only resume if we have an abortSignal AND it's not aborted (explicit check prevents
-  // undefined abortSignal from accidentally allowing resume after user cancellation)
-  if (
+  // undefined abortSignal from accidentally allowing resume after user cancellation).
+  // Approval-pending conflicts are not resumable disconnects — let App's approval
+  // recovery path handle them instead.
+  // "waiting for approval on a tool call" = server in requires_approval state, not resumable
+  // (distinct from "is currently being processed" = conversation-busy 409, which IS resumable)
+  const isApprovalPendingConflict =
+    result.fallbackError?.includes("waiting for approval on a tool call") ??
+    false;
+  const canResume =
     result.stopReason === "error" &&
-    runIdToResume &&
+    !isApprovalPendingConflict &&
+    (runIdToResume || runIdSource === "otid") &&
     abortSignal &&
-    !abortSignal.aborted
-  ) {
+    !abortSignal.aborted;
+
+  if (canResume) {
     // Resume path: markCurrentLineAsFinished was skipped in the catch block.
     // If resume fails below, we call it in the catch. If no resume condition is
     // met (else branch), we call it there instead.
@@ -625,10 +650,11 @@ export async function drainStreamWithResume(
 
     debugWarn(
       "stream",
-      "[MID-STREAM RESUME] Attempting (runId=%s, lastSeqId=%s, source=%s)",
-      runIdToResume,
+      "[MID-STREAM RESUME] Attempting (runId=%s, lastSeqId=%s, source=%s, otid=%s)",
+      runIdToResume ?? "none",
       result.lastSeqId ?? 0,
       runIdSource ?? "unknown",
+      streamOtid ?? "none",
     );
 
     try {
@@ -642,19 +668,31 @@ export async function drainStreamWithResume(
       buffers.commitGeneration = (buffers.commitGeneration || 0) + 1;
       buffers.interrupted = false;
 
-      // Resume from Redis where we left off
-      // TODO: Re-enable once issues are resolved - disabled retries were causing problems
-      // Disable SDK retries - state management happens outside, retries would create race conditions
-      const resumeStream = await client.runs.messages.stream(
-        runIdToResume,
-        {
-          // If lastSeqId is null the stream failed before any seq_id-bearing
-          // chunk arrived; use 0 to replay the run from the beginning.
-          starting_after: result.lastSeqId ?? 0,
-          batch_size: 1000, // Fetch buffered chunks quickly
-        },
-        // { maxRetries: 0 },
-      );
+      // Create the resume stream: use OTID-based conversations endpoint only when
+      // run_id is unavailable (server resolves the exact run, safe for multi-client).
+      // When we already have run_id from stream chunks, use the run stream directly.
+      const resumeStream =
+        runIdSource === "otid" && streamOtid && streamRequestContext
+          ? await client.conversations.messages.stream(
+              streamRequestContext.resolvedConversationId,
+              {
+                agent_id:
+                  streamRequestContext.conversationId === "default"
+                    ? (streamRequestContext.agentId ?? undefined)
+                    : undefined,
+                otid: streamOtid,
+                starting_after: result.lastSeqId ?? 0,
+                batch_size: 1000,
+              } as unknown as Parameters<
+                typeof client.conversations.messages.stream
+              >[1],
+            )
+          : await client.runs.messages.stream(runIdToResume!, {
+              // If lastSeqId is null the stream failed before any seq_id-bearing
+              // chunk arrived; use 0 to replay the run from the beginning.
+              starting_after: result.lastSeqId ?? 0,
+              batch_size: 1000,
+            });
 
       // Continue draining from where we left off
       // Note: Don't pass onFirstMessage again - already called in initial drain
@@ -672,12 +710,20 @@ export async function drainStreamWithResume(
 
       // Use the resume result (should have proper stop_reason now)
       // Clear the original stream error since we recovered
-      debugWarn(
-        "stream",
-        "[MID-STREAM RESUME] ✅ Success (runId=%s, stopReason=%s)",
-        runIdToResume,
-        resumeResult.stopReason,
-      );
+      if (resumeResult.stopReason !== "error") {
+        debugWarn(
+          "stream",
+          "[MID-STREAM RESUME] ✅ Success (runId=%s, stopReason=%s)",
+          runIdToResume,
+          resumeResult.stopReason,
+        );
+      } else {
+        debugWarn(
+          "stream",
+          "[MID-STREAM RESUME] ⚠️ Resumed but terminal error persisted (runId=%s)",
+          runIdToResume,
+        );
+      }
       result = resumeResult;
 
       // The resumed stream uses a fresh streamProcessor that won't have
@@ -745,7 +791,8 @@ export async function drainStreamWithResume(
   // Log when stream errored but resume was NOT attempted, with reasons why
   if (result.stopReason === "error") {
     const skipReasons: string[] = [];
-    if (!result.lastRunId) skipReasons.push("no_run_id");
+    if (!result.lastRunId && runIdSource !== "otid")
+      skipReasons.push("no_run_id");
     if (!abortSignal) skipReasons.push("no_abort_signal");
     if (abortSignal?.aborted) skipReasons.push("user_aborted");
 

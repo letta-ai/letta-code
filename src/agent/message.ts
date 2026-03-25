@@ -33,6 +33,7 @@ export type StreamRequestContext = {
   resolvedConversationId: string;
   agentId: string | null;
   requestStartedAtMs: number;
+  otid?: string;
 };
 const streamRequestContexts = new WeakMap<object, StreamRequestContext>();
 
@@ -196,14 +197,14 @@ export async function sendMessageStream(
     })
     .join(",");
 
-  const firstOtid = (messages[0] as Record<string, unknown>)?.otid ?? "none";
+  const firstOtid = (messages[0] as unknown as { otid?: string })?.otid;
   debugLog(
     "send-message-stream",
     "request_start conversation_id=%s agent_id=%s messages=%s otid=%s stream_tokens=%s background=%s max_retries=%s",
     resolvedConversationId,
     opts.agentId ?? "none",
     messageSummary || "(empty)",
-    firstOtid,
+    firstOtid ?? "none",
     opts.streamTokens ?? true,
     opts.background ?? true,
     requestOptions.maxRetries ?? "default",
@@ -227,7 +228,7 @@ export async function sendMessageStream(
       "send-message-stream",
       "request_error conversation_id=%s otid=%s status=%s error=%s",
       resolvedConversationId,
-      firstOtid,
+      firstOtid ?? "none",
       (error as { status?: number })?.status ?? "none",
       error instanceof Error ? error.message : String(error),
     );
@@ -238,7 +239,7 @@ export async function sendMessageStream(
     "send-message-stream",
     "request_ok conversation_id=%s otid=%s",
     resolvedConversationId,
-    firstOtid,
+    firstOtid ?? "none",
   );
 
   if (requestStartTime !== undefined) {
@@ -250,6 +251,7 @@ export async function sendMessageStream(
     resolvedConversationId,
     agentId: opts.agentId ?? null,
     requestStartedAtMs,
+    otid: firstOtid,
   });
 
   return stream;
