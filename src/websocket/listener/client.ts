@@ -22,6 +22,7 @@ import { createSharedReminderState } from "../../reminders/state";
 import { settingsManager } from "../../settings-manager";
 import { loadTools } from "../../tools/manager";
 import type {
+  AbortMessageCommand,
   ApprovalResponseBody,
   ChangeDeviceStateCommand,
 } from "../../types/protocol_v2";
@@ -83,6 +84,7 @@ import {
   emitLoopErrorDelta,
   emitLoopStatusUpdate,
   emitRetryDelta,
+  emitRuntimeStateUpdates,
   emitStateSync,
   emitStreamDelta,
   emitSubagentStateIfOpen,
@@ -105,6 +107,7 @@ import {
   shouldAttemptPostStopApprovalRecovery,
 } from "./recovery";
 import {
+  clearActiveRunState,
   clearConversationRuntimeState,
   clearRecoveredApprovalStateForScope,
   clearRuntimeTimers,
@@ -362,6 +365,16 @@ async function handleApprovalResponseInput(
       params.runtime.agent_id,
       params.runtime.conversation_id,
     );
+  if (targetRuntime.cancelRequested && !targetRuntime.isProcessing) {
+    targetRuntime.cancelRequested = false;
+    deps.scheduleQueuePump(
+      targetRuntime,
+      params.socket,
+      params.opts as StartListenerOptions,
+      params.processQueuedTurn,
+    );
+    return false;
+  }
   if (
     await deps.resolveRecoveredApprovalResponse(
       targetRuntime,
@@ -485,6 +498,174 @@ async function handleChangeDeviceStateInput(
     }
   }
 
+  return true;
+}
+
+async function handleAbortMessageInput(
+  listener: ListenerRuntime,
+  params: {
+    command: AbortMessageCommand;
+    socket: WebSocket;
+    opts: {
+      onStatusChange?: StartListenerOptions["onStatusChange"];
+      connectionId?: string;
+    };
+    processQueuedTurn: ProcessQueuedTurn;
+  },
+  deps: Partial<{
+    getActiveRuntime: typeof getActiveRuntime;
+    getPendingControlRequestCount: typeof getPendingControlRequestCount;
+    getOrCreateScopedRuntime: typeof getOrCreateScopedRuntime;
+    getRecoveredApprovalStateForScope: typeof getRecoveredApprovalStateForScope;
+    stashRecoveredApprovalInterrupts: typeof stashRecoveredApprovalInterrupts;
+    rejectPendingApprovalResolvers: typeof rejectPendingApprovalResolvers;
+    setLoopStatus: typeof setLoopStatus;
+    clearActiveRunState: typeof clearActiveRunState;
+    emitRuntimeStateUpdates: typeof emitRuntimeStateUpdates;
+    emitInterruptedStatusDelta: typeof emitInterruptedStatusDelta;
+    scheduleQueuePump: typeof scheduleQueuePump;
+    cancelConversation: (
+      agentId: string,
+      conversationId: string,
+    ) => Promise<void>;
+  }> = {},
+): Promise<boolean> {
+  const resolvedDeps = {
+    getActiveRuntime,
+    getPendingControlRequestCount,
+    getOrCreateScopedRuntime,
+    getRecoveredApprovalStateForScope,
+    stashRecoveredApprovalInterrupts,
+    rejectPendingApprovalResolvers,
+    setLoopStatus,
+    clearActiveRunState,
+    emitRuntimeStateUpdates,
+    emitInterruptedStatusDelta,
+    scheduleQueuePump,
+    cancelConversation: async (agentId: string, conversationId: string) => {
+      const client = await getClient();
+      const cancelId =
+        conversationId === "default" || !conversationId
+          ? agentId
+          : conversationId;
+      await client.conversations.cancel(cancelId);
+    },
+    ...deps,
+  };
+
+  if (
+    listener !== resolvedDeps.getActiveRuntime() ||
+    listener.intentionallyClosed
+  ) {
+    return false;
+  }
+
+  const scope = {
+    agent_id: params.command.runtime.agent_id,
+    conversation_id: params.command.runtime.conversation_id,
+  };
+  const hasPendingApprovals =
+    resolvedDeps.getPendingControlRequestCount(listener, scope) > 0;
+  const scopedRuntime = resolvedDeps.getOrCreateScopedRuntime(
+    listener,
+    scope.agent_id,
+    scope.conversation_id,
+  );
+  const hasActiveTurn = scopedRuntime.isProcessing;
+
+  if (!hasActiveTurn && !hasPendingApprovals) {
+    return false;
+  }
+
+  const interruptedRunId = scopedRuntime.activeRunId;
+  scopedRuntime.cancelRequested = true;
+
+  if (
+    scopedRuntime.activeExecutingToolCallIds.length > 0 &&
+    (!scopedRuntime.pendingInterruptedResults ||
+      scopedRuntime.pendingInterruptedResults.length === 0)
+  ) {
+    scopedRuntime.pendingInterruptedResults =
+      scopedRuntime.activeExecutingToolCallIds.map((toolCallId) => ({
+        type: "tool",
+        tool_call_id: toolCallId,
+        tool_return: INTERRUPTED_BY_USER,
+        status: "error",
+      }));
+    scopedRuntime.pendingInterruptedContext = {
+      agentId: scopedRuntime.agentId || "",
+      conversationId: scopedRuntime.conversationId,
+      continuationEpoch: scopedRuntime.continuationEpoch,
+    };
+    scopedRuntime.pendingInterruptedToolCallIds = [
+      ...scopedRuntime.activeExecutingToolCallIds,
+    ];
+  }
+
+  if (
+    scopedRuntime.activeAbortController &&
+    !scopedRuntime.activeAbortController.signal.aborted
+  ) {
+    scopedRuntime.activeAbortController.abort();
+  }
+
+  const recoveredApprovalState = resolvedDeps.getRecoveredApprovalStateForScope(
+    listener,
+    scope,
+  );
+  if (recoveredApprovalState && !hasActiveTurn) {
+    resolvedDeps.stashRecoveredApprovalInterrupts(
+      scopedRuntime,
+      recoveredApprovalState,
+    );
+  }
+
+  if (hasPendingApprovals) {
+    resolvedDeps.rejectPendingApprovalResolvers(
+      scopedRuntime,
+      "Cancelled by user",
+    );
+  }
+
+  if (hasActiveTurn) {
+    scopedRuntime.lastStopReason = "cancelled";
+    scopedRuntime.isProcessing = false;
+    resolvedDeps.clearActiveRunState(scopedRuntime);
+    resolvedDeps.setLoopStatus(scopedRuntime, "WAITING_ON_INPUT", scope);
+    resolvedDeps.emitRuntimeStateUpdates(scopedRuntime, scope);
+    resolvedDeps.emitInterruptedStatusDelta(params.socket, scopedRuntime, {
+      runId: interruptedRunId,
+      agentId: scope.agent_id,
+      conversationId: scope.conversation_id,
+    });
+  } else if (hasPendingApprovals) {
+    resolvedDeps.emitInterruptedStatusDelta(params.socket, scopedRuntime, {
+      runId: interruptedRunId,
+      agentId: scope.agent_id,
+      conversationId: scope.conversation_id,
+    });
+  }
+
+  if (!hasActiveTurn) {
+    scopedRuntime.cancelRequested = false;
+  }
+
+  const cancelConversationId = scopedRuntime.conversationId;
+  const cancelAgentId = scopedRuntime.agentId;
+  if (cancelAgentId) {
+    void resolvedDeps
+      .cancelConversation(cancelAgentId, cancelConversationId)
+      .catch(() => {
+        // Fire-and-forget
+      });
+  }
+
+  resolvedDeps.scheduleQueuePump(
+    scopedRuntime,
+    params.socket,
+    params.opts as StartListenerOptions,
+    params.processQueuedTurn,
+  );
   return true;
 }
 
@@ -988,98 +1169,15 @@ async function connectWithRetry(
     }
 
     if (parsed.type === "abort_message") {
-      if (runtime !== getActiveRuntime() || runtime.intentionallyClosed) {
-        return;
-      }
-
-      const hasPendingApprovals =
-        getPendingControlRequestCount(runtime, {
-          agent_id: parsed.runtime.agent_id,
-          conversation_id: parsed.runtime.conversation_id,
-        }) > 0;
-      const scopedRuntime = getOrCreateScopedRuntime(
-        runtime,
-        parsed.runtime.agent_id,
-        parsed.runtime.conversation_id,
-      );
-      const hasActiveTurn = scopedRuntime.isProcessing;
-
-      if (!hasActiveTurn && !hasPendingApprovals) {
-        return;
-      }
-
-      scopedRuntime.cancelRequested = true;
-      // Eager interrupt capture parity with App/headless:
-      // if tool execution is currently in-flight, queue explicit interrupted
-      // tool results immediately at cancel time (before async catch paths).
-      if (
-        scopedRuntime.activeExecutingToolCallIds.length > 0 &&
-        (!scopedRuntime.pendingInterruptedResults ||
-          scopedRuntime.pendingInterruptedResults.length === 0)
-      ) {
-        scopedRuntime.pendingInterruptedResults =
-          scopedRuntime.activeExecutingToolCallIds.map((toolCallId) => ({
-            type: "tool",
-            tool_call_id: toolCallId,
-            tool_return: INTERRUPTED_BY_USER,
-            status: "error",
-          }));
-        scopedRuntime.pendingInterruptedContext = {
-          agentId: scopedRuntime.agentId || "",
-          conversationId: scopedRuntime.conversationId,
-          continuationEpoch: scopedRuntime.continuationEpoch,
-        };
-        scopedRuntime.pendingInterruptedToolCallIds = [
-          ...scopedRuntime.activeExecutingToolCallIds,
-        ];
-      }
-      if (
-        scopedRuntime.activeAbortController &&
-        !scopedRuntime.activeAbortController.signal.aborted
-      ) {
-        scopedRuntime.activeAbortController.abort();
-      }
-      const recoveredApprovalState = getRecoveredApprovalStateForScope(
-        runtime,
-        {
-          agent_id: parsed.runtime.agent_id,
-          conversation_id: parsed.runtime.conversation_id,
+      await handleAbortMessageInput(runtime, {
+        command: parsed,
+        socket,
+        opts: {
+          onStatusChange: opts.onStatusChange,
+          connectionId: opts.connectionId,
         },
-      );
-      if (recoveredApprovalState && !hasActiveTurn) {
-        stashRecoveredApprovalInterrupts(scopedRuntime, recoveredApprovalState);
-      }
-      if (hasPendingApprovals) {
-        rejectPendingApprovalResolvers(scopedRuntime, "Cancelled by user");
-      }
-
-      if (!hasActiveTurn && hasPendingApprovals) {
-        emitInterruptedStatusDelta(socket, scopedRuntime, {
-          runId: scopedRuntime.activeRunId,
-          agentId: parsed.runtime.agent_id,
-          conversationId: parsed.runtime.conversation_id,
-        });
-      }
-
-      // Backend cancel parity with TUI (App.tsx:5932-5941).
-      // Fire-and-forget — local cancel + queued results are the primary mechanism.
-      const cancelConversationId = scopedRuntime.conversationId;
-      const cancelAgentId = scopedRuntime.agentId;
-      if (cancelAgentId) {
-        getClient()
-          .then((client) => {
-            const cancelId =
-              cancelConversationId === "default" || !cancelConversationId
-                ? cancelAgentId
-                : cancelConversationId;
-            return client.conversations.cancel(cancelId);
-          })
-          .catch(() => {
-            // Fire-and-forget
-          });
-      }
-
-      scheduleQueuePump(scopedRuntime, socket, opts, processQueuedTurn);
+        processQueuedTurn,
+      });
       return;
     }
 
@@ -1755,6 +1853,7 @@ export const __listenClientTestUtils = {
   consumeQueuedTurn,
   handleIncomingMessage,
   handleApprovalResponseInput,
+  handleAbortMessageInput,
   handleChangeDeviceStateInput,
   scheduleQueuePump,
   recoverApprovalStateForSync,

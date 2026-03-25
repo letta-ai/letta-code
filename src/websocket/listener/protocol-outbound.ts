@@ -31,6 +31,7 @@ import {
   getConversationRuntime,
   getPendingControlRequests,
   getRecoveredApprovalStateForScope,
+  hasInterruptedCacheForScope,
   nextEventSeq,
   safeEmitWsEvent,
 } from "./runtime";
@@ -132,6 +133,7 @@ export function buildDeviceStatus(
     scopedAgentId,
     scopedConversationId,
   );
+  const interruptedCacheActive = hasInterruptedCacheForScope(listener, scope);
   return {
     current_connection_id: listener.connectionId,
     connection_name: listener.connectionName,
@@ -149,7 +151,9 @@ export function buildDeviceStatus(
     current_loaded_tools: getToolNames(),
     current_available_skills: [],
     background_processes: [],
-    pending_control_requests: getPendingControlRequests(listener, scope),
+    pending_control_requests: interruptedCacheActive
+      ? []
+      : getPendingControlRequests(listener, scope),
     memory_directory: scopedAgentId
       ? getMemoryFilesystemRoot(scopedAgentId)
       : null,
@@ -175,18 +179,25 @@ export function buildLoopStatus(
     scopedAgentId,
     scopedConversationId,
   );
+  const interruptedCacheActive = hasInterruptedCacheForScope(listener, scope);
   const recovered = getRecoveredApprovalStateForScope(listener, scope);
-  const status =
-    recovered &&
-    recovered.pendingRequestIds.size > 0 &&
-    conversationRuntime?.loopStatus === "WAITING_ON_INPUT"
+  const status = interruptedCacheActive
+    ? !conversationRuntime?.isProcessing
+      ? "WAITING_ON_INPUT"
+      : (conversationRuntime?.loopStatus ?? "WAITING_ON_INPUT")
+    : recovered &&
+        recovered.pendingRequestIds.size > 0 &&
+        conversationRuntime?.loopStatus === "WAITING_ON_INPUT"
       ? "WAITING_ON_APPROVAL"
       : (conversationRuntime?.loopStatus ?? "WAITING_ON_INPUT");
   return {
     status,
-    active_run_ids: conversationRuntime?.activeRunId
-      ? [conversationRuntime.activeRunId]
-      : [],
+    active_run_ids:
+      interruptedCacheActive && !conversationRuntime?.isProcessing
+        ? []
+        : conversationRuntime?.activeRunId
+          ? [conversationRuntime.activeRunId]
+          : [],
   };
 }
 
