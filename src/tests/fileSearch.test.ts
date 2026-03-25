@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { searchFiles } from "../cli/helpers/fileSearch";
 import { setIndexRoot } from "../cli/helpers/fileIndex";
+import { searchFiles } from "../cli/helpers/fileSearch";
 
 const isWindows = process.platform === "win32";
 const TEST_DIR = join(process.cwd(), ".test-filesearch");
