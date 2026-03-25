@@ -114,6 +114,10 @@ import { updateProjectSettings } from "../settings";
 import { settingsManager } from "../settings-manager";
 import { telemetry } from "../telemetry";
 import {
+  shouldAutoApproveEnterPlanMode,
+  shouldAutoApproveExitPlanMode,
+} from "../tools/interactivePolicy";
+import {
   analyzeToolApproval,
   checkToolPermission,
   executeTool,
@@ -12747,12 +12751,18 @@ ${SYSTEM_REMINDER_CLOSE}
       const hasUsablePlan = planFileExists(fallbackPlanPath);
 
       if (mode !== "plan") {
-        if (hasUsablePlan) {
-          // Keep approval flow alive and let user manually approve.
-          return;
-        }
-
         if (mode === "bypassPermissions") {
+          if (hasUsablePlan && shouldAutoApproveExitPlanMode()) {
+            lastAutoHandledExitPlanToolCallIdRef.current = approval.toolCallId;
+            handlePlanApprove();
+            return;
+          }
+
+          if (hasUsablePlan) {
+            // Keep approval flow alive and let user manually approve.
+            return;
+          }
+
           // YOLO mode but no plan file yet — tell agent to write it first.
           const planFilePath = activePlanPath ?? fallbackPlanPath;
           const plansDir = join(homedir(), ".letta", "plans");
@@ -12818,6 +12828,7 @@ ${SYSTEM_REMINDER_CLOSE}
   }, [
     pendingApprovals,
     approvalResults.length,
+    handlePlanApprove,
     handlePlanKeepPlanning,
     refreshDerived,
     queueApprovalResults,
@@ -12992,14 +13003,16 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
   }, [pendingApprovals, approvalResults, sendAllResults]);
 
   // Guard EnterPlanMode:
-  // When in bypassPermissions (YOLO) mode, auto-approve EnterPlanMode and stay
-  // in YOLO — the agent gets plan instructions but keeps full permissions.
-  // ExitPlanMode still requires explicit user approval.
+  // In bypassPermissions (YOLO) mode, optionally auto-approve EnterPlanMode
+  // based on the shared plan-mode approval policy.
   useEffect(() => {
     const currentIndex = approvalResults.length;
     const approval = pendingApprovals[currentIndex];
     if (approval?.toolName === "EnterPlanMode") {
-      if (permissionMode.getMode() === "bypassPermissions") {
+      if (
+        permissionMode.getMode() === "bypassPermissions" &&
+        shouldAutoApproveEnterPlanMode()
+      ) {
         if (
           lastAutoApprovedEnterPlanToolCallIdRef.current === approval.toolCallId
         ) {
