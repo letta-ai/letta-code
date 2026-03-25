@@ -286,6 +286,8 @@ export async function handleApprovalStop(params: {
     toolContextId: turnToolContextId ?? undefined,
     abortSignal: abortController.signal,
     workingDirectory: turnWorkingDirectory,
+    parentScope:
+      agentId && conversationId ? { agentId, conversationId } : undefined,
   });
   const persistedExecutionResults = normalizeExecutionResultsForInterruptParity(
     runtime,

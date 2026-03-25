@@ -43,6 +43,7 @@ interface TaskArgs {
   max_turns?: number; // Maximum number of agentic turns
   toolCallId?: string; // Injected by executeTool for linking subagent to parent tool call
   signal?: AbortSignal; // Injected by executeTool for interruption handling
+  parentScope?: { agentId: string; conversationId: string }; // Injected by executeTool for notification routing
 }
 
 // Valid subagent_types when deploying an existing agent
@@ -67,6 +68,8 @@ export interface SpawnBackgroundSubagentTaskArgs {
   existingAgentId?: string;
   existingConversationId?: string;
   maxTurns?: number;
+  /** Parent conversation scope for routing notifications in listener mode. */
+  parentScope?: { agentId: string; conversationId: string };
   /**
    * When true, skip injecting the completion notification into the primary
    * agent's message queue and hide from SubagentGroupDisplay.
@@ -212,6 +215,7 @@ export function spawnBackgroundSubagentTask(
     existingAgentId,
     existingConversationId,
     maxTurns,
+    parentScope,
     silentCompletion,
     onComplete,
     deps,
@@ -337,6 +341,8 @@ export function spawnBackgroundSubagentTask(
         addToMessageQueueFn({
           kind: "task_notification",
           text: notificationXml,
+          agentId: parentScope?.agentId,
+          conversationId: parentScope?.conversationId,
         });
       }
 
@@ -404,6 +410,8 @@ export function spawnBackgroundSubagentTask(
         addToMessageQueueFn({
           kind: "task_notification",
           text: notificationXml,
+          agentId: parentScope?.agentId,
+          conversationId: parentScope?.conversationId,
         });
       }
 
@@ -508,6 +516,7 @@ export async function task(args: TaskArgs): Promise<string> {
       existingAgentId: args.agent_id,
       existingConversationId: args.conversation_id,
       maxTurns: args.max_turns,
+      parentScope: args.parentScope,
     });
 
     await waitForBackgroundSubagentLink(subagentId, null, signal);

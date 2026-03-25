@@ -1263,6 +1263,7 @@ export async function executeTool(
     toolCallId?: string;
     onOutput?: (chunk: string, stream: "stdout" | "stderr") => void;
     toolContextId?: string;
+    parentScope?: { agentId: string; conversationId: string };
   },
 ): Promise<ToolExecutionResult> {
   const context = options?.toolContextId
@@ -1340,13 +1341,16 @@ export async function executeTool(
       enhancedArgs = substituteSecretsInArgs(enhancedArgs);
     }
 
-    // Inject toolCallId and abort signal for Task tool
+    // Inject toolCallId, abort signal, and parent scope for Task tool
     if (internalName === "Task") {
       if (options?.toolCallId) {
         enhancedArgs = { ...enhancedArgs, toolCallId: options.toolCallId };
       }
       if (options?.signal) {
         enhancedArgs = { ...enhancedArgs, signal: options.signal };
+      }
+      if (options?.parentScope) {
+        enhancedArgs = { ...enhancedArgs, parentScope: options.parentScope };
       }
     }
 

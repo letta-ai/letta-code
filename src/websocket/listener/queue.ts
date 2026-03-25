@@ -207,10 +207,30 @@ function buildQueuedTurnMessage(
 ): IncomingMessage | null {
   const primaryItem = getPrimaryQueueMessageItem(batch.items);
   if (!primaryItem) {
+    // No user message in the batch — this is a notification-only batch.
+    // Build a synthetic IncomingMessage to restart the agent loop.
     for (const item of batch.items) {
       runtime.queuedMessagesByItemId.delete(item.id);
     }
-    return null;
+
+    const mergedContent = mergeDequeuedBatchContent(batch.items);
+    if (mergedContent === null) {
+      return null;
+    }
+
+    // Determine scope from the batch items (they all share the same scope)
+    const scopeItem = batch.items[0];
+    return {
+      type: "message",
+      agentId: scopeItem?.agentId ?? runtime.agentId ?? undefined,
+      conversationId: scopeItem?.conversationId ?? runtime.conversationId,
+      messages: [
+        {
+          role: "user",
+          content: mergedContent,
+        } satisfies MessageCreate,
+      ],
+    };
   }
 
   const template = runtime.queuedMessagesByItemId.get(primaryItem.id);
@@ -266,6 +286,7 @@ export function consumeQueuedTurn(runtime: ConversationRuntime): {
 
   let queueLen = 0;
   let hasMessage = false;
+  let hasTaskNotification = false;
   for (const item of queuedItems) {
     if (
       !isCoalescable(item.kind) ||
@@ -277,9 +298,12 @@ export function consumeQueuedTurn(runtime: ConversationRuntime): {
     if (item.kind === "message") {
       hasMessage = true;
     }
+    if (item.kind === "task_notification") {
+      hasTaskNotification = true;
+    }
   }
 
-  if (!hasMessage || queueLen === 0) {
+  if ((!hasMessage && !hasTaskNotification) || queueLen === 0) {
     return null;
   }
 
