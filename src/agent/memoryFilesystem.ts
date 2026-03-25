@@ -354,6 +354,14 @@ export async function applyMemfsFlags(
       const result = await pullMemory(agentId);
       pullSummary = result.summary;
     }
+
+    // Fetch secrets from the server so they're available for $SECRET_NAME substitution.
+    const { initSecretsFromServer } = await import("../utils/secretsStore");
+    try {
+      await initSecretsFromServer(agentId, getMemoryFilesystemRoot(agentId));
+    } catch {
+      // Non-fatal: secrets substitution won't work but agent can still run.
+    }
   }
 
   const action =
@@ -375,8 +383,11 @@ export async function applyMemfsFlags(
 export async function isLettaCloud(): Promise<boolean> {
   const { getServerUrl } = await import("./client");
   const serverUrl = getServerUrl();
+
   return (
-    serverUrl.includes("api.letta.com") || process.env.LETTA_MEMFS_LOCAL === "1"
+    serverUrl.includes("api.letta.com") ||
+    process.env.LETTA_MEMFS_LOCAL === "1" ||
+    process.env.LETTA_API_KEY === "local-desktop"
   );
 }
 

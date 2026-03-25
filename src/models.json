@@ -7,7 +7,12 @@
       "label": "Auto",
       "description": "Automatically select the best model",
       "isFeatured": true,
-      "free": true
+      "free": true,
+      "updateArgs": {
+        "context_window": 140000,
+        "max_output_tokens": 28000,
+        "parallel_tool_calls": true
+      }
     },
     {
       "id": "auto-fast",
@@ -15,7 +20,12 @@
       "label": "Auto Fast",
       "description": "Automatically select the best fast model",
       "isFeatured": true,
-      "free": true
+      "free": true,
+      "updateArgs": {
+        "context_window": 140000,
+        "max_output_tokens": 28000,
+        "parallel_tool_calls": true
+      }
     },
     {
       "id": "sonnet",

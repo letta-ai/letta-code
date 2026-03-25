@@ -212,12 +212,15 @@ export async function drainStream(
   onFirstMessage?: () => void,
   onChunkProcessed?: DrainStreamHook,
   contextTracker?: ContextTracker,
+  seenSeqIdThreshold?: number | null,
+  isResumeStream?: boolean,
+  skipCancelToolsOnError?: boolean,
 ): Promise<DrainResult> {
   const startTime = performance.now();
   const requestStartTime = getStreamRequestStartTime(stream) ?? startTime;
   let hasLoggedTTFT = false;
 
-  const streamProcessor = new StreamProcessor();
+  const streamProcessor = new StreamProcessor(seenSeqIdThreshold ?? null);
 
   let stopReason: StopReasonType | null = null;
   let hasCalledFirstMessage = false;
@@ -258,8 +261,6 @@ export async function drainStream(
 
   try {
     for await (const chunk of stream) {
-      // console.log("chunk", chunk);
-
       // Check if abort generation changed (handleInterrupt ran while we were waiting)
       // This catches cases where the abort signal might not propagate correctly
       if ((buffers.abortGeneration || 0) !== startAbortGen) {
@@ -385,7 +386,20 @@ export async function drainStream(
     // Preserve a stop reason already parsed from stream chunks (e.g. llm_api_error)
     // and only fall back to generic "error" when none is available.
     stopReason = streamProcessor.stopReason || "error";
-    markIncompleteToolsAsCancelled(buffers, true, "stream_error");
+    // skipMarkCurrentLine=true: if a resume follows, the resume stream will
+    // finalize the streaming line with full text. Marking it finished now would
+    // commit truncated content to static (emittedIdsRef) before resume can append.
+    // drainStreamWithResume calls markCurrentLineAsFinished if no resume happens.
+    //
+    // skipCancelToolsOnError: when drainStreamWithResume will attempt a resume,
+    // don't cancel tool calls yet — the resume stream replays tool_return_message
+    // chunks that overwrite any cancelled state. drainStreamWithResume cancels
+    // tools itself in the failure/no-resume paths.
+    if (skipCancelToolsOnError) {
+      buffers.interrupted = true;
+    } else {
+      markIncompleteToolsAsCancelled(buffers, true, "stream_error", true);
+    }
     queueMicrotask(refresh);
   } finally {
     // Persist chunk log to disk (one write per stream, not per chunk)
@@ -428,8 +442,12 @@ export async function drainStream(
     markIncompleteToolsAsCancelled(buffers, true, "user_interrupt");
   }
 
-  // Mark the final line as finished now that stream has ended
-  markCurrentLineAsFinished(buffers);
+  // Mark the final line as finished now that stream has ended.
+  // Skip for error stop reason — drainStreamWithResume will finalize after
+  // resume succeeds (or in its catch/else path if no resume is attempted).
+  if (stopReason !== "error") {
+    markCurrentLineAsFinished(buffers);
+  }
   queueMicrotask(refresh);
 
   // Package the approval request(s) at the end.
@@ -440,12 +458,18 @@ export async function drainStream(
   const approvals: ApprovalRequest[] = allPending.map((a) => ({
     toolCallId: a.toolCallId,
     toolName: a.toolName || "",
-    toolArgs: a.toolArgs || "{}",
+    toolArgs: a.toolArgs || "",
   }));
   const approval: ApprovalRequest | null = approvals[0] || null;
   streamProcessor.pendingApprovals.clear();
 
-  if (stopReason === "requires_approval" && approvals.length === 0) {
+  if (
+    stopReason === "requires_approval" &&
+    approvals.length === 0 &&
+    !isResumeStream
+  ) {
+    // On resume streams, approval chunks are before starting_after and won't be replayed.
+    // drainStreamWithResume carries them over from the original drain — this is expected.
     debugWarn(
       "drainStream",
       "No approvals collected despite requires_approval stop reason",
@@ -488,9 +512,14 @@ export async function drainStreamWithResume(
   onFirstMessage?: () => void,
   onChunkProcessed?: DrainStreamHook,
   contextTracker?: ContextTracker,
+  seenSeqIdThreshold?: number | null,
 ): Promise<DrainResult> {
   const overallStartTime = performance.now();
   const streamRequestContext = getStreamRequestContext(stream);
+  // Use the message OTID stored in the request context (set from messages[0].otid).
+  // This is the real UUID OTID — distinct from the tool execution context ID
+  // returned by getStreamToolContextId (which is ctx-{ts}-N, not meaningful for resume).
+  const streamOtid = streamRequestContext?.otid ?? null;
 
   let _client: Awaited<ReturnType<typeof getClient>> | undefined;
   const lazyClient = async () => {
@@ -500,7 +529,10 @@ export async function drainStreamWithResume(
     return _client;
   };
 
-  // Attempt initial drain
+  // Attempt initial drain.
+  // skipCancelToolsOnError=true: don't cancel tool calls on stream error here —
+  // drainStreamWithResume will attempt a resume that replays tool_return_message
+  // chunks. Tools are only cancelled in the failure/no-resume paths below.
   let result = await drainStream(
     stream,
     buffers,
@@ -509,15 +541,20 @@ export async function drainStreamWithResume(
     onFirstMessage,
     onChunkProcessed,
     contextTracker,
+    seenSeqIdThreshold,
+    false, // isResumeStream
+    true, // skipCancelToolsOnError
   );
 
   let runIdToResume = result.lastRunId ?? null;
-  let runIdSource: "stream_chunk" | "discovery" | null = result.lastRunId
-    ? "stream_chunk"
-    : null;
+  let runIdSource: "stream_chunk" | "discovery" | "otid" | null =
+    result.lastRunId ? "stream_chunk" : null;
 
-  // If the stream failed before exposing run_id, try to discover the latest
-  // running/created run for this conversation that was created after send start.
+  // If the stream failed before exposing run_id, attempt to find the right run.
+  // Prefer OTID-based lookup via the conversations stream endpoint: it lets the
+  // server resolve exactly which run corresponds to this client's message, which
+  // is safe in multi-client scenarios (timestamp heuristic is not).
+  // Fall back to timestamp-based discovery if OTID is unavailable.
   if (
     result.stopReason === "error" &&
     !runIdToResume &&
@@ -525,55 +562,77 @@ export async function drainStreamWithResume(
     abortSignal &&
     !abortSignal.aborted
   ) {
-    try {
+    if (streamOtid) {
+      // OTID path: server resolves the run — no client-side discovery needed.
+      runIdSource = "otid";
       debugLog(
         "stream",
-        "Mid-stream resume: attempting run discovery (conv=%s, agent=%s)",
-        streamRequestContext.conversationId,
-        streamRequestContext.agentId,
+        "Mid-stream resume: will use OTID-based conversations stream (otid=%s)",
+        streamOtid,
       );
-      const client = await lazyClient();
-      runIdToResume = await discoverFallbackRunIdWithTimeout(
-        client,
-        streamRequestContext,
-      );
-      debugLog(
-        "stream",
-        "Mid-stream resume: run discovery result: %s",
-        runIdToResume ?? "none",
-      );
-      if (runIdToResume) {
-        result.lastRunId = runIdToResume;
-        runIdSource = "discovery";
+    } else {
+      // Fallback: timestamp-based run discovery.
+      try {
+        debugLog(
+          "stream",
+          "Mid-stream resume: attempting run discovery (conv=%s, agent=%s)",
+          streamRequestContext.conversationId,
+          streamRequestContext.agentId,
+        );
+        const client = await lazyClient();
+        runIdToResume = await discoverFallbackRunIdWithTimeout(
+          client,
+          streamRequestContext,
+        );
+        debugLog(
+          "stream",
+          "Mid-stream resume: run discovery result: %s",
+          runIdToResume ?? "none",
+        );
+        if (runIdToResume) {
+          result.lastRunId = runIdToResume;
+          runIdSource = "discovery";
+        }
+      } catch (lookupError) {
+        const lookupErrorMsg =
+          lookupError instanceof Error
+            ? lookupError.message
+            : String(lookupError);
+        telemetry.trackError(
+          "stream_resume_lookup_failed",
+          lookupErrorMsg,
+          "stream_resume",
+        );
+        debugWarn(
+          "drainStreamWithResume",
+          "Fallback run_id lookup failed:",
+          lookupError,
+        );
       }
-    } catch (lookupError) {
-      const lookupErrorMsg =
-        lookupError instanceof Error
-          ? lookupError.message
-          : String(lookupError);
-      telemetry.trackError(
-        "stream_resume_lookup_failed",
-        lookupErrorMsg,
-        "stream_resume",
-      );
-
-      debugWarn(
-        "drainStreamWithResume",
-        "Fallback run_id lookup failed:",
-        lookupError,
-      );
     }
   }
 
-  // If stream ended without proper stop_reason and we have resume info, try once to reconnect
+  // If stream ended without proper stop_reason and we have resume info, try once to reconnect.
   // Only resume if we have an abortSignal AND it's not aborted (explicit check prevents
-  // undefined abortSignal from accidentally allowing resume after user cancellation)
-  if (
+  // undefined abortSignal from accidentally allowing resume after user cancellation).
+  // Approval-pending conflicts are not resumable disconnects — let App's approval
+  // recovery path handle them instead.
+  // "waiting for approval on a tool call" = server in requires_approval state, not resumable
+  // (distinct from "is currently being processed" = conversation-busy 409, which IS resumable)
+  const isApprovalPendingConflict =
+    result.fallbackError?.includes("waiting for approval on a tool call") ??
+    false;
+  const canResume =
     result.stopReason === "error" &&
-    runIdToResume &&
+    !isApprovalPendingConflict &&
+    (runIdToResume || runIdSource === "otid") &&
     abortSignal &&
-    !abortSignal.aborted
-  ) {
+    !abortSignal.aborted;
+
+  if (canResume) {
+    // Resume path: markCurrentLineAsFinished was skipped in the catch block.
+    // If resume fails below, we call it in the catch. If no resume condition is
+    // met (else branch), we call it there instead.
     // Preserve original state in case resume needs to merge or fails
     const originalFallbackError = result.fallbackError;
     const originalApprovals = result.approvals;
@@ -589,19 +648,13 @@ export async function drainStreamWithResume(
       },
     );
 
-    debugLog(
+    debugWarn(
       "stream",
-      "Mid-stream resume: fetching run stream (source=%s, runId=%s, lastSeqId=%s)",
+      "[MID-STREAM RESUME] Attempting (runId=%s, lastSeqId=%s, source=%s, otid=%s)",
+      runIdToResume ?? "none",
+      result.lastSeqId ?? 0,
       runIdSource ?? "unknown",
-      runIdToResume,
-      result.lastSeqId ?? 0,
-    );
-
-    debugLog(
-      "stream",
-      "Mid-stream resume: attempting resume (runId=%s, lastSeqId=%s)",
-      runIdToResume,
-      result.lastSeqId ?? 0,
+      streamOtid ?? "none",
     );
 
     try {
@@ -615,19 +668,31 @@ export async function drainStreamWithResume(
       buffers.commitGeneration = (buffers.commitGeneration || 0) + 1;
       buffers.interrupted = false;
 
-      // Resume from Redis where we left off
-      // TODO: Re-enable once issues are resolved - disabled retries were causing problems
-      // Disable SDK retries - state management happens outside, retries would create race conditions
-      const resumeStream = await client.runs.messages.stream(
-        runIdToResume,
-        {
-          // If lastSeqId is null the stream failed before any seq_id-bearing
-          // chunk arrived; use 0 to replay the run from the beginning.
-          starting_after: result.lastSeqId ?? 0,
-          batch_size: 1000, // Fetch buffered chunks quickly
-        },
-        // { maxRetries: 0 },
-      );
+      // Create the resume stream: use OTID-based conversations endpoint only when
+      // run_id is unavailable (server resolves the exact run, safe for multi-client).
+      // When we already have run_id from stream chunks, use the run stream directly.
+      const resumeStream =
+        runIdSource === "otid" && streamOtid && streamRequestContext
+          ? await client.conversations.messages.stream(
+              streamRequestContext.resolvedConversationId,
+              {
+                agent_id:
+                  streamRequestContext.conversationId === "default"
+                    ? (streamRequestContext.agentId ?? undefined)
+                    : undefined,
+                otid: streamOtid,
+                starting_after: result.lastSeqId ?? 0,
+                batch_size: 1000,
+              } as unknown as Parameters<
+                typeof client.conversations.messages.stream
+              >[1],
+            )
+          : await client.runs.messages.stream(runIdToResume!, {
+              // If lastSeqId is null the stream failed before any seq_id-bearing
+              // chunk arrived; use 0 to replay the run from the beginning.
+              starting_after: result.lastSeqId ?? 0,
+              batch_size: 1000,
+            });
 
       // Continue draining from where we left off
       // Note: Don't pass onFirstMessage again - already called in initial drain
@@ -639,41 +704,76 @@ export async function drainStreamWithResume(
         undefined,
         onChunkProcessed,
         contextTracker,
+        seenSeqIdThreshold,
+        true, // isResumeStream
       );
 
       // Use the resume result (should have proper stop_reason now)
       // Clear the original stream error since we recovered
-      debugLog(
-        "stream",
-        "Mid-stream resume succeeded (runId=%s, stopReason=%s)",
-        runIdToResume,
-        resumeResult.stopReason,
-      );
+      if (resumeResult.stopReason !== "error") {
+        debugWarn(
+          "stream",
+          "[MID-STREAM RESUME] ✅ Success (runId=%s, stopReason=%s)",
+          runIdToResume,
+          resumeResult.stopReason,
+        );
+      } else {
+        debugWarn(
+          "stream",
+          "[MID-STREAM RESUME] ⚠️ Resumed but terminal error persisted (runId=%s)",
+          runIdToResume,
+        );
+      }
       result = resumeResult;
 
       // The resumed stream uses a fresh streamProcessor that won't have
       // approval_request_message chunks from before the disconnect (they
-      // had seq_id <= lastSeqId). Carry them over from the original drain.
+      // had seq_id <= lastSeqId).
+      //
+      // Two cases:
+      // 1. All approval chunks were before the drop (resume has no approvals):
+      //    carry over the originals unchanged.
+      // 2. Approval args were split across the drop (original has prefix,
+      //    resume has suffix): merge them so the full args string is intact.
       if (
         result.stopReason === "requires_approval" &&
-        (result.approvals?.length ?? 0) === 0 &&
         (originalApprovals?.length ?? 0) > 0
       ) {
-        result.approvals = originalApprovals;
-        result.approval = originalApproval;
+        if ((result.approvals?.length ?? 0) === 0) {
+          // Case 1: full carry-over
+          result.approvals = originalApprovals;
+          result.approval = originalApproval;
+        } else {
+          // Case 2: merge prefix args from original with suffix args from resume
+          result.approvals = (result.approvals ?? []).map((resumeApproval) => {
+            const orig = originalApprovals?.find(
+              (a) => a.toolCallId === resumeApproval.toolCallId,
+            );
+            if (!orig) return resumeApproval;
+            return {
+              ...resumeApproval,
+              toolName: resumeApproval.toolName || orig.toolName,
+              toolArgs: (orig.toolArgs || "") + (resumeApproval.toolArgs || ""),
+            };
+          });
+          result.approval = result.approvals[0] ?? null;
+        }
       }
     } catch (resumeError) {
-      // Resume failed - stick with the error stop_reason
-      // Restore the original stream error for display
+      // Resume failed - cancel tools and finalize the streaming line now
+      // (both were skipped in the initial drain's catch block above)
+      markIncompleteToolsAsCancelled(buffers, false, "stream_error", true);
+      markCurrentLineAsFinished(buffers);
+      // Stick with the error stop_reason and restore the original stream error for display
       result.fallbackError = originalFallbackError;
 
       const resumeErrorMsg =
         resumeError instanceof Error
           ? resumeError.message
           : String(resumeError);
-      debugLog(
+      debugWarn(
         "stream",
-        "Mid-stream resume failed (runId=%s): %s",
+        "[MID-STREAM RESUME] ❌ Failed (runId=%s): %s",
         runIdToResume,
         resumeErrorMsg,
       );
@@ -691,12 +791,17 @@ export async function drainStreamWithResume(
   // Log when stream errored but resume was NOT attempted, with reasons why
   if (result.stopReason === "error") {
     const skipReasons: string[] = [];
-    if (!result.lastRunId) skipReasons.push("no_run_id");
+    if (!result.lastRunId && runIdSource !== "otid")
+      skipReasons.push("no_run_id");
     if (!abortSignal) skipReasons.push("no_abort_signal");
     if (abortSignal?.aborted) skipReasons.push("user_aborted");
 
     // Only log if we actually skipped for a reason (i.e., we didn't enter the resume branch above)
     if (skipReasons.length > 0) {
+      // No resume — cancel tools and finalize the streaming line now
+      // (both were skipped in the initial drain's catch block above)
+      markIncompleteToolsAsCancelled(buffers, false, "stream_error", true);
+      markCurrentLineAsFinished(buffers);
       debugLog(
         "stream",
         "Mid-stream resume skipped: %s",
@@ -711,6 +816,18 @@ export async function drainStreamWithResume(
         },
       );
     }
+  }
+
+  // If the initial drain's catch block set buffers.interrupted=true (skipCancelToolsOnError)
+  // but the stream ended with complete requires_approval data (stop_reason chunk arrived
+  // before the drop), no resume is needed — clean up so the approval prompt renders correctly.
+  if (
+    result.stopReason === "requires_approval" &&
+    (result.approvals?.length ?? 0) > 0 &&
+    buffers.interrupted
+  ) {
+    buffers.interrupted = false;
+    markCurrentLineAsFinished(buffers);
   }
 
   // Update duration to reflect total time (including resume attempt)

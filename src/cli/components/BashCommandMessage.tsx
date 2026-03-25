@@ -1,6 +1,7 @@
 import { Box } from "ink";
 import { memo } from "react";
 import { INTERRUPTED_BY_USER } from "../../constants";
+import { clipToolReturn } from "../../tools/manager";
 import type { StreamingState } from "../helpers/accumulator";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { BlinkDot } from "./BlinkDot.js";
@@ -90,7 +91,9 @@ export const BashCommandMessage = memo(
               <Text>{"  ⎿  "}</Text>
             </Box>
             <Box flexGrow={1} width={Math.max(0, columns - 5)}>
-              <MarkdownDisplay text={line.output.replace(/\n+$/, "")} />
+              <MarkdownDisplay
+                text={clipToolReturn(line.output).replace(/\n+$/, "")}
+              />
             </Box>
           </Box>
         )}

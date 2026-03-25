@@ -367,7 +367,6 @@ export async function handleHeadlessCommand(
     console.error(
       "Error: --resume is for interactive mode only (opens conversation selector).\n" +
         "In headless mode, use:\n" +
-        "  --continue           Resume the last session (agent + conversation)\n" +
         "  --conversation <id>  Resume a specific conversation by ID",
     );
     process.exit(1);
@@ -382,7 +381,6 @@ export async function handleHeadlessCommand(
   let specifiedAgentId = values.agent;
   const specifiedAgentName = values.name;
   let specifiedConversationId = values.conversation;
-  const shouldContinue = values.continue;
   const forceNew = values["new-agent"];
   const systemPromptPreset = values.system;
   const systemCustom = values["system-custom"];
@@ -509,10 +507,6 @@ export async function handleHeadlessCommand(
       );
       process.exit(1);
     }
-    if (shouldContinue) {
-      console.error("Error: --from-agent cannot be used with --continue");
-      process.exit(1);
-    }
     if (forceNew) {
       console.error("Error: --from-agent cannot be used with --new-agent");
       process.exit(1);
@@ -543,20 +537,12 @@ export async function handleHeadlessCommand(
           when: fromAfFile,
           message: "--conversation cannot be used with --import",
         },
-        {
-          when: shouldContinue,
-          message: "--conversation cannot be used with --continue",
-        },
       ],
     });
 
     validateFlagConflicts({
       guard: forceNewConversation,
       checks: [
-        {
-          when: shouldContinue,
-          message: "--new cannot be used with --continue",
-        },
         {
           when: specifiedConversationId,
           message: "--new cannot be used with --conversation",
@@ -585,10 +571,6 @@ export async function handleHeadlessCommand(
           {
             when: specifiedAgentName,
             message: "--import cannot be used with --name",
-          },
-          {
-            when: shouldContinue,
-            message: "--import cannot be used with --continue",
           },
           {
             when: forceNew,
@@ -860,14 +842,7 @@ export async function handleHeadlessCommand(
     }
   }
 
-  // Priority 6: --continue with no agent found → error
-  if (!agent && shouldContinue) {
-    console.error("No recent session found in .letta/ or ~/.letta.");
-    console.error("Run 'letta' to get started.");
-    process.exit(1);
-  }
-
-  // Priority 7: Fresh user with no LRU - create default agent
+  // Priority 6: Fresh user with no LRU - create default agent
   if (!agent) {
     const { ensureDefaultAgents } = await import("./agent/defaults");
     const defaultAgent = await ensureDefaultAgents(client, {
@@ -886,11 +861,7 @@ export async function handleHeadlessCommand(
   markMilestone("HEADLESS_AGENT_RESOLVED");
 
   // Check if we're resuming an existing agent (not creating a new one)
-  const isResumingAgent = !!(
-    specifiedAgentId ||
-    shouldContinue ||
-    (!forceNew && !fromAfFile)
-  );
+  const isResumingAgent = !!(specifiedAgentId || (!forceNew && !fromAfFile));
 
   // If resuming, always refresh model settings from presets to keep
   // preset-derived fields in sync, then apply optional command-line
@@ -1111,45 +1082,6 @@ export async function handleHeadlessCommand(
         process.exit(1);
       }
     }
-  } else if (shouldContinue) {
-    // Try to resume the last conversation for this agent
-    await settingsManager.loadLocalProjectSettings();
-    const lastSession =
-      settingsManager.getLocalLastSession(process.cwd()) ??
-      settingsManager.getGlobalLastSession();
-
-    if (lastSession && lastSession.agentId === agent.id) {
-      if (lastSession.conversationId === "default") {
-        // "default" is always valid - just use it directly
-        conversationId = "default";
-      } else {
-        // Verify the conversation still exists
-        try {
-          debugLog(
-            "conversations",
-            `retrieve(${lastSession.conversationId}) [headless lastSession resume]`,
-          );
-          await client.conversations.retrieve(lastSession.conversationId);
-          conversationId = lastSession.conversationId;
-        } catch {
-          // Conversation no longer exists - error with helpful message
-          console.error(
-            `Attempting to resume conversation ${lastSession.conversationId}, but conversation was not found.`,
-          );
-          console.error(
-            "Resume the default conversation with 'letta -p ...', view recent conversations with 'letta --resume', or start a new conversation with 'letta -p ... --new'.",
-          );
-          process.exit(1);
-        }
-      }
-    } else {
-      // No matching session - error with helpful message
-      console.error("No previous session found for this agent to resume.");
-      console.error(
-        "Resume the default conversation with 'letta -p ...', or start a new conversation with 'letta -p ... --new'.",
-      );
-      process.exit(1);
-    }
   } else if (forceNewConversation) {
     // --new flag: create a new conversation (for concurrent sessions)
     const conversation = await client.conversations.create({
@@ -1181,14 +1113,7 @@ export async function handleHeadlessCommand(
   // Skip for subagents - they shouldn't pollute the LRU settings
   if (!isSubagent) {
     await settingsManager.loadLocalProjectSettings();
-    settingsManager.setLocalLastSession(
-      { agentId: agent.id, conversationId },
-      process.cwd(),
-    );
-    settingsManager.setGlobalLastSession({
-      agentId: agent.id,
-      conversationId,
-    });
+    settingsManager.persistSession(agent.id, conversationId);
   }
 
   // Set agent context for tools that need it (e.g., Skill tool, Task tool)
@@ -1384,6 +1309,7 @@ export async function handleHeadlessCommand(
       const approvalInput: ApprovalCreate = {
         type: "approval",
         approvals: executedResults as ApprovalResult[],
+        otid: randomUUID(),
       };
 
       // Inject queued skill content as user message parts (LET-7353)
@@ -1403,6 +1329,7 @@ export async function handleHeadlessCommand(
               type: "text" as const,
               text: sc.content,
             })),
+            otid: randomUUID(),
           });
         }
       }
@@ -1530,8 +1457,16 @@ ${SYSTEM_REMINDER_CLOSE}
     {
       role: "user",
       content: contentParts,
+      otid: randomUUID(),
     },
   ];
+  const refreshCurrentInputOtids = () => {
+    // Terminal stop-reason retries are NEW requests and must not reuse OTIDs.
+    currentInput = currentInput.map((item) => ({
+      ...item,
+      otid: randomUUID(),
+    }));
+  };
 
   // Track lastRunId outside the while loop so it's available in catch block
   let lastKnownRunId: string | null = null;
@@ -1582,6 +1517,7 @@ ${SYSTEM_REMINDER_CLOSE}
                 type: "text" as const,
                 text: sc.content,
               })),
+              otid: randomUUID(),
             },
           ];
         }
@@ -1637,40 +1573,61 @@ ${SYSTEM_REMINDER_CLOSE}
           continue;
         }
 
-        // Check for 409 "conversation busy" error - retry once with delay
-        // TODO: Add pre-stream resume logic for parity with App.tsx.
-        // Before waiting, attempt to discover the in-flight run via
-        // discoverFallbackRunIdWithTimeout() and resume its stream with
-        // client.runs.messages.stream() + drainStream(). See App.tsx
-        // retry_conversation_busy handler for reference implementation.
+        // Check for 409 "conversation busy" - resume via conversation stream endpoint.
+        // Server resolves: (1) otid lookup, (2) active run fallback.
+        // OTID lookup provides server-side request ownership validation.
+        // Falls back to exponential backoff retry if the endpoint fails.
         if (preStreamAction === "retry_conversation_busy") {
-          conversationBusyRetries += 1;
-          const retryDelayMs = getRetryDelayMs({
-            category: "conversation_busy",
-            attempt: conversationBusyRetries,
-          });
+          const messageOtid = currentInput
+            .map((item) => (item as Record<string, unknown>).otid)
+            .find((v): v is string => typeof v === "string");
 
-          // Emit retry message for stream-json mode
-          if (outputFormat === "stream-json") {
-            const retryMsg: RetryMessage = {
-              type: "retry",
-              reason: "error", // 409 conversation busy is a pre-stream error
+          try {
+            const client = await getClient();
+            stream = (await client.conversations.messages.stream(
+              conversationId,
+              // Cast needed until SDK MessageStreamParams includes otid field
+              {
+                agent_id:
+                  conversationId === "default"
+                    ? (agent?.id ?? undefined)
+                    : undefined,
+                otid: messageOtid ?? undefined,
+                starting_after: 0,
+                batch_size: 1000,
+              } as unknown as Parameters<
+                typeof client.conversations.messages.stream
+              >[1],
+            )) as Awaited<ReturnType<typeof sendMessageStream>>;
+            conversationBusyRetries = 0;
+            // Fall through to drain
+          } catch {
+            conversationBusyRetries += 1;
+            const retryDelayMs = getRetryDelayMs({
+              category: "conversation_busy",
               attempt: conversationBusyRetries,
-              max_attempts: CONVERSATION_BUSY_MAX_RETRIES,
-              delay_ms: retryDelayMs,
-              session_id: sessionId,
-              uuid: `retry-conversation-busy-${randomUUID()}`,
-            };
-            console.log(JSON.stringify(retryMsg));
-          } else {
-            console.error(
-              `Conversation is busy, waiting ${Math.round(retryDelayMs / 1000)}s and retrying...`,
-            );
-          }
+            });
 
-          // Wait before retry
-          await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
-          continue;
+            if (outputFormat === "stream-json") {
+              const retryMsg: RetryMessage = {
+                type: "retry",
+                reason: "error",
+                attempt: conversationBusyRetries,
+                max_attempts: CONVERSATION_BUSY_MAX_RETRIES,
+                delay_ms: retryDelayMs,
+                session_id: sessionId,
+                uuid: `retry-conversation-busy-${randomUUID()}`,
+              };
+              console.log(JSON.stringify(retryMsg));
+            } else {
+              console.error(
+                `Conversation is busy, waiting ${Math.round(retryDelayMs / 1000)}s and retrying...`,
+              );
+            }
+
+            await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+            continue;
+          }
         }
 
         if (preStreamAction === "retry_transient") {
@@ -1986,12 +1943,12 @@ ${SYSTEM_REMINDER_CLOSE}
         );
 
         // Send all results in one batch
-        currentInput = [
-          {
-            type: "approval",
-            approvals: executedResults as ApprovalResult[],
-          },
-        ];
+        const approvalInputWithOtid = {
+          type: "approval" as const,
+          approvals: executedResults as ApprovalResult[],
+          otid: randomUUID(),
+        };
+        currentInput = [approvalInputWithOtid];
         continue;
       }
 
@@ -2047,6 +2004,8 @@ ${SYSTEM_REMINDER_CLOSE}
           // Exponential backoff before retrying the same input
           await new Promise((resolve) => setTimeout(resolve, delayMs));
 
+          // Post-stream retry creates a new run/request.
+          refreshCurrentInputOtids();
           continue;
         }
       }
@@ -2160,6 +2119,7 @@ ${SYSTEM_REMINDER_CLOSE}
               const nudgeMessage: MessageCreate = {
                 role: "system",
                 content: `<system-reminder>The previous response was empty. Please provide a response with either text content or a tool call.</system-reminder>`,
+                otid: randomUUID(),
               };
               currentInput = [...currentInput, nudgeMessage];
             }
@@ -2183,6 +2143,8 @@ ${SYSTEM_REMINDER_CLOSE}
             }
 
             await new Promise((resolve) => setTimeout(resolve, delayMs));
+            // Empty-response retry creates a new run/request.
+            refreshCurrentInputOtids();
             continue;
           }
 
@@ -2216,6 +2178,8 @@ ${SYSTEM_REMINDER_CLOSE}
             }
 
             await new Promise((resolve) => setTimeout(resolve, delayMs));
+            // Post-stream retry creates a new run/request.
+            refreshCurrentInputOtids();
             continue;
           }
         } catch (_e) {
@@ -2549,6 +2513,7 @@ async function runBidirectionalMode(
       const approvalInput: ApprovalCreate = {
         type: "approval",
         approvals: executedResults as ApprovalResult[],
+        otid: randomUUID(),
       };
 
       const approvalMessages: Array<
@@ -2568,6 +2533,7 @@ async function runBidirectionalMode(
               type: "text" as const,
               text: sc.content,
             })),
+            otid: randomUUID(),
           });
         }
       }
@@ -2970,6 +2936,7 @@ async function runBidirectionalMode(
       const approvalInput: ApprovalCreate = {
         type: "approval",
         approvals: executedResults as ApprovalResult[],
+        otid: randomUUID(),
       };
       const approvalStream = await sendMessageStream(
         targetConversationId,
@@ -3696,12 +3663,12 @@ async function runBidirectionalMode(
             );
 
             // Send approval results back to continue
-            currentInput = [
-              {
-                type: "approval",
-                approvals: executedResults,
-              } as unknown as MessageCreate,
-            ];
+            const approvalInputWithOtid = {
+              type: "approval" as const,
+              approvals: executedResults,
+              otid: randomUUID(),
+            };
+            currentInput = [approvalInputWithOtid as unknown as MessageCreate];
 
             // Continue the loop to process the next stream
             continue;

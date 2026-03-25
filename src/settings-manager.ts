@@ -67,6 +67,7 @@ export interface Settings {
   showCompactions?: boolean;
   enableSleeptime: boolean;
   sessionContextEnabled: boolean; // Send device/agent context on first message of each session
+  autoSwapOnQuotaLimit: boolean; // Auto-switch to temporary Auto model override on quota-limit errors
   memoryReminderInterval: number | null | "compaction" | "auto-compaction"; // DEPRECATED: use reflection* fields
   reflectionTrigger: "off" | "step-count" | "compaction-event";
   reflectionStepCount: number;
@@ -131,6 +132,7 @@ const DEFAULT_SETTINGS: Settings = {
   enableSleeptime: false,
   conversationSwitchAlertEnabled: false,
   sessionContextEnabled: true,
+  autoSwapOnQuotaLimit: true,
   memoryReminderInterval: 25, // DEPRECATED: use reflection* fields
   reflectionTrigger: "step-count",
   reflectionStepCount: 25,
@@ -1142,6 +1144,23 @@ class SettingsManager {
     }
     // Fall back to global
     return this.getGlobalLastAgentId();
+  }
+
+  /**
+   * Persist the current session (agent + conversation) to both local and global
+   * settings, plus the legacy lastAgent fields for backwards compat.
+   *
+   * This is the single entry-point every conversation/agent switch should use
+   * instead of calling setLocalLastSession + setGlobalLastSession individually.
+   */
+  persistSession(
+    agentId: string,
+    conversationId: string,
+    workingDirectory: string = process.cwd(),
+  ): void {
+    const session: SessionRef = { agentId, conversationId };
+    this.setLocalLastSession(session, workingDirectory);
+    this.setGlobalLastSession(session);
   }
 
   // =====================================================================

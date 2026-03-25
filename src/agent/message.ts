@@ -23,6 +23,7 @@ import {
 } from "./approval-result-normalization";
 import { getClient } from "./client";
 import { buildClientSkillsPayload } from "./clientSkills";
+import { ALL_SKILL_SOURCES } from "./skillSources";
 
 const streamRequestStartTimes = new WeakMap<object, number>();
 const streamToolContextIds = new WeakMap<object, string>();
@@ -32,6 +33,7 @@ export type StreamRequestContext = {
   resolvedConversationId: string;
   agentId: string | null;
   requestStartedAtMs: number;
+  otid?: string;
 };
 const streamRequestContexts = new WeakMap<object, StreamRequestContext>();
 
@@ -62,6 +64,11 @@ export type SendMessageStreamOptions = {
   /** Per-conversation permission mode state. When provided, tool execution uses
    *  this scoped state instead of the global permissionMode singleton. */
   permissionModeState?: PermissionModeState;
+  /**
+   * Per-request model override. Uses backend request-scoped override_model and
+   * does not mutate agent/conversation persisted model configuration.
+   */
+  overrideModel?: string;
 };
 
 export function buildConversationMessagesCreateRequestBody(
@@ -92,6 +99,7 @@ export function buildConversationMessagesCreateRequestBody(
     client_skills: clientSkills,
     client_tools: clientTools,
     include_compaction_messages: true,
+    ...(opts.overrideModel ? { override_model: opts.overrideModel } : {}),
     ...(isDefaultConversation ? { agent_id: opts.agentId } : {}),
   };
 }
@@ -132,6 +140,7 @@ export async function sendMessageStream(
   const { clientSkills, errors: clientSkillDiscoveryErrors } =
     await buildClientSkillsPayload({
       agentId: opts.agentId,
+      skillSources: ALL_SKILL_SOURCES,
     });
 
   const resolvedConversationId = conversationId;
@@ -194,12 +203,14 @@ export async function sendMessageStream(
     })
     .join(",");
 
+  const firstOtid = (messages[0] as unknown as { otid?: string })?.otid;
   debugLog(
     "send-message-stream",
-    "request_start conversation_id=%s agent_id=%s messages=%s stream_tokens=%s background=%s max_retries=%s",
+    "request_start conversation_id=%s agent_id=%s messages=%s otid=%s stream_tokens=%s background=%s max_retries=%s",
     resolvedConversationId,
     opts.agentId ?? "none",
     messageSummary || "(empty)",
+    firstOtid ?? "none",
     opts.streamTokens ?? true,
     opts.background ?? true,
     requestOptions.maxRetries ?? "default",
@@ -221,8 +232,9 @@ export async function sendMessageStream(
   } catch (error) {
     debugWarn(
       "send-message-stream",
-      "request_error conversation_id=%s status=%s error=%s",
+      "request_error conversation_id=%s otid=%s status=%s error=%s",
       resolvedConversationId,
+      firstOtid ?? "none",
       (error as { status?: number })?.status ?? "none",
       error instanceof Error ? error.message : String(error),
     );
@@ -231,8 +243,9 @@ export async function sendMessageStream(
 
   debugLog(
     "send-message-stream",
-    "request_ok conversation_id=%s",
+    "request_ok conversation_id=%s otid=%s",
     resolvedConversationId,
+    firstOtid ?? "none",
   );
 
   if (requestStartTime !== undefined) {
@@ -244,6 +257,7 @@ export async function sendMessageStream(
     resolvedConversationId,
     agentId: opts.agentId ?? null,
     requestStartedAtMs,
+    otid: firstOtid,
   });
 
   return stream;

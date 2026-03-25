@@ -1,6 +1,8 @@
 // src/cli/commands/registry.ts
 // Registry of available CLI commands
 
+import { handleSecretCommand } from "./secret";
+
 type CommandHandler = (args: string[]) => Promise<string> | string;
 
 interface Command {
@@ -38,6 +40,15 @@ export const commands: Record<string, Command> = {
     handler: () => {
       // Handled specially in App.tsx to send initialization prompt
       return "Initializing memory...";
+    },
+  },
+  "/doctor": {
+    desc: "Audit and refine your memory structure",
+    order: 12.1,
+    noArgs: true,
+    handler: () => {
+      // Handled specially in App.tsx to send doctor prompt
+      return "Running memory doctor...";
     },
   },
   "/remember": {
@@ -165,6 +176,15 @@ export const commands: Record<string, Command> = {
       return "Starting new conversation...";
     },
   },
+  "/fork": {
+    desc: "Fork the current conversation",
+    order: 20.5,
+    noArgs: true,
+    handler: () => {
+      // Handled specially in App.tsx to fork current conversation
+      return "Forking conversation...";
+    },
+  },
   "/pin": {
     desc: "Pin current agent globally, or use -l for local only",
     order: 22,
@@ -250,6 +270,15 @@ export const commands: Record<string, Command> = {
     handler: () => {
       // Handled specially in App.tsx to show MCP server selector
       return "Opening MCP server manager...";
+    },
+  },
+  "/secret": {
+    desc: "Manage secrets for shell commands",
+    order: 33,
+    args: "<set|list|unset> [key] [value]",
+    handler: async (args: string[]) => {
+      const result = await handleSecretCommand(args);
+      return result.output;
     },
   },
   "/usage": {

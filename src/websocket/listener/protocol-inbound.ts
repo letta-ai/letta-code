@@ -2,8 +2,13 @@ import type WebSocket from "ws";
 import type {
   AbortMessageCommand,
   ChangeDeviceStateCommand,
+  EnableMemfsCommand,
   InputCommand,
+  ListInDirectoryCommand,
+  ListMemoryCommand,
+  ReadFileCommand,
   RuntimeScope,
+  SearchFilesCommand,
   SyncCommand,
   TerminalInputCommand,
   TerminalKillCommand,
@@ -240,6 +245,68 @@ function isTerminalKillCommand(value: unknown): value is TerminalKillCommand {
   return c.type === "terminal_kill" && typeof c.terminal_id === "string";
 }
 
+export function isSearchFilesCommand(
+  value: unknown,
+): value is SearchFilesCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as { type?: unknown; query?: unknown; request_id?: unknown };
+  return (
+    c.type === "search_files" &&
+    typeof c.query === "string" &&
+    typeof c.request_id === "string"
+  );
+}
+
+export function isListInDirectoryCommand(
+  value: unknown,
+): value is ListInDirectoryCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as { type?: unknown; path?: unknown };
+  return c.type === "list_in_directory" && typeof c.path === "string";
+}
+
+export function isReadFileCommand(value: unknown): value is ReadFileCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as { type?: unknown; path?: unknown; request_id?: unknown };
+  return (
+    c.type === "read_file" &&
+    typeof c.path === "string" &&
+    typeof c.request_id === "string"
+  );
+}
+
+export function isListMemoryCommand(
+  value: unknown,
+): value is ListMemoryCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    agent_id?: unknown;
+  };
+  return (
+    c.type === "list_memory" &&
+    typeof c.request_id === "string" &&
+    typeof c.agent_id === "string"
+  );
+}
+
+export function isEnableMemfsCommand(
+  value: unknown,
+): value is EnableMemfsCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    agent_id?: unknown;
+  };
+  return (
+    c.type === "enable_memfs" &&
+    typeof c.request_id === "string" &&
+    typeof c.agent_id === "string"
+  );
+}
+
 export function parseServerMessage(
   data: WebSocket.RawData,
 ): ParsedServerMessage | null {
@@ -254,7 +321,12 @@ export function parseServerMessage(
       isTerminalSpawnCommand(parsed) ||
       isTerminalInputCommand(parsed) ||
       isTerminalResizeCommand(parsed) ||
-      isTerminalKillCommand(parsed)
+      isTerminalKillCommand(parsed) ||
+      isSearchFilesCommand(parsed) ||
+      isListInDirectoryCommand(parsed) ||
+      isReadFileCommand(parsed) ||
+      isListMemoryCommand(parsed) ||
+      isEnableMemfsCommand(parsed)
     ) {
       return parsed as WsProtocolCommand;
     }

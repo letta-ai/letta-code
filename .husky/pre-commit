@@ -1,3 +1,7 @@
 #!/usr/bin/env sh
-# Run the same checks as CI to ensure parity
-bun run check
+
+# Lint staged files only (fast)
+bunx lint-staged
+
+# Typecheck full project (catches type errors in unchanged files)
+bun run typecheck

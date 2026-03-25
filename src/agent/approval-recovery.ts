@@ -28,6 +28,7 @@ export {
   isEmptyResponseRetryable,
   isInvalidToolCallIdsError,
   isNonRetryableProviderErrorDetail,
+  isQuotaLimitErrorDetail,
   isRetryableProviderErrorDetail,
   parseRetryAfterHeaderMs,
   rebuildInputWithFreshDenials,

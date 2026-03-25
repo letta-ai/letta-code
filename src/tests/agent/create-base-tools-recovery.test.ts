@@ -5,7 +5,7 @@ import { createAgentWithBaseToolsRecovery } from "../../agent/create";
 function missingBaseToolsError(): Error & { status: number } {
   return Object.assign(
     new Error(
-      `400 {"detail":"Tools not found by name: {'fetch_webpage', 'memory'}"}`,
+      `400 {"detail":"Tools not found by name: {'fetch_webpage', 'memory_apply_patch'}"}`,
     ),
     { status: 400 },
   );
@@ -25,7 +25,7 @@ describe("createAgentWithBaseToolsRecovery", () => {
 
     const agent = await createAgentWithBaseToolsRecovery(
       createWithTools,
-      ["memory", "web_search", "fetch_webpage"],
+      ["memory_apply_patch", "web_search", "fetch_webpage"],
       addBaseTools,
     );
 
@@ -33,12 +33,12 @@ describe("createAgentWithBaseToolsRecovery", () => {
     expect(addBaseTools).toHaveBeenCalledTimes(1);
     expect(createWithTools).toHaveBeenCalledTimes(2);
     expect(createWithTools.mock.calls[0]?.[0]).toEqual([
-      "memory",
+      "memory_apply_patch",
       "web_search",
       "fetch_webpage",
     ]);
     expect(createWithTools.mock.calls[1]?.[0]).toEqual([
-      "memory",
+      "memory_apply_patch",
       "web_search",
       "fetch_webpage",
     ]);
@@ -59,7 +59,7 @@ describe("createAgentWithBaseToolsRecovery", () => {
 
     const agent = await createAgentWithBaseToolsRecovery(
       createWithTools,
-      ["memory", "web_search", "fetch_webpage"],
+      ["memory_apply_patch", "web_search", "fetch_webpage"],
       addBaseTools,
     );
 

@@ -64,6 +64,10 @@ function truncateText(text: string, maxWidth: number): string {
   return `${text.slice(0, maxWidth - 3)}...`;
 }
 
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, (match) => `\\${match}`);
+}
+
 /**
  * Get display text from a message
  */
@@ -105,6 +109,44 @@ function getMessageText(msg: MessageSearchResponse[number]): string {
   return `[${msg.message_type || "unknown"}]`;
 }
 
+/**
+ * Highlight keywords in text
+ */
+function HighlightedText({ text, query }: { text: string; query: string }) {
+  if (!query.trim()) return <Text>{text}</Text>;
+
+  const highlightTerms = [
+    ...new Set(query.trim().split(/\s+/).filter(Boolean)),
+  ].sort((a, b) => b.length - a.length);
+
+  if (highlightTerms.length === 0) return <Text>{text}</Text>;
+
+  const parts = text.split(
+    new RegExp(`(${highlightTerms.map(escapeRegExp).join("|")})`, "gi"),
+  );
+
+  let offset = 0;
+
+  return (
+    <Text>
+      {parts.map((part) => {
+        const key = `${offset}-${part}`;
+        offset += part.length;
+
+        return highlightTerms.some(
+          (term) => part.toLowerCase() === term.toLowerCase(),
+        ) ? (
+          <Text key={key} bold color={colors.selector.itemHighlighted}>
+            {part}
+          </Text>
+        ) : (
+          <Text key={key}>{part}</Text>
+        );
+      })}
+    </Text>
+  );
+}
+
 export function MessageSearch({
   onClose,
   initialQuery,
@@ -127,6 +169,22 @@ export function MessageSearch({
   const clientRef = useRef<Letta | null>(null);
   // Cache results per query+mode+range combination to avoid re-fetching
   const resultsCache = useRef<Map<string, MessageSearchResponse>>(new Map());
+
+  // Warm tpuf cache on mount (fire-and-forget)
+  useEffect(() => {
+    const warmCache = async () => {
+      try {
+        const client = await getClient();
+        await client.post("/v1/messages/search", {
+          body: {},
+          query: { warm_only: true },
+        });
+      } catch {
+        // Silently ignore - cache warm is best-effort
+      }
+    };
+    void warmCache();
+  }, []);
 
   // Get cache key for a specific query+mode+range combination
   const getCacheKey = useCallback(
@@ -431,36 +489,46 @@ export function MessageSearch({
           const timestamp = formatLocalTime(msgData.created_at || msgData.date);
 
           return (
-            <>
-              {/* Full message text in quotes */}
-              <Box paddingLeft={2}>
-                <Text>"{fullText}"</Text>
+            <Box flexDirection="column" paddingX={1}>
+              {/* Full message text with padding and HighlightedText */}
+              <Box paddingLeft={2} paddingY={1} marginBottom={1}>
+                <HighlightedText text={fullText} query={activeQuery} />
               </Box>
 
-              <Box height={1} />
-
-              {/* Metadata */}
-              <Box flexDirection="column" paddingLeft={2}>
+              {/* Metadata list */}
+              <Box flexDirection="column" paddingLeft={2} gap={0}>
                 <Text dimColor>
                   {typeLabel}, sent {timestamp}
                 </Text>
-                <Text dimColor>Agent ID: {msgData.agent_id || "unknown"}</Text>
+                <Box flexDirection="row">
+                  <Text dimColor>Agent ID: </Text>
+                  <Text dimColor>{msgData.agent_id || "unknown"}</Text>
+                </Box>
                 {msgData.conversation_id && (
-                  <Text dimColor>Conv ID: {msgData.conversation_id}</Text>
+                  <Box flexDirection="row">
+                    <Text dimColor>Conversation ID: </Text>
+                    <Text dimColor>{msgData.conversation_id}</Text>
+                  </Box>
                 )}
               </Box>
 
               <Box height={1} />
 
-              {/* Footer */}
+              {/* Action prompt footer */}
               <Box paddingLeft={2}>
                 <Text dimColor>
-                  {onOpenConversation
-                    ? "Enter to open conversation · Esc cancel"
-                    : "Esc cancel"}
+                  {onOpenConversation ? (
+                    <>
+                      <Text>Enter to open conversation</Text>
+                      <Text> · </Text>
+                      <Text>Esc cancel</Text>
+                    </>
+                  ) : (
+                    <Text>Esc cancel</Text>
+                  )}
                 </Text>
               </Box>
-            </>
+            </Box>
           );
         })()}
 
@@ -612,12 +680,11 @@ export function MessageSearch({
                     <Text> {emoji} </Text>
                     <Text
                       bold={isSelected}
-                      italic
                       color={
                         isSelected ? colors.selector.itemHighlighted : undefined
                       }
                     >
-                      {displayText}
+                      <HighlightedText text={displayText} query={activeQuery} />
                     </Text>
                   </Box>
                   <Box flexDirection="row" marginLeft={2}>

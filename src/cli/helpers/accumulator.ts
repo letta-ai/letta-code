@@ -383,6 +383,11 @@ export function markCurrentLineAsFinished(b: Buffers) {
  * @param setInterruptedFlag - Whether to set the interrupted flag (default true).
  *   Pass false when clearing stale tool calls at stream startup to avoid race conditions
  *   with concurrent processConversation calls reading the flag.
+ * @param reason - Why the cancellation is happening.
+ * @param skipMarkCurrentLine - When true, do NOT call markCurrentLineAsFinished.
+ *   Use this when a stream resume will follow: the resume stream will finalize the
+ *   streaming line with its full text, so prematurely marking it finished would
+ *   cause it to be committed to static with truncated content.
  * @returns true if any tool calls were marked as cancelled
  */
 export type CancelReason =
@@ -402,6 +407,7 @@ export function markIncompleteToolsAsCancelled(
   b: Buffers,
   setInterruptedFlag = true,
   reason: CancelReason = "internal_cancel",
+  skipMarkCurrentLine = false,
 ): boolean {
   // Mark buffer as interrupted to skip stale throttled refreshes
   // (only when actually interrupting, not when clearing stale state at startup)
@@ -422,8 +428,12 @@ export function markIncompleteToolsAsCancelled(
       anyToolsCancelled = true;
     }
   }
-  // Also mark any streaming assistant/reasoning lines as finished
-  markCurrentLineAsFinished(b);
+  // Mark any streaming assistant/reasoning lines as finished, unless a resume
+  // is about to follow (in which case the resume stream will finalize it with
+  // full text — marking it now would freeze truncated content in static).
+  if (!skipMarkCurrentLine) {
+    markCurrentLineAsFinished(b);
+  }
   return anyToolsCancelled;
 }
 

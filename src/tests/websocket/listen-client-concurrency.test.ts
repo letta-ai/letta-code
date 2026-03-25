@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { APIError } from "@letta-ai/letta-client/error";
 import WebSocket from "ws";
 import type { ResumeData } from "../../agent/check-approval";
 import { permissionMode } from "../../permissions/mode";
@@ -6,6 +7,9 @@ import type {
   MessageQueueItem,
   TaskNotificationQueueItem,
 } from "../../queue/queueRuntime";
+import { queueSkillContent } from "../../tools/impl/skillContentRegistry";
+import { resolveRecoveredApprovalResponse } from "../../websocket/listener/recovery";
+import { injectQueuedSkillContent } from "../../websocket/listener/skill-injection";
 import type { IncomingMessage } from "../../websocket/listener/types";
 
 type MockStream = {
@@ -29,15 +33,23 @@ const defaultDrainResult: DrainResult = {
   apiDurationMs: 0,
 };
 
+const sendMessageStreamCalls: Array<{
+  conversationId: string;
+  messages: unknown[];
+  opts?: { agentId?: string };
+}> = [];
 const sendMessageStreamMock = mock(
   async (
     conversationId: string,
-    _messages: unknown[],
+    messages: unknown[],
     opts?: { agentId?: string },
-  ): Promise<MockStream> => ({
-    conversationId,
-    agentId: opts?.agentId,
-  }),
+  ): Promise<MockStream> => {
+    sendMessageStreamCalls.push({ conversationId, messages, opts });
+    return {
+      conversationId,
+      agentId: opts?.agentId,
+    };
+  },
 );
 const getStreamToolContextIdMock = mock(() => null);
 const drainHandlers = new Map<
@@ -60,12 +72,28 @@ const drainStreamWithResumeMock = mock(
 );
 const retrieveAgentMock = mock(async (agentId: string) => ({ id: agentId }));
 const cancelConversationMock = mock(async (_conversationId: string) => {});
+const conversationMessagesStreamMock = mock(
+  async (
+    conversationId: string,
+    _params?: {
+      agent_id?: string;
+      otid?: string;
+      starting_after?: number;
+      batch_size?: number;
+    },
+  ): Promise<MockStream> => ({
+    conversationId,
+  }),
+);
 const getClientMock = mock(async () => ({
   agents: {
     retrieve: retrieveAgentMock,
   },
   conversations: {
     cancel: cancelConversationMock,
+    messages: {
+      stream: conversationMessagesStreamMock,
+    },
   },
 }));
 const getResumeDataMock = mock(
@@ -197,8 +225,11 @@ function makeIncomingMessage(
 
 describe("listen-client multi-worker concurrency", () => {
   beforeEach(() => {
+    queueSkillContent("__test-cleanup__", "__test-cleanup__");
+    injectQueuedSkillContent([]);
     permissionMode.reset();
     sendMessageStreamMock.mockClear();
+    sendMessageStreamCalls.length = 0;
     getStreamToolContextIdMock.mockClear();
     drainStreamWithResumeMock.mockClear();
     getClientMock.mockClear();
@@ -207,6 +238,7 @@ describe("listen-client multi-worker concurrency", () => {
     classifyApprovalsMock.mockClear();
     executeApprovalBatchMock.mockClear();
     cancelConversationMock.mockClear();
+    conversationMessagesStreamMock.mockClear();
     fetchRunErrorDetailMock.mockClear();
     drainHandlers.clear();
     __listenClientTestUtils.setActiveRuntime(null);
@@ -711,7 +743,7 @@ describe("listen-client multi-worker concurrency", () => {
       pendingApprovals: [approval],
       messageHistory: [],
     });
-    classifyApprovalsMock.mockResolvedValueOnce({
+    (classifyApprovalsMock as any).mockResolvedValueOnce({
       autoAllowed: [
         {
           approval,
@@ -753,6 +785,11 @@ describe("listen-client multi-worker concurrency", () => {
       throw new Error("Expected stale recovery queued task item");
     }
 
+    queueSkillContent(
+      "tool-call-1",
+      "<searching-messages>stale recovery skill content</searching-messages>",
+    );
+
     const recoveryPromise = __listenClientTestUtils.resolveStaleApprovals(
       runtime,
       socket as unknown as WebSocket,
@@ -766,11 +803,14 @@ describe("listen-client multi-worker concurrency", () => {
     const continuationMessages = sendMessageStreamMock.mock.calls[0]?.[1] as
       | Array<Record<string, unknown>>
       | undefined;
-    expect(continuationMessages).toHaveLength(2);
-    expect(continuationMessages?.[0]).toEqual({
-      type: "approval",
-      approvals: [approvalResult],
-    });
+    expect(continuationMessages).toHaveLength(3);
+    expect(continuationMessages?.[0]).toEqual(
+      expect.objectContaining({
+        type: "approval",
+        approvals: [approvalResult],
+        otid: expect.any(String),
+      }),
+    );
     expect(continuationMessages?.[1]).toEqual({
       role: "user",
       content: [
@@ -781,6 +821,16 @@ describe("listen-client multi-worker concurrency", () => {
           text: "<task-notification>done</task-notification>",
         },
       ],
+    });
+    expect(continuationMessages?.[2]).toEqual({
+      role: "user",
+      content: [
+        {
+          type: "text",
+          text: "<searching-messages>stale recovery skill content</searching-messages>",
+        },
+      ],
+      otid: expect.any(String),
     });
     expect(runtime.loopStatus as string).toBe("PROCESSING_API_RESPONSE");
     expect(runtime.queueRuntime.length).toBe(0);
@@ -803,6 +853,156 @@ describe("listen-client multi-worker concurrency", () => {
       stopReason: "end_turn",
       approvals: [],
       apiDurationMs: 0,
+    });
+  });
+
+  test("interrupt-queue approval continuation appends skill content as trailing user message", async () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    __listenClientTestUtils.setActiveRuntime(listener);
+    const runtime = __listenClientTestUtils.getOrCreateScopedRuntime(
+      listener,
+      "agent-1",
+      "conv-int",
+    );
+    const socket = new MockSocket();
+
+    runtime.pendingInterruptedResults = [
+      {
+        type: "approval",
+        tool_call_id: "call-int",
+        approve: false,
+        reason: "Interrupted by user",
+      },
+    ] as never;
+    runtime.pendingInterruptedContext = {
+      agentId: "agent-1",
+      conversationId: "conv-int",
+      continuationEpoch: runtime.continuationEpoch,
+    };
+    runtime.pendingInterruptedToolCallIds = ["call-int"];
+
+    queueSkillContent(
+      "call-int",
+      "<searching-messages>interrupt path skill content</searching-messages>",
+    );
+
+    await __listenClientTestUtils.handleIncomingMessage(
+      {
+        type: "message",
+        agentId: "agent-1",
+        conversationId: "conv-int",
+        messages: [],
+      } as unknown as IncomingMessage,
+      socket as unknown as WebSocket,
+      runtime,
+    );
+
+    expect(sendMessageStreamMock.mock.calls.length).toBeGreaterThan(0);
+    const firstSendMessages = sendMessageStreamMock.mock.calls[0]?.[1] as
+      | Array<Record<string, unknown>>
+      | undefined;
+
+    expect(firstSendMessages).toHaveLength(2);
+    expect(firstSendMessages?.[0]).toMatchObject({
+      type: "approval",
+      approvals: [
+        {
+          tool_call_id: "call-int",
+          approve: false,
+          reason: "Interrupted by user",
+        },
+      ],
+    });
+    expect(firstSendMessages?.[1]).toEqual({
+      role: "user",
+      content: [
+        {
+          type: "text",
+          text: "<searching-messages>interrupt path skill content</searching-messages>",
+        },
+      ],
+      otid: expect.any(String),
+    });
+  });
+
+  test("recovered approval replay keeps approval-only routing and appends skill content at send boundary", async () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    __listenClientTestUtils.setActiveRuntime(listener);
+    const runtime = __listenClientTestUtils.getOrCreateScopedRuntime(
+      listener,
+      "agent-1",
+      "conv-recovered",
+    );
+    const socket = new MockSocket();
+
+    runtime.recoveredApprovalState = {
+      agentId: "agent-1",
+      conversationId: "conv-recovered",
+      approvalsByRequestId: new Map([
+        [
+          "perm-recovered-1",
+          {
+            approval: {
+              toolCallId: "tool-call-recovered-1",
+              toolName: "Write",
+              toolArgs: '{"file_path":"foo.ts"}',
+            },
+            controlRequest: {
+              type: "control_request",
+              request_id: "perm-recovered-1",
+              request: {
+                subtype: "can_use_tool",
+                tool_name: "Write",
+                input: { file_path: "foo.ts" },
+                tool_call_id: "tool-call-recovered-1",
+                permission_suggestions: [],
+                blocked_path: null,
+              },
+              agent_id: "agent-1",
+              conversation_id: "conv-recovered",
+            },
+          },
+        ],
+      ]),
+      pendingRequestIds: new Set(["perm-recovered-1"]),
+      responsesByRequestId: new Map(),
+    };
+
+    queueSkillContent(
+      "tool-call-recovered-1",
+      "<searching-messages>recovered skill content</searching-messages>",
+    );
+
+    await resolveRecoveredApprovalResponse(
+      runtime,
+      socket as unknown as WebSocket,
+      {
+        request_id: "perm-recovered-1",
+        decision: { behavior: "allow" },
+      },
+      __listenClientTestUtils.handleIncomingMessage,
+      {},
+    );
+
+    expect(sendMessageStreamMock.mock.calls.length).toBeGreaterThan(0);
+    const firstSendMessages = sendMessageStreamMock.mock.calls[0]?.[1] as
+      | Array<Record<string, unknown>>
+      | undefined;
+
+    expect(firstSendMessages).toHaveLength(2);
+    expect(firstSendMessages?.[0]).toMatchObject({
+      type: "approval",
+      approvals: [],
+    });
+    expect(firstSendMessages?.[1]).toEqual({
+      role: "user",
+      content: [
+        {
+          type: "text",
+          text: "<searching-messages>recovered skill content</searching-messages>",
+        },
+      ],
+      otid: expect.any(String),
     });
   });
 
@@ -950,5 +1150,319 @@ describe("listen-client multi-worker concurrency", () => {
     expect(processedTurns).toEqual(["conv-a"]);
     expect(runtime.loopStatus).toBe("WAITING_ON_INPUT");
     expect(runtime.queuedMessagesByItemId.size).toBe(0);
+  });
+
+  test("mid-turn mode changes apply to same-turn approval classification", async () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    __listenClientTestUtils.setActiveRuntime(listener);
+    const runtime = __listenClientTestUtils.getOrCreateScopedRuntime(
+      listener,
+      "agent-1",
+      "conv-mid",
+    );
+    const socket = new MockSocket();
+
+    let releaseFirstDrain!: () => void;
+    const firstDrainGate = new Promise<void>((resolve) => {
+      releaseFirstDrain = resolve;
+    });
+    let drainCount = 0;
+    drainHandlers.set("conv-mid", async () => {
+      drainCount += 1;
+      if (drainCount === 1) {
+        await firstDrainGate;
+        return {
+          stopReason: "requires_approval",
+          approvals: [
+            {
+              toolCallId: "tc-1",
+              toolName: "Bash",
+              toolArgs: '{"command":"pwd"}',
+            },
+          ],
+          apiDurationMs: 0,
+        };
+      }
+      return {
+        stopReason: "end_turn",
+        approvals: [],
+        apiDurationMs: 0,
+      };
+    });
+
+    let capturedModeAtClassification: string | null = null;
+    (classifyApprovalsMock as any).mockImplementationOnce(
+      async (_approvals: any, opts: any) => {
+        capturedModeAtClassification = opts?.permissionModeState?.mode ?? null;
+        return {
+          autoAllowed: [
+            {
+              approval: {
+                toolCallId: "tc-1",
+                toolName: "Bash",
+                toolArgs: '{"command":"pwd"}',
+              },
+              permission: { decision: "allow" },
+              context: null,
+              parsedArgs: { command: "pwd" },
+            },
+          ],
+          autoDenied: [],
+          needsUserInput: [],
+        };
+      },
+    );
+    (executeApprovalBatchMock as any).mockResolvedValueOnce([
+      {
+        type: "tool",
+        tool_call_id: "tc-1",
+        status: "success",
+        tool_return: "ok",
+      },
+    ]);
+
+    const turnPromise = __listenClientTestUtils.handleIncomingMessage(
+      makeIncomingMessage("agent-1", "conv-mid", "run it"),
+      socket as unknown as WebSocket,
+      runtime,
+    );
+
+    await waitFor(() => sendMessageStreamMock.mock.calls.length >= 1);
+
+    await __listenClientTestUtils.handleChangeDeviceStateInput(listener, {
+      command: {
+        type: "change_device_state",
+        runtime: { agent_id: "agent-1", conversation_id: "conv-mid" },
+        payload: { mode: "bypassPermissions" },
+      },
+      socket: socket as unknown as WebSocket,
+      opts: {},
+      processQueuedTurn: async () => {},
+    });
+
+    releaseFirstDrain();
+
+    await turnPromise;
+
+    expect(capturedModeAtClassification === "bypassPermissions").toBe(true);
+  });
+
+  test("change_device_state does not prune default-state entry mid-turn", async () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    __listenClientTestUtils.setActiveRuntime(listener);
+    const socket = new MockSocket();
+
+    await __listenClientTestUtils.handleChangeDeviceStateInput(listener, {
+      command: {
+        type: "change_device_state",
+        runtime: { agent_id: "agent-1", conversation_id: "default" },
+        payload: { mode: "default" },
+      },
+      socket: socket as unknown as WebSocket,
+      opts: {},
+      processQueuedTurn: async () => {},
+    });
+
+    expect(
+      listener.permissionModeByConversation.has(
+        "agent:agent-1::conversation:default",
+      ),
+    ).toBe(true);
+  });
+
+  test("pre-stream 409 resumes via conversations stream with message otid", async () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const runtime = __listenClientTestUtils.getOrCreateConversationRuntime(
+      listener,
+      "agent-409-otid",
+      "conv-409-otid",
+    );
+    const socket = new MockSocket();
+
+    sendMessageStreamMock.mockRejectedValueOnce(
+      new APIError(
+        409,
+        {
+          error: {
+            detail:
+              "Cannot send a new message: Another request is currently being processed for this conversation.",
+          },
+        },
+        undefined,
+        new Headers(),
+      ),
+    );
+
+    const turnPromise = __listenClientTestUtils.handleIncomingMessage(
+      {
+        type: "message",
+        agentId: "agent-409-otid",
+        conversationId: "conv-409-otid",
+        messages: [
+          {
+            role: "user",
+            content: "hello",
+            otid: "otid-123",
+          } as unknown as IncomingMessage["messages"][number],
+        ],
+      },
+      socket as unknown as WebSocket,
+      runtime,
+    );
+
+    await waitFor(() => conversationMessagesStreamMock.mock.calls.length === 1);
+
+    const [, resumeParams] = conversationMessagesStreamMock.mock.calls[0] ?? [];
+    expect(resumeParams).toMatchObject({
+      agent_id: undefined,
+      otid: "otid-123",
+      starting_after: 0,
+      batch_size: 1000,
+    });
+
+    await turnPromise;
+  });
+
+  test("pre-stream 409 resume on default conversation includes agent_id", async () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const runtime = __listenClientTestUtils.getOrCreateConversationRuntime(
+      listener,
+      "agent-409-default",
+      "default",
+    );
+    const socket = new MockSocket();
+
+    sendMessageStreamMock.mockRejectedValueOnce(
+      new APIError(
+        409,
+        {
+          error: {
+            detail:
+              "Cannot send a new message: Another request is currently being processed for this conversation.",
+          },
+        },
+        undefined,
+        new Headers(),
+      ),
+    );
+
+    const turnPromise = __listenClientTestUtils.handleIncomingMessage(
+      {
+        type: "message",
+        agentId: "agent-409-default",
+        conversationId: "default",
+        messages: [
+          {
+            role: "user",
+            content: "hello default",
+            otid: "otid-default",
+          } as unknown as IncomingMessage["messages"][number],
+        ],
+      },
+      socket as unknown as WebSocket,
+      runtime,
+    );
+
+    await waitFor(() => conversationMessagesStreamMock.mock.calls.length === 1);
+
+    const [resumeConversationId, resumeParams] =
+      conversationMessagesStreamMock.mock.calls[0] ?? [];
+    expect(resumeConversationId).toBe("default");
+    expect(resumeParams).toMatchObject({
+      agent_id: "agent-409-default",
+      otid: "otid-default",
+      starting_after: 0,
+      batch_size: 1000,
+    });
+
+    await turnPromise;
+  });
+
+  test("approval continuation 409 resumes via conversations stream with approval otid", async () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const runtime = __listenClientTestUtils.getOrCreateScopedRuntime(
+      listener,
+      "agent-409-approval",
+      "conv-409-approval",
+    );
+    const socket = new MockSocket();
+
+    (classifyApprovalsMock as any).mockResolvedValueOnce({
+      autoAllowed: [
+        {
+          approval: {
+            toolCallId: "tool-1",
+            toolName: "Read",
+            toolArgs: "{}",
+          },
+          parsedArgs: {},
+          permission: { allowed: true, reason: "auto" },
+          denyReason: null,
+        },
+      ],
+      autoDenied: [],
+      needsUserInput: [],
+    });
+
+    executeApprovalBatchMock.mockResolvedValueOnce([
+      {
+        type: "tool",
+        toolCallId: "tool-1",
+        toolName: "Read",
+        toolArgs: "{}",
+        result: "ok",
+        approved: true,
+      },
+    ] as never);
+
+    sendMessageStreamMock.mockRejectedValueOnce(
+      new APIError(
+        409,
+        {
+          error: {
+            detail:
+              "Cannot send a new message: Another request is currently being processed for this conversation.",
+          },
+        },
+        undefined,
+        new Headers(),
+      ),
+    );
+
+    getResumeDataMock.mockResolvedValueOnce({
+      pendingApproval: {
+        toolCallId: "tool-1",
+        toolName: "Read",
+        toolArgs: "{}",
+      },
+      pendingApprovals: [
+        {
+          toolCallId: "tool-1",
+          toolName: "Read",
+          toolArgs: "{}",
+        },
+      ],
+      messageHistory: [],
+    });
+
+    const result = await __listenClientTestUtils.resolveStaleApprovals(
+      runtime,
+      socket as unknown as WebSocket,
+      new AbortController().signal,
+      {
+        getResumeData: getResumeDataMock,
+      },
+    );
+
+    expect(result?.stopReason).toBe("end_turn");
+    await waitFor(() => conversationMessagesStreamMock.mock.calls.length >= 1);
+
+    const firstCall = conversationMessagesStreamMock.mock.calls[0];
+    expect(firstCall?.[0]).toBe("conv-409-approval");
+    expect(firstCall?.[1]).toMatchObject({
+      otid: expect.any(String),
+      starting_after: 0,
+      batch_size: 1000,
+    });
   });
 });
