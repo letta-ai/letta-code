@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { APIError } from "@letta-ai/letta-client/error";
 import WebSocket from "ws";
 import type { ResumeData } from "../../agent/check-approval";
 import { permissionMode } from "../../permissions/mode";
@@ -32,15 +33,23 @@ const defaultDrainResult: DrainResult = {
   apiDurationMs: 0,
 };
 
+const sendMessageStreamCalls: Array<{
+  conversationId: string;
+  messages: unknown[];
+  opts?: { agentId?: string };
+}> = [];
 const sendMessageStreamMock = mock(
   async (
     conversationId: string,
-    _messages: unknown[],
+    messages: unknown[],
     opts?: { agentId?: string },
-  ): Promise<MockStream> => ({
-    conversationId,
-    agentId: opts?.agentId,
-  }),
+  ): Promise<MockStream> => {
+    sendMessageStreamCalls.push({ conversationId, messages, opts });
+    return {
+      conversationId,
+      agentId: opts?.agentId,
+    };
+  },
 );
 const getStreamToolContextIdMock = mock(() => null);
 const drainHandlers = new Map<
@@ -63,12 +72,28 @@ const drainStreamWithResumeMock = mock(
 );
 const retrieveAgentMock = mock(async (agentId: string) => ({ id: agentId }));
 const cancelConversationMock = mock(async (_conversationId: string) => {});
+const conversationMessagesStreamMock = mock(
+  async (
+    conversationId: string,
+    _params?: {
+      agent_id?: string;
+      otid?: string;
+      starting_after?: number;
+      batch_size?: number;
+    },
+  ): Promise<MockStream> => ({
+    conversationId,
+  }),
+);
 const getClientMock = mock(async () => ({
   agents: {
     retrieve: retrieveAgentMock,
   },
   conversations: {
     cancel: cancelConversationMock,
+    messages: {
+      stream: conversationMessagesStreamMock,
+    },
   },
 }));
 const getResumeDataMock = mock(
@@ -204,6 +229,7 @@ describe("listen-client multi-worker concurrency", () => {
     injectQueuedSkillContent([]);
     permissionMode.reset();
     sendMessageStreamMock.mockClear();
+    sendMessageStreamCalls.length = 0;
     getStreamToolContextIdMock.mockClear();
     drainStreamWithResumeMock.mockClear();
     getClientMock.mockClear();
@@ -212,6 +238,7 @@ describe("listen-client multi-worker concurrency", () => {
     classifyApprovalsMock.mockClear();
     executeApprovalBatchMock.mockClear();
     cancelConversationMock.mockClear();
+    conversationMessagesStreamMock.mockClear();
     fetchRunErrorDetailMock.mockClear();
     drainHandlers.clear();
     __listenClientTestUtils.setActiveRuntime(null);
@@ -716,7 +743,7 @@ describe("listen-client multi-worker concurrency", () => {
       pendingApprovals: [approval],
       messageHistory: [],
     });
-    classifyApprovalsMock.mockResolvedValueOnce({
+    (classifyApprovalsMock as any).mockResolvedValueOnce({
       autoAllowed: [
         {
           approval,
@@ -1241,5 +1268,201 @@ describe("listen-client multi-worker concurrency", () => {
         "agent:agent-1::conversation:default",
       ),
     ).toBe(true);
+  });
+
+  test("pre-stream 409 resumes via conversations stream with message otid", async () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const runtime = __listenClientTestUtils.getOrCreateConversationRuntime(
+      listener,
+      "agent-409-otid",
+      "conv-409-otid",
+    );
+    const socket = new MockSocket();
+
+    sendMessageStreamMock.mockRejectedValueOnce(
+      new APIError(
+        409,
+        {
+          error: {
+            detail:
+              "Cannot send a new message: Another request is currently being processed for this conversation.",
+          },
+        },
+        undefined,
+        new Headers(),
+      ),
+    );
+
+    const turnPromise = __listenClientTestUtils.handleIncomingMessage(
+      {
+        type: "message",
+        agentId: "agent-409-otid",
+        conversationId: "conv-409-otid",
+        messages: [
+          {
+            role: "user",
+            content: "hello",
+            otid: "otid-123",
+          } as unknown as IncomingMessage["messages"][number],
+        ],
+      },
+      socket as unknown as WebSocket,
+      runtime,
+    );
+
+    await waitFor(() => conversationMessagesStreamMock.mock.calls.length === 1);
+
+    const [, resumeParams] = conversationMessagesStreamMock.mock.calls[0] ?? [];
+    expect(resumeParams).toMatchObject({
+      agent_id: undefined,
+      otid: "otid-123",
+      starting_after: 0,
+      batch_size: 1000,
+    });
+
+    await turnPromise;
+  });
+
+  test("pre-stream 409 resume on default conversation includes agent_id", async () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const runtime = __listenClientTestUtils.getOrCreateConversationRuntime(
+      listener,
+      "agent-409-default",
+      "default",
+    );
+    const socket = new MockSocket();
+
+    sendMessageStreamMock.mockRejectedValueOnce(
+      new APIError(
+        409,
+        {
+          error: {
+            detail:
+              "Cannot send a new message: Another request is currently being processed for this conversation.",
+          },
+        },
+        undefined,
+        new Headers(),
+      ),
+    );
+
+    const turnPromise = __listenClientTestUtils.handleIncomingMessage(
+      {
+        type: "message",
+        agentId: "agent-409-default",
+        conversationId: "default",
+        messages: [
+          {
+            role: "user",
+            content: "hello default",
+            otid: "otid-default",
+          } as unknown as IncomingMessage["messages"][number],
+        ],
+      },
+      socket as unknown as WebSocket,
+      runtime,
+    );
+
+    await waitFor(() => conversationMessagesStreamMock.mock.calls.length === 1);
+
+    const [resumeConversationId, resumeParams] =
+      conversationMessagesStreamMock.mock.calls[0] ?? [];
+    expect(resumeConversationId).toBe("default");
+    expect(resumeParams).toMatchObject({
+      agent_id: "agent-409-default",
+      otid: "otid-default",
+      starting_after: 0,
+      batch_size: 1000,
+    });
+
+    await turnPromise;
+  });
+
+  test("approval continuation 409 resumes via conversations stream with approval otid", async () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const runtime = __listenClientTestUtils.getOrCreateScopedRuntime(
+      listener,
+      "agent-409-approval",
+      "conv-409-approval",
+    );
+    const socket = new MockSocket();
+
+    (classifyApprovalsMock as any).mockResolvedValueOnce({
+      autoAllowed: [
+        {
+          approval: {
+            toolCallId: "tool-1",
+            toolName: "Read",
+            toolArgs: "{}",
+          },
+          parsedArgs: {},
+          permission: { allowed: true, reason: "auto" },
+          denyReason: null,
+        },
+      ],
+      autoDenied: [],
+      needsUserInput: [],
+    });
+
+    executeApprovalBatchMock.mockResolvedValueOnce([
+      {
+        type: "tool",
+        toolCallId: "tool-1",
+        toolName: "Read",
+        toolArgs: "{}",
+        result: "ok",
+        approved: true,
+      },
+    ] as never);
+
+    sendMessageStreamMock.mockRejectedValueOnce(
+      new APIError(
+        409,
+        {
+          error: {
+            detail:
+              "Cannot send a new message: Another request is currently being processed for this conversation.",
+          },
+        },
+        undefined,
+        new Headers(),
+      ),
+    );
+
+    getResumeDataMock.mockResolvedValueOnce({
+      pendingApproval: {
+        toolCallId: "tool-1",
+        toolName: "Read",
+        toolArgs: "{}",
+      },
+      pendingApprovals: [
+        {
+          toolCallId: "tool-1",
+          toolName: "Read",
+          toolArgs: "{}",
+        },
+      ],
+      messageHistory: [],
+    });
+
+    const result = await __listenClientTestUtils.resolveStaleApprovals(
+      runtime,
+      socket as unknown as WebSocket,
+      new AbortController().signal,
+      {
+        getResumeData: getResumeDataMock,
+      },
+    );
+
+    expect(result?.stopReason).toBe("end_turn");
+    await waitFor(() => conversationMessagesStreamMock.mock.calls.length >= 1);
+
+    const firstCall = conversationMessagesStreamMock.mock.calls[0];
+    expect(firstCall?.[0]).toBe("conv-409-approval");
+    expect(firstCall?.[1]).toMatchObject({
+      otid: expect.any(String),
+      starting_after: 0,
+      batch_size: 1000,
+    });
   });
 });
