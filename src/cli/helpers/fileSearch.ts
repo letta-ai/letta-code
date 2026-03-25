@@ -1,7 +1,12 @@
 import { readdirSync, statSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { debugLog } from "../../utils/debug";
-import { ensureFileIndex, type FileMatch, searchFileIndex } from "./fileIndex";
+import {
+  ensureFileIndex,
+  type FileMatch,
+  getIndexRoot,
+  searchFileIndex,
+} from "./fileIndex";
 import { shouldHardExcludeEntry } from "./fileSearchConfig";
 
 export function debounce<T extends (...args: never[]) => unknown>(
@@ -43,7 +48,7 @@ function searchDirectoryRecursive(
     for (const entry of entries) {
       try {
         const fullPath = join(dir, entry);
-        const relativePath = relative(process.cwd(), fullPath);
+        const relativePath = relative(getIndexRoot(), fullPath);
 
         if (shouldHardExcludeEntry(entry)) {
           continue;
@@ -102,7 +107,7 @@ export async function searchFiles(
 
   try {
     // Determine the directory to search in
-    let searchDir = process.cwd();
+    let searchDir = getIndexRoot();
     let searchPattern = query;
 
     // Handle explicit relative/absolute paths or directory navigation
@@ -116,7 +121,7 @@ export async function searchFiles(
 
       // Try to resolve the directory path
       try {
-        const resolvedDir = resolve(process.cwd(), dirPart);
+        const resolvedDir = resolve(getIndexRoot(), dirPart);
         // Check if the directory exists by trying to read it
         try {
           statSync(resolvedDir);
@@ -137,7 +142,7 @@ export async function searchFiles(
     // Use shallow search to avoid recursively walking the entire subtree.
     const effectiveDeep = deep && searchPattern.length > 0;
 
-    const relativeSearchDir = relative(process.cwd(), searchDir);
+    const relativeSearchDir = relative(getIndexRoot(), searchDir);
     const normalizedSearchDir =
       relativeSearchDir === "." ? "" : relativeSearchDir;
     const insideWorkspace =
@@ -209,7 +214,7 @@ export async function searchFiles(
             const fullPath = join(searchDir, entry);
             const stats = statSync(fullPath);
 
-            const relativePath = relative(process.cwd(), fullPath);
+            const relativePath = relative(getIndexRoot(), fullPath);
 
             results.push({
               path: relativePath,
