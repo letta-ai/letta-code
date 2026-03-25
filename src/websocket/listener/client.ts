@@ -9,7 +9,12 @@ import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agen
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import WebSocket from "ws";
 import { getClient } from "../../agent/client";
-import { ensureFileIndex, searchFileIndex } from "../../cli/helpers/fileIndex";
+import {
+  ensureFileIndex,
+  getIndexRoot,
+  searchFileIndex,
+  setIndexRoot,
+} from "../../cli/helpers/fileIndex";
 import { setMessageQueueAdder } from "../../cli/helpers/messageQueueBridge";
 import { generatePlanFilePath } from "../../cli/helpers/planName";
 import {
@@ -703,6 +708,16 @@ async function handleCwdChange(
       conversationId,
       normalizedPath,
     );
+
+    // If the new cwd is outside the current file-index root, re-root the
+    // index so file search covers the new workspace.  setIndexRoot()
+    // triggers a non-blocking rebuild and does NOT mutate process.cwd(),
+    // keeping concurrent conversations safe.
+    const currentRoot = getIndexRoot();
+    if (!normalizedPath.startsWith(currentRoot)) {
+      setIndexRoot(normalizedPath);
+    }
+
     emitDeviceStatusUpdate(socket, runtime, {
       agent_id: agentId,
       conversation_id: conversationId,
@@ -1191,7 +1206,7 @@ async function connectWithRetry(
         // compute the relative path from the index root to the requested cwd.
         let searchDir = ".";
         if (parsed.cwd) {
-          const rel = path.relative(process.cwd(), parsed.cwd);
+          const rel = path.relative(getIndexRoot(), parsed.cwd);
           // Only scope if cwd is within the index root (not "../" etc.)
           if (rel && !rel.startsWith("..")) {
             searchDir = rel;

@@ -56,6 +56,13 @@ let cachedEntryPaths = new Set<string>();
 let buildPromise: Promise<void> | null = null;
 let hasCompletedBuild = false;
 
+/**
+ * The root directory that the file index is built from.  Defaults to
+ * `process.cwd()` at module load time.  Use `setIndexRoot()` to point
+ * it at a different directory without mutating global process state.
+ */
+let indexRoot: string = process.cwd();
+
 interface FileIndexCache {
   metadata: {
     rootHash: string;
@@ -419,7 +426,7 @@ async function buildDirectory(
     }
 
     const fullPath = join(dir, entry);
-    const entryPath = relative(process.cwd(), fullPath);
+    const entryPath = relative(indexRoot, fullPath);
 
     if (!entryPath) {
       continue;
@@ -483,7 +490,7 @@ async function buildIndex(
   const statsMap: StatsMap = {};
   const context: BuildContext = { newEntryCount: 0, truncated: false };
   const rootHash = await buildDirectory(
-    process.cwd(),
+    indexRoot,
     "",
     entries,
     merkle,
@@ -525,7 +532,7 @@ function sanitizeWorkspacePath(workspacePath: string): string {
 
 function getProjectStorageDir(): string {
   const homeDir = homedir();
-  const sanitizedWorkspace = sanitizeWorkspacePath(process.cwd());
+  const sanitizedWorkspace = sanitizeWorkspacePath(indexRoot);
   return join(homeDir, ".letta", "projects", sanitizedWorkspace);
 }
 
@@ -695,6 +702,25 @@ export function refreshFileIndex(): Promise<void> {
   hasCompletedBuild = false;
   buildPromise = null;
   return ensureFileIndex();
+}
+
+/**
+ * Return the current index root directory.
+ * All indexed paths are stored relative to this root.
+ */
+export function getIndexRoot(): string {
+  return indexRoot;
+}
+
+/**
+ * Change the index root directory and trigger a non-blocking rebuild.
+ * Unlike `process.chdir()`, this only affects the file index — it does
+ * not mutate global process state.
+ */
+export function setIndexRoot(dir: string): void {
+  if (dir === indexRoot) return;
+  indexRoot = dir;
+  void refreshFileIndex();
 }
 
 /**
