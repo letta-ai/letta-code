@@ -1003,8 +1003,21 @@ async function connectWithRetry(
     if (isSearchFilesCommand(parsed)) {
       void (async () => {
         await ensureFileIndex();
+
+        // Scope search to the conversation's cwd when provided.
+        // The file index stores paths relative to process.cwd(), so we
+        // compute the relative path from the index root to the requested cwd.
+        let searchDir = ".";
+        if (parsed.cwd) {
+          const rel = path.relative(process.cwd(), parsed.cwd);
+          // Only scope if cwd is within the index root (not "../" etc.)
+          if (rel && !rel.startsWith("..")) {
+            searchDir = rel;
+          }
+        }
+
         const files = searchFileIndex({
-          searchDir: ".",
+          searchDir,
           pattern: parsed.query,
           deep: true,
           maxResults: parsed.max_results ?? 5,
