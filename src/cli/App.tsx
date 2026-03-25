@@ -8366,15 +8366,6 @@ export default function App({
 
         // Special handling for /fork command - fork the current conversation
         if (msg.trim() === "/fork") {
-          if (conversationIdRef.current === "default") {
-            const cmd = commandRunner.start(
-              msg.trim(),
-              "Forking conversation...",
-            );
-            cmd.fail("Cannot fork the default conversation — use /new instead");
-            return { submitted: true };
-          }
-
           const cmd = commandRunner.start(
             msg.trim(),
             "Forking conversation...",
@@ -8388,9 +8379,12 @@ export default function App({
           try {
             const client = await getClient();
 
-            const forked = await client.post<
-              import("@letta-ai/letta-client/resources/conversations/conversations").Conversation
-            >(`/v1/conversations/${conversationIdRef.current}/fork`);
+            // For default conversation, pass agent_id
+            const isDefault = conversationIdRef.current === "default";
+            const forked = await client.conversations.fork(
+              conversationIdRef.current,
+              isDefault ? { agent_id: agentId } : undefined,
+            );
 
             await maybeCarryOverActiveConversationModel(forked.id);
 
