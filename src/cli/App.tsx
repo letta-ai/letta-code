@@ -275,6 +275,7 @@ import {
 } from "./helpers/reflectionTranscript";
 import { safeJsonParseOr } from "./helpers/safeJsonParse";
 import { getDeviceType, getLocalTime } from "./helpers/sessionContext";
+import { buildStartupSystemPromptWarning } from "./helpers/startupSystemPromptWarning";
 import {
   resolvePromptChar,
   resolveStatusLineConfig,
@@ -3125,12 +3126,18 @@ export default function App({
       // Build status lines with optional release notes above header
       const statusLines: string[] = [];
 
+      const startupSystemPromptWarning =
+        buildStartupSystemPromptWarning(agentState);
+
       // Add release notes first (above everything) - same styling as rest of status block
       if (releaseNotes) {
         statusLines.push(releaseNotes);
         statusLines.push(""); // blank line separator
       }
 
+      if (startupSystemPromptWarning) {
+        statusLines.push(startupSystemPromptWarning);
+      }
       statusLines.push(headerMessage);
       statusLines.push(...commandHints);
 
@@ -13208,12 +13215,18 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
       // Build status lines with optional release notes above header
       const statusLines: string[] = [];
 
+      const startupSystemPromptWarning =
+        buildStartupSystemPromptWarning(agentState);
+
       // Add release notes first (above everything) - same styling as rest of status block
       if (releaseNotes) {
         statusLines.push(releaseNotes);
         statusLines.push(""); // blank line separator
       }
 
+      if (startupSystemPromptWarning) {
+        statusLines.push(startupSystemPromptWarning);
+      }
       statusLines.push(headerMessage);
       statusLines.push(...commandHints);
 
