@@ -8241,6 +8241,84 @@ export default function App({
           return { submitted: true };
         }
 
+        // Special handling for /fork command - fork the current conversation
+        if (msg.trim() === "/fork") {
+          if (conversationIdRef.current === "default") {
+            const cmd = commandRunner.start(
+              msg.trim(),
+              "Forking conversation...",
+            );
+            cmd.fail("Cannot fork the default conversation — use /new instead");
+            return { submitted: true };
+          }
+
+          const cmd = commandRunner.start(
+            msg.trim(),
+            "Forking conversation...",
+          );
+
+          resetPendingReasoningCycle();
+          setCommandRunning(true);
+
+          await runEndHooks();
+
+          try {
+            const client = await getClient();
+
+            const forked = await client.post<
+              import("@letta-ai/letta-client/resources/conversations/conversations").Conversation
+            >(`/v1/conversations/${conversationIdRef.current}/fork`);
+
+            await maybeCarryOverActiveConversationModel(forked.id);
+
+            setConversationId(forked.id);
+
+            pendingConversationSwitchRef.current = {
+              origin: "fork",
+              conversationId: forked.id,
+              isDefault: false,
+            };
+
+            settingsManager.setLocalLastSession(
+              { agentId, conversationId: forked.id },
+              process.cwd(),
+            );
+            settingsManager.setGlobalLastSession({
+              agentId,
+              conversationId: forked.id,
+            });
+
+            resetContextHistory(contextTrackerRef.current);
+            resetBootstrapReminderState();
+
+            sessionHooksRanRef.current = false;
+            runSessionStartHooks(
+              true,
+              agentId,
+              agentName ?? undefined,
+              forked.id,
+            )
+              .then((result) => {
+                if (result.feedback.length > 0) {
+                  sessionStartFeedbackRef.current = result.feedback;
+                }
+              })
+              .catch(() => {});
+            sessionHooksRanRef.current = true;
+
+            cmd.finish(
+              "Forked conversation (use /resume to switch back)",
+              true,
+            );
+          } catch (error) {
+            const errorDetails = formatErrorDetails(error, agentId);
+            cmd.fail(`Failed: ${errorDetails}`);
+          } finally {
+            setCommandRunning(false);
+          }
+          return { submitted: true };
+        }
+
         // Special handling for /clear command - reset all agent messages (destructive)
         if (msg.trim() === "/clear") {
           const cmd = commandRunner.start(
