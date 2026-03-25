@@ -176,6 +176,15 @@ export const commands: Record<string, Command> = {
       return "Starting new conversation...";
     },
   },
+  "/fork": {
+    desc: "Fork the current conversation",
+    order: 20.5,
+    noArgs: true,
+    handler: () => {
+      // Handled specially in App.tsx to fork current conversation
+      return "Forking conversation...";
+    },
+  },
   "/pin": {
     desc: "Pin current agent globally, or use -l for local only",
     order: 22,

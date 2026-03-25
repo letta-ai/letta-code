@@ -11,7 +11,8 @@ export interface ConversationSwitchContext {
     | "new"
     | "clear"
     | "search"
-    | "agent-switch";
+    | "agent-switch"
+    | "fork";
   conversationId: string;
   isDefault: boolean;
 
@@ -35,7 +36,12 @@ export function buildConversationSwitchAlert(
 ): string {
   const parts: string[] = [];
 
-  if (ctx.origin === "new" || ctx.origin === "clear") {
+  if (ctx.origin === "fork") {
+    parts.push(
+      "Forked conversation. This is a copy of the previous conversation with a freshly compiled system message.",
+    );
+    parts.push(`Conversation: ${ctx.conversationId}`);
+  } else if (ctx.origin === "new" || ctx.origin === "clear") {
     parts.push(
       "New conversation started. This is a fresh conversation thread with no prior messages.",
     );
