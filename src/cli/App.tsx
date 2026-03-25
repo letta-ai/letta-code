@@ -373,10 +373,7 @@ const PROVIDER_STATUS_PAGES: Record<string, { name: string; url: string }> = {
     name: "Anthropic",
     url: "https://status.claude.com/",
   },
-  bedrock: {
-    name: "Anthropic",
-    url: "https://status.claude.com/",
-  },
+
   openai: {
     name: "OpenAI",
     url: "https://status.openai.com",
