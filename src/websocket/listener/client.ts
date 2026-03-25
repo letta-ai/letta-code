@@ -10,6 +10,7 @@ import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/mes
 import WebSocket from "ws";
 import { getClient } from "../../agent/client";
 import { ensureFileIndex, searchFileIndex } from "../../cli/helpers/fileIndex";
+import { setMessageQueueAdder } from "../../cli/helpers/messageQueueBridge";
 import { generatePlanFilePath } from "../../cli/helpers/planName";
 import {
   subscribe as subscribeToSubagentState,
@@ -247,6 +248,22 @@ function getOrCreateScopedRuntime(
     listener,
     getOrCreateConversationRuntime(listener, agentId, conversationId),
   );
+}
+
+/**
+ * Fallback for unscoped task notifications (e.g., reflection/init spawned
+ * outside turn processing). Picks the first ConversationRuntime that has a
+ * QueueRuntime, or null if none exist.
+ */
+function findFallbackRuntime(
+  listener: ListenerRuntime,
+): ConversationRuntime | null {
+  for (const cr of listener.conversationRuntimes.values()) {
+    if (cr.queueRuntime) {
+      return cr;
+    }
+  }
+  return null;
 }
 
 function resolveRuntimeForApprovalRequest(
@@ -553,6 +570,7 @@ function stopRuntime(
   runtime: ListenerRuntime,
   suppressCallbacks: boolean,
 ): void {
+  setMessageQueueAdder(null); // Clear bridge for ALL stop paths
   runtime.intentionallyClosed = true;
   clearRuntimeTimers(runtime);
   for (const conversationRuntime of runtime.conversationRuntimes.values()) {
@@ -744,6 +762,39 @@ async function connectWithRetry(
       },
     );
 
+    // Register the message queue bridge to route task notifications into the
+    // correct per-conversation QueueRuntime. This enables background Task
+    // completions to reach the agent in listen mode.
+    setMessageQueueAdder((queuedMessage) => {
+      const targetRuntime =
+        queuedMessage.agentId && queuedMessage.conversationId
+          ? getOrCreateScopedRuntime(
+              runtime,
+              queuedMessage.agentId,
+              queuedMessage.conversationId,
+            )
+          : findFallbackRuntime(runtime);
+
+      if (!targetRuntime?.queueRuntime) {
+        return; // No target — notification dropped
+      }
+
+      targetRuntime.queueRuntime.enqueue({
+        kind: "task_notification",
+        source: "task_notification",
+        text: queuedMessage.text,
+        agentId: queuedMessage.agentId ?? targetRuntime.agentId ?? undefined,
+        conversationId:
+          queuedMessage.conversationId ?? targetRuntime.conversationId,
+      } as Omit<
+        import("../../queue/queueRuntime").TaskNotificationQueueItem,
+        "id" | "enqueuedAt"
+      >);
+
+      // Kick the queue pump so the notification can trigger a standalone turn
+      // (see consumeQueuedTurn notification-aware path in queue.ts).
+      scheduleQueuePump(targetRuntime, socket, opts, processQueuedTurn);
+    });
     runtime.heartbeatInterval = setInterval(() => {
       if (socket.readyState === WebSocket.OPEN) {
         socket.send(JSON.stringify({ type: "ping" }));
@@ -1347,6 +1398,10 @@ async function connectWithRetry(
       code,
       reason: reason.toString(),
     });
+
+    // Clear the bridge before queue clearing to prevent a race where a task
+    // completion enqueues into a shutting-down runtime.
+    setMessageQueueAdder(null);
 
     // Single authoritative queue clear for all close paths
     // (intentional and unintentional). Must fire before early returns.

@@ -2,7 +2,7 @@
  * Message Queue Bridge
  *
  * Allows non-React code (like Task.ts) to add messages to the messageQueue.
- * The queue adder function is set by App.tsx on mount.
+ * The queue adder function is set by the active consumer on mount.
  *
  * This enables background tasks to queue their notification XML directly
  * into messageQueue, where the existing dequeue logic handles auto-firing.
@@ -11,12 +11,16 @@
 export type QueuedMessage = {
   kind: "user" | "task_notification";
   text: string;
+  /** Optional parent agent scope for routing in listener mode. */
+  agentId?: string;
+  /** Optional parent conversation scope for routing in listener mode. */
+  conversationId?: string;
 };
 
 type QueueAdder = (message: QueuedMessage) => void;
 
-// Global bridge is intentionally single-consumer. Each process runs either
-// one TUI App instance or one headless bidirectional loop.
+// Global bridge is intentionally single-consumer. Each process runs exactly
+// one of: TUI App (App.tsx), headless bidirectional loop, or WebSocket listener.
 let queueAdder: QueueAdder | null = null;
 const pendingMessages: QueuedMessage[] = [];
 const MAX_PENDING_MESSAGES = 10;

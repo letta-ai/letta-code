@@ -272,6 +272,13 @@ export async function resolveStaleApprovals(
       const approvalResults = await executeApprovalBatch(decisions, undefined, {
         abortSignal,
         workingDirectory: recoveryWorkingDirectory,
+        parentScope:
+          runtime.agentId && runtime.conversationId
+            ? {
+                agentId: runtime.agentId,
+                conversationId: runtime.conversationId,
+              }
+            : undefined,
       });
       emitToolExecutionFinishedEvents(socket, runtime, {
         approvals: approvalResults,

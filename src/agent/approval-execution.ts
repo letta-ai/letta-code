@@ -198,6 +198,7 @@ async function executeSingleDecision(
       isStderr?: boolean,
     ) => void;
     toolContextId?: string;
+    parentScope?: { agentId: string; conversationId: string };
   },
 ): Promise<ApprovalResult> {
   // If aborted, record an interrupted result
@@ -256,6 +257,7 @@ async function executeSingleDecision(
           signal: options?.abortSignal,
           toolCallId: decision.approval.toolCallId,
           toolContextId: options?.toolContextId,
+          parentScope: options?.parentScope,
           onOutput: options?.onStreamingOutput
             ? (chunk, stream) =>
                 options.onStreamingOutput?.(
@@ -372,6 +374,7 @@ export async function executeApprovalBatch(
     ) => void;
     toolContextId?: string;
     workingDirectory?: string;
+    parentScope?: { agentId: string; conversationId: string };
   },
 ): Promise<ApprovalResult[]> {
   const toolContextId =

@@ -546,6 +546,13 @@ export async function resolveRecoveredApprovalResponse(
         recovered.agentId,
         recovered.conversationId,
       ),
+      parentScope:
+        recovered.agentId && recovered.conversationId
+          ? {
+              agentId: recovered.agentId,
+              conversationId: recovered.conversationId,
+            }
+          : undefined,
     });
 
     emitToolExecutionFinishedEvents(socket, runtime, {
