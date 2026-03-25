@@ -367,13 +367,25 @@ const INTERRUPT_MESSAGE =
 const ERROR_FEEDBACK_HINT =
   "Something went wrong? Use /feedback to report issues.";
 
-// Hint shown when Anthropic Opus 4.5 hits llm_api_error and Bedrock is available
-const OPUS_BEDROCK_FALLBACK_HINT =
-  "Downstream provider issues? Use /model to switch to Bedrock Opus 4.5";
-
-// Generic hint for llm_api_error when specific model suggestion not applicable
-const PROVIDER_FALLBACK_HINT =
-  "Downstream provider issues? Use /model to switch to another provider";
+// Status page URLs for known providers
+const PROVIDER_STATUS_PAGES: Record<string, { name: string; url: string }> = {
+  anthropic: {
+    name: "Anthropic",
+    url: "https://status.claude.com/",
+  },
+  bedrock: {
+    name: "Anthropic",
+    url: "https://status.claude.com/",
+  },
+  openai: {
+    name: "OpenAI",
+    url: "https://status.openai.com",
+  },
+  chatgpt_oauth: {
+    name: "OpenAI",
+    url: "https://status.openai.com",
+  },
+};
 
 /**
  * Derives the current reasoning effort from agent state (canonical) with llm_config as fallback.
@@ -488,18 +500,34 @@ function mapHandleToLlmConfigPatch(modelHandle: string): Partial<LlmConfig> {
 function getErrorHintForStopReason(
   stopReason: StopReasonType | null,
   currentModelId: string | null,
+  modelEndpointType?: string | null,
 ): string {
-  if (
+  if (stopReason !== "llm_api_error") {
+    return ERROR_FEEDBACK_HINT;
+  }
+
+  const statusInfo = modelEndpointType
+    ? PROVIDER_STATUS_PAGES[modelEndpointType]
+    : undefined;
+
+  // Build the /model swap suggestion — mention Bedrock Opus if applicable
+  const hasBedrockOpus =
     currentModelId === "opus" &&
-    stopReason === "llm_api_error" &&
-    getModelInfo("bedrock-opus")
-  ) {
-    return OPUS_BEDROCK_FALLBACK_HINT;
+    modelEndpointType === "anthropic" &&
+    getModelInfo("bedrock-opus");
+  const modelSwapSuffix = hasBedrockOpus
+    ? " (e.g. Opus 4.5 via Amazon Bedrock)"
+    : "";
+
+  if (statusInfo) {
+    return [
+      `Downstream provider (${statusInfo.name}) is experiencing errors — check ${statusInfo.url} for additional information`,
+      `(note that the official status page may not be reliable / up-to-date).`,
+      `Use /model to swap to a model from a different provider${modelSwapSuffix}, or try again later.`,
+    ].join(" ");
   }
-  if (stopReason === "llm_api_error") {
-    return PROVIDER_FALLBACK_HINT;
-  }
-  return ERROR_FEEDBACK_HINT;
+
+  return `Downstream provider is experiencing errors. Use /model to swap to a model from a different provider, or try again later.`;
 }
 
 /** Extract errorType and httpStatus from a caught exception for telemetry. */
@@ -5891,6 +5919,7 @@ export default function App({
                     getErrorHintForStopReason(
                       stopReasonToHandle,
                       currentModelId,
+                      llmConfigRef.current?.model_endpoint_type,
                     ),
                     true,
                   );
@@ -5907,7 +5936,11 @@ export default function App({
 
                 // Show appropriate error hint based on stop reason
                 appendError(
-                  getErrorHintForStopReason(stopReasonToHandle, currentModelId),
+                  getErrorHintForStopReason(
+                    stopReasonToHandle,
+                    currentModelId,
+                    llmConfigRef.current?.model_endpoint_type,
+                  ),
                   true,
                 );
               }
@@ -5923,7 +5956,11 @@ export default function App({
 
               // Show appropriate error hint based on stop reason
               appendError(
-                getErrorHintForStopReason(stopReasonToHandle, currentModelId),
+                getErrorHintForStopReason(
+                  stopReasonToHandle,
+                  currentModelId,
+                  llmConfigRef.current?.model_endpoint_type,
+                ),
                 true,
               );
 
@@ -5953,7 +5990,11 @@ export default function App({
 
             // Show appropriate error hint based on stop reason
             appendError(
-              getErrorHintForStopReason(stopReasonToHandle, currentModelId),
+              getErrorHintForStopReason(
+                stopReasonToHandle,
+                currentModelId,
+                llmConfigRef.current?.model_endpoint_type,
+              ),
               true,
             );
           }
