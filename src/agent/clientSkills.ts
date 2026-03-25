@@ -39,15 +39,19 @@ function toClientSkill(skill: Skill): ClientSkill {
 function resolveSkillDiscoveryContext(
   options: BuildClientSkillsPayloadOptions,
 ): {
-  skillsDirectory: string;
+  legacySkillsDirectory: string;
   skillSources: SkillSource[];
 } {
-  const skillsDirectory =
+  const legacySkillsDirectory =
     options.skillsDirectory ??
     getSkillsDirectory() ??
     join(process.cwd(), SKILLS_DIR);
   const skillSources = options.skillSources ?? getSkillSources();
-  return { skillsDirectory, skillSources };
+  return { legacySkillsDirectory, skillSources };
+}
+
+function getPrimaryProjectSkillsDirectory(): string {
+  return join(process.cwd(), ".agents", "skills");
 }
 
 /**
@@ -60,42 +64,86 @@ function resolveSkillDiscoveryContext(
 export async function buildClientSkillsPayload(
   options: BuildClientSkillsPayloadOptions = {},
 ): Promise<BuildClientSkillsPayloadResult> {
-  const { skillsDirectory, skillSources } =
+  const { legacySkillsDirectory, skillSources } =
     resolveSkillDiscoveryContext(options);
   const discoverSkillsFn = options.discoverSkillsFn ?? discoverSkills;
+  const skillsById = new Map<string, Skill>();
+  const errors: SkillDiscoveryError[] = [];
 
-  try {
-    const discovery = await discoverSkillsFn(skillsDirectory, options.agentId, {
-      sources: skillSources,
+  const primaryProjectSkillsDirectory = getPrimaryProjectSkillsDirectory();
+  const nonProjectSources = skillSources.filter(
+    (source): source is SkillSource => source !== "project",
+  );
+
+  const discoveryRuns: Array<{ path: string; sources: SkillSource[] }> = [];
+
+  // For bundled/global/agent sources, use the primary project root.
+  if (nonProjectSources.length > 0) {
+    discoveryRuns.push({
+      path: primaryProjectSkillsDirectory,
+      sources: nonProjectSources,
     });
-    const sortedSkills = [...discovery.skills].sort(compareSkills);
-
-    return {
-      clientSkills: sortedSkills.map(toClientSkill),
-      skillPathById: Object.fromEntries(
-        sortedSkills
-          .filter(
-            (skill) => typeof skill.path === "string" && skill.path.length > 0,
-          )
-          .map((skill) => [skill.id, skill.path]),
-      ),
-      errors: discovery.errors,
-    };
-  } catch (error) {
-    const message =
-      error instanceof Error
-        ? error.message
-        : `Unknown error: ${String(error)}`;
-    options.logger?.(`Failed to build client_skills payload: ${message}`);
-    return {
-      clientSkills: [],
-      skillPathById: {},
-      errors: [
-        {
-          path: skillsDirectory,
-          message,
-        },
-      ],
-    };
   }
+
+  const includeProjectSource = skillSources.includes("project");
+
+  // Legacy project location (.skills): discovered first so primary path can override.
+  if (
+    includeProjectSource &&
+    legacySkillsDirectory !== primaryProjectSkillsDirectory
+  ) {
+    discoveryRuns.push({
+      path: legacySkillsDirectory,
+      sources: ["project"],
+    });
+  }
+
+  // Primary location for project-scoped client skills.
+  if (includeProjectSource) {
+    discoveryRuns.push({
+      path: primaryProjectSkillsDirectory,
+      sources: ["project"],
+    });
+  }
+
+  for (const run of discoveryRuns) {
+    try {
+      const discovery = await discoverSkillsFn(run.path, options.agentId, {
+        sources: run.sources,
+      });
+      errors.push(...discovery.errors);
+      for (const skill of discovery.skills) {
+        skillsById.set(skill.id, skill);
+      }
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : `Unknown error: ${String(error)}`;
+      errors.push({ path: run.path, message });
+    }
+  }
+
+  const sortedSkills = [...skillsById.values()].sort(compareSkills);
+
+  if (errors.length > 0) {
+    const summarizedErrors = errors.map(
+      (error) => `${error.path}: ${error.message}`,
+    );
+    options.logger?.(
+      `Failed to build some client_skills entries: ${summarizedErrors.join("; ")}`,
+    );
+  }
+
+  return {
+    clientSkills: sortedSkills.map(toClientSkill),
+    skillPathById: Object.fromEntries(
+      sortedSkills
+        .filter(
+          (skill) => typeof skill.path === "string" && skill.path.length > 0,
+        )
+        .map((skill) => [skill.id, skill.path]),
+    ),
+    errors,
+  };
 }
