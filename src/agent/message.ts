@@ -64,6 +64,11 @@ export type SendMessageStreamOptions = {
   /** Per-conversation permission mode state. When provided, tool execution uses
    *  this scoped state instead of the global permissionMode singleton. */
   permissionModeState?: PermissionModeState;
+  /**
+   * Per-request model override. Uses backend request-scoped override_model and
+   * does not mutate agent/conversation persisted model configuration.
+   */
+  overrideModel?: string;
 };
 
 export function buildConversationMessagesCreateRequestBody(
@@ -94,6 +99,7 @@ export function buildConversationMessagesCreateRequestBody(
     client_skills: clientSkills,
     client_tools: clientTools,
     include_compaction_messages: true,
+    ...(opts.overrideModel ? { override_model: opts.overrideModel } : {}),
     ...(isDefaultConversation ? { agent_id: opts.agentId } : {}),
   };
 }

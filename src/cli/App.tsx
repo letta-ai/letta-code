@@ -37,6 +37,7 @@ import {
   isApprovalPendingError,
   isEmptyResponseRetryable,
   isInvalidToolCallIdsError,
+  isQuotaLimitErrorDetail,
   parseRetryAfterHeaderMs,
   rebuildInputWithFreshDenials,
   shouldAttemptApprovalRecovery,
@@ -353,6 +354,7 @@ const LLM_API_ERROR_MAX_RETRIES = 3;
 // Retry config for empty response errors (Opus 4.6 SADs)
 // Retry 1: same input. Retry 2: with system reminder nudge.
 const EMPTY_RESPONSE_MAX_RETRIES = 2;
+const TEMP_QUOTA_OVERRIDE_MODEL = "letta/auto";
 
 // Retry config for 409 "conversation busy" errors (exponential backoff)
 const CONVERSATION_BUSY_MAX_RETRIES = 3; // 10s -> 20s -> 40s
@@ -1499,6 +1501,32 @@ export default function App({
     agentStateRef.current = agentState;
   }, [agentState]);
   const [currentModelId, setCurrentModelId] = useState<string | null>(null);
+  const [tempModelOverride, _setTempModelOverride] = useState<string | null>(
+    null,
+  );
+  const [tempModelOverrideContext, setTempModelOverrideContext] = useState<{
+    agentId: string;
+    conversationId: string;
+  }>({ agentId, conversationId });
+  const tempModelOverrideRef = useRef<string | null>(null);
+  const setTempModelOverride = useCallback((next: string | null) => {
+    tempModelOverrideRef.current = next;
+    _setTempModelOverride(next);
+  }, []);
+
+  // Keep temporary override scoped to the current agent/conversation identity.
+  // This uses render-time state adjustment instead of an Effect.
+  if (
+    tempModelOverrideContext.agentId !== agentId ||
+    tempModelOverrideContext.conversationId !== conversationId
+  ) {
+    setTempModelOverrideContext({ agentId, conversationId });
+    if (tempModelOverride !== null) {
+      setTempModelOverride(null);
+    } else if (tempModelOverrideRef.current !== null) {
+      tempModelOverrideRef.current = null;
+    }
+  }
   // Full model handle for API calls (e.g., "anthropic/claude-sonnet-4-5-20251101")
   const [currentModelHandle, setCurrentModelHandle] = useState<string | null>(
     null,
@@ -1510,6 +1538,7 @@ export default function App({
   // Prefer the currently-active model handle, then fall back to agent.model
   // (canonical handle) and finally llm_config reconstruction.
   const currentModelLabel =
+    tempModelOverride ||
     currentModelHandle ||
     agentState?.model ||
     (llmConfig?.model_endpoint_type && llmConfig?.model
@@ -1551,6 +1580,8 @@ export default function App({
       ? null
       : (derivedReasoningEffort ??
         inferReasoningEffortFromModelPreset(currentModelId, currentModelLabel));
+
+  const hasTemporaryModelOverride = tempModelOverride !== null;
 
   // Billing tier for conditional UI and error context (fetched once on mount)
   const [billingTier, setBillingTier] = useState<string | null>(null);
@@ -1799,6 +1830,7 @@ export default function App({
 
   // Retry counter for transient LLM API errors (ref for synchronous access in loop)
   const llmApiErrorRetriesRef = useRef(0);
+  const quotaAutoSwapAttemptedRef = useRef(false);
   const emptyResponseRetriesRef = useRef(0);
 
   // Retry counter for 409 "conversation busy" errors
@@ -3938,6 +3970,7 @@ export default function App({
         llmApiErrorRetriesRef.current = 0;
         emptyResponseRetriesRef.current = 0;
         conversationBusyRetriesRef.current = 0;
+        quotaAutoSwapAttemptedRef.current = false;
       }
 
       // Track last run ID for error reporting (accessible in catch block)
@@ -4088,7 +4121,10 @@ export default function App({
             const nextStream = await sendMessageStream(
               conversationIdRef.current,
               currentInput,
-              { agentId: agentIdRef.current },
+              {
+                agentId: agentIdRef.current,
+                overrideModel: tempModelOverrideRef.current ?? undefined,
+              },
             );
             stream = nextStream;
             turnToolContextId = getStreamToolContextId(nextStream);
@@ -5558,6 +5594,55 @@ export default function App({
             }
 
             // Reset interrupted flag so retry stream chunks are processed
+            buffersRef.current.interrupted = false;
+            continue;
+          }
+
+          // Quota-limit fallback: set a temporary client-side override to Auto,
+          // append a brief continuation message, and continue the same turn.
+          const autoSwapOnQuotaLimitEnabled =
+            settingsManager.getSetting("autoSwapOnQuotaLimit") !== false;
+          const isQuotaLimit = isQuotaLimitErrorDetail(
+            detailFromRun ?? fallbackError,
+          );
+          const alreadyOnTempAuto =
+            tempModelOverrideRef.current === TEMP_QUOTA_OVERRIDE_MODEL;
+          const canAttemptQuotaAutoSwap =
+            autoSwapOnQuotaLimitEnabled &&
+            isQuotaLimit &&
+            !alreadyOnTempAuto &&
+            !quotaAutoSwapAttemptedRef.current;
+
+          if (canAttemptQuotaAutoSwap) {
+            quotaAutoSwapAttemptedRef.current = true;
+            setTempModelOverride(TEMP_QUOTA_OVERRIDE_MODEL);
+
+            const statusId = uid("status");
+            buffersRef.current.byId.set(statusId, {
+              kind: "status",
+              id: statusId,
+              lines: [
+                "Quota limit reached; temporarily switching to Auto and continuing...",
+              ],
+            });
+            buffersRef.current.order.push(statusId);
+            refreshDerived();
+
+            currentInput = [
+              ...currentInput,
+              {
+                type: "message",
+                role: "user",
+                content: "Keep going.",
+              },
+            ];
+
+            buffersRef.current.byId.delete(statusId);
+            buffersRef.current.order = buffersRef.current.order.filter(
+              (id) => id !== statusId,
+            );
+            refreshDerived();
+
             buffersRef.current.interrupted = false;
             continue;
           }
@@ -11751,6 +11836,7 @@ ${SYSTEM_REMINDER_CLOSE}
               : {}),
           });
           setCurrentModelId(modelId);
+          setTempModelOverride(null);
 
           // Reset context token tracking since different models have different tokenizers
           resetContextHistory(contextTrackerRef.current);
@@ -11840,6 +11926,7 @@ ${SYSTEM_REMINDER_CLOSE}
       resetPendingReasoningCycle,
       withCommandLock,
       setHasConversationModelOverride,
+      setTempModelOverride,
     ],
   );
 
@@ -13775,6 +13862,7 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
                 agentName={agentName}
                 currentModel={currentModelDisplay}
                 currentModelProvider={currentModelProvider}
+                hasTemporaryModelOverride={hasTemporaryModelOverride}
                 currentReasoningEffort={currentReasoningEffort}
                 messageQueue={queueDisplay}
                 onEnterQueueEditMode={handleEnterQueueEditMode}

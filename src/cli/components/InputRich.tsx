@@ -238,6 +238,7 @@ const InputFooter = memo(function InputFooter({
   currentReasoningEffort,
   isOpenAICodexProvider,
   isByokProvider,
+  hasTemporaryModelOverride,
   hideFooter,
   rightColumnWidth,
   statusLineText,
@@ -257,6 +258,7 @@ const InputFooter = memo(function InputFooter({
   currentReasoningEffort?: ModelReasoningEffort | null;
   isOpenAICodexProvider: boolean;
   isByokProvider: boolean;
+  hasTemporaryModelOverride?: boolean;
   hideFooter: boolean;
   rightColumnWidth: number;
   statusLineText?: string;
@@ -314,15 +316,21 @@ const InputFooter = memo(function InputFooter({
   const displayAgentName = truncateEnd(agentName || "Unnamed", maxAgentChars);
   const reasoningTag = getReasoningEffortTag(currentReasoningEffort);
   const byokExtraChars = isByokProvider ? 2 : 0; // " ▲"
+  const tempOverrideExtraChars = hasTemporaryModelOverride ? 2 : 0; // " ▲"
 
-  const baseReservedChars = displayAgentName.length + byokExtraChars + 4;
+  const baseReservedChars =
+    displayAgentName.length + byokExtraChars + tempOverrideExtraChars + 4;
   const modelWithReasoning =
     (currentModel ?? "unknown") + (reasoningTag ? ` (${reasoningTag})` : "");
 
   const maxModelChars = Math.max(8, rightColumnWidth - baseReservedChars);
   const displayModel = truncateEnd(modelWithReasoning, maxModelChars);
   const rightTextLength =
-    displayAgentName.length + displayModel.length + byokExtraChars + 3;
+    displayAgentName.length +
+    displayModel.length +
+    byokExtraChars +
+    tempOverrideExtraChars +
+    3;
   const rightPrefixSpaces = Math.max(0, rightColumnWidth - rightTextLength);
 
   // When bg agents are active, widen the right column to fit the indicator + label
@@ -359,9 +367,19 @@ const InputFooter = memo(function InputFooter({
         isOpenAICodexProvider ? chalk.hex("#74AA9C")("▲") : chalk.yellow("▲"),
       );
     }
+    if (hasTemporaryModelOverride) {
+      parts.push(chalk.dim(" "));
+      parts.push(chalk.yellow("▲"));
+    }
     parts.push(chalk.dim("]"));
     return parts.join("");
-  }, [displayAgentName, displayModel, isByokProvider, isOpenAICodexProvider]);
+  }, [
+    displayAgentName,
+    displayModel,
+    isByokProvider,
+    isOpenAICodexProvider,
+    hasTemporaryModelOverride,
+  ]);
 
   const rightLabel = useMemo(
     () => " ".repeat(rightPrefixSpaces) + rightLabelCore,
@@ -735,6 +753,7 @@ export function Input({
   agentName,
   currentModel,
   currentModelProvider,
+  hasTemporaryModelOverride = false,
   currentReasoningEffort,
   messageQueue,
   onEnterQueueEditMode,
@@ -778,6 +797,7 @@ export function Input({
   agentName?: string | null;
   currentModel?: string | null;
   currentModelProvider?: string | null;
+  hasTemporaryModelOverride?: boolean;
   currentReasoningEffort?: ModelReasoningEffort | null;
   messageQueue?: QueuedMessage[];
   onEnterQueueEditMode?: () => void;
@@ -1639,6 +1659,7 @@ export function Input({
                   currentModelProvider?.startsWith("lc-") ||
                   currentModelProvider === OPENAI_CODEX_PROVIDER_NAME
                 }
+                hasTemporaryModelOverride={hasTemporaryModelOverride}
                 hideFooter={hideFooter}
                 rightColumnWidth={footerRightColumnWidth}
                 statusLineText={statusLineText}
@@ -1684,6 +1705,7 @@ export function Input({
     currentModel,
     currentReasoningEffort,
     currentModelProvider,
+    hasTemporaryModelOverride,
     hideFooter,
     footerRightColumnWidth,
     reserveInputSpace,
