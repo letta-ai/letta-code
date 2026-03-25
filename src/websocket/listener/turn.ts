@@ -79,6 +79,41 @@ import { injectQueuedSkillContent } from "./skill-injection";
 import { handleApprovalStop } from "./turn-approval";
 import type { ConversationRuntime, IncomingMessage } from "./types";
 
+function finalizeInterruptedTurn(
+  socket: WebSocket,
+  runtime: ConversationRuntime,
+  params: {
+    runId?: string | null;
+    agentId?: string | null;
+    conversationId: string;
+  },
+): void {
+  const scope = {
+    agent_id: params.agentId ?? null,
+    conversation_id: params.conversationId,
+  };
+  const alreadyProjected =
+    runtime.cancelRequested &&
+    !runtime.isProcessing &&
+    runtime.loopStatus === "WAITING_ON_INPUT" &&
+    runtime.activeRunId === null &&
+    runtime.activeAbortController === null;
+
+  runtime.lastStopReason = "cancelled";
+  runtime.isProcessing = false;
+
+  if (!alreadyProjected) {
+    emitInterruptedStatusDelta(socket, runtime, {
+      runId: params.runId,
+      agentId: params.agentId,
+      conversationId: params.conversationId,
+    });
+    clearActiveRunState(runtime);
+    setLoopStatus(runtime, "WAITING_ON_INPUT", scope);
+    emitRuntimeStateUpdates(runtime, scope);
+  }
+}
+
 export async function handleIncomingMessage(
   msg: IncomingMessage,
   socket: WebSocket,
@@ -122,7 +157,9 @@ export async function handleIncomingMessage(
 
   runtime.isProcessing = true;
   runtime.cancelRequested = false;
-  runtime.activeAbortController = new AbortController();
+  const turnAbortController = new AbortController();
+  runtime.activeAbortController = turnAbortController;
+  const turnAbortSignal = turnAbortController.signal;
   runtime.activeWorkingDirectory = turnWorkingDirectory;
   runtime.activeRunId = null;
   runtime.activeRunStartedAt = new Date().toISOString();
@@ -143,10 +180,10 @@ export async function handleIncomingMessage(
   try {
     if (!agentId) {
       runtime.isProcessing = false;
+      clearActiveRunState(runtime);
       setLoopStatus(runtime, "WAITING_ON_INPUT", {
         conversation_id: conversationId,
       });
-      clearActiveRunState(runtime);
       emitRuntimeStateUpdates(runtime, {
         conversation_id: conversationId,
       });
@@ -245,7 +282,7 @@ export async function handleIncomingMessage(
           buildSendOptions(),
           socket,
           runtime,
-          runtime.activeAbortController.signal,
+          turnAbortSignal,
         )
       : await sendMessageStreamWithRetry(
           conversationId,
@@ -253,7 +290,7 @@ export async function handleIncomingMessage(
           buildSendOptions(),
           socket,
           runtime,
-          runtime.activeAbortController.signal,
+          turnAbortSignal,
         );
     currentInput = currentInputWithSkillContent;
     if (!stream) {
@@ -281,9 +318,12 @@ export async function handleIncomingMessage(
         stream as Stream<LettaStreamingResponse>,
         buffers,
         () => {},
-        runtime.activeAbortController.signal,
+        turnAbortSignal,
         undefined,
         ({ chunk, shouldOutput, errorInfo }) => {
+          if (runtime.cancelRequested) {
+            return undefined;
+          }
           const maybeRunId = (chunk as { run_id?: unknown }).run_id;
           if (typeof maybeRunId === "string") {
             runId = maybeRunId;
@@ -340,14 +380,23 @@ export async function handleIncomingMessage(
       const approvals = result.approvals || [];
       lastApprovalContinuationAccepted = false;
 
+      if (stopReason === "end_turn" && runtime.cancelRequested) {
+        finalizeInterruptedTurn(socket, runtime, {
+          runId: runId || runtime.activeRunId,
+          agentId: agentId ?? null,
+          conversationId,
+        });
+        break;
+      }
+
       if (stopReason === "end_turn") {
         runtime.lastStopReason = "end_turn";
         runtime.isProcessing = false;
+        clearActiveRunState(runtime);
         setLoopStatus(runtime, "WAITING_ON_INPUT", {
           agent_id: agentId,
           conversation_id: conversationId,
         });
-        clearActiveRunState(runtime);
         emitRuntimeStateUpdates(runtime, {
           agent_id: agentId,
           conversation_id: conversationId,
@@ -357,23 +406,11 @@ export async function handleIncomingMessage(
       }
 
       if (stopReason === "cancelled") {
-        runtime.lastStopReason = "cancelled";
-        runtime.isProcessing = false;
-        emitInterruptedStatusDelta(socket, runtime, {
+        finalizeInterruptedTurn(socket, runtime, {
           runId: runId || runtime.activeRunId,
-          agentId,
+          agentId: agentId ?? null,
           conversationId,
         });
-        setLoopStatus(runtime, "WAITING_ON_INPUT", {
-          agent_id: agentId,
-          conversation_id: conversationId,
-        });
-        clearActiveRunState(runtime);
-        emitRuntimeStateUpdates(runtime, {
-          agent_id: agentId,
-          conversation_id: conversationId,
-        });
-
         break;
       }
 
@@ -434,7 +471,7 @@ export async function handleIncomingMessage(
                 buildSendOptions(),
                 socket,
                 runtime,
-                runtime.activeAbortController.signal,
+                turnAbortSignal,
               )
             : await sendMessageStreamWithRetry(
                 conversationId,
@@ -442,7 +479,7 @@ export async function handleIncomingMessage(
                 buildSendOptions(),
                 socket,
                 runtime,
-                runtime.activeAbortController.signal,
+                turnAbortSignal,
               );
           currentInput = retryInputWithSkillContent;
           if (!stream) {
@@ -499,7 +536,7 @@ export async function handleIncomingMessage(
           });
 
           await new Promise((resolve) => setTimeout(resolve, delayMs));
-          if (runtime.activeAbortController.signal.aborted) {
+          if (turnAbortSignal.aborted) {
             throw new Error("Cancelled by user");
           }
 
@@ -518,7 +555,7 @@ export async function handleIncomingMessage(
                 buildSendOptions(),
                 socket,
                 runtime,
-                runtime.activeAbortController.signal,
+                turnAbortSignal,
               )
             : await sendMessageStreamWithRetry(
                 conversationId,
@@ -526,7 +563,7 @@ export async function handleIncomingMessage(
                 buildSendOptions(),
                 socket,
                 runtime,
-                runtime.activeAbortController.signal,
+                turnAbortSignal,
               );
           currentInput = retryInputWithSkillContent;
           if (!stream) {
@@ -571,7 +608,7 @@ export async function handleIncomingMessage(
           });
 
           await new Promise((resolve) => setTimeout(resolve, delayMs));
-          if (runtime.activeAbortController.signal.aborted) {
+          if (turnAbortSignal.aborted) {
             throw new Error("Cancelled by user");
           }
 
@@ -590,7 +627,7 @@ export async function handleIncomingMessage(
                 buildSendOptions(),
                 socket,
                 runtime,
-                runtime.activeAbortController.signal,
+                turnAbortSignal,
               )
             : await sendMessageStreamWithRetry(
                 conversationId,
@@ -598,7 +635,7 @@ export async function handleIncomingMessage(
                 buildSendOptions(),
                 socket,
                 runtime,
-                runtime.activeAbortController.signal,
+                turnAbortSignal,
               );
           currentInput = retryInputWithSkillContent;
           if (!stream) {
@@ -621,33 +658,21 @@ export async function handleIncomingMessage(
           : (stopReason as StopReasonType) || "error";
 
         if (effectiveStopReason === "cancelled") {
-          runtime.lastStopReason = "cancelled";
-          runtime.isProcessing = false;
-          emitInterruptedStatusDelta(socket, runtime, {
+          finalizeInterruptedTurn(socket, runtime, {
             runId: runId || runtime.activeRunId,
-            agentId,
+            agentId: agentId ?? null,
             conversationId,
           });
-          setLoopStatus(runtime, "WAITING_ON_INPUT", {
-            agent_id: agentId,
-            conversation_id: conversationId,
-          });
-          clearActiveRunState(runtime);
-          emitRuntimeStateUpdates(runtime, {
-            agent_id: agentId,
-            conversation_id: conversationId,
-          });
-
           break;
         }
 
         runtime.lastStopReason = effectiveStopReason;
         runtime.isProcessing = false;
+        clearActiveRunState(runtime);
         setLoopStatus(runtime, "WAITING_ON_INPUT", {
           agent_id: agentId,
           conversation_id: conversationId,
         });
-        clearActiveRunState(runtime);
         emitRuntimeStateUpdates(runtime, {
           agent_id: agentId,
           conversation_id: conversationId,
@@ -733,21 +758,10 @@ export async function handleIncomingMessage(
         }
       }
 
-      runtime.lastStopReason = "cancelled";
-      runtime.isProcessing = false;
-      emitInterruptedStatusDelta(socket, runtime, {
+      finalizeInterruptedTurn(socket, runtime, {
         runId: runtime.activeRunId || msgRunIds[msgRunIds.length - 1],
         agentId: agentId || null,
         conversationId,
-      });
-      setLoopStatus(runtime, "WAITING_ON_INPUT", {
-        agent_id: agentId || null,
-        conversation_id: conversationId,
-      });
-      clearActiveRunState(runtime);
-      emitRuntimeStateUpdates(runtime, {
-        agent_id: agentId || null,
-        conversation_id: conversationId,
       });
 
       return;
@@ -755,11 +769,11 @@ export async function handleIncomingMessage(
 
     runtime.lastStopReason = "error";
     runtime.isProcessing = false;
+    clearActiveRunState(runtime);
     setLoopStatus(runtime, "WAITING_ON_INPUT", {
       agent_id: agentId || null,
       conversation_id: conversationId,
     });
-    clearActiveRunState(runtime);
     emitRuntimeStateUpdates(runtime, {
       agent_id: agentId || null,
       conversation_id: conversationId,

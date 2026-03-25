@@ -1303,6 +1303,138 @@ describe("listen-client capability-gated approval flow", () => {
       expect.any(Function),
     );
   });
+
+  test("stale approval responses unlatch cancelRequested after approval-only interrupt", async () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const targetRuntime =
+      __listenClientTestUtils.getOrCreateConversationRuntime(
+        listener,
+        "agent-1",
+        "default",
+      );
+    const socket = new MockSocket(WebSocket.OPEN);
+    const scheduleQueuePumpMock = mock(() => {});
+    const resolveRecoveredApprovalResponseMock = mock(async () => false);
+
+    targetRuntime.cancelRequested = true;
+    targetRuntime.isProcessing = false;
+
+    const handled = await __listenClientTestUtils.handleApprovalResponseInput(
+      listener,
+      {
+        runtime: { agent_id: "agent-1", conversation_id: "default" },
+        response: {
+          request_id: "perm-stale",
+          decision: { behavior: "allow" },
+        },
+        socket: socket as unknown as WebSocket,
+        opts: {
+          onStatusChange: undefined,
+          connectionId: "conn-1",
+        },
+        processQueuedTurn: async () => {},
+      },
+      {
+        resolveRuntimeForApprovalRequest: () => null,
+        resolvePendingApprovalResolver: () => false,
+        getOrCreateScopedRuntime: () => targetRuntime,
+        resolveRecoveredApprovalResponse: resolveRecoveredApprovalResponseMock,
+        scheduleQueuePump: scheduleQueuePumpMock,
+      },
+    );
+
+    expect(handled).toBe(false);
+    expect(targetRuntime.cancelRequested).toBe(false);
+    expect(resolveRecoveredApprovalResponseMock).not.toHaveBeenCalled();
+    expect(scheduleQueuePumpMock).toHaveBeenCalledWith(
+      targetRuntime,
+      socket,
+      expect.objectContaining({ connectionId: "conn-1" }),
+      expect.any(Function),
+    );
+  });
+
+  test("abort_message eagerly projects idle interrupted state for active turns", async () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const socket = new MockSocket(WebSocket.OPEN);
+    listener.socket = socket as unknown as WebSocket;
+    __listenClientTestUtils.setActiveRuntime(listener);
+
+    const runtime = __listenClientTestUtils.getOrCreateScopedRuntime(
+      listener,
+      "agent-1",
+      "default",
+    );
+    const scheduleQueuePumpMock = mock(() => {});
+    const cancelConversationMock = mock(async () => {});
+
+    runtime.isProcessing = true;
+    runtime.loopStatus = "PROCESSING_API_RESPONSE";
+    runtime.activeAbortController = new AbortController();
+    runtime.activeRunId = "run-active";
+    runtime.activeRunStartedAt = new Date().toISOString();
+    runtime.activeWorkingDirectory = process.cwd();
+    runtime.activeExecutingToolCallIds = ["tool-1"];
+
+    const handled = await __listenClientTestUtils.handleAbortMessageInput(
+      listener,
+      {
+        command: {
+          type: "abort_message",
+          runtime: { agent_id: "agent-1", conversation_id: "default" },
+        },
+        socket: socket as unknown as WebSocket,
+        opts: {
+          onStatusChange: undefined,
+          connectionId: "conn-1",
+        },
+        processQueuedTurn: async () => {},
+      },
+      {
+        scheduleQueuePump: scheduleQueuePumpMock,
+        cancelConversation: cancelConversationMock,
+      },
+    );
+
+    expect(handled).toBe(true);
+    expect(runtime.cancelRequested).toBe(true);
+    expect(runtime.isProcessing).toBe(false);
+    expect(runtime.loopStatus as string).toBe("WAITING_ON_INPUT");
+    expect(runtime.activeRunId).toBeNull();
+    expect(runtime.activeAbortController).toBeNull();
+    expect(runtime.pendingInterruptedToolCallIds).toEqual(["tool-1"]);
+    expect(scheduleQueuePumpMock).toHaveBeenCalledWith(
+      runtime,
+      socket,
+      expect.objectContaining({ connectionId: "conn-1" }),
+      expect.any(Function),
+    );
+    expect(cancelConversationMock).toHaveBeenCalledWith("agent-1", "default");
+
+    const outbound = socket.sentPayloads.map((payload) => JSON.parse(payload));
+    const interruptedStatus = outbound.find(
+      (payload) =>
+        payload.type === "stream_delta" &&
+        payload.delta?.message_type === "status" &&
+        payload.delta?.message === "Interrupted",
+    );
+    const loopUpdate = outbound.find(
+      (payload) =>
+        payload.type === "update_loop_status" &&
+        payload.loop_status?.status === "WAITING_ON_INPUT",
+    );
+    const deviceUpdate = outbound.find(
+      (payload) =>
+        payload.type === "update_device_status" &&
+        payload.device_status?.is_processing === false,
+    );
+
+    expect(interruptedStatus).toBeDefined();
+    expect(loopUpdate?.loop_status?.active_run_ids).toEqual([]);
+    expect(deviceUpdate).toBeDefined();
+
+    __listenClientTestUtils.setActiveRuntime(null);
+  });
 });
 
 describe("listen-client approval recovery batch correlation", () => {
