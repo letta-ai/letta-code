@@ -8379,16 +8379,12 @@ export default function App({
           try {
             const client = await getClient();
 
-            // For default conversation, pass agent_id as query param
+            // For default conversation, pass agent_id
             const isDefault = conversationIdRef.current === "default";
-            const forkUrl = isDefault
-              ? `/v1/conversations/default/fork?agent_id=${agentId}`
-              : `/v1/conversations/${conversationIdRef.current}/fork`;
-
-            const forked =
-              await client.post<
-                import("@letta-ai/letta-client/resources/conversations/conversations").Conversation
-              >(forkUrl);
+            const forked = await client.conversations.fork(
+              conversationIdRef.current,
+              isDefault ? { agent_id: agentId } : undefined,
+            );
 
             await maybeCarryOverActiveConversationModel(forked.id);
 
