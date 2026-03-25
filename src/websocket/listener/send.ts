@@ -22,7 +22,7 @@ import {
 } from "../../agent/turn-recovery-policy";
 import { classifyApprovals } from "../../cli/helpers/approvalClassification";
 import { getRetryStatusMessage } from "../../cli/helpers/errorFormatter";
-import { discoverFallbackRunIdWithTimeout } from "../../cli/helpers/stream";
+
 import { computeDiffPreviews } from "../../helpers/diffPreview";
 import { isInteractiveApprovalTool } from "../../tools/interactivePolicy";
 import type { ControlRequest } from "../../types/protocol_v2";
@@ -367,7 +367,6 @@ export async function sendMessageStreamWithRetry(
   let conversationBusyRetries = 0;
   let preStreamRecoveryAttempts = 0;
   const MAX_CONVERSATION_BUSY_RETRIES = 3;
-  const requestStartedAtMs = Date.now();
 
   // eslint-disable-next-line no-constant-condition
   while (true) {
@@ -490,25 +489,25 @@ export async function sendMessageStreamWithRetry(
         });
         try {
           const client = await getClient();
-          const discoveredRunId = await discoverFallbackRunIdWithTimeout(
-            client,
-            {
-              conversationId,
-              resolvedConversationId: conversationId,
-              agentId: runtime.agentId ?? null,
-              requestStartedAtMs,
-            },
-          );
+          const messageOtid = messages
+            .map((item) => (item as Record<string, unknown>).otid)
+            .find((value): value is string => typeof value === "string");
 
-          if (discoveredRunId) {
-            if (abortSignal?.aborted) {
-              throw new Error("Cancelled by user");
-            }
-            return await client.runs.messages.stream(discoveredRunId, {
-              starting_after: 0,
-              batch_size: 1000,
-            });
+          if (abortSignal?.aborted) {
+            throw new Error("Cancelled by user");
           }
+
+          return await client.conversations.messages.stream(conversationId, {
+            agent_id:
+              conversationId === "default"
+                ? (runtime.agentId ?? undefined)
+                : undefined,
+            otid: messageOtid ?? undefined,
+            starting_after: 0,
+            batch_size: 1000,
+          } as unknown as Parameters<
+            typeof client.conversations.messages.stream
+          >[1]);
         } catch (resumeError) {
           if (abortSignal?.aborted) {
             throw new Error("Cancelled by user");
@@ -568,7 +567,6 @@ export async function sendApprovalContinuationWithRetry(
   let conversationBusyRetries = 0;
   let preStreamRecoveryAttempts = 0;
   const MAX_CONVERSATION_BUSY_RETRIES = 3;
-  const requestStartedAtMs = Date.now();
 
   // eslint-disable-next-line no-constant-condition
   while (true) {
@@ -691,25 +689,25 @@ export async function sendApprovalContinuationWithRetry(
 
         try {
           const client = await getClient();
-          const discoveredRunId = await discoverFallbackRunIdWithTimeout(
-            client,
-            {
-              conversationId,
-              resolvedConversationId: conversationId,
-              agentId: runtime.agentId ?? null,
-              requestStartedAtMs,
-            },
-          );
+          const messageOtid = messages
+            .map((item) => (item as Record<string, unknown>).otid)
+            .find((value): value is string => typeof value === "string");
 
-          if (discoveredRunId) {
-            if (abortSignal?.aborted) {
-              throw new Error("Cancelled by user");
-            }
-            return await client.runs.messages.stream(discoveredRunId, {
-              starting_after: 0,
-              batch_size: 1000,
-            });
+          if (abortSignal?.aborted) {
+            throw new Error("Cancelled by user");
           }
+
+          return await client.conversations.messages.stream(conversationId, {
+            agent_id:
+              conversationId === "default"
+                ? (runtime.agentId ?? undefined)
+                : undefined,
+            otid: messageOtid ?? undefined,
+            starting_after: 0,
+            batch_size: 1000,
+          } as unknown as Parameters<
+            typeof client.conversations.messages.stream
+          >[1]);
         } catch (resumeError) {
           if (abortSignal?.aborted) {
             throw new Error("Cancelled by user");
