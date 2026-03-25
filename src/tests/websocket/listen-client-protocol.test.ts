@@ -644,6 +644,7 @@ describe("listen-client v2 status builders", () => {
       "update_device_status",
       "update_loop_status",
       "update_queue",
+      "update_subagent_state",
     ]);
     expect(
       outbound.every((message) => message.runtime.agent_id === "agent-1"),

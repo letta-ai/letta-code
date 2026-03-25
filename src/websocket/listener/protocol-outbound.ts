@@ -1,6 +1,7 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import WebSocket from "ws";
 import { getMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
+import { getSubagents } from "../../cli/helpers/subagentState";
 import { permissionMode } from "../../permissions/mode";
 import type { DequeuedBatch } from "../../queue/queueRuntime";
 import { settingsManager } from "../../settings-manager";
@@ -19,6 +20,8 @@ import type {
   StopReasonType,
   StreamDelta,
   StreamDeltaMessage,
+  SubagentSnapshot,
+  SubagentStateUpdateMessage,
   WsProtocolMessage,
 } from "../../types/protocol_v2";
 import { SYSTEM_REMINDER_RE } from "./constants";
@@ -455,6 +458,65 @@ export function emitStateSync(
   emitDeviceStatusUpdate(socket, runtime, scope);
   emitLoopStatusUpdate(socket, runtime, scope);
   emitQueueUpdate(socket, runtime, scope);
+  emitSubagentStateUpdate(socket, runtime, scope);
+}
+
+// ─────────────────────────────────────────────
+// Subagent state
+// ─────────────────────────────────────────────
+
+export function buildSubagentSnapshot(): SubagentSnapshot[] {
+  return getSubagents()
+    .filter(
+      (a) => !a.silent && (a.status === "pending" || a.status === "running"),
+    )
+    .map((a) => ({
+      subagent_id: a.id,
+      subagent_type: a.type,
+      description: a.description,
+      status: a.status,
+      agent_url: a.agentURL,
+      model: a.model,
+      is_background: a.isBackground,
+      silent: a.silent,
+      tool_call_id: a.toolCallId,
+      start_time: a.startTime,
+      tool_calls: a.toolCalls,
+      total_tokens: a.totalTokens,
+      duration_ms: a.durationMs,
+      error: a.error,
+    }));
+}
+
+export function emitSubagentStateUpdate(
+  socket: WebSocket,
+  runtime: RuntimeCarrier,
+  scope?: {
+    agent_id?: string | null;
+    conversation_id?: string | null;
+  },
+): void {
+  const message: Omit<
+    SubagentStateUpdateMessage,
+    "runtime" | "event_seq" | "emitted_at" | "idempotency_key"
+  > = {
+    type: "update_subagent_state",
+    subagents: buildSubagentSnapshot(),
+  };
+  emitProtocolV2Message(socket, runtime, message, scope);
+}
+
+export function emitSubagentStateIfOpen(
+  runtime: RuntimeCarrier,
+  scope?: {
+    agent_id?: string | null;
+    conversation_id?: string | null;
+  },
+): void {
+  const listener = getListenerRuntime(runtime);
+  if (listener?.socket?.readyState === WebSocket.OPEN) {
+    emitSubagentStateUpdate(listener.socket, runtime, scope);
+  }
 }
 
 export function scheduleQueueEmit(
@@ -610,6 +672,7 @@ export function emitStreamDelta(
     agent_id?: string | null;
     conversation_id?: string | null;
   },
+  subagentId?: string,
 ): void {
   const message: Omit<
     StreamDeltaMessage,
@@ -617,6 +680,7 @@ export function emitStreamDelta(
   > = {
     type: "stream_delta",
     delta,
+    ...(subagentId ? { subagent_id: subagentId } : {}),
   };
   emitProtocolV2Message(socket, runtime, message, scope);
 }

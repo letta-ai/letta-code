@@ -128,7 +128,9 @@ function parseTimingLogs(stderr: string): {
 /**
  * Run a single benchmark scenario
  */
-async function runBenchmark(scenario: ScenarioConfig): Promise<BenchmarkResult> {
+async function runBenchmark(
+  scenario: ScenarioConfig,
+): Promise<BenchmarkResult> {
   const start = performance.now();
 
   return new Promise((resolve) => {
@@ -210,16 +212,16 @@ function printResults(results: BenchmarkResult[]): void {
     // Print API calls summary
     if (result.apiCalls.length > 0) {
       console.log("  API Calls:");
-      const totalApiMs = result.apiCalls.reduce((sum, c) => sum + c.durationMs, 0);
+      const totalApiMs = result.apiCalls.reduce(
+        (sum, c) => sum + c.durationMs,
+        0,
+      );
 
       // Group by path pattern
       const grouped: Record<string, { count: number; totalMs: number }> = {};
       for (const call of result.apiCalls) {
         // Normalize paths (remove UUIDs)
-        const normalizedPath = call.path.replace(
-          /[a-f0-9-]{36}/g,
-          "{id}",
-        );
+        const normalizedPath = call.path.replace(/[a-f0-9-]{36}/g, "{id}");
         const key = `${call.method} ${normalizedPath}`;
         if (!grouped[key]) {
           grouped[key] = { count: 0, totalMs: 0 };
@@ -262,7 +264,10 @@ function printResults(results: BenchmarkResult[]): void {
   console.log("-".repeat(70));
 
   for (const result of results) {
-    const totalApiMs = result.apiCalls.reduce((sum, c) => sum + c.durationMs, 0);
+    const totalApiMs = result.apiCalls.reduce(
+      (sum, c) => sum + c.durationMs,
+      0,
+    );
     const cliOverhead = result.totalMs - totalApiMs;
     console.log(
       result.scenario.padEnd(20) +
@@ -301,7 +306,9 @@ async function main(): Promise<void> {
 
   if (scenariosToRun.length === 0) {
     console.error(`Error: Unknown scenario "${scenarioFilter}"`);
-    console.error(`Available scenarios: ${SCENARIOS.map((s) => s.name).join(", ")}`);
+    console.error(
+      `Available scenarios: ${SCENARIOS.map((s) => s.name).join(", ")}`,
+    );
     process.exit(1);
   }
 
@@ -323,7 +330,9 @@ async function main(): Promise<void> {
       allResults.push(result);
 
       if (result.exitCode !== 0) {
-        console.warn(`  Warning: ${scenario.name} exited with code ${result.exitCode}`);
+        console.warn(
+          `  Warning: ${scenario.name} exited with code ${result.exitCode}`,
+        );
       } else {
         console.log(`  Completed in ${formatMs(result.totalMs)}`);
       }

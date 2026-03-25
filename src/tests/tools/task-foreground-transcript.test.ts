@@ -23,7 +23,7 @@ describe("Task foreground transcript wiring", () => {
       `return \`\${truncatedOutput}\\nOutput file: \${outputFile}\`;`,
     );
     expect(source).toContain(
-      `return \`Error: \${errorMessage}\\nOutput file: \${outputFile}\`;`,
+      `return \`\${header}\\n\\nError: \${errorMessage}\\nOutput file: \${outputFile}\`;`,
     );
   });
 });
