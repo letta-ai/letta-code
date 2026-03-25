@@ -1113,14 +1113,7 @@ export async function handleHeadlessCommand(
   // Skip for subagents - they shouldn't pollute the LRU settings
   if (!isSubagent) {
     await settingsManager.loadLocalProjectSettings();
-    settingsManager.setLocalLastSession(
-      { agentId: agent.id, conversationId },
-      process.cwd(),
-    );
-    settingsManager.setGlobalLastSession({
-      agentId: agent.id,
-      conversationId,
-    });
+    settingsManager.persistSession(agent.id, conversationId);
   }
 
   // Set agent context for tools that need it (e.g., Skill tool, Task tool)

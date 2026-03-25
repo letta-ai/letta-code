@@ -700,21 +700,13 @@ async function isRetriableError(
 function saveLastSessionBeforeExit(conversationId?: string | null) {
   try {
     const currentAgentId = getCurrentAgentId();
-    // Legacy field — kept for backwards compat
-    settingsManager.updateLocalProjectSettings({ lastAgent: currentAgentId });
-    settingsManager.updateSettings({ lastAgent: currentAgentId });
-
-    // Save the full session (agent + conversation) so the next startup
-    // resumes the correct conversation, not just the agent.
     if (conversationId && conversationId !== "default") {
-      settingsManager.setLocalLastSession(
-        { agentId: currentAgentId, conversationId },
-        process.cwd(),
-      );
-      settingsManager.setGlobalLastSession({
-        agentId: currentAgentId,
-        conversationId,
-      });
+      // persistSession writes session + legacy lastAgent fields
+      settingsManager.persistSession(currentAgentId, conversationId);
+    } else {
+      // No conversation to save — still track the agent via legacy fields
+      settingsManager.updateLocalProjectSettings({ lastAgent: currentAgentId });
+      settingsManager.updateSettings({ lastAgent: currentAgentId });
     }
   } catch {
     // Ignore if no agent context set
@@ -6425,14 +6417,7 @@ export default function App({
         await updateProjectSettings({ lastAgent: targetAgentId });
 
         // Save the session (agent + conversation) to settings
-        settingsManager.setLocalLastSession(
-          { agentId: targetAgentId, conversationId: targetConversationId },
-          process.cwd(),
-        );
-        settingsManager.setGlobalLastSession({
-          agentId: targetAgentId,
-          conversationId: targetConversationId,
-        });
+        settingsManager.persistSession(targetAgentId, targetConversationId);
 
         // Clear current transcript and static items
         buffersRef.current.byId.clear();
@@ -6571,14 +6556,7 @@ export default function App({
         // Persist this explicitly so routing and resume state do not retain
         // a previous agent's non-default conversation id.
         const targetConversationId = "default";
-        settingsManager.setLocalLastSession(
-          { agentId: agent.id, conversationId: targetConversationId },
-          process.cwd(),
-        );
-        settingsManager.setGlobalLastSession({
-          agentId: agent.id,
-          conversationId: targetConversationId,
-        });
+        settingsManager.persistSession(agent.id, targetConversationId);
 
         // Build success message with hints
         const agentUrl = buildChatUrl(agent.id);
@@ -8223,14 +8201,7 @@ export default function App({
             };
 
             // Save the new session to settings
-            settingsManager.setLocalLastSession(
-              { agentId, conversationId: conversation.id },
-              process.cwd(),
-            );
-            settingsManager.setGlobalLastSession({
-              agentId,
-              conversationId: conversation.id,
-            });
+            settingsManager.persistSession(agentId, conversation.id);
 
             // Reset context tokens for new conversation
             resetContextHistory(contextTrackerRef.current);
@@ -8309,14 +8280,7 @@ export default function App({
               isDefault: false,
             };
 
-            settingsManager.setLocalLastSession(
-              { agentId, conversationId: conversation.id },
-              process.cwd(),
-            );
-            settingsManager.setGlobalLastSession({
-              agentId,
-              conversationId: conversation.id,
-            });
+            settingsManager.persistSession(agentId, conversation.id);
 
             // Reset context tokens for new conversation
             resetContextHistory(contextTrackerRef.current);
@@ -8722,14 +8686,7 @@ export default function App({
                   messageHistory: resumeData.messageHistory,
                 };
 
-                settingsManager.setLocalLastSession(
-                  { agentId, conversationId: targetConvId },
-                  process.cwd(),
-                );
-                settingsManager.setGlobalLastSession({
-                  agentId,
-                  conversationId: targetConvId,
-                });
+                settingsManager.persistSession(agentId, targetConvId);
 
                 // Build success message
                 const currentAgentName = agentState.name || "Unnamed Agent";
@@ -12208,14 +12165,7 @@ ${SYSTEM_REMINDER_CLOSE}
                   messageHistory: resumeData.messageHistory,
                 };
 
-                settingsManager.setLocalLastSession(
-                  { agentId, conversationId: action.conversationId },
-                  process.cwd(),
-                );
-                settingsManager.setGlobalLastSession({
-                  agentId,
-                  conversationId: action.conversationId,
-                });
+                settingsManager.persistSession(agentId, action.conversationId);
 
                 // Reset context tokens for new conversation
                 resetContextHistory(contextTrackerRef.current);
@@ -14072,14 +14022,7 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
                         hasSetConversationSummaryRef.current = true;
                       }
 
-                      settingsManager.setLocalLastSession(
-                        { agentId, conversationId: convId },
-                        process.cwd(),
-                      );
-                      settingsManager.setGlobalLastSession({
-                        agentId,
-                        conversationId: convId,
-                      });
+                      settingsManager.persistSession(agentId, convId);
 
                       // Build success command with agent + conversation info
                       const currentAgentName =
@@ -14236,14 +14179,7 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
                       conversation.id,
                     );
                     setConversationId(conversation.id);
-                    settingsManager.setLocalLastSession(
-                      { agentId, conversationId: conversation.id },
-                      process.cwd(),
-                    );
-                    settingsManager.setGlobalLastSession({
-                      agentId,
-                      conversationId: conversation.id,
-                    });
+                    settingsManager.persistSession(agentId, conversation.id);
 
                     // Build success command with agent + conversation info
                     const currentAgentName =
@@ -14381,14 +14317,7 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
                         searchMessage: searchContext?.message,
                       };
 
-                      settingsManager.setLocalLastSession(
-                        { agentId, conversationId: actualTargetConv },
-                        process.cwd(),
-                      );
-                      settingsManager.setGlobalLastSession({
-                        agentId,
-                        conversationId: actualTargetConv,
-                      });
+                      settingsManager.persistSession(agentId, actualTargetConv);
 
                       const currentAgentName =
                         agentState.name || "Unnamed Agent";

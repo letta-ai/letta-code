@@ -64,8 +64,6 @@ describe("bootstrap reminder reset wiring", () => {
 
     expect(scoped).toContain('const targetConversationId = "default";');
     expect(scoped).toContain("setConversationId(targetConversationId);");
-    expect(scoped).toContain("settingsManager.setLocalLastSession(");
-    expect(scoped).toContain("settingsManager.setGlobalLastSession({");
-    expect(scoped).toContain("conversationId: targetConversationId");
+    expect(scoped).toContain("settingsManager.persistSession(");
   });
 });
