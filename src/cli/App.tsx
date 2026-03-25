@@ -5699,6 +5699,8 @@ export default function App({
             if (!cancelled) {
               // Post-stream retry is a new request/run, so refresh OTIDs.
               refreshCurrentInputOtids();
+              // Reset seq_id threshold — new run starts from seq_id 1, not a resume.
+              highestSeqIdSeen = null;
               // Reset interrupted flag so retry stream chunks are processed
               buffersRef.current.interrupted = false;
               // Retry by continuing the while loop with fresh OTIDs.
