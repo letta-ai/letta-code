@@ -64,6 +64,9 @@ export type SendMessageStreamOptions = {
   /** Per-conversation permission mode state. When provided, tool execution uses
    *  this scoped state instead of the global permissionMode singleton. */
   permissionModeState?: PermissionModeState;
+  /** Fully compiled system prompt to pass as override_system. When provided,
+   *  bypasses server-side system prompt compilation entirely. */
+  overrideSystem?: string;
 };
 
 export function buildConversationMessagesCreateRequestBody(
@@ -95,6 +98,7 @@ export function buildConversationMessagesCreateRequestBody(
     client_tools: clientTools,
     include_compaction_messages: true,
     ...(isDefaultConversation ? { agent_id: opts.agentId } : {}),
+    ...(opts.overrideSystem ? { override_system: opts.overrideSystem } : {}),
   };
 }
 
@@ -137,11 +141,26 @@ export async function sendMessageStream(
       skillSources: ALL_SKILL_SOURCES,
     });
 
+  // Client-side system prompt compilation: when memfs is enabled and no
+  // override is already provided, compile the full prompt locally and pass
+  // it via override_system so the server uses it as-is.
+  let effectiveOpts = opts;
+  if (!opts.overrideSystem && opts.agentId) {
+    const compiled = await tryCompileSystemPrompt(
+      opts.agentId,
+      conversationId,
+      clientSkills,
+    );
+    if (compiled) {
+      effectiveOpts = { ...opts, overrideSystem: compiled };
+    }
+  }
+
   const resolvedConversationId = conversationId;
   const requestBody = buildConversationMessagesCreateRequestBody(
     conversationId,
     messages,
-    opts,
+    effectiveOpts,
     clientTools,
     clientSkills,
   );
@@ -255,4 +274,70 @@ export async function sendMessageStream(
   });
 
   return stream;
+}
+
+// ---------------------------------------------------------------------------
+// Client-side system prompt compilation (lazy-loaded to avoid circular imports)
+// ---------------------------------------------------------------------------
+
+type ClientSkillPayload = NonNullable<
+  ConversationMessageCreateParams["client_skills"]
+>;
+
+/**
+ * Attempt to compile the system prompt client-side. Returns null if memfs is
+ * not enabled or the base prompt recipe is unknown.
+ */
+async function tryCompileSystemPrompt(
+  agentId: string,
+  conversationId: string,
+  clientSkills: ClientSkillPayload,
+): Promise<string | null> {
+  try {
+    // Lazy imports to avoid circular dependency issues
+    const { settingsManager } = await import("../settings-manager");
+    if (!settingsManager.isReady || !settingsManager.isMemfsEnabled(agentId)) {
+      return null;
+    }
+
+    const presetId = settingsManager.getSystemPromptPreset(agentId);
+    if (!presetId) return null;
+
+    const { buildSystemPrompt, isKnownPreset } = await import("./promptAssets");
+    if (!isKnownPreset(presetId)) return null;
+
+    const basePrompt = buildSystemPrompt(presetId, "memfs");
+
+    const { getMemoryRepoDir } = await import("./memoryGit");
+    const memoryDir = getMemoryRepoDir(agentId);
+
+    const { compileSystemPrompt } = await import("./systemPromptCompiler");
+    const compiled = compileSystemPrompt({
+      basePrompt,
+      memoryDir,
+      agentId,
+      conversationId,
+      previousMessageCount: 0,
+      clientSkills: clientSkills.map((s) => ({
+        name: s.name,
+        description: s.description,
+        location: s.location,
+      })),
+    });
+
+    debugLog(
+      "agent-message",
+      "sendMessageStream: compiled system prompt client-side (%d chars)",
+      compiled.length,
+    );
+
+    return compiled;
+  } catch (err) {
+    debugWarn(
+      "agent-message",
+      "sendMessageStream: client-side system prompt compilation failed: %s",
+      err instanceof Error ? err.message : String(err),
+    );
+    return null;
+  }
 }
