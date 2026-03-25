@@ -7,12 +7,7 @@
       "label": "Auto",
       "description": "Automatically select the best model",
       "isFeatured": true,
-      "free": true,
-      "updateArgs": {
-        "context_window": 140000,
-        "max_output_tokens": 28000,
-        "parallel_tool_calls": true
-      }
+      "free": true
     },
     {
       "id": "auto-fast",
@@ -20,12 +15,7 @@
       "label": "Auto Fast",
       "description": "Automatically select the best fast model",
       "isFeatured": true,
-      "free": true,
-      "updateArgs": {
-        "context_window": 140000,
-        "max_output_tokens": 28000,
-        "parallel_tool_calls": true
-      }
+      "free": true
     },
     {
       "id": "sonnet",
@@ -1479,23 +1469,11 @@
       }
     },
     {
-      "id": "minimax-m2.7",
-      "handle": "minimax/MiniMax-M2.7",
-      "label": "MiniMax 2.7",
-      "description": "MiniMax's latest coding model",
-      "isFeatured": true,
-      "free": true,
-      "updateArgs": {
-        "context_window": 160000,
-        "max_output_tokens": 64000,
-        "parallel_tool_calls": true
-      }
-    },
-    {
       "id": "minimax-m2.5",
       "handle": "minimax/MiniMax-M2.5",
       "label": "MiniMax 2.5",
-      "description": "MiniMax's latest coding model (legacy)",
+      "description": "MiniMax's latest coding model",
+      "isFeatured": true,
       "free": true,
       "updateArgs": {
         "context_window": 160000,
@@ -1550,10 +1528,20 @@
     },
     {
       "id": "kimi-k2.5",
-      "handle": "openrouter/moonshotai/kimi-k2.5",
+      "handle": "baseten/moonshotai/Kimi-K2.5",
       "label": "Kimi K2.5",
       "description": "Kimi's latest coding model",
       "isFeatured": true,
+      "updateArgs": {
+        "context_window": 262000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "kimi-k2.5",
+      "handle": "openrouter/moonshotai/kimi-k2.5",
+      "label": "Kimi K2.5",
+      "description": "Kimi's latest coding model",
       "updateArgs": {
         "context_window": 262144,
         "parallel_tool_calls": true
