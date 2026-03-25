@@ -394,6 +394,9 @@ export interface SearchFilesCommand {
   request_id: string;
   /** Maximum number of results to return. Defaults to 5. */
   max_results?: number;
+  /** Working directory to scope the search to. When provided, only files
+   *  within this directory (relative to the index root) are returned. */
+  cwd?: string;
 }
 
 export interface ListInDirectoryCommand {
