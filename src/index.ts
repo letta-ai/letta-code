@@ -1271,6 +1271,22 @@ async function main(): Promise<void> {
 
         // Short-circuit: flags handled by init() skip resolution entirely
         if (forceNew || agentIdArg || fromAfFile) {
+          // For --agent/--name: restore conversation from local session if the
+          // agent matches, so we don't clobber a real conv ID with "default".
+          if (agentIdArg && !forceNew && !fromAfFile && !forceNewConversation) {
+            // loadLocalProjectSettings is cached if already loaded (e.g. --name)
+            await settingsManager.loadLocalProjectSettings(process.cwd());
+            const localSession = settingsManager.getLocalLastSession(
+              process.cwd(),
+            );
+            if (
+              localSession?.agentId === agentIdArg &&
+              localSession.conversationId &&
+              localSession.conversationId !== "default"
+            ) {
+              setSelectedConversationId(localSession.conversationId);
+            }
+          }
           setLoadingState("assembling");
           return;
         }
