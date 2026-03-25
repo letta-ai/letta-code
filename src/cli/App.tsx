@@ -8385,9 +8385,10 @@ export default function App({
               ? `/v1/conversations/default/fork?agent_id=${agentId}`
               : `/v1/conversations/${conversationIdRef.current}/fork`;
 
-            const forked = await client.post<
-              import("@letta-ai/letta-client/resources/conversations/conversations").Conversation
-            >(forkUrl);
+            const forked =
+              await client.post<
+                import("@letta-ai/letta-client/resources/conversations/conversations").Conversation
+              >(forkUrl);
 
             await maybeCarryOverActiveConversationModel(forked.id);
 
