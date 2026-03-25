@@ -48,7 +48,11 @@ import {
   setLoopStatus,
 } from "./protocol-outbound";
 import { consumeQueuedTurn } from "./queue";
-import { clearActiveRunState, clearRecoveredApprovalState } from "./runtime";
+import {
+  clearActiveRunState,
+  clearRecoveredApprovalState,
+  hasInterruptedCacheForScope,
+} from "./runtime";
 import type {
   ConversationRuntime,
   IncomingMessage,
@@ -328,6 +332,11 @@ export async function recoverApprovalStateForSync(
   runtime: ConversationRuntime,
   scope: { agent_id: string; conversation_id: string },
 ): Promise<void> {
+  if (hasInterruptedCacheForScope(runtime.listener, scope)) {
+    clearRecoveredApprovalState(runtime);
+    return;
+  }
+
   const sameActiveScope =
     runtime.agentId === scope.agent_id &&
     runtime.conversationId === scope.conversation_id;
@@ -511,6 +520,11 @@ export async function resolveRecoveredApprovalResponse(
     agent_id: recovered.agentId,
     conversation_id: recovered.conversationId,
   } as const;
+  if (hasInterruptedCacheForScope(runtime.listener, scope)) {
+    clearRecoveredApprovalState(runtime);
+    emitRuntimeStateUpdates(runtime, scope);
+    return true;
+  }
   const approvedToolCallIds = decisions
     .filter(
       (decision): decision is Extract<ApprovalDecision, { type: "approve" }> =>

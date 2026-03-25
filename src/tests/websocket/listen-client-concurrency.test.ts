@@ -1006,6 +1006,162 @@ describe("listen-client multi-worker concurrency", () => {
     });
   });
 
+  test("sync replay suppresses recovered approvals when interrupted cache is active", async () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    __listenClientTestUtils.setActiveRuntime(listener);
+    const runtime = __listenClientTestUtils.getOrCreateScopedRuntime(
+      listener,
+      "agent-1",
+      "conv-sync",
+    );
+
+    runtime.pendingInterruptedResults = [
+      {
+        type: "approval",
+        tool_call_id: "call-sync",
+        approve: false,
+        reason: "User interrupted the stream",
+      },
+    ] as never;
+    runtime.pendingInterruptedContext = {
+      agentId: "agent-1",
+      conversationId: "conv-sync",
+      continuationEpoch: runtime.continuationEpoch,
+    };
+    runtime.pendingInterruptedToolCallIds = null;
+    runtime.recoveredApprovalState = {
+      agentId: "agent-1",
+      conversationId: "conv-sync",
+      approvalsByRequestId: new Map([
+        [
+          "perm-sync",
+          {
+            approval: {
+              toolCallId: "call-sync",
+              toolName: "Bash",
+              toolArgs: '{"command":"sleep 300"}',
+            },
+            controlRequest: {
+              type: "control_request",
+              request_id: "perm-sync",
+              request: {
+                subtype: "can_use_tool",
+                tool_name: "Bash",
+                input: { command: "sleep 300" },
+                tool_call_id: "call-sync",
+                permission_suggestions: [],
+                blocked_path: null,
+              },
+              agent_id: "agent-1",
+              conversation_id: "conv-sync",
+            },
+          },
+        ],
+      ]),
+      pendingRequestIds: new Set(["perm-sync"]),
+      responsesByRequestId: new Map(),
+    };
+    runtime.loopStatus = "WAITING_ON_APPROVAL";
+    getResumeDataMock.mockClear();
+    retrieveAgentMock.mockClear();
+
+    await __listenClientTestUtils.recoverApprovalStateForSync(runtime, {
+      agent_id: "agent-1",
+      conversation_id: "conv-sync",
+    });
+
+    expect(retrieveAgentMock).not.toHaveBeenCalled();
+    expect(getResumeDataMock).not.toHaveBeenCalled();
+    expect(runtime.recoveredApprovalState).toBeNull();
+
+    const deviceStatus = __listenClientTestUtils.buildDeviceStatus(listener, {
+      agent_id: "agent-1",
+      conversation_id: "conv-sync",
+    });
+    const loopStatus = __listenClientTestUtils.buildLoopStatus(listener, {
+      agent_id: "agent-1",
+      conversation_id: "conv-sync",
+    });
+
+    expect(deviceStatus.pending_control_requests).toEqual([]);
+    expect(loopStatus.status).toBe("WAITING_ON_INPUT");
+    expect(loopStatus.active_run_ids).toEqual([]);
+  });
+
+  test("recovered approval response does not revive an interrupted turn", async () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    __listenClientTestUtils.setActiveRuntime(listener);
+    const runtime = __listenClientTestUtils.getOrCreateScopedRuntime(
+      listener,
+      "agent-1",
+      "conv-stale",
+    );
+    const socket = new MockSocket();
+
+    runtime.pendingInterruptedResults = [
+      {
+        type: "approval",
+        tool_call_id: "tool-call-stale",
+        approve: false,
+        reason: "User interrupted the stream",
+      },
+    ] as never;
+    runtime.pendingInterruptedContext = {
+      agentId: "agent-1",
+      conversationId: "conv-stale",
+      continuationEpoch: runtime.continuationEpoch,
+    };
+    runtime.pendingInterruptedToolCallIds = null;
+    runtime.recoveredApprovalState = {
+      agentId: "agent-1",
+      conversationId: "conv-stale",
+      approvalsByRequestId: new Map([
+        [
+          "perm-stale",
+          {
+            approval: {
+              toolCallId: "tool-call-stale",
+              toolName: "Bash",
+              toolArgs: '{"command":"sleep 300"}',
+            },
+            controlRequest: {
+              type: "control_request",
+              request_id: "perm-stale",
+              request: {
+                subtype: "can_use_tool",
+                tool_name: "Bash",
+                input: { command: "sleep 300" },
+                tool_call_id: "tool-call-stale",
+                permission_suggestions: [],
+                blocked_path: null,
+              },
+              agent_id: "agent-1",
+              conversation_id: "conv-stale",
+            },
+          },
+        ],
+      ]),
+      pendingRequestIds: new Set(["perm-stale"]),
+      responsesByRequestId: new Map(),
+    };
+
+    const handled = await resolveRecoveredApprovalResponse(
+      runtime,
+      socket as unknown as WebSocket,
+      {
+        request_id: "perm-stale",
+        decision: { behavior: "deny", message: "Denied after interrupt" },
+      },
+      __listenClientTestUtils.handleIncomingMessage,
+      {},
+    );
+
+    expect(handled).toBe(true);
+    expect(runtime.recoveredApprovalState).toBeNull();
+    expect(sendMessageStreamMock).not.toHaveBeenCalled();
+    expect(runtime.isProcessing).toBe(false);
+  });
+
   test("queue pump status callbacks stay aggregate when another conversation is busy", async () => {
     const listener = __listenClientTestUtils.createListenerRuntime();
     __listenClientTestUtils.setActiveRuntime(listener);

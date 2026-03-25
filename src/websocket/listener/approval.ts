@@ -196,7 +196,7 @@ export function resolvePendingApprovalResolver(
 
   runtime.pendingApprovalResolvers.delete(requestId);
   runtime.listener.approvalRuntimeKeyByRequestId.delete(requestId);
-  if (runtime.pendingApprovalResolvers.size === 0) {
+  if (runtime.pendingApprovalResolvers.size === 0 && !runtime.isProcessing) {
     setLoopStatus(runtime, "WAITING_ON_INPUT");
   }
   pending.resolve(response);

@@ -228,7 +228,7 @@ describe("listen-client permission mode scope keys", () => {
 });
 
 describe("listen-client approval resolver wiring", () => {
-  test("resolved approvals restore WAITING_ON_INPUT instead of faking processing", () => {
+  test("resolved approvals do not project WAITING_ON_INPUT while the enclosing turn is still processing", () => {
     const runtime = __listenClientTestUtils.createRuntime();
     const socket = new MockSocket(WebSocket.OPEN);
     runtime.isProcessing = true;
@@ -249,7 +249,7 @@ describe("listen-client approval resolver wiring", () => {
     });
 
     expect(resolved).toBe(true);
-    expect(runtime.loopStatus as string).toBe("WAITING_ON_INPUT");
+    expect(runtime.loopStatus as string).toBe("WAITING_ON_APPROVAL");
   });
 
   test("resolves matching pending resolver", async () => {
