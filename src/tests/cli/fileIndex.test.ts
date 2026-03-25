@@ -5,6 +5,7 @@ import {
   addEntriesToCache,
   refreshFileIndex,
   searchFileIndex,
+  setIndexRoot,
 } from "../../cli/helpers/fileIndex";
 
 const TEST_DIR = join(process.cwd(), ".test-fileindex");
@@ -46,11 +47,11 @@ beforeEach(() => {
     "utf-8",
   );
 
-  process.chdir(TEST_DIR);
+  setIndexRoot(TEST_DIR);
 });
 
 afterEach(() => {
-  process.chdir(originalCwd);
+  setIndexRoot(originalCwd);
   rmSync(TEST_DIR, { recursive: true, force: true });
 });
 
