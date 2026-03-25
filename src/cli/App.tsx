@@ -694,13 +694,28 @@ async function isRetriableError(
   return false;
 }
 
-// Save current agent as lastAgent before exiting
-// This ensures subagent overwrites during the session don't persist
-function saveLastAgentBeforeExit() {
+// Save current agent + conversation as last session before exiting.
+// This ensures subagent overwrites during the session don't persist,
+// and the conversation ID is always up-to-date on exit.
+function saveLastSessionBeforeExit(conversationId?: string | null) {
   try {
     const currentAgentId = getCurrentAgentId();
+    // Legacy field — kept for backwards compat
     settingsManager.updateLocalProjectSettings({ lastAgent: currentAgentId });
     settingsManager.updateSettings({ lastAgent: currentAgentId });
+
+    // Save the full session (agent + conversation) so the next startup
+    // resumes the correct conversation, not just the agent.
+    if (conversationId && conversationId !== "default") {
+      settingsManager.setLocalLastSession(
+        { agentId: currentAgentId, conversationId },
+        process.cwd(),
+      );
+      settingsManager.setGlobalLastSession({
+        agentId: currentAgentId,
+        conversationId,
+      });
+    }
   } catch {
     // Ignore if no agent context set
   }
@@ -5968,7 +5983,7 @@ export default function App({
   );
 
   const handleExit = useCallback(async () => {
-    saveLastAgentBeforeExit();
+    saveLastSessionBeforeExit(conversationIdRef.current);
 
     // Run SessionEnd hooks
     await runEndHooks();
@@ -7973,7 +7988,7 @@ export default function App({
               true,
             );
 
-            saveLastAgentBeforeExit();
+            saveLastSessionBeforeExit(conversationIdRef.current);
 
             // Track session end explicitly (before exit) with stats
             const stats = sessionStatsRef.current.getSnapshot();
