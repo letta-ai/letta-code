@@ -9,7 +9,12 @@ import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agen
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import WebSocket from "ws";
 import { getClient } from "../../agent/client";
-import { ensureFileIndex, searchFileIndex } from "../../cli/helpers/fileIndex";
+import {
+  ensureFileIndex,
+  getIndexRoot,
+  refreshFileIndex,
+  searchFileIndex,
+} from "../../cli/helpers/fileIndex";
 import { generatePlanFilePath } from "../../cli/helpers/planName";
 import { INTERRUPTED_BY_USER } from "../../constants";
 import { type DequeuedBatch, QueueRuntime } from "../../queue/queueRuntime";
@@ -499,6 +504,17 @@ async function handleCwdChange(
       conversationId,
       normalizedPath,
     );
+
+    // If the new cwd is outside the current file-index root, switch the
+    // process working directory and rebuild the index so file search
+    // covers the new workspace. The disk cache is per-workspace (Merkle
+    // based) so switching back later is fast.
+    const indexRoot = getIndexRoot();
+    if (!normalizedPath.startsWith(indexRoot)) {
+      process.chdir(normalizedPath);
+      void refreshFileIndex();
+    }
+
     emitDeviceStatusUpdate(socket, runtime, {
       agent_id: agentId,
       conversation_id: conversationId,
