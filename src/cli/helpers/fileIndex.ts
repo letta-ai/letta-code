@@ -56,6 +56,20 @@ let cachedEntryPaths = new Set<string>();
 let buildPromise: Promise<void> | null = null;
 let hasCompletedBuild = false;
 
+/**
+ * The root directory that the file index is built from.  When `null` the
+ * index falls back to `process.cwd()` (which is the right default for
+ * local CLI mode and tests that use `process.chdir()`).  Call
+ * `setIndexRoot()` to pin it to a specific directory without mutating
+ * global process state — important for the listener where multiple
+ * conversations may each have a different working directory.
+ */
+let explicitIndexRoot: string | null = null;
+
+function resolveIndexRoot(): string {
+  return explicitIndexRoot ?? process.cwd();
+}
+
 interface FileIndexCache {
   metadata: {
     rootHash: string;
@@ -419,7 +433,7 @@ async function buildDirectory(
     }
 
     const fullPath = join(dir, entry);
-    const entryPath = relative(process.cwd(), fullPath);
+    const entryPath = relative(resolveIndexRoot(), fullPath);
 
     if (!entryPath) {
       continue;
@@ -483,7 +497,7 @@ async function buildIndex(
   const statsMap: StatsMap = {};
   const context: BuildContext = { newEntryCount: 0, truncated: false };
   const rootHash = await buildDirectory(
-    process.cwd(),
+    resolveIndexRoot(),
     "",
     entries,
     merkle,
@@ -525,7 +539,7 @@ function sanitizeWorkspacePath(workspacePath: string): string {
 
 function getProjectStorageDir(): string {
   const homeDir = homedir();
-  const sanitizedWorkspace = sanitizeWorkspacePath(process.cwd());
+  const sanitizedWorkspace = sanitizeWorkspacePath(resolveIndexRoot());
   return join(homeDir, ".letta", "projects", sanitizedWorkspace);
 }
 
@@ -699,10 +713,22 @@ export function refreshFileIndex(): Promise<void> {
 
 /**
  * Return the current index root directory.
- * The index stores all paths relative to this root (always `process.cwd()`).
+ * All indexed paths are stored relative to this root.
  */
 export function getIndexRoot(): string {
-  return process.cwd();
+  return resolveIndexRoot();
+}
+
+/**
+ * Pin the index root to a specific directory and trigger a non-blocking
+ * rebuild.  Unlike `process.chdir()`, this only affects the file index —
+ * it does not mutate global process state, which is important for
+ * concurrent conversations that may each have a different working directory.
+ */
+export function setIndexRoot(dir: string): void {
+  if (dir === resolveIndexRoot()) return;
+  explicitIndexRoot = dir;
+  void refreshFileIndex();
 }
 
 /**

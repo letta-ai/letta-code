@@ -12,8 +12,8 @@ import { getClient } from "../../agent/client";
 import {
   ensureFileIndex,
   getIndexRoot,
-  refreshFileIndex,
   searchFileIndex,
+  setIndexRoot,
 } from "../../cli/helpers/fileIndex";
 import { setMessageQueueAdder } from "../../cli/helpers/messageQueueBridge";
 import { generatePlanFilePath } from "../../cli/helpers/planName";
@@ -709,14 +709,13 @@ async function handleCwdChange(
       normalizedPath,
     );
 
-    // If the new cwd is outside the current file-index root, switch the
-    // process working directory and rebuild the index so file search
-    // covers the new workspace. The disk cache is per-workspace (Merkle
-    // based) so switching back later is fast.
-    const indexRoot = getIndexRoot();
-    if (!normalizedPath.startsWith(indexRoot)) {
-      process.chdir(normalizedPath);
-      void refreshFileIndex();
+    // If the new cwd is outside the current file-index root, re-root the
+    // index so file search covers the new workspace.  setIndexRoot()
+    // triggers a non-blocking rebuild and does NOT mutate process.cwd(),
+    // keeping concurrent conversations safe.
+    const currentRoot = getIndexRoot();
+    if (!normalizedPath.startsWith(currentRoot)) {
+      setIndexRoot(normalizedPath);
     }
 
     emitDeviceStatusUpdate(socket, runtime, {
@@ -1207,7 +1206,7 @@ async function connectWithRetry(
         // compute the relative path from the index root to the requested cwd.
         let searchDir = ".";
         if (parsed.cwd) {
-          const rel = path.relative(process.cwd(), parsed.cwd);
+          const rel = path.relative(getIndexRoot(), parsed.cwd);
           // Only scope if cwd is within the index root (not "../" etc.)
           if (rel && !rel.startsWith("..")) {
             searchDir = rel;
