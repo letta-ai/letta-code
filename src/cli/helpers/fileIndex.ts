@@ -698,6 +698,14 @@ export function refreshFileIndex(): Promise<void> {
 }
 
 /**
+ * Return the current index root directory.
+ * The index stores all paths relative to this root (always `process.cwd()`).
+ */
+export function getIndexRoot(): string {
+  return process.cwd();
+}
+
+/**
  * Add newly discovered entries to the in-memory cache without a full rebuild.
  * Called when a disk scan finds files that weren't in the index (e.g. created
  * externally). Skips paths that are already cached.
