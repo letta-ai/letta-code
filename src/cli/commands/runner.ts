@@ -73,18 +73,6 @@ export function createCommandRunner({
   onCommandFinished,
 }: RunnerDeps) {
   function getHandle(id: string, input: string): CommandHandle {
-    const uninitialized = (): never => {
-      throw new Error("CommandHandle callback used before initialization");
-    };
-
-    const handle: CommandHandle = {
-      id,
-      input,
-      update: uninitialized,
-      finish: uninitialized,
-      fail: uninitialized,
-    };
-
     const update = (updateData: CommandUpdate) => {
       const previous = buffersRef.current.byId.get(id);
       const wasFinished =
@@ -113,28 +101,30 @@ export function createCommandRunner({
       refreshDerived();
     };
 
-    handle.update = update;
-
-    handle.finish = (
-      finalOutput: string,
-      success = true,
-      dimOutput?: boolean,
-      preformatted?: boolean,
-    ) =>
-      update({
-        output: finalOutput,
-        phase: "finished",
-        success,
-        dimOutput,
-        preformatted,
-      });
-
-    handle.fail = (finalOutput: string) =>
-      update({
-        output: finalOutput,
-        phase: "finished",
-        success: false,
-      });
+    const handle: CommandHandle = {
+      id,
+      input,
+      update,
+      finish: (
+        finalOutput: string,
+        success = true,
+        dimOutput?: boolean,
+        preformatted?: boolean,
+      ) =>
+        update({
+          output: finalOutput,
+          phase: "finished",
+          success,
+          dimOutput,
+          preformatted,
+        }),
+      fail: (finalOutput: string) =>
+        update({
+          output: finalOutput,
+          phase: "finished",
+          success: false,
+        }),
+    };
 
     return handle;
   }

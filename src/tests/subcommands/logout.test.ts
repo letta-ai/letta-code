@@ -8,8 +8,7 @@ describe("runLogoutSubcommand", () => {
     const logoutMock = mock(async () => {});
     const logs: string[] = [];
     const originalLog = console.log;
-    console.log = (...args: unknown[]) =>
-      logs.push(args.map(String).join(" "));
+    console.log = (...args: unknown[]) => logs.push(args.map(String).join(" "));
 
     try {
       // Import the module under test, replacing the settingsManager singleton
