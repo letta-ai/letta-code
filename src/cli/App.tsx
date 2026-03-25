@@ -553,6 +553,7 @@ const NON_STATE_COMMANDS = new Set([
   "/download",
   "/statusline",
   "/reasoning-tab",
+  "/secret",
 ]);
 
 // Check if a command is interactive (opens overlay, should not be queued)
@@ -2742,9 +2743,16 @@ export default function App({
   refreshDerivedRef.current = refreshDerived;
 
   const recordCommandReminder = useCallback((event: CommandFinishedEvent) => {
-    const input = event.input.trim();
+    let input = event.input.trim();
     if (!input.startsWith("/")) {
       return;
+    }
+    // Redact secret values so they don't leak into agent context
+    if (/^\/secret\s+set\s+/i.test(input)) {
+      const parts = input.split(/\s+/);
+      if (parts.length >= 4) {
+        input = `${parts[0]} ${parts[1]} ${parts[2]} ***`;
+      }
     }
     enqueueCommandIoReminder(sharedReminderStateRef.current, {
       input,
@@ -7107,20 +7115,20 @@ export default function App({
       }
 
       const isSlashCommand = userTextForInput.startsWith("/");
-      if (isAgentBusy() && isSlashCommand) {
+      // Interactive/non-state slash commands bypass queueing so menus stay responsive
+      // while the agent is busy. Overlay writes are still deferred via queuedOverlayAction.
+      const shouldBypassQueue =
+        isSlashCommand &&
+        (isInteractiveCommand(userTextForInput) ||
+          isNonStateCommand(userTextForInput));
+
+      if (isAgentBusy() && isSlashCommand && !shouldBypassQueue) {
         const attemptedCommand = userTextForInput.split(/\s+/)[0] || "/";
         const disabledMessage = `'${attemptedCommand}' is disabled while the agent is running.`;
         const cmd = commandRunner.start(userTextForInput, disabledMessage);
         cmd.fail(disabledMessage);
         return { submitted: true }; // Clears input
       }
-
-      // Interactive slash commands (like /memory, /model, /agents) bypass queueing
-      // so users can browse/view while the agent is working.
-      // Changes made in these overlays will be queued until end_turn.
-      const shouldBypassQueue =
-        isInteractiveCommand(userTextForInput) ||
-        isNonStateCommand(userTextForInput);
 
       if (isAgentBusy() && !shouldBypassQueue) {
         // Enqueue via QueueRuntime — onEnqueued callback updates queueDisplay.
@@ -10700,6 +10708,7 @@ ${SYSTEM_REMINDER_CLOSE}
           initialInput.push({
             type: "approval",
             approvals: queuedApprovalResults,
+            otid: randomUUID(),
           });
         } else {
           debugWarn(
@@ -11057,7 +11066,11 @@ ${SYSTEM_REMINDER_CLOSE}
           const hadNotifications =
             appendTaskNotificationEvents(queuedNotifications);
           const input: Array<MessageCreate | ApprovalCreate> = [
-            { type: "approval", approvals: allResults as ApprovalResult[] },
+            {
+              type: "approval",
+              approvals: allResults as ApprovalResult[],
+              otid: randomUUID(),
+            },
           ];
           if (queuedItemsToAppend && queuedItemsToAppend.length > 0) {
             const queuedUserText = buildQueuedUserText(queuedItemsToAppend);
