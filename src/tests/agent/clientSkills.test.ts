@@ -5,6 +5,9 @@ import type {
   SkillSource,
 } from "../../agent/skills";
 
+/** Normalize path separators so assertions work on Windows too. */
+const normalize = (p: string): string => p.replace(/\\/g, "/");
+
 const baseSkill: Skill = {
   id: "base",
   name: "Base",
@@ -82,7 +85,7 @@ describe("buildClientSkillsPayload", () => {
         sources: options?.sources,
       });
 
-      if (projectSkillsPath?.endsWith("/.agents/skills")) {
+      if (normalize(projectSkillsPath ?? "").endsWith("/.agents/skills")) {
         return {
           skills: [
             {
@@ -134,7 +137,9 @@ describe("buildClientSkillsPayload", () => {
 
     expect(calls).toHaveLength(2);
     expect(calls[0]).toEqual({ path: "/tmp/.skills", sources: ["project"] });
-    expect(calls[1]?.path.endsWith("/.agents/skills")).toBe(true);
+    expect(normalize(calls[1]?.path ?? "").endsWith("/.agents/skills")).toBe(
+      true,
+    );
     expect(calls[1]?.sources).toEqual(["project"]);
     expect(result.clientSkills).toEqual([
       {
@@ -164,7 +169,7 @@ describe("buildClientSkillsPayload", () => {
     const discoverSkillsFn = async (
       projectSkillsPath?: string,
     ): Promise<SkillDiscoveryResult> => {
-      if (projectSkillsPath?.endsWith("/.agents/skills")) {
+      if (normalize(projectSkillsPath ?? "").endsWith("/.agents/skills")) {
         throw new Error("boom");
       }
 
@@ -201,7 +206,9 @@ describe("buildClientSkillsPayload", () => {
       "ok-skill": "/tmp/.skills/ok-skill/SKILL.md",
     });
     expect(result.errors).toHaveLength(1);
-    expect(result.errors[0]?.path.endsWith("/.agents/skills")).toBe(true);
+    expect(
+      normalize(result.errors[0]?.path ?? "").endsWith("/.agents/skills"),
+    ).toBe(true);
     expect(
       logs.some((m) =>
         m.includes("Failed to build some client_skills entries"),
