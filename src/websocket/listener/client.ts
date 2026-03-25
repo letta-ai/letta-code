@@ -9,13 +9,13 @@ import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agen
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import WebSocket from "ws";
 import { getClient } from "../../agent/client";
-import { setMessageQueueAdder } from "../../cli/helpers/messageQueueBridge";
 import {
   ensureFileIndex,
   getIndexRoot,
   refreshFileIndex,
   searchFileIndex,
 } from "../../cli/helpers/fileIndex";
+import { setMessageQueueAdder } from "../../cli/helpers/messageQueueBridge";
 import { generatePlanFilePath } from "../../cli/helpers/planName";
 import {
   subscribe as subscribeToSubagentState,
