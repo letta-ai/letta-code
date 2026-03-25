@@ -31,6 +31,7 @@ describe("bootstrap reminder reset wiring", () => {
       'const inputCmd = "/new";', // new-agent creation flow
       "const newMatch = msg.trim().match(/^\\/new(?:\\s+(.+))?$/);",
       'if (msg.trim() === "/clear")',
+      'if (msg.trim() === "/fork")', // fork conversation flow
       'origin: "resume-direct"',
       'if (action.type === "switch_conversation")', // queued conversation switch flow
       'origin: "resume-selector"',
