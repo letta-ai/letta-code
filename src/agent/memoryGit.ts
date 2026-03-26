@@ -14,12 +14,13 @@ import {
   chmodSync,
   existsSync,
   mkdirSync,
+  readFileSync,
   renameSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { debugLog, debugWarn } from "../utils/debug";
 import { getClient, getServerUrl } from "./client";
@@ -503,6 +504,67 @@ export async function removeGitMemoryTag(agentId: string): Promise<void> {
     debugWarn(
       "memfs-git",
       `Failed to remove git-memory tag: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
+
+/**
+ * Write a file into the memory repo, commit, and push.
+ *
+ * Used by the harness (not the agent) to persist generated files like
+ * system/secrets.md. Skips the commit if the file content is unchanged.
+ * Push failures are non-fatal — the local commit will be pushed on the
+ * next pull/push cycle.
+ */
+export async function commitMemoryFile(
+  agentId: string,
+  relativePath: string,
+  content: string,
+  commitMessage: string,
+): Promise<void> {
+  const dir = getMemoryRepoDir(agentId);
+  if (!isGitRepo(agentId)) return;
+
+  // Write the file
+  const filePath = join(dir, relativePath);
+  const fileDir = dirname(filePath);
+  if (!existsSync(fileDir)) {
+    mkdirSync(fileDir, { recursive: true });
+  }
+
+  // Skip if content is identical (avoids empty commits)
+  if (existsSync(filePath)) {
+    const existing = readFileSync(filePath, "utf8");
+    if (existing === content) return;
+  }
+
+  writeFileSync(filePath, content, "utf8");
+
+  // Stage, commit, push
+  await runGit(dir, ["add", relativePath]);
+
+  try {
+    await runGit(dir, ["diff", "--cached", "--quiet"]);
+    return; // nothing staged
+  } catch {
+    // staged changes exist — continue
+  }
+
+  await runGit(dir, [
+    "commit",
+    "--no-verify",
+    "-m",
+    commitMessage,
+  ]);
+
+  // Best-effort push — failure is non-fatal
+  try {
+    const token = await getAuthToken();
+    await runGit(dir, ["push"], token);
+  } catch (err) {
+    debugWarn(
+      "memfs-git",
+      `Push after commitMemoryFile failed (will sync later): ${err instanceof Error ? err.message : String(err)}`,
     );
   }
 }

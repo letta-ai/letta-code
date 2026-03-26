@@ -4,8 +4,7 @@
  * and cached in memory for fast $SECRET_NAME substitution in shell commands.
  */
 
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { getClient } from "../agent/client";
 
 declare const process: { env: Record<string, string | undefined> };
@@ -15,9 +14,6 @@ let cachedSecrets: Record<string, string> | null = null;
 
 /** Stored agent ID, set during initialization. */
 let storedAgentId: string | null = null;
-
-/** Stored memory directory path, set during initialization. */
-let storedMemoryDir: string | null = null;
 
 /**
  * Get the agent ID (set during init, falls back to env).
@@ -38,10 +34,8 @@ function getAgentId(): string {
  */
 export async function initSecretsFromServer(
   agentId: string,
-  memoryDir?: string,
 ): Promise<void> {
   storedAgentId = agentId;
-  if (memoryDir) storedMemoryDir = memoryDir;
   const client = await getClient();
 
   const agent = await client.agents.retrieve(agentId, {
@@ -58,7 +52,7 @@ export async function initSecretsFromServer(
   }
 
   cachedSecrets = secrets;
-  syncSecretsToMemoryBlock();
+  await syncSecretsToMemoryBlock();
 }
 
 /**
@@ -95,7 +89,7 @@ export async function setSecretOnServer(
   await client.agents.update(agentId, { secrets });
 
   cachedSecrets = secrets;
-  syncSecretsToMemoryBlock();
+  await syncSecretsToMemoryBlock();
 }
 
 /**
@@ -118,20 +112,19 @@ export async function deleteSecretOnServer(key: string): Promise<boolean> {
   await client.agents.update(agentId, { secrets });
 
   cachedSecrets = secrets;
-  syncSecretsToMemoryBlock();
+  await syncSecretsToMemoryBlock();
   return true;
 }
 
 /**
  * Sync secret names to the memory block so the agent knows which secrets exist.
- * Writes to $MEMORY_DIR/system/secrets.md (names only, no values).
+ * Commits system/secrets.md via git so it syncs across hosts.
  */
-function syncSecretsToMemoryBlock(): void {
-  const memoryDir = storedMemoryDir || process.env.MEMORY_DIR;
-  if (!memoryDir) return;
+async function syncSecretsToMemoryBlock(): Promise<void> {
+  const agentId = storedAgentId;
+  if (!agentId) return;
 
   const names = listSecretNames();
-  const secretsFilePath = join(memoryDir, "system", "secrets.md");
 
   const description =
     names.length > 0
@@ -152,12 +145,13 @@ description: ${description}
 ${body}
 `;
 
-  const systemDir = dirname(secretsFilePath);
-  if (!existsSync(systemDir)) {
-    mkdirSync(systemDir, { recursive: true });
-  }
-
-  writeFileSync(secretsFilePath, rendered, "utf8");
+  const { commitMemoryFile } = await import("../agent/memoryGit");
+  await commitMemoryFile(
+    agentId,
+    join("system", "secrets.md"),
+    rendered,
+    "chore(harness): sync secret names",
+  );
 }
 
 /**
