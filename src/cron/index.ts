@@ -6,6 +6,7 @@ export {
   type CronTask,
   type CronTaskStatus,
   claimSchedulerLease,
+  computeJitter,
   deleteAllTasks,
   deleteTask,
   garbageCollect,

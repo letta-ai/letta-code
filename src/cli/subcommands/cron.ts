@@ -154,9 +154,14 @@ function handleAdd(values: ReturnType<typeof parseCronArgs>["values"]): number {
       );
       return 1;
     }
+    if (values.once) {
+      console.error(
+        "Error: --once cannot be used with --cron. Use --at for one-shot tasks.",
+      );
+      return 1;
+    }
     cron = cronValue;
-    // --cron is recurring unless --once is specified
-    recurring = !values.once;
+    recurring = true;
   } else {
     console.error("Error: no schedule specified.");
     return 1;

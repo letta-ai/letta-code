@@ -197,23 +197,134 @@ export function isValidCron(expr: string): boolean {
 // ── Cron evaluation ─────────────────────────────────────────────────
 
 /**
- * Check if a cron expression matches a given date/time (minute-level).
- * Supports: `*`, `N`, `*​/N` (step), `N-N` (range) per field.
- * Fields: minute, hour, day-of-month, month, day-of-week.
+ * Derive minute/hour/day/month/dow for a Date in a given IANA timezone.
+ * Falls back to local time if the timezone is invalid or unavailable.
+ *
+ * Note on DST: Standard cron semantics apply — if a wall-clock minute is
+ * skipped during spring-forward, tasks scheduled for that minute won't fire.
+ * If a wall-clock hour repeats during fall-back, tasks may fire twice (once
+ * per occurrence of the matching minute).
  */
-export function cronMatchesTime(expr: string, date: Date): boolean {
+function getTimeComponents(
+  date: Date,
+  timezone?: string | null,
+): [
+  minute: number,
+  hour: number,
+  dayOfMonth: number,
+  month: number,
+  dayOfWeek: number,
+] {
+  if (!timezone) {
+    return [
+      date.getMinutes(),
+      date.getHours(),
+      date.getDate(),
+      date.getMonth() + 1,
+      date.getDay(),
+    ];
+  }
+  try {
+    // Intl.DateTimeFormat gives us wall-clock components in the target tz.
+    const fmt = new Intl.DateTimeFormat("en-US", {
+      timeZone: timezone,
+      hour: "numeric",
+      minute: "numeric",
+      day: "numeric",
+      month: "numeric",
+      weekday: "short",
+      hour12: false,
+    });
+    const parts = new Map(
+      fmt.formatToParts(date).map((p) => [p.type, p.value]),
+    );
+
+    const dayOfWeekStr = parts.get("weekday") ?? "";
+    const dowMap: Record<string, number> = {
+      Sun: 0,
+      Mon: 1,
+      Tue: 2,
+      Wed: 3,
+      Thu: 4,
+      Fri: 5,
+      Sat: 6,
+    };
+
+    return [
+      Number.parseInt(parts.get("minute") ?? "0", 10),
+      Number.parseInt(parts.get("hour") ?? "0", 10),
+      Number.parseInt(parts.get("day") ?? "1", 10),
+      Number.parseInt(parts.get("month") ?? "1", 10),
+      dowMap[dayOfWeekStr] ?? date.getDay(),
+    ];
+  } catch {
+    // Invalid timezone — fall back to local time.
+    return [
+      date.getMinutes(),
+      date.getHours(),
+      date.getDate(),
+      date.getMonth() + 1,
+      date.getDay(),
+    ];
+  }
+}
+
+/**
+ * Check if a cron expression matches a given date/time (minute-level).
+ * Supports: *, N, step (N), range (N-N) per field.
+ * Fields: minute, hour, day-of-month, month, day-of-week.
+ *
+ * Standard cron day semantics: when both day-of-month (field 2) and
+ * day-of-week (field 4) are constrained (not `*`), the result is OR —
+ * the expression fires if either day condition matches. When only one is
+ * constrained, it behaves as a normal AND with the other fields.
+ *
+ * When `timezone` is provided, the date is evaluated in that IANA timezone
+ * rather than the process's local timezone.
+ */
+export function cronMatchesTime(
+  expr: string,
+  date: Date,
+  timezone?: string | null,
+): boolean {
   const fields = expr.trim().split(/\s+/);
   if (fields.length !== 5) return false;
 
-  const values = [
-    date.getMinutes(),
-    date.getHours(),
-    date.getDate(),
-    date.getMonth() + 1,
-    date.getDay(), // 0=Sun
+  const [minute, hour, dayOfMonth, month, dayOfWeek] = getTimeComponents(
+    date,
+    timezone,
+  );
+
+  // Destructure after length check so Biome doesn't complain about non-null.
+  const [fMinute, fHour, fDom, fMonth, fDow] = fields as [
+    string,
+    string,
+    string,
+    string,
+    string,
   ];
 
-  return fields.every((field, i) => fieldMatches(field, values[i] ?? 0));
+  // Minute, hour, month must always match.
+  if (!fieldMatches(fMinute, minute)) return false;
+  if (!fieldMatches(fHour, hour)) return false;
+  if (!fieldMatches(fMonth, month)) return false;
+
+  const domField = fDom;
+  const dowField = fDow;
+  const domConstrained = domField !== "*";
+  const dowConstrained = dowField !== "*";
+
+  if (domConstrained && dowConstrained) {
+    // Standard cron OR: fire if either day-of-month or day-of-week matches.
+    return (
+      fieldMatches(domField, dayOfMonth) || fieldMatches(dowField, dayOfWeek)
+    );
+  }
+
+  // One or neither constrained — AND logic (unconstrained fields always match).
+  return (
+    fieldMatches(domField, dayOfMonth) && fieldMatches(dowField, dayOfWeek)
+  );
 }
 
 function fieldMatches(field: string, value: number): boolean {

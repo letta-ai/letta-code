@@ -213,7 +213,7 @@ function handleModeChange(
   }
 }
 
-function ensureConversationQueueRuntime(
+export function ensureConversationQueueRuntime(
   listener: ListenerRuntime,
   runtime: ConversationRuntime,
 ): ConversationRuntime {

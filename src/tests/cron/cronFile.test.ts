@@ -5,6 +5,7 @@ import {
   type AddTaskInput,
   addTask,
   claimSchedulerLease,
+  computeJitter,
   deleteAllTasks,
   deleteTask,
   garbageCollect,
@@ -263,5 +264,75 @@ describe("withLock", () => {
   test("returns function result", () => {
     const result = withLock(() => 42);
     expect(result).toBe(42);
+  });
+});
+
+// ── computeJitter ─────────────────────────────────────────────────
+
+describe("computeJitter", () => {
+  const now = new Date("2026-03-26T00:00:00Z");
+
+  test("recurring jitter is always < 60s", () => {
+    // Hourly cron: period=3600s, 10% = 360s, but cap at 59999ms
+    const jitter = computeJitter(
+      "test-hourly-task",
+      "0 * * * *",
+      true,
+      null,
+      now,
+    );
+    expect(jitter).toBeGreaterThanOrEqual(0);
+    expect(jitter).toBeLessThan(60_000);
+  });
+
+  test("recurring jitter for daily cron is < 60s", () => {
+    // Daily: period=86400s, 10% = 8640s, but cap at 59999ms
+    const jitter = computeJitter(
+      "test-daily-task",
+      "30 9 * * *",
+      true,
+      null,
+      now,
+    );
+    expect(jitter).toBeGreaterThanOrEqual(0);
+    expect(jitter).toBeLessThan(60_000);
+  });
+
+  test("recurring jitter for frequent cron stays small", () => {
+    // Every 5 min: period=300s, 10% = 30s < 60s → no cap needed
+    const jitter = computeJitter(
+      "test-5m-task",
+      "*/5 * * * *",
+      true,
+      null,
+      now,
+    );
+    expect(jitter).toBeGreaterThanOrEqual(0);
+    expect(jitter).toBeLessThan(30_000); // 10% of 300s = 30s
+  });
+
+  test("one-shot at :00 gets negative jitter up to 90s", () => {
+    const scheduledFor = new Date("2026-03-27T14:00:00Z");
+    const jitter = computeJitter(
+      "test-oneshot",
+      "0 14 * * *",
+      false,
+      scheduledFor,
+      now,
+    );
+    expect(jitter).toBeLessThanOrEqual(0);
+    expect(jitter).toBeGreaterThanOrEqual(-90_000);
+  });
+
+  test("one-shot at non-:00/:30 minute gets zero jitter", () => {
+    const scheduledFor = new Date("2026-03-27T14:15:00Z");
+    const jitter = computeJitter(
+      "test-oneshot-15",
+      "15 14 * * *",
+      false,
+      scheduledFor,
+      now,
+    );
+    expect(jitter).toBe(0);
   });
 });

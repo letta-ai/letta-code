@@ -201,6 +201,63 @@ describe("cronMatchesTime", () => {
     expect(cronMatchesTime("30 14 26 3 *", date)).toBe(true);
     expect(cronMatchesTime("30 14 27 3 *", date)).toBe(false);
   });
+
+  test("day-of-month and day-of-week OR semantics", () => {
+    // 2026-03-26 is a Thursday (day 4), day-of-month 26
+    const date = new Date("2026-03-26T09:00:00");
+
+    // Both constrained: "0 9 15 * 4" = 15th OR Thursday → should fire (it's Thursday)
+    expect(cronMatchesTime("0 9 15 * 4", date)).toBe(true);
+
+    // Both constrained: "0 9 26 * 1" = 26th OR Monday → should fire (it's the 26th)
+    expect(cronMatchesTime("0 9 26 * 1", date)).toBe(true);
+
+    // Both constrained: "0 9 15 * 1" = 15th OR Monday → neither matches
+    expect(cronMatchesTime("0 9 15 * 1", date)).toBe(false);
+
+    // Only day-of-month constrained (dow is *): AND logic
+    expect(cronMatchesTime("0 9 26 * *", date)).toBe(true);
+    expect(cronMatchesTime("0 9 15 * *", date)).toBe(false);
+
+    // Only day-of-week constrained (dom is *): AND logic
+    expect(cronMatchesTime("0 9 * * 4", date)).toBe(true);
+    expect(cronMatchesTime("0 9 * * 1", date)).toBe(false);
+  });
+
+  test("timezone-aware matching", () => {
+    // Create a UTC date: 2026-03-26 at 22:30 UTC
+    const utcDate = new Date("2026-03-26T22:30:00Z");
+
+    // In UTC, this is hour 22, minute 30
+    expect(cronMatchesTime("30 22 * * *", utcDate, "UTC")).toBe(true);
+    expect(cronMatchesTime("30 15 * * *", utcDate, "UTC")).toBe(false);
+
+    // In America/Los_Angeles (PDT, UTC-7), 22:30 UTC = 15:30 local
+    expect(cronMatchesTime("30 15 * * *", utcDate, "America/Los_Angeles")).toBe(
+      true,
+    );
+    expect(cronMatchesTime("30 22 * * *", utcDate, "America/Los_Angeles")).toBe(
+      false,
+    );
+
+    // In Asia/Tokyo (JST, UTC+9), 22:30 UTC = 07:30 next day (March 27)
+    expect(cronMatchesTime("30 7 27 3 *", utcDate, "Asia/Tokyo")).toBe(true);
+    expect(cronMatchesTime("30 22 26 3 *", utcDate, "Asia/Tokyo")).toBe(false);
+  });
+
+  test("invalid timezone falls back to local time", () => {
+    const date = new Date("2026-03-26T14:30:00");
+    // Invalid timezone should not throw, should match same as no timezone
+    expect(cronMatchesTime("30 14 * * *", date, "Invalid/Timezone")).toBe(
+      cronMatchesTime("30 14 * * *", date),
+    );
+  });
+
+  test("null/undefined timezone uses local time", () => {
+    const date = new Date("2026-03-26T14:30:00");
+    expect(cronMatchesTime("30 14 * * *", date, null)).toBe(true);
+    expect(cronMatchesTime("30 14 * * *", date, undefined)).toBe(true);
+  });
 });
 
 // ── estimatePeriodMs ────────────────────────────────────────────────

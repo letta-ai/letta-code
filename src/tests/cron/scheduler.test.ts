@@ -1,7 +1,13 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import path from "node:path";
-import { type AddTaskInput, addTask } from "../../cron/cronFile";
+import {
+  type AddTaskInput,
+  addTask,
+  deleteTask,
+  getTask,
+  updateTask,
+} from "../../cron/cronFile";
 import { cronMatchesTime } from "../../cron/parseInterval";
 
 // ── Test setup ──────────────────────────────────────────────────────
@@ -147,5 +153,48 @@ describe("task lifecycle", () => {
     );
     // jitter_offset_ms should be a number (may be 0 or negative for :00/:30)
     expect(typeof task.jitter_offset_ms).toBe("number");
+  });
+});
+
+// ── Delayed-fire revalidation tests ─────────────────────────────────
+
+describe("jitter revalidation guards", () => {
+  test("deleted task is not found by getTask (revalidation would skip fire)", () => {
+    const { task } = addTask(makeInput());
+    expect(getTask(task.id)).not.toBeNull();
+
+    // Simulate deletion during jitter window
+    deleteTask(task.id);
+    expect(getTask(task.id)).toBeNull();
+  });
+
+  test("cancelled task has non-active status (revalidation would skip fire)", () => {
+    const { task } = addTask(makeInput());
+    expect(task.status).toBe("active");
+
+    // Simulate cancellation during jitter window
+    updateTask(task.id, (t) => {
+      t.status = "cancelled";
+    });
+    const fresh = getTask(task.id);
+    expect(fresh?.status).toBe("cancelled");
+  });
+
+  test("fired one-shot has non-active status (revalidation would skip fire)", () => {
+    const { task } = addTask(
+      makeInput({
+        recurring: false,
+        scheduled_for: new Date(Date.now() + 60000),
+      }),
+    );
+    expect(task.status).toBe("active");
+
+    // Simulate one-shot being marked as fired during jitter window
+    updateTask(task.id, (t) => {
+      t.status = "fired";
+      t.fired_at = new Date().toISOString();
+    });
+    const fresh = getTask(task.id);
+    expect(fresh?.status).toBe("fired");
   });
 });

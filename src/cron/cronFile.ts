@@ -290,7 +290,9 @@ export function computeJitter(
   if (recurring) {
     const periodMs = estimatePeriodMs(cron);
     if (periodMs <= 0) return 0;
-    const maxJitter = Math.min(periodMs * 0.1, 15 * 60 * 1000);
+    // Cap recurring jitter to < 60s (one tick interval). The scheduler
+    // evaluates once per minute, so cross-minute jitter would be ignored.
+    const maxJitter = Math.min(periodMs * 0.1, 59_999);
     return simpleHash(taskId) % Math.max(1, Math.floor(maxJitter));
   }
 
@@ -300,9 +302,7 @@ export function computeJitter(
   const min = scheduledFor.getMinutes();
   if (min === 0 || min === 30) {
     const offset = -(simpleHash(taskId) % 90_000);
-    // Don't fire before creation
-    if (scheduledFor.getTime() + offset < createdAt.getTime()) return 0;
-    // Don't push into the past at creation time
+    // Don't fire before creation time
     if (scheduledFor.getTime() + offset < createdAt.getTime()) return 0;
     return offset;
   }

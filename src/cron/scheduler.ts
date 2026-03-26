@@ -14,6 +14,7 @@
 
 import type WebSocket from "ws";
 import type { CronPromptQueueItem, DequeuedBatch } from "../queue/queueRuntime";
+import { ensureConversationQueueRuntime } from "../websocket/listener/client";
 import { scheduleQueuePump } from "../websocket/listener/queue";
 import {
   getActiveRuntime,
@@ -30,6 +31,7 @@ import {
   garbageCollect,
   getActiveTasks,
   getCronFileMtime,
+  getTask,
   releaseSchedulerLease,
   updateTask,
   verifySchedulerLease,
@@ -54,6 +56,8 @@ interface SchedulerState {
   firedThisMinute: Set<string>;
   /** Minute key for the current tick (e.g. "2026-03-26T00:15"). */
   lastMinuteKey: string;
+  /** Pending jitter-delayed timers — cleared on stop/lease loss. */
+  pendingTimers: Set<NodeJS.Timeout>;
 }
 
 let schedulerState: SchedulerState | null = null;
@@ -100,27 +104,16 @@ function shouldFireTask(task: CronTask, now: Date): boolean {
     }
   }
 
-  // One-shot: check if scheduled_for is now or past
+  // One-shot: check if scheduled_for is now or past (jitter applied to scheduled time)
   if (!task.recurring && task.scheduled_for) {
     const scheduledMs =
       new Date(task.scheduled_for).getTime() + task.jitter_offset_ms;
     return scheduledMs <= now.getTime();
   }
 
-  // Apply jitter offset: delay fire by jitter_offset_ms
-  // For recurring tasks with late jitter (positive offset), check if the
-  // adjusted time has passed within this minute window.
-  const jitter = task.jitter_offset_ms;
-  if (jitter > 0 && jitter < TICK_INTERVAL_MS) {
-    // Cron must match the CURRENT minute (not a jitter-adjusted time)
-    if (!cronMatchesTime(task.cron, now)) return false;
-    // The jitter means "fire N ms after the minute boundary"
-    // Since we tick once per minute, this fires on the matching minute.
-    // The jitter is a sub-minute delay that the scheduler tolerates.
-    return true;
-  }
-
-  return cronMatchesTime(task.cron, now);
+  // Recurring: check if the cron expression matches this minute.
+  // Jitter is applied as a setTimeout delay at the call site, not here.
+  return cronMatchesTime(task.cron, now, task.timezone);
 }
 
 function fireCronTask(
@@ -133,13 +126,20 @@ function fireCronTask(
   const listener = getActiveRuntime();
   if (!listener) return;
 
-  const conversationRuntime = getOrCreateConversationRuntime(
+  const rawRuntime = getOrCreateConversationRuntime(
     listener,
     task.agent_id,
     task.conversation_id === "default" ? undefined : task.conversation_id,
   );
 
-  if (!conversationRuntime) return;
+  if (!rawRuntime) return;
+
+  // Ensure the queue runtime is initialized (getOrCreateConversationRuntime
+  // leaves queueRuntime as null — the listener's scoped helper initializes it).
+  const conversationRuntime = ensureConversationQueueRuntime(
+    listener,
+    rawRuntime,
+  );
 
   const text = wrapCronPrompt(task);
 
@@ -182,8 +182,9 @@ function handleExpiredRecurring(task: CronTask, now: Date): void {
   }
 }
 
-function handleMissedOneShot(task: CronTask, now: Date): void {
-  if (task.recurring || !task.scheduled_for) return;
+/** Returns true if the task was marked as missed (caller should skip firing). */
+function handleMissedOneShot(task: CronTask, now: Date): boolean {
+  if (task.recurring || !task.scheduled_for) return false;
   // A one-shot is "missed" if it's been more than 5 minutes past scheduled time
   const scheduledMs = new Date(task.scheduled_for).getTime();
   const missThreshold = 5 * 60_000;
@@ -192,7 +193,9 @@ function handleMissedOneShot(task: CronTask, now: Date): void {
       t.status = "missed";
       t.missed_at = now.toISOString();
     });
+    return true;
   }
+  return false;
 }
 
 function tick(
@@ -226,19 +229,42 @@ function tick(
     handleExpiredRecurring(task, now);
     if (task.status !== "active") continue;
 
-    // Handle missed one-shots
-    handleMissedOneShot(task, now);
+    // Handle missed one-shots (skip firing if marked missed)
+    if (handleMissedOneShot(task, now)) continue;
 
     // Per-minute dedup
     if (state.firedThisMinute.has(task.id)) continue;
 
     if (shouldFireTask(task, now)) {
       state.firedThisMinute.add(task.id);
-      try {
-        fireCronTask(task, now, socket, opts, processQueuedTurn);
-      } catch (err) {
-        console.error(`[Cron] Error firing task ${task.id}:`, err);
-        // Transient error — task stays active, will retry next tick
+
+      // Apply jitter as a real delay for recurring tasks so that tasks with
+      // different jitter values actually fire at different times.
+      const jitterMs = task.recurring ? task.jitter_offset_ms : 0;
+      const taskId = task.id;
+      const doFire = () => {
+        // Revalidate before firing: scheduler may have stopped, lease may
+        // have been lost, or the task may have been deleted/cancelled during
+        // the jitter window.
+        if (!schedulerState) return;
+        const freshTask = getTask(taskId);
+        if (!freshTask || freshTask.status !== "active") return;
+
+        try {
+          fireCronTask(freshTask, now, socket, opts, processQueuedTurn);
+        } catch (err) {
+          console.error(`[Cron] Error firing task ${taskId}:`, err);
+        }
+      };
+
+      if (jitterMs > 0) {
+        const handle = setTimeout(() => {
+          state.pendingTimers.delete(handle);
+          doFire();
+        }, jitterMs);
+        state.pendingTimers.add(handle);
+      } else {
+        doFire();
       }
     }
   }
@@ -275,6 +301,7 @@ export function startScheduler(
     cachedTasks: [],
     firedThisMinute: new Set(),
     lastMinuteKey: minuteKey(now),
+    pendingTimers: new Set(),
   };
 
   // Initial tick
@@ -306,6 +333,12 @@ export function stopScheduler(): void {
 
   clearInterval(schedulerState.tickInterval);
   clearInterval(schedulerState.gcInterval);
+
+  // Cancel all jitter-delayed fires that haven't executed yet.
+  for (const handle of schedulerState.pendingTimers) {
+    clearTimeout(handle);
+  }
+  schedulerState.pendingTimers.clear();
 
   try {
     releaseSchedulerLease(schedulerState.token);
