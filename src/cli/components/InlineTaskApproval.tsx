@@ -12,6 +12,7 @@ type Props = {
     description: string;
     prompt: string;
     model?: string;
+    isBackground?: boolean;
   };
   onApprove: () => void;
   onApproveAlways: (scope: "project" | "session") => void;
@@ -131,7 +132,8 @@ export const InlineTaskApproval = memo(
 
     // Memoize the static task content so it doesn't re-render on keystroke
     const memoizedTaskContent = useMemo(() => {
-      const { subagentType, description, prompt, model } = taskInfo;
+      const { subagentType, description, prompt, model, isBackground } =
+        taskInfo;
 
       // Show full prompt - users need to see what the task will do
       const truncatedPrompt = prompt;
@@ -155,6 +157,7 @@ export const InlineTaskApproval = memo(
                   <Text bold color={colors.subagent.header}>
                     {subagentType}
                   </Text>
+                  {isBackground && <Text dimColor>{" [background]"}</Text>}
                   <Text dimColor>
                     {" — "}
                     {description}
