@@ -75,6 +75,7 @@ class TelemetryManager {
   private messageCount = 0;
   private toolCallCount = 0;
   private sessionEndTracked = false;
+  private initialized = false;
   private flushInterval: NodeJS.Timeout | null = null;
   private serverVersion: string | null = null;
   private readonly FLUSH_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
@@ -121,9 +122,10 @@ class TelemetryManager {
    * Initialize telemetry and start periodic flushing
    */
   init() {
-    if (!this.isTelemetryEnabled()) {
+    if (!this.isTelemetryEnabled() || this.initialized) {
       return;
     }
+    this.initialized = true;
 
     // Initialize device ID (persistent across sessions)
     this.deviceId = settingsManager.getOrCreateDeviceId();
@@ -160,6 +162,36 @@ class TelemetryManager {
       }
       // Exit immediately - don't wait for flush
       process.exit(0);
+    });
+
+    process.on("uncaughtException", (error) => {
+      try {
+        this.trackError(
+          "uncaught_exception",
+          error instanceof Error ? error.message : String(error),
+          "process_uncaught_exception",
+        );
+        this.flush().catch(() => {
+          // Silently ignore
+        });
+      } catch {
+        // Silently ignore - don't prevent process from exiting
+      }
+    });
+
+    process.on("unhandledRejection", (reason) => {
+      try {
+        this.trackError(
+          "unhandled_rejection",
+          reason instanceof Error ? reason.message : String(reason),
+          "process_unhandled_rejection",
+        );
+        this.flush().catch(() => {
+          // Silently ignore
+        });
+      } catch {
+        // Silently ignore - don't prevent process from exiting
+      }
     });
 
     // TODO: Add telemetry for crashes and abnormal exits
@@ -507,6 +539,7 @@ class TelemetryManager {
       clearInterval(this.flushInterval);
       this.flushInterval = null;
     }
+    this.initialized = false;
   }
 }
 

@@ -1,5 +1,6 @@
 import type WebSocket from "ws";
 import { getClient } from "../../agent/client";
+import { trackBoundaryError } from "../../telemetry/errorReporting";
 import type {
   ExecuteCommandCommand,
   SlashCommandEndMessage,
@@ -76,6 +77,11 @@ export async function handleExecuteCommand(
       success: true,
     });
   } catch (error) {
+    trackBoundaryError({
+      errorType: "listener_execute_command_failed",
+      error,
+      context: "listener_command_execution",
+    });
     const errorMessage = error instanceof Error ? error.message : String(error);
     emitSlashCommandEnd(socket, conversationRuntime, scope, {
       command_id: command.command_id,
@@ -118,7 +124,7 @@ function emitSlashCommandEnd(
  * Returns a human-readable success message.
  */
 async function handleClearCommand(
-  socket: WebSocket,
+  _socket: WebSocket,
   conversationRuntime: ConversationRuntime,
   opts: {
     onStatusChange?: StartListenerOptions["onStatusChange"];
