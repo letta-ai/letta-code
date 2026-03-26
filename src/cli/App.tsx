@@ -8392,10 +8392,12 @@ export default function App({
 
             // For default conversation, pass agent_id
             const isDefault = conversationIdRef.current === "default";
-            const forked = await client.conversations.fork(
-              conversationIdRef.current,
-              isDefault ? { agent_id: agentId } : undefined,
-            );
+            const forked = (await client.post(
+              `/v1/conversations/${encodeURIComponent(conversationIdRef.current)}/fork`,
+              {
+                body: isDefault ? { agent_id: agentId } : {},
+              },
+            )) as { id: string };
 
             // If we forked with an explicit summary, update it
             if (conversationSummary) {
