@@ -59,6 +59,8 @@ function makeInput(overrides: Partial<AddTaskInput> = {}): AddTaskInput {
   return {
     agent_id: "agent-test-001",
     conversation_id: "default",
+    name: "Test task",
+    description: "A test cron task",
     prompt: "echo hello",
     cron: "*/5 * * * *",
     recurring: true,

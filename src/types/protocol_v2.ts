@@ -485,6 +485,8 @@ export interface CronAddCommand {
   request_id: string;
   agent_id: string;
   conversation_id?: string;
+  name: string;
+  description: string;
   cron: string;
   timezone?: string;
   recurring: boolean;

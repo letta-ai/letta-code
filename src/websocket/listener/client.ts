@@ -296,6 +296,8 @@ async function handleCronCommand(
       const result = addCronTask({
         agent_id: parsed.agent_id,
         conversation_id: parsed.conversation_id,
+        name: parsed.name,
+        description: parsed.description,
         cron: parsed.cron,
         timezone: parsed.timezone,
         recurring: parsed.recurring,

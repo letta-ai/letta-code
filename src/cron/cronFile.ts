@@ -38,6 +38,10 @@ export interface CronTask {
   agent_id: string;
   conversation_id: string; // defaults to "default"
 
+  // Metadata
+  name: string;
+  description: string;
+
   // Schedule
   cron: string;
   timezone: string; // IANA
@@ -315,6 +319,8 @@ export function computeJitter(
 export interface AddTaskInput {
   agent_id: string;
   conversation_id?: string;
+  name: string;
+  description: string;
   cron: string;
   timezone?: string;
   recurring: boolean;
@@ -355,6 +361,8 @@ export function addTask(input: AddTaskInput): AddTaskResult {
       id: taskId,
       agent_id: agentId,
       conversation_id: conversationId,
+      name: input.name,
+      description: input.description,
       cron: input.cron,
       timezone,
       recurring: input.recurring,

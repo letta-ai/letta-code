@@ -324,8 +324,7 @@ export function isCronListCommand(value: unknown): value is CronListCommand {
     c.type === "cron_list" &&
     typeof c.request_id === "string" &&
     (c.agent_id === undefined || typeof c.agent_id === "string") &&
-    (c.conversation_id === undefined ||
-      typeof c.conversation_id === "string")
+    (c.conversation_id === undefined || typeof c.conversation_id === "string")
   );
 }
 
@@ -336,6 +335,8 @@ export function isCronAddCommand(value: unknown): value is CronAddCommand {
     request_id?: unknown;
     agent_id?: unknown;
     conversation_id?: unknown;
+    name?: unknown;
+    description?: unknown;
     cron?: unknown;
     timezone?: unknown;
     recurring?: unknown;
@@ -348,6 +349,8 @@ export function isCronAddCommand(value: unknown): value is CronAddCommand {
     typeof c.agent_id === "string" &&
     (c.conversation_id === undefined ||
       typeof c.conversation_id === "string") &&
+    typeof c.name === "string" &&
+    typeof c.description === "string" &&
     typeof c.cron === "string" &&
     (c.timezone === undefined || typeof c.timezone === "string") &&
     typeof c.recurring === "boolean" &&
@@ -392,7 +395,11 @@ export function isCronDeleteAllCommand(
   value: unknown,
 ): value is CronDeleteAllCommand {
   if (!value || typeof value !== "object") return false;
-  const c = value as { type?: unknown; request_id?: unknown; agent_id?: unknown };
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    agent_id?: unknown;
+  };
   return (
     c.type === "cron_delete_all" &&
     typeof c.request_id === "string" &&

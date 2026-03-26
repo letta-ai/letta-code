@@ -74,16 +74,18 @@ function minuteKey(date: Date): string {
 }
 
 function wrapCronPrompt(task: CronTask): string {
-  return [
-    "<cron_prompt>",
-    `<task_id>${task.id}</task_id>`,
-    `<cron>${task.cron}</cron>`,
+  const lines = [
+    "<system-reminder>",
+    `Scheduled task "${task.name}" is firing.`,
+    `Description: ${task.description}`,
     task.recurring
-      ? `<fire_count>${task.fire_count + 1}</fire_count>`
-      : "<one_shot>true</one_shot>",
-    `<prompt>${task.prompt}</prompt>`,
-    "</cron_prompt>",
-  ].join("\n");
+      ? `This is fire #${task.fire_count + 1} (cron: ${task.cron}).`
+      : `This is a one-off scheduled task.`,
+    "",
+    task.prompt,
+    "</system-reminder>",
+  ];
+  return lines.join("\n");
 }
 
 // ── Core tick logic ─────────────────────────────────────────────────

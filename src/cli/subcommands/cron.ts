@@ -62,6 +62,8 @@ Output is JSON.
 
 const CRON_OPTIONS = {
   help: { type: "boolean", short: "h" },
+  name: { type: "string" },
+  description: { type: "string" },
   prompt: { type: "string" },
   every: { type: "string" },
   at: { type: "string" },
@@ -92,6 +94,18 @@ function getConversationId(fromArgs?: string): string {
 // ── Handlers ────────────────────────────────────────────────────────
 
 function handleAdd(values: ReturnType<typeof parseCronArgs>["values"]): number {
+  const name = values.name;
+  if (!name || typeof name !== "string") {
+    console.error("Error: --name is required.");
+    return 1;
+  }
+
+  const description = values.description;
+  if (!description || typeof description !== "string") {
+    console.error("Error: --description is required.");
+    return 1;
+  }
+
   const prompt = values.prompt;
   if (!prompt || typeof prompt !== "string") {
     console.error("Error: --prompt is required.");
@@ -171,6 +185,8 @@ function handleAdd(values: ReturnType<typeof parseCronArgs>["values"]): number {
     const result = addTask({
       agent_id: agentId,
       conversation_id: conversationId,
+      name,
+      description,
       cron,
       recurring,
       prompt,
