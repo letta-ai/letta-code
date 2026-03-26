@@ -58,7 +58,8 @@ export async function initSecretsFromServer(
   }
 
   cachedSecrets = secrets;
-  syncSecretsToMemoryBlock();
+  // TODO: Come up with a better way to sync secrets than using a memory block.
+  // syncSecretsToMemoryBlock();
 }
 
 /**
@@ -95,7 +96,8 @@ export async function setSecretOnServer(
   await client.agents.update(agentId, { secrets });
 
   cachedSecrets = secrets;
-  syncSecretsToMemoryBlock();
+  // TODO: Come up with a better way to sync secrets than using a memory block.
+  // syncSecretsToMemoryBlock();
 }
 
 /**
@@ -118,7 +120,8 @@ export async function deleteSecretOnServer(key: string): Promise<boolean> {
   await client.agents.update(agentId, { secrets });
 
   cachedSecrets = secrets;
-  syncSecretsToMemoryBlock();
+  // TODO: Come up with a better way to sync secrets than using a memory block.
+  // syncSecretsToMemoryBlock();
   return true;
 }
 
