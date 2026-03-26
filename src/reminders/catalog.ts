@@ -8,6 +8,7 @@ export type SharedReminderMode =
 export type SharedReminderId =
   | "session-context"
   | "agent-info"
+  | "secrets-info"
   | "permission-mode"
   | "plan-mode"
   | "reflection-step-count"
@@ -37,6 +38,16 @@ export const SHARED_REMINDER_CATALOG: ReadonlyArray<SharedReminderDefinition> =
     {
       id: "agent-info",
       description: "Agent identity (ID, name, server, memory dir)",
+      modes: [
+        "interactive",
+        "headless-one-shot",
+        "headless-bidirectional",
+        "listen",
+      ],
+    },
+    {
+      id: "secrets-info",
+      description: "Available secret names for $SECRET_NAME substitution",
       modes: [
         "interactive",
         "headless-one-shot",

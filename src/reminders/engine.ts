@@ -83,6 +83,33 @@ async function buildAgentInfoReminder(
   return reminder || null;
 }
 
+async function buildSecretsInfoReminder(
+  context: SharedReminderContext,
+): Promise<string | null> {
+  if (context.state.hasSentSecretsInfo) {
+    return null;
+  }
+
+  context.state.hasSentSecretsInfo = true;
+
+  try {
+    const { listSecretNames } = await import("../utils/secretsStore");
+    const names = listSecretNames();
+    if (names.length === 0) {
+      return null;
+    }
+
+    const list = names.map((n) => `- \`$${n}\``).join("\n");
+    return `${SYSTEM_REMINDER_OPEN}Use \`$SECRET_NAME\` syntax in shell commands to reference these secrets:\n\n${list}\n${SYSTEM_REMINDER_CLOSE}`;
+  } catch (error) {
+    debugLog(
+      "secrets",
+      `Failed to build secrets reminder: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return null;
+  }
+}
+
 async function buildSessionContextReminder(
   context: SharedReminderContext,
 ): Promise<string | null> {
@@ -345,6 +372,7 @@ export const sharedReminderProviders: Record<
   SharedReminderProvider
 > = {
   "agent-info": buildAgentInfoReminder,
+  "secrets-info": buildSecretsInfoReminder,
   "session-context": buildSessionContextReminder,
   "permission-mode": buildPermissionModeReminder,
   "plan-mode": buildPlanModeReminder,
