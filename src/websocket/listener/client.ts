@@ -23,7 +23,10 @@ import {
 } from "../../cli/helpers/subagentState";
 import { INTERRUPTED_BY_USER } from "../../constants";
 import { type DequeuedBatch, QueueRuntime } from "../../queue/queueRuntime";
-import { createSharedReminderState } from "../../reminders/state";
+import {
+  createSharedReminderState,
+  resetSharedReminderState,
+} from "../../reminders/state";
 import { settingsManager } from "../../settings-manager";
 import { loadTools } from "../../tools/manager";
 import type {
@@ -124,6 +127,7 @@ import {
   getListenerStatus,
   getOrCreateConversationRuntime,
   getPendingControlRequestCount,
+  getPendingControlRequests,
   getRecoveredApprovalStateForScope,
   safeEmitWsEvent,
   setActiveRuntime,
@@ -522,6 +526,7 @@ async function handleAbortMessageInput(
   deps: Partial<{
     getActiveRuntime: typeof getActiveRuntime;
     getPendingControlRequestCount: typeof getPendingControlRequestCount;
+    getPendingControlRequests: typeof getPendingControlRequests;
     getOrCreateScopedRuntime: typeof getOrCreateScopedRuntime;
     getRecoveredApprovalStateForScope: typeof getRecoveredApprovalStateForScope;
     stashRecoveredApprovalInterrupts: typeof stashRecoveredApprovalInterrupts;
@@ -540,6 +545,7 @@ async function handleAbortMessageInput(
   const resolvedDeps = {
     getActiveRuntime,
     getPendingControlRequestCount,
+    getPendingControlRequests,
     getOrCreateScopedRuntime,
     getRecoveredApprovalStateForScope,
     stashRecoveredApprovalInterrupts,
@@ -609,6 +615,22 @@ async function handleAbortMessageInput(
     ];
   }
 
+  // Also set interrupt context for active turns without tracked tool IDs
+  // (e.g., background Task tools that spawn subagents)
+  if (
+    hasActiveTurn &&
+    scopedRuntime.activeExecutingToolCallIds.length === 0 &&
+    !scopedRuntime.pendingInterruptedContext
+  ) {
+    scopedRuntime.pendingInterruptedContext = {
+      agentId: scopedRuntime.agentId || "",
+      conversationId: scopedRuntime.conversationId,
+      continuationEpoch: scopedRuntime.continuationEpoch,
+    };
+    // Set empty results array so hasInterruptedCacheForScope can detect the interrupt
+    scopedRuntime.pendingInterruptedResults = [];
+  }
+
   if (
     scopedRuntime.activeAbortController &&
     !scopedRuntime.activeAbortController.signal.aborted
@@ -646,6 +668,22 @@ async function handleAbortMessageInput(
       conversationId: scope.conversation_id,
     });
   } else if (hasPendingApprovals) {
+    // Populate interrupted cache to prevent stale approval recovery on sync
+    const pendingRequests = resolvedDeps.getPendingControlRequests(
+      listener,
+      scope,
+    );
+    scopedRuntime.pendingInterruptedResults = pendingRequests.map((req) => ({
+      type: "approval" as const,
+      tool_call_id: req.request.tool_call_id,
+      approve: false,
+      reason: "User interrupted the stream",
+    }));
+    scopedRuntime.pendingInterruptedContext = {
+      agentId: scope.agent_id || "",
+      conversationId: scope.conversation_id,
+      continuationEpoch: scopedRuntime.continuationEpoch,
+    };
     resolvedDeps.emitInterruptedStatusDelta(params.socket, scopedRuntime, {
       runId: interruptedRunId,
       agentId: scope.agent_id,
@@ -710,6 +748,11 @@ async function handleCwdChange(
       conversationId,
       normalizedPath,
     );
+
+    // Invalidate session-context only (not agent-info) so the agent gets
+    // updated CWD/git info on the next turn.
+    runtime.reminderState.hasSentSessionContext = false;
+    runtime.reminderState.pendingSessionContextReason = "cwd_changed";
 
     // If the new cwd is outside the current file-index root, re-root the
     // index so file search covers the new workspace.  setIndexRoot()
@@ -924,6 +967,13 @@ async function connectWithRetry(
       emitLoopStatusUpdate(socket, runtime);
     } else {
       for (const conversationRuntime of runtime.conversationRuntimes.values()) {
+        // Reset bootstrap reminder state on (re)connect so session-context
+        // and agent-info fire on the first turn of the new connection.
+        // This is intentionally in the open handler, NOT the sync handler,
+        // because the Desktop UMI controller sends sync every ~5 s and
+        // resetting there would re-arm reminders on every periodic sync.
+        resetSharedReminderState(conversationRuntime.reminderState);
+
         const scope = {
           agent_id: conversationRuntime.agentId,
           conversation_id: conversationRuntime.conversationId,
@@ -1041,14 +1091,13 @@ async function connectWithRetry(
         console.log(`[Listen V2] Dropping sync: runtime mismatch or closed`);
         return;
       }
-      await recoverApprovalStateForSync(
-        getOrCreateScopedRuntime(
-          runtime,
-          parsed.runtime.agent_id,
-          parsed.runtime.conversation_id,
-        ),
-        parsed.runtime,
+      const syncScopedRuntime = getOrCreateScopedRuntime(
+        runtime,
+        parsed.runtime.agent_id,
+        parsed.runtime.conversation_id,
       );
+      await recoverApprovalStateForSync(syncScopedRuntime, parsed.runtime);
+
       emitStateSync(socket, runtime, parsed.runtime);
       return;
     }

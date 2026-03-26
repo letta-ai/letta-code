@@ -7,6 +7,7 @@ import type {
   MessageQueueItem,
   TaskNotificationQueueItem,
 } from "../../queue/queueRuntime";
+import { sharedReminderProviders } from "../../reminders/engine";
 import { queueSkillContent } from "../../tools/impl/skillContentRegistry";
 import { resolveRecoveredApprovalResponse } from "../../websocket/listener/recovery";
 import { injectQueuedSkillContent } from "../../websocket/listener/skill-injection";
@@ -223,8 +224,19 @@ function makeIncomingMessage(
   };
 }
 
+// Stub reminder providers that touch settingsManager/process.cwd so
+// handleIncomingMessage works without a fully initialised environment.
+// Uses the same save/restore pattern as listen-session-context.test.ts
+// to avoid mock.module (which leaks into other test files in Bun).
+const origSessionContext = sharedReminderProviders["session-context"];
+const origAgentInfo = sharedReminderProviders["agent-info"];
+
 describe("listen-client multi-worker concurrency", () => {
   beforeEach(() => {
+    // No-op stubs for providers that need settingsManager / process.cwd
+    sharedReminderProviders["session-context"] = async () => null;
+    sharedReminderProviders["agent-info"] = async () => null;
+
     queueSkillContent("__test-cleanup__", "__test-cleanup__");
     injectQueuedSkillContent([]);
     permissionMode.reset();
@@ -242,6 +254,11 @@ describe("listen-client multi-worker concurrency", () => {
     fetchRunErrorDetailMock.mockClear();
     drainHandlers.clear();
     __listenClientTestUtils.setActiveRuntime(null);
+  });
+
+  afterEach(() => {
+    sharedReminderProviders["session-context"] = origSessionContext;
+    sharedReminderProviders["agent-info"] = origAgentInfo;
   });
 
   afterEach(() => {

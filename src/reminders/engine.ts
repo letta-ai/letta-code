@@ -7,7 +7,10 @@ import {
   type ReflectionSettings,
   shouldFireStepCountTrigger,
 } from "../cli/helpers/memoryReminder";
-import { buildSessionContext } from "../cli/helpers/sessionContext";
+import {
+  buildSessionContext,
+  type SessionContextSource,
+} from "../cli/helpers/sessionContext";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "../constants";
 import { permissionMode } from "../permissions/mode";
 import { settingsManager } from "../settings-manager";
@@ -17,7 +20,7 @@ import {
   type SharedReminderId,
   type SharedReminderMode,
 } from "./catalog";
-import type { SharedReminderState } from "./state";
+import type { SessionContextReason, SharedReminderState } from "./state";
 
 type ReflectionTriggerSource = "step-count" | "compaction-event";
 
@@ -40,6 +43,12 @@ export interface SharedReminderContext {
   maybeLaunchReflectionSubagent?: (
     triggerSource: ReflectionTriggerSource,
   ) => Promise<boolean>;
+  /** Explicit working directory (overrides process.cwd() in session context). */
+  workingDirectory?: string;
+  /** Source of the session context (varies intro text). */
+  sessionContextSource?: SessionContextSource;
+  /** Reason the session context is being (re)generated. */
+  sessionContextReason?: SessionContextReason;
 }
 
 export type ReminderTextPart = { type: "text"; text: string };
@@ -88,9 +97,19 @@ async function buildSessionContextReminder(
     return null;
   }
 
-  const reminder = buildSessionContext();
+  const reason =
+    context.sessionContextReason ??
+    context.state.pendingSessionContextReason ??
+    "initial_attach";
+
+  const reminder = buildSessionContext({
+    cwd: context.workingDirectory,
+    source: context.sessionContextSource,
+    reason,
+  });
 
   context.state.hasSentSessionContext = true;
+  context.state.pendingSessionContextReason = undefined;
   return reminder || null;
 }
 
