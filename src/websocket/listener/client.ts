@@ -28,6 +28,7 @@ import {
   resetSharedReminderState,
 } from "../../reminders/state";
 import { settingsManager } from "../../settings-manager";
+import { telemetry } from "../../telemetry";
 import { loadTools } from "../../tools/manager";
 import type {
   AbortMessageCommand,
@@ -866,6 +867,7 @@ export async function startListenerClient(
   runtime.connectionId = opts.connectionId;
   runtime.connectionName = opts.connectionName;
   setActiveRuntime(runtime);
+  telemetry.setSurface("websocket");
 
   await connectWithRetry(runtime, opts);
 }
@@ -1737,6 +1739,7 @@ export function stopListenerClient(): void {
     return;
   }
   setActiveRuntime(null);
+  telemetry.setSurface(process.stdin.isTTY ? "tui" : "headless");
   stopRuntime(runtime, true);
 }
 

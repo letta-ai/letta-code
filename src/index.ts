@@ -365,9 +365,6 @@ async function main(): Promise<void> {
     }
   }
 
-  // Initialize telemetry (enabled by default, opt-out via LETTA_CODE_TELEM=0)
-  telemetry.init();
-
   // Check for updates on startup (non-blocking)
   const { checkAndAutoUpdate } = await import("./updater/auto-update");
   const autoUpdatePromise = startStartupAutoUpdateCheck(checkAndAutoUpdate);
@@ -530,6 +527,11 @@ async function main(): Promise<void> {
     fromAfFlagValue: values["from-af"],
   });
   const isHeadless = values.prompt || values.run || !process.stdin.isTTY;
+
+  // Initialize telemetry (enabled by default, opt-out via LETTA_CODE_TELEM=0)
+  // Surface is set here so session_start captures the correct mode.
+  telemetry.setSurface(isHeadless ? "headless" : "tui");
+  telemetry.init();
 
   // Fail if an unknown command/argument is passed (and we're not in headless mode where it might be a prompt)
   if (command && !isHeadless) {
