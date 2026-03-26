@@ -3,6 +3,7 @@ import type {
   AbortMessageCommand,
   ChangeDeviceStateCommand,
   EnableMemfsCommand,
+  ExecuteCommandCommand,
   InputCommand,
   ListInDirectoryCommand,
   ListMemoryCommand,
@@ -307,6 +308,24 @@ export function isEnableMemfsCommand(
   );
 }
 
+export function isExecuteCommandCommand(
+  value: unknown,
+): value is ExecuteCommandCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    command_id?: unknown;
+    request_id?: unknown;
+    runtime?: unknown;
+  };
+  return (
+    c.type === "execute_command" &&
+    typeof c.command_id === "string" &&
+    typeof c.request_id === "string" &&
+    isRuntimeScope(c.runtime)
+  );
+}
+
 export function parseServerMessage(
   data: WebSocket.RawData,
 ): ParsedServerMessage | null {
@@ -326,7 +345,8 @@ export function parseServerMessage(
       isListInDirectoryCommand(parsed) ||
       isReadFileCommand(parsed) ||
       isListMemoryCommand(parsed) ||
-      isEnableMemfsCommand(parsed)
+      isEnableMemfsCommand(parsed) ||
+      isExecuteCommandCommand(parsed)
     ) {
       return parsed as WsProtocolCommand;
     }

@@ -240,6 +240,20 @@ export interface CommandEndMessage extends UmiLifecycleMessageBase {
   preformatted?: boolean;
 }
 
+export interface SlashCommandStartMessage extends UmiLifecycleMessageBase {
+  message_type: "slash_command_start";
+  command_id: string;
+  input: string;
+}
+
+export interface SlashCommandEndMessage extends UmiLifecycleMessageBase {
+  message_type: "slash_command_end";
+  command_id: string;
+  input: string;
+  output: string;
+  success: boolean;
+}
+
 export interface StatusMessage extends UmiLifecycleMessageBase {
   message_type: "status";
   message: string;
@@ -273,6 +287,8 @@ export type StreamDelta =
   | ClientToolEndMessage
   | CommandStartMessage
   | CommandEndMessage
+  | SlashCommandStartMessage
+  | SlashCommandEndMessage
   | StatusMessage
   | RetryMessage
   | LoopErrorMessage;
@@ -468,6 +484,21 @@ export interface EnableMemfsCommand {
   agent_id: string;
 }
 
+/**
+ * Generic slash-command dispatch from the web app.
+ * The device handles the `command_id` and emits `command_start` /
+ * `command_end` stream deltas with the result.
+ */
+export interface ExecuteCommandCommand {
+  type: "execute_command";
+  /** Which slash command to run (e.g., "clear") */
+  command_id: string;
+  /** Correlation id (echoed in the response stream deltas) */
+  request_id: string;
+  /** Runtime scope — identifies which agent + conversation this targets */
+  runtime: RuntimeScope;
+}
+
 export type WsProtocolCommand =
   | InputCommand
   | ChangeDeviceStateCommand
@@ -481,7 +512,8 @@ export type WsProtocolCommand =
   | ListInDirectoryCommand
   | ReadFileCommand
   | ListMemoryCommand
-  | EnableMemfsCommand;
+  | EnableMemfsCommand
+  | ExecuteCommandCommand;
 
 export type WsProtocolMessage =
   | DeviceStatusUpdateMessage

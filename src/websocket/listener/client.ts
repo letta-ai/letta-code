@@ -74,12 +74,14 @@ import {
 } from "./permissionMode";
 import {
   isEnableMemfsCommand,
+  isExecuteCommandCommand,
   isListInDirectoryCommand,
   isListMemoryCommand,
   isReadFileCommand,
   isSearchFilesCommand,
   parseServerMessage,
 } from "./protocol-inbound";
+import { handleExecuteCommand } from "./commands";
 import {
   buildDeviceStatus,
   buildLoopStatus,
@@ -1472,6 +1474,21 @@ async function connectWithRetry(
           );
         }
       })();
+      return;
+    }
+
+    // ── Slash commands (execute_command) ────────────────────────────────
+    if (isExecuteCommandCommand(parsed)) {
+      // Slash commands need a scoped runtime for the conversation context
+      const scopedRuntime = getOrCreateScopedRuntime(
+        runtime,
+        parsed.runtime.agent_id,
+        parsed.runtime.conversation_id,
+      );
+      void handleExecuteCommand(parsed, socket, scopedRuntime, {
+        onStatusChange: opts.onStatusChange,
+        connectionId: opts.connectionId,
+      });
       return;
     }
 
