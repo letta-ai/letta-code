@@ -8365,10 +8365,14 @@ export default function App({
         }
 
         // Special handling for /fork command - fork the current conversation
-        if (msg.trim() === "/fork") {
+        const forkMatch = msg.trim().match(/^\/fork(?:\s+(.+))?$/);
+        if (forkMatch) {
+          const conversationSummary = forkMatch[1]?.trim();
           const cmd = commandRunner.start(
             msg.trim(),
-            "Forking conversation...",
+            conversationSummary
+              ? `Forking conversation: ${conversationSummary}...`
+              : "Forking conversation...",
           );
 
           resetPendingReasoningCycle();
@@ -8385,6 +8389,14 @@ export default function App({
               conversationIdRef.current,
               isDefault ? { agent_id: agentId } : undefined,
             );
+
+            // If we forked with an explicit summary, update it
+            if (conversationSummary) {
+              await client.conversations.update(forked.id, {
+                summary: conversationSummary,
+              });
+              hasSetConversationSummaryRef.current = true;
+            }
 
             await maybeCarryOverActiveConversationModel(forked.id);
 
