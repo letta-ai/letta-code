@@ -1,7 +1,7 @@
 import { Box, useInput } from "ink";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Skill, SkillSource } from "../../agent/skills";
-import { charsToTokens } from "../helpers/format";
+import { estimateTokens } from "../helpers/format";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
 import { Text } from "./Text";
@@ -222,7 +222,7 @@ export function SkillsDialog({ onClose, agentId }: SkillsDialogProps) {
       {!loading && currentSkills.length > 0 && (
         <Box flexDirection="column">
           {visibleSkills.map((skill) => {
-            const tokens = charsToTokens(skill.description.length);
+            const tokens = estimateTokens(skill.description);
             return (
               <Text key={skill.id}>
                 {"  "}
