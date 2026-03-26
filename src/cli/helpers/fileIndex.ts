@@ -6,6 +6,7 @@ import {
   readdirSync,
   readFileSync,
   statSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
@@ -50,6 +51,11 @@ const PROJECT_INDEX_FILENAME = "file-index.json";
 // The file is auto-created with comments on first run so users can find it.
 const MAX_CACHE_ENTRIES = readIntSetting("MAX_ENTRIES", 50_000);
 
+// Maximum size of the index cache file before we skip loading it.
+// Large cache files (e.g., 447MB for home directory) cause OOM when parsed.
+// If the cache exceeds this threshold, we rebuild from scratch instead.
+const MAX_CACHE_FILE_SIZE_MB = 50;
+
 let cachedEntries: FileIndexEntry[] = [];
 // Kept in sync with cachedEntries for O(1) membership checks in addEntriesToCache.
 let cachedEntryPaths = new Set<string>();
@@ -83,6 +89,7 @@ interface PreviousIndexData {
 
 interface BuildContext {
   newEntryCount: number;
+  totalEntryCount: number; // Tracks all entries including reused ones
   truncated: boolean;
 }
 
@@ -157,9 +164,24 @@ function appendSubtreeEntries(
   targetEntries: FileIndexEntry[],
   previous: PreviousIndexData,
   path: string,
+  context: BuildContext,
 ): void {
+  // Don't copy if we've already hit the cap
+  if (context.totalEntryCount >= MAX_CACHE_ENTRIES) {
+    context.truncated = true;
+    return;
+  }
+
   if (path === "") {
-    for (const e of previous.entries) targetEntries.push(e);
+    // Copy all entries up to cap
+    const toCopy = previous.entries.slice(0, MAX_CACHE_ENTRIES - context.totalEntryCount);
+    for (const e of toCopy) {
+      targetEntries.push(e);
+      context.totalEntryCount++;
+    }
+    if (previous.entries.length > toCopy.length) {
+      context.truncated = true;
+    }
     return;
   }
 
@@ -169,9 +191,19 @@ function appendSubtreeEntries(
   const prefix = `${path}/`;
   const [start, end] = findPrefixRange(entryPaths, prefix);
 
-  for (let i = start; i < end; i++) {
+  let copied = 0;
+  const maxToCopy = MAX_CACHE_ENTRIES - context.totalEntryCount;
+  for (let i = start; i < end && copied < maxToCopy; i++) {
     const entry = previousEntries[i];
-    if (entry !== undefined) targetEntries.push(entry);
+    if (entry !== undefined) {
+      targetEntries.push(entry);
+      context.totalEntryCount++;
+      copied++;
+    }
+  }
+
+  if (start + copied < end) {
+    context.truncated = true;
   }
 }
 
@@ -392,14 +424,14 @@ async function buildDirectory(
     )
   ) {
     copyStatsSubtree(previous, relativePath, statsMap);
-    appendSubtreeEntries(entries, previous, relativePath);
+    appendSubtreeEntries(entries, previous, relativePath, context);
     copyMerkleSubtree(previous, relativePath, merkle);
     return previous.merkle[relativePath] ?? hashValue("__reused__");
   }
 
   statsMap[relativePath] = currentStats;
 
-  if (depth >= MAX_INDEX_DEPTH || context.newEntryCount >= MAX_CACHE_ENTRIES) {
+  if (depth >= MAX_INDEX_DEPTH || context.totalEntryCount >= MAX_CACHE_ENTRIES) {
     context.truncated = true;
     const truncatedHash = hashValue("__truncated__");
     merkle[relativePath] = truncatedHash;
@@ -409,7 +441,7 @@ async function buildDirectory(
   const childHashes: string[] = [];
 
   for (const entry of childNames) {
-    if (context.newEntryCount >= MAX_CACHE_ENTRIES) {
+    if (context.totalEntryCount >= MAX_CACHE_ENTRIES) {
       context.truncated = true;
       break;
     }
@@ -440,32 +472,47 @@ async function buildDirectory(
         parent: normalizeParent(entryPath),
       });
       context.newEntryCount++;
+      context.totalEntryCount++;
 
-      const childHash = await buildDirectory(
-        fullPath,
-        entryPath,
-        entries,
-        merkle,
-        statsMap,
-        previous,
-        depth + 1,
-        context,
-      );
+      // Only recurse if we haven't hit the cap
+      if (context.totalEntryCount <= MAX_CACHE_ENTRIES) {
+        const childHash = await buildDirectory(
+          fullPath,
+          entryPath,
+          entries,
+          merkle,
+          statsMap,
+          previous,
+          depth + 1,
+          context,
+        );
 
-      childHashes.push(`dir:${entry}:${childHash}`);
+        childHashes.push(`dir:${entry}:${childHash}`);
+      } else {
+        // Mark as truncated and use a placeholder hash
+        context.truncated = true;
+        childHashes.push(`dir:${entry}:${hashValue("__truncated__")}`);
+      }
     } else {
       const fileHash = hashValue(
         `${entryPath}:${entryStat.size}:${entryStat.mtimeMs}:${entryStat.ino ?? 0}`,
       );
 
-      statsMap[entryPath] = {
-        type: "file",
-        mtimeMs: entryStat.mtimeMs,
-        ino: entryStat.ino ?? 0,
-        size: entryStat.size,
-      };
+      // Only add to merkle and stats if we haven't hit the cap
+      // This prevents unbounded memory growth for large workspaces
+      if (context.totalEntryCount <= MAX_CACHE_ENTRIES) {
+        statsMap[entryPath] = {
+          type: "file",
+          mtimeMs: entryStat.mtimeMs,
+          ino: entryStat.ino ?? 0,
+          size: entryStat.size,
+        };
 
-      merkle[entryPath] = fileHash;
+        merkle[entryPath] = fileHash;
+      } else {
+        context.truncated = true;
+      }
+
       entries.push({
         path: entryPath,
         type: "file",
@@ -473,6 +520,7 @@ async function buildDirectory(
         parent: normalizeParent(entryPath),
       });
       context.newEntryCount++;
+      context.totalEntryCount++;
       childHashes.push(`file:${entry}:${fileHash}`);
     }
   }
@@ -488,7 +536,7 @@ async function buildIndex(
   const entries: FileIndexEntry[] = [];
   const merkle: MerkleMap = {};
   const statsMap: StatsMap = {};
-  const context: BuildContext = { newEntryCount: 0, truncated: false };
+  const context: BuildContext = { newEntryCount: 0, totalEntryCount: 0, truncated: false };
   const rootHash = await buildDirectory(
     indexRoot,
     "",
@@ -555,6 +603,24 @@ function loadCachedIndex(): FileIndexCache | null {
   }
 
   try {
+    // Check file size before loading to prevent OOM on massive caches
+    // (e.g., 447MB for home directory workspace)
+    const stats = statSync(indexPath);
+    const fileSizeMB = stats.size / (1024 * 1024);
+    if (fileSizeMB > MAX_CACHE_FILE_SIZE_MB) {
+      debugLog(
+        "file-index",
+        `Index cache file too large (${fileSizeMB.toFixed(1)}MB > ${MAX_CACHE_FILE_SIZE_MB}MB), replacing with fresh build`,
+      );
+      // Delete the bloated cache immediately, then rebuild
+      try {
+        unlinkSync(indexPath);
+      } catch {
+        // Ignore deletion errors - rebuild will overwrite anyway
+      }
+      return null;
+    }
+
     const content = readFileSync(indexPath, "utf-8");
     const parsed = JSON.parse(content);
 
@@ -608,18 +674,48 @@ function loadCachedIndex(): FileIndexCache | null {
 }
 
 function cacheProjectIndex(result: FileIndexBuildResult): void {
+  // Don't cache when running from home directory - it's too large and would
+  // cause OOM on next load. The in-memory cache still works for this session.
+  if (process.cwd() === homedir()) {
+    return;
+  }
+
   try {
     const storageDir = ensureProjectStorageDir();
     const indexPath = join(storageDir, PROJECT_INDEX_FILENAME);
+
+    // Cap entries to MAX_CACHE_ENTRIES as a safety net (build should already cap)
+    const cappedEntries = result.entries.slice(0, MAX_CACHE_ENTRIES);
+
+    // Only include merkle/stats for entries we're keeping
+    const cappedMerkle: MerkleMap = {};
+    const cappedStats: StatsMap = {};
+
+    for (const entry of cappedEntries) {
+      const merkleValue = result.merkle[entry.path];
+      if (merkleValue !== undefined) {
+        cappedMerkle[entry.path] = merkleValue;
+      }
+      const statsValue = result.stats[entry.path];
+      if (statsValue !== undefined) {
+        cappedStats[entry.path] = statsValue;
+      }
+    }
+    // Include root merkle hash
+    const rootMerkle = result.merkle[""];
+    if (rootMerkle !== undefined) {
+      cappedMerkle[""] = rootMerkle;
+    }
+
     const payload: FileIndexCache = {
       metadata: {
         rootHash: result.rootHash,
       },
-      entries: result.entries,
-      merkle: result.merkle,
-      stats: result.stats,
+      entries: cappedEntries,
+      merkle: cappedMerkle,
+      stats: cappedStats,
     };
-    writeFileSync(indexPath, JSON.stringify(payload, null, 2), "utf-8");
+    writeFileSync(indexPath, JSON.stringify(payload), "utf-8");
   } catch {
     // Silently ignore persistence errors to avoid breaking search.
   }
