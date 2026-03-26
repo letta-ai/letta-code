@@ -791,6 +791,7 @@ function createRuntime(): ListenerRuntime {
     reconnectTimeout: null,
     intentionallyClosed: false,
     hasSuccessfulConnection: false,
+    everConnected: false,
     sessionId: `listen-${crypto.randomUUID()}`,
     eventSeqCounter: 0,
     lastStopReason: null,
@@ -889,6 +890,13 @@ async function connectWithRetry(
 
   if (attempt > 0) {
     if (elapsedTime >= MAX_RETRY_DURATION_MS) {
+      // If we ever had a successful connection, try to re-register instead
+      // of giving up. This keeps established sessions alive through transient
+      // outages (e.g. Cloudflare 521, server deploys).
+      if (runtime.everConnected && opts.onNeedsReregister) {
+        opts.onNeedsReregister();
+        return;
+      }
       opts.onError(new Error("Failed to connect after 5 minutes of retrying"));
       return;
     }
@@ -963,6 +971,7 @@ async function connectWithRetry(
 
     safeEmitWsEvent("recv", "lifecycle", { type: "_ws_open" });
     runtime.hasSuccessfulConnection = true;
+    runtime.everConnected = true;
     opts.onConnected(opts.connectionId);
 
     if (runtime.conversationRuntimes.size === 0) {
@@ -1771,6 +1780,7 @@ function createLegacyTestRuntime(): ConversationRuntime & {
   heartbeatInterval: NodeJS.Timeout | null;
   intentionallyClosed: boolean;
   hasSuccessfulConnection: boolean;
+  everConnected: boolean;
   conversationRuntimes: ListenerRuntime["conversationRuntimes"];
   approvalRuntimeKeyByRequestId: ListenerRuntime["approvalRuntimeKeyByRequestId"];
   lastEmittedStatus: ListenerRuntime["lastEmittedStatus"];
@@ -1799,6 +1809,7 @@ function createLegacyTestRuntime(): ConversationRuntime & {
     heartbeatInterval: NodeJS.Timeout | null;
     intentionallyClosed: boolean;
     hasSuccessfulConnection: boolean;
+    everConnected: boolean;
     conversationRuntimes: ListenerRuntime["conversationRuntimes"];
     approvalRuntimeKeyByRequestId: ListenerRuntime["approvalRuntimeKeyByRequestId"];
     lastEmittedStatus: ListenerRuntime["lastEmittedStatus"];
@@ -1905,6 +1916,12 @@ function createLegacyTestRuntime(): ConversationRuntime & {
       get: () => listener.hasSuccessfulConnection,
       set: (value: boolean) => {
         listener.hasSuccessfulConnection = value;
+      },
+    },
+    everConnected: {
+      get: () => listener.everConnected,
+      set: (value: boolean) => {
+        listener.everConnected = value;
       },
     },
     conversationRuntimes: {

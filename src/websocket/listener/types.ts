@@ -139,6 +139,8 @@ export type ListenerRuntime = {
   reconnectTimeout: NodeJS.Timeout | null;
   intentionallyClosed: boolean;
   hasSuccessfulConnection: boolean;
+  /** True once the WS has connected at least once. Never reset to false. */
+  everConnected: boolean;
   sessionId: string;
   eventSeqCounter: number;
   lastStopReason: string | null;
