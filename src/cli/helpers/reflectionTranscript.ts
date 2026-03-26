@@ -70,7 +70,7 @@ export function buildReflectionSubagentPrompt(
     `Review the conversation transcript and update memory files. The current conversation transcript has been saved to: ${input.transcriptPath}`,
     "",
     `The primary agent's memory filesystem is located at: ${input.memoryDir}`,
-    "In-context memory (in the parent agent's system prompt) is stored in the `system/` folder and are rendered in <memory> tags below. Modification to files in `system/` will edit the parent agent's system prompt.",
+    "In-context memory (in the primary agent's system prompt) is stored in the `system/` folder and are rendered in <memory> tags below. Modification to files in `system/` will edit the primary agent's system prompt.",
     "Additional memory files (such as skills and external memory) may also be read and modified.",
     "",
   );
@@ -297,7 +297,7 @@ export async function buildParentMemorySnapshot(
   );
 
   const lines = [
-    "<parent_memory>",
+    "<primary_agent_memory>",
     "<memory_filesystem>",
     tree,
     "</memory_filesystem>",
@@ -316,7 +316,7 @@ export async function buildParentMemorySnapshot(
     }
   }
 
-  lines.push("</parent_memory>");
+  lines.push("</primary_agent_memory>");
   return lines.join("\n");
 }
 

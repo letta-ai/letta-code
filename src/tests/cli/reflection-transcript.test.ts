@@ -174,7 +174,7 @@ describe("reflectionTranscript helper", () => {
 
     const snapshot = await buildParentMemorySnapshot(memoryDir);
 
-    expect(snapshot).toContain("<parent_memory>");
+    expect(snapshot).toContain("<primary_agent_memory>");
     expect(snapshot).toContain("<memory_filesystem>");
     expect(snapshot).toContain("/memory/");
     expect(snapshot).toContain("system/");
@@ -197,7 +197,7 @@ describe("reflectionTranscript helper", () => {
     expect(snapshot).not.toContain(
       "This body should not be inlined into parent memory.",
     );
-    expect(snapshot).toContain("</parent_memory>");
+    expect(snapshot).toContain("</primary_agent_memory>");
   });
 
   test("buildParentMemorySnapshot collapses large users directory with omission marker", async () => {
@@ -234,7 +234,7 @@ describe("reflectionTranscript helper", () => {
       transcriptPath: "/tmp/transcript.txt",
       memoryDir: "/tmp/memory",
       cwd: "/tmp/work",
-      parentMemory: "<parent_memory>snapshot</parent_memory>",
+      parentMemory: "<primary_agent_memory>snapshot</primary_agent_memory>",
     });
 
     expect(prompt).toContain("Review the conversation transcript");
@@ -243,11 +243,13 @@ describe("reflectionTranscript helper", () => {
       "The current conversation transcript has been saved",
     );
     expect(prompt).toContain(
-      "In-context memory (in the parent agent's system prompt) is stored in the `system/` folder and are rendered in <memory> tags below.",
+      "In-context memory (in the primary agent's system prompt) is stored in the `system/` folder and are rendered in <memory> tags below.",
     );
     expect(prompt).toContain(
       "Additional memory files (such as skills and external memory) may also be read and modified.",
     );
-    expect(prompt).toContain("<parent_memory>snapshot</parent_memory>");
+    expect(prompt).toContain(
+      "<primary_agent_memory>snapshot</primary_agent_memory>",
+    );
   });
 });

@@ -194,11 +194,31 @@ Check `git status` — if there are no changes to commit,
 skip straight to Step 5d (cleanup). Report "no updates
 needed" in your output.
 
-If there are changes, commit:
+If there are changes, resolve the actual ID values first:
 
 ```bash
-git commit -m "chore(defrag): <summary>"
+echo "AGENT_ID=$LETTA_AGENT_ID"
+echo "PARENT_AGENT_ID=$LETTA_PARENT_AGENT_ID"
 ```
+
+Use the printed values (e.g., `agent-abc123...`) in the trailers. If a variable is empty or unset, omit that trailer. Never write a literal variable name like `$LETTA_AGENT_ID` or `$AGENT_ID` in the commit message.
+
+```bash
+git commit --author="Memory Defrag Subagent <<ACTUAL_AGENT_ID>@letta.com>" -m "<type>(memory-defrag): <summary>
+
+Updates:
+- <what changed and why>
+
+Generated-By: Letta Code
+Agent-ID: <ACTUAL_AGENT_ID>
+Parent-Agent-ID: <ACTUAL_PARENT_AGENT_ID>"
+```
+
+**Commit type** — pick the one that fits:
+- `refactor` — reorganizing/splitting/merging files (most common for defrag)
+- `fix` — correcting stale or incorrect memory content
+- `feat` — adding wholly new memory content
+- `chore` — routine cleanup, removing redundancy
 
 **Step 5b: Pull + merge to main**
 

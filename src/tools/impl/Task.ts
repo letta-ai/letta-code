@@ -501,7 +501,35 @@ export async function task(args: TaskArgs): Promise<string> {
     return `Error: When deploying an existing agent, subagent_type must be "explore" (read-only) or "general-purpose" (read-write). Got: "${subagent_type}"`;
   }
 
-  const prompt = inputPrompt;
+  // Inject primary agent memory for memory-type subagents (mirrors reflection prompt pattern)
+  let prompt = inputPrompt;
+  if (subagent_type === "memory") {
+    try {
+      const { getMemoryFilesystemRoot } = await import(
+        "../../agent/memoryFilesystem"
+      );
+      const { buildParentMemorySnapshot } = await import(
+        "../../cli/helpers/reflectionTranscript"
+      );
+      const { getCurrentAgentId } = await import("../../agent/context");
+      const { settingsManager } = await import("../../settings-manager");
+      const agentId = getCurrentAgentId();
+      if (settingsManager.isMemfsEnabled(agentId)) {
+        const memoryDir = getMemoryFilesystemRoot(agentId);
+        const parentMemory = await buildParentMemorySnapshot(memoryDir);
+        const memoryPreamble = [
+          `The primary agent's memory filesystem is located at: ${memoryDir}`,
+          "In-context memory (in the primary agent's system prompt) is stored in the `system/` folder.",
+          "",
+          parentMemory,
+          "",
+        ].join("\n");
+        prompt = `${memoryPreamble}\n${inputPrompt}`;
+      }
+    } catch {
+      // If memory snapshot fails, proceed with original prompt
+    }
+  }
 
   const isBackground = args.run_in_background ?? false;
 
