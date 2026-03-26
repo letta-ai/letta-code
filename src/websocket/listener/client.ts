@@ -122,6 +122,7 @@ import {
   getListenerStatus,
   getOrCreateConversationRuntime,
   getPendingControlRequestCount,
+  getPendingControlRequests,
   getRecoveredApprovalStateForScope,
   safeEmitWsEvent,
   setActiveRuntime,
@@ -520,6 +521,7 @@ async function handleAbortMessageInput(
   deps: Partial<{
     getActiveRuntime: typeof getActiveRuntime;
     getPendingControlRequestCount: typeof getPendingControlRequestCount;
+    getPendingControlRequests: typeof getPendingControlRequests;
     getOrCreateScopedRuntime: typeof getOrCreateScopedRuntime;
     getRecoveredApprovalStateForScope: typeof getRecoveredApprovalStateForScope;
     stashRecoveredApprovalInterrupts: typeof stashRecoveredApprovalInterrupts;
@@ -538,6 +540,7 @@ async function handleAbortMessageInput(
   const resolvedDeps = {
     getActiveRuntime,
     getPendingControlRequestCount,
+    getPendingControlRequests,
     getOrCreateScopedRuntime,
     getRecoveredApprovalStateForScope,
     stashRecoveredApprovalInterrupts,
@@ -607,6 +610,22 @@ async function handleAbortMessageInput(
     ];
   }
 
+  // Also set interrupt context for active turns without tracked tool IDs
+  // (e.g., background Task tools that spawn subagents)
+  if (
+    hasActiveTurn &&
+    scopedRuntime.activeExecutingToolCallIds.length === 0 &&
+    !scopedRuntime.pendingInterruptedContext
+  ) {
+    scopedRuntime.pendingInterruptedContext = {
+      agentId: scopedRuntime.agentId || "",
+      conversationId: scopedRuntime.conversationId,
+      continuationEpoch: scopedRuntime.continuationEpoch,
+    };
+    // Set empty results array so hasInterruptedCacheForScope can detect the interrupt
+    scopedRuntime.pendingInterruptedResults = [];
+  }
+
   if (
     scopedRuntime.activeAbortController &&
     !scopedRuntime.activeAbortController.signal.aborted
@@ -644,6 +663,22 @@ async function handleAbortMessageInput(
       conversationId: scope.conversation_id,
     });
   } else if (hasPendingApprovals) {
+    // Populate interrupted cache to prevent stale approval recovery on sync
+    const pendingRequests = resolvedDeps.getPendingControlRequests(
+      listener,
+      scope,
+    );
+    scopedRuntime.pendingInterruptedResults = pendingRequests.map((req) => ({
+      type: "approval" as const,
+      tool_call_id: req.request.tool_call_id,
+      approve: false,
+      reason: "User interrupted the stream",
+    }));
+    scopedRuntime.pendingInterruptedContext = {
+      agentId: scope.agent_id || "",
+      conversationId: scope.conversation_id,
+      continuationEpoch: scopedRuntime.continuationEpoch,
+    };
     resolvedDeps.emitInterruptedStatusDelta(params.socket, scopedRuntime, {
       runId: interruptedRunId,
       agentId: scope.agent_id,

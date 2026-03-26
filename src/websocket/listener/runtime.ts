@@ -360,9 +360,7 @@ export function hasInterruptedCacheForScope(
     context &&
     context.agentId === (scopedAgentId ?? "") &&
     context.conversationId === scopedConversationId &&
-    context.continuationEpoch === conversationRuntime.continuationEpoch &&
-    conversationRuntime.pendingInterruptedResults &&
-    conversationRuntime.pendingInterruptedResults.length > 0
+    context.continuationEpoch === conversationRuntime.continuationEpoch
   ) {
     return true;
   }
