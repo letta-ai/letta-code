@@ -32,9 +32,7 @@ function getAgentId(): string {
  * Fetches secrets via GET /v1/agents/{agent_id}?include=agent.secrets
  * and populates the in-memory cache.
  */
-export async function initSecretsFromServer(
-  agentId: string,
-): Promise<void> {
+export async function initSecretsFromServer(agentId: string): Promise<void> {
   storedAgentId = agentId;
   const client = await getClient();
 

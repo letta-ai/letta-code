@@ -550,12 +550,7 @@ export async function commitMemoryFile(
     // staged changes exist — continue
   }
 
-  await runGit(dir, [
-    "commit",
-    "--no-verify",
-    "-m",
-    commitMessage,
-  ]);
+  await runGit(dir, ["commit", "--no-verify", "-m", commitMessage]);
 
   // Pull --rebase to incorporate any remote changes, then push.
   // This handles the case where another host pushed since our last pull.
