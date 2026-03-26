@@ -50,6 +50,7 @@ import {
   resolvePendingApprovalResolver,
   resolveRecoveryBatchId,
 } from "./approval";
+import { handleExecuteCommand } from "./commands";
 import {
   INITIAL_RETRY_DELAY_MS,
   MAX_RETRY_DELAY_MS,
@@ -77,6 +78,7 @@ import {
 } from "./permissionMode";
 import {
   isEnableMemfsCommand,
+  isExecuteCommandCommand,
   isListInDirectoryCommand,
   isListMemoryCommand,
   isReadFileCommand,
@@ -1521,6 +1523,21 @@ async function connectWithRetry(
           );
         }
       })();
+      return;
+    }
+
+    // ── Slash commands (execute_command) ────────────────────────────────
+    if (isExecuteCommandCommand(parsed)) {
+      // Slash commands need a scoped runtime for the conversation context
+      const scopedRuntime = getOrCreateScopedRuntime(
+        runtime,
+        parsed.runtime.agent_id,
+        parsed.runtime.conversation_id,
+      );
+      void handleExecuteCommand(parsed, socket, scopedRuntime, {
+        onStatusChange: opts.onStatusChange,
+        connectionId: opts.connectionId,
+      });
       return;
     }
 
