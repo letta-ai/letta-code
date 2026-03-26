@@ -23,7 +23,10 @@ import {
 } from "../../cli/helpers/subagentState";
 import { INTERRUPTED_BY_USER } from "../../constants";
 import { type DequeuedBatch, QueueRuntime } from "../../queue/queueRuntime";
-import { createSharedReminderState } from "../../reminders/state";
+import {
+  createSharedReminderState,
+  resetSharedReminderState,
+} from "../../reminders/state";
 import { settingsManager } from "../../settings-manager";
 import { loadTools } from "../../tools/manager";
 import type {
@@ -744,6 +747,11 @@ async function handleCwdChange(
       normalizedPath,
     );
 
+    // Invalidate session-context only (not agent-info) so the agent gets
+    // updated CWD/git info on the next turn.
+    runtime.reminderState.hasSentSessionContext = false;
+    runtime.reminderState.pendingSessionContextReason = "cwd_changed";
+
     // If the new cwd is outside the current file-index root, re-root the
     // index so file search covers the new workspace.  setIndexRoot()
     // triggers a non-blocking rebuild and does NOT mutate process.cwd(),
@@ -957,6 +965,13 @@ async function connectWithRetry(
       emitLoopStatusUpdate(socket, runtime);
     } else {
       for (const conversationRuntime of runtime.conversationRuntimes.values()) {
+        // Reset bootstrap reminder state on (re)connect so session-context
+        // and agent-info fire on the first turn of the new connection.
+        // This is intentionally in the open handler, NOT the sync handler,
+        // because the Desktop UMI controller sends sync every ~5 s and
+        // resetting there would re-arm reminders on every periodic sync.
+        resetSharedReminderState(conversationRuntime.reminderState);
+
         const scope = {
           agent_id: conversationRuntime.agentId,
           conversation_id: conversationRuntime.conversationId,
@@ -1074,14 +1089,13 @@ async function connectWithRetry(
         console.log(`[Listen V2] Dropping sync: runtime mismatch or closed`);
         return;
       }
-      await recoverApprovalStateForSync(
-        getOrCreateScopedRuntime(
-          runtime,
-          parsed.runtime.agent_id,
-          parsed.runtime.conversation_id,
-        ),
-        parsed.runtime,
+      const syncScopedRuntime = getOrCreateScopedRuntime(
+        runtime,
+        parsed.runtime.agent_id,
+        parsed.runtime.conversation_id,
       );
+      await recoverApprovalStateForSync(syncScopedRuntime, parsed.runtime);
+
       emitStateSync(socket, runtime, parsed.runtime);
       return;
     }

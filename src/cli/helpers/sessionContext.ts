@@ -4,8 +4,11 @@
 
 import { platform } from "node:os";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "../../constants";
+import type { SessionContextReason } from "../../reminders/state";
 import { getVersion } from "../../version";
 import { gatherGitContextSnapshot } from "./gitContext";
+
+export type SessionContextSource = "interactive-cli" | "headless" | "listen";
 
 /**
  * Get the current local time in a human-readable format
@@ -45,7 +48,7 @@ export function getDeviceType(): string {
  * Returns truncated commits (3) and status (20 lines)
  * Each field is gathered independently with fallbacks
  */
-function getGitInfo(): {
+function getGitInfo(cwd?: string): {
   isGitRepo: boolean;
   branch?: string;
   recentCommits?: string;
@@ -53,6 +56,7 @@ function getGitInfo(): {
   gitUser?: string;
 } {
   const git = gatherGitContextSnapshot({
+    cwd,
     recentCommitLimit: 3,
     recentCommitFormat: "%h %s (%an)",
     statusLineLimit: 20,
@@ -71,14 +75,41 @@ function getGitInfo(): {
   };
 }
 
+export interface BuildSessionContextOptions {
+  cwd?: string;
+  source?: SessionContextSource;
+  reason?: SessionContextReason;
+}
+
+function getIntroText(
+  source: SessionContextSource,
+  reason: SessionContextReason,
+): string {
+  if (reason === "cwd_changed") {
+    return "The working directory for this conversation has changed. Updated environment context follows.";
+  }
+  switch (source) {
+    case "listen":
+      return "This conversation is now connected to a Letta Code execution environment.";
+    case "headless":
+      return "The user has just initiated a new connection via the Letta Code headless client.";
+    default:
+      return "The user has just initiated a new connection via the [Letta Code CLI client](https://docs.letta.com/letta-code/index.md).";
+  }
+}
+
 /**
  * Build the session context system reminder (device/environment info only).
  * Agent metadata is handled separately by buildAgentMetadata().
  * Returns empty string on any failure (graceful degradation).
  */
-export function buildSessionContext(): string {
+export function buildSessionContext(
+  options?: BuildSessionContextOptions,
+): string {
   try {
-    const cwd = process.cwd();
+    const cwd = options?.cwd ?? process.cwd();
+    const source = options?.source ?? "interactive-cli";
+    const reason = options?.reason ?? "initial_attach";
 
     // Gather info with safe fallbacks
     let version = "unknown";
@@ -102,12 +133,12 @@ export function buildSessionContext(): string {
       // localTime stays "unknown"
     }
 
-    const gitInfo = getGitInfo();
+    const gitInfo = getGitInfo(cwd);
 
     // Build the context
     let context = `${SYSTEM_REMINDER_OPEN}
 This is an automated message providing context about the user's environment.
-The user has just initiated a new connection via the [Letta Code CLI client](https://docs.letta.com/letta-code/index.md).
+${getIntroText(source, reason)}
 
 ## Device Information
 - **Local time**: ${localTime}
