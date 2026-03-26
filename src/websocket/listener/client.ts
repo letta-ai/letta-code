@@ -3,8 +3,10 @@
  * Connects to Letta Cloud and receives messages to execute locally
  */
 
+import { execFile } from "node:child_process";
 import { realpath, stat } from "node:fs/promises";
 import path from "node:path";
+import { promisify } from "node:util";
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import WebSocket from "ws";
@@ -15,6 +17,7 @@ import {
   searchFileIndex,
   setIndexRoot,
 } from "../../cli/helpers/fileIndex";
+import { getGitContext } from "../../cli/helpers/gitContext";
 import { setMessageQueueAdder } from "../../cli/helpers/messageQueueBridge";
 import { generatePlanFilePath } from "../../cli/helpers/planName";
 import {
@@ -78,12 +81,14 @@ import {
   persistPermissionModeMapForRuntime,
 } from "./permissionMode";
 import {
+  isCheckoutBranchCommand,
   isEditFileCommand,
   isEnableMemfsCommand,
   isExecuteCommandCommand,
   isListInDirectoryCommand,
   isListMemoryCommand,
   isReadFileCommand,
+  isSearchBranchesCommand,
   isSearchFilesCommand,
   parseServerMessage,
 } from "./protocol-inbound";
@@ -1602,6 +1607,118 @@ async function connectWithRetry(
         onStatusChange: opts.onStatusChange,
         connectionId: opts.connectionId,
       });
+      return;
+    }
+
+    // ── Git branch commands (no runtime scope required) ────────────────
+    if (isSearchBranchesCommand(parsed)) {
+      void (async () => {
+        try {
+          const cwd = parsed.cwd ?? runtime.bootWorkingDirectory;
+          const maxResults = parsed.max_results ?? 20;
+          const execFileAsync = promisify(execFile);
+
+          // Get local + remote branches with format
+          const { stdout } = await execFileAsync(
+            "git",
+            ["branch", "-a", "--format=%(refname:short)\t%(HEAD)"],
+            {
+              cwd,
+              encoding: "utf-8",
+              timeout: 5000,
+            },
+          );
+
+          const query = parsed.query.toLowerCase();
+          const branches = stdout
+            .split("\n")
+            .filter((line) => line.trim().length > 0)
+            .map((line) => {
+              const parts = line.split("\t");
+              const trimmedName = (parts[0] ?? "").trim();
+              const isRemote = trimmedName.startsWith("origin/");
+              return {
+                name: trimmedName,
+                is_current: parts[1]?.trim() === "*",
+                is_remote: isRemote,
+              };
+            })
+            .filter(
+              (b) => query.length === 0 || b.name.toLowerCase().includes(query),
+            )
+            .slice(0, maxResults);
+
+          socket.send(
+            JSON.stringify({
+              type: "search_branches_response",
+              request_id: parsed.request_id,
+              branches,
+              success: true,
+            }),
+          );
+        } catch (error) {
+          socket.send(
+            JSON.stringify({
+              type: "search_branches_response",
+              request_id: parsed.request_id,
+              branches: [],
+              success: false,
+              error:
+                error instanceof Error
+                  ? error.message
+                  : "Failed to search branches",
+            }),
+          );
+        }
+      })();
+      return;
+    }
+
+    if (isCheckoutBranchCommand(parsed)) {
+      void (async () => {
+        try {
+          const cwd = parsed.cwd ?? runtime.bootWorkingDirectory;
+          const execFileAsync = promisify(execFile);
+
+          const args = parsed.create
+            ? ["checkout", "-b", parsed.branch]
+            : ["checkout", parsed.branch];
+
+          await execFileAsync("git", args, {
+            cwd,
+            encoding: "utf-8",
+            timeout: 10000,
+          });
+
+          // Re-read the current branch after checkout to confirm
+          const gitCtx = getGitContext(cwd);
+
+          socket.send(
+            JSON.stringify({
+              type: "checkout_branch_response",
+              request_id: parsed.request_id,
+              branch: gitCtx?.branch ?? parsed.branch,
+              success: true,
+            }),
+          );
+
+          // Emit updated device status so UIs pick up the new branch
+          emitDeviceStatusUpdate(socket, runtime);
+        } catch (error) {
+          socket.send(
+            JSON.stringify({
+              type: "checkout_branch_response",
+              request_id: parsed.request_id,
+              branch: parsed.branch,
+              success: false,
+              error:
+                error instanceof Error
+                  ? error.message
+                  : "Failed to checkout branch",
+            }),
+          );
+        }
+      })();
       return;
     }
 
