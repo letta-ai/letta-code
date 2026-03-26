@@ -457,7 +457,7 @@ const InputFooter = memo(function InputFooter({
               pulseIntervalMs={400}
             />
             {bgAgentParts.map((part, i) => (
-              <Text key={`bg-agent-${part}`}>
+              <Text key={`bg-agent-${part.id}`}>
                 {i > 0 && (
                   <Text
                     key={`bg-agent-indicator-${part}`}
