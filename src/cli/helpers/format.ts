@@ -37,17 +37,7 @@ export function bytesToTokens(bytes: number): number {
 
 /**
  * Estimate token count from a UTF-8 string using byte length.
- * This is more accurate than charsToTokens for non-ASCII text.
  */
 export function estimateTokens(text: string): number {
   return bytesToTokens(Buffer.byteLength(text, "utf8"));
-}
-
-/**
- * Rough approximation of tokens from character count.
- * Uses ~4 chars per token as a rough average for English text.
- * Prefer estimateTokens() when you have the actual text string.
- */
-export function charsToTokens(chars: number): number {
-  return Math.round(chars / 4);
 }
