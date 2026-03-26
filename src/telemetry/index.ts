@@ -4,6 +4,8 @@ import { settingsManager } from "../settings-manager";
 import { debugLogFile } from "../utils/debug";
 import { getVersion } from "../version";
 
+export type TelemetrySurface = "tui" | "headless" | "websocket";
+
 export interface TelemetryEvent {
   type: "session_start" | "session_end" | "tool_usage" | "error" | "user_input";
   timestamp: string;
@@ -68,6 +70,7 @@ class TelemetryManager {
   private sessionId: string;
   private deviceId: string | null = null;
   private currentAgentId: string | null = null;
+  private surface: TelemetrySurface = "tui";
   private sessionStartTime: number;
   private messageCount = 0;
   private toolCallCount = 0;
@@ -191,6 +194,7 @@ class TelemetryManager {
         ...data,
         session_id: this.sessionId,
         agent_id: this.currentAgentId || undefined,
+        surface: this.surface,
       },
     };
 
@@ -212,6 +216,10 @@ class TelemetryManager {
    */
   setCurrentAgentId(agentId: string | null) {
     this.currentAgentId = agentId;
+  }
+
+  setSurface(surface: TelemetrySurface) {
+    this.surface = surface;
   }
 
   /**
