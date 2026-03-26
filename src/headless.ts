@@ -905,6 +905,14 @@ export async function handleHeadlessCommand(
   // Captured so prompt logic below can await it when needed.
   let memfsBgPromise: Promise<unknown> | undefined;
 
+  // Init secrets cache — runs in parallel with memfs sync below.
+  const secretsAgentId = agent?.id;
+  const secretsInitPromise = secretsAgentId
+    ? import("./utils/secretsStore").then(({ initSecretsFromServer }) =>
+        initSecretsFromServer(secretsAgentId),
+      )
+    : Promise.resolve();
+
   // Apply memfs flags and auto-enable from server tag when local settings are missing.
   // Respects memfsStartupPolicy:
   //   "blocking"  (default) – await the pull; exit on conflict.
@@ -969,6 +977,18 @@ export async function handleHeadlessCommand(
   // Ensure background memfs sync settles before prompt logic reads isMemfsEnabled().
   if (memfsBgPromise && isResumingAgent) {
     await memfsBgPromise;
+  }
+
+  // Ensure secrets cache is populated (non-fatal).
+  try {
+    await secretsInitPromise;
+  } catch (error) {
+    import("./utils/debug").then(({ debugLog }) =>
+      debugLog(
+        "secrets",
+        `Failed to init secrets: ${error instanceof Error ? error.message : String(error)}`,
+      ),
+    );
   }
 
   // Apply --system flag after memfs sync so isMemfsEnabled() is up to date.

@@ -1679,6 +1679,11 @@ async function main(): Promise<void> {
             }),
         );
 
+        // Init secrets cache — runs in parallel with memfs sync below.
+        const secretsInitPromise = import("./utils/secretsStore").then(
+          ({ initSecretsFromServer }) => initSecretsFromServer(agentId),
+        );
+
         // Check if we're resuming an existing agent
         // We're resuming if:
         // 1. We specified an agent ID via --agent flag (agentIdArg)
@@ -1882,6 +1887,18 @@ async function main(): Promise<void> {
         } catch (error) {
           console.error(error instanceof Error ? error.message : String(error));
           process.exit(1);
+        }
+
+        // Ensure secrets cache is populated (non-fatal).
+        try {
+          await secretsInitPromise;
+        } catch (error) {
+          import("./utils/debug").then(({ debugLog }) =>
+            debugLog(
+              "secrets",
+              `Failed to init secrets: ${error instanceof Error ? error.message : String(error)}`,
+            ),
+          );
         }
 
         // Auto-heal system prompt drift (rebuild from stored recipe).
