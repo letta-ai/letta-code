@@ -564,7 +564,7 @@ describe("input-format stream-json", () => {
           }),
         ],
         [],
-        300000, // 5 min timeout - subagent spawn + execution can be slow
+        420000, // 7 min timeout - subagent spawn + execution can be very slow on Linux CI
       )) as WireMessage[];
 
       // Should have a successful result
@@ -578,6 +578,6 @@ describe("input-format stream-json", () => {
       const autoApprovals = objects.filter((o) => o.type === "auto_approval");
       expect(autoApprovals.length).toBeGreaterThan(0);
     },
-    { timeout: 320000 },
+    { timeout: 450000 },
   );
 });
