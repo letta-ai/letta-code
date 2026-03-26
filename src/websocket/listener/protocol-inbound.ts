@@ -2,6 +2,7 @@ import type WebSocket from "ws";
 import type {
   AbortMessageCommand,
   ChangeDeviceStateCommand,
+  EditFileCommand,
   EnableMemfsCommand,
   ExecuteCommandCommand,
   InputCommand,
@@ -276,6 +277,31 @@ export function isReadFileCommand(value: unknown): value is ReadFileCommand {
   );
 }
 
+export function isEditFileCommand(value: unknown): value is EditFileCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    file_path?: unknown;
+    old_string?: unknown;
+    new_string?: unknown;
+    replace_all?: unknown;
+    expected_replacements?: unknown;
+    request_id?: unknown;
+  };
+  return (
+    c.type === "edit_file" &&
+    typeof c.file_path === "string" &&
+    typeof c.old_string === "string" &&
+    typeof c.new_string === "string" &&
+    typeof c.request_id === "string" &&
+    (c.replace_all === undefined || typeof c.replace_all === "boolean") &&
+    (c.expected_replacements === undefined ||
+      (typeof c.expected_replacements === "number" &&
+        Number.isInteger(c.expected_replacements) &&
+        c.expected_replacements > 0))
+  );
+}
+
 export function isListMemoryCommand(
   value: unknown,
 ): value is ListMemoryCommand {
@@ -344,6 +370,7 @@ export function parseServerMessage(
       isSearchFilesCommand(parsed) ||
       isListInDirectoryCommand(parsed) ||
       isReadFileCommand(parsed) ||
+      isEditFileCommand(parsed) ||
       isListMemoryCommand(parsed) ||
       isEnableMemfsCommand(parsed) ||
       isExecuteCommandCommand(parsed)

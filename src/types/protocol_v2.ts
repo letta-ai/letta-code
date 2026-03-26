@@ -468,6 +468,22 @@ export interface ReadFileCommand {
   request_id: string;
 }
 
+export interface EditFileCommand {
+  type: "edit_file";
+  /** Absolute path to the file to edit. */
+  file_path: string;
+  /** The exact text to find and replace. */
+  old_string: string;
+  /** The replacement text. */
+  new_string: string;
+  /** When true, replace all occurrences. */
+  replace_all?: boolean;
+  /** Expected number of replacements (validation). */
+  expected_replacements?: number;
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+}
+
 export interface ListMemoryCommand {
   type: "list_memory";
   /** Echoed back in every response chunk for request correlation. */
@@ -511,6 +527,7 @@ export type WsProtocolCommand =
   | SearchFilesCommand
   | ListInDirectoryCommand
   | ReadFileCommand
+  | EditFileCommand
   | ListMemoryCommand
   | EnableMemfsCommand
   | ExecuteCommandCommand;
