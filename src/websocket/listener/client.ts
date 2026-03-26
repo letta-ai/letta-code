@@ -965,6 +965,13 @@ async function connectWithRetry(
       emitLoopStatusUpdate(socket, runtime);
     } else {
       for (const conversationRuntime of runtime.conversationRuntimes.values()) {
+        // Reset bootstrap reminder state on (re)connect so session-context
+        // and agent-info fire on the first turn of the new connection.
+        // This is intentionally in the open handler, NOT the sync handler,
+        // because the Desktop UMI controller sends sync every ~5 s and
+        // resetting there would re-arm reminders on every periodic sync.
+        resetSharedReminderState(conversationRuntime.reminderState);
+
         const scope = {
           agent_id: conversationRuntime.agentId,
           conversation_id: conversationRuntime.conversationId,
@@ -1088,10 +1095,6 @@ async function connectWithRetry(
         parsed.runtime.conversation_id,
       );
       await recoverApprovalStateForSync(syncScopedRuntime, parsed.runtime);
-
-      // Reset bootstrap reminder state for this runtime so session-context +
-      // agent-info fire on the next non-approval turn after (re)connect.
-      resetSharedReminderState(syncScopedRuntime.reminderState);
 
       emitStateSync(socket, runtime, parsed.runtime);
       return;
