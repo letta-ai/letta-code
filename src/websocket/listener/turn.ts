@@ -190,6 +190,10 @@ export async function handleIncomingMessage(
       return;
     }
 
+    // Ensure memfs repo is cloned/pulled for this agent (lazy, once per session).
+    const { ensureMemfsSyncedForAgent } = await import("./memfs-sync");
+    await ensureMemfsSyncedForAgent(runtime.listener, agentId);
+
     // Set agent context for tools that need it (e.g., Skill tool)
     setCurrentAgentId(agentId);
     setConversationId(conversationId);
