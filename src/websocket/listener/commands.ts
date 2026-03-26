@@ -10,10 +10,7 @@ import {
   createLifecycleMessageBase,
   emitCanonicalMessageDelta,
 } from "./protocol-outbound";
-import {
-  clearConversationRuntimeState,
-  emitListenerStatus,
-} from "./runtime";
+import { clearConversationRuntimeState, emitListenerStatus } from "./runtime";
 import type { ConversationRuntime, StartListenerOptions } from "./types";
 
 const ISOLATED_BLOCK_LABELS = ["human", "persona"];
@@ -47,7 +44,12 @@ export async function handleExecuteCommand(
     command_id: command.command_id,
     input,
   };
-  emitCanonicalMessageDelta(socket, conversationRuntime, startDelta as StreamDelta, scope);
+  emitCanonicalMessageDelta(
+    socket,
+    conversationRuntime,
+    startDelta as StreamDelta,
+    scope,
+  );
 
   try {
     let output: string;
@@ -74,8 +76,7 @@ export async function handleExecuteCommand(
       success: true,
     });
   } catch (error) {
-    const errorMessage =
-      error instanceof Error ? error.message : String(error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
     emitSlashCommandEnd(socket, conversationRuntime, scope, {
       command_id: command.command_id,
       input,
@@ -94,7 +95,10 @@ function emitSlashCommandEnd(
   socket: WebSocket,
   runtime: ConversationRuntime,
   scope: { agent_id: string | null; conversation_id: string },
-  fields: Pick<SlashCommandEndMessage, "command_id" | "input" | "output" | "success">,
+  fields: Pick<
+    SlashCommandEndMessage,
+    "command_id" | "input" | "output" | "success"
+  >,
 ): void {
   const endDelta: SlashCommandEndMessage = {
     ...createLifecycleMessageBase("slash_command_end"),

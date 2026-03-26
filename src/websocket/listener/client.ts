@@ -47,6 +47,7 @@ import {
   resolvePendingApprovalResolver,
   resolveRecoveryBatchId,
 } from "./approval";
+import { handleExecuteCommand } from "./commands";
 import {
   INITIAL_RETRY_DELAY_MS,
   MAX_RETRY_DELAY_MS,
@@ -81,7 +82,6 @@ import {
   isSearchFilesCommand,
   parseServerMessage,
 } from "./protocol-inbound";
-import { handleExecuteCommand } from "./commands";
 import {
   buildDeviceStatus,
   buildLoopStatus,
