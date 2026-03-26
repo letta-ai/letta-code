@@ -7,9 +7,10 @@
  * and headless code paths.
  */
 
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { debugLog } from "../utils/debug";
 import {
   DIRECTORY_LIMIT_DEFAULTS,
   getDirectoryLimits,
@@ -355,12 +356,26 @@ export async function applyMemfsFlags(
       pullSummary = result.summary;
     }
 
-    // Fetch secrets from the server so they're available for $SECRET_NAME substitution.
-    const { initSecretsFromServer } = await import("../utils/secretsStore");
+    // Clean up legacy secrets.md file that was previously written by secretsStore.
+    // This is a one-time migration — new secrets info is delivered via system reminders.
     try {
-      await initSecretsFromServer(agentId, getMemoryFilesystemRoot(agentId));
-    } catch {
-      // Non-fatal: secrets substitution won't work but agent can still run.
+      const secretsFile = join(
+        getMemoryFilesystemRoot(agentId),
+        "system",
+        "secrets.md",
+      );
+      if (existsSync(secretsFile)) {
+        unlinkSync(secretsFile);
+        debugLog(
+          "secrets",
+          `Removed legacy secrets.md from memfs for agent ${agentId}`,
+        );
+      }
+    } catch (error) {
+      debugLog(
+        "secrets",
+        `Failed to clean up legacy secrets.md: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
   }
 

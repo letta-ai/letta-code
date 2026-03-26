@@ -24,6 +24,7 @@ export type SessionContextReason = "initial_attach" | "cwd_changed";
 export interface SharedReminderState {
   hasSentAgentInfo: boolean;
   hasSentSessionContext: boolean;
+  hasSentSecretsInfo: boolean;
   lastNotifiedPermissionMode: PermissionMode | null;
   turnCount: number;
   pendingReflectionTrigger: boolean;
@@ -38,6 +39,7 @@ export function createSharedReminderState(): SharedReminderState {
   return {
     hasSentAgentInfo: false,
     hasSentSessionContext: false,
+    hasSentSecretsInfo: false,
     lastNotifiedPermissionMode: null,
     turnCount: 0,
     pendingReflectionTrigger: false,
