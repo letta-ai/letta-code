@@ -557,14 +557,16 @@ export async function commitMemoryFile(
     commitMessage,
   ]);
 
-  // Best-effort push — failure is non-fatal
+  // Pull --rebase to incorporate any remote changes, then push.
+  // This handles the case where another host pushed since our last pull.
   try {
     const token = await getAuthToken();
+    await runGit(dir, ["pull", "--rebase"], token);
     await runGit(dir, ["push"], token);
   } catch (err) {
     debugWarn(
       "memfs-git",
-      `Push after commitMemoryFile failed (will sync later): ${err instanceof Error ? err.message : String(err)}`,
+      `commitMemoryFile push failed (will sync on next startup): ${err instanceof Error ? err.message : String(err)}`,
     );
   }
 }
