@@ -3,9 +3,8 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { getClient } from "../../../../agent/client";
+import { estimateTokens } from "../../../../cli/helpers/format";
 import { settingsManager } from "../../../../settings-manager";
-
-const BYTES_PER_TOKEN = 4;
 
 type FileEstimate = {
   path: string;
@@ -44,10 +43,6 @@ function parseArgs(argv: string[]): ParsedArgs {
   }
 
   return parsed;
-}
-
-function estimateTokens(text: string): number {
-  return Math.ceil(Buffer.byteLength(text, "utf8") / BYTES_PER_TOKEN);
 }
 
 function normalizePath(value: string): string {

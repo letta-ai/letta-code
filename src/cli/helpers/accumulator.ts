@@ -733,7 +733,7 @@ export function onChunk(
       }));
       if (delta) {
         const newText = line.text + delta;
-        b.tokenCount += delta.length;
+        b.tokenCount += Buffer.byteLength(delta, "utf8");
 
         // Try to split at paragraph boundary (only if streaming enabled)
         if (!trySplitContent(b, id, "reasoning", newText)) {
@@ -767,7 +767,7 @@ export function onChunk(
       }));
       if (delta) {
         const newText = line.text + delta;
-        b.tokenCount += delta.length;
+        b.tokenCount += Buffer.byteLength(delta, "utf8");
 
         // Try to split at paragraph boundary (only if streaming enabled)
         if (!trySplitContent(b, id, "assistant", newText)) {
@@ -890,7 +890,7 @@ export function onChunk(
         line = updatedLine;
         b.byId.set(id, updatedLine);
         // Count tool call arguments as LLM output tokens
-        b.tokenCount += argsText.length;
+        b.tokenCount += Buffer.byteLength(argsText, "utf8");
       }
 
       // Track server-side tools and trigger PreToolUse hook (fire-and-forget since execution already started)

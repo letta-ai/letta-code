@@ -272,6 +272,7 @@ import {
 } from "./helpers/reflectionTranscript";
 import { safeJsonParseOr } from "./helpers/safeJsonParse";
 import { getDeviceType, getLocalTime } from "./helpers/sessionContext";
+import { buildStartupSystemPromptWarning } from "./helpers/startupSystemPromptWarning";
 import {
   resolvePromptChar,
   resolveStatusLineConfig,
@@ -3190,12 +3191,18 @@ export default function App({
       // Build status lines with optional release notes above header
       const statusLines: string[] = [];
 
+      const startupSystemPromptWarning =
+        buildStartupSystemPromptWarning(agentState);
+
       // Add release notes first (above everything) - same styling as rest of status block
       if (releaseNotes) {
         statusLines.push(releaseNotes);
         statusLines.push(""); // blank line separator
       }
 
+      if (startupSystemPromptWarning) {
+        statusLines.push(startupSystemPromptWarning);
+      }
       statusLines.push(headerMessage);
       statusLines.push(...commandHints);
 
@@ -8365,10 +8372,14 @@ export default function App({
         }
 
         // Special handling for /fork command - fork the current conversation
-        if (msg.trim() === "/fork") {
+        const forkMatch = msg.trim().match(/^\/fork(?:\s+(.+))?$/);
+        if (forkMatch) {
+          const conversationSummary = forkMatch[1]?.trim();
           const cmd = commandRunner.start(
             msg.trim(),
-            "Forking conversation...",
+            conversationSummary
+              ? `Forking conversation: ${conversationSummary}...`
+              : "Forking conversation...",
           );
 
           resetPendingReasoningCycle();
@@ -8385,6 +8396,14 @@ export default function App({
               conversationIdRef.current,
               isDefault ? { agent_id: agentId } : undefined,
             );
+
+            // If we forked with an explicit summary, update it
+            if (conversationSummary) {
+              await client.conversations.update(forked.id, {
+                summary: conversationSummary,
+              });
+              hasSetConversationSummaryRef.current = true;
+            }
 
             await maybeCarryOverActiveConversationModel(forked.id);
 
@@ -13465,12 +13484,18 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
       // Build status lines with optional release notes above header
       const statusLines: string[] = [];
 
+      const startupSystemPromptWarning =
+        buildStartupSystemPromptWarning(agentState);
+
       // Add release notes first (above everything) - same styling as rest of status block
       if (releaseNotes) {
         statusLines.push(releaseNotes);
         statusLines.push(""); // blank line separator
       }
 
+      if (startupSystemPromptWarning) {
+        statusLines.push(startupSystemPromptWarning);
+      }
       statusLines.push(headerMessage);
       statusLines.push(...commandHints);
 

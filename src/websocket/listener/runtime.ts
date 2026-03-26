@@ -1,3 +1,4 @@
+import { createSharedReminderState } from "../../reminders/state";
 import type { PendingControlRequest } from "../../types/protocol_v2";
 import {
   normalizeConversationId,
@@ -176,6 +177,7 @@ export function createConversationRuntime(
     continuationEpoch: 0,
     activeExecutingToolCallIds: [],
     pendingInterruptedToolCallIds: null,
+    reminderState: createSharedReminderState(),
   };
   listener.conversationRuntimes.set(
     conversationRuntime.key,
@@ -360,9 +362,7 @@ export function hasInterruptedCacheForScope(
     context &&
     context.agentId === (scopedAgentId ?? "") &&
     context.conversationId === scopedConversationId &&
-    context.continuationEpoch === conversationRuntime.continuationEpoch &&
-    conversationRuntime.pendingInterruptedResults &&
-    conversationRuntime.pendingInterruptedResults.length > 0
+    context.continuationEpoch === conversationRuntime.continuationEpoch
   ) {
     return true;
   }

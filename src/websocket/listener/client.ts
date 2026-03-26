@@ -23,8 +23,12 @@ import {
 } from "../../cli/helpers/subagentState";
 import { INTERRUPTED_BY_USER } from "../../constants";
 import { type DequeuedBatch, QueueRuntime } from "../../queue/queueRuntime";
-import { createSharedReminderState } from "../../reminders/state";
+import {
+  createSharedReminderState,
+  resetSharedReminderState,
+} from "../../reminders/state";
 import { settingsManager } from "../../settings-manager";
+import { telemetry } from "../../telemetry";
 import { loadTools } from "../../tools/manager";
 import type {
   AbortMessageCommand,
@@ -47,6 +51,7 @@ import {
   resolvePendingApprovalResolver,
   resolveRecoveryBatchId,
 } from "./approval";
+import { handleExecuteCommand } from "./commands";
 import {
   INITIAL_RETRY_DELAY_MS,
   MAX_RETRY_DELAY_MS,
@@ -73,7 +78,9 @@ import {
   persistPermissionModeMapForRuntime,
 } from "./permissionMode";
 import {
+  isEditFileCommand,
   isEnableMemfsCommand,
+  isExecuteCommandCommand,
   isListInDirectoryCommand,
   isListMemoryCommand,
   isReadFileCommand,
@@ -122,6 +129,7 @@ import {
   getListenerStatus,
   getOrCreateConversationRuntime,
   getPendingControlRequestCount,
+  getPendingControlRequests,
   getRecoveredApprovalStateForScope,
   safeEmitWsEvent,
   setActiveRuntime,
@@ -520,6 +528,7 @@ async function handleAbortMessageInput(
   deps: Partial<{
     getActiveRuntime: typeof getActiveRuntime;
     getPendingControlRequestCount: typeof getPendingControlRequestCount;
+    getPendingControlRequests: typeof getPendingControlRequests;
     getOrCreateScopedRuntime: typeof getOrCreateScopedRuntime;
     getRecoveredApprovalStateForScope: typeof getRecoveredApprovalStateForScope;
     stashRecoveredApprovalInterrupts: typeof stashRecoveredApprovalInterrupts;
@@ -538,6 +547,7 @@ async function handleAbortMessageInput(
   const resolvedDeps = {
     getActiveRuntime,
     getPendingControlRequestCount,
+    getPendingControlRequests,
     getOrCreateScopedRuntime,
     getRecoveredApprovalStateForScope,
     stashRecoveredApprovalInterrupts,
@@ -607,6 +617,22 @@ async function handleAbortMessageInput(
     ];
   }
 
+  // Also set interrupt context for active turns without tracked tool IDs
+  // (e.g., background Task tools that spawn subagents)
+  if (
+    hasActiveTurn &&
+    scopedRuntime.activeExecutingToolCallIds.length === 0 &&
+    !scopedRuntime.pendingInterruptedContext
+  ) {
+    scopedRuntime.pendingInterruptedContext = {
+      agentId: scopedRuntime.agentId || "",
+      conversationId: scopedRuntime.conversationId,
+      continuationEpoch: scopedRuntime.continuationEpoch,
+    };
+    // Set empty results array so hasInterruptedCacheForScope can detect the interrupt
+    scopedRuntime.pendingInterruptedResults = [];
+  }
+
   if (
     scopedRuntime.activeAbortController &&
     !scopedRuntime.activeAbortController.signal.aborted
@@ -644,6 +670,22 @@ async function handleAbortMessageInput(
       conversationId: scope.conversation_id,
     });
   } else if (hasPendingApprovals) {
+    // Populate interrupted cache to prevent stale approval recovery on sync
+    const pendingRequests = resolvedDeps.getPendingControlRequests(
+      listener,
+      scope,
+    );
+    scopedRuntime.pendingInterruptedResults = pendingRequests.map((req) => ({
+      type: "approval" as const,
+      tool_call_id: req.request.tool_call_id,
+      approve: false,
+      reason: "User interrupted the stream",
+    }));
+    scopedRuntime.pendingInterruptedContext = {
+      agentId: scope.agent_id || "",
+      conversationId: scope.conversation_id,
+      continuationEpoch: scopedRuntime.continuationEpoch,
+    };
     resolvedDeps.emitInterruptedStatusDelta(params.socket, scopedRuntime, {
       runId: interruptedRunId,
       agentId: scope.agent_id,
@@ -709,6 +751,11 @@ async function handleCwdChange(
       normalizedPath,
     );
 
+    // Invalidate session-context only (not agent-info) so the agent gets
+    // updated CWD/git info on the next turn.
+    runtime.reminderState.hasSentSessionContext = false;
+    runtime.reminderState.pendingSessionContextReason = "cwd_changed";
+
     // If the new cwd is outside the current file-index root, re-root the
     // index so file search covers the new workspace.  setIndexRoot()
     // triggers a non-blocking rebuild and does NOT mutate process.cwd(),
@@ -744,6 +791,7 @@ function createRuntime(): ListenerRuntime {
     reconnectTimeout: null,
     intentionallyClosed: false,
     hasSuccessfulConnection: false,
+    everConnected: false,
     sessionId: `listen-${crypto.randomUUID()}`,
     eventSeqCounter: 0,
     lastStopReason: null,
@@ -758,6 +806,7 @@ function createRuntime(): ListenerRuntime {
     connectionName: null,
     conversationRuntimes: new Map(),
     approvalRuntimeKeyByRequestId: new Map(),
+    memfsSyncedAgents: new Map(),
     lastEmittedStatus: null,
   };
 }
@@ -820,6 +869,7 @@ export async function startListenerClient(
   runtime.connectionId = opts.connectionId;
   runtime.connectionName = opts.connectionName;
   setActiveRuntime(runtime);
+  telemetry.setSurface("websocket");
 
   await connectWithRetry(runtime, opts);
 }
@@ -841,6 +891,13 @@ async function connectWithRetry(
 
   if (attempt > 0) {
     if (elapsedTime >= MAX_RETRY_DURATION_MS) {
+      // If we ever had a successful connection, try to re-register instead
+      // of giving up. This keeps established sessions alive through transient
+      // outages (e.g. Cloudflare 521, server deploys).
+      if (runtime.everConnected && opts.onNeedsReregister) {
+        opts.onNeedsReregister();
+        return;
+      }
       opts.onError(new Error("Failed to connect after 5 minutes of retrying"));
       return;
     }
@@ -915,6 +972,7 @@ async function connectWithRetry(
 
     safeEmitWsEvent("recv", "lifecycle", { type: "_ws_open" });
     runtime.hasSuccessfulConnection = true;
+    runtime.everConnected = true;
     opts.onConnected(opts.connectionId);
 
     if (runtime.conversationRuntimes.size === 0) {
@@ -922,6 +980,13 @@ async function connectWithRetry(
       emitLoopStatusUpdate(socket, runtime);
     } else {
       for (const conversationRuntime of runtime.conversationRuntimes.values()) {
+        // Reset bootstrap reminder state on (re)connect so session-context
+        // and agent-info fire on the first turn of the new connection.
+        // This is intentionally in the open handler, NOT the sync handler,
+        // because the Desktop UMI controller sends sync every ~5 s and
+        // resetting there would re-arm reminders on every periodic sync.
+        resetSharedReminderState(conversationRuntime.reminderState);
+
         const scope = {
           agent_id: conversationRuntime.agentId,
           conversation_id: conversationRuntime.conversationId,
@@ -1039,14 +1104,13 @@ async function connectWithRetry(
         console.log(`[Listen V2] Dropping sync: runtime mismatch or closed`);
         return;
       }
-      await recoverApprovalStateForSync(
-        getOrCreateScopedRuntime(
-          runtime,
-          parsed.runtime.agent_id,
-          parsed.runtime.conversation_id,
-        ),
-        parsed.runtime,
+      const syncScopedRuntime = getOrCreateScopedRuntime(
+        runtime,
+        parsed.runtime.agent_id,
+        parsed.runtime.conversation_id,
       );
+      await recoverApprovalStateForSync(syncScopedRuntime, parsed.runtime);
+
       emitStateSync(socket, runtime, parsed.runtime);
       return;
     }
@@ -1300,10 +1364,16 @@ async function connectWithRetry(
 
     // ── File reading (no runtime scope required) ─────────────────────
     if (isReadFileCommand(parsed)) {
+      console.log(
+        `[Listen] Received read_file command: path=${parsed.path}, request_id=${parsed.request_id}`,
+      );
       void (async () => {
         try {
           const { readFile } = await import("node:fs/promises");
           const content = await readFile(parsed.path, "utf-8");
+          console.log(
+            `[Listen] read_file success: ${parsed.path} (${content.length} bytes)`,
+          );
           socket.send(
             JSON.stringify({
               type: "read_file_response",
@@ -1314,6 +1384,9 @@ async function connectWithRetry(
             }),
           );
         } catch (err) {
+          console.error(
+            `[Listen] read_file error: ${err instanceof Error ? err.message : "Unknown error"}`,
+          );
           socket.send(
             JSON.stringify({
               type: "read_file_response",
@@ -1322,6 +1395,58 @@ async function connectWithRetry(
               content: null,
               success: false,
               error: err instanceof Error ? err.message : "Failed to read file",
+            }),
+          );
+        }
+      })();
+      return;
+    }
+
+    // ── File editing (no runtime scope required) ─────────────────────
+    if (isEditFileCommand(parsed)) {
+      console.log(
+        `[Listen] Received edit_file command: file_path=${parsed.file_path}, request_id=${parsed.request_id}`,
+      );
+      void (async () => {
+        try {
+          const { edit } = await import("../../tools/impl/Edit");
+          console.log(
+            `[Listen] Executing edit: old_string="${parsed.old_string.slice(0, 50)}${parsed.old_string.length > 50 ? "..." : ""}"`,
+          );
+          const result = await edit({
+            file_path: parsed.file_path,
+            old_string: parsed.old_string,
+            new_string: parsed.new_string,
+            replace_all: parsed.replace_all,
+            expected_replacements: parsed.expected_replacements,
+          });
+          console.log(
+            `[Listen] edit_file success: ${result.replacements} replacement(s) at line ${result.startLine}`,
+          );
+          socket.send(
+            JSON.stringify({
+              type: "edit_file_response",
+              request_id: parsed.request_id,
+              file_path: parsed.file_path,
+              message: result.message,
+              replacements: result.replacements,
+              start_line: result.startLine,
+              success: true,
+            }),
+          );
+        } catch (err) {
+          console.error(
+            `[Listen] edit_file error: ${err instanceof Error ? err.message : "Unknown error"}`,
+          );
+          socket.send(
+            JSON.stringify({
+              type: "edit_file_response",
+              request_id: parsed.request_id,
+              file_path: parsed.file_path,
+              message: null,
+              replacements: 0,
+              success: false,
+              error: err instanceof Error ? err.message : "Failed to edit file",
             }),
           );
         }
@@ -1475,6 +1600,21 @@ async function connectWithRetry(
       return;
     }
 
+    // ── Slash commands (execute_command) ────────────────────────────────
+    if (isExecuteCommandCommand(parsed)) {
+      // Slash commands need a scoped runtime for the conversation context
+      const scopedRuntime = getOrCreateScopedRuntime(
+        runtime,
+        parsed.runtime.agent_id,
+        parsed.runtime.conversation_id,
+      );
+      void handleExecuteCommand(parsed, socket, scopedRuntime, {
+        onStatusChange: opts.onStatusChange,
+        connectionId: opts.connectionId,
+      });
+      return;
+    }
+
     // ── Terminal commands (no runtime scope required) ──────────────────
     if (parsed.type === "terminal_spawn") {
       handleTerminalSpawn(
@@ -1609,6 +1749,7 @@ export function stopListenerClient(): void {
     return;
   }
   setActiveRuntime(null);
+  telemetry.setSurface(process.stdin.isTTY ? "tui" : "headless");
   stopRuntime(runtime, true);
 }
 
@@ -1640,8 +1781,10 @@ function createLegacyTestRuntime(): ConversationRuntime & {
   heartbeatInterval: NodeJS.Timeout | null;
   intentionallyClosed: boolean;
   hasSuccessfulConnection: boolean;
+  everConnected: boolean;
   conversationRuntimes: ListenerRuntime["conversationRuntimes"];
   approvalRuntimeKeyByRequestId: ListenerRuntime["approvalRuntimeKeyByRequestId"];
+  memfsSyncedAgents: ListenerRuntime["memfsSyncedAgents"];
   lastEmittedStatus: ListenerRuntime["lastEmittedStatus"];
 } {
   const listener = createRuntime();
@@ -1668,8 +1811,10 @@ function createLegacyTestRuntime(): ConversationRuntime & {
     heartbeatInterval: NodeJS.Timeout | null;
     intentionallyClosed: boolean;
     hasSuccessfulConnection: boolean;
+    everConnected: boolean;
     conversationRuntimes: ListenerRuntime["conversationRuntimes"];
     approvalRuntimeKeyByRequestId: ListenerRuntime["approvalRuntimeKeyByRequestId"];
+    memfsSyncedAgents: ListenerRuntime["memfsSyncedAgents"];
     lastEmittedStatus: ListenerRuntime["lastEmittedStatus"];
   };
   for (const [prop, getSet] of Object.entries({
@@ -1776,6 +1921,12 @@ function createLegacyTestRuntime(): ConversationRuntime & {
         listener.hasSuccessfulConnection = value;
       },
     },
+    everConnected: {
+      get: () => listener.everConnected,
+      set: (value: boolean) => {
+        listener.everConnected = value;
+      },
+    },
     conversationRuntimes: {
       get: () => listener.conversationRuntimes,
       set: (value: ListenerRuntime["conversationRuntimes"]) => {
@@ -1786,6 +1937,12 @@ function createLegacyTestRuntime(): ConversationRuntime & {
       get: () => listener.approvalRuntimeKeyByRequestId,
       set: (value: ListenerRuntime["approvalRuntimeKeyByRequestId"]) => {
         listener.approvalRuntimeKeyByRequestId = value;
+      },
+    },
+    memfsSyncedAgents: {
+      get: () => listener.memfsSyncedAgents,
+      set: (value: ListenerRuntime["memfsSyncedAgents"]) => {
+        listener.memfsSyncedAgents = value;
       },
     },
     lastEmittedStatus: {

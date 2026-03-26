@@ -30,7 +30,7 @@ import { OPENAI_CODEX_PROVIDER_NAME } from "../../providers/openai-codex-provide
 import { ralphMode } from "../../ralph/mode";
 import { settingsManager } from "../../settings-manager";
 import { buildChatUrl } from "../helpers/appUrls.js";
-import { charsToTokens, formatCompact } from "../helpers/format";
+import { bytesToTokens, formatCompact } from "../helpers/format";
 import type { QueuedMessage } from "../helpers/messageQueueBridge";
 import {
   getActiveBackgroundAgents,
@@ -457,7 +457,7 @@ const InputFooter = memo(function InputFooter({
               pulseIntervalMs={400}
             />
             {bgAgentParts.map((part, i) => (
-              <Text key={`bg-agent-${part}`}>
+              <Text key={`bg-agent-${part.id}`}>
                 {i > 0 && (
                   <Text
                     key={`bg-agent-indicator-${part}`}
@@ -606,7 +606,7 @@ const StreamingStatus = memo(function StreamingStatus({
     }
   }, [streaming, visible, includeSystemPromptUpgradeTip]);
 
-  const estimatedTokens = charsToTokens(tokenCount);
+  const estimatedTokens = bytesToTokens(tokenCount);
   const totalElapsedMs = elapsedBaseMs + elapsedMs;
   const shouldShowTokenCount =
     streaming && estimatedTokens > TOKEN_DISPLAY_THRESHOLD;

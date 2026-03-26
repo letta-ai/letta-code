@@ -97,6 +97,7 @@ export function buildSearchTargetPlan(
   };
 }
 
+
 /**
  * Format a timestamp in local timezone
  */

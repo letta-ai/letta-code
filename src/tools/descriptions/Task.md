@@ -109,6 +109,30 @@ Task({
 })
 ```
 
+## Forking Parent Context
+
+Use `subagent_type: "fork"` to launch a subagent that inherits the parent's full conversation history. The subagent runs against a forked copy of the current conversation, so it has all accumulated context without the parent needing to serialize it into the prompt.
+
+This is useful when:
+- The subagent needs deep context that would be expensive to re-explain in the prompt
+- You want to leverage prompt caching across multiple parallel forked subagents
+- The task requires understanding decisions and discussion from earlier in the conversation
+
+```typescript
+// Fork with full parent context
+Task({
+  subagent_type: "fork",
+  description: "Implement auth module",
+  prompt: "Implement the auth module we discussed. Use the patterns from the existing code."
+})
+
+// Parallel forks share the same cached prefix
+Task({ subagent_type: "fork", description: "Implement component A", prompt: "..." })
+Task({ subagent_type: "fork", description: "Implement component B", prompt: "..." })
+```
+
+Note: `fork` cannot be combined with `agent_id` or `conversation_id`.
+
 ## Concurrency and Safety:
 
 - **Safe**: Multiple read-only agents (explore, plan) running in parallel
