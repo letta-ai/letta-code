@@ -162,6 +162,19 @@ mock.module("../../agent/approval-recovery", () => ({
   fetchRunErrorDetail: fetchRunErrorDetailMock,
 }));
 
+mock.module("../../reminders/engine", () => ({
+  buildSharedReminderParts: async () => ({ parts: [], appliedReminderIds: [] }),
+  prependReminderPartsToContent: (content: unknown) => content,
+}));
+
+mock.module("../../reminders/listenContext", () => ({
+  buildListenReminderContext: () => ({}),
+}));
+
+mock.module("../../reminders/planModeReminder", () => ({
+  getPlanModeReminder: () => "",
+}));
+
 const listenClientModule = await import("../../websocket/listen-client");
 const {
   __listenClientTestUtils,
