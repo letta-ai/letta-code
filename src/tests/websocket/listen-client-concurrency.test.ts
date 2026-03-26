@@ -162,16 +162,21 @@ mock.module("../../agent/approval-recovery", () => ({
   fetchRunErrorDetail: fetchRunErrorDetailMock,
 }));
 
+const realReminderEngine = await import("../../reminders/engine");
 mock.module("../../reminders/engine", () => ({
+  ...realReminderEngine,
   buildSharedReminderParts: async () => ({ parts: [], appliedReminderIds: [] }),
-  prependReminderPartsToContent: (content: unknown) => content,
 }));
 
+const realListenContext = await import("../../reminders/listenContext");
 mock.module("../../reminders/listenContext", () => ({
+  ...realListenContext,
   buildListenReminderContext: () => ({}),
 }));
 
+const realPlanModeReminder = await import("../../reminders/planModeReminder");
 mock.module("../../reminders/planModeReminder", () => ({
+  ...realPlanModeReminder,
   getPlanModeReminder: () => "",
 }));
 
