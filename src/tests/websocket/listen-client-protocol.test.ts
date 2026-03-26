@@ -2021,7 +2021,9 @@ describe("listen-client edit_file command", () => {
 
       // Check for response
       const responses = socket.sentPayloads.map((p) => JSON.parse(p as string));
-      const editResponse = responses.find((r) => r.type === "edit_file_response");
+      const editResponse = responses.find(
+        (r) => r.type === "edit_file_response",
+      );
 
       // Note: The handler runs asynchronously, so we may need to wait
       // In a real test, we'd mock the edit function or use a different approach
