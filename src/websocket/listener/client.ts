@@ -76,6 +76,7 @@ import {
   persistPermissionModeMapForRuntime,
 } from "./permissionMode";
 import {
+  isEditFileCommand,
   isEnableMemfsCommand,
   isListInDirectoryCommand,
   isListMemoryCommand,
@@ -1371,6 +1372,46 @@ async function connectWithRetry(
               content: null,
               success: false,
               error: err instanceof Error ? err.message : "Failed to read file",
+            }),
+          );
+        }
+      })();
+      return;
+    }
+
+    // ── File editing (no runtime scope required) ─────────────────────
+    if (isEditFileCommand(parsed)) {
+      void (async () => {
+        try {
+          const { edit } = await import("../../tools/impl/Edit");
+          const result = await edit({
+            file_path: parsed.file_path,
+            old_string: parsed.old_string,
+            new_string: parsed.new_string,
+            replace_all: parsed.replace_all,
+            expected_replacements: parsed.expected_replacements,
+          });
+          socket.send(
+            JSON.stringify({
+              type: "edit_file_response",
+              request_id: parsed.request_id,
+              file_path: parsed.file_path,
+              message: result.message,
+              replacements: result.replacements,
+              start_line: result.startLine,
+              success: true,
+            }),
+          );
+        } catch (err) {
+          socket.send(
+            JSON.stringify({
+              type: "edit_file_response",
+              request_id: parsed.request_id,
+              file_path: parsed.file_path,
+              message: null,
+              replacements: 0,
+              success: false,
+              error: err instanceof Error ? err.message : "Failed to edit file",
             }),
           );
         }
