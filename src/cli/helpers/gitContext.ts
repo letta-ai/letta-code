@@ -115,3 +115,46 @@ export function gatherGitContextSnapshot(
     gitUser,
   };
 }
+
+// ─────────────────────────────────────────────────
+//  Lightweight git context for DeviceStatus
+// ─────────────────────────────────────────────────
+
+export interface LightGitContext {
+  branch: string | null;
+  recent_branches: string[];
+}
+
+/**
+ * Get a lightweight git context suitable for the DeviceStatus payload.
+ * Fast: only runs `git branch --show-current` and `git branch --sort=-committerdate`.
+ * Returns null if the cwd is not inside a git repo.
+ */
+export function getGitContext(cwd: string): LightGitContext | null {
+  if (!runGit(["rev-parse", "--git-dir"], cwd)) {
+    return null;
+  }
+
+  const branch = runGit(["branch", "--show-current"], cwd);
+
+  // Get up to 11 local branches sorted by most recent commit (10 + current)
+  const branchList = runGit(
+    [
+      "branch",
+      "--sort=-committerdate",
+      "--format=%(refname:short)",
+      "--no-color",
+    ],
+    cwd,
+  );
+
+  const recentBranches = branchList
+    ? branchList
+        .split("\n")
+        .map((b) => b.trim())
+        .filter((b) => b.length > 0 && b !== branch)
+        .slice(0, 10)
+    : [];
+
+  return { branch, recent_branches: recentBranches };
+}
