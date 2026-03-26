@@ -1,4 +1,3 @@
-import { createSharedReminderState } from "../../reminders/state";
 import type { PendingControlRequest } from "../../types/protocol_v2";
 import {
   normalizeConversationId,
@@ -177,7 +176,6 @@ export function createConversationRuntime(
     continuationEpoch: 0,
     activeExecutingToolCallIds: [],
     pendingInterruptedToolCallIds: null,
-    reminderState: createSharedReminderState(),
   };
   listener.conversationRuntimes.set(
     conversationRuntime.key,

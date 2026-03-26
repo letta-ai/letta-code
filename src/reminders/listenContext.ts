@@ -1,6 +1,6 @@
 import type { ReflectionSettings } from "../cli/helpers/memoryReminder";
 import type { SharedReminderContext } from "./engine";
-import type { SessionContextReason, SharedReminderState } from "./state";
+import type { SharedReminderState } from "./state";
 
 // hardcoded for now as we only need plan mode reminder for listener mode
 const LISTEN_REFLECTION_SETTINGS: ReflectionSettings = {
@@ -12,10 +12,6 @@ interface BuildListenReminderContextParams {
   agentId: string;
   state: SharedReminderState;
   resolvePlanModeReminder: () => string | Promise<string>;
-  /** Explicit working directory for session context (overrides process.cwd()). */
-  workingDirectory?: string;
-  /** Reason for injecting session context (controls intro text). */
-  sessionContextReason?: SessionContextReason;
 }
 
 export function buildListenReminderContext(
@@ -30,12 +26,9 @@ export function buildListenReminderContext(
       lastRunAt: null,
     },
     state: params.state,
-    sessionContextReminderEnabled: true,
+    sessionContextReminderEnabled: false,
     reflectionSettings: LISTEN_REFLECTION_SETTINGS,
     skillSources: [],
     resolvePlanModeReminder: params.resolvePlanModeReminder,
-    workingDirectory: params.workingDirectory,
-    sessionContextSource: "listen",
-    sessionContextReason: params.sessionContextReason,
   };
 }

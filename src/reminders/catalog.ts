@@ -27,22 +27,12 @@ export const SHARED_REMINDER_CATALOG: ReadonlyArray<SharedReminderDefinition> =
     {
       id: "session-context",
       description: "First-turn device/git/cwd context",
-      modes: [
-        "interactive",
-        "headless-one-shot",
-        "headless-bidirectional",
-        "listen",
-      ],
+      modes: ["interactive", "headless-one-shot", "headless-bidirectional"],
     },
     {
       id: "agent-info",
       description: "Agent identity (ID, name, server, memory dir)",
-      modes: [
-        "interactive",
-        "headless-one-shot",
-        "headless-bidirectional",
-        "listen",
-      ],
+      modes: ["interactive", "headless-one-shot", "headless-bidirectional"],
     },
     {
       id: "permission-mode",
