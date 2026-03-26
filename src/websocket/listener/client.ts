@@ -22,8 +22,15 @@ import {
   subscribeToStreamEvents as subscribeToSubagentStreamEvents,
 } from "../../cli/helpers/subagentState";
 import { INTERRUPTED_BY_USER } from "../../constants";
+import {
+  startScheduler as startCronScheduler,
+  stopScheduler as stopCronScheduler,
+} from "../../cron/scheduler";
 import { type DequeuedBatch, QueueRuntime } from "../../queue/queueRuntime";
-import { createSharedReminderState } from "../../reminders/state";
+import {
+  createSharedReminderState,
+  resetSharedReminderState,
+} from "../../reminders/state";
 import { settingsManager } from "../../settings-manager";
 import { loadTools } from "../../tools/manager";
 import type {
@@ -744,6 +751,11 @@ async function handleCwdChange(
       normalizedPath,
     );
 
+    // Invalidate session-context only (not agent-info) so the agent gets
+    // updated CWD/git info on the next turn.
+    runtime.reminderState.hasSentSessionContext = false;
+    runtime.reminderState.pendingSessionContextReason = "cwd_changed";
+
     // If the new cwd is outside the current file-index root, re-root the
     // index so file search covers the new workspace.  setIndexRoot()
     // triggers a non-blocking rebuild and does NOT mutate process.cwd(),
@@ -1031,6 +1043,9 @@ async function connectWithRetry(
         socket.send(JSON.stringify({ type: "ping" }));
       }
     }, 30000);
+
+    // Start cron scheduler if tasks exist
+    startCronScheduler(socket, opts, processQueuedTurn);
   });
 
   socket.on("message", async (data: WebSocket.RawData) => {
@@ -1074,14 +1089,17 @@ async function connectWithRetry(
         console.log(`[Listen V2] Dropping sync: runtime mismatch or closed`);
         return;
       }
-      await recoverApprovalStateForSync(
-        getOrCreateScopedRuntime(
-          runtime,
-          parsed.runtime.agent_id,
-          parsed.runtime.conversation_id,
-        ),
-        parsed.runtime,
+      const syncScopedRuntime = getOrCreateScopedRuntime(
+        runtime,
+        parsed.runtime.agent_id,
+        parsed.runtime.conversation_id,
       );
+      await recoverApprovalStateForSync(syncScopedRuntime, parsed.runtime);
+
+      // Reset bootstrap reminder state for this runtime so session-context +
+      // agent-info fire on the next non-approval turn after (re)connect.
+      resetSharedReminderState(syncScopedRuntime.reminderState);
+
       emitStateSync(socket, runtime, parsed.runtime);
       return;
     }
@@ -1546,6 +1564,9 @@ async function connectWithRetry(
       code,
       reason: reason.toString(),
     });
+
+    // Stop cron scheduler on disconnect
+    stopCronScheduler();
 
     // Clear the bridge before queue clearing to prevent a race where a task
     // completion enqueues into a shutting-down runtime.

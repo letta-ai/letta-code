@@ -2675,6 +2675,12 @@ async function runBidirectionalMode(
         source: "task_notification",
         text: input.text,
       } as Parameters<typeof msgQueueRuntime.enqueue>[0]);
+    } else if (input.kind === "cron_prompt") {
+      msgQueueRuntime.enqueue({
+        kind: "cron_prompt",
+        source: "cron",
+        text: input.text,
+      } as Parameters<typeof msgQueueRuntime.enqueue>[0]);
     } else {
       msgQueueRuntime.enqueue({
         kind: "message",

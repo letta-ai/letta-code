@@ -19,6 +19,8 @@ export interface ToolsetChangeReminder {
   newTools: string[];
 }
 
+export type SessionContextReason = "initial_attach" | "cwd_changed";
+
 export interface SharedReminderState {
   hasSentAgentInfo: boolean;
   hasSentSessionContext: boolean;
@@ -28,6 +30,8 @@ export interface SharedReminderState {
   pendingAutoInitReminder: boolean;
   pendingCommandIoReminders: CommandIoReminder[];
   pendingToolsetChangeReminders: ToolsetChangeReminder[];
+  /** When set, the next session-context reminder uses this reason for its intro text. */
+  pendingSessionContextReason?: SessionContextReason;
 }
 
 export function createSharedReminderState(): SharedReminderState {

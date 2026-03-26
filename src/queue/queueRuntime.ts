@@ -47,9 +47,18 @@ export type OverlayActionQueueItem = QueueItemBase & {
   text: string;
 };
 
+export type CronPromptQueueItem = QueueItemBase & {
+  kind: "cron_prompt";
+  /** XML-wrapped prompt text. */
+  text: string;
+  /** Cron task ID for tracing. */
+  cronTaskId: string;
+};
+
 export type QueueItem =
   | MessageQueueItem
   | TaskNotificationQueueItem
+  | CronPromptQueueItem
   | ApprovalResultQueueItem
   | OverlayActionQueueItem;
 
@@ -57,7 +66,9 @@ export type QueueItem =
 
 /** Coalescable items can be merged into a single submission batch. */
 export function isCoalescable(kind: QueueItemKind): boolean {
-  return kind === "message" || kind === "task_notification";
+  return (
+    kind === "message" || kind === "task_notification" || kind === "cron_prompt"
+  );
 }
 
 function hasSameScope(a: QueueItem, b: QueueItem): boolean {

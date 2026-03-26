@@ -152,12 +152,14 @@ export type LoopStatus =
 export type QueueMessageKind =
   | "message"
   | "task_notification"
+  | "cron_prompt"
   | "approval_result"
   | "overlay_action";
 
 export type QueueMessageSource =
   | "user"
   | "task_notification"
+  | "cron"
   | "subagent"
   | "system";
 
