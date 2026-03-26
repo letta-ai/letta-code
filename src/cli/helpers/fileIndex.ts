@@ -174,7 +174,10 @@ function appendSubtreeEntries(
 
   if (path === "") {
     // Copy all entries up to cap
-    const toCopy = previous.entries.slice(0, MAX_CACHE_ENTRIES - context.totalEntryCount);
+    const toCopy = previous.entries.slice(
+      0,
+      MAX_CACHE_ENTRIES - context.totalEntryCount,
+    );
     for (const e of toCopy) {
       targetEntries.push(e);
       context.totalEntryCount++;
@@ -431,7 +434,10 @@ async function buildDirectory(
 
   statsMap[relativePath] = currentStats;
 
-  if (depth >= MAX_INDEX_DEPTH || context.totalEntryCount >= MAX_CACHE_ENTRIES) {
+  if (
+    depth >= MAX_INDEX_DEPTH ||
+    context.totalEntryCount >= MAX_CACHE_ENTRIES
+  ) {
     context.truncated = true;
     const truncatedHash = hashValue("__truncated__");
     merkle[relativePath] = truncatedHash;
@@ -536,7 +542,11 @@ async function buildIndex(
   const entries: FileIndexEntry[] = [];
   const merkle: MerkleMap = {};
   const statsMap: StatsMap = {};
-  const context: BuildContext = { newEntryCount: 0, totalEntryCount: 0, truncated: false };
+  const context: BuildContext = {
+    newEntryCount: 0,
+    totalEntryCount: 0,
+    truncated: false,
+  };
   const rootHash = await buildDirectory(
     indexRoot,
     "",
