@@ -9,6 +9,7 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
+import type { CronTask } from "../cron";
 
 /**
  * Runtime identity for all state and delta events.
@@ -345,10 +346,8 @@ export type ApprovalResponseBody =
 
 /**
  * Controller -> execution-environment commands.
- * In v2, the WS server accepts only:
- * - input (chat-loop ingress envelope)
- * - change_device_state (device runtime mutation)
- * - abort_message (abort request)
+ * In v2, the WS server accepts runtime-scoped chat/device commands plus
+ * device capability commands (filesystem, memory, cron, terminals).
  */
 export interface InputCreateMessagePayload {
   kind: "create_message";
@@ -470,6 +469,101 @@ export interface EnableMemfsCommand {
   agent_id: string;
 }
 
+export interface CronListCommand {
+  type: "cron_list";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  /** Optional agent filter. */
+  agent_id?: string;
+  /** Optional conversation filter. */
+  conversation_id?: string;
+}
+
+export interface CronAddCommand {
+  type: "cron_add";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  agent_id: string;
+  conversation_id?: string;
+  cron: string;
+  timezone?: string;
+  recurring: boolean;
+  prompt: string;
+  /** Optional ISO timestamp for one-shot tasks. */
+  scheduled_for?: string | null;
+}
+
+export interface CronGetCommand {
+  type: "cron_get";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  task_id: string;
+}
+
+export interface CronDeleteCommand {
+  type: "cron_delete";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  task_id: string;
+}
+
+export interface CronDeleteAllCommand {
+  type: "cron_delete_all";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  agent_id: string;
+}
+
+export interface CronListResponseMessage {
+  type: "cron_list_response";
+  request_id: string;
+  tasks: CronTask[];
+  success: boolean;
+  error?: string;
+}
+
+export interface CronAddResponseMessage {
+  type: "cron_add_response";
+  request_id: string;
+  success: boolean;
+  task?: CronTask;
+  warning?: string;
+  error?: string;
+}
+
+export interface CronGetResponseMessage {
+  type: "cron_get_response";
+  request_id: string;
+  success: boolean;
+  found: boolean;
+  task: CronTask | null;
+  error?: string;
+}
+
+export interface CronDeleteResponseMessage {
+  type: "cron_delete_response";
+  request_id: string;
+  success: boolean;
+  found: boolean;
+  error?: string;
+}
+
+export interface CronDeleteAllResponseMessage {
+  type: "cron_delete_all_response";
+  request_id: string;
+  success: boolean;
+  agent_id: string;
+  deleted: number;
+  error?: string;
+}
+
+export interface CronsUpdatedMessage {
+  type: "crons_updated";
+  timestamp: number;
+  agent_id?: string;
+  conversation_id?: string | null;
+}
+
 export type WsProtocolCommand =
   | InputCommand
   | ChangeDeviceStateCommand
@@ -483,7 +577,12 @@ export type WsProtocolCommand =
   | ListInDirectoryCommand
   | ReadFileCommand
   | ListMemoryCommand
-  | EnableMemfsCommand;
+  | EnableMemfsCommand
+  | CronListCommand
+  | CronAddCommand
+  | CronGetCommand
+  | CronDeleteCommand
+  | CronDeleteAllCommand;
 
 export type WsProtocolMessage =
   | DeviceStatusUpdateMessage
