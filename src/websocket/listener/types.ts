@@ -129,6 +129,8 @@ export type ConversationRuntime = {
   continuationEpoch: number;
   activeExecutingToolCallIds: string[];
   pendingInterruptedToolCallIds: string[] | null;
+  /** Per-conversation reminder state (session-context, agent-info, etc.). */
+  reminderState: SharedReminderState;
 };
 
 export type ListenerRuntime = {
