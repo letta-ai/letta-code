@@ -8,6 +8,7 @@ import type {
 } from "../../queue/queueRuntime";
 import { isCoalescable } from "../../queue/queueRuntime";
 import { mergeQueuedTurnInput } from "../../queue/turnQueueRuntime";
+import { trackBoundaryError } from "../../telemetry/errorReporting";
 import { getListenerBlockedReason } from "../helpers/listenerQueueAdapter";
 import { emitDequeuedUserMessage } from "./protocol-outbound";
 import {
@@ -430,6 +431,11 @@ export function scheduleQueuePump(
     })
     .catch((error: unknown) => {
       runtime.queuePumpScheduled = false;
+      trackBoundaryError({
+        errorType: "listener_queue_pump_failed",
+        error,
+        context: "listener_queue_pump",
+      });
       console.error("[Listen] Error in queue pump:", error);
       emitListenerStatus(
         runtime.listener,

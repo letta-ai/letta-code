@@ -4,6 +4,7 @@
  */
 
 import Letta from "@letta-ai/letta-client";
+import { trackBoundaryError } from "../telemetry/errorReporting";
 
 export const LETTA_CLOUD_API_URL = "https://api.letta.com";
 
@@ -123,6 +124,11 @@ export async function pollForToken(
 
       throw new Error(`OAuth error: ${error.error_description || error.error}`);
     } catch (error) {
+      trackBoundaryError({
+        errorType: "oauth_token_poll_failed",
+        error,
+        context: "auth_oauth_token_poll",
+      });
       if (error instanceof Error) {
         throw error;
       }
@@ -185,12 +191,22 @@ export async function revokeToken(refreshToken: string): Promise<void> {
     // OAuth 2.0 revoke endpoint should return 200 even if token is already invalid
     if (!response.ok) {
       const error = (await response.json()) as OAuthError;
+      trackBoundaryError({
+        errorType: "oauth_revoke_failed",
+        error: error.error_description || error.error,
+        context: "auth_oauth_revoke",
+      });
       console.error(
         `Warning: Failed to revoke token: ${error.error_description || error.error}`,
       );
       // Don't throw - we still want to clear local credentials
     }
   } catch (error) {
+    trackBoundaryError({
+      errorType: "oauth_revoke_exception",
+      error,
+      context: "auth_oauth_revoke",
+    });
     console.error("Warning: Failed to revoke token:", error);
     // Don't throw - we still want to clear local credentials
   }

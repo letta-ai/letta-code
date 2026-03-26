@@ -47,6 +47,7 @@ import { permissionMode } from "./permissions/mode";
 import { settingsManager } from "./settings-manager";
 import { startStartupAutoUpdateCheck } from "./startup-auto-update";
 import { telemetry } from "./telemetry";
+import { trackBoundaryError } from "./telemetry/errorReporting";
 import { loadTools } from "./tools/manager";
 import { clearPersistedClientToolRules } from "./tools/toolset";
 import { debugLog, debugWarn, isDebugEnabled } from "./utils/debug";
@@ -57,6 +58,19 @@ import { markMilestone } from "./utils/timing";
 // anti-pattern of creating new [] on every render which triggers useEffect re-runs
 const EMPTY_APPROVAL_ARRAY: ApprovalRequest[] = [];
 const EMPTY_MESSAGE_ARRAY: Message[] = [];
+
+function trackCliBoundaryError(
+  errorType: string,
+  error: unknown,
+  context: string,
+): void {
+  trackBoundaryError({
+    errorType,
+    error,
+    context,
+  });
+}
+
 void ensureFileIndex();
 
 function printHelp() {
@@ -361,6 +375,7 @@ async function main(): Promise<void> {
       const { lspManager } = await import("./lsp/manager.js");
       await lspManager.initialize(process.cwd());
     } catch (error) {
+      trackCliBoundaryError("lsp_init_failed", error, "tui_startup_lsp_init");
       console.error("[LSP] Failed to initialize:", error);
     }
   }
@@ -394,6 +409,11 @@ async function main(): Promise<void> {
     values = parsed.values;
     positionals = parsed.positionals;
   } catch (error) {
+    trackCliBoundaryError(
+      "cli_args_parse_failed",
+      error,
+      "tui_startup_parse_args",
+    );
     const errorMsg = error instanceof Error ? error.message : String(error);
     // Improve error message for common mistakes
     if (errorMsg.includes("Unknown option")) {
@@ -467,6 +487,11 @@ async function main(): Promise<void> {
     specifiedConversationId = normalized.specifiedConversationId ?? null;
     specifiedAgentId = normalized.specifiedAgentId ?? null;
   } catch (error) {
+    trackCliBoundaryError(
+      "conversation_shorthand_normalization_failed",
+      error,
+      "tui_startup_conversation_shorthand",
+    );
     console.error(
       error instanceof Error ? `Error: ${error.message}` : String(error),
     );
@@ -481,6 +506,11 @@ async function main(): Promise<void> {
       forceNew,
     });
   } catch (error) {
+    trackCliBoundaryError(
+      "conversation_flag_validation_failed",
+      error,
+      "tui_startup_conversation_flag_validation",
+    );
     console.error(
       error instanceof Error ? `Error: ${error.message}` : String(error),
     );
@@ -593,6 +623,11 @@ async function main(): Promise<void> {
         allowSubagentNames,
       });
     } catch (err) {
+      trackCliBoundaryError(
+        "system_prompt_preset_validation_failed",
+        err,
+        "tui_startup_system_prompt_preset",
+      );
       console.error(
         `Error: ${err instanceof Error ? err.message : String(err)}`,
       );
@@ -766,6 +801,7 @@ async function main(): Promise<void> {
     // After setup, restart main flow
     return main().catch((err: unknown) => {
       // Handle top-level errors gracefully without raw stack traces
+      trackCliBoundaryError("setup_restart_failed", err, "tui_setup_restart");
       const message =
         err instanceof Error ? err.message : "An unexpected error occurred";
       console.error(`\nError: ${message}`);
@@ -1935,6 +1971,11 @@ async function main(): Promise<void> {
 
       init().catch((err) => {
         // Handle errors gracefully without showing raw stack traces
+        trackCliBoundaryError(
+          "tui_initialization_failed",
+          err,
+          "tui_app_initialization",
+        );
         const message = formatErrorDetails(err);
         console.error(`\nError during initialization: ${message}`);
         if (isDebugEnabled()) {
