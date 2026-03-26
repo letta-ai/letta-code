@@ -255,9 +255,12 @@ export async function handleIncomingMessage(
             }
           }
         }
-      } catch {
+      } catch (err) {
         // Reminder injection is best-effort — failures must not prevent
         // the user message from being sent to the agent.
+        if (isDebugEnabled()) {
+          console.error("[Listen] Failed to build reminder parts:", err);
+        }
       }
     }
 
