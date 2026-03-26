@@ -801,6 +801,7 @@ function createRuntime(): ListenerRuntime {
     connectionName: null,
     conversationRuntimes: new Map(),
     approvalRuntimeKeyByRequestId: new Map(),
+    memfsSyncedAgents: new Map(),
     lastEmittedStatus: null,
   };
 }
@@ -1691,6 +1692,7 @@ function createLegacyTestRuntime(): ConversationRuntime & {
   hasSuccessfulConnection: boolean;
   conversationRuntimes: ListenerRuntime["conversationRuntimes"];
   approvalRuntimeKeyByRequestId: ListenerRuntime["approvalRuntimeKeyByRequestId"];
+  memfsSyncedAgents: ListenerRuntime["memfsSyncedAgents"];
   lastEmittedStatus: ListenerRuntime["lastEmittedStatus"];
 } {
   const listener = createRuntime();
@@ -1719,6 +1721,7 @@ function createLegacyTestRuntime(): ConversationRuntime & {
     hasSuccessfulConnection: boolean;
     conversationRuntimes: ListenerRuntime["conversationRuntimes"];
     approvalRuntimeKeyByRequestId: ListenerRuntime["approvalRuntimeKeyByRequestId"];
+    memfsSyncedAgents: ListenerRuntime["memfsSyncedAgents"];
     lastEmittedStatus: ListenerRuntime["lastEmittedStatus"];
   };
   for (const [prop, getSet] of Object.entries({
@@ -1835,6 +1838,12 @@ function createLegacyTestRuntime(): ConversationRuntime & {
       get: () => listener.approvalRuntimeKeyByRequestId,
       set: (value: ListenerRuntime["approvalRuntimeKeyByRequestId"]) => {
         listener.approvalRuntimeKeyByRequestId = value;
+      },
+    },
+    memfsSyncedAgents: {
+      get: () => listener.memfsSyncedAgents,
+      set: (value: ListenerRuntime["memfsSyncedAgents"]) => {
+        listener.memfsSyncedAgents = value;
       },
     },
     lastEmittedStatus: {
