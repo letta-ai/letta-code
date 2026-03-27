@@ -198,6 +198,8 @@ describe("listen-client parseServerMessage", () => {
           request_id: "cron-add-1",
           agent_id: "agent-1",
           conversation_id: "default",
+          name: "Test task",
+          description: "A test cron task",
           cron: "*/5 * * * *",
           recurring: true,
           prompt: "hello",
