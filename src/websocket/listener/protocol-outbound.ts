@@ -498,9 +498,12 @@ export function emitStateSync(
 
 export function buildSubagentSnapshot(): SubagentSnapshot[] {
   return getSubagents()
-    .filter(
-      (a) => !a.silent && (a.status === "pending" || a.status === "running"),
-    )
+    .filter((a) => {
+      if (a.status !== "pending" && a.status !== "running") {
+        return false;
+      }
+      return !a.silent || a.isBackground === true;
+    })
     .map((a) => ({
       subagent_id: a.id,
       subagent_type: a.type,

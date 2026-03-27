@@ -5,6 +5,10 @@ import { join } from "node:path";
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import WebSocket from "ws";
 import { buildConversationMessagesCreateRequestBody } from "../../agent/message";
+import {
+  clearAllSubagents,
+  registerSubagent,
+} from "../../cli/helpers/subagentState";
 import { INTERRUPTED_BY_USER } from "../../constants";
 import type { MessageQueueItem } from "../../queue/queueRuntime";
 import type { LocalProjectSettings, Settings } from "../../settings-manager";
@@ -1056,6 +1060,56 @@ describe("listen-client v2 status builders", () => {
         kind: "message",
       }),
     ]);
+  });
+
+  test("sync includes silent background reflection subagents in update_subagent_state", () => {
+    clearAllSubagents();
+    try {
+      registerSubagent(
+        "subagent-reflection-1",
+        "reflection",
+        "Reflect on recent conversations",
+        undefined,
+        true,
+        true,
+      );
+
+      const listener = __listenClientTestUtils.createListenerRuntime();
+      const runtime = __listenClientTestUtils.getOrCreateScopedRuntime(
+        listener,
+        "agent-1",
+        "default",
+      );
+      const socket = new MockSocket(WebSocket.OPEN);
+
+      __listenClientTestUtils.emitStateSync(
+        socket as unknown as WebSocket,
+        runtime,
+        {
+          agent_id: "agent-1",
+          conversation_id: "default",
+        },
+      );
+
+      const outbound = socket.sentPayloads.map((payload) =>
+        JSON.parse(payload as string),
+      );
+      expect(outbound[3]).toMatchObject({
+        type: "update_subagent_state",
+        subagents: [
+          expect.objectContaining({
+            subagent_id: "subagent-reflection-1",
+            subagent_type: "Reflection",
+            description: "Reflect on recent conversations",
+            status: "pending",
+            is_background: true,
+            silent: true,
+          }),
+        ],
+      });
+    } finally {
+      clearAllSubagents();
+    }
   });
 
   test("recovered approvals surface as pending control requests and WAITING_ON_APPROVAL", () => {
