@@ -234,6 +234,7 @@ export function getShellEnv(): NodeJS.ProcessEnv {
   }
   if (convId) {
     env.LETTA_CONVERSATION_ID = convId;
+    env.CONVERSATION_ID = convId;
   }
 
   // Inject API key and base URL from settings if not already in env

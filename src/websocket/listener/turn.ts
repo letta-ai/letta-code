@@ -242,6 +242,7 @@ export async function handleIncomingMessage(
         const { parts: reminderParts } = await buildSharedReminderParts(
           buildListenReminderContext({
             agentId: agentId || "",
+            conversationId,
             state: runtime.reminderState,
             resolvePlanModeReminder: getPlanModeReminder,
             workingDirectory: turnWorkingDirectory,
