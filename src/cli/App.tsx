@@ -394,9 +394,10 @@ function deriveReasoningEffort(
   llmConfig: LlmConfig | null | undefined,
 ): ModelReasoningEffort | null {
   if (modelSettings && "provider_type" in modelSettings) {
-    // OpenAI/OpenRouter: reasoning.reasoning_effort
+    // OpenAI/OpenRouter/ChatGPT OAuth: reasoning.reasoning_effort
     if (
-      modelSettings.provider_type === "openai" &&
+      (modelSettings.provider_type === "openai" ||
+        modelSettings.provider_type === "chatgpt_oauth") &&
       "reasoning" in modelSettings &&
       modelSettings.reasoning
     ) {
@@ -3314,19 +3315,30 @@ export default function App({
           ).last_run_completion;
           setAgentLastRunAt(lastRunCompletion ?? null);
 
-          // Derive model ID from llm_config for ModelSelector
+          // Derive model ID from llm_config for ModelSelector.
+          // Use deriveReasoningEffort so chatgpt_oauth (and similar) models
+          // resolve the correct tier even when llm_config omits the legacy field.
           const agentModelHandle =
             agent.llm_config.model_endpoint_type && agent.llm_config.model
               ? `${agent.llm_config.model_endpoint_type}/${agent.llm_config.model}`
               : agent.llm_config.model;
           const { getModelInfoForLlmConfig } = await import("../agent/model");
-          const modelInfo = getModelInfoForLlmConfig(
-            agentModelHandle || "",
-            agent.llm_config as unknown as {
-              reasoning_effort?: string | null;
-              enable_reasoner?: boolean | null;
-            },
+          const effectiveReasoningEffort = deriveReasoningEffort(
+            agent.model_settings,
+            agent.llm_config,
           );
+          const modelInfo = getModelInfoForLlmConfig(agentModelHandle || "", {
+            reasoning_effort:
+              effectiveReasoningEffort ??
+              agent.llm_config.reasoning_effort ??
+              null,
+            enable_reasoner:
+              (
+                agent.llm_config as {
+                  enable_reasoner?: boolean | null;
+                }
+              ).enable_reasoner ?? null,
+          });
           if (modelInfo) {
             setCurrentModelId(modelInfo.id);
           } else {
@@ -4571,9 +4583,15 @@ export default function App({
               // Keep model UI in sync with the agent configuration.
               // Note: many tiers share the same handle (e.g. gpt-5.2-none/high), so we
               // must also treat reasoning settings as model-affecting.
+              // Use deriveReasoningEffort for robust comparison -- covers chatgpt_oauth
+              // and other providers where llm_config.reasoning_effort may be absent but
+              // the canonical value lives in model_settings.
               const currentModel = llmConfigRef.current?.model;
               const currentEndpoint = llmConfigRef.current?.model_endpoint_type;
-              const currentEffort = llmConfigRef.current?.reasoning_effort;
+              const currentEffort = deriveReasoningEffort(
+                agentStateRef.current?.model_settings,
+                llmConfigRef.current,
+              );
               const currentEnableReasoner = (
                 llmConfigRef.current as unknown as {
                   enable_reasoner?: boolean | null;
@@ -4582,7 +4600,10 @@ export default function App({
 
               const agentModel = agent.llm_config.model;
               const agentEndpoint = agent.llm_config.model_endpoint_type;
-              const agentEffort = agent.llm_config.reasoning_effort;
+              const agentEffort = deriveReasoningEffort(
+                agent.model_settings,
+                agent.llm_config,
+              );
               const agentEnableReasoner = (
                 agent.llm_config as unknown as {
                   enable_reasoner?: boolean | null;
@@ -4604,11 +4625,16 @@ export default function App({
                     agent.llm_config,
                   );
 
+                  // Prefer effective reasoning from model_settings so
+                  // ChatGPT OAuth (and similar) resolve the correct tier.
                   const modelInfo = getModelInfoForLlmConfig(
                     agentModelHandle || "",
-                    agent.llm_config as unknown as {
-                      reasoning_effort?: string | null;
-                      enable_reasoner?: boolean | null;
+                    {
+                      reasoning_effort:
+                        agentEffort ??
+                        agent.llm_config.reasoning_effort ??
+                        null,
+                      enable_reasoner: agentEnableReasoner ?? null,
                     },
                   );
                   if (modelInfo) {

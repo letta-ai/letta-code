@@ -433,16 +433,10 @@ const InputFooter = memo(function InputFooter({
       <Box
         flexDirection="column"
         alignItems="flex-end"
-        width={
-          statusLineRight && !hideFooterContent
-            ? undefined
-            : effectiveRightWidth
-        }
+        width={statusLineRight ? undefined : effectiveRightWidth}
         flexShrink={0}
       >
-        {hideFooterContent ? (
-          <Text>{" ".repeat(rightColumnWidth)}</Text>
-        ) : statusLineRight ? (
+        {statusLineRight ? (
           statusLineRight.split("\n").map((line, i) => (
             <Text key={`${i}-${line}`} wrap="truncate-end">
               {parseOsc8Line(line, `r${i}`)}
