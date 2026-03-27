@@ -5,6 +5,8 @@
  * Supports both built-in subagent types and custom subagents defined in .letta/agents/.
  */
 
+import { getClient } from "../../agent/client";
+import { getConversationId, getCurrentAgentId } from "../../agent/context";
 import {
   clearSubagentConfigCache,
   discoverSubagents,
@@ -68,6 +70,7 @@ export interface SpawnBackgroundSubagentTaskArgs {
   existingAgentId?: string;
   existingConversationId?: string;
   maxTurns?: number;
+  forkedContext?: boolean;
   /** Parent conversation scope for routing notifications in listener mode. */
   parentScope?: { agentId: string; conversationId: string };
   /**
@@ -215,6 +218,7 @@ export function spawnBackgroundSubagentTask(
     existingAgentId,
     existingConversationId,
     maxTurns,
+    forkedContext,
     parentScope,
     silentCompletion,
     onComplete,
@@ -273,6 +277,7 @@ export function spawnBackgroundSubagentTask(
     existingAgentId,
     existingConversationId,
     maxTurns,
+    forkedContext,
   )
     .then(async (result) => {
       bgTask.status = result.success ? "completed" : "failed";
@@ -501,9 +506,37 @@ export async function task(args: TaskArgs): Promise<string> {
     return `Error: When deploying an existing agent, subagent_type must be "explore" (read-only) or "general-purpose" (read-write). Got: "${subagent_type}"`;
   }
 
+  // If subagent config requires forked context, fork the parent conversation
+  const config = allConfigs[subagent_type];
+  if (!config) {
+    return `Error: Invalid subagent type "${subagent_type}"`;
+  }
+  let effectiveAgentId = args.agent_id;
+  let effectiveConversationId = args.conversation_id;
+
+  if (config.fork) {
+    if (args.agent_id || args.conversation_id) {
+      return "Error: Subagent type with fork: true cannot be combined with agent_id or conversation_id";
+    }
+    try {
+      const client = await getClient();
+      const parentAgentId = getCurrentAgentId();
+      const parentConvId = getConversationId() ?? "default";
+      const forkedConv = await client.conversations.fork(parentConvId, {
+        agent_id: parentAgentId,
+      });
+      effectiveAgentId = parentAgentId;
+      effectiveConversationId = forkedConv.id;
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      return `Error: Failed to fork parent conversation: ${errorMessage}`;
+    }
+  }
+
   const prompt = inputPrompt;
 
-  const isBackground = args.run_in_background ?? false;
+  const isBackground = args.run_in_background ?? config.background;
 
   // Handle background execution
   if (isBackground) {
@@ -513,9 +546,10 @@ export async function task(args: TaskArgs): Promise<string> {
       description,
       model,
       toolCallId,
-      existingAgentId: args.agent_id,
-      existingConversationId: args.conversation_id,
+      existingAgentId: effectiveAgentId,
+      existingConversationId: effectiveConversationId,
       maxTurns: args.max_turns,
+      forkedContext: config.fork,
       parentScope: args.parentScope,
     });
 
@@ -548,9 +582,10 @@ export async function task(args: TaskArgs): Promise<string> {
       model,
       subagentId,
       signal,
-      args.agent_id,
-      args.conversation_id,
+      effectiveAgentId,
+      effectiveConversationId,
       args.max_turns,
+      config.fork,
     );
 
     // Mark subagent as completed in state store
@@ -617,8 +652,8 @@ export async function task(args: TaskArgs): Promise<string> {
       subagent_type,
       subagentId,
       {
-        agentId: args.agent_id ?? "",
-        conversationId: args.conversation_id,
+        agentId: effectiveAgentId ?? "",
+        conversationId: effectiveConversationId,
       },
       "error",
     );
@@ -630,8 +665,8 @@ export async function task(args: TaskArgs): Promise<string> {
       subagentId,
       false,
       errorMessage,
-      args.agent_id,
-      args.conversation_id,
+      effectiveAgentId,
+      effectiveConversationId,
     ).catch(() => {
       // Silently ignore hook errors
     });

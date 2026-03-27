@@ -1,0 +1,4 @@
+# CODEOWNERS file for letta-code repository
+# Memory filesystem and git-backed memory
+/src/agent/memoryFilesystem.ts @letta-ai/system-prompt-owners
+/src/agent/memoryGit.ts @letta-ai/system-prompt-owners

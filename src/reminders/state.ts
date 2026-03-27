@@ -19,21 +19,27 @@ export interface ToolsetChangeReminder {
   newTools: string[];
 }
 
+export type SessionContextReason = "initial_attach" | "cwd_changed";
+
 export interface SharedReminderState {
   hasSentAgentInfo: boolean;
   hasSentSessionContext: boolean;
+  hasSentSecretsInfo: boolean;
   lastNotifiedPermissionMode: PermissionMode | null;
   turnCount: number;
   pendingReflectionTrigger: boolean;
   pendingAutoInitReminder: boolean;
   pendingCommandIoReminders: CommandIoReminder[];
   pendingToolsetChangeReminders: ToolsetChangeReminder[];
+  /** When set, the next session-context reminder uses this reason for its intro text. */
+  pendingSessionContextReason?: SessionContextReason;
 }
 
 export function createSharedReminderState(): SharedReminderState {
   return {
     hasSentAgentInfo: false,
     hasSentSessionContext: false,
+    hasSentSecretsInfo: false,
     lastNotifiedPermissionMode: null,
     turnCount: 0,
     pendingReflectionTrigger: false,

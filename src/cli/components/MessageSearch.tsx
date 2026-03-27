@@ -34,6 +34,31 @@ const SEARCH_MODES: SearchMode[] = ["fts", "vector", "hybrid"]; // Display order
 type SearchRange = "all" | "agent" | "conv";
 const SEARCH_RANGES: SearchRange[] = ["all", "agent", "conv"];
 
+type SearchCacheWarmRequest = {
+  collection: "messages";
+  scope: Record<string, never>;
+};
+
+type SearchCacheWarmResponse = {
+  collection: "messages";
+  status: string;
+  warmed: boolean;
+};
+
+export async function warmMessageSearchCache(client: Letta) {
+  const body: SearchCacheWarmRequest = {
+    collection: "messages",
+    scope: {},
+  };
+
+  return client.post<SearchCacheWarmResponse>(
+    "/v1/_internal_search/cache-warm",
+    {
+      body,
+    },
+  );
+}
+
 /**
  * Format a timestamp in local timezone
  */
@@ -175,10 +200,7 @@ export function MessageSearch({
     const warmCache = async () => {
       try {
         const client = await getClient();
-        await client.post("/v1/messages/search", {
-          body: {},
-          query: { warm_only: true },
-        });
+        await warmMessageSearchCache(client);
       } catch {
         // Silently ignore - cache warm is best-effort
       }

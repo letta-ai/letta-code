@@ -7,7 +7,10 @@ import { hostname } from "node:os";
 import { getServerUrl } from "../../agent/client";
 import { settingsManager } from "../../settings-manager";
 import { getErrorMessage } from "../../utils/error";
-import { registerWithCloud } from "../../websocket/listen-register";
+import {
+  registerWithCloud,
+  registerWithCloudRetry,
+} from "../../websocket/listen-register";
 import type { Buffers, Line } from "../helpers/accumulator";
 import { buildChatUrl } from "../helpers/appUrls";
 
@@ -324,12 +327,23 @@ export async function handleListen(
           );
 
           try {
-            const reregisterResult = await registerWithCloud({
-              serverUrl,
-              apiKey,
-              deviceId,
-              connectionName,
-            });
+            const reregisterResult = await registerWithCloudRetry(
+              { serverUrl, apiKey, deviceId, connectionName },
+              {
+                onRetry: (attempt, delayMs, error) => {
+                  updateCommandResult(
+                    ctx.buffersRef,
+                    ctx.refreshDerived,
+                    cmdId,
+                    msg,
+                    `Re-registering "${connectionName}"...\n` +
+                      `Retry ${attempt} in ${Math.round(delayMs / 1000)}s: ${error.message}`,
+                    true,
+                    "running",
+                  );
+                },
+              },
+            );
 
             // Restart client with new connectionId
             await startClient(

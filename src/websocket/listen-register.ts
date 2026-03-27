@@ -17,6 +17,30 @@ export interface RegisterOptions {
 }
 
 /**
+ * Error thrown by registration that carries the HTTP status code (if any).
+ * Network errors (fetch failure) have `statusCode = 0`.
+ */
+export class RegistrationError extends Error {
+  readonly statusCode: number;
+  constructor(message: string, statusCode: number) {
+    super(message);
+    this.name = "RegistrationError";
+    this.statusCode = statusCode;
+  }
+}
+
+/** Returns true for errors that are likely transient and worth retrying. */
+function isTransientRegistrationError(error: unknown): boolean {
+  if (error instanceof RegistrationError) {
+    // 5xx = server errors (including Cloudflare 521/522/523/524)
+    // 0 = network-level failure (DNS, TCP, TLS)
+    return error.statusCode === 0 || error.statusCode >= 500;
+  }
+  // Non-RegistrationError from fetch (e.g. TypeError for DNS failure)
+  return true;
+}
+
+/**
  * Register this device with the Letta Cloud environments endpoint.
  * Throws on any failure with an error message suitable for wrapping in caller-specific context.
  */
@@ -41,6 +65,11 @@ export async function registerWithCloud(
         nodeVersion: process.version,
       },
     }),
+  }).catch((fetchError: unknown) => {
+    // Network-level failures (DNS, TCP, TLS, etc.)
+    const msg =
+      fetchError instanceof Error ? fetchError.message : String(fetchError);
+    throw new RegistrationError(`Network error: ${msg}`, 0);
   });
 
   if (!response.ok) {
@@ -58,15 +87,16 @@ export async function registerWithCloud(
         detail += `: ${text.slice(0, 200)}`;
       }
     }
-    throw new Error(detail);
+    throw new RegistrationError(detail, response.status);
   }
 
   let body: unknown;
   try {
     body = await response.json();
   } catch {
-    throw new Error(
+    throw new RegistrationError(
       "Server returned non-JSON response — is the server running?",
+      response.status,
     );
   }
 
@@ -75,8 +105,9 @@ export async function registerWithCloud(
     typeof result.connectionId !== "string" ||
     typeof result.wsUrl !== "string"
   ) {
-    throw new Error(
+    throw new RegistrationError(
       "Server returned unexpected response shape (missing connectionId or wsUrl)",
+      response.status,
     );
   }
 
@@ -84,4 +115,52 @@ export async function registerWithCloud(
     connectionId: result.connectionId,
     wsUrl: result.wsUrl,
   };
+}
+
+const REGISTER_INITIAL_DELAY_MS = 1_000;
+const REGISTER_MAX_DELAY_MS = 30_000;
+const REGISTER_MAX_DURATION_MS = 2 * 60 * 1_000; // 2 minutes
+
+export interface RegisterRetryCallbacks {
+  /** Called before each retry attempt. */
+  onRetry?: (attempt: number, delayMs: number, error: Error) => void;
+}
+
+/**
+ * Register with Cloud, retrying on transient errors (5xx, network failures)
+ * with exponential backoff. Fails immediately on client errors (4xx).
+ */
+export async function registerWithCloudRetry(
+  opts: RegisterOptions,
+  callbacks?: RegisterRetryCallbacks,
+): Promise<RegisterResult> {
+  const startTime = Date.now();
+  let attempt = 0;
+
+  for (;;) {
+    try {
+      return await registerWithCloud(opts);
+    } catch (error) {
+      const elapsed = Date.now() - startTime;
+
+      if (
+        !isTransientRegistrationError(error) ||
+        elapsed >= REGISTER_MAX_DURATION_MS
+      ) {
+        throw error;
+      }
+
+      attempt++;
+      const delay = Math.min(
+        REGISTER_INITIAL_DELAY_MS * 2 ** (attempt - 1),
+        REGISTER_MAX_DELAY_MS,
+      );
+
+      if (error instanceof Error) {
+        callbacks?.onRetry?.(attempt, delay, error);
+      }
+
+      await new Promise<void>((resolve) => setTimeout(resolve, delay));
+    }
+  }
 }

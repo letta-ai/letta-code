@@ -25,10 +25,19 @@ export function formatCompact(n: number): string {
   return `${Math.round(m)}M`;
 }
 
+// 4 bytes per token (Codex heuristic: codex-rs/core/src/truncate.rs APPROX_BYTES_PER_TOKEN = 4)
+const BYTES_PER_TOKEN = 4;
+
 /**
- * Rough approximation of tokens from character count.
- * Uses ~4 chars per token as a rough average for English text.
+ * Estimate token count from a byte count using the 4-bytes-per-token heuristic.
  */
-export function charsToTokens(chars: number): number {
-  return Math.round(chars / 4);
+export function bytesToTokens(bytes: number): number {
+  return Math.ceil(bytes / BYTES_PER_TOKEN);
+}
+
+/**
+ * Estimate token count from a UTF-8 string using byte length.
+ */
+export function estimateTokens(text: string): number {
+  return bytesToTokens(Buffer.byteLength(text, "utf8"));
 }

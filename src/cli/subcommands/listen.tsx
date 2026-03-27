@@ -12,7 +12,10 @@ import { useState } from "react";
 import { getServerUrl } from "../../agent/client";
 import { settingsManager } from "../../settings-manager";
 import { RemoteSessionLog } from "../../websocket/listen-log";
-import { registerWithCloud } from "../../websocket/listen-register";
+import {
+  registerWithCloud,
+  registerWithCloudRetry,
+} from "../../websocket/listen-register";
 import { ListenerStatusUI } from "../components/ListenerStatusUI";
 
 /**
@@ -187,18 +190,29 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       "../../websocket/listen-client"
     );
 
-    // Re-register helper for when the server closes with 1008 (environment not found)
+    // Re-register helper with retry for transient errors (e.g. 521).
+    // Uses exponential backoff so a temporary server outage doesn't
+    // permanently kill the connection.
     const reregister = async (): Promise<{
       connectionId: string;
       wsUrl: string;
     }> => {
-      sessionLog.log("Environment expired, re-registering...");
-      const result = await registerWithCloud({
-        serverUrl,
-        apiKey,
-        deviceId,
-        connectionName,
-      });
+      sessionLog.log("Re-registering with retry...");
+      const result = await registerWithCloudRetry(
+        { serverUrl, apiKey, deviceId, connectionName },
+        {
+          onRetry: (attempt, delayMs, error) => {
+            sessionLog.log(
+              `Registration retry ${attempt} in ${Math.round(delayMs / 1000)}s: ${error.message}`,
+            );
+            if (debugMode) {
+              console.log(
+                `[${formatTimestamp()}] Registration retry ${attempt} in ${Math.round(delayMs / 1000)}s: ${error.message}`,
+              );
+            }
+          },
+        },
+      );
       sessionLog.log(`Re-registered: connectionId=${result.connectionId}`);
       return result;
     };

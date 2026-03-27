@@ -268,7 +268,9 @@ function handleInitEvent(
 ): void {
   if (event.agent_id) {
     state.agentId = event.agent_id;
-    const agentURL = buildChatUrl(event.agent_id);
+    const agentURL = buildChatUrl(event.agent_id, {
+      conversationId: event.conversation_id,
+    });
     updateSubagent(subagentId, { agentURL });
   }
   if (event.conversation_id) {
@@ -893,6 +895,16 @@ ${SYSTEM_REMINDER_CLOSE}
 `;
 }
 
+function buildForkSystemReminder(): string {
+  return `${SYSTEM_REMINDER_OPEN}
+You have been forked from the primary conversational thread to run as an independent subagent.
+You CANNOT ask questions mid-execution - all instructions are provided upfront.
+Your final message will be returned to the caller.
+${SYSTEM_REMINDER_CLOSE}
+
+`;
+}
+
 /**
  * Spawn a subagent and execute it autonomously
  *
@@ -913,6 +925,7 @@ export async function spawnSubagent(
   existingAgentId?: string,
   existingConversationId?: string,
   maxTurns?: number,
+  forkedContext?: boolean,
 ): Promise<SubagentResult> {
   const allConfigs = await getAllSubagentConfigs();
   const config = allConfigs[type];
@@ -951,12 +964,17 @@ export async function spawnSubagent(
       const parentAgentId = getCurrentAgentId();
       const client = await getClient();
       const parentAgent = await client.agents.retrieve(parentAgentId);
-      const systemReminder = buildDeploySystemReminder(
-        parentAgent.name,
-        parentAgentId,
-        type,
-      );
-      finalPrompt = systemReminder + prompt;
+      if (forkedContext) {
+        const systemReminder = buildForkSystemReminder();
+        finalPrompt = systemReminder + prompt;
+      } else {
+        const systemReminder = buildDeploySystemReminder(
+          parentAgent.name,
+          parentAgentId,
+          type,
+        );
+        finalPrompt = systemReminder + prompt;
+      }
     } catch {
       // If we can't get parent agent info, proceed without the reminder
     }

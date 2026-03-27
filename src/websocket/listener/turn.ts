@@ -190,6 +190,10 @@ export async function handleIncomingMessage(
       return;
     }
 
+    // Ensure memfs repo is cloned/pulled for this agent (lazy, once per session).
+    const { ensureMemfsSyncedForAgent } = await import("./memfs-sync");
+    await ensureMemfsSyncedForAgent(runtime.listener, agentId);
+
     // Set agent context for tools that need it (e.g., Skill tool)
     setCurrentAgentId(agentId);
     setConversationId(conversationId);
@@ -234,20 +238,32 @@ export async function handleIncomingMessage(
       "approvals" in firstMessage;
 
     if (!isApprovalMessage) {
-      const { parts: reminderParts } = await buildSharedReminderParts(
-        buildListenReminderContext({
-          agentId: agentId || "",
-          state: runtime.listener.reminderState,
-          resolvePlanModeReminder: getPlanModeReminder,
-        }),
-      );
+      try {
+        const { parts: reminderParts } = await buildSharedReminderParts(
+          buildListenReminderContext({
+            agentId: agentId || "",
+            state: runtime.reminderState,
+            resolvePlanModeReminder: getPlanModeReminder,
+            workingDirectory: turnWorkingDirectory,
+          }),
+        );
 
-      if (reminderParts.length > 0) {
-        for (const m of messagesToSend) {
-          if ("role" in m && m.role === "user" && "content" in m) {
-            m.content = prependReminderPartsToContent(m.content, reminderParts);
-            break;
+        if (reminderParts.length > 0) {
+          for (const m of messagesToSend) {
+            if ("role" in m && m.role === "user" && "content" in m) {
+              m.content = prependReminderPartsToContent(
+                m.content,
+                reminderParts,
+              );
+              break;
+            }
           }
+        }
+      } catch (err) {
+        // Reminder injection is best-effort — failures must not prevent
+        // the user message from being sent to the agent.
+        if (isDebugEnabled()) {
+          console.error("[Listen] Failed to build reminder parts:", err);
         }
       }
     }
