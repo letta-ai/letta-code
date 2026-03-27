@@ -567,8 +567,6 @@ export interface SkillEnableCommand {
   request_id: string;
   /** Absolute path to the skill directory on the local machine. */
   skill_path: string;
-  /** Optional name for the symlink in ~/.letta/skills/ (defaults to directory basename). */
-  name?: string;
 }
 
 export interface SkillDisableCommand {
@@ -700,6 +698,8 @@ export type WsProtocolCommand =
   | CronGetCommand
   | CronDeleteCommand
   | CronDeleteAllCommand
+  | SkillEnableCommand
+  | SkillDisableCommand
   | GetReflectionSettingsCommand
   | SetReflectionSettingsCommand
   | ExecuteCommandCommand;

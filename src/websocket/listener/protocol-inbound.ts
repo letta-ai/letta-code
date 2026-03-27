@@ -446,13 +446,11 @@ export function isSkillEnableCommand(
     type?: unknown;
     request_id?: unknown;
     skill_path?: unknown;
-    name?: unknown;
   };
   return (
     c.type === "skill_enable" &&
     typeof c.request_id === "string" &&
-    typeof c.skill_path === "string" &&
-    (c.name === undefined || typeof c.name === "string")
+    typeof c.skill_path === "string"
   );
 }
 

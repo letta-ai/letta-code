@@ -485,10 +485,7 @@ async function handleSkillCommand(
   // Compute skills dir dynamically to respect LETTA_HOME (important for tests)
   const lettaHome =
     process.env.LETTA_HOME ||
-    join(
-      process.env.HOME || process.env.USERPROFILE || "~",
-      ".letta",
-    );
+    join(process.env.HOME || process.env.USERPROFILE || "~", ".letta");
   const globalSkillsDir = join(lettaHome, "skills");
 
   if (parsed.type === "skill_enable") {
@@ -520,7 +517,7 @@ async function handleSkillCommand(
         return true;
       }
 
-      const linkName = parsed.name || basename(parsed.skill_path);
+      const linkName = basename(parsed.skill_path);
       const linkPath = join(globalSkillsDir, linkName);
 
       // Ensure ~/.letta/skills/ exists
@@ -616,8 +613,7 @@ async function handleSkillCommand(
           type: "skill_disable_response",
           request_id: parsed.request_id,
           success: false,
-          error:
-            err instanceof Error ? err.message : "Failed to disable skill",
+          error: err instanceof Error ? err.message : "Failed to disable skill",
         }),
       );
     }

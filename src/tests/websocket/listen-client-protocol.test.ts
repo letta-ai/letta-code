@@ -261,16 +261,6 @@ describe("listen-client parseServerMessage", () => {
         }),
       ),
     );
-    const skillEnableWithName = parseServerMessage(
-      Buffer.from(
-        JSON.stringify({
-          type: "skill_enable",
-          request_id: "skill-enable-2",
-          skill_path: "/tmp/my-skill",
-          name: "custom-name",
-        }),
-      ),
-    );
     const skillDisable = parseServerMessage(
       Buffer.from(
         JSON.stringify({
@@ -282,7 +272,6 @@ describe("listen-client parseServerMessage", () => {
     );
 
     expect(skillEnable?.type).toBe("skill_enable");
-    expect(skillEnableWithName?.type).toBe("skill_enable");
     expect(skillDisable?.type).toBe("skill_disable");
   });
 
@@ -2786,52 +2775,6 @@ describe("listen-client skill enable/disable command handling", () => {
         success: false,
       });
       expect(messages[0].error).toContain("not a symlink");
-    } finally {
-      if (originalLettaHome) {
-        process.env.LETTA_HOME = originalLettaHome;
-      } else {
-        delete process.env.LETTA_HOME;
-      }
-      await rm(tempRoot, { recursive: true, force: true });
-    }
-  });
-
-  test("enables with a custom name", async () => {
-    const tempRoot = await mkdtemp(join(os.tmpdir(), "letta-listen-skill-"));
-    const originalLettaHome = process.env.LETTA_HOME;
-    process.env.LETTA_HOME = tempRoot;
-
-    try {
-      const skillDir = join(tempRoot, "source-skill");
-      await mkdir(skillDir, { recursive: true });
-      await writeFile(
-        join(skillDir, "SKILL.md"),
-        "---\nname: test-skill\ndescription: A test skill\n---\nHello",
-      );
-
-      const socket = new MockSocket(WebSocket.OPEN);
-
-      await __listenClientTestUtils.handleSkillCommand(
-        {
-          type: "skill_enable",
-          request_id: "skill-enable-custom",
-          skill_path: skillDir,
-          name: "my-custom-name",
-        },
-        socket as unknown as WebSocket,
-      );
-
-      const messages = socket.sentPayloads.map((p) => JSON.parse(p));
-      expect(messages[0]).toMatchObject({
-        type: "skill_enable_response",
-        request_id: "skill-enable-custom",
-        success: true,
-        name: "my-custom-name",
-      });
-
-      // Verify the symlink uses the custom name
-      const { existsSync } = await import("node:fs");
-      expect(existsSync(join(tempRoot, "skills", "my-custom-name"))).toBe(true);
     } finally {
       if (originalLettaHome) {
         process.env.LETTA_HOME = originalLettaHome;
