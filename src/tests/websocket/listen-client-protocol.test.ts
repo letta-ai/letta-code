@@ -251,6 +251,64 @@ describe("listen-client parseServerMessage", () => {
     expect(cronDeleteAll?.type).toBe("cron_delete_all");
   });
 
+  test("parses skill enable/disable commands", () => {
+    const skillEnable = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "skill_enable",
+          request_id: "skill-enable-1",
+          skill_path: "/tmp/my-skill",
+        }),
+      ),
+    );
+    const skillEnableWithName = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "skill_enable",
+          request_id: "skill-enable-2",
+          skill_path: "/tmp/my-skill",
+          name: "custom-name",
+        }),
+      ),
+    );
+    const skillDisable = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "skill_disable",
+          request_id: "skill-disable-1",
+          name: "my-skill",
+        }),
+      ),
+    );
+
+    expect(skillEnable?.type).toBe("skill_enable");
+    expect(skillEnableWithName?.type).toBe("skill_enable");
+    expect(skillDisable?.type).toBe("skill_disable");
+  });
+
+  test("rejects malformed skill commands", () => {
+    // Missing skill_path
+    const noPath = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "skill_enable",
+          request_id: "skill-enable-bad",
+        }),
+      ),
+    );
+    // Missing name on disable
+    const noName = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "skill_disable",
+          request_id: "skill-disable-bad",
+        }),
+      ),
+    );
+    expect(noPath).toBeNull();
+    expect(noName).toBeNull();
+  });
+
   test("parses reflection settings commands", () => {
     const getSettings = parseServerMessage(
       Buffer.from(
@@ -2543,6 +2601,244 @@ describe("listen-client edit_file command", () => {
     } finally {
       await rm(tempRoot, { recursive: true, force: true });
       __listenClientTestUtils.setActiveRuntime(null);
+    }
+  });
+});
+
+describe("listen-client skill enable/disable command handling", () => {
+  test("enables a skill by creating a symlink and disables it by removing it", async () => {
+    const tempRoot = await mkdtemp(join(os.tmpdir(), "letta-listen-skill-"));
+    const originalLettaHome = process.env.LETTA_HOME;
+    process.env.LETTA_HOME = tempRoot;
+
+    try {
+      // Create a fake skill directory with SKILL.md
+      const skillDir = join(tempRoot, "source-skill");
+      await mkdir(skillDir, { recursive: true });
+      await writeFile(
+        join(skillDir, "SKILL.md"),
+        "---\nname: test-skill\ndescription: A test skill\n---\nHello",
+      );
+
+      const socket = new MockSocket(WebSocket.OPEN);
+
+      // Enable the skill
+      await __listenClientTestUtils.handleSkillCommand(
+        {
+          type: "skill_enable",
+          request_id: "skill-enable-1",
+          skill_path: skillDir,
+        },
+        socket as unknown as WebSocket,
+      );
+
+      const enableMessages = socket.sentPayloads.map((p) => JSON.parse(p));
+      expect(enableMessages[0]).toMatchObject({
+        type: "skill_enable_response",
+        request_id: "skill-enable-1",
+        success: true,
+        name: "source-skill",
+      });
+      expect(enableMessages[1]).toMatchObject({
+        type: "skills_updated",
+      });
+
+      // Verify symlink was created
+      const { lstatSync, readlinkSync } = await import("node:fs");
+      const linkPath = join(tempRoot, "skills", "source-skill");
+      const stat = lstatSync(linkPath);
+      expect(stat.isSymbolicLink()).toBe(true);
+      const target = readlinkSync(linkPath);
+      expect(target).toBe(skillDir);
+
+      // Disable the skill
+      socket.sentPayloads.length = 0;
+      await __listenClientTestUtils.handleSkillCommand(
+        {
+          type: "skill_disable",
+          request_id: "skill-disable-1",
+          name: "source-skill",
+        },
+        socket as unknown as WebSocket,
+      );
+
+      const disableMessages = socket.sentPayloads.map((p) => JSON.parse(p));
+      expect(disableMessages[0]).toMatchObject({
+        type: "skill_disable_response",
+        request_id: "skill-disable-1",
+        success: true,
+        name: "source-skill",
+      });
+      expect(disableMessages[1]).toMatchObject({
+        type: "skills_updated",
+      });
+
+      // Verify symlink was removed
+      const { existsSync } = await import("node:fs");
+      expect(existsSync(linkPath)).toBe(false);
+    } finally {
+      if (originalLettaHome) {
+        process.env.LETTA_HOME = originalLettaHome;
+      } else {
+        delete process.env.LETTA_HOME;
+      }
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("rejects enable when path does not exist", async () => {
+    const tempRoot = await mkdtemp(join(os.tmpdir(), "letta-listen-skill-"));
+    const originalLettaHome = process.env.LETTA_HOME;
+    process.env.LETTA_HOME = tempRoot;
+
+    try {
+      const socket = new MockSocket(WebSocket.OPEN);
+
+      await __listenClientTestUtils.handleSkillCommand(
+        {
+          type: "skill_enable",
+          request_id: "skill-enable-bad",
+          skill_path: "/nonexistent/path",
+        },
+        socket as unknown as WebSocket,
+      );
+
+      const messages = socket.sentPayloads.map((p) => JSON.parse(p));
+      expect(messages[0]).toMatchObject({
+        type: "skill_enable_response",
+        request_id: "skill-enable-bad",
+        success: false,
+      });
+      expect(messages[0].error).toContain("does not exist");
+    } finally {
+      if (originalLettaHome) {
+        process.env.LETTA_HOME = originalLettaHome;
+      } else {
+        delete process.env.LETTA_HOME;
+      }
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("rejects enable when SKILL.md is missing", async () => {
+    const tempRoot = await mkdtemp(join(os.tmpdir(), "letta-listen-skill-"));
+    const originalLettaHome = process.env.LETTA_HOME;
+    process.env.LETTA_HOME = tempRoot;
+
+    try {
+      // Create a directory without SKILL.md
+      const skillDir = join(tempRoot, "no-skill-md");
+      await mkdir(skillDir, { recursive: true });
+
+      const socket = new MockSocket(WebSocket.OPEN);
+
+      await __listenClientTestUtils.handleSkillCommand(
+        {
+          type: "skill_enable",
+          request_id: "skill-enable-no-md",
+          skill_path: skillDir,
+        },
+        socket as unknown as WebSocket,
+      );
+
+      const messages = socket.sentPayloads.map((p) => JSON.parse(p));
+      expect(messages[0]).toMatchObject({
+        type: "skill_enable_response",
+        request_id: "skill-enable-no-md",
+        success: false,
+      });
+      expect(messages[0].error).toContain("No SKILL.md");
+    } finally {
+      if (originalLettaHome) {
+        process.env.LETTA_HOME = originalLettaHome;
+      } else {
+        delete process.env.LETTA_HOME;
+      }
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("rejects disable when skill is not a symlink", async () => {
+    const tempRoot = await mkdtemp(join(os.tmpdir(), "letta-listen-skill-"));
+    const originalLettaHome = process.env.LETTA_HOME;
+    process.env.LETTA_HOME = tempRoot;
+
+    try {
+      // Create a real directory (not a symlink) in skills/
+      const skillsDir = join(tempRoot, "skills");
+      await mkdir(join(skillsDir, "real-dir"), { recursive: true });
+
+      const socket = new MockSocket(WebSocket.OPEN);
+
+      await __listenClientTestUtils.handleSkillCommand(
+        {
+          type: "skill_disable",
+          request_id: "skill-disable-real",
+          name: "real-dir",
+        },
+        socket as unknown as WebSocket,
+      );
+
+      const messages = socket.sentPayloads.map((p) => JSON.parse(p));
+      expect(messages[0]).toMatchObject({
+        type: "skill_disable_response",
+        request_id: "skill-disable-real",
+        success: false,
+      });
+      expect(messages[0].error).toContain("not a symlink");
+    } finally {
+      if (originalLettaHome) {
+        process.env.LETTA_HOME = originalLettaHome;
+      } else {
+        delete process.env.LETTA_HOME;
+      }
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("enables with a custom name", async () => {
+    const tempRoot = await mkdtemp(join(os.tmpdir(), "letta-listen-skill-"));
+    const originalLettaHome = process.env.LETTA_HOME;
+    process.env.LETTA_HOME = tempRoot;
+
+    try {
+      const skillDir = join(tempRoot, "source-skill");
+      await mkdir(skillDir, { recursive: true });
+      await writeFile(
+        join(skillDir, "SKILL.md"),
+        "---\nname: test-skill\ndescription: A test skill\n---\nHello",
+      );
+
+      const socket = new MockSocket(WebSocket.OPEN);
+
+      await __listenClientTestUtils.handleSkillCommand(
+        {
+          type: "skill_enable",
+          request_id: "skill-enable-custom",
+          skill_path: skillDir,
+          name: "my-custom-name",
+        },
+        socket as unknown as WebSocket,
+      );
+
+      const messages = socket.sentPayloads.map((p) => JSON.parse(p));
+      expect(messages[0]).toMatchObject({
+        type: "skill_enable_response",
+        request_id: "skill-enable-custom",
+        success: true,
+        name: "my-custom-name",
+      });
+
+      // Verify the symlink uses the custom name
+      const { existsSync } = await import("node:fs");
+      expect(existsSync(join(tempRoot, "skills", "my-custom-name"))).toBe(true);
+    } finally {
+      if (originalLettaHome) {
+        process.env.LETTA_HOME = originalLettaHome;
+      } else {
+        delete process.env.LETTA_HOME;
+      }
+      await rm(tempRoot, { recursive: true, force: true });
     }
   });
 });

@@ -59,6 +59,8 @@ import type {
   GetReflectionSettingsCommand,
   ReflectionSettingsScope,
   SetReflectionSettingsCommand,
+  SkillDisableCommand,
+  SkillEnableCommand,
 } from "../../types/protocol_v2";
 import { isDebugEnabled } from "../../utils/debug";
 import {
@@ -117,6 +119,8 @@ import {
   isReadFileCommand,
   isSearchFilesCommand,
   isSetReflectionSettingsCommand,
+  isSkillDisableCommand,
+  isSkillEnableCommand,
   parseServerMessage,
 } from "./protocol-inbound";
 import {
@@ -457,6 +461,170 @@ async function handleCronCommand(
     );
   }
   return true;
+}
+
+type SkillCommand = SkillEnableCommand | SkillDisableCommand;
+
+function emitSkillsUpdated(socket: WebSocket): void {
+  socket.send(
+    JSON.stringify({
+      type: "skills_updated",
+      timestamp: Date.now(),
+    }),
+  );
+}
+
+async function handleSkillCommand(
+  parsed: SkillCommand,
+  socket: WebSocket,
+): Promise<boolean> {
+  const { existsSync, lstatSync, mkdirSync, symlinkSync, unlinkSync } =
+    await import("node:fs");
+  const { basename, join } = await import("node:path");
+
+  // Compute skills dir dynamically to respect LETTA_HOME (important for tests)
+  const lettaHome =
+    process.env.LETTA_HOME ||
+    join(
+      process.env.HOME || process.env.USERPROFILE || "~",
+      ".letta",
+    );
+  const globalSkillsDir = join(lettaHome, "skills");
+
+  if (parsed.type === "skill_enable") {
+    try {
+      // Validate the skill path exists
+      if (!existsSync(parsed.skill_path)) {
+        socket.send(
+          JSON.stringify({
+            type: "skill_enable_response",
+            request_id: parsed.request_id,
+            success: false,
+            error: `Path does not exist: ${parsed.skill_path}`,
+          }),
+        );
+        return true;
+      }
+
+      // Check it contains a SKILL.md
+      const skillMdPath = join(parsed.skill_path, "SKILL.md");
+      if (!existsSync(skillMdPath)) {
+        socket.send(
+          JSON.stringify({
+            type: "skill_enable_response",
+            request_id: parsed.request_id,
+            success: false,
+            error: `No SKILL.md found in ${parsed.skill_path}`,
+          }),
+        );
+        return true;
+      }
+
+      const linkName = parsed.name || basename(parsed.skill_path);
+      const linkPath = join(globalSkillsDir, linkName);
+
+      // Ensure ~/.letta/skills/ exists
+      mkdirSync(globalSkillsDir, { recursive: true });
+
+      // If symlink already exists, remove it first
+      if (existsSync(linkPath)) {
+        const stat = lstatSync(linkPath);
+        if (stat.isSymbolicLink()) {
+          unlinkSync(linkPath);
+        } else {
+          socket.send(
+            JSON.stringify({
+              type: "skill_enable_response",
+              request_id: parsed.request_id,
+              success: false,
+              error: `${linkPath} already exists and is not a symlink — refusing to overwrite`,
+            }),
+          );
+          return true;
+        }
+      }
+
+      symlinkSync(parsed.skill_path, linkPath, "dir");
+
+      socket.send(
+        JSON.stringify({
+          type: "skill_enable_response",
+          request_id: parsed.request_id,
+          success: true,
+          name: linkName,
+          skill_path: parsed.skill_path,
+          link_path: linkPath,
+        }),
+      );
+      emitSkillsUpdated(socket);
+    } catch (err) {
+      socket.send(
+        JSON.stringify({
+          type: "skill_enable_response",
+          request_id: parsed.request_id,
+          success: false,
+          error: err instanceof Error ? err.message : "Failed to enable skill",
+        }),
+      );
+    }
+    return true;
+  }
+
+  if (parsed.type === "skill_disable") {
+    try {
+      const linkPath = join(globalSkillsDir, parsed.name);
+
+      if (!existsSync(linkPath)) {
+        socket.send(
+          JSON.stringify({
+            type: "skill_disable_response",
+            request_id: parsed.request_id,
+            success: false,
+            error: `Skill not found: ${parsed.name}`,
+          }),
+        );
+        return true;
+      }
+
+      const stat = lstatSync(linkPath);
+      if (!stat.isSymbolicLink()) {
+        socket.send(
+          JSON.stringify({
+            type: "skill_disable_response",
+            request_id: parsed.request_id,
+            success: false,
+            error: `${parsed.name} is not a symlink — refusing to delete. Remove it manually if intended.`,
+          }),
+        );
+        return true;
+      }
+
+      unlinkSync(linkPath);
+
+      socket.send(
+        JSON.stringify({
+          type: "skill_disable_response",
+          request_id: parsed.request_id,
+          success: true,
+          name: parsed.name,
+        }),
+      );
+      emitSkillsUpdated(socket);
+    } catch (err) {
+      socket.send(
+        JSON.stringify({
+          type: "skill_disable_response",
+          request_id: parsed.request_id,
+          success: false,
+          error:
+            err instanceof Error ? err.message : "Failed to disable skill",
+        }),
+      );
+    }
+    return true;
+  }
+
+  return false;
 }
 
 function toReflectionSettingsResponse(
@@ -2033,6 +2201,12 @@ async function connectWithRetry(
       return;
     }
 
+    // ── Skill enable/disable commands (no runtime scope required) ─────
+    if (isSkillEnableCommand(parsed) || isSkillDisableCommand(parsed)) {
+      void handleSkillCommand(parsed, socket);
+      return;
+    }
+
     if (
       isGetReflectionSettingsCommand(parsed) ||
       isSetReflectionSettingsCommand(parsed)
@@ -2507,6 +2681,7 @@ export const __listenClientTestUtils = {
   handleAbortMessageInput,
   handleChangeDeviceStateInput,
   handleCronCommand,
+  handleSkillCommand,
   handleReflectionSettingsCommand,
   scheduleQueuePump,
   recoverApprovalStateForSync,

@@ -561,6 +561,24 @@ export interface CronDeleteAllCommand {
   agent_id: string;
 }
 
+export interface SkillEnableCommand {
+  type: "skill_enable";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  /** Absolute path to the skill directory on the local machine. */
+  skill_path: string;
+  /** Optional name for the symlink in ~/.letta/skills/ (defaults to directory basename). */
+  name?: string;
+}
+
+export interface SkillDisableCommand {
+  type: "skill_disable";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  /** Skill name (symlink name in ~/.letta/skills/). */
+  name: string;
+}
+
 export interface GetReflectionSettingsCommand {
   type: "get_reflection_settings";
   /** Echoed back in the response for request correlation. */
