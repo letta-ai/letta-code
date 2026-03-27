@@ -30,6 +30,7 @@ export interface AgentReminderContext {
   description?: string | null;
   lastRunAt?: string | null;
   serverUrl?: string;
+  conversationId?: string;
 }
 
 export interface SharedReminderContext {
@@ -77,6 +78,7 @@ async function buildAgentInfoReminder(
       lastRunAt: context.agent.lastRunAt,
     },
     serverUrl: context.agent.serverUrl,
+    conversationId: context.agent.conversationId,
   });
 
   context.state.hasSentAgentInfo = true;

@@ -113,6 +113,34 @@ describe("agent info reminder", () => {
     expect(context).toContain("**Server location**:");
   });
 
+  test("includes CONVERSATION_ID when provided", () => {
+    const convId = "conv-abc123";
+    const context = buildAgentInfo({
+      agentInfo: {
+        id: "agent-test",
+        name: "Test Agent",
+        lastRunAt: null,
+      },
+      conversationId: convId,
+    });
+
+    expect(context).toContain(
+      `- **Conversation ID (also stored in \`CONVERSATION_ID\` env var)**: ${convId}`,
+    );
+  });
+
+  test("omits CONVERSATION_ID when not provided", () => {
+    const context = buildAgentInfo({
+      agentInfo: {
+        id: "agent-test",
+        name: "Test Agent",
+        lastRunAt: null,
+      },
+    });
+
+    expect(context).not.toContain("Conversation ID");
+  });
+
   test("does not include device information", () => {
     const context = buildAgentInfo({
       agentInfo: {
