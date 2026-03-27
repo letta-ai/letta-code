@@ -59,9 +59,9 @@ import { createContextTracker } from "./cli/helpers/contextTracker";
 import { formatErrorDetails } from "./cli/helpers/errorFormatter";
 import {
   getReflectionSettings,
+  persistReflectionSettingsForAgent,
   type ReflectionSettings,
   type ReflectionTrigger,
-  reflectionSettingsToLegacyMode,
 } from "./cli/helpers/memoryReminder";
 import {
   type QueuedMessage,
@@ -221,7 +221,7 @@ async function applyReflectionOverrides(
   agentId: string,
   overrides: ReflectionOverrides,
 ): Promise<ReflectionSettings> {
-  const current = getReflectionSettings();
+  const current = getReflectionSettings(agentId);
   const merged: ReflectionSettings = {
     trigger: overrides.trigger ?? current.trigger,
     stepCount: overrides.stepCount ?? current.stepCount,
@@ -250,17 +250,7 @@ async function applyReflectionOverrides(
     await settingsManager.loadLocalProjectSettings();
   }
 
-  const legacyMode = reflectionSettingsToLegacyMode(merged);
-  settingsManager.updateLocalProjectSettings({
-    memoryReminderInterval: legacyMode,
-    reflectionTrigger: merged.trigger,
-    reflectionStepCount: merged.stepCount,
-  });
-  settingsManager.updateSettings({
-    memoryReminderInterval: legacyMode,
-    reflectionTrigger: merged.trigger,
-    reflectionStepCount: merged.stepCount,
-  });
+  await persistReflectionSettingsForAgent(agentId, merged);
 
   return merged;
 }

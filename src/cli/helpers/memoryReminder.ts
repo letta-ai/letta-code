@@ -22,6 +22,18 @@ export interface ReflectionSettings {
   stepCount: number;
 }
 
+type PersistedReflectionSettings = {
+  trigger?: unknown;
+  stepCount?: unknown;
+};
+
+interface ReflectionSettingsCarrier {
+  memoryReminderInterval?: MemoryReminderMode;
+  reflectionTrigger?: unknown;
+  reflectionStepCount?: unknown;
+  reflectionSettingsByAgent?: Record<string, PersistedReflectionSettings>;
+}
+
 const DEFAULT_REFLECTION_SETTINGS: ReflectionSettings = {
   trigger: "compaction-event",
   stepCount: DEFAULT_STEP_COUNT,
@@ -64,6 +76,20 @@ function applyExplicitReflectionOverrides(
   return {
     trigger: normalizeTrigger(raw.reflectionTrigger, base.trigger),
     stepCount: normalizeStepCount(raw.reflectionStepCount, base.stepCount),
+  };
+}
+
+function applyPersistedAgentScopedSettings(
+  base: ReflectionSettings,
+  raw: PersistedReflectionSettings | undefined,
+): ReflectionSettings {
+  if (!raw) {
+    return base;
+  }
+
+  return {
+    trigger: normalizeTrigger(raw.trigger, base.trigger),
+    stepCount: normalizeStepCount(raw.stepCount, base.stepCount),
   };
 }
 
@@ -116,24 +142,52 @@ export function reflectionSettingsToLegacyMode(
 /**
  * Get effective reflection settings (local overrides global with legacy fallback).
  */
-export function getReflectionSettings(): ReflectionSettings {
-  const globalSettings = settingsManager.getSettings();
+export function getReflectionSettings(
+  agentId?: string,
+  workingDirectory: string = process.cwd(),
+): ReflectionSettings {
+  const globalSettings =
+    settingsManager.getSettings() as unknown as ReflectionSettingsCarrier;
+  let localSettings: ReflectionSettingsCarrier | null = null;
+
+  try {
+    localSettings = settingsManager.getLocalProjectSettings(
+      workingDirectory,
+    ) as unknown as ReflectionSettingsCarrier;
+  } catch {
+    localSettings = null;
+  }
+
+  if (agentId) {
+    const localScoped = localSettings?.reflectionSettingsByAgent?.[agentId];
+    if (localScoped) {
+      return applyPersistedAgentScopedSettings(
+        DEFAULT_REFLECTION_SETTINGS,
+        localScoped,
+      );
+    }
+
+    const globalScoped = globalSettings.reflectionSettingsByAgent?.[agentId];
+    if (globalScoped) {
+      return applyPersistedAgentScopedSettings(
+        DEFAULT_REFLECTION_SETTINGS,
+        globalScoped,
+      );
+    }
+  }
+
   let resolved = legacyModeToReflectionSettings(
     globalSettings.memoryReminderInterval,
   );
   resolved = applyExplicitReflectionOverrides(resolved, globalSettings);
 
-  // Check local settings first (may not be loaded, so catch errors)
-  try {
-    const localSettings = settingsManager.getLocalProjectSettings();
+  if (localSettings) {
     if (localSettings.memoryReminderInterval !== undefined) {
       resolved = legacyModeToReflectionSettings(
         localSettings.memoryReminderInterval,
       );
     }
     resolved = applyExplicitReflectionOverrides(resolved, localSettings);
-  } catch {
-    // Local settings not loaded, fall through to global
   }
 
   return resolved;
@@ -142,8 +196,13 @@ export function getReflectionSettings(): ReflectionSettings {
 /**
  * Legacy mode view used by existing call sites while migrating to split fields.
  */
-export function getMemoryReminderMode(): MemoryReminderMode {
-  return reflectionSettingsToLegacyMode(getReflectionSettings());
+export function getMemoryReminderMode(
+  agentId?: string,
+  workingDirectory?: string,
+): MemoryReminderMode {
+  return reflectionSettingsToLegacyMode(
+    getReflectionSettings(agentId, workingDirectory),
+  );
 }
 
 export function shouldFireStepCountTrigger(
@@ -192,8 +251,9 @@ export async function buildCompactionMemoryReminder(
 export async function buildMemoryReminder(
   turnCount: number,
   agentId: string,
+  workingDirectory?: string,
 ): Promise<string> {
-  const reflectionSettings = getReflectionSettings();
+  const reflectionSettings = getReflectionSettings(agentId, workingDirectory);
   if (reflectionSettings.trigger !== "step-count") {
     return "";
   }
@@ -207,6 +267,67 @@ export async function buildMemoryReminder(
   }
 
   return "";
+}
+
+type PersistReflectionSettingsOptions = {
+  workingDirectory?: string;
+  persistLocalProject?: boolean;
+  persistGlobal?: boolean;
+};
+
+export async function persistReflectionSettingsForAgent(
+  agentId: string,
+  settings: ReflectionSettings,
+  options: PersistReflectionSettingsOptions = {},
+): Promise<void> {
+  const {
+    workingDirectory = process.cwd(),
+    persistLocalProject = true,
+    persistGlobal = true,
+  } = options;
+  const legacyMode = reflectionSettingsToLegacyMode(settings);
+
+  if (persistLocalProject) {
+    try {
+      settingsManager.getLocalProjectSettings(workingDirectory);
+    } catch {
+      await settingsManager.loadLocalProjectSettings(workingDirectory);
+    }
+
+    const localSettings =
+      settingsManager.getLocalProjectSettings(workingDirectory);
+    settingsManager.updateLocalProjectSettings(
+      {
+        memoryReminderInterval: legacyMode,
+        reflectionTrigger: settings.trigger,
+        reflectionStepCount: settings.stepCount,
+        reflectionSettingsByAgent: {
+          ...(localSettings.reflectionSettingsByAgent ?? {}),
+          [agentId]: {
+            trigger: settings.trigger,
+            stepCount: settings.stepCount,
+          },
+        },
+      },
+      workingDirectory,
+    );
+  }
+
+  if (persistGlobal) {
+    const globalSettings = settingsManager.getSettings();
+    settingsManager.updateSettings({
+      memoryReminderInterval: legacyMode,
+      reflectionTrigger: settings.trigger,
+      reflectionStepCount: settings.stepCount,
+      reflectionSettingsByAgent: {
+        ...(globalSettings.reflectionSettingsByAgent ?? {}),
+        [agentId]: {
+          trigger: settings.trigger,
+          stepCount: settings.stepCount,
+        },
+      },
+    });
+  }
 }
 
 interface Question {
@@ -223,6 +344,8 @@ interface Question {
 export function parseMemoryPreference(
   questions: Question[],
   answers: Record<string, string>,
+  agentId?: string,
+  workingDirectory?: string,
 ): boolean {
   for (const q of questions) {
     // Skip malformed questions (LLM might send invalid data)
@@ -240,18 +363,54 @@ export function parseMemoryPreference(
 
       // Parse answer: "frequent" → MEMORY_INTERVAL_FREQUENT, "occasional" → MEMORY_INTERVAL_OCCASIONAL
       if (answer.includes("frequent")) {
-        settingsManager.updateLocalProjectSettings({
-          memoryReminderInterval: MEMORY_INTERVAL_FREQUENT,
-          reflectionTrigger: "step-count",
-          reflectionStepCount: MEMORY_INTERVAL_FREQUENT,
-        });
+        if (agentId) {
+          void persistReflectionSettingsForAgent(
+            agentId,
+            {
+              trigger: "step-count",
+              stepCount: MEMORY_INTERVAL_FREQUENT,
+            },
+            {
+              workingDirectory,
+              persistLocalProject: true,
+              persistGlobal: false,
+            },
+          );
+        } else {
+          settingsManager.updateLocalProjectSettings(
+            {
+              memoryReminderInterval: MEMORY_INTERVAL_FREQUENT,
+              reflectionTrigger: "step-count",
+              reflectionStepCount: MEMORY_INTERVAL_FREQUENT,
+            },
+            workingDirectory,
+          );
+        }
         return true;
       } else if (answer.includes("occasional")) {
-        settingsManager.updateLocalProjectSettings({
-          memoryReminderInterval: MEMORY_INTERVAL_OCCASIONAL,
-          reflectionTrigger: "step-count",
-          reflectionStepCount: MEMORY_INTERVAL_OCCASIONAL,
-        });
+        if (agentId) {
+          void persistReflectionSettingsForAgent(
+            agentId,
+            {
+              trigger: "step-count",
+              stepCount: MEMORY_INTERVAL_OCCASIONAL,
+            },
+            {
+              workingDirectory,
+              persistLocalProject: true,
+              persistGlobal: false,
+            },
+          );
+        } else {
+          settingsManager.updateLocalProjectSettings(
+            {
+              memoryReminderInterval: MEMORY_INTERVAL_OCCASIONAL,
+              reflectionTrigger: "step-count",
+              reflectionStepCount: MEMORY_INTERVAL_OCCASIONAL,
+            },
+            workingDirectory,
+          );
+        }
         return true;
       }
       break; // Only process first matching question
