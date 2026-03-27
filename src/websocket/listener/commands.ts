@@ -6,6 +6,7 @@ import {
   gatherInitGitContext,
 } from "../../cli/helpers/initCommand";
 import { settingsManager } from "../../settings-manager";
+import { trackBoundaryError } from "../../telemetry/errorReporting";
 import type {
   ExecuteCommandCommand,
   SlashCommandEndMessage,
@@ -96,6 +97,11 @@ export async function handleExecuteCommand(
       success: true,
     });
   } catch (error) {
+    trackBoundaryError({
+      errorType: "listener_execute_command_failed",
+      error,
+      context: "listener_command_execution",
+    });
     const errorMessage = error instanceof Error ? error.message : String(error);
     emitSlashCommandEnd(socket, conversationRuntime, scope, {
       command_id: command.command_id,

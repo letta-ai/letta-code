@@ -6,6 +6,7 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import type { HooksConfig } from "./hooks/types";
 import type { PermissionRules } from "./permissions/types";
+import { trackBoundaryError } from "./telemetry/errorReporting";
 import { debugWarn } from "./utils/debug.js";
 import { exists, mkdir, readFile, writeFile } from "./utils/fs.js";
 import {
@@ -71,6 +72,13 @@ export interface Settings {
   memoryReminderInterval: number | null | "compaction" | "auto-compaction"; // DEPRECATED: use reflection* fields
   reflectionTrigger: "off" | "step-count" | "compaction-event";
   reflectionStepCount: number;
+  reflectionSettingsByAgent?: Record<
+    string,
+    {
+      trigger: "off" | "step-count" | "compaction-event";
+      stepCount: number;
+    }
+  >;
   conversationSwitchAlertEnabled: boolean; // Send system-reminder when switching conversations/agents
   globalSharedBlockIds: Record<string, string>; // DEPRECATED: kept for backwards compat
   profiles?: Record<string, string>; // DEPRECATED: old format, kept for migration
@@ -118,6 +126,13 @@ export interface LocalProjectSettings {
   memoryReminderInterval?: number | null | "compaction" | "auto-compaction"; // DEPRECATED: use reflection* fields
   reflectionTrigger?: "off" | "step-count" | "compaction-event";
   reflectionStepCount?: number;
+  reflectionSettingsByAgent?: Record<
+    string,
+    {
+      trigger: "off" | "step-count" | "compaction-event";
+      stepCount: number;
+    }
+  >;
   // Server-indexed settings (agent IDs are server-specific)
   sessionsByServer?: Record<string, SessionRef>; // key = normalized base URL
   pinnedAgentsByServer?: Record<string, string[]>; // key = normalized base URL
@@ -271,6 +286,11 @@ class SettingsManager {
       // Migrate pinnedAgents/pinnedAgentsByServer to agents array
       this.migrateToAgentsArray();
     } catch (error) {
+      trackBoundaryError({
+        errorType: "settings_load_failed",
+        error,
+        context: "settings_initialize",
+      });
       console.error("Error loading settings, using defaults:", error);
       this.settings = { ...DEFAULT_SETTINGS };
       for (const key of Object.keys(DEFAULT_SETTINGS)) {
@@ -535,6 +555,11 @@ class SettingsManager {
     // Persist both regular settings and secure tokens asynchronously
     const writePromise = this.persistSettingsAndTokens(secureTokens)
       .catch((error) => {
+        trackBoundaryError({
+          errorType: "settings_persist_failed",
+          error,
+          context: "settings_update",
+        });
         console.error("Failed to persist settings:", error);
       })
       .finally(() => {
@@ -699,6 +724,11 @@ class SettingsManager {
     // Persist asynchronously (track promise for testing)
     const writePromise = this.persistProjectSettings(workingDirectory)
       .catch((error) => {
+        trackBoundaryError({
+          errorType: "project_settings_persist_failed",
+          error,
+          context: "settings_project_update",
+        });
         console.error("Failed to persist project settings:", error);
       })
       .finally(() => {
@@ -1714,6 +1744,11 @@ class SettingsManager {
     try {
       return await getSecureTokens();
     } catch (error) {
+      trackBoundaryError({
+        errorType: "secrets_retrieve_tokens_failed",
+        error,
+        context: "settings_secrets_retrieve",
+      });
       console.warn("Failed to retrieve tokens from secrets:", error);
       return {};
     }
@@ -1735,6 +1770,11 @@ class SettingsManager {
     try {
       await setSecureTokens(tokens);
     } catch (error) {
+      trackBoundaryError({
+        errorType: "secrets_store_tokens_failed",
+        error,
+        context: "settings_secrets_store",
+      });
       console.warn(
         "Failed to store tokens in secrets, falling back to settings file",
       );
@@ -1755,6 +1795,11 @@ class SettingsManager {
     try {
       await deleteSecureTokens();
     } catch (error) {
+      trackBoundaryError({
+        errorType: "secrets_delete_tokens_failed",
+        error,
+        context: "settings_secrets_delete",
+      });
       console.warn("Failed to delete tokens from secrets:", error);
       // Continue anyway as the tokens might not exist
     }
@@ -1799,6 +1844,11 @@ class SettingsManager {
         "Successfully logged out and cleared all authentication data",
       );
     } catch (error) {
+      trackBoundaryError({
+        errorType: "settings_logout_failed",
+        error,
+        context: "settings_logout",
+      });
       console.error("Error during logout:", error);
       throw error;
     }

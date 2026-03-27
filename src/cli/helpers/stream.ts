@@ -383,6 +383,15 @@ export async function drainStream(
     // is still in-progress and has no error metadata yet.
     fallbackError = errorMessageWithDiagnostic;
 
+    telemetry.trackError(
+      "stream_drain_error",
+      errorMessageWithDiagnostic,
+      "stream_drain",
+      {
+        runId: streamProcessor.lastRunId || undefined,
+      },
+    );
+
     // Preserve a stop reason already parsed from stream chunks (e.g. llm_api_error)
     // and only fall back to generic "error" when none is available.
     stopReason = streamProcessor.stopReason || "error";
