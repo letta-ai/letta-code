@@ -46,6 +46,8 @@ type Props = {
   allowPersistence?: boolean;
   showPreview?: boolean;
   defaultScope?: "project" | "session";
+  /** Override the auto-generated header text (e.g. "Edit memory system/persona/soul?") */
+  headerOverride?: string;
 };
 
 // Horizontal line characters for Claude Code style
@@ -162,6 +164,7 @@ export const InlineFileEditApproval = memo(
     allowPersistence = true,
     showPreview = true,
     defaultScope = "project",
+    headerOverride,
   }: Props) => {
     const [selectedOption, setSelectedOption] = useState(0);
     const {
@@ -300,7 +303,7 @@ export const InlineFileEditApproval = memo(
     // Generate horizontal lines
     const solidLine = SOLID_LINE.repeat(Math.max(columns, 10));
     const dottedLine = DOTTED_LINE.repeat(Math.max(columns, 10));
-    const headerText = getHeaderText(fileEdit);
+    const headerText = headerOverride || getHeaderText(fileEdit);
     const diffKind = getDiffKind(fileEdit.toolName);
 
     // Memoize the static diff content so it doesn't re-render on keystroke
@@ -436,6 +439,7 @@ export const InlineFileEditApproval = memo(
         solidLine,
         dottedLine,
         headerText,
+        headerOverride,
         diffKind,
       ],
     );
