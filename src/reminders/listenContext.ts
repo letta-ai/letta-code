@@ -10,6 +10,7 @@ const LISTEN_REFLECTION_SETTINGS: ReflectionSettings = {
 
 interface BuildListenReminderContextParams {
   agentId: string;
+  conversationId?: string;
   state: SharedReminderState;
   resolvePlanModeReminder: () => string | Promise<string>;
   /** Explicit working directory for session context (overrides process.cwd()). */
@@ -28,6 +29,7 @@ export function buildListenReminderContext(
       name: null,
       description: null,
       lastRunAt: null,
+      conversationId: params.conversationId,
     },
     state: params.state,
     sessionContextReminderEnabled: true,

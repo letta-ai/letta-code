@@ -51,6 +51,7 @@ jobs:
     environment: npm-publish
     permissions:
       contents: write
+      pull-requests: write
       id-token: write  # Required for npm OIDC trusted publishing
     steps:
       - name: Checkout
@@ -152,7 +153,7 @@ jobs:
       - name: Commit and tag version bump (local only)
         run: |
           git add package.json package-lock.json
-          git commit -m "chore: bump version to ${{ steps.version.outputs.new_version }} [skip ci]"
+          git commit -m "chore: bump version to ${{ steps.version.outputs.new_version }}"
           git tag "${{ steps.version.outputs.tag }}"
 
       - name: Install dependencies
@@ -180,10 +181,21 @@ jobs:
       - name: Publish to npm
         run: npm publish --access public --tag ${{ steps.version.outputs.npm_tag }}
 
-      - name: Push commit and tag after publish
+      - name: Push tag after publish
+        run: git push origin "${{ steps.version.outputs.tag }}"
+
+      - name: Create version bump PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          git push origin main
-          git push origin "${{ steps.version.outputs.tag }}"
+          BRANCH="chore/bump-v${{ steps.version.outputs.new_version }}"
+          git checkout -b "$BRANCH"
+          git push origin "$BRANCH"
+          gh pr create \
+            --title "chore: bump version to ${{ steps.version.outputs.new_version }}" \
+            --body "Automated version bump after npm publish of v${{ steps.version.outputs.new_version }}." \
+            --base main \
+            --head "$BRANCH"
 
       - name: Create GitHub Release
         if: steps.version.outputs.is_prerelease == 'false'

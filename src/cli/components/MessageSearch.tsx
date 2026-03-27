@@ -34,6 +34,69 @@ const SEARCH_MODES: SearchMode[] = ["fts", "vector", "hybrid"]; // Display order
 type SearchRange = "all" | "agent" | "conv";
 const SEARCH_RANGES: SearchRange[] = ["all", "agent", "conv"];
 
+type SearchTarget = {
+  mode: SearchMode;
+  range: SearchRange;
+};
+
+type SearchCacheWarmRequest = {
+  collection: "messages";
+  scope: Record<string, never>;
+};
+
+type SearchCacheWarmResponse = {
+  collection: "messages";
+  status: string;
+  warmed: boolean;
+};
+
+export async function warmMessageSearchCache(client: Letta) {
+  const body: SearchCacheWarmRequest = {
+    collection: "messages",
+    scope: {},
+  };
+
+  return client.post<SearchCacheWarmResponse>(
+    "/v1/_internal_search/cache-warm",
+    {
+      body,
+    },
+  );
+}
+
+function isSearchRangeAvailable(
+  range: SearchRange,
+  options: { agentId?: string; conversationId?: string },
+): boolean {
+  if (range === "agent") return Boolean(options.agentId);
+  if (range === "conv") return Boolean(options.conversationId);
+  return true;
+}
+
+export function buildSearchTargetPlan(
+  mode: SearchMode,
+  range: SearchRange,
+  options: { agentId?: string; conversationId?: string },
+): { primary: SearchTarget; prefetch: SearchTarget[] } {
+  const availableRanges = SEARCH_RANGES.filter((candidateRange) =>
+    isSearchRangeAvailable(candidateRange, options),
+  );
+
+  const prefetch = [
+    ...SEARCH_MODES.filter((candidateMode) => candidateMode !== mode).map(
+      (candidateMode) => ({ mode: candidateMode, range }),
+    ),
+    ...availableRanges
+      .filter((candidateRange) => candidateRange !== range)
+      .map((candidateRange) => ({ mode, range: candidateRange })),
+  ];
+
+  return {
+    primary: { mode, range },
+    prefetch,
+  };
+}
+
 /**
  * Format a timestamp in local timezone
  */
@@ -167,18 +230,20 @@ export function MessageSearch({
     MessageSearchResponse[number] | null
   >(null);
   const clientRef = useRef<Letta | null>(null);
+  const searchRequestIdRef = useRef(0);
   // Cache results per query+mode+range combination to avoid re-fetching
   const resultsCache = useRef<Map<string, MessageSearchResponse>>(new Map());
+  const pendingResultsCache = useRef<
+    Map<string, Promise<MessageSearchResponse>>
+  >(new Map());
 
   // Warm tpuf cache on mount (fire-and-forget)
   useEffect(() => {
     const warmCache = async () => {
       try {
         const client = await getClient();
-        await client.post("/v1/messages/search", {
-          body: {},
-          query: { warm_only: true },
-        });
+        clientRef.current = client;
+        await warmMessageSearchCache(client);
       } catch {
         // Silently ignore - cache warm is best-effort
       }
@@ -230,116 +295,130 @@ export function MessageSearch({
     [agentId, conversationId],
   );
 
-  // Execute search - fires all 9 combinations (3 modes × 3 ranges) in parallel
+  const fetchAndCacheSearchResults = useCallback(
+    async (
+      client: Letta,
+      query: string,
+      mode: SearchMode,
+      range: SearchRange,
+    ) => {
+      const cacheKey = getCacheKey(query, mode, range);
+      const cached = resultsCache.current.get(cacheKey);
+      if (cached) {
+        return cached;
+      }
+
+      const pending = pendingResultsCache.current.get(cacheKey);
+      if (pending) {
+        return pending;
+      }
+
+      if (!isSearchRangeAvailable(range, { agentId, conversationId })) {
+        const emptyResults: MessageSearchResponse = [];
+        resultsCache.current.set(cacheKey, emptyResults);
+        return emptyResults;
+      }
+
+      const request = fetchSearchResults(client, query, mode, range)
+        .then((searchResults) => {
+          resultsCache.current.set(cacheKey, searchResults);
+          return searchResults;
+        })
+        .finally(() => {
+          pendingResultsCache.current.delete(cacheKey);
+        });
+
+      pendingResultsCache.current.set(cacheKey, request);
+      return request;
+    },
+    [agentId, conversationId, fetchSearchResults, getCacheKey],
+  );
+
+  const prefetchSearchResults = useCallback(
+    (query: string, mode: SearchMode, range: SearchRange) => {
+      const { prefetch } = buildSearchTargetPlan(mode, range, {
+        agentId,
+        conversationId,
+      });
+
+      if (prefetch.length === 0) {
+        return;
+      }
+
+      void (async () => {
+        try {
+          const client = clientRef.current || (await getClient());
+          clientRef.current = client;
+
+          await Promise.all(
+            prefetch.map(({ mode: prefetchMode, range: prefetchRange }) =>
+              fetchAndCacheSearchResults(
+                client,
+                query,
+                prefetchMode,
+                prefetchRange,
+              ).catch(() => []),
+            ),
+          );
+        } catch {
+          // Best-effort only - prefetch should never block the active result
+        }
+      })();
+    },
+    [agentId, conversationId, fetchAndCacheSearchResults],
+  );
+
+  // Execute the active search first, then prefetch adjacent tab/range results
   const executeSearch = useCallback(
     async (query: string, mode: SearchMode, range: SearchRange) => {
       if (!query.trim()) return;
 
       const cacheKey = getCacheKey(query, mode, range);
-
-      // Check cache first
+      const requestId = ++searchRequestIdRef.current;
       const cached = resultsCache.current.get(cacheKey);
+
+      setError(null);
+
       if (cached) {
+        setLoading(false);
         setResults(cached);
         setSelectedIndex(0);
+        prefetchSearchResults(query, mode, range);
         return;
       }
 
       setLoading(true);
-      setError(null);
 
       try {
         const client = clientRef.current || (await getClient());
         clientRef.current = client;
 
-        // Helper to get cached or fetch
-        const getOrFetch = (m: SearchMode, r: SearchRange) => {
-          const key = getCacheKey(query, m, r);
-          return (
-            resultsCache.current.get(key) ??
-            fetchSearchResults(client, query, m, r)
-          );
-        };
-
-        // Fire all 9 combinations in parallel for instant mode/range switching
-        const [
-          hybridAll,
-          vectorAll,
-          ftsAll,
-          hybridAgent,
-          vectorAgent,
-          ftsAgent,
-          hybridConv,
-          vectorConv,
-          ftsConv,
-        ] = await Promise.all([
-          getOrFetch("hybrid", "all"),
-          getOrFetch("vector", "all"),
-          getOrFetch("fts", "all"),
-          agentId ? getOrFetch("hybrid", "agent") : Promise.resolve([]),
-          agentId ? getOrFetch("vector", "agent") : Promise.resolve([]),
-          agentId ? getOrFetch("fts", "agent") : Promise.resolve([]),
-          conversationId ? getOrFetch("hybrid", "conv") : Promise.resolve([]),
-          conversationId ? getOrFetch("vector", "conv") : Promise.resolve([]),
-          conversationId ? getOrFetch("fts", "conv") : Promise.resolve([]),
-        ]);
-
-        // Cache all results
-        resultsCache.current.set(
-          getCacheKey(query, "hybrid", "all"),
-          hybridAll,
+        const primaryResults = await fetchAndCacheSearchResults(
+          client,
+          query,
+          mode,
+          range,
         );
-        resultsCache.current.set(
-          getCacheKey(query, "vector", "all"),
-          vectorAll,
-        );
-        resultsCache.current.set(getCacheKey(query, "fts", "all"), ftsAll);
-        if (agentId) {
-          resultsCache.current.set(
-            getCacheKey(query, "hybrid", "agent"),
-            hybridAgent,
-          );
-          resultsCache.current.set(
-            getCacheKey(query, "vector", "agent"),
-            vectorAgent,
-          );
-          resultsCache.current.set(
-            getCacheKey(query, "fts", "agent"),
-            ftsAgent,
-          );
-        }
-        if (conversationId) {
-          resultsCache.current.set(
-            getCacheKey(query, "hybrid", "conv"),
-            hybridConv,
-          );
-          resultsCache.current.set(
-            getCacheKey(query, "vector", "conv"),
-            vectorConv,
-          );
-          resultsCache.current.set(getCacheKey(query, "fts", "conv"), ftsConv);
+
+        if (searchRequestIdRef.current !== requestId) {
+          return;
         }
 
-        // Set the results for the current mode+range
-        const resultMap: Record<
-          SearchMode,
-          Record<SearchRange, MessageSearchResponse>
-        > = {
-          hybrid: { all: hybridAll, agent: hybridAgent, conv: hybridConv },
-          vector: { all: vectorAll, agent: vectorAgent, conv: vectorConv },
-          fts: { all: ftsAll, agent: ftsAgent, conv: ftsConv },
-        };
-
-        setResults(resultMap[mode][range]);
+        setResults(primaryResults);
         setSelectedIndex(0);
+        setLoading(false);
+        prefetchSearchResults(query, mode, range);
       } catch (err) {
+        if (searchRequestIdRef.current !== requestId) {
+          return;
+        }
+
         setError(err instanceof Error ? err.message : String(err));
         setResults([]);
-      } finally {
         setLoading(false);
       }
     },
-    [fetchSearchResults, getCacheKey, agentId, conversationId],
+    [fetchAndCacheSearchResults, getCacheKey, prefetchSearchResults],
   );
 
   // Submit search (only when query changes)

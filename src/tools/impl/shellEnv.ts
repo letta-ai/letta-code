@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { getServerUrl } from "../../agent/client";
-import { getCurrentAgentId } from "../../agent/context";
+import { getConversationId, getCurrentAgentId } from "../../agent/context";
 import { getMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
 import { settingsManager } from "../../settings-manager";
 
@@ -218,6 +218,25 @@ export function getShellEnv(): NodeJS.ProcessEnv {
       // Settings may not be initialized in tests/startup; preserve inherited values.
     }
   }
+  // Inject conversation ID if available
+  let convId: string | undefined;
+  try {
+    const resolved = getConversationId();
+    if (resolved) convId = resolved;
+  } catch {
+    // Not set yet
+  }
+  if (!convId) {
+    const fallback = env.LETTA_CONVERSATION_ID;
+    if (typeof fallback === "string" && fallback.trim()) {
+      convId = fallback.trim();
+    }
+  }
+  if (convId) {
+    env.LETTA_CONVERSATION_ID = convId;
+    env.CONVERSATION_ID = convId;
+  }
+
   // Inject API key and base URL from settings if not already in env
   if (!env.LETTA_API_KEY || !env.LETTA_BASE_URL) {
     try {

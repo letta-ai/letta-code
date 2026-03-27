@@ -130,6 +130,8 @@ describe("buildSubagentArgs", () => {
     skills: [],
     memoryBlocks: "none",
     mode: "stateful",
+    fork: false,
+    background: false,
   };
 
   test("adds --no-memfs for newly spawned subagents by default", () => {

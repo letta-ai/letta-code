@@ -16,6 +16,7 @@ export interface AgentInfo {
 export interface AgentInfoOptions {
   agentInfo: AgentInfo;
   serverUrl?: string;
+  conversationId?: string;
 }
 
 /**
@@ -49,7 +50,7 @@ function getRelativeTime(dateStr: string): string {
  */
 export function buildAgentInfo(options: AgentInfoOptions): string {
   try {
-    const { agentInfo, serverUrl } = options;
+    const { agentInfo, serverUrl, conversationId } = options;
 
     // Get server URL
     let actualServerUrl = LETTA_CLOUD_API_URL;
@@ -88,8 +89,12 @@ export function buildAgentInfo(options: AgentInfoOptions): string {
       ? `\n- **Memory directory (also stored in \`MEMORY_DIR\` env var)**: \`${getMemoryFilesystemRoot(agentInfo.id)}\``
       : "";
 
+    const convLine = conversationId
+      ? `\n- **Conversation ID (also stored in \`CONVERSATION_ID\` env var)**: ${conversationId}`
+      : "";
+
     return `${SYSTEM_REMINDER_OPEN} This is an automated message providing information about you.
-- **Agent ID (also stored in \`AGENT_ID\` env var)**: ${agentInfo.id}${memoryDirLine}
+- **Agent ID (also stored in \`AGENT_ID\` env var)**: ${agentInfo.id}${convLine}${memoryDirLine}
 - **Agent name**: ${agentInfo.name || "(unnamed)"} (the user can change this with /rename)
 - **Agent description**: ${agentInfo.description || "(no description)"} (the user can change this with /description)
 - **Last message**: ${lastRunInfo}

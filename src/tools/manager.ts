@@ -1411,12 +1411,18 @@ export async function executeTool(
       }
       if (stdout) {
         for (let i = 0; i < stdout.length; i++) {
-          stdout[i] = scrubSecretsFromString(stdout[i]!);
+          const line = stdout[i];
+          if (line !== undefined) {
+            stdout[i] = scrubSecretsFromString(line);
+          }
         }
       }
       if (stderr) {
         for (let i = 0; i < stderr.length; i++) {
-          stderr[i] = scrubSecretsFromString(stderr[i]!);
+          const line = stderr[i];
+          if (line !== undefined) {
+            stderr[i] = scrubSecretsFromString(line);
+          }
         }
       }
     }

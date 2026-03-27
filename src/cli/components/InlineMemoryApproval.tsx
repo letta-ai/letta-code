@@ -6,14 +6,24 @@ import { useTextInputCursor } from "../hooks/useTextInputCursor";
 import { colors } from "./colors";
 import { Text } from "./Text";
 
+export type MemoryInfo = {
+  command: string;
+  reason?: string;
+  path?: string;
+  oldPath?: string;
+  newPath?: string;
+  oldString?: string;
+  newString?: string;
+  insertLine?: number;
+  insertText?: string;
+  description?: string;
+  fileText?: string;
+  /** Unified diff input for memory_apply_patch */
+  patchInput?: string;
+};
+
 type Props = {
-  taskInfo: {
-    subagentType: string;
-    description: string;
-    prompt: string;
-    model?: string;
-    isBackground?: boolean;
-  };
+  memoryInfo: MemoryInfo;
   onApprove: () => void;
   onApproveAlways: (scope: "project" | "session") => void;
   onDeny: (reason: string) => void;
@@ -21,19 +31,52 @@ type Props = {
   isFocused?: boolean;
   approveAlwaysText?: string;
   allowPersistence?: boolean;
+  defaultScope?: "project" | "session";
+  showPreview?: boolean;
 };
 
-// Horizontal line character for Claude Code style
 const SOLID_LINE = "─";
 
+function getHeader(command: string): string {
+  switch (command) {
+    case "delete":
+      return "Delete memory?";
+    case "str_replace":
+      return "Edit memory?";
+    case "insert":
+      return "Insert into memory?";
+    case "rename":
+      return "Rename memory?";
+    case "create":
+      return "Create memory?";
+    case "update_description":
+      return "Update memory description?";
+    case "patch":
+      return "Patch memory?";
+    default:
+      return `Run memory ${command}?`;
+  }
+}
+
+/** Strip .md extension from memory paths for display */
+function displayPath(path: string): string {
+  return path.replace(/\.md$/, "");
+}
+
+function truncate(text: string, max: number): string {
+  if (text.length <= max) return text;
+  return `${text.slice(0, max)}…`;
+}
+
 /**
- * InlineTaskApproval - Renders Task tool approval UI inline with pretty formatting
+ * InlineMemoryApproval - Renders memory tool approval UI inline
  *
- * Shows subagent type, description, and prompt in a readable format.
+ * Shows the memory operation, target path, and key details in a readable format
+ * instead of dumping raw JSON.
  */
-export const InlineTaskApproval = memo(
+export const InlineMemoryApproval = memo(
   ({
-    taskInfo,
+    memoryInfo,
     onApprove,
     onApproveAlways,
     onDeny,
@@ -41,6 +84,8 @@ export const InlineTaskApproval = memo(
     isFocused = true,
     approveAlwaysText,
     allowPersistence = true,
+    defaultScope = "project",
+    showPreview = true,
   }: Props) => {
     const [selectedOption, setSelectedOption] = useState(0);
     const {
@@ -52,7 +97,6 @@ export const InlineTaskApproval = memo(
     const columns = useTerminalWidth();
     useProgressIndicator();
 
-    // Custom option index depends on whether "always" option is shown
     const customOptionIndex = allowPersistence ? 2 : 1;
     const maxOptionIndex = customOptionIndex;
     const isOnCustomOption = selectedOption === customOptionIndex;
@@ -63,13 +107,11 @@ export const InlineTaskApproval = memo(
       (input, key) => {
         if (!isFocused) return;
 
-        // CTRL-C: cancel (queue denial, return to input)
         if (key.ctrl && input === "c") {
           onCancel?.();
           return;
         }
 
-        // Arrow navigation always works
         if (key.upArrow) {
           setSelectedOption((prev) => Math.max(0, prev - 1));
           return;
@@ -79,7 +121,6 @@ export const InlineTaskApproval = memo(
           return;
         }
 
-        // When on custom input option
         if (isOnCustomOption) {
           if (key.return) {
             if (customReason.trim()) {
@@ -95,16 +136,14 @@ export const InlineTaskApproval = memo(
             }
             return;
           }
-          // Handle text input (arrows, backspace, typing)
           if (handleKey(input, key)) return;
         }
 
-        // When on regular options
         if (key.return) {
           if (selectedOption === 0) {
             onApprove();
           } else if (selectedOption === 1 && allowPersistence) {
-            onApproveAlways("session");
+            onApproveAlways(defaultScope);
           }
           return;
         }
@@ -113,91 +152,147 @@ export const InlineTaskApproval = memo(
           return;
         }
 
-        // Number keys for quick selection (only for fixed options, not custom text input)
         if (input === "1") {
           onApprove();
           return;
         }
         if (input === "2" && allowPersistence) {
-          onApproveAlways("session");
+          onApproveAlways(defaultScope);
           return;
         }
       },
       { isActive: isFocused },
     );
 
-    // Generate horizontal line
     const solidLine = SOLID_LINE.repeat(Math.max(columns, 10));
-    const contentWidth = Math.max(0, columns - 4); // 2 padding on each side
+    const contentWidth = Math.max(0, columns - 4);
 
-    // Memoize the static task content so it doesn't re-render on keystroke
-    const memoizedTaskContent = useMemo(() => {
-      const { subagentType, description, prompt, model, isBackground } =
-        taskInfo;
-
-      // Show full prompt - users need to see what the task will do
-      const truncatedPrompt = prompt;
+    const memoizedContent = useMemo(() => {
+      const {
+        command,
+        reason,
+        path,
+        oldPath,
+        newPath,
+        oldString,
+        newString,
+        insertLine,
+        insertText,
+        description,
+        fileText,
+        patchInput,
+      } = memoryInfo;
 
       return (
         <>
-          {/* Top solid line */}
           <Text dimColor>{solidLine}</Text>
 
-          {/* Header */}
           <Text bold color={colors.approval.header}>
-            Dispatch subagent?
+            {getHeader(command)}
           </Text>
 
-          {/* Task details */}
           <Box paddingLeft={2} flexDirection="column" marginTop={1}>
-            {/* Type — Description (with optional model) */}
-            <Box flexDirection="row">
+            {/* Path */}
+            {command === "rename" ? (
               <Box flexGrow={1} width={contentWidth}>
                 <Text wrap="wrap">
-                  <Text bold color={colors.subagent.header}>
-                    {subagentType}
-                  </Text>
-                  {isBackground && <Text dimColor>{" [background]"}</Text>}
-                  <Text dimColor>
-                    {" — "}
-                    {description}
-                    {model ? ` (${model})` : ""}
-                  </Text>
+                  <Text bold>{displayPath(oldPath || "(unknown)")}</Text>
+                  <Text dimColor>{" → "}</Text>
+                  <Text bold>{displayPath(newPath || "(unknown)")}</Text>
                 </Text>
               </Box>
-            </Box>
+            ) : (
+              path && <Text bold>{displayPath(path)}</Text>
+            )}
 
-            {/* Prompt */}
-            <Box marginTop={1}>
-              <Box flexGrow={1} width={contentWidth}>
+            {/* Operation-specific details */}
+            {command === "str_replace" &&
+              oldString != null &&
+              newString != null && (
+                <Box flexDirection="column" marginTop={1}>
+                  <Box flexGrow={1} width={contentWidth}>
+                    <Text wrap="wrap">
+                      <Text color="red">- {truncate(oldString, 200)}</Text>
+                    </Text>
+                  </Box>
+                  <Box flexGrow={1} width={contentWidth}>
+                    <Text wrap="wrap">
+                      <Text color="green">+ {truncate(newString, 200)}</Text>
+                    </Text>
+                  </Box>
+                </Box>
+              )}
+
+            {command === "insert" && insertText != null && (
+              <Box marginTop={1} flexGrow={1} width={contentWidth}>
                 <Text wrap="wrap" dimColor>
-                  {truncatedPrompt}
+                  {insertLine != null ? `Line ${insertLine}: ` : ""}
+                  {truncate(insertText, 300)}
                 </Text>
               </Box>
-            </Box>
+            )}
+
+            {command === "create" && description && (
+              <Box marginTop={1} flexGrow={1} width={contentWidth}>
+                <Text wrap="wrap" dimColor>
+                  {description}
+                </Text>
+              </Box>
+            )}
+
+            {command === "create" && fileText && (
+              <Box marginTop={1} flexGrow={1} width={contentWidth}>
+                <Text wrap="wrap" dimColor>
+                  {truncate(fileText, 300)}
+                </Text>
+              </Box>
+            )}
+
+            {command === "update_description" && description && (
+              <Box marginTop={1} flexGrow={1} width={contentWidth}>
+                <Text wrap="wrap" dimColor>
+                  {description}
+                </Text>
+              </Box>
+            )}
+
+            {command === "patch" && patchInput && (
+              <Box flexDirection="column" marginTop={1}>
+                <Box flexGrow={1} width={contentWidth}>
+                  <Text wrap="wrap" dimColor>
+                    {truncate(patchInput, 500)}
+                  </Text>
+                </Box>
+              </Box>
+            )}
+
+            {/* Reason */}
+            {reason && (
+              <Box marginTop={1} flexGrow={1} width={contentWidth}>
+                <Text wrap="wrap" dimColor>
+                  {reason}
+                </Text>
+              </Box>
+            )}
           </Box>
         </>
       );
-    }, [taskInfo, solidLine, contentWidth]);
+    }, [memoryInfo, solidLine, contentWidth]);
 
-    // Hint text based on state
     const hintText = isOnCustomOption
       ? customReason
         ? "Enter to submit · Esc to clear"
         : "Type reason · Esc to cancel"
       : "Enter to select · Esc to cancel";
 
-    // Generate "always" text for Task tool
     const alwaysText =
-      approveAlwaysText || "Yes, allow subagent operations during this session";
+      approveAlwaysText || "Yes, allow memory operations during this session";
 
     return (
       <Box flexDirection="column">
-        {/* Static task content - memoized to prevent re-render on keystroke */}
-        {memoizedTaskContent}
+        {showPreview && memoizedContent}
 
-        {/* Options */}
-        <Box marginTop={1} flexDirection="column">
+        <Box marginTop={showPreview ? 1 : 0} flexDirection="column">
           {/* Option 1: Yes */}
           <Box flexDirection="row">
             <Box width={5} flexShrink={0}>
@@ -221,7 +316,7 @@ export const InlineTaskApproval = memo(
             </Box>
           </Box>
 
-          {/* Option 2: Yes, always (only if persistence allowed) */}
+          {/* Option 2: Yes, always */}
           {allowPersistence && (
             <Box flexDirection="row">
               <Box width={5} flexShrink={0}>
@@ -272,7 +367,6 @@ export const InlineTaskApproval = memo(
           </Box>
         </Box>
 
-        {/* Hint */}
         <Box marginTop={1}>
           <Text dimColor>{hintText}</Text>
         </Box>
@@ -281,4 +375,4 @@ export const InlineTaskApproval = memo(
   },
 );
 
-InlineTaskApproval.displayName = "InlineTaskApproval";
+InlineMemoryApproval.displayName = "InlineMemoryApproval";

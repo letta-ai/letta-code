@@ -25,23 +25,24 @@ Ask the user:
 
 **For HTTP servers:**
 ```bash
-npx tsx <skill-path>/scripts/mcp-http.ts <url> list-tools
+npx tsx <SKILL_DIR>/scripts/mcp-http.ts <url> list-tools
 
 # With auth header
-npx tsx <skill-path>/scripts/mcp-http.ts <url> --header "Authorization: Bearer KEY" list-tools
+npx tsx <SKILL_DIR>/scripts/mcp-http.ts <url> --header "Authorization: Bearer KEY" list-tools
 ```
+Where `<SKILL_DIR>` is the Skill Directory shown when the skill was loaded (visible in the injection header).
 
 **For stdio servers:**
 ```bash
 # First, install dependencies (one time)
-cd <skill-path>/scripts && npm install
+cd <SKILL_DIR>/scripts && npm install
 
 # Then connect
-npx tsx <skill-path>/scripts/mcp-stdio.ts "<command>" list-tools
+npx tsx <SKILL_DIR>/scripts/mcp-stdio.ts "<command>" list-tools
 
 # Examples
-npx tsx <skill-path>/scripts/mcp-stdio.ts "npx -y @modelcontextprotocol/server-filesystem ." list-tools
-npx tsx <skill-path>/scripts/mcp-stdio.ts "python server.py" list-tools
+npx tsx <SKILL_DIR>/scripts/mcp-stdio.ts "npx -y @modelcontextprotocol/server-filesystem ." list-tools
+npx tsx <SKILL_DIR>/scripts/mcp-stdio.ts "python server.py" list-tools
 ```
 
 ### Step 3: Explore available tools
@@ -113,7 +114,7 @@ Connects to MCP servers that run as subprocesses. Requires npm install first.
 
 ```bash
 # One-time setup
-cd <skill-path>/scripts && npm install
+cd <SKILL_DIR>/scripts && npm install
 
 npx tsx mcp-stdio.ts "<command>" [options] <action> [args]
 
@@ -163,7 +164,7 @@ Here are some well-known MCP servers:
 - Or `--env "API_KEY=xxx"` for stdio servers that need env vars
 
 **stdio "npm install" error:**
-- Run `cd <skill-path>/scripts && npm install` first
+- Run `cd <SKILL_DIR>/scripts && npm install` first
 - The stdio client requires the MCP SDK
 
 **Tool call fails:**

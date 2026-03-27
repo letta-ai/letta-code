@@ -10,6 +10,10 @@ export type QueuedTurnInput<TUserContent> =
   | {
       kind: "task_notification";
       text: string;
+    }
+  | {
+      kind: "cron_prompt";
+      text: string;
     };
 
 type MergeQueuedTurnInputOptions<TUserContent> = {
@@ -47,7 +51,7 @@ export function mergeQueuedTurnInput<TUserContent>(
     }
     isFirst = false;
 
-    if (item.kind === "task_notification") {
+    if (item.kind === "task_notification" || item.kind === "cron_prompt") {
       mergedParts.push({ type: "text", text: item.text });
       continue;
     }

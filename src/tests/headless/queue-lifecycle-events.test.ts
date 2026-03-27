@@ -107,6 +107,12 @@ function enqueueForTracking(
       source: "task_notification",
       text: input.text,
     } as Parameters<typeof q.enqueue>[0]);
+  } else if (input.kind === "cron_prompt") {
+    q.enqueue({
+      kind: "cron_prompt",
+      source: "cron",
+      text: input.text,
+    } as Parameters<typeof q.enqueue>[0]);
   } else {
     q.enqueue({
       kind: "message",

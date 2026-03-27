@@ -19,6 +19,7 @@ import { MEMORY_BLOCK_LABELS, type MemoryBlockLabel } from "../memory";
 
 // Built-in subagent definitions (embedded at build time)
 import exploreAgentMd from "./builtin/explore.md";
+import forkAgentMd from "./builtin/fork.md";
 import generalPurposeAgentMd from "./builtin/general-purpose.md";
 import historyAnalyzerAgentMd from "./builtin/history-analyzer.md";
 import initAgentMd from "./builtin/init.md";
@@ -29,6 +30,7 @@ import reflectionAgentMd from "./builtin/reflection.md";
 
 const BUILTIN_SOURCES = [
   exploreAgentMd,
+  forkAgentMd,
   generalPurposeAgentMd,
   historyAnalyzerAgentMd,
   initAgentMd,
@@ -66,6 +68,10 @@ export interface SubagentConfig {
   memoryBlocks: MemoryBlockLabel[] | "all" | "none";
   /** Stateless agents should not persist private working memory. */
   mode: SubagentMode;
+  /** Whether this subagent should fork the parent conversation before launch. */
+  fork: boolean;
+  /** Whether this subagent should run in the background by default. */
+  background: boolean;
   /** Permission mode for this subagent (default, acceptEdits, plan, bypassPermissions) */
   permissionMode?: string;
 }
@@ -239,6 +245,9 @@ function parseSubagentContent(content: string): SubagentConfig {
       getStringField(frontmatter, "memoryBlocks"),
     ),
     mode: parseSubagentMode(getStringField(frontmatter, "mode")),
+    fork: getStringField(frontmatter, "fork")?.toLowerCase() === "true",
+    background:
+      getStringField(frontmatter, "background")?.toLowerCase() === "true",
     permissionMode: getStringField(frontmatter, "permissionMode"),
   };
 }

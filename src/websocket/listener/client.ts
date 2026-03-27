@@ -25,6 +25,17 @@ import {
   subscribeToStreamEvents as subscribeToSubagentStreamEvents,
 } from "../../cli/helpers/subagentState";
 import { INTERRUPTED_BY_USER } from "../../constants";
+import {
+  addTask as addCronTask,
+  deleteAllTasks as deleteAllCronTasks,
+  deleteTask as deleteCronTask,
+  getTask as getCronTask,
+  listTasks as listCronTasks,
+} from "../../cron";
+import {
+  startScheduler as startCronScheduler,
+  stopScheduler as stopCronScheduler,
+} from "../../cron/scheduler";
 import { type DequeuedBatch, QueueRuntime } from "../../queue/queueRuntime";
 import {
   createSharedReminderState,
@@ -37,6 +48,11 @@ import type {
   AbortMessageCommand,
   ApprovalResponseBody,
   ChangeDeviceStateCommand,
+  CronAddCommand,
+  CronDeleteAllCommand,
+  CronDeleteCommand,
+  CronGetCommand,
+  CronListCommand,
 } from "../../types/protocol_v2";
 import { isDebugEnabled } from "../../utils/debug";
 import {
@@ -82,6 +98,11 @@ import {
 } from "./permissionMode";
 import {
   isCheckoutBranchCommand,
+  isCronAddCommand,
+  isCronDeleteAllCommand,
+  isCronDeleteCommand,
+  isCronGetCommand,
+  isCronListCommand,
   isEditFileCommand,
   isEnableMemfsCommand,
   isExecuteCommandCommand,
@@ -221,7 +242,197 @@ function handleModeChange(
   }
 }
 
-function ensureConversationQueueRuntime(
+type CronCommand =
+  | CronListCommand
+  | CronAddCommand
+  | CronGetCommand
+  | CronDeleteCommand
+  | CronDeleteAllCommand;
+
+function emitCronsUpdated(
+  socket: WebSocket,
+  scope?: { agent_id?: string; conversation_id?: string | null },
+): void {
+  socket.send(
+    JSON.stringify({
+      type: "crons_updated",
+      timestamp: Date.now(),
+      ...(scope?.agent_id ? { agent_id: scope.agent_id } : {}),
+      ...(scope?.conversation_id !== undefined
+        ? { conversation_id: scope.conversation_id }
+        : {}),
+    }),
+  );
+}
+
+async function handleCronCommand(
+  parsed: CronCommand,
+  socket: WebSocket,
+): Promise<boolean> {
+  if (parsed.type === "cron_list") {
+    try {
+      const tasks = listCronTasks({
+        agent_id: parsed.agent_id,
+        conversation_id: parsed.conversation_id,
+      });
+      socket.send(
+        JSON.stringify({
+          type: "cron_list_response",
+          request_id: parsed.request_id,
+          tasks,
+          success: true,
+        }),
+      );
+    } catch (err) {
+      socket.send(
+        JSON.stringify({
+          type: "cron_list_response",
+          request_id: parsed.request_id,
+          tasks: [],
+          success: false,
+          error: err instanceof Error ? err.message : "Failed to list crons",
+        }),
+      );
+    }
+    return true;
+  }
+
+  if (parsed.type === "cron_add") {
+    try {
+      const scheduledFor = parsed.scheduled_for
+        ? new Date(parsed.scheduled_for)
+        : undefined;
+      if (scheduledFor && Number.isNaN(scheduledFor.getTime())) {
+        throw new Error("Invalid scheduled_for timestamp");
+      }
+      const result = addCronTask({
+        agent_id: parsed.agent_id,
+        conversation_id: parsed.conversation_id,
+        name: parsed.name,
+        description: parsed.description,
+        cron: parsed.cron,
+        timezone: parsed.timezone,
+        recurring: parsed.recurring,
+        prompt: parsed.prompt,
+        scheduled_for: scheduledFor,
+      });
+      socket.send(
+        JSON.stringify({
+          type: "cron_add_response",
+          request_id: parsed.request_id,
+          success: true,
+          task: result.task,
+          ...(result.warning ? { warning: result.warning } : {}),
+        }),
+      );
+      emitCronsUpdated(socket, {
+        agent_id: result.task.agent_id,
+        conversation_id: result.task.conversation_id,
+      });
+    } catch (err) {
+      socket.send(
+        JSON.stringify({
+          type: "cron_add_response",
+          request_id: parsed.request_id,
+          success: false,
+          error: err instanceof Error ? err.message : "Failed to add cron",
+        }),
+      );
+    }
+    return true;
+  }
+
+  if (parsed.type === "cron_get") {
+    try {
+      const task = getCronTask(parsed.task_id);
+      socket.send(
+        JSON.stringify({
+          type: "cron_get_response",
+          request_id: parsed.request_id,
+          success: true,
+          found: task !== null,
+          task,
+        }),
+      );
+    } catch (err) {
+      socket.send(
+        JSON.stringify({
+          type: "cron_get_response",
+          request_id: parsed.request_id,
+          success: false,
+          found: false,
+          task: null,
+          error: err instanceof Error ? err.message : "Failed to get cron",
+        }),
+      );
+    }
+    return true;
+  }
+
+  if (parsed.type === "cron_delete") {
+    try {
+      const existingTask = getCronTask(parsed.task_id);
+      const found = deleteCronTask(parsed.task_id);
+      socket.send(
+        JSON.stringify({
+          type: "cron_delete_response",
+          request_id: parsed.request_id,
+          success: true,
+          found,
+        }),
+      );
+      if (found) {
+        emitCronsUpdated(socket, {
+          agent_id: existingTask?.agent_id,
+          conversation_id: existingTask?.conversation_id,
+        });
+      }
+    } catch (err) {
+      socket.send(
+        JSON.stringify({
+          type: "cron_delete_response",
+          request_id: parsed.request_id,
+          success: false,
+          found: false,
+          error: err instanceof Error ? err.message : "Failed to delete cron",
+        }),
+      );
+    }
+    return true;
+  }
+
+  try {
+    const deleted = deleteAllCronTasks(parsed.agent_id);
+    socket.send(
+      JSON.stringify({
+        type: "cron_delete_all_response",
+        request_id: parsed.request_id,
+        success: true,
+        agent_id: parsed.agent_id,
+        deleted,
+      }),
+    );
+    if (deleted > 0) {
+      emitCronsUpdated(socket, {
+        agent_id: parsed.agent_id,
+      });
+    }
+  } catch (err) {
+    socket.send(
+      JSON.stringify({
+        type: "cron_delete_all_response",
+        request_id: parsed.request_id,
+        success: false,
+        agent_id: parsed.agent_id,
+        deleted: 0,
+        error: err instanceof Error ? err.message : "Failed to delete crons",
+      }),
+    );
+  }
+  return true;
+}
+
+export function ensureConversationQueueRuntime(
   listener: ListenerRuntime,
   runtime: ConversationRuntime,
 ): ConversationRuntime {
@@ -796,6 +1007,7 @@ function createRuntime(): ListenerRuntime {
     reconnectTimeout: null,
     intentionallyClosed: false,
     hasSuccessfulConnection: false,
+    everConnected: false,
     sessionId: `listen-${crypto.randomUUID()}`,
     eventSeqCounter: 0,
     lastStopReason: null,
@@ -810,6 +1022,7 @@ function createRuntime(): ListenerRuntime {
     connectionName: null,
     conversationRuntimes: new Map(),
     approvalRuntimeKeyByRequestId: new Map(),
+    memfsSyncedAgents: new Map(),
     lastEmittedStatus: null,
   };
 }
@@ -894,6 +1107,13 @@ async function connectWithRetry(
 
   if (attempt > 0) {
     if (elapsedTime >= MAX_RETRY_DURATION_MS) {
+      // If we ever had a successful connection, try to re-register instead
+      // of giving up. This keeps established sessions alive through transient
+      // outages (e.g. Cloudflare 521, server deploys).
+      if (runtime.everConnected && opts.onNeedsReregister) {
+        opts.onNeedsReregister();
+        return;
+      }
       opts.onError(new Error("Failed to connect after 5 minutes of retrying"));
       return;
     }
@@ -968,6 +1188,7 @@ async function connectWithRetry(
 
     safeEmitWsEvent("recv", "lifecycle", { type: "_ws_open" });
     runtime.hasSuccessfulConnection = true;
+    runtime.everConnected = true;
     opts.onConnected(opts.connectionId);
 
     if (runtime.conversationRuntimes.size === 0) {
@@ -1056,6 +1277,9 @@ async function connectWithRetry(
         socket.send(JSON.stringify({ type: "ping" }));
       }
     }, 30000);
+
+    // Start cron scheduler if tasks exist
+    startCronScheduler(socket, opts, processQueuedTurn);
   });
 
   socket.on("message", async (data: WebSocket.RawData) => {
@@ -1595,6 +1819,18 @@ async function connectWithRetry(
       return;
     }
 
+    // ── Cron CRUD commands (no runtime scope required) ────────────────
+    if (
+      isCronListCommand(parsed) ||
+      isCronAddCommand(parsed) ||
+      isCronGetCommand(parsed) ||
+      isCronDeleteCommand(parsed) ||
+      isCronDeleteAllCommand(parsed)
+    ) {
+      void handleCronCommand(parsed, socket);
+      return;
+    }
+
     // ── Slash commands (execute_command) ────────────────────────────────
     if (isExecuteCommandCommand(parsed)) {
       // Slash commands need a scoped runtime for the conversation context
@@ -1759,6 +1995,9 @@ async function connectWithRetry(
       reason: reason.toString(),
     });
 
+    // Stop cron scheduler on disconnect
+    stopCronScheduler();
+
     // Clear the bridge before queue clearing to prevent a race where a task
     // completion enqueues into a shutting-down runtime.
     setMessageQueueAdder(null);
@@ -1888,8 +2127,10 @@ function createLegacyTestRuntime(): ConversationRuntime & {
   heartbeatInterval: NodeJS.Timeout | null;
   intentionallyClosed: boolean;
   hasSuccessfulConnection: boolean;
+  everConnected: boolean;
   conversationRuntimes: ListenerRuntime["conversationRuntimes"];
   approvalRuntimeKeyByRequestId: ListenerRuntime["approvalRuntimeKeyByRequestId"];
+  memfsSyncedAgents: ListenerRuntime["memfsSyncedAgents"];
   lastEmittedStatus: ListenerRuntime["lastEmittedStatus"];
 } {
   const listener = createRuntime();
@@ -1916,8 +2157,10 @@ function createLegacyTestRuntime(): ConversationRuntime & {
     heartbeatInterval: NodeJS.Timeout | null;
     intentionallyClosed: boolean;
     hasSuccessfulConnection: boolean;
+    everConnected: boolean;
     conversationRuntimes: ListenerRuntime["conversationRuntimes"];
     approvalRuntimeKeyByRequestId: ListenerRuntime["approvalRuntimeKeyByRequestId"];
+    memfsSyncedAgents: ListenerRuntime["memfsSyncedAgents"];
     lastEmittedStatus: ListenerRuntime["lastEmittedStatus"];
   };
   for (const [prop, getSet] of Object.entries({
@@ -2024,6 +2267,12 @@ function createLegacyTestRuntime(): ConversationRuntime & {
         listener.hasSuccessfulConnection = value;
       },
     },
+    everConnected: {
+      get: () => listener.everConnected,
+      set: (value: boolean) => {
+        listener.everConnected = value;
+      },
+    },
     conversationRuntimes: {
       get: () => listener.conversationRuntimes,
       set: (value: ListenerRuntime["conversationRuntimes"]) => {
@@ -2034,6 +2283,12 @@ function createLegacyTestRuntime(): ConversationRuntime & {
       get: () => listener.approvalRuntimeKeyByRequestId,
       set: (value: ListenerRuntime["approvalRuntimeKeyByRequestId"]) => {
         listener.approvalRuntimeKeyByRequestId = value;
+      },
+    },
+    memfsSyncedAgents: {
+      get: () => listener.memfsSyncedAgents,
+      set: (value: ListenerRuntime["memfsSyncedAgents"]) => {
+        listener.memfsSyncedAgents = value;
       },
     },
     lastEmittedStatus: {
@@ -2118,6 +2373,7 @@ export const __listenClientTestUtils = {
   handleApprovalResponseInput,
   handleAbortMessageInput,
   handleChangeDeviceStateInput,
+  handleCronCommand,
   scheduleQueuePump,
   recoverApprovalStateForSync,
   clearRecoveredApprovalStateForScope: (
