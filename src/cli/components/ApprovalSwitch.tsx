@@ -5,6 +5,7 @@ import type { ApprovalRequest } from "../helpers/stream";
 import {
   isFileEditTool,
   isFileWriteTool,
+  isMemoryTool,
   isPatchTool,
   isShellTool,
   isTaskTool,
@@ -13,6 +14,8 @@ import { InlineBashApproval } from "./InlineBashApproval";
 import { InlineEnterPlanModeApproval } from "./InlineEnterPlanModeApproval";
 import { InlineFileEditApproval } from "./InlineFileEditApproval";
 import { InlineGenericApproval } from "./InlineGenericApproval";
+import type { MemoryInfo } from "./InlineMemoryApproval";
+import { InlineMemoryApproval } from "./InlineMemoryApproval";
 import { InlineQuestionApproval } from "./InlineQuestionApproval";
 import { InlineTaskApproval } from "./InlineTaskApproval";
 import { StaticPlanApproval } from "./StaticPlanApproval";
@@ -189,6 +192,35 @@ function getTaskInfo(approval: ApprovalRequest): TaskInfo | null {
   }
 }
 
+// Parse memory info from approval args
+function getMemoryInfo(approval: ApprovalRequest): MemoryInfo | null {
+  try {
+    const args = JSON.parse(approval.toolArgs || "{}");
+    const command = typeof args.command === "string" ? args.command : "";
+    if (!command) return null;
+    return {
+      command,
+      reason: typeof args.reason === "string" ? args.reason : undefined,
+      path: typeof args.path === "string" ? args.path : undefined,
+      oldPath: typeof args.old_path === "string" ? args.old_path : undefined,
+      newPath: typeof args.new_path === "string" ? args.new_path : undefined,
+      oldString:
+        typeof args.old_string === "string" ? args.old_string : undefined,
+      newString:
+        typeof args.new_string === "string" ? args.new_string : undefined,
+      insertLine:
+        typeof args.insert_line === "number" ? args.insert_line : undefined,
+      insertText:
+        typeof args.insert_text === "string" ? args.insert_text : undefined,
+      description:
+        typeof args.description === "string" ? args.description : undefined,
+      fileText: typeof args.file_text === "string" ? args.file_text : undefined,
+    };
+  } catch {
+    return null;
+  }
+}
+
 // Parse questions from AskUserQuestion args
 function getQuestions(approval: ApprovalRequest): Question[] {
   try {
@@ -331,7 +363,28 @@ export const ApprovalSwitch = memo(
       }
     }
 
-    // 6. Task tool → InlineTaskApproval
+    // 6. Memory tool → InlineMemoryApproval
+    if (isMemoryTool(toolName)) {
+      const memoryInfo = getMemoryInfo(approval);
+      if (memoryInfo) {
+        return (
+          <InlineMemoryApproval
+            memoryInfo={memoryInfo}
+            onApprove={() => onApprove()}
+            onApproveAlways={(scope) => onApproveAlways(scope)}
+            onDeny={onDeny}
+            onCancel={onCancel}
+            isFocused={isFocused}
+            approveAlwaysText={approveAlwaysText}
+            allowPersistence={allowPersistence}
+            defaultScope={defaultScope}
+            showPreview={showPreview}
+          />
+        );
+      }
+    }
+
+    // 7. Task tool → InlineTaskApproval
     if (isTaskTool(toolName)) {
       const taskInfo = getTaskInfo(approval);
       if (taskInfo) {
@@ -350,7 +403,7 @@ export const ApprovalSwitch = memo(
       }
     }
 
-    // 7. Fallback → InlineGenericApproval
+    // 8. Fallback → InlineGenericApproval
     return (
       <InlineGenericApproval
         toolName={toolName}
