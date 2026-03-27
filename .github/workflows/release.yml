@@ -51,6 +51,7 @@ jobs:
     environment: npm-publish
     permissions:
       contents: write
+      pull-requests: write
       id-token: write  # Required for npm OIDC trusted publishing
     steps:
       - name: Checkout
@@ -152,7 +153,7 @@ jobs:
       - name: Commit and tag version bump (local only)
         run: |
           git add package.json package-lock.json
-          git commit -m "chore: bump version to ${{ steps.version.outputs.new_version }} [skip ci]"
+          git commit -m "chore: bump version to ${{ steps.version.outputs.new_version }}"
           git tag "${{ steps.version.outputs.tag }}"
 
       - name: Install dependencies
