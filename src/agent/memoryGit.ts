@@ -402,6 +402,51 @@ export async function pullMemory(
   }
 }
 
+/**
+ * Push local memory commits to the server.
+ * Handles auth, retries with rebase on conflict, and gracefully
+ * handles empty remotes (no branch on server yet).
+ */
+export async function pushMemory(agentId: string): Promise<void> {
+  const token = await getAuthToken();
+  const dir = getMemoryRepoDir(agentId);
+
+  await configureLocalCredentialHelper(dir, token);
+
+  try {
+    await runGit(dir, ["push"], token);
+    return;
+  } catch (pushError) {
+    debugWarn(
+      "memfs-git",
+      `Push failed, attempting pull --rebase: ${pushError instanceof Error ? pushError.message : String(pushError)}`,
+    );
+  }
+
+  // Push failed — try pull --rebase then retry push.
+  // The pull itself may fail (e.g. empty remote with no branch), so catch that.
+  try {
+    await runGit(dir, ["pull", "--rebase"], token);
+  } catch (pullError) {
+    debugWarn(
+      "memfs-git",
+      `Pull --rebase also failed (remote may be empty): ${pullError instanceof Error ? pullError.message : String(pullError)}`,
+    );
+    // If pull fails, the push won't succeed either — surface original push error
+    // but don't crash; the commit is saved locally and can be pushed later.
+    return;
+  }
+
+  try {
+    await runGit(dir, ["push"], token);
+  } catch (retryError) {
+    debugWarn(
+      "memfs-git",
+      `Push failed after rebase: ${retryError instanceof Error ? retryError.message : String(retryError)}`,
+    );
+  }
+}
+
 export interface MemoryGitStatus {
   /** Uncommitted changes in working tree */
   dirty: boolean;

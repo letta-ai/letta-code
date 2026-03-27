@@ -62,6 +62,13 @@ import {
   type ModelReasoningEffort,
 } from "../agent/model";
 import {
+  applyPersonalityToMemory,
+  detectPersonalityFromPersonaFile,
+  getPersonalityContent,
+  getPersonalityOption,
+  type PersonalityId,
+} from "../agent/personality";
+import {
   INTERRUPT_RECOVERY_ALERT,
   shouldRecommendDefaultPrompt,
 } from "../agent/promptAssets";
@@ -176,6 +183,7 @@ import { ModelReasoningSelector } from "./components/ModelReasoningSelector";
 import { ModelSelector } from "./components/ModelSelector";
 import { NewAgentDialog } from "./components/NewAgentDialog";
 import { PendingApprovalStub } from "./components/PendingApprovalStub";
+import { PersonalitySelector } from "./components/PersonalitySelector";
 import { PinDialog, validateAgentName } from "./components/PinDialog";
 import { ProviderSelector } from "./components/ProviderSelector";
 import { ReasoningMessage } from "./components/ReasoningMessageRich";
@@ -549,6 +557,7 @@ const INTERACTIVE_SLASH_COMMANDS = new Set([
   "/model",
   "/toolset",
   "/system",
+  "/personality",
   "/subagents",
   "/memory",
   "/sleeptime",
@@ -1398,6 +1407,7 @@ export default function App({
     | "compaction"
     | "toolset"
     | "system"
+    | "personality"
     | "agent"
     | "resume"
     | "conversations"
@@ -1483,6 +1493,11 @@ export default function App({
         commandId?: string;
       }
     | { type: "switch_system"; promptId: string; commandId?: string }
+    | {
+        type: "switch_personality";
+        personalityId: PersonalityId;
+        commandId?: string;
+      }
     | null;
   const [queuedOverlayAction, setQueuedOverlayAction] =
     useState<QueuedOverlayAction>(null);
@@ -1497,6 +1512,8 @@ export default function App({
   const [currentSystemPromptId, setCurrentSystemPromptId] = useState<
     string | null
   >("default");
+  const [currentPersonalityId, setCurrentPersonalityId] =
+    useState<PersonalityId | null>(null);
   const [currentToolset, setCurrentToolset] = useState<ToolsetName | null>(
     null,
   );
@@ -7410,6 +7427,45 @@ export default function App({
           return { submitted: true };
         }
 
+        // Special handling for /personality command - opens personality selector
+        if (trimmed === "/personality") {
+          startOverlayCommand(
+            "personality",
+            "/personality",
+            "Opening personality selector...",
+            "Personality selector dismissed",
+          );
+
+          if (settingsManager.isMemfsEnabled(agentId)) {
+            try {
+              const memoryRoot = getMemoryFilesystemRoot(agentId);
+              const personaCandidates = [
+                join(memoryRoot, "system", "persona.md"),
+                join(memoryRoot, "memory", "system", "persona.md"),
+              ];
+              const personaPath = personaCandidates.find((candidate) =>
+                existsSync(candidate),
+              );
+
+              if (personaPath) {
+                const personaContent = readFileSync(personaPath, "utf-8");
+                setCurrentPersonalityId(
+                  detectPersonalityFromPersonaFile(personaContent),
+                );
+              } else {
+                setCurrentPersonalityId(null);
+              }
+            } catch {
+              setCurrentPersonalityId(null);
+            }
+          } else {
+            setCurrentPersonalityId(null);
+          }
+
+          setActiveOverlay("personality");
+          return { submitted: true };
+        }
+
         // Special handling for /subagents command - opens subagent manager
         if (trimmed === "/subagents") {
           startOverlayCommand(
@@ -8653,9 +8709,6 @@ export default function App({
             // post-compaction reflection reminder/auto-launch on the next user turn.
             contextTrackerRef.current.pendingReflectionTrigger = true;
           } catch (error) {
-            let errorOutput: string;
-
-            // Check for summarization failure - format it cleanly
             const apiError = error as {
               status?: number;
               error?: { detail?: string };
@@ -8663,22 +8716,18 @@ export default function App({
             const detail = apiError?.error?.detail;
             if (
               apiError?.status === 400 &&
-              detail?.includes("Summarization failed")
+              detail?.includes(
+                "Summarization failed to reduce the number of messages",
+              )
             ) {
-              // Clean format for this specific error, but preserve raw JSON
-              const cleanDetail = detail.replace(/^\d{3}:\s*/, "");
-              const rawJson = JSON.stringify(apiError.error);
-              errorOutput = [
-                `Request failed (code=400)`,
-                `Raw: ${rawJson}`,
-                `Detail: ${cleanDetail}`,
-                "",
-                "Tip: Use /clear instead to clear the current message buffer.",
-              ].join("\n");
-            } else {
-              errorOutput = formatErrorDetails(error, agentId);
+              cmd.finish(
+                "Compaction run, but the number of messages is the same",
+                true,
+              );
+              return { submitted: true };
             }
 
+            const errorOutput = formatErrorDetails(error, agentId);
             cmd.fail(`Failed: ${errorOutput}`);
           } finally {
             setCommandRunning(false);
@@ -12070,6 +12119,159 @@ ${SYSTEM_REMINDER_CLOSE}
     ],
   );
 
+  const handlePersonalitySelect = useCallback(
+    async (personalityId: PersonalityId, commandId?: string | null) => {
+      const overlayCommand = commandId
+        ? commandRunner.getHandle(commandId, "/personality")
+        : consumeOverlayCommand("personality");
+
+      const personality = getPersonalityOption(personalityId);
+
+      if (!settingsManager.isMemfsEnabled(agentId)) {
+        const cmd =
+          overlayCommand ??
+          commandRunner.start(
+            "/personality",
+            "Memory filesystem is disabled. Run /memfs enable first.",
+          );
+        cmd.fail("Memory filesystem is disabled. Run `/memfs enable` first.");
+        return;
+      }
+
+      if (isAgentBusy()) {
+        setActiveOverlay(null);
+        const cmd =
+          overlayCommand ??
+          commandRunner.start(
+            "/personality",
+            "Personality switch queued – will apply after current task completes",
+          );
+        cmd.update({
+          output:
+            "Personality switch queued – will apply after current task completes",
+          phase: "running",
+        });
+        setQueuedOverlayAction({
+          type: "switch_personality",
+          personalityId,
+          commandId: cmd.id,
+        });
+        return;
+      }
+
+      try {
+        await withCommandLock(async () => {
+          const cmd =
+            overlayCommand ??
+            commandRunner.start(
+              "/personality",
+              `Switching personality to ${personality.label}...`,
+            );
+          cmd.update({
+            output: `Switching personality to ${personality.label}...`,
+            phase: "running",
+          });
+
+          const result = await applyPersonalityToMemory({
+            agentId,
+            personalityId,
+          });
+
+          if (!result.changed) {
+            setCurrentPersonalityId(personalityId);
+            cmd.finish(`Personality already set to ${personality.label}`, true);
+            return;
+          }
+
+          setCurrentPersonalityId(personalityId);
+
+          // Wait for the remote block to pick up the git push
+          cmd.update({
+            output: "Waiting for changes to propagate...",
+            phase: "running",
+          });
+
+          const expectedContent = getPersonalityContent(personalityId).trim();
+          const client = await getClient();
+          const maxWaitMs = 300_000;
+          const pollIntervalMs = 1_000;
+          const start = Date.now();
+          let propagated = false;
+
+          while (Date.now() - start < maxWaitMs) {
+            try {
+              const blockPage = await client.agents.blocks.list(agentId);
+              const block = blockPage.items.find(
+                (b) => b.label === "system/persona",
+              );
+              if (!block) {
+                throw new Error(
+                  "system/persona block not found on agent. Run `/doctor` to diagnose.",
+                );
+              }
+              if (block.value.includes(expectedContent)) {
+                propagated = true;
+                break;
+              }
+            } catch (pollErr) {
+              if (
+                pollErr instanceof Error &&
+                pollErr.message.includes("not found on agent")
+              ) {
+                throw pollErr;
+              }
+              // Transient API error — keep polling
+            }
+            await new Promise((r) => setTimeout(r, pollIntervalMs));
+          }
+
+          if (propagated) {
+            cmd.update({
+              output: "Recompiling agent...",
+              phase: "running",
+            });
+
+            const currentConversationId = conversationIdRef.current;
+            await client.agents.recompile(agentId, {
+              update_timestamp: true,
+            });
+            const conversationParams =
+              currentConversationId === "default"
+                ? { agent_id: agentId }
+                : undefined;
+            await client.conversations.recompile(
+              currentConversationId,
+              conversationParams,
+            );
+
+            cmd.finish(
+              `Personality swapped to ${personality.label}. Run \`/clear\` or \`/new\` to reset your message history for the personality to take full effect.`,
+              true,
+            );
+          } else {
+            cmd.finish(
+              `Personality swapped to ${personality.label}. Block propagation timed out — run \`/recompile\` manually`,
+              true,
+            );
+          }
+        });
+      } catch (error) {
+        const errorDetails = formatErrorDetails(error, agentId);
+        const cmd =
+          overlayCommand ??
+          commandRunner.start("/personality", "Failed to switch personality.");
+        cmd.fail(`Failed to switch personality: ${errorDetails}`);
+      }
+    },
+    [
+      agentId,
+      commandRunner,
+      consumeOverlayCommand,
+      isAgentBusy,
+      withCommandLock,
+    ],
+  );
+
   const handleSleeptimeModeSelect = useCallback(
     async (
       reflectionSettings: ReflectionSettings,
@@ -12411,6 +12613,8 @@ ${SYSTEM_REMINDER_CLOSE}
         handleToolsetSelect(action.toolsetId, action.commandId);
       } else if (action.type === "switch_system") {
         handleSystemPromptSelect(action.promptId, action.commandId);
+      } else if (action.type === "switch_personality") {
+        handlePersonalitySelect(action.personalityId, action.commandId);
       }
     }
   }, [
@@ -12425,6 +12629,7 @@ ${SYSTEM_REMINDER_CLOSE}
     handleCompactionModeSelect,
     handleToolsetSelect,
     handleSystemPromptSelect,
+    handlePersonalitySelect,
     agentId,
     agentState,
     conversationId,
@@ -14137,6 +14342,14 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
               <SystemPromptSelector
                 currentPromptId={currentSystemPromptId ?? undefined}
                 onSelect={handleSystemPromptSelect}
+                onCancel={closeOverlay}
+              />
+            )}
+
+            {activeOverlay === "personality" && (
+              <PersonalitySelector
+                currentPersonalityId={currentPersonalityId ?? undefined}
+                onSelect={handlePersonalitySelect}
                 onCancel={closeOverlay}
               />
             )}
