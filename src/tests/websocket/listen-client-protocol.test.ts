@@ -941,7 +941,7 @@ describe("listen-client v2 status builders", () => {
     expect(deviceStatus.current_toolset_preference).toBe("auto");
   });
 
-  test("buildDeviceStatus includes bash and task background processes", () => {
+  test("buildDeviceStatus includes only active bash and task background processes", () => {
     const runtime = __listenClientTestUtils.createRuntime();
     backgroundProcesses.clear();
     backgroundTasks.clear();
@@ -958,13 +958,22 @@ describe("listen-client v2 status builders", () => {
         startTime: new Date("2026-03-27T12:00:00.000Z"),
       });
       backgroundTasks.set("task_1", {
-        description: "Reflect on recent conversations",
-        subagentType: "reflection",
+        description: "Active background review",
+        subagentType: "review",
         subagentId: "subagent-1",
-        status: "completed",
+        status: "running",
         output: [],
         startTime: new Date("2026-03-27T12:01:00.000Z"),
         outputFile: "/tmp/task_1.log",
+      });
+      backgroundTasks.set("task_2", {
+        description: "Reflect on recent conversations",
+        subagentType: "reflection",
+        subagentId: "subagent-2",
+        status: "completed",
+        output: [],
+        startTime: new Date("2026-03-27T12:02:00.000Z"),
+        outputFile: "/tmp/task_2.log",
       });
 
       const deviceStatus = __listenClientTestUtils.buildDeviceStatus(runtime);
@@ -972,10 +981,10 @@ describe("listen-client v2 status builders", () => {
         {
           process_id: "task_1",
           kind: "agent_task",
-          task_type: "reflection",
-          description: "Reflect on recent conversations",
+          task_type: "review",
+          description: "Active background review",
           started_at_ms: new Date("2026-03-27T12:01:00.000Z").getTime(),
-          status: "completed",
+          status: "running",
           subagent_id: "subagent-1",
         },
         {
