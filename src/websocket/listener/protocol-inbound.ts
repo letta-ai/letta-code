@@ -10,12 +10,14 @@ import type {
   EditFileCommand,
   EnableMemfsCommand,
   ExecuteCommandCommand,
+  GetReflectionSettingsCommand,
   InputCommand,
   ListInDirectoryCommand,
   ListMemoryCommand,
   ReadFileCommand,
   RuntimeScope,
   SearchFilesCommand,
+  SetReflectionSettingsCommand,
   SyncCommand,
   TerminalInputCommand,
   TerminalKillCommand,
@@ -434,6 +436,60 @@ export function isCronDeleteAllCommand(
   );
 }
 
+export function isGetReflectionSettingsCommand(
+  value: unknown,
+): value is GetReflectionSettingsCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    runtime?: unknown;
+  };
+  return (
+    c.type === "get_reflection_settings" &&
+    typeof c.request_id === "string" &&
+    isRuntimeScope(c.runtime)
+  );
+}
+
+export function isSetReflectionSettingsCommand(
+  value: unknown,
+): value is SetReflectionSettingsCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    runtime?: unknown;
+    settings?: unknown;
+    scope?: unknown;
+  };
+  if (
+    c.type !== "set_reflection_settings" ||
+    typeof c.request_id !== "string" ||
+    !isRuntimeScope(c.runtime) ||
+    !c.settings ||
+    typeof c.settings !== "object"
+  ) {
+    return false;
+  }
+  const settings = c.settings as {
+    trigger?: unknown;
+    step_count?: unknown;
+  };
+  return (
+    (settings.trigger === "off" ||
+      settings.trigger === "step-count" ||
+      settings.trigger === "compaction-event") &&
+    typeof settings.step_count === "number" &&
+    Number.isInteger(settings.step_count) &&
+    settings.step_count > 0 &&
+    (c.scope === undefined ||
+      c.scope === "local_project" ||
+      c.scope === "global" ||
+      c.scope === "both")
+  );
+}
+
 export function isExecuteCommandCommand(
   value: unknown,
 ): value is ExecuteCommandCommand {
@@ -478,6 +534,8 @@ export function parseServerMessage(
       isCronGetCommand(parsed) ||
       isCronDeleteCommand(parsed) ||
       isCronDeleteAllCommand(parsed) ||
+      isGetReflectionSettingsCommand(parsed) ||
+      isSetReflectionSettingsCommand(parsed) ||
       isExecuteCommandCommand(parsed)
     ) {
       return parsed as WsProtocolCommand;

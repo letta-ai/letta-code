@@ -7,6 +7,8 @@ import WebSocket from "ws";
 import { buildConversationMessagesCreateRequestBody } from "../../agent/message";
 import { INTERRUPTED_BY_USER } from "../../constants";
 import type { MessageQueueItem } from "../../queue/queueRuntime";
+import type { LocalProjectSettings, Settings } from "../../settings-manager";
+import { settingsManager } from "../../settings-manager";
 import type {
   ApprovalResponseBody,
   ControlRequest,
@@ -241,6 +243,35 @@ describe("listen-client parseServerMessage", () => {
     expect(cronDeleteAll?.type).toBe("cron_delete_all");
   });
 
+  test("parses reflection settings commands", () => {
+    const getSettings = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "get_reflection_settings",
+          request_id: "reflection-get-1",
+          runtime: { agent_id: "agent-1", conversation_id: "default" },
+        }),
+      ),
+    );
+    const setSettings = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "set_reflection_settings",
+          request_id: "reflection-set-1",
+          runtime: { agent_id: "agent-1", conversation_id: "default" },
+          settings: {
+            trigger: "step-count",
+            step_count: 9,
+          },
+          scope: "local_project",
+        }),
+      ),
+    );
+
+    expect(getSettings?.type).toBe("get_reflection_settings");
+    expect(setSettings?.type).toBe("set_reflection_settings");
+  });
+
   test("rejects legacy cancel_run in hard-cut v2 protocol", () => {
     const legacyCancel = parseServerMessage(
       Buffer.from(
@@ -405,6 +436,155 @@ describe("listen-client cron command handling", () => {
         delete process.env.LETTA_HOME;
       }
       await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("listen-client reflection settings command handling", () => {
+  test("wraps typed reflection settings reads and writes over WS", async () => {
+    const tempProjectDir = await mkdtemp(
+      join(os.tmpdir(), "letta-listen-reflection-"),
+    );
+    const originalGetSettings = settingsManager.getSettings;
+    const originalGetLocalProjectSettings =
+      settingsManager.getLocalProjectSettings;
+    const originalLoadLocalProjectSettings =
+      settingsManager.loadLocalProjectSettings;
+    const originalUpdateSettings = settingsManager.updateSettings;
+    const originalUpdateLocalProjectSettings =
+      settingsManager.updateLocalProjectSettings;
+
+    const globalSettings = {
+      reflectionTrigger: "compaction-event",
+      reflectionStepCount: 25,
+      memoryReminderInterval: "auto-compaction",
+      reflectionSettingsByAgent: {},
+    } as Settings;
+    const localSettingsByDir = new Map<string, LocalProjectSettings>();
+
+    try {
+      (settingsManager as typeof settingsManager).getSettings = (() =>
+        globalSettings) as typeof settingsManager.getSettings;
+      (settingsManager as typeof settingsManager).getLocalProjectSettings = ((
+        workingDirectory: string = process.cwd(),
+      ) => {
+        const settings = localSettingsByDir.get(workingDirectory);
+        if (!settings) {
+          throw new Error("local settings not loaded");
+        }
+        return settings as ReturnType<
+          typeof settingsManager.getLocalProjectSettings
+        >;
+      }) as typeof settingsManager.getLocalProjectSettings;
+      (settingsManager as typeof settingsManager).loadLocalProjectSettings =
+        (async (workingDirectory: string = process.cwd()) => {
+          const settings = {
+            lastAgent: null,
+            reflectionSettingsByAgent: {},
+          } satisfies LocalProjectSettings;
+          localSettingsByDir.set(workingDirectory, settings);
+          return settings as Awaited<
+            ReturnType<typeof settingsManager.loadLocalProjectSettings>
+          >;
+        }) as typeof settingsManager.loadLocalProjectSettings;
+      (settingsManager as typeof settingsManager).updateSettings = ((
+        updates: Record<string, unknown>,
+      ) => {
+        Object.assign(
+          globalSettings as unknown as Record<string, unknown>,
+          updates,
+        );
+      }) as typeof settingsManager.updateSettings;
+      (settingsManager as typeof settingsManager).updateLocalProjectSettings =
+        ((updates: Record<string, unknown>, workingDirectory?: string) => {
+          const key = workingDirectory ?? process.cwd();
+          const current = localSettingsByDir.get(key) ?? { lastAgent: null };
+          localSettingsByDir.set(key, { ...current, ...updates });
+        }) as typeof settingsManager.updateLocalProjectSettings;
+
+      const socket = new MockSocket(WebSocket.OPEN);
+      const listener = __listenClientTestUtils.createListenerRuntime();
+      __listenClientTestUtils.setConversationWorkingDirectory(
+        listener,
+        "agent-1",
+        "default",
+        tempProjectDir,
+      );
+
+      await __listenClientTestUtils.handleReflectionSettingsCommand(
+        {
+          type: "get_reflection_settings",
+          request_id: "reflection-get-1",
+          runtime: { agent_id: "agent-1", conversation_id: "default" },
+        },
+        socket as unknown as WebSocket,
+        listener,
+      );
+
+      const getResponse = JSON.parse(socket.sentPayloads[0] as string);
+      expect(getResponse).toMatchObject({
+        type: "get_reflection_settings_response",
+        request_id: "reflection-get-1",
+        success: true,
+        reflection_settings: {
+          agent_id: "agent-1",
+          trigger: "compaction-event",
+          step_count: 25,
+        },
+      });
+
+      socket.sentPayloads.length = 0;
+
+      await __listenClientTestUtils.handleReflectionSettingsCommand(
+        {
+          type: "set_reflection_settings",
+          request_id: "reflection-set-1",
+          runtime: { agent_id: "agent-1", conversation_id: "default" },
+          settings: {
+            trigger: "step-count",
+            step_count: 9,
+          },
+          scope: "local_project",
+        },
+        socket as unknown as WebSocket,
+        listener,
+      );
+
+      const setResponse = JSON.parse(socket.sentPayloads[0] as string);
+      const deviceStatusUpdate = JSON.parse(socket.sentPayloads[1] as string);
+      expect(setResponse).toMatchObject({
+        type: "set_reflection_settings_response",
+        request_id: "reflection-set-1",
+        success: true,
+        scope: "local_project",
+        reflection_settings: {
+          agent_id: "agent-1",
+          trigger: "step-count",
+          step_count: 9,
+        },
+      });
+      expect(deviceStatusUpdate).toMatchObject({
+        type: "update_device_status",
+        device_status: {
+          reflection_settings: {
+            agent_id: "agent-1",
+            trigger: "step-count",
+            step_count: 9,
+          },
+        },
+      });
+    } finally {
+      (settingsManager as typeof settingsManager).getSettings =
+        originalGetSettings;
+      (settingsManager as typeof settingsManager).getLocalProjectSettings =
+        originalGetLocalProjectSettings;
+      (settingsManager as typeof settingsManager).loadLocalProjectSettings =
+        originalLoadLocalProjectSettings;
+      (settingsManager as typeof settingsManager).updateSettings =
+        originalUpdateSettings;
+      (settingsManager as typeof settingsManager).updateLocalProjectSettings =
+        originalUpdateLocalProjectSettings;
+      await rm(tempProjectDir, { recursive: true, force: true });
     }
   });
 });

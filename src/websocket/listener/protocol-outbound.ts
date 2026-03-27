@@ -1,6 +1,7 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import WebSocket from "ws";
 import { getMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
+import { getReflectionSettings } from "../../cli/helpers/memoryReminder";
 import { getSubagents } from "../../cli/helpers/subagentState";
 import { permissionMode } from "../../permissions/mode";
 import type { DequeuedBatch } from "../../queue/queueRuntime";
@@ -107,6 +108,7 @@ export function buildDeviceStatus(
       background_processes: [],
       pending_control_requests: [],
       memory_directory: null,
+      reflection_settings: null,
     };
   }
   const scope = getScopeForRuntime(runtime, params);
@@ -134,17 +136,28 @@ export function buildDeviceStatus(
     scopedConversationId,
   );
   const interruptedCacheActive = hasInterruptedCacheForScope(listener, scope);
+  const currentWorkingDirectory = getConversationWorkingDirectory(
+    listener,
+    scopedAgentId,
+    scopedConversationId,
+  );
+  const reflectionSettings = (() => {
+    if (!scopedAgentId) {
+      return null;
+    }
+    try {
+      return getReflectionSettings(scopedAgentId, currentWorkingDirectory);
+    } catch {
+      return null;
+    }
+  })();
   return {
     current_connection_id: listener.connectionId,
     connection_name: listener.connectionName,
     is_online: listener.socket?.readyState === WebSocket.OPEN,
     is_processing: !!conversationRuntime?.isProcessing,
     current_permission_mode: conversationPermissionModeState.mode,
-    current_working_directory: getConversationWorkingDirectory(
-      listener,
-      scopedAgentId,
-      scopedConversationId,
-    ),
+    current_working_directory: currentWorkingDirectory,
     letta_code_version: process.env.npm_package_version || null,
     current_toolset: toolsetPreference === "auto" ? null : toolsetPreference,
     current_toolset_preference: toolsetPreference,
@@ -156,6 +169,13 @@ export function buildDeviceStatus(
       : getPendingControlRequests(listener, scope),
     memory_directory: scopedAgentId
       ? getMemoryFilesystemRoot(scopedAgentId)
+      : null,
+    reflection_settings: scopedAgentId
+      ? {
+          agent_id: scopedAgentId,
+          trigger: reflectionSettings?.trigger ?? "compaction-event",
+          step_count: reflectionSettings?.stepCount ?? 25,
+        }
       : null,
   };
 }

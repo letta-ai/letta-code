@@ -16,6 +16,10 @@ import {
   searchFileIndex,
   setIndexRoot,
 } from "../../cli/helpers/fileIndex";
+import {
+  getReflectionSettings,
+  persistReflectionSettingsForAgent,
+} from "../../cli/helpers/memoryReminder";
 import { setMessageQueueAdder } from "../../cli/helpers/messageQueueBridge";
 import { generatePlanFilePath } from "../../cli/helpers/planName";
 import {
@@ -51,6 +55,9 @@ import type {
   CronDeleteCommand,
   CronGetCommand,
   CronListCommand,
+  GetReflectionSettingsCommand,
+  ReflectionSettingsScope,
+  SetReflectionSettingsCommand,
 } from "../../types/protocol_v2";
 import { isDebugEnabled } from "../../utils/debug";
 import {
@@ -103,10 +110,12 @@ import {
   isEditFileCommand,
   isEnableMemfsCommand,
   isExecuteCommandCommand,
+  isGetReflectionSettingsCommand,
   isListInDirectoryCommand,
   isListMemoryCommand,
   isReadFileCommand,
   isSearchFilesCommand,
+  isSetReflectionSettingsCommand,
   parseServerMessage,
 } from "./protocol-inbound";
 import {
@@ -244,6 +253,10 @@ type CronCommand =
   | CronGetCommand
   | CronDeleteCommand
   | CronDeleteAllCommand;
+
+type ReflectionSettingsCommand =
+  | GetReflectionSettingsCommand
+  | SetReflectionSettingsCommand;
 
 function emitCronsUpdated(
   socket: WebSocket,
@@ -422,6 +435,139 @@ async function handleCronCommand(
         agent_id: parsed.agent_id,
         deleted: 0,
         error: err instanceof Error ? err.message : "Failed to delete crons",
+      }),
+    );
+  }
+  return true;
+}
+
+function toReflectionSettingsResponse(
+  agentId: string,
+  workingDirectory: string,
+): {
+  agent_id: string;
+  trigger: "off" | "step-count" | "compaction-event";
+  step_count: number;
+} {
+  const settings = getReflectionSettings(agentId, workingDirectory);
+  return {
+    agent_id: agentId,
+    trigger: settings.trigger,
+    step_count: settings.stepCount,
+  };
+}
+
+function resolveReflectionSettingsScope(
+  scope: ReflectionSettingsScope | undefined,
+): {
+  persistLocalProject: boolean;
+  persistGlobal: boolean;
+  normalizedScope: ReflectionSettingsScope;
+} {
+  if (scope === "local_project") {
+    return {
+      persistLocalProject: true,
+      persistGlobal: false,
+      normalizedScope: scope,
+    };
+  }
+  if (scope === "global") {
+    return {
+      persistLocalProject: false,
+      persistGlobal: true,
+      normalizedScope: scope,
+    };
+  }
+  return {
+    persistLocalProject: true,
+    persistGlobal: true,
+    normalizedScope: "both",
+  };
+}
+
+async function handleReflectionSettingsCommand(
+  parsed: ReflectionSettingsCommand,
+  socket: WebSocket,
+  listener: ListenerRuntime,
+): Promise<boolean> {
+  const agentId = parsed.runtime.agent_id;
+  const workingDirectory = getConversationWorkingDirectory(
+    listener,
+    parsed.runtime.agent_id,
+    parsed.runtime.conversation_id,
+  );
+
+  if (parsed.type === "get_reflection_settings") {
+    try {
+      socket.send(
+        JSON.stringify({
+          type: "get_reflection_settings_response",
+          request_id: parsed.request_id,
+          success: true,
+          reflection_settings: toReflectionSettingsResponse(
+            agentId,
+            workingDirectory,
+          ),
+        }),
+      );
+    } catch (err) {
+      socket.send(
+        JSON.stringify({
+          type: "get_reflection_settings_response",
+          request_id: parsed.request_id,
+          success: false,
+          reflection_settings: null,
+          error:
+            err instanceof Error
+              ? err.message
+              : "Failed to load reflection settings",
+        }),
+      );
+    }
+    return true;
+  }
+
+  const { persistLocalProject, persistGlobal, normalizedScope } =
+    resolveReflectionSettingsScope(parsed.scope);
+
+  try {
+    await persistReflectionSettingsForAgent(
+      agentId,
+      {
+        trigger: parsed.settings.trigger,
+        stepCount: parsed.settings.step_count,
+      },
+      {
+        workingDirectory,
+        persistLocalProject,
+        persistGlobal,
+      },
+    );
+    socket.send(
+      JSON.stringify({
+        type: "set_reflection_settings_response",
+        request_id: parsed.request_id,
+        success: true,
+        scope: normalizedScope,
+        reflection_settings: toReflectionSettingsResponse(
+          agentId,
+          workingDirectory,
+        ),
+      }),
+    );
+    emitDeviceStatusUpdate(socket, listener, parsed.runtime);
+  } catch (err) {
+    socket.send(
+      JSON.stringify({
+        type: "set_reflection_settings_response",
+        request_id: parsed.request_id,
+        success: false,
+        scope: normalizedScope,
+        reflection_settings: null,
+        error:
+          err instanceof Error
+            ? err.message
+            : "Failed to update reflection settings",
       }),
     );
   }
@@ -1839,6 +1985,14 @@ async function connectWithRetry(
       return;
     }
 
+    if (
+      isGetReflectionSettingsCommand(parsed) ||
+      isSetReflectionSettingsCommand(parsed)
+    ) {
+      void handleReflectionSettingsCommand(parsed, socket, runtime);
+      return;
+    }
+
     // ── Slash commands (execute_command) ────────────────────────────────
     if (isExecuteCommandCommand(parsed)) {
       // Slash commands need a scoped runtime for the conversation context
@@ -2304,6 +2458,7 @@ export const __listenClientTestUtils = {
   handleAbortMessageInput,
   handleChangeDeviceStateInput,
   handleCronCommand,
+  handleReflectionSettingsCommand,
   scheduleQueuePump,
   recoverApprovalStateForSync,
   clearRecoveredApprovalStateForScope: (
