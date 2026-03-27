@@ -12,26 +12,31 @@ const PRIMARY_PERSONA_RELATIVE_PATH = "system/persona.md";
 const LEGACY_PERSONA_RELATIVE_PATH = "memory/system/persona.md";
 
 export interface PersonalityOption {
-  id: "kawaii" | "codex" | "claude";
+  id: "kawaii" | "codex" | "claude" | "linus";
   label: string;
   description: string;
 }
 
 export const PERSONALITY_OPTIONS: PersonalityOption[] = [
   {
+    id: "linus",
+    label: "Linus",
+    description: "Blunt and unfiltered, inspired by Linus Torvalds",
+  },
+  {
     id: "kawaii",
     label: "Kawaii",
     description: "A cute anime-inspired personality",
   },
   {
-    id: "codex",
-    label: "Codex",
-    description: "A pragmatic coding personality from Codex",
-  },
-  {
     id: "claude",
     label: "Claude",
     description: "A concise engineering personality from Claude Code",
+  },
+  {
+    id: "codex",
+    label: "Codex",
+    description: "A pragmatic coding personality from Codex",
   },
 ];
 
@@ -121,6 +126,18 @@ export function getPersonalityContent(personalityId: PersonalityId): string {
 
   if (personalityId === "codex") {
     return ensureTrailingNewline(getSystemPromptById("source-codex"));
+  }
+
+  if (personalityId === "linus") {
+    const rawPrompt = MEMORY_PROMPTS["persona_linus.mdx"];
+    if (!rawPrompt) {
+      throw new Error("Missing built-in prompt content for persona_linus.mdx");
+    }
+    const { body } = parseMdxFrontmatter(rawPrompt);
+    if (!body.trim()) {
+      throw new Error("persona_linus.mdx has empty body content");
+    }
+    return ensureTrailingNewline(body);
   }
 
   return ensureTrailingNewline(getSystemPromptById("source-claude"));
