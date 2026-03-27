@@ -16,6 +16,15 @@ import type { ConversationRuntime, StartListenerOptions } from "./types";
 const ISOLATED_BLOCK_LABELS = ["human", "persona"];
 
 /**
+ * Command IDs that this letta-code version can handle via `execute_command`.
+ * Advertised in DeviceStatus.supported_commands so the web UI only shows
+ * commands the connected device actually supports.
+ *
+ * When adding a new case to `handleExecuteCommand`, add the ID here too.
+ */
+export const SUPPORTED_REMOTE_COMMANDS: readonly string[] = ["clear"];
+
+/**
  * Handle an `execute_command` message from the web app.
  *
  * Dispatches to the appropriate command handler based on `command_id`.

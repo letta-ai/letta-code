@@ -24,6 +24,7 @@ import type {
   SubagentStateUpdateMessage,
   WsProtocolMessage,
 } from "../../types/protocol_v2";
+import { SUPPORTED_REMOTE_COMMANDS } from "./commands";
 import { SYSTEM_REMINDER_RE } from "./constants";
 import { getConversationWorkingDirectory } from "./cwd";
 import { getConversationPermissionModeState } from "./permissionMode";
@@ -107,6 +108,7 @@ export function buildDeviceStatus(
       background_processes: [],
       pending_control_requests: [],
       memory_directory: null,
+      supported_commands: [...SUPPORTED_REMOTE_COMMANDS],
     };
   }
   const scope = getScopeForRuntime(runtime, params);
@@ -157,6 +159,7 @@ export function buildDeviceStatus(
     memory_directory: scopedAgentId
       ? getMemoryFilesystemRoot(scopedAgentId)
       : null,
+    supported_commands: [...SUPPORTED_REMOTE_COMMANDS],
   };
 }
 

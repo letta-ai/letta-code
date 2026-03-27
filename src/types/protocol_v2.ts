@@ -138,6 +138,8 @@ export interface DeviceStatus {
   background_processes: BackgroundProcessSummary[];
   pending_control_requests: PendingControlRequest[];
   memory_directory: string | null;
+  /** Remote slash command IDs this letta-code version can handle via `execute_command`. */
+  supported_commands: string[];
 }
 
 export type LoopStatus =
