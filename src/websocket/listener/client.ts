@@ -40,6 +40,7 @@ import {
 } from "../../reminders/state";
 import { settingsManager } from "../../settings-manager";
 import { telemetry } from "../../telemetry";
+import { trackBoundaryError } from "../../telemetry/errorReporting";
 import { loadTools } from "../../tools/manager";
 import type {
   AbortMessageCommand,
@@ -174,6 +175,18 @@ import type {
   StartListenerOptions,
 } from "./types";
 
+function trackListenerError(
+  errorType: string,
+  error: unknown,
+  context: string,
+): void {
+  trackBoundaryError({
+    errorType,
+    error,
+    context,
+  });
+}
+
 /**
  * Handle mode change request from cloud.
  * Stores the new mode in ListenerRuntime.permissionModeByConversation so
@@ -223,6 +236,11 @@ function handleModeChange(
       console.log(`[Listen] Mode changed to: ${msg.mode}`);
     }
   } catch (error) {
+    trackListenerError(
+      "listener_mode_change_failed",
+      error,
+      "listener_mode_change",
+    );
     emitLoopErrorDelta(socket, runtime, {
       message: error instanceof Error ? error.message : "Mode change failed",
       stopReason: "error",
@@ -1439,6 +1457,11 @@ async function connectWithRetry(
           scheduleQueuePump(scopedRuntime, socket, opts, processQueuedTurn);
         })
         .catch((error: unknown) => {
+          trackListenerError(
+            "listener_queued_input_failed",
+            error,
+            "listener_message_queue",
+          );
           if (process.env.DEBUG) {
             console.error("[Listen] Error handling queued input:", error);
           }
@@ -1560,6 +1583,11 @@ async function connectWithRetry(
           }
           socket.send(JSON.stringify(response));
         } catch (err) {
+          trackListenerError(
+            "listener_list_directory_failed",
+            err,
+            "listener_file_browser",
+          );
           socket.send(
             JSON.stringify({
               type: "list_in_directory_response",
@@ -1598,6 +1626,11 @@ async function connectWithRetry(
             }),
           );
         } catch (err) {
+          trackListenerError(
+            "listener_read_file_failed",
+            err,
+            "listener_file_read",
+          );
           console.error(
             `[Listen] read_file error: ${err instanceof Error ? err.message : "Unknown error"}`,
           );
@@ -1649,6 +1682,11 @@ async function connectWithRetry(
             }),
           );
         } catch (err) {
+          trackListenerError(
+            "listener_edit_file_failed",
+            err,
+            "listener_file_edit",
+          );
           console.error(
             `[Listen] edit_file error: ${err instanceof Error ? err.message : "Unknown error"}`,
           );
@@ -1758,6 +1796,11 @@ async function connectWithRetry(
             );
           }
         } catch (err) {
+          trackListenerError(
+            "listener_list_memory_failed",
+            err,
+            "listener_memory_browser",
+          );
           socket.send(
             JSON.stringify({
               type: "list_memory_response",
@@ -1800,6 +1843,11 @@ async function connectWithRetry(
             }),
           );
         } catch (err) {
+          trackListenerError(
+            "listener_enable_memfs_failed",
+            err,
+            "listener_memfs_enable",
+          );
           socket.send(
             JSON.stringify({
               type: "enable_memfs_response",
@@ -1950,6 +1998,7 @@ async function connectWithRetry(
   });
 
   socket.on("error", (error: Error) => {
+    trackListenerError("listener_websocket_error", error, "listener_socket");
     safeEmitWsEvent("recv", "lifecycle", {
       type: "_ws_error",
       message: error.message,
