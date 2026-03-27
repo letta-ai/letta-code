@@ -3,6 +3,7 @@ import Letta from "@letta-ai/letta-client";
 import packageJson from "../../package.json";
 import { LETTA_CLOUD_API_URL, refreshAccessToken } from "../auth/oauth";
 import { settingsManager } from "../settings-manager";
+import { trackBoundaryError } from "../telemetry/errorReporting";
 import { isDebugEnabled } from "../utils/debug";
 import { createTimingFetch, isTimingsEnabled } from "../utils/timing";
 
@@ -160,6 +161,11 @@ export async function getClient() {
         apiKey = tokens.access_token;
         _cachedApiKey = tokens.access_token;
       } catch (error) {
+        trackBoundaryError({
+          errorType: "auth_token_refresh_failed",
+          error,
+          context: "auth_client_token_refresh",
+        });
         console.error("Failed to refresh access token:", error);
         console.error("Please run 'letta login' to re-authenticate");
         process.exit(1);

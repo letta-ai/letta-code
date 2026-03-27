@@ -45,6 +45,7 @@ import { buildListenReminderContext } from "../../reminders/listenContext";
 import { getPlanModeReminder } from "../../reminders/planModeReminder";
 import { syncReminderStateFromContextTracker } from "../../reminders/state";
 import { settingsManager } from "../../settings-manager";
+import { trackBoundaryError } from "../../telemetry/errorReporting";
 import type { StopReasonType, StreamDelta } from "../../types/protocol_v2";
 import { debugLog, debugWarn, isDebugEnabled } from "../../utils/debug";
 import {
@@ -411,6 +412,11 @@ export async function handleIncomingMessage(
       } catch (err) {
         // Reminder injection is best-effort — failures must not prevent
         // the user message from being sent to the agent.
+        trackBoundaryError({
+          errorType: "listener_reminder_build_failed",
+          error: err,
+          context: "listener_turn_reminders",
+        });
         if (isDebugEnabled()) {
           console.error("[Listen] Failed to build reminder parts:", err);
         }
@@ -913,6 +919,12 @@ export async function handleIncomingMessage(
       );
     }
   } catch (error) {
+    trackBoundaryError({
+      errorType: "listener_turn_processing_failed",
+      error,
+      context: "listener_turn_processing",
+      runId: runtime.activeRunId || msgRunIds[msgRunIds.length - 1],
+    });
     if (runtime.cancelRequested) {
       if (!lastApprovalContinuationAccepted) {
         populateInterruptQueue(runtime, {
