@@ -2,8 +2,8 @@ import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agen
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import type WebSocket from "ws";
 import type { ApprovalResult } from "../../agent/approval-execution";
+import type { ContextTracker } from "../../cli/helpers/contextTracker";
 import type { ApprovalRequest } from "../../cli/helpers/stream";
-
 import type {
   DequeuedBatch,
   QueueBlockedReason,
@@ -131,6 +131,8 @@ export type ConversationRuntime = {
   pendingInterruptedToolCallIds: string[] | null;
   /** Per-conversation reminder state (session-context, agent-info, etc.). */
   reminderState: SharedReminderState;
+  /** Per-conversation tracker for compaction/reflection cadence. */
+  contextTracker: ContextTracker;
 };
 
 export type ListenerRuntime = {
@@ -158,6 +160,13 @@ export type ListenerRuntime = {
     string,
     import("./permissionMode").ConversationPermissionModeState
   >;
+  /** Per-conversation reminder state survives ConversationRuntime eviction. */
+  reminderStateByConversation: Map<string, SharedReminderState>;
+  /** Per-conversation context tracker survives ConversationRuntime eviction. */
+  contextTrackerByConversation: Map<string, ContextTracker>;
+  /** Shared recompile coalescing for memory-writing subagents. */
+  systemPromptRecompileByConversation: Map<string, Promise<void>>;
+  queuedSystemPromptRecompileByConversation: Set<string>;
   connectionId: string | null;
   connectionName: string | null;
   conversationRuntimes: Map<string, ConversationRuntime>;

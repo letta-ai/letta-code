@@ -10,6 +10,7 @@ import { fetchRunErrorDetail } from "../../agent/approval-recovery";
 import { getResumeData } from "../../agent/check-approval";
 import { getClient } from "../../agent/client";
 import { setConversationId, setCurrentAgentId } from "../../agent/context";
+import { getMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
 import {
   getStreamToolContextId,
   type sendMessageStream,
@@ -19,17 +20,33 @@ import {
   isEmptyResponseRetryable,
   rebuildInputWithFreshDenials,
 } from "../../agent/turn-recovery-policy";
-import { createBuffers } from "../../cli/helpers/accumulator";
+import { createBuffers, toLines } from "../../cli/helpers/accumulator";
 import { getRetryStatusMessage } from "../../cli/helpers/errorFormatter";
+import {
+  getReflectionSettings,
+  type ReflectionTrigger,
+} from "../../cli/helpers/memoryReminder";
+import { handleMemorySubagentCompletion } from "../../cli/helpers/memorySubagentCompletion";
+import { addToMessageQueue } from "../../cli/helpers/messageQueueBridge";
+import {
+  appendTranscriptDeltaJsonl,
+  buildAutoReflectionPayload,
+  buildParentMemorySnapshot,
+  buildReflectionSubagentPrompt,
+  finalizeAutoReflectionPayload,
+} from "../../cli/helpers/reflectionTranscript";
 import { drainStreamWithResume } from "../../cli/helpers/stream";
+import { getSubagents } from "../../cli/helpers/subagentState";
 import {
   buildSharedReminderParts,
   prependReminderPartsToContent,
 } from "../../reminders/engine";
 import { buildListenReminderContext } from "../../reminders/listenContext";
 import { getPlanModeReminder } from "../../reminders/planModeReminder";
+import { syncReminderStateFromContextTracker } from "../../reminders/state";
+import { settingsManager } from "../../settings-manager";
 import type { StopReasonType, StreamDelta } from "../../types/protocol_v2";
-import { isDebugEnabled } from "../../utils/debug";
+import { debugLog, debugWarn, isDebugEnabled } from "../../utils/debug";
 import {
   EMPTY_RESPONSE_MAX_RETRIES,
   LLM_API_ERROR_MAX_RETRIES,
@@ -78,6 +95,120 @@ import {
 import { injectQueuedSkillContent } from "./skill-injection";
 import { handleApprovalStop } from "./turn-approval";
 import type { ConversationRuntime, IncomingMessage } from "./types";
+
+const AUTO_REFLECTION_DESCRIPTION = "Reflect on recent conversations";
+
+function hasActiveReflectionSubagent(): boolean {
+  return getSubagents().some(
+    (agent) =>
+      agent.type.toLowerCase() === "reflection" &&
+      (agent.status === "pending" || agent.status === "running"),
+  );
+}
+
+function buildMaybeLaunchReflectionSubagent(params: {
+  runtime: ConversationRuntime;
+  agentId: string;
+  conversationId: string;
+  workingDirectory: string;
+}): (triggerSource: Exclude<ReflectionTrigger, "off">) => Promise<boolean> {
+  return async (triggerSource) => {
+    const { runtime, agentId, conversationId, workingDirectory } = params;
+
+    if (!agentId || !settingsManager.isMemfsEnabled(agentId)) {
+      return false;
+    }
+
+    if (hasActiveReflectionSubagent()) {
+      debugLog(
+        "memory",
+        `Skipping auto reflection launch (${triggerSource}) because one is already active`,
+      );
+      return false;
+    }
+
+    try {
+      const autoPayload = await buildAutoReflectionPayload(
+        agentId,
+        conversationId,
+      );
+      if (!autoPayload) {
+        debugLog(
+          "memory",
+          `Skipping auto reflection launch (${triggerSource}) because transcript has no new content`,
+        );
+        return false;
+      }
+
+      const memoryDir = getMemoryFilesystemRoot(agentId);
+      const parentMemory = await buildParentMemorySnapshot(memoryDir);
+      const reflectionPrompt = buildReflectionSubagentPrompt({
+        transcriptPath: autoPayload.payloadPath,
+        memoryDir,
+        cwd: workingDirectory,
+        parentMemory,
+      });
+
+      const { spawnBackgroundSubagentTask } = await import(
+        "../../tools/impl/Task"
+      );
+      spawnBackgroundSubagentTask({
+        subagentType: "reflection",
+        prompt: reflectionPrompt,
+        description: AUTO_REFLECTION_DESCRIPTION,
+        silentCompletion: true,
+        parentScope: { agentId, conversationId },
+        onComplete: async ({ success, error }) => {
+          await finalizeAutoReflectionPayload(
+            agentId,
+            conversationId,
+            autoPayload.payloadPath,
+            autoPayload.endSnapshotLine,
+            success,
+          );
+
+          const msg = await handleMemorySubagentCompletion(
+            {
+              agentId,
+              conversationId,
+              subagentType: "reflection",
+              success,
+              error,
+            },
+            {
+              recompileByConversation:
+                runtime.listener.systemPromptRecompileByConversation,
+              recompileQueuedByConversation:
+                runtime.listener.queuedSystemPromptRecompileByConversation,
+              logRecompileFailure: (message) => debugWarn("memory", message),
+            },
+          );
+
+          addToMessageQueue({
+            kind: "task_notification",
+            text: msg,
+            agentId,
+            conversationId,
+          });
+        },
+      });
+
+      debugLog(
+        "memory",
+        `Auto-launched reflection subagent (${triggerSource})`,
+      );
+      return true;
+    } catch (error) {
+      debugWarn(
+        "memory",
+        `Failed to auto-launch reflection subagent (${triggerSource}): ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return false;
+    }
+  };
+}
 
 function finalizeInterruptedTurn(
   socket: WebSocket,
@@ -239,11 +370,28 @@ export async function handleIncomingMessage(
 
     if (!isApprovalMessage) {
       try {
+        syncReminderStateFromContextTracker(
+          runtime.reminderState,
+          runtime.contextTracker,
+        );
+        const reflectionSettings = getReflectionSettings(
+          agentId || undefined,
+          turnWorkingDirectory,
+        );
         const { parts: reminderParts } = await buildSharedReminderParts(
           buildListenReminderContext({
             agentId: agentId || "",
             conversationId,
             state: runtime.reminderState,
+            reflectionSettings,
+            maybeLaunchReflectionSubagent: agentId
+              ? buildMaybeLaunchReflectionSubagent({
+                  runtime,
+                  agentId,
+                  conversationId,
+                  workingDirectory: turnWorkingDirectory,
+                })
+              : undefined,
             resolvePlanModeReminder: getPlanModeReminder,
             workingDirectory: turnWorkingDirectory,
           }),
@@ -391,6 +539,7 @@ export async function handleIncomingMessage(
 
           return undefined;
         },
+        runtime.contextTracker,
       );
 
       const stopReason = result.stopReason;
@@ -407,6 +556,25 @@ export async function handleIncomingMessage(
       }
 
       if (stopReason === "end_turn") {
+        try {
+          const transcriptLines = toLines(buffers);
+          if (transcriptLines.length > 0) {
+            await appendTranscriptDeltaJsonl(
+              agentId || "",
+              conversationId,
+              transcriptLines,
+            );
+          }
+        } catch (transcriptError) {
+          debugWarn(
+            "memory",
+            `Failed to append transcript delta: ${
+              transcriptError instanceof Error
+                ? transcriptError.message
+                : String(transcriptError)
+            }`,
+          );
+        }
         runtime.lastStopReason = "end_turn";
         runtime.isProcessing = false;
         clearActiveRunState(runtime);

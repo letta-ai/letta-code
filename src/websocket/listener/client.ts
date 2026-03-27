@@ -9,6 +9,7 @@ import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agen
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import WebSocket from "ws";
 import { getClient } from "../../agent/client";
+import { resetContextHistory } from "../../cli/helpers/contextTracker";
 import {
   ensureFileIndex,
   getIndexRoot,
@@ -1013,6 +1014,10 @@ function createRuntime(): ListenerRuntime {
     bootWorkingDirectory,
     workingDirectoryByConversation: loadPersistedCwdMap(),
     permissionModeByConversation: loadPersistedPermissionModeMap(),
+    reminderStateByConversation: new Map(),
+    contextTrackerByConversation: new Map(),
+    systemPromptRecompileByConversation: new Map(),
+    queuedSystemPromptRecompileByConversation: new Set(),
     connectionId: null,
     connectionName: null,
     conversationRuntimes: new Map(),
@@ -1042,6 +1047,10 @@ function stopRuntime(
   }
   runtime.conversationRuntimes.clear();
   runtime.approvalRuntimeKeyByRequestId.clear();
+  runtime.reminderStateByConversation.clear();
+  runtime.contextTrackerByConversation.clear();
+  runtime.systemPromptRecompileByConversation.clear();
+  runtime.queuedSystemPromptRecompileByConversation.clear();
 
   if (!runtime.socket) {
     return;
@@ -1190,14 +1199,18 @@ async function connectWithRetry(
       emitDeviceStatusUpdate(socket, runtime);
       emitLoopStatusUpdate(socket, runtime);
     } else {
-      for (const conversationRuntime of runtime.conversationRuntimes.values()) {
+      for (const reminderState of runtime.reminderStateByConversation.values()) {
         // Reset bootstrap reminder state on (re)connect so session-context
         // and agent-info fire on the first turn of the new connection.
         // This is intentionally in the open handler, NOT the sync handler,
         // because the Desktop UMI controller sends sync every ~5 s and
         // resetting there would re-arm reminders on every periodic sync.
-        resetSharedReminderState(conversationRuntime.reminderState);
-
+        resetSharedReminderState(reminderState);
+      }
+      for (const contextTracker of runtime.contextTrackerByConversation.values()) {
+        resetContextHistory(contextTracker);
+      }
+      for (const conversationRuntime of runtime.conversationRuntimes.values()) {
         const scope = {
           agent_id: conversationRuntime.agentId,
           conversation_id: conversationRuntime.conversationId,
@@ -1994,6 +2007,10 @@ function createLegacyTestRuntime(): ConversationRuntime & {
   socket: WebSocket | null;
   workingDirectoryByConversation: Map<string, string>;
   permissionModeByConversation: ListenerRuntime["permissionModeByConversation"];
+  reminderStateByConversation: ListenerRuntime["reminderStateByConversation"];
+  contextTrackerByConversation: ListenerRuntime["contextTrackerByConversation"];
+  systemPromptRecompileByConversation: ListenerRuntime["systemPromptRecompileByConversation"];
+  queuedSystemPromptRecompileByConversation: ListenerRuntime["queuedSystemPromptRecompileByConversation"];
   bootWorkingDirectory: string;
   connectionId: string | null;
   connectionName: string | null;
@@ -2024,6 +2041,10 @@ function createLegacyTestRuntime(): ConversationRuntime & {
     socket: WebSocket | null;
     workingDirectoryByConversation: Map<string, string>;
     permissionModeByConversation: ListenerRuntime["permissionModeByConversation"];
+    reminderStateByConversation: ListenerRuntime["reminderStateByConversation"];
+    contextTrackerByConversation: ListenerRuntime["contextTrackerByConversation"];
+    systemPromptRecompileByConversation: ListenerRuntime["systemPromptRecompileByConversation"];
+    queuedSystemPromptRecompileByConversation: ListenerRuntime["queuedSystemPromptRecompileByConversation"];
     bootWorkingDirectory: string;
     connectionId: string | null;
     connectionName: string | null;
@@ -2063,6 +2084,32 @@ function createLegacyTestRuntime(): ConversationRuntime & {
       get: () => listener.permissionModeByConversation,
       set: (value: ListenerRuntime["permissionModeByConversation"]) => {
         listener.permissionModeByConversation = value;
+      },
+    },
+    reminderStateByConversation: {
+      get: () => listener.reminderStateByConversation,
+      set: (value: ListenerRuntime["reminderStateByConversation"]) => {
+        listener.reminderStateByConversation = value;
+      },
+    },
+    contextTrackerByConversation: {
+      get: () => listener.contextTrackerByConversation,
+      set: (value: ListenerRuntime["contextTrackerByConversation"]) => {
+        listener.contextTrackerByConversation = value;
+      },
+    },
+    systemPromptRecompileByConversation: {
+      get: () => listener.systemPromptRecompileByConversation,
+      set: (value: ListenerRuntime["systemPromptRecompileByConversation"]) => {
+        listener.systemPromptRecompileByConversation = value;
+      },
+    },
+    queuedSystemPromptRecompileByConversation: {
+      get: () => listener.queuedSystemPromptRecompileByConversation,
+      set: (
+        value: ListenerRuntime["queuedSystemPromptRecompileByConversation"],
+      ) => {
+        listener.queuedSystemPromptRecompileByConversation = value;
       },
     },
     bootWorkingDirectory: {
