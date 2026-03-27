@@ -12,12 +12,17 @@ const PRIMARY_PERSONA_RELATIVE_PATH = "system/persona.md";
 const LEGACY_PERSONA_RELATIVE_PATH = "memory/system/persona.md";
 
 export interface PersonalityOption {
-  id: "kawaii" | "codex" | "claude" | "linus";
+  id: "kawaii" | "codex" | "claude" | "linus" | "memo";
   label: string;
   description: string;
 }
 
 export const PERSONALITY_OPTIONS: PersonalityOption[] = [
+  {
+    id: "memo",
+    label: "Memo",
+    description: "A thoughtful, substantive coding assistant that learns",
+  },
   {
     id: "linus",
     label: "Linus",
@@ -111,6 +116,18 @@ export function getPersonalityOption(
 }
 
 export function getPersonalityContent(personalityId: PersonalityId): string {
+  if (personalityId === "memo") {
+    const rawPrompt = MEMORY_PROMPTS["persona_memo.mdx"];
+    if (!rawPrompt) {
+      throw new Error("Missing built-in prompt content for persona_memo.mdx");
+    }
+    const { body } = parseMdxFrontmatter(rawPrompt);
+    if (!body.trim()) {
+      throw new Error("persona_memo.mdx has empty body content");
+    }
+    return ensureTrailingNewline(body);
+  }
+
   if (personalityId === "kawaii") {
     const rawPrompt = MEMORY_PROMPTS["persona_kawaii.mdx"];
     if (!rawPrompt) {
