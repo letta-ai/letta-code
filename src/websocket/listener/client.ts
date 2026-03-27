@@ -478,8 +478,14 @@ async function handleSkillCommand(
   parsed: SkillCommand,
   socket: WebSocket,
 ): Promise<boolean> {
-  const { existsSync, lstatSync, mkdirSync, symlinkSync, unlinkSync } =
-    await import("node:fs");
+  const {
+    existsSync,
+    lstatSync,
+    mkdirSync,
+    rmdirSync,
+    symlinkSync,
+    unlinkSync,
+  } = await import("node:fs");
   const { basename, join } = await import("node:path");
 
   // Compute skills dir dynamically to respect LETTA_HOME (important for tests)
@@ -523,11 +529,15 @@ async function handleSkillCommand(
       // Ensure ~/.letta/skills/ exists
       mkdirSync(globalSkillsDir, { recursive: true });
 
-      // If symlink already exists, remove it first
+      // If symlink/junction already exists, remove it first
       if (existsSync(linkPath)) {
         const stat = lstatSync(linkPath);
         if (stat.isSymbolicLink()) {
-          unlinkSync(linkPath);
+          if (process.platform === "win32") {
+            rmdirSync(linkPath);
+          } else {
+            unlinkSync(linkPath);
+          }
         } else {
           socket.send(
             JSON.stringify({
@@ -541,7 +551,9 @@ async function handleSkillCommand(
         }
       }
 
-      symlinkSync(parsed.skill_path, linkPath, "dir");
+      // Use junctions on Windows — they don't require admin/Developer Mode
+      const linkType = process.platform === "win32" ? "junction" : "dir";
+      symlinkSync(parsed.skill_path, linkPath, linkType);
 
       socket.send(
         JSON.stringify({
@@ -596,7 +608,11 @@ async function handleSkillCommand(
         return true;
       }
 
-      unlinkSync(linkPath);
+      if (process.platform === "win32") {
+        rmdirSync(linkPath);
+      } else {
+        unlinkSync(linkPath);
+      }
 
       socket.send(
         JSON.stringify({
