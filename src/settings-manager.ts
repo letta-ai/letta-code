@@ -72,6 +72,13 @@ export interface Settings {
   memoryReminderInterval: number | null | "compaction" | "auto-compaction"; // DEPRECATED: use reflection* fields
   reflectionTrigger: "off" | "step-count" | "compaction-event";
   reflectionStepCount: number;
+  reflectionSettingsByAgent?: Record<
+    string,
+    {
+      trigger: "off" | "step-count" | "compaction-event";
+      stepCount: number;
+    }
+  >;
   conversationSwitchAlertEnabled: boolean; // Send system-reminder when switching conversations/agents
   globalSharedBlockIds: Record<string, string>; // DEPRECATED: kept for backwards compat
   profiles?: Record<string, string>; // DEPRECATED: old format, kept for migration
@@ -119,6 +126,13 @@ export interface LocalProjectSettings {
   memoryReminderInterval?: number | null | "compaction" | "auto-compaction"; // DEPRECATED: use reflection* fields
   reflectionTrigger?: "off" | "step-count" | "compaction-event";
   reflectionStepCount?: number;
+  reflectionSettingsByAgent?: Record<
+    string,
+    {
+      trigger: "off" | "step-count" | "compaction-event";
+      stepCount: number;
+    }
+  >;
   // Server-indexed settings (agent IDs are server-specific)
   sessionsByServer?: Record<string, SessionRef>; // key = normalized base URL
   pinnedAgentsByServer?: Record<string, string[]>; // key = normalized base URL

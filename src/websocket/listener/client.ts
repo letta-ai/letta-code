@@ -9,12 +9,17 @@ import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agen
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import WebSocket from "ws";
 import { getClient } from "../../agent/client";
+import { resetContextHistory } from "../../cli/helpers/contextTracker";
 import {
   ensureFileIndex,
   getIndexRoot,
   searchFileIndex,
   setIndexRoot,
 } from "../../cli/helpers/fileIndex";
+import {
+  getReflectionSettings,
+  persistReflectionSettingsForAgent,
+} from "../../cli/helpers/memoryReminder";
 import { setMessageQueueAdder } from "../../cli/helpers/messageQueueBridge";
 import { generatePlanFilePath } from "../../cli/helpers/planName";
 import {
@@ -51,6 +56,9 @@ import type {
   CronDeleteCommand,
   CronGetCommand,
   CronListCommand,
+  GetReflectionSettingsCommand,
+  ReflectionSettingsScope,
+  SetReflectionSettingsCommand,
 } from "../../types/protocol_v2";
 import { isDebugEnabled } from "../../utils/debug";
 import {
@@ -103,10 +111,12 @@ import {
   isEditFileCommand,
   isEnableMemfsCommand,
   isExecuteCommandCommand,
+  isGetReflectionSettingsCommand,
   isListInDirectoryCommand,
   isListMemoryCommand,
   isReadFileCommand,
   isSearchFilesCommand,
+  isSetReflectionSettingsCommand,
   parseServerMessage,
 } from "./protocol-inbound";
 import {
@@ -261,6 +271,10 @@ type CronCommand =
   | CronGetCommand
   | CronDeleteCommand
   | CronDeleteAllCommand;
+
+type ReflectionSettingsCommand =
+  | GetReflectionSettingsCommand
+  | SetReflectionSettingsCommand;
 
 function emitCronsUpdated(
   socket: WebSocket,
@@ -439,6 +453,139 @@ async function handleCronCommand(
         agent_id: parsed.agent_id,
         deleted: 0,
         error: err instanceof Error ? err.message : "Failed to delete crons",
+      }),
+    );
+  }
+  return true;
+}
+
+function toReflectionSettingsResponse(
+  agentId: string,
+  workingDirectory: string,
+): {
+  agent_id: string;
+  trigger: "off" | "step-count" | "compaction-event";
+  step_count: number;
+} {
+  const settings = getReflectionSettings(agentId, workingDirectory);
+  return {
+    agent_id: agentId,
+    trigger: settings.trigger,
+    step_count: settings.stepCount,
+  };
+}
+
+function resolveReflectionSettingsScope(
+  scope: ReflectionSettingsScope | undefined,
+): {
+  persistLocalProject: boolean;
+  persistGlobal: boolean;
+  normalizedScope: ReflectionSettingsScope;
+} {
+  if (scope === "local_project") {
+    return {
+      persistLocalProject: true,
+      persistGlobal: false,
+      normalizedScope: scope,
+    };
+  }
+  if (scope === "global") {
+    return {
+      persistLocalProject: false,
+      persistGlobal: true,
+      normalizedScope: scope,
+    };
+  }
+  return {
+    persistLocalProject: true,
+    persistGlobal: true,
+    normalizedScope: "both",
+  };
+}
+
+async function handleReflectionSettingsCommand(
+  parsed: ReflectionSettingsCommand,
+  socket: WebSocket,
+  listener: ListenerRuntime,
+): Promise<boolean> {
+  const agentId = parsed.runtime.agent_id;
+  const workingDirectory = getConversationWorkingDirectory(
+    listener,
+    parsed.runtime.agent_id,
+    parsed.runtime.conversation_id,
+  );
+
+  if (parsed.type === "get_reflection_settings") {
+    try {
+      socket.send(
+        JSON.stringify({
+          type: "get_reflection_settings_response",
+          request_id: parsed.request_id,
+          success: true,
+          reflection_settings: toReflectionSettingsResponse(
+            agentId,
+            workingDirectory,
+          ),
+        }),
+      );
+    } catch (err) {
+      socket.send(
+        JSON.stringify({
+          type: "get_reflection_settings_response",
+          request_id: parsed.request_id,
+          success: false,
+          reflection_settings: null,
+          error:
+            err instanceof Error
+              ? err.message
+              : "Failed to load reflection settings",
+        }),
+      );
+    }
+    return true;
+  }
+
+  const { persistLocalProject, persistGlobal, normalizedScope } =
+    resolveReflectionSettingsScope(parsed.scope);
+
+  try {
+    await persistReflectionSettingsForAgent(
+      agentId,
+      {
+        trigger: parsed.settings.trigger,
+        stepCount: parsed.settings.step_count,
+      },
+      {
+        workingDirectory,
+        persistLocalProject,
+        persistGlobal,
+      },
+    );
+    socket.send(
+      JSON.stringify({
+        type: "set_reflection_settings_response",
+        request_id: parsed.request_id,
+        success: true,
+        scope: normalizedScope,
+        reflection_settings: toReflectionSettingsResponse(
+          agentId,
+          workingDirectory,
+        ),
+      }),
+    );
+    emitDeviceStatusUpdate(socket, listener, parsed.runtime);
+  } catch (err) {
+    socket.send(
+      JSON.stringify({
+        type: "set_reflection_settings_response",
+        request_id: parsed.request_id,
+        success: false,
+        scope: normalizedScope,
+        reflection_settings: null,
+        error:
+          err instanceof Error
+            ? err.message
+            : "Failed to update reflection settings",
       }),
     );
   }
@@ -1031,6 +1178,10 @@ function createRuntime(): ListenerRuntime {
     bootWorkingDirectory,
     workingDirectoryByConversation: loadPersistedCwdMap(),
     permissionModeByConversation: loadPersistedPermissionModeMap(),
+    reminderStateByConversation: new Map(),
+    contextTrackerByConversation: new Map(),
+    systemPromptRecompileByConversation: new Map(),
+    queuedSystemPromptRecompileByConversation: new Set(),
     connectionId: null,
     connectionName: null,
     conversationRuntimes: new Map(),
@@ -1060,6 +1211,10 @@ function stopRuntime(
   }
   runtime.conversationRuntimes.clear();
   runtime.approvalRuntimeKeyByRequestId.clear();
+  runtime.reminderStateByConversation.clear();
+  runtime.contextTrackerByConversation.clear();
+  runtime.systemPromptRecompileByConversation.clear();
+  runtime.queuedSystemPromptRecompileByConversation.clear();
 
   if (!runtime.socket) {
     return;
@@ -1208,14 +1363,18 @@ async function connectWithRetry(
       emitDeviceStatusUpdate(socket, runtime);
       emitLoopStatusUpdate(socket, runtime);
     } else {
-      for (const conversationRuntime of runtime.conversationRuntimes.values()) {
+      for (const reminderState of runtime.reminderStateByConversation.values()) {
         // Reset bootstrap reminder state on (re)connect so session-context
         // and agent-info fire on the first turn of the new connection.
         // This is intentionally in the open handler, NOT the sync handler,
         // because the Desktop UMI controller sends sync every ~5 s and
         // resetting there would re-arm reminders on every periodic sync.
-        resetSharedReminderState(conversationRuntime.reminderState);
-
+        resetSharedReminderState(reminderState);
+      }
+      for (const contextTracker of runtime.contextTrackerByConversation.values()) {
+        resetContextHistory(contextTracker);
+      }
+      for (const conversationRuntime of runtime.conversationRuntimes.values()) {
         const scope = {
           agent_id: conversationRuntime.agentId,
           conversation_id: conversationRuntime.conversationId,
@@ -1874,6 +2033,14 @@ async function connectWithRetry(
       return;
     }
 
+    if (
+      isGetReflectionSettingsCommand(parsed) ||
+      isSetReflectionSettingsCommand(parsed)
+    ) {
+      void handleReflectionSettingsCommand(parsed, socket, runtime);
+      return;
+    }
+
     // ── Slash commands (execute_command) ────────────────────────────────
     if (isExecuteCommandCommand(parsed)) {
       // Slash commands need a scoped runtime for the conversation context
@@ -2043,6 +2210,10 @@ function createLegacyTestRuntime(): ConversationRuntime & {
   socket: WebSocket | null;
   workingDirectoryByConversation: Map<string, string>;
   permissionModeByConversation: ListenerRuntime["permissionModeByConversation"];
+  reminderStateByConversation: ListenerRuntime["reminderStateByConversation"];
+  contextTrackerByConversation: ListenerRuntime["contextTrackerByConversation"];
+  systemPromptRecompileByConversation: ListenerRuntime["systemPromptRecompileByConversation"];
+  queuedSystemPromptRecompileByConversation: ListenerRuntime["queuedSystemPromptRecompileByConversation"];
   bootWorkingDirectory: string;
   connectionId: string | null;
   connectionName: string | null;
@@ -2073,6 +2244,10 @@ function createLegacyTestRuntime(): ConversationRuntime & {
     socket: WebSocket | null;
     workingDirectoryByConversation: Map<string, string>;
     permissionModeByConversation: ListenerRuntime["permissionModeByConversation"];
+    reminderStateByConversation: ListenerRuntime["reminderStateByConversation"];
+    contextTrackerByConversation: ListenerRuntime["contextTrackerByConversation"];
+    systemPromptRecompileByConversation: ListenerRuntime["systemPromptRecompileByConversation"];
+    queuedSystemPromptRecompileByConversation: ListenerRuntime["queuedSystemPromptRecompileByConversation"];
     bootWorkingDirectory: string;
     connectionId: string | null;
     connectionName: string | null;
@@ -2112,6 +2287,32 @@ function createLegacyTestRuntime(): ConversationRuntime & {
       get: () => listener.permissionModeByConversation,
       set: (value: ListenerRuntime["permissionModeByConversation"]) => {
         listener.permissionModeByConversation = value;
+      },
+    },
+    reminderStateByConversation: {
+      get: () => listener.reminderStateByConversation,
+      set: (value: ListenerRuntime["reminderStateByConversation"]) => {
+        listener.reminderStateByConversation = value;
+      },
+    },
+    contextTrackerByConversation: {
+      get: () => listener.contextTrackerByConversation,
+      set: (value: ListenerRuntime["contextTrackerByConversation"]) => {
+        listener.contextTrackerByConversation = value;
+      },
+    },
+    systemPromptRecompileByConversation: {
+      get: () => listener.systemPromptRecompileByConversation,
+      set: (value: ListenerRuntime["systemPromptRecompileByConversation"]) => {
+        listener.systemPromptRecompileByConversation = value;
+      },
+    },
+    queuedSystemPromptRecompileByConversation: {
+      get: () => listener.queuedSystemPromptRecompileByConversation,
+      set: (
+        value: ListenerRuntime["queuedSystemPromptRecompileByConversation"],
+      ) => {
+        listener.queuedSystemPromptRecompileByConversation = value;
       },
     },
     bootWorkingDirectory: {
@@ -2306,6 +2507,7 @@ export const __listenClientTestUtils = {
   handleAbortMessageInput,
   handleChangeDeviceStateInput,
   handleCronCommand,
+  handleReflectionSettingsCommand,
   scheduleQueuePump,
   recoverApprovalStateForSync,
   clearRecoveredApprovalStateForScope: (

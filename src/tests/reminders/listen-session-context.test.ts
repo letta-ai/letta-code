@@ -58,6 +58,7 @@ function listenContext(
   return buildListenReminderContext({
     agentId: "agent-test",
     state,
+    reflectionSettings: { trigger: "off", stepCount: 25 },
     resolvePlanModeReminder: () => "",
     ...overrides,
   });
