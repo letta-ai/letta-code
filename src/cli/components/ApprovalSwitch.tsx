@@ -192,10 +192,21 @@ function getTaskInfo(approval: ApprovalRequest): TaskInfo | null {
   }
 }
 
-// Parse memory info from approval args
+// Parse memory info from approval args (handles both `memory` and `memory_apply_patch`)
 function getMemoryInfo(approval: ApprovalRequest): MemoryInfo | null {
   try {
     const args = JSON.parse(approval.toolArgs || "{}");
+    const toolName = approval.toolName;
+
+    // memory_apply_patch has { reason, input } — no command field
+    if (toolName === "memory_apply_patch") {
+      return {
+        command: "patch",
+        reason: typeof args.reason === "string" ? args.reason : undefined,
+        patchInput: typeof args.input === "string" ? args.input : undefined,
+      };
+    }
+
     const command = typeof args.command === "string" ? args.command : "";
     if (!command) return null;
     return {

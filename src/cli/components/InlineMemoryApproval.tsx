@@ -18,6 +18,8 @@ export type MemoryInfo = {
   insertText?: string;
   description?: string;
   fileText?: string;
+  /** Unified diff input for memory_apply_patch */
+  patchInput?: string;
 };
 
 type Props = {
@@ -38,20 +40,27 @@ const SOLID_LINE = "─";
 function getHeader(command: string): string {
   switch (command) {
     case "delete":
-      return "Delete memory file?";
+      return "Delete memory?";
     case "str_replace":
-      return "Edit memory file?";
+      return "Edit memory?";
     case "insert":
-      return "Insert into memory file?";
+      return "Insert into memory?";
     case "rename":
-      return "Rename memory file?";
+      return "Rename memory?";
     case "create":
-      return "Create memory file?";
+      return "Create memory?";
     case "update_description":
       return "Update memory description?";
+    case "patch":
+      return "Patch memory?";
     default:
       return `Run memory ${command}?`;
   }
+}
+
+/** Strip .md extension from memory paths for display */
+function displayPath(path: string): string {
+  return path.replace(/\.md$/, "");
 }
 
 function truncate(text: string, max: number): string {
@@ -171,6 +180,7 @@ export const InlineMemoryApproval = memo(
         insertText,
         description,
         fileText,
+        patchInput,
       } = memoryInfo;
 
       return (
@@ -186,13 +196,13 @@ export const InlineMemoryApproval = memo(
             {command === "rename" ? (
               <Box flexGrow={1} width={contentWidth}>
                 <Text wrap="wrap">
-                  <Text bold>{oldPath || "(unknown)"}</Text>
+                  <Text bold>{displayPath(oldPath || "(unknown)")}</Text>
                   <Text dimColor>{" → "}</Text>
-                  <Text bold>{newPath || "(unknown)"}</Text>
+                  <Text bold>{displayPath(newPath || "(unknown)")}</Text>
                 </Text>
               </Box>
             ) : (
-              path && <Text bold>{path}</Text>
+              path && <Text bold>{displayPath(path)}</Text>
             )}
 
             {/* Operation-specific details */}
@@ -243,6 +253,16 @@ export const InlineMemoryApproval = memo(
                 <Text wrap="wrap" dimColor>
                   {description}
                 </Text>
+              </Box>
+            )}
+
+            {command === "patch" && patchInput && (
+              <Box flexDirection="column" marginTop={1}>
+                <Box flexGrow={1} width={contentWidth}>
+                  <Text wrap="wrap" dimColor>
+                    {truncate(patchInput, 500)}
+                  </Text>
+                </Box>
               </Box>
             )}
 
