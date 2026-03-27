@@ -760,6 +760,7 @@ describe("listen-client multi-worker concurrency", () => {
       pendingApprovals: [approval],
       messageHistory: [],
     });
+    // biome-ignore lint/suspicious/noExplicitAny: mock method access
     (classifyApprovalsMock as any).mockResolvedValueOnce({
       autoAllowed: [
         {
@@ -1364,7 +1365,9 @@ describe("listen-client multi-worker concurrency", () => {
     });
 
     let capturedModeAtClassification: string | null = null;
+    // biome-ignore lint/suspicious/noExplicitAny: mock method access
     (classifyApprovalsMock as any).mockImplementationOnce(
+      // biome-ignore lint/suspicious/noExplicitAny: mock param types
       async (_approvals: any, opts: any) => {
         capturedModeAtClassification = opts?.permissionModeState?.mode ?? null;
         return {
@@ -1385,6 +1388,7 @@ describe("listen-client multi-worker concurrency", () => {
         };
       },
     );
+    // biome-ignore lint/suspicious/noExplicitAny: mock method access
     (executeApprovalBatchMock as any).mockResolvedValueOnce([
       {
         type: "tool",
@@ -1560,6 +1564,7 @@ describe("listen-client multi-worker concurrency", () => {
     );
     const socket = new MockSocket();
 
+    // biome-ignore lint/suspicious/noExplicitAny: mock method access
     (classifyApprovalsMock as any).mockResolvedValueOnce({
       autoAllowed: [
         {

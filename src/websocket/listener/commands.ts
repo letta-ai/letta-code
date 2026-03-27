@@ -118,7 +118,7 @@ function emitSlashCommandEnd(
  * Returns a human-readable success message.
  */
 async function handleClearCommand(
-  socket: WebSocket,
+  _socket: WebSocket,
   conversationRuntime: ConversationRuntime,
   opts: {
     onStatusChange?: StartListenerOptions["onStatusChange"];
