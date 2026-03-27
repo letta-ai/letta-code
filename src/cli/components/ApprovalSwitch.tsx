@@ -94,6 +94,8 @@ type Props = {
   planContent?: string;
   planFilePath?: string;
   agentName?: string;
+  // Draft text from input buffer when approval appeared
+  initialDraft?: string;
 };
 
 // Parse bash info from approval args
@@ -357,6 +359,7 @@ export const ApprovalSwitch = memo(
     planContent,
     planFilePath,
     agentName,
+    initialDraft,
   }: Props) => {
     const toolName = approval.toolName;
 
@@ -376,6 +379,7 @@ export const ApprovalSwitch = memo(
           planContent={planContent}
           planFilePath={planFilePath}
           agentName={agentName}
+          initialDraft={initialDraft}
         />
       );
     }
@@ -455,6 +459,7 @@ export const ApprovalSwitch = memo(
             onSubmit={onQuestionSubmit}
             onCancel={onCancel}
             isFocused={isFocused}
+            initialDraft={initialDraft}
           />
         );
       }
