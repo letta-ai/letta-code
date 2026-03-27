@@ -32,8 +32,9 @@ Prompts that are compiled as part of the system prompt (contained in `system/`) 
 
 Use the following script to evaluate the token usage of the system prompt: 
 ```bash
-bun scripts/estimate_system_tokens.ts --memory-dir "$MEMORY_DIR"
+npx tsx <SKILL_DIR>/scripts/estimate_system_tokens.ts --memory-dir "$MEMORY_DIR"
 ```
+Where `<SKILL_DIR>` is the Skill Directory shown when the skill was loaded (visible in the injection header).
 
 **Questions to ask**:
 - Do all these tokens need to be passed to the LLM on every turn, or can they be retrieved when needed through being part of external memory of my conversation history? 

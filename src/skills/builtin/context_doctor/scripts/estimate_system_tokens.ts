@@ -1,10 +1,23 @@
-#!/usr/bin/env bun
+#!/usr/bin/env npx tsx
+/**
+ * Estimate token usage of system prompt memory files.
+ *
+ * Self-contained — no imports from the letta-code source tree.
+ *
+ * Usage:
+ *   npx tsx estimate_system_tokens.ts --memory-dir "$MEMORY_DIR"
+ *   npx tsx estimate_system_tokens.ts --memory-dir ~/.letta/agents/<id>/memory
+ */
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { getClient } from "../../../../agent/client";
-import { estimateTokens } from "../../../../cli/helpers/format";
-import { settingsManager } from "../../../../settings-manager";
+
+// Codex heuristic: ~4 bytes per token (codex-rs/core/src/truncate.rs APPROX_BYTES_PER_TOKEN = 4)
+const BYTES_PER_TOKEN = 4;
+
+function estimateTokens(text: string): number {
+  return Math.ceil(Buffer.byteLength(text, "utf8") / BYTES_PER_TOKEN);
+}
 
 type FileEstimate = {
   path: string;
@@ -13,7 +26,6 @@ type FileEstimate = {
 
 type ParsedArgs = {
   memoryDir?: string;
-  agentId?: string;
   top: number;
 };
 
@@ -24,11 +36,6 @@ function parseArgs(argv: string[]): ParsedArgs {
     const arg = argv[i];
     if (arg === "--memory-dir") {
       parsed.memoryDir = argv[i + 1];
-      i++;
-      continue;
-    }
-    if (arg === "--agent-id") {
-      parsed.agentId = argv[i + 1];
       i++;
       continue;
     }
@@ -63,9 +70,6 @@ function walkMarkdownFiles(dir: string): string[] {
     }
     const full = join(dir, entry.name);
     if (entry.isDirectory()) {
-      if (entry.name === ".git") {
-        continue;
-      }
       out.push(...walkMarkdownFiles(full));
       continue;
     }
@@ -77,69 +81,24 @@ function walkMarkdownFiles(dir: string): string[] {
   return out;
 }
 
-function inferAgentIdFromMemoryDir(memoryDir: string): string | null {
-  const parts = normalizePath(memoryDir).split("/");
-  for (let i = 0; i < parts.length - 1; i++) {
-    if (parts[i] === "agents" && parts[i + 1]?.startsWith("agent-")) {
-      return parts[i + 1];
-    }
-  }
-
-  const maybe = parts.at(-2);
-  return maybe?.startsWith("agent-") ? maybe : null;
-}
-
-async function resolveAgentId(
-  memoryDir: string,
-  cliAgentId?: string,
-): Promise<string> {
-  if (cliAgentId) {
-    return cliAgentId;
-  }
-
-  if (process.env.AGENT_ID) {
-    return process.env.AGENT_ID;
-  }
-
-  const inferred = inferAgentIdFromMemoryDir(memoryDir);
-  if (inferred) {
-    return inferred;
-  }
-
-  const fromSession = settingsManager.getEffectiveLastAgentId(process.cwd());
-  if (fromSession) {
-    return fromSession;
-  }
-
-  throw new Error(
-    "Unable to resolve agent ID. Pass --agent-id or set AGENT_ID.",
-  );
-}
-
 function formatNumber(value: number): string {
   return value.toLocaleString("en-US");
 }
 
-async function main(): Promise<number> {
-  await settingsManager.initialize();
-
+function main(): number {
   const args = parseArgs(process.argv.slice(2));
   const memoryDir = args.memoryDir || process.env.MEMORY_DIR;
 
   if (!memoryDir) {
-    throw new Error("Missing memory dir. Pass --memory-dir or set MEMORY_DIR.");
+    console.error("Missing memory dir. Pass --memory-dir or set MEMORY_DIR.");
+    return 1;
   }
 
   const systemDir = join(memoryDir, "system");
   if (!existsSync(systemDir)) {
-    throw new Error(`Missing system directory: ${systemDir}`);
+    console.error(`Missing system directory: ${systemDir}`);
+    return 1;
   }
-
-  const agentId = await resolveAgentId(memoryDir, args.agentId);
-
-  // Use the SDK auth path used by letta-code (OAuth + API key handling via getClient).
-  const client = await getClient();
-  await client.agents.retrieve(agentId);
 
   const files = walkMarkdownFiles(systemDir).sort();
   const rows: FileEstimate[] = [];
@@ -166,11 +125,4 @@ async function main(): Promise<number> {
   return 0;
 }
 
-main()
-  .then((code) => {
-    process.exit(code);
-  })
-  .catch((error: unknown) => {
-    console.error(error instanceof Error ? error.message : String(error));
-    process.exit(1);
-  });
+process.exit(main());
