@@ -6,8 +6,13 @@ import { getSubagents } from "../../cli/helpers/subagentState";
 import { permissionMode } from "../../permissions/mode";
 import type { DequeuedBatch } from "../../queue/queueRuntime";
 import { settingsManager } from "../../settings-manager";
+import {
+  backgroundProcesses,
+  backgroundTasks,
+} from "../../tools/impl/process_manager";
 import { getToolNames } from "../../tools/manager";
 import type {
+  BackgroundProcessSummary,
   DeviceStatus,
   DeviceStatusUpdateMessage,
   LoopState,
@@ -73,6 +78,38 @@ function getScopeForRuntime(
   return scope ?? {};
 }
 
+export function buildBackgroundProcessSnapshot(): BackgroundProcessSummary[] {
+  const bashProcesses: BackgroundProcessSummary[] = Array.from(
+    backgroundProcesses.entries(),
+  ).map(([processId, proc]) => ({
+    process_id: processId,
+    kind: "bash",
+    command: proc.command,
+    started_at_ms: proc.startTime?.getTime() ?? null,
+    status: proc.status,
+    exit_code: proc.exitCode,
+  }));
+
+  const taskProcesses: BackgroundProcessSummary[] = Array.from(
+    backgroundTasks.entries(),
+  ).map(([processId, task]) => ({
+    process_id: processId,
+    kind: "agent_task",
+    task_type: task.subagentType,
+    description: task.description,
+    started_at_ms: task.startTime.getTime(),
+    status: task.status,
+    subagent_id: task.subagentId,
+    ...(task.error ? { error: task.error } : {}),
+  }));
+
+  return [...bashProcesses, ...taskProcesses].sort((a, b) => {
+    const aStart = a.started_at_ms ?? 0;
+    const bStart = b.started_at_ms ?? 0;
+    return bStart - aStart;
+  });
+}
+
 export function emitRuntimeStateUpdates(
   runtime: RuntimeCarrier,
   scope?: {
@@ -105,7 +142,7 @@ export function buildDeviceStatus(
       current_toolset_preference: "auto",
       current_loaded_tools: getToolNames(),
       current_available_skills: [],
-      background_processes: [],
+      background_processes: buildBackgroundProcessSnapshot(),
       pending_control_requests: [],
       memory_directory: null,
       reflection_settings: null,
@@ -163,7 +200,7 @@ export function buildDeviceStatus(
     current_toolset_preference: toolsetPreference,
     current_loaded_tools: getToolNames(),
     current_available_skills: [],
-    background_processes: [],
+    background_processes: buildBackgroundProcessSnapshot(),
     pending_control_requests: interruptedCacheActive
       ? []
       : getPendingControlRequests(listener, scope),

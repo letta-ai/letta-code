@@ -13,6 +13,10 @@ import { INTERRUPTED_BY_USER } from "../../constants";
 import type { MessageQueueItem } from "../../queue/queueRuntime";
 import type { LocalProjectSettings, Settings } from "../../settings-manager";
 import { settingsManager } from "../../settings-manager";
+import {
+  backgroundProcesses,
+  backgroundTasks,
+} from "../../tools/impl/process_manager";
 import type {
   ApprovalResponseBody,
   ControlRequest,
@@ -935,6 +939,58 @@ describe("listen-client v2 status builders", () => {
       (deviceStatus.current_working_directory ?? "").length,
     ).toBeGreaterThan(0);
     expect(deviceStatus.current_toolset_preference).toBe("auto");
+  });
+
+  test("buildDeviceStatus includes bash and task background processes", () => {
+    const runtime = __listenClientTestUtils.createRuntime();
+    backgroundProcesses.clear();
+    backgroundTasks.clear();
+
+    try {
+      backgroundProcesses.set("bash_1", {
+        process: {} as never,
+        command: "sleep 300",
+        stdout: [],
+        stderr: [],
+        status: "running",
+        exitCode: null,
+        lastReadIndex: { stdout: 0, stderr: 0 },
+        startTime: new Date("2026-03-27T12:00:00.000Z"),
+      });
+      backgroundTasks.set("task_1", {
+        description: "Reflect on recent conversations",
+        subagentType: "reflection",
+        subagentId: "subagent-1",
+        status: "completed",
+        output: [],
+        startTime: new Date("2026-03-27T12:01:00.000Z"),
+        outputFile: "/tmp/task_1.log",
+      });
+
+      const deviceStatus = __listenClientTestUtils.buildDeviceStatus(runtime);
+      expect(deviceStatus.background_processes).toEqual([
+        {
+          process_id: "task_1",
+          kind: "agent_task",
+          task_type: "reflection",
+          description: "Reflect on recent conversations",
+          started_at_ms: new Date("2026-03-27T12:01:00.000Z").getTime(),
+          status: "completed",
+          subagent_id: "subagent-1",
+        },
+        {
+          process_id: "bash_1",
+          kind: "bash",
+          command: "sleep 300",
+          started_at_ms: new Date("2026-03-27T12:00:00.000Z").getTime(),
+          status: "running",
+          exit_code: null,
+        },
+      ]);
+    } finally {
+      backgroundProcesses.clear();
+      backgroundTasks.clear();
+    }
   });
 
   test("resolveRuntimeScope returns null until a real runtime is bound", () => {
