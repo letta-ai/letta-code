@@ -2235,7 +2235,7 @@ describe("listen-client edit_file command", () => {
 
       // Check for response
       const responses = socket.sentPayloads.map((p) => JSON.parse(p as string));
-      const editResponse = responses.find(
+      const _editResponse = responses.find(
         (r) => r.type === "edit_file_response",
       );
 

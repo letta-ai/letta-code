@@ -1,6 +1,9 @@
 import { describe, expect, mock, test } from "bun:test";
 import type { Letta } from "@letta-ai/letta-client";
-import { warmMessageSearchCache } from "../../cli/components/MessageSearch";
+import {
+  buildSearchTargetPlan,
+  warmMessageSearchCache,
+} from "../../cli/components/MessageSearch";
 
 describe("warmMessageSearchCache", () => {
   test("posts the new internal search cache-warm request shape", async () => {
@@ -29,6 +32,40 @@ describe("warmMessageSearchCache", () => {
       collection: "messages",
       status: "ACCEPTED",
       warmed: true,
+    });
+  });
+});
+
+describe("buildSearchTargetPlan", () => {
+  test("prefetches adjacent modes and ranges instead of blocking on every combination", () => {
+    expect(
+      buildSearchTargetPlan("hybrid", "agent", {
+        agentId: "agent-1",
+        conversationId: "conv-1",
+      }),
+    ).toEqual({
+      primary: { mode: "hybrid", range: "agent" },
+      prefetch: [
+        { mode: "fts", range: "agent" },
+        { mode: "vector", range: "agent" },
+        { mode: "hybrid", range: "all" },
+        { mode: "hybrid", range: "conv" },
+      ],
+    });
+  });
+
+  test("skips unavailable ranges when there is no current conversation", () => {
+    expect(
+      buildSearchTargetPlan("hybrid", "agent", {
+        agentId: "agent-1",
+      }),
+    ).toEqual({
+      primary: { mode: "hybrid", range: "agent" },
+      prefetch: [
+        { mode: "fts", range: "agent" },
+        { mode: "vector", range: "agent" },
+        { mode: "hybrid", range: "all" },
+      ],
     });
   });
 });
