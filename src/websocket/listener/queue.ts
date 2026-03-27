@@ -70,6 +70,10 @@ function mergeDequeuedBatchContent(
         kind: "task_notification";
         text: string;
       }
+    | {
+        kind: "cron_prompt";
+        text: string;
+      }
   > = [];
 
   for (const item of items) {
@@ -83,6 +87,12 @@ function mergeDequeuedBatchContent(
     if (item.kind === "task_notification") {
       queuedInputs.push({
         kind: "task_notification",
+        text: item.text,
+      });
+    }
+    if (item.kind === "cron_prompt") {
+      queuedInputs.push({
+        kind: "cron_prompt",
         text: item.text,
       });
     }
@@ -287,6 +297,7 @@ export function consumeQueuedTurn(runtime: ConversationRuntime): {
   let queueLen = 0;
   let hasMessage = false;
   let hasTaskNotification = false;
+  let hasCronPrompt = false;
   for (const item of queuedItems) {
     if (
       !isCoalescable(item.kind) ||
@@ -301,9 +312,15 @@ export function consumeQueuedTurn(runtime: ConversationRuntime): {
     if (item.kind === "task_notification") {
       hasTaskNotification = true;
     }
+    if (item.kind === "cron_prompt") {
+      hasCronPrompt = true;
+    }
   }
 
-  if ((!hasMessage && !hasTaskNotification) || queueLen === 0) {
+  if (
+    (!hasMessage && !hasTaskNotification && !hasCronPrompt) ||
+    queueLen === 0
+  ) {
     return null;
   }
 

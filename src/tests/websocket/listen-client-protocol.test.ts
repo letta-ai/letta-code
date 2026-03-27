@@ -181,6 +181,66 @@ describe("listen-client parseServerMessage", () => {
     expect(sync?.type).toBe("sync");
   });
 
+  test("parses cron CRUD commands", () => {
+    const cronList = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "cron_list",
+          request_id: "cron-list-1",
+          agent_id: "agent-1",
+        }),
+      ),
+    );
+    const cronAdd = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "cron_add",
+          request_id: "cron-add-1",
+          agent_id: "agent-1",
+          conversation_id: "default",
+          name: "Test task",
+          description: "A test cron task",
+          cron: "*/5 * * * *",
+          recurring: true,
+          prompt: "hello",
+        }),
+      ),
+    );
+    const cronGet = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "cron_get",
+          request_id: "cron-get-1",
+          task_id: "cron-1",
+        }),
+      ),
+    );
+    const cronDelete = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "cron_delete",
+          request_id: "cron-delete-1",
+          task_id: "cron-1",
+        }),
+      ),
+    );
+    const cronDeleteAll = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "cron_delete_all",
+          request_id: "cron-delete-all-1",
+          agent_id: "agent-1",
+        }),
+      ),
+    );
+
+    expect(cronList?.type).toBe("cron_list");
+    expect(cronAdd?.type).toBe("cron_add");
+    expect(cronGet?.type).toBe("cron_get");
+    expect(cronDelete?.type).toBe("cron_delete");
+    expect(cronDeleteAll?.type).toBe("cron_delete_all");
+  });
+
   test("rejects legacy cancel_run in hard-cut v2 protocol", () => {
     const legacyCancel = parseServerMessage(
       Buffer.from(
@@ -192,6 +252,160 @@ describe("listen-client parseServerMessage", () => {
       ),
     );
     expect(legacyCancel).toBeNull();
+  });
+});
+
+describe("listen-client cron command handling", () => {
+  test("wraps cron library CRUD over WS commands", async () => {
+    const tempRoot = await mkdtemp(join(os.tmpdir(), "letta-listen-cron-"));
+    const originalLettaHome = process.env.LETTA_HOME;
+    process.env.LETTA_HOME = tempRoot;
+
+    try {
+      const socket = new MockSocket(WebSocket.OPEN);
+
+      await __listenClientTestUtils.handleCronCommand(
+        {
+          type: "cron_add",
+          request_id: "cron-add-1",
+          agent_id: "agent-1",
+          conversation_id: "conv-1",
+          name: "Test cron",
+          description: "A test schedule",
+          cron: "*/5 * * * *",
+          recurring: true,
+          prompt: "run the cron task",
+        },
+        socket as unknown as WebSocket,
+      );
+
+      const addMessages = socket.sentPayloads.map((payload) =>
+        JSON.parse(payload as string),
+      );
+      expect(addMessages[0]).toMatchObject({
+        type: "cron_add_response",
+        request_id: "cron-add-1",
+        success: true,
+      });
+      expect(addMessages[0].task).toMatchObject({
+        agent_id: "agent-1",
+        conversation_id: "conv-1",
+        cron: "*/5 * * * *",
+        recurring: true,
+        prompt: "run the cron task",
+      });
+      expect(addMessages[1]).toMatchObject({
+        type: "crons_updated",
+        agent_id: "agent-1",
+        conversation_id: "conv-1",
+      });
+
+      const taskId = addMessages[0].task.id as string;
+      socket.sentPayloads.length = 0;
+
+      await __listenClientTestUtils.handleCronCommand(
+        {
+          type: "cron_list",
+          request_id: "cron-list-1",
+          agent_id: "agent-1",
+        },
+        socket as unknown as WebSocket,
+      );
+      const listResponse = JSON.parse(socket.sentPayloads[0] as string);
+      expect(listResponse).toMatchObject({
+        type: "cron_list_response",
+        request_id: "cron-list-1",
+        success: true,
+      });
+      expect(listResponse.tasks).toHaveLength(1);
+      expect(listResponse.tasks[0].id).toBe(taskId);
+
+      socket.sentPayloads.length = 0;
+      await __listenClientTestUtils.handleCronCommand(
+        {
+          type: "cron_get",
+          request_id: "cron-get-1",
+          task_id: taskId,
+        },
+        socket as unknown as WebSocket,
+      );
+      expect(JSON.parse(socket.sentPayloads[0] as string)).toMatchObject({
+        type: "cron_get_response",
+        request_id: "cron-get-1",
+        success: true,
+        found: true,
+        task: { id: taskId },
+      });
+
+      socket.sentPayloads.length = 0;
+      await __listenClientTestUtils.handleCronCommand(
+        {
+          type: "cron_delete",
+          request_id: "cron-delete-1",
+          task_id: taskId,
+        },
+        socket as unknown as WebSocket,
+      );
+      const deleteMessages = socket.sentPayloads.map((payload) =>
+        JSON.parse(payload as string),
+      );
+      expect(deleteMessages[0]).toMatchObject({
+        type: "cron_delete_response",
+        request_id: "cron-delete-1",
+        success: true,
+        found: true,
+      });
+      expect(deleteMessages[1]).toMatchObject({
+        type: "crons_updated",
+        agent_id: "agent-1",
+        conversation_id: "conv-1",
+      });
+
+      socket.sentPayloads.length = 0;
+      await __listenClientTestUtils.handleCronCommand(
+        {
+          type: "cron_add",
+          request_id: "cron-add-2",
+          agent_id: "agent-1",
+          name: "Another cron",
+          description: "Another test schedule",
+          cron: "0 12 * * *",
+          recurring: true,
+          prompt: "run again",
+        },
+        socket as unknown as WebSocket,
+      );
+      socket.sentPayloads.length = 0;
+      await __listenClientTestUtils.handleCronCommand(
+        {
+          type: "cron_delete_all",
+          request_id: "cron-delete-all-1",
+          agent_id: "agent-1",
+        },
+        socket as unknown as WebSocket,
+      );
+      const deleteAllMessages = socket.sentPayloads.map((payload) =>
+        JSON.parse(payload as string),
+      );
+      expect(deleteAllMessages[0]).toMatchObject({
+        type: "cron_delete_all_response",
+        request_id: "cron-delete-all-1",
+        success: true,
+        agent_id: "agent-1",
+        deleted: 1,
+      });
+      expect(deleteAllMessages[1]).toMatchObject({
+        type: "crons_updated",
+        agent_id: "agent-1",
+      });
+    } finally {
+      if (originalLettaHome) {
+        process.env.LETTA_HOME = originalLettaHome;
+      } else {
+        delete process.env.LETTA_HOME;
+      }
+      await rm(tempRoot, { recursive: true, force: true });
+    }
   });
 });
 

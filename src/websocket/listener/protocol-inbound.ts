@@ -2,6 +2,11 @@ import type WebSocket from "ws";
 import type {
   AbortMessageCommand,
   ChangeDeviceStateCommand,
+  CronAddCommand,
+  CronDeleteAllCommand,
+  CronDeleteCommand,
+  CronGetCommand,
+  CronListCommand,
   EditFileCommand,
   EnableMemfsCommand,
   ExecuteCommandCommand,
@@ -334,6 +339,101 @@ export function isEnableMemfsCommand(
   );
 }
 
+export function isCronListCommand(value: unknown): value is CronListCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    agent_id?: unknown;
+    conversation_id?: unknown;
+  };
+  return (
+    c.type === "cron_list" &&
+    typeof c.request_id === "string" &&
+    (c.agent_id === undefined || typeof c.agent_id === "string") &&
+    (c.conversation_id === undefined || typeof c.conversation_id === "string")
+  );
+}
+
+export function isCronAddCommand(value: unknown): value is CronAddCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    agent_id?: unknown;
+    conversation_id?: unknown;
+    name?: unknown;
+    description?: unknown;
+    cron?: unknown;
+    timezone?: unknown;
+    recurring?: unknown;
+    prompt?: unknown;
+    scheduled_for?: unknown;
+  };
+  return (
+    c.type === "cron_add" &&
+    typeof c.request_id === "string" &&
+    typeof c.agent_id === "string" &&
+    (c.conversation_id === undefined ||
+      typeof c.conversation_id === "string") &&
+    typeof c.name === "string" &&
+    typeof c.description === "string" &&
+    typeof c.cron === "string" &&
+    (c.timezone === undefined || typeof c.timezone === "string") &&
+    typeof c.recurring === "boolean" &&
+    typeof c.prompt === "string" &&
+    (c.scheduled_for === undefined ||
+      c.scheduled_for === null ||
+      typeof c.scheduled_for === "string")
+  );
+}
+
+export function isCronGetCommand(value: unknown): value is CronGetCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    task_id?: unknown;
+  };
+  return (
+    c.type === "cron_get" &&
+    typeof c.request_id === "string" &&
+    typeof c.task_id === "string"
+  );
+}
+
+export function isCronDeleteCommand(
+  value: unknown,
+): value is CronDeleteCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    task_id?: unknown;
+  };
+  return (
+    c.type === "cron_delete" &&
+    typeof c.request_id === "string" &&
+    typeof c.task_id === "string"
+  );
+}
+
+export function isCronDeleteAllCommand(
+  value: unknown,
+): value is CronDeleteAllCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    agent_id?: unknown;
+  };
+  return (
+    c.type === "cron_delete_all" &&
+    typeof c.request_id === "string" &&
+    typeof c.agent_id === "string"
+  );
+}
+
 export function isExecuteCommandCommand(
   value: unknown,
 ): value is ExecuteCommandCommand {
@@ -373,6 +473,11 @@ export function parseServerMessage(
       isEditFileCommand(parsed) ||
       isListMemoryCommand(parsed) ||
       isEnableMemfsCommand(parsed) ||
+      isCronListCommand(parsed) ||
+      isCronAddCommand(parsed) ||
+      isCronGetCommand(parsed) ||
+      isCronDeleteCommand(parsed) ||
+      isCronDeleteAllCommand(parsed) ||
       isExecuteCommandCommand(parsed)
     ) {
       return parsed as WsProtocolCommand;
