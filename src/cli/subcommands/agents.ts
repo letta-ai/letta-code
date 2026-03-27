@@ -1,20 +1,40 @@
 import { parseArgs } from "node:util";
 import type { AgentListParams } from "@letta-ai/letta-client/resources/agents/agents";
 import { getClient } from "../../agent/client";
+import { type CreateAgentOptions, createAgent } from "../../agent/create";
+import { GIT_MEMORY_ENABLED_TAG } from "../../agent/memoryGit";
+import {
+  getPersonalityContent,
+  PERSONALITY_OPTIONS,
+  type PersonalityId,
+} from "../../agent/personality";
+import { settingsManager } from "../../settings-manager";
+
+const VALID_PERSONALITIES = PERSONALITY_OPTIONS.map((p) => p.id);
 
 function printUsage(): void {
   console.log(
     `
 Usage:
   letta agents list [options]
+  letta agents create [options]
 
-Options:
+List Options:
   --name <name>         Exact name match
   --query <text>        Fuzzy search by name
   --tags <tag1,tag2>    Filter by tags (comma-separated)
   --match-all-tags      Require ALL tags (default: ANY)
   --include-blocks      Include agent.blocks in response
   --limit <n>           Max results (default: 20)
+
+Create Options:
+  --name <name>         Agent name (default: "Letta Code")
+  --model <model>       Model handle (e.g., anthropic/claude-sonnet-4-20250514)
+  --personality <name>  Personality preset: memo, linus, kawaii, claude, codex
+  --description <text>  Agent description
+  --tags <tag1,tag2>    Tags (comma-separated)
+
+  Creates a memfs-enabled agent with persona.md pre-populated.
 
 Notes:
   - Output is JSON only.
@@ -46,6 +66,10 @@ const AGENTS_OPTIONS = {
   "match-all-tags": { type: "boolean" },
   "include-blocks": { type: "boolean" },
   limit: { type: "string" },
+  // Create options
+  model: { type: "string" },
+  personality: { type: "string" },
+  description: { type: "string" },
 } as const;
 
 function parseAgentsArgs(argv: string[]) {
@@ -74,33 +98,117 @@ export async function runAgentsSubcommand(argv: string[]): Promise<number> {
     return 0;
   }
 
-  if (action !== "list") {
-    console.error(`Unknown action: ${action}`);
-    printUsage();
+  if (action === "create") {
+    return runCreateAction(parsed.values);
+  }
+
+  if (action === "list") {
+    return runListAction(parsed.values);
+  }
+
+  console.error(`Unknown action: ${action}`);
+  printUsage();
+  return 1;
+}
+
+async function runCreateAction(
+  values: ReturnType<typeof parseAgentsArgs>["values"],
+): Promise<number> {
+  const personality = values.personality as string | undefined;
+  if (
+    personality &&
+    !VALID_PERSONALITIES.includes(personality as PersonalityId)
+  ) {
+    const valid = VALID_PERSONALITIES.join(", ");
+    console.error(`Unknown personality: ${personality}. Valid: ${valid}`);
     return 1;
   }
 
-  const params: AgentListParams = {
-    limit: parseLimit(parsed.values.limit, 20),
+  // Get persona content if personality specified
+  let personaContent: string | undefined;
+  if (personality) {
+    personaContent = getPersonalityContent(personality as PersonalityId);
+  }
+
+  const options: CreateAgentOptions = {
+    memoryPromptMode: "memfs",
+    // Set persona block value directly if personality specified
+    blockValues: personaContent ? { persona: personaContent } : undefined,
   };
 
-  if (typeof parsed.values.name === "string") {
-    params.name = parsed.values.name;
+  if (typeof values.name === "string") {
+    options.name = values.name;
   }
 
-  if (typeof parsed.values.query === "string") {
-    params.query_text = parsed.values.query;
+  if (typeof values.model === "string") {
+    options.model = values.model;
   }
 
-  const tags = parseTags(parsed.values.tags);
+  if (typeof values.description === "string") {
+    options.description = values.description;
+  }
+
+  const tags = parseTags(values.tags);
+  if (tags) {
+    options.tags = tags;
+  }
+
+  try {
+    const result = await createAgent(options);
+    const agentId = result.agent.id;
+
+    // Add git-memory-enabled tag via API (no git clone needed here)
+    // Always try - if it fails (self-hosted without memfs), that's fine
+    try {
+      const client = await getClient();
+      const agentTags = result.agent.tags || [];
+      if (!agentTags.includes(GIT_MEMORY_ENABLED_TAG)) {
+        await client.agents.update(agentId, {
+          tags: [...agentTags, GIT_MEMORY_ENABLED_TAG],
+        });
+      }
+      // Mark memfs enabled locally so interactive startup knows
+      settingsManager.setMemfsEnabled(agentId, true);
+    } catch {
+      // Self-hosted or memfs not available - skip silently
+    }
+
+    // Re-fetch agent to get updated tags in output
+    const client = await getClient();
+    const updatedAgent = await client.agents.retrieve(agentId);
+
+    console.log(JSON.stringify(updatedAgent, null, 2));
+    return 0;
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    return 1;
+  }
+}
+
+async function runListAction(
+  values: ReturnType<typeof parseAgentsArgs>["values"],
+): Promise<number> {
+  const params: AgentListParams = {
+    limit: parseLimit(values.limit, 20),
+  };
+
+  if (typeof values.name === "string") {
+    params.name = values.name;
+  }
+
+  if (typeof values.query === "string") {
+    params.query_text = values.query;
+  }
+
+  const tags = parseTags(values.tags);
   if (tags) {
     params.tags = tags;
-    if (parsed.values["match-all-tags"]) {
+    if (values["match-all-tags"]) {
       params.match_all_tags = true;
     }
   }
 
-  if (parsed.values["include-blocks"]) {
+  if (values["include-blocks"]) {
     params.include = ["agent.blocks"];
   }
 
