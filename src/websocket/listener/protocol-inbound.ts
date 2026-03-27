@@ -18,6 +18,8 @@ import type {
   RuntimeScope,
   SearchFilesCommand,
   SetReflectionSettingsCommand,
+  SkillDisableCommand,
+  SkillEnableCommand,
   SyncCommand,
   TerminalInputCommand,
   TerminalKillCommand,
@@ -436,6 +438,38 @@ export function isCronDeleteAllCommand(
   );
 }
 
+export function isSkillEnableCommand(
+  value: unknown,
+): value is SkillEnableCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    skill_path?: unknown;
+  };
+  return (
+    c.type === "skill_enable" &&
+    typeof c.request_id === "string" &&
+    typeof c.skill_path === "string"
+  );
+}
+
+export function isSkillDisableCommand(
+  value: unknown,
+): value is SkillDisableCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    name?: unknown;
+  };
+  return (
+    c.type === "skill_disable" &&
+    typeof c.request_id === "string" &&
+    typeof c.name === "string"
+  );
+}
+
 export function isGetReflectionSettingsCommand(
   value: unknown,
 ): value is GetReflectionSettingsCommand {
@@ -534,6 +568,8 @@ export function parseServerMessage(
       isCronGetCommand(parsed) ||
       isCronDeleteCommand(parsed) ||
       isCronDeleteAllCommand(parsed) ||
+      isSkillEnableCommand(parsed) ||
+      isSkillDisableCommand(parsed) ||
       isGetReflectionSettingsCommand(parsed) ||
       isSetReflectionSettingsCommand(parsed) ||
       isExecuteCommandCommand(parsed)
