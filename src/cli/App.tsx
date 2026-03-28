@@ -556,6 +556,7 @@ const INTERACTIVE_SLASH_COMMANDS = new Set([
   "/help",
   "/agents",
   "/resume",
+  "/delete",
   "/pinned",
   "/profiles",
   "/search",
@@ -1417,6 +1418,8 @@ export default function App({
     | "skills"
     | null;
   const [activeOverlay, setActiveOverlay] = useState<ActiveOverlay>(null);
+  /** Tracks whether the conversation selector was opened for "resume" or "delete" */
+  const conversationOverlayModeRef = useRef<"resume" | "delete">("resume");
   const pendingOverlayCommandRef = useRef<{
     overlay: ActiveOverlay;
     command: CommandHandle;
@@ -1455,6 +1458,7 @@ export default function App({
     setSearchQuery("");
     setModelSelectorOptions({});
     setModelReasoningPrompt(null);
+    conversationOverlayModeRef.current = "resume";
   }, [activeOverlay]);
 
   // Queued overlay action - executed after end_turn when user makes a selection
@@ -9025,9 +9029,96 @@ export default function App({
           }
 
           // No conversation ID provided - show selector
+          conversationOverlayModeRef.current = "resume";
           startOverlayCommand(
             "conversations",
             "/resume",
+            "Opening conversation selector...",
+            "Conversation selector dismissed",
+          );
+          setActiveOverlay("conversations");
+          return { submitted: true };
+        }
+
+        // Special handling for /delete command - delete a conversation
+        if (msg.trim().startsWith("/delete")) {
+          const parts = msg.trim().split(/\s+/);
+          const targetConvId = parts[1]; // Optional conversation ID
+
+          if (targetConvId === "help") {
+            const cmd = commandRunner.start(
+              msg.trim(),
+              "Showing delete help...",
+            );
+            const output = [
+              "/delete help",
+              "",
+              "Delete a conversation (soft delete).",
+              "",
+              "USAGE",
+              "  /delete                       — open conversation selector to pick one to delete",
+              "  /delete <conversation_id>     — delete a specific conversation",
+              "  /delete help                  — show this help",
+              "",
+              "After deletion, you will be switched to the default conversation.",
+              "The 'default' and current conversation cannot be deleted.",
+            ].join("\n");
+            cmd.finish(output, true);
+            return { submitted: true };
+          }
+
+          if (targetConvId) {
+            const cmd = commandRunner.start(
+              msg.trim(),
+              "Deleting conversation...",
+            );
+
+            if (targetConvId === "default") {
+              cmd.fail("Cannot delete the default conversation");
+              return { submitted: true };
+            }
+
+            if (targetConvId === conversationId) {
+              cmd.fail(
+                "Cannot delete the current conversation. Switch to another conversation first using /resume, then delete this one.",
+              );
+              return { submitted: true };
+            }
+
+            setCommandRunning(true);
+
+            try {
+              const client = await getClient();
+
+              // Delete the conversation via API (soft delete)
+              await client.conversations.delete(targetConvId);
+
+              cmd.finish(`Deleted conversation ${targetConvId}`, true);
+            } catch (error) {
+              let errorMsg = "Unknown error";
+              if (error instanceof APIError) {
+                if (error.status === 404) {
+                  errorMsg = "Conversation not found";
+                } else if (error.status === 422) {
+                  errorMsg = "Invalid conversation ID";
+                } else {
+                  errorMsg = error.message;
+                }
+              } else if (error instanceof Error) {
+                errorMsg = error.message;
+              }
+              cmd.fail(`Failed to delete conversation: ${errorMsg}`);
+            } finally {
+              setCommandRunning(false);
+            }
+            return { submitted: true };
+          }
+
+          // No conversation ID provided - show conversation selector
+          conversationOverlayModeRef.current = "delete";
+          startOverlayCommand(
+            "conversations",
+            "/delete",
             "Opening conversation selector...",
             "Conversation selector dismissed",
           );
@@ -14162,15 +14253,70 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
               />
             )}
 
-            {/* Conversation Selector - for resuming conversations */}
+            {/* Conversation Selector - for resuming or deleting conversations */}
             {activeOverlay === "conversations" && (
               <ConversationSelector
                 agentId={agentId}
                 agentName={agentName ?? undefined}
                 currentConversationId={conversationId}
+                mode={conversationOverlayModeRef.current}
                 onSelect={async (convId, selectorContext) => {
+                  const overlayMode = conversationOverlayModeRef.current;
                   const overlayCommand = consumeOverlayCommand("conversations");
                   closeOverlay();
+
+                  // ── Delete mode ──
+                  if (overlayMode === "delete") {
+                    const cmd =
+                      overlayCommand ??
+                      commandRunner.start(
+                        "/delete",
+                        "Deleting conversation...",
+                      );
+
+                    if (convId === "default") {
+                      cmd.fail("Cannot delete the default conversation");
+                      return;
+                    }
+
+                    if (convId === conversationId) {
+                      cmd.fail(
+                        "Cannot delete the current conversation. Switch to another conversation first using /resume, then delete this one.",
+                      );
+                      return;
+                    }
+
+                    setCommandRunning(true);
+                    cmd.update({
+                      output: "Deleting conversation...",
+                      phase: "running",
+                    });
+
+                    try {
+                      const client = await getClient();
+                      await client.conversations.delete(convId);
+                      cmd.finish(`Deleted conversation ${convId}`, true);
+                    } catch (error) {
+                      let errorMsg = "Unknown error";
+                      if (error instanceof APIError) {
+                        if (error.status === 404) {
+                          errorMsg = "Conversation not found";
+                        } else if (error.status === 422) {
+                          errorMsg = "Invalid conversation ID";
+                        } else {
+                          errorMsg = error.message;
+                        }
+                      } else if (error instanceof Error) {
+                        errorMsg = error.message;
+                      }
+                      cmd.fail(`Failed to delete conversation: ${errorMsg}`);
+                    } finally {
+                      setCommandRunning(false);
+                    }
+                    return;
+                  }
+
+                  // ── Resume mode (default) ──
 
                   // Skip if already on this conversation
                   if (convId === conversationId) {
@@ -14375,6 +14521,9 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
                   }
                 }}
                 onNewConversation={async () => {
+                  // New conversation is not available in delete mode
+                  if (conversationOverlayModeRef.current === "delete") return;
+
                   const overlayCommand = consumeOverlayCommand("conversations");
                   closeOverlay();
 

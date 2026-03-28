@@ -537,6 +537,15 @@ export const commands: Record<string, Command> = {
       return "Opening conversation selector...";
     },
   },
+  "/delete": {
+    desc: "Delete a conversation",
+    args: "[conversation_id]",
+    order: 20,
+    handler: () => {
+      // Handled specially in App.tsx to show conversation selector or delete directly
+      return "Opening conversation selector...";
+    },
+  },
   "/pinned": {
     desc: "Browse pinned agents",
     hidden: true, // Alias for /agents (opens to Pinned tab)
