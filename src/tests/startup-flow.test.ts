@@ -20,10 +20,26 @@ async function runCli(
   const { timeoutMs = 30000, expectExit } = options;
 
   return new Promise((resolve, reject) => {
+    // For credential-check tests, explicitly unset LETTA_API_KEY to test error handling
+    const env: Record<string, string | undefined> = {
+      ...process.env,
+      LETTA_CODE_AGENT_ROLE: "subagent",
+    };
+    const requiresAuth =
+      args.includes("--new-agent") ||
+      args.includes("--new") ||
+      args.includes("--continue") ||
+      args.includes("-c") ||
+      args.includes("--conversation") ||
+      args.includes("-C") ||
+      args.includes("--import");
+    if (requiresAuth && !args.includes("--agent")) {
+      delete env.LETTA_API_KEY;
+    }
+
     const proc = spawn("bun", ["run", "dev", ...args], {
       cwd: projectRoot,
-      // Mark as subagent to prevent polluting user's LRU settings
-      env: { ...process.env, LETTA_CODE_AGENT_ROLE: "subagent" },
+      env,
     });
 
     let stdout = "";

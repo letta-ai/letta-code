@@ -703,11 +703,6 @@ export function onChunk(
     return;
   }
 
-  // TODO remove once SDK v1 has proper typing for in-stream errors
-  // Check for streaming error objects (not typed in SDK but emitted by backend)
-  // Note: Error handling moved to catch blocks in App.tsx and headless.ts
-  // The SDK now throws APIError when it sees event: error, so chunks never have error property
-
   switch (chunk.message_type) {
     case "reasoning_message": {
       const chunkWithIds = chunk as LettaStreamingResponse & {
