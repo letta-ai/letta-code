@@ -2,9 +2,10 @@ import { parseArgs } from "node:util";
 import type { AgentListParams } from "@letta-ai/letta-client/resources/agents/agents";
 import { getClient } from "../../agent/client";
 import { type CreateAgentOptions, createAgent } from "../../agent/create";
+import { getDefaultMemoryBlocks } from "../../agent/memory";
 import { GIT_MEMORY_ENABLED_TAG } from "../../agent/memoryGit";
 import {
-  getPersonalityContent,
+  getPersonalityBlockDefinitions,
   PERSONALITY_OPTIONS,
   type PersonalityId,
 } from "../../agent/personality";
@@ -33,6 +34,7 @@ Create Options:
   --personality <name>  Personality preset: memo, linus, kawaii, claude, codex
   --description <text>  Agent description
   --tags <tag1,tag2>    Tags (comma-separated)
+  --pinned              Pin the created agent globally
 
   Creates a memfs-enabled agent with persona.md pre-populated.
 
@@ -70,6 +72,7 @@ const AGENTS_OPTIONS = {
   model: { type: "string" },
   personality: { type: "string" },
   description: { type: "string" },
+  pinned: { type: "boolean" },
 } as const;
 
 function parseAgentsArgs(argv: string[]) {
@@ -124,17 +127,52 @@ async function runCreateAction(
     return 1;
   }
 
-  // Get persona content if personality specified
-  let personaContent: string | undefined;
+  // Resolve personality-specific memory block overrides, if any.
+  let personalityBlockDefinitions:
+    | ReturnType<typeof getPersonalityBlockDefinitions>
+    | undefined;
   if (personality) {
-    personaContent = getPersonalityContent(personality as PersonalityId);
+    personalityBlockDefinitions = getPersonalityBlockDefinitions(
+      personality as PersonalityId,
+    );
   }
 
   const options: CreateAgentOptions = {
     memoryPromptMode: "memfs",
-    // Set persona block value directly if personality specified
-    blockValues: personaContent ? { persona: personaContent } : undefined,
   };
+
+  if (personalityBlockDefinitions) {
+    const defaultMemoryBlocks = await getDefaultMemoryBlocks();
+    options.memoryBlocks = defaultMemoryBlocks.map((block) => {
+      if (block.label === "persona") {
+        return {
+          label: block.label,
+          value: personalityBlockDefinitions.persona.value,
+          description:
+            personalityBlockDefinitions.persona.description ??
+            block.description ??
+            undefined,
+        };
+      }
+
+      if (block.label === "human") {
+        return {
+          label: block.label,
+          value: personalityBlockDefinitions.human.value,
+          description:
+            personalityBlockDefinitions.human.description ??
+            block.description ??
+            undefined,
+        };
+      }
+
+      return {
+        label: block.label,
+        value: block.value,
+        description: block.description ?? undefined,
+      };
+    });
+  }
 
   if (typeof values.name === "string") {
     options.name = values.name;
@@ -156,6 +194,10 @@ async function runCreateAction(
   try {
     const result = await createAgent(options);
     const agentId = result.agent.id;
+
+    if (values.pinned) {
+      settingsManager.pinGlobal(agentId);
+    }
 
     // Add git-memory-enabled tag via API (no git clone needed here)
     // Always try - if it fails (self-hosted without memfs), that's fine
