@@ -1,12 +1,29 @@
 import { describe, expect, mock, test } from "bun:test";
 import type Letta from "@letta-ai/letta-client";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
-import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
+import type {
+  Message,
+  MessageType,
+} from "@letta-ai/letta-client/resources/agents/messages";
 import { getResumeData } from "../../agent/check-approval";
 
 type ResumeAgentState = AgentState & {
   in_context_message_ids?: string[] | null;
 };
+
+const RESUME_BACKFILL_MESSAGE_TYPES: MessageType[] = [
+  "user_message",
+  "assistant_message",
+  "reasoning_message",
+  "event_message",
+  "summary_message",
+];
+
+const DEFAULT_RESUME_MESSAGE_TYPES: MessageType[] = [
+  ...RESUME_BACKFILL_MESSAGE_TYPES,
+  "approval_request_message",
+  "approval_response_message",
+];
 
 function makeAgent(overrides: Partial<ResumeAgentState> = {}): AgentState {
   return {
@@ -190,6 +207,12 @@ describe("getResumeData", () => {
 
     expect(messagesRetrieve).toHaveBeenCalledTimes(1);
     expect(agentsList).toHaveBeenCalledTimes(1);
+    expect(agentsList).toHaveBeenCalledWith("agent-test", {
+      conversation_id: "default",
+      limit: 200,
+      order: "desc",
+      include_return_message_types: DEFAULT_RESUME_MESSAGE_TYPES,
+    });
     expect(resume.pendingApprovals).toHaveLength(0);
     expect(resume.messageHistory.length).toBeGreaterThan(0);
   });
