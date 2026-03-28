@@ -17,6 +17,8 @@ interface ConversationSelectorProps {
   agentId: string;
   agentName?: string;
   currentConversationId: string;
+  /** Controls the visual mode of the selector. "resume" (default) shows resume UI, "delete" shows delete UI. */
+  mode?: "resume" | "delete";
   onSelect: (
     conversationId: string,
     context?: {
@@ -204,6 +206,7 @@ export function ConversationSelector({
   agentId,
   agentName,
   currentConversationId,
+  mode = "resume",
   onSelect,
   onNewConversation,
   onCancel,
@@ -466,8 +469,8 @@ export function ConversationSelector({
       }
     } else if (key.escape) {
       onCancel();
-    } else if (input === "n" || input === "N") {
-      // New conversation
+    } else if ((input === "n" || input === "N") && mode !== "delete") {
+      // New conversation (disabled in delete mode)
       onNewConversation();
     } else if (key.leftArrow) {
       // Previous page
@@ -619,7 +622,7 @@ export function ConversationSelector({
   return (
     <Box flexDirection="column">
       {/* Command header */}
-      <Text dimColor>{"> /resume"}</Text>
+      <Text dimColor>{mode === "delete" ? "> /delete" : "> /resume"}</Text>
       <Text dimColor>{solidLine}</Text>
 
       <Box height={1} />
@@ -627,7 +630,9 @@ export function ConversationSelector({
       {/* Title */}
       <Box marginBottom={1}>
         <Text bold color={colors.selector.title}>
-          Resume a previous conversation
+          {mode === "delete"
+            ? "Delete a conversation"
+            : "Resume a previous conversation"}
         </Text>
       </Box>
 
@@ -682,7 +687,9 @@ export function ConversationSelector({
           const footerWidth = Math.max(0, terminalWidth - 2);
           const pageText = `Page ${page + 1}${hasMore ? "+" : `/${totalPages || 1}`}${loadingMore ? " (loading...)" : ""}`;
           const hintsText =
-            "Enter select · ↑↓ navigate · ←→ page · N new · Esc cancel";
+            mode === "delete"
+              ? "Enter delete · ↑↓ navigate · ←→ page · Esc cancel"
+              : "Enter select · ↑↓ navigate · ←→ page · N new · Esc cancel";
 
           return (
             <Box flexDirection="column">
