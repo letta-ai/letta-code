@@ -66,7 +66,7 @@ import {
 import {
   applyPersonalityToMemory,
   detectPersonalityFromPersonaFile,
-  getPersonalityContent,
+  getPersonalityBlockValues,
   getPersonalityOption,
   type PersonalityId,
 } from "../agent/personality";
@@ -11883,7 +11883,16 @@ ${SYSTEM_REMINDER_CLOSE}
             phase: "running",
           });
 
-          const expectedContent = getPersonalityContent(personalityId).trim();
+          const expectedBlocks = new Map<string, string>([
+            [
+              "system/persona",
+              getPersonalityBlockValues(personalityId).persona.trim(),
+            ],
+            [
+              "system/human",
+              getPersonalityBlockValues(personalityId).human.trim(),
+            ],
+          ]);
           const client = await getClient();
           const maxWaitMs = 300_000;
           const pollIntervalMs = 1_000;
@@ -11893,15 +11902,26 @@ ${SYSTEM_REMINDER_CLOSE}
           while (Date.now() - start < maxWaitMs) {
             try {
               const blockPage = await client.agents.blocks.list(agentId);
-              const block = blockPage.items.find(
-                (b) => b.label === "system/persona",
+              const missingLabels = Array.from(expectedBlocks.keys()).filter(
+                (label) =>
+                  !blockPage.items.some((block) => block.label === label),
               );
-              if (!block) {
+              if (missingLabels.length > 0) {
                 throw new Error(
-                  "system/persona block not found on agent. Run `/doctor` to diagnose.",
+                  `${missingLabels.join(", ")} block not found on agent. Run \`/doctor\` to diagnose.`,
                 );
               }
-              if (block.value.includes(expectedContent)) {
+
+              const allBlocksPropagated = Array.from(
+                expectedBlocks.entries(),
+              ).every(([label, expectedContent]) =>
+                blockPage.items.some(
+                  (block) =>
+                    block.label === label &&
+                    block.value.includes(expectedContent),
+                ),
+              );
+              if (allBlocksPropagated) {
                 propagated = true;
                 break;
               }
