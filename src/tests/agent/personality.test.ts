@@ -1,7 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import {
   detectPersonalityFromPersonaFile,
+  getDefaultHumanContent,
+  getPersonalityBlockDefinitions,
+  getPersonalityBlockValues,
   getPersonalityContent,
+  getPersonalityHumanContent,
   PERSONALITY_OPTIONS,
   replaceBodyPreservingFrontmatter,
 } from "../../agent/personality";
@@ -34,5 +38,25 @@ describe("personality helpers", () => {
   test("detectPersonalityFromPersonaFile returns null for unknown body", () => {
     const personaFile = `${VALID_FRONTMATTER}This does not match any preset.\n`;
     expect(detectPersonalityFromPersonaFile(personaFile)).toBeNull();
+  });
+
+  test("personality block values always include both persona and human", () => {
+    for (const option of PERSONALITY_OPTIONS) {
+      const values = getPersonalityBlockValues(option.id);
+      expect(values.persona.trim().length).toBeGreaterThan(0);
+      expect(values.human.trim().length).toBeGreaterThan(0);
+    }
+  });
+
+  test("claude and codex use the default human block", () => {
+    const defaultHuman = getDefaultHumanContent();
+    expect(getPersonalityHumanContent("claude")).toBe(defaultHuman);
+    expect(getPersonalityHumanContent("codex")).toBe(defaultHuman);
+  });
+
+  test("kawaii block definitions carry personality-specific descriptions", () => {
+    const definitions = getPersonalityBlockDefinitions("kawaii");
+    expect(definitions.persona.description).toContain("sparkly memory");
+    expect(definitions.human.description).toContain("senpai");
   });
 });

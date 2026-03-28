@@ -10,14 +10,21 @@ const execFile = promisify(execFileCb);
 
 const PRIMARY_PERSONA_RELATIVE_PATH = "system/persona.md";
 const LEGACY_PERSONA_RELATIVE_PATH = "memory/system/persona.md";
+const PRIMARY_HUMAN_RELATIVE_PATH = "system/human.md";
+const LEGACY_HUMAN_RELATIVE_PATH = "memory/system/human.md";
 
 export interface PersonalityOption {
-  id: "kawaii" | "codex" | "claude" | "linus";
+  id: "kawaii" | "codex" | "claude" | "linus" | "memo";
   label: string;
   description: string;
 }
 
 export const PERSONALITY_OPTIONS: PersonalityOption[] = [
+  {
+    id: "memo",
+    label: "Memo",
+    description: "A thoughtful, substantive coding assistant that learns",
+  },
   {
     id: "linus",
     label: "Linus",
@@ -52,10 +59,22 @@ export interface ApplyPersonalityToMemoryResult {
   changed: boolean;
   personality: PersonalityOption;
   personaRelativePath: string;
+  humanRelativePath: string;
   commitMessage?: string;
 }
 
+export interface PersonalityBlockDefinition {
+  value: string;
+  description?: string;
+  templatePromptAssetName: string;
+}
+
 const FRONTMATTER_REGEX = /^(---\n[\s\S]*?\n---)\n*/;
+const EDITABLE_FRONTMATTER_KEYS = [
+  "description",
+  "limit",
+  "read_only",
+] as const;
 
 function normalizeComparableContent(content: string): string {
   return content.replace(/\r\n/g, "\n").trim();
@@ -65,27 +84,117 @@ function ensureTrailingNewline(content: string): string {
   return `${content.trimEnd()}\n`;
 }
 
-function buildDefaultPersonaFile(body: string): string {
-  return `---\ndescription: Agent personality\nlimit: 20000\n---\n\n${ensureTrailingNewline(body.trim())}`;
-}
-
-function getPersonaRelativePathForRepo(repoDir: string): string {
-  const primaryPath = join(repoDir, PRIMARY_PERSONA_RELATIVE_PATH);
-  if (existsSync(primaryPath)) {
-    return PRIMARY_PERSONA_RELATIVE_PATH;
+function getPromptTemplate(promptAssetName: string): {
+  frontmatter: Record<string, string>;
+  body: string;
+} {
+  const rawPrompt = MEMORY_PROMPTS[promptAssetName];
+  if (!rawPrompt) {
+    throw new Error(`Missing built-in prompt content for ${promptAssetName}`);
   }
 
-  const legacyPath = join(repoDir, LEGACY_PERSONA_RELATIVE_PATH);
+  return parseMdxFrontmatter(rawPrompt);
+}
+
+function getPromptBody(promptAssetName: string): string {
+  const { body } = getPromptTemplate(promptAssetName);
+  if (!body.trim()) {
+    throw new Error(`${promptAssetName} has empty body content`);
+  }
+
+  return ensureTrailingNewline(body);
+}
+
+function getEditablePromptFrontmatter(
+  promptAssetName: string,
+): Record<string, string> {
+  const { frontmatter } = getPromptTemplate(promptAssetName);
+  return Object.fromEntries(
+    Object.entries(frontmatter).filter(([key]) =>
+      (EDITABLE_FRONTMATTER_KEYS as readonly string[]).includes(key),
+    ),
+  );
+}
+
+function serializeFrontmatter(frontmatter: Record<string, string>): string {
+  const orderedKeys = [
+    ...EDITABLE_FRONTMATTER_KEYS,
+    ...Object.keys(frontmatter).filter(
+      (key) => !(EDITABLE_FRONTMATTER_KEYS as readonly string[]).includes(key),
+    ),
+  ];
+  const lines: string[] = [];
+
+  for (const key of orderedKeys) {
+    const value = frontmatter[key];
+    if (value === undefined) {
+      continue;
+    }
+    lines.push(`${key}: ${value}`);
+  }
+
+  return `---\n${lines.join("\n")}\n---`;
+}
+
+function buildDefaultMemoryFile(
+  templatePromptAssetName: string,
+  body: string,
+  description?: string,
+): string {
+  const normalizedBody = ensureTrailingNewline(body.trim());
+  if (!normalizedBody.trim()) {
+    throw new Error("Memory content cannot be empty");
+  }
+
+  const frontmatter = getEditablePromptFrontmatter(templatePromptAssetName);
+  if (description !== undefined) {
+    frontmatter.description = description;
+  }
+
+  if (Object.keys(frontmatter).length === 0) {
+    return normalizedBody;
+  }
+
+  return `${serializeFrontmatter(frontmatter)}\n\n${normalizedBody}`;
+}
+
+function getMemoryFileRelativePathForRepo(
+  repoDir: string,
+  primaryRelativePath: string,
+  legacyRelativePath: string,
+): string {
+  const primaryPath = join(repoDir, primaryRelativePath);
+  if (existsSync(primaryPath)) {
+    return primaryRelativePath;
+  }
+
+  const legacyPath = join(repoDir, legacyRelativePath);
   if (existsSync(legacyPath)) {
-    return LEGACY_PERSONA_RELATIVE_PATH;
+    return legacyRelativePath;
   }
 
   // Prefer legacy layout when the repo has a top-level memory/ directory.
   if (existsSync(join(repoDir, "memory"))) {
-    return LEGACY_PERSONA_RELATIVE_PATH;
+    return legacyRelativePath;
   }
 
-  return PRIMARY_PERSONA_RELATIVE_PATH;
+  return primaryRelativePath;
+}
+
+function getPersonaRelativePathForRepo(repoDir: string): string {
+  return getMemoryFileRelativePathForRepo(
+    repoDir,
+    PRIMARY_PERSONA_RELATIVE_PATH,
+    LEGACY_PERSONA_RELATIVE_PATH,
+  );
+}
+
+function getHumanRelativePathForRepo(repoDir: string): string {
+  return getMemoryFileRelativePathForRepo(
+    repoDir,
+    PRIMARY_HUMAN_RELATIVE_PATH,
+    LEGACY_HUMAN_RELATIVE_PATH,
+  );
 }
 
 function getSystemPromptById(systemPromptId: string): string {
@@ -111,17 +220,12 @@ export function getPersonalityOption(
 }
 
 export function getPersonalityContent(personalityId: PersonalityId): string {
-  if (personalityId === "kawaii") {
-    const rawPrompt = MEMORY_PROMPTS["persona_kawaii.mdx"];
-    if (!rawPrompt) {
-      throw new Error("Missing built-in prompt content for persona_kawaii.mdx");
-    }
+  if (personalityId === "memo") {
+    return getPromptBody("persona_memo.mdx");
+  }
 
-    const { body } = parseMdxFrontmatter(rawPrompt);
-    if (!body.trim()) {
-      throw new Error("persona_kawaii.mdx has empty body content");
-    }
-    return ensureTrailingNewline(body);
+  if (personalityId === "kawaii") {
+    return getPromptBody("persona_kawaii.mdx");
   }
 
   if (personalityId === "codex") {
@@ -129,38 +233,106 @@ export function getPersonalityContent(personalityId: PersonalityId): string {
   }
 
   if (personalityId === "linus") {
-    const rawPrompt = MEMORY_PROMPTS["persona_linus.mdx"];
-    if (!rawPrompt) {
-      throw new Error("Missing built-in prompt content for persona_linus.mdx");
-    }
-    const { body } = parseMdxFrontmatter(rawPrompt);
-    if (!body.trim()) {
-      throw new Error("persona_linus.mdx has empty body content");
-    }
-    return ensureTrailingNewline(body);
+    return getPromptBody("persona_linus.mdx");
   }
 
   return ensureTrailingNewline(getSystemPromptById("source-claude"));
 }
 
+export function getDefaultHumanContent(): string {
+  return getPromptBody("human.mdx");
+}
+
+export function getPersonalityHumanContent(
+  personalityId: PersonalityId,
+): string {
+  if (personalityId === "memo") {
+    return getPromptBody("human_memo.mdx");
+  }
+
+  if (personalityId === "linus") {
+    return getPromptBody("human_linus.mdx");
+  }
+
+  if (personalityId === "kawaii") {
+    return getPromptBody("human_kawaii.mdx");
+  }
+
+  return getDefaultHumanContent();
+}
+
+export function getPersonalityBlockValues(personalityId: PersonalityId): {
+  persona: string;
+  human: string;
+} {
+  const overrides = getPersonalityBlockDefinitions(personalityId);
+  return {
+    persona: overrides.persona.value,
+    human: overrides.human.value,
+  };
+}
+
+export function getPersonalityBlockDefinitions(personalityId: PersonalityId): {
+  persona: PersonalityBlockDefinition;
+  human: PersonalityBlockDefinition;
+} {
+  const personaTemplatePromptAssetName =
+    personalityId === "memo"
+      ? "persona_memo.mdx"
+      : personalityId === "kawaii"
+        ? "persona_kawaii.mdx"
+        : personalityId === "linus"
+          ? "persona_linus.mdx"
+          : "persona.mdx";
+  const humanTemplatePromptAssetName =
+    personalityId === "memo"
+      ? "human_memo.mdx"
+      : personalityId === "kawaii"
+        ? "human_kawaii.mdx"
+        : personalityId === "linus"
+          ? "human_linus.mdx"
+          : "human.mdx";
+
+  return {
+    persona: {
+      value: getPersonalityContent(personalityId),
+      description: getEditablePromptFrontmatter(personaTemplatePromptAssetName)
+        .description,
+      templatePromptAssetName: personaTemplatePromptAssetName,
+    },
+    human: {
+      value: getPersonalityHumanContent(personalityId),
+      description: getEditablePromptFrontmatter(humanTemplatePromptAssetName)
+        .description,
+      templatePromptAssetName: humanTemplatePromptAssetName,
+    },
+  };
+}
+
 export function replaceBodyPreservingFrontmatter(
   existingPersonaFile: string,
   newBody: string,
+  options?: { description?: string },
 ): string {
   const frontmatterMatch = existingPersonaFile.match(FRONTMATTER_REGEX);
   if (!frontmatterMatch || frontmatterMatch.index !== 0) {
     throw new Error(
-      "system/persona.md is missing valid frontmatter; cannot safely replace personality body.",
+      "Memory file is missing valid frontmatter; cannot safely replace its body.",
     );
   }
 
-  const frontmatter = frontmatterMatch[1];
   const normalizedBody = ensureTrailingNewline(newBody.trim());
   if (!normalizedBody.trim()) {
     throw new Error("Personality content cannot be empty");
   }
 
-  return `${frontmatter}\n\n${normalizedBody}`;
+  const { frontmatter } = parseMdxFrontmatter(existingPersonaFile);
+  const mergedFrontmatter = { ...frontmatter };
+  if (options?.description !== undefined) {
+    mergedFrontmatter.description = options.description;
+  }
+
+  return `${serializeFrontmatter(mergedFrontmatter)}\n\n${normalizedBody}`;
 }
 
 export function detectPersonalityFromPersonaFile(
@@ -199,10 +371,14 @@ async function runGit(cwd: string, args: string[]): Promise<string> {
 
 async function hasStagedChanges(
   cwd: string,
-  relativePath: string,
+  relativePaths: string[],
 ): Promise<boolean> {
+  if (relativePaths.length === 0) {
+    return false;
+  }
+
   try {
-    await runGit(cwd, ["diff", "--cached", "--quiet", "--", relativePath]);
+    await runGit(cwd, ["diff", "--cached", "--quiet", "--", ...relativePaths]);
     return false;
   } catch (error) {
     if (isExitCode(error, 1)) {
@@ -216,7 +392,7 @@ export async function applyPersonalityToMemory(
   params: ApplyPersonalityToMemoryParams,
 ): Promise<ApplyPersonalityToMemoryResult> {
   const personality = getPersonalityOption(params.personalityId);
-  const personalityContent = getPersonalityContent(params.personalityId);
+  const blockDefinitions = getPersonalityBlockDefinitions(params.personalityId);
 
   const repoDir = getMemoryRepoDir(params.agentId);
 
@@ -234,37 +410,73 @@ export async function applyPersonalityToMemory(
   await pullMemory(params.agentId);
 
   const personaRelativePath = getPersonaRelativePathForRepo(repoDir);
+  const humanRelativePath = getHumanRelativePathForRepo(repoDir);
   const personaPath = join(repoDir, personaRelativePath);
+  const humanPath = join(repoDir, humanRelativePath);
 
-  const existingPersona = existsSync(personaPath)
-    ? readFileSync(personaPath, "utf-8")
-    : null;
-  const nextPersona = existingPersona
-    ? replaceBodyPreservingFrontmatter(existingPersona, personalityContent)
-    : buildDefaultPersonaFile(personalityContent);
+  const filesToUpdate = [
+    {
+      relativePath: personaRelativePath,
+      absolutePath: personaPath,
+      templatePromptAssetName: blockDefinitions.persona.templatePromptAssetName,
+      content: blockDefinitions.persona.value,
+      description: blockDefinitions.persona.description,
+    },
+    {
+      relativePath: humanRelativePath,
+      absolutePath: humanPath,
+      templatePromptAssetName: blockDefinitions.human.templatePromptAssetName,
+      content: blockDefinitions.human.value,
+      description: blockDefinitions.human.description,
+    },
+  ];
 
-  if (
-    existingPersona !== null &&
-    normalizeComparableContent(existingPersona) ===
-      normalizeComparableContent(nextPersona)
-  ) {
+  const changedPaths: string[] = [];
+
+  for (const file of filesToUpdate) {
+    const existingContent = existsSync(file.absolutePath)
+      ? readFileSync(file.absolutePath, "utf-8")
+      : null;
+    const nextContent = existingContent
+      ? replaceBodyPreservingFrontmatter(existingContent, file.content, {
+          description: file.description,
+        })
+      : buildDefaultMemoryFile(
+          file.templatePromptAssetName,
+          file.content,
+          file.description,
+        );
+
+    if (
+      existingContent !== null &&
+      normalizeComparableContent(existingContent) ===
+        normalizeComparableContent(nextContent)
+    ) {
+      continue;
+    }
+
+    mkdirSync(dirname(file.absolutePath), { recursive: true });
+    writeFileSync(file.absolutePath, nextContent, "utf-8");
+    changedPaths.push(file.relativePath);
+  }
+
+  if (changedPaths.length === 0) {
     return {
       changed: false,
       personality,
       personaRelativePath,
+      humanRelativePath,
     };
   }
 
-  mkdirSync(dirname(personaPath), { recursive: true });
-  writeFileSync(personaPath, nextPersona, "utf-8");
+  await runGit(repoDir, ["add", "--", ...changedPaths]);
 
-  await runGit(repoDir, ["add", "--", personaRelativePath]);
-
-  if (!(await hasStagedChanges(repoDir, personaRelativePath))) {
+  if (!(await hasStagedChanges(repoDir, changedPaths))) {
     return {
       changed: false,
       personality,
       personaRelativePath,
+      humanRelativePath,
     };
   }
 
@@ -278,7 +490,7 @@ export async function applyPersonalityToMemory(
     "-m",
     commitMessage,
     "--",
-    personaRelativePath,
+    ...changedPaths,
   ]);
 
   await pushMemory(params.agentId);
@@ -287,6 +499,7 @@ export async function applyPersonalityToMemory(
     changed: true,
     personality,
     personaRelativePath,
+    humanRelativePath,
     commitMessage,
   };
 }
