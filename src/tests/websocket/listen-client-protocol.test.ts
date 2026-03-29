@@ -5,8 +5,19 @@ import { join } from "node:path";
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import WebSocket from "ws";
 import { buildConversationMessagesCreateRequestBody } from "../../agent/message";
+import { models } from "../../agent/model";
+import {
+  clearAllSubagents,
+  registerSubagent,
+} from "../../cli/helpers/subagentState";
 import { INTERRUPTED_BY_USER } from "../../constants";
 import type { MessageQueueItem } from "../../queue/queueRuntime";
+import type { LocalProjectSettings, Settings } from "../../settings-manager";
+import { settingsManager } from "../../settings-manager";
+import {
+  backgroundProcesses,
+  backgroundTasks,
+} from "../../tools/impl/process_manager";
 import type {
   ApprovalResponseBody,
   ControlRequest,
@@ -19,7 +30,6 @@ import {
   requestApprovalOverWS,
   resolvePendingApprovalResolver,
 } from "../../websocket/listen-client";
-import { models } from "../../agent/model";
 import { isEditFileCommand } from "../../websocket/listener/protocol-inbound";
 
 class MockSocket {
@@ -287,6 +297,82 @@ describe("listen-client parseServerMessage", () => {
     expect(parsed).toBeNull();
   });
 
+  test("parses skill enable/disable commands", () => {
+    const skillEnable = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "skill_enable",
+          request_id: "skill-enable-1",
+          skill_path: "/tmp/my-skill",
+        }),
+      ),
+    );
+    const skillDisable = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "skill_disable",
+          request_id: "skill-disable-1",
+          name: "my-skill",
+        }),
+      ),
+    );
+
+    expect(skillEnable?.type).toBe("skill_enable");
+    expect(skillDisable?.type).toBe("skill_disable");
+  });
+
+  test("rejects malformed skill commands", () => {
+    // Missing skill_path
+    const noPath = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "skill_enable",
+          request_id: "skill-enable-bad",
+        }),
+      ),
+    );
+    // Missing name on disable
+    const noName = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "skill_disable",
+          request_id: "skill-disable-bad",
+        }),
+      ),
+    );
+    expect(noPath).toBeNull();
+    expect(noName).toBeNull();
+  });
+
+  test("parses reflection settings commands", () => {
+    const getSettings = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "get_reflection_settings",
+          request_id: "reflection-get-1",
+          runtime: { agent_id: "agent-1", conversation_id: "default" },
+        }),
+      ),
+    );
+    const setSettings = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "set_reflection_settings",
+          request_id: "reflection-set-1",
+          runtime: { agent_id: "agent-1", conversation_id: "default" },
+          settings: {
+            trigger: "step-count",
+            step_count: 9,
+          },
+          scope: "local_project",
+        }),
+      ),
+    );
+
+    expect(getSettings?.type).toBe("get_reflection_settings");
+    expect(setSettings?.type).toBe("set_reflection_settings");
+  });
+
   test("rejects legacy cancel_run in hard-cut v2 protocol", () => {
     const legacyCancel = parseServerMessage(
       Buffer.from(
@@ -492,6 +578,155 @@ describe("listen-client cron command handling", () => {
         delete process.env.LETTA_HOME;
       }
       await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("listen-client reflection settings command handling", () => {
+  test("wraps typed reflection settings reads and writes over WS", async () => {
+    const tempProjectDir = await mkdtemp(
+      join(os.tmpdir(), "letta-listen-reflection-"),
+    );
+    const originalGetSettings = settingsManager.getSettings;
+    const originalGetLocalProjectSettings =
+      settingsManager.getLocalProjectSettings;
+    const originalLoadLocalProjectSettings =
+      settingsManager.loadLocalProjectSettings;
+    const originalUpdateSettings = settingsManager.updateSettings;
+    const originalUpdateLocalProjectSettings =
+      settingsManager.updateLocalProjectSettings;
+
+    const globalSettings = {
+      reflectionTrigger: "compaction-event",
+      reflectionStepCount: 25,
+      memoryReminderInterval: "auto-compaction",
+      reflectionSettingsByAgent: {},
+    } as Settings;
+    const localSettingsByDir = new Map<string, LocalProjectSettings>();
+
+    try {
+      (settingsManager as typeof settingsManager).getSettings = (() =>
+        globalSettings) as typeof settingsManager.getSettings;
+      (settingsManager as typeof settingsManager).getLocalProjectSettings = ((
+        workingDirectory: string = process.cwd(),
+      ) => {
+        const settings = localSettingsByDir.get(workingDirectory);
+        if (!settings) {
+          throw new Error("local settings not loaded");
+        }
+        return settings as ReturnType<
+          typeof settingsManager.getLocalProjectSettings
+        >;
+      }) as typeof settingsManager.getLocalProjectSettings;
+      (settingsManager as typeof settingsManager).loadLocalProjectSettings =
+        (async (workingDirectory: string = process.cwd()) => {
+          const settings = {
+            lastAgent: null,
+            reflectionSettingsByAgent: {},
+          } satisfies LocalProjectSettings;
+          localSettingsByDir.set(workingDirectory, settings);
+          return settings as Awaited<
+            ReturnType<typeof settingsManager.loadLocalProjectSettings>
+          >;
+        }) as typeof settingsManager.loadLocalProjectSettings;
+      (settingsManager as typeof settingsManager).updateSettings = ((
+        updates: Record<string, unknown>,
+      ) => {
+        Object.assign(
+          globalSettings as unknown as Record<string, unknown>,
+          updates,
+        );
+      }) as typeof settingsManager.updateSettings;
+      (settingsManager as typeof settingsManager).updateLocalProjectSettings =
+        ((updates: Record<string, unknown>, workingDirectory?: string) => {
+          const key = workingDirectory ?? process.cwd();
+          const current = localSettingsByDir.get(key) ?? { lastAgent: null };
+          localSettingsByDir.set(key, { ...current, ...updates });
+        }) as typeof settingsManager.updateLocalProjectSettings;
+
+      const socket = new MockSocket(WebSocket.OPEN);
+      const listener = __listenClientTestUtils.createListenerRuntime();
+      __listenClientTestUtils.setConversationWorkingDirectory(
+        listener,
+        "agent-1",
+        "default",
+        tempProjectDir,
+      );
+
+      await __listenClientTestUtils.handleReflectionSettingsCommand(
+        {
+          type: "get_reflection_settings",
+          request_id: "reflection-get-1",
+          runtime: { agent_id: "agent-1", conversation_id: "default" },
+        },
+        socket as unknown as WebSocket,
+        listener,
+      );
+
+      const getResponse = JSON.parse(socket.sentPayloads[0] as string);
+      expect(getResponse).toMatchObject({
+        type: "get_reflection_settings_response",
+        request_id: "reflection-get-1",
+        success: true,
+        reflection_settings: {
+          agent_id: "agent-1",
+          trigger: "compaction-event",
+          step_count: 25,
+        },
+      });
+
+      socket.sentPayloads.length = 0;
+
+      await __listenClientTestUtils.handleReflectionSettingsCommand(
+        {
+          type: "set_reflection_settings",
+          request_id: "reflection-set-1",
+          runtime: { agent_id: "agent-1", conversation_id: "default" },
+          settings: {
+            trigger: "step-count",
+            step_count: 9,
+          },
+          scope: "local_project",
+        },
+        socket as unknown as WebSocket,
+        listener,
+      );
+
+      const setResponse = JSON.parse(socket.sentPayloads[0] as string);
+      const deviceStatusUpdate = JSON.parse(socket.sentPayloads[1] as string);
+      expect(setResponse).toMatchObject({
+        type: "set_reflection_settings_response",
+        request_id: "reflection-set-1",
+        success: true,
+        scope: "local_project",
+        reflection_settings: {
+          agent_id: "agent-1",
+          trigger: "step-count",
+          step_count: 9,
+        },
+      });
+      expect(deviceStatusUpdate).toMatchObject({
+        type: "update_device_status",
+        device_status: {
+          reflection_settings: {
+            agent_id: "agent-1",
+            trigger: "step-count",
+            step_count: 9,
+          },
+        },
+      });
+    } finally {
+      (settingsManager as typeof settingsManager).getSettings =
+        originalGetSettings;
+      (settingsManager as typeof settingsManager).getLocalProjectSettings =
+        originalGetLocalProjectSettings;
+      (settingsManager as typeof settingsManager).loadLocalProjectSettings =
+        originalLoadLocalProjectSettings;
+      (settingsManager as typeof settingsManager).updateSettings =
+        originalUpdateSettings;
+      (settingsManager as typeof settingsManager).updateLocalProjectSettings =
+        originalUpdateLocalProjectSettings;
+      await rm(tempProjectDir, { recursive: true, force: true });
     }
   });
 });
@@ -840,6 +1075,67 @@ describe("listen-client v2 status builders", () => {
     expect(deviceStatus.current_toolset_preference).toBe("auto");
   });
 
+  test("buildDeviceStatus includes only active bash and task background processes", () => {
+    const runtime = __listenClientTestUtils.createRuntime();
+    backgroundProcesses.clear();
+    backgroundTasks.clear();
+
+    try {
+      backgroundProcesses.set("bash_1", {
+        process: {} as never,
+        command: "sleep 300",
+        stdout: [],
+        stderr: [],
+        status: "running",
+        exitCode: null,
+        lastReadIndex: { stdout: 0, stderr: 0 },
+        startTime: new Date("2026-03-27T12:00:00.000Z"),
+      });
+      backgroundTasks.set("task_1", {
+        description: "Active background review",
+        subagentType: "review",
+        subagentId: "subagent-1",
+        status: "running",
+        output: [],
+        startTime: new Date("2026-03-27T12:01:00.000Z"),
+        outputFile: "/tmp/task_1.log",
+      });
+      backgroundTasks.set("task_2", {
+        description: "Reflect on recent conversations",
+        subagentType: "reflection",
+        subagentId: "subagent-2",
+        status: "completed",
+        output: [],
+        startTime: new Date("2026-03-27T12:02:00.000Z"),
+        outputFile: "/tmp/task_2.log",
+      });
+
+      const deviceStatus = __listenClientTestUtils.buildDeviceStatus(runtime);
+      expect(deviceStatus.background_processes).toEqual([
+        {
+          process_id: "task_1",
+          kind: "agent_task",
+          task_type: "review",
+          description: "Active background review",
+          started_at_ms: new Date("2026-03-27T12:01:00.000Z").getTime(),
+          status: "running",
+          subagent_id: "subagent-1",
+        },
+        {
+          process_id: "bash_1",
+          kind: "bash",
+          command: "sleep 300",
+          started_at_ms: new Date("2026-03-27T12:00:00.000Z").getTime(),
+          status: "running",
+          exit_code: null,
+        },
+      ]);
+    } finally {
+      backgroundProcesses.clear();
+      backgroundTasks.clear();
+    }
+  });
+
   test("resolveRuntimeScope returns null until a real runtime is bound", () => {
     const runtime = __listenClientTestUtils.createRuntime();
     expect(__listenClientTestUtils.resolveRuntimeScope(runtime)).toBeNull();
@@ -963,6 +1259,56 @@ describe("listen-client v2 status builders", () => {
         kind: "message",
       }),
     ]);
+  });
+
+  test("sync includes silent background reflection subagents in update_subagent_state", () => {
+    clearAllSubagents();
+    try {
+      registerSubagent(
+        "subagent-reflection-1",
+        "reflection",
+        "Reflect on recent conversations",
+        undefined,
+        true,
+        true,
+      );
+
+      const listener = __listenClientTestUtils.createListenerRuntime();
+      const runtime = __listenClientTestUtils.getOrCreateScopedRuntime(
+        listener,
+        "agent-1",
+        "default",
+      );
+      const socket = new MockSocket(WebSocket.OPEN);
+
+      __listenClientTestUtils.emitStateSync(
+        socket as unknown as WebSocket,
+        runtime,
+        {
+          agent_id: "agent-1",
+          conversation_id: "default",
+        },
+      );
+
+      const outbound = socket.sentPayloads.map((payload) =>
+        JSON.parse(payload as string),
+      );
+      expect(outbound[3]).toMatchObject({
+        type: "update_subagent_state",
+        subagents: [
+          expect.objectContaining({
+            subagent_id: "subagent-reflection-1",
+            subagent_type: "Reflection",
+            description: "Reflect on recent conversations",
+            status: "pending",
+            is_background: true,
+            silent: true,
+          }),
+        ],
+      });
+    } finally {
+      clearAllSubagents();
+    }
   });
 
   test("recovered approvals surface as pending control requests and WAITING_ON_APPROVAL", () => {
@@ -2331,6 +2677,198 @@ describe("listen-client edit_file command", () => {
     } finally {
       await rm(tempRoot, { recursive: true, force: true });
       __listenClientTestUtils.setActiveRuntime(null);
+    }
+  });
+});
+
+describe("listen-client skill enable/disable command handling", () => {
+  test("enables a skill by creating a symlink and disables it by removing it", async () => {
+    const tempRoot = await mkdtemp(join(os.tmpdir(), "letta-listen-skill-"));
+    const originalLettaHome = process.env.LETTA_HOME;
+    process.env.LETTA_HOME = tempRoot;
+
+    try {
+      // Create a fake skill directory with SKILL.md
+      const skillDir = join(tempRoot, "source-skill");
+      await mkdir(skillDir, { recursive: true });
+      await writeFile(
+        join(skillDir, "SKILL.md"),
+        "---\nname: test-skill\ndescription: A test skill\n---\nHello",
+      );
+
+      const socket = new MockSocket(WebSocket.OPEN);
+
+      // Enable the skill
+      await __listenClientTestUtils.handleSkillCommand(
+        {
+          type: "skill_enable",
+          request_id: "skill-enable-1",
+          skill_path: skillDir,
+        },
+        socket as unknown as WebSocket,
+      );
+
+      const enableMessages = socket.sentPayloads.map((p) => JSON.parse(p));
+      expect(enableMessages[0]).toMatchObject({
+        type: "skill_enable_response",
+        request_id: "skill-enable-1",
+        success: true,
+        name: "source-skill",
+      });
+      expect(enableMessages[1]).toMatchObject({
+        type: "skills_updated",
+      });
+
+      // Verify symlink was created
+      const { lstatSync, readlinkSync } = await import("node:fs");
+      const linkPath = join(tempRoot, "skills", "source-skill");
+      const stat = lstatSync(linkPath);
+      expect(stat.isSymbolicLink()).toBe(true);
+      const target = readlinkSync(linkPath);
+      expect(target).toBe(skillDir);
+
+      // Disable the skill
+      socket.sentPayloads.length = 0;
+      await __listenClientTestUtils.handleSkillCommand(
+        {
+          type: "skill_disable",
+          request_id: "skill-disable-1",
+          name: "source-skill",
+        },
+        socket as unknown as WebSocket,
+      );
+
+      const disableMessages = socket.sentPayloads.map((p) => JSON.parse(p));
+      expect(disableMessages[0]).toMatchObject({
+        type: "skill_disable_response",
+        request_id: "skill-disable-1",
+        success: true,
+        name: "source-skill",
+      });
+      expect(disableMessages[1]).toMatchObject({
+        type: "skills_updated",
+      });
+
+      // Verify symlink was removed
+      const { existsSync } = await import("node:fs");
+      expect(existsSync(linkPath)).toBe(false);
+    } finally {
+      if (originalLettaHome) {
+        process.env.LETTA_HOME = originalLettaHome;
+      } else {
+        delete process.env.LETTA_HOME;
+      }
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("rejects enable when path does not exist", async () => {
+    const tempRoot = await mkdtemp(join(os.tmpdir(), "letta-listen-skill-"));
+    const originalLettaHome = process.env.LETTA_HOME;
+    process.env.LETTA_HOME = tempRoot;
+
+    try {
+      const socket = new MockSocket(WebSocket.OPEN);
+
+      await __listenClientTestUtils.handleSkillCommand(
+        {
+          type: "skill_enable",
+          request_id: "skill-enable-bad",
+          skill_path: "/nonexistent/path",
+        },
+        socket as unknown as WebSocket,
+      );
+
+      const messages = socket.sentPayloads.map((p) => JSON.parse(p));
+      expect(messages[0]).toMatchObject({
+        type: "skill_enable_response",
+        request_id: "skill-enable-bad",
+        success: false,
+      });
+      expect(messages[0].error).toContain("does not exist");
+    } finally {
+      if (originalLettaHome) {
+        process.env.LETTA_HOME = originalLettaHome;
+      } else {
+        delete process.env.LETTA_HOME;
+      }
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("rejects enable when SKILL.md is missing", async () => {
+    const tempRoot = await mkdtemp(join(os.tmpdir(), "letta-listen-skill-"));
+    const originalLettaHome = process.env.LETTA_HOME;
+    process.env.LETTA_HOME = tempRoot;
+
+    try {
+      // Create a directory without SKILL.md
+      const skillDir = join(tempRoot, "no-skill-md");
+      await mkdir(skillDir, { recursive: true });
+
+      const socket = new MockSocket(WebSocket.OPEN);
+
+      await __listenClientTestUtils.handleSkillCommand(
+        {
+          type: "skill_enable",
+          request_id: "skill-enable-no-md",
+          skill_path: skillDir,
+        },
+        socket as unknown as WebSocket,
+      );
+
+      const messages = socket.sentPayloads.map((p) => JSON.parse(p));
+      expect(messages[0]).toMatchObject({
+        type: "skill_enable_response",
+        request_id: "skill-enable-no-md",
+        success: false,
+      });
+      expect(messages[0].error).toContain("No SKILL.md");
+    } finally {
+      if (originalLettaHome) {
+        process.env.LETTA_HOME = originalLettaHome;
+      } else {
+        delete process.env.LETTA_HOME;
+      }
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("rejects disable when skill is not a symlink", async () => {
+    const tempRoot = await mkdtemp(join(os.tmpdir(), "letta-listen-skill-"));
+    const originalLettaHome = process.env.LETTA_HOME;
+    process.env.LETTA_HOME = tempRoot;
+
+    try {
+      // Create a real directory (not a symlink) in skills/
+      const skillsDir = join(tempRoot, "skills");
+      await mkdir(join(skillsDir, "real-dir"), { recursive: true });
+
+      const socket = new MockSocket(WebSocket.OPEN);
+
+      await __listenClientTestUtils.handleSkillCommand(
+        {
+          type: "skill_disable",
+          request_id: "skill-disable-real",
+          name: "real-dir",
+        },
+        socket as unknown as WebSocket,
+      );
+
+      const messages = socket.sentPayloads.map((p) => JSON.parse(p));
+      expect(messages[0]).toMatchObject({
+        type: "skill_disable_response",
+        request_id: "skill-disable-real",
+        success: false,
+      });
+      expect(messages[0].error).toContain("not a symlink");
+    } finally {
+      if (originalLettaHome) {
+        process.env.LETTA_HOME = originalLettaHome;
+      } else {
+        delete process.env.LETTA_HOME;
+      }
+      await rm(tempRoot, { recursive: true, force: true });
     }
   });
 });

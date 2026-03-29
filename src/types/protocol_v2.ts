@@ -120,6 +120,16 @@ export interface PendingControlRequest {
   request: ControlRequestBody;
 }
 
+export type ReflectionTriggerMode = "off" | "step-count" | "compaction-event";
+
+export type ReflectionSettingsScope = "local_project" | "global" | "both";
+
+export interface ReflectionSettingsSnapshot {
+  agent_id: string;
+  trigger: ReflectionTriggerMode;
+  step_count: number;
+}
+
 /**
  * Bottom-bar and device execution context state.
  */
@@ -138,6 +148,9 @@ export interface DeviceStatus {
   background_processes: BackgroundProcessSummary[];
   pending_control_requests: PendingControlRequest[];
   memory_directory: string | null;
+  reflection_settings: ReflectionSettingsSnapshot | null;
+  /** Remote slash command IDs this letta-code version can handle via `execute_command`. */
+  supported_commands: string[];
 }
 
 export type LoopStatus =
@@ -601,6 +614,41 @@ export interface CronDeleteAllCommand {
   agent_id: string;
 }
 
+export interface SkillEnableCommand {
+  type: "skill_enable";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  /** Absolute path to the skill directory on the local machine. */
+  skill_path: string;
+}
+
+export interface SkillDisableCommand {
+  type: "skill_disable";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  /** Skill name (symlink name in ~/.letta/skills/). */
+  name: string;
+}
+
+export interface GetReflectionSettingsCommand {
+  type: "get_reflection_settings";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  runtime: RuntimeScope;
+}
+
+export interface SetReflectionSettingsCommand {
+  type: "set_reflection_settings";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  runtime: RuntimeScope;
+  settings: {
+    trigger: ReflectionTriggerMode;
+    step_count: number;
+  };
+  scope?: ReflectionSettingsScope;
+}
+
 export interface CronListResponseMessage {
   type: "cron_list_response";
   request_id: string;
@@ -651,6 +699,23 @@ export interface CronsUpdatedMessage {
   conversation_id?: string | null;
 }
 
+export interface GetReflectionSettingsResponseMessage {
+  type: "get_reflection_settings_response";
+  request_id: string;
+  success: boolean;
+  reflection_settings: ReflectionSettingsSnapshot | null;
+  error?: string;
+}
+
+export interface SetReflectionSettingsResponseMessage {
+  type: "set_reflection_settings_response";
+  request_id: string;
+  success: boolean;
+  reflection_settings: ReflectionSettingsSnapshot | null;
+  scope: ReflectionSettingsScope;
+  error?: string;
+}
+
 /**
  * Generic slash-command dispatch from the web app.
  * The device handles the `command_id` and emits `command_start` /
@@ -688,6 +753,10 @@ export type WsProtocolCommand =
   | CronGetCommand
   | CronDeleteCommand
   | CronDeleteAllCommand
+  | SkillEnableCommand
+  | SkillDisableCommand
+  | GetReflectionSettingsCommand
+  | SetReflectionSettingsCommand
   | ExecuteCommandCommand;
 
 export type WsProtocolMessage =

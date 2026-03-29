@@ -1,5 +1,12 @@
 import type WebSocket from "ws";
 import { getClient } from "../../agent/client";
+import { getMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
+import {
+  buildDoctorMessage,
+  gatherInitGitContext,
+} from "../../cli/helpers/initCommand";
+import { settingsManager } from "../../settings-manager";
+import { trackBoundaryError } from "../../telemetry/errorReporting";
 import type {
   ExecuteCommandCommand,
   SlashCommandEndMessage,
@@ -11,9 +18,19 @@ import {
   emitCanonicalMessageDelta,
 } from "./protocol-outbound";
 import { clearConversationRuntimeState, emitListenerStatus } from "./runtime";
+import { handleIncomingMessage } from "./turn";
 import type { ConversationRuntime, StartListenerOptions } from "./types";
 
 const ISOLATED_BLOCK_LABELS = ["human", "persona"];
+
+/**
+ * Command IDs that this letta-code version can handle via `execute_command`.
+ * Advertised in DeviceStatus.supported_commands so the web UI only shows
+ * commands the connected device actually supports.
+ *
+ * When adding a new case to `handleExecuteCommand`, add the ID here too.
+ */
+export const SUPPORTED_REMOTE_COMMANDS: readonly string[] = ["clear", "doctor"];
 
 /**
  * Handle an `execute_command` message from the web app.
@@ -59,6 +76,10 @@ export async function handleExecuteCommand(
         output = await handleClearCommand(socket, conversationRuntime, opts);
         break;
 
+      case "doctor":
+        output = await handleDoctorCommand(socket, conversationRuntime, opts);
+        break;
+
       default:
         emitSlashCommandEnd(socket, conversationRuntime, scope, {
           command_id: command.command_id,
@@ -76,6 +97,11 @@ export async function handleExecuteCommand(
       success: true,
     });
   } catch (error) {
+    trackBoundaryError({
+      errorType: "listener_execute_command_failed",
+      error,
+      context: "listener_command_execution",
+    });
     const errorMessage = error instanceof Error ? error.message : String(error);
     emitSlashCommandEnd(socket, conversationRuntime, scope, {
       command_id: command.command_id,
@@ -159,4 +185,56 @@ async function handleClearCommand(
   );
 
   return "Agent's in-context messages cleared & moved to conversation history";
+}
+
+/**
+ * /doctor — Audit and refine memory structure.
+ *
+ * Builds the doctor system-reminder message (same as the CLI /doctor)
+ * and feeds it through `handleIncomingMessage` so the agent runs a full
+ * turn executing the `context_doctor` skill.
+ */
+async function handleDoctorCommand(
+  socket: WebSocket,
+  conversationRuntime: ConversationRuntime,
+  opts: {
+    onStatusChange?: StartListenerOptions["onStatusChange"];
+    connectionId?: string;
+  },
+): Promise<string> {
+  const agentId = conversationRuntime.agentId;
+
+  if (!agentId) {
+    throw new Error("No agent ID available for /doctor command");
+  }
+
+  const { context: gitContext } = gatherInitGitContext();
+  const memoryDir = settingsManager.isMemfsEnabled(agentId)
+    ? getMemoryFilesystemRoot(agentId)
+    : undefined;
+
+  const doctorMessage = buildDoctorMessage({ gitContext, memoryDir });
+
+  // Feed the doctor prompt as a user message through the normal turn pipeline.
+  // This triggers a full agent turn whose deltas stream back to the web UI.
+  await handleIncomingMessage(
+    {
+      type: "message",
+      agentId,
+      conversationId: conversationRuntime.conversationId,
+      messages: [
+        {
+          type: "message",
+          role: "user",
+          content: [{ type: "text", text: doctorMessage }],
+        },
+      ],
+    },
+    socket,
+    conversationRuntime,
+    opts.onStatusChange,
+    opts.connectionId,
+  );
+
+  return "Memory doctor completed";
 }

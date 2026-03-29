@@ -4,7 +4,10 @@
 import type Letta from "@letta-ai/letta-client";
 import { APIError } from "@letta-ai/letta-client/core/error";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
-import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
+import type {
+  Message,
+  MessageType,
+} from "@letta-ai/letta-client/resources/agents/messages";
 import type { ApprovalRequest } from "../cli/helpers/stream";
 import { debugLog, debugWarn, isDebugEnabled } from "../utils/debug";
 
@@ -28,6 +31,20 @@ const BACKFILL_ANCHOR_MESSAGE_LIMIT = 6;
 const BACKFILL_PAGE_LIMIT = 200;
 const BACKFILL_MAX_PAGES = 25; // 5k messages max
 const BACKFILL_MIN_ASSISTANT = 1;
+
+const RESUME_BACKFILL_MESSAGE_TYPES: MessageType[] = [
+  "user_message",
+  "assistant_message",
+  "reasoning_message",
+  "event_message",
+  "summary_message",
+];
+
+const DEFAULT_RESUME_MESSAGE_TYPES: MessageType[] = [
+  ...RESUME_BACKFILL_MESSAGE_TYPES,
+  "approval_request_message",
+  "approval_response_message",
+];
 
 function isPrimaryMessageType(messageType: string | undefined): boolean {
   return (
@@ -271,6 +288,7 @@ async function fetchConversationBackfillMessages(
     const page = await client.conversations.messages.list(conversationId, {
       limit: BACKFILL_PAGE_LIMIT,
       order: "desc",
+      include_return_message_types: RESUME_BACKFILL_MESSAGE_TYPES,
       ...(cursorBefore ? { before: cursorBefore } : {}),
     });
     const items = page.getPaginatedItems();
@@ -466,6 +484,7 @@ export async function getResumeData(
             conversation_id: "default",
             limit: listLimit,
             order: "desc",
+            include_return_message_types: DEFAULT_RESUME_MESSAGE_TYPES,
           });
           defaultConversationMessages = sortChronological(
             messagesPage.getPaginatedItems(),
