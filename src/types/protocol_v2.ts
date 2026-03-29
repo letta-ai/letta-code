@@ -501,6 +501,59 @@ export interface EnableMemfsCommand {
   agent_id: string;
 }
 
+export interface ListModelsCommand {
+  type: "list_models";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+}
+
+export interface UpdateModelPayload {
+  /** Preferred model identifier from models.json (e.g. "sonnet") */
+  model_id?: string;
+  /** Optional direct handle override (e.g. "anthropic/claude-sonnet-4-6") */
+  model_handle?: string;
+}
+
+export interface UpdateModelCommand {
+  type: "update_model";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  /** Runtime scope — identifies which agent + conversation this targets */
+  runtime: RuntimeScope;
+  payload: UpdateModelPayload;
+}
+
+export interface ListModelsResponseModelEntry {
+  id: string;
+  handle: string;
+  label: string;
+  description: string;
+  isDefault?: boolean;
+  isFeatured?: boolean;
+  free?: boolean;
+  updateArgs?: Record<string, unknown>;
+}
+
+export interface ListModelsResponseMessage {
+  type: "list_models_response";
+  request_id: string;
+  success: boolean;
+  entries: ListModelsResponseModelEntry[];
+  error?: string;
+}
+
+export interface UpdateModelResponseMessage {
+  type: "update_model_response";
+  request_id: string;
+  success: boolean;
+  runtime?: RuntimeScope;
+  applied_to?: "agent" | "conversation";
+  model_id?: string;
+  model_handle?: string;
+  model_settings?: Record<string, unknown> | null;
+  error?: string;
+}
+
 export interface CronListCommand {
   type: "cron_list";
   /** Echoed back in the response for request correlation. */
@@ -628,6 +681,8 @@ export type WsProtocolCommand =
   | EditFileCommand
   | ListMemoryCommand
   | EnableMemfsCommand
+  | ListModelsCommand
+  | UpdateModelCommand
   | CronListCommand
   | CronAddCommand
   | CronGetCommand
@@ -640,6 +695,8 @@ export type WsProtocolMessage =
   | LoopStatusUpdateMessage
   | QueueUpdateMessage
   | StreamDeltaMessage
-  | SubagentStateUpdateMessage;
+  | SubagentStateUpdateMessage
+  | ListModelsResponseMessage
+  | UpdateModelResponseMessage;
 
 export type { StopReasonType };

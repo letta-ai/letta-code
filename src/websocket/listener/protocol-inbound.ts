@@ -13,6 +13,8 @@ import type {
   InputCommand,
   ListInDirectoryCommand,
   ListMemoryCommand,
+  ListModelsCommand,
+  UpdateModelCommand,
   ReadFileCommand,
   RuntimeScope,
   SearchFilesCommand,
@@ -339,6 +341,54 @@ export function isEnableMemfsCommand(
   );
 }
 
+export function isListModelsCommand(
+  value: unknown,
+): value is ListModelsCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+  };
+  return c.type === "list_models" && typeof c.request_id === "string";
+}
+
+export function isUpdateModelCommand(
+  value: unknown,
+): value is UpdateModelCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    runtime?: unknown;
+    payload?: unknown;
+  };
+
+  if (
+    c.type !== "update_model" ||
+    typeof c.request_id !== "string" ||
+    !isRuntimeScope(c.runtime) ||
+    !c.payload ||
+    typeof c.payload !== "object"
+  ) {
+    return false;
+  }
+
+  const payload = c.payload as {
+    model_id?: unknown;
+    model_handle?: unknown;
+  };
+  const hasModelId =
+    payload.model_id === undefined || typeof payload.model_id === "string";
+  const hasModelHandle =
+    payload.model_handle === undefined ||
+    typeof payload.model_handle === "string";
+  const hasAtLeastOne =
+    typeof payload.model_id === "string" ||
+    typeof payload.model_handle === "string";
+
+  return hasModelId && hasModelHandle && hasAtLeastOne;
+}
+
 export function isCronListCommand(value: unknown): value is CronListCommand {
   if (!value || typeof value !== "object") return false;
   const c = value as {
@@ -473,6 +523,8 @@ export function parseServerMessage(
       isEditFileCommand(parsed) ||
       isListMemoryCommand(parsed) ||
       isEnableMemfsCommand(parsed) ||
+      isListModelsCommand(parsed) ||
+      isUpdateModelCommand(parsed) ||
       isCronListCommand(parsed) ||
       isCronAddCommand(parsed) ||
       isCronGetCommand(parsed) ||
