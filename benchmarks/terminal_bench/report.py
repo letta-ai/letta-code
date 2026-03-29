@@ -19,57 +19,29 @@ Expects Harbor job output structure under results-dir:
 import argparse
 import json
 import os
-import re
 import subprocess
 import sys
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
-# Exception types that indicate infrastructure / environment problems.
-_INFRA_EXCEPTION_TYPES = {"ConnectionResetError", "FilesystemExecutionError"}
 
-
-def classify_failure(result: dict) -> tuple[str, str]:
-    """Classify a failed task into a category with a short detail string.
-
-    Returns (category, detail).
-    """
+def classify_failure(result: dict) -> str:
+    """Return a short error label for a failed task, or empty string if it's just a wrong answer."""
     exception_info = result.get("exception_info") or {}
     exc_type = exception_info.get("exception_type", "")
-    exc_msg = exception_info.get("exception_message", "") or ""
-
-    if exc_type == "AgentSetupTimeoutError":
-        return "setup-timeout", ""
-
-    if exc_type == "AgentTimeoutError":
-        return "agent-timeout", ""
-
-    if exc_type == "VerifierTimeoutError":
-        return "verifier-timeout", ""
-
-    if exc_type in _INFRA_EXCEPTION_TYPES:
-        return "connection-error", exc_type
-
-    if exc_type == "RuntimeError":
-        # Extract exit code if present (e.g. "Agent setup failed with exit code 127")
-        m = re.search(r"exit code (\d+)", exc_msg)
-        detail = f"exit code {m.group(1)}" if m else ""
-        return "setup-error", detail
 
     if exc_type:
-        # Unknown exception type — surface it directly.
-        return "error", exc_type
+        return exc_type
 
     # No exception — check agent return code.
     agent_result = result.get("agent_result") or {}
     metadata = agent_result.get("metadata") or {}
     rc = metadata.get("letta_return_code")
     if rc is not None and rc != 0:
-        return "agent-error", f"return code {rc}"
+        return f"agent-error (rc {rc})"
 
-    # No exception, agent exited cleanly — just a wrong answer, not an error.
-    return "", ""
+    return ""
 
 
 
@@ -140,11 +112,11 @@ def parse_job_results(results_dir: Path) -> dict[str, dict]:
                     elif result_file.exists():
                         tasks[task_name] = False
 
-                # Classify failures (skip wrong-answer — only track actual errors)
+                # Classify failures (skip wrong answers — only track actual errors)
                 if task_name in tasks and not tasks[task_name] and result_data is not None:
-                    category, detail = classify_failure(result_data)
-                    if category:
-                        failures[task_name] = {"category": category, "detail": detail}
+                    error_label = classify_failure(result_data)
+                    if error_label:
+                        failures[task_name] = error_label
 
                 # Collect cost from usage.json
                 usage_file = trial_dir / "usage.json"
@@ -189,16 +161,12 @@ def load_baseline(baseline_path: Path) -> dict:
         return {}
 
 
-def _failure_annotation(task_name: str, failures: dict[str, dict]) -> str:
+def _failure_annotation(task_name: str, failures: dict[str, str]) -> str:
     """Return a parenthesized annotation for a failed task, or empty string."""
-    info = failures.get(task_name)
-    if not info:
+    label = failures.get(task_name)
+    if not label:
         return ""
-    category = info["category"]
-    detail = info.get("detail", "")
-    if detail:
-        return f" ({category}, {detail})"
-    return f" ({category})"
+    return f" ({label})"
 
 
 def build_report(
@@ -257,7 +225,7 @@ def build_report(
 
         # Error breakdown table
         if failures:
-            category_counts = Counter(f["category"] for f in failures.values())
+            category_counts = Counter(failures.values())
             lines.append(f"**Error breakdown ({n_errors} failures):**")
             lines.append("| Category | Count |")
             lines.append("|---|---|")
