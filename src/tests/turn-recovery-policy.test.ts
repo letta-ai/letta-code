@@ -34,6 +34,25 @@ describe("isApprovalPendingError", () => {
     expect(isApprovalPendingError("WAITING FOR APPROVAL")).toBe(true);
   });
 
+  test("detects structured PENDING_APPROVAL detail objects", () => {
+    expect(
+      isApprovalPendingError({
+        detail: {
+          code: "PENDING_APPROVAL",
+          message: "Approval required before continuing",
+        },
+      }),
+    ).toBe(true);
+  });
+
+  test("detects serialized PENDING_APPROVAL codes", () => {
+    expect(
+      isApprovalPendingError(
+        '409 {"detail":{"code":"PENDING_APPROVAL","message":"approval needed"}}',
+      ),
+    ).toBe(true);
+  });
+
   test("does not match conversation-busy", () => {
     expect(
       isApprovalPendingError(
@@ -104,6 +123,19 @@ describe("classifyPreStreamConflict", () => {
   test("unknown", () => {
     expect(classifyPreStreamConflict("Connection refused")).toBeNull();
   });
+
+  test("structured pending-approval object", () => {
+    expect(
+      classifyPreStreamConflict({
+        error: {
+          detail: {
+            code: "PENDING_APPROVAL",
+            message: "Approval required before continuing",
+          },
+        },
+      }),
+    ).toBe("approval_pending");
+  });
 });
 
 describe("getPreStreamErrorAction", () => {
@@ -111,6 +143,29 @@ describe("getPreStreamErrorAction", () => {
     expect(getPreStreamErrorAction("waiting for approval", 0, 3)).toBe(
       "resolve_approval_pending",
     );
+  });
+
+  test("structured PENDING_APPROVAL → resolve", () => {
+    expect(
+      getPreStreamErrorAction(
+        {
+          error: {
+            detail: {
+              code: "PENDING_APPROVAL",
+              message: "Approval required before continuing",
+              pending_request_id: "message-123",
+            },
+          },
+        },
+        0,
+        3,
+        {
+          status: 409,
+          transientRetries: 0,
+          maxTransientRetries: 3,
+        },
+      ),
+    ).toBe("resolve_approval_pending");
   });
 
   test("conversation busy with budget → retry", () => {

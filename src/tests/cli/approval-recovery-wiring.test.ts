@@ -22,6 +22,8 @@ describe("approval recovery wiring", () => {
     expect(segment).toContain("extractConflictDetail(preStreamError)");
     expect(segment).toContain("getPreStreamErrorAction(");
     expect(segment).toContain("shouldAttemptApprovalRecovery(");
+    expect(segment).toContain("approvalRecoveryRetriesRef.current");
+    expect(segment).toContain("APPROVAL_RECOVERY_MAX_RETRIES");
     expect(segment).toContain("rebuildInputWithFreshDenials(");
     expect(segment).toContain('preStreamAction === "retry_transient"');
   });
@@ -41,6 +43,8 @@ describe("approval recovery wiring", () => {
     const segment = source.slice(start, end);
 
     expect(segment).toContain("shouldAttemptApprovalRecovery(");
+    expect(segment).toContain("approvalRecoveryRetriesRef.current");
+    expect(segment).toContain("APPROVAL_RECOVERY_MAX_RETRIES");
     expect(segment).not.toContain("!hasApprovalInPayload &&");
   });
 

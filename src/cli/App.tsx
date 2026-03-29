@@ -352,6 +352,9 @@ const EAGER_CANCEL = true;
 // Maximum retries for transient LLM API errors (matches headless.ts)
 const LLM_API_ERROR_MAX_RETRIES = 3;
 
+// Maximum retries for approval-pending recovery (independent from LLM retries)
+const APPROVAL_RECOVERY_MAX_RETRIES = 3;
+
 // Retry config for empty response errors (Opus 4.6 SADs)
 // Retry 1: same input. Retry 2: with system reminder nudge.
 const EMPTY_RESPONSE_MAX_RETRIES = 2;
@@ -1857,6 +1860,7 @@ export default function App({
   // Retry counter for transient LLM API errors (ref for synchronous access in loop)
   const llmApiErrorRetriesRef = useRef(0);
   const quotaAutoSwapAttemptedRef = useRef(false);
+  const approvalRecoveryRetriesRef = useRef(0);
   const emptyResponseRetriesRef = useRef(0);
 
   // Retry counter for 409 "conversation busy" errors
@@ -4000,6 +4004,7 @@ export default function App({
       // Reset retry counters for new conversation turns (fresh budget per user message)
       if (!allowReentry) {
         llmApiErrorRetriesRef.current = 0;
+        approvalRecoveryRetriesRef.current = 0;
         emptyResponseRetriesRef.current = 0;
         conversationBusyRetriesRef.current = 0;
         quotaAutoSwapAttemptedRef.current = false;
@@ -4177,7 +4182,7 @@ export default function App({
 
             // Route through shared pre-stream conflict classifier (parity with headless.ts)
             const preStreamAction = getPreStreamErrorAction(
-              errorDetail,
+              preStreamError,
               conversationBusyRetriesRef.current,
               CONVERSATION_BUSY_MAX_RETRIES,
               {
@@ -4191,17 +4196,16 @@ export default function App({
             );
 
             // Resolve stale approval conflict: fetch real pending approvals, auto-deny, retry.
-            // Shares llmApiErrorRetriesRef budget with LLM transient-error retries (max 3 per turn).
-            // Resets on each processConversation entry and on success.
+            // Uses a dedicated approval-recovery retry budget (separate from transient LLM retries).
             if (
               shouldAttemptApprovalRecovery({
                 approvalPendingDetected:
                   preStreamAction === "resolve_approval_pending",
-                retries: llmApiErrorRetriesRef.current,
-                maxRetries: LLM_API_ERROR_MAX_RETRIES,
+                retries: approvalRecoveryRetriesRef.current,
+                maxRetries: APPROVAL_RECOVERY_MAX_RETRIES,
               })
             ) {
-              llmApiErrorRetriesRef.current += 1;
+              approvalRecoveryRetriesRef.current += 1;
               try {
                 const client = await getClient();
                 const agent = await client.agents.retrieve(agentIdRef.current);
@@ -4750,6 +4754,7 @@ export default function App({
             })();
             closeTrajectorySegment();
             llmApiErrorRetriesRef.current = 0; // Reset retry counter on success
+            approvalRecoveryRetriesRef.current = 0;
             emptyResponseRetriesRef.current = 0;
             conversationBusyRetriesRef.current = 0;
             lastDequeuedMessageRef.current = null; // Clear - message was processed successfully
@@ -5603,11 +5608,11 @@ export default function App({
           if (
             shouldAttemptApprovalRecovery({
               approvalPendingDetected,
-              retries: llmApiErrorRetriesRef.current,
-              maxRetries: LLM_API_ERROR_MAX_RETRIES,
+              retries: approvalRecoveryRetriesRef.current,
+              maxRetries: APPROVAL_RECOVERY_MAX_RETRIES,
             })
           ) {
-            llmApiErrorRetriesRef.current += 1;
+            approvalRecoveryRetriesRef.current += 1;
 
             try {
               // Fetch pending approvals and auto-deny them
@@ -5828,6 +5833,7 @@ export default function App({
 
           // Reset retry counters on non-retriable error (or max retries exceeded)
           llmApiErrorRetriesRef.current = 0;
+          approvalRecoveryRetriesRef.current = 0;
           emptyResponseRetriesRef.current = 0;
           conversationBusyRetriesRef.current = 0;
 

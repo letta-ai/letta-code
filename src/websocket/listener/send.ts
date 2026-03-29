@@ -402,7 +402,7 @@ export async function sendMessageStreamWithRetry(
 
       const errorDetail = extractConflictDetail(preStreamError);
       const action = getPreStreamErrorAction(
-        errorDetail,
+        preStreamError,
         conversationBusyRetries,
         MAX_CONVERSATION_BUSY_RETRIES,
         {
@@ -602,7 +602,7 @@ export async function sendApprovalContinuationWithRetry(
 
       const errorDetail = extractConflictDetail(preStreamError);
       const action = getPreStreamErrorAction(
-        errorDetail,
+        preStreamError,
         conversationBusyRetries,
         MAX_CONVERSATION_BUSY_RETRIES,
         {

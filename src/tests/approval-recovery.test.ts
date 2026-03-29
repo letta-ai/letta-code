@@ -164,6 +164,20 @@ describe("classifyPreStreamConflict", () => {
   test("returns null for non-conflict errors", () => {
     expect(classifyPreStreamConflict("Rate limit exceeded")).toBeNull();
   });
+
+  test("classifies structured PENDING_APPROVAL payloads", () => {
+    expect(
+      classifyPreStreamConflict({
+        error: {
+          detail: {
+            code: "PENDING_APPROVAL",
+            message: "Approval required before continuing",
+            pending_request_id: "message-abc",
+          },
+        },
+      }),
+    ).toBe("approval_pending");
+  });
 });
 
 describe("getPreStreamErrorAction", () => {
@@ -174,6 +188,24 @@ describe("getPreStreamErrorAction", () => {
     expect(getPreStreamErrorAction(detail, 0, 1)).toBe(
       "resolve_approval_pending",
     );
+  });
+
+  test("returns resolve_approval_pending for structured conflict details", () => {
+    expect(
+      getPreStreamErrorAction(
+        {
+          error: {
+            detail: {
+              code: "PENDING_APPROVAL",
+              message: "Approval required before continuing",
+              pending_request_id: "message-1",
+            },
+          },
+        },
+        0,
+        1,
+      ),
+    ).toBe("resolve_approval_pending");
   });
 
   test("returns retry_conversation_busy when busy and retries remain", () => {
@@ -401,6 +433,23 @@ describe("extractConflictDetail", () => {
     };
     const detail = extractConflictDetail(error);
     expect(isConversationBusyError(detail)).toBe(true);
+  });
+
+  test("extracts message from structured detail object", () => {
+    const error = {
+      error: {
+        detail: {
+          code: "PENDING_APPROVAL",
+          message:
+            "CONFLICT: Cannot send a new message: approval is pending on a tool call.",
+          pending_request_id: "message-42",
+        },
+      },
+    };
+
+    expect(extractConflictDetail(error)).toBe(
+      "CONFLICT: Cannot send a new message: approval is pending on a tool call.",
+    );
   });
 
   test("extracts from flat shape (e.error.message) when detail is missing", () => {

@@ -1634,7 +1634,7 @@ ${SYSTEM_REMINDER_CLOSE}
         const errorDetail = extractConflictDetail(preStreamError);
 
         const preStreamAction = getPreStreamErrorAction(
-          errorDetail,
+          preStreamError,
           conversationBusyRetries,
           CONVERSATION_BUSY_MAX_RETRIES,
           {
@@ -3495,14 +3495,19 @@ async function runBidirectionalMode(
 
             // Route through shared pre-stream conflict classifier (parity with main loop + TUI)
             // Bidir mode has no conversation-busy retry budget, so pass 0/0 to disable busy-retry.
-            const preStreamAction = getPreStreamErrorAction(errorDetail, 0, 0, {
-              status:
-                preStreamError instanceof APIError
-                  ? preStreamError.status
-                  : undefined,
-              transientRetries: preStreamTransientRetries,
-              maxTransientRetries: LLM_API_ERROR_MAX_RETRIES,
-            });
+            const preStreamAction = getPreStreamErrorAction(
+              preStreamError,
+              0,
+              0,
+              {
+                status:
+                  preStreamError instanceof APIError
+                    ? preStreamError.status
+                    : undefined,
+                transientRetries: preStreamTransientRetries,
+                maxTransientRetries: LLM_API_ERROR_MAX_RETRIES,
+              },
+            );
 
             if (preStreamAction === "resolve_approval_pending") {
               const recoveryMsg: RecoveryMessage = {

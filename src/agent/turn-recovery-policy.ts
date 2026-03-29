@@ -70,6 +70,67 @@ const CLOUDFLARE_EDGE_52X_RETRY_BASE_DELAY_MS = 5000;
 const CONVERSATION_BUSY_RETRY_BASE_DELAY_MS = 10000;
 const EMPTY_RESPONSE_RETRY_BASE_DELAY_MS = 500;
 
+const PENDING_APPROVAL_ERROR_CODE = "PENDING_APPROVAL";
+const PENDING_APPROVAL_CODE_PATTERN =
+  /"(?:code|error_code)"\s*:\s*"PENDING_APPROVAL"/i;
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object") return null;
+  return value as Record<string, unknown>;
+}
+
+function extractCodeField(value: unknown): string | null {
+  const record = asRecord(value);
+  if (!record) return null;
+
+  if (typeof record.code === "string") return record.code;
+  if (typeof record.error_code === "string") return record.error_code;
+
+  return null;
+}
+
+function extractConflictCode(value: unknown): string | null {
+  const directCode = extractCodeField(value);
+  if (directCode) return directCode;
+
+  const record = asRecord(value);
+  if (!record) return null;
+
+  const detailCode = extractConflictCode(record.detail);
+  if (detailCode) return detailCode;
+
+  const nestedErrorCode = extractConflictCode(record.error);
+  if (nestedErrorCode) return nestedErrorCode;
+
+  return null;
+}
+
+function extractMessageFromConflictValue(value: unknown): string | null {
+  const record = asRecord(value);
+  if (!record) return null;
+
+  if (typeof record.detail === "string") return record.detail;
+  if (typeof record.message === "string") return record.message;
+
+  if (record.detail && typeof record.detail === "object") {
+    const detailRecord = record.detail as Record<string, unknown>;
+    if (typeof detailRecord.message === "string") return detailRecord.message;
+    if (typeof detailRecord.detail === "string") return detailRecord.detail;
+  }
+
+  const nested = extractMessageFromConflictValue(record.error);
+  if (nested) return nested;
+
+  return null;
+}
+
+function isPendingApprovalCode(code: unknown): boolean {
+  return (
+    typeof code === "string" &&
+    code.toUpperCase() === PENDING_APPROVAL_ERROR_CODE
+  );
+}
+
 function isCloudflareEdge52xDetail(detail: unknown): boolean {
   if (typeof detail !== "string") return false;
   return isCloudflareEdge52xHtmlError(detail);
@@ -104,8 +165,13 @@ export function isInvalidToolCallIdsError(detail: unknown): boolean {
 
 /** Backend has a pending approval blocking new messages. */
 export function isApprovalPendingError(detail: unknown): boolean {
+  if (isPendingApprovalCode(extractConflictCode(detail))) return true;
+
   if (typeof detail !== "string") return false;
-  return detail.toLowerCase().includes(APPROVAL_PENDING_DETAIL_FRAGMENT);
+  return (
+    detail.toLowerCase().includes(APPROVAL_PENDING_DETAIL_FRAGMENT) ||
+    PENDING_APPROVAL_CODE_PATTERN.test(detail)
+  );
 }
 
 /** Conversation is busy (another request is being processed). */
@@ -288,23 +354,36 @@ export interface PreStreamErrorOptions {
   maxTransientRetries?: number;
 }
 
-/** Classify a pre-stream 409 conflict detail string. */
+/**
+ * Classify a pre-stream 409 conflict from either a raw detail string
+ * or an SDK error object with nested `{ detail: { code, message, ... } }`.
+ */
 export function classifyPreStreamConflict(
-  detail: unknown,
+  errorOrDetail: unknown,
 ): PreStreamConflictKind {
-  if (isApprovalPendingError(detail)) return "approval_pending";
+  if (isApprovalPendingError(errorOrDetail)) return "approval_pending";
+
+  const detail =
+    typeof errorOrDetail === "string"
+      ? errorOrDetail
+      : extractConflictDetail(errorOrDetail);
+
   if (isConversationBusyError(detail)) return "conversation_busy";
   return null;
 }
 
 /** Determine the recovery action for a pre-stream 409 error. */
 export function getPreStreamErrorAction(
-  detail: unknown,
+  errorOrDetail: unknown,
   conversationBusyRetries: number,
   maxConversationBusyRetries: number,
   opts?: PreStreamErrorOptions,
 ): PreStreamErrorAction {
-  const kind = classifyPreStreamConflict(detail);
+  const kind = classifyPreStreamConflict(errorOrDetail);
+  const detail =
+    typeof errorOrDetail === "string"
+      ? errorOrDetail
+      : extractConflictDetail(errorOrDetail);
 
   if (kind === "approval_pending") {
     return "resolve_approval_pending";
@@ -341,21 +420,9 @@ export function getPreStreamErrorAction(
  * Checks `detail` first (specific) then `message` (generic) at each level.
  */
 export function extractConflictDetail(error: unknown): string {
-  if (error && typeof error === "object" && "error" in error) {
-    const errObj = (error as Record<string, unknown>).error;
-    if (errObj && typeof errObj === "object") {
-      const outer = errObj as Record<string, unknown>;
-      // Nested: e.error.error.detail → e.error.error.message
-      if (outer.error && typeof outer.error === "object") {
-        const nested = outer.error as Record<string, unknown>;
-        if (typeof nested.detail === "string") return nested.detail;
-        if (typeof nested.message === "string") return nested.message;
-      }
-      // Direct: e.error.detail → e.error.message
-      if (typeof outer.detail === "string") return outer.detail;
-      if (typeof outer.message === "string") return outer.message;
-    }
-  }
+  const fromObject = extractMessageFromConflictValue(error);
+  if (fromObject) return fromObject;
+
   if (error instanceof Error) return error.message;
   return "";
 }
