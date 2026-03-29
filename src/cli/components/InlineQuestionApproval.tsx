@@ -24,13 +24,20 @@ type Props = {
   onSubmit: (answers: Record<string, string>) => void;
   onCancel?: () => void;
   isFocused?: boolean;
+  initialDraft?: string;
 };
 
 // Horizontal line character for Claude Code style
 const SOLID_LINE = "─";
 
 export const InlineQuestionApproval = memo(
-  ({ questions, onSubmit, onCancel, isFocused = true }: Props) => {
+  ({
+    questions,
+    onSubmit,
+    onCancel,
+    isFocused = true,
+    initialDraft,
+  }: Props) => {
     const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
     const [answers, setAnswers] = useState<Record<string, string>>({});
     const [selectedOption, setSelectedOption] = useState(0);
@@ -48,26 +55,44 @@ export const InlineQuestionApproval = memo(
 
     const currentQuestion = questions[currentQuestionIndex];
 
-    // Build options list: regular options + "Type something" (unless allowOther=false)
+    // Build options list: regular options + draft (if exists) + "Type new message" (unless allowOther=false)
     // For multi-select, we also track a separate "Submit" action
     const showOther = currentQuestion?.allowOther !== false;
-    const baseOptions = currentQuestion
+    const hasDraft = initialDraft && initialDraft.trim().length > 0;
+
+    // Regular options from the question
+    const regularOptions = currentQuestion?.options ?? [];
+
+    // Draft option (if exists) - shows truncated preview
+    const draftOption = hasDraft
       ? [
-          ...currentQuestion.options,
-          ...(showOther ? [{ label: "Type something.", description: "" }] : []),
+          {
+            label: "Edit current draft",
+            description: `"${initialDraft.slice(0, 40)}${initialDraft.length > 40 ? "..." : ""}"`,
+          },
         ]
       : [];
+
+    // "Type new message" option
+    const typeNewOption = showOther
+      ? [{ label: "Type new message.", description: "" }]
+      : [];
+
+    const baseOptions = [...regularOptions, ...draftOption, ...typeNewOption];
 
     // For multi-select, add Submit as a separate selectable item
     const optionsWithOther = currentQuestion?.multiSelect
       ? [...baseOptions, { label: "Submit", description: "" }]
       : baseOptions;
 
-    const customOptionIndex = showOther ? baseOptions.length - 1 : -1; // "Type something" index (-1 if disabled)
+    // Track indices for special options
+    const draftOptionIndex = hasDraft ? regularOptions.length : -1;
+    const customOptionIndex = showOther ? baseOptions.length - 1 : -1; // "Type new message" index
     const submitOptionIndex = currentQuestion?.multiSelect
       ? optionsWithOther.length - 1
       : -1; // Submit index (only for multi-select)
 
+    const isOnDraftOption = hasDraft && selectedOption === draftOptionIndex;
     const isOnCustomOption = showOther && selectedOption === customOptionIndex;
     const isOnSubmitOption = selectedOption === submitOptionIndex;
 
@@ -111,7 +136,33 @@ export const InlineQuestionApproval = memo(
           return;
         }
 
-        // When on custom input option ("Type something")
+        // When on draft edit option
+        if (isOnDraftOption) {
+          // Initialize draft text if not already done
+          if (!customText && initialDraft) {
+            setCustomText(initialDraft);
+            setCursorPos(initialDraft.length);
+          }
+          if (key.return) {
+            // Single-select: submit the draft text
+            if (customText.trim()) {
+              handleSubmitAnswer(customText.trim());
+            }
+            return;
+          }
+          if (key.escape) {
+            if (customText) {
+              clearCustomText();
+            } else {
+              onCancel?.();
+            }
+            return;
+          }
+          // Handle text input (arrows, backspace, typing)
+          if (handleKey(input, key)) return;
+        }
+
+        // When on custom input option ("Type new message")
         if (isOnCustomOption) {
           if (key.return) {
             // Enter toggles the checkbox (same as other options)
@@ -316,6 +367,7 @@ export const InlineQuestionApproval = memo(
             const isSelected = index === selectedOption;
             const isChecked = selectedMulti.has(index);
             const color = isSelected ? colors.approval.header : undefined;
+            const isDraftOption = index === draftOptionIndex;
             const isCustomOption = index === customOptionIndex;
             const isSubmitOption = index === submitOptionIndex;
 
@@ -370,8 +422,20 @@ export const InlineQuestionApproval = memo(
                   )}
                   {/* Label */}
                   <Box flexGrow={1} width={Math.max(0, columns - prefixWidth)}>
-                    {isCustomOption ? (
-                      // Custom input option ("Type something")
+                    {isDraftOption ? (
+                      // Draft edit option - show label with description (truncated draft)
+                      <Box flexDirection="column">
+                        <Text wrap="wrap" color={color} bold={isSelected}>
+                          {option.label}
+                        </Text>
+                        {option.description && (
+                          <Text wrap="wrap" dimColor>
+                            {option.description}
+                          </Text>
+                        )}
+                      </Box>
+                    ) : isCustomOption ? (
+                      // Custom input option ("Type new message")
                       customText ? (
                         <Text wrap="wrap">
                           {customText.slice(0, cursorPos)}

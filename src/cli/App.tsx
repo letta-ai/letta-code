@@ -1976,6 +1976,9 @@ export default function App({
   // Restored input value - set when we need to restore a message to the input after error
   const [restoredInput, setRestoredInput] = useState<string | null>(null);
 
+  // Track current input draft for approval dialogs
+  const currentDraftRef = useRef<string>("");
+
   // Helper to check if agent is busy (streaming, executing tool, or running command)
   // Uses refs for synchronous access outside React's closure system
   // biome-ignore lint/correctness/useExhaustiveDependencies: refs are stable objects, .current is read dynamically
@@ -13934,6 +13937,9 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
                 onPasteError={handlePasteError}
                 restoredInput={restoredInput}
                 onRestoredInputConsumed={() => setRestoredInput(null)}
+                onDraftChange={(draft) => {
+                  currentDraftRef.current = draft;
+                }}
                 networkPhase={networkPhase}
                 terminalWidth={chromeColumns}
                 shouldAnimate={shouldAnimate}

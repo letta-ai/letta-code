@@ -17,6 +17,7 @@ type Props = {
   planContent?: string;
   planFilePath?: string;
   agentName?: string;
+  initialDraft?: string; // Draft text from input buffer when approval appeared
 };
 
 /**
@@ -41,15 +42,19 @@ export const StaticPlanApproval = memo(
     planContent,
     planFilePath,
     agentName,
+    initialDraft,
   }: Props) => {
-    const [selectedOption, setSelectedOption] = useState(0);
+    // If draft exists, default to custom option and pre-populate
+    const hasDraft = initialDraft && initialDraft.trim().length > 0;
+    const defaultOptionIndex = hasDraft ? (showAcceptEditsOption ? 2 : 1) : 0;
+    const [selectedOption, setSelectedOption] = useState(defaultOptionIndex);
     const [browserStatus, setBrowserStatus] = useState("");
     const {
       text: customReason,
       cursorPos,
       handleKey,
       clear,
-    } = useTextInputCursor();
+    } = useTextInputCursor(hasDraft ? initialDraft : "");
     const columns = useTerminalWidth();
     useProgressIndicator();
 

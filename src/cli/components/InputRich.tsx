@@ -774,6 +774,7 @@ export function Input({
   statusLinePadding = 0,
   statusLinePrompt,
   onCycleReasoningEffort,
+  onDraftChange,
   footerNotification,
 }: {
   visible?: boolean;
@@ -818,6 +819,7 @@ export function Input({
   statusLinePadding?: number;
   statusLinePrompt?: string;
   onCycleReasoningEffort?: () => void;
+  onDraftChange?: (draft: string) => void;
   footerNotification?: string | null;
 }) {
   const [value, setValue] = useState("");
@@ -1349,7 +1351,8 @@ export function Input({
       setAtEndBoundary(false);
     }
     previousValueRef.current = value;
-  }, [value]);
+    onDraftChange?.(value);
+  }, [value, onDraftChange]);
 
   // Exit history mode when user starts typing
   useEffect(() => {
