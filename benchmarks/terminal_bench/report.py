@@ -40,16 +40,13 @@ def classify_failure(result: dict) -> tuple[str, str]:
     exc_msg = exception_info.get("exception_message", "") or ""
 
     if exc_type == "AgentSetupTimeoutError":
-        seconds = _extract_seconds(exc_msg)
-        return "setup-timeout", f"{seconds}s" if seconds else ""
+        return "setup-timeout", ""
 
     if exc_type == "AgentTimeoutError":
-        seconds = _extract_seconds(exc_msg)
-        return "agent-timeout", f"{seconds}s" if seconds else ""
+        return "agent-timeout", ""
 
     if exc_type == "VerifierTimeoutError":
-        seconds = _extract_seconds(exc_msg)
-        return "verifier-timeout", f"{seconds}s" if seconds else ""
+        return "verifier-timeout", ""
 
     if exc_type in _INFRA_EXCEPTION_TYPES:
         return "connection-error", exc_type
@@ -74,14 +71,6 @@ def classify_failure(result: dict) -> tuple[str, str]:
     # No exception, agent exited cleanly — just a wrong answer, not an error.
     return "", ""
 
-
-def _extract_seconds(msg: str) -> str:
-    """Pull the timeout duration from an exception message like '... after 1800.0 seconds'."""
-    m = re.search(r"([\d.]+)\s*seconds?", msg)
-    if m:
-        val = float(m.group(1))
-        return str(int(val)) if val == int(val) else str(val)
-    return ""
 
 
 def parse_job_results(results_dir: Path) -> dict[str, dict]:
