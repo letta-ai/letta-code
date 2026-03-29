@@ -51,7 +51,7 @@ import {
 import { settingsManager } from "../../settings-manager";
 import { telemetry } from "../../telemetry";
 import { trackBoundaryError } from "../../telemetry/errorReporting";
-import { loadTools } from "../../tools/manager";
+import { getToolNames, loadTools } from "../../tools/manager";
 import {
   forceToolsetSwitch,
   switchToolsetForModel,
@@ -368,6 +368,34 @@ function formatToolsetStatusMessageForModelUpdate(params: {
   );
 }
 
+function buildModelUpdateStatusMessage(params: {
+  modelLabel: string;
+  toolsetChanged: boolean;
+  toolsetError: string | null;
+  nextToolset: ToolsetName;
+  toolsetPreference: ToolsetName | "auto";
+}): { message: string; level: "info" | "warning" } {
+  const {
+    modelLabel,
+    toolsetChanged,
+    toolsetError,
+    nextToolset,
+    toolsetPreference,
+  } = params;
+  let message = `Model updated to ${modelLabel}.`;
+  if (toolsetError) {
+    message += ` Warning: toolset switch failed (${toolsetError}).`;
+    return { message, level: "warning" };
+  }
+  if (toolsetChanged) {
+    message += ` ${formatToolsetStatusMessageForModelUpdate({
+      nextToolset,
+      toolsetPreference,
+    })}`;
+  }
+  return { message, level: "info" };
+}
+
 async function applyModelUpdateForRuntime(params: {
   socket: WebSocket;
   listener: ListenerRuntime;
@@ -426,22 +454,39 @@ async function applyModelUpdateForRuntime(params: {
   }
 
   const toolsetPreference = settingsManager.getToolsetPreference(agentId);
+  const previousToolNames = getToolNames();
   let nextToolset: ToolsetName;
-  if (toolsetPreference === "auto") {
-    nextToolset = await switchToolsetForModel(model.handle, agentId);
-  } else {
-    await forceToolsetSwitch(toolsetPreference, agentId);
-    nextToolset = toolsetPreference;
+  let toolsetError: string | null = null;
+
+  try {
+    if (toolsetPreference === "auto") {
+      nextToolset = await switchToolsetForModel(model.handle, agentId);
+    } else {
+      await forceToolsetSwitch(toolsetPreference, agentId);
+      nextToolset = toolsetPreference;
+    }
+  } catch (error) {
+    nextToolset = toolsetPreference === "auto" ? "default" : toolsetPreference;
+    toolsetError =
+      error instanceof Error ? error.message : "Failed to switch toolset";
   }
 
+  // Only mention toolset in the status message when it actually changed
+  const toolsetChanged =
+    !toolsetError &&
+    JSON.stringify(previousToolNames) !== JSON.stringify(getToolNames());
+  const { message: statusMessage, level: statusLevel } =
+    buildModelUpdateStatusMessage({
+      modelLabel: model.label,
+      toolsetChanged,
+      toolsetError,
+      nextToolset,
+      toolsetPreference,
+    });
+
   emitStatusDelta(socket, scopedRuntime, {
-    message: `Model updated to ${model.label}. ${formatToolsetStatusMessageForModelUpdate(
-      {
-        nextToolset,
-        toolsetPreference,
-      },
-    )}`,
-    level: "info",
+    message: statusMessage,
+    level: statusLevel,
     agentId,
     conversationId,
   });
@@ -2938,6 +2983,7 @@ export const __listenClientTestUtils = {
   createListenerRuntime: createRuntime,
   getOrCreateScopedRuntime,
   buildListModelsEntries,
+  buildModelUpdateStatusMessage,
   resolveModelForUpdate,
   applyModelUpdateForRuntime,
   stopRuntime: (
