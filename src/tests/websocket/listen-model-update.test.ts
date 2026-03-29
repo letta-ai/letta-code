@@ -123,3 +123,88 @@ describe("listen-client applyModelUpdateForRuntime wiring", () => {
     expect(source).toContain('appliedTo = "conversation"');
   });
 });
+
+describe("listen-client list_models response wiring", () => {
+  test("buildListModelsResponse is async and uses Promise.allSettled for parallel fetches", () => {
+    const clientPath = fileURLToPath(
+      new URL("../../websocket/listener/client.ts", import.meta.url),
+    );
+    const source = readFileSync(clientPath, "utf-8");
+
+    // The response builder should use Promise.allSettled for parallel fetches
+    expect(source).toContain("Promise.allSettled");
+    expect(source).toContain("getAvailableModelHandles()");
+    expect(source).toContain("listProviders()");
+    expect(source).toContain("buildByokProviderAliases(providers)");
+  });
+
+  test("handler uses async pattern with buildListModelsResponse", () => {
+    const clientPath = fileURLToPath(
+      new URL("../../websocket/listener/client.ts", import.meta.url),
+    );
+    const source = readFileSync(clientPath, "utf-8");
+
+    // Handler should be wrapped in void (async () => { ... })() pattern
+    expect(source).toContain("buildListModelsResponse(parsed.request_id)");
+  });
+
+  test("response type includes available_handles and byok_provider_aliases fields", () => {
+    const clientPath = fileURLToPath(
+      new URL("../../websocket/listener/client.ts", import.meta.url),
+    );
+    const source = readFileSync(clientPath, "utf-8");
+
+    // The response payload should include the new fields
+    expect(source).toContain("available_handles: availableHandles");
+    expect(source).toContain("byok_provider_aliases: byokProviderAliases");
+  });
+
+  test("available_handles is null when availability fetch fails (degraded path)", () => {
+    const clientPath = fileURLToPath(
+      new URL("../../websocket/listener/client.ts", import.meta.url),
+    );
+    const source = readFileSync(clientPath, "utf-8");
+
+    // Should handle rejected availability fetch by returning null
+    expect(source).toContain('handlesResult.status === "fulfilled"');
+    // Null fallback when fetch fails
+    expect(source).toContain(": null");
+  });
+
+  test("buildListModelsEntries returns entries with expected shape", () => {
+    const entries = __listenClientTestUtils.buildListModelsEntries();
+
+    expect(Array.isArray(entries)).toBe(true);
+    expect(entries.length).toBeGreaterThan(0);
+
+    // Every entry should have required fields
+    for (const entry of entries) {
+      expect(typeof entry.id).toBe("string");
+      expect(typeof entry.handle).toBe("string");
+      expect(typeof entry.label).toBe("string");
+      expect(typeof entry.description).toBe("string");
+    }
+  });
+
+  test("buildListModelsEntries preserves updateArgs when present", () => {
+    const entries = __listenClientTestUtils.buildListModelsEntries();
+
+    // At least some entries should have updateArgs (models with config)
+    const withUpdateArgs = entries.filter(
+      (e) => e.updateArgs && Object.keys(e.updateArgs).length > 0,
+    );
+    expect(withUpdateArgs.length).toBeGreaterThan(0);
+
+    // At least some entries with updateArgs should have reasoning_effort
+    const withReasoningEffort = withUpdateArgs.filter(
+      (e) => "reasoning_effort" in (e.updateArgs as Record<string, unknown>),
+    );
+    expect(withReasoningEffort.length).toBeGreaterThan(0);
+  });
+
+  test("buildListModelsResponse is exposed on test utils", () => {
+    expect(typeof __listenClientTestUtils.buildListModelsResponse).toBe(
+      "function",
+    );
+  });
+});

@@ -552,6 +552,10 @@ export interface ListModelsResponseMessage {
   request_id: string;
   success: boolean;
   entries: ListModelsResponseModelEntry[];
+  /** Handles available to this user from the API. null = lookup failed; absent = old server. */
+  available_handles?: string[] | null;
+  /** BYOK provider name → base provider (e.g. "lc-anthropic" → "anthropic") */
+  byok_provider_aliases?: Record<string, string>;
   error?: string;
 }
 

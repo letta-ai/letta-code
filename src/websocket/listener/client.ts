@@ -8,6 +8,7 @@ import path from "node:path";
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import WebSocket from "ws";
+import { getAvailableModelHandles } from "../../agent/available-models";
 import { getClient } from "../../agent/client";
 import { getModelInfo, models } from "../../agent/model";
 import {
@@ -43,6 +44,10 @@ import {
   startScheduler as startCronScheduler,
   stopScheduler as stopCronScheduler,
 } from "../../cron/scheduler";
+import {
+  buildByokProviderAliases,
+  listProviders,
+} from "../../providers/byok-providers";
 import { type DequeuedBatch, QueueRuntime } from "../../queue/queueRuntime";
 import {
   createSharedReminderState,
@@ -68,6 +73,7 @@ import type {
   CronGetCommand,
   CronListCommand,
   GetReflectionSettingsCommand,
+  ListModelsResponseMessage,
   ListModelsResponseModelEntry,
   ReflectionSettingsScope,
   SetReflectionSettingsCommand,
@@ -528,6 +534,40 @@ function buildListModelsEntries(): ListModelsResponseModelEntry[] {
       ? { updateArgs: model.updateArgs as Record<string, unknown> }
       : {}),
   }));
+}
+
+/**
+ * Build the full list_models_response payload, including availability data.
+ * Fetches available handles and BYOK provider aliases in parallel (best-effort).
+ */
+async function buildListModelsResponse(
+  requestId: string,
+): Promise<ListModelsResponseMessage> {
+  const entries = buildListModelsEntries();
+
+  const [handlesResult, providersResult] = await Promise.allSettled([
+    getAvailableModelHandles(),
+    listProviders(),
+  ]);
+
+  const availableHandles: string[] | null =
+    handlesResult.status === "fulfilled"
+      ? [...handlesResult.value.handles]
+      : null;
+
+  // listProviders already degrades to [] on failure, but handle rejection too
+  const providers =
+    providersResult.status === "fulfilled" ? providersResult.value : [];
+  const byokProviderAliases = buildByokProviderAliases(providers);
+
+  return {
+    type: "list_models_response",
+    request_id: requestId,
+    success: true,
+    entries,
+    available_handles: availableHandles,
+    byok_provider_aliases: byokProviderAliases,
+  };
 }
 
 type ReflectionSettingsCommand =
@@ -2457,27 +2497,25 @@ async function connectWithRetry(
 
     // ── Model catalog command (no runtime scope required) ───────────────
     if (isListModelsCommand(parsed)) {
-      try {
-        socket.send(
-          JSON.stringify({
-            type: "list_models_response",
-            request_id: parsed.request_id,
-            success: true,
-            entries: buildListModelsEntries(),
-          }),
-        );
-      } catch (error) {
-        socket.send(
-          JSON.stringify({
-            type: "list_models_response",
-            request_id: parsed.request_id,
-            success: false,
-            entries: [],
-            error:
-              error instanceof Error ? error.message : "Failed to list models",
-          }),
-        );
-      }
+      void (async () => {
+        try {
+          const response = await buildListModelsResponse(parsed.request_id);
+          socket.send(JSON.stringify(response));
+        } catch (error) {
+          socket.send(
+            JSON.stringify({
+              type: "list_models_response",
+              request_id: parsed.request_id,
+              success: false,
+              entries: [],
+              error:
+                error instanceof Error
+                  ? error.message
+                  : "Failed to list models",
+            }),
+          );
+        }
+      })();
       return;
     }
 
@@ -2983,6 +3021,7 @@ export const __listenClientTestUtils = {
   createListenerRuntime: createRuntime,
   getOrCreateScopedRuntime,
   buildListModelsEntries,
+  buildListModelsResponse,
   buildModelUpdateStatusMessage,
   resolveModelForUpdate,
   applyModelUpdateForRuntime,
