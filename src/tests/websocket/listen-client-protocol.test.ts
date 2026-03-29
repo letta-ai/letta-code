@@ -5,6 +5,7 @@ import { join } from "node:path";
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import WebSocket from "ws";
 import { buildConversationMessagesCreateRequestBody } from "../../agent/message";
+import { models } from "../../agent/model";
 import {
   clearAllSubagents,
   registerSubagent,
@@ -251,6 +252,51 @@ describe("listen-client parseServerMessage", () => {
     expect(cronDeleteAll?.type).toBe("cron_delete_all");
   });
 
+  test("parses list_models command", () => {
+    const parsed = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "list_models",
+          request_id: "models-1",
+        }),
+      ),
+    );
+
+    expect(parsed).not.toBeNull();
+    expect(parsed?.type).toBe("list_models");
+  });
+
+  test("parses update_model command with model_id", () => {
+    const parsed = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "update_model",
+          request_id: "update-model-1",
+          runtime: { agent_id: "agent-1", conversation_id: "default" },
+          payload: { model_id: "sonnet" },
+        }),
+      ),
+    );
+
+    expect(parsed).not.toBeNull();
+    expect(parsed?.type).toBe("update_model");
+  });
+
+  test("rejects update_model command missing model identifier", () => {
+    const parsed = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "update_model",
+          request_id: "update-model-2",
+          runtime: { agent_id: "agent-1", conversation_id: "default" },
+          payload: {},
+        }),
+      ),
+    );
+
+    expect(parsed).toBeNull();
+  });
+
   test("parses skill enable/disable commands", () => {
     const skillEnable = parseServerMessage(
       Buffer.from(
@@ -338,6 +384,47 @@ describe("listen-client parseServerMessage", () => {
       ),
     );
     expect(legacyCancel).toBeNull();
+  });
+});
+
+describe("listen-client model command helpers", () => {
+  test("buildListModelsEntries reflects models.json metadata", () => {
+    const entries = __listenClientTestUtils.buildListModelsEntries();
+
+    expect(entries.length).toBe(models.length);
+    expect(entries[0]).toMatchObject({
+      id: models[0]?.id,
+      handle: models[0]?.handle,
+      label: models[0]?.label,
+      description: models[0]?.description,
+    });
+  });
+
+  test("resolveModelForUpdate resolves by id and by handle", () => {
+    const byId = __listenClientTestUtils.resolveModelForUpdate({
+      model_id: models[0]?.id,
+    });
+    expect(byId).not.toBeNull();
+    expect(byId?.handle).toBe(models[0]?.handle);
+
+    const byHandle = __listenClientTestUtils.resolveModelForUpdate({
+      model_handle: models[0]?.handle,
+    });
+    expect(byHandle).not.toBeNull();
+    expect(byHandle?.id).toBe(models[0]?.id);
+  });
+
+  test("resolveModelForUpdate allows custom handles", () => {
+    const resolved = __listenClientTestUtils.resolveModelForUpdate({
+      model_handle: "custom/provider-model",
+    });
+
+    expect(resolved).toEqual({
+      id: "custom/provider-model",
+      handle: "custom/provider-model",
+      label: "custom/provider-model",
+      updateArgs: undefined,
+    });
   });
 });
 

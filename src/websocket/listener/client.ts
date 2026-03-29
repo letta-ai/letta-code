@@ -8,7 +8,13 @@ import path from "node:path";
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import WebSocket from "ws";
+import { getAvailableModelHandles } from "../../agent/available-models";
 import { getClient } from "../../agent/client";
+import { getModelInfo, models } from "../../agent/model";
+import {
+  updateAgentLLMConfig,
+  updateConversationLLMConfig,
+} from "../../agent/modify";
 import { resetContextHistory } from "../../cli/helpers/contextTracker";
 import {
   ensureFileIndex,
@@ -38,6 +44,10 @@ import {
   startScheduler as startCronScheduler,
   stopScheduler as stopCronScheduler,
 } from "../../cron/scheduler";
+import {
+  buildByokProviderAliases,
+  listProviders,
+} from "../../providers/byok-providers";
 import { type DequeuedBatch, QueueRuntime } from "../../queue/queueRuntime";
 import {
   createSharedReminderState,
@@ -46,7 +56,13 @@ import {
 import { settingsManager } from "../../settings-manager";
 import { telemetry } from "../../telemetry";
 import { trackBoundaryError } from "../../telemetry/errorReporting";
-import { loadTools } from "../../tools/manager";
+import { getToolNames, loadTools } from "../../tools/manager";
+import {
+  forceToolsetSwitch,
+  switchToolsetForModel,
+  type ToolsetName,
+} from "../../tools/toolset";
+import { formatToolsetName } from "../../tools/toolset-labels";
 import type {
   AbortMessageCommand,
   ApprovalResponseBody,
@@ -57,10 +73,13 @@ import type {
   CronGetCommand,
   CronListCommand,
   GetReflectionSettingsCommand,
+  ListModelsResponseMessage,
+  ListModelsResponseModelEntry,
   ReflectionSettingsScope,
   SetReflectionSettingsCommand,
   SkillDisableCommand,
   SkillEnableCommand,
+  UpdateModelResponseMessage,
 } from "../../types/protocol_v2";
 import { isDebugEnabled } from "../../utils/debug";
 import {
@@ -116,11 +135,13 @@ import {
   isGetReflectionSettingsCommand,
   isListInDirectoryCommand,
   isListMemoryCommand,
+  isListModelsCommand,
   isReadFileCommand,
   isSearchFilesCommand,
   isSetReflectionSettingsCommand,
   isSkillDisableCommand,
   isSkillEnableCommand,
+  isUpdateModelCommand,
   parseServerMessage,
 } from "./protocol-inbound";
 import {
@@ -134,6 +155,7 @@ import {
   emitRetryDelta,
   emitRuntimeStateUpdates,
   emitStateSync,
+  emitStatusDelta,
   emitStreamDelta,
   emitSubagentStateIfOpen,
   scheduleQueueEmit,
@@ -275,6 +297,278 @@ type CronCommand =
   | CronGetCommand
   | CronDeleteCommand
   | CronDeleteAllCommand;
+
+type ResolvedModelForUpdate = {
+  id: string;
+  handle: string;
+  label: string;
+  updateArgs?: Record<string, unknown>;
+};
+
+function resolveModelForUpdate(payload: {
+  model_id?: string;
+  model_handle?: string;
+}): ResolvedModelForUpdate | null {
+  if (typeof payload.model_id === "string" && payload.model_id.length > 0) {
+    const byId = getModelInfo(payload.model_id);
+    if (byId) {
+      return {
+        id: byId.id,
+        handle: byId.handle,
+        label: byId.label,
+        updateArgs:
+          byId.updateArgs && typeof byId.updateArgs === "object"
+            ? ({ ...byId.updateArgs } as Record<string, unknown>)
+            : undefined,
+      };
+    }
+  }
+
+  if (
+    typeof payload.model_handle === "string" &&
+    payload.model_handle.length > 0
+  ) {
+    const exactByHandle = models.find((m) => m.handle === payload.model_handle);
+    if (exactByHandle) {
+      return {
+        id: exactByHandle.id,
+        handle: exactByHandle.handle,
+        label: exactByHandle.label,
+        updateArgs:
+          exactByHandle.updateArgs &&
+          typeof exactByHandle.updateArgs === "object"
+            ? ({ ...exactByHandle.updateArgs } as Record<string, unknown>)
+            : undefined,
+      };
+    }
+
+    return {
+      id: payload.model_handle,
+      handle: payload.model_handle,
+      label: payload.model_handle,
+      updateArgs: undefined,
+    };
+  }
+
+  return null;
+}
+
+function formatToolsetStatusMessageForModelUpdate(params: {
+  nextToolset: ToolsetName;
+  toolsetPreference: ToolsetName | "auto";
+}): string {
+  const { nextToolset, toolsetPreference } = params;
+
+  if (toolsetPreference === "auto") {
+    return (
+      "Tools adjusted for this model (auto): now using " +
+      formatToolsetName(nextToolset) +
+      "."
+    );
+  }
+
+  return (
+    "Manual toolset override remains active: " +
+    formatToolsetName(toolsetPreference) +
+    "."
+  );
+}
+
+function buildModelUpdateStatusMessage(params: {
+  modelLabel: string;
+  toolsetChanged: boolean;
+  toolsetError: string | null;
+  nextToolset: ToolsetName;
+  toolsetPreference: ToolsetName | "auto";
+}): { message: string; level: "info" | "warning" } {
+  const {
+    modelLabel,
+    toolsetChanged,
+    toolsetError,
+    nextToolset,
+    toolsetPreference,
+  } = params;
+  let message = `Model updated to ${modelLabel}.`;
+  if (toolsetError) {
+    message += ` Warning: toolset switch failed (${toolsetError}).`;
+    return { message, level: "warning" };
+  }
+  if (toolsetChanged) {
+    message += ` ${formatToolsetStatusMessageForModelUpdate({
+      nextToolset,
+      toolsetPreference,
+    })}`;
+  }
+  return { message, level: "info" };
+}
+
+async function applyModelUpdateForRuntime(params: {
+  socket: WebSocket;
+  listener: ListenerRuntime;
+  scopedRuntime: ConversationRuntime;
+  requestId: string;
+  model: ResolvedModelForUpdate;
+}): Promise<UpdateModelResponseMessage> {
+  const { socket, listener, scopedRuntime, requestId, model } = params;
+  const agentId = scopedRuntime.agentId;
+  const conversationId = scopedRuntime.conversationId;
+
+  if (!agentId) {
+    return {
+      type: "update_model_response",
+      request_id: requestId,
+      success: false,
+      error: "Missing agent_id in runtime scope",
+    };
+  }
+
+  const isDefaultConversation = conversationId === "default";
+
+  const updateArgs = {
+    ...(model.updateArgs ?? {}),
+    parallel_tool_calls: true,
+  };
+
+  let modelSettings: Record<string, unknown> | null = null;
+  let appliedTo: "agent" | "conversation";
+
+  if (isDefaultConversation) {
+    const updatedAgent = await updateAgentLLMConfig(
+      agentId,
+      model.handle,
+      updateArgs,
+    );
+    modelSettings =
+      (updatedAgent.model_settings as
+        | Record<string, unknown>
+        | null
+        | undefined) ?? null;
+    appliedTo = "agent";
+  } else {
+    const updatedConversation = await updateConversationLLMConfig(
+      conversationId,
+      model.handle,
+      updateArgs,
+    );
+    modelSettings =
+      ((
+        updatedConversation as {
+          model_settings?: Record<string, unknown> | null;
+        }
+      ).model_settings as Record<string, unknown> | null | undefined) ?? null;
+    appliedTo = "conversation";
+  }
+
+  const toolsetPreference = settingsManager.getToolsetPreference(agentId);
+  const previousToolNames = getToolNames();
+  let nextToolset: ToolsetName;
+  let toolsetError: string | null = null;
+
+  try {
+    if (toolsetPreference === "auto") {
+      nextToolset = await switchToolsetForModel(model.handle, agentId);
+    } else {
+      await forceToolsetSwitch(toolsetPreference, agentId);
+      nextToolset = toolsetPreference;
+    }
+  } catch (error) {
+    nextToolset = toolsetPreference === "auto" ? "default" : toolsetPreference;
+    toolsetError =
+      error instanceof Error ? error.message : "Failed to switch toolset";
+  }
+
+  // Only mention toolset in the status message when it actually changed
+  const toolsetChanged =
+    !toolsetError &&
+    JSON.stringify(previousToolNames) !== JSON.stringify(getToolNames());
+  const { message: statusMessage, level: statusLevel } =
+    buildModelUpdateStatusMessage({
+      modelLabel: model.label,
+      toolsetChanged,
+      toolsetError,
+      nextToolset,
+      toolsetPreference,
+    });
+
+  emitStatusDelta(socket, scopedRuntime, {
+    message: statusMessage,
+    level: statusLevel,
+    agentId,
+    conversationId,
+  });
+
+  emitRuntimeStateUpdates(listener, {
+    agent_id: agentId,
+    conversation_id: conversationId,
+  });
+
+  return {
+    type: "update_model_response",
+    request_id: requestId,
+    success: true,
+    runtime: {
+      agent_id: agentId,
+      conversation_id: conversationId,
+    },
+    applied_to: appliedTo,
+    model_id: model.id,
+    model_handle: model.handle,
+    model_settings: modelSettings,
+  };
+}
+
+function buildListModelsEntries(): ListModelsResponseModelEntry[] {
+  return models.map((model) => ({
+    id: model.id,
+    handle: model.handle,
+    label: model.label,
+    description: model.description,
+    ...(typeof model.isDefault === "boolean"
+      ? { isDefault: model.isDefault }
+      : {}),
+    ...(typeof model.isFeatured === "boolean"
+      ? { isFeatured: model.isFeatured }
+      : {}),
+    ...(typeof model.free === "boolean" ? { free: model.free } : {}),
+    ...(model.updateArgs && typeof model.updateArgs === "object"
+      ? { updateArgs: model.updateArgs as Record<string, unknown> }
+      : {}),
+  }));
+}
+
+/**
+ * Build the full list_models_response payload, including availability data.
+ * Fetches available handles and BYOK provider aliases in parallel (best-effort).
+ */
+async function buildListModelsResponse(
+  requestId: string,
+): Promise<ListModelsResponseMessage> {
+  const entries = buildListModelsEntries();
+
+  const [handlesResult, providersResult] = await Promise.allSettled([
+    getAvailableModelHandles(),
+    listProviders(),
+  ]);
+
+  const availableHandles: string[] | null =
+    handlesResult.status === "fulfilled"
+      ? [...handlesResult.value.handles]
+      : null;
+
+  // listProviders already degrades to [] on failure, but handle rejection too
+  const providers =
+    providersResult.status === "fulfilled" ? providersResult.value : [];
+  const byokProviderAliases = buildByokProviderAliases(providers);
+
+  return {
+    type: "list_models_response",
+    request_id: requestId,
+    success: true,
+    entries,
+    available_handles: availableHandles,
+    byok_provider_aliases: byokProviderAliases,
+  };
+}
 
 type ReflectionSettingsCommand =
   | GetReflectionSettingsCommand
@@ -2201,6 +2495,81 @@ async function connectWithRetry(
       return;
     }
 
+    // ── Model catalog command (no runtime scope required) ───────────────
+    if (isListModelsCommand(parsed)) {
+      void (async () => {
+        try {
+          const response = await buildListModelsResponse(parsed.request_id);
+          socket.send(JSON.stringify(response));
+        } catch (error) {
+          socket.send(
+            JSON.stringify({
+              type: "list_models_response",
+              request_id: parsed.request_id,
+              success: false,
+              entries: [],
+              error:
+                error instanceof Error
+                  ? error.message
+                  : "Failed to list models",
+            }),
+          );
+        }
+      })();
+      return;
+    }
+
+    // ── Model update command (runtime scoped) ────────────────────────────
+    if (isUpdateModelCommand(parsed)) {
+      void (async () => {
+        const scopedRuntime = getOrCreateScopedRuntime(
+          runtime,
+          parsed.runtime.agent_id,
+          parsed.runtime.conversation_id,
+        );
+
+        const resolvedModel = resolveModelForUpdate(parsed.payload);
+        if (!resolvedModel) {
+          const failure: UpdateModelResponseMessage = {
+            type: "update_model_response",
+            request_id: parsed.request_id,
+            success: false,
+            error:
+              "Model not found. Provide a valid model_id from list_models or a model_handle.",
+          };
+          socket.send(JSON.stringify(failure));
+          return;
+        }
+
+        try {
+          const response = await applyModelUpdateForRuntime({
+            socket,
+            listener: runtime,
+            scopedRuntime,
+            requestId: parsed.request_id,
+            model: resolvedModel,
+          });
+          socket.send(JSON.stringify(response));
+        } catch (error) {
+          const failure: UpdateModelResponseMessage = {
+            type: "update_model_response",
+            request_id: parsed.request_id,
+            success: false,
+            runtime: {
+              agent_id: parsed.runtime.agent_id,
+              conversation_id: parsed.runtime.conversation_id,
+            },
+            model_id: resolvedModel.id,
+            model_handle: resolvedModel.handle,
+            error:
+              error instanceof Error ? error.message : "Failed to update model",
+          };
+          socket.send(JSON.stringify(failure));
+        }
+      })();
+      return;
+    }
+
     // ── Cron CRUD commands (no runtime scope required) ────────────────
     if (
       isCronListCommand(parsed) ||
@@ -2651,6 +3020,11 @@ export const __listenClientTestUtils = {
   createRuntime: createLegacyTestRuntime,
   createListenerRuntime: createRuntime,
   getOrCreateScopedRuntime,
+  buildListModelsEntries,
+  buildListModelsResponse,
+  buildModelUpdateStatusMessage,
+  resolveModelForUpdate,
+  applyModelUpdateForRuntime,
   stopRuntime: (
     runtime: ListenerRuntime | ConversationRuntime,
     suppressCallbacks: boolean,
