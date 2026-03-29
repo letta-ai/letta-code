@@ -8,6 +8,7 @@ import { Box, useInput } from "ink";
 import React, { useCallback, useEffect, useState } from "react";
 import { getClient } from "../agent/client";
 import { settingsManager } from "../settings-manager";
+import { AgentSelector } from "./components/AgentSelector";
 import { colors } from "./components/colors";
 import { Text } from "./components/Text";
 import { WelcomeScreen } from "./components/WelcomeScreen";
@@ -21,7 +22,7 @@ interface ProfileOption {
 }
 
 interface ProfileSelectionResult {
-  type: "select" | "new" | "new_with_model" | "exit";
+  type: "select" | "new" | "new_with_model" | "browse" | "exit";
   agentId?: string;
   profileName?: string | null;
   model?: string;
@@ -163,7 +164,8 @@ function ProfileSelectionUI({
 
   const displayOptions = showAll ? options : options.slice(0, MAX_DISPLAY);
   const hasMore = options.length > MAX_DISPLAY;
-  const totalItems = displayOptions.length + 1 + (hasMore && !showAll ? 1 : 0);
+  // +1 for "Create new agent", +1 for "Browse all agents..."
+  const totalItems = displayOptions.length + 2 + (hasMore && !showAll ? 1 : 0);
 
   // Model selection - filter out legacy models and apply search
   const allServerModels =
@@ -258,8 +260,8 @@ function ProfileSelectionUI({
       ) {
         setShowAll(true);
         setSelectedIndex(0);
-      } else {
-        // "Create new agent" selected
+      } else if (selectedIndex === totalItems - 2) {
+        // "Create new agent" selected (second-to-last item)
         if (serverModelsForNewAgent && serverModelsForNewAgent.length > 0) {
           // Need to pick a model first
           setSelectingModel(true);
@@ -267,6 +269,9 @@ function ProfileSelectionUI({
         } else {
           onComplete({ type: "new" });
         }
+      } else {
+        // "Browse all agents..." selected (last item)
+        onComplete({ type: "browse" });
       }
     } else if (key.escape || (key.ctrl && _input === "c")) {
       onComplete({ type: "exit" });
@@ -432,15 +437,28 @@ function ProfileSelectionUI({
             <Box>
               <Text
                 color={
+                  selectedIndex === totalItems - 2
+                    ? colors.selector.itemHighlighted
+                    : undefined
+                }
+              >
+                {selectedIndex === totalItems - 2 ? "> " : "  "}
+                Create a new agent
+              </Text>
+              <Text dimColor> (--new)</Text>
+            </Box>
+
+            <Box>
+              <Text
+                color={
                   selectedIndex === totalItems - 1
                     ? colors.selector.itemHighlighted
                     : undefined
                 }
               >
                 {selectedIndex === totalItems - 1 ? "> " : "  "}
-                Create a new agent
+                Browse all agents...
               </Text>
-              <Text dimColor> (--new)</Text>
             </Box>
           </Box>
 
@@ -485,8 +503,27 @@ export function ProfileSelectionInline({
   onCreateNewWithModel?: (model: string) => void;
   onExit: () => void;
 }) {
+  // Track whether user has chosen to browse all agents (shows AgentSelector)
+  const [browsing, setBrowsing] = useState(false);
+
+  // Show full AgentSelector when user picks "Browse all agents..."
+  if (browsing) {
+    return React.createElement(AgentSelector, {
+      currentAgentId: "",
+      onSelect: (agentId: string) => onSelect(agentId),
+      onCancel: () => setBrowsing(false),
+      onCreateNewAgent: () => {
+        setBrowsing(false);
+        onCreateNew();
+      },
+      command: "browse",
+    });
+  }
+
   const handleComplete = (result: ProfileSelectionResult) => {
-    if (result.type === "exit") {
+    if (result.type === "browse") {
+      setBrowsing(true);
+    } else if (result.type === "exit") {
       onExit();
     } else if (result.type === "select" && result.agentId) {
       onSelect(result.agentId);
