@@ -54,6 +54,59 @@ describe("listen-client model update status message", () => {
     expect(result.level).toBe("info");
   });
 
+  test("includes reasoning effort when updateArgs has reasoning_effort", () => {
+    const result = __listenClientTestUtils.buildModelUpdateStatusMessage({
+      modelLabel: "Opus 4.6",
+      toolsetChanged: false,
+      toolsetError: null,
+      nextToolset: "default",
+      toolsetPreference: "auto",
+      updateArgs: { reasoning_effort: "medium" },
+    });
+
+    expect(result.message).toBe("Model updated to Opus 4.6 (Medium).");
+    expect(result.level).toBe("info");
+  });
+
+  test("shows No Reasoning for reasoning_effort none", () => {
+    const result = __listenClientTestUtils.buildModelUpdateStatusMessage({
+      modelLabel: "Opus 4.6",
+      toolsetChanged: false,
+      toolsetError: null,
+      nextToolset: "default",
+      toolsetPreference: "auto",
+      updateArgs: { reasoning_effort: "none" },
+    });
+
+    expect(result.message).toBe("Model updated to Opus 4.6 (No Reasoning).");
+  });
+
+  test("shows Max for reasoning_effort xhigh", () => {
+    const result = __listenClientTestUtils.buildModelUpdateStatusMessage({
+      modelLabel: "Opus 4.6",
+      toolsetChanged: false,
+      toolsetError: null,
+      nextToolset: "default",
+      toolsetPreference: "auto",
+      updateArgs: { reasoning_effort: "xhigh" },
+    });
+
+    expect(result.message).toBe("Model updated to Opus 4.6 (Max).");
+  });
+
+  test("omits effort when updateArgs has no reasoning_effort", () => {
+    const result = __listenClientTestUtils.buildModelUpdateStatusMessage({
+      modelLabel: "GLM-5",
+      toolsetChanged: false,
+      toolsetError: null,
+      nextToolset: "default",
+      toolsetPreference: "auto",
+      updateArgs: { context_window: 180000 },
+    });
+
+    expect(result.message).toBe("Model updated to GLM-5.");
+  });
+
   test("reports warning level when toolset switch failed", () => {
     const result = __listenClientTestUtils.buildModelUpdateStatusMessage({
       modelLabel: "Claude Sonnet 4",
