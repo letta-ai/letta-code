@@ -1,5 +1,5 @@
 import { Box, useInput } from "ink";
-import { Fragment, memo, useMemo, useState } from "react";
+import { Fragment, memo, useEffect, useMemo, useState } from "react";
 import { useProgressIndicator } from "../hooks/useProgressIndicator";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { useTextInputCursor } from "../hooks/useTextInputCursor";
@@ -95,6 +95,14 @@ export const InlineQuestionApproval = memo(
     const isOnDraftOption = hasDraft && selectedOption === draftOptionIndex;
     const isOnCustomOption = showOther && selectedOption === customOptionIndex;
     const isOnSubmitOption = selectedOption === submitOptionIndex;
+    // If a draft exists, default the selection to the draft option so it's
+    // immediately visible and the user can enter/edit it quickly.
+    // Run this in an effect so it updates when questions/currentQuestion changes.
+    useEffect(() => {
+      if (hasDraft && draftOptionIndex >= 0) {
+        setSelectedOption(draftOptionIndex);
+      }
+    }, [hasDraft, draftOptionIndex]);
 
     const handleSubmitAnswer = (answer: string) => {
       if (!currentQuestion) return;
