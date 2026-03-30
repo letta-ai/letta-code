@@ -143,23 +143,19 @@ const EMPTY_RESPONSE_MAX_RETRIES = 2;
 // Provider fallback: Anthropic model ID → Bedrock model ID.
 // After 1 failed retry against Anthropic, automatically retry via Bedrock.
 const PROVIDER_FALLBACK_MAP: Record<string, string> = {
+  // Opus 4.6 variants → Bedrock Opus 4.6
   opus: "bedrock-opus-4.6",
   "opus-4.6-no-reasoning": "bedrock-opus-4.6",
   "opus-4.6-low": "bedrock-opus-4.6",
   "opus-4.6-medium": "bedrock-opus-4.6",
   "opus-4.6-xhigh": "bedrock-opus-4.6",
-  "opus-4.5": "bedrock-opus-4.5",
-  "opus-4.5-no-reasoning": "bedrock-opus-4.5",
-  "opus-4.5-low": "bedrock-opus-4.5",
-  "opus-4.5-medium": "bedrock-opus-4.5",
+  // Sonnet 4.6 variants → Bedrock Sonnet 4.6
   sonnet: "bedrock-sonnet-4.6",
   "sonnet-1m": "bedrock-sonnet-4.6",
   "sonnet-4.6-no-reasoning": "bedrock-sonnet-4.6",
   "sonnet-4.6-low": "bedrock-sonnet-4.6",
   "sonnet-4.6-medium": "bedrock-sonnet-4.6",
   "sonnet-4.6-xhigh": "bedrock-sonnet-4.6",
-  "sonnet-4.5": "bedrock-sonnet-4.5",
-  "sonnet-4.5-no-reasoning": "bedrock-sonnet-4.5",
 };
 
 // Retry config for 409 "conversation busy" errors (exponential backoff)
