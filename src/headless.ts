@@ -911,6 +911,7 @@ export async function handleHeadlessCommand(
     process.exit(1);
   }
   markMilestone("HEADLESS_AGENT_RESOLVED");
+  telemetry.setCurrentAgentId(agent.id);
 
   // Check if we're resuming an existing agent (not creating a new one)
   const isResumingAgent = !!(specifiedAgentId || (!forceNew && !fromAfFile));
