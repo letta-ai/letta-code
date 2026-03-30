@@ -270,7 +270,7 @@
     },
     {
       "id": "bedrock-opus-4.6",
-      "handle": "bedrock/us.anthropic.claude-opus-4-6-v1:0",
+      "handle": "bedrock/us.anthropic.claude-opus-4-6-v1",
       "label": "Bedrock Opus 4.6",
       "shortLabel": "Opus 4.6 BR",
       "description": "Anthropic's Opus 4.6 (via AWS Bedrock)",
@@ -283,7 +283,7 @@
     },
     {
       "id": "bedrock-sonnet-4.6",
-      "handle": "bedrock/us.anthropic.claude-sonnet-4-6-v1:0",
+      "handle": "bedrock/us.anthropic.claude-sonnet-4-6",
       "label": "Bedrock Sonnet 4.6",
       "shortLabel": "Sonnet 4.6 BR",
       "description": "Anthropic's Sonnet 4.6 (via AWS Bedrock)",
