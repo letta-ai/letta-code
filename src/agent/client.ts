@@ -167,7 +167,9 @@ export async function getClient() {
           context: "auth_client_token_refresh",
         });
         console.error("Failed to refresh access token:", error);
-        console.error("\nPlease move ~/.letta to something like ~/.letta_backup, and re-run 'letta' to re-authenticate");
+        console.error(
+          "\nPlease move ~/.letta to something like ~/.letta_backup, and re-run 'letta' to re-authenticate",
+        );
         process.exit(1);
       }
     }
