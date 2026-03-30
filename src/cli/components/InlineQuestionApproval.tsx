@@ -1,5 +1,5 @@
 import { Box, useInput } from "ink";
-import { Fragment, memo, useEffect, useMemo, useState } from "react";
+import { Fragment, memo, useEffect, useMemo, useRef, useState } from "react";
 import { useProgressIndicator } from "../hooks/useProgressIndicator";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { useTextInputCursor } from "../hooks/useTextInputCursor";
@@ -50,6 +50,7 @@ export const InlineQuestionApproval = memo(
       clear: clearCustomText,
     } = useTextInputCursor();
     const [selectedMulti, setSelectedMulti] = useState<Set<number>>(new Set());
+    const previousSelectedOptionRef = useRef(0);
     const columns = useTerminalWidth();
     useProgressIndicator();
 
@@ -103,6 +104,31 @@ export const InlineQuestionApproval = memo(
         setSelectedOption(draftOptionIndex);
       }
     }, [hasDraft, draftOptionIndex]);
+
+    // If user moves from "Edit current draft" to "Type new message", clear
+    // local editor text so the empty option starts truly empty while preserving
+    // the upstream draft buffer.
+    useEffect(() => {
+      const previous = previousSelectedOptionRef.current;
+      if (
+        hasDraft &&
+        isOnCustomOption &&
+        previous === draftOptionIndex &&
+        customText
+      ) {
+        clearCustomText();
+        setCursorPos(0);
+      }
+      previousSelectedOptionRef.current = selectedOption;
+    }, [
+      hasDraft,
+      isOnCustomOption,
+      draftOptionIndex,
+      customText,
+      selectedOption,
+      clearCustomText,
+      setCursorPos,
+    ]);
 
     const handleSubmitAnswer = (answer: string) => {
       if (!currentQuestion) return;
