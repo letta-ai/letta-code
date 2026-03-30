@@ -1861,7 +1861,11 @@ async function connectWithRetry(
     opts.onConnected(opts.connectionId);
 
     if (runtime.conversationRuntimes.size === 0) {
-      emitDeviceStatusUpdate(socket, runtime);
+      // Don't emit device_status before the lookup store exists.
+      // Without a conversation runtime, the scope resolves to
+      // agent:__unknown__ which misses persisted CWD and permission
+      // mode entries. The web's sync command will create a scoped
+      // runtime and emit a properly-scoped device_status at that point.
       emitLoopStatusUpdate(socket, runtime);
     } else {
       for (const reminderState of runtime.reminderStateByConversation.values()) {
