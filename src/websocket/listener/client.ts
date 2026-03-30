@@ -2007,6 +2007,20 @@ async function connectWithRetry(
       );
       await recoverApprovalStateForSync(syncScopedRuntime, parsed.runtime);
 
+      // Ensure the file index covers the conversation's working directory.
+      // On fresh process start, indexRoot defaults to process.cwd() (the
+      // Electron app dir on desktop), but the persisted CWD may point
+      // elsewhere. Re-root the index so file search works immediately.
+      const syncCwd = getConversationWorkingDirectory(
+        runtime,
+        parsed.runtime.agent_id,
+        parsed.runtime.conversation_id,
+      );
+      const currentRoot = getIndexRoot();
+      if (!syncCwd.startsWith(currentRoot)) {
+        setIndexRoot(syncCwd);
+      }
+
       emitStateSync(socket, runtime, parsed.runtime);
       return;
     }
