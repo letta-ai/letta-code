@@ -13731,6 +13731,7 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
                                 : undefined
                             }
                             agentName={agentName ?? undefined}
+                            initialDraft={currentDraftRef.current || undefined}
                           />
                         ) : ln.kind === "user" ? (
                           <UserMessage line={ln} prompt={statusLine.prompt} />
@@ -13828,6 +13829,7 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
                         : undefined
                     }
                     agentName={agentName ?? undefined}
+                    initialDraft={currentDraftRef.current || undefined}
                   />
                 </Box>
               )}
