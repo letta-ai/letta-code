@@ -28,6 +28,19 @@
       }
     },
     {
+      "id": "auto-chat",
+      "handle": "letta/auto-chat",
+      "label": "Auto Chat",
+      "description": "Automatically select the best model for chat",
+      "isFeatured": true,
+      "free": true,
+      "updateArgs": {
+        "context_window": 140000,
+        "max_output_tokens": 28000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
       "id": "sonnet",
       "handle": "anthropic/claude-sonnet-4-6",
       "label": "Sonnet 4.6",

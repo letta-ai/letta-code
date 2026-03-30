@@ -312,9 +312,19 @@ function resolveModelForUpdate(payload: {
   if (typeof payload.model_id === "string" && payload.model_id.length > 0) {
     const byId = getModelInfo(payload.model_id);
     if (byId) {
+      // When an explicit model_handle is also provided (e.g. BYOK tier
+      // changes), use the model_id entry for updateArgs/label but preserve
+      // the caller-specified handle so the BYOK identity is maintained
+      // end-to-end.
+      const explicitHandle =
+        typeof payload.model_handle === "string" &&
+        payload.model_handle.length > 0
+          ? payload.model_handle
+          : null;
+
       return {
         id: byId.id,
-        handle: byId.handle,
+        handle: explicitHandle ?? byId.handle,
         label: byId.label,
         updateArgs:
           byId.updateArgs && typeof byId.updateArgs === "object"
@@ -361,9 +371,9 @@ function formatToolsetStatusMessageForModelUpdate(params: {
 
   if (toolsetPreference === "auto") {
     return (
-      "Tools adjusted for this model (auto): now using " +
+      "Toolset auto-switched for this model: now using the " +
       formatToolsetName(nextToolset) +
-      "."
+      " toolset."
     );
   }
 
@@ -374,12 +384,27 @@ function formatToolsetStatusMessageForModelUpdate(params: {
   );
 }
 
+function formatEffortSuffix(updateArgs?: Record<string, unknown>): string {
+  if (!updateArgs) return "";
+  const effort = updateArgs.reasoning_effort;
+  if (typeof effort !== "string" || effort.length === 0) return "";
+  const labels: Record<string, string> = {
+    none: "No Reasoning",
+    low: "Low",
+    medium: "Medium",
+    high: "High",
+    xhigh: "Max",
+  };
+  return ` (${labels[effort] ?? effort})`;
+}
+
 function buildModelUpdateStatusMessage(params: {
   modelLabel: string;
   toolsetChanged: boolean;
   toolsetError: string | null;
   nextToolset: ToolsetName;
   toolsetPreference: ToolsetName | "auto";
+  updateArgs?: Record<string, unknown>;
 }): { message: string; level: "info" | "warning" } {
   const {
     modelLabel,
@@ -387,8 +412,9 @@ function buildModelUpdateStatusMessage(params: {
     toolsetError,
     nextToolset,
     toolsetPreference,
+    updateArgs,
   } = params;
-  let message = `Model updated to ${modelLabel}.`;
+  let message = `Model updated to ${modelLabel}${formatEffortSuffix(updateArgs)}.`;
   if (toolsetError) {
     message += ` Warning: toolset switch failed (${toolsetError}).`;
     return { message, level: "warning" };
@@ -488,6 +514,7 @@ async function applyModelUpdateForRuntime(params: {
       toolsetError,
       nextToolset,
       toolsetPreference,
+      updateArgs: model.updateArgs,
     });
 
   emitStatusDelta(socket, scopedRuntime, {

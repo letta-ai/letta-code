@@ -426,6 +426,34 @@ describe("listen-client model command helpers", () => {
       updateArgs: undefined,
     });
   });
+
+  test("resolveModelForUpdate preserves explicit model_handle when both model_id and model_handle are present (BYOK tier change)", () => {
+    // When LCD sends both fields for a BYOK tier change, the resolver should
+    // use model_id for updateArgs/label but keep the explicit model_handle.
+    const byokHandle = "lc-mykey/" + models[0]?.handle;
+    const resolved = __listenClientTestUtils.resolveModelForUpdate({
+      model_id: models[0]?.id,
+      model_handle: byokHandle,
+    });
+
+    expect(resolved).not.toBeNull();
+    // Handle must be the explicit BYOK handle, not the base static handle
+    expect(resolved?.handle).toBe(byokHandle);
+    // But id/label/updateArgs still come from the model_id entry
+    expect(resolved?.id).toBe(models[0]?.id);
+    expect(resolved?.label).toBe(models[0]?.label);
+  });
+
+  test("resolveModelForUpdate ignores model_handle when only model_id is present", () => {
+    // Standard (non-BYOK) tier selection: only model_id, no model_handle
+    const resolved = __listenClientTestUtils.resolveModelForUpdate({
+      model_id: models[0]?.id,
+    });
+
+    expect(resolved).not.toBeNull();
+    // Should resolve handle from the static entry, not from an explicit override
+    expect(resolved?.handle).toBe(models[0]?.handle);
+  });
 });
 
 describe("listen-client cron command handling", () => {
