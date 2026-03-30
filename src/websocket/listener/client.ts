@@ -142,6 +142,7 @@ import {
   isSkillDisableCommand,
   isSkillEnableCommand,
   isUpdateModelCommand,
+  isWriteFileCommand,
   parseServerMessage,
 } from "./protocol-inbound";
 import {
@@ -2198,10 +2199,17 @@ async function connectWithRetry(
 
     // ── Directory listing (no runtime scope required) ──────────────────
     if (isListInDirectoryCommand(parsed)) {
+      console.log(
+        `[Listen] Received list_in_directory command: path=${parsed.path}`,
+      );
       void (async () => {
         try {
           const { readdir } = await import("node:fs/promises");
+          console.log(`[Listen] Reading directory: ${parsed.path}`);
           const entries = await readdir(parsed.path, { withFileTypes: true });
+          console.log(
+            `[Listen] Directory read success, ${entries.length} entries`,
+          );
 
           // Filter out OS/VCS noise before sorting
           const IGNORED_NAMES = new Set([
@@ -2241,16 +2249,23 @@ async function connectWithRetry(
             hasMore: offset + limit < total,
             total,
             success: true,
+            ...(parsed.request_id ? { request_id: parsed.request_id } : {}),
           };
           if (parsed.include_files) {
             response.files = files;
           }
+          console.log(
+            `[Listen] Sending list_in_directory_response: ${folders.length} folders, ${files?.length ?? 0} files`,
+          );
           socket.send(JSON.stringify(response));
         } catch (err) {
           trackListenerError(
             "listener_list_directory_failed",
             err,
             "listener_file_browser",
+          );
+          console.error(
+            `[Listen] list_in_directory error: ${err instanceof Error ? err.message : "Unknown error"}`,
           );
           socket.send(
             JSON.stringify({
@@ -2261,6 +2276,7 @@ async function connectWithRetry(
               success: false,
               error:
                 err instanceof Error ? err.message : "Failed to list directory",
+              ...(parsed.request_id ? { request_id: parsed.request_id } : {}),
             }),
           );
         }
@@ -2306,6 +2322,45 @@ async function connectWithRetry(
               content: null,
               success: false,
               error: err instanceof Error ? err.message : "Failed to read file",
+            }),
+          );
+        }
+      })();
+      return;
+    }
+
+    // ── File writing (no runtime scope required) ──────────────────────
+    if (isWriteFileCommand(parsed)) {
+      console.log(
+        `[Listen] Received write_file command: path=${parsed.path}, request_id=${parsed.request_id}`,
+      );
+      void (async () => {
+        try {
+          const { writeFile } = await import("node:fs/promises");
+          await writeFile(parsed.path, parsed.content, "utf-8");
+          console.log(
+            `[Listen] write_file success: ${parsed.path} (${parsed.content.length} bytes)`,
+          );
+          socket.send(
+            JSON.stringify({
+              type: "write_file_response",
+              request_id: parsed.request_id,
+              path: parsed.path,
+              success: true,
+            }),
+          );
+        } catch (err) {
+          console.error(
+            `[Listen] write_file error: ${err instanceof Error ? err.message : "Unknown error"}`,
+          );
+          socket.send(
+            JSON.stringify({
+              type: "write_file_response",
+              request_id: parsed.request_id,
+              path: parsed.path,
+              success: false,
+              error:
+                err instanceof Error ? err.message : "Failed to write file",
             }),
           );
         }

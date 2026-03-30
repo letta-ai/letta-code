@@ -472,12 +472,24 @@ export interface ListInDirectoryCommand {
   limit?: number;
   /** Number of entries to skip before returning. */
   offset?: number;
+  /** Echoed back in the response for request correlation. */
+  request_id?: string;
 }
 
 export interface ReadFileCommand {
   type: "read_file";
   /** Absolute path to the file to read. */
   path: string;
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+}
+
+export interface WriteFileCommand {
+  type: "write_file";
+  /** Absolute path to the file to write. */
+  path: string;
+  /** The full file content to write. */
+  content: string;
   /** Echoed back in the response for request correlation. */
   request_id: string;
 }
@@ -747,6 +759,7 @@ export type WsProtocolCommand =
   | SearchFilesCommand
   | ListInDirectoryCommand
   | ReadFileCommand
+  | WriteFileCommand
   | EditFileCommand
   | ListMemoryCommand
   | EnableMemfsCommand
