@@ -16,7 +16,6 @@ import type {
   ListMemoryCommand,
   ListModelsCommand,
   ReadFileCommand,
-  WriteFileCommand,
   RuntimeScope,
   SearchFilesCommand,
   SetReflectionSettingsCommand,
@@ -28,6 +27,7 @@ import type {
   TerminalResizeCommand,
   TerminalSpawnCommand,
   UpdateModelCommand,
+  WriteFileCommand,
   WsProtocolCommand,
 } from "../../types/protocol_v2";
 import { isValidApprovalResponseBody } from "./approval";
@@ -289,11 +289,14 @@ export function isReadFileCommand(value: unknown): value is ReadFileCommand {
   );
 }
 
-export function isWriteFileCommand(
-  value: unknown,
-): value is WriteFileCommand {
+export function isWriteFileCommand(value: unknown): value is WriteFileCommand {
   if (!value || typeof value !== "object") return false;
-  const c = value as { type?: unknown; path?: unknown; content?: unknown; request_id?: unknown };
+  const c = value as {
+    type?: unknown;
+    path?: unknown;
+    content?: unknown;
+    request_id?: unknown;
+  };
   return (
     c.type === "write_file" &&
     typeof c.path === "string" &&

@@ -137,12 +137,12 @@ import {
   isListMemoryCommand,
   isListModelsCommand,
   isReadFileCommand,
-  isWriteFileCommand,
   isSearchFilesCommand,
   isSetReflectionSettingsCommand,
   isSkillDisableCommand,
   isSkillEnableCommand,
   isUpdateModelCommand,
+  isWriteFileCommand,
   parseServerMessage,
 } from "./protocol-inbound";
 import {
@@ -2359,7 +2359,8 @@ async function connectWithRetry(
               request_id: parsed.request_id,
               path: parsed.path,
               success: false,
-              error: err instanceof Error ? err.message : "Failed to write file",
+              error:
+                err instanceof Error ? err.message : "Failed to write file",
             }),
           );
         }
