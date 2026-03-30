@@ -6,12 +6,9 @@ import { getDefaultMemoryBlocks } from "../../agent/memory";
 import { GIT_MEMORY_ENABLED_TAG } from "../../agent/memoryGit";
 import {
   getPersonalityBlockDefinitions,
-  PERSONALITY_OPTIONS,
-  type PersonalityId,
+  resolvePersonalityId,
 } from "../../agent/personality";
 import { settingsManager } from "../../settings-manager";
-
-const VALID_PERSONALITIES = PERSONALITY_OPTIONS.map((p) => p.id);
 
 function printUsage(): void {
   console.log(
@@ -31,7 +28,7 @@ List Options:
 Create Options:
   --name <name>         Agent name (default: "Letta Code")
   --model <model>       Model handle (e.g., anthropic/claude-sonnet-4-20250514)
-  --personality <name>  Personality preset: memo, linus, kawaii, claude, codex
+  --personality <name>  Personality preset: letta-code, linus, kawaii, claude, codex
   --description <text>  Agent description
   --tags <tag1,tag2>    Tags (comma-separated)
   --pinned              Pin the created agent globally
@@ -117,13 +114,15 @@ export async function runAgentsSubcommand(argv: string[]): Promise<number> {
 async function runCreateAction(
   values: ReturnType<typeof parseAgentsArgs>["values"],
 ): Promise<number> {
-  const personality = values.personality as string | undefined;
-  if (
-    personality &&
-    !VALID_PERSONALITIES.includes(personality as PersonalityId)
-  ) {
-    const valid = VALID_PERSONALITIES.join(", ");
-    console.error(`Unknown personality: ${personality}. Valid: ${valid}`);
+  const personalityInput = values.personality as string | undefined;
+  const personality = personalityInput
+    ? resolvePersonalityId(personalityInput)
+    : undefined;
+
+  if (personalityInput && !personality) {
+    console.error(
+      `Unknown personality: ${personalityInput}. Valid: letta-code, linus, kawaii, claude, codex`,
+    );
     return 1;
   }
 
@@ -132,9 +131,7 @@ async function runCreateAction(
     | ReturnType<typeof getPersonalityBlockDefinitions>
     | undefined;
   if (personality) {
-    personalityBlockDefinitions = getPersonalityBlockDefinitions(
-      personality as PersonalityId,
-    );
+    personalityBlockDefinitions = getPersonalityBlockDefinitions(personality);
   }
 
   const options: CreateAgentOptions = {

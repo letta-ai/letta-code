@@ -22,8 +22,8 @@ export interface PersonalityOption {
 export const PERSONALITY_OPTIONS: PersonalityOption[] = [
   {
     id: "memo",
-    label: "Memo",
-    description: "A thoughtful, substantive coding assistant that learns",
+    label: "Letta Code",
+    description: "The default Letta Code personality that learns",
   },
   {
     id: "linus",
@@ -48,6 +48,12 @@ export const PERSONALITY_OPTIONS: PersonalityOption[] = [
 ];
 
 export type PersonalityId = PersonalityOption["id"];
+
+const PERSONALITY_ALIASES: Record<string, PersonalityId> = {
+  "letta-code": "memo",
+  lettacode: "memo",
+  memo: "memo",
+};
 
 export interface ApplyPersonalityToMemoryParams {
   agentId: string;
@@ -217,6 +223,20 @@ export function getPersonalityOption(
     throw new Error(`Unknown personality: ${personalityId}`);
   }
   return option;
+}
+
+export function resolvePersonalityId(input: string): PersonalityId | null {
+  const normalized = input.trim().toLowerCase();
+  if (!normalized) {
+    return null;
+  }
+
+  const direct = PERSONALITY_OPTIONS.find((candidate) => candidate.id === normalized);
+  if (direct) {
+    return direct.id;
+  }
+
+  return PERSONALITY_ALIASES[normalized] ?? null;
 }
 
 export function getPersonalityContent(personalityId: PersonalityId): string {

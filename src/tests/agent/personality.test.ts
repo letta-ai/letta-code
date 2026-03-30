@@ -7,6 +7,7 @@ import {
   getPersonalityContent,
   getPersonalityHumanContent,
   PERSONALITY_OPTIONS,
+  resolvePersonalityId,
   replaceBodyPreservingFrontmatter,
 } from "../../agent/personality";
 
@@ -38,6 +39,12 @@ describe("personality helpers", () => {
   test("detectPersonalityFromPersonaFile returns null for unknown body", () => {
     const personaFile = `${VALID_FRONTMATTER}This does not match any preset.\n`;
     expect(detectPersonalityFromPersonaFile(personaFile)).toBeNull();
+  });
+
+  test("resolvePersonalityId accepts public Letta Code alias", () => {
+    expect(resolvePersonalityId("letta-code")).toBe("memo");
+    expect(resolvePersonalityId("LettaCode")).toBe("memo");
+    expect(resolvePersonalityId("memo")).toBe("memo");
   });
 
   test("personality block values always include both persona and human", () => {
