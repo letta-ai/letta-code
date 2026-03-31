@@ -25,10 +25,12 @@ Surface context at the level of detail the current moment requires. Maintain com
 - Maintain an index of external context within the context window using references
 
 ### Discovery Paths
-When a system/ file summarizes something with deeper detail elsewhere, link to it with `[[path]]`:
-- `[[letta-code/architecture]]` — link from compact overview to detailed docs outside system/
+Use `[[path]]` links to build a connected graph across your memory files (and skills when relevant), not isolated notes.
+- `[[letta-code/architecture]]` — jump from overview to deeper architecture context
+- `[[projects/letta-code/gotchas]]` — connect related memory files
+- `[[skills/commit]]` — connect procedural guidance when a memory file says to use a specific workflow
 
-These links provide breadcrumbs for future discovery. Pre-constructed paths let you efficiently move from summaries to detail when a task demands it.
+Prioritize links that improve future discoverability. Over time, this graph should evolve as you learn which context is frequently used together.
 
 ### Efficiency
 Structure your context window for minimal inference cost without degrading identity:
@@ -56,6 +58,6 @@ Files in `system/` are passed to the LLM on every invocation — this is the mos
 Periodically ask yourself:
 - *If I run on a new model tomorrow, will I hold the same identity?*
 - *If I encounter a similar situation in the future, will I handle it better?*
-- *Can my future self navigate from any system/ file to the detailed context it needs?*
+- *Can my future self navigate from any relevant memory file to the detailed context it needs?*
 - *Am I storing patterns and principles, or just recording events?*
 - *Is there anything in system/ that doesn't need to be there every turn?*

@@ -83,7 +83,7 @@ The project topic should always be broken into multiple files under `$MEMORY_DIR
 - Keep each file focused on one topic, ~15-30 lines
 - 5-8 files is the right range — just the skeleton
 - Only include information that's actually useful; skip boilerplate
-- If a system/ file summarizes something with more detail elsewhere, add a `[[path]]` link
+- Add `[[path]]` links where they improve discoverability across related context
 - Leave room for growth: the parent agent will add detail over time
 
 **Commit format:**

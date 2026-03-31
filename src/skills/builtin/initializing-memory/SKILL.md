@@ -13,8 +13,10 @@ Your context is not just data storage — it is your identity, memory, and conti
 
 **Progressive disclosure**: Surface context at the level of detail the current moment requires. Keep compact summaries and indexes in `system/`; load full content only when needed.
 
-**Discovery paths**: Use `[[path]]` in system/ files to link to deeper context stored outside system/:
-- `[[letta-code/architecture]]` — link from a compact overview to detailed docs
+**Discovery paths**: Use `[[path]]` links to create a connected graph across memory files (and skills when relevant):
+- `[[letta-code/architecture]]` — jump from overview to detailed docs
+- `[[projects/letta-code/gotchas]]` — connect related memory files
+- `[[skills/commit]]` — link to procedural guidance when useful
 
 These breadcrumbs let your future self find relevant detail without searching.
 
@@ -66,7 +68,7 @@ Generalize from experience rather than recording events:
 **`system/` (always in-context)**:
 - Identity: who the user is, who you are
 - Active preferences and behavioral rules
-- Project index with links to deeper context outside system/
+- Project index with links to related context (deeper docs, gotchas, workflows)
 - Known gotchas and corrections
 - Current work context (if needed)
 
@@ -102,7 +104,7 @@ letta-code/
 Key patterns:
 - Project dirs use the real name (`letta-code/`), not generic `project/`
 - Detailed content lives outside `system/` — organize however makes sense
-- System/ files use `[[path]]` to point to deeper detail outside system/
+- Use `[[path]]` links to connect related context into a navigable graph
 
 ## Initialization Flow
 
@@ -158,7 +160,7 @@ Explore based on chosen depth.
 
 ### 7. Build memory with discovery paths
 As you create/update memory files:
-- When a system/ file summarizes something that has more detail elsewhere, add a `[[path]]` link so the agent can find it later
+- Add `[[path]]` links wherever they improve discoverability (summary→detail, related-memory↔related-memory, memory→skill workflow)
 - Ensure every file has a useful `description` in frontmatter
 - Keep `system/` files focused and scannable
 - Put detailed reference material outside `system/`
@@ -167,7 +169,7 @@ As you create/update memory files:
 Before finishing, review your work:
 
 - **Progressive disclosure**: Can you decide whether to load a file just from its path + description?
-- **Discovery paths**: Do system/ files link to external files where deeper detail exists?
+- **Discovery paths**: Are key memory files linked so related context can be discovered quickly?
 - **Project naming**: Are project dirs named after the actual project (e.g., `letta-code/`), not generic `project/`? Same for reference files.
 - **Signal density**: Is everything in `system/` truly needed every turn?
 - **Completeness**: Did you update human (identity + preferences), persona, AND project files?
