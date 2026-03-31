@@ -365,6 +365,24 @@ const LLM_API_ERROR_MAX_RETRIES = 3;
 const EMPTY_RESPONSE_MAX_RETRIES = 2;
 const TEMP_QUOTA_OVERRIDE_MODEL = "letta/auto";
 
+// Provider fallback: Anthropic model ID → Bedrock model ID.
+// After 1 failed retry against Anthropic, automatically retry via Bedrock.
+const PROVIDER_FALLBACK_MAP: Record<string, string> = {
+  // Opus 4.6 variants → Bedrock Opus 4.6
+  opus: "bedrock-opus-4.6",
+  "opus-4.6-no-reasoning": "bedrock-opus-4.6",
+  "opus-4.6-low": "bedrock-opus-4.6",
+  "opus-4.6-medium": "bedrock-opus-4.6",
+  "opus-4.6-xhigh": "bedrock-opus-4.6",
+  // Sonnet 4.6 variants → Bedrock Sonnet 4.6
+  sonnet: "bedrock-sonnet-4.6",
+  "sonnet-1m": "bedrock-sonnet-4.6",
+  "sonnet-4.6-no-reasoning": "bedrock-sonnet-4.6",
+  "sonnet-4.6-low": "bedrock-sonnet-4.6",
+  "sonnet-4.6-medium": "bedrock-sonnet-4.6",
+  "sonnet-4.6-xhigh": "bedrock-sonnet-4.6",
+};
+
 // Retry config for 409 "conversation busy" errors (exponential backoff)
 const CONVERSATION_BUSY_MAX_RETRIES = 3; // 10s -> 20s -> 40s
 
@@ -520,9 +538,9 @@ function getErrorHintForStopReason(
   const hasBedrockOpus =
     currentModelId === "opus" &&
     modelEndpointType === "anthropic" &&
-    getModelInfo("bedrock-opus");
+    getModelInfo("bedrock-opus-4.6");
   const modelSwapSuffix = hasBedrockOpus
-    ? " (e.g. Opus 4.5 via Amazon Bedrock)"
+    ? " (e.g. Opus 4.6 via Amazon Bedrock)"
     : "";
 
   if (statusInfo) {
@@ -1874,6 +1892,7 @@ export default function App({
   // Retry counter for transient LLM API errors (ref for synchronous access in loop)
   const llmApiErrorRetriesRef = useRef(0);
   const quotaAutoSwapAttemptedRef = useRef(false);
+  const providerFallbackAttemptedRef = useRef(false);
   const emptyResponseRetriesRef = useRef(0);
 
   // Retry counter for 409 "conversation busy" errors
@@ -4020,6 +4039,7 @@ export default function App({
         emptyResponseRetriesRef.current = 0;
         conversationBusyRetriesRef.current = 0;
         quotaAutoSwapAttemptedRef.current = false;
+        providerFallbackAttemptedRef.current = false;
       }
 
       // Track last run ID for error reporting (accessible in catch block)
@@ -4392,6 +4412,37 @@ export default function App({
             if (preStreamAction === "retry_transient") {
               llmApiErrorRetriesRef.current += 1;
               const attempt = llmApiErrorRetriesRef.current;
+
+              // Provider fallback: after 1 retry against Anthropic, switch to Bedrock
+              if (
+                attempt >= 2 &&
+                !providerFallbackAttemptedRef.current &&
+                currentModelId
+              ) {
+                const fallbackId = PROVIDER_FALLBACK_MAP[currentModelId];
+                const fallbackHandle = fallbackId
+                  ? getModelInfo(fallbackId)?.handle
+                  : undefined;
+                if (fallbackHandle) {
+                  providerFallbackAttemptedRef.current = true;
+                  setTempModelOverride(fallbackHandle);
+
+                  const statusId = uid("status");
+                  buffersRef.current.byId.set(statusId, {
+                    kind: "status",
+                    id: statusId,
+                    lines: ["Anthropic API error; falling back to Bedrock..."],
+                  });
+                  buffersRef.current.order.push(statusId);
+                  refreshDerived();
+
+                  buffersRef.current.interrupted = false;
+                  conversationBusyRetriesRef.current = 0;
+                  restorePinnedPermissionMode();
+                  continue;
+                }
+              }
+
               const retryAfterMs =
                 preStreamError instanceof APIError
                   ? parseRetryAfterHeaderMs(
@@ -4769,6 +4820,7 @@ export default function App({
             llmApiErrorRetriesRef.current = 0; // Reset retry counter on success
             emptyResponseRetriesRef.current = 0;
             conversationBusyRetriesRef.current = 0;
+            providerFallbackAttemptedRef.current = false;
             lastDequeuedMessageRef.current = null; // Clear - message was processed successfully
             lastSentInputRef.current = null; // Clear - no recovery needed
             pendingInterruptRecoveryConversationIdRef.current = null;
@@ -5766,6 +5818,37 @@ export default function App({
 
             llmApiErrorRetriesRef.current += 1;
             const attempt = llmApiErrorRetriesRef.current;
+
+            // Provider fallback: after 1 retry against Anthropic, switch to Bedrock
+            if (
+              attempt >= 2 &&
+              !providerFallbackAttemptedRef.current &&
+              currentModelId
+            ) {
+              const fallbackId = PROVIDER_FALLBACK_MAP[currentModelId];
+              const fallbackHandle = fallbackId
+                ? getModelInfo(fallbackId)?.handle
+                : undefined;
+              if (fallbackHandle) {
+                providerFallbackAttemptedRef.current = true;
+                setTempModelOverride(fallbackHandle);
+
+                const statusId = uid("status");
+                buffersRef.current.byId.set(statusId, {
+                  kind: "status",
+                  id: statusId,
+                  lines: ["Anthropic API error; falling back to Bedrock..."],
+                });
+                buffersRef.current.order.push(statusId);
+                refreshDerived();
+
+                refreshCurrentInputOtids();
+                highestSeqIdSeen = null;
+                buffersRef.current.interrupted = false;
+                continue;
+              }
+            }
+
             const delayMs = getRetryDelayMs({
               category: "transient_provider",
               attempt,
