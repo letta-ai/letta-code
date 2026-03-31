@@ -1,5 +1,5 @@
 import { Box, useInput } from "ink";
-import { Fragment, memo, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, memo, useEffect, useMemo, useState } from "react";
 import { useProgressIndicator } from "../hooks/useProgressIndicator";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { useTextInputCursor } from "../hooks/useTextInputCursor";
@@ -43,16 +43,7 @@ export const InlineQuestionApproval = memo(
     const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
     const [answers, setAnswers] = useState<Record<string, string>>({});
     const [selectedOption, setSelectedOption] = useState(0);
-    const {
-      text: customText,
-      setText: setCustomText,
-      cursorPos,
-      setCursorPos,
-      handleKey,
-      clear: clearCustomText,
-    } = useTextInputCursor();
     const [selectedMulti, setSelectedMulti] = useState<Set<number>>(new Set());
-    const previousSelectedOptionRef = useRef(0);
     const columns = useTerminalWidth();
     useProgressIndicator();
 
@@ -62,6 +53,9 @@ export const InlineQuestionApproval = memo(
     // For multi-select, we also track a separate "Submit" action
     const showOther = currentQuestion?.allowOther !== false;
     const hasDraft = initialDraft && initialDraft.trim().length > 0;
+
+    const draftInput = useTextInputCursor(hasDraft ? initialDraft : "");
+    const customInput = useTextInputCursor("");
 
     // Regular options from the question
     const regularOptions = currentQuestion?.options ?? [];
@@ -107,31 +101,6 @@ export const InlineQuestionApproval = memo(
       }
     }, [hasDraft, draftOptionIndex]);
 
-    // If user moves from "Edit current draft" to "Type new message", clear
-    // local editor text so the empty option starts truly empty while preserving
-    // the upstream draft buffer.
-    useEffect(() => {
-      const previous = previousSelectedOptionRef.current;
-      if (
-        hasDraft &&
-        isOnCustomOption &&
-        previous === draftOptionIndex &&
-        customText
-      ) {
-        clearCustomText();
-        setCursorPos(0);
-      }
-      previousSelectedOptionRef.current = selectedOption;
-    }, [
-      hasDraft,
-      isOnCustomOption,
-      draftOptionIndex,
-      customText,
-      selectedOption,
-      clearCustomText,
-      setCursorPos,
-    ]);
-
     const handleSubmitAnswer = (answer: string) => {
       if (!currentQuestion) return;
       const newAnswers = {
@@ -143,7 +112,8 @@ export const InlineQuestionApproval = memo(
       if (currentQuestionIndex < questions.length - 1) {
         setCurrentQuestionIndex(currentQuestionIndex + 1);
         setSelectedOption(0);
-        clearCustomText();
+        draftInput.clear();
+        customInput.clear();
         setSelectedMulti(new Set());
       } else {
         onSubmit(newAnswers);
@@ -172,31 +142,24 @@ export const InlineQuestionApproval = memo(
           return;
         }
 
-        // When on draft edit option
+        // When on draft input option
         if (isOnDraftOption) {
-          // Initialize draft text if not already done
-          if (!customText && initialDraft) {
-            setCustomText(initialDraft);
-            setCursorPos(initialDraft.length);
-          }
           if (key.return) {
-            // Single-select: submit the draft text
-            if (customText.trim()) {
+            if (draftInput.text.trim()) {
               onConsumeDraft?.();
-              handleSubmitAnswer(customText.trim());
+              handleSubmitAnswer(draftInput.text.trim());
             }
             return;
           }
           if (key.escape) {
-            if (customText) {
-              clearCustomText();
+            if (draftInput.text) {
+              draftInput.clear();
             } else {
               onCancel?.();
             }
             return;
           }
-          // Handle text input (arrows, backspace, typing)
-          if (handleKey(input, key)) return;
+          if (draftInput.handleKey(input, key)) return;
         }
 
         // When on custom input option ("Type new message")
@@ -215,8 +178,8 @@ export const InlineQuestionApproval = memo(
               });
             } else {
               // Single-select: submit the custom text if any
-              if (customText.trim()) {
-                handleSubmitAnswer(customText.trim());
+              if (customInput.text.trim()) {
+                handleSubmitAnswer(customInput.text.trim());
               }
             }
             return;
@@ -231,22 +194,23 @@ export const InlineQuestionApproval = memo(
               });
             }
             // Insert space at cursor position
-            setCustomText(
-              (prev) => `${prev.slice(0, cursorPos)} ${prev.slice(cursorPos)}`,
+            customInput.setText(
+              (prev) =>
+                `${prev.slice(0, customInput.cursorPos)} ${prev.slice(customInput.cursorPos)}`,
             );
-            setCursorPos((prev) => prev + 1);
+            customInput.setCursorPos((prev) => prev + 1);
             return;
           }
           if (key.escape) {
-            if (customText) {
-              clearCustomText();
+            if (customInput.text) {
+              customInput.clear();
             } else {
               onCancel?.();
             }
             return;
           }
           // Handle text input (arrows, backspace, typing)
-          if (handleKey(input, key)) return;
+          if (customInput.handleKey(input, key)) return;
         }
 
         // When on Submit option (multi-select only)
@@ -257,8 +221,8 @@ export const InlineQuestionApproval = memo(
             for (const i of selectedMulti) {
               if (i === customOptionIndex) {
                 // Include custom text if checkbox is checked and text was entered
-                if (customText.trim()) {
-                  selectedLabels.push(customText.trim());
+                if (customInput.text.trim()) {
+                  selectedLabels.push(customInput.text.trim());
                 }
               } else {
                 const label = baseOptions[i]?.label;
@@ -339,9 +303,17 @@ export const InlineQuestionApproval = memo(
               });
             } else {
               if (optionIndex === draftOptionIndex) {
-                onConsumeDraft?.();
+                if (draftInput.text.trim()) {
+                  onConsumeDraft?.();
+                  handleSubmitAnswer(draftInput.text.trim());
+                }
+              } else if (optionIndex === customOptionIndex) {
+                if (customInput.text.trim()) {
+                  handleSubmitAnswer(customInput.text.trim());
+                }
+              } else {
+                handleSubmitAnswer(optionsWithOther[optionIndex]?.label || "");
               }
-              handleSubmitAnswer(optionsWithOther[optionIndex]?.label || "");
             }
           }
         }
@@ -464,18 +436,27 @@ export const InlineQuestionApproval = memo(
                   {/* Label */}
                   <Box flexGrow={1} width={Math.max(0, columns - prefixWidth)}>
                     {isDraftOption || isCustomOption ? (
-                      customText ? (
-                        <Text wrap="wrap">
-                          {customText.slice(0, cursorPos)}
-                          {isSelected && "█"}
-                          {customText.slice(cursorPos)}
-                        </Text>
-                      ) : (
-                        <Text wrap="wrap" dimColor>
-                          {isDraftOption ? initialDraft : ""}
-                          {isSelected && "█"}
-                        </Text>
-                      )
+                      (() => {
+                        const textValue = isDraftOption
+                          ? draftInput.text
+                          : customInput.text;
+                        const textCursor = isDraftOption
+                          ? draftInput.cursorPos
+                          : customInput.cursorPos;
+
+                        return textValue ? (
+                          <Text wrap="wrap">
+                            {textValue.slice(0, textCursor)}
+                            {isSelected && "█"}
+                            {textValue.slice(textCursor)}
+                          </Text>
+                        ) : (
+                          <Text wrap="wrap" dimColor>
+                            {isDraftOption ? initialDraft : ""}
+                            {isSelected && "█"}
+                          </Text>
+                        );
+                      })()
                     ) : (
                       <Text wrap="wrap" color={color} bold={isSelected}>
                         {option.label}
