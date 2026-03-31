@@ -4,7 +4,15 @@
  */
 
 import { realpath, stat } from "node:fs/promises";
+import { homedir } from "node:os";
 import path from "node:path";
+
+/** Expand leading `~` or `~/` to the user's home directory. */
+function expandTilde(p: string): string {
+  if (p === "~") return homedir();
+  if (p.startsWith("~/")) return path.join(homedir(), p.slice(2));
+  return p;
+}
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import WebSocket from "ws";
@@ -2231,8 +2239,9 @@ async function connectWithRetry(
       void (async () => {
         try {
           const { readdir } = await import("node:fs/promises");
-          console.log(`[Listen] Reading directory: ${parsed.path}`);
-          const entries = await readdir(parsed.path, { withFileTypes: true });
+          const resolvedPath = expandTilde(parsed.path);
+          console.log(`[Listen] Reading directory: ${resolvedPath}`);
+          const entries = await readdir(resolvedPath, { withFileTypes: true });
           console.log(
             `[Listen] Directory read success, ${entries.length} entries`,
           );
@@ -2318,7 +2327,8 @@ async function connectWithRetry(
       void (async () => {
         try {
           const { readFile } = await import("node:fs/promises");
-          const content = await readFile(parsed.path, "utf-8");
+          const resolvedPath = expandTilde(parsed.path);
+          const content = await readFile(resolvedPath, "utf-8");
           console.log(
             `[Listen] read_file success: ${parsed.path} (${content.length} bytes)`,
           );
