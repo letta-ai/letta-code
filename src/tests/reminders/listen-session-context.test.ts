@@ -19,6 +19,9 @@ import {
 function withStubbedProviders(fn: () => Promise<void>): () => Promise<void> {
   const origSession = sharedReminderProviders["session-context"];
   const origAgent = sharedReminderProviders["agent-info"];
+  const origReflectionStep = sharedReminderProviders["reflection-step-count"];
+  const origReflectionCompaction =
+    sharedReminderProviders["reflection-compaction"];
 
   return async () => {
     sharedReminderProviders["session-context"] = async (ctx) => {
@@ -39,11 +42,17 @@ function withStubbedProviders(fn: () => Promise<void>): () => Promise<void> {
       ctx.state.hasSentAgentInfo = true;
       return "<agent-info-stub>";
     };
+    // Stub reflection providers to avoid hitting real settingsManager
+    sharedReminderProviders["reflection-step-count"] = async () => null;
+    sharedReminderProviders["reflection-compaction"] = async () => null;
     try {
       await fn();
     } finally {
       sharedReminderProviders["session-context"] = origSession;
       sharedReminderProviders["agent-info"] = origAgent;
+      sharedReminderProviders["reflection-step-count"] = origReflectionStep;
+      sharedReminderProviders["reflection-compaction"] =
+        origReflectionCompaction;
     }
   };
 }
@@ -58,6 +67,7 @@ function listenContext(
   return buildListenReminderContext({
     agentId: "agent-test",
     state,
+    reflectionSettings: { trigger: "off", stepCount: 25 },
     resolvePlanModeReminder: () => "",
     ...overrides,
   });
@@ -189,4 +199,113 @@ describe("listen-mode session context", () => {
     expect(sessionCtx.modes).toContain("listen");
     expect(agentInfo.modes).toContain("listen");
   });
+
+  test("listen mode is included in reflection catalog modes", () => {
+    const { SHARED_REMINDER_CATALOG } = require("../../reminders/catalog");
+    const stepCount = SHARED_REMINDER_CATALOG.find(
+      (e: { id: string }) => e.id === "reflection-step-count",
+    );
+    const compaction = SHARED_REMINDER_CATALOG.find(
+      (e: { id: string }) => e.id === "reflection-compaction",
+    );
+    expect(stepCount.modes).toContain("listen");
+    expect(compaction.modes).toContain("listen");
+  });
+});
+
+describe("listen-mode reflection", () => {
+  test(
+    "reflection step-count provider fires and invokes launcher at threshold",
+    withStubbedProviders(async () => {
+      const state = createSharedReminderState();
+      let launchCalled = false;
+      let launchSource: string | undefined;
+
+      // Override the reflection-step-count stub with a real-ish implementation
+      // that tracks whether the launcher callback is invoked.
+      sharedReminderProviders["reflection-step-count"] = async (ctx) => {
+        const { shouldFireStepCountTrigger } = await import(
+          "../../cli/helpers/memoryReminder"
+        );
+        if (
+          shouldFireStepCountTrigger(
+            ctx.state.turnCount,
+            ctx.reflectionSettings,
+          )
+        ) {
+          if (ctx.maybeLaunchReflectionSubagent) {
+            await ctx.maybeLaunchReflectionSubagent("step-count");
+          }
+        }
+        ctx.state.turnCount += 1;
+        return null;
+      };
+
+      const ctx = buildListenReminderContext({
+        agentId: "agent-test",
+        state,
+        reflectionSettings: { trigger: "step-count", stepCount: 3 },
+        maybeLaunchReflectionSubagent: async (source) => {
+          launchCalled = true;
+          launchSource = source;
+          return true;
+        },
+        resolvePlanModeReminder: () => "",
+      });
+
+      // Turns 0, 1, 2 — should not fire (turnCount 0 is skipped, 1 and 2 are not multiples of 3)
+      await buildSharedReminderParts(ctx); // turnCount 0 → 1
+      await buildSharedReminderParts(ctx); // turnCount 1 → 2
+      await buildSharedReminderParts(ctx); // turnCount 2 → 3
+      expect(launchCalled).toBe(false);
+
+      // Turn 3 — turnCount is now 3, which is a multiple of stepCount
+      await buildSharedReminderParts(ctx); // turnCount 3 → 4
+      expect(launchCalled).toBe(true);
+      expect(launchSource).toBe("step-count");
+    }),
+  );
+
+  test(
+    "reflection step-count provider does not fire when trigger is off",
+    withStubbedProviders(async () => {
+      const state = createSharedReminderState();
+      let launchCalled = false;
+
+      sharedReminderProviders["reflection-step-count"] = async (ctx) => {
+        const { shouldFireStepCountTrigger } = await import(
+          "../../cli/helpers/memoryReminder"
+        );
+        if (
+          shouldFireStepCountTrigger(
+            ctx.state.turnCount,
+            ctx.reflectionSettings,
+          )
+        ) {
+          if (ctx.maybeLaunchReflectionSubagent) {
+            await ctx.maybeLaunchReflectionSubagent("step-count");
+          }
+        }
+        ctx.state.turnCount += 1;
+        return null;
+      };
+
+      const ctx = buildListenReminderContext({
+        agentId: "agent-test",
+        state,
+        reflectionSettings: { trigger: "off", stepCount: 1 },
+        maybeLaunchReflectionSubagent: async () => {
+          launchCalled = true;
+          return true;
+        },
+        resolvePlanModeReminder: () => "",
+      });
+
+      // Even with stepCount=1, trigger is off — should never fire
+      await buildSharedReminderParts(ctx);
+      await buildSharedReminderParts(ctx);
+      await buildSharedReminderParts(ctx);
+      expect(launchCalled).toBe(false);
+    }),
+  );
 });

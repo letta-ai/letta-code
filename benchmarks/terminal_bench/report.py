@@ -21,12 +21,32 @@ import json
 import os
 import subprocess
 import sys
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
 
+def classify_failure(result: dict) -> str:
+    """Return a short error label for a failed task, or empty string if it's just a wrong answer."""
+    exception_info = result.get("exception_info") or {}
+    exc_type = exception_info.get("exception_type", "")
+
+    if exc_type:
+        return exc_type
+
+    # No exception — check agent return code.
+    agent_result = result.get("agent_result") or {}
+    metadata = agent_result.get("metadata") or {}
+    rc = metadata.get("letta_return_code")
+    if rc is not None and rc != 0:
+        return f"agent-error (rc {rc})"
+
+    return ""
+
+
+
 def parse_job_results(results_dir: Path) -> dict[str, dict]:
-    """Parse Harbor job results into {model: {tasks: {task: passed}, cost: {..}}}."""
+    """Parse Harbor job results into {model: {tasks, cost, failures}}."""
     model_results: dict[str, dict] = {}
 
     for artifact_dir in sorted(results_dir.iterdir()):
@@ -41,6 +61,7 @@ def parse_job_results(results_dir: Path) -> dict[str, dict]:
             model = dir_name
 
         tasks: dict[str, bool] = {}
+        failures: dict[str, dict] = {}
         total_cost = 0.0
         total_prompt_tokens = 0
         total_completion_tokens = 0
@@ -63,6 +84,14 @@ def parse_job_results(results_dir: Path) -> dict[str, dict]:
                 # Skip non-trial dirs like config.json
                 task_name = trial_dir.name
 
+                result_data: dict | None = None
+                result_file = trial_dir / "result.json"
+                if result_file.exists():
+                    try:
+                        result_data = json.loads(result_file.read_text())
+                    except (json.JSONDecodeError, OSError):
+                        pass
+
                 # Try verifier/reward.txt first
                 reward_file = trial_dir / "verifier" / "reward.txt"
                 if reward_file.exists():
@@ -74,14 +103,20 @@ def parse_job_results(results_dir: Path) -> dict[str, dict]:
 
                 if task_name not in tasks:
                     # Fall back to result.json
-                    result_file = trial_dir / "result.json"
-                    if result_file.exists():
+                    if result_data is not None:
                         try:
-                            result = json.loads(result_file.read_text())
-                            reward = result.get("reward", result.get("score", 0))
+                            reward = result_data.get("reward", result_data.get("score", 0))
                             tasks[task_name] = float(reward) >= 1.0
-                        except (json.JSONDecodeError, ValueError, OSError):
+                        except (ValueError, TypeError):
                             tasks[task_name] = False
+                    elif result_file.exists():
+                        tasks[task_name] = False
+
+                # Classify failures (skip wrong answers — only track actual errors)
+                if task_name in tasks and not tasks[task_name] and result_data is not None:
+                    error_label = classify_failure(result_data)
+                    if error_label:
+                        failures[task_name] = error_label
 
                 # Collect cost from usage.json
                 usage_file = trial_dir / "usage.json"
@@ -97,6 +132,7 @@ def parse_job_results(results_dir: Path) -> dict[str, dict]:
         if tasks:
             model_results[model] = {
                 "tasks": tasks,
+                "failures": failures,
                 "cost": {
                     "cost_usd": round(total_cost, 2),
                     "prompt_tokens": total_prompt_tokens,
@@ -125,6 +161,14 @@ def load_baseline(baseline_path: Path) -> dict:
         return {}
 
 
+def _failure_annotation(task_name: str, failures: dict[str, str]) -> str:
+    """Return a parenthesized annotation for a failed task, or empty string."""
+    label = failures.get(task_name)
+    if not label:
+        return ""
+    return f" ({label})"
+
+
 def build_report(
     model_results: dict[str, dict],
     baseline: dict,
@@ -143,10 +187,12 @@ def build_report(
 
     for model, data in sorted(model_results.items()):
         tasks = data["tasks"]
+        failures = data.get("failures", {})
         cost = data.get("cost", {})
         pass_rate = compute_pass_rate(tasks)
         passed = sum(1 for v in tasks.values() if v)
         total = len(tasks)
+        n_errors = len(failures)
 
         # Compare to baseline
         baseline_model = baseline.get(model, {})
@@ -164,14 +210,28 @@ def build_report(
             elif delta > 0:
                 delta_str = f" | {delta:+.0%} from baseline :white_check_mark:"
 
+        error_str = ""
+        if n_errors > 0:
+            error_str = f" | {n_errors} errors"
+
         cost_str = ""
         cost_usd = cost.get("cost_usd", 0)
         if cost_usd > 0:
             cost_str = f" | ${cost_usd:.2f}"
 
-        lines.append(f"<details>")
-        lines.append(f"<summary><strong>{model}</strong> — {passed}/{total} ({pass_rate:.0%}){delta_str}{cost_str}</summary>")
+        lines.append("<details>")
+        lines.append(f"<summary><strong>{model}</strong> — {passed}/{total} ({pass_rate:.0%}){delta_str}{error_str}{cost_str}</summary>")
         lines.append("")
+
+        # Error breakdown table
+        if failures:
+            category_counts = Counter(failures.values())
+            lines.append(f"**Error breakdown ({n_errors} failures):**")
+            lines.append("| Category | Count |")
+            lines.append("|---|---|")
+            for cat, count in category_counts.most_common():
+                lines.append(f"| {cat} | {count} |")
+            lines.append("")
 
         # Categorize tasks
         regressions = []  # was passing, now failing
@@ -191,7 +251,7 @@ def build_report(
         if regressions:
             lines.append(f"**Regressions ({len(regressions)}):**")
             for t in regressions:
-                lines.append(f"- :red_circle: {t}")
+                lines.append(f"- :red_circle: {t}{_failure_annotation(t, failures)}")
             lines.append("")
 
         if improvements:
@@ -205,7 +265,8 @@ def build_report(
             lines.append(f"**New tasks ({new_passed}/{len(new_tasks)} passed):**")
             for t, p in new_tasks:
                 emoji = ":white_check_mark:" if p else ":x:"
-                lines.append(f"- {emoji} {t}")
+                annotation = _failure_annotation(t, failures) if not p else ""
+                lines.append(f"- {emoji} {t}{annotation}")
             lines.append("")
 
         if not regressions and not improvements and not new_tasks:

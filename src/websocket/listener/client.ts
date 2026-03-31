@@ -10,7 +10,14 @@ import { promisify } from "node:util";
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import WebSocket from "ws";
+import { getAvailableModelHandles } from "../../agent/available-models";
 import { getClient } from "../../agent/client";
+import { getModelInfo, models } from "../../agent/model";
+import {
+  updateAgentLLMConfig,
+  updateConversationLLMConfig,
+} from "../../agent/modify";
+import { resetContextHistory } from "../../cli/helpers/contextTracker";
 import {
   ensureFileIndex,
   getIndexRoot,
@@ -18,6 +25,10 @@ import {
   setIndexRoot,
 } from "../../cli/helpers/fileIndex";
 import { getGitContext } from "../../cli/helpers/gitContext";
+import {
+  getReflectionSettings,
+  persistReflectionSettingsForAgent,
+} from "../../cli/helpers/memoryReminder";
 import { setMessageQueueAdder } from "../../cli/helpers/messageQueueBridge";
 import { generatePlanFilePath } from "../../cli/helpers/planName";
 import {
@@ -36,6 +47,10 @@ import {
   startScheduler as startCronScheduler,
   stopScheduler as stopCronScheduler,
 } from "../../cron/scheduler";
+import {
+  buildByokProviderAliases,
+  listProviders,
+} from "../../providers/byok-providers";
 import { type DequeuedBatch, QueueRuntime } from "../../queue/queueRuntime";
 import {
   createSharedReminderState,
@@ -43,7 +58,14 @@ import {
 } from "../../reminders/state";
 import { settingsManager } from "../../settings-manager";
 import { telemetry } from "../../telemetry";
-import { loadTools } from "../../tools/manager";
+import { trackBoundaryError } from "../../telemetry/errorReporting";
+import { getToolNames, loadTools } from "../../tools/manager";
+import {
+  forceToolsetSwitch,
+  switchToolsetForModel,
+  type ToolsetName,
+} from "../../tools/toolset";
+import { formatToolsetName } from "../../tools/toolset-labels";
 import type {
   AbortMessageCommand,
   ApprovalResponseBody,
@@ -53,6 +75,14 @@ import type {
   CronDeleteCommand,
   CronGetCommand,
   CronListCommand,
+  GetReflectionSettingsCommand,
+  ListModelsResponseMessage,
+  ListModelsResponseModelEntry,
+  ReflectionSettingsScope,
+  SetReflectionSettingsCommand,
+  SkillDisableCommand,
+  SkillEnableCommand,
+  UpdateModelResponseMessage,
 } from "../../types/protocol_v2";
 import { isDebugEnabled } from "../../utils/debug";
 import {
@@ -106,11 +136,17 @@ import {
   isEditFileCommand,
   isEnableMemfsCommand,
   isExecuteCommandCommand,
+  isGetReflectionSettingsCommand,
   isListInDirectoryCommand,
   isListMemoryCommand,
+  isListModelsCommand,
   isReadFileCommand,
   isSearchBranchesCommand,
   isSearchFilesCommand,
+  isSetReflectionSettingsCommand,
+  isSkillDisableCommand,
+  isSkillEnableCommand,
+  isUpdateModelCommand,
   parseServerMessage,
 } from "./protocol-inbound";
 import {
@@ -124,6 +160,7 @@ import {
   emitRetryDelta,
   emitRuntimeStateUpdates,
   emitStateSync,
+  emitStatusDelta,
   emitStreamDelta,
   emitSubagentStateIfOpen,
   scheduleQueueEmit,
@@ -179,6 +216,18 @@ import type {
   StartListenerOptions,
 } from "./types";
 
+function trackListenerError(
+  errorType: string,
+  error: unknown,
+  context: string,
+): void {
+  trackBoundaryError({
+    errorType,
+    error,
+    context,
+  });
+}
+
 /**
  * Handle mode change request from cloud.
  * Stores the new mode in ListenerRuntime.permissionModeByConversation so
@@ -228,6 +277,11 @@ function handleModeChange(
       console.log(`[Listen] Mode changed to: ${msg.mode}`);
     }
   } catch (error) {
+    trackListenerError(
+      "listener_mode_change_failed",
+      error,
+      "listener_mode_change",
+    );
     emitLoopErrorDelta(socket, runtime, {
       message: error instanceof Error ? error.message : "Mode change failed",
       stopReason: "error",
@@ -248,6 +302,309 @@ type CronCommand =
   | CronGetCommand
   | CronDeleteCommand
   | CronDeleteAllCommand;
+
+type ResolvedModelForUpdate = {
+  id: string;
+  handle: string;
+  label: string;
+  updateArgs?: Record<string, unknown>;
+};
+
+function resolveModelForUpdate(payload: {
+  model_id?: string;
+  model_handle?: string;
+}): ResolvedModelForUpdate | null {
+  if (typeof payload.model_id === "string" && payload.model_id.length > 0) {
+    const byId = getModelInfo(payload.model_id);
+    if (byId) {
+      // When an explicit model_handle is also provided (e.g. BYOK tier
+      // changes), use the model_id entry for updateArgs/label but preserve
+      // the caller-specified handle so the BYOK identity is maintained
+      // end-to-end.
+      const explicitHandle =
+        typeof payload.model_handle === "string" &&
+        payload.model_handle.length > 0
+          ? payload.model_handle
+          : null;
+
+      return {
+        id: byId.id,
+        handle: explicitHandle ?? byId.handle,
+        label: byId.label,
+        updateArgs:
+          byId.updateArgs && typeof byId.updateArgs === "object"
+            ? ({ ...byId.updateArgs } as Record<string, unknown>)
+            : undefined,
+      };
+    }
+  }
+
+  if (
+    typeof payload.model_handle === "string" &&
+    payload.model_handle.length > 0
+  ) {
+    const exactByHandle = models.find((m) => m.handle === payload.model_handle);
+    if (exactByHandle) {
+      return {
+        id: exactByHandle.id,
+        handle: exactByHandle.handle,
+        label: exactByHandle.label,
+        updateArgs:
+          exactByHandle.updateArgs &&
+          typeof exactByHandle.updateArgs === "object"
+            ? ({ ...exactByHandle.updateArgs } as Record<string, unknown>)
+            : undefined,
+      };
+    }
+
+    return {
+      id: payload.model_handle,
+      handle: payload.model_handle,
+      label: payload.model_handle,
+      updateArgs: undefined,
+    };
+  }
+
+  return null;
+}
+
+function formatToolsetStatusMessageForModelUpdate(params: {
+  nextToolset: ToolsetName;
+  toolsetPreference: ToolsetName | "auto";
+}): string {
+  const { nextToolset, toolsetPreference } = params;
+
+  if (toolsetPreference === "auto") {
+    return (
+      "Toolset auto-switched for this model: now using the " +
+      formatToolsetName(nextToolset) +
+      " toolset."
+    );
+  }
+
+  return (
+    "Manual toolset override remains active: " +
+    formatToolsetName(toolsetPreference) +
+    "."
+  );
+}
+
+function formatEffortSuffix(updateArgs?: Record<string, unknown>): string {
+  if (!updateArgs) return "";
+  const effort = updateArgs.reasoning_effort;
+  if (typeof effort !== "string" || effort.length === 0) return "";
+  const labels: Record<string, string> = {
+    none: "No Reasoning",
+    low: "Low",
+    medium: "Medium",
+    high: "High",
+    xhigh: "Max",
+  };
+  return ` (${labels[effort] ?? effort})`;
+}
+
+function buildModelUpdateStatusMessage(params: {
+  modelLabel: string;
+  toolsetChanged: boolean;
+  toolsetError: string | null;
+  nextToolset: ToolsetName;
+  toolsetPreference: ToolsetName | "auto";
+  updateArgs?: Record<string, unknown>;
+}): { message: string; level: "info" | "warning" } {
+  const {
+    modelLabel,
+    toolsetChanged,
+    toolsetError,
+    nextToolset,
+    toolsetPreference,
+    updateArgs,
+  } = params;
+  let message = `Model updated to ${modelLabel}${formatEffortSuffix(updateArgs)}.`;
+  if (toolsetError) {
+    message += ` Warning: toolset switch failed (${toolsetError}).`;
+    return { message, level: "warning" };
+  }
+  if (toolsetChanged) {
+    message += ` ${formatToolsetStatusMessageForModelUpdate({
+      nextToolset,
+      toolsetPreference,
+    })}`;
+  }
+  return { message, level: "info" };
+}
+
+async function applyModelUpdateForRuntime(params: {
+  socket: WebSocket;
+  listener: ListenerRuntime;
+  scopedRuntime: ConversationRuntime;
+  requestId: string;
+  model: ResolvedModelForUpdate;
+}): Promise<UpdateModelResponseMessage> {
+  const { socket, listener, scopedRuntime, requestId, model } = params;
+  const agentId = scopedRuntime.agentId;
+  const conversationId = scopedRuntime.conversationId;
+
+  if (!agentId) {
+    return {
+      type: "update_model_response",
+      request_id: requestId,
+      success: false,
+      error: "Missing agent_id in runtime scope",
+    };
+  }
+
+  const isDefaultConversation = conversationId === "default";
+
+  const updateArgs = {
+    ...(model.updateArgs ?? {}),
+    parallel_tool_calls: true,
+  };
+
+  let modelSettings: Record<string, unknown> | null = null;
+  let appliedTo: "agent" | "conversation";
+
+  if (isDefaultConversation) {
+    const updatedAgent = await updateAgentLLMConfig(
+      agentId,
+      model.handle,
+      updateArgs,
+    );
+    modelSettings =
+      (updatedAgent.model_settings as
+        | Record<string, unknown>
+        | null
+        | undefined) ?? null;
+    appliedTo = "agent";
+  } else {
+    const updatedConversation = await updateConversationLLMConfig(
+      conversationId,
+      model.handle,
+      updateArgs,
+    );
+    modelSettings =
+      ((
+        updatedConversation as {
+          model_settings?: Record<string, unknown> | null;
+        }
+      ).model_settings as Record<string, unknown> | null | undefined) ?? null;
+    appliedTo = "conversation";
+  }
+
+  const toolsetPreference = settingsManager.getToolsetPreference(agentId);
+  const previousToolNames = getToolNames();
+  let nextToolset: ToolsetName;
+  let toolsetError: string | null = null;
+
+  try {
+    if (toolsetPreference === "auto") {
+      nextToolset = await switchToolsetForModel(model.handle, agentId);
+    } else {
+      await forceToolsetSwitch(toolsetPreference, agentId);
+      nextToolset = toolsetPreference;
+    }
+  } catch (error) {
+    nextToolset = toolsetPreference === "auto" ? "default" : toolsetPreference;
+    toolsetError =
+      error instanceof Error ? error.message : "Failed to switch toolset";
+  }
+
+  // Only mention toolset in the status message when it actually changed
+  const toolsetChanged =
+    !toolsetError &&
+    JSON.stringify(previousToolNames) !== JSON.stringify(getToolNames());
+  const { message: statusMessage, level: statusLevel } =
+    buildModelUpdateStatusMessage({
+      modelLabel: model.label,
+      toolsetChanged,
+      toolsetError,
+      nextToolset,
+      toolsetPreference,
+      updateArgs: model.updateArgs,
+    });
+
+  emitStatusDelta(socket, scopedRuntime, {
+    message: statusMessage,
+    level: statusLevel,
+    agentId,
+    conversationId,
+  });
+
+  emitRuntimeStateUpdates(listener, {
+    agent_id: agentId,
+    conversation_id: conversationId,
+  });
+
+  return {
+    type: "update_model_response",
+    request_id: requestId,
+    success: true,
+    runtime: {
+      agent_id: agentId,
+      conversation_id: conversationId,
+    },
+    applied_to: appliedTo,
+    model_id: model.id,
+    model_handle: model.handle,
+    model_settings: modelSettings,
+  };
+}
+
+function buildListModelsEntries(): ListModelsResponseModelEntry[] {
+  return models.map((model) => ({
+    id: model.id,
+    handle: model.handle,
+    label: model.label,
+    description: model.description,
+    ...(typeof model.isDefault === "boolean"
+      ? { isDefault: model.isDefault }
+      : {}),
+    ...(typeof model.isFeatured === "boolean"
+      ? { isFeatured: model.isFeatured }
+      : {}),
+    ...(typeof model.free === "boolean" ? { free: model.free } : {}),
+    ...(model.updateArgs && typeof model.updateArgs === "object"
+      ? { updateArgs: model.updateArgs as Record<string, unknown> }
+      : {}),
+  }));
+}
+
+/**
+ * Build the full list_models_response payload, including availability data.
+ * Fetches available handles and BYOK provider aliases in parallel (best-effort).
+ */
+async function buildListModelsResponse(
+  requestId: string,
+): Promise<ListModelsResponseMessage> {
+  const entries = buildListModelsEntries();
+
+  const [handlesResult, providersResult] = await Promise.allSettled([
+    getAvailableModelHandles(),
+    listProviders(),
+  ]);
+
+  const availableHandles: string[] | null =
+    handlesResult.status === "fulfilled"
+      ? [...handlesResult.value.handles]
+      : null;
+
+  // listProviders already degrades to [] on failure, but handle rejection too
+  const providers =
+    providersResult.status === "fulfilled" ? providersResult.value : [];
+  const byokProviderAliases = buildByokProviderAliases(providers);
+
+  return {
+    type: "list_models_response",
+    request_id: requestId,
+    success: true,
+    entries,
+    available_handles: availableHandles,
+    byok_provider_aliases: byokProviderAliases,
+  };
+}
+
+type ReflectionSettingsCommand =
+  | GetReflectionSettingsCommand
+  | SetReflectionSettingsCommand;
 
 function emitCronsUpdated(
   socket: WebSocket,
@@ -426,6 +783,315 @@ async function handleCronCommand(
         agent_id: parsed.agent_id,
         deleted: 0,
         error: err instanceof Error ? err.message : "Failed to delete crons",
+      }),
+    );
+  }
+  return true;
+}
+
+type SkillCommand = SkillEnableCommand | SkillDisableCommand;
+
+function emitSkillsUpdated(socket: WebSocket): void {
+  socket.send(
+    JSON.stringify({
+      type: "skills_updated",
+      timestamp: Date.now(),
+    }),
+  );
+}
+
+async function handleSkillCommand(
+  parsed: SkillCommand,
+  socket: WebSocket,
+): Promise<boolean> {
+  const {
+    existsSync,
+    lstatSync,
+    mkdirSync,
+    rmdirSync,
+    symlinkSync,
+    unlinkSync,
+  } = await import("node:fs");
+  const { basename, join } = await import("node:path");
+
+  // Compute skills dir dynamically to respect LETTA_HOME (important for tests)
+  const lettaHome =
+    process.env.LETTA_HOME ||
+    join(process.env.HOME || process.env.USERPROFILE || "~", ".letta");
+  const globalSkillsDir = join(lettaHome, "skills");
+
+  if (parsed.type === "skill_enable") {
+    try {
+      // Validate the skill path exists
+      if (!existsSync(parsed.skill_path)) {
+        socket.send(
+          JSON.stringify({
+            type: "skill_enable_response",
+            request_id: parsed.request_id,
+            success: false,
+            error: `Path does not exist: ${parsed.skill_path}`,
+          }),
+        );
+        return true;
+      }
+
+      // Check it contains a SKILL.md
+      const skillMdPath = join(parsed.skill_path, "SKILL.md");
+      if (!existsSync(skillMdPath)) {
+        socket.send(
+          JSON.stringify({
+            type: "skill_enable_response",
+            request_id: parsed.request_id,
+            success: false,
+            error: `No SKILL.md found in ${parsed.skill_path}`,
+          }),
+        );
+        return true;
+      }
+
+      const linkName = basename(parsed.skill_path);
+      const linkPath = join(globalSkillsDir, linkName);
+
+      // Ensure ~/.letta/skills/ exists
+      mkdirSync(globalSkillsDir, { recursive: true });
+
+      // If symlink/junction already exists, remove it first
+      if (existsSync(linkPath)) {
+        const stat = lstatSync(linkPath);
+        if (stat.isSymbolicLink()) {
+          if (process.platform === "win32") {
+            rmdirSync(linkPath);
+          } else {
+            unlinkSync(linkPath);
+          }
+        } else {
+          socket.send(
+            JSON.stringify({
+              type: "skill_enable_response",
+              request_id: parsed.request_id,
+              success: false,
+              error: `${linkPath} already exists and is not a symlink — refusing to overwrite`,
+            }),
+          );
+          return true;
+        }
+      }
+
+      // Use junctions on Windows — they don't require admin/Developer Mode
+      const linkType = process.platform === "win32" ? "junction" : "dir";
+      symlinkSync(parsed.skill_path, linkPath, linkType);
+
+      socket.send(
+        JSON.stringify({
+          type: "skill_enable_response",
+          request_id: parsed.request_id,
+          success: true,
+          name: linkName,
+          skill_path: parsed.skill_path,
+          link_path: linkPath,
+        }),
+      );
+      emitSkillsUpdated(socket);
+    } catch (err) {
+      socket.send(
+        JSON.stringify({
+          type: "skill_enable_response",
+          request_id: parsed.request_id,
+          success: false,
+          error: err instanceof Error ? err.message : "Failed to enable skill",
+        }),
+      );
+    }
+    return true;
+  }
+
+  if (parsed.type === "skill_disable") {
+    try {
+      const linkPath = join(globalSkillsDir, parsed.name);
+
+      if (!existsSync(linkPath)) {
+        socket.send(
+          JSON.stringify({
+            type: "skill_disable_response",
+            request_id: parsed.request_id,
+            success: false,
+            error: `Skill not found: ${parsed.name}`,
+          }),
+        );
+        return true;
+      }
+
+      const stat = lstatSync(linkPath);
+      if (!stat.isSymbolicLink()) {
+        socket.send(
+          JSON.stringify({
+            type: "skill_disable_response",
+            request_id: parsed.request_id,
+            success: false,
+            error: `${parsed.name} is not a symlink — refusing to delete. Remove it manually if intended.`,
+          }),
+        );
+        return true;
+      }
+
+      if (process.platform === "win32") {
+        rmdirSync(linkPath);
+      } else {
+        unlinkSync(linkPath);
+      }
+
+      socket.send(
+        JSON.stringify({
+          type: "skill_disable_response",
+          request_id: parsed.request_id,
+          success: true,
+          name: parsed.name,
+        }),
+      );
+      emitSkillsUpdated(socket);
+    } catch (err) {
+      socket.send(
+        JSON.stringify({
+          type: "skill_disable_response",
+          request_id: parsed.request_id,
+          success: false,
+          error: err instanceof Error ? err.message : "Failed to disable skill",
+        }),
+      );
+    }
+    return true;
+  }
+
+  return false;
+}
+
+function toReflectionSettingsResponse(
+  agentId: string,
+  workingDirectory: string,
+): {
+  agent_id: string;
+  trigger: "off" | "step-count" | "compaction-event";
+  step_count: number;
+} {
+  const settings = getReflectionSettings(agentId, workingDirectory);
+  return {
+    agent_id: agentId,
+    trigger: settings.trigger,
+    step_count: settings.stepCount,
+  };
+}
+
+function resolveReflectionSettingsScope(
+  scope: ReflectionSettingsScope | undefined,
+): {
+  persistLocalProject: boolean;
+  persistGlobal: boolean;
+  normalizedScope: ReflectionSettingsScope;
+} {
+  if (scope === "local_project") {
+    return {
+      persistLocalProject: true,
+      persistGlobal: false,
+      normalizedScope: scope,
+    };
+  }
+  if (scope === "global") {
+    return {
+      persistLocalProject: false,
+      persistGlobal: true,
+      normalizedScope: scope,
+    };
+  }
+  return {
+    persistLocalProject: true,
+    persistGlobal: true,
+    normalizedScope: "both",
+  };
+}
+
+async function handleReflectionSettingsCommand(
+  parsed: ReflectionSettingsCommand,
+  socket: WebSocket,
+  listener: ListenerRuntime,
+): Promise<boolean> {
+  const agentId = parsed.runtime.agent_id;
+  const workingDirectory = getConversationWorkingDirectory(
+    listener,
+    parsed.runtime.agent_id,
+    parsed.runtime.conversation_id,
+  );
+
+  if (parsed.type === "get_reflection_settings") {
+    try {
+      socket.send(
+        JSON.stringify({
+          type: "get_reflection_settings_response",
+          request_id: parsed.request_id,
+          success: true,
+          reflection_settings: toReflectionSettingsResponse(
+            agentId,
+            workingDirectory,
+          ),
+        }),
+      );
+    } catch (err) {
+      socket.send(
+        JSON.stringify({
+          type: "get_reflection_settings_response",
+          request_id: parsed.request_id,
+          success: false,
+          reflection_settings: null,
+          error:
+            err instanceof Error
+              ? err.message
+              : "Failed to load reflection settings",
+        }),
+      );
+    }
+    return true;
+  }
+
+  const { persistLocalProject, persistGlobal, normalizedScope } =
+    resolveReflectionSettingsScope(parsed.scope);
+
+  try {
+    await persistReflectionSettingsForAgent(
+      agentId,
+      {
+        trigger: parsed.settings.trigger,
+        stepCount: parsed.settings.step_count,
+      },
+      {
+        workingDirectory,
+        persistLocalProject,
+        persistGlobal,
+      },
+    );
+    socket.send(
+      JSON.stringify({
+        type: "set_reflection_settings_response",
+        request_id: parsed.request_id,
+        success: true,
+        scope: normalizedScope,
+        reflection_settings: toReflectionSettingsResponse(
+          agentId,
+          workingDirectory,
+        ),
+      }),
+    );
+    emitDeviceStatusUpdate(socket, listener, parsed.runtime);
+  } catch (err) {
+    socket.send(
+      JSON.stringify({
+        type: "set_reflection_settings_response",
+        request_id: parsed.request_id,
+        success: false,
+        scope: normalizedScope,
+        reflection_settings: null,
+        error:
+          err instanceof Error
+            ? err.message
+            : "Failed to update reflection settings",
       }),
     );
   }
@@ -1018,6 +1684,10 @@ function createRuntime(): ListenerRuntime {
     bootWorkingDirectory,
     workingDirectoryByConversation: loadPersistedCwdMap(),
     permissionModeByConversation: loadPersistedPermissionModeMap(),
+    reminderStateByConversation: new Map(),
+    contextTrackerByConversation: new Map(),
+    systemPromptRecompileByConversation: new Map(),
+    queuedSystemPromptRecompileByConversation: new Set(),
     connectionId: null,
     connectionName: null,
     conversationRuntimes: new Map(),
@@ -1047,6 +1717,10 @@ function stopRuntime(
   }
   runtime.conversationRuntimes.clear();
   runtime.approvalRuntimeKeyByRequestId.clear();
+  runtime.reminderStateByConversation.clear();
+  runtime.contextTrackerByConversation.clear();
+  runtime.systemPromptRecompileByConversation.clear();
+  runtime.queuedSystemPromptRecompileByConversation.clear();
 
   if (!runtime.socket) {
     return;
@@ -1192,17 +1866,25 @@ async function connectWithRetry(
     opts.onConnected(opts.connectionId);
 
     if (runtime.conversationRuntimes.size === 0) {
-      emitDeviceStatusUpdate(socket, runtime);
+      // Don't emit device_status before the lookup store exists.
+      // Without a conversation runtime, the scope resolves to
+      // agent:__unknown__ which misses persisted CWD and permission
+      // mode entries. The web's sync command will create a scoped
+      // runtime and emit a properly-scoped device_status at that point.
       emitLoopStatusUpdate(socket, runtime);
     } else {
-      for (const conversationRuntime of runtime.conversationRuntimes.values()) {
+      for (const reminderState of runtime.reminderStateByConversation.values()) {
         // Reset bootstrap reminder state on (re)connect so session-context
         // and agent-info fire on the first turn of the new connection.
         // This is intentionally in the open handler, NOT the sync handler,
         // because the Desktop UMI controller sends sync every ~5 s and
         // resetting there would re-arm reminders on every periodic sync.
-        resetSharedReminderState(conversationRuntime.reminderState);
-
+        resetSharedReminderState(reminderState);
+      }
+      for (const contextTracker of runtime.contextTrackerByConversation.values()) {
+        resetContextHistory(contextTracker);
+      }
+      for (const conversationRuntime of runtime.conversationRuntimes.values()) {
         const scope = {
           agent_id: conversationRuntime.agentId,
           conversation_id: conversationRuntime.conversationId,
@@ -1444,6 +2126,11 @@ async function connectWithRetry(
           scheduleQueuePump(scopedRuntime, socket, opts, processQueuedTurn);
         })
         .catch((error: unknown) => {
+          trackListenerError(
+            "listener_queued_input_failed",
+            error,
+            "listener_message_queue",
+          );
           if (process.env.DEBUG) {
             console.error("[Listen] Error handling queued input:", error);
           }
@@ -1565,6 +2252,11 @@ async function connectWithRetry(
           }
           socket.send(JSON.stringify(response));
         } catch (err) {
+          trackListenerError(
+            "listener_list_directory_failed",
+            err,
+            "listener_file_browser",
+          );
           socket.send(
             JSON.stringify({
               type: "list_in_directory_response",
@@ -1603,6 +2295,11 @@ async function connectWithRetry(
             }),
           );
         } catch (err) {
+          trackListenerError(
+            "listener_read_file_failed",
+            err,
+            "listener_file_read",
+          );
           console.error(
             `[Listen] read_file error: ${err instanceof Error ? err.message : "Unknown error"}`,
           );
@@ -1654,6 +2351,11 @@ async function connectWithRetry(
             }),
           );
         } catch (err) {
+          trackListenerError(
+            "listener_edit_file_failed",
+            err,
+            "listener_file_edit",
+          );
           console.error(
             `[Listen] edit_file error: ${err instanceof Error ? err.message : "Unknown error"}`,
           );
@@ -1763,6 +2465,11 @@ async function connectWithRetry(
             );
           }
         } catch (err) {
+          trackListenerError(
+            "listener_list_memory_failed",
+            err,
+            "listener_memory_browser",
+          );
           socket.send(
             JSON.stringify({
               type: "list_memory_response",
@@ -1805,6 +2512,11 @@ async function connectWithRetry(
             }),
           );
         } catch (err) {
+          trackListenerError(
+            "listener_enable_memfs_failed",
+            err,
+            "listener_memfs_enable",
+          );
           socket.send(
             JSON.stringify({
               type: "enable_memfs_response",
@@ -1819,6 +2531,81 @@ async function connectWithRetry(
       return;
     }
 
+    // ── Model catalog command (no runtime scope required) ───────────────
+    if (isListModelsCommand(parsed)) {
+      void (async () => {
+        try {
+          const response = await buildListModelsResponse(parsed.request_id);
+          socket.send(JSON.stringify(response));
+        } catch (error) {
+          socket.send(
+            JSON.stringify({
+              type: "list_models_response",
+              request_id: parsed.request_id,
+              success: false,
+              entries: [],
+              error:
+                error instanceof Error
+                  ? error.message
+                  : "Failed to list models",
+            }),
+          );
+        }
+      })();
+      return;
+    }
+
+    // ── Model update command (runtime scoped) ────────────────────────────
+    if (isUpdateModelCommand(parsed)) {
+      void (async () => {
+        const scopedRuntime = getOrCreateScopedRuntime(
+          runtime,
+          parsed.runtime.agent_id,
+          parsed.runtime.conversation_id,
+        );
+
+        const resolvedModel = resolveModelForUpdate(parsed.payload);
+        if (!resolvedModel) {
+          const failure: UpdateModelResponseMessage = {
+            type: "update_model_response",
+            request_id: parsed.request_id,
+            success: false,
+            error:
+              "Model not found. Provide a valid model_id from list_models or a model_handle.",
+          };
+          socket.send(JSON.stringify(failure));
+          return;
+        }
+
+        try {
+          const response = await applyModelUpdateForRuntime({
+            socket,
+            listener: runtime,
+            scopedRuntime,
+            requestId: parsed.request_id,
+            model: resolvedModel,
+          });
+          socket.send(JSON.stringify(response));
+        } catch (error) {
+          const failure: UpdateModelResponseMessage = {
+            type: "update_model_response",
+            request_id: parsed.request_id,
+            success: false,
+            runtime: {
+              agent_id: parsed.runtime.agent_id,
+              conversation_id: parsed.runtime.conversation_id,
+            },
+            model_id: resolvedModel.id,
+            model_handle: resolvedModel.handle,
+            error:
+              error instanceof Error ? error.message : "Failed to update model",
+          };
+          socket.send(JSON.stringify(failure));
+        }
+      })();
+      return;
+    }
+
     // ── Cron CRUD commands (no runtime scope required) ────────────────
     if (
       isCronListCommand(parsed) ||
@@ -1828,6 +2615,20 @@ async function connectWithRetry(
       isCronDeleteAllCommand(parsed)
     ) {
       void handleCronCommand(parsed, socket);
+      return;
+    }
+
+    // ── Skill enable/disable commands (no runtime scope required) ─────
+    if (isSkillEnableCommand(parsed) || isSkillDisableCommand(parsed)) {
+      void handleSkillCommand(parsed, socket);
+      return;
+    }
+
+    if (
+      isGetReflectionSettingsCommand(parsed) ||
+      isSetReflectionSettingsCommand(parsed)
+    ) {
+      void handleReflectionSettingsCommand(parsed, socket, runtime);
       return;
     }
 
@@ -2067,6 +2868,7 @@ async function connectWithRetry(
   });
 
   socket.on("error", (error: Error) => {
+    trackListenerError("listener_websocket_error", error, "listener_socket");
     safeEmitWsEvent("recv", "lifecycle", {
       type: "_ws_error",
       message: error.message,
@@ -2111,6 +2913,10 @@ function createLegacyTestRuntime(): ConversationRuntime & {
   socket: WebSocket | null;
   workingDirectoryByConversation: Map<string, string>;
   permissionModeByConversation: ListenerRuntime["permissionModeByConversation"];
+  reminderStateByConversation: ListenerRuntime["reminderStateByConversation"];
+  contextTrackerByConversation: ListenerRuntime["contextTrackerByConversation"];
+  systemPromptRecompileByConversation: ListenerRuntime["systemPromptRecompileByConversation"];
+  queuedSystemPromptRecompileByConversation: ListenerRuntime["queuedSystemPromptRecompileByConversation"];
   bootWorkingDirectory: string;
   connectionId: string | null;
   connectionName: string | null;
@@ -2141,6 +2947,10 @@ function createLegacyTestRuntime(): ConversationRuntime & {
     socket: WebSocket | null;
     workingDirectoryByConversation: Map<string, string>;
     permissionModeByConversation: ListenerRuntime["permissionModeByConversation"];
+    reminderStateByConversation: ListenerRuntime["reminderStateByConversation"];
+    contextTrackerByConversation: ListenerRuntime["contextTrackerByConversation"];
+    systemPromptRecompileByConversation: ListenerRuntime["systemPromptRecompileByConversation"];
+    queuedSystemPromptRecompileByConversation: ListenerRuntime["queuedSystemPromptRecompileByConversation"];
     bootWorkingDirectory: string;
     connectionId: string | null;
     connectionName: string | null;
@@ -2180,6 +2990,32 @@ function createLegacyTestRuntime(): ConversationRuntime & {
       get: () => listener.permissionModeByConversation,
       set: (value: ListenerRuntime["permissionModeByConversation"]) => {
         listener.permissionModeByConversation = value;
+      },
+    },
+    reminderStateByConversation: {
+      get: () => listener.reminderStateByConversation,
+      set: (value: ListenerRuntime["reminderStateByConversation"]) => {
+        listener.reminderStateByConversation = value;
+      },
+    },
+    contextTrackerByConversation: {
+      get: () => listener.contextTrackerByConversation,
+      set: (value: ListenerRuntime["contextTrackerByConversation"]) => {
+        listener.contextTrackerByConversation = value;
+      },
+    },
+    systemPromptRecompileByConversation: {
+      get: () => listener.systemPromptRecompileByConversation,
+      set: (value: ListenerRuntime["systemPromptRecompileByConversation"]) => {
+        listener.systemPromptRecompileByConversation = value;
+      },
+    },
+    queuedSystemPromptRecompileByConversation: {
+      get: () => listener.queuedSystemPromptRecompileByConversation,
+      set: (
+        value: ListenerRuntime["queuedSystemPromptRecompileByConversation"],
+      ) => {
+        listener.queuedSystemPromptRecompileByConversation = value;
       },
     },
     bootWorkingDirectory: {
@@ -2332,6 +3168,11 @@ export const __listenClientTestUtils = {
   createRuntime: createLegacyTestRuntime,
   createListenerRuntime: createRuntime,
   getOrCreateScopedRuntime,
+  buildListModelsEntries,
+  buildListModelsResponse,
+  buildModelUpdateStatusMessage,
+  resolveModelForUpdate,
+  applyModelUpdateForRuntime,
   stopRuntime: (
     runtime: ListenerRuntime | ConversationRuntime,
     suppressCallbacks: boolean,
@@ -2374,6 +3215,8 @@ export const __listenClientTestUtils = {
   handleAbortMessageInput,
   handleChangeDeviceStateInput,
   handleCronCommand,
+  handleSkillCommand,
+  handleReflectionSettingsCommand,
   scheduleQueuePump,
   recoverApprovalStateForSync,
   clearRecoveredApprovalStateForScope: (

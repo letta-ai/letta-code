@@ -3,6 +3,7 @@ import { realpathSync } from "node:fs";
 import { readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import { trackBoundaryError } from "../telemetry/errorReporting";
 import { getVersion } from "../version";
 
 const execFileAsync = promisify(execFile);
@@ -220,6 +221,11 @@ export async function checkForUpdate(): Promise<UpdateCheckResult> {
     }
     debugLog("Already on latest version");
   } catch (error) {
+    trackBoundaryError({
+      errorType: "auto_update_check_failed",
+      error,
+      context: "updater_check",
+    });
     debugLog("Failed to check for updates:", error);
     return {
       updateAvailable: false,
@@ -296,6 +302,11 @@ async function performUpdate(): Promise<{
     debugLog("Update completed successfully");
     return { success: true };
   } catch (error) {
+    trackBoundaryError({
+      errorType: "auto_update_install_failed",
+      error,
+      context: "updater_install",
+    });
     const errorMsg = error instanceof Error ? error.message : String(error);
 
     // ENOTEMPTY retry is npm-specific
@@ -308,6 +319,11 @@ async function performUpdate(): Promise<{
         debugLog("Update succeeded after cleanup retry");
         return { success: true };
       } catch (retryError) {
+        trackBoundaryError({
+          errorType: "auto_update_install_retry_failed",
+          error: retryError,
+          context: "updater_install_retry",
+        });
         const retryMsg =
           retryError instanceof Error ? retryError.message : String(retryError);
         debugLog("Update failed after retry:", retryMsg);
@@ -342,6 +358,11 @@ async function performUpdate(): Promise<{
         debugLog("Update succeeded after race condition retry");
         return { success: true };
       } catch (retryError) {
+        trackBoundaryError({
+          errorType: "auto_update_race_retry_failed",
+          error: retryError,
+          context: "updater_install_race_retry",
+        });
         const retryMsg =
           retryError instanceof Error ? retryError.message : String(retryError);
         debugLog("Update failed after race condition retry:", retryMsg);

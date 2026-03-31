@@ -241,8 +241,8 @@ import {
 import {
   getReflectionSettings,
   parseMemoryPreference,
+  persistReflectionSettingsForAgent,
   type ReflectionSettings,
-  reflectionSettingsToLegacyMode,
 } from "./helpers/memoryReminder";
 import { handleMemorySubagentCompletion } from "./helpers/memorySubagentCompletion";
 import {
@@ -2564,7 +2564,7 @@ export default function App({
   // Configurable status line hook
   const sessionStatsSnapshot = sessionStatsRef.current.getSnapshot();
   const contextWindowSize = llmConfigRef.current?.context_window;
-  const reflectionSettings = getReflectionSettings();
+  const reflectionSettings = getReflectionSettings(agentId);
   const memfsEnabled = settingsManager.isMemfsEnabled(agentId);
   const memfsDirectory =
     memfsEnabled && agentId && agentId !== "loading"
@@ -7827,8 +7827,9 @@ export default function App({
                       contextTrackerRef.current.lastContextTokens,
                     stepCount: stats.usage.stepCount,
                     turnCount: sharedReminderStateRef.current.turnCount,
-                    reflectionMode: getReflectionSettings().trigger,
-                    reflectionStepCount: getReflectionSettings().stepCount,
+                    reflectionMode: getReflectionSettings(agentId).trigger,
+                    reflectionStepCount:
+                      getReflectionSettings(agentId).stepCount,
                     memfsEnabled:
                       agentId !== "loading"
                         ? settingsManager.isMemfsEnabled(agentId)
@@ -8392,10 +8393,12 @@ export default function App({
 
             // For default conversation, pass agent_id
             const isDefault = conversationIdRef.current === "default";
-            const forked = await client.conversations.fork(
-              conversationIdRef.current,
-              isDefault ? { agent_id: agentId } : undefined,
-            );
+            const forked = (await client.post(
+              `/v1/conversations/${encodeURIComponent(conversationIdRef.current)}/fork`,
+              {
+                body: isDefault ? { agent_id: agentId } : {},
+              },
+            )) as { id: string };
 
             // If we forked with an explicit summary, update it
             if (conversationSummary) {
@@ -10129,7 +10132,7 @@ ${SYSTEM_REMINDER_CLOSE}
         bashCommandCacheRef.current = [];
       }
 
-      const reflectionSettings = getReflectionSettings();
+      const reflectionSettings = getReflectionSettings(agentId);
       const memfsEnabledForAgent = settingsManager.isMemfsEnabled(agentId);
 
       // Build git memory sync reminder if uncommitted changes or unpushed commits
@@ -12108,17 +12111,7 @@ ${SYSTEM_REMINDER_CLOSE}
         });
 
         try {
-          const legacyMode = reflectionSettingsToLegacyMode(reflectionSettings);
-          settingsManager.updateLocalProjectSettings({
-            memoryReminderInterval: legacyMode,
-            reflectionTrigger: reflectionSettings.trigger,
-            reflectionStepCount: reflectionSettings.stepCount,
-          });
-          settingsManager.updateSettings({
-            memoryReminderInterval: legacyMode,
-            reflectionTrigger: reflectionSettings.trigger,
-            reflectionStepCount: reflectionSettings.stepCount,
-          });
+          await persistReflectionSettingsForAgent(agentId, reflectionSettings);
 
           cmd.finish(
             `Updated sleeptime settings to: ${formatReflectionSettings(reflectionSettings)}`,
@@ -13107,7 +13100,7 @@ ${SYSTEM_REMINDER_CLOSE}
       const questions = getQuestionsFromApproval(approval);
 
       // Check for memory preference question and update setting
-      parseMemoryPreference(questions, answers);
+      parseMemoryPreference(questions, answers, agentId);
 
       // Format the answer string like Claude Code does
       // Filter out malformed questions (LLM might send invalid data)
@@ -13152,7 +13145,13 @@ ${SYSTEM_REMINDER_CLOSE}
         setApprovalResults((prev) => [...prev, decision]);
       }
     },
-    [pendingApprovals, approvalResults, sendAllResults, refreshDerived],
+    [
+      pendingApprovals,
+      approvalResults,
+      sendAllResults,
+      refreshDerived,
+      agentId,
+    ],
   );
 
   const handleEnterPlanModeApprove = useCallback(
@@ -13982,7 +13981,7 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
 
             {activeOverlay === "sleeptime" && (
               <SleeptimeSelector
-                initialSettings={getReflectionSettings()}
+                initialSettings={getReflectionSettings(agentId)}
                 memfsEnabled={settingsManager.isMemfsEnabled(agentId)}
                 onSave={handleSleeptimeModeSelect}
                 onCancel={closeOverlay}

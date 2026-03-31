@@ -1,3 +1,5 @@
+import { trackBoundaryError } from "./telemetry/errorReporting";
+
 export interface UpdateNotification {
   latestVersion: string;
 }
@@ -31,5 +33,12 @@ export function startStartupAutoUpdateCheck(
       }
       return undefined;
     })
-    .catch(() => undefined);
+    .catch((error) => {
+      trackBoundaryError({
+        errorType: "startup_auto_update_failed",
+        error,
+        context: "startup_auto_update",
+      });
+      return undefined;
+    });
 }

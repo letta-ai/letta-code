@@ -119,6 +119,86 @@ export const BYOK_PROVIDERS = [
 export type ByokProviderId = (typeof BYOK_PROVIDERS)[number]["id"];
 export type ByokProvider = (typeof BYOK_PROVIDERS)[number];
 
+// ── BYOK handle classification helpers ──────────────────────────────────────
+// These are used by both the TUI ModelSelector and the WS list_models handler
+// to categorize model handles as BYOK vs Letta API.
+
+/** Prefixes that always indicate a BYOK handle (ChatGPT OAuth + lc-* providers) */
+export const STATIC_BYOK_PROVIDER_PREFIXES = ["chatgpt-plus-pro/", "lc-"];
+
+/**
+ * Maps provider_type → base provider string used in model handles.
+ * Used to translate BYOK provider names back to their canonical handle prefix
+ * (e.g., "lc-anthropic/claude-sonnet-4" → "anthropic/claude-sonnet-4").
+ */
+export const PROVIDER_TYPE_TO_BASE_PROVIDER: Record<string, string> = {
+  chatgpt_oauth: "chatgpt-plus-pro",
+  anthropic: "anthropic",
+  openai: "openai",
+  zai: "zai",
+  zai_coding: "zai",
+  google_ai: "google_ai",
+  google_vertex: "google_vertex",
+  minimax: "minimax",
+  openrouter: "openrouter",
+  bedrock: "bedrock",
+};
+
+/**
+ * Build a mapping of BYOK provider names → base provider strings.
+ *
+ * Default aliases are derived from BYOK_PROVIDERS metadata so all built-in
+ * providers are always covered. Connected providers (from API) are layered on
+ * top to support custom provider names (e.g., "openai-sarah" → "openai").
+ */
+export function buildByokProviderAliases(
+  connectedProviders: Array<
+    Pick<ProviderResponse, "name" | "provider_type">
+  > = [],
+): Record<string, string> {
+  const aliases: Record<string, string> = {};
+
+  // Seed from built-in BYOK_PROVIDERS so every known provider has an alias
+  for (const bp of BYOK_PROVIDERS) {
+    const base = PROVIDER_TYPE_TO_BASE_PROVIDER[bp.providerType];
+    if (base) {
+      aliases[bp.providerName] = base;
+    }
+  }
+
+  // Layer on connected providers (supports custom names like "openai-sarah")
+  for (const provider of connectedProviders) {
+    const base = PROVIDER_TYPE_TO_BASE_PROVIDER[provider.provider_type];
+    if (base) {
+      aliases[provider.name] = base;
+    }
+  }
+
+  return aliases;
+}
+
+/**
+ * Check whether a model handle belongs to a BYOK provider.
+ * Matches static prefixes (chatgpt-plus-pro/, lc-*) and any provider
+ * name present in the alias map.
+ */
+export function isByokHandleForSelector(
+  handle: string,
+  byokProviderAliases: Record<string, string>,
+): boolean {
+  if (
+    STATIC_BYOK_PROVIDER_PREFIXES.some((prefix) => handle.startsWith(prefix))
+  ) {
+    return true;
+  }
+
+  const slashIndex = handle.indexOf("/");
+  if (slashIndex === -1) return false;
+
+  const provider = handle.slice(0, slashIndex);
+  return provider in byokProviderAliases;
+}
+
 // Response type from the providers API
 export interface ProviderResponse {
   id: string;

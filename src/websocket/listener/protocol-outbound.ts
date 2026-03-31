@@ -2,12 +2,18 @@ import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agen
 import WebSocket from "ws";
 import { getMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
 import { getGitContext } from "../../cli/helpers/gitContext";
+import { getReflectionSettings } from "../../cli/helpers/memoryReminder";
 import { getSubagents } from "../../cli/helpers/subagentState";
 import { permissionMode } from "../../permissions/mode";
 import type { DequeuedBatch } from "../../queue/queueRuntime";
 import { settingsManager } from "../../settings-manager";
+import {
+  backgroundProcesses,
+  backgroundTasks,
+} from "../../tools/impl/process_manager";
 import { getToolNames } from "../../tools/manager";
 import type {
+  BackgroundProcessSummary,
   DeviceStatus,
   DeviceStatusUpdateMessage,
   LoopState,
@@ -25,6 +31,7 @@ import type {
   SubagentStateUpdateMessage,
   WsProtocolMessage,
 } from "../../types/protocol_v2";
+import { SUPPORTED_REMOTE_COMMANDS } from "./commands";
 import { SYSTEM_REMINDER_RE } from "./constants";
 import { getConversationWorkingDirectory } from "./cwd";
 import { getConversationPermissionModeState } from "./permissionMode";
@@ -73,6 +80,42 @@ function getScopeForRuntime(
   return scope ?? {};
 }
 
+export function buildBackgroundProcessSnapshot(): BackgroundProcessSummary[] {
+  const bashProcesses: BackgroundProcessSummary[] = Array.from(
+    backgroundProcesses.entries(),
+  )
+    .filter(([, proc]) => proc.status === "running")
+    .map(([processId, proc]) => ({
+      process_id: processId,
+      kind: "bash",
+      command: proc.command,
+      started_at_ms: proc.startTime?.getTime() ?? null,
+      status: proc.status,
+      exit_code: proc.exitCode,
+    }));
+
+  const taskProcesses: BackgroundProcessSummary[] = Array.from(
+    backgroundTasks.entries(),
+  )
+    .filter(([, task]) => task.status === "running")
+    .map(([processId, task]) => ({
+      process_id: processId,
+      kind: "agent_task",
+      task_type: task.subagentType,
+      description: task.description,
+      started_at_ms: task.startTime.getTime(),
+      status: task.status,
+      subagent_id: task.subagentId,
+      ...(task.error ? { error: task.error } : {}),
+    }));
+
+  return [...bashProcesses, ...taskProcesses].sort((a, b) => {
+    const aStart = a.started_at_ms ?? 0;
+    const bStart = b.started_at_ms ?? 0;
+    return bStart - aStart;
+  });
+}
+
 export function emitRuntimeStateUpdates(
   runtime: RuntimeCarrier,
   scope?: {
@@ -107,9 +150,11 @@ export function buildDeviceStatus(
       current_toolset_preference: "auto",
       current_loaded_tools: getToolNames(),
       current_available_skills: [],
-      background_processes: [],
+      background_processes: buildBackgroundProcessSnapshot(),
       pending_control_requests: [],
       memory_directory: null,
+      reflection_settings: null,
+      supported_commands: [...SUPPORTED_REMOTE_COMMANDS],
     };
   }
   const scope = getScopeForRuntime(runtime, params);
@@ -142,6 +187,16 @@ export function buildDeviceStatus(
     scopedAgentId,
     scopedConversationId,
   );
+  const reflectionSettings = (() => {
+    if (!scopedAgentId) {
+      return null;
+    }
+    try {
+      return getReflectionSettings(scopedAgentId, resolvedCwd);
+    } catch {
+      return null;
+    }
+  })();
   return {
     current_connection_id: listener.connectionId,
     connection_name: listener.connectionName,
@@ -155,12 +210,20 @@ export function buildDeviceStatus(
     current_toolset_preference: toolsetPreference,
     current_loaded_tools: getToolNames(),
     current_available_skills: [],
-    background_processes: [],
+    background_processes: buildBackgroundProcessSnapshot(),
     pending_control_requests: interruptedCacheActive
       ? []
       : getPendingControlRequests(listener, scope),
     memory_directory: scopedAgentId
       ? getMemoryFilesystemRoot(scopedAgentId)
+      : null,
+    supported_commands: [...SUPPORTED_REMOTE_COMMANDS],
+    reflection_settings: scopedAgentId
+      ? {
+          agent_id: scopedAgentId,
+          trigger: reflectionSettings?.trigger ?? "compaction-event",
+          step_count: reflectionSettings?.stepCount ?? 25,
+        }
       : null,
   };
 }
@@ -483,9 +546,12 @@ export function emitStateSync(
 
 export function buildSubagentSnapshot(): SubagentSnapshot[] {
   return getSubagents()
-    .filter(
-      (a) => !a.silent && (a.status === "pending" || a.status === "running"),
-    )
+    .filter((a) => {
+      if (a.status !== "pending" && a.status !== "running") {
+        return false;
+      }
+      return !a.silent || a.isBackground === true;
+    })
     .map((a) => ({
       subagent_id: a.id,
       subagent_type: a.type,

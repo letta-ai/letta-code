@@ -374,7 +374,7 @@ describe("input-format stream-json", () => {
   test(
     "interrupt control request is acknowledged",
     async () => {
-      const objects = (await runBidirectional([
+      const objects = (await runBidirectionalWithRetry([
         JSON.stringify({
           type: "control_request",
           request_id: "int_1",

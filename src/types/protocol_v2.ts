@@ -120,6 +120,16 @@ export interface PendingControlRequest {
   request: ControlRequestBody;
 }
 
+export type ReflectionTriggerMode = "off" | "step-count" | "compaction-event";
+
+export type ReflectionSettingsScope = "local_project" | "global" | "both";
+
+export interface ReflectionSettingsSnapshot {
+  agent_id: string;
+  trigger: ReflectionTriggerMode;
+  step_count: number;
+}
+
 /**
  * Git repository state for the current working directory.
  * Null when the CWD is not inside a git repository.
@@ -150,6 +160,9 @@ export interface DeviceStatus {
   background_processes: BackgroundProcessSummary[];
   pending_control_requests: PendingControlRequest[];
   memory_directory: string | null;
+  reflection_settings: ReflectionSettingsSnapshot | null;
+  /** Remote slash command IDs this letta-code version can handle via `execute_command`. */
+  supported_commands: string[];
 }
 
 export type LoopStatus =
@@ -513,6 +526,63 @@ export interface EnableMemfsCommand {
   agent_id: string;
 }
 
+export interface ListModelsCommand {
+  type: "list_models";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+}
+
+export interface UpdateModelPayload {
+  /** Preferred model identifier from models.json (e.g. "sonnet") */
+  model_id?: string;
+  /** Optional direct handle override (e.g. "anthropic/claude-sonnet-4-6") */
+  model_handle?: string;
+}
+
+export interface UpdateModelCommand {
+  type: "update_model";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  /** Runtime scope — identifies which agent + conversation this targets */
+  runtime: RuntimeScope;
+  payload: UpdateModelPayload;
+}
+
+export interface ListModelsResponseModelEntry {
+  id: string;
+  handle: string;
+  label: string;
+  description: string;
+  isDefault?: boolean;
+  isFeatured?: boolean;
+  free?: boolean;
+  updateArgs?: Record<string, unknown>;
+}
+
+export interface ListModelsResponseMessage {
+  type: "list_models_response";
+  request_id: string;
+  success: boolean;
+  entries: ListModelsResponseModelEntry[];
+  /** Handles available to this user from the API. null = lookup failed; absent = old server. */
+  available_handles?: string[] | null;
+  /** BYOK provider name → base provider (e.g. "lc-anthropic" → "anthropic") */
+  byok_provider_aliases?: Record<string, string>;
+  error?: string;
+}
+
+export interface UpdateModelResponseMessage {
+  type: "update_model_response";
+  request_id: string;
+  success: boolean;
+  runtime?: RuntimeScope;
+  applied_to?: "agent" | "conversation";
+  model_id?: string;
+  model_handle?: string;
+  model_settings?: Record<string, unknown> | null;
+  error?: string;
+}
+
 export interface CronListCommand {
   type: "cron_list";
   /** Echoed back in the response for request correlation. */
@@ -558,6 +628,41 @@ export interface CronDeleteAllCommand {
   /** Echoed back in the response for request correlation. */
   request_id: string;
   agent_id: string;
+}
+
+export interface SkillEnableCommand {
+  type: "skill_enable";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  /** Absolute path to the skill directory on the local machine. */
+  skill_path: string;
+}
+
+export interface SkillDisableCommand {
+  type: "skill_disable";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  /** Skill name (symlink name in ~/.letta/skills/). */
+  name: string;
+}
+
+export interface GetReflectionSettingsCommand {
+  type: "get_reflection_settings";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  runtime: RuntimeScope;
+}
+
+export interface SetReflectionSettingsCommand {
+  type: "set_reflection_settings";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  runtime: RuntimeScope;
+  settings: {
+    trigger: ReflectionTriggerMode;
+    step_count: number;
+  };
+  scope?: ReflectionSettingsScope;
 }
 
 export interface CronListResponseMessage {
@@ -608,6 +713,23 @@ export interface CronsUpdatedMessage {
   timestamp: number;
   agent_id?: string;
   conversation_id?: string | null;
+}
+
+export interface GetReflectionSettingsResponseMessage {
+  type: "get_reflection_settings_response";
+  request_id: string;
+  success: boolean;
+  reflection_settings: ReflectionSettingsSnapshot | null;
+  error?: string;
+}
+
+export interface SetReflectionSettingsResponseMessage {
+  type: "set_reflection_settings_response";
+  request_id: string;
+  success: boolean;
+  reflection_settings: ReflectionSettingsSnapshot | null;
+  scope: ReflectionSettingsScope;
+  error?: string;
 }
 
 /**
@@ -691,11 +813,17 @@ export type WsProtocolCommand =
   | EditFileCommand
   | ListMemoryCommand
   | EnableMemfsCommand
+  | ListModelsCommand
+  | UpdateModelCommand
   | CronListCommand
   | CronAddCommand
   | CronGetCommand
   | CronDeleteCommand
   | CronDeleteAllCommand
+  | SkillEnableCommand
+  | SkillDisableCommand
+  | GetReflectionSettingsCommand
+  | SetReflectionSettingsCommand
   | ExecuteCommandCommand
   | SearchBranchesCommand
   | CheckoutBranchCommand;
@@ -705,6 +833,8 @@ export type WsProtocolMessage =
   | LoopStatusUpdateMessage
   | QueueUpdateMessage
   | StreamDeltaMessage
-  | SubagentStateUpdateMessage;
+  | SubagentStateUpdateMessage
+  | ListModelsResponseMessage
+  | UpdateModelResponseMessage;
 
 export type { StopReasonType };

@@ -9,8 +9,9 @@ import {
 } from "../../agent/available-models";
 import { models } from "../../agent/model";
 import {
+  buildByokProviderAliases,
+  isByokHandleForSelector,
   listProviders,
-  type ProviderResponse,
 } from "../../providers/byok-providers";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
@@ -29,58 +30,8 @@ type ModelCategory =
   | "server-recommended"
   | "server-all";
 
-// BYOK provider prefixes (ChatGPT OAuth + lc-* providers from /connect)
-const STATIC_BYOK_PROVIDER_PREFIXES = ["chatgpt-plus-pro/", "lc-"];
-
-const PROVIDER_TYPE_TO_BASE_PROVIDER: Record<string, string> = {
-  chatgpt_oauth: "chatgpt-plus-pro",
-  anthropic: "anthropic",
-  openai: "openai",
-  zai: "zai",
-  google_ai: "google_ai",
-  google_vertex: "google_vertex",
-  minimax: "minimax",
-  openrouter: "openrouter",
-  bedrock: "bedrock",
-};
-
-export function buildByokProviderAliases(
-  providers: Array<Pick<ProviderResponse, "name" | "provider_type">>,
-): Record<string, string> {
-  const aliases: Record<string, string> = {
-    "lc-anthropic": "anthropic",
-    "lc-openai": "openai",
-    "lc-zai": "zai",
-    "lc-gemini": "google_ai",
-    "chatgpt-plus-pro": "chatgpt-plus-pro",
-  };
-
-  for (const provider of providers) {
-    const baseProvider = PROVIDER_TYPE_TO_BASE_PROVIDER[provider.provider_type];
-    if (baseProvider) {
-      aliases[provider.name] = baseProvider;
-    }
-  }
-
-  return aliases;
-}
-
-export function isByokHandleForSelector(
-  handle: string,
-  byokProviderAliases: Record<string, string>,
-): boolean {
-  if (
-    STATIC_BYOK_PROVIDER_PREFIXES.some((prefix) => handle.startsWith(prefix))
-  ) {
-    return true;
-  }
-
-  const slashIndex = handle.indexOf("/");
-  if (slashIndex === -1) return false;
-
-  const provider = handle.slice(0, slashIndex);
-  return provider in byokProviderAliases;
-}
+// Re-export for consumers that import from ModelSelector
+export { buildByokProviderAliases, isByokHandleForSelector };
 
 // Get tab order for model categories.
 // For self-hosted servers, only show server-specific tabs.
