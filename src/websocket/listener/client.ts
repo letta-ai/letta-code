@@ -29,6 +29,7 @@ import {
 import { setMessageQueueAdder } from "../../cli/helpers/messageQueueBridge";
 import { generatePlanFilePath } from "../../cli/helpers/planName";
 import {
+  getSubagents,
   subscribe as subscribeToSubagentState,
   subscribeToStreamEvents as subscribeToSubagentStreamEvents,
 } from "../../cli/helpers/subagentState";
@@ -1905,6 +1906,16 @@ async function connectWithRetry(
     runtime._unsubscribeSubagentStreamEvents = subscribeToSubagentStreamEvents(
       (subagentId, event) => {
         if (socket.readyState !== WebSocket.OPEN) return;
+
+        const isSilentSubagent = getSubagents().some(
+          (subagent) => subagent.id === subagentId && subagent.silent === true,
+        );
+        if (isSilentSubagent) {
+          // Reflection/background "silent" subagents should not stream their
+          // internal transcript into the parent conversation.
+          return;
+        }
+
         // The event has { type: "message", message_type, ...LettaStreamingResponse }
         // plus extra headless fields (session_id, uuid) that pass through harmlessly.
         emitStreamDelta(
