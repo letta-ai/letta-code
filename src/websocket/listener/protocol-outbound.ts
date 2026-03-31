@@ -1,6 +1,7 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import WebSocket from "ws";
 import { getMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
+import { getGitContext } from "../../cli/helpers/gitContext";
 import { getReflectionSettings } from "../../cli/helpers/memoryReminder";
 import { getSubagents } from "../../cli/helpers/subagentState";
 import { permissionMode } from "../../permissions/mode";
@@ -135,13 +136,15 @@ export function buildDeviceStatus(
 ): DeviceStatus {
   const listener = getListenerRuntime(runtime);
   if (!listener) {
+    const fallbackCwd = process.cwd();
     return {
       current_connection_id: null,
       connection_name: null,
       is_online: false,
       is_processing: false,
       current_permission_mode: permissionMode.getMode(),
-      current_working_directory: process.cwd(),
+      current_working_directory: fallbackCwd,
+      git_context: getGitContext(fallbackCwd),
       letta_code_version: process.env.npm_package_version || null,
       current_toolset: null,
       current_toolset_preference: "auto",
@@ -179,7 +182,7 @@ export function buildDeviceStatus(
     scopedConversationId,
   );
   const interruptedCacheActive = hasInterruptedCacheForScope(listener, scope);
-  const currentWorkingDirectory = getConversationWorkingDirectory(
+  const resolvedCwd = getConversationWorkingDirectory(
     listener,
     scopedAgentId,
     scopedConversationId,
@@ -189,7 +192,7 @@ export function buildDeviceStatus(
       return null;
     }
     try {
-      return getReflectionSettings(scopedAgentId, currentWorkingDirectory);
+      return getReflectionSettings(scopedAgentId, resolvedCwd);
     } catch {
       return null;
     }
@@ -200,7 +203,8 @@ export function buildDeviceStatus(
     is_online: listener.socket?.readyState === WebSocket.OPEN,
     is_processing: !!conversationRuntime?.isProcessing,
     current_permission_mode: conversationPermissionModeState.mode,
-    current_working_directory: currentWorkingDirectory,
+    current_working_directory: resolvedCwd,
+    git_context: getGitContext(resolvedCwd),
     letta_code_version: process.env.npm_package_version || null,
     current_toolset: toolsetPreference === "auto" ? null : toolsetPreference,
     current_toolset_preference: toolsetPreference,

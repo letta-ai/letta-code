@@ -2,6 +2,7 @@ import type WebSocket from "ws";
 import type {
   AbortMessageCommand,
   ChangeDeviceStateCommand,
+  CheckoutBranchCommand,
   CronAddCommand,
   CronDeleteAllCommand,
   CronDeleteCommand,
@@ -17,6 +18,7 @@ import type {
   ListModelsCommand,
   ReadFileCommand,
   RuntimeScope,
+  SearchBranchesCommand,
   SearchFilesCommand,
   SetReflectionSettingsCommand,
   SkillDisableCommand,
@@ -591,6 +593,38 @@ export function isSetReflectionSettingsCommand(
   );
 }
 
+export function isSearchBranchesCommand(
+  value: unknown,
+): value is SearchBranchesCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    query?: unknown;
+  };
+  return (
+    c.type === "search_branches" &&
+    typeof c.request_id === "string" &&
+    typeof c.query === "string"
+  );
+}
+
+export function isCheckoutBranchCommand(
+  value: unknown,
+): value is CheckoutBranchCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    branch?: unknown;
+  };
+  return (
+    c.type === "checkout_branch" &&
+    typeof c.request_id === "string" &&
+    typeof c.branch === "string"
+  );
+}
+
 export function isExecuteCommandCommand(
   value: unknown,
 ): value is ExecuteCommandCommand {
@@ -642,7 +676,9 @@ export function parseServerMessage(
       isSkillDisableCommand(parsed) ||
       isGetReflectionSettingsCommand(parsed) ||
       isSetReflectionSettingsCommand(parsed) ||
-      isExecuteCommandCommand(parsed)
+      isExecuteCommandCommand(parsed) ||
+      isSearchBranchesCommand(parsed) ||
+      isCheckoutBranchCommand(parsed)
     ) {
       return parsed as WsProtocolCommand;
     }

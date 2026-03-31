@@ -914,6 +914,7 @@ describe("listen-client approval resolver wiring", () => {
     const pending = new Promise<ApprovalResponseBody>((resolve, reject) => {
       runtime.pendingApprovalResolvers.set("perm-stop", { resolve, reject });
     });
+    const pendingError = pending.catch((error: unknown) => error);
     const socket = new MockSocket(WebSocket.OPEN);
     runtime.socket = socket as unknown as WebSocket;
 
@@ -922,7 +923,9 @@ describe("listen-client approval resolver wiring", () => {
     expect(runtime.pendingApprovalResolvers.size).toBe(0);
     expect(socket.removeAllListenersCalls).toBe(1);
     expect(socket.closeCalls).toBe(1);
-    await expect(pending).rejects.toThrow("Listener runtime stopped");
+    const error = await pendingError;
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain("Listener runtime stopped");
   });
 });
 
