@@ -187,7 +187,7 @@ function buildMaybeLaunchReflectionSubagent(params: {
 
           addToMessageQueue({
             kind: "task_notification",
-            text: msg,
+            text: `<task-notification><summary>${msg}</summary></task-notification>`,
             agentId,
             conversationId,
           });
