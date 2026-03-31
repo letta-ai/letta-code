@@ -80,18 +80,22 @@ Generalize from experience rather than recording events:
 
 **Rule of thumb**: If removing it from `system/` wouldn't materially affect near-term responses, it belongs outside `system/`.
 
-### Example File Names
+### Example Structure
 
-These are examples of well-named memory files — **not a template to fill in**. Derive your structure from what the project actually needs.
+This is an example — **not a template to fill in**. Derive your structure from what the project actually needs.
 
 ```
-system/human/identity.md           # Who the user is
-system/human/preferences.md        # Communication style, workflow prefs
-system/persona.md                  # Agent's role, identity, behavioral rules
-system/letta-code/overview.md      # Compact index: what it is, stack, key links
-system/letta-code/conventions.md   # Code style, commit style
-system/letta-code/gotchas.md       # Footguns
-letta-code/architecture.md         # Detailed design (outside system/, loaded on demand)
+system/
+├── human/
+│   ├── identity.md               # Who the user is
+│   └── preferences.md            # Communication style, workflow prefs (branch naming, pkg manager, etc.)
+├── persona.md                      # Agent's role, identity, and behavioral rules
+└── letta-code/                     # Named after the project, NOT generic "project/"
+    ├── overview.md               # Compact index: what it is, stack, key links
+    ├── conventions.md            # Code style, commit style, PR process
+    └── gotchas.md                # Footguns and things to watch out for
+letta-code/
+└── architecture.md               # Detailed design (outside system/, loaded on demand)
 ```
 
 Key principles:
