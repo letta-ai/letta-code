@@ -86,9 +86,7 @@ system/
 ├── human/
 │   ├── identity.md               # Who the user is
 │   └── preferences.md            # Communication and workflow prefs
-├── persona/
-│   ├── role.md                   # Agent's role and active projects
-│   └── behavior.md               # Learned behavioral rules
+├── persona.md                      # Agent's role, active projects, and behavioral rules
 └── project/
     ├── overview.md               # What it is, stack, key links → [[reference/architecture]]
     ├── conventions.md            # Code style, commit style, PR process
@@ -115,27 +113,33 @@ ls ~/.claude/history.jsonl ~/.codex/history.jsonl 2>/dev/null
 ```
 You need this result BEFORE asking upfront questions so you know whether to include the history question.
 
-### 3. Ask upfront questions
+### 3. Identify the user from git
+Infer the user's identity from git context — don't ask them who they are:
+```bash
+git shortlog -sn --all | head -5
+git log --format="%an <%ae>" | sort -u | head -10
+```
+Cross-reference with the git user config to determine which contributor is the current user. Store in `system/human/`.
+
+### 4a. Ask upfront questions
 Use AskUserQuestion to gather key information. Bundle questions together:
 
 1. **Research depth**: "Standard or deep research?"
-2. **Identity**: "Which contributor are you?" (infer from git logs when possible)
-3. **Related repos**: "Are there other repositories I should know about?"
-4. **Historical sessions** (if data found in step 2): "I found Claude Code / Codex history. Should I analyze it to learn your preferences?"
-5. **Memory updates**: "How often should I check whether to update memory?" — Frequent or Occasional
-6. **Communication style**: "Terse or detailed responses?"
-7. **Rules**: "Any rules I should always follow?"
+2. **Related repos**: "Are there other repositories I should know about?"
+3. **Historical sessions** (if data found in step 2): "I found Claude Code / Codex history. Should I analyze it to learn your preferences?"
+4. **Communication style**: "Terse or detailed responses?"
+5. **Rules**: "Any rules I should always follow?"
 
-**Don't ask** things you can discover by reading files.
+**Don't ask** things you can discover by reading files or git.
 
-### 4. Seed identity early
-Before diving into project research, update human and persona files based on upfront answers:
-- `system/human/`: User identity, communication style, workflow preferences
-- `system/persona/`: Behavioral rules they expressed, your role definition
+### 5. Seed identity early
+Before diving into project research, update human and persona files based on git identity and upfront answers:
+- `system/human/`: User identity (from git), communication style, workflow preferences
+- `system/persona.md`: Behavioral rules they expressed, your role definition
 
 Don't wait until the end — write early and refine as you go.
 
-### 5. Research the project
+### 6. Research the project
 Explore based on chosen depth.
 
 **Standard** (~5-20 tool calls): README, package manifests, config files, git logs, key directories.
@@ -149,14 +153,14 @@ Explore based on chosen depth.
 - CI/CD configs (.github/workflows/)
 - `git log --oneline -20`, `git branch -a`, `git shortlog -sn --all | head -10`
 
-### 6. Build memory with discovery paths
+### 7. Build memory with discovery paths
 As you create/update memory files:
 - Add `[[references]]` to connect related context
 - Ensure every file has a useful `description` in frontmatter
 - Keep `system/` files focused and scannable
 - Put detailed reference material outside `system/`
 
-### 7. Verify context quality
+### 8. Verify context quality
 Before finishing, review your work:
 
 - **Progressive disclosure**: Can you decide whether to load a file just from its path + description?
@@ -165,7 +169,7 @@ Before finishing, review your work:
 - **Completeness**: Did you update human, persona, AND project files?
 - **Identity**: Does the persona reflect what you've learned about the user's expectations?
 
-### 8. Historical session analysis (if approved)
+### 9. Historical session analysis (if approved)
 
 This section runs only if the user approved during upfront questions. It uses parallel `history-analyzer` subagents to process Claude Code and/or Codex history into memory.
 
@@ -245,5 +249,5 @@ git push
 | Merge conflicts | Resolve by reading both versions, keep most complete content |
 | Auth fails on push | See syncing-memory-filesystem skill |
 
-### 9. Ask user if done
+### 10. Ask user if done
 Check if they're satisfied or want further refinement. Then commit and push memory.

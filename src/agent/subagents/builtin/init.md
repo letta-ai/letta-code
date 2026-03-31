@@ -61,14 +61,14 @@ Memory files live under `$MEMORY_DIR/system/` and are rendered in the parent age
 
 ### Default blocks
 
-New agents come with default boilerplate files at `$MEMORY_DIR/system/human.md` and `$MEMORY_DIR/system/persona.md`. Update `system/human.md` with real user info from git context. For `system/persona.md`, write a minimal persona seed — the agent's role and any obvious behavioral context from the project (e.g., if CLAUDE.md specifies rules, note them). The parent agent will develop this further through interaction.
+New agents come with default boilerplate files at `$MEMORY_DIR/system/human.md` and `$MEMORY_DIR/system/persona.md`. Update `system/human.md` with real user info from git context. For `system/persona.md`, write a minimal persona seed — the agent's role and any obvious behavioral context from the project (e.g., if CLAUDE.md specifies rules, note them). Keep persona as a single `persona.md` file (not a directory). The parent agent will develop this further through interaction.
 
 ### Topics to cover
 
 Ensure each topic is covered by exactly one file. If an existing file already covers a topic, update it rather than creating a new file at a different path.
 
 - **`system/human.md`** (update the default): name, email, role — inferred from git context
-- **`system/persona.md`** (update the default): agent role, initial behavioral notes from project rules
+- **`system/persona.md`** (update the default, keep as single file): agent role, initial behavioral notes from project rules
 - **Project overview**: what it is, tech stack, repo structure. Include `[[references]]` to project files that contain deeper context (e.g., `For architecture details, see [[README.md]]` or `Conventions defined in [[CLAUDE.md]]`)
 - **Project commands**: build, test, lint, dev workflows
 - **Project conventions**: coding style, runtime preferences, patterns from CLAUDE.md/AGENTS.md
