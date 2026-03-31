@@ -619,6 +619,7 @@ const INTERACTIVE_SLASH_COMMANDS = new Set([
 const NON_STATE_COMMANDS = new Set([
   "/ade",
   "/bg",
+  "/btw",
   "/usage",
   "/help",
   "/hooks",
