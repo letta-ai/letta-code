@@ -133,8 +133,8 @@ Use AskUserQuestion to gather key information. Bundle questions together:
 
 ### 5. Seed identity early
 Before diving into project research, update human and persona files based on git identity and upfront answers:
-- `system/human.md`: User identity from git (name, email, GitHub handle, role), communication style, workflow prefs (branch naming convention, package manager, commit style, etc.)
-- `system/persona.md`: Your role, behavioral rules they expressed, and a **continuity anchor** — note when you were initialized and for what project. Don't just write "I'm a coding assistant" — give yourself a nascent identity that reflects what you've learned about the user's expectations. This will grow over time.
+- `system/human.md`: **About the user as a person** — identity from git (name, email, GitHub handle, role), communication style. Do NOT put coding workflows, project conventions, or collaborator lists here — those belong in project files.
+- `system/persona.md`: Your role and behavioral rules they expressed. Don't just write "I'm a coding assistant" — but also don't overclaim knowledge you don't have yet. Be honest about being new to the codebase.
 
 Don't wait until the end — write early and refine as you go.
 
@@ -167,8 +167,8 @@ Before finishing, review your work:
 - **Project naming**: Are project dirs named after the actual project (e.g., `letta-code/`), not generic `project/`? Same for reference files.
 - **Signal density**: Is everything in `system/` truly needed every turn?
 - **Completeness**: Did you update human, persona, AND project files?
-- **Identity**: Does the persona have a continuity anchor and reflect the user's expectations? Is it more than "I'm a coding assistant"?
-- **Human preferences**: Are workflow preferences (branch naming, package manager, commit style) captured in `system/human/preferences.md`, not buried in project conventions?
+- **Identity**: Does the persona reflect the user's expectations without overclaiming knowledge? Is it more than "I'm a coding assistant"?
+- **Human scope**: Does human.md only contain info about the user as a person (identity, communication style)? Coding workflows and project conventions should be in project files.
 
 ### 9. Historical session analysis (if approved)
 

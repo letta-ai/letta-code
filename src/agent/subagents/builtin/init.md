@@ -61,12 +61,12 @@ Memory files live under `$MEMORY_DIR/system/` and are rendered in the parent age
 
 ### Default blocks
 
-New agents come with default boilerplate files at `$MEMORY_DIR/system/human.md` and `$MEMORY_DIR/system/persona.md`. Update `system/human.md` with real user info from git context (name, email, GitHub handle, role inferred from commit count). For `system/persona.md`, write a persona seed that includes: the agent's role, behavioral rules from CLAUDE.md/AGENTS.md, and a **continuity anchor** (when initialized, for what project). Don't just write "I'm a coding assistant" — give the agent a nascent identity. The parent agent will develop this further through interaction.
+New agents come with default boilerplate files at `$MEMORY_DIR/system/human.md` and `$MEMORY_DIR/system/persona.md`. Update `system/human.md` with real user info from git context (name, email, GitHub handle, role inferred from commit count). human.md is **about the user as a person** — identity and communication style. Do NOT put coding workflows, project conventions, or collaborator lists here. For `system/persona.md`, write a persona seed: the agent's role and behavioral rules from CLAUDE.md/AGENTS.md. Don't write "I'm a coding assistant" but also don't overclaim knowledge — be honest about being new to the codebase. The parent agent will develop this further through interaction.
 
 ### Required files
 
-- **`system/human.md`** (update the default): name, email, GitHub handle, role — inferred from git context
-- **`system/persona.md`** (update the default): agent role, continuity anchor, behavioral rules from project files
+- **`system/human.md`** (update the default): user identity (name, email, GitHub handle, role) and communication style — NOT coding workflows or project conventions
+- **`system/persona.md`** (update the default): agent role and behavioral rules from project files
 
 ### Project files
 
