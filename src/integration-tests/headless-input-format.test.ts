@@ -615,11 +615,12 @@ describe("input-format stream-json", () => {
         expect(autoApprovals.length).toBeGreaterThan(0);
 
         const resultText = result?.result ?? "";
+        const normalizedResultText = resultText.replaceAll("\\", "/");
         for (const path of fixture.expectedTsFiles) {
-          expect(resultText).toContain(path);
+          expect(normalizedResultText).toContain(path);
         }
         for (const path of fixture.unexpectedFiles) {
-          expect(resultText).not.toContain(path);
+          expect(normalizedResultText).not.toContain(path);
         }
       } finally {
         await rm(fixture.rootDir, { recursive: true, force: true });
