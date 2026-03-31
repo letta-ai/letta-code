@@ -80,30 +80,24 @@ Generalize from experience rather than recording events:
 
 **Rule of thumb**: If removing it from `system/` wouldn't materially affect near-term responses, it belongs outside `system/`.
 
-### Example Structure
+### Example File Names
 
-For a project called "letta-code":
+These are examples of well-named memory files — **not a template to fill in**. Derive your structure from what the project actually needs.
 
 ```
-system/
-├── human/
-│   ├── identity.md               # Who the user is
-│   └── preferences.md            # Communication style, workflow prefs (branch naming, pkg manager, etc.)
-├── persona.md                      # Agent's role, identity, and behavioral rules
-└── letta-code/                     # Named after the project, NOT generic "project/"
-    ├── overview.md               # What it is, stack → [[letta-code/architecture]]
-    ├── conventions.md            # Code style, commit style, PR process
-    ├── gotchas.md                # Footguns and things to watch out for
-    └── tooling/
-        ├── testing.md            # Test framework and commands
-        └── linting.md            # Linter config
-letta-code/
-└── architecture.md               # Detailed system design (loaded on demand)
+system/human/identity.md           # Who the user is
+system/human/preferences.md        # Communication style, workflow prefs
+system/persona.md                  # Agent's role, identity, behavioral rules
+system/letta-code/overview.md      # Compact index: what it is, stack, key links
+system/letta-code/conventions.md   # Code style, commit style
+system/letta-code/gotchas.md       # Footguns
+letta-code/architecture.md         # Detailed design (outside system/, loaded on demand)
 ```
 
-Key patterns:
-- Project dirs use the real name (`letta-code/`), not generic `project/`
-- Detailed content lives outside `system/` — organize however makes sense
+Key principles:
+- **Derive structure from the project**, not from this example. A CLI tool needs different files than a web app or a library.
+- Project dirs use the **real project name** (`letta-code/`), not generic `project/`
+- Overview should be a **compact index** (~10-15 lines) that links to deeper detail, not a verbose reference doc
 - Use `[[path]]` links to connect related context into a navigable graph
 
 ## Initialization Flow
