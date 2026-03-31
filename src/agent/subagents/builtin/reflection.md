@@ -83,7 +83,7 @@ You can create, delete, or modify files — including their contents, names, and
 - **Skills**: Only update if there is information relevant to an existing skill, or you anticipate workflows in the current conversation will need to be reused in the future
 - **External files**: Update to serve as effective reference material
 
-**NOTE**: If there are no useful modifications you can make, skip to Step 5 and commit with no changes and an explanatory message. It is better to avoid unnecessary changes than to pollute the primary agent's context.
+**NOTE**: If there are no useful modifications you can make, report this with a 1 sentence explanation and exit. Do NOT create any commits. 
 
 ### Step 5: Commit and push
 
