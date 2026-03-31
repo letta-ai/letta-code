@@ -69,6 +69,7 @@ type Props = {
   ) => void;
   onDeny: (reason: string) => void;
   onCancel?: () => void;
+  onConsumeDraft?: () => void;
   isFocused?: boolean;
   approveAlwaysText?: string;
   allowPersistence?: boolean;
@@ -344,6 +345,7 @@ export const ApprovalSwitch = memo(
     onApproveAlways,
     onDeny,
     onCancel,
+    onConsumeDraft,
     isFocused = true,
     approveAlwaysText,
     allowPersistence = true,
@@ -374,6 +376,7 @@ export const ApprovalSwitch = memo(
           onApproveAndAcceptEdits={() => onPlanApprove(true)}
           onKeepPlanning={onPlanKeepPlanning}
           onCancel={onCancel ?? (() => {})}
+          onConsumeDraft={onConsumeDraft}
           showAcceptEditsOption={showAcceptEditsOption}
           isFocused={isFocused}
           planContent={planContent}
@@ -458,6 +461,7 @@ export const ApprovalSwitch = memo(
             questions={questions}
             onSubmit={onQuestionSubmit}
             onCancel={onCancel}
+            onConsumeDraft={onConsumeDraft}
             isFocused={isFocused}
             initialDraft={initialDraft}
           />

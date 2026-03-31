@@ -23,6 +23,7 @@ type Props = {
   questions: Question[];
   onSubmit: (answers: Record<string, string>) => void;
   onCancel?: () => void;
+  onConsumeDraft?: () => void;
   isFocused?: boolean;
   initialDraft?: string;
 };
@@ -35,6 +36,7 @@ export const InlineQuestionApproval = memo(
     questions,
     onSubmit,
     onCancel,
+    onConsumeDraft,
     isFocused = true,
     initialDraft,
   }: Props) => {
@@ -180,6 +182,7 @@ export const InlineQuestionApproval = memo(
           if (key.return) {
             // Single-select: submit the draft text
             if (customText.trim()) {
+              onConsumeDraft?.();
               handleSubmitAnswer(customText.trim());
             }
             return;
@@ -335,6 +338,9 @@ export const InlineQuestionApproval = memo(
                 return newSet;
               });
             } else {
+              if (optionIndex === draftOptionIndex) {
+                onConsumeDraft?.();
+              }
               handleSubmitAnswer(optionsWithOther[optionIndex]?.label || "");
             }
           }

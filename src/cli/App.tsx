@@ -13100,6 +13100,11 @@ ${SYSTEM_REMINDER_CLOSE}
     queueApprovalResults,
   ]);
 
+  const handleConsumeDraft = useCallback(() => {
+    currentDraftRef.current = "";
+    setRestoredInput("");
+  }, []);
+
   const handleQuestionSubmit = useCallback(
     async (answers: Record<string, string>) => {
       const currentIndex = approvalResults.length;
@@ -13732,6 +13737,7 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
                             }
                             agentName={agentName ?? undefined}
                             initialDraft={currentDraftRef.current || undefined}
+                            onConsumeDraft={handleConsumeDraft}
                           />
                         ) : ln.kind === "user" ? (
                           <UserMessage line={ln} prompt={statusLine.prompt} />
@@ -13830,6 +13836,7 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
                     }
                     agentName={agentName ?? undefined}
                     initialDraft={currentDraftRef.current || undefined}
+                    onConsumeDraft={handleConsumeDraft}
                   />
                 </Box>
               )}

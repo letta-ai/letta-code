@@ -962,10 +962,19 @@ export function Input({
 
   // Restore input from error (only if current value is empty)
   useEffect(() => {
-    if (restoredInput && value === "") {
+    if (restoredInput === null || restoredInput === undefined) return;
+
+    // Empty string is a deliberate external clear request (e.g. draft consumed).
+    if (restoredInput === "") {
+      setValue("");
+      onRestoredInputConsumed?.();
+      return;
+    }
+
+    if (value === "") {
       setValue(restoredInput);
       onRestoredInputConsumed?.();
-    } else if (restoredInput && value !== "") {
+    } else {
       // Input has content, don't clobber - just consume the restored value
       onRestoredInputConsumed?.();
     }

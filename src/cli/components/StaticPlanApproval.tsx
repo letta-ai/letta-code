@@ -1,5 +1,5 @@
 import { Box, useInput } from "ink";
-import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useState } from "react";
 import { generateAndOpenPlanViewer } from "../../web/generate-plan-viewer";
 import { useProgressIndicator } from "../hooks/useProgressIndicator";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
@@ -12,6 +12,7 @@ type Props = {
   onApproveAndAcceptEdits: () => void;
   onKeepPlanning: (reason: string) => void;
   onCancel: () => void; // For CTRL-C to queue denial (like other approval screens)
+  onConsumeDraft?: () => void;
   showAcceptEditsOption?: boolean;
   isFocused?: boolean;
   planContent?: string;
@@ -33,6 +34,7 @@ export const StaticPlanApproval = memo(
     onApproveAndAcceptEdits,
     onKeepPlanning,
     onCancel,
+    onConsumeDraft,
     showAcceptEditsOption = true,
     isFocused = true,
     planContent,
@@ -48,8 +50,8 @@ export const StaticPlanApproval = memo(
     const fixedOptionCount = showAcceptEditsOption ? 2 : 1;
 
     // If draft exists, show TWO text options:
-    // - Edit current draft (default)
-    // - Type new message. (empty)
+    // - pre-populated with current draft
+    // - empty freeform input
     const draftOptionIndex = hasDraft ? fixedOptionCount : -1;
     const customOptionIndex = hasDraft
       ? fixedOptionCount + 1
@@ -60,16 +62,8 @@ export const StaticPlanApproval = memo(
     const [selectedOption, setSelectedOption] = useState(defaultOptionIndex);
     const [browserStatus, setBrowserStatus] = useState("");
 
-    const {
-      text: customReason,
-      setText: setCustomReason,
-      cursorPos,
-      setCursorPos,
-      handleKey,
-      clear,
-    } = useTextInputCursor(hasDraft ? initialDraft : "");
-
-    const previousSelectedOptionRef = useRef(defaultOptionIndex);
+    const draftInput = useTextInputCursor(hasDraft ? initialDraft : "");
+    const newInput = useTextInputCursor("");
 
     const columns = useTerminalWidth();
     useProgressIndicator();
@@ -98,39 +92,11 @@ export const StaticPlanApproval = memo(
     const isOnCustomOption = effectiveSelectedOption === customOptionIndex;
     const isOnTextOption = isOnDraftOption || isOnCustomOption;
 
-    // Moving from draft-edit to empty custom should clear local text while
-    // preserving the upstream main-input draft buffer.
-    useEffect(() => {
-      const previous = previousSelectedOptionRef.current;
-      if (
-        hasDraft &&
-        previous === draftOptionIndex &&
-        effectiveSelectedOption === customOptionIndex
-      ) {
-        clear();
-      }
-      previousSelectedOptionRef.current = effectiveSelectedOption;
-    }, [
-      hasDraft,
-      draftOptionIndex,
-      customOptionIndex,
-      effectiveSelectedOption,
-      clear,
-    ]);
-
-    // If user re-selects draft option after clearing, restore initial draft text.
-    useEffect(() => {
-      if (isOnDraftOption && !customReason && initialDraft) {
-        setCustomReason(initialDraft);
-        setCursorPos(initialDraft.length);
-      }
-    }, [
-      isOnDraftOption,
-      customReason,
-      initialDraft,
-      setCustomReason,
-      setCursorPos,
-    ]);
+    const activeInput = isOnDraftOption
+      ? draftInput
+      : isOnCustomOption
+        ? newInput
+        : null;
 
     useInput(
       (input, key) => {
@@ -162,23 +128,26 @@ export const StaticPlanApproval = memo(
           return;
         }
 
-        // Text options: draft edit or empty new message
-        if (isOnTextOption) {
+        // Text options: pre-populated draft input or empty new input
+        if (activeInput) {
           if (key.return) {
-            if (customReason.trim()) {
-              onKeepPlanning(customReason.trim());
+            if (activeInput.text.trim()) {
+              if (isOnDraftOption) {
+                onConsumeDraft?.();
+              }
+              onKeepPlanning(activeInput.text.trim());
             }
             return;
           }
           if (key.escape) {
-            if (customReason) {
-              clear();
+            if (activeInput.text) {
+              activeInput.clear();
             } else {
               onKeepPlanning("User cancelled");
             }
             return;
           }
-          if (handleKey(input, key)) return;
+          if (activeInput.handleKey(input, key)) return;
         }
 
         // Regular fixed options
@@ -221,8 +190,9 @@ export const StaticPlanApproval = memo(
     );
 
     const browserHint = planContent ? " · O open in browser" : "";
+    const activeText = activeInput?.text || "";
     const hintText = isOnTextOption
-      ? customReason
+      ? activeText
         ? "Enter to submit · Esc to clear"
         : "Type feedback · Esc to cancel"
       : `Enter to select${browserHint} · Esc to cancel`;
@@ -294,7 +264,7 @@ export const StaticPlanApproval = memo(
             </Box>
           )}
 
-          {/* Option N: Edit current draft */}
+          {/* Option N: Pre-populated draft input */}
           {hasDraft && (
             <Box flexDirection="row">
               <Box width={5} flexShrink={0}>
@@ -303,21 +273,21 @@ export const StaticPlanApproval = memo(
                 </Text>
               </Box>
               <Box flexGrow={1} width={Math.max(0, columns - 5)}>
-                {isOnDraftOption && customReason ? (
+                {isOnDraftOption ? (
                   <Text wrap="wrap">
-                    {customReason.slice(0, cursorPos)}█
-                    {customReason.slice(cursorPos)}
+                    {draftInput.text.slice(0, draftInput.cursorPos)}█
+                    {draftInput.text.slice(draftInput.cursorPos)}
                   </Text>
                 ) : (
                   <Text wrap="wrap" dimColor>
-                    {initialDraft}
+                    {draftInput.text}
                   </Text>
                 )}
               </Box>
             </Box>
           )}
 
-          {/* Last option: Empty input */}
+          {/* Last option: Empty freeform input */}
           <Box flexDirection="row">
             <Box width={5} flexShrink={0}>
               <Text color={isOnCustomOption ? textOptionColor : undefined}>
@@ -325,17 +295,14 @@ export const StaticPlanApproval = memo(
               </Text>
             </Box>
             <Box flexGrow={1} width={Math.max(0, columns - 5)}>
-              {isOnCustomOption && customReason ? (
+              {isOnCustomOption ? (
                 <Text wrap="wrap">
-                  {customReason.slice(0, cursorPos)}█
-                  {customReason.slice(cursorPos)}
+                  {newInput.text.slice(0, newInput.cursorPos)}█
+                  {newInput.text.slice(newInput.cursorPos)}
                 </Text>
               ) : (
                 <Text wrap="wrap" dimColor>
-                  {hasDraft
-                    ? "Type new message."
-                    : "Type here to tell Letta Code what to change"}
-                  {isOnCustomOption && "█"}
+                  {newInput.text}
                 </Text>
               )}
             </Box>
