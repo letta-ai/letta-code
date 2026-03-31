@@ -1895,7 +1895,17 @@ async function connectWithRetry(
     // Store the unsubscribe function on the runtime for cleanup on close.
     runtime._unsubscribeSubagentState?.();
     runtime._unsubscribeSubagentState = subscribeToSubagentState(() => {
-      emitSubagentStateIfOpen(runtime);
+      if (runtime.conversationRuntimes.size === 0) {
+        emitSubagentStateIfOpen(runtime);
+        return;
+      }
+
+      for (const conversationRuntime of runtime.conversationRuntimes.values()) {
+        emitSubagentStateIfOpen(runtime, {
+          agent_id: conversationRuntime.agentId,
+          conversation_id: conversationRuntime.conversationId,
+        });
+      }
     });
 
     // Subscribe to subagent stream events and forward as tagged stream_delta.
@@ -1907,10 +1917,10 @@ async function connectWithRetry(
       (subagentId, event) => {
         if (socket.readyState !== WebSocket.OPEN) return;
 
-        const isSilentSubagent = getSubagents().some(
-          (subagent) => subagent.id === subagentId && subagent.silent === true,
+        const subagent = getSubagents().find(
+          (entry) => entry.id === subagentId,
         );
-        if (isSilentSubagent) {
+        if (subagent?.silent === true) {
           // Reflection/background "silent" subagents should not stream their
           // internal transcript into the parent conversation.
           return;
@@ -1922,7 +1932,12 @@ async function connectWithRetry(
           socket,
           runtime,
           event as unknown as import("../../types/protocol_v2").StreamDelta,
-          undefined, // scope: falls back to listener's default agent/conversation
+          subagent?.parentAgentId
+            ? {
+                agent_id: subagent.parentAgentId,
+                conversation_id: subagent.parentConversationId ?? "default",
+              }
+            : undefined,
           subagentId,
         );
       },

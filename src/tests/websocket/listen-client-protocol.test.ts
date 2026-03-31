@@ -1299,6 +1299,10 @@ describe("listen-client v2 status builders", () => {
         undefined,
         true,
         true,
+        {
+          agentId: "agent-1",
+          conversationId: "default",
+        },
       );
 
       const listener = __listenClientTestUtils.createListenerRuntime();
@@ -1333,6 +1337,64 @@ describe("listen-client v2 status builders", () => {
             silent: true,
           }),
         ],
+      });
+    } finally {
+      clearAllSubagents();
+    }
+  });
+
+  test("sync scopes update_subagent_state to runtime agent and conversation", () => {
+    clearAllSubagents();
+    try {
+      registerSubagent(
+        "subagent-reflection-target",
+        "reflection",
+        "Target scope",
+        undefined,
+        true,
+        true,
+        {
+          agentId: "agent-1",
+          conversationId: "default",
+        },
+      );
+      registerSubagent(
+        "subagent-reflection-other",
+        "reflection",
+        "Other scope",
+        undefined,
+        true,
+        true,
+        {
+          agentId: "agent-2",
+          conversationId: "default",
+        },
+      );
+
+      const listener = __listenClientTestUtils.createListenerRuntime();
+      const runtime = __listenClientTestUtils.getOrCreateScopedRuntime(
+        listener,
+        "agent-1",
+        "default",
+      );
+      const socket = new MockSocket(WebSocket.OPEN);
+
+      __listenClientTestUtils.emitStateSync(
+        socket as unknown as WebSocket,
+        runtime,
+        {
+          agent_id: "agent-1",
+          conversation_id: "default",
+        },
+      );
+
+      const outbound = socket.sentPayloads.map((payload) =>
+        JSON.parse(payload as string),
+      );
+      expect(outbound[3].type).toBe("update_subagent_state");
+      expect(outbound[3].subagents).toHaveLength(1);
+      expect(outbound[3].subagents[0]).toMatchObject({
+        subagent_id: "subagent-reflection-target",
       });
     } finally {
       clearAllSubagents();
