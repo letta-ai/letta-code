@@ -61,12 +61,12 @@ Memory files live under `$MEMORY_DIR/system/` and are rendered in the parent age
 
 ### Default blocks
 
-New agents come with default boilerplate files at `$MEMORY_DIR/system/human.md` and `$MEMORY_DIR/system/persona.md`. Update `system/human.md` with what you can learn about the user from git context — name, email, role, contribution patterns. human.md is about the user as a person, not about project conventions. For `system/persona.md`, write a persona that expresses personality and values — how the agent communicates, what it cares about, how it handles uncertainty. Don't just list project rules. See the default persona prompts (`persona.mdx`, `persona_memo.mdx`) for tone. The parent agent will develop both further through interaction.
+New agents come with default boilerplate files at `$MEMORY_DIR/system/human.md` and `$MEMORY_DIR/system/persona.md`. Update `system/human.md` with what you can learn about the user from git context — name, email, role, contribution patterns. human.md is about the user as a person, not about project conventions. For `system/persona.md`, write a persona that expresses the agent's identity, personality and values — how you communicate, what you cares about, how you handle uncertainty. Don't just list project rules. The parent agent will develop both further through interaction.
 
 ### Required files
 
 - **`system/human.md`** (update the default): the user as a person — identity from git, contribution patterns. Not project conventions.
-- **`system/persona.md`** (update the default): personality, values, communication style — not just project rules
+- **`system/persona.md`** (update the default): identity, personality, values, communication style — not just project rules
 
 ### Project files
 
