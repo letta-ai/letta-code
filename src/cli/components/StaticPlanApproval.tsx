@@ -310,7 +310,7 @@ export const StaticPlanApproval = memo(
                   </Text>
                 ) : (
                   <Text wrap="wrap" dimColor>
-                    Edit current draft
+                    {initialDraft}
                   </Text>
                 )}
               </Box>

@@ -68,8 +68,8 @@ export const InlineQuestionApproval = memo(
     const draftOption = hasDraft
       ? [
           {
-            label: "Edit current draft",
-            description: `"${initialDraft.slice(0, 40)}${initialDraft.length > 40 ? "..." : ""}"`,
+            label: initialDraft,
+            description: "",
           },
         ]
       : [];
@@ -433,7 +433,8 @@ export const InlineQuestionApproval = memo(
               );
             }
 
-            const hasDescription = option.description && !isCustomOption;
+            const hasDescription =
+              option.description && !isCustomOption && !isDraftOption;
 
             // Use Fragment to avoid column Box wrapper - render row and description as siblings
             // Note: Can't use <> shorthand with key, so we import Fragment
@@ -456,20 +457,7 @@ export const InlineQuestionApproval = memo(
                   )}
                   {/* Label */}
                   <Box flexGrow={1} width={Math.max(0, columns - prefixWidth)}>
-                    {isDraftOption ? (
-                      // Draft edit option - show label with description (truncated draft)
-                      <Box flexDirection="column">
-                        <Text wrap="wrap" color={color} bold={isSelected}>
-                          {option.label}
-                        </Text>
-                        {option.description && (
-                          <Text wrap="wrap" dimColor>
-                            {option.description}
-                          </Text>
-                        )}
-                      </Box>
-                    ) : isCustomOption ? (
-                      // Custom input option ("Type new message")
+                    {isDraftOption || isCustomOption ? (
                       customText ? (
                         <Text wrap="wrap">
                           {customText.slice(0, cursorPos)}
@@ -478,7 +466,7 @@ export const InlineQuestionApproval = memo(
                         </Text>
                       ) : (
                         <Text wrap="wrap" dimColor>
-                          {option.label}
+                          {isDraftOption ? initialDraft : ""}
                           {isSelected && "█"}
                         </Text>
                       )
