@@ -160,8 +160,8 @@ function hashFile(
   try {
     const content = readFileSync(fullPath);
     return createHash("sha256").update(content).digest("hex");
-  } catch {
-    // Unreadable file — degrade to metadata hash rather than crashing.
+  } catch (err) {
+    debugLog("file-index", `Cannot read file for hashing ${fullPath}: ${err}`);
     return hashValue(
       `meta:${entryPath}:${stat.size}:${stat.mtimeMs}:${stat.ino ?? 0}`,
     );
@@ -433,7 +433,8 @@ async function buildDirectory(
 
   try {
     dirStats = statSync(dir);
-  } catch {
+  } catch (err) {
+    debugLog("file-index", `Cannot stat directory ${dir}: ${err}`);
     const unreadableHash = hashValue("__unreadable__");
     merkle[relativePath] = unreadableHash;
     return unreadableHash;
@@ -448,7 +449,8 @@ async function buildDirectory(
   let dirEntries: string[];
   try {
     dirEntries = readdirSync(dir);
-  } catch {
+  } catch (err) {
+    debugLog("file-index", `Cannot read directory ${dir}: ${err}`);
     const unreadableHash = hashValue("__unreadable__");
     merkle[relativePath] = unreadableHash;
     return unreadableHash;
@@ -468,7 +470,9 @@ async function buildDirectory(
       const childStat = statSync(join(dir, entry));
       childNames.push(entry);
       childStatsMap.set(entry, childStat);
-    } catch {}
+    } catch (err) {
+      debugLog("file-index", `Cannot stat entry ${join(dir, entry)}: ${err}`);
+    }
   }
 
   if (
@@ -678,8 +682,8 @@ function loadCachedIndex(): FileIndexCache | null {
       // Delete the bloated cache immediately, then rebuild
       try {
         unlinkSync(indexPath);
-      } catch {
-        // Ignore deletion errors - rebuild will overwrite anyway
+      } catch (err) {
+        debugLog("file-index", `Failed to delete bloated cache ${indexPath}: ${err}`);
       }
       return null;
     }
@@ -704,8 +708,8 @@ function loadCachedIndex(): FileIndexCache | null {
         );
         try {
           unlinkSync(indexPath);
-        } catch {
-          // Ignore deletion errors - rebuild will overwrite anyway
+        } catch (err) {
+          debugLog("file-index", `Failed to delete stale cache ${indexPath}: ${err}`);
         }
         return null;
       }
@@ -747,8 +751,8 @@ function loadCachedIndex(): FileIndexCache | null {
         stats,
       };
     }
-  } catch {
-    // Ignore parse errors
+  } catch (err) {
+    debugLog("file-index", `Failed to parse index cache ${indexPath}: ${err}`);
   }
 
   return null;
@@ -798,8 +802,8 @@ function cacheProjectIndex(result: FileIndexBuildResult): void {
       stats: cappedStats,
     };
     writeFileSync(indexPath, JSON.stringify(payload), "utf-8");
-  } catch {
-    // Silently ignore persistence errors to avoid breaking search.
+  } catch (err) {
+    debugLog("file-index", `Failed to persist index cache: ${err}`);
   }
 }
 
