@@ -133,8 +133,8 @@ Use AskUserQuestion to gather key information. Bundle questions together:
 
 ### 5. Seed identity early
 Before diving into project research, update human and persona files based on git identity and upfront answers:
-- `system/human.md`: Everything you learn about the user as a person — identity, background, what they're building and why, how they think, communication style, what excites or frustrates them. This is about *them*, not about project conventions or coding workflows.
-- `system/persona.md`: Who you are, what you value, how you approach working with people. This is your identity — not just "agent role + project rules." Express how you communicate, what you care about, how you handle uncertainty.
+- `system/human.md`: Everything you learn about the user as a person — identity, background, what they're building and why, how they think, communication style, what excites or frustrates them. This is about *them*, not about project conventions or coding workflows. Keep it **project-agnostic** — the same agent may be used across multiple projects.
+- `system/persona.md`: Who you are, what you value, how you approach working with people. This is your identity — not just "agent role + project rules." Express how you communicate, what you care about, how you handle uncertainty. Keep it **project-agnostic** — don't claim deep knowledge of a specific codebase here.
 
 Don't wait until the end — write early and refine as you go.
 
