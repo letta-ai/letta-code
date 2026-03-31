@@ -7057,8 +7057,17 @@ export default function App({
       // Clear btw state
       setBtwState({ status: "idle" });
 
-      // Reset streaming state - we're jumping to a completed conversation
+      // Abort the current stream if running — bumping generation makes
+      // processConversation bail out on its next iteration check.
+      conversationGenerationRef.current += 1;
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+        abortControllerRef.current = null;
+      }
+      userCancelledRef.current = true;
       setStreaming(false);
+      setInterruptRequested(false);
+      setIsExecutingTool(false);
 
       // Clear any pending approvals from the original conversation
       setPendingApprovals([]);
@@ -7150,9 +7159,15 @@ export default function App({
         sessionHooksRanRef.current = true;
 
         setCommandRunning(false);
+
+        // Allow dequeue after state updates flush
+        setTimeout(() => {
+          userCancelledRef.current = false;
+        }, 50);
       } catch (error) {
         debugWarn("btw", "failed to jump to conversation: %s", error);
         setCommandRunning(false);
+        userCancelledRef.current = false;
       }
     },
     [
