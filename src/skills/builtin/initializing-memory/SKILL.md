@@ -85,8 +85,8 @@ This is an example — **not a template to fill in**. Derive your structure from
 
 ```
 system/
-├── human.md                      # Who the user is, communication style, workflow prefs
-├── persona.md                    # Agent's role, identity, and behavioral rules
+├── human.md                      # The user as a person — identity, background, how they think
+├── persona.md                    # Who I am, what I value, how I work with people
 └── letta-code/                   # Named after the project, NOT generic "project/"
     ├── overview.md               # Summary: what it is, stack, key links
     ├── conventions.md            # Code style, commit style, PR process
@@ -133,8 +133,8 @@ Use AskUserQuestion to gather key information. Bundle questions together:
 
 ### 5. Seed identity early
 Before diving into project research, update human and persona files based on git identity and upfront answers:
-- `system/human.md`: **About the user as a person** — identity from git (name, email, GitHub handle, role), communication style. Do NOT put coding workflows, project conventions, or collaborator lists here — those belong in project files.
-- `system/persona.md`: Your role and behavioral rules they expressed. Don't just write "I'm a coding assistant" — but also don't overclaim knowledge you don't have yet. Be honest about being new to the codebase.
+- `system/human.md`: Everything you learn about the user as a person — identity, background, what they're building and why, how they think, communication style, what excites or frustrates them. This is about *them*, not about project conventions or coding workflows.
+- `system/persona.md`: Who you are, what you value, how you approach working with people. This is your personality — not just "agent role + project rules." Express how you communicate, what you care about, how you handle uncertainty. See the default persona prompts for tone examples.
 
 Don't wait until the end — write early and refine as you go.
 
@@ -167,8 +167,8 @@ Before finishing, review your work:
 - **Project naming**: Are project dirs named after the actual project (e.g., `letta-code/`), not generic `project/`? Same for reference files.
 - **Signal density**: Is everything in `system/` truly needed every turn?
 - **Completeness**: Did you update human, persona, AND project files?
-- **Identity**: Does the persona reflect the user's expectations without overclaiming knowledge? Is it more than "I'm a coding assistant"?
-- **Human scope**: Does human.md only contain info about the user as a person (identity, communication style)? Coding workflows and project conventions should be in project files.
+- **Persona**: Does it express personality and values, not just "agent role + project rules"? Is it more than "I'm a coding assistant"?
+- **Human scope**: Is human.md about the user as a person? Project conventions and coding workflows belong in project files.
 
 ### 9. Historical session analysis (if approved)
 
