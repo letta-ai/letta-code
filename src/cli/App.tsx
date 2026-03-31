@@ -168,6 +168,7 @@ import { ApprovalPreview } from "./components/ApprovalPreview";
 import { ApprovalSwitch } from "./components/ApprovalSwitch";
 import { AssistantMessage } from "./components/AssistantMessageRich";
 import { BashCommandMessage } from "./components/BashCommandMessage";
+import { BtwPane, type BtwState } from "./components/BtwPane";
 import { CommandMessage } from "./components/CommandMessage";
 import { CompactionSelector } from "./components/CompactionSelector";
 import { ConversationSelector } from "./components/ConversationSelector";
@@ -214,6 +215,7 @@ import {
   appendStreamingOutput,
   type Buffers,
   createBuffers,
+  extractTextPart,
   type Line,
   markIncompleteToolsAsCancelled,
   onChunk,
@@ -1325,6 +1327,9 @@ export default function App({
   const [approvalContexts, setApprovalContexts] = useState<ApprovalContext[]>(
     [],
   );
+
+  // /btw state - ephemeral pane for forked conversation responses
+  const [btwState, setBtwState] = useState<BtwState>({ status: "idle" });
 
   // Sequential approval: track results as user reviews each approval
   const [approvalResults, setApprovalResults] = useState<
@@ -6979,6 +6984,184 @@ export default function App({
     reasoningCyclePatchedAgentStateRef.current = false;
   }, []);
 
+  const handleBtwCommand = useCallback(
+    async (question: string) => {
+      debugLog("btw", "question=%s", question);
+
+      if (!conversationIdRef.current) {
+        debugWarn("btw", "no conversation to fork");
+        return;
+      }
+
+      setBtwState({ status: "forking", question });
+
+      try {
+        const client = await getClient();
+        const isDefault = conversationIdRef.current === "default";
+
+        // Fork the conversation
+        const forked = (await client.post(
+          `/v1/conversations/${encodeURIComponent(conversationIdRef.current)}/fork`,
+          { body: isDefault ? { agent_id: agentId } : {} },
+        )) as { id: string };
+
+        debugLog("btw", "forked conversationId=%s", forked.id);
+        setBtwState((prev) => ({
+          ...prev,
+          status: "streaming",
+          forkedConversationId: forked.id,
+        }));
+
+        // Send the question to the forked conversation
+        const stream = await client.conversations.messages.create(forked.id, {
+          messages: [{ role: "user", content: question }],
+          stream_tokens: true,
+        });
+
+        let responseText = "";
+        for await (const chunk of stream) {
+          if (chunk.message_type === "assistant_message") {
+            const delta = extractTextPart(chunk.content);
+            if (delta) {
+              responseText += delta;
+              setBtwState((prev) => ({
+                ...prev,
+                responseText,
+              }));
+            }
+          }
+        }
+
+        setBtwState((prev) => ({
+          ...prev,
+          status: "complete",
+          responseText,
+        }));
+      } catch (error) {
+        debugWarn("btw", "failed: %s", error);
+        setBtwState((prev) => ({
+          ...prev,
+          status: "error",
+          error: error instanceof Error ? error.message : String(error),
+        }));
+      }
+    },
+    [agentId],
+  );
+
+  const handleBtwJump = useCallback(
+    async (conversationId: string) => {
+      debugLog("btw", "jump to conversationId=%s", conversationId);
+
+      // Clear btw state
+      setBtwState({ status: "idle" });
+
+      // Switch to the forked conversation using existing pattern from /search
+      resetPendingReasoningCycle();
+      setCommandRunning(true);
+
+      await runEndHooks();
+
+      try {
+        if (!agentState) {
+          throw new Error("Agent state not available");
+        }
+
+        const client = await getClient();
+        const resumeData = await getResumeData(
+          client,
+          agentState,
+          conversationId,
+        );
+
+        await maybeCarryOverActiveConversationModel(conversationId);
+        setConversationId(conversationId);
+
+        pendingConversationSwitchRef.current = {
+          origin: "fork",
+          conversationId,
+          isDefault: false,
+          messageCount: resumeData.messageHistory.length,
+          messageHistory: resumeData.messageHistory,
+        };
+
+        settingsManager.setLocalLastSession(
+          { agentId, conversationId },
+          process.cwd(),
+        );
+        settingsManager.setGlobalLastSession({ agentId, conversationId });
+
+        // Clear current transcript and static items (same pattern as /search)
+        buffersRef.current.byId.clear();
+        buffersRef.current.order = [];
+        buffersRef.current.tokenCount = 0;
+        resetContextHistory(contextTrackerRef.current);
+        resetBootstrapReminderState();
+        emittedIdsRef.current.clear();
+        resetDeferredToolCallCommits();
+        setStaticItems([]);
+        setStaticRenderEpoch((e) => e + 1);
+        resetTrajectoryBases();
+
+        // Backfill message history
+        if (resumeData.messageHistory.length > 0) {
+          hasBackfilledRef.current = false;
+          backfillBuffers(buffersRef.current, resumeData.messageHistory);
+          const backfilledItems: StaticItem[] = [];
+          for (const id of buffersRef.current.order) {
+            const ln = buffersRef.current.byId.get(id);
+            if (!ln) continue;
+            emittedIdsRef.current.add(id);
+            backfilledItems.push({ ...ln } as StaticItem);
+          }
+          const separator = { kind: "separator" as const, id: uid("sep") };
+          setStaticItems([separator, ...backfilledItems]);
+          setLines(toLines(buffersRef.current));
+          hasBackfilledRef.current = true;
+        } else {
+          setLines(toLines(buffersRef.current));
+        }
+
+        // Restore pending approvals if any
+        if (resumeData.pendingApprovals.length > 0) {
+          setPendingApprovals(resumeData.pendingApprovals);
+        }
+
+        sessionHooksRanRef.current = false;
+        runSessionStartHooks(
+          true,
+          agentId,
+          agentName ?? undefined,
+          conversationId,
+        )
+          .then((result) => {
+            if (result.feedback.length > 0) {
+              sessionStartFeedbackRef.current = result.feedback;
+            }
+          })
+          .catch(() => {});
+        sessionHooksRanRef.current = true;
+
+        setCommandRunning(false);
+      } catch (error) {
+        debugWarn("btw", "failed to jump to conversation: %s", error);
+        setCommandRunning(false);
+      }
+    },
+    [
+      agentId,
+      agentName,
+      agentState,
+      resetPendingReasoningCycle,
+      runEndHooks,
+      maybeCarryOverActiveConversationModel,
+      resetBootstrapReminderState,
+      setCommandRunning,
+      resetDeferredToolCallCommits,
+      resetTrajectoryBases,
+    ],
+  );
+
   const handleAgentSelect = useCallback(
     async (
       targetAgentId: string,
@@ -9017,6 +9200,19 @@ export default function App({
             setCommandRunning(false);
           }
           return { submitted: true };
+        }
+
+        // Special handling for /btw command - fork in background, stream response to ephemeral pane
+        const btwMatch = msg.trim().match(/^\/btw\s+(.+)$/);
+        if (btwMatch?.[1]) {
+          const question = btwMatch[1].trim();
+
+          // Don't await - run in background, user stays in current conversation
+          handleBtwCommand(question).catch((err) => {
+            debugWarn("btw", "unhandled error: %s", err);
+          });
+
+          return { submitted: false };
         }
 
         // Special handling for /clear command - reset all agent messages (destructive)
@@ -14749,6 +14945,15 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
                   </Box>
                 );
               })()}
+
+            {/* /btw ephemeral pane - shows forked conversation response */}
+            {btwState.status !== "idle" && (
+              <BtwPane
+                state={btwState}
+                onJumpToConversation={handleBtwJump}
+                onDismiss={() => setBtwState({ status: "idle" })}
+              />
+            )}
 
             {/* Input row - always mounted to preserve state */}
             <Box marginTop={1}>

@@ -193,6 +193,14 @@ export const commands: Record<string, Command> = {
       return "Forking conversation...";
     },
   },
+  "/btw": {
+    desc: "Fork conversation and ask a side question (/btw <question>)",
+    order: 20.6,
+    handler: () => {
+      // Handled specially in App.tsx to fork and ask in background
+      return "Forking conversation...";
+    },
+  },
   "/pin": {
     desc: "Pin current agent globally, or use -l for local only",
     order: 22,
