@@ -27,7 +27,11 @@ export const BtwPane = memo(
       (input, key) => {
         if (state.status !== "complete") return;
 
-        if (input === "j" && state.forkedConversationId && onJumpToConversation) {
+        if (
+          input === "j" &&
+          state.forkedConversationId &&
+          onJumpToConversation
+        ) {
           onJumpToConversation(state.forkedConversationId);
         } else if (key.escape || input === "q") {
           onDismiss?.();

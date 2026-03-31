@@ -7180,7 +7180,6 @@ export default function App({
       resetBootstrapReminderState,
       setCommandRunning,
       setStreaming,
-      setPendingApprovals,
       resetDeferredToolCallCommits,
       resetTrajectoryBases,
     ],
