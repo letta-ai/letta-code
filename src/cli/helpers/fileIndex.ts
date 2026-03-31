@@ -47,6 +47,22 @@ export interface FileMatch {
 const MAX_INDEX_DEPTH = 12;
 const PROJECT_INDEX_FILENAME = "file-index.json";
 
+/**
+ * Cache format version. Bump this whenever the on-disk format changes
+ * in a backward-incompatible way (e.g. switching hash algorithm).
+ *
+ *   v1 (implicit) – metadata-based file hashes: sha256(path:size:mtime:ino)
+ *   v2            – content-based file hashes:  sha256(file_bytes)
+ */
+const CACHE_VERSION = 2;
+
+/**
+ * Files larger than this threshold use a metadata-based hash instead of
+ * reading the entire file for content hashing. This avoids expensive reads
+ * on large binaries/assets while still content-hashing all normal source files.
+ */
+const MAX_CONTENT_HASH_FILE_SIZE = 5 * 1024 * 1024; // 5 MB
+
 // Read from ~/.letta/.lettasettings (MAX_ENTRIES), falling back to 50 000.
 // The file is auto-created with comments on first run so users can find it.
 const MAX_CACHE_ENTRIES = readIntSetting("MAX_ENTRIES", 50_000);
@@ -72,6 +88,12 @@ let indexRoot: string = process.cwd();
 interface FileIndexCache {
   metadata: {
     rootHash: string;
+    /**
+     * Cache format version.  `undefined` implies v1 (legacy metadata hashes).
+     * When the on-disk version doesn't match CACHE_VERSION the cache is
+     * discarded and rebuilt from scratch.
+     */
+    version?: number;
   };
   entries: FileIndexEntry[];
   merkle: MerkleMap;
@@ -111,6 +133,39 @@ function normalizeParent(relativePath: string): string {
 
 function hashValue(input: string): string {
   return createHash("sha256").update(input).digest("hex");
+}
+
+/**
+ * Compute a content-based hash for a file.
+ *
+ * For files at or below MAX_CONTENT_HASH_FILE_SIZE the hash is
+ * `sha256(file_bytes)` — identical content on any device produces
+ * the same hash, which is required for cross-device Merkle comparison.
+ *
+ * For larger files (binaries, assets) we fall back to a metadata-based
+ * hash to avoid expensive reads.  These are prefixed with `meta:` so
+ * the sync layer can identify files that need re-hashing later.
+ */
+function hashFile(
+  fullPath: string,
+  entryPath: string,
+  stat: FsStats,
+): string {
+  if (stat.size > MAX_CONTENT_HASH_FILE_SIZE) {
+    return hashValue(
+      `meta:${entryPath}:${stat.size}:${stat.mtimeMs}:${stat.ino ?? 0}`,
+    );
+  }
+
+  try {
+    const content = readFileSync(fullPath);
+    return createHash("sha256").update(content).digest("hex");
+  } catch {
+    // Unreadable file — degrade to metadata hash rather than crashing.
+    return hashValue(
+      `meta:${entryPath}:${stat.size}:${stat.mtimeMs}:${stat.ino ?? 0}`,
+    );
+  }
 }
 
 function lowerBound(sorted: string[], target: string): number {
@@ -500,9 +555,7 @@ async function buildDirectory(
         childHashes.push(`dir:${entry}:${hashValue("__truncated__")}`);
       }
     } else {
-      const fileHash = hashValue(
-        `${entryPath}:${entryStat.size}:${entryStat.mtimeMs}:${entryStat.ino ?? 0}`,
-      );
+      const fileHash = hashFile(fullPath, entryPath, entryStat);
 
       // Only add to merkle and stats if we haven't hit the cap
       // This prevents unbounded memory growth for large workspaces
@@ -641,6 +694,22 @@ function loadCachedIndex(): FileIndexCache | null {
       parsed.merkle &&
       typeof parsed.merkle === "object"
     ) {
+      // Version gate: discard caches written by an older (or missing) format
+      // so we rebuild with content-based hashes. This is a one-time cost on
+      // upgrade — subsequent sessions will load the v2 cache normally.
+      if (parsed.metadata.version !== CACHE_VERSION) {
+        debugLog(
+          "file-index",
+          `Cache version mismatch (got ${parsed.metadata.version ?? "none"}, need ${CACHE_VERSION}), rebuilding`,
+        );
+        try {
+          unlinkSync(indexPath);
+        } catch {
+          // Ignore deletion errors - rebuild will overwrite anyway
+        }
+        return null;
+      }
+
       const merkle: MerkleMap = {};
       for (const [key, value] of Object.entries(parsed.merkle)) {
         if (typeof value === "string") {
@@ -662,6 +731,7 @@ function loadCachedIndex(): FileIndexCache | null {
               type: sv.type as "file" | "dir",
               mtimeMs: sv.mtimeMs,
               ino: sv.ino,
+              size: typeof sv.size === "number" ? sv.size : undefined,
             };
           }
         }
@@ -670,6 +740,7 @@ function loadCachedIndex(): FileIndexCache | null {
       return {
         metadata: {
           rootHash: parsed.metadata.rootHash,
+          version: CACHE_VERSION,
         },
         entries: parsed.entries,
         merkle,
@@ -720,6 +791,7 @@ function cacheProjectIndex(result: FileIndexBuildResult): void {
     const payload: FileIndexCache = {
       metadata: {
         rootHash: result.rootHash,
+        version: CACHE_VERSION,
       },
       entries: cappedEntries,
       merkle: cappedMerkle,
