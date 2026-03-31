@@ -25,12 +25,10 @@ Surface context at the level of detail the current moment requires. Maintain com
 - Maintain an index of external context within the context window using references
 
 ### Discovery Paths
-Create navigable links between context fragments using `[[references]]`:
-- `[[skills/commit]]` — reference a skill
-- `[[reference/api-docs]]` — reference an external memory file
-- `[[projects/letta-code]]` — reference a folder
+When a system/ file summarizes something with deeper detail in reference/, link to it using `[[references]]`:
+- `[[reference/letta-code/architecture]]` — link from compact overview to detailed docs
 
-These links provide breadcrumbs for future discovery. Over time, the pathways between related context should tighten as you gain experience — similar to how biological memory strengthens synaptic connections between related concepts. Pre-constructed paths allow you to efficiently move down the context hierarchy when specific conditions arise.
+These links provide breadcrumbs for future discovery. Pre-constructed paths let you efficiently move from summaries to detail when a task demands it.
 
 ### Efficiency
 Structure your context window for minimal inference cost without degrading identity:
@@ -49,7 +47,7 @@ Learning should generalize across patterns, not simply memorize events. Your ful
 
 ### System Memory is Your Core Program
 Files in `system/` are passed to the LLM on every invocation — this is the most critical token-space representation of who you are. Reserve it for durable knowledge:
-- **Include**: Identity, active preferences, behavioral rules, project index with discovery paths, known gotchas
+- **Include**: Identity, active preferences, behavioral rules, project index, known gotchas
 - **Exclude**: Transient work items, specific commits, session notes, detailed reference material
 - **Move externally**: Content that's useful but not needed every turn — it remains accessible via tools and discoverable via your index
 

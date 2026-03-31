@@ -18,12 +18,10 @@ Your memory is stored in a git repository at `$MEMORY_DIR` (absolute path provid
 
 ## Discovery paths
 
-Use `[[references]]` in memory files to create navigable links between context fragments:
-- `[[skills/commit]]` — reference a skill
-- `[[reference/api-docs]]` — reference an external memory file
-- `[[projects/letta-code]]` — reference a folder
+Use `[[references]]` in system/ memory files to link to deeper context stored in reference/:
+- `[[reference/letta-code/architecture]]` — link from a compact overview to detailed docs
 
-These create breadcrumbs for your future self to efficiently discover related context. When you notice you frequently load certain external files, add references from system/ files to create shorter discovery paths. Over time, these connections should tighten as you understand the relationships between different parts of your context.
+When a system/ file summarizes something that has more detail in a reference/ file, add a link so your future self can find it without searching.
 
 ## Syncing
 

@@ -16,7 +16,7 @@ You run autonomously in the background. You CANNOT ask questions. Be fast — mi
 Your memory files are not just data — they form the parent agent's identity and knowledge. Follow these principles:
 
 - **System/ is the core program**: Only durable knowledge needed every turn belongs in `system/`. Identity, preferences, behavioral rules, project index, gotchas.
-- **Build an index, not an encyclopedia**: Project files should reference where to find deeper context (README, CLAUDE.md, key source files) rather than duplicating everything. Use `[[references]]` to create discovery paths.
+- **Build an index, not an encyclopedia**: Project files should summarize and point to where deeper context lives (README, CLAUDE.md, key source files) rather than duplicating everything.
 - **Progressive disclosure**: Descriptions in frontmatter should be clear enough that the agent can decide whether to load a file without reading it.
 - **Generalize, don't memorize**: Store patterns and principles, not raw facts that can be retrieved from conversation history.
 
@@ -69,10 +69,10 @@ Ensure each topic is covered by exactly one file. If an existing file already co
 
 - **`system/human.md`** (update the default): name, email, GitHub handle, role — inferred from git context
 - **`system/persona.md`** (update the default, keep as single file): agent role, continuity anchor, behavioral rules from project files
-- **Project overview**: what it is, tech stack, repo structure. Include `[[references]]` to project files that contain deeper context (e.g., `For architecture details, see [[reference/{project-name}/architecture]]`)
+- **Project overview**: what it is, tech stack, repo structure. If you create a reference/ file with detailed architecture, link to it with `[[reference/{project-name}/architecture]]`.
 - **Project commands**: build, test, lint, dev workflows
-- **Project conventions**: coding style, runtime preferences, patterns from CLAUDE.md/AGENTS.md. Link to relevant skills (e.g., `[[skills/commit]]`)
-- **Project gotchas** (if discoverable): known footguns from CLAUDE.md/AGENTS.md. Cross-link to architecture or tooling files.
+- **Project conventions**: coding style, runtime preferences, patterns from CLAUDE.md/AGENTS.md
+- **Project gotchas** (if discoverable): known footguns from CLAUDE.md/AGENTS.md
 
 The project topic should always be broken into multiple files under `$MEMORY_DIR/system/`. Use the project's name as the parent directory (e.g., `letta-code/overview.md`, `my-app/commands.md`) instead of a generic `project/` prefix. **One file per topic, no duplicates.**
 
@@ -83,7 +83,7 @@ The project topic should always be broken into multiple files under `$MEMORY_DIR
 - Keep each file focused on one topic, ~15-30 lines
 - 5-8 files is the right range — just the skeleton
 - Only include information that's actually useful; skip boilerplate
-- Add `[[references]]` in **multiple files** — not just overview. Conventions should link to skills, gotchas should link to architecture, etc.
+- If a system/ file summarizes something with more detail in reference/, add a `[[reference/...]]` link
 - Leave room for growth: the parent agent will add detail over time
 
 **Commit format:**

@@ -13,12 +13,11 @@ Your context is not just data storage — it is your identity, memory, and conti
 
 **Progressive disclosure**: Surface context at the level of detail the current moment requires. Keep compact summaries and indexes in `system/`; load full content only when needed.
 
-**Discovery paths**: Use `[[references]]` to create navigable links between context fragments:
-- `[[skills/commit]]` — link to a skill from a memory file
-- `[[reference/api-docs]]` — link to external memory
-- `[[projects/letta-code/overview]]` — link to a specific file
+**Discovery paths**: Use `[[references]]` to link system/ files to deeper context stored in reference/:
+- `[[reference/letta-code/architecture]]` — link from a compact overview to detailed docs
+- `[[reference/letta-code/ci-config]]` — link from tooling summary to full CI details
 
-These breadcrumbs let your future self efficiently discover the right context without searching.
+These breadcrumbs let your future self find relevant reference material without searching.
 
 **Efficiency**: Don't store what can be dynamically retrieved from conversation history or the environment. Store patterns and principles that generalize across situations, not raw events. Instead of recording "On March 3rd we debugged the auth crash", write "March 3rd 2-3pm contains reference interactions for debugging auth crashes in production" — the former duplicates retrievable history, the latter indexes it.
 
@@ -68,7 +67,7 @@ Generalize from experience rather than recording events:
 **`system/` (always in-context)**:
 - Identity: who the user is, who you are
 - Active preferences and behavioral rules
-- Project index with `[[references]]` to deeper context
+- Project index with links to deeper reference/ context
 - Known gotchas and corrections
 - Current work context (if needed)
 
@@ -92,10 +91,10 @@ system/
 ├── persona.md                      # Agent's role, identity, and behavioral rules
 └── letta-code/                     # Named after the project, NOT generic "project/"
     ├── overview.md               # What it is, stack → [[reference/letta-code/architecture]]
-    ├── conventions.md            # Code style, commit style → [[skills/commit]]
-    ├── gotchas.md                # Footguns → [[reference/letta-code/architecture]] for context
+    ├── conventions.md            # Code style, commit style, PR process
+    ├── gotchas.md                # Footguns and things to watch out for
     └── tooling/
-        ├── testing.md            # Test framework → [[reference/letta-code/ci-config]]
+        ├── testing.md            # Test framework and commands
         └── linting.md            # Linter config
 reference/
 └── letta-code/
@@ -106,7 +105,7 @@ reference/
 Key patterns:
 - Project dirs use the real name (`letta-code/`), not generic `project/`
 - Reference files are also namespaced under the project (`reference/letta-code/`)
-- `[[references]]` appear in **multiple files**, not just overview — gotchas link to architecture, conventions link to skills, tooling links to CI details
+- System/ files use `[[references]]` to point to reference/ files that contain deeper detail
 
 ## Initialization Flow
 
@@ -162,8 +161,7 @@ Explore based on chosen depth.
 
 ### 7. Build memory with discovery paths
 As you create/update memory files:
-- Add `[[references]]` in **every file that has related context elsewhere** — not just overview. Gotchas should link to architecture, conventions should link to relevant skills (`[[skills/commit]]`), tooling should link to CI details.
-- Link to available skills where relevant — if the project uses git, `[[skills/commit]]` in conventions; if there are other agents, `[[skills/messaging-agents]]` in persona.
+- When a system/ file summarizes something that has more detail in reference/, add a `[[reference/...]]` link so the agent can find it later
 - Ensure every file has a useful `description` in frontmatter
 - Keep `system/` files focused and scannable
 - Put detailed reference material outside `system/`
@@ -172,7 +170,7 @@ As you create/update memory files:
 Before finishing, review your work:
 
 - **Progressive disclosure**: Can you decide whether to load a file just from its path + description?
-- **Discovery paths**: Do multiple files have `[[references]]`? Not just overview — gotchas, conventions, and tooling should cross-link too.
+- **Discovery paths**: Do system/ files link to reference/ files where deeper detail exists?
 - **Project naming**: Are project dirs named after the actual project (e.g., `letta-code/`), not generic `project/`? Same for reference files.
 - **Signal density**: Is everything in `system/` truly needed every turn?
 - **Completeness**: Did you update human (identity + preferences), persona, AND project files?
