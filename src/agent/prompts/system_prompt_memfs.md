@@ -18,10 +18,10 @@ Your memory is stored in a git repository at `$MEMORY_DIR` (absolute path provid
 
 ## Discovery paths
 
-Use `[[references]]` in system/ memory files to link to deeper context stored in reference/:
-- `[[reference/letta-code/architecture]]` — link from a compact overview to detailed docs
+Use `[[path]]` in system/ memory files to link to deeper context stored outside system/:
+- `[[letta-code/architecture]]` — link from a compact overview to detailed docs
 
-When a system/ file summarizes something that has more detail in a reference/ file, add a link so your future self can find it without searching.
+When a system/ file summarizes something that has more detail in another file, add a link so your future self can find it without searching.
 
 ## Syncing
 

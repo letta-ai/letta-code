@@ -13,11 +13,10 @@ Your context is not just data storage — it is your identity, memory, and conti
 
 **Progressive disclosure**: Surface context at the level of detail the current moment requires. Keep compact summaries and indexes in `system/`; load full content only when needed.
 
-**Discovery paths**: Use `[[references]]` to link system/ files to deeper context stored in reference/:
-- `[[reference/letta-code/architecture]]` — link from a compact overview to detailed docs
-- `[[reference/letta-code/ci-config]]` — link from tooling summary to full CI details
+**Discovery paths**: Use `[[path]]` in system/ files to link to deeper context stored outside system/:
+- `[[letta-code/architecture]]` — link from a compact overview to detailed docs
 
-These breadcrumbs let your future self find relevant reference material without searching.
+These breadcrumbs let your future self find relevant detail without searching.
 
 **Efficiency**: Don't store what can be dynamically retrieved from conversation history or the environment. Store patterns and principles that generalize across situations, not raw events. Instead of recording "On March 3rd we debugged the auth crash", write "March 3rd 2-3pm contains reference interactions for debugging auth crashes in production" — the former duplicates retrievable history, the latter indexes it.
 
@@ -67,7 +66,7 @@ Generalize from experience rather than recording events:
 **`system/` (always in-context)**:
 - Identity: who the user is, who you are
 - Active preferences and behavioral rules
-- Project index with links to deeper reference/ context
+- Project index with links to deeper context outside system/
 - Known gotchas and corrections
 - Current work context (if needed)
 
@@ -90,22 +89,20 @@ system/
 │   └── preferences.md            # Communication style, workflow prefs (branch naming, pkg manager, etc.)
 ├── persona.md                      # Agent's role, identity, and behavioral rules
 └── letta-code/                     # Named after the project, NOT generic "project/"
-    ├── overview.md               # What it is, stack → [[reference/letta-code/architecture]]
+    ├── overview.md               # What it is, stack → [[letta-code/architecture]]
     ├── conventions.md            # Code style, commit style, PR process
     ├── gotchas.md                # Footguns and things to watch out for
     └── tooling/
         ├── testing.md            # Test framework and commands
         └── linting.md            # Linter config
-reference/
-└── letta-code/
-    ├── architecture.md           # Detailed system design (loaded on demand)
-    └── ci-config.md              # CI workflow details
+letta-code/
+└── architecture.md               # Detailed system design (loaded on demand)
 ```
 
 Key patterns:
 - Project dirs use the real name (`letta-code/`), not generic `project/`
-- Reference files are also namespaced under the project (`reference/letta-code/`)
-- System/ files use `[[references]]` to point to reference/ files that contain deeper detail
+- Detailed content lives outside `system/` — organize however makes sense
+- System/ files use `[[path]]` to point to deeper detail outside system/
 
 ## Initialization Flow
 
@@ -161,7 +158,7 @@ Explore based on chosen depth.
 
 ### 7. Build memory with discovery paths
 As you create/update memory files:
-- When a system/ file summarizes something that has more detail in reference/, add a `[[reference/...]]` link so the agent can find it later
+- When a system/ file summarizes something that has more detail elsewhere, add a `[[path]]` link so the agent can find it later
 - Ensure every file has a useful `description` in frontmatter
 - Keep `system/` files focused and scannable
 - Put detailed reference material outside `system/`
@@ -170,7 +167,7 @@ As you create/update memory files:
 Before finishing, review your work:
 
 - **Progressive disclosure**: Can you decide whether to load a file just from its path + description?
-- **Discovery paths**: Do system/ files link to reference/ files where deeper detail exists?
+- **Discovery paths**: Do system/ files link to external files where deeper detail exists?
 - **Project naming**: Are project dirs named after the actual project (e.g., `letta-code/`), not generic `project/`? Same for reference files.
 - **Signal density**: Is everything in `system/` truly needed every turn?
 - **Completeness**: Did you update human (identity + preferences), persona, AND project files?

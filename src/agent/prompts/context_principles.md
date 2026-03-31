@@ -25,8 +25,8 @@ Surface context at the level of detail the current moment requires. Maintain com
 - Maintain an index of external context within the context window using references
 
 ### Discovery Paths
-When a system/ file summarizes something with deeper detail in reference/, link to it using `[[references]]`:
-- `[[reference/letta-code/architecture]]` — link from compact overview to detailed docs
+When a system/ file summarizes something with deeper detail elsewhere, link to it with `[[path]]`:
+- `[[letta-code/architecture]]` — link from compact overview to detailed docs outside system/
 
 These links provide breadcrumbs for future discovery. Pre-constructed paths let you efficiently move from summaries to detail when a task demands it.
 

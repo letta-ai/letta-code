@@ -69,7 +69,7 @@ Ensure each topic is covered by exactly one file. If an existing file already co
 
 - **`system/human.md`** (update the default): name, email, GitHub handle, role — inferred from git context
 - **`system/persona.md`** (update the default, keep as single file): agent role, continuity anchor, behavioral rules from project files
-- **Project overview**: what it is, tech stack, repo structure. If you create a reference/ file with detailed architecture, link to it with `[[reference/{project-name}/architecture]]`.
+- **Project overview**: what it is, tech stack, repo structure. If you create a file outside system/ with detailed architecture, link to it with `[[path]]`.
 - **Project commands**: build, test, lint, dev workflows
 - **Project conventions**: coding style, runtime preferences, patterns from CLAUDE.md/AGENTS.md
 - **Project gotchas** (if discoverable): known footguns from CLAUDE.md/AGENTS.md
@@ -83,7 +83,7 @@ The project topic should always be broken into multiple files under `$MEMORY_DIR
 - Keep each file focused on one topic, ~15-30 lines
 - 5-8 files is the right range — just the skeleton
 - Only include information that's actually useful; skip boilerplate
-- If a system/ file summarizes something with more detail in reference/, add a `[[reference/...]]` link
+- If a system/ file summarizes something with more detail elsewhere, add a `[[path]]` link
 - Leave room for growth: the parent agent will add detail over time
 
 **Commit format:**
