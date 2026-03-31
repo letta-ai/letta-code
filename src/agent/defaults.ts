@@ -18,9 +18,12 @@ import { MEMORY_PROMPTS } from "./promptAssets";
 export const MEMO_TAG = "default:memo";
 export const INCOGNITO_TAG = "default:incognito";
 
-// Letta Code's default persona - loaded from persona_memo.mdx
+// Letta Code's default memory blocks - loaded from Memo-specific prompts.
 const MEMO_PERSONA = parseMdxFrontmatter(
   MEMORY_PROMPTS["persona_memo.mdx"] ?? "",
+).body;
+const MEMO_HUMAN = parseMdxFrontmatter(
+  MEMORY_PROMPTS["human_memo.mdx"] ?? "",
 ).body;
 
 // Agent descriptions shown in /agents selector
@@ -36,9 +39,10 @@ export const DEFAULT_AGENT_CONFIGS: Record<string, CreateAgentOptions> = {
     name: "Letta Code",
     description: MEMO_DESCRIPTION,
     // Uses default memory blocks and tools (full stateful config)
-    // Override persona block with Memo-specific personality
+    // Override global blocks with Memo-specific personality defaults
     blockValues: {
       persona: MEMO_PERSONA,
+      human: MEMO_HUMAN,
     },
   },
   incognito: {
