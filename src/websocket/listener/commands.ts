@@ -1,5 +1,6 @@
 import type WebSocket from "ws";
 import { getClient } from "../../agent/client";
+import { ISOLATED_BLOCK_LABELS } from "../../agent/memory";
 import { getMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
 import {
   buildDoctorMessage,
@@ -20,8 +21,6 @@ import {
 import { clearConversationRuntimeState, emitListenerStatus } from "./runtime";
 import { handleIncomingMessage } from "./turn";
 import type { ConversationRuntime, StartListenerOptions } from "./types";
-
-const ISOLATED_BLOCK_LABELS = ["human", "persona"];
 
 /**
  * Command IDs that this letta-code version can handle via `execute_command`.
