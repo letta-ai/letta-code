@@ -7057,6 +7057,12 @@ export default function App({
       // Clear btw state
       setBtwState({ status: "idle" });
 
+      // Reset streaming state - we're jumping to a completed conversation
+      setStreaming(false);
+
+      // Clear any pending approvals from the original conversation
+      setPendingApprovals([]);
+
       // Switch to the forked conversation using existing pattern from /search
       resetPendingReasoningCycle();
       setCommandRunning(true);
@@ -7158,6 +7164,8 @@ export default function App({
       maybeCarryOverActiveConversationModel,
       resetBootstrapReminderState,
       setCommandRunning,
+      setStreaming,
+      setPendingApprovals,
       resetDeferredToolCallCommits,
       resetTrajectoryBases,
     ],
