@@ -2,6 +2,7 @@
 
 import approvalRecoveryAlert from "./prompts/approval_recovery_alert.txt";
 import autoInitReminder from "./prompts/auto_init_reminder.txt";
+import contextPrinciples from "./prompts/context_principles.md";
 import humanPrompt from "./prompts/human.mdx";
 import interruptRecoveryAlert from "./prompts/interrupt_recovery_alert.txt";
 import lettaPrompt from "./prompts/letta.md";
@@ -26,6 +27,7 @@ import systemPromptMemfsAddon from "./prompts/system_prompt_memfs.md";
 export const SYSTEM_PROMPT = lettaPrompt;
 export const SYSTEM_PROMPT_BLOCKS_ADDON = systemPromptBlocksAddon;
 export const SYSTEM_PROMPT_MEMFS_ADDON = systemPromptMemfsAddon;
+export const CONTEXT_PRINCIPLES = contextPrinciples;
 export const PLAN_MODE_REMINDER = planModeReminder;
 
 export const SKILL_CREATOR_PROMPT = skillCreatorModePrompt;
