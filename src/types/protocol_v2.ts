@@ -148,6 +148,7 @@ export interface DeviceStatus {
   background_processes: BackgroundProcessSummary[];
   pending_control_requests: PendingControlRequest[];
   memory_directory: string | null;
+  should_doctor?: boolean;
   reflection_settings: ReflectionSettingsSnapshot | null;
   /** Remote slash command IDs this letta-code version can handle via `execute_command`. */
   supported_commands: string[];

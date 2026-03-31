@@ -3,6 +3,7 @@ import WebSocket from "ws";
 import { getMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
 import { getReflectionSettings } from "../../cli/helpers/memoryReminder";
 import { getSubagents } from "../../cli/helpers/subagentState";
+import { getOrRefreshSystemPromptDoctorState } from "../../cli/helpers/systemPromptWarning";
 import { permissionMode } from "../../permissions/mode";
 import type { DequeuedBatch } from "../../queue/queueRuntime";
 import { settingsManager } from "../../settings-manager";
@@ -150,6 +151,7 @@ export function buildDeviceStatus(
       background_processes: buildBackgroundProcessSnapshot(),
       pending_control_requests: [],
       memory_directory: null,
+      should_doctor: false,
       reflection_settings: null,
       supported_commands: [...SUPPORTED_REMOTE_COMMANDS],
     };
@@ -194,6 +196,13 @@ export function buildDeviceStatus(
       return null;
     }
   })();
+  const systemPromptDoctorState = scopedAgentId
+    ? getOrRefreshSystemPromptDoctorState(scopedAgentId)
+    : null;
+  console.log(
+    "buildDeviceStatus: ",
+    JSON.stringify({ scopedAgentId, state: systemPromptDoctorState }),
+  );
   return {
     current_connection_id: listener.connectionId,
     connection_name: listener.connectionName,
@@ -213,6 +222,7 @@ export function buildDeviceStatus(
     memory_directory: scopedAgentId
       ? getMemoryFilesystemRoot(scopedAgentId)
       : null,
+    should_doctor: systemPromptDoctorState?.should_doctor ?? false,
     supported_commands: [...SUPPORTED_REMOTE_COMMANDS],
     reflection_settings: scopedAgentId
       ? {
