@@ -758,6 +758,7 @@ export function Input({
   messageQueue,
   onEnterQueueEditMode,
   onEscapeCancel,
+  inputDisabled = false,
   ralphActive = false,
   ralphPending = false,
   ralphPendingYolo = false,
@@ -803,6 +804,7 @@ export function Input({
   messageQueue?: QueuedMessage[];
   onEnterQueueEditMode?: () => void;
   onEscapeCancel?: () => void;
+  inputDisabled?: boolean;
   ralphActive?: boolean;
   ralphPending?: boolean;
   ralphPendingYolo?: boolean;
@@ -886,7 +888,7 @@ export function Input({
   const promptVisualWidth = stringWidth(promptChar) + 1; // +1 for trailing space
   const contentWidth = Math.max(0, columns - promptVisualWidth);
 
-  const interactionEnabled = visible && inputEnabled;
+  const interactionEnabled = visible && inputEnabled && !inputDisabled;
   const reserveInputSpace = !collapseInputWhenDisabled;
   const hideFooter = !interactionEnabled || value.startsWith("/");
   const inputRowLines = useMemo(() => {

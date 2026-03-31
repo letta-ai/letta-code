@@ -14994,6 +14994,7 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
                 onEscapeCancel={
                   profileConfirmPending ? handleProfileEscapeCancel : undefined
                 }
+                inputDisabled={btwState.status === "complete"}
                 ralphActive={uiRalphActive}
                 ralphPending={pendingRalphConfig !== null}
                 ralphPendingYolo={pendingRalphConfig?.isYolo ?? false}
