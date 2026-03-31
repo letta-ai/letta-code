@@ -9213,7 +9213,7 @@ export default function App({
             debugWarn("btw", "unhandled error: %s", err);
           });
 
-          return { submitted: false };
+          return { submitted: true };
         }
 
         // Special handling for /clear command - reset all agent messages (destructive)
