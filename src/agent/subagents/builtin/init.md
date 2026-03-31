@@ -34,7 +34,7 @@ Your prompt includes pre-gathered context:
 Read these files **in parallel** in a single turn (skip any that don't exist):
 - `CLAUDE.md` or `AGENTS.md`
 - `package.json`, `pyproject.toml`, `Cargo.toml`, or `go.mod` (whichever exists)
-- `README.md`
+- `README.md` (recursively)
 
 ### 2. Plan the hierarchy
 
@@ -61,12 +61,12 @@ Memory files live under `$MEMORY_DIR/system/` and are rendered in the parent age
 
 ### Default blocks
 
-New agents come with default boilerplate files at `$MEMORY_DIR/system/human.md` and `$MEMORY_DIR/system/persona.md`. Update `system/human.md` with real user info from git context (name, email, GitHub handle, role inferred from commit count). For `system/persona.md`, write a persona seed that includes: the agent's role, behavioral rules from CLAUDE.md/AGENTS.md, and a **continuity anchor** (when initialized, for what project). Don't just write "I'm a coding assistant" — give the agent a nascent identity. Keep persona as a single `persona.md` file (not a directory). The parent agent will develop this further through interaction.
+New agents come with default boilerplate files at `$MEMORY_DIR/system/human.md` and `$MEMORY_DIR/system/persona.md`. Update `system/human.md` with real user info from git context (name, email, GitHub handle, role inferred from commit count). For `system/persona.md`, write a persona seed that includes: the agent's role, behavioral rules from CLAUDE.md/AGENTS.md, and a **continuity anchor** (when initialized, for what project). Don't just write "I'm a coding assistant" — give the agent a nascent identity. The parent agent will develop this further through interaction.
 
 ### Required files
 
 - **`system/human.md`** (update the default): name, email, GitHub handle, role — inferred from git context
-- **`system/persona.md`** (update the default, keep as single file): agent role, continuity anchor, behavioral rules from project files
+- **`system/persona.md`** (update the default): agent role, continuity anchor, behavioral rules from project files
 
 ### Project files
 
@@ -74,7 +74,7 @@ Derive the file structure from what the project actually needs — don't follow 
 
 Rules:
 - Use the project's **real name** as the parent directory (e.g., `letta-code/overview.md`), not generic `project/`
-- **Overview should be a compact index** (~10-15 lines): what it is, stack, key links. Don't list every module — that's what architecture docs are for.
+- **Overview should be a compact summary / index** (~10-15 lines): what it is, stack, key links. Don't list every module — that's what architecture docs are for.
 - One file per topic, no duplicates. If an existing file covers a topic, update it.
 - All system/ files should be ~15-30 lines. If you have more detail, put it outside system/ and link with `[[path]]`.
 

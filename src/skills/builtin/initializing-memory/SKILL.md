@@ -13,14 +13,14 @@ Your context is not just data storage — it is your identity, memory, and conti
 
 **Progressive disclosure**: Surface context at the level of detail the current moment requires. Keep compact summaries and indexes in `system/`; load full content only when needed.
 
-**Discovery paths**: Use `[[path]]` links to create a connected graph across memory files (and skills when relevant):
+**Discovery paths**: Use `[[path]]` links to create a connected graph across memory files (and skills when relevant). For example:
 - `[[letta-code/architecture]]` — jump from overview to detailed docs
 - `[[projects/letta-code/gotchas]]` — connect related memory files
 - `[[skills/commit]]` — link to procedural guidance when useful
 
 These breadcrumbs let your future self find relevant detail without searching.
 
-**Efficiency**: Don't store what can be dynamically retrieved from conversation history or the environment. Store patterns and principles that generalize across situations, not raw events. Instead of recording "On March 3rd we debugged the auth crash", write "March 3rd 2-3pm contains reference interactions for debugging auth crashes in production" — the former duplicates retrievable history, the latter indexes it.
+**Efficiency**: Don't store what can be dynamically retrieved from conversation history or the environment. Store patterns and principles that generalize across situations, not raw events.
 
 **System/ is your core program**: Reserve it for durable knowledge that helps across sessions — identity, preferences, behavioral rules, project index with discovery paths, gotchas. Exclude transient items (specific commits, current tickets, session notes) that dilute signal.
 
@@ -29,7 +29,7 @@ These breadcrumbs let your future self find relevant detail without searching.
 ## Understanding Your Context
 
 This command may run in different scenarios:
-- **Fresh agent**: Default memory files from initialization — build everything from scratch
+- **Fresh agent**: Default human and persona memory files from initialization — build everything from scratch
 - **Existing agent**: User wants to reorganize or significantly update memory structure
 - **Shared files**: Some memory files may be shared across agents — be careful modifying these
 
@@ -56,8 +56,8 @@ Generalize from experience rather than recording events:
 ## Memory Structure
 
 ### Hierarchy Principles
-- **Use the project's actual name** as the directory prefix — `letta-code/overview.md`, not `project/overview.md`. This avoids ambiguity when the agent works across multiple projects.
-- Use nested `/` paths for hierarchy: `letta-code/tooling/testing.md` not `letta-code-testing.md`
+- **Use the project's actual name** as the directory prefix — e.g. `letta-code/overview.md`, not `project/overview.md`. This avoids ambiguity when the agent works across multiple projects.
+- Use nested `/` paths for hierarchy – e.g. `letta-code/tooling/testing.md` not `letta-code-testing.md`
 - Keep files focused on one concept — split when a file mixes distinct topics
 - Every file should have a meaningful `description` in frontmatter — your future self uses this to decide whether to load the file
 - Files in `system/` should be lean and scannable (bullet points, short lines)
@@ -68,9 +68,8 @@ Generalize from experience rather than recording events:
 **`system/` (always in-context)**:
 - Identity: who the user is, who you are
 - Active preferences and behavioral rules
-- Project index with links to related context (deeper docs, gotchas, workflows)
-- Known gotchas and corrections
-- Current work context (if needed)
+- Project summary / index with links to related context (deeper docs, gotchas, workflows)
+- Key decisions, gotchas and corrections
 
 **Outside `system/` (reference, loaded on-demand)**:
 - Detailed architecture documentation
@@ -86,10 +85,10 @@ This is an example — **not a template to fill in**. Derive your structure from
 
 ```
 system/
-├── human.md                        # Who the user is, communication style, workflow prefs
-├── persona.md                      # Agent's role, identity, and behavioral rules
-└── letta-code/                     # Named after the project, NOT generic "project/"
-    ├── overview.md               # Compact index: what it is, stack, key links
+├── human.md                      # Who the user is, communication style, workflow prefs
+├── persona.md                    # Agent's role, identity, and behavioral rules
+└── letta-code/                   # Named after the project, NOT generic "project/"
+    ├── overview.md               # Summary: what it is, stack, key links
     ├── conventions.md            # Code style, commit style, PR process
     └── gotchas.md                # Footguns and things to watch out for
 letta-code/
@@ -99,7 +98,7 @@ letta-code/
 Key principles:
 - **Derive structure from the project**, not from this example. A CLI tool needs different files than a web app or a library.
 - Project dirs use the **real project name** (`letta-code/`), not generic `project/`
-- Overview should be a **compact index** (~10-15 lines) that links to deeper detail, not a verbose reference doc
+- Overview should be a **summary or compact index** (~10-15 lines) that links to deeper detail, not a verbose reference doc or list of generic list of files
 - Use `[[path]]` links to connect related context into a navigable graph
 
 ## Initialization Flow
@@ -181,7 +180,7 @@ This section runs only if the user approved during upfront questions. It uses pa
 - `letta.js` must be built (`bun run build`)
 - Use `subagent_type: "history-analyzer"` — cheaper model, has `bypassPermissions`, creates its own worktree
 
-**Step 8a: Split data for parallel processing**
+**Step 9a: Split data for parallel processing**
 
 ```bash
 SPLIT_DIR=/tmp/history-splits
@@ -202,7 +201,7 @@ for f in "$SPLIT_DIR"/*; do mv "$f" "$f.jsonl" 2>/dev/null; done
 wc -l "$SPLIT_DIR"/*.jsonl
 ```
 
-**Step 8b: Launch workers in parallel** (all Task calls in a single message)
+**Step 9b: Launch workers in parallel** (all Task calls in a single message)
 
 ```
 Task({
@@ -217,7 +216,7 @@ Task({
 })
 ```
 
-**Step 8c: Merge and curate**
+**Step 9c: Merge and curate**
 
 After workers complete, merge their branches and apply editorial judgment:
 
@@ -234,7 +233,7 @@ Review all merged files:
 - Add `[[references]]` to connect new knowledge with existing memory
 - Delete low-value content
 
-**Step 8d: Clean up**
+**Step 9d: Clean up**
 
 ```bash
 for w in $(dirname [MEMORY_DIR])/memory-worktrees/migration-*; do
