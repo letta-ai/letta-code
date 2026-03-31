@@ -7,8 +7,8 @@ import {
   getPersonalityContent,
   getPersonalityHumanContent,
   PERSONALITY_OPTIONS,
-  resolvePersonalityId,
   replaceBodyPreservingFrontmatter,
+  resolvePersonalityId,
 } from "../../agent/personality";
 
 const VALID_FRONTMATTER = "---\ndescription: Persona\nlimit: 20000\n---\n\n";

@@ -231,7 +231,9 @@ export function resolvePersonalityId(input: string): PersonalityId | null {
     return null;
   }
 
-  const direct = PERSONALITY_OPTIONS.find((candidate) => candidate.id === normalized);
+  const direct = PERSONALITY_OPTIONS.find(
+    (candidate) => candidate.id === normalized,
+  );
   if (direct) {
     return direct.id;
   }

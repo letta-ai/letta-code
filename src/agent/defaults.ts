@@ -24,8 +24,7 @@ const MEMO_PERSONA = parseMdxFrontmatter(
 ).body;
 
 // Agent descriptions shown in /agents selector
-const MEMO_DESCRIPTION =
-  "The default Letta Code agent with persistent memory";
+const MEMO_DESCRIPTION = "The default Letta Code agent with persistent memory";
 const INCOGNITO_DESCRIPTION =
   "A stateless coding agent without memory (incognito mode)";
 
