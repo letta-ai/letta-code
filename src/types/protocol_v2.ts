@@ -745,6 +745,8 @@ export interface ExecuteCommandCommand {
   request_id: string;
   /** Runtime scope — identifies which agent + conversation this targets */
   runtime: RuntimeScope;
+  /** Optional command arguments (everything after the command name). */
+  args?: string;
 }
 
 export type WsProtocolCommand =
