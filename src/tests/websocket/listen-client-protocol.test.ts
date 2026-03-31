@@ -430,7 +430,7 @@ describe("listen-client model command helpers", () => {
   test("resolveModelForUpdate preserves explicit model_handle when both model_id and model_handle are present (BYOK tier change)", () => {
     // When LCD sends both fields for a BYOK tier change, the resolver should
     // use model_id for updateArgs/label but keep the explicit model_handle.
-    const byokHandle = "lc-mykey/" + models[0]?.handle;
+    const byokHandle = `lc-mykey/${models[0]?.handle}`;
     const resolved = __listenClientTestUtils.resolveModelForUpdate({
       model_id: models[0]?.id,
       model_handle: byokHandle,

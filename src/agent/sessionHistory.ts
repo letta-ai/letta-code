@@ -47,7 +47,7 @@ interface SessionStartData {
  */
 function getHistoryDir(): string {
   const homeDir = os.homedir();
-  return path.join(homeDir, ".letta-code");
+  return path.join(homeDir, ".letta");
 }
 
 /**

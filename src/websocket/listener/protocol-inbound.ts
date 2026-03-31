@@ -29,6 +29,7 @@ import type {
   TerminalResizeCommand,
   TerminalSpawnCommand,
   UpdateModelCommand,
+  WriteFileCommand,
   WsProtocolCommand,
 } from "../../types/protocol_v2";
 import { isValidApprovalResponseBody } from "./approval";
@@ -286,6 +287,22 @@ export function isReadFileCommand(value: unknown): value is ReadFileCommand {
   return (
     c.type === "read_file" &&
     typeof c.path === "string" &&
+    typeof c.request_id === "string"
+  );
+}
+
+export function isWriteFileCommand(value: unknown): value is WriteFileCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    path?: unknown;
+    content?: unknown;
+    request_id?: unknown;
+  };
+  return (
+    c.type === "write_file" &&
+    typeof c.path === "string" &&
+    typeof c.content === "string" &&
     typeof c.request_id === "string"
   );
 }
@@ -644,6 +661,7 @@ export function parseServerMessage(
       isSearchFilesCommand(parsed) ||
       isListInDirectoryCommand(parsed) ||
       isReadFileCommand(parsed) ||
+      isWriteFileCommand(parsed) ||
       isEditFileCommand(parsed) ||
       isListMemoryCommand(parsed) ||
       isEnableMemfsCommand(parsed) ||
