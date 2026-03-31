@@ -56,7 +56,8 @@ Generalize from experience rather than recording events:
 ## Memory Structure
 
 ### Hierarchy Principles
-- Use nested `/` paths for hierarchy: `project/tooling/testing.md` not `project-testing.md`
+- **Use the project's actual name** as the directory prefix — `letta-code/overview.md`, not `project/overview.md`. This avoids ambiguity when the agent works across multiple projects.
+- Use nested `/` paths for hierarchy: `letta-code/tooling/testing.md` not `letta-code-testing.md`
 - Keep files focused on one concept — split when a file mixes distinct topics
 - Every file should have a meaningful `description` in frontmatter — your future self uses this to decide whether to load the file
 - Files in `system/` should be lean and scannable (bullet points, short lines)
@@ -81,26 +82,31 @@ Generalize from experience rather than recording events:
 
 ### Example Structure
 
+For a project called "letta-code":
+
 ```
 system/
 ├── human/
 │   ├── identity.md               # Who the user is
-│   └── preferences.md            # Communication and workflow prefs
-├── persona.md                      # Agent's role, active projects, and behavioral rules
-└── project/
-    ├── overview.md               # What it is, stack, key links → [[reference/architecture]]
-    ├── conventions.md            # Code style, commit style, PR process
-    ├── gotchas.md                # Footguns and things to watch out for
+│   └── preferences.md            # Communication style, workflow prefs (branch naming, pkg manager, etc.)
+├── persona.md                      # Agent's role, identity, and behavioral rules
+└── letta-code/                     # Named after the project, NOT generic "project/"
+    ├── overview.md               # What it is, stack → [[reference/letta-code/architecture]]
+    ├── conventions.md            # Code style, commit style → [[skills/commit]]
+    ├── gotchas.md                # Footguns → [[reference/letta-code/architecture]] for context
     └── tooling/
-        ├── testing.md            # Test framework and commands
+        ├── testing.md            # Test framework → [[reference/letta-code/ci-config]]
         └── linting.md            # Linter config
 reference/
-├── architecture.md               # Detailed system design (loaded on demand)
-└── history/
-    └── decisions.md              # Past architectural decisions
+└── letta-code/
+    ├── architecture.md           # Detailed system design (loaded on demand)
+    └── ci-config.md              # CI workflow details
 ```
 
-Note how `system/project/overview.md` uses `[[reference/architecture]]` to link to detailed content without bloating system/.
+Key patterns:
+- Project dirs use the real name (`letta-code/`), not generic `project/`
+- Reference files are also namespaced under the project (`reference/letta-code/`)
+- `[[references]]` appear in **multiple files**, not just overview — gotchas link to architecture, conventions link to skills, tooling links to CI details
 
 ## Initialization Flow
 
@@ -134,8 +140,9 @@ Use AskUserQuestion to gather key information. Bundle questions together:
 
 ### 5. Seed identity early
 Before diving into project research, update human and persona files based on git identity and upfront answers:
-- `system/human/`: User identity (from git), communication style, workflow preferences
-- `system/persona.md`: Behavioral rules they expressed, your role definition
+- `system/human/identity.md`: User identity from git (name, email, GitHub handle, role)
+- `system/human/preferences.md`: Communication style, workflow prefs (branch naming convention, package manager, commit style, etc.)
+- `system/persona.md`: Your role, behavioral rules they expressed, and a **continuity anchor** — note when you were initialized and for what project. Don't just write "I'm a coding assistant" — give yourself a nascent identity that reflects what you've learned about the user's expectations. This will grow over time.
 
 Don't wait until the end — write early and refine as you go.
 
@@ -155,7 +162,8 @@ Explore based on chosen depth.
 
 ### 7. Build memory with discovery paths
 As you create/update memory files:
-- Add `[[references]]` to connect related context
+- Add `[[references]]` in **every file that has related context elsewhere** — not just overview. Gotchas should link to architecture, conventions should link to relevant skills (`[[skills/commit]]`), tooling should link to CI details.
+- Link to available skills where relevant — if the project uses git, `[[skills/commit]]` in conventions; if there are other agents, `[[skills/messaging-agents]]` in persona.
 - Ensure every file has a useful `description` in frontmatter
 - Keep `system/` files focused and scannable
 - Put detailed reference material outside `system/`
@@ -164,10 +172,12 @@ As you create/update memory files:
 Before finishing, review your work:
 
 - **Progressive disclosure**: Can you decide whether to load a file just from its path + description?
-- **Discovery paths**: Are `[[references]]` connecting related context across the hierarchy?
+- **Discovery paths**: Do multiple files have `[[references]]`? Not just overview — gotchas, conventions, and tooling should cross-link too.
+- **Project naming**: Are project dirs named after the actual project (e.g., `letta-code/`), not generic `project/`? Same for reference files.
 - **Signal density**: Is everything in `system/` truly needed every turn?
-- **Completeness**: Did you update human, persona, AND project files?
-- **Identity**: Does the persona reflect what you've learned about the user's expectations?
+- **Completeness**: Did you update human (identity + preferences), persona, AND project files?
+- **Identity**: Does the persona have a continuity anchor and reflect the user's expectations? Is it more than "I'm a coding assistant"?
+- **Human preferences**: Are workflow preferences (branch naming, package manager, commit style) captured in `system/human/preferences.md`, not buried in project conventions?
 
 ### 9. Historical session analysis (if approved)
 

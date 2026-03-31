@@ -61,17 +61,18 @@ Memory files live under `$MEMORY_DIR/system/` and are rendered in the parent age
 
 ### Default blocks
 
-New agents come with default boilerplate files at `$MEMORY_DIR/system/human.md` and `$MEMORY_DIR/system/persona.md`. Update `system/human.md` with real user info from git context. For `system/persona.md`, write a minimal persona seed — the agent's role and any obvious behavioral context from the project (e.g., if CLAUDE.md specifies rules, note them). Keep persona as a single `persona.md` file (not a directory). The parent agent will develop this further through interaction.
+New agents come with default boilerplate files at `$MEMORY_DIR/system/human.md` and `$MEMORY_DIR/system/persona.md`. Update `system/human.md` with real user info from git context (name, email, GitHub handle, role inferred from commit count). For `system/persona.md`, write a persona seed that includes: the agent's role, behavioral rules from CLAUDE.md/AGENTS.md, and a **continuity anchor** (when initialized, for what project). Don't just write "I'm a coding assistant" — give the agent a nascent identity. Keep persona as a single `persona.md` file (not a directory). The parent agent will develop this further through interaction.
 
 ### Topics to cover
 
 Ensure each topic is covered by exactly one file. If an existing file already covers a topic, update it rather than creating a new file at a different path.
 
-- **`system/human.md`** (update the default): name, email, role — inferred from git context
-- **`system/persona.md`** (update the default, keep as single file): agent role, initial behavioral notes from project rules
-- **Project overview**: what it is, tech stack, repo structure. Include `[[references]]` to project files that contain deeper context (e.g., `For architecture details, see [[README.md]]` or `Conventions defined in [[CLAUDE.md]]`)
+- **`system/human.md`** (update the default): name, email, GitHub handle, role — inferred from git context
+- **`system/persona.md`** (update the default, keep as single file): agent role, continuity anchor, behavioral rules from project files
+- **Project overview**: what it is, tech stack, repo structure. Include `[[references]]` to project files that contain deeper context (e.g., `For architecture details, see [[reference/{project-name}/architecture]]`)
 - **Project commands**: build, test, lint, dev workflows
-- **Project conventions**: coding style, runtime preferences, patterns from CLAUDE.md/AGENTS.md
+- **Project conventions**: coding style, runtime preferences, patterns from CLAUDE.md/AGENTS.md. Link to relevant skills (e.g., `[[skills/commit]]`)
+- **Project gotchas** (if discoverable): known footguns from CLAUDE.md/AGENTS.md. Cross-link to architecture or tooling files.
 
 The project topic should always be broken into multiple files under `$MEMORY_DIR/system/`. Use the project's name as the parent directory (e.g., `letta-code/overview.md`, `my-app/commands.md`) instead of a generic `project/` prefix. **One file per topic, no duplicates.**
 
@@ -80,9 +81,9 @@ The project topic should always be broken into multiple files under `$MEMORY_DIR
 - All files go under `$MEMORY_DIR/system/` — never create files outside of it during init
 - Use nested paths with `/` for new project files (e.g., `letta-code/overview.md`, `letta-code/commands.md`)
 - Keep each file focused on one topic, ~15-30 lines
-- 4-7 files is the right range — just the skeleton
+- 5-8 files is the right range — just the skeleton
 - Only include information that's actually useful; skip boilerplate
-- Add `[[references]]` where appropriate to connect files and point to external context
+- Add `[[references]]` in **multiple files** — not just overview. Conventions should link to skills, gotchas should link to architecture, etc.
 - Leave room for growth: the parent agent will add detail over time
 
 **Commit format:**
