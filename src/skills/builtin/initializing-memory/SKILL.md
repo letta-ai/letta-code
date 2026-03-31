@@ -121,7 +121,7 @@ git log --format="%an <%ae>" | sort -u | head -10
 ```
 Cross-reference with the git user config to determine which contributor is the current user. Store in `system/human/`.
 
-### 4a. Ask upfront questions
+### 4. Ask upfront questions
 Use AskUserQuestion to gather key information. Bundle questions together:
 
 1. **Research depth**: "Standard or deep research?"
