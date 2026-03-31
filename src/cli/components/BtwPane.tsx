@@ -1,5 +1,6 @@
 import { Box, Text, useInput } from "ink";
 import { memo } from "react";
+import { brandColors } from "./colors.js";
 
 export type BtwState = {
   status: "idle" | "forking" | "streaming" | "complete" | "error";
@@ -43,13 +44,13 @@ export const BtwPane = memo(
       <Box
         flexDirection="column"
         borderStyle="round"
-        borderColor="cyan"
+        borderColor={brandColors.primaryAccent}
         paddingX={1}
         marginY={1}
       >
         {/* Header */}
         <Box>
-          <Text bold color="cyan">
+          <Text bold color={brandColors.primaryAccent}>
             btw
           </Text>
           {state.question && (
