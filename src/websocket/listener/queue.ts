@@ -68,10 +68,6 @@ function mergeDequeuedBatchContent(
   const queuedInputs: Array<
     | { kind: "user"; content: MessageCreate["content"] }
     | {
-        kind: "task_notification";
-        text: string;
-      }
-    | {
         kind: "cron_prompt";
         text: string;
       }
@@ -84,12 +80,6 @@ function mergeDequeuedBatchContent(
         content: item.content,
       });
       continue;
-    }
-    if (item.kind === "task_notification") {
-      queuedInputs.push({
-        kind: "task_notification",
-        text: item.text,
-      });
     }
     if (item.kind === "cron_prompt") {
       queuedInputs.push({
@@ -226,7 +216,15 @@ function buildQueuedTurnMessage(
 
     const mergedContent = mergeDequeuedBatchContent(batch.items);
     if (mergedContent === null) {
-      return null;
+      // Notification-only batch: preserve dequeue lifecycle and outbound
+      // synthetic display emission, but do not produce model input.
+      const scopeItem = batch.items[0];
+      return {
+        type: "message",
+        agentId: scopeItem?.agentId ?? runtime.agentId ?? undefined,
+        conversationId: scopeItem?.conversationId ?? runtime.conversationId,
+        messages: [],
+      };
     }
 
     // Determine scope from the batch items (they all share the same scope)
@@ -396,6 +394,15 @@ async function drainQueuedMessages(
       const { dequeuedBatch, queuedTurn } = consumedQueuedTurn;
 
       emitDequeuedUserMessage(socket, runtime, queuedTurn, dequeuedBatch);
+
+      // task_notification items are display-only in listener mode:
+      // keep queue lifecycle + transcript event, skip model execution.
+      const isNotificationOnlyBatch =
+        dequeuedBatch.items.length > 0 &&
+        dequeuedBatch.items.every((item) => item.kind === "task_notification");
+      if (isNotificationOnlyBatch) {
+        continue;
+      }
 
       const preTurnStatus =
         getListenerStatus(runtime.listener) === "processing"
