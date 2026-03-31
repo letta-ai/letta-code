@@ -32,7 +32,11 @@ const ISOLATED_BLOCK_LABELS = ["human", "persona"];
  *
  * When adding a new case to `handleExecuteCommand`, add the ID here too.
  */
-export const SUPPORTED_REMOTE_COMMANDS: readonly string[] = ["clear", "doctor", "remember"];
+export const SUPPORTED_REMOTE_COMMANDS: readonly string[] = [
+  "clear",
+  "doctor",
+  "remember",
+];
 
 /**
  * Handle an `execute_command` message from the web app.
