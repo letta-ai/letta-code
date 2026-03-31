@@ -540,13 +540,47 @@ export function emitStateSync(
 // Subagent state
 // ─────────────────────────────────────────────
 
-export function buildSubagentSnapshot(): SubagentSnapshot[] {
+function resolveSubagentScopeForSnapshot(
+  runtime: RuntimeCarrier,
+  scope?: {
+    agent_id?: string | null;
+    conversation_id?: string | null;
+  },
+): RuntimeScope | null {
+  const listener = getListenerRuntime(runtime);
+  return resolveRuntimeScope(listener, getScopeForRuntime(runtime, scope));
+}
+
+export function buildSubagentSnapshot(
+  runtime: RuntimeCarrier,
+  scope?: {
+    agent_id?: string | null;
+    conversation_id?: string | null;
+  },
+): SubagentSnapshot[] {
+  const runtimeScope = resolveSubagentScopeForSnapshot(runtime, scope);
+
   return getSubagents()
     .filter((a) => {
       if (a.status !== "pending" && a.status !== "running") {
         return false;
       }
-      return !a.silent || a.isBackground === true;
+      if (a.silent && a.isBackground !== true) {
+        return false;
+      }
+
+      if (!runtimeScope) {
+        return true;
+      }
+
+      // Scope listener-mode snapshots to the parent runtime that launched
+      // the subagent so active reflection/task state does not bleed across
+      // other agent/conversation tabs.
+      if (!a.parentAgentId || a.parentAgentId !== runtimeScope.agent_id) {
+        return false;
+      }
+      const parentConversationId = a.parentConversationId ?? "default";
+      return parentConversationId === runtimeScope.conversation_id;
     })
     .map((a) => ({
       subagent_id: a.id,
@@ -558,6 +592,8 @@ export function buildSubagentSnapshot(): SubagentSnapshot[] {
       is_background: a.isBackground,
       silent: a.silent,
       tool_call_id: a.toolCallId,
+      parent_agent_id: a.parentAgentId,
+      parent_conversation_id: a.parentConversationId,
       start_time: a.startTime,
       tool_calls: a.toolCalls,
       total_tokens: a.totalTokens,
@@ -579,7 +615,7 @@ export function emitSubagentStateUpdate(
     "runtime" | "event_seq" | "emitted_at" | "idempotency_key"
   > = {
     type: "update_subagent_state",
-    subagents: buildSubagentSnapshot(),
+    subagents: buildSubagentSnapshot(runtime, scope),
   };
   emitProtocolV2Message(socket, runtime, message, scope);
 }

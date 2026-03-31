@@ -335,6 +335,8 @@ export interface SubagentSnapshot {
   is_background?: boolean;
   silent?: boolean;
   tool_call_id?: string;
+  parent_agent_id?: string;
+  parent_conversation_id?: string;
   start_time: number;
   tool_calls: SubagentSnapshotToolCall[];
   total_tokens: number;
