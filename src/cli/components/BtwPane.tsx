@@ -1,5 +1,5 @@
-import { Box, Text } from "ink";
-import { memo, useEffect } from "react";
+import { Box, Text, useInput } from "ink";
+import { memo } from "react";
 
 export type BtwState = {
   status: "idle" | "forking" | "streaming" | "complete" | "error";
@@ -21,34 +21,19 @@ type BtwPaneProps = {
  */
 export const BtwPane = memo(
   ({ state, onJumpToConversation, onDismiss }: BtwPaneProps) => {
-    // Handle keyboard input for jump/dismiss (must be before early return)
-    useEffect(() => {
-      if (state.status !== "complete") return;
+    // Handle keyboard input for jump/dismiss using Ink's useInput
+    useInput(
+      (input, key) => {
+        if (state.status !== "complete") return;
 
-      const handleKey = (data: Buffer) => {
-        const key = data.toString();
-        if (
-          (key === "j" || key === "J") &&
-          state.forkedConversationId &&
-          onJumpToConversation
-        ) {
+        if (input === "j" && state.forkedConversationId && onJumpToConversation) {
           onJumpToConversation(state.forkedConversationId);
-        } else if (key === "\x1b" || key === "q" || key === "Q") {
-          // escape or q
+        } else if (key.escape || input === "q") {
           onDismiss?.();
         }
-      };
-
-      process.stdin.on("data", handleKey);
-      return () => {
-        process.stdin.off("data", handleKey);
-      };
-    }, [
-      state.status,
-      state.forkedConversationId,
-      onJumpToConversation,
-      onDismiss,
-    ]);
+      },
+      { isActive: state.status === "complete" },
+    );
 
     if (state.status === "idle") {
       return null;
