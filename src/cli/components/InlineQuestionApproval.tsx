@@ -444,16 +444,22 @@ export const InlineQuestionApproval = memo(
                           ? draftInput.cursorPos
                           : customInput.cursorPos;
 
-                        return textValue ? (
-                          <Text wrap="wrap">
-                            {textValue.slice(0, textCursor)}
-                            {isSelected && "█"}
-                            {textValue.slice(textCursor)}
-                          </Text>
-                        ) : (
+                        if (textValue) {
+                          const display = isSelected
+                            ? `${textValue.slice(0, textCursor)}█${textValue.slice(textCursor)}`
+                            : textValue;
+                          return <Text wrap="wrap">{display}</Text>;
+                        }
+
+                        const emptyDisplay = isDraftOption
+                          ? `${initialDraft}${isSelected ? "█" : ""}`
+                          : isSelected
+                            ? "█"
+                            : "";
+
+                        return (
                           <Text wrap="wrap" dimColor>
-                            {isDraftOption ? initialDraft : ""}
-                            {isSelected && "█"}
+                            {emptyDisplay}
                           </Text>
                         );
                       })()
