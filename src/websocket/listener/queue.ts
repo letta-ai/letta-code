@@ -216,15 +216,7 @@ function buildQueuedTurnMessage(
 
     const mergedContent = mergeDequeuedBatchContent(batch.items);
     if (mergedContent === null) {
-      // Notification-only batch: preserve dequeue lifecycle and outbound
-      // synthetic display emission, but do not produce model input.
-      const scopeItem = batch.items[0];
-      return {
-        type: "message",
-        agentId: scopeItem?.agentId ?? runtime.agentId ?? undefined,
-        conversationId: scopeItem?.conversationId ?? runtime.conversationId,
-        messages: [],
-      };
+      return null;
     }
 
     // Determine scope from the batch items (they all share the same scope)
@@ -395,8 +387,9 @@ async function drainQueuedMessages(
 
       emitDequeuedUserMessage(socket, runtime, queuedTurn, dequeuedBatch);
 
-      // task_notification items are display-only in listener mode:
-      // keep queue lifecycle + transcript event, skip model execution.
+      // Notification-only batches: emit to frontend for display, skip
+      // model execution. The agent doesn't need the notification text —
+      // the system prompt was already recompiled with updated memories.
       const isNotificationOnlyBatch =
         dequeuedBatch.items.length > 0 &&
         dequeuedBatch.items.every((item) => item.kind === "task_notification");
