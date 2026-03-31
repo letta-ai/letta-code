@@ -84,7 +84,7 @@ export const BtwPane = memo(
         )}
 
         {state.status === "streaming" && (
-          <Text dimColor> Streaming response...</Text>
+          <Text dimColor> Side questing...</Text>
         )}
 
         {/* Response content */}
