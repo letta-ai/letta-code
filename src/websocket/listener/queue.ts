@@ -68,6 +68,10 @@ function mergeDequeuedBatchContent(
   const queuedInputs: Array<
     | { kind: "user"; content: MessageCreate["content"] }
     | {
+        kind: "task_notification";
+        text: string;
+      }
+    | {
         kind: "cron_prompt";
         text: string;
       }
@@ -78,6 +82,13 @@ function mergeDequeuedBatchContent(
       queuedInputs.push({
         kind: "user",
         content: item.content,
+      });
+      continue;
+    }
+    if (item.kind === "task_notification") {
+      queuedInputs.push({
+        kind: "task_notification",
+        text: item.text,
       });
       continue;
     }
