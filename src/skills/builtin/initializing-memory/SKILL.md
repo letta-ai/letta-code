@@ -86,9 +86,7 @@ This is an example — **not a template to fill in**. Derive your structure from
 
 ```
 system/
-├── human/
-│   ├── identity.md               # Who the user is
-│   └── preferences.md            # Communication style, workflow prefs (branch naming, pkg manager, etc.)
+├── human.md                        # Who the user is, communication style, workflow prefs
 ├── persona.md                      # Agent's role, identity, and behavioral rules
 └── letta-code/                     # Named after the project, NOT generic "project/"
     ├── overview.md               # Compact index: what it is, stack, key links
@@ -136,8 +134,7 @@ Use AskUserQuestion to gather key information. Bundle questions together:
 
 ### 5. Seed identity early
 Before diving into project research, update human and persona files based on git identity and upfront answers:
-- `system/human/identity.md`: User identity from git (name, email, GitHub handle, role)
-- `system/human/preferences.md`: Communication style, workflow prefs (branch naming convention, package manager, commit style, etc.)
+- `system/human.md`: User identity from git (name, email, GitHub handle, role), communication style, workflow prefs (branch naming convention, package manager, commit style, etc.)
 - `system/persona.md`: Your role, behavioral rules they expressed, and a **continuity anchor** — note when you were initialized and for what project. Don't just write "I'm a coding assistant" — give yourself a nascent identity that reflects what you've learned about the user's expectations. This will grow over time.
 
 Don't wait until the end — write early and refine as you go.
@@ -170,7 +167,7 @@ Before finishing, review your work:
 - **Discovery paths**: Are key memory files linked so related context can be discovered quickly?
 - **Project naming**: Are project dirs named after the actual project (e.g., `letta-code/`), not generic `project/`? Same for reference files.
 - **Signal density**: Is everything in `system/` truly needed every turn?
-- **Completeness**: Did you update human (identity + preferences), persona, AND project files?
+- **Completeness**: Did you update human, persona, AND project files?
 - **Identity**: Does the persona have a continuity anchor and reflect the user's expectations? Is it more than "I'm a coding assistant"?
 - **Human preferences**: Are workflow preferences (branch naming, package manager, commit style) captured in `system/human/preferences.md`, not buried in project conventions?
 
