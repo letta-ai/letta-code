@@ -1462,7 +1462,28 @@ export async function handleHeadlessCommand(
   // Clear any pending approvals before starting a new turn - ONLY when resuming (LET-7101)
   // For new agents/conversations, lazy recovery handles any edge cases
   if (isResumingAgent) {
-    await resolveAllPendingApprovals();
+    try {
+      await resolveAllPendingApprovals();
+    } catch (approvalError) {
+      // Don't crash on pre-loop approval resolution (e.g., 409 from server-side
+      // sleeptime run holding the conversation lock). The main loop's own
+      // approval-recovery and conversation-busy retry logic will handle it.
+      if (outputFormat === "stream-json") {
+        const errorMsg: ErrorMessage = {
+          type: "error",
+          message: `Failed to resolve pending approvals on resume: ${approvalError instanceof Error ? approvalError.message : String(approvalError)}`,
+          stop_reason: "error",
+          session_id: sessionId,
+          uuid: `error-pre-loop-approval-${randomUUID()}`,
+        };
+        console.log(JSON.stringify(errorMsg));
+      } else {
+        console.error(
+          `Warning: Failed to resolve pending approvals on resume: ${approvalError instanceof Error ? approvalError.message : String(approvalError)}`,
+        );
+      }
+      // Continue to main loop — lazy recovery will handle stale approvals
+    }
   }
 
   // Build message content with reminders
