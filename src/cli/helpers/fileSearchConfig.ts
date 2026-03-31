@@ -36,16 +36,19 @@ function buildConfig(cwd: string): CwdConfig {
 }
 
 /**
- * Returns the compiled matchers for the current working directory.
- * Builds and caches on first access per cwd; returns cached result thereafter.
+ * Returns the compiled matchers for the given root directory.
+ * Builds and caches on first access per root; returns cached result thereafter.
+ *
+ * @param root - Workspace directory to load ignore patterns from (reads `<root>/.letta/.lettaignore`).
+ *               Defaults to `process.cwd()`.
  */
-function getConfig(): CwdConfig {
-  const cwd = process.cwd();
-  const cached = cwdConfigCache.get(cwd);
+function getConfig(root?: string): CwdConfig {
+  const dir = root ?? process.cwd();
+  const cached = cwdConfigCache.get(dir);
   if (cached) return cached;
 
-  const config = buildConfig(cwd);
-  cwdConfigCache.set(cwd, config);
+  const config = buildConfig(dir);
+  cwdConfigCache.set(dir, config);
   return config;
 }
 
@@ -73,14 +76,17 @@ export function invalidateFileSearchConfig(cwd: string = process.cwd()): void {
  * shouldHardExcludeEntry() which matches against entry names only.
  *
  * @param name         - The entry's basename (e.g. "node_modules", ".env")
- * @param relativePath - Optional path relative to cwd (e.g. "src/generated/foo.ts").
+ * @param relativePath - Optional path relative to root (e.g. "src/generated/foo.ts").
  *                       Required for path-based .lettaignore patterns to work.
+ * @param root         - Project root directory (reads `<root>/.letta/.lettaignore`).
+ *                       Defaults to `process.cwd()`.
  */
 export function shouldExcludeEntry(
   name: string,
   relativePath?: string,
+  root?: string,
 ): boolean {
-  const { nameMatchers, pathMatchers } = getConfig();
+  const { nameMatchers, pathMatchers } = getConfig(root);
 
   // Name-based .lettaignore patterns (e.g. *.log, vendor)
   if (nameMatchers.length > 0 && nameMatchers.some((m) => m(name))) return true;
@@ -102,8 +108,10 @@ export function shouldExcludeEntry(
  * the entry name is available during a shallow disk scan).
  *
  * @param name - The entry's basename (e.g. "node_modules", "dist")
+ * @param root - Project root directory (reads `<root>/.letta/.lettaignore`).
+ *               Defaults to `process.cwd()`.
  */
-export function shouldHardExcludeEntry(name: string): boolean {
-  const { nameMatchers } = getConfig();
+export function shouldHardExcludeEntry(name: string, root?: string): boolean {
+  const { nameMatchers } = getConfig(root);
   return nameMatchers.length > 0 && nameMatchers.some((m) => m(name));
 }

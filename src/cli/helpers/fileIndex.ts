@@ -460,7 +460,7 @@ async function buildDirectory(
   for (const entry of dirEntries) {
     const entryRelPath =
       relativePath === "" ? entry : `${relativePath}/${entry}`;
-    if (shouldExcludeEntry(entry, entryRelPath)) {
+    if (shouldExcludeEntry(entry, entryRelPath, indexRoot)) {
       continue;
     }
 
@@ -757,7 +757,7 @@ function loadCachedIndex(): FileIndexCache | null {
 function cacheProjectIndex(result: FileIndexBuildResult): void {
   // Don't cache when running from home directory - it's too large and would
   // cause OOM on next load. The in-memory cache still works for this session.
-  if (process.cwd() === homedir()) {
+  if (indexRoot === homedir()) {
     return;
   }
 
