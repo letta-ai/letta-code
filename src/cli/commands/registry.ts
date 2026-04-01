@@ -483,6 +483,17 @@ export const commands: Record<string, Command> = {
     },
   },
 
+  // === Fun stuff (order 45) ===
+  "/empanada": {
+    desc: "Order empanadas from Empanada Empire",
+    order: 44.5,
+    args: "[address]",
+    handler: () => {
+      // Handled specially in App.tsx
+      return "Checking Empanada Empire...";
+    },
+  },
+
   // === Ralph Wiggum mode (order 45-46) ===
   "/ralph": {
     desc: 'Start Ralph Wiggum loop (/ralph [prompt] [--completion-promise "X"] [--max-iterations N])',
