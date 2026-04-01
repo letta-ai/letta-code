@@ -12,7 +12,7 @@ import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/mes
 import WebSocket from "ws";
 import { getAvailableModelHandles } from "../../agent/available-models";
 import { getClient } from "../../agent/client";
-import { getModelInfo, models } from "../../agent/model";
+import { getModelInfo, models, resolveModel } from "../../agent/model";
 import {
   updateAgentLLMConfig,
   updateConversationLLMConfig,
@@ -71,12 +71,14 @@ import type {
   AbortMessageCommand,
   ApprovalResponseBody,
   ChangeDeviceStateCommand,
+  CreateAgentCommand,
   CronAddCommand,
   CronDeleteAllCommand,
   CronDeleteCommand,
   CronGetCommand,
   CronListCommand,
   GetReflectionSettingsCommand,
+  ListAgentsCommand,
   ListModelsResponseMessage,
   ListModelsResponseModelEntry,
   ReflectionSettingsScope,
@@ -129,6 +131,7 @@ import {
 } from "./permissionMode";
 import {
   isCheckoutBranchCommand,
+  isCreateAgentCommand,
   isCronAddCommand,
   isCronDeleteAllCommand,
   isCronDeleteCommand,
@@ -138,6 +141,7 @@ import {
   isEnableMemfsCommand,
   isExecuteCommandCommand,
   isGetReflectionSettingsCommand,
+  isListAgentsCommand,
   isListInDirectoryCommand,
   isListMemoryCommand,
   isListModelsCommand,
@@ -965,6 +969,107 @@ async function handleSkillCommand(
   }
 
   return false;
+}
+
+async function handleCreateAgentCommand(
+  parsed: CreateAgentCommand,
+  socket: WebSocket,
+): Promise<void> {
+  try {
+    // Pre-validate model to avoid process.exit(1) in createAgent()
+    if (parsed.model) {
+      const resolved = resolveModel(parsed.model);
+      if (!resolved) {
+        socket.send(
+          JSON.stringify({
+            type: "create_agent_response",
+            request_id: parsed.request_id,
+            success: false,
+            error: `Unknown model "${parsed.model}"`,
+          }),
+        );
+        return;
+      }
+    }
+
+    const { createAgent } = await import("../../agent/create");
+    const result = await createAgent({
+      name: parsed.name,
+      description: parsed.description,
+      model: parsed.model,
+    });
+
+    // Pin the agent globally (favorites it) unless explicitly disabled
+    if (parsed.pin_global !== false) {
+      settingsManager.pinGlobal(result.agent.id);
+    }
+
+    socket.send(
+      JSON.stringify({
+        type: "create_agent_response",
+        request_id: parsed.request_id,
+        success: true,
+        agent_id: result.agent.id,
+        name: result.agent.name,
+        model: result.agent.model ?? null,
+      }),
+    );
+  } catch (err) {
+    socket.send(
+      JSON.stringify({
+        type: "create_agent_response",
+        request_id: parsed.request_id,
+        success: false,
+        error: err instanceof Error ? err.message : "Failed to create agent",
+      }),
+    );
+  }
+}
+
+async function handleListAgentsCommand(
+  parsed: ListAgentsCommand,
+  socket: WebSocket,
+): Promise<void> {
+  try {
+    const client = await getClient();
+    const params: Record<string, unknown> = {
+      limit: parsed.limit ?? 50,
+    };
+    if (parsed.tags && parsed.tags.length > 0) {
+      params.tags = parsed.tags;
+      if (parsed.match_all_tags) {
+        params.match_all_tags = true;
+      }
+    }
+
+    const page = await client.agents.list(params);
+
+    socket.send(
+      JSON.stringify({
+        type: "list_agents_response",
+        request_id: parsed.request_id,
+        success: true,
+        agents: page.items.map((a) => ({
+          agent_id: a.id,
+          name: a.name,
+          description: a.description ?? null,
+          model: a.model ?? "unknown",
+          created_at: a.created_at ?? null,
+          tags: a.tags ?? [],
+        })),
+      }),
+    );
+  } catch (err) {
+    socket.send(
+      JSON.stringify({
+        type: "list_agents_response",
+        request_id: parsed.request_id,
+        success: false,
+        agents: [],
+        error: err instanceof Error ? err.message : "Failed to list agents",
+      }),
+    );
+  }
 }
 
 function toReflectionSettingsResponse(
@@ -2705,6 +2810,17 @@ async function connectWithRetry(
       return;
     }
 
+    // ── Agent management commands (no runtime scope required) ─────────
+    if (isCreateAgentCommand(parsed)) {
+      void handleCreateAgentCommand(parsed, socket);
+      return;
+    }
+
+    if (isListAgentsCommand(parsed)) {
+      void handleListAgentsCommand(parsed, socket);
+      return;
+    }
+
     if (
       isGetReflectionSettingsCommand(parsed) ||
       isSetReflectionSettingsCommand(parsed)
@@ -3297,6 +3413,8 @@ export const __listenClientTestUtils = {
   handleChangeDeviceStateInput,
   handleCronCommand,
   handleSkillCommand,
+  handleCreateAgentCommand,
+  handleListAgentsCommand,
   handleReflectionSettingsCommand,
   scheduleQueuePump,
   recoverApprovalStateForSync,

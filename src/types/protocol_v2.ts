@@ -660,6 +660,32 @@ export interface SkillDisableCommand {
   name: string;
 }
 
+export interface CreateAgentCommand {
+  type: "create_agent";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  /** Agent name. Defaults to "Letta Code" if omitted. */
+  name?: string;
+  /** Agent description. */
+  description?: string;
+  /** Model identifier (e.g. "sonnet", "gpt-4o"). Uses default if omitted. */
+  model?: string;
+  /** Whether to pin the agent globally after creation. Defaults to true. */
+  pin_global?: boolean;
+}
+
+export interface ListAgentsCommand {
+  type: "list_agents";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  /** Filter by tags (e.g. ["origin:letta-code"]). */
+  tags?: string[];
+  /** Whether all tags must match (AND) vs any (OR). Defaults to false (OR). */
+  match_all_tags?: boolean;
+  /** Max number of agents to return. Defaults to 50. */
+  limit?: number;
+}
+
 export interface GetReflectionSettingsCommand {
   type: "get_reflection_settings";
   /** Echoed back in the response for request correlation. */
@@ -727,6 +753,33 @@ export interface CronsUpdatedMessage {
   timestamp: number;
   agent_id?: string;
   conversation_id?: string | null;
+}
+
+export interface CreateAgentResponseMessage {
+  type: "create_agent_response";
+  request_id: string;
+  success: boolean;
+  agent_id?: string;
+  name?: string;
+  model?: string;
+  error?: string;
+}
+
+export interface ListAgentsResponseAgentEntry {
+  agent_id: string;
+  name: string;
+  description: string | null;
+  model: string;
+  created_at: string | null;
+  tags: string[];
+}
+
+export interface ListAgentsResponseMessage {
+  type: "list_agents_response";
+  request_id: string;
+  success: boolean;
+  agents: ListAgentsResponseAgentEntry[];
+  error?: string;
 }
 
 export interface GetReflectionSettingsResponseMessage {
@@ -837,6 +890,8 @@ export type WsProtocolCommand =
   | CronDeleteAllCommand
   | SkillEnableCommand
   | SkillDisableCommand
+  | CreateAgentCommand
+  | ListAgentsCommand
   | GetReflectionSettingsCommand
   | SetReflectionSettingsCommand
   | ExecuteCommandCommand

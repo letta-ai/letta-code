@@ -3,6 +3,7 @@ import type {
   AbortMessageCommand,
   ChangeDeviceStateCommand,
   CheckoutBranchCommand,
+  CreateAgentCommand,
   CronAddCommand,
   CronDeleteAllCommand,
   CronDeleteCommand,
@@ -13,6 +14,7 @@ import type {
   ExecuteCommandCommand,
   GetReflectionSettingsCommand,
   InputCommand,
+  ListAgentsCommand,
   ListInDirectoryCommand,
   ListMemoryCommand,
   ListModelsCommand,
@@ -539,6 +541,50 @@ export function isSkillDisableCommand(
   );
 }
 
+export function isCreateAgentCommand(
+  value: unknown,
+): value is CreateAgentCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    name?: unknown;
+    description?: unknown;
+    model?: unknown;
+    pin_global?: unknown;
+  };
+  return (
+    c.type === "create_agent" &&
+    typeof c.request_id === "string" &&
+    (c.name === undefined || typeof c.name === "string") &&
+    (c.description === undefined || typeof c.description === "string") &&
+    (c.model === undefined || typeof c.model === "string") &&
+    (c.pin_global === undefined || typeof c.pin_global === "boolean")
+  );
+}
+
+export function isListAgentsCommand(
+  value: unknown,
+): value is ListAgentsCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    tags?: unknown;
+    match_all_tags?: unknown;
+    limit?: unknown;
+  };
+  return (
+    c.type === "list_agents" &&
+    typeof c.request_id === "string" &&
+    (c.tags === undefined ||
+      (Array.isArray(c.tags) &&
+        c.tags.every((t: unknown) => typeof t === "string"))) &&
+    (c.match_all_tags === undefined || typeof c.match_all_tags === "boolean") &&
+    (c.limit === undefined || (typeof c.limit === "number" && c.limit > 0))
+  );
+}
+
 export function isGetReflectionSettingsCommand(
   value: unknown,
 ): value is GetReflectionSettingsCommand {
@@ -674,6 +720,8 @@ export function parseServerMessage(
       isCronDeleteAllCommand(parsed) ||
       isSkillEnableCommand(parsed) ||
       isSkillDisableCommand(parsed) ||
+      isCreateAgentCommand(parsed) ||
+      isListAgentsCommand(parsed) ||
       isGetReflectionSettingsCommand(parsed) ||
       isSetReflectionSettingsCommand(parsed) ||
       isExecuteCommandCommand(parsed) ||
