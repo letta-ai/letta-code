@@ -14,7 +14,7 @@ import type {
   ExecuteCommandCommand,
   GetReflectionSettingsCommand,
   InputCommand,
-  ListAgentsCommand,
+  ListDefaultAgentsCommand,
   ListInDirectoryCommand,
   ListMemoryCommand,
   ListModelsCommand,
@@ -563,26 +563,15 @@ export function isCreateAgentCommand(
   );
 }
 
-export function isListAgentsCommand(
+export function isListDefaultAgentsCommand(
   value: unknown,
-): value is ListAgentsCommand {
+): value is ListDefaultAgentsCommand {
   if (!value || typeof value !== "object") return false;
   const c = value as {
     type?: unknown;
     request_id?: unknown;
-    tags?: unknown;
-    match_all_tags?: unknown;
-    limit?: unknown;
   };
-  return (
-    c.type === "list_agents" &&
-    typeof c.request_id === "string" &&
-    (c.tags === undefined ||
-      (Array.isArray(c.tags) &&
-        c.tags.every((t: unknown) => typeof t === "string"))) &&
-    (c.match_all_tags === undefined || typeof c.match_all_tags === "boolean") &&
-    (c.limit === undefined || (typeof c.limit === "number" && c.limit > 0))
-  );
+  return c.type === "list_default_agents" && typeof c.request_id === "string";
 }
 
 export function isGetReflectionSettingsCommand(
@@ -721,7 +710,7 @@ export function parseServerMessage(
       isSkillEnableCommand(parsed) ||
       isSkillDisableCommand(parsed) ||
       isCreateAgentCommand(parsed) ||
-      isListAgentsCommand(parsed) ||
+      isListDefaultAgentsCommand(parsed) ||
       isGetReflectionSettingsCommand(parsed) ||
       isSetReflectionSettingsCommand(parsed) ||
       isExecuteCommandCommand(parsed) ||

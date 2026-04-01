@@ -78,7 +78,7 @@ import type {
   CronGetCommand,
   CronListCommand,
   GetReflectionSettingsCommand,
-  ListAgentsCommand,
+  ListDefaultAgentsCommand,
   ListModelsResponseMessage,
   ListModelsResponseModelEntry,
   ReflectionSettingsScope,
@@ -141,7 +141,7 @@ import {
   isEnableMemfsCommand,
   isExecuteCommandCommand,
   isGetReflectionSettingsCommand,
-  isListAgentsCommand,
+  isListDefaultAgentsCommand,
   isListInDirectoryCommand,
   isListMemoryCommand,
   isListModelsCommand,
@@ -1026,50 +1026,31 @@ async function handleCreateAgentCommand(
   }
 }
 
-async function handleListAgentsCommand(
-  parsed: ListAgentsCommand,
+async function handleListDefaultAgentsCommand(
+  parsed: ListDefaultAgentsCommand,
   socket: WebSocket,
 ): Promise<void> {
-  try {
-    const client = await getClient();
-    const params: Record<string, unknown> = {
-      limit: parsed.limit ?? 50,
-    };
-    if (parsed.tags && parsed.tags.length > 0) {
-      params.tags = parsed.tags;
-      if (parsed.match_all_tags) {
-        params.match_all_tags = true;
-      }
-    }
+  const { DEFAULT_AGENT_CONFIGS, MEMO_TAG, INCOGNITO_TAG } = await import(
+    "../../agent/defaults"
+  );
+  const tagMap: Record<string, string> = {
+    memo: MEMO_TAG,
+    incognito: INCOGNITO_TAG,
+  };
 
-    const page = await client.agents.list(params);
-
-    socket.send(
-      JSON.stringify({
-        type: "list_agents_response",
-        request_id: parsed.request_id,
-        success: true,
-        agents: page.items.map((a) => ({
-          agent_id: a.id,
-          name: a.name,
-          description: a.description ?? null,
-          model: a.model ?? "unknown",
-          created_at: a.created_at ?? null,
-          tags: a.tags ?? [],
-        })),
-      }),
-    );
-  } catch (err) {
-    socket.send(
-      JSON.stringify({
-        type: "list_agents_response",
-        request_id: parsed.request_id,
-        success: false,
-        agents: [],
-        error: err instanceof Error ? err.message : "Failed to list agents",
-      }),
-    );
-  }
+  socket.send(
+    JSON.stringify({
+      type: "list_default_agents_response",
+      request_id: parsed.request_id,
+      success: true,
+      agents: Object.entries(DEFAULT_AGENT_CONFIGS).map(([id, config]) => ({
+        id,
+        name: (config as { name?: string }).name ?? id,
+        description: (config as { description?: string }).description ?? "",
+        tag: tagMap[id] ?? `default:${id}`,
+      })),
+    }),
+  );
 }
 
 function toReflectionSettingsResponse(
@@ -2816,8 +2797,8 @@ async function connectWithRetry(
       return;
     }
 
-    if (isListAgentsCommand(parsed)) {
-      void handleListAgentsCommand(parsed, socket);
+    if (isListDefaultAgentsCommand(parsed)) {
+      void handleListDefaultAgentsCommand(parsed, socket);
       return;
     }
 
@@ -3414,7 +3395,7 @@ export const __listenClientTestUtils = {
   handleCronCommand,
   handleSkillCommand,
   handleCreateAgentCommand,
-  handleListAgentsCommand,
+  handleListDefaultAgentsCommand,
   handleReflectionSettingsCommand,
   scheduleQueuePump,
   recoverApprovalStateForSync,

@@ -387,56 +387,24 @@ describe("listen-client parseServerMessage", () => {
     expect(badPinGlobal).toBeNull();
   });
 
-  test("parses list_agents command", () => {
-    const minimal = parseServerMessage(
+  test("parses list_default_agents command", () => {
+    const parsed = parseServerMessage(
       Buffer.from(
         JSON.stringify({
-          type: "list_agents",
-          request_id: "list-1",
-        }),
-      ),
-    );
-    const withTags = parseServerMessage(
-      Buffer.from(
-        JSON.stringify({
-          type: "list_agents",
-          request_id: "list-2",
-          tags: ["origin:letta-code"],
-          match_all_tags: true,
-          limit: 10,
+          type: "list_default_agents",
+          request_id: "list-defaults-1",
         }),
       ),
     );
 
-    expect(minimal?.type).toBe("list_agents");
-    expect(withTags?.type).toBe("list_agents");
+    expect(parsed?.type).toBe("list_default_agents");
   });
 
-  test("rejects malformed list_agents command", () => {
+  test("rejects malformed list_default_agents command", () => {
     const noRequestId = parseServerMessage(
-      Buffer.from(JSON.stringify({ type: "list_agents" })),
-    );
-    const badTags = parseServerMessage(
-      Buffer.from(
-        JSON.stringify({
-          type: "list_agents",
-          request_id: "list-bad",
-          tags: [123],
-        }),
-      ),
-    );
-    const badLimit = parseServerMessage(
-      Buffer.from(
-        JSON.stringify({
-          type: "list_agents",
-          request_id: "list-bad-2",
-          limit: -1,
-        }),
-      ),
+      Buffer.from(JSON.stringify({ type: "list_default_agents" })),
     );
     expect(noRequestId).toBeNull();
-    expect(badTags).toBeNull();
-    expect(badLimit).toBeNull();
   });
 
   test("parses reflection settings commands", () => {
