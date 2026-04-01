@@ -330,6 +330,23 @@ export async function debugLogApprovalResumeState(
   }
 }
 
+function buildRecoveredAutoDecisions(
+  autoAllowed: Awaited<ReturnType<typeof classifyApprovals>>["autoAllowed"],
+  autoDenied: Awaited<ReturnType<typeof classifyApprovals>>["autoDenied"],
+): ApprovalDecision[] {
+  return [
+    ...autoAllowed.map((ac) => ({
+      type: "approve" as const,
+      approval: ac.approval,
+    })),
+    ...autoDenied.map((ac) => ({
+      type: "deny" as const,
+      approval: ac.approval,
+      reason: ac.denyReason || ac.permission.reason || "Permission denied",
+    })),
+  ];
+}
+
 export async function recoverApprovalStateForSync(
   runtime: ConversationRuntime,
   scope: { agent_id: string; conversation_id: string },
@@ -398,17 +415,21 @@ export async function recoverApprovalStateForSync(
     scope.agent_id,
     scope.conversation_id,
   );
-  const { needsUserInput } = await classifyApprovals(pendingApprovals, {
-    alwaysRequiresUserInput: isInteractiveApprovalTool,
-    requireArgsForAutoApprove: true,
-    missingNameReason: "Tool call incomplete - missing name",
-    workingDirectory,
-    permissionModeState: getOrCreateConversationPermissionModeStateRef(
-      runtime.listener,
-      scope.agent_id,
-      scope.conversation_id,
-    ),
-  });
+  const { needsUserInput, autoAllowed, autoDenied } = await classifyApprovals(
+    pendingApprovals,
+    {
+      alwaysRequiresUserInput: isInteractiveApprovalTool,
+      requireArgsForAutoApprove: true,
+      missingNameReason: "Tool call incomplete - missing name",
+      workingDirectory,
+      permissionModeState: getOrCreateConversationPermissionModeStateRef(
+        runtime.listener,
+        scope.agent_id,
+        scope.conversation_id,
+      ),
+    },
+  );
+  const autoDecisions = buildRecoveredAutoDecisions(autoAllowed, autoDenied);
 
   if (needsUserInput.length === 0) {
     clearRecoveredApprovalState(runtime);
@@ -454,6 +475,8 @@ export async function recoverApprovalStateForSync(
     approvalsByRequestId,
     pendingRequestIds: new Set(approvalsByRequestId.keys()),
     responsesByRequestId: new Map(),
+    autoDecisions,
+    allApprovals: pendingApprovals,
   };
 }
 
@@ -501,7 +524,7 @@ export async function resolveRecoveredApprovalResponse(
     return true;
   }
 
-  const decisions: ApprovalDecision[] = [];
+  const decisions: ApprovalDecision[] = [...(recovered.autoDecisions ?? [])];
   for (const [id, entry] of recovered.approvalsByRequestId) {
     const approvalResponse = recovered.responsesByRequestId.get(id);
     if (!approvalResponse) {

@@ -531,9 +531,9 @@ export function stashRecoveredApprovalInterrupts(
   runtime: ConversationRuntime,
   recovered: RecoveredApprovalState,
 ): boolean {
-  const approvals = [...recovered.approvalsByRequestId.values()].map(
-    (entry) => entry.approval,
-  );
+  const approvals =
+    recovered.allApprovals ??
+    [...recovered.approvalsByRequestId.values()].map((entry) => entry.approval);
   if (approvals.length === 0) {
     clearRecoveredApprovalState(runtime);
     return false;

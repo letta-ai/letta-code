@@ -13116,6 +13116,12 @@ ${SYSTEM_REMINDER_CLOSE}
                 resetContextHistory(contextTrackerRef.current);
                 resetBootstrapReminderState();
 
+                if (resumeData.pendingApprovals.length > 0) {
+                  await recoverRestoredPendingApprovals(
+                    resumeData.pendingApprovals,
+                  );
+                }
+
                 cmd.finish(
                   `Switched to conversation (${resumeData.messageHistory.length} messages)`,
                   true,
@@ -13159,6 +13165,7 @@ ${SYSTEM_REMINDER_CLOSE}
     setCommandRunning,
     commandRunner.getHandle,
     commandRunner.start,
+    recoverRestoredPendingApprovals,
     resetBootstrapReminderState,
   ]);
 

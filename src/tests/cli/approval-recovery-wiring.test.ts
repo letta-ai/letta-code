@@ -81,5 +81,22 @@ describe("approval recovery wiring", () => {
     expect(source).not.toContain(
       "setPendingApprovals(resumeData.pendingApprovals);",
     );
+
+    const queuedSwitchStart = source.indexOf(
+      'if (action.type === "switch_conversation")',
+    );
+    const queuedSwitchEnd = source.indexOf(
+      '} else if (action.type === "switch_toolset")',
+    );
+    expect(queuedSwitchStart).toBeGreaterThan(-1);
+    expect(queuedSwitchEnd).toBeGreaterThan(queuedSwitchStart);
+
+    const queuedSwitchSegment = source.slice(
+      queuedSwitchStart,
+      queuedSwitchEnd,
+    );
+    expect(queuedSwitchSegment).toContain(
+      "await recoverRestoredPendingApprovals(",
+    );
   });
 });

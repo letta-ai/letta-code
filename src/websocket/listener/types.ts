@@ -1,7 +1,10 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import type WebSocket from "ws";
-import type { ApprovalResult } from "../../agent/approval-execution";
+import type {
+  ApprovalDecision,
+  ApprovalResult,
+} from "../../agent/approval-execution";
 import type { ContextTracker } from "../../cli/helpers/contextTracker";
 import type { ApprovalRequest } from "../../cli/helpers/stream";
 import type {
@@ -95,6 +98,8 @@ export type RecoveredApprovalState = {
   approvalsByRequestId: Map<string, RecoveredPendingApproval>;
   pendingRequestIds: Set<string>;
   responsesByRequestId: Map<string, ApprovalResponseBody>;
+  autoDecisions?: ApprovalDecision[];
+  allApprovals?: ApprovalRequest[];
 };
 
 export type ConversationRuntime = {

@@ -1627,7 +1627,10 @@ describe("listen-client v2 status builders", () => {
     const source = readFileSync(recoveryPath, "utf-8");
 
     expect(source).toContain(
-      "const { needsUserInput } = await classifyApprovals(",
+      "const { needsUserInput, autoAllowed, autoDenied } = await classifyApprovals(",
+    );
+    expect(source).toContain(
+      "const autoDecisions = buildRecoveredAutoDecisions(autoAllowed, autoDenied);",
     );
     expect(source).toContain("if (needsUserInput.length === 0) {");
     expect(source).toContain("needsUserInput.map(async (approvalEntry) => {");
