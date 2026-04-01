@@ -28,7 +28,7 @@ git status
 
 # Commit and push your changes
 git add .
-git commit -m "<type>: <what changed>"  # e.g. "fix: update user prefs", "refactor: reorganize persona blocks"
+git commit --author="$AGENT_NAME <$AGENT_ID@letta.com>" -m "<type>: <what changed>"  # e.g. "fix: update user prefs", "refactor: reorganize persona blocks"
 git push
 
 # Get latest from server

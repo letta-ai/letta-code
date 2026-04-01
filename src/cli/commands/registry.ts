@@ -60,9 +60,17 @@ export const commands: Record<string, Command> = {
     },
   },
   "/reflect": {
-    desc: "Launch a background reflection agent to update memory",
+    desc: "Launch reflection (/reflect [transcript_file])",
+    args: "[transcript_file]",
     order: 50,
-    noArgs: true,
+    handler: () => {
+      // Handled specially in App.tsx
+      return "Launching reflection agent...";
+    },
+  },
+  "/reflection": {
+    desc: "Alias for /reflect",
+    args: "[transcript_file]",
     handler: () => {
       // Handled specially in App.tsx
       return "Launching reflection agent...";
@@ -480,17 +488,6 @@ export const commands: Record<string, Command> = {
     handler: () => {
       // Handled specially in App.tsx to access settings manager
       return "Clearing credentials...";
-    },
-  },
-
-  // === Fun stuff (order 45) ===
-  "/empanada": {
-    desc: "Order empanadas from Empanada Empire",
-    order: 44.5,
-    args: "[address]",
-    handler: () => {
-      // Handled specially in App.tsx
-      return "Checking Empanada Empire...";
     },
   },
 
