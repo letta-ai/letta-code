@@ -48,6 +48,7 @@ import { getResumeData } from "../agent/check-approval";
 import { getClient, getServerUrl } from "../agent/client";
 import { getCurrentAgentId, setCurrentAgentId } from "../agent/context";
 import { type AgentProvenance, createAgent } from "../agent/create";
+import { selectDefaultAgentModel } from "../agent/defaults";
 import { getLettaCodeHeaders } from "../agent/http-headers";
 import { ISOLATED_BLOCK_LABELS } from "../agent/memory";
 import {
@@ -6766,9 +6767,31 @@ export default function App({
         );
         const willAutoEnableMemfs = await isLettaCloud();
 
+        let effectiveModel = currentModelId || currentModelHandle || undefined;
+        const isSelfHosted = !getServerUrl().includes("api.letta.com");
+        if (isSelfHosted) {
+          try {
+            const client = await getClient();
+            const availableHandles = (await client.models.list())
+              .map((model) => model.handle)
+              .filter((handle): handle is string => typeof handle === "string");
+            effectiveModel = selectDefaultAgentModel({
+              preferredModel: effectiveModel,
+              isSelfHosted: true,
+              availableHandles,
+            });
+          } catch {
+            effectiveModel = selectDefaultAgentModel({
+              preferredModel: effectiveModel,
+              isSelfHosted: true,
+            });
+          }
+        }
+
         // Create the new agent
         const { agent } = await createAgent({
           name,
+          model: effectiveModel,
           memoryPromptMode: willAutoEnableMemfs ? "memfs" : undefined,
         });
 
@@ -6869,6 +6892,8 @@ export default function App({
     [
       agentId,
       commandRunner,
+      currentModelHandle,
+      currentModelId,
       setCommandRunning,
       resetDeferredToolCallCommits,
       resetTrajectoryBases,
