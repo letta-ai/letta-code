@@ -47,7 +47,7 @@ Appended to the system prompt at build time based on the agent's memory mode. Ex
 
 ## Memory blocks (`.mdx`)
 
-Default values for agent memory blocks. Loaded via `MEMORY_PROMPTS` in `promptAssets.ts`. Each has YAML frontmatter with `label`, `description`, and optional `limit`.
+Default values for agent memory blocks. Loaded via `MEMORY_PROMPTS` in `promptAssets.ts`. Each has YAML frontmatter with `label` and `description`.
 
 | File | Used | Description |
 |------|------|-------------|

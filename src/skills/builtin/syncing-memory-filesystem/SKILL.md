@@ -68,7 +68,7 @@ The harness installs a git pre-commit hook that validates `.md` files under `mem
 
 **Rules:**
 - Every `.md` file must have YAML frontmatter (`---` header and closing `---`)
-- Required fields: `description` (non-empty string), `limit` (positive integer)
+- Required fields: `description` (non-empty string)
 - `read_only` is a **protected field**: you (the agent) cannot add, remove, or change it. Files with `read_only: true` cannot be modified at all. Only the server/user sets this field.
 - Unknown frontmatter keys are rejected
 
@@ -76,7 +76,6 @@ The harness installs a git pre-commit hook that validates `.md` files under `mem
 ```markdown
 ---
 description: What this block contains
-limit: 20000
 ---
 
 Block content goes here.

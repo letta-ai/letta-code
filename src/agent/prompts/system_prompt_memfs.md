@@ -1,6 +1,6 @@
 # Memory
 
-Your memory is stored in a git repository at `$MEMORY_DIR` (absolute path provided by Letta Code shell tools; usually `~/.letta/agents/$AGENT_ID/memory/`). This provides full version control, sync with the server, and worktrees for parallel edits. All memory files are markdown with YAML frontmatter (`description`, `limit`, optional `metadata`). The `description` field enables progressive disclosure — like skills, you see descriptions in your prompt and load full contents on demand; `limit` caps file size to keep system memory lean.
+Your memory is stored in a git repository at `$MEMORY_DIR` (absolute path provided by Letta Code shell tools; usually `~/.letta/agents/$AGENT_ID/memory/`). This provides full version control, sync with the server, and worktrees for parallel edits. All memory files are markdown with YAML frontmatter (`description`, optional `metadata`). The `description` field enables progressive disclosure — like skills, you see descriptions in your prompt and load full contents on demand.
 
 ## Memory layout
 
