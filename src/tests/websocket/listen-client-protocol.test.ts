@@ -430,7 +430,7 @@ describe("listen-client model command helpers", () => {
   test("resolveModelForUpdate preserves explicit model_handle when both model_id and model_handle are present (BYOK tier change)", () => {
     // When LCD sends both fields for a BYOK tier change, the resolver should
     // use model_id for updateArgs/label but keep the explicit model_handle.
-    const byokHandle = "lc-mykey/" + models[0]?.handle;
+    const byokHandle = `lc-mykey/${models[0]?.handle}`;
     const resolved = __listenClientTestUtils.resolveModelForUpdate({
       model_id: models[0]?.id,
       model_handle: byokHandle,
@@ -914,6 +914,7 @@ describe("listen-client approval resolver wiring", () => {
     const pending = new Promise<ApprovalResponseBody>((resolve, reject) => {
       runtime.pendingApprovalResolvers.set("perm-stop", { resolve, reject });
     });
+    const pendingError = pending.catch((error: unknown) => error);
     const socket = new MockSocket(WebSocket.OPEN);
     runtime.socket = socket as unknown as WebSocket;
 
@@ -922,7 +923,9 @@ describe("listen-client approval resolver wiring", () => {
     expect(runtime.pendingApprovalResolvers.size).toBe(0);
     expect(socket.removeAllListenersCalls).toBe(1);
     expect(socket.closeCalls).toBe(1);
-    await expect(pending).rejects.toThrow("Listener runtime stopped");
+    const error = await pendingError;
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain("Listener runtime stopped");
   });
 });
 
@@ -1299,6 +1302,10 @@ describe("listen-client v2 status builders", () => {
         undefined,
         true,
         true,
+        {
+          agentId: "agent-1",
+          conversationId: "default",
+        },
       );
 
       const listener = __listenClientTestUtils.createListenerRuntime();
@@ -1333,6 +1340,64 @@ describe("listen-client v2 status builders", () => {
             silent: true,
           }),
         ],
+      });
+    } finally {
+      clearAllSubagents();
+    }
+  });
+
+  test("sync scopes update_subagent_state to runtime agent and conversation", () => {
+    clearAllSubagents();
+    try {
+      registerSubagent(
+        "subagent-reflection-target",
+        "reflection",
+        "Target scope",
+        undefined,
+        true,
+        true,
+        {
+          agentId: "agent-1",
+          conversationId: "default",
+        },
+      );
+      registerSubagent(
+        "subagent-reflection-other",
+        "reflection",
+        "Other scope",
+        undefined,
+        true,
+        true,
+        {
+          agentId: "agent-2",
+          conversationId: "default",
+        },
+      );
+
+      const listener = __listenClientTestUtils.createListenerRuntime();
+      const runtime = __listenClientTestUtils.getOrCreateScopedRuntime(
+        listener,
+        "agent-1",
+        "default",
+      );
+      const socket = new MockSocket(WebSocket.OPEN);
+
+      __listenClientTestUtils.emitStateSync(
+        socket as unknown as WebSocket,
+        runtime,
+        {
+          agent_id: "agent-1",
+          conversation_id: "default",
+        },
+      );
+
+      const outbound = socket.sentPayloads.map((payload) =>
+        JSON.parse(payload as string),
+      );
+      expect(outbound[3].type).toBe("update_subagent_state");
+      expect(outbound[3].subagents).toHaveLength(1);
+      expect(outbound[3].subagents[0]).toMatchObject({
+        subagent_id: "subagent-reflection-target",
       });
     } finally {
       clearAllSubagents();

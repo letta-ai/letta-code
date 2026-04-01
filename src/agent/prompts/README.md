@@ -52,7 +52,7 @@ Default values for agent memory blocks. Loaded via `MEMORY_PROMPTS` in `promptAs
 | File | Used | Description |
 |------|------|-------------|
 | `persona.mdx` | Default persona for all new agents | Blank-slate "ready to be shaped" |
-| `persona_memo.mdx` | Overrides persona for the default Memo agent | Warm, curious collaborator personality |
+| `persona_memo.mdx` | Overrides persona for the default Letta Code agent | Warm, curious collaborator personality |
 | `persona_kawaii.mdx` | Not wired into any agent creation flow | Kawaii voice persona preset |
 | `human.mdx` | Default human block for all new agents | Placeholder for learning about the user |
 | `project.mdx` | Registered but not loaded into agents | Placeholder for codebase knowledge |

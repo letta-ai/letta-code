@@ -33,6 +33,8 @@ export interface SubagentState {
   toolCallId?: string; // Links this subagent to its parent Task tool call
   isBackground?: boolean; // True if running in background (fire-and-forget)
   silent?: boolean; // True if this subagent should be hidden from SubagentGroupDisplay
+  parentAgentId?: string; // Parent runtime scope agent id (for listener-mode WS scoping)
+  parentConversationId?: string; // Parent runtime scope conversation id
 }
 
 interface SubagentStore {
@@ -112,6 +114,10 @@ export function registerSubagent(
   toolCallId?: string,
   isBackground?: boolean,
   silent?: boolean,
+  parentScope?: {
+    agentId?: string | null;
+    conversationId?: string | null;
+  },
 ): void {
   // Capitalize type for display (explore -> Explore)
   const displayType = type.charAt(0).toUpperCase() + type.slice(1);
@@ -130,6 +136,11 @@ export function registerSubagent(
     toolCallId,
     isBackground,
     silent,
+    parentAgentId: parentScope?.agentId ?? undefined,
+    parentConversationId:
+      parentScope?.conversationId && parentScope.conversationId.length > 0
+        ? parentScope.conversationId
+        : undefined,
   };
 
   store.agents.set(id, agent);

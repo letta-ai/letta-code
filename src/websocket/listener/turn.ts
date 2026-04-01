@@ -99,12 +99,25 @@ import type { ConversationRuntime, IncomingMessage } from "./types";
 
 const AUTO_REFLECTION_DESCRIPTION = "Reflect on recent conversations";
 
-function hasActiveReflectionSubagent(): boolean {
-  return getSubagents().some(
-    (agent) =>
-      agent.type.toLowerCase() === "reflection" &&
-      (agent.status === "pending" || agent.status === "running"),
-  );
+function hasActiveReflectionSubagent(
+  agentId: string,
+  conversationId: string,
+): boolean {
+  return getSubagents().some((agent) => {
+    if (agent.type.toLowerCase() !== "reflection") {
+      return false;
+    }
+    if (agent.status !== "pending" && agent.status !== "running") {
+      return false;
+    }
+    if (!agent.parentAgentId) {
+      return false;
+    }
+    const parentConversationId = agent.parentConversationId ?? "default";
+    return (
+      agent.parentAgentId === agentId && parentConversationId === conversationId
+    );
+  });
 }
 
 function buildMaybeLaunchReflectionSubagent(params: {
@@ -120,7 +133,7 @@ function buildMaybeLaunchReflectionSubagent(params: {
       return false;
     }
 
-    if (hasActiveReflectionSubagent()) {
+    if (hasActiveReflectionSubagent(agentId, conversationId)) {
       debugLog(
         "memory",
         `Skipping auto reflection launch (${triggerSource}) because one is already active`,
@@ -187,7 +200,7 @@ function buildMaybeLaunchReflectionSubagent(params: {
 
           addToMessageQueue({
             kind: "task_notification",
-            text: msg,
+            text: `<task-notification><summary>${msg}</summary></task-notification>`,
             agentId,
             conversationId,
           });

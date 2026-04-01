@@ -3,8 +3,10 @@
  * Connects to Letta Cloud and receives messages to execute locally
  */
 
+import { execFile } from "node:child_process";
 import { realpath, stat } from "node:fs/promises";
 import path from "node:path";
+import { promisify } from "node:util";
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import WebSocket from "ws";
@@ -22,6 +24,7 @@ import {
   searchFileIndex,
   setIndexRoot,
 } from "../../cli/helpers/fileIndex";
+import { getGitContext } from "../../cli/helpers/gitContext";
 import {
   getReflectionSettings,
   persistReflectionSettingsForAgent,
@@ -29,6 +32,7 @@ import {
 import { setMessageQueueAdder } from "../../cli/helpers/messageQueueBridge";
 import { generatePlanFilePath } from "../../cli/helpers/planName";
 import {
+  getSubagents,
   subscribe as subscribeToSubagentState,
   subscribeToStreamEvents as subscribeToSubagentStreamEvents,
 } from "../../cli/helpers/subagentState";
@@ -124,6 +128,7 @@ import {
   persistPermissionModeMapForRuntime,
 } from "./permissionMode";
 import {
+  isCheckoutBranchCommand,
   isCronAddCommand,
   isCronDeleteAllCommand,
   isCronDeleteCommand,
@@ -137,11 +142,13 @@ import {
   isListMemoryCommand,
   isListModelsCommand,
   isReadFileCommand,
+  isSearchBranchesCommand,
   isSearchFilesCommand,
   isSetReflectionSettingsCommand,
   isSkillDisableCommand,
   isSkillEnableCommand,
   isUpdateModelCommand,
+  isWriteFileCommand,
   parseServerMessage,
 } from "./protocol-inbound";
 import {
@@ -1893,7 +1900,17 @@ async function connectWithRetry(
     // Store the unsubscribe function on the runtime for cleanup on close.
     runtime._unsubscribeSubagentState?.();
     runtime._unsubscribeSubagentState = subscribeToSubagentState(() => {
-      emitSubagentStateIfOpen(runtime);
+      if (runtime.conversationRuntimes.size === 0) {
+        emitSubagentStateIfOpen(runtime);
+        return;
+      }
+
+      for (const conversationRuntime of runtime.conversationRuntimes.values()) {
+        emitSubagentStateIfOpen(runtime, {
+          agent_id: conversationRuntime.agentId,
+          conversation_id: conversationRuntime.conversationId,
+        });
+      }
     });
 
     // Subscribe to subagent stream events and forward as tagged stream_delta.
@@ -1904,13 +1921,28 @@ async function connectWithRetry(
     runtime._unsubscribeSubagentStreamEvents = subscribeToSubagentStreamEvents(
       (subagentId, event) => {
         if (socket.readyState !== WebSocket.OPEN) return;
+
+        const subagent = getSubagents().find(
+          (entry) => entry.id === subagentId,
+        );
+        if (subagent?.silent === true) {
+          // Reflection/background "silent" subagents should not stream their
+          // internal transcript into the parent conversation.
+          return;
+        }
+
         // The event has { type: "message", message_type, ...LettaStreamingResponse }
         // plus extra headless fields (session_id, uuid) that pass through harmlessly.
         emitStreamDelta(
           socket,
           runtime,
           event as unknown as import("../../types/protocol_v2").StreamDelta,
-          undefined, // scope: falls back to listener's default agent/conversation
+          subagent?.parentAgentId
+            ? {
+                agent_id: subagent.parentAgentId,
+                conversation_id: subagent.parentConversationId ?? "default",
+              }
+            : undefined,
           subagentId,
         );
       },
@@ -2198,10 +2230,17 @@ async function connectWithRetry(
 
     // ── Directory listing (no runtime scope required) ──────────────────
     if (isListInDirectoryCommand(parsed)) {
+      console.log(
+        `[Listen] Received list_in_directory command: path=${parsed.path}`,
+      );
       void (async () => {
         try {
           const { readdir } = await import("node:fs/promises");
+          console.log(`[Listen] Reading directory: ${parsed.path}`);
           const entries = await readdir(parsed.path, { withFileTypes: true });
+          console.log(
+            `[Listen] Directory read success, ${entries.length} entries`,
+          );
 
           // Filter out OS/VCS noise before sorting
           const IGNORED_NAMES = new Set([
@@ -2241,16 +2280,23 @@ async function connectWithRetry(
             hasMore: offset + limit < total,
             total,
             success: true,
+            ...(parsed.request_id ? { request_id: parsed.request_id } : {}),
           };
           if (parsed.include_files) {
             response.files = files;
           }
+          console.log(
+            `[Listen] Sending list_in_directory_response: ${folders.length} folders, ${files?.length ?? 0} files`,
+          );
           socket.send(JSON.stringify(response));
         } catch (err) {
           trackListenerError(
             "listener_list_directory_failed",
             err,
             "listener_file_browser",
+          );
+          console.error(
+            `[Listen] list_in_directory error: ${err instanceof Error ? err.message : "Unknown error"}`,
           );
           socket.send(
             JSON.stringify({
@@ -2261,6 +2307,7 @@ async function connectWithRetry(
               success: false,
               error:
                 err instanceof Error ? err.message : "Failed to list directory",
+              ...(parsed.request_id ? { request_id: parsed.request_id } : {}),
             }),
           );
         }
@@ -2306,6 +2353,45 @@ async function connectWithRetry(
               content: null,
               success: false,
               error: err instanceof Error ? err.message : "Failed to read file",
+            }),
+          );
+        }
+      })();
+      return;
+    }
+
+    // ── File writing (no runtime scope required) ──────────────────────
+    if (isWriteFileCommand(parsed)) {
+      console.log(
+        `[Listen] Received write_file command: path=${parsed.path}, request_id=${parsed.request_id}`,
+      );
+      void (async () => {
+        try {
+          const { writeFile } = await import("node:fs/promises");
+          await writeFile(parsed.path, parsed.content, "utf-8");
+          console.log(
+            `[Listen] write_file success: ${parsed.path} (${parsed.content.length} bytes)`,
+          );
+          socket.send(
+            JSON.stringify({
+              type: "write_file_response",
+              request_id: parsed.request_id,
+              path: parsed.path,
+              success: true,
+            }),
+          );
+        } catch (err) {
+          console.error(
+            `[Listen] write_file error: ${err instanceof Error ? err.message : "Unknown error"}`,
+          );
+          socket.send(
+            JSON.stringify({
+              type: "write_file_response",
+              request_id: parsed.request_id,
+              path: parsed.path,
+              success: false,
+              error:
+                err instanceof Error ? err.message : "Failed to write file",
             }),
           );
         }
@@ -2639,6 +2725,118 @@ async function connectWithRetry(
         onStatusChange: opts.onStatusChange,
         connectionId: opts.connectionId,
       });
+      return;
+    }
+
+    // ── Git branch commands (no runtime scope required) ────────────────
+    if (isSearchBranchesCommand(parsed)) {
+      void (async () => {
+        try {
+          const cwd = parsed.cwd ?? runtime.bootWorkingDirectory;
+          const maxResults = parsed.max_results ?? 20;
+          const execFileAsync = promisify(execFile);
+
+          // Get local + remote branches with format
+          const { stdout } = await execFileAsync(
+            "git",
+            ["branch", "-a", "--format=%(refname:short)\t%(HEAD)"],
+            {
+              cwd,
+              encoding: "utf-8",
+              timeout: 5000,
+            },
+          );
+
+          const query = parsed.query.toLowerCase();
+          const branches = stdout
+            .split("\n")
+            .filter((line) => line.trim().length > 0)
+            .map((line) => {
+              const parts = line.split("\t");
+              const trimmedName = (parts[0] ?? "").trim();
+              const isRemote = trimmedName.startsWith("origin/");
+              return {
+                name: trimmedName,
+                is_current: parts[1]?.trim() === "*",
+                is_remote: isRemote,
+              };
+            })
+            .filter(
+              (b) => query.length === 0 || b.name.toLowerCase().includes(query),
+            )
+            .slice(0, maxResults);
+
+          socket.send(
+            JSON.stringify({
+              type: "search_branches_response",
+              request_id: parsed.request_id,
+              branches,
+              success: true,
+            }),
+          );
+        } catch (error) {
+          socket.send(
+            JSON.stringify({
+              type: "search_branches_response",
+              request_id: parsed.request_id,
+              branches: [],
+              success: false,
+              error:
+                error instanceof Error
+                  ? error.message
+                  : "Failed to search branches",
+            }),
+          );
+        }
+      })();
+      return;
+    }
+
+    if (isCheckoutBranchCommand(parsed)) {
+      void (async () => {
+        try {
+          const cwd = parsed.cwd ?? runtime.bootWorkingDirectory;
+          const execFileAsync = promisify(execFile);
+
+          const args = parsed.create
+            ? ["checkout", "-b", parsed.branch]
+            : ["checkout", parsed.branch];
+
+          await execFileAsync("git", args, {
+            cwd,
+            encoding: "utf-8",
+            timeout: 10000,
+          });
+
+          // Re-read the current branch after checkout to confirm
+          const gitCtx = getGitContext(cwd);
+
+          socket.send(
+            JSON.stringify({
+              type: "checkout_branch_response",
+              request_id: parsed.request_id,
+              branch: gitCtx?.branch ?? parsed.branch,
+              success: true,
+            }),
+          );
+
+          // Emit updated device status so UIs pick up the new branch
+          emitDeviceStatusUpdate(socket, runtime);
+        } catch (error) {
+          socket.send(
+            JSON.stringify({
+              type: "checkout_branch_response",
+              request_id: parsed.request_id,
+              branch: parsed.branch,
+              success: false,
+              error:
+                error instanceof Error
+                  ? error.message
+                  : "Failed to checkout branch",
+            }),
+          );
+        }
+      })();
       return;
     }
 

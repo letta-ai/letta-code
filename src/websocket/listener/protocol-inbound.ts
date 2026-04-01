@@ -2,6 +2,7 @@ import type WebSocket from "ws";
 import type {
   AbortMessageCommand,
   ChangeDeviceStateCommand,
+  CheckoutBranchCommand,
   CronAddCommand,
   CronDeleteAllCommand,
   CronDeleteCommand,
@@ -17,6 +18,7 @@ import type {
   ListModelsCommand,
   ReadFileCommand,
   RuntimeScope,
+  SearchBranchesCommand,
   SearchFilesCommand,
   SetReflectionSettingsCommand,
   SkillDisableCommand,
@@ -27,6 +29,7 @@ import type {
   TerminalResizeCommand,
   TerminalSpawnCommand,
   UpdateModelCommand,
+  WriteFileCommand,
   WsProtocolCommand,
 } from "../../types/protocol_v2";
 import { isValidApprovalResponseBody } from "./approval";
@@ -284,6 +287,22 @@ export function isReadFileCommand(value: unknown): value is ReadFileCommand {
   return (
     c.type === "read_file" &&
     typeof c.path === "string" &&
+    typeof c.request_id === "string"
+  );
+}
+
+export function isWriteFileCommand(value: unknown): value is WriteFileCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    path?: unknown;
+    content?: unknown;
+    request_id?: unknown;
+  };
+  return (
+    c.type === "write_file" &&
+    typeof c.path === "string" &&
+    typeof c.content === "string" &&
     typeof c.request_id === "string"
   );
 }
@@ -574,6 +593,38 @@ export function isSetReflectionSettingsCommand(
   );
 }
 
+export function isSearchBranchesCommand(
+  value: unknown,
+): value is SearchBranchesCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    query?: unknown;
+  };
+  return (
+    c.type === "search_branches" &&
+    typeof c.request_id === "string" &&
+    typeof c.query === "string"
+  );
+}
+
+export function isCheckoutBranchCommand(
+  value: unknown,
+): value is CheckoutBranchCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    branch?: unknown;
+  };
+  return (
+    c.type === "checkout_branch" &&
+    typeof c.request_id === "string" &&
+    typeof c.branch === "string"
+  );
+}
+
 export function isExecuteCommandCommand(
   value: unknown,
 ): value is ExecuteCommandCommand {
@@ -610,6 +661,7 @@ export function parseServerMessage(
       isSearchFilesCommand(parsed) ||
       isListInDirectoryCommand(parsed) ||
       isReadFileCommand(parsed) ||
+      isWriteFileCommand(parsed) ||
       isEditFileCommand(parsed) ||
       isListMemoryCommand(parsed) ||
       isEnableMemfsCommand(parsed) ||
@@ -624,7 +676,9 @@ export function parseServerMessage(
       isSkillDisableCommand(parsed) ||
       isGetReflectionSettingsCommand(parsed) ||
       isSetReflectionSettingsCommand(parsed) ||
-      isExecuteCommandCommand(parsed)
+      isExecuteCommandCommand(parsed) ||
+      isSearchBranchesCommand(parsed) ||
+      isCheckoutBranchCommand(parsed)
     ) {
       return parsed as WsProtocolCommand;
     }

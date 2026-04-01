@@ -1,7 +1,7 @@
 /**
- * Default agents (Memo & Incognito) creation and management.
+ * Default agents (Letta Code & Incognito) creation and management.
  *
- * Memo: Stateful agent with full memory - learns and grows with the user.
+ * Letta Code: Stateful agent with full memory - learns and grows with the user.
  * Incognito: Stateless agent - fresh experience without accumulated memory.
  */
 
@@ -18,13 +18,16 @@ import { MEMORY_PROMPTS } from "./promptAssets";
 export const MEMO_TAG = "default:memo";
 export const INCOGNITO_TAG = "default:incognito";
 
-// Memo's persona - loaded from persona_memo.mdx
+// Letta Code's default memory blocks - loaded from Memo-specific prompts.
 const MEMO_PERSONA = parseMdxFrontmatter(
   MEMORY_PROMPTS["persona_memo.mdx"] ?? "",
 ).body;
+const MEMO_HUMAN = parseMdxFrontmatter(
+  MEMORY_PROMPTS["human_memo.mdx"] ?? "",
+).body;
 
 // Agent descriptions shown in /agents selector
-const MEMO_DESCRIPTION = "A stateful coding agent with persistent memory";
+const MEMO_DESCRIPTION = "The default Letta Code agent with persistent memory";
 const INCOGNITO_DESCRIPTION =
   "A stateless coding agent without memory (incognito mode)";
 
@@ -36,9 +39,10 @@ export const DEFAULT_AGENT_CONFIGS: Record<string, CreateAgentOptions> = {
     name: "Letta Code",
     description: MEMO_DESCRIPTION,
     // Uses default memory blocks and tools (full stateful config)
-    // Override persona block with Memo-specific personality
+    // Override global blocks with Memo-specific personality defaults
     blockValues: {
       persona: MEMO_PERSONA,
+      human: MEMO_HUMAN,
     },
   },
   incognito: {
@@ -147,13 +151,13 @@ async function addTagToAgent(
 }
 
 /**
- * Create a fresh default Memo agent and pin it globally.
+ * Create a fresh default Letta Code agent and pin it globally.
  * Always creates a new agent — does NOT search by tag to avoid picking up
  * agents created by other users on shared Letta Cloud orgs.
  *
  * Respects `createDefaultAgents` setting (defaults to true).
  *
- * @returns The Memo agent (or null if creation disabled/failed).
+ * @returns The Letta Code agent (or null if creation disabled/failed).
  */
 export async function ensureDefaultAgents(
   client: Letta,

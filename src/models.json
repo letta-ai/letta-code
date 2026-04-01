@@ -269,11 +269,37 @@
       }
     },
     {
-      "id": "bedrock-opus",
+      "id": "bedrock-opus-4.5",
       "handle": "bedrock/us.anthropic.claude-opus-4-5-20251101-v1:0",
       "label": "Bedrock Opus 4.5",
       "shortLabel": "Opus 4.5 BR",
-      "description": "Anthropic's best model (via AWS Bedrock)",
+      "description": "Anthropic's Opus 4.5 (via AWS Bedrock)",
+      "updateArgs": {
+        "context_window": 180000,
+        "max_output_tokens": 64000,
+        "max_reasoning_tokens": 31999,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "bedrock-opus-4.6",
+      "handle": "bedrock/us.anthropic.claude-opus-4-6-v1",
+      "label": "Bedrock Opus 4.6",
+      "shortLabel": "Opus 4.6 BR",
+      "description": "Anthropic's Opus 4.6 (via AWS Bedrock)",
+      "updateArgs": {
+        "context_window": 180000,
+        "max_output_tokens": 64000,
+        "max_reasoning_tokens": 31999,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "bedrock-sonnet-4.6",
+      "handle": "bedrock/us.anthropic.claude-sonnet-4-6",
+      "label": "Bedrock Sonnet 4.6",
+      "shortLabel": "Sonnet 4.6 BR",
+      "description": "Anthropic's Sonnet 4.6 (via AWS Bedrock)",
       "updateArgs": {
         "context_window": 180000,
         "max_output_tokens": 64000,

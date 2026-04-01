@@ -131,6 +131,17 @@ export interface ReflectionSettingsSnapshot {
 }
 
 /**
+ * Git repository state for the current working directory.
+ * Null when the CWD is not inside a git repository.
+ */
+export interface GitContext {
+  /** Current branch name. Null on detached HEAD or repos with no commits. */
+  branch: string | null;
+  /** Up to 10 local branches sorted by most-recently-committed, excluding the current branch. */
+  recent_branches: string[];
+}
+
+/**
  * Bottom-bar and device execution context state.
  */
 export interface DeviceStatus {
@@ -140,6 +151,7 @@ export interface DeviceStatus {
   is_processing: boolean;
   current_permission_mode: DevicePermissionMode;
   current_working_directory: string | null;
+  git_context: GitContext | null;
   letta_code_version: string | null;
   current_toolset: ToolsetName | null;
   current_toolset_preference: ToolsetPreference;
@@ -335,6 +347,8 @@ export interface SubagentSnapshot {
   is_background?: boolean;
   silent?: boolean;
   tool_call_id?: string;
+  parent_agent_id?: string;
+  parent_conversation_id?: string;
   start_time: number;
   tool_calls: SubagentSnapshotToolCall[];
   total_tokens: number;
@@ -472,12 +486,24 @@ export interface ListInDirectoryCommand {
   limit?: number;
   /** Number of entries to skip before returning. */
   offset?: number;
+  /** Echoed back in the response for request correlation. */
+  request_id?: string;
 }
 
 export interface ReadFileCommand {
   type: "read_file";
   /** Absolute path to the file to read. */
   path: string;
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+}
+
+export interface WriteFileCommand {
+  type: "write_file";
+  /** Absolute path to the file to write. */
+  path: string;
+  /** The full file content to write. */
+  content: string;
   /** Echoed back in the response for request correlation. */
   request_id: string;
 }
@@ -735,6 +761,57 @@ export interface ExecuteCommandCommand {
   runtime: RuntimeScope;
 }
 
+// ─────────────────────────────────────────────────
+//  Git branch commands
+// ─────────────────────────────────────────────────
+
+export interface GitBranchInfo {
+  name: string;
+  is_current: boolean;
+  is_remote: boolean;
+}
+
+export interface SearchBranchesCommand {
+  type: "search_branches";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  /** Substring filter for branch names. Empty string returns all branches. */
+  query: string;
+  /** Maximum number of results to return. Defaults to 20. */
+  max_results?: number;
+  /** Working directory to run git in. Falls back to conversation cwd. */
+  cwd?: string;
+}
+
+export interface SearchBranchesResponse {
+  type: "search_branches_response";
+  request_id: string;
+  branches: GitBranchInfo[];
+  success: boolean;
+  error?: string;
+}
+
+export interface CheckoutBranchCommand {
+  type: "checkout_branch";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  /** Branch name to checkout. */
+  branch: string;
+  /** Create a new branch if it doesn't exist. */
+  create?: boolean;
+  /** Working directory to run git in. Falls back to conversation cwd. */
+  cwd?: string;
+}
+
+export interface CheckoutBranchResponse {
+  type: "checkout_branch_response";
+  request_id: string;
+  /** The branch now checked out. */
+  branch: string;
+  success: boolean;
+  error?: string;
+}
+
 export type WsProtocolCommand =
   | InputCommand
   | ChangeDeviceStateCommand
@@ -747,6 +824,7 @@ export type WsProtocolCommand =
   | SearchFilesCommand
   | ListInDirectoryCommand
   | ReadFileCommand
+  | WriteFileCommand
   | EditFileCommand
   | ListMemoryCommand
   | EnableMemfsCommand
@@ -761,7 +839,9 @@ export type WsProtocolCommand =
   | SkillDisableCommand
   | GetReflectionSettingsCommand
   | SetReflectionSettingsCommand
-  | ExecuteCommandCommand;
+  | ExecuteCommandCommand
+  | SearchBranchesCommand
+  | CheckoutBranchCommand;
 
 export type WsProtocolMessage =
   | DeviceStatusUpdateMessage
