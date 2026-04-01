@@ -626,6 +626,8 @@ describe("input-format stream-json", () => {
         await rm(fixture.rootDir, { recursive: true, force: true });
       }
     },
-    { timeout: 260000 },
+    // Must exceed the helper timeout + retry budget, otherwise Bun can kill the
+    // retry attempt before runBidirectionalWithRetry() finishes.
+    { timeout: 520000 },
   );
 });
