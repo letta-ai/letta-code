@@ -75,7 +75,6 @@ describe("init wiring", () => {
     agentId: "test-agent",
     workingDirectory: "/tmp/test",
     memoryDir: "/tmp/test/.memory",
-    gitContext: "- branch: main\n- status: (clean)",
     gitIdentity: "Test User <test@example.com>",
     existingMemoryPaths: [] as string[],
     existingMemory: "",

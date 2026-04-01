@@ -187,7 +187,6 @@ export function buildShallowInitPrompt(args: {
   agentId: string;
   workingDirectory: string;
   memoryDir: string;
-  gitContext: string;
   gitIdentity: string;
   existingMemoryPaths: string[];
   existingMemory: string;
@@ -204,9 +203,6 @@ export function buildShallowInitPrompt(args: {
 - memory_dir: ${args.memoryDir}
 - parent_agent_id: ${args.agentId}
 ${identityLine}
-
-## Git
-${args.gitContext}
 
 ## Project Structure
 
@@ -242,7 +238,6 @@ export async function fireAutoInit(
     agentId,
     workingDirectory: process.cwd(),
     memoryDir: getMemoryFilesystemRoot(agentId),
-    gitContext: gitDetails.context,
     gitIdentity: gitDetails.identity,
     existingMemoryPaths: existing.paths,
     existingMemory: existing.contents,
