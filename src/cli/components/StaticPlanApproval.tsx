@@ -12,11 +12,13 @@ type Props = {
   onApproveAndAcceptEdits: () => void;
   onKeepPlanning: (reason: string) => void;
   onCancel: () => void; // For CTRL-C to queue denial (like other approval screens)
+  onConsumeDraft?: () => void;
   showAcceptEditsOption?: boolean;
   isFocused?: boolean;
   planContent?: string;
   planFilePath?: string;
   agentName?: string;
+  initialDraft?: string; // Draft text from input buffer when approval appeared
 };
 
 /**
@@ -24,11 +26,7 @@ type Props = {
  *
  * This component renders ONLY the approval options (no plan preview).
  * The plan preview is committed separately to the Static area via the
- * eager commit pattern, which keeps this component small (~8 lines)
- * and flicker-free.
- *
- * The plan prop was removed because the plan is rendered in the Static
- * area by ApprovalPreview, not here.
+ * eager commit pattern, which keeps this component small and flicker-free.
  */
 export const StaticPlanApproval = memo(
   ({
@@ -36,20 +34,37 @@ export const StaticPlanApproval = memo(
     onApproveAndAcceptEdits,
     onKeepPlanning,
     onCancel,
+    onConsumeDraft,
     showAcceptEditsOption = true,
     isFocused = true,
     planContent,
     planFilePath,
     agentName,
+    initialDraft,
   }: Props) => {
-    const [selectedOption, setSelectedOption] = useState(0);
+    const hasDraft = Boolean(initialDraft && initialDraft.trim().length > 0);
+
+    // Base fixed options are:
+    // 1) Yes + auto-accept (or Yes in yolo mode)
+    // 2) Yes + manual approve (only when showAcceptEditsOption)
+    const fixedOptionCount = showAcceptEditsOption ? 2 : 1;
+
+    // If draft exists, show TWO text options:
+    // - pre-populated with current draft
+    // - empty freeform input
+    const draftOptionIndex = hasDraft ? fixedOptionCount : -1;
+    const customOptionIndex = hasDraft
+      ? fixedOptionCount + 1
+      : fixedOptionCount;
+    const maxOptionIndex = customOptionIndex;
+
+    const defaultOptionIndex = hasDraft ? draftOptionIndex : 0;
+    const [selectedOption, setSelectedOption] = useState(defaultOptionIndex);
     const [browserStatus, setBrowserStatus] = useState("");
-    const {
-      text: customReason,
-      cursorPos,
-      handleKey,
-      clear,
-    } = useTextInputCursor();
+
+    const draftInput = useTextInputCursor(hasDraft ? initialDraft : "");
+    const newInput = useTextInputCursor("");
+
     const columns = useTerminalWidth();
     useProgressIndicator();
 
@@ -71,12 +86,17 @@ export const StaticPlanApproval = memo(
         });
     }, [planContent, planFilePath, agentName]);
 
-    const customOptionIndex = showAcceptEditsOption ? 2 : 1;
-    const maxOptionIndex = customOptionIndex;
     const effectiveSelectedOption = Math.min(selectedOption, maxOptionIndex);
+    const isOnDraftOption =
+      hasDraft && effectiveSelectedOption === draftOptionIndex;
     const isOnCustomOption = effectiveSelectedOption === customOptionIndex;
-    const customOptionPlaceholder =
-      "Type here to tell Letta Code what to change";
+    const isOnTextOption = isOnDraftOption || isOnCustomOption;
+
+    const activeInput = isOnDraftOption
+      ? draftInput
+      : isOnCustomOption
+        ? newInput
+        : null;
 
     useInput(
       (input, key) => {
@@ -88,10 +108,10 @@ export const StaticPlanApproval = memo(
           return;
         }
 
-        // O: open plan in browser (only when not typing in custom field)
+        // O: open plan in browser (only when not typing in text field)
         if (
           (input === "o" || input === "O") &&
-          !isOnCustomOption &&
+          !isOnTextOption &&
           planContent
         ) {
           openInBrowser();
@@ -108,27 +128,29 @@ export const StaticPlanApproval = memo(
           return;
         }
 
-        // When on custom input option
-        if (isOnCustomOption) {
+        // Text options: pre-populated draft input or empty new input
+        if (activeInput) {
           if (key.return) {
-            if (customReason.trim()) {
-              onKeepPlanning(customReason.trim());
+            if (activeInput.text.trim()) {
+              if (isOnDraftOption) {
+                onConsumeDraft?.();
+              }
+              onKeepPlanning(activeInput.text.trim());
             }
             return;
           }
           if (key.escape) {
-            if (customReason) {
-              clear();
+            if (activeInput.text) {
+              activeInput.clear();
             } else {
               onKeepPlanning("User cancelled");
             }
             return;
           }
-          // Handle text input (arrows, backspace, typing)
-          if (handleKey(input, key)) return;
+          if (activeInput.handleKey(input, key)) return;
         }
 
-        // When on regular options
+        // Regular fixed options
         if (key.return) {
           if (showAcceptEditsOption && effectiveSelectedOption === 0) {
             onApproveAndAcceptEdits();
@@ -142,7 +164,7 @@ export const StaticPlanApproval = memo(
           return;
         }
 
-        // Number keys for quick selection (only for fixed options, not custom text input)
+        // Number keys for quick selection
         if (input === "1") {
           if (showAcceptEditsOption) {
             onApproveAndAcceptEdits();
@@ -155,26 +177,34 @@ export const StaticPlanApproval = memo(
           onApprove();
           return;
         }
+
+        if (hasDraft && input === String(draftOptionIndex + 1)) {
+          setSelectedOption(draftOptionIndex);
+          return;
+        }
+        if (input === String(customOptionIndex + 1)) {
+          setSelectedOption(customOptionIndex);
+        }
       },
       { isActive: isFocused },
     );
 
-    // Hint text based on state
     const browserHint = planContent ? " · O open in browser" : "";
-    const hintText = isOnCustomOption
-      ? customReason
+    const activeText = activeInput?.text || "";
+    const hintText = isOnTextOption
+      ? activeText
         ? "Enter to submit · Esc to clear"
         : "Type feedback · Esc to cancel"
       : `Enter to select${browserHint} · Esc to cancel`;
 
+    const textOptionColor = colors.approval.header;
+
     return (
       <Box flexDirection="column">
-        {/* Question */}
         <Box>
           <Text>Would you like to proceed?</Text>
         </Box>
 
-        {/* Options */}
         <Box marginTop={1} flexDirection="column">
           {/* Option 1 */}
           <Box flexDirection="row">
@@ -205,7 +235,7 @@ export const StaticPlanApproval = memo(
             </Box>
           </Box>
 
-          {/* Option 2: Yes, and manually approve edits */}
+          {/* Option 2 */}
           {showAcceptEditsOption && (
             <Box flexDirection="row">
               <Box width={5} flexShrink={0}>
@@ -234,33 +264,51 @@ export const StaticPlanApproval = memo(
             </Box>
           )}
 
-          {/* Option 3: Custom input */}
+          {/* Option N: Pre-populated draft input */}
+          {hasDraft && (
+            <Box flexDirection="row">
+              <Box width={5} flexShrink={0}>
+                <Text color={isOnDraftOption ? textOptionColor : undefined}>
+                  {isOnDraftOption ? "❯" : " "} {draftOptionIndex + 1}.
+                </Text>
+              </Box>
+              <Box flexGrow={1} width={Math.max(0, columns - 5)}>
+                {isOnDraftOption ? (
+                  <Text wrap="wrap">
+                    {draftInput.text.slice(0, draftInput.cursorPos)}█
+                    {draftInput.text.slice(draftInput.cursorPos)}
+                  </Text>
+                ) : (
+                  <Text wrap="wrap" dimColor>
+                    {draftInput.text}
+                  </Text>
+                )}
+              </Box>
+            </Box>
+          )}
+
+          {/* Last option: Empty freeform input */}
           <Box flexDirection="row">
             <Box width={5} flexShrink={0}>
-              <Text
-                color={isOnCustomOption ? colors.approval.header : undefined}
-              >
+              <Text color={isOnCustomOption ? textOptionColor : undefined}>
                 {isOnCustomOption ? "❯" : " "} {customOptionIndex + 1}.
               </Text>
             </Box>
             <Box flexGrow={1} width={Math.max(0, columns - 5)}>
-              {customReason ? (
+              {isOnCustomOption ? (
                 <Text wrap="wrap">
-                  {customReason.slice(0, cursorPos)}
-                  {isOnCustomOption && "█"}
-                  {customReason.slice(cursorPos)}
+                  {newInput.text.slice(0, newInput.cursorPos)}█
+                  {newInput.text.slice(newInput.cursorPos)}
                 </Text>
               ) : (
                 <Text wrap="wrap" dimColor>
-                  {customOptionPlaceholder}
-                  {isOnCustomOption && "█"}
+                  {newInput.text}
                 </Text>
               )}
             </Box>
           </Box>
         </Box>
 
-        {/* Hint */}
         <Box marginTop={1}>
           <Text dimColor>{browserStatus || hintText}</Text>
         </Box>

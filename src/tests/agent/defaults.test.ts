@@ -1,5 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { selectDefaultAgentModel } from "../../agent/defaults";
+import {
+  DEFAULT_AGENT_CONFIGS,
+  selectDefaultAgentModel,
+} from "../../agent/defaults";
+import {
+  getPersonalityContent,
+  getPersonalityHumanContent,
+} from "../../agent/personality";
 
 describe("selectDefaultAgentModel", () => {
   test("uses the caller's preferred model when it is available on self-hosted", () => {
@@ -29,5 +36,17 @@ describe("selectDefaultAgentModel", () => {
     });
 
     expect(result).toBe("anthropic/claude-haiku-4-5");
+  });
+});
+
+describe("default agent configs", () => {
+  test("memo default agent is Letta Code with memo persona and human", () => {
+    expect(DEFAULT_AGENT_CONFIGS.memo?.name).toBe("Letta Code");
+    expect(DEFAULT_AGENT_CONFIGS.memo?.blockValues?.persona?.trim()).toBe(
+      getPersonalityContent("memo").trim(),
+    );
+    expect(DEFAULT_AGENT_CONFIGS.memo?.blockValues?.human?.trim()).toBe(
+      getPersonalityHumanContent("memo").trim(),
+    );
   });
 });

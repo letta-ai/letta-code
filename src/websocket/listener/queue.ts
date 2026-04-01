@@ -90,6 +90,7 @@ function mergeDequeuedBatchContent(
         kind: "task_notification",
         text: item.text,
       });
+      continue;
     }
     if (item.kind === "cron_prompt") {
       queuedInputs.push({
@@ -396,6 +397,16 @@ async function drainQueuedMessages(
       const { dequeuedBatch, queuedTurn } = consumedQueuedTurn;
 
       emitDequeuedUserMessage(socket, runtime, queuedTurn, dequeuedBatch);
+
+      // Notification-only batches: emit to frontend for display, skip
+      // model execution. The agent doesn't need the notification text —
+      // the system prompt was already recompiled with updated memories.
+      const isNotificationOnlyBatch =
+        dequeuedBatch.items.length > 0 &&
+        dequeuedBatch.items.every((item) => item.kind === "task_notification");
+      if (isNotificationOnlyBatch) {
+        continue;
+      }
 
       const preTurnStatus =
         getListenerStatus(runtime.listener) === "processing"

@@ -1,9 +1,11 @@
 import type WebSocket from "ws";
 import { getClient } from "../../agent/client";
+import { ISOLATED_BLOCK_LABELS } from "../../agent/memory";
 import { getMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
 import { REMEMBER_PROMPT } from "../../agent/promptAssets";
 import {
   buildDoctorMessage,
+  buildInitMessage,
   gatherInitGitContext,
 } from "../../cli/helpers/initCommand";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "../../constants";
@@ -23,8 +25,6 @@ import { clearConversationRuntimeState, emitListenerStatus } from "./runtime";
 import { handleIncomingMessage } from "./turn";
 import type { ConversationRuntime, StartListenerOptions } from "./types";
 
-const ISOLATED_BLOCK_LABELS = ["human", "persona"];
-
 /**
  * Command IDs that this letta-code version can handle via `execute_command`.
  * Advertised in DeviceStatus.supported_commands so the web UI only shows
@@ -35,6 +35,7 @@ const ISOLATED_BLOCK_LABELS = ["human", "persona"];
 export const SUPPORTED_REMOTE_COMMANDS: readonly string[] = [
   "clear",
   "doctor",
+  "init",
   "remember",
 ];
 
@@ -87,6 +88,10 @@ export async function handleExecuteCommand(
 
       case "doctor":
         output = await handleDoctorCommand(socket, conversationRuntime, opts);
+        break;
+
+      case "init":
+        output = await handleInitCommand(socket, conversationRuntime, opts);
         break;
 
       case "remember":
@@ -255,6 +260,58 @@ async function handleDoctorCommand(
   );
 
   return "Memory doctor completed";
+}
+
+/**
+ * /init — Initialize (or re-init) agent memory.
+ *
+ * Builds the init system-reminder message (same as the CLI /init)
+ * and feeds it through `handleIncomingMessage` so the agent runs a full
+ * turn executing the `initializing-memory` skill.
+ */
+async function handleInitCommand(
+  socket: WebSocket,
+  conversationRuntime: ConversationRuntime,
+  opts: {
+    onStatusChange?: StartListenerOptions["onStatusChange"];
+    connectionId?: string;
+  },
+): Promise<string> {
+  const agentId = conversationRuntime.agentId;
+
+  if (!agentId) {
+    throw new Error("No agent ID available for /init command");
+  }
+
+  const { context: gitContext } = gatherInitGitContext();
+  const memoryDir = settingsManager.isMemfsEnabled(agentId)
+    ? getMemoryFilesystemRoot(agentId)
+    : undefined;
+
+  const initMessage = buildInitMessage({ gitContext, memoryDir });
+
+  // Feed the init prompt as a user message through the normal turn pipeline.
+  // This triggers a full agent turn whose deltas stream back to the web UI.
+  await handleIncomingMessage(
+    {
+      type: "message",
+      agentId,
+      conversationId: conversationRuntime.conversationId,
+      messages: [
+        {
+          type: "message",
+          role: "user",
+          content: [{ type: "text", text: initMessage }],
+        },
+      ],
+    },
+    socket,
+    conversationRuntime,
+    opts.onStatusChange,
+    opts.connectionId,
+  );
+
+  return "Memory initialization completed";
 }
 
 /**

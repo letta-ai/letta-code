@@ -2,6 +2,8 @@ import type WebSocket from "ws";
 import type {
   AbortMessageCommand,
   ChangeDeviceStateCommand,
+  CheckoutBranchCommand,
+  CreateAgentCommand,
   CronAddCommand,
   CronDeleteAllCommand,
   CronDeleteCommand,
@@ -17,6 +19,7 @@ import type {
   ListModelsCommand,
   ReadFileCommand,
   RuntimeScope,
+  SearchBranchesCommand,
   SearchFilesCommand,
   SetReflectionSettingsCommand,
   SkillDisableCommand,
@@ -537,6 +540,28 @@ export function isSkillDisableCommand(
   );
 }
 
+export function isCreateAgentCommand(
+  value: unknown,
+): value is CreateAgentCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    personality?: unknown;
+    model?: unknown;
+    pin_global?: unknown;
+  };
+  return (
+    c.type === "create_agent" &&
+    typeof c.request_id === "string" &&
+    (c.personality === "memo" ||
+      c.personality === "linus" ||
+      c.personality === "kawaii") &&
+    (c.model === undefined || typeof c.model === "string") &&
+    (c.pin_global === undefined || typeof c.pin_global === "boolean")
+  );
+}
+
 export function isGetReflectionSettingsCommand(
   value: unknown,
 ): value is GetReflectionSettingsCommand {
@@ -588,6 +613,38 @@ export function isSetReflectionSettingsCommand(
       c.scope === "local_project" ||
       c.scope === "global" ||
       c.scope === "both")
+  );
+}
+
+export function isSearchBranchesCommand(
+  value: unknown,
+): value is SearchBranchesCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    query?: unknown;
+  };
+  return (
+    c.type === "search_branches" &&
+    typeof c.request_id === "string" &&
+    typeof c.query === "string"
+  );
+}
+
+export function isCheckoutBranchCommand(
+  value: unknown,
+): value is CheckoutBranchCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    branch?: unknown;
+  };
+  return (
+    c.type === "checkout_branch" &&
+    typeof c.request_id === "string" &&
+    typeof c.branch === "string"
   );
 }
 
@@ -643,9 +700,12 @@ export function parseServerMessage(
       isCronDeleteAllCommand(parsed) ||
       isSkillEnableCommand(parsed) ||
       isSkillDisableCommand(parsed) ||
+      isCreateAgentCommand(parsed) ||
       isGetReflectionSettingsCommand(parsed) ||
       isSetReflectionSettingsCommand(parsed) ||
-      isExecuteCommandCommand(parsed)
+      isExecuteCommandCommand(parsed) ||
+      isSearchBranchesCommand(parsed) ||
+      isCheckoutBranchCommand(parsed)
     ) {
       return parsed as WsProtocolCommand;
     }

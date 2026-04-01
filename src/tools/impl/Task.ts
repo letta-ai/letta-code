@@ -166,6 +166,27 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function resolveParentScope(parentScope?: {
+  agentId: string;
+  conversationId: string;
+}): { agentId: string; conversationId: string } | undefined {
+  if (parentScope?.agentId) {
+    return {
+      agentId: parentScope.agentId,
+      conversationId: parentScope.conversationId || "default",
+    };
+  }
+
+  try {
+    return {
+      agentId: getCurrentAgentId(),
+      conversationId: getConversationId() ?? "default",
+    };
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Wait briefly for a background subagent to publish its agent URL.
  * This keeps Task mostly non-blocking while allowing static transcript rows
@@ -225,6 +246,8 @@ export function spawnBackgroundSubagentTask(
     deps,
   } = args;
 
+  const resolvedParentScope = resolveParentScope(parentScope);
+
   const spawnSubagentFn = deps?.spawnSubagentImpl ?? spawnSubagent;
   const addToMessageQueueFn = deps?.addToMessageQueueImpl ?? addToMessageQueue;
   const formatTaskNotificationFn =
@@ -246,6 +269,7 @@ export function spawnBackgroundSubagentTask(
     toolCallId,
     true,
     silentCompletion,
+    resolvedParentScope,
   );
 
   const taskId = getNextTaskId();
@@ -346,8 +370,8 @@ export function spawnBackgroundSubagentTask(
         addToMessageQueueFn({
           kind: "task_notification",
           text: notificationXml,
-          agentId: parentScope?.agentId,
-          conversationId: parentScope?.conversationId,
+          agentId: resolvedParentScope?.agentId,
+          conversationId: resolvedParentScope?.conversationId,
         });
       }
 
@@ -415,8 +439,8 @@ export function spawnBackgroundSubagentTask(
         addToMessageQueueFn({
           kind: "task_notification",
           text: notificationXml,
-          agentId: parentScope?.agentId,
-          conversationId: parentScope?.conversationId,
+          agentId: resolvedParentScope?.agentId,
+          conversationId: resolvedParentScope?.conversationId,
         });
       }
 
@@ -537,6 +561,7 @@ export async function task(args: TaskArgs): Promise<string> {
   const prompt = inputPrompt;
 
   const isBackground = args.run_in_background ?? config.background;
+  const resolvedParentScope = resolveParentScope(args.parentScope);
 
   // Handle background execution
   if (isBackground) {
@@ -550,7 +575,7 @@ export async function task(args: TaskArgs): Promise<string> {
       existingConversationId: effectiveConversationId,
       maxTurns: args.max_turns,
       forkedContext: config.fork,
-      parentScope: args.parentScope,
+      parentScope: resolvedParentScope,
     });
 
     await waitForBackgroundSubagentLink(subagentId, null, signal);
@@ -567,7 +592,15 @@ export async function task(args: TaskArgs): Promise<string> {
 
   // Register subagent with state store for UI display (foreground path)
   const subagentId = generateSubagentId();
-  registerSubagent(subagentId, subagent_type, description, toolCallId, false);
+  registerSubagent(
+    subagentId,
+    subagent_type,
+    description,
+    toolCallId,
+    false,
+    false,
+    resolvedParentScope,
+  );
 
   // Foreground tasks now also write transcripts so users can inspect full output
   // even when inline content is truncated.

@@ -31,6 +31,7 @@ import { handleListMessages } from "./agent/listMessagesHandler";
 import { ISOLATED_BLOCK_LABELS } from "./agent/memory";
 import { getStreamToolContextId, sendMessageStream } from "./agent/message";
 import {
+  getModelInfo,
   getModelPresetUpdateForAgent,
   getModelUpdateArgs,
   getResumeRefreshArgs,
@@ -138,6 +139,24 @@ const LLM_API_ERROR_MAX_RETRIES = 3;
 // Retry config for empty response errors (Opus 4.6 SADs)
 // Retry 1: same input. Retry 2: with system reminder nudge.
 const EMPTY_RESPONSE_MAX_RETRIES = 2;
+
+// Provider fallback: Anthropic model ID → Bedrock model ID.
+// After 1 failed retry against Anthropic, automatically retry via Bedrock.
+const PROVIDER_FALLBACK_MAP: Record<string, string> = {
+  // Opus 4.6 variants → Bedrock Opus 4.6
+  opus: "bedrock-opus-4.6",
+  "opus-4.6-no-reasoning": "bedrock-opus-4.6",
+  "opus-4.6-low": "bedrock-opus-4.6",
+  "opus-4.6-medium": "bedrock-opus-4.6",
+  "opus-4.6-xhigh": "bedrock-opus-4.6",
+  // Sonnet 4.6 variants → Bedrock Sonnet 4.6
+  sonnet: "bedrock-sonnet-4.6",
+  "sonnet-1m": "bedrock-sonnet-4.6",
+  "sonnet-4.6-no-reasoning": "bedrock-sonnet-4.6",
+  "sonnet-4.6-low": "bedrock-sonnet-4.6",
+  "sonnet-4.6-medium": "bedrock-sonnet-4.6",
+  "sonnet-4.6-xhigh": "bedrock-sonnet-4.6",
+};
 
 // Retry config for 409 "conversation busy" errors (exponential backoff)
 const CONVERSATION_BUSY_MAX_RETRIES = 3; // 10s -> 20s -> 40s
@@ -911,6 +930,7 @@ export async function handleHeadlessCommand(
     process.exit(1);
   }
   markMilestone("HEADLESS_AGENT_RESOLVED");
+  telemetry.setCurrentAgentId(agent.id);
 
   // Check if we're resuming an existing agent (not creating a new one)
   const isResumingAgent = !!(specifiedAgentId || (!forceNew && !fromAfFile));
@@ -1462,7 +1482,28 @@ export async function handleHeadlessCommand(
   // Clear any pending approvals before starting a new turn - ONLY when resuming (LET-7101)
   // For new agents/conversations, lazy recovery handles any edge cases
   if (isResumingAgent) {
-    await resolveAllPendingApprovals();
+    try {
+      await resolveAllPendingApprovals();
+    } catch (approvalError) {
+      // Don't crash on pre-loop approval resolution (e.g., 409 from server-side
+      // sleeptime run holding the conversation lock). The main loop's own
+      // approval-recovery and conversation-busy retry logic will handle it.
+      if (outputFormat === "stream-json") {
+        const errorMsg: ErrorMessage = {
+          type: "error",
+          message: `Failed to resolve pending approvals on resume: ${approvalError instanceof Error ? approvalError.message : String(approvalError)}`,
+          stop_reason: "error",
+          session_id: sessionId,
+          uuid: `error-pre-loop-approval-${randomUUID()}`,
+        };
+        console.log(JSON.stringify(errorMsg));
+      } else {
+        console.error(
+          `Warning: Failed to resolve pending approvals on resume: ${approvalError instanceof Error ? approvalError.message : String(approvalError)}`,
+        );
+      }
+      // Continue to main loop — lazy recovery will handle stale approvals
+    }
   }
 
   // Build message content with reminders
@@ -1571,6 +1612,8 @@ ${SYSTEM_REMINDER_CLOSE}
   let llmApiErrorRetries = 0;
   let emptyResponseRetries = 0;
   let conversationBusyRetries = 0;
+  let providerFallbackAttempted = false;
+  let overrideModelHandle: string | undefined;
   markMilestone("HEADLESS_FIRST_STREAM_START");
   measureSinceMilestone("headless-setup-total", "HEADLESS_CLIENT_READY");
 
@@ -1627,6 +1670,7 @@ ${SYSTEM_REMINDER_CLOSE}
       try {
         stream = await sendMessageStream(conversationId, currentInput, {
           agentId: agent.id,
+          overrideModel: overrideModelHandle,
         });
         turnToolContextId = getStreamToolContextId(stream);
       } catch (preStreamError) {
@@ -1730,6 +1774,36 @@ ${SYSTEM_REMINDER_CLOSE}
 
         if (preStreamAction === "retry_transient") {
           const attempt = llmApiErrorRetries + 1;
+          llmApiErrorRetries = attempt;
+
+          // Provider fallback: after 1 retry against Anthropic, switch to Bedrock
+          if (attempt >= 2 && !providerFallbackAttempted && model) {
+            const fallbackId = PROVIDER_FALLBACK_MAP[model];
+            const fallbackHandle = fallbackId
+              ? getModelInfo(fallbackId)?.handle
+              : undefined;
+            if (fallbackHandle) {
+              providerFallbackAttempted = true;
+              overrideModelHandle = fallbackHandle;
+              if (outputFormat === "stream-json") {
+                console.log(
+                  JSON.stringify({
+                    type: "status",
+                    message: "Anthropic API error; falling back to Bedrock...",
+                    session_id: sessionId,
+                    uuid: `fallback-${randomUUID()}`,
+                  }),
+                );
+              } else {
+                console.error(
+                  "Anthropic API error; falling back to Bedrock...",
+                );
+              }
+              conversationBusyRetries = 0;
+              continue;
+            }
+          }
+
           const retryAfterMs =
             preStreamError instanceof APIError
               ? parseRetryAfterHeaderMs(
@@ -1742,8 +1816,6 @@ ${SYSTEM_REMINDER_CLOSE}
             detail: errorDetail,
             retryAfterMs,
           });
-
-          llmApiErrorRetries = attempt;
 
           if (outputFormat === "stream-json") {
             const retryMsg: RetryMessage = {
@@ -2072,13 +2144,41 @@ ${SYSTEM_REMINDER_CLOSE}
       if (stopReason === "llm_api_error") {
         if (llmApiErrorRetries < LLM_API_ERROR_MAX_RETRIES) {
           const attempt = llmApiErrorRetries + 1;
+          llmApiErrorRetries = attempt;
+
+          // Provider fallback: after 1 retry against Anthropic, switch to Bedrock
+          if (attempt >= 2 && !providerFallbackAttempted && model) {
+            const fallbackId = PROVIDER_FALLBACK_MAP[model];
+            const fallbackHandle = fallbackId
+              ? getModelInfo(fallbackId)?.handle
+              : undefined;
+            if (fallbackHandle) {
+              providerFallbackAttempted = true;
+              overrideModelHandle = fallbackHandle;
+              if (outputFormat === "stream-json") {
+                console.log(
+                  JSON.stringify({
+                    type: "status",
+                    message: "Anthropic API error; falling back to Bedrock...",
+                    session_id: sessionId,
+                    uuid: `fallback-${randomUUID()}`,
+                  }),
+                );
+              } else {
+                console.error(
+                  "Anthropic API error; falling back to Bedrock...",
+                );
+              }
+              refreshCurrentInputOtids();
+              continue;
+            }
+          }
+
           const delayMs = getRetryDelayMs({
             category: "transient_provider",
             attempt,
             detail: detailFromRun,
           });
-
-          llmApiErrorRetries = attempt;
 
           if (outputFormat === "stream-json") {
             const retryMsg: RetryMessage = {

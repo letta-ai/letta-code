@@ -255,6 +255,15 @@ export const commands: Record<string, Command> = {
       return "Opening system prompt selector...";
     },
   },
+  "/personality": {
+    desc: "Switch personality",
+    order: 30.5,
+    noArgs: true,
+    handler: () => {
+      // Handled specially in App.tsx to open personality selector
+      return "Opening personality selector...";
+    },
+  },
   "/subagents": {
     desc: "Manage custom subagents",
     order: 31,

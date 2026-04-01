@@ -7,6 +7,10 @@ import WebSocket from "ws";
 import { buildConversationMessagesCreateRequestBody } from "../../agent/message";
 import { models } from "../../agent/model";
 import {
+  DEFAULT_CREATE_AGENT_PERSONALITIES,
+  getPersonalityOption,
+} from "../../agent/personality";
+import {
   clearAllSubagents,
   registerSubagent,
 } from "../../cli/helpers/subagentState";
@@ -98,6 +102,100 @@ describe("listen-client parseServerMessage", () => {
     );
     expect(parsed).not.toBeNull();
     expect(parsed?.type).toBe("input");
+  });
+
+  describe("listen-client create_agent command handling", () => {
+    test("creates the memo, linus, and kawaii presets through the shared helper", async () => {
+      expect(DEFAULT_CREATE_AGENT_PERSONALITIES).toEqual([
+        "memo",
+        "linus",
+        "kawaii",
+      ]);
+
+      for (const personality of [...DEFAULT_CREATE_AGENT_PERSONALITIES]) {
+        const socket = new MockSocket(WebSocket.OPEN);
+        const personalityOption = getPersonalityOption(personality);
+        const createAgentForPersonalityMock = mock(async () => ({
+          agent: {
+            id: `agent-${personality}`,
+            name: personalityOption.label,
+            model: "anthropic/test-model",
+          } as never,
+          provenance: "created",
+        }));
+        mock.module("../../agent/personality", () => ({
+          createAgentForPersonality: createAgentForPersonalityMock,
+        }));
+
+        const originalPinGlobal = settingsManager.pinGlobal;
+        const pinGlobalMock = mock(() => {});
+        settingsManager.pinGlobal = pinGlobalMock;
+
+        await __listenClientTestUtils.handleCreateAgentCommand(
+          {
+            type: "create_agent",
+            request_id: `create-${personality}`,
+            personality,
+          },
+          socket as unknown as WebSocket,
+        );
+
+        settingsManager.pinGlobal = originalPinGlobal;
+
+        expect(createAgentForPersonalityMock).toHaveBeenCalledTimes(1);
+        expect(createAgentForPersonalityMock).toHaveBeenCalledWith({
+          personalityId: personality,
+          model: undefined,
+        });
+        expect(pinGlobalMock).toHaveBeenCalledWith(`agent-${personality}`);
+
+        const messages = socket.sentPayloads.map((payload) =>
+          JSON.parse(payload),
+        );
+        expect(messages).toContainEqual(
+          expect.objectContaining({
+            type: "create_agent_response",
+            request_id: `create-${personality}`,
+            success: true,
+            agent_id: `agent-${personality}`,
+            name: personalityOption.label,
+            model: "anthropic/test-model",
+          }),
+        );
+      }
+    });
+
+    test("does not globally pin when pin_global is false", async () => {
+      const socket = new MockSocket(WebSocket.OPEN);
+      const createAgentForPersonalityMock = mock(async () => ({
+        agent: {
+          id: "agent-kawaii",
+          name: "Kawaii",
+          model: "anthropic/test-model",
+        } as never,
+        provenance: "created",
+      }));
+      mock.module("../../agent/personality", () => ({
+        createAgentForPersonality: createAgentForPersonalityMock,
+      }));
+
+      const originalPinGlobal = settingsManager.pinGlobal;
+      const pinGlobalMock = mock(() => {});
+      settingsManager.pinGlobal = pinGlobalMock;
+
+      await __listenClientTestUtils.handleCreateAgentCommand(
+        {
+          type: "create_agent",
+          request_id: "create-no-pin",
+          personality: "kawaii",
+          pin_global: false,
+        },
+        socket as unknown as WebSocket,
+      );
+
+      settingsManager.pinGlobal = originalPinGlobal;
+      expect(pinGlobalMock).not.toHaveBeenCalled();
+    });
   });
 
   test("classifies invalid input approval_response payloads", () => {
@@ -342,6 +440,72 @@ describe("listen-client parseServerMessage", () => {
     );
     expect(noPath).toBeNull();
     expect(noName).toBeNull();
+  });
+
+  test("parses create_agent command", () => {
+    const minimal = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "create_agent",
+          request_id: "create-1",
+          personality: "memo",
+        }),
+      ),
+    );
+    const withOptions = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "create_agent",
+          request_id: "create-2",
+          personality: "kawaii",
+          model: "sonnet",
+          pin_global: false,
+        }),
+      ),
+    );
+
+    expect(minimal?.type).toBe("create_agent");
+    expect(withOptions?.type).toBe("create_agent");
+  });
+
+  test("rejects malformed create_agent command", () => {
+    const noRequestId = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({ type: "create_agent", personality: "memo" }),
+      ),
+    );
+    const badPersonality = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "create_agent",
+          request_id: "create-bad-personality",
+          personality: "claude",
+        }),
+      ),
+    );
+    const badCodexPersonality = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "create_agent",
+          request_id: "create-bad-codex",
+          personality: "codex",
+        }),
+      ),
+    );
+    const badPinGlobal = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "create_agent",
+          request_id: "create-bad",
+          personality: "linus",
+          pin_global: "yes",
+        }),
+      ),
+    );
+    expect(noRequestId).toBeNull();
+    expect(badPersonality).toBeNull();
+    expect(badCodexPersonality).toBeNull();
+    expect(badPinGlobal).toBeNull();
   });
 
   test("parses reflection settings commands", () => {
@@ -914,6 +1078,7 @@ describe("listen-client approval resolver wiring", () => {
     const pending = new Promise<ApprovalResponseBody>((resolve, reject) => {
       runtime.pendingApprovalResolvers.set("perm-stop", { resolve, reject });
     });
+    const pendingError = pending.catch((error: unknown) => error);
     const socket = new MockSocket(WebSocket.OPEN);
     runtime.socket = socket as unknown as WebSocket;
 
@@ -922,7 +1087,9 @@ describe("listen-client approval resolver wiring", () => {
     expect(runtime.pendingApprovalResolvers.size).toBe(0);
     expect(socket.removeAllListenersCalls).toBe(1);
     expect(socket.closeCalls).toBe(1);
-    await expect(pending).rejects.toThrow("Listener runtime stopped");
+    const error = await pendingError;
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain("Listener runtime stopped");
   });
 });
 
@@ -1299,6 +1466,10 @@ describe("listen-client v2 status builders", () => {
         undefined,
         true,
         true,
+        {
+          agentId: "agent-1",
+          conversationId: "default",
+        },
       );
 
       const listener = __listenClientTestUtils.createListenerRuntime();
@@ -1333,6 +1504,64 @@ describe("listen-client v2 status builders", () => {
             silent: true,
           }),
         ],
+      });
+    } finally {
+      clearAllSubagents();
+    }
+  });
+
+  test("sync scopes update_subagent_state to runtime agent and conversation", () => {
+    clearAllSubagents();
+    try {
+      registerSubagent(
+        "subagent-reflection-target",
+        "reflection",
+        "Target scope",
+        undefined,
+        true,
+        true,
+        {
+          agentId: "agent-1",
+          conversationId: "default",
+        },
+      );
+      registerSubagent(
+        "subagent-reflection-other",
+        "reflection",
+        "Other scope",
+        undefined,
+        true,
+        true,
+        {
+          agentId: "agent-2",
+          conversationId: "default",
+        },
+      );
+
+      const listener = __listenClientTestUtils.createListenerRuntime();
+      const runtime = __listenClientTestUtils.getOrCreateScopedRuntime(
+        listener,
+        "agent-1",
+        "default",
+      );
+      const socket = new MockSocket(WebSocket.OPEN);
+
+      __listenClientTestUtils.emitStateSync(
+        socket as unknown as WebSocket,
+        runtime,
+        {
+          agent_id: "agent-1",
+          conversation_id: "default",
+        },
+      );
+
+      const outbound = socket.sentPayloads.map((payload) =>
+        JSON.parse(payload as string),
+      );
+      expect(outbound[3].type).toBe("update_subagent_state");
+      expect(outbound[3].subagents).toHaveLength(1);
+      expect(outbound[3].subagents[0]).toMatchObject({
+        subagent_id: "subagent-reflection-target",
       });
     } finally {
       clearAllSubagents();
