@@ -12,7 +12,7 @@ import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/mes
 import WebSocket from "ws";
 import { getAvailableModelHandles } from "../../agent/available-models";
 import { getClient } from "../../agent/client";
-import { getModelInfo, models } from "../../agent/model";
+import { getModelInfo, models, resolveModel } from "../../agent/model";
 import {
   updateAgentLLMConfig,
   updateConversationLLMConfig,
@@ -71,6 +71,7 @@ import type {
   AbortMessageCommand,
   ApprovalResponseBody,
   ChangeDeviceStateCommand,
+  CreateAgentCommand,
   CronAddCommand,
   CronDeleteAllCommand,
   CronDeleteCommand,
@@ -129,6 +130,7 @@ import {
 } from "./permissionMode";
 import {
   isCheckoutBranchCommand,
+  isCreateAgentCommand,
   isCronAddCommand,
   isCronDeleteAllCommand,
   isCronDeleteCommand,
@@ -965,6 +967,62 @@ async function handleSkillCommand(
   }
 
   return false;
+}
+
+async function handleCreateAgentCommand(
+  parsed: CreateAgentCommand,
+  socket: WebSocket,
+): Promise<void> {
+  try {
+    // Pre-validate model to avoid process.exit(1) in createAgent()
+    if (parsed.model) {
+      const resolved = resolveModel(parsed.model);
+      if (!resolved) {
+        socket.send(
+          JSON.stringify({
+            type: "create_agent_response",
+            request_id: parsed.request_id,
+            success: false,
+            error: `Unknown model "${parsed.model}"`,
+          }),
+        );
+        return;
+      }
+    }
+
+    const { createAgentForPersonality } = await import(
+      "../../agent/personality"
+    );
+    const result = await createAgentForPersonality({
+      personalityId: parsed.personality,
+      model: parsed.model,
+    });
+
+    // Pin the agent globally (favorites it) unless explicitly disabled
+    if (parsed.pin_global !== false) {
+      settingsManager.pinGlobal(result.agent.id);
+    }
+
+    socket.send(
+      JSON.stringify({
+        type: "create_agent_response",
+        request_id: parsed.request_id,
+        success: true,
+        agent_id: result.agent.id,
+        name: result.agent.name,
+        model: result.agent.model ?? null,
+      }),
+    );
+  } catch (err) {
+    socket.send(
+      JSON.stringify({
+        type: "create_agent_response",
+        request_id: parsed.request_id,
+        success: false,
+        error: err instanceof Error ? err.message : "Failed to create agent",
+      }),
+    );
+  }
 }
 
 function toReflectionSettingsResponse(
@@ -2705,6 +2763,12 @@ async function connectWithRetry(
       return;
     }
 
+    // ── Agent management commands (no runtime scope required) ─────────
+    if (isCreateAgentCommand(parsed)) {
+      void handleCreateAgentCommand(parsed, socket);
+      return;
+    }
+
     if (
       isGetReflectionSettingsCommand(parsed) ||
       isSetReflectionSettingsCommand(parsed)
@@ -3297,6 +3361,7 @@ export const __listenClientTestUtils = {
   handleChangeDeviceStateInput,
   handleCronCommand,
   handleSkillCommand,
+  handleCreateAgentCommand,
   handleReflectionSettingsCommand,
   scheduleQueuePump,
   recoverApprovalStateForSync,

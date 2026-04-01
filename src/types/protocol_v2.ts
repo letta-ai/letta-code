@@ -660,6 +660,18 @@ export interface SkillDisableCommand {
   name: string;
 }
 
+export interface CreateAgentCommand {
+  type: "create_agent";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  /** Built-in personality preset to create. */
+  personality: "memo" | "linus" | "kawaii";
+  /** Model identifier (e.g. "sonnet", "gpt-4o"). Uses default if omitted. */
+  model?: string;
+  /** Whether to pin the agent globally after creation. Defaults to true. */
+  pin_global?: boolean;
+}
+
 export interface GetReflectionSettingsCommand {
   type: "get_reflection_settings";
   /** Echoed back in the response for request correlation. */
@@ -727,6 +739,16 @@ export interface CronsUpdatedMessage {
   timestamp: number;
   agent_id?: string;
   conversation_id?: string | null;
+}
+
+export interface CreateAgentResponseMessage {
+  type: "create_agent_response";
+  request_id: string;
+  success: boolean;
+  agent_id?: string;
+  name?: string;
+  model?: string;
+  error?: string;
 }
 
 export interface GetReflectionSettingsResponseMessage {
@@ -837,6 +859,7 @@ export type WsProtocolCommand =
   | CronDeleteAllCommand
   | SkillEnableCommand
   | SkillDisableCommand
+  | CreateAgentCommand
   | GetReflectionSettingsCommand
   | SetReflectionSettingsCommand
   | ExecuteCommandCommand

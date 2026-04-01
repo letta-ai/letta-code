@@ -2,10 +2,10 @@ import { parseArgs } from "node:util";
 import type { AgentListParams } from "@letta-ai/letta-client/resources/agents/agents";
 import { getClient } from "../../agent/client";
 import { type CreateAgentOptions, createAgent } from "../../agent/create";
-import { getDefaultMemoryBlocks } from "../../agent/memory";
-import { GIT_MEMORY_ENABLED_TAG } from "../../agent/memoryGit";
 import {
-  getPersonalityBlockDefinitions,
+  buildCreateAgentOptionsForPersonality,
+  createAgentForPersonality,
+  enableMemfsForCreatedAgent,
   resolvePersonalityId,
 } from "../../agent/personality";
 import { settingsManager } from "../../settings-manager";
@@ -126,50 +126,13 @@ async function runCreateAction(
     return 1;
   }
 
-  // Resolve personality-specific memory block overrides, if any.
-  let personalityBlockDefinitions:
-    | ReturnType<typeof getPersonalityBlockDefinitions>
-    | undefined;
-  if (personality) {
-    personalityBlockDefinitions = getPersonalityBlockDefinitions(personality);
-  }
-
-  const options: CreateAgentOptions = {
-    memoryPromptMode: "memfs",
-  };
-
-  if (personalityBlockDefinitions) {
-    const defaultMemoryBlocks = await getDefaultMemoryBlocks();
-    options.memoryBlocks = defaultMemoryBlocks.map((block) => {
-      if (block.label === "persona") {
-        return {
-          label: block.label,
-          value: personalityBlockDefinitions.persona.value,
-          description:
-            personalityBlockDefinitions.persona.description ??
-            block.description ??
-            undefined,
-        };
-      }
-
-      if (block.label === "human") {
-        return {
-          label: block.label,
-          value: personalityBlockDefinitions.human.value,
-          description:
-            personalityBlockDefinitions.human.description ??
-            block.description ??
-            undefined,
-        };
-      }
-
-      return {
-        label: block.label,
-        value: block.value,
-        description: block.description ?? undefined,
+  const options: CreateAgentOptions = personality
+    ? await buildCreateAgentOptionsForPersonality({
+        personalityId: personality,
+      })
+    : {
+        memoryPromptMode: "memfs",
       };
-    });
-  }
 
   if (typeof values.name === "string") {
     options.name = values.name;
@@ -189,27 +152,26 @@ async function runCreateAction(
   }
 
   try {
-    const result = await createAgent(options);
+    const result = personality
+      ? await createAgentForPersonality({
+          personalityId: personality,
+          name: options.name,
+          description: options.description,
+          model: options.model,
+          tags: options.tags,
+        })
+      : await createAgent(options);
     const agentId = result.agent.id;
+
+    if (!personality) {
+      await enableMemfsForCreatedAgent({
+        agentId,
+        agentTags: result.agent.tags,
+      });
+    }
 
     if (values.pinned) {
       settingsManager.pinGlobal(agentId);
-    }
-
-    // Add git-memory-enabled tag via API (no git clone needed here)
-    // Always try - if it fails (self-hosted without memfs), that's fine
-    try {
-      const client = await getClient();
-      const agentTags = result.agent.tags || [];
-      if (!agentTags.includes(GIT_MEMORY_ENABLED_TAG)) {
-        await client.agents.update(agentId, {
-          tags: [...agentTags, GIT_MEMORY_ENABLED_TAG],
-        });
-      }
-      // Mark memfs enabled locally so interactive startup knows
-      settingsManager.setMemfsEnabled(agentId, true);
-    } catch {
-      // Self-hosted or memfs not available - skip silently
     }
 
     // Re-fetch agent to get updated tags in output

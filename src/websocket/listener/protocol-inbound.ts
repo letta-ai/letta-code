@@ -3,6 +3,7 @@ import type {
   AbortMessageCommand,
   ChangeDeviceStateCommand,
   CheckoutBranchCommand,
+  CreateAgentCommand,
   CronAddCommand,
   CronDeleteAllCommand,
   CronDeleteCommand,
@@ -539,6 +540,28 @@ export function isSkillDisableCommand(
   );
 }
 
+export function isCreateAgentCommand(
+  value: unknown,
+): value is CreateAgentCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    personality?: unknown;
+    model?: unknown;
+    pin_global?: unknown;
+  };
+  return (
+    c.type === "create_agent" &&
+    typeof c.request_id === "string" &&
+    (c.personality === "memo" ||
+      c.personality === "linus" ||
+      c.personality === "kawaii") &&
+    (c.model === undefined || typeof c.model === "string") &&
+    (c.pin_global === undefined || typeof c.pin_global === "boolean")
+  );
+}
+
 export function isGetReflectionSettingsCommand(
   value: unknown,
 ): value is GetReflectionSettingsCommand {
@@ -674,6 +697,7 @@ export function parseServerMessage(
       isCronDeleteAllCommand(parsed) ||
       isSkillEnableCommand(parsed) ||
       isSkillDisableCommand(parsed) ||
+      isCreateAgentCommand(parsed) ||
       isGetReflectionSettingsCommand(parsed) ||
       isSetReflectionSettingsCommand(parsed) ||
       isExecuteCommandCommand(parsed) ||

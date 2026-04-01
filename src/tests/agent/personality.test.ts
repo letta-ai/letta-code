@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
+  buildCreateAgentOptionsForPersonality,
+  DEFAULT_CREATE_AGENT_PERSONALITIES,
   detectPersonalityFromPersonaFile,
   getDefaultHumanContent,
   getPersonalityBlockDefinitions,
@@ -59,6 +61,51 @@ describe("personality helpers", () => {
     const defaultHuman = getDefaultHumanContent();
     expect(getPersonalityHumanContent("claude")).toBe(defaultHuman);
     expect(getPersonalityHumanContent("codex")).toBe(defaultHuman);
+  });
+
+  test("default create-agent personalities are exactly memo, linus, and kawaii", () => {
+    expect(DEFAULT_CREATE_AGENT_PERSONALITIES).toEqual([
+      "memo",
+      "linus",
+      "kawaii",
+    ]);
+  });
+
+  test("buildCreateAgentOptionsForPersonality maps the curated presets to personality-specific memory blocks", async () => {
+    for (const personality of [...DEFAULT_CREATE_AGENT_PERSONALITIES]) {
+      const definitions = getPersonalityBlockDefinitions(personality);
+      const options = await buildCreateAgentOptionsForPersonality({
+        personalityId: personality,
+      });
+      const personaBlock = options.memoryBlocks?.find(
+        (block): block is { label: string; value: string } =>
+          "label" in block && block.label === "persona",
+      );
+      const humanBlock = options.memoryBlocks?.find(
+        (block): block is { label: string; value: string } =>
+          "label" in block && block.label === "human",
+      );
+
+      expect(options).toMatchObject({
+        name: PERSONALITY_OPTIONS.find((option) => option.id === personality)
+          ?.label,
+        description: PERSONALITY_OPTIONS.find(
+          (option) => option.id === personality,
+        )?.description,
+        memoryPromptMode: "memfs",
+      });
+      expect(personaBlock?.value).toBe(definitions.persona.value);
+      expect(humanBlock?.value).toBe(definitions.human.value);
+    }
+  });
+
+  test("buildCreateAgentOptionsForPersonality preserves caller-provided tags", async () => {
+    const options = await buildCreateAgentOptionsForPersonality({
+      personalityId: "memo",
+      tags: ["desktop", "favorite"],
+    });
+
+    expect(options.tags).toEqual(["desktop", "favorite"]);
   });
 
   test("kawaii block definitions carry personality-specific descriptions", () => {
