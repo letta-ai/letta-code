@@ -19,14 +19,15 @@ import {
   shouldRetryRunMetadataError,
 } from "../../agent/turn-recovery-policy";
 import { createBuffers } from "../../cli/helpers/accumulator";
+import { classifyApprovals } from "../../cli/helpers/approvalClassification";
 import { drainStreamWithResume } from "../../cli/helpers/stream";
 import { computeDiffPreviews } from "../../helpers/diffPreview";
+import { isInteractiveApprovalTool } from "../../tools/interactivePolicy";
 import type {
   ApprovalResponseBody,
   StopReasonType,
   StreamDelta,
 } from "../../types/protocol_v2";
-import { parseApprovalInput } from "./approval";
 import {
   MAX_POST_STOP_APPROVAL_RECOVERY,
   NO_AWAITING_APPROVAL_DETAIL_FRAGMENT,
@@ -38,6 +39,7 @@ import {
   emitToolExecutionStartedEvents,
   normalizeToolReturnWireMessage,
 } from "./interrupts";
+import { getOrCreateConversationPermissionModeStateRef } from "./permissionMode";
 import {
   emitCanonicalMessageDelta,
   emitDequeuedUserMessage,
@@ -328,6 +330,23 @@ export async function debugLogApprovalResumeState(
   }
 }
 
+function buildRecoveredAutoDecisions(
+  autoAllowed: Awaited<ReturnType<typeof classifyApprovals>>["autoAllowed"],
+  autoDenied: Awaited<ReturnType<typeof classifyApprovals>>["autoDenied"],
+): ApprovalDecision[] {
+  return [
+    ...autoAllowed.map((ac) => ({
+      type: "approve" as const,
+      approval: ac.approval,
+    })),
+    ...autoDenied.map((ac) => ({
+      type: "deny" as const,
+      approval: ac.approval,
+      reason: ac.denyReason || ac.permission.reason || "Permission denied",
+    })),
+  ];
+}
+
 export async function recoverApprovalStateForSync(
   runtime: ConversationRuntime,
   scope: { agent_id: string; conversation_id: string },
@@ -391,19 +410,42 @@ export async function recoverApprovalStateForSync(
     return;
   }
 
+  const workingDirectory = getConversationWorkingDirectory(
+    runtime.listener,
+    scope.agent_id,
+    scope.conversation_id,
+  );
+  const { needsUserInput, autoAllowed, autoDenied } = await classifyApprovals(
+    pendingApprovals,
+    {
+      alwaysRequiresUserInput: isInteractiveApprovalTool,
+      requireArgsForAutoApprove: true,
+      missingNameReason: "Tool call incomplete - missing name",
+      workingDirectory,
+      permissionModeState: getOrCreateConversationPermissionModeStateRef(
+        runtime.listener,
+        scope.agent_id,
+        scope.conversation_id,
+      ),
+    },
+  );
+  const autoDecisions = buildRecoveredAutoDecisions(autoAllowed, autoDenied);
+
+  if (needsUserInput.length === 0) {
+    clearRecoveredApprovalState(runtime);
+    return;
+  }
+
   const approvalsByRequestId = new Map<string, RecoveredPendingApproval>();
   await Promise.all(
-    pendingApprovals.map(async (approval) => {
+    needsUserInput.map(async (approvalEntry) => {
+      const approval = approvalEntry.approval;
       const requestId = `perm-${approval.toolCallId}`;
-      const input = parseApprovalInput(approval.toolArgs);
+      const input = approvalEntry.parsedArgs;
       const diffs = await computeDiffPreviews(
         approval.toolName,
         input,
-        getConversationWorkingDirectory(
-          runtime.listener,
-          scope.agent_id,
-          scope.conversation_id,
-        ),
+        workingDirectory,
       );
 
       approvalsByRequestId.set(requestId, {
@@ -433,6 +475,8 @@ export async function recoverApprovalStateForSync(
     approvalsByRequestId,
     pendingRequestIds: new Set(approvalsByRequestId.keys()),
     responsesByRequestId: new Map(),
+    autoDecisions,
+    allApprovals: pendingApprovals,
   };
 }
 
@@ -480,7 +524,7 @@ export async function resolveRecoveredApprovalResponse(
     return true;
   }
 
-  const decisions: ApprovalDecision[] = [];
+  const decisions: ApprovalDecision[] = [...(recovered.autoDecisions ?? [])];
   for (const [id, entry] of recovered.approvalsByRequestId) {
     const approvalResponse = recovered.responsesByRequestId.get(id);
     if (!approvalResponse) {

@@ -72,6 +72,24 @@ const drainStreamWithResumeMock = mock(
   },
 );
 const retrieveAgentMock = mock(async (agentId: string) => ({ id: agentId }));
+const retrieveConversationMock = mock(async (conversationId: string) => ({
+  id: conversationId,
+  in_context_message_ids: ["msg-recovered-approval"],
+}));
+const retrieveMessageMock = mock(async () => [
+  {
+    id: "msg-recovered-approval",
+    message_type: "approval_request_message",
+    tool_calls: [] as Array<{
+      tool_call_id: string;
+      name: string;
+      arguments: string;
+    }>,
+  },
+]);
+const listAgentMessagesMock = mock(async () => ({
+  getPaginatedItems: () => [],
+}));
 const cancelConversationMock = mock(async (_conversationId: string) => {});
 const conversationMessagesStreamMock = mock(
   async (
@@ -89,12 +107,19 @@ const conversationMessagesStreamMock = mock(
 const getClientMock = mock(async () => ({
   agents: {
     retrieve: retrieveAgentMock,
+    messages: {
+      list: listAgentMessagesMock,
+    },
   },
   conversations: {
+    retrieve: retrieveConversationMock,
     cancel: cancelConversationMock,
     messages: {
       stream: conversationMessagesStreamMock,
     },
+  },
+  messages: {
+    retrieve: retrieveMessageMock,
   },
 }));
 const getResumeDataMock = mock(
@@ -246,6 +271,9 @@ describe("listen-client multi-worker concurrency", () => {
     drainStreamWithResumeMock.mockClear();
     getClientMock.mockClear();
     retrieveAgentMock.mockClear();
+    retrieveConversationMock.mockClear();
+    retrieveMessageMock.mockClear();
+    listAgentMessagesMock.mockClear();
     getResumeDataMock.mockClear();
     classifyApprovalsMock.mockClear();
     executeApprovalBatchMock.mockClear();
@@ -1022,6 +1050,257 @@ describe("listen-client multi-worker concurrency", () => {
       ],
       otid: expect.any(String),
     });
+  });
+
+  test("sync replay preserves hidden auto decisions while only surfacing manual recovered approvals", async () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    __listenClientTestUtils.setActiveRuntime(listener);
+    const runtime = __listenClientTestUtils.getOrCreateScopedRuntime(
+      listener,
+      "agent-1",
+      "conv-mixed-sync",
+    );
+
+    const autoAllowedApproval = {
+      toolCallId: "tool-auto-allow",
+      toolName: "Read",
+      toolArgs: '{"file_path":"foo.ts"}',
+    };
+    const manualApproval = {
+      toolCallId: "tool-manual",
+      toolName: "Bash",
+      toolArgs: '{"command":"rm -rf tmp"}',
+    };
+    const autoDeniedApproval = {
+      toolCallId: "tool-auto-deny",
+      toolName: "Write",
+      toolArgs: '{"file_path":"denied.ts","content":"nope"}',
+    };
+
+    retrieveConversationMock.mockResolvedValueOnce({
+      id: "conv-mixed-sync",
+      in_context_message_ids: ["msg-recovered-approval"],
+    });
+    retrieveMessageMock.mockResolvedValueOnce([
+      {
+        id: "msg-recovered-approval",
+        message_type: "approval_request_message",
+        tool_calls: [
+          {
+            tool_call_id: autoAllowedApproval.toolCallId,
+            name: autoAllowedApproval.toolName,
+            arguments: autoAllowedApproval.toolArgs,
+          },
+          {
+            tool_call_id: manualApproval.toolCallId,
+            name: manualApproval.toolName,
+            arguments: manualApproval.toolArgs,
+          },
+          {
+            tool_call_id: autoDeniedApproval.toolCallId,
+            name: autoDeniedApproval.toolName,
+            arguments: autoDeniedApproval.toolArgs,
+          },
+        ],
+      },
+    ]);
+    // biome-ignore lint/suspicious/noExplicitAny: mock method access
+    (classifyApprovalsMock as any).mockResolvedValueOnce({
+      autoAllowed: [
+        {
+          approval: autoAllowedApproval,
+          parsedArgs: { file_path: "foo.ts" },
+          permission: { decision: "allow", reason: "auto" },
+        },
+      ],
+      autoDenied: [
+        {
+          approval: autoDeniedApproval,
+          parsedArgs: { file_path: "denied.ts", content: "nope" },
+          permission: { decision: "deny", reason: "blocked" },
+          denyReason: "blocked by policy",
+        },
+      ],
+      needsUserInput: [
+        {
+          approval: manualApproval,
+          parsedArgs: { command: "rm -rf tmp" },
+          permission: { decision: "ask", reason: "needs approval" },
+        },
+      ],
+    } as never);
+
+    await __listenClientTestUtils.recoverApprovalStateForSync(runtime, {
+      agent_id: "agent-1",
+      conversation_id: "conv-mixed-sync",
+    });
+
+    expect(runtime.recoveredApprovalState?.pendingRequestIds).toEqual(
+      new Set(["perm-tool-manual"]),
+    );
+    expect(runtime.recoveredApprovalState?.autoDecisions).toEqual([
+      {
+        type: "approve",
+        approval: autoAllowedApproval,
+      },
+      {
+        type: "deny",
+        approval: autoDeniedApproval,
+        reason: "blocked by policy",
+      },
+    ]);
+    expect(runtime.recoveredApprovalState?.allApprovals).toEqual([
+      autoAllowedApproval,
+      manualApproval,
+      autoDeniedApproval,
+    ]);
+
+    const deviceStatus = __listenClientTestUtils.buildDeviceStatus(listener, {
+      agent_id: "agent-1",
+      conversation_id: "conv-mixed-sync",
+    });
+    expect(deviceStatus.pending_control_requests).toEqual([
+      {
+        request_id: "perm-tool-manual",
+        request: expect.objectContaining({
+          subtype: "can_use_tool",
+          tool_name: "Bash",
+          tool_call_id: "tool-manual",
+        }),
+      },
+    ]);
+  });
+
+  test("recovered approval continuation executes hidden auto decisions together with manual responses", async () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    __listenClientTestUtils.setActiveRuntime(listener);
+    const runtime = __listenClientTestUtils.getOrCreateScopedRuntime(
+      listener,
+      "agent-1",
+      "conv-mixed-recovered",
+    );
+    const socket = new MockSocket();
+
+    const autoAllowedApproval = {
+      toolCallId: "tool-auto-allow",
+      toolName: "Read",
+      toolArgs: '{"file_path":"foo.ts"}',
+    };
+    const manualApproval = {
+      toolCallId: "tool-manual",
+      toolName: "Bash",
+      toolArgs: '{"command":"rm -rf tmp"}',
+    };
+    const autoDeniedApproval = {
+      toolCallId: "tool-auto-deny",
+      toolName: "Write",
+      toolArgs: '{"file_path":"denied.ts","content":"nope"}',
+    };
+    const approvalResults = [
+      {
+        type: "tool",
+        tool_call_id: "tool-auto-allow",
+        tool_return: "auto ok",
+        status: "success",
+      },
+      {
+        type: "approval",
+        tool_call_id: "tool-auto-deny",
+        approve: false,
+        reason: "blocked by policy",
+      },
+      {
+        type: "tool",
+        tool_call_id: "tool-manual",
+        tool_return: "manual ok",
+        status: "success",
+      },
+    ];
+    executeApprovalBatchMock.mockResolvedValueOnce(approvalResults as never);
+
+    runtime.recoveredApprovalState = {
+      agentId: "agent-1",
+      conversationId: "conv-mixed-recovered",
+      approvalsByRequestId: new Map([
+        [
+          "perm-tool-manual",
+          {
+            approval: manualApproval,
+            controlRequest: {
+              type: "control_request",
+              request_id: "perm-tool-manual",
+              request: {
+                subtype: "can_use_tool",
+                tool_name: "Bash",
+                input: { command: "rm -rf tmp" },
+                tool_call_id: "tool-manual",
+                permission_suggestions: [],
+                blocked_path: null,
+              },
+              agent_id: "agent-1",
+              conversation_id: "conv-mixed-recovered",
+            },
+          },
+        ],
+      ]),
+      pendingRequestIds: new Set(["perm-tool-manual"]),
+      responsesByRequestId: new Map(),
+      autoDecisions: [
+        {
+          type: "approve",
+          approval: autoAllowedApproval,
+        },
+        {
+          type: "deny",
+          approval: autoDeniedApproval,
+          reason: "blocked by policy",
+        },
+      ],
+      allApprovals: [autoAllowedApproval, manualApproval, autoDeniedApproval],
+    };
+
+    const handled = await resolveRecoveredApprovalResponse(
+      runtime,
+      socket as unknown as WebSocket,
+      {
+        request_id: "perm-tool-manual",
+        decision: { behavior: "allow", message: "approved manually" },
+      },
+      __listenClientTestUtils.handleIncomingMessage,
+      {},
+    );
+
+    expect(handled).toBe(true);
+    expect(executeApprovalBatchMock).toHaveBeenCalledWith(
+      [
+        {
+          type: "approve",
+          approval: autoAllowedApproval,
+        },
+        {
+          type: "deny",
+          approval: autoDeniedApproval,
+          reason: "blocked by policy",
+        },
+        {
+          type: "approve",
+          approval: manualApproval,
+          reason: "approved manually",
+        },
+      ],
+      undefined,
+      expect.any(Object),
+    );
+
+    const continuationMessages = sendMessageStreamMock.mock.calls[0]?.[1] as
+      | Array<Record<string, unknown>>
+      | undefined;
+    expect(continuationMessages?.[0]).toEqual(
+      expect.objectContaining({
+        type: "approval",
+        approvals: approvalResults,
+      }),
+    );
   });
 
   test("sync replay suppresses recovered approvals when interrupted cache is active", async () => {

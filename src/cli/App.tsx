@@ -215,7 +215,10 @@ import {
   setToolCallsRunning,
   toLines,
 } from "./helpers/accumulator";
-import { classifyApprovals } from "./helpers/approvalClassification";
+import {
+  type ClassifiedApproval,
+  classifyApprovals,
+} from "./helpers/approvalClassification";
 import { buildChatUrl } from "./helpers/appUrls";
 import { backfillBuffers } from "./helpers/backfill";
 import { chunkLog } from "./helpers/chunkLog";
@@ -690,6 +693,82 @@ function estimateAdvancedDiffLines(
 // tiny helper for unique ids (avoid overwriting prior user lines)
 function uid(prefix: string) {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function buildApprovalBatchKey(approvals: ApprovalRequest[]): string {
+  return approvals
+    .map((approval) => approval.toolCallId)
+    .sort()
+    .join("|");
+}
+
+function precomputeDiffsForApprovalBatch(
+  approvals: Array<Pick<ClassifiedApproval, "approval" | "parsedArgs">>,
+  precomputedDiffs: Map<string, AdvancedDiffSuccess>,
+): void {
+  for (const ac of approvals) {
+    const toolName = ac.approval.toolName;
+    const toolCallId = ac.approval.toolCallId;
+    const args = ac.parsedArgs;
+
+    try {
+      if (isFileWriteTool(toolName)) {
+        const filePath = args.file_path as string | undefined;
+        if (filePath) {
+          const result = computeAdvancedDiff({
+            kind: "write",
+            filePath,
+            content: (args.content as string) || "",
+          });
+          if (result.mode === "advanced") {
+            precomputedDiffs.set(toolCallId, result);
+          }
+        }
+      } else if (isFileEditTool(toolName)) {
+        const filePath = args.file_path as string | undefined;
+        if (filePath) {
+          if (args.edits && Array.isArray(args.edits)) {
+            const result = computeAdvancedDiff({
+              kind: "multi_edit",
+              filePath,
+              edits: args.edits as Array<{
+                old_string: string;
+                new_string: string;
+                replace_all?: boolean;
+              }>,
+            });
+            if (result.mode === "advanced") {
+              precomputedDiffs.set(toolCallId, result);
+            }
+          } else {
+            const result = computeAdvancedDiff({
+              kind: "edit",
+              filePath,
+              oldString: (args.old_string as string) || "",
+              newString: (args.new_string as string) || "",
+              replaceAll: args.replace_all as boolean | undefined,
+            });
+            if (result.mode === "advanced") {
+              precomputedDiffs.set(toolCallId, result);
+            }
+          }
+        }
+      } else if (isPatchTool(toolName) && args.input) {
+        const operations = parsePatchOperations(args.input as string);
+        for (const op of operations) {
+          const key = `${toolCallId}:${op.path}`;
+          if (op.kind === "add" || op.kind === "update") {
+            const result = parsePatchToAdvancedDiff(op.patchLines, op.path);
+            if (result) {
+              precomputedDiffs.set(key, result);
+            }
+          }
+        }
+      }
+    } catch {
+      // Ignore diff computation errors for approval previews.
+    }
+  }
 }
 
 // Send desktop notification via terminal bell
@@ -1290,6 +1369,15 @@ export default function App({
     conversationId: string;
     generation: number;
   } | null>(null);
+  const restoredApprovalRecoveryRef = useRef<{
+    batchKey: string | null;
+    generation: number;
+    status: "idle" | "running" | "completed";
+  }>({
+    batchKey: null,
+    generation: -1,
+    status: "idle",
+  });
   const queuedApprovalMetadataRef = useRef<{
     conversationId: string;
     generation: number;
@@ -3040,49 +3128,6 @@ export default function App({
       }, 16); // ~60fps
     }
   }, [refreshDerived]);
-
-  // Restore pending approval from startup when ready
-  // All approvals (including fancy UI tools) go through pendingApprovals
-  // The render logic determines which UI to show based on tool name
-  useEffect(() => {
-    // Use new plural field if available, otherwise wrap singular in array for backward compat
-    const approvals =
-      startupApprovals?.length > 0
-        ? startupApprovals
-        : startupApproval
-          ? [startupApproval]
-          : [];
-
-    if (loadingState === "ready" && approvals.length > 0) {
-      // All approvals go through the same flow - UI rendering decides which dialog to show
-      setPendingApprovals(approvals);
-
-      // Analyze approval contexts for all restored approvals
-      const analyzeStartupApprovals = async () => {
-        try {
-          const contexts = await Promise.all(
-            approvals.map(async (approval) => {
-              const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
-                approval.toolArgs,
-                {},
-              );
-              return await analyzeToolApproval(approval.toolName, parsedArgs);
-            }),
-          );
-          setApprovalContexts(contexts);
-        } catch (error) {
-          // If analysis fails, leave context as null (will show basic options)
-          debugLog(
-            "approvals",
-            "Failed to analyze startup approvals: %O",
-            error,
-          );
-        }
-      };
-
-      analyzeStartupApprovals();
-    }
-  }, [loadingState, startupApproval, startupApprovals]);
 
   // Eager commit for ExitPlanMode: Always commit plan preview to staticItems
   // This keeps the dynamic area small (just approval options) to avoid flicker
@@ -6211,6 +6256,304 @@ export default function App({
     ],
   );
 
+  const restorePendingApprovalUi = useCallback(
+    async (
+      approvals: ApprovalRequest[],
+      contexts?: ApprovalContext[],
+    ): Promise<void> => {
+      setPendingApprovals(approvals);
+
+      if (contexts) {
+        setApprovalContexts(contexts);
+        return;
+      }
+
+      try {
+        const analyzedContexts = await Promise.all(
+          approvals.map(async (approval) => {
+            const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
+              approval.toolArgs,
+              {},
+            );
+            return await analyzeToolApproval(approval.toolName, parsedArgs);
+          }),
+        );
+        setApprovalContexts(analyzedContexts);
+      } catch (error) {
+        debugLog(
+          "approvals",
+          "Failed to analyze restored approvals: %O",
+          error,
+        );
+        setApprovalContexts([]);
+      }
+    },
+    [],
+  );
+
+  const recoverRestoredPendingApprovals = useCallback(
+    async (
+      approvals: ApprovalRequest[],
+      options: { notifyOnManualApproval?: boolean } = {},
+    ): Promise<void> => {
+      if (approvals.length === 0) {
+        return;
+      }
+
+      const generationAtStart = conversationGenerationRef.current;
+      const batchKey = buildApprovalBatchKey(approvals);
+      const currentRecovery = restoredApprovalRecoveryRef.current;
+      if (
+        currentRecovery.batchKey === batchKey &&
+        currentRecovery.generation === generationAtStart &&
+        currentRecovery.status !== "idle"
+      ) {
+        return;
+      }
+
+      restoredApprovalRecoveryRef.current = {
+        batchKey,
+        generation: generationAtStart,
+        status: "running",
+      };
+
+      setApprovalResults([]);
+      setAutoHandledResults([]);
+      setAutoDeniedApprovals([]);
+      setApprovalContexts([]);
+      setPendingApprovals([]);
+      queueApprovalResults(null);
+
+      try {
+        const desiredMode = uiPermissionModeRef.current;
+        if (permissionMode.getMode() !== desiredMode) {
+          permissionMode.setMode(desiredMode);
+        }
+
+        const { needsUserInput, autoAllowed, autoDenied } =
+          await classifyApprovals(approvals, {
+            getContext: analyzeToolApproval,
+            alwaysRequiresUserInput,
+            missingNameReason:
+              "Tool call incomplete - missing name or arguments",
+          });
+
+        if (conversationGenerationRef.current !== generationAtStart) {
+          restoredApprovalRecoveryRef.current = {
+            batchKey,
+            generation: generationAtStart,
+            status: "completed",
+          };
+          return;
+        }
+
+        precomputeDiffsForApprovalBatch(
+          [...autoAllowed, ...needsUserInput],
+          precomputedDiffsRef.current,
+        );
+
+        const autoAllowedToolCallIds = autoAllowed.map(
+          (ac) => ac.approval.toolCallId,
+        );
+        const autoAllowedAbortController =
+          abortControllerRef.current ?? new AbortController();
+        const shouldTrackAutoAllowed = autoAllowedToolCallIds.length > 0;
+        let autoAllowedResults: Array<{
+          toolCallId: string;
+          result: ToolExecutionResult;
+        }> = [];
+        let autoDeniedResults: Array<{
+          approval: ApprovalRequest;
+          reason: string;
+        }> = [];
+
+        if (shouldTrackAutoAllowed) {
+          setIsExecutingTool(true);
+          executingToolCallIdsRef.current = autoAllowedToolCallIds;
+          toolAbortControllerRef.current = autoAllowedAbortController;
+          autoAllowedExecutionRef.current = {
+            toolCallIds: autoAllowedToolCallIds,
+            results: null,
+            conversationId: conversationIdRef.current,
+            generation: generationAtStart,
+          };
+        }
+
+        try {
+          if (autoAllowedToolCallIds.length > 0) {
+            setToolCallsRunning(buffersRef.current, autoAllowedToolCallIds);
+            refreshDerived();
+          }
+
+          autoAllowedResults =
+            autoAllowed.length > 0
+              ? await executeAutoAllowedTools(
+                  autoAllowed,
+                  (chunk) => onChunk(buffersRef.current, chunk),
+                  {
+                    abortSignal: autoAllowedAbortController.signal,
+                    onStreamingOutput: updateStreamingOutput,
+                    toolContextId:
+                      approvalToolContextIdRef.current ?? undefined,
+                  },
+                )
+              : [];
+
+          autoDeniedResults = autoDenied.map((ac) => {
+            const reason = ac.permission.reason
+              ? `Permission denied: ${ac.permission.reason}`
+              : "matchedRule" in ac.permission && ac.permission.matchedRule
+                ? `Permission denied by rule: ${ac.permission.matchedRule}`
+                : "Permission denied: Unknown reason";
+
+            onChunk(buffersRef.current, {
+              message_type: "tool_return_message",
+              id: "dummy",
+              date: new Date().toISOString(),
+              tool_call_id: ac.approval.toolCallId,
+              tool_return: `Error: request to call tool denied. User reason: ${reason}`,
+              status: "error",
+              stdout: null,
+              stderr: null,
+            });
+
+            return {
+              approval: ac.approval,
+              reason,
+            };
+          });
+        } finally {
+          if (shouldTrackAutoAllowed) {
+            setIsExecutingTool(false);
+            toolAbortControllerRef.current = null;
+            executingToolCallIdsRef.current = [];
+            autoAllowedExecutionRef.current = null;
+            toolResultsInFlightRef.current = false;
+          }
+        }
+
+        if (conversationGenerationRef.current !== generationAtStart) {
+          restoredApprovalRecoveryRef.current = {
+            batchKey,
+            generation: generationAtStart,
+            status: "completed",
+          };
+          return;
+        }
+
+        if (needsUserInput.length > 0) {
+          await restorePendingApprovalUi(
+            needsUserInput.map((ac) => ac.approval),
+            needsUserInput
+              .map((ac) => ac.context)
+              .filter((ctx): ctx is ApprovalContext => ctx !== null),
+          );
+          setAutoHandledResults(autoAllowedResults);
+          setAutoDeniedApprovals(autoDeniedResults);
+          if (options.notifyOnManualApproval !== false) {
+            sendDesktopNotification("Approval needed");
+          }
+          restoredApprovalRecoveryRef.current = {
+            batchKey,
+            generation: generationAtStart,
+            status: "completed",
+          };
+          return;
+        }
+
+        const allResults = [
+          ...autoAllowedResults.map((ar) => ({
+            type: "tool" as const,
+            tool_call_id: ar.toolCallId,
+            tool_return: ar.result.toolReturn,
+            status: ar.result.status,
+            stdout: ar.result.stdout,
+            stderr: ar.result.stderr,
+          })),
+          ...autoDeniedResults.map((ad) => ({
+            type: "approval" as const,
+            tool_call_id: ad.approval.toolCallId,
+            approve: false,
+            reason: ad.reason,
+          })),
+        ];
+
+        if (allResults.length > 0) {
+          setThinkingMessage(getRandomThinkingVerb());
+          refreshDerived();
+          toolResultsInFlightRef.current = true;
+          await processConversation(
+            [
+              {
+                type: "approval",
+                approvals: allResults,
+                otid: randomUUID(),
+              },
+            ],
+            { allowReentry: true },
+          );
+          toolResultsInFlightRef.current = false;
+        }
+
+        restoredApprovalRecoveryRef.current = {
+          batchKey,
+          generation: generationAtStart,
+          status: "completed",
+        };
+      } catch (error) {
+        debugLog(
+          "approvals",
+          "Failed to recover restored approvals automatically: %O",
+          error,
+        );
+        await restorePendingApprovalUi(approvals);
+        setAutoHandledResults([]);
+        setAutoDeniedApprovals([]);
+        sendDesktopNotification("Approval needed");
+        restoredApprovalRecoveryRef.current = {
+          batchKey,
+          generation: generationAtStart,
+          status: "completed",
+        };
+      }
+    },
+    [
+      processConversation,
+      queueApprovalResults,
+      refreshDerived,
+      restorePendingApprovalUi,
+      updateStreamingOutput,
+    ],
+  );
+
+  useEffect(() => {
+    void conversationId;
+    restoredApprovalRecoveryRef.current = {
+      batchKey: null,
+      generation: conversationGenerationRef.current,
+      status: "idle",
+    };
+  }, [conversationId]);
+
+  // Restore pending approval from startup when ready.
+  useEffect(() => {
+    const approvals =
+      startupApprovals?.length > 0
+        ? startupApprovals
+        : startupApproval
+          ? [startupApproval]
+          : [];
+
+    if (loadingState === "ready" && approvals.length > 0) {
+      void recoverRestoredPendingApprovals(approvals);
+    }
+  }, [
+    loadingState,
+    recoverRestoredPendingApprovals,
+    startupApproval,
+    startupApprovals,
+  ]);
+
   const handleExit = useCallback(async () => {
     saveLastSessionBeforeExit(conversationIdRef.current);
 
@@ -9127,30 +9470,9 @@ export default function App({
 
                 // Restore pending approvals if any (fixes #540 for /resume command)
                 if (resumeData.pendingApprovals.length > 0) {
-                  setPendingApprovals(resumeData.pendingApprovals);
-
-                  // Analyze approval contexts (same logic as startup)
-                  try {
-                    const contexts = await Promise.all(
-                      resumeData.pendingApprovals.map(async (approval) => {
-                        const parsedArgs = safeJsonParseOr<
-                          Record<string, unknown>
-                        >(approval.toolArgs, {});
-                        return await analyzeToolApproval(
-                          approval.toolName,
-                          parsedArgs,
-                        );
-                      }),
-                    );
-                    setApprovalContexts(contexts);
-                  } catch (approvalError) {
-                    // If analysis fails, leave context as null (will show basic options)
-                    debugLog(
-                      "approvals",
-                      "Failed to analyze resume approvals: %O",
-                      approvalError,
-                    );
-                  }
+                  await recoverRestoredPendingApprovals(
+                    resumeData.pendingApprovals,
+                  );
                 }
               }
             } catch (error) {
@@ -12794,6 +13116,12 @@ ${SYSTEM_REMINDER_CLOSE}
                 resetContextHistory(contextTrackerRef.current);
                 resetBootstrapReminderState();
 
+                if (resumeData.pendingApprovals.length > 0) {
+                  await recoverRestoredPendingApprovals(
+                    resumeData.pendingApprovals,
+                  );
+                }
+
                 cmd.finish(
                   `Switched to conversation (${resumeData.messageHistory.length} messages)`,
                   true,
@@ -12837,6 +13165,7 @@ ${SYSTEM_REMINDER_CLOSE}
     setCommandRunning,
     commandRunner.getHandle,
     commandRunner.start,
+    recoverRestoredPendingApprovals,
     resetBootstrapReminderState,
   ]);
 
@@ -14760,32 +15089,9 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
 
                       // Restore pending approvals if any (fixes #540 for ConversationSelector)
                       if (resumeData.pendingApprovals.length > 0) {
-                        setPendingApprovals(resumeData.pendingApprovals);
-
-                        // Analyze approval contexts (same logic as startup)
-                        try {
-                          const contexts = await Promise.all(
-                            resumeData.pendingApprovals.map(
-                              async (approval) => {
-                                const parsedArgs = safeJsonParseOr<
-                                  Record<string, unknown>
-                                >(approval.toolArgs, {});
-                                return await analyzeToolApproval(
-                                  approval.toolName,
-                                  parsedArgs,
-                                );
-                              },
-                            ),
-                          );
-                          setApprovalContexts(contexts);
-                        } catch (approvalError) {
-                          // If analysis fails, leave context as null (will show basic options)
-                          debugLog(
-                            "approvals",
-                            "Failed to analyze resume approvals: %O",
-                            approvalError,
-                          );
-                        }
+                        await recoverRestoredPendingApprovals(
+                          resumeData.pendingApprovals,
+                        );
                       }
                     }
                   } catch (error) {
@@ -15042,25 +15348,9 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
 
                       // Restore pending approvals if any
                       if (resumeData.pendingApprovals.length > 0) {
-                        setPendingApprovals(resumeData.pendingApprovals);
-                        try {
-                          const contexts = await Promise.all(
-                            resumeData.pendingApprovals.map(
-                              async (approval) => {
-                                const parsedArgs = safeJsonParseOr<
-                                  Record<string, unknown>
-                                >(approval.toolArgs, {});
-                                return await analyzeToolApproval(
-                                  approval.toolName,
-                                  parsedArgs,
-                                );
-                              },
-                            ),
-                          );
-                          setApprovalContexts(contexts);
-                        } catch {
-                          // If analysis fails, leave context as null
-                        }
+                        await recoverRestoredPendingApprovals(
+                          resumeData.pendingApprovals,
+                        );
                       }
                     }
                   } catch (error) {
