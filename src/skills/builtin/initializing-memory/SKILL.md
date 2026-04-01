@@ -145,6 +145,8 @@ Explore based on chosen depth.
 
 **Deep** (100+ tool calls): Everything above plus git history patterns, contributor analysis, code evolution, CI/CD setup. Use your TODO tool to organize systematic research. **Write findings to memory as you go** — don't wait until the end.
 
+**Use parallel tool calls wherever possible** — read multiple files in a single turn, write multiple memory files in a single turn. This dramatically reduces init time.
+
 **Research techniques:**
 - README.md, CONTRIBUTING.md, AGENTS.md, CLAUDE.md
 - Package manifests (package.json, pyproject.toml, Cargo.toml, go.mod)
