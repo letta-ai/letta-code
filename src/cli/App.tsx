@@ -8538,7 +8538,7 @@ export default function App({
             const forked = (await client.post(
               `/v1/conversations/${encodeURIComponent(conversationIdRef.current)}/fork`,
               {
-                body: isDefault ? { agent_id: agentId } : {},
+                query: isDefault ? { agent_id: agentId } : {},
               },
             )) as { id: string };
 
