@@ -2,11 +2,13 @@ import type WebSocket from "ws";
 import { getClient } from "../../agent/client";
 import { ISOLATED_BLOCK_LABELS } from "../../agent/memory";
 import { getMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
+import { REMEMBER_PROMPT } from "../../agent/promptAssets";
 import {
   buildDoctorMessage,
   buildInitMessage,
   gatherInitGitContext,
 } from "../../cli/helpers/initCommand";
+import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "../../constants";
 import { settingsManager } from "../../settings-manager";
 import { trackBoundaryError } from "../../telemetry/errorReporting";
 import type {
@@ -34,6 +36,7 @@ export const SUPPORTED_REMOTE_COMMANDS: readonly string[] = [
   "clear",
   "doctor",
   "init",
+  "remember",
 ];
 
 /**
@@ -57,7 +60,10 @@ export async function handleExecuteCommand(
     conversation_id: conversationRuntime.conversationId,
   };
 
-  const input = `/${command.command_id}`;
+  const trimmedArgs = command.args?.trim();
+  const input = trimmedArgs
+    ? `/${command.command_id} ${trimmedArgs}`
+    : `/${command.command_id}`;
 
   // Emit slash_command_start
   const startDelta: SlashCommandStartMessage = {
@@ -86,6 +92,15 @@ export async function handleExecuteCommand(
 
       case "init":
         output = await handleInitCommand(socket, conversationRuntime, opts);
+        break;
+
+      case "remember":
+        output = await handleRememberCommand(
+          socket,
+          conversationRuntime,
+          trimmedArgs,
+          opts,
+        );
         break;
 
       default:
@@ -297,4 +312,59 @@ async function handleInitCommand(
   );
 
   return "Memory initialization completed";
+}
+
+/**
+ * /remember — Store information from the conversation.
+ *
+ * Mirrors the CLI /remember logic by sending the remember system reminder
+ * and optional user-provided text through the normal turn pipeline.
+ */
+async function handleRememberCommand(
+  socket: WebSocket,
+  conversationRuntime: ConversationRuntime,
+  args: string | undefined,
+  opts: {
+    onStatusChange?: StartListenerOptions["onStatusChange"];
+    connectionId?: string;
+  },
+): Promise<string> {
+  const agentId = conversationRuntime.agentId;
+
+  if (!agentId) {
+    throw new Error("No agent ID available for /remember command");
+  }
+
+  const hasArgs = Boolean(args && args.length > 0);
+  const rememberReminder = hasArgs
+    ? `${SYSTEM_REMINDER_OPEN}\n${REMEMBER_PROMPT}\n${SYSTEM_REMINDER_CLOSE}`
+    : `${SYSTEM_REMINDER_OPEN}\n${REMEMBER_PROMPT}\n\nThe user did not specify what to remember. Look at the recent conversation context to identify what they likely want you to remember, or ask them to clarify.\n${SYSTEM_REMINDER_CLOSE}`;
+
+  const content = hasArgs
+    ? [
+        { type: "text" as const, text: rememberReminder },
+        { type: "text" as const, text: args as string },
+      ]
+    : [{ type: "text" as const, text: rememberReminder }];
+
+  await handleIncomingMessage(
+    {
+      type: "message",
+      agentId,
+      conversationId: conversationRuntime.conversationId,
+      messages: [
+        {
+          type: "message",
+          role: "user",
+          content,
+        },
+      ],
+    },
+    socket,
+    conversationRuntime,
+    opts.onStatusChange,
+    opts.connectionId,
+  );
+
+  return "Memory request submitted";
 }

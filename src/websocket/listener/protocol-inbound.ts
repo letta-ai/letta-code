@@ -657,12 +657,15 @@ export function isExecuteCommandCommand(
     command_id?: unknown;
     request_id?: unknown;
     runtime?: unknown;
+    args?: unknown;
   };
+  const hasValidArgs = c.args === undefined || typeof c.args === "string";
   return (
     c.type === "execute_command" &&
     typeof c.command_id === "string" &&
     typeof c.request_id === "string" &&
-    isRuntimeScope(c.runtime)
+    isRuntimeScope(c.runtime) &&
+    hasValidArgs
   );
 }
 
