@@ -21,12 +21,6 @@ import {
 } from "./secret-substitution";
 import { TOOL_DEFINITIONS, type ToolName } from "./toolDefinitions";
 
-/**
- * Tools that may create, modify, or delete files on disk.
- * After any of these complete successfully, the file index is refreshed
- * in the background so subsequent @ searches reflect the latest state.
- */
-
 export const TOOL_NAMES = Object.keys(TOOL_DEFINITIONS) as ToolName[];
 const STREAMING_SHELL_TOOLS = new Set([
   "Bash",

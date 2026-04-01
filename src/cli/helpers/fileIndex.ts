@@ -316,6 +316,14 @@ async function buildDirectory(
     childStatsMap = new Map<string, FsStats>();
 
     for (const childName of prevChildSet) {
+      // Re-check exclusions so that .lettaignore changes take effect
+      // even when the directory structure hasn't changed.
+      const entryRelPath =
+        relativePath === "" ? childName : `${relativePath}/${childName}`;
+      if (shouldExcludeEntry(childName, entryRelPath, indexRoot)) {
+        continue;
+      }
+
       try {
         const currentChildStats = statSync(join(dir, childName));
         childNames.push(childName);
