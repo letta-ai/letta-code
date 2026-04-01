@@ -2,14 +2,17 @@
 
 import approvalRecoveryAlert from "./prompts/approval_recovery_alert.txt";
 import autoInitReminder from "./prompts/auto_init_reminder.txt";
-import contextPrinciples from "./prompts/context_principles.md";
 import humanPrompt from "./prompts/human.mdx";
+import humanKawaiiPrompt from "./prompts/human_kawaii.mdx";
+import humanLinusPrompt from "./prompts/human_linus.mdx";
+import humanMemoPrompt from "./prompts/human_memo.mdx";
 import interruptRecoveryAlert from "./prompts/interrupt_recovery_alert.txt";
 import lettaPrompt from "./prompts/letta.md";
 import memoryCheckReminder from "./prompts/memory_check_reminder.txt";
 import memoryFilesystemPrompt from "./prompts/memory_filesystem.mdx";
 import personaPrompt from "./prompts/persona.mdx";
 import personaKawaiiPrompt from "./prompts/persona_kawaii.mdx";
+import personaLinusPrompt from "./prompts/persona_linus.mdx";
 import personaMemoPrompt from "./prompts/persona_memo.mdx";
 import planModeReminder from "./prompts/plan_mode_reminder.txt";
 import projectPrompt from "./prompts/project.mdx";
@@ -27,7 +30,6 @@ import systemPromptMemfsAddon from "./prompts/system_prompt_memfs.md";
 export const SYSTEM_PROMPT = lettaPrompt;
 export const SYSTEM_PROMPT_BLOCKS_ADDON = systemPromptBlocksAddon;
 export const SYSTEM_PROMPT_MEMFS_ADDON = systemPromptMemfsAddon;
-export const CONTEXT_PRINCIPLES = contextPrinciples;
 export const PLAN_MODE_REMINDER = planModeReminder;
 
 export const SKILL_CREATOR_PROMPT = skillCreatorModePrompt;
@@ -41,8 +43,12 @@ export const SLEEPTIME_MEMORY_PERSONA = sleeptimePersona;
 export const MEMORY_PROMPTS: Record<string, string> = {
   "persona.mdx": personaPrompt,
   "persona_kawaii.mdx": personaKawaiiPrompt,
+  "persona_linus.mdx": personaLinusPrompt,
   "persona_memo.mdx": personaMemoPrompt,
   "human.mdx": humanPrompt,
+  "human_kawaii.mdx": humanKawaiiPrompt,
+  "human_linus.mdx": humanLinusPrompt,
+  "human_memo.mdx": humanMemoPrompt,
   "project.mdx": projectPrompt,
 
   "memory_filesystem.mdx": memoryFilesystemPrompt,

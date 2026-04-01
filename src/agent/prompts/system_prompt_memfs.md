@@ -16,15 +16,6 @@ Your memory is stored in a git repository at `$MEMORY_DIR` (absolute path provid
 2. The `memory_filesystem` block renders the current tree view of all available memory files
 3. The system prompt is only recompiled on compactions or message resets — your local edits take effect on the next recompilation
 
-## Discovery paths
-
-Use `[[path]]` links to connect related context across your memory files (and skills when relevant):
-- `[[letta-code/architecture]]` — jump from overview to detailed docs
-- `[[projects/letta-code/gotchas]]` — connect related memory files
-- `[[skills/commit]]` — link to procedural guidance when needed
-
-Treat memory as a connected graph. Add links where they improve discoverability and remove stale links when structures evolve.
-
 ## Syncing
 
 Changes you commit and push sync to the Letta server within seconds, and server-side changes sync back automatically.
