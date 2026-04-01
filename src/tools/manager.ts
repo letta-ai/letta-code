@@ -26,28 +26,6 @@ import { TOOL_DEFINITIONS, type ToolName } from "./toolDefinitions";
  * After any of these complete successfully, the file index is refreshed
  * in the background so subsequent @ searches reflect the latest state.
  */
-const FILE_MODIFYING_TOOLS = new Set([
-  // Anthropic toolset
-  "Write",
-  "Edit",
-  "MultiEdit",
-  "Bash",
-  "ApplyPatch",
-  // Codex toolset
-  "Shell",
-  "shell",
-  "ShellCommand",
-  "shell_command",
-  "apply_patch",
-  "memory_apply_patch",
-  // Gemini toolset
-  "Replace",
-  "replace",
-  "WriteFileGemini",
-  "write_file_gemini",
-  "RunShellCommand",
-  "run_shell_command",
-]);
 
 export const TOOL_NAMES = Object.keys(TOOL_DEFINITIONS) as ToolName[];
 const STREAMING_SHELL_TOOLS = new Set([
@@ -1379,11 +1357,11 @@ export async function executeTool(
     );
     const duration = Date.now() - startTime;
 
-    // Refresh the file index in the background after file-modifying tools
-    // so subsequent @ searches reflect newly created or deleted files.
-    if (FILE_MODIFYING_TOOLS.has(internalName)) {
-      void refreshFileIndex();
-    }
+    // Refresh the file index in the background after every tool execution
+    // so subsequent @ searches reflect externally created or deleted files.
+    // The incremental rebuild is cheap (metadata-based skip for unchanged
+    // subtrees), so running on every tool adds negligible overhead.
+    void refreshFileIndex();
 
     // Extract stdout/stderr if present (for bash tools)
     const recordResult = isRecord(result) ? result : undefined;

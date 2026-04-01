@@ -102,9 +102,7 @@ interface FileIndexCache {
 
 interface PreviousIndexData {
   entries: FileIndexEntry[];
-  entryPaths: string[];
   merkle: MerkleMap;
-  merkleKeys: string[];
   stats: StatsMap;
   statsKeys: string[];
 }
@@ -200,114 +198,15 @@ function findPrefixRange(sorted: string[], prefix: string): [number, number] {
 }
 
 function preparePreviousIndexData(cache: FileIndexCache): PreviousIndexData {
-  const entryPaths = cache.entries.map((entry) => entry.path);
-  const merkleKeys = Object.keys(cache.merkle).sort();
   const stats: StatsMap = { ...cache.stats };
   const statsKeys = Object.keys(stats).sort();
 
   return {
     entries: cache.entries,
-    entryPaths,
     merkle: cache.merkle,
-    merkleKeys,
     stats,
     statsKeys,
   };
-}
-
-function appendSubtreeEntries(
-  targetEntries: FileIndexEntry[],
-  previous: PreviousIndexData,
-  path: string,
-  context: BuildContext,
-): void {
-  // Don't copy if we've already hit the cap
-  if (context.totalEntryCount >= MAX_CACHE_ENTRIES) {
-    context.truncated = true;
-    return;
-  }
-
-  if (path === "") {
-    // Copy all entries up to cap
-    const toCopy = previous.entries.slice(
-      0,
-      MAX_CACHE_ENTRIES - context.totalEntryCount,
-    );
-    for (const e of toCopy) {
-      targetEntries.push(e);
-      context.totalEntryCount++;
-    }
-    if (previous.entries.length > toCopy.length) {
-      context.truncated = true;
-    }
-    return;
-  }
-
-  const { entryPaths, entries: previousEntries } = previous;
-  // Do NOT push the directory's own entry here — the parent loop already did
-  // that before making the recursive buildDirectory call. Only copy children.
-  const prefix = `${path}/`;
-  const [start, end] = findPrefixRange(entryPaths, prefix);
-
-  let copied = 0;
-  const maxToCopy = MAX_CACHE_ENTRIES - context.totalEntryCount;
-  for (let i = start; i < end && copied < maxToCopy; i++) {
-    const entry = previousEntries[i];
-    if (entry !== undefined) {
-      targetEntries.push(entry);
-      context.totalEntryCount++;
-      copied++;
-    }
-  }
-
-  if (start + copied < end) {
-    context.truncated = true;
-  }
-}
-
-function copyMerkleSubtree(
-  previous: PreviousIndexData,
-  path: string,
-  target: MerkleMap,
-): void {
-  if (path !== "" && previous.merkle[path]) {
-    target[path] = previous.merkle[path];
-  }
-
-  const prefix = path === "" ? "" : `${path}/`;
-  const [start, end] =
-    prefix === ""
-      ? [0, previous.merkleKeys.length]
-      : findPrefixRange(previous.merkleKeys, prefix);
-
-  for (let i = start; i < end; i++) {
-    const key = previous.merkleKeys[i];
-    if (key === undefined) continue;
-    target[key] = previous.merkle[key] ?? "";
-  }
-}
-
-function copyStatsSubtree(
-  previous: PreviousIndexData,
-  path: string,
-  target: StatsMap,
-): void {
-  if (path !== "" && previous.stats[path]) {
-    target[path] = previous.stats[path];
-  }
-
-  const prefix = path === "" ? "" : `${path}/`;
-  const [start, end] =
-    prefix === ""
-      ? [0, previous.statsKeys.length]
-      : findPrefixRange(previous.statsKeys, prefix);
-
-  for (let i = start; i < end; i++) {
-    const key = previous.statsKeys[i];
-    if (key === undefined) continue;
-    const val = previous.stats[key];
-    if (val !== undefined) target[key] = val;
-  }
 }
 
 function collectPreviousChildNames(
@@ -363,62 +262,6 @@ function statsMatch(prev: FileStats, current: FsStats): boolean {
   return true;
 }
 
-function shouldReuseDirectory(
-  previous: PreviousIndexData | undefined,
-  path: string,
-  stats: FileStats,
-  childNames: string[],
-  childStats: Map<string, FsStats>,
-): boolean {
-  if (!previous) {
-    return false;
-  }
-
-  const previousStats = previous.stats[path];
-
-  if (!previousStats || previousStats.type !== "dir") {
-    return false;
-  }
-
-  if (
-    previousStats.mtimeMs !== stats.mtimeMs ||
-    previousStats.ino !== stats.ino
-  ) {
-    return false;
-  }
-
-  const previousChildNames = collectPreviousChildNames(previous, path);
-  const seen = new Set<string>();
-
-  for (const childName of childNames) {
-    const childPath = path === "" ? childName : `${path}/${childName}`;
-    const prevStats = previous.stats[childPath];
-    const currentStats = childStats.get(childName);
-
-    if (!prevStats || !currentStats) {
-      return false;
-    }
-
-    if (!statsMatch(prevStats, currentStats)) {
-      return false;
-    }
-
-    seen.add(childName);
-  }
-
-  if (seen.size !== previousChildNames.size) {
-    return false;
-  }
-
-  for (const name of previousChildNames) {
-    if (!seen.has(name)) {
-      return false;
-    }
-  }
-
-  return true;
-}
-
 async function buildDirectory(
   dir: string,
   relativePath: string,
@@ -446,49 +289,77 @@ async function buildDirectory(
     ino: dirStats.ino ?? 0,
   };
 
-  let dirEntries: string[];
-  try {
-    dirEntries = readdirSync(dir);
-  } catch (err) {
-    debugLog("file-index", `Cannot read directory ${dir}: ${err}`);
-    const unreadableHash = hashValue("__unreadable__");
-    merkle[relativePath] = unreadableHash;
-    return unreadableHash;
-  }
+  // ── Collect children ───────────────────────────────────────────────
+  // If the directory's own mtime+ino match the previous build, the child
+  // list hasn't changed (no adds/removes/renames). Skip readdir and use
+  // the previous child list. Otherwise do a full readdir.
+  //
+  // Unlike the old approach we NEVER skip entire subtrees — child
+  // directories are always recursed into so that deep content changes
+  // propagate up through the Merkle hashes. The optimizations here are:
+  //   1. Skip readdir when dir metadata is unchanged
+  //   2. Skip file content hashing when file metadata is unchanged
+  let childNames: string[];
+  let childStatsMap: Map<string, FsStats>;
 
-  const childNames: string[] = [];
-  const childStatsMap = new Map<string, FsStats>();
+  const prevDirStats = previous?.stats[relativePath];
+  const dirMetadataUnchanged =
+    prevDirStats !== undefined &&
+    prevDirStats.type === "dir" &&
+    prevDirStats.mtimeMs === currentStats.mtimeMs &&
+    prevDirStats.ino === currentStats.ino;
 
-  for (const entry of dirEntries) {
-    const entryRelPath =
-      relativePath === "" ? entry : `${relativePath}/${entry}`;
-    if (shouldExcludeEntry(entry, entryRelPath, indexRoot)) {
-      continue;
+  if (dirMetadataUnchanged && previous !== undefined) {
+    // Dir metadata unchanged — skip readdir, use previous child list
+    const prevChildSet = collectPreviousChildNames(previous, relativePath);
+    childNames = [];
+    childStatsMap = new Map<string, FsStats>();
+
+    for (const childName of prevChildSet) {
+      try {
+        const currentChildStats = statSync(join(dir, childName));
+        childNames.push(childName);
+        childStatsMap.set(childName, currentChildStats);
+      } catch (err) {
+        debugLog(
+          "file-index",
+          `Cannot stat entry ${join(dir, childName)}: ${err}`,
+        );
+      }
     }
-
+  } else {
+    // Dir is new or structurally changed — full readdir
+    let dirEntries: string[];
     try {
-      const childStat = statSync(join(dir, entry));
-      childNames.push(entry);
-      childStatsMap.set(entry, childStat);
+      dirEntries = readdirSync(dir);
     } catch (err) {
-      debugLog("file-index", `Cannot stat entry ${join(dir, entry)}: ${err}`);
+      debugLog("file-index", `Cannot read directory ${dir}: ${err}`);
+      const unreadableHash = hashValue("__unreadable__");
+      merkle[relativePath] = unreadableHash;
+      return unreadableHash;
     }
-  }
 
-  if (
-    previous !== undefined &&
-    shouldReuseDirectory(
-      previous,
-      relativePath,
-      currentStats,
-      childNames,
-      childStatsMap,
-    )
-  ) {
-    copyStatsSubtree(previous, relativePath, statsMap);
-    appendSubtreeEntries(entries, previous, relativePath, context);
-    copyMerkleSubtree(previous, relativePath, merkle);
-    return previous.merkle[relativePath] ?? hashValue("__reused__");
+    childNames = [];
+    childStatsMap = new Map<string, FsStats>();
+
+    for (const entry of dirEntries) {
+      const entryRelPath =
+        relativePath === "" ? entry : `${relativePath}/${entry}`;
+      if (shouldExcludeEntry(entry, entryRelPath, indexRoot)) {
+        continue;
+      }
+
+      try {
+        const childStat = statSync(join(dir, entry));
+        childNames.push(entry);
+        childStatsMap.set(entry, childStat);
+      } catch (err) {
+        debugLog(
+          "file-index",
+          `Cannot stat entry ${join(dir, entry)}: ${err}`,
+        );
+      }
+    }
   }
 
   statsMap[relativePath] = currentStats;
@@ -559,7 +430,20 @@ async function buildDirectory(
         childHashes.push(`dir:${entry}:${hashValue("__truncated__")}`);
       }
     } else {
-      const fileHash = hashFile(fullPath, entryPath, entryStat);
+      // Skip content hashing when file metadata is unchanged — reuse
+      // the previous hash. This avoids reading file bytes for the
+      // vast majority of files on incremental rebuilds.
+      const prevFileStats = previous?.stats[entryPath];
+      let fileHash: string;
+      if (
+        prevFileStats &&
+        previous?.merkle[entryPath] &&
+        statsMatch(prevFileStats, entryStat)
+      ) {
+        fileHash = previous.merkle[entryPath];
+      } else {
+        fileHash = hashFile(fullPath, entryPath, entryStat);
+      }
 
       // Only add to merkle and stats if we haven't hit the cap
       // This prevents unbounded memory growth for large workspaces
@@ -617,10 +501,8 @@ async function buildIndex(
 
   entries.sort((a, b) => a.path.localeCompare(b.path));
 
-  // Deduplicate by path. Duplicates can occur when a dirty cache is reused
-  // via appendSubtreeEntries — the parent pushed the dir entry, and the cache
-  // contained it again. This is a one-time cleanup that also writes a clean
-  // cache to disk so subsequent sessions start fresh.
+  // Deduplicate by path — a safety net against any edge cases that could
+  // produce duplicate entries during incremental rebuilds.
   const seen = new Set<string>();
   const deduped = entries.filter((e) => {
     if (seen.has(e.path)) return false;
@@ -813,7 +695,7 @@ function cacheProjectIndex(result: FileIndexBuildResult): void {
  * appear first in results), and caps at MAX_CACHE_ENTRIES.
  *
  * NOTE: buildIndex keeps entries sorted by path — that ordering is load-bearing
- * for the binary searches in appendSubtreeEntries/findPrefixRange. This helper
+ * for binary searches in collectPreviousChildNames/findPrefixRange. This helper
  * produces a separate mtime-sorted copy only for the in-memory search cache.
  */
 function buildCachedEntries(

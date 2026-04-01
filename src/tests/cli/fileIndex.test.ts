@@ -554,6 +554,50 @@ describe("content-based hashing", () => {
     expect(storedHash).toMatch(/^[a-f0-9]{64}$/);
   });
 
+  test("deep content change propagates through Merkle hashes", async () => {
+    await refreshFileIndex();
+
+    const cachePath = getTestCachePath(TEST_DIR);
+    if (!existsSync(cachePath)) {
+      return;
+    }
+
+    const cacheBefore = JSON.parse(readFileSync(cachePath, "utf-8"));
+    const rootHashBefore = cacheBefore.metadata.rootHash;
+    const srcHashBefore = cacheBefore.merkle["src"];
+    const componentsHashBefore =
+      cacheBefore.merkle[join("src", "components")];
+    const buttonHashBefore =
+      cacheBefore.merkle[join("src", "components", "Button.tsx")];
+    // A sibling directory that should NOT change
+    const testsHashBefore = cacheBefore.merkle["tests"];
+
+    // Modify a deeply nested file (2 levels deep) without adding/removing files
+    writeFileSync(
+      join(TEST_DIR, "src/components/Button.tsx"),
+      "export function Button() { return <button>Updated</button> }",
+    );
+
+    await refreshFileIndex();
+
+    const cacheAfter = JSON.parse(readFileSync(cachePath, "utf-8"));
+
+    // The modified file's hash should change
+    expect(cacheAfter.merkle[join("src", "components", "Button.tsx")]).not.toBe(
+      buttonHashBefore,
+    );
+
+    // Parent directory hashes should propagate the change upward
+    expect(cacheAfter.merkle[join("src", "components")]).not.toBe(
+      componentsHashBefore,
+    );
+    expect(cacheAfter.merkle["src"]).not.toBe(srcHashBefore);
+    expect(cacheAfter.metadata.rootHash).not.toBe(rootHashBefore);
+
+    // Unrelated sibling subtree should remain unchanged
+    expect(cacheAfter.merkle["tests"]).toBe(testsHashBefore);
+  });
+
   test("files with identical content produce the same hash", async () => {
     // Create two files at different paths with identical content
     const sharedContent = "identical content for hash comparison";
