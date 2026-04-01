@@ -2012,6 +2012,9 @@ export default function App({
   // Restored input value - set when we need to restore a message to the input after error
   const [restoredInput, setRestoredInput] = useState<string | null>(null);
 
+  // Track current input draft for approval dialogs
+  const currentDraftRef = useRef<string>("");
+
   // Helper to check if agent is busy (streaming, executing tool, or running command)
   // Uses refs for synchronous access outside React's closure system
   // biome-ignore lint/correctness/useExhaustiveDependencies: refs are stable objects, .current is read dynamically
@@ -13396,6 +13399,11 @@ ${SYSTEM_REMINDER_CLOSE}
     queueApprovalResults,
   ]);
 
+  const handleConsumeDraft = useCallback(() => {
+    currentDraftRef.current = "";
+    setRestoredInput("");
+  }, []);
+
   const handleQuestionSubmit = useCallback(
     async (answers: Record<string, string>) => {
       const currentIndex = approvalResults.length;
@@ -14033,6 +14041,8 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
                                 : undefined
                             }
                             agentName={agentName ?? undefined}
+                            initialDraft={currentDraftRef.current || undefined}
+                            onConsumeDraft={handleConsumeDraft}
                           />
                         ) : ln.kind === "user" ? (
                           <UserMessage line={ln} prompt={statusLine.prompt} />
@@ -14130,6 +14140,8 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
                         : undefined
                     }
                     agentName={agentName ?? undefined}
+                    initialDraft={currentDraftRef.current || undefined}
+                    onConsumeDraft={handleConsumeDraft}
                   />
                 </Box>
               )}
@@ -14242,6 +14254,9 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
                 onPasteError={handlePasteError}
                 restoredInput={restoredInput}
                 onRestoredInputConsumed={() => setRestoredInput(null)}
+                onDraftChange={(draft) => {
+                  currentDraftRef.current = draft;
+                }}
                 networkPhase={networkPhase}
                 terminalWidth={chromeColumns}
                 shouldAnimate={shouldAnimate}
