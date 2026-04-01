@@ -28,6 +28,25 @@ describe("selectDefaultAgentModel", () => {
     expect(result).toBe("anthropic/claude-haiku-4-5");
   });
 
+  test("falls back when the preferred self-hosted model is unavailable", () => {
+    const result = selectDefaultAgentModel({
+      preferredModel: "gpt-5",
+      isSelfHosted: true,
+      availableHandles: ["letta/auto", "anthropic/claude-haiku-4-5"],
+    });
+
+    expect(result).toBe("anthropic/claude-haiku-4-5");
+  });
+
+  test("keeps the preferred self-hosted handle when model availability cannot be fetched", () => {
+    const result = selectDefaultAgentModel({
+      preferredModel: "anthropic/claude-haiku-4-5",
+      isSelfHosted: true,
+    });
+
+    expect(result).toBe("anthropic/claude-haiku-4-5");
+  });
+
   test("passes through the preferred model on cloud", () => {
     const result = selectDefaultAgentModel({
       preferredModel: "haiku",
