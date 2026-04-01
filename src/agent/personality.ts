@@ -30,27 +30,27 @@ export const PERSONALITY_OPTIONS: PersonalityOption[] = [
   {
     id: "memo",
     label: "Letta Code",
-    description: "The default Letta Code personality that learns",
+    description: "The memory-first agent",
   },
   {
     id: "linus",
     label: "Linus",
-    description: "Blunt and unfiltered, inspired by Linus Torvalds",
+    description: "Code with a stern hand",
   },
   {
     id: "kawaii",
-    label: "Kawaii",
-    description: "A cute anime-inspired personality",
+    label: "Letta-Chan",
+    description: "sugoi~ (◕‿◕)✨",
   },
   {
     id: "claude",
-    label: "Claude",
-    description: "A concise engineering personality from Claude Code",
+    label: "Letta Code",
+    description: "Vanilla Claude flavors",
   },
   {
     id: "codex",
-    label: "Codex",
-    description: "A pragmatic coding personality from Codex",
+    label: "Letta Code",
+    description: "Vanilla Codex flavors",
   },
 ];
 
