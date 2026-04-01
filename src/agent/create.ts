@@ -205,10 +205,13 @@ export async function createAgent(
   if (options.model) {
     const resolved = resolveModel(options.model);
     if (!resolved) {
+      const availableModels = formatAvailableModels();
       console.error(`Error: Unknown model "${options.model}"`);
       console.error("Available models:");
-      console.error(formatAvailableModels());
-      process.exit(1);
+      console.error(availableModels);
+      throw new Error(
+        `Unknown model "${options.model}". Available models:\n${availableModels}`,
+      );
     }
     modelHandle = resolved;
   } else {

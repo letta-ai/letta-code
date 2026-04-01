@@ -232,6 +232,71 @@ function trackListenerError(
   });
 }
 
+function safeSocketSend(
+  socket: WebSocket,
+  payload: unknown,
+  errorType: string,
+  context: string,
+): boolean {
+  if (socket.readyState !== WebSocket.OPEN) {
+    return false;
+  }
+
+  try {
+    const serialized =
+      typeof payload === "string" ? payload : JSON.stringify(payload);
+    socket.send(serialized);
+    return true;
+  } catch (error) {
+    trackListenerError(errorType, error, context);
+    if (isDebugEnabled()) {
+      console.error(`[Listen] ${context} send failed:`, error);
+    }
+    return false;
+  }
+}
+
+function runDetachedListenerTask(
+  commandName: string,
+  task: () => Promise<void>,
+): void {
+  void task().catch((error) => {
+    trackListenerError(
+      `listener_${commandName}_failed`,
+      error,
+      `listener_${commandName}`,
+    );
+    if (isDebugEnabled()) {
+      console.error(`[Listen] ${commandName} failed:`, error);
+    }
+  });
+}
+
+function getParsedRuntimeScope(
+  parsed: unknown,
+): { agent_id: string; conversation_id: string } | null {
+  if (!parsed || typeof parsed !== "object" || !("runtime" in parsed)) {
+    return null;
+  }
+
+  const runtime = (
+    parsed as {
+      runtime?: { agent_id?: unknown; conversation_id?: unknown };
+    }
+  ).runtime;
+  if (!runtime || typeof runtime.agent_id !== "string") {
+    return null;
+  }
+
+  return {
+    agent_id: runtime.agent_id,
+    conversation_id:
+      typeof runtime.conversation_id === "string"
+        ? runtime.conversation_id
+        : "default",
+  };
+}
+
 /**
  * Handle mode change request from cloud.
  * Stores the new mode in ListenerRuntime.permissionModeByConversation so
@@ -974,17 +1039,20 @@ async function handleCreateAgentCommand(
   socket: WebSocket,
 ): Promise<void> {
   try {
-    // Pre-validate model to avoid process.exit(1) in createAgent()
+    // Pre-validate model so invalid requests soft-fail before createAgent().
     if (parsed.model) {
       const resolved = resolveModel(parsed.model);
       if (!resolved) {
-        socket.send(
-          JSON.stringify({
+        safeSocketSend(
+          socket,
+          {
             type: "create_agent_response",
             request_id: parsed.request_id,
             success: false,
             error: `Unknown model "${parsed.model}"`,
-          }),
+          },
+          "listener_create_agent_send_failed",
+          "listener_create_agent",
         );
         return;
       }
@@ -1003,24 +1071,30 @@ async function handleCreateAgentCommand(
       settingsManager.pinGlobal(result.agent.id);
     }
 
-    socket.send(
-      JSON.stringify({
+    safeSocketSend(
+      socket,
+      {
         type: "create_agent_response",
         request_id: parsed.request_id,
         success: true,
         agent_id: result.agent.id,
         name: result.agent.name,
         model: result.agent.model ?? null,
-      }),
+      },
+      "listener_create_agent_send_failed",
+      "listener_create_agent",
     );
   } catch (err) {
-    socket.send(
-      JSON.stringify({
+    safeSocketSend(
+      socket,
+      {
         type: "create_agent_response",
         request_id: parsed.request_id,
         success: false,
         error: err instanceof Error ? err.message : "Failed to create agent",
-      }),
+      },
+      "listener_create_agent_send_failed",
+      "listener_create_agent",
     );
   }
 }
@@ -2041,7 +2115,12 @@ async function connectWithRetry(
     });
     runtime.heartbeatInterval = setInterval(() => {
       if (socket.readyState === WebSocket.OPEN) {
-        socket.send(JSON.stringify({ type: "ping" }));
+        safeSocketSend(
+          socket,
+          { type: "ping" },
+          "listener_ping_send_failed",
+          "listener_heartbeat",
+        );
       }
     }, 30000);
 
@@ -2051,491 +2130,602 @@ async function connectWithRetry(
 
   socket.on("message", async (data: WebSocket.RawData) => {
     const raw = data.toString();
-    const parsed = parseServerMessage(data);
-    if (parsed) {
-      safeEmitWsEvent("recv", "client", parsed);
-    } else {
-      // Log unparseable frames so protocol drift is visible in debug mode
-      safeEmitWsEvent("recv", "lifecycle", {
-        type: "_ws_unparseable",
-        raw,
-      });
-    }
-    if (isDebugEnabled()) {
-      console.log(
-        `[Listen] Received message: ${JSON.stringify(parsed, null, 2)}`,
-      );
-    }
+    let parsed: ReturnType<typeof parseServerMessage> = null;
 
-    if (!parsed) {
-      return;
-    }
-
-    if (parsed.type === "__invalid_input") {
-      emitLoopErrorDelta(socket, runtime, {
-        message: parsed.reason,
-        stopReason: "error",
-        isTerminal: false,
-        agentId: parsed.runtime.agent_id,
-        conversationId: parsed.runtime.conversation_id,
-      });
-      return;
-    }
-
-    if (parsed.type === "sync") {
-      console.log(
-        `[Listen V2] Received sync command for runtime=${parsed.runtime.agent_id}/${parsed.runtime.conversation_id}`,
-      );
-      if (runtime !== getActiveRuntime() || runtime.intentionallyClosed) {
-        console.log(`[Listen V2] Dropping sync: runtime mismatch or closed`);
-        return;
+    try {
+      parsed = parseServerMessage(data);
+      if (parsed) {
+        safeEmitWsEvent("recv", "client", parsed);
+      } else {
+        // Log unparseable frames so protocol drift is visible in debug mode
+        safeEmitWsEvent("recv", "lifecycle", {
+          type: "_ws_unparseable",
+          raw,
+        });
       }
-      const syncScopedRuntime = getOrCreateScopedRuntime(
-        runtime,
-        parsed.runtime.agent_id,
-        parsed.runtime.conversation_id,
-      );
-      await recoverApprovalStateForSync(syncScopedRuntime, parsed.runtime);
+      if (isDebugEnabled()) {
+        console.log(
+          `[Listen] Received message: ${JSON.stringify(parsed, null, 2)}`,
+        );
+      }
 
-      emitStateSync(socket, runtime, parsed.runtime);
-      return;
-    }
-
-    if (parsed.type === "input") {
-      console.log(
-        `[Listen V2] Received input command, kind=${parsed.payload?.kind}`,
-      );
-      if (runtime !== getActiveRuntime() || runtime.intentionallyClosed) {
-        console.log(`[Listen V2] Dropping input: runtime mismatch or closed`);
+      if (!parsed) {
         return;
       }
 
-      if (parsed.payload.kind === "approval_response") {
-        if (
-          await handleApprovalResponseInput(runtime, {
-            runtime: parsed.runtime,
-            response: parsed.payload,
-            socket,
-            opts: {
-              onStatusChange: opts.onStatusChange,
-              connectionId: opts.connectionId,
-            },
-            processQueuedTurn,
-          })
-        ) {
+      if (parsed.type === "__invalid_input") {
+        emitLoopErrorDelta(socket, runtime, {
+          message: parsed.reason,
+          stopReason: "error",
+          isTerminal: false,
+          agentId: parsed.runtime.agent_id,
+          conversationId: parsed.runtime.conversation_id,
+        });
+        return;
+      }
+
+      if (parsed.type === "sync") {
+        console.log(
+          `[Listen V2] Received sync command for runtime=${parsed.runtime.agent_id}/${parsed.runtime.conversation_id}`,
+        );
+        if (runtime !== getActiveRuntime() || runtime.intentionallyClosed) {
+          console.log(`[Listen V2] Dropping sync: runtime mismatch or closed`);
           return;
         }
-        return;
-      }
-
-      const inputPayload = parsed.payload;
-      if (inputPayload.kind !== "create_message") {
-        emitLoopErrorDelta(socket, runtime, {
-          message: `Unsupported input payload kind: ${String((inputPayload as { kind?: unknown }).kind)}`,
-          stopReason: "error",
-          isTerminal: false,
-          agentId: parsed.runtime.agent_id,
-          conversationId: parsed.runtime.conversation_id,
-        });
-        return;
-      }
-
-      const incoming: IncomingMessage = {
-        type: "message",
-        agentId: parsed.runtime.agent_id,
-        conversationId: parsed.runtime.conversation_id,
-        messages: inputPayload.messages,
-      };
-      const hasApprovalPayload = incoming.messages.some(
-        (payload): payload is ApprovalCreate =>
-          "type" in payload && payload.type === "approval",
-      );
-      if (hasApprovalPayload) {
-        emitLoopErrorDelta(socket, runtime, {
-          message:
-            "Protocol violation: approval payloads are not allowed in input.kind=create_message. Use input.kind=approval_response.",
-          stopReason: "error",
-          isTerminal: false,
-          agentId: parsed.runtime.agent_id,
-          conversationId: parsed.runtime.conversation_id,
-        });
-        return;
-      }
-
-      const scopedRuntime = getOrCreateScopedRuntime(
-        runtime,
-        incoming.agentId,
-        incoming.conversationId,
-      );
-
-      if (shouldQueueInboundMessage(incoming)) {
-        const firstUserPayload = incoming.messages.find(
-          (
-            payload,
-          ): payload is MessageCreate & { client_message_id?: string } =>
-            "content" in payload,
+        const syncScopedRuntime = getOrCreateScopedRuntime(
+          runtime,
+          parsed.runtime.agent_id,
+          parsed.runtime.conversation_id,
         );
-        if (firstUserPayload) {
-          const enqueuedItem = scopedRuntime.queueRuntime.enqueue({
-            kind: "message",
-            source: "user",
-            content: firstUserPayload.content,
-            clientMessageId:
-              firstUserPayload.client_message_id ??
-              `cm-submit-${crypto.randomUUID()}`,
-            agentId: parsed.runtime.agent_id,
-            conversationId: parsed.runtime.conversation_id || "default",
-          } as Parameters<typeof scopedRuntime.queueRuntime.enqueue>[0]);
-          if (enqueuedItem) {
-            scopedRuntime.queuedMessagesByItemId.set(enqueuedItem.id, incoming);
-          }
-        }
-        scheduleQueuePump(scopedRuntime, socket, opts, processQueuedTurn);
+        await recoverApprovalStateForSync(syncScopedRuntime, parsed.runtime);
+
+        emitStateSync(socket, runtime, parsed.runtime);
         return;
       }
 
-      scopedRuntime.messageQueue = scopedRuntime.messageQueue
-        .then(async () => {
-          if (runtime !== getActiveRuntime() || runtime.intentionallyClosed) {
+      if (parsed.type === "input") {
+        console.log(
+          `[Listen V2] Received input command, kind=${parsed.payload?.kind}`,
+        );
+        if (runtime !== getActiveRuntime() || runtime.intentionallyClosed) {
+          console.log(`[Listen V2] Dropping input: runtime mismatch or closed`);
+          return;
+        }
+
+        if (parsed.payload.kind === "approval_response") {
+          if (
+            await handleApprovalResponseInput(runtime, {
+              runtime: parsed.runtime,
+              response: parsed.payload,
+              socket,
+              opts: {
+                onStatusChange: opts.onStatusChange,
+                connectionId: opts.connectionId,
+              },
+              processQueuedTurn,
+            })
+          ) {
             return;
           }
-          emitListenerStatus(runtime, opts.onStatusChange, opts.connectionId);
-          await handleIncomingMessage(
-            incoming,
-            socket,
-            scopedRuntime,
-            opts.onStatusChange,
-            opts.connectionId,
-          );
-          emitListenerStatus(runtime, opts.onStatusChange, opts.connectionId);
-          scheduleQueuePump(scopedRuntime, socket, opts, processQueuedTurn);
-        })
-        .catch((error: unknown) => {
-          trackListenerError(
-            "listener_queued_input_failed",
-            error,
-            "listener_message_queue",
-          );
-          if (process.env.DEBUG) {
-            console.error("[Listen] Error handling queued input:", error);
-          }
-          emitListenerStatus(runtime, opts.onStatusChange, opts.connectionId);
-          scheduleQueuePump(scopedRuntime, socket, opts, processQueuedTurn);
-        });
-      return;
-    }
-
-    if (parsed.type === "change_device_state") {
-      await handleChangeDeviceStateInput(runtime, {
-        command: parsed,
-        socket,
-        opts: {
-          onStatusChange: opts.onStatusChange,
-          connectionId: opts.connectionId,
-        },
-        processQueuedTurn,
-      });
-      return;
-    }
-
-    if (parsed.type === "abort_message") {
-      await handleAbortMessageInput(runtime, {
-        command: parsed,
-        socket,
-        opts: {
-          onStatusChange: opts.onStatusChange,
-          connectionId: opts.connectionId,
-        },
-        processQueuedTurn,
-      });
-      return;
-    }
-
-    // ── File search (no runtime scope required) ────────────────────────
-    if (isSearchFilesCommand(parsed)) {
-      void (async () => {
-        await ensureFileIndex();
-
-        // Scope search to the conversation's cwd when provided.
-        // The file index stores paths relative to process.cwd(), so we
-        // compute the relative path from the index root to the requested cwd.
-        let searchDir = ".";
-        if (parsed.cwd) {
-          const rel = path.relative(getIndexRoot(), parsed.cwd);
-          // Only scope if cwd is within the index root (not "../" etc.)
-          if (rel && !rel.startsWith("..")) {
-            searchDir = rel;
-          }
+          return;
         }
 
-        const files = searchFileIndex({
-          searchDir,
-          pattern: parsed.query,
-          deep: true,
-          maxResults: parsed.max_results ?? 5,
-        });
-        socket.send(
-          JSON.stringify({
-            type: "search_files_response",
-            request_id: parsed.request_id,
-            files,
-            success: true,
-          }),
+        const inputPayload = parsed.payload;
+        if (inputPayload.kind !== "create_message") {
+          emitLoopErrorDelta(socket, runtime, {
+            message: `Unsupported input payload kind: ${String((inputPayload as { kind?: unknown }).kind)}`,
+            stopReason: "error",
+            isTerminal: false,
+            agentId: parsed.runtime.agent_id,
+            conversationId: parsed.runtime.conversation_id,
+          });
+          return;
+        }
+
+        const incoming: IncomingMessage = {
+          type: "message",
+          agentId: parsed.runtime.agent_id,
+          conversationId: parsed.runtime.conversation_id,
+          messages: inputPayload.messages,
+        };
+        const hasApprovalPayload = incoming.messages.some(
+          (payload): payload is ApprovalCreate =>
+            "type" in payload && payload.type === "approval",
         );
-      })();
-      return;
-    }
+        if (hasApprovalPayload) {
+          emitLoopErrorDelta(socket, runtime, {
+            message:
+              "Protocol violation: approval payloads are not allowed in input.kind=create_message. Use input.kind=approval_response.",
+            stopReason: "error",
+            isTerminal: false,
+            agentId: parsed.runtime.agent_id,
+            conversationId: parsed.runtime.conversation_id,
+          });
+          return;
+        }
 
-    // ── Directory listing (no runtime scope required) ──────────────────
-    if (isListInDirectoryCommand(parsed)) {
-      console.log(
-        `[Listen] Received list_in_directory command: path=${parsed.path}`,
-      );
-      void (async () => {
-        try {
-          const { readdir } = await import("node:fs/promises");
-          console.log(`[Listen] Reading directory: ${parsed.path}`);
-          const entries = await readdir(parsed.path, { withFileTypes: true });
-          console.log(
-            `[Listen] Directory read success, ${entries.length} entries`,
+        const scopedRuntime = getOrCreateScopedRuntime(
+          runtime,
+          incoming.agentId,
+          incoming.conversationId,
+        );
+
+        if (shouldQueueInboundMessage(incoming)) {
+          const firstUserPayload = incoming.messages.find(
+            (
+              payload,
+            ): payload is MessageCreate & { client_message_id?: string } =>
+              "content" in payload,
           );
-
-          // Filter out OS/VCS noise before sorting
-          const IGNORED_NAMES = new Set([
-            ".DS_Store",
-            ".git",
-            ".gitignore",
-            "Thumbs.db",
-          ]);
-          const sortedEntries = entries
-            .filter((e) => !IGNORED_NAMES.has(e.name))
-            .sort((a, b) => a.name.localeCompare(b.name));
-
-          const allFolders: string[] = [];
-          const allFiles: string[] = [];
-          for (const e of sortedEntries) {
-            if (e.isDirectory()) {
-              allFolders.push(e.name);
-            } else if (parsed.include_files) {
-              allFiles.push(e.name);
+          if (firstUserPayload) {
+            const enqueuedItem = scopedRuntime.queueRuntime.enqueue({
+              kind: "message",
+              source: "user",
+              content: firstUserPayload.content,
+              clientMessageId:
+                firstUserPayload.client_message_id ??
+                `cm-submit-${crypto.randomUUID()}`,
+              agentId: parsed.runtime.agent_id,
+              conversationId: parsed.runtime.conversation_id || "default",
+            } as Parameters<typeof scopedRuntime.queueRuntime.enqueue>[0]);
+            if (enqueuedItem) {
+              scopedRuntime.queuedMessagesByItemId.set(
+                enqueuedItem.id,
+                incoming,
+              );
             }
           }
+          scheduleQueuePump(scopedRuntime, socket, opts, processQueuedTurn);
+          return;
+        }
 
-          const total = allFolders.length + allFiles.length;
-          const offset = parsed.offset ?? 0;
-          const limit = parsed.limit ?? total;
+        scopedRuntime.messageQueue = scopedRuntime.messageQueue
+          .then(async () => {
+            if (runtime !== getActiveRuntime() || runtime.intentionallyClosed) {
+              return;
+            }
+            emitListenerStatus(runtime, opts.onStatusChange, opts.connectionId);
+            await handleIncomingMessage(
+              incoming,
+              socket,
+              scopedRuntime,
+              opts.onStatusChange,
+              opts.connectionId,
+            );
+            emitListenerStatus(runtime, opts.onStatusChange, opts.connectionId);
+            scheduleQueuePump(scopedRuntime, socket, opts, processQueuedTurn);
+          })
+          .catch((error: unknown) => {
+            trackListenerError(
+              "listener_queued_input_failed",
+              error,
+              "listener_message_queue",
+            );
+            if (process.env.DEBUG) {
+              console.error("[Listen] Error handling queued input:", error);
+            }
+            emitListenerStatus(runtime, opts.onStatusChange, opts.connectionId);
+            scheduleQueuePump(scopedRuntime, socket, opts, processQueuedTurn);
+          });
+        return;
+      }
 
-          // Paginate over the combined [folders, files] list
-          const combined = [...allFolders, ...allFiles];
-          const page = combined.slice(offset, offset + limit);
-          const folders = page.filter((name) => allFolders.includes(name));
-          const files = page.filter((name) => allFiles.includes(name));
+      if (parsed.type === "change_device_state") {
+        await handleChangeDeviceStateInput(runtime, {
+          command: parsed,
+          socket,
+          opts: {
+            onStatusChange: opts.onStatusChange,
+            connectionId: opts.connectionId,
+          },
+          processQueuedTurn,
+        });
+        return;
+      }
 
-          const response: Record<string, unknown> = {
-            type: "list_in_directory_response",
-            path: parsed.path,
-            folders,
-            hasMore: offset + limit < total,
-            total,
-            success: true,
-            ...(parsed.request_id ? { request_id: parsed.request_id } : {}),
-          };
-          if (parsed.include_files) {
-            response.files = files;
+      if (parsed.type === "abort_message") {
+        await handleAbortMessageInput(runtime, {
+          command: parsed,
+          socket,
+          opts: {
+            onStatusChange: opts.onStatusChange,
+            connectionId: opts.connectionId,
+          },
+          processQueuedTurn,
+        });
+        return;
+      }
+
+      // ── File search (no runtime scope required) ────────────────────────
+      if (isSearchFilesCommand(parsed)) {
+        runDetachedListenerTask("search_files", async () => {
+          try {
+            await ensureFileIndex();
+
+            // Scope search to the conversation's cwd when provided.
+            // The file index stores paths relative to process.cwd(), so we
+            // compute the relative path from the index root to the requested cwd.
+            let searchDir = ".";
+            if (parsed.cwd) {
+              const rel = path.relative(getIndexRoot(), parsed.cwd);
+              // Only scope if cwd is within the index root (not "../" etc.)
+              if (rel && !rel.startsWith("..")) {
+                searchDir = rel;
+              }
+            }
+
+            const files = searchFileIndex({
+              searchDir,
+              pattern: parsed.query,
+              deep: true,
+              maxResults: parsed.max_results ?? 5,
+            });
+            safeSocketSend(
+              socket,
+              {
+                type: "search_files_response",
+                request_id: parsed.request_id,
+                files,
+                success: true,
+              },
+              "listener_search_files_send_failed",
+              "listener_search_files",
+            );
+          } catch (error) {
+            trackListenerError(
+              "listener_search_files_failed",
+              error,
+              "listener_file_search",
+            );
+            safeSocketSend(
+              socket,
+              {
+                type: "search_files_response",
+                request_id: parsed.request_id,
+                files: [],
+                success: false,
+                error:
+                  error instanceof Error
+                    ? error.message
+                    : "Failed to search files",
+              },
+              "listener_search_files_send_failed",
+              "listener_search_files",
+            );
           }
-          console.log(
-            `[Listen] Sending list_in_directory_response: ${folders.length} folders, ${files?.length ?? 0} files`,
-          );
-          socket.send(JSON.stringify(response));
-        } catch (err) {
-          trackListenerError(
-            "listener_list_directory_failed",
-            err,
-            "listener_file_browser",
-          );
-          console.error(
-            `[Listen] list_in_directory error: ${err instanceof Error ? err.message : "Unknown error"}`,
-          );
-          socket.send(
-            JSON.stringify({
+        });
+        return;
+      }
+
+      // ── Directory listing (no runtime scope required) ──────────────────
+      if (isListInDirectoryCommand(parsed)) {
+        console.log(
+          `[Listen] Received list_in_directory command: path=${parsed.path}`,
+        );
+        runDetachedListenerTask("list_in_directory", async () => {
+          try {
+            const { readdir } = await import("node:fs/promises");
+            console.log(`[Listen] Reading directory: ${parsed.path}`);
+            const entries = await readdir(parsed.path, { withFileTypes: true });
+            console.log(
+              `[Listen] Directory read success, ${entries.length} entries`,
+            );
+
+            // Filter out OS/VCS noise before sorting
+            const IGNORED_NAMES = new Set([
+              ".DS_Store",
+              ".git",
+              ".gitignore",
+              "Thumbs.db",
+            ]);
+            const sortedEntries = entries
+              .filter((e) => !IGNORED_NAMES.has(e.name))
+              .sort((a, b) => a.name.localeCompare(b.name));
+
+            const allFolders: string[] = [];
+            const allFiles: string[] = [];
+            for (const e of sortedEntries) {
+              if (e.isDirectory()) {
+                allFolders.push(e.name);
+              } else if (parsed.include_files) {
+                allFiles.push(e.name);
+              }
+            }
+
+            const total = allFolders.length + allFiles.length;
+            const offset = parsed.offset ?? 0;
+            const limit = parsed.limit ?? total;
+
+            // Paginate over the combined [folders, files] list
+            const combined = [...allFolders, ...allFiles];
+            const page = combined.slice(offset, offset + limit);
+            const folders = page.filter((name) => allFolders.includes(name));
+            const files = page.filter((name) => allFiles.includes(name));
+
+            const response: Record<string, unknown> = {
               type: "list_in_directory_response",
               path: parsed.path,
-              folders: [],
-              hasMore: false,
-              success: false,
-              error:
-                err instanceof Error ? err.message : "Failed to list directory",
+              folders,
+              hasMore: offset + limit < total,
+              total,
+              success: true,
               ...(parsed.request_id ? { request_id: parsed.request_id } : {}),
-            }),
-          );
-        }
-      })();
-      return;
-    }
+            };
+            if (parsed.include_files) {
+              response.files = files;
+            }
+            console.log(
+              `[Listen] Sending list_in_directory_response: ${folders.length} folders, ${files?.length ?? 0} files`,
+            );
+            socket.send(JSON.stringify(response));
+          } catch (err) {
+            trackListenerError(
+              "listener_list_directory_failed",
+              err,
+              "listener_file_browser",
+            );
+            console.error(
+              `[Listen] list_in_directory error: ${err instanceof Error ? err.message : "Unknown error"}`,
+            );
+            socket.send(
+              JSON.stringify({
+                type: "list_in_directory_response",
+                path: parsed.path,
+                folders: [],
+                hasMore: false,
+                success: false,
+                error:
+                  err instanceof Error
+                    ? err.message
+                    : "Failed to list directory",
+                ...(parsed.request_id ? { request_id: parsed.request_id } : {}),
+              }),
+            );
+          }
+        });
+        return;
+      }
 
-    // ── File reading (no runtime scope required) ─────────────────────
-    if (isReadFileCommand(parsed)) {
-      console.log(
-        `[Listen] Received read_file command: path=${parsed.path}, request_id=${parsed.request_id}`,
-      );
-      void (async () => {
-        try {
-          const { readFile } = await import("node:fs/promises");
-          const content = await readFile(parsed.path, "utf-8");
-          console.log(
-            `[Listen] read_file success: ${parsed.path} (${content.length} bytes)`,
-          );
-          socket.send(
-            JSON.stringify({
-              type: "read_file_response",
-              request_id: parsed.request_id,
-              path: parsed.path,
-              content,
-              success: true,
-            }),
-          );
-        } catch (err) {
-          trackListenerError(
-            "listener_read_file_failed",
-            err,
-            "listener_file_read",
-          );
-          console.error(
-            `[Listen] read_file error: ${err instanceof Error ? err.message : "Unknown error"}`,
-          );
-          socket.send(
-            JSON.stringify({
-              type: "read_file_response",
-              request_id: parsed.request_id,
-              path: parsed.path,
-              content: null,
-              success: false,
-              error: err instanceof Error ? err.message : "Failed to read file",
-            }),
-          );
-        }
-      })();
-      return;
-    }
+      // ── File reading (no runtime scope required) ─────────────────────
+      if (isReadFileCommand(parsed)) {
+        console.log(
+          `[Listen] Received read_file command: path=${parsed.path}, request_id=${parsed.request_id}`,
+        );
+        runDetachedListenerTask("read_file", async () => {
+          try {
+            const { readFile } = await import("node:fs/promises");
+            const content = await readFile(parsed.path, "utf-8");
+            console.log(
+              `[Listen] read_file success: ${parsed.path} (${content.length} bytes)`,
+            );
+            socket.send(
+              JSON.stringify({
+                type: "read_file_response",
+                request_id: parsed.request_id,
+                path: parsed.path,
+                content,
+                success: true,
+              }),
+            );
+          } catch (err) {
+            trackListenerError(
+              "listener_read_file_failed",
+              err,
+              "listener_file_read",
+            );
+            console.error(
+              `[Listen] read_file error: ${err instanceof Error ? err.message : "Unknown error"}`,
+            );
+            socket.send(
+              JSON.stringify({
+                type: "read_file_response",
+                request_id: parsed.request_id,
+                path: parsed.path,
+                content: null,
+                success: false,
+                error:
+                  err instanceof Error ? err.message : "Failed to read file",
+              }),
+            );
+          }
+        });
+        return;
+      }
 
-    // ── File writing (no runtime scope required) ──────────────────────
-    if (isWriteFileCommand(parsed)) {
-      console.log(
-        `[Listen] Received write_file command: path=${parsed.path}, request_id=${parsed.request_id}`,
-      );
-      void (async () => {
-        try {
-          const { writeFile } = await import("node:fs/promises");
-          await writeFile(parsed.path, parsed.content, "utf-8");
-          console.log(
-            `[Listen] write_file success: ${parsed.path} (${parsed.content.length} bytes)`,
-          );
-          socket.send(
-            JSON.stringify({
-              type: "write_file_response",
-              request_id: parsed.request_id,
-              path: parsed.path,
-              success: true,
-            }),
-          );
-        } catch (err) {
-          console.error(
-            `[Listen] write_file error: ${err instanceof Error ? err.message : "Unknown error"}`,
-          );
-          socket.send(
-            JSON.stringify({
-              type: "write_file_response",
-              request_id: parsed.request_id,
-              path: parsed.path,
-              success: false,
-              error:
-                err instanceof Error ? err.message : "Failed to write file",
-            }),
-          );
-        }
-      })();
-      return;
-    }
+      // ── File writing (no runtime scope required) ──────────────────────
+      if (isWriteFileCommand(parsed)) {
+        console.log(
+          `[Listen] Received write_file command: path=${parsed.path}, request_id=${parsed.request_id}`,
+        );
+        runDetachedListenerTask("write_file", async () => {
+          try {
+            const { writeFile } = await import("node:fs/promises");
+            await writeFile(parsed.path, parsed.content, "utf-8");
+            console.log(
+              `[Listen] write_file success: ${parsed.path} (${parsed.content.length} bytes)`,
+            );
+            socket.send(
+              JSON.stringify({
+                type: "write_file_response",
+                request_id: parsed.request_id,
+                path: parsed.path,
+                success: true,
+              }),
+            );
+          } catch (err) {
+            console.error(
+              `[Listen] write_file error: ${err instanceof Error ? err.message : "Unknown error"}`,
+            );
+            socket.send(
+              JSON.stringify({
+                type: "write_file_response",
+                request_id: parsed.request_id,
+                path: parsed.path,
+                success: false,
+                error:
+                  err instanceof Error ? err.message : "Failed to write file",
+              }),
+            );
+          }
+        });
+        return;
+      }
 
-    // ── File editing (no runtime scope required) ─────────────────────
-    if (isEditFileCommand(parsed)) {
-      console.log(
-        `[Listen] Received edit_file command: file_path=${parsed.file_path}, request_id=${parsed.request_id}`,
-      );
-      void (async () => {
-        try {
-          const { edit } = await import("../../tools/impl/Edit");
-          console.log(
-            `[Listen] Executing edit: old_string="${parsed.old_string.slice(0, 50)}${parsed.old_string.length > 50 ? "..." : ""}"`,
-          );
-          const result = await edit({
-            file_path: parsed.file_path,
-            old_string: parsed.old_string,
-            new_string: parsed.new_string,
-            replace_all: parsed.replace_all,
-            expected_replacements: parsed.expected_replacements,
-          });
-          console.log(
-            `[Listen] edit_file success: ${result.replacements} replacement(s) at line ${result.startLine}`,
-          );
-          socket.send(
-            JSON.stringify({
-              type: "edit_file_response",
-              request_id: parsed.request_id,
+      // ── File editing (no runtime scope required) ─────────────────────
+      if (isEditFileCommand(parsed)) {
+        console.log(
+          `[Listen] Received edit_file command: file_path=${parsed.file_path}, request_id=${parsed.request_id}`,
+        );
+        runDetachedListenerTask("edit_file", async () => {
+          try {
+            const { edit } = await import("../../tools/impl/Edit");
+            console.log(
+              `[Listen] Executing edit: old_string="${parsed.old_string.slice(0, 50)}${parsed.old_string.length > 50 ? "..." : ""}"`,
+            );
+            const result = await edit({
               file_path: parsed.file_path,
-              message: result.message,
-              replacements: result.replacements,
-              start_line: result.startLine,
-              success: true,
-            }),
-          );
-        } catch (err) {
-          trackListenerError(
-            "listener_edit_file_failed",
-            err,
-            "listener_file_edit",
-          );
-          console.error(
-            `[Listen] edit_file error: ${err instanceof Error ? err.message : "Unknown error"}`,
-          );
-          socket.send(
-            JSON.stringify({
-              type: "edit_file_response",
-              request_id: parsed.request_id,
-              file_path: parsed.file_path,
-              message: null,
-              replacements: 0,
-              success: false,
-              error: err instanceof Error ? err.message : "Failed to edit file",
-            }),
-          );
-        }
-      })();
-      return;
-    }
+              old_string: parsed.old_string,
+              new_string: parsed.new_string,
+              replace_all: parsed.replace_all,
+              expected_replacements: parsed.expected_replacements,
+            });
+            console.log(
+              `[Listen] edit_file success: ${result.replacements} replacement(s) at line ${result.startLine}`,
+            );
+            socket.send(
+              JSON.stringify({
+                type: "edit_file_response",
+                request_id: parsed.request_id,
+                file_path: parsed.file_path,
+                message: result.message,
+                replacements: result.replacements,
+                start_line: result.startLine,
+                success: true,
+              }),
+            );
+          } catch (err) {
+            trackListenerError(
+              "listener_edit_file_failed",
+              err,
+              "listener_file_edit",
+            );
+            console.error(
+              `[Listen] edit_file error: ${err instanceof Error ? err.message : "Unknown error"}`,
+            );
+            socket.send(
+              JSON.stringify({
+                type: "edit_file_response",
+                request_id: parsed.request_id,
+                file_path: parsed.file_path,
+                message: null,
+                replacements: 0,
+                success: false,
+                error:
+                  err instanceof Error ? err.message : "Failed to edit file",
+              }),
+            );
+          }
+        });
+        return;
+      }
 
-    // ── Memory index (no runtime scope required) ─────────────────────
-    if (isListMemoryCommand(parsed)) {
-      void (async () => {
-        try {
-          const { getMemoryFilesystemRoot } = await import(
-            "../../agent/memoryFilesystem"
-          );
-          const { scanMemoryFilesystem, getFileNodes, readFileContent } =
-            await import("../../agent/memoryScanner");
-          const { parseFrontmatter } = await import("../../utils/frontmatter");
+      // ── Memory index (no runtime scope required) ─────────────────────
+      if (isListMemoryCommand(parsed)) {
+        runDetachedListenerTask("list_memory", async () => {
+          try {
+            const { getMemoryFilesystemRoot } = await import(
+              "../../agent/memoryFilesystem"
+            );
+            const { scanMemoryFilesystem, getFileNodes, readFileContent } =
+              await import("../../agent/memoryScanner");
+            const { parseFrontmatter } = await import(
+              "../../utils/frontmatter"
+            );
 
-          const { existsSync } = await import("node:fs");
-          const { join } = await import("node:path");
+            const { existsSync } = await import("node:fs");
+            const { join } = await import("node:path");
 
-          const memoryRoot = getMemoryFilesystemRoot(parsed.agent_id);
+            const memoryRoot = getMemoryFilesystemRoot(parsed.agent_id);
 
-          // If the memory directory doesn't have a git repo, memfs
-          // hasn't been initialized — tell the UI so it can show the
-          // enable button instead of an empty file list.
-          const memfsInitialized = existsSync(join(memoryRoot, ".git"));
+            // If the memory directory doesn't have a git repo, memfs
+            // hasn't been initialized — tell the UI so it can show the
+            // enable button instead of an empty file list.
+            const memfsInitialized = existsSync(join(memoryRoot, ".git"));
 
-          if (!memfsInitialized) {
+            if (!memfsInitialized) {
+              socket.send(
+                JSON.stringify({
+                  type: "list_memory_response",
+                  request_id: parsed.request_id,
+                  entries: [],
+                  done: true,
+                  total: 0,
+                  success: true,
+                  memfs_initialized: false,
+                }),
+              );
+              return;
+            }
+
+            const treeNodes = scanMemoryFilesystem(memoryRoot);
+            const fileNodes = getFileNodes(treeNodes).filter((n) =>
+              n.name.endsWith(".md"),
+            );
+
+            const CHUNK_SIZE = 5;
+            const total = fileNodes.length;
+
+            for (let i = 0; i < total; i += CHUNK_SIZE) {
+              const chunk = fileNodes.slice(i, i + CHUNK_SIZE);
+              const entries = chunk.map((node) => {
+                const raw = readFileContent(node.fullPath);
+                const { frontmatter, body } = parseFrontmatter(raw);
+                const desc = frontmatter.description;
+                return {
+                  relative_path: node.relativePath,
+                  is_system:
+                    node.relativePath.startsWith("system/") ||
+                    node.relativePath.startsWith("system\\"),
+                  description: typeof desc === "string" ? desc : null,
+                  content: body,
+                  size: body.length,
+                };
+              });
+
+              const done = i + CHUNK_SIZE >= total;
+              socket.send(
+                JSON.stringify({
+                  type: "list_memory_response",
+                  request_id: parsed.request_id,
+                  entries,
+                  done,
+                  total,
+                  success: true,
+                  memfs_initialized: true,
+                }),
+              );
+            }
+
+            // Edge case: no files at all (repo exists but empty)
+            if (total === 0) {
+              socket.send(
+                JSON.stringify({
+                  type: "list_memory_response",
+                  request_id: parsed.request_id,
+                  entries: [],
+                  done: true,
+                  total: 0,
+                  success: true,
+                  memfs_initialized: true,
+                }),
+              );
+            }
+          } catch (err) {
+            trackListenerError(
+              "listener_list_memory_failed",
+              err,
+              "listener_memory_browser",
+            );
             socket.send(
               JSON.stringify({
                 type: "list_memory_response",
@@ -2543,390 +2733,356 @@ async function connectWithRetry(
                 entries: [],
                 done: true,
                 total: 0,
-                success: true,
-                memfs_initialized: false,
+                success: false,
+                error:
+                  err instanceof Error ? err.message : "Failed to list memory",
               }),
             );
+          }
+        });
+        return;
+      }
+
+      // ── Enable memfs command ────────────────────────────────────────────
+      if (isEnableMemfsCommand(parsed)) {
+        runDetachedListenerTask("enable_memfs", async () => {
+          try {
+            const { applyMemfsFlags } = await import(
+              "../../agent/memoryFilesystem"
+            );
+            const result = await applyMemfsFlags(parsed.agent_id, true, false);
+            socket.send(
+              JSON.stringify({
+                type: "enable_memfs_response",
+                request_id: parsed.request_id,
+                success: true,
+                memory_directory: result.memoryDir,
+              }),
+            );
+            // Push memory_updated so the UI auto-refreshes its file list
+            socket.send(
+              JSON.stringify({
+                type: "memory_updated",
+                affected_paths: ["*"],
+                timestamp: Date.now(),
+              }),
+            );
+          } catch (err) {
+            trackListenerError(
+              "listener_enable_memfs_failed",
+              err,
+              "listener_memfs_enable",
+            );
+            socket.send(
+              JSON.stringify({
+                type: "enable_memfs_response",
+                request_id: parsed.request_id,
+                success: false,
+                error:
+                  err instanceof Error ? err.message : "Failed to enable memfs",
+              }),
+            );
+          }
+        });
+        return;
+      }
+
+      // ── Model catalog command (no runtime scope required) ───────────────
+      if (isListModelsCommand(parsed)) {
+        runDetachedListenerTask("list_models", async () => {
+          try {
+            const response = await buildListModelsResponse(parsed.request_id);
+            socket.send(JSON.stringify(response));
+          } catch (error) {
+            socket.send(
+              JSON.stringify({
+                type: "list_models_response",
+                request_id: parsed.request_id,
+                success: false,
+                entries: [],
+                error:
+                  error instanceof Error
+                    ? error.message
+                    : "Failed to list models",
+              }),
+            );
+          }
+        });
+        return;
+      }
+
+      // ── Model update command (runtime scoped) ────────────────────────────
+      if (isUpdateModelCommand(parsed)) {
+        runDetachedListenerTask("update_model", async () => {
+          const scopedRuntime = getOrCreateScopedRuntime(
+            runtime,
+            parsed.runtime.agent_id,
+            parsed.runtime.conversation_id,
+          );
+
+          const resolvedModel = resolveModelForUpdate(parsed.payload);
+          if (!resolvedModel) {
+            const failure: UpdateModelResponseMessage = {
+              type: "update_model_response",
+              request_id: parsed.request_id,
+              success: false,
+              error:
+                "Model not found. Provide a valid model_id from list_models or a model_handle.",
+            };
+            socket.send(JSON.stringify(failure));
             return;
           }
 
-          const treeNodes = scanMemoryFilesystem(memoryRoot);
-          const fileNodes = getFileNodes(treeNodes).filter((n) =>
-            n.name.endsWith(".md"),
-          );
-
-          const CHUNK_SIZE = 5;
-          const total = fileNodes.length;
-
-          for (let i = 0; i < total; i += CHUNK_SIZE) {
-            const chunk = fileNodes.slice(i, i + CHUNK_SIZE);
-            const entries = chunk.map((node) => {
-              const raw = readFileContent(node.fullPath);
-              const { frontmatter, body } = parseFrontmatter(raw);
-              const desc = frontmatter.description;
-              return {
-                relative_path: node.relativePath,
-                is_system:
-                  node.relativePath.startsWith("system/") ||
-                  node.relativePath.startsWith("system\\"),
-                description: typeof desc === "string" ? desc : null,
-                content: body,
-                size: body.length,
-              };
+          try {
+            const response = await applyModelUpdateForRuntime({
+              socket,
+              listener: runtime,
+              scopedRuntime,
+              requestId: parsed.request_id,
+              model: resolvedModel,
             });
-
-            const done = i + CHUNK_SIZE >= total;
-            socket.send(
-              JSON.stringify({
-                type: "list_memory_response",
-                request_id: parsed.request_id,
-                entries,
-                done,
-                total,
-                success: true,
-                memfs_initialized: true,
-              }),
-            );
-          }
-
-          // Edge case: no files at all (repo exists but empty)
-          if (total === 0) {
-            socket.send(
-              JSON.stringify({
-                type: "list_memory_response",
-                request_id: parsed.request_id,
-                entries: [],
-                done: true,
-                total: 0,
-                success: true,
-                memfs_initialized: true,
-              }),
-            );
-          }
-        } catch (err) {
-          trackListenerError(
-            "listener_list_memory_failed",
-            err,
-            "listener_memory_browser",
-          );
-          socket.send(
-            JSON.stringify({
-              type: "list_memory_response",
-              request_id: parsed.request_id,
-              entries: [],
-              done: true,
-              total: 0,
-              success: false,
-              error:
-                err instanceof Error ? err.message : "Failed to list memory",
-            }),
-          );
-        }
-      })();
-      return;
-    }
-
-    // ── Enable memfs command ────────────────────────────────────────────
-    if (isEnableMemfsCommand(parsed)) {
-      void (async () => {
-        try {
-          const { applyMemfsFlags } = await import(
-            "../../agent/memoryFilesystem"
-          );
-          const result = await applyMemfsFlags(parsed.agent_id, true, false);
-          socket.send(
-            JSON.stringify({
-              type: "enable_memfs_response",
-              request_id: parsed.request_id,
-              success: true,
-              memory_directory: result.memoryDir,
-            }),
-          );
-          // Push memory_updated so the UI auto-refreshes its file list
-          socket.send(
-            JSON.stringify({
-              type: "memory_updated",
-              affected_paths: ["*"],
-              timestamp: Date.now(),
-            }),
-          );
-        } catch (err) {
-          trackListenerError(
-            "listener_enable_memfs_failed",
-            err,
-            "listener_memfs_enable",
-          );
-          socket.send(
-            JSON.stringify({
-              type: "enable_memfs_response",
+            socket.send(JSON.stringify(response));
+          } catch (error) {
+            const failure: UpdateModelResponseMessage = {
+              type: "update_model_response",
               request_id: parsed.request_id,
               success: false,
-              error:
-                err instanceof Error ? err.message : "Failed to enable memfs",
-            }),
-          );
-        }
-      })();
-      return;
-    }
-
-    // ── Model catalog command (no runtime scope required) ───────────────
-    if (isListModelsCommand(parsed)) {
-      void (async () => {
-        try {
-          const response = await buildListModelsResponse(parsed.request_id);
-          socket.send(JSON.stringify(response));
-        } catch (error) {
-          socket.send(
-            JSON.stringify({
-              type: "list_models_response",
-              request_id: parsed.request_id,
-              success: false,
-              entries: [],
+              runtime: {
+                agent_id: parsed.runtime.agent_id,
+                conversation_id: parsed.runtime.conversation_id,
+              },
+              model_id: resolvedModel.id,
+              model_handle: resolvedModel.handle,
               error:
                 error instanceof Error
                   ? error.message
-                  : "Failed to list models",
-            }),
-          );
-        }
-      })();
-      return;
-    }
+                  : "Failed to update model",
+            };
+            socket.send(JSON.stringify(failure));
+          }
+        });
+        return;
+      }
 
-    // ── Model update command (runtime scoped) ────────────────────────────
-    if (isUpdateModelCommand(parsed)) {
-      void (async () => {
+      // ── Cron CRUD commands (no runtime scope required) ────────────────
+      if (
+        isCronListCommand(parsed) ||
+        isCronAddCommand(parsed) ||
+        isCronGetCommand(parsed) ||
+        isCronDeleteCommand(parsed) ||
+        isCronDeleteAllCommand(parsed)
+      ) {
+        runDetachedListenerTask("cron_command", async () => {
+          await handleCronCommand(parsed, socket);
+        });
+        return;
+      }
+
+      // ── Skill enable/disable commands (no runtime scope required) ─────
+      if (isSkillEnableCommand(parsed) || isSkillDisableCommand(parsed)) {
+        runDetachedListenerTask("skill_command", async () => {
+          await handleSkillCommand(parsed, socket);
+        });
+        return;
+      }
+
+      // ── Agent management commands (no runtime scope required) ─────────
+      if (isCreateAgentCommand(parsed)) {
+        runDetachedListenerTask("create_agent_command", async () => {
+          await handleCreateAgentCommand(parsed, socket);
+        });
+        return;
+      }
+
+      if (
+        isGetReflectionSettingsCommand(parsed) ||
+        isSetReflectionSettingsCommand(parsed)
+      ) {
+        runDetachedListenerTask("reflection_settings_command", async () => {
+          await handleReflectionSettingsCommand(parsed, socket, runtime);
+        });
+        return;
+      }
+
+      // ── Slash commands (execute_command) ────────────────────────────────
+      if (isExecuteCommandCommand(parsed)) {
+        // Slash commands need a scoped runtime for the conversation context
         const scopedRuntime = getOrCreateScopedRuntime(
           runtime,
           parsed.runtime.agent_id,
           parsed.runtime.conversation_id,
         );
-
-        const resolvedModel = resolveModelForUpdate(parsed.payload);
-        if (!resolvedModel) {
-          const failure: UpdateModelResponseMessage = {
-            type: "update_model_response",
-            request_id: parsed.request_id,
-            success: false,
-            error:
-              "Model not found. Provide a valid model_id from list_models or a model_handle.",
-          };
-          socket.send(JSON.stringify(failure));
-          return;
-        }
-
-        try {
-          const response = await applyModelUpdateForRuntime({
-            socket,
-            listener: runtime,
-            scopedRuntime,
-            requestId: parsed.request_id,
-            model: resolvedModel,
+        runDetachedListenerTask("execute_command", async () => {
+          await handleExecuteCommand(parsed, socket, scopedRuntime, {
+            onStatusChange: opts.onStatusChange,
+            connectionId: opts.connectionId,
           });
-          socket.send(JSON.stringify(response));
-        } catch (error) {
-          const failure: UpdateModelResponseMessage = {
-            type: "update_model_response",
-            request_id: parsed.request_id,
-            success: false,
-            runtime: {
-              agent_id: parsed.runtime.agent_id,
-              conversation_id: parsed.runtime.conversation_id,
-            },
-            model_id: resolvedModel.id,
-            model_handle: resolvedModel.handle,
-            error:
-              error instanceof Error ? error.message : "Failed to update model",
-          };
-          socket.send(JSON.stringify(failure));
-        }
-      })();
-      return;
-    }
+        });
+        return;
+      }
 
-    // ── Cron CRUD commands (no runtime scope required) ────────────────
-    if (
-      isCronListCommand(parsed) ||
-      isCronAddCommand(parsed) ||
-      isCronGetCommand(parsed) ||
-      isCronDeleteCommand(parsed) ||
-      isCronDeleteAllCommand(parsed)
-    ) {
-      void handleCronCommand(parsed, socket);
-      return;
-    }
+      // ── Git branch commands (no runtime scope required) ────────────────
+      if (isSearchBranchesCommand(parsed)) {
+        runDetachedListenerTask("search_branches", async () => {
+          try {
+            const cwd = parsed.cwd ?? runtime.bootWorkingDirectory;
+            const maxResults = parsed.max_results ?? 20;
+            const execFileAsync = promisify(execFile);
 
-    // ── Skill enable/disable commands (no runtime scope required) ─────
-    if (isSkillEnableCommand(parsed) || isSkillDisableCommand(parsed)) {
-      void handleSkillCommand(parsed, socket);
-      return;
-    }
+            // Get local + remote branches with format
+            const { stdout } = await execFileAsync(
+              "git",
+              ["branch", "-a", "--format=%(refname:short)\t%(HEAD)"],
+              {
+                cwd,
+                encoding: "utf-8",
+                timeout: 5000,
+              },
+            );
 
-    // ── Agent management commands (no runtime scope required) ─────────
-    if (isCreateAgentCommand(parsed)) {
-      void handleCreateAgentCommand(parsed, socket);
-      return;
-    }
+            const query = parsed.query.toLowerCase();
+            const branches = stdout
+              .split("\n")
+              .filter((line) => line.trim().length > 0)
+              .map((line) => {
+                const parts = line.split("\t");
+                const trimmedName = (parts[0] ?? "").trim();
+                const isRemote = trimmedName.startsWith("origin/");
+                return {
+                  name: trimmedName,
+                  is_current: parts[1]?.trim() === "*",
+                  is_remote: isRemote,
+                };
+              })
+              .filter(
+                (b) =>
+                  query.length === 0 || b.name.toLowerCase().includes(query),
+              )
+              .slice(0, maxResults);
 
-    if (
-      isGetReflectionSettingsCommand(parsed) ||
-      isSetReflectionSettingsCommand(parsed)
-    ) {
-      void handleReflectionSettingsCommand(parsed, socket, runtime);
-      return;
-    }
+            socket.send(
+              JSON.stringify({
+                type: "search_branches_response",
+                request_id: parsed.request_id,
+                branches,
+                success: true,
+              }),
+            );
+          } catch (error) {
+            socket.send(
+              JSON.stringify({
+                type: "search_branches_response",
+                request_id: parsed.request_id,
+                branches: [],
+                success: false,
+                error:
+                  error instanceof Error
+                    ? error.message
+                    : "Failed to search branches",
+              }),
+            );
+          }
+        });
+        return;
+      }
 
-    // ── Slash commands (execute_command) ────────────────────────────────
-    if (isExecuteCommandCommand(parsed)) {
-      // Slash commands need a scoped runtime for the conversation context
-      const scopedRuntime = getOrCreateScopedRuntime(
-        runtime,
-        parsed.runtime.agent_id,
-        parsed.runtime.conversation_id,
-      );
-      void handleExecuteCommand(parsed, socket, scopedRuntime, {
-        onStatusChange: opts.onStatusChange,
-        connectionId: opts.connectionId,
-      });
-      return;
-    }
+      if (isCheckoutBranchCommand(parsed)) {
+        runDetachedListenerTask("checkout_branch", async () => {
+          try {
+            const cwd = parsed.cwd ?? runtime.bootWorkingDirectory;
+            const execFileAsync = promisify(execFile);
 
-    // ── Git branch commands (no runtime scope required) ────────────────
-    if (isSearchBranchesCommand(parsed)) {
-      void (async () => {
-        try {
-          const cwd = parsed.cwd ?? runtime.bootWorkingDirectory;
-          const maxResults = parsed.max_results ?? 20;
-          const execFileAsync = promisify(execFile);
+            const args = parsed.create
+              ? ["checkout", "-b", parsed.branch]
+              : ["checkout", parsed.branch];
 
-          // Get local + remote branches with format
-          const { stdout } = await execFileAsync(
-            "git",
-            ["branch", "-a", "--format=%(refname:short)\t%(HEAD)"],
-            {
+            await execFileAsync("git", args, {
               cwd,
               encoding: "utf-8",
-              timeout: 5000,
-            },
-          );
+              timeout: 10000,
+            });
 
-          const query = parsed.query.toLowerCase();
-          const branches = stdout
-            .split("\n")
-            .filter((line) => line.trim().length > 0)
-            .map((line) => {
-              const parts = line.split("\t");
-              const trimmedName = (parts[0] ?? "").trim();
-              const isRemote = trimmedName.startsWith("origin/");
-              return {
-                name: trimmedName,
-                is_current: parts[1]?.trim() === "*",
-                is_remote: isRemote,
-              };
-            })
-            .filter(
-              (b) => query.length === 0 || b.name.toLowerCase().includes(query),
-            )
-            .slice(0, maxResults);
+            // Re-read the current branch after checkout to confirm
+            const gitCtx = getGitContext(cwd);
 
-          socket.send(
-            JSON.stringify({
-              type: "search_branches_response",
-              request_id: parsed.request_id,
-              branches,
-              success: true,
-            }),
-          );
-        } catch (error) {
-          socket.send(
-            JSON.stringify({
-              type: "search_branches_response",
-              request_id: parsed.request_id,
-              branches: [],
-              success: false,
-              error:
-                error instanceof Error
-                  ? error.message
-                  : "Failed to search branches",
-            }),
-          );
-        }
-      })();
-      return;
-    }
+            socket.send(
+              JSON.stringify({
+                type: "checkout_branch_response",
+                request_id: parsed.request_id,
+                branch: gitCtx?.branch ?? parsed.branch,
+                success: true,
+              }),
+            );
 
-    if (isCheckoutBranchCommand(parsed)) {
-      void (async () => {
-        try {
-          const cwd = parsed.cwd ?? runtime.bootWorkingDirectory;
-          const execFileAsync = promisify(execFile);
+            // Emit updated device status so UIs pick up the new branch
+            emitDeviceStatusUpdate(socket, runtime);
+          } catch (error) {
+            socket.send(
+              JSON.stringify({
+                type: "checkout_branch_response",
+                request_id: parsed.request_id,
+                branch: parsed.branch,
+                success: false,
+                error:
+                  error instanceof Error
+                    ? error.message
+                    : "Failed to checkout branch",
+              }),
+            );
+          }
+        });
+        return;
+      }
 
-          const args = parsed.create
-            ? ["checkout", "-b", parsed.branch]
-            : ["checkout", parsed.branch];
+      // ── Terminal commands (no runtime scope required) ──────────────────
+      if (parsed.type === "terminal_spawn") {
+        handleTerminalSpawn(
+          parsed,
+          socket,
+          parsed.cwd ?? runtime.bootWorkingDirectory,
+        );
+        return;
+      }
 
-          await execFileAsync("git", args, {
-            cwd,
-            encoding: "utf-8",
-            timeout: 10000,
-          });
+      if (parsed.type === "terminal_input") {
+        handleTerminalInput(parsed);
+        return;
+      }
 
-          // Re-read the current branch after checkout to confirm
-          const gitCtx = getGitContext(cwd);
+      if (parsed.type === "terminal_resize") {
+        handleTerminalResize(parsed);
+        return;
+      }
 
-          socket.send(
-            JSON.stringify({
-              type: "checkout_branch_response",
-              request_id: parsed.request_id,
-              branch: gitCtx?.branch ?? parsed.branch,
-              success: true,
-            }),
-          );
-
-          // Emit updated device status so UIs pick up the new branch
-          emitDeviceStatusUpdate(socket, runtime);
-        } catch (error) {
-          socket.send(
-            JSON.stringify({
-              type: "checkout_branch_response",
-              request_id: parsed.request_id,
-              branch: parsed.branch,
-              success: false,
-              error:
-                error instanceof Error
-                  ? error.message
-                  : "Failed to checkout branch",
-            }),
-          );
-        }
-      })();
-      return;
-    }
-
-    // ── Terminal commands (no runtime scope required) ──────────────────
-    if (parsed.type === "terminal_spawn") {
-      handleTerminalSpawn(
-        parsed,
-        socket,
-        parsed.cwd ?? runtime.bootWorkingDirectory,
+      if (parsed.type === "terminal_kill") {
+        handleTerminalKill(parsed);
+        return;
+      }
+    } catch (error) {
+      trackListenerError(
+        "listener_message_handler_failed",
+        error,
+        "listener_message_handler",
       );
-      return;
-    }
+      if (isDebugEnabled()) {
+        console.error("[Listen] Unhandled message handler error:", error);
+      }
 
-    if (parsed.type === "terminal_input") {
-      handleTerminalInput(parsed);
-      return;
-    }
+      const scope = getParsedRuntimeScope(parsed);
+      if (!scope) {
+        return;
+      }
 
-    if (parsed.type === "terminal_resize") {
-      handleTerminalResize(parsed);
-      return;
-    }
-
-    if (parsed.type === "terminal_kill") {
-      handleTerminalKill(parsed);
-      return;
+      emitLoopErrorDelta(socket, runtime, {
+        message:
+          error instanceof Error
+            ? error.message
+            : "Failed to process listener message",
+        stopReason: "error",
+        isTerminal: false,
+        agentId: scope.agent_id,
+        conversationId: scope.conversation_id,
+      });
     }
   });
 
