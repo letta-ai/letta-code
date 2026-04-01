@@ -78,7 +78,6 @@ import type {
   CronGetCommand,
   CronListCommand,
   GetReflectionSettingsCommand,
-  ListDefaultAgentsCommand,
   ListModelsResponseMessage,
   ListModelsResponseModelEntry,
   ReflectionSettingsScope,
@@ -141,7 +140,6 @@ import {
   isEnableMemfsCommand,
   isExecuteCommandCommand,
   isGetReflectionSettingsCommand,
-  isListDefaultAgentsCommand,
   isListInDirectoryCommand,
   isListMemoryCommand,
   isListModelsCommand,
@@ -992,10 +990,11 @@ async function handleCreateAgentCommand(
       }
     }
 
-    const { createAgent } = await import("../../agent/create");
-    const result = await createAgent({
-      name: parsed.name,
-      description: parsed.description,
+    const { createAgentForPersonality } = await import(
+      "../../agent/personality"
+    );
+    const result = await createAgentForPersonality({
+      personalityId: parsed.personality,
       model: parsed.model,
     });
 
@@ -1024,33 +1023,6 @@ async function handleCreateAgentCommand(
       }),
     );
   }
-}
-
-async function handleListDefaultAgentsCommand(
-  parsed: ListDefaultAgentsCommand,
-  socket: WebSocket,
-): Promise<void> {
-  const { DEFAULT_AGENT_CONFIGS, MEMO_TAG, INCOGNITO_TAG } = await import(
-    "../../agent/defaults"
-  );
-  const tagMap: Record<string, string> = {
-    memo: MEMO_TAG,
-    incognito: INCOGNITO_TAG,
-  };
-
-  socket.send(
-    JSON.stringify({
-      type: "list_default_agents_response",
-      request_id: parsed.request_id,
-      success: true,
-      agents: Object.entries(DEFAULT_AGENT_CONFIGS).map(([id, config]) => ({
-        id,
-        name: (config as { name?: string }).name ?? id,
-        description: (config as { description?: string }).description ?? "",
-        tag: tagMap[id] ?? `default:${id}`,
-      })),
-    }),
-  );
 }
 
 function toReflectionSettingsResponse(
@@ -2797,11 +2769,6 @@ async function connectWithRetry(
       return;
     }
 
-    if (isListDefaultAgentsCommand(parsed)) {
-      void handleListDefaultAgentsCommand(parsed, socket);
-      return;
-    }
-
     if (
       isGetReflectionSettingsCommand(parsed) ||
       isSetReflectionSettingsCommand(parsed)
@@ -3395,7 +3362,6 @@ export const __listenClientTestUtils = {
   handleCronCommand,
   handleSkillCommand,
   handleCreateAgentCommand,
-  handleListDefaultAgentsCommand,
   handleReflectionSettingsCommand,
   scheduleQueuePump,
   recoverApprovalStateForSync,

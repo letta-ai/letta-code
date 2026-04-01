@@ -2,8 +2,15 @@ import { execFile as execFileCb } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
-import { parseMdxFrontmatter } from "./memory";
-import { getMemoryRepoDir, pullMemory, pushMemory } from "./memoryGit";
+import { settingsManager } from "../settings-manager";
+import type { CreateAgentOptions } from "./create";
+import { getDefaultMemoryBlocks, parseMdxFrontmatter } from "./memory";
+import {
+  GIT_MEMORY_ENABLED_TAG,
+  getMemoryRepoDir,
+  pullMemory,
+  pushMemory,
+} from "./memoryGit";
 import { MEMORY_PROMPTS, SYSTEM_PROMPTS } from "./promptAssets";
 
 const execFile = promisify(execFileCb);
@@ -48,6 +55,15 @@ export const PERSONALITY_OPTIONS: PersonalityOption[] = [
 ];
 
 export type PersonalityId = PersonalityOption["id"];
+
+export const DEFAULT_CREATE_AGENT_PERSONALITIES = [
+  "memo",
+  "linus",
+  "kawaii",
+] as const;
+
+export type DefaultCreateAgentPersonalityId =
+  (typeof DEFAULT_CREATE_AGENT_PERSONALITIES)[number];
 
 const PERSONALITY_ALIASES: Record<string, PersonalityId> = {
   "letta-code": "memo",
@@ -329,6 +345,97 @@ export function getPersonalityBlockDefinitions(personalityId: PersonalityId): {
       templatePromptAssetName: humanTemplatePromptAssetName,
     },
   };
+}
+
+export async function buildCreateAgentOptionsForPersonality(params: {
+  personalityId: PersonalityId;
+  name?: string;
+  description?: string;
+  model?: string;
+  tags?: string[];
+}): Promise<CreateAgentOptions> {
+  const { personalityId, name, description, model, tags } = params;
+  const personality = getPersonalityOption(personalityId);
+  const blockDefinitions = getPersonalityBlockDefinitions(personalityId);
+  const defaultMemoryBlocks = await getDefaultMemoryBlocks();
+
+  return {
+    name: name ?? personality.label,
+    description: description ?? personality.description,
+    model,
+    tags,
+    memoryPromptMode: "memfs",
+    memoryBlocks: defaultMemoryBlocks.map((block) => {
+      if (block.label === "persona") {
+        return {
+          label: block.label,
+          value: blockDefinitions.persona.value,
+          description:
+            blockDefinitions.persona.description ??
+            block.description ??
+            undefined,
+        };
+      }
+
+      if (block.label === "human") {
+        return {
+          label: block.label,
+          value: blockDefinitions.human.value,
+          description:
+            blockDefinitions.human.description ??
+            block.description ??
+            undefined,
+        };
+      }
+
+      return {
+        label: block.label,
+        value: block.value,
+        description: block.description ?? undefined,
+      };
+    }),
+  };
+}
+
+export async function enableMemfsForCreatedAgent(params: {
+  agentId: string;
+  agentTags?: string[] | null;
+}): Promise<void> {
+  const { agentId, agentTags } = params;
+
+  try {
+    const { getClient } = await import("./client");
+    const client = await getClient();
+    const tags = agentTags || [];
+    if (!tags.includes(GIT_MEMORY_ENABLED_TAG)) {
+      await client.agents.update(agentId, {
+        tags: [...tags, GIT_MEMORY_ENABLED_TAG],
+      });
+    }
+    settingsManager.setMemfsEnabled(agentId, true);
+  } catch {
+    // Self-hosted or memfs not available - skip silently
+  }
+}
+
+export async function createAgentForPersonality(params: {
+  personalityId: PersonalityId;
+  name?: string;
+  description?: string;
+  model?: string;
+  tags?: string[];
+}): Promise<Awaited<ReturnType<typeof import("./create")["createAgent"]>>> {
+  const { createAgent } = await import("./create");
+  const result = await createAgent(
+    await buildCreateAgentOptionsForPersonality(params),
+  );
+
+  await enableMemfsForCreatedAgent({
+    agentId: result.agent.id,
+    agentTags: result.agent.tags,
+  });
+
+  return result;
 }
 
 export function replaceBodyPreservingFrontmatter(

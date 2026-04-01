@@ -664,20 +664,12 @@ export interface CreateAgentCommand {
   type: "create_agent";
   /** Echoed back in the response for request correlation. */
   request_id: string;
-  /** Agent name. Defaults to "Letta Code" if omitted. */
-  name?: string;
-  /** Agent description. */
-  description?: string;
+  /** Built-in personality preset to create. */
+  personality: "memo" | "linus" | "kawaii";
   /** Model identifier (e.g. "sonnet", "gpt-4o"). Uses default if omitted. */
   model?: string;
   /** Whether to pin the agent globally after creation. Defaults to true. */
   pin_global?: boolean;
-}
-
-export interface ListDefaultAgentsCommand {
-  type: "list_default_agents";
-  /** Echoed back in the response for request correlation. */
-  request_id: string;
 }
 
 export interface GetReflectionSettingsCommand {
@@ -759,55 +751,11 @@ export interface CreateAgentResponseMessage {
   error?: string;
 }
 
-export interface DefaultAgentEntry {
-  /** Config key, e.g. "memo", "incognito" */
-  id: string;
-  name: string;
-  description: string;
-  /** Tag used to identify this default agent type */
-  tag: string;
-}
-
-export interface ListDefaultAgentsResponseMessage {
-  type: "list_default_agents_response";
-  request_id: string;
-  success: boolean;
-  agents: DefaultAgentEntry[];
-  error?: string;
-}
-
 export interface GetReflectionSettingsResponseMessage {
   type: "get_reflection_settings_response";
   request_id: string;
   success: boolean;
   reflection_settings: ReflectionSettingsSnapshot | null;
-  error?: string;
-}
-
-export interface CreateAgentResponseMessage {
-  type: "create_agent_response";
-  request_id: string;
-  success: boolean;
-  agent_id?: string;
-  name?: string;
-  model?: string;
-  error?: string;
-}
-
-export interface DefaultAgentEntry {
-  /** Config key, e.g. "memo", "incognito" */
-  id: string;
-  name: string;
-  description: string;
-  /** Tag used to identify this default agent type */
-  tag: string;
-}
-
-export interface ListDefaultAgentsResponseMessage {
-  type: "list_default_agents_response";
-  request_id: string;
-  success: boolean;
-  agents: DefaultAgentEntry[];
   error?: string;
 }
 
@@ -912,7 +860,6 @@ export type WsProtocolCommand =
   | SkillEnableCommand
   | SkillDisableCommand
   | CreateAgentCommand
-  | ListDefaultAgentsCommand
   | GetReflectionSettingsCommand
   | SetReflectionSettingsCommand
   | ExecuteCommandCommand

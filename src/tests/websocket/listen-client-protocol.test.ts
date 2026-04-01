@@ -7,6 +7,10 @@ import WebSocket from "ws";
 import { buildConversationMessagesCreateRequestBody } from "../../agent/message";
 import { models } from "../../agent/model";
 import {
+  DEFAULT_CREATE_AGENT_PERSONALITIES,
+  getPersonalityOption,
+} from "../../agent/personality";
+import {
   clearAllSubagents,
   registerSubagent,
 } from "../../cli/helpers/subagentState";
@@ -98,6 +102,100 @@ describe("listen-client parseServerMessage", () => {
     );
     expect(parsed).not.toBeNull();
     expect(parsed?.type).toBe("input");
+  });
+
+  describe("listen-client create_agent command handling", () => {
+    test("creates the memo, linus, and kawaii presets through the shared helper", async () => {
+      expect(DEFAULT_CREATE_AGENT_PERSONALITIES).toEqual([
+        "memo",
+        "linus",
+        "kawaii",
+      ]);
+
+      for (const personality of [...DEFAULT_CREATE_AGENT_PERSONALITIES]) {
+        const socket = new MockSocket(WebSocket.OPEN);
+        const personalityOption = getPersonalityOption(personality);
+        const createAgentForPersonalityMock = mock(async () => ({
+          agent: {
+            id: `agent-${personality}`,
+            name: personalityOption.label,
+            model: "anthropic/test-model",
+          } as never,
+          provenance: "created",
+        }));
+        mock.module("../../agent/personality", () => ({
+          createAgentForPersonality: createAgentForPersonalityMock,
+        }));
+
+        const originalPinGlobal = settingsManager.pinGlobal;
+        const pinGlobalMock = mock(() => {});
+        settingsManager.pinGlobal = pinGlobalMock;
+
+        await __listenClientTestUtils.handleCreateAgentCommand(
+          {
+            type: "create_agent",
+            request_id: `create-${personality}`,
+            personality,
+          },
+          socket as unknown as WebSocket,
+        );
+
+        settingsManager.pinGlobal = originalPinGlobal;
+
+        expect(createAgentForPersonalityMock).toHaveBeenCalledTimes(1);
+        expect(createAgentForPersonalityMock).toHaveBeenCalledWith({
+          personalityId: personality,
+          model: undefined,
+        });
+        expect(pinGlobalMock).toHaveBeenCalledWith(`agent-${personality}`);
+
+        const messages = socket.sentPayloads.map((payload) =>
+          JSON.parse(payload),
+        );
+        expect(messages).toContainEqual(
+          expect.objectContaining({
+            type: "create_agent_response",
+            request_id: `create-${personality}`,
+            success: true,
+            agent_id: `agent-${personality}`,
+            name: personalityOption.label,
+            model: "anthropic/test-model",
+          }),
+        );
+      }
+    });
+
+    test("does not globally pin when pin_global is false", async () => {
+      const socket = new MockSocket(WebSocket.OPEN);
+      const createAgentForPersonalityMock = mock(async () => ({
+        agent: {
+          id: "agent-kawaii",
+          name: "Kawaii",
+          model: "anthropic/test-model",
+        } as never,
+        provenance: "created",
+      }));
+      mock.module("../../agent/personality", () => ({
+        createAgentForPersonality: createAgentForPersonalityMock,
+      }));
+
+      const originalPinGlobal = settingsManager.pinGlobal;
+      const pinGlobalMock = mock(() => {});
+      settingsManager.pinGlobal = pinGlobalMock;
+
+      await __listenClientTestUtils.handleCreateAgentCommand(
+        {
+          type: "create_agent",
+          request_id: "create-no-pin",
+          personality: "kawaii",
+          pin_global: false,
+        },
+        socket as unknown as WebSocket,
+      );
+
+      settingsManager.pinGlobal = originalPinGlobal;
+      expect(pinGlobalMock).not.toHaveBeenCalled();
+    });
   });
 
   test("classifies invalid input approval_response payloads", () => {
@@ -350,6 +448,7 @@ describe("listen-client parseServerMessage", () => {
         JSON.stringify({
           type: "create_agent",
           request_id: "create-1",
+          personality: "memo",
         }),
       ),
     );
@@ -358,8 +457,7 @@ describe("listen-client parseServerMessage", () => {
         JSON.stringify({
           type: "create_agent",
           request_id: "create-2",
-          name: "My Agent",
-          description: "Test agent",
+          personality: "kawaii",
           model: "sonnet",
           pin_global: false,
         }),
@@ -372,39 +470,42 @@ describe("listen-client parseServerMessage", () => {
 
   test("rejects malformed create_agent command", () => {
     const noRequestId = parseServerMessage(
-      Buffer.from(JSON.stringify({ type: "create_agent" })),
+      Buffer.from(
+        JSON.stringify({ type: "create_agent", personality: "memo" }),
+      ),
+    );
+    const badPersonality = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "create_agent",
+          request_id: "create-bad-personality",
+          personality: "claude",
+        }),
+      ),
+    );
+    const badCodexPersonality = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "create_agent",
+          request_id: "create-bad-codex",
+          personality: "codex",
+        }),
+      ),
     );
     const badPinGlobal = parseServerMessage(
       Buffer.from(
         JSON.stringify({
           type: "create_agent",
           request_id: "create-bad",
+          personality: "linus",
           pin_global: "yes",
         }),
       ),
     );
     expect(noRequestId).toBeNull();
+    expect(badPersonality).toBeNull();
+    expect(badCodexPersonality).toBeNull();
     expect(badPinGlobal).toBeNull();
-  });
-
-  test("parses list_default_agents command", () => {
-    const parsed = parseServerMessage(
-      Buffer.from(
-        JSON.stringify({
-          type: "list_default_agents",
-          request_id: "list-defaults-1",
-        }),
-      ),
-    );
-
-    expect(parsed?.type).toBe("list_default_agents");
-  });
-
-  test("rejects malformed list_default_agents command", () => {
-    const noRequestId = parseServerMessage(
-      Buffer.from(JSON.stringify({ type: "list_default_agents" })),
-    );
-    expect(noRequestId).toBeNull();
   });
 
   test("parses reflection settings commands", () => {
