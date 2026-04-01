@@ -20,9 +20,9 @@ These principles define what healthy context looks like. Use them as your diagno
 
 ## Operating Procedure
 
-### Step 1: Measure token budget
+### Step 1: Diagnose
 
-`system/` memory files that are compiled into the system prompt should take up roughly 10% of total context (~15-20k tokens). Estimate system prompt usage token with:
+Read all memory files (`system/` and external) and evaluate against the principles above. Run the token estimator alongside your review:
 
 ```bash
 npx tsx <SKILL_DIR>/scripts/estimate_system_tokens.ts --memory-dir "$MEMORY_DIR"
@@ -30,16 +30,17 @@ npx tsx <SKILL_DIR>/scripts/estimate_system_tokens.ts --memory-dir "$MEMORY_DIR"
 
 Where `<SKILL_DIR>` is the Skill Directory shown when the skill was loaded (visible in the injection header).
 
-If over budget, identify what can move outside `system/` — detailed reference material, verbose context, evidence trails. Link from `system/` with `[[path]]` so it remains discoverable.
+Check for these categories of issues:
 
-### Step 2: Diagnose context issues
-
-Read your memory files and evaluate against the principles above. Check for:
+**Token bloat** — `system/` memory should take up roughly 10% of total context (~15-20k tokens):
+- Is the system prompt over budget? What's consuming the most tokens?
+- Are there files in `system/` that could live outside it without hurting near-term responses? Move them out and link with `[[path]]`.
+- Is verbose content (evidence trails, detailed reference, long lists) living in `system/` when a lean summary + external link would suffice?
 
 **Content quality**:
-- Does each system/ file contain generalized, actionable knowledge — or raw facts, one-off events, transient items (specific commits, current tickets, session notes)?
-- Are there files that wouldn't materially affect near-term responses if removed from system/? Move them outside and link with `[[path]]`.
+- Does each `system/` file contain generalized, actionable knowledge — or raw facts, one-off events, transient items (specific commits, current tickets, session notes)?
 - Do any prompts confuse or distract you? Are critical instructions (persona, user preferences) easy to follow?
+- Is there low-value content that can simply be deleted — stale facts, things retrievable on demand from conversation history?
 
 **Organization**:
 - One concept per file? Or do files mix distinct topics that should be split?
@@ -48,7 +49,7 @@ Read your memory files and evaluate against the principles above. Check for:
 - Any file/folder name collisions (e.g. `system/human.md` and `system/human/identity.md`)?
 
 **Discovery paths**:
-- Can you find external files (outside system/) when you need them? Are they referenced from system/ with `[[path]]` links or clear descriptions?
+- Can you find external files (outside `system/`) when you need them? Are they referenced from `system/` with `[[path]]` links or clear descriptions?
 - Do skills have informative names and descriptions so you know when to load them?
 
 **Structural validity**:
@@ -56,11 +57,11 @@ Read your memory files and evaluate against the principles above. Check for:
 - Skills must follow spec: `skills/{name}/SKILL.md` with optional `scripts/`, `references/`, `assets/`
 - Project directories use the project's **real name** (e.g. `letta-code/`), not generic `project/`
 
-### Step 3: Implement fixes
+### Step 2: Plan and implement fixes
 
-Create a plan for what to fix, then implement. Common fixes:
+Present findings to the user, then create a plan and implement. Common fixes:
 
-- **Move verbose content** outside `system/`, add `[[path]]` reference from a lean system/ summary
+- **Move verbose content** outside `system/`, add `[[path]]` reference from a lean summary
 - **Consolidate redundant files** into one canonical location
 - **Rewrite unclear descriptions** so they enable progressive disclosure
 - **Split mixed-topic files** into focused single-concept files
@@ -68,13 +69,13 @@ Create a plan for what to fix, then implement. Common fixes:
 - **Delete low-value content** — stale facts, transient items, anything retrievable on demand
 
 Before moving on, verify:
-- [ ] System prompt token budget reviewed (target ~10% of context, usually 15-20k tokens)
+- [ ] All identified issues addressed
 - [ ] No overlapping or redundant files remain
 - [ ] All file descriptions are unique, accurate, and match their contents
-- [ ] Moved-out knowledge has `[[path]]` references from system/ so it can be discovered
+- [ ] Moved-out knowledge has `[[path]]` references from `system/` so it can be discovered
 - [ ] No semantic changes to persona, user identity, or behavioral instructions
 
-### Step 4: Commit and push
+### Step 3: Commit and push
 
 Review changes, then commit with a descriptive message:
 
@@ -89,7 +90,7 @@ git commit --author="<AGENT_NAME> <<ACTUAL_AGENT_ID>@letta.com>" -m "fix(doctor)
 git push
 ```
 
-### Step 5: Report to user
+### Step 4: Report to user
 
 Tell the user what issues you identified, the fixes you made, and the commit. Recommend they run `/recompile` to apply changes to the current system prompt.
 
