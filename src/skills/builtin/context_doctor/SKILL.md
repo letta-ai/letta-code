@@ -6,7 +6,7 @@ description: Identify and repair degradation in system prompt, external memory, 
 
 # Context Doctor
 
-Your context — system prompt, memory files, and skills — is what makes you *you* across sessions. Over time it can degrade: bloat erodes signal, redundancy wastes tokens, poor organization makes knowledge hard to find. This skill helps you diagnose issues and repair them.
+Your context — system prompt, memory files (both `system/` and external), and skills (procedural memory) — is what makes you *you* across sessions. Over time it can degrade: bloat erodes signal, redundancy wastes tokens, poor organization makes knowledge hard to find. This skill helps you diagnose issues and repair them collaboratively with the user.
 
 ## Context Principles
 
@@ -22,7 +22,7 @@ These principles define what healthy context looks like. Use them as your diagno
 
 ### Step 1: Measure token budget
 
-System prompt files should take up roughly 10% of total context (~15-20k tokens). Run:
+`system/` memory files that are compiled into the system prompt should take up roughly 10% of total context (~15-20k tokens). Estimate system prompt usage token with:
 
 ```bash
 npx tsx <SKILL_DIR>/scripts/estimate_system_tokens.ts --memory-dir "$MEMORY_DIR"
@@ -30,7 +30,7 @@ npx tsx <SKILL_DIR>/scripts/estimate_system_tokens.ts --memory-dir "$MEMORY_DIR"
 
 Where `<SKILL_DIR>` is the Skill Directory shown when the skill was loaded (visible in the injection header).
 
-If over budget, identify what can move outside `system/` — detailed reference material, verbose context, evidence trails. Link from system/ with `[[path]]` so it remains discoverable.
+If over budget, identify what can move outside `system/` — detailed reference material, verbose context, evidence trails. Link from `system/` with `[[path]]` so it remains discoverable.
 
 ### Step 2: Diagnose context issues
 
