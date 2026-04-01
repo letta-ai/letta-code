@@ -79,6 +79,14 @@ describe("build and search", () => {
       maxResults: 100,
     });
 
+    // Diagnostic: print entries on CI failure so we can debug Windows issues.
+    if (all.length < 10) {
+      console.warn(
+        `[DIAGNOSTIC] Expected 10 entries but got ${all.length}:`,
+        JSON.stringify(all.map((e) => ({ path: e.path, type: e.type }))),
+      );
+    }
+
     // Should find all files
     const paths = all.map((r) => r.path);
     expect(paths).toContain("README.md");
@@ -599,8 +607,8 @@ describe("content-based hashing", () => {
   test("files with identical content produce the same hash", async () => {
     // Create two files at different paths with identical content
     const sharedContent = "identical content for hash comparison";
-    writeFileSync(join(TEST_DIR, "src/copy-a.ts"), sharedContent);
-    writeFileSync(join(TEST_DIR, "tests/copy-b.ts"), sharedContent);
+    writeFileSync(join(TEST_DIR, "src", "copy-a.ts"), sharedContent);
+    writeFileSync(join(TEST_DIR, "tests", "copy-b.ts"), sharedContent);
 
     await refreshFileIndex();
 
@@ -609,9 +617,25 @@ describe("content-based hashing", () => {
       return;
     }
 
-    const cache = JSON.parse(readFileSync(cachePath, "utf-8"));
-    const hashA = cache.merkle[join("src", "copy-a.ts")];
-    const hashB = cache.merkle[join("tests", "copy-b.ts")];
+    const cache = JSON.parse(readFileSync(cachePath, "utf-8")) as {
+      merkle: Record<string, string>;
+      entries: { path: string }[];
+    };
+
+    // Diagnostic: if the new files aren't in the cache, log available keys.
+    const copyAKey = join("src", "copy-a.ts");
+    const copyBKey = join("tests", "copy-b.ts");
+    if (!cache.merkle[copyAKey]) {
+      const entryPaths = cache.entries.map((e) => e.path);
+      console.warn(
+        `[DIAGNOSTIC] merkle key "${copyAKey}" not found.`,
+        `\nEntry paths in cache: ${JSON.stringify(entryPaths)}`,
+        `\nMerkle keys: ${JSON.stringify(Object.keys(cache.merkle))}`,
+      );
+    }
+
+    const hashA = cache.merkle[copyAKey];
+    const hashB = cache.merkle[copyBKey];
 
     // Content-based hashing: same bytes → same hash, regardless of path
     expect(hashA).toBe(hashB);

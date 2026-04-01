@@ -77,6 +77,10 @@ let cachedEntries: FileIndexEntry[] = [];
 let cachedEntryPaths = new Set<string>();
 let buildPromise: Promise<void> | null = null;
 let hasCompletedBuild = false;
+// Monotonically increasing counter that is bumped on every refreshFileIndex() call.
+// Stale builds (whose generation is less than the current) skip cache writes and
+// cachedEntries updates so they don't overwrite results from a newer build.
+let buildGeneration = 0;
 
 /**
  * The root directory that the file index is built from.  Defaults to
@@ -210,7 +214,7 @@ function collectPreviousChildNames(
   path: string,
 ): Set<string> {
   const names = new Set<string>();
-  const prefix = path === "" ? "" : `${path}/`;
+  const prefix = path === "" ? "" : `${path}${sep}`;
 
   // Use binary search to jump to the relevant range instead of scanning all
   // statsKeys. For root (prefix="") every key qualifies so we start at 0;
@@ -227,7 +231,7 @@ function collectPreviousChildNames(
     }
 
     const remainder = key.slice(prefix.length);
-    const slashIndex = remainder.indexOf("/");
+    const slashIndex = remainder.indexOf(sep);
     const childName =
       slashIndex === -1 ? remainder : remainder.slice(0, slashIndex);
     if (childName.length > 0) {
@@ -247,7 +251,10 @@ function statsMatch(prev: FileStats, current: FsStats): boolean {
     return false;
   }
 
-  if (prev.mtimeMs !== current.mtimeMs || prev.ino !== (current.ino ?? 0)) {
+  if (
+    prev.mtimeMs !== current.mtimeMs ||
+    Number(prev.ino) !== Number(current.ino ?? 0)
+  ) {
     return false;
   }
 
@@ -282,7 +289,7 @@ async function buildDirectory(
   const currentStats: FileStats = {
     type: "dir",
     mtimeMs: dirStats.mtimeMs,
-    ino: dirStats.ino ?? 0,
+    ino: Number(dirStats.ino ?? 0),
   };
 
   // ── Collect children ───────────────────────────────────────────────
@@ -311,11 +318,13 @@ async function buildDirectory(
     childNames = [];
     childStatsMap = new Map<string, FsStats>();
 
+    // Normalize to forward slashes for picomatch pattern matching.
+    const fwdRelPath = relativePath.replaceAll("\\", "/");
     for (const childName of prevChildSet) {
       // Re-check exclusions so that .lettaignore changes take effect
       // even when the directory structure hasn't changed.
       const entryRelPath =
-        relativePath === "" ? childName : `${relativePath}/${childName}`;
+        fwdRelPath === "" ? childName : `${fwdRelPath}/${childName}`;
       if (shouldExcludeEntry(childName, entryRelPath, indexRoot)) {
         continue;
       }
@@ -346,9 +355,10 @@ async function buildDirectory(
     childNames = [];
     childStatsMap = new Map<string, FsStats>();
 
+    // Normalize to forward slashes for picomatch pattern matching.
+    const fwdRelPath = relativePath.replaceAll("\\", "/");
     for (const entry of dirEntries) {
-      const entryRelPath =
-        relativePath === "" ? entry : `${relativePath}/${entry}`;
+      const entryRelPath = fwdRelPath === "" ? entry : `${fwdRelPath}/${entry}`;
       if (shouldExcludeEntry(entry, entryRelPath, indexRoot)) {
         continue;
       }
@@ -452,7 +462,7 @@ async function buildDirectory(
         statsMap[entryPath] = {
           type: "file",
           mtimeMs: entryStat.mtimeMs,
-          ino: entryStat.ino ?? 0,
+          ino: Number(entryStat.ino ?? 0),
           size: entryStat.size,
         };
 
@@ -724,18 +734,33 @@ function buildCachedEntries(
 /**
  * Ensure the file index is built at least once per session.
  */
-export function ensureFileIndex(): Promise<void> {
-  if (hasCompletedBuild) return Promise.resolve();
+export function ensureFileIndex(fullRebuild = false): Promise<void> {
+  if (hasCompletedBuild && !fullRebuild) return Promise.resolve();
   if (!buildPromise) {
     let currentPromise!: Promise<void>;
+    // Capture the generation at the time the build is kicked off. If a
+    // newer refresh is requested while this build is in progress, the
+    // generation will be bumped and this build should NOT write its
+    // (now stale) results to disk or to the in-memory cache.
+    const myGeneration = buildGeneration;
     currentPromise = (async () => {
       let succeeded = false;
       try {
-        const diskIndex = loadCachedIndex();
+        // When fullRebuild is true (e.g. refreshFileIndex), skip loading
+        // the on-disk cache so the entire tree is scanned from scratch.
+        // This avoids subtle mtime-granularity bugs where a directory's
+        // mtime doesn't change even though children were added/removed.
+        const diskIndex = fullRebuild ? null : loadCachedIndex();
         const previousData = diskIndex
           ? preparePreviousIndexData(diskIndex)
           : undefined;
         const buildResult = await buildIndex(previousData);
+
+        // A newer build was requested while we were running — our results
+        // are stale, so bail out without writing anything.
+        if (myGeneration !== buildGeneration) {
+          return;
+        }
 
         if (diskIndex && diskIndex.metadata.rootHash === buildResult.rootHash) {
           ({ entries: cachedEntries, paths: cachedEntryPaths } =
@@ -770,9 +795,10 @@ export function ensureFileIndex(): Promise<void> {
 }
 
 export function refreshFileIndex(): Promise<void> {
+  buildGeneration++;
   hasCompletedBuild = false;
   buildPromise = null;
-  return ensureFileIndex();
+  return ensureFileIndex(/* fullRebuild */ true);
 }
 
 /**
