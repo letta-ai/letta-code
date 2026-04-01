@@ -5,7 +5,6 @@
 import { existsSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { getStringField, parseFrontmatter } from "../../utils/frontmatter.js";
 
 export const COMMANDS_DIR = ".commands";
@@ -14,31 +13,12 @@ export const GLOBAL_COMMANDS_DIR = join(
   ".letta/commands",
 );
 
-/**
- * Get the bundled commands directory path (ships with letta-code)
- */
-function getBundledCommandsPath(): string {
-  const thisDir = dirname(fileURLToPath(import.meta.url));
-
-  // Dev mode: thisDir is src/cli/commands
-  if (
-    thisDir.includes("src/cli/commands") ||
-    thisDir.includes("src\\cli\\commands")
-  ) {
-    return join(thisDir, "bundled");
-  }
-
-  // Production: commands/ is next to the bundled letta.js
-  return join(thisDir, "commands");
-}
-
 export interface CustomCommand {
   id: string; // Command name without slash (e.g., "review")
   description: string; // For autocomplete display
   argumentHint?: string; // e.g., "[message]" shown after command in autocomplete
-  runnerMessage?: string; // Custom message shown while command runs (e.g., "Placing empanada order...")
   namespace?: string; // Subdirectory name for disambiguation
-  source: "project" | "user" | "bundled";
+  source: "project" | "user";
   path: string; // Full path to .md file
   content: string; // Prompt body (after frontmatter)
   // Future fields (parsed but not used in MVP):
@@ -76,37 +56,25 @@ export async function discoverCustomCommands(
 ): Promise<CustomCommand[]> {
   const commandsById = new Map<string, CustomCommand[]>(); // Group by id for collision handling
 
-  // 1. Discover bundled commands first (lowest priority)
-  const bundledCommands = await discoverFromDirectory(
-    getBundledCommandsPath(),
-    "bundled",
-  );
-  for (const cmd of bundledCommands) {
+  // 1. Discover user commands first (lower priority)
+  const userCommands = await discoverFromDirectory(GLOBAL_COMMANDS_DIR, "user");
+  for (const cmd of userCommands) {
     const existing = commandsById.get(cmd.id) || [];
     existing.push(cmd);
     commandsById.set(cmd.id, existing);
   }
 
-  // 2. Discover user commands (higher priority - may override bundled)
-  const userCommands = await discoverFromDirectory(GLOBAL_COMMANDS_DIR, "user");
-  for (const cmd of userCommands) {
-    const existing = commandsById.get(cmd.id) || [];
-    // Insert user commands at front (higher priority than bundled)
-    existing.unshift(cmd);
-    commandsById.set(cmd.id, existing);
-  }
-
-  // 3. Discover project commands (highest priority - may override user and bundled)
+  // 2. Discover project commands (higher priority - may override user)
   const projectCommands = await discoverFromDirectory(projectPath, "project");
   for (const cmd of projectCommands) {
     const existing = commandsById.get(cmd.id) || [];
-    // Insert project commands at front (highest priority)
+    // Insert project commands at front (higher priority)
     existing.unshift(cmd);
     commandsById.set(cmd.id, existing);
   }
 
   // Flatten to array - keep all commands (for namespace disambiguation)
-  // Note: When executing, we pick the first match (project > user > bundled)
+  // Note: When executing, we pick the first match (project > user)
   const result: CustomCommand[] = [];
   for (const [_id, cmds] of commandsById) {
     result.push(...cmds);
@@ -120,7 +88,7 @@ export async function discoverCustomCommands(
  */
 async function discoverFromDirectory(
   dirPath: string,
-  source: "project" | "user" | "bundled",
+  source: "project" | "user",
 ): Promise<CustomCommand[]> {
   if (!existsSync(dirPath)) {
     return [];
@@ -138,7 +106,7 @@ async function findCommandFiles(
   currentPath: string,
   rootPath: string,
   commands: CustomCommand[],
-  source: "project" | "user" | "bundled",
+  source: "project" | "user",
 ): Promise<void> {
   try {
     const entries = await readdir(currentPath, { withFileTypes: true });
@@ -172,7 +140,7 @@ async function findCommandFiles(
 async function parseCommandFile(
   filePath: string,
   rootPath: string,
-  source: "project" | "user" | "bundled",
+  source: "project" | "user",
 ): Promise<CustomCommand | null> {
   const content = await readFile(filePath, "utf-8");
   const { frontmatter, body } = parseFrontmatter(content);
@@ -192,13 +160,11 @@ async function parseCommandFile(
   }
 
   const argumentHint = getStringField(frontmatter, "argument-hint");
-  const runnerMessage = getStringField(frontmatter, "runner-message");
 
   return {
     id,
     description,
     argumentHint,
-    runnerMessage,
     namespace,
     source,
     path: filePath,

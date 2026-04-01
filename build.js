@@ -44,6 +44,7 @@ await Bun.build({
     ".md": "text",
     ".mdx": "text",
     ".txt": "text",
+
   },
   // Keep most native Node.js modules external to avoid bundling issues
   // But don't make `sharp` external, causes issues with global Bun-based installs
@@ -85,18 +86,6 @@ if (existsSync(bundledSkillsSrc)) {
   }
   cpSync(bundledSkillsSrc, bundledSkillsDst, { recursive: true });
   console.log("📂 Copied bundled skills to skills/");
-}
-
-// Copy bundled commands to commands/ directory for shipping
-const bundledCommandsSrc = join(__dirname, "src/cli/commands/bundled");
-const bundledCommandsDst = join(__dirname, "commands");
-
-if (existsSync(bundledCommandsSrc)) {
-  if (existsSync(bundledCommandsDst)) {
-    rmSync(bundledCommandsDst, { recursive: true });
-  }
-  cpSync(bundledCommandsSrc, bundledCommandsDst, { recursive: true });
-  console.log("📂 Copied bundled commands to commands/");
 }
 
 // Generate type declarations for wire types export

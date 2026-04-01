@@ -10024,7 +10024,7 @@ export default function App({
         if (matchedCustom) {
           const cmd = commandRunner.start(
             trimmed,
-            matchedCustom.runnerMessage || `Running /${matchedCustom.id}...`,
+            `Running /${matchedCustom.id}...`,
           );
 
           // Check for pending approvals before sending
@@ -10049,10 +10049,7 @@ export default function App({
           try {
             // Mark command as finished BEFORE sending to agent
             // (matches /remember pattern - command succeeded in triggering agent)
-            cmd.finish(
-              matchedCustom.runnerMessage || "Running custom command...",
-              true,
-            );
+            cmd.finish("Running custom command...", true);
 
             // Send prompt to agent
             // NOTE: Unlike /remember, we DON'T append args separately because
