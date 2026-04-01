@@ -23,7 +23,6 @@ Your memory files are not just data — they form the parent agent's identity an
 ## Context
 
 Your prompt includes pre-gathered context:
-- **Git context**: branch, status, recent commits, contributors
 - **Existing memory files**: file paths and contents of the current memory filesystem (may be empty for new agents)
 - **Directory listing**: top-level project files
 
