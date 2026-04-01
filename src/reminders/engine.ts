@@ -102,7 +102,7 @@ async function buildSecretsInfoReminder(
     }
 
     const list = names.map((n) => `- \`$${n}\``).join("\n");
-    return `${SYSTEM_REMINDER_OPEN}Use \`$SECRET_NAME\` syntax in shell commands to reference these secrets:\n\n${list}\n${SYSTEM_REMINDER_CLOSE}`;
+    return `${SYSTEM_REMINDER_OPEN}Use \`$SECRET_NAME\` syntax in shell commands to reference these secrets:\n\n${list}\n\nThe actual secret value will be automatically substituted before the command runs, and scrubbed from the output. You never see the real value — just use \`$SECRET_NAME\` directly (e.g. \`curl -H "Authorization: Bearer $MY_API_KEY" ...\`).\n${SYSTEM_REMINDER_CLOSE}`;
   } catch (error) {
     debugLog(
       "secrets",
