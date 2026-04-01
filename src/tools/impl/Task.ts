@@ -29,6 +29,8 @@ import {
   backgroundTasks,
   createBackgroundOutputFile,
   getNextTaskId,
+  scheduleBackgroundTaskCleanup,
+  setBackgroundTaskOutput,
 } from "./process_manager.js";
 import { LIMITS, truncateByChars } from "./truncation.js";
 import { validateRequiredParams } from "./validation";
@@ -317,8 +319,9 @@ export function spawnBackgroundSubagentTask(
       );
       writeTaskTranscriptResult(outputFile, result, header);
       if (result.success) {
-        bgTask.output.push(result.report || "");
+        setBackgroundTaskOutput(bgTask, result.report || "");
       }
+      scheduleBackgroundTaskCleanup(taskId);
 
       completeSubagentFn(subagentId, {
         success: result.success,
@@ -392,6 +395,7 @@ export function spawnBackgroundSubagentTask(
       bgTask.status = "failed";
       bgTask.error = errorMessage;
       appendToOutputFile(outputFile, `[error] ${errorMessage}\n`);
+      scheduleBackgroundTaskCleanup(taskId);
       completeSubagentFn(subagentId, { success: false, error: errorMessage });
 
       try {

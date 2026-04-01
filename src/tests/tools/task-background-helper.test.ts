@@ -6,7 +6,11 @@ import {
   registerSubagent,
   updateSubagent,
 } from "../../cli/helpers/subagentState";
-import { backgroundTasks } from "../../tools/impl/process_manager";
+import {
+  __resetBackgroundRetentionConfigForTests,
+  __setBackgroundRetentionConfigForTests,
+  backgroundTasks,
+} from "../../tools/impl/process_manager";
 import {
   spawnBackgroundSubagentTask,
   waitForBackgroundSubagentLink,
@@ -78,6 +82,7 @@ describe("spawnBackgroundSubagentTask", () => {
     completeSubagentImpl.mockClear();
     formatTaskNotificationImpl.mockClear();
     runSubagentStopHooksImpl.mockClear();
+    __resetBackgroundRetentionConfigForTests();
     backgroundTasks.clear();
     clearAllSubagents();
   });
@@ -88,6 +93,7 @@ describe("spawnBackgroundSubagentTask", () => {
         unlinkSync(task.outputFile);
       }
     }
+    __resetBackgroundRetentionConfigForTests();
     backgroundTasks.clear();
     clearAllSubagents();
   });
@@ -273,6 +279,42 @@ describe("spawnBackgroundSubagentTask", () => {
     expect(runSubagentStopHooksImpl).toHaveBeenCalledTimes(1);
     const outputContent = readFileSync(launched.outputFile, "utf-8");
     expect(outputContent).toContain("[onComplete error] callback exploded");
+  });
+
+  test("evicts completed background tasks after the retention window", async () => {
+    __setBackgroundRetentionConfigForTests({ completedEntryTtlMs: 20 });
+
+    const spawnSubagentImpl = mock(async () => ({
+      agentId: "agent-evict",
+      conversationId: "default",
+      report: "done",
+      success: true,
+      totalTokens: 7,
+    }));
+
+    const launched = spawnBackgroundSubagentTask({
+      subagentType: "reflection",
+      prompt: "Reflect",
+      description: "Reflect on memory",
+      deps: {
+        spawnSubagentImpl,
+        addToMessageQueueImpl,
+        formatTaskNotificationImpl,
+        runSubagentStopHooksImpl,
+        generateSubagentIdImpl,
+        registerSubagentImpl,
+        completeSubagentImpl,
+        getSubagentSnapshotImpl,
+      },
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(backgroundTasks.has(launched.taskId)).toBe(true);
+
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    expect(backgroundTasks.has(launched.taskId)).toBe(false);
+    expect(existsSync(launched.outputFile)).toBe(true);
+    unlinkSync(launched.outputFile);
   });
 
   test("marks background task failed and emits notification on error", async () => {

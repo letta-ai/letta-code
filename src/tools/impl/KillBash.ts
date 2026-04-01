@@ -1,4 +1,7 @@
-import { backgroundProcesses } from "./process_manager.js";
+import {
+  backgroundProcesses,
+  clearBackgroundProcessCleanup,
+} from "./process_manager.js";
 import { validateRequiredParams } from "./validation.js";
 
 interface KillBashArgs {
@@ -15,6 +18,7 @@ export async function kill_bash(args: KillBashArgs): Promise<KillBashResult> {
   if (!proc) return { killed: false };
   try {
     proc.process.kill("SIGTERM");
+    clearBackgroundProcessCleanup(shell_id);
     backgroundProcesses.delete(shell_id);
     return { killed: true };
   } catch {
