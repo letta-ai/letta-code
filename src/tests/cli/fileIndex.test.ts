@@ -497,9 +497,8 @@ describe("content-based hashing", () => {
 
     // If we can read the cache, the root hash should have changed
     if (existsSync(cachePath) && rootHashBefore) {
-      const rootHashAfter = JSON.parse(
-        readFileSync(cachePath, "utf-8"),
-      ).metadata.rootHash;
+      const rootHashAfter = JSON.parse(readFileSync(cachePath, "utf-8"))
+        .metadata.rootHash;
       expect(rootHashAfter).not.toBe(rootHashBefore);
     }
   });
@@ -565,8 +564,7 @@ describe("content-based hashing", () => {
     const cacheBefore = JSON.parse(readFileSync(cachePath, "utf-8"));
     const rootHashBefore = cacheBefore.metadata.rootHash;
     const srcHashBefore = cacheBefore.merkle["src"];
-    const componentsHashBefore =
-      cacheBefore.merkle[join("src", "components")];
+    const componentsHashBefore = cacheBefore.merkle[join("src", "components")];
     const buttonHashBefore =
       cacheBefore.merkle[join("src", "components", "Button.tsx")];
     // A sibling directory that should NOT change

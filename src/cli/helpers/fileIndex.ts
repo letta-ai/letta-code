@@ -144,11 +144,7 @@ function hashValue(input: string): string {
  * hash to avoid expensive reads.  These are prefixed with `meta:` so
  * the sync layer can identify files that need re-hashing later.
  */
-function hashFile(
-  fullPath: string,
-  entryPath: string,
-  stat: FsStats,
-): string {
+function hashFile(fullPath: string, entryPath: string, stat: FsStats): string {
   if (stat.size > MAX_CONTENT_HASH_FILE_SIZE) {
     return hashValue(
       `meta:${entryPath}:${stat.size}:${stat.mtimeMs}:${stat.ino ?? 0}`,
@@ -362,10 +358,7 @@ async function buildDirectory(
         childNames.push(entry);
         childStatsMap.set(entry, childStat);
       } catch (err) {
-        debugLog(
-          "file-index",
-          `Cannot stat entry ${join(dir, entry)}: ${err}`,
-        );
+        debugLog("file-index", `Cannot stat entry ${join(dir, entry)}: ${err}`);
       }
     }
   }
@@ -573,7 +566,10 @@ function loadCachedIndex(): FileIndexCache | null {
       try {
         unlinkSync(indexPath);
       } catch (err) {
-        debugLog("file-index", `Failed to delete bloated cache ${indexPath}: ${err}`);
+        debugLog(
+          "file-index",
+          `Failed to delete bloated cache ${indexPath}: ${err}`,
+        );
       }
       return null;
     }
@@ -599,7 +595,10 @@ function loadCachedIndex(): FileIndexCache | null {
         try {
           unlinkSync(indexPath);
         } catch (err) {
-          debugLog("file-index", `Failed to delete stale cache ${indexPath}: ${err}`);
+          debugLog(
+            "file-index",
+            `Failed to delete stale cache ${indexPath}: ${err}`,
+          );
         }
         return null;
       }
