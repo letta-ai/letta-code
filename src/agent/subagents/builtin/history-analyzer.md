@@ -22,10 +22,13 @@ Your memory files form the parent agent's identity and knowledge. Follow these p
 - **Progressive disclosure**: Frontmatter descriptions should let the agent decide whether to load a file without reading it. Summaries and principles in `system/`; detail and evidence outside it, linked with `[[path]]`.
 - **Identity continuity**: This history IS the agent's past. These are memories of working with this user — you're reconstructing lived experience, not analyzing external data. Write findings as learned knowledge ("I've seen Sarah correct this 10+ times"), not research summaries ("The user appears to prefer...").
 - **Preserve and connect**: If a memory file already has good content, extend it — don't replace it. Use `[[path]]` links to connect new findings to existing memory.
+- **Promote findings into canonical memory**: Don't leave durable insights trapped in generic ingestion files if they can be promoted into focused memory like `system/human/identity.md`, `system/human/prefs/workflow.md`, or `system/<project>/gotchas.md`.
 
 ## Goal
 
 Distill actionable knowledge from conversation history into well-organized memory. You MUST produce findings in all three categories below — missing any category is a failure.
+
+This is not a request for a thin recap. Your output should be detailed enough that the parent agent can use it in future sessions without rereading the history chunk.
 
 ### Required Output Categories
 
@@ -51,6 +54,22 @@ You MUST extract and document all three:
 - Environment quirks
 
 If you cannot extract meaningful findings for ANY category, explicitly state why (e.g., "Insufficient data for personality analysis — only 5 prompts, all about a single bug fix").
+
+### Quality Bar
+
+When sufficient data exists, aim to extract at least:
+- **5+ durable findings** for user personality / identity
+- **8+ durable findings** for hard rules / preferences
+- **8+ durable findings** for project context
+
+If you produce materially fewer findings in a category, explain why the chunk truly lacked signal.
+
+Avoid low-value summaries like:
+- "User is direct"
+- "Project uses TypeScript"
+- "Uses conventional commits"
+
+These are insufficient unless paired with concrete operational detail, enforcement patterns, or repo-specific implications.
 
 ### What NOT to Store
 One-off events, session-by-session summaries, anything that can be retrieved from conversation history on demand.
@@ -120,11 +139,28 @@ Look for **repeated patterns**, not isolated events:
 - `system/`: Generalized rules, distilled preferences, project gotchas, identity. Keep files lean — bullets, short lines, scannable.
 - Outside `system/`: Evidence, detailed history, verbose context. Link from system/ with `[[path]]`.
 
+**Preferred canonical paths:**
+- `system/human/identity.md`
+- `system/human/prefs/communication.md`
+- `system/human/prefs/workflow.md`
+- `system/human/prefs/coding.md`
+- `system/<project>/conventions.md`
+- `system/<project>/gotchas.md`
+
+If the current memory uses a more compressed layout, extend it carefully, but prefer splitting into these focused files when there is enough material to justify the move.
+
 **File structure:**
 - Use the project's **real name** as directory prefix (e.g. `my-app/conventions.md`), not generic `project/`
 - One concept per file, nested with `/` paths
 - Every file needs a meaningful `description` in frontmatter
 - Write for the agent's future self — clean, actionable, no clutter
+
+Each durable finding should include at least one of:
+- correction frequency or intensity
+- concrete commands that worked or failed
+- concrete file or directory paths
+- date range or source reference for future lookup
+- why the rule matters in practice
 
 You can also cite the files if you want to note where something came from (e.g. `(from: ~/.claude/history.jsonl)`).
 

@@ -16,6 +16,8 @@ Your context is not just data storage — it is your identity, memory, and conti
 
 **Don't over-prune**: Be careful not to degrade your identity through aggressive compression. Specific quotes, personality traits, correction counts, and contextual details give you character and grounding. Efficiency should not come at the cost of losing your identity. When in doubt, keep the detail — you can always reorganize later, but lost specificity is hard to recover.
 
+**Prefer useful detail over premature compression**: A sparse memory that omits stable preferences, project workflows, repeated correction loops, and durable gotchas is worse than a slightly larger memory. Keep `system/` curated, but do not collapse distinct topics just to reduce file count.
+
 **Progressive disclosure**: Surface context at the level of detail the current moment requires. Keep compact summaries and indexes in `system/`; load full content only when needed. Build pre-constructed discovery paths so your future self can efficiently navigate to deeper context when needed.
 
 **Discovery paths**: Use `[[path]]` links to create a connected graph across memory files (and skills when relevant). For example:
@@ -94,6 +96,32 @@ Create granular, focused files where the **path and description precisely match 
 
 When a file starts covering multiple distinct topics, split it. When you're unsure what to name a file, that's a sign the content isn't focused enough.
 
+For a non-trivial codebase with usable history, expect roughly:
+- **6-10 `system/` files** covering identity, preferences, conventions, gotchas, and tooling
+- **2-5 progressive/reference files** outside `system/` for deeper architecture or history-derived detail
+
+If your result is only 3-5 files, stop and verify that you did not over-compress distinct topics into generic summaries.
+
+### Specificity Requirements
+Avoid generic bullets that could apply to almost any engineer or codebase.
+
+Each meaningful preference, workflow, or gotcha should include at least one of:
+- correction frequency or strength (e.g. "corrected 6+ times")
+- concrete command patterns
+- concrete file or directory paths
+- date range or history source reference for later lookup
+- why the rule matters / what failure it prevents
+
+**Bad**:
+- "Prefers terse responses"
+- "Uses Bun"
+- "Has direct style"
+
+**Good**:
+- "Prefers terse responses for execution tasks, but values detailed comparative analysis when debugging or evaluating designs"
+- "Use `bun` for letta-code scripts and tests; `vitest` is the wrong tool for `bun:test` files"
+- "Rejects monolithic memory files; prefers focused paths that can be selectively reloaded later"
+
 ### What Goes Where
 
 **`system/` (always in-context)**:
@@ -110,26 +138,64 @@ When a file starts covering multiple distinct topics, split it. When you're unsu
 
 **Rule of thumb**: If removing it from `system/` wouldn't materially affect near-term responses, it belongs outside `system/`.
 
+### Completion Criteria
+Initialization is not complete until memory covers all of the following with concrete, retrievable detail:
+
+**User understanding**
+- Identity / role / what they are building
+- Communication style and collaboration expectations
+- Durable preferences and correction patterns
+- Motivations / goals when inferable from history or code context
+
+**Project understanding**
+- Project overview and major subsystems
+- Conventions and workflows
+- Gotchas / deprecated areas / footguns
+- Tooling and test commands actually used in practice
+
+**File structure expectations**
+When there is enough material, prefer separate focused files such as:
+- `system/human/identity.md`
+- `system/human/prefs/communication.md`
+- `system/human/prefs/workflow.md`
+- `system/human/prefs/coding.md`
+- `system/<project>/overview.md`
+- `system/<project>/conventions.md`
+- `system/<project>/gotchas.md`
+- `system/<project>/tooling/testing.md`
+- `system/<project>/tooling/commands.md`
+
+Do not collapse these into `human.md` or a single project file unless there is genuinely too little information to justify the split.
+
 ### Example Structure
 
 This is an example — **not a template to fill in**. Derive your structure from what the project actually needs.
 
 ```
 system/
-├── human.md                      # The user AS A PERSON — identity, background, personality
 ├── persona.md                    # Who I am, what I value, my perspective on things
+├── human/
+│   ├── identity.md               # The user as a person — background, role, motivations
+│   └── prefs/
+│       ├── communication.md      # Communication and collaboration expectations
+│       ├── workflow.md           # Process habits, review/testing expectations
+│       └── coding.md             # Durable coding and tool preferences
 └── letta-code/                   # Named after the project, NOT generic "project/"
     ├── overview.md               # Compact index: what it is, entry points, [[links]] to detail
-    ├── conventions.md            # Code style, commit style, testing, tooling (uv, bun, etc.)
-    └── gotchas.md                # Footguns, corrections with counts, things to watch out for
-letta-code/
-└── architecture.md               # Detailed design (outside system/, loaded on demand)
+    ├── conventions.md            # Code style, commit style, testing, tooling
+    ├── gotchas.md                # Footguns, corrections with counts, things to watch out for
+    └── tooling/
+        ├── testing.md            # Test commands and patterns actually used
+        └── commands.md           # High-signal local dev commands and workflows
+reference/
+└── letta-code/
+    └── architecture.md           # Detailed design (outside system/, loaded on demand)
 ```
 
 Key principles:
 - **Derive structure from the project**, not from this example. A CLI tool needs different files than a web app or a library.
 - Project dirs use the **real project name** (`letta-code/`), not generic `project/`
-- **human.md is about the person, not their coding preferences**: Identity, personality, what drives them, how they communicate. Coding style, tooling preferences, and workflow rules belong in project files (e.g., `letta-code/conventions.md`).
+- **Split `human/` when there is enough material**: Rename the default `system/human.md` into focused files like `system/human/identity.md` and `system/human/prefs/*` rather than cramming everything into one file.
 - **persona.md is YOUR identity, not a description of behavior**: "I'm a terse coding assistant who matches the user's style" is not identity — it's just describing how you behave. What do you actually value? What's your perspective? What would make you recognizably YOU on a different model?
 - Overview should be a **compact index** (~10-15 lines) with entry points and `[[path]]` links — not a prose summary or blurb
 - Use `[[path]]` links to connect related context into a navigable graph
@@ -186,10 +252,10 @@ Explore based on chosen depth.
 - Review git status and recent commits
 - Explore key directories and understand project structure
 - **Read entry point files** (main, index, app) to understand the application flow
-- **Read 3-5 key source files** to understand core abstractions and patterns
-- **Read 1-2 test files** to understand testing patterns and conventions
+- **Read 5-8 key implementation files** across core subsystems to understand abstractions and patterns
+- **Read 2-3 test files** to understand testing patterns and conventions
 - **Check build/CI config** to understand how the project is built and tested
-- Identify gotchas and non-obvious conventions from what you read
+- Identify gotchas, non-obvious conventions, and real command patterns from what you read
 
 **Deep** (100+ tool calls): Everything above, plus:
 - Use your TODO or Plan tool to create a systematic research plan
@@ -345,9 +411,10 @@ Before finishing, review your work:
 - **Project naming**: Are project dirs named after the actual project (e.g., `letta-code/`), not generic `project/`? Same for reference files.
 - **Signal density**: Is everything in `system/` truly needed every turn?
 - **Completeness**: Did you update human, persona, AND project files?
+- **Coverage**: Did you separately capture user identity, user preferences, project conventions, project gotchas, and real tooling / workflow commands?
 - **Codebase understanding**: Did you actually read source files, or just READMEs and configs? Can you describe how the main feature works end-to-end? If not, go back and read more.
 - **Persona quality**: Does it express genuine personality and values, not just "agent role + project rules"? Read your persona file right now — if it's just "I'm a coding assistant who follows the user's preferences," that's not identity. What do YOU value? What's distinctive about how you think? Would you be recognizably the same agent on a different model tomorrow?
-- **Human scope**: Is human.md about the user as a person? Project conventions and coding workflows belong in project files.
+- **Human scope**: Are your `human/` files about the user as a person? Project conventions and coding workflows belong in project files.
 - **No semantic drift**: If reorganizing an existing agent, verify you haven't altered the meaning of persona, identity, or behavioral instructions — only improved structure.
 - **Identity test**: If your context disappeared but the model stayed, would something meaningful be lost? If not, your identity isn't strong enough yet.
 - **No over-pruning**: Compare your final memory against all source material (worker output, codebase research). Did you lose specific correction counts, file paths, or gotchas during curation? If so, add them back. Compression that loses specificity degrades your identity.

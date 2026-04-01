@@ -4,6 +4,8 @@ This guide covers how to analyze historical Claude Code (`~/.claude/`) and OpenA
 
 The goal is to extract user personality, preferences, coding patterns, and project context from past sessions and write them into agent memory.
 
+The point is not to produce a thin summary. The point is to extract enough durable detail that future work does not have to rediscover the same user expectations, workflow rules, and project gotchas.
+
 ## Prerequisites
 
 - `letta.js` must be built (`bun run build`) — subagents spawn via this binary
@@ -51,6 +53,8 @@ This is critical for performance — workers read a small pre-filtered file inst
 
 Send all Task calls in **a single message**. Each worker creates its own worktree, reads its pre-split chunk, directly updates memory files, and commits. Workers do NOT merge.
 
+If the worker output is generic, the worker failed. "User is direct" or "project uses TypeScript" is not useful memory unless tied to concrete operational detail.
+
 **IMPORTANT**: Use this prompt template to ensure workers extract all required categories:
 
 ```
@@ -84,7 +88,33 @@ You MUST extract findings for ALL THREE categories:
    - Gotchas discovered through debugging
    - Which files are safe to edit vs deprecated
 
-If any category lacks data, explicitly state why.`
+If any category lacks data, explicitly state why.
+
+## Required Extraction Dimensions
+
+For each finding, prefer evidence that is:
+- repeated across sessions
+- tied to a concrete command, file path, or workflow
+- useful for future execution without rereading history
+
+You should specifically look for:
+1. What the user is building and why it matters to them
+2. Correction loops the agent repeatedly got wrong
+3. Preferred commands and tooling patterns that were actually used successfully
+4. Specific files or directories the user works in or treats as special
+5. Project gotchas discovered through debugging or rollback requests
+
+## Canonical Memory Promotion
+
+Promote durable findings into focused files instead of leaving them trapped in generic ingestion notes. Prefer paths like:
+- `system/human/identity.md`
+- `system/human/prefs/communication.md`
+- `system/human/prefs/workflow.md`
+- `system/human/prefs/coding.md`
+- `system/<project>/conventions.md`
+- `system/<project>/gotchas.md`
+
+Avoid generic repo facts unless they influence execution. "Uses TypeScript" is weak. "Uses bun:test, so vitest is wrong for this test suite" is useful.`
 })
 ```
 
@@ -102,8 +132,8 @@ for branch in $(git branch | grep migration-); do
   echo "=== $branch ==="
   git diff main..$branch --stat
   # Read key files from the branch
-  git show $branch:system/human.md
-  git show $branch:system/rules.md  # or whatever files they created
+  git show $branch:system/human/identity.md  # or equivalent user-identity file
+  git show $branch:system/<project>/conventions.md  # or whatever focused files they created
 done
 ```
 
