@@ -504,6 +504,16 @@ function buildModelHandleFromLlmConfig(
   return llmConfig.model ?? null;
 }
 
+function getPreferredAgentModelHandle(
+  agent: Pick<AgentState, "model" | "llm_config"> | null | undefined,
+): string | null {
+  if (!agent) return null;
+  if (typeof agent.model === "string" && agent.model.length > 0) {
+    return agent.model;
+  }
+  return buildModelHandleFromLlmConfig(agent.llm_config);
+}
+
 function mapHandleToLlmConfigPatch(modelHandle: string): Partial<LlmConfig> {
   const [provider, ...modelParts] = modelHandle.split("/");
   const modelName = modelParts.join("/");
@@ -3353,11 +3363,8 @@ export default function App({
           ).last_run_completion;
           setAgentLastRunAt(lastRunCompletion ?? null);
 
-          // Derive model ID from llm_config for ModelSelector
-          const agentModelHandle =
-            agent.llm_config.model_endpoint_type && agent.llm_config.model
-              ? `${agent.llm_config.model_endpoint_type}/${agent.llm_config.model}`
-              : agent.llm_config.model;
+          // Derive model ID from the configured model handle for ModelSelector.
+          const agentModelHandle = getPreferredAgentModelHandle(agent);
           const { getModelInfoForLlmConfig } = await import("../agent/model");
           const modelInfo = getModelInfoForLlmConfig(
             agentModelHandle || "",
@@ -3446,9 +3453,7 @@ export default function App({
     let cancelled = false;
 
     const applyAgentModelLocally = () => {
-      const agentModelHandle =
-        agentState.model ??
-        buildModelHandleFromLlmConfig(agentState.llm_config);
+      const agentModelHandle = getPreferredAgentModelHandle(agentState);
       setHasConversationModelOverride(false);
       setConversationOverrideModelSettings(null);
       setLlmConfig(agentState.llm_config);
@@ -3504,9 +3509,7 @@ export default function App({
           return;
         }
 
-        const agentModelHandle =
-          agentState.model ??
-          buildModelHandleFromLlmConfig(agentState.llm_config);
+        const agentModelHandle = getPreferredAgentModelHandle(agentState);
         const effectiveModelHandle = conversationModel ?? agentModelHandle;
         if (!effectiveModelHandle) {
           applyAgentModelLocally();
@@ -4670,10 +4673,8 @@ export default function App({
                   // Model has changed at the agent level - update local state.
                   setLlmConfig(agent.llm_config);
 
-                  // Derive model ID from llm_config for ModelSelector.
-                  const agentModelHandle = buildModelHandleFromLlmConfig(
-                    agent.llm_config,
-                  );
+                  // Derive model ID from the configured model handle for ModelSelector.
+                  const agentModelHandle = getPreferredAgentModelHandle(agent);
 
                   const modelInfo = getModelInfoForLlmConfig(
                     agentModelHandle || "",
@@ -6669,12 +6670,7 @@ export default function App({
         setAgentId(targetAgentId);
         setAgentState(agent);
         setLlmConfig(agent.llm_config);
-        const agentModelHandle =
-          agent.llm_config.model_endpoint_type && agent.llm_config.model
-            ? agent.llm_config.model_endpoint_type +
-              "/" +
-              agent.llm_config.model
-            : (agent.llm_config.model ?? null);
+        const agentModelHandle = getPreferredAgentModelHandle(agent);
         setCurrentModelHandle(agentModelHandle);
         setConversationId(targetConversationId);
 
@@ -6828,12 +6824,7 @@ export default function App({
         setAgentId(agent.id);
         setAgentState(agent);
         setLlmConfig(agent.llm_config);
-        const agentModelHandle =
-          agent.llm_config.model_endpoint_type && agent.llm_config.model
-            ? agent.llm_config.model_endpoint_type +
-              "/" +
-              agent.llm_config.model
-            : (agent.llm_config.model ?? null);
+        const agentModelHandle = getPreferredAgentModelHandle(agent);
         setCurrentModelHandle(agentModelHandle);
         setConversationId(targetConversationId);
 
