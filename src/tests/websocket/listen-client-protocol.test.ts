@@ -1,7 +1,9 @@
 import { describe, expect, mock, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import WebSocket from "ws";
 import { buildConversationMessagesCreateRequestBody } from "../../agent/message";
@@ -1616,6 +1618,20 @@ describe("listen-client v2 status builders", () => {
       status: "WAITING_ON_APPROVAL",
       active_run_ids: [],
     });
+  });
+
+  test("sync wiring only surfaces recovered approvals that still need user input", () => {
+    const recoveryPath = fileURLToPath(
+      new URL("../../websocket/listener/recovery.ts", import.meta.url),
+    );
+    const source = readFileSync(recoveryPath, "utf-8");
+
+    expect(source).toContain(
+      "const { needsUserInput } = await classifyApprovals(",
+    );
+    expect(source).toContain("if (needsUserInput.length === 0) {");
+    expect(source).toContain("needsUserInput.map(async (approvalEntry) => {");
+    expect(source).not.toContain("pendingApprovals.map(async (approval) => {");
   });
 
   test("sync ignores backend recovered approvals while a live turn is already processing", async () => {

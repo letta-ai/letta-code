@@ -61,4 +61,25 @@ describe("approval recovery wiring", () => {
     expect(segment).toContain("getClient()");
     expect(segment).toContain("client.conversations.cancel");
   });
+
+  test("startup and resume approval restores route through shared recovery helper", () => {
+    const appPath = fileURLToPath(
+      new URL("../../cli/App.tsx", import.meta.url),
+    );
+    const source = readFileSync(appPath, "utf-8");
+
+    expect(source).toContain(
+      "const recoverRestoredPendingApprovals = useCallback(",
+    );
+    expect(source).toContain("await classifyApprovals(approvals, {");
+    expect(source).toContain("await executeAutoAllowedTools(");
+    expect(source).toContain("await processConversation(");
+    expect(source).toContain(
+      "void recoverRestoredPendingApprovals(approvals);",
+    );
+    expect(source).toContain("await recoverRestoredPendingApprovals(");
+    expect(source).not.toContain(
+      "setPendingApprovals(resumeData.pendingApprovals);",
+    );
+  });
 });

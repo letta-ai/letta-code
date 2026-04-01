@@ -19,14 +19,15 @@ import {
   shouldRetryRunMetadataError,
 } from "../../agent/turn-recovery-policy";
 import { createBuffers } from "../../cli/helpers/accumulator";
+import { classifyApprovals } from "../../cli/helpers/approvalClassification";
 import { drainStreamWithResume } from "../../cli/helpers/stream";
 import { computeDiffPreviews } from "../../helpers/diffPreview";
+import { isInteractiveApprovalTool } from "../../tools/interactivePolicy";
 import type {
   ApprovalResponseBody,
   StopReasonType,
   StreamDelta,
 } from "../../types/protocol_v2";
-import { parseApprovalInput } from "./approval";
 import {
   MAX_POST_STOP_APPROVAL_RECOVERY,
   NO_AWAITING_APPROVAL_DETAIL_FRAGMENT,
@@ -38,6 +39,7 @@ import {
   emitToolExecutionStartedEvents,
   normalizeToolReturnWireMessage,
 } from "./interrupts";
+import { getOrCreateConversationPermissionModeStateRef } from "./permissionMode";
 import {
   emitCanonicalMessageDelta,
   emitDequeuedUserMessage,
@@ -391,19 +393,38 @@ export async function recoverApprovalStateForSync(
     return;
   }
 
+  const workingDirectory = getConversationWorkingDirectory(
+    runtime.listener,
+    scope.agent_id,
+    scope.conversation_id,
+  );
+  const { needsUserInput } = await classifyApprovals(pendingApprovals, {
+    alwaysRequiresUserInput: isInteractiveApprovalTool,
+    requireArgsForAutoApprove: true,
+    missingNameReason: "Tool call incomplete - missing name",
+    workingDirectory,
+    permissionModeState: getOrCreateConversationPermissionModeStateRef(
+      runtime.listener,
+      scope.agent_id,
+      scope.conversation_id,
+    ),
+  });
+
+  if (needsUserInput.length === 0) {
+    clearRecoveredApprovalState(runtime);
+    return;
+  }
+
   const approvalsByRequestId = new Map<string, RecoveredPendingApproval>();
   await Promise.all(
-    pendingApprovals.map(async (approval) => {
+    needsUserInput.map(async (approvalEntry) => {
+      const approval = approvalEntry.approval;
       const requestId = `perm-${approval.toolCallId}`;
-      const input = parseApprovalInput(approval.toolArgs);
+      const input = approvalEntry.parsedArgs;
       const diffs = await computeDiffPreviews(
         approval.toolName,
         input,
-        getConversationWorkingDirectory(
-          runtime.listener,
-          scope.agent_id,
-          scope.conversation_id,
-        ),
+        workingDirectory,
       );
 
       approvalsByRequestId.set(requestId, {
