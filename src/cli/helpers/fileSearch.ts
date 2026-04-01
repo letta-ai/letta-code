@@ -50,7 +50,7 @@ function searchDirectoryRecursive(
         const fullPath = join(dir, entry);
         const relativePath = relative(getIndexRoot(), fullPath);
 
-        if (shouldHardExcludeEntry(entry)) {
+        if (shouldHardExcludeEntry(entry, getIndexRoot())) {
           continue;
         }
 
@@ -202,7 +202,7 @@ export async function searchFiles(
         const lowerPattern = searchPattern.toLowerCase();
         const matchingEntries = entries.filter(
           (entry) =>
-            !shouldHardExcludeEntry(entry) &&
+            !shouldHardExcludeEntry(entry, getIndexRoot()) &&
             (searchPattern.length === 0 ||
               entry.toLowerCase().includes(lowerPattern)),
         );

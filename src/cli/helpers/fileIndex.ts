@@ -47,6 +47,22 @@ export interface FileMatch {
 const MAX_INDEX_DEPTH = 12;
 const PROJECT_INDEX_FILENAME = "file-index.json";
 
+/**
+ * Cache format version. Bump this whenever the on-disk format changes
+ * in a backward-incompatible way (e.g. switching hash algorithm).
+ *
+ *   v1 (implicit) – metadata-based file hashes: sha256(path:size:mtime:ino)
+ *   v2            – content-based file hashes:  sha256(file_bytes)
+ */
+const CACHE_VERSION = 2;
+
+/**
+ * Files larger than this threshold use a metadata-based hash instead of
+ * reading the entire file for content hashing. This avoids expensive reads
+ * on large binaries/assets while still content-hashing all normal source files.
+ */
+const MAX_CONTENT_HASH_FILE_SIZE = 5 * 1024 * 1024; // 5 MB
+
 // Read from ~/.letta/.lettasettings (MAX_ENTRIES), falling back to 50 000.
 // The file is auto-created with comments on first run so users can find it.
 const MAX_CACHE_ENTRIES = readIntSetting("MAX_ENTRIES", 50_000);
@@ -61,6 +77,10 @@ let cachedEntries: FileIndexEntry[] = [];
 let cachedEntryPaths = new Set<string>();
 let buildPromise: Promise<void> | null = null;
 let hasCompletedBuild = false;
+// Monotonically increasing counter that is bumped on every refreshFileIndex() call.
+// Stale builds (whose generation is less than the current) skip cache writes and
+// cachedEntries updates so they don't overwrite results from a newer build.
+let buildGeneration = 0;
 
 /**
  * The root directory that the file index is built from.  Defaults to
@@ -72,6 +92,12 @@ let indexRoot: string = process.cwd();
 interface FileIndexCache {
   metadata: {
     rootHash: string;
+    /**
+     * Cache format version.  `undefined` implies v1 (legacy metadata hashes).
+     * When the on-disk version doesn't match CACHE_VERSION the cache is
+     * discarded and rebuilt from scratch.
+     */
+    version?: number;
   };
   entries: FileIndexEntry[];
   merkle: MerkleMap;
@@ -80,9 +106,7 @@ interface FileIndexCache {
 
 interface PreviousIndexData {
   entries: FileIndexEntry[];
-  entryPaths: string[];
   merkle: MerkleMap;
-  merkleKeys: string[];
   stats: StatsMap;
   statsKeys: string[];
 }
@@ -111,6 +135,35 @@ function normalizeParent(relativePath: string): string {
 
 function hashValue(input: string): string {
   return createHash("sha256").update(input).digest("hex");
+}
+
+/**
+ * Compute a content-based hash for a file.
+ *
+ * For files at or below MAX_CONTENT_HASH_FILE_SIZE the hash is
+ * `sha256(file_bytes)` — identical content on any device produces
+ * the same hash, which is required for cross-device Merkle comparison.
+ *
+ * For larger files (binaries, assets) we fall back to a metadata-based
+ * hash to avoid expensive reads.  These are prefixed with `meta:` so
+ * the sync layer can identify files that need re-hashing later.
+ */
+function hashFile(fullPath: string, entryPath: string, stat: FsStats): string {
+  if (stat.size > MAX_CONTENT_HASH_FILE_SIZE) {
+    return hashValue(
+      `meta:${entryPath}:${stat.size}:${stat.mtimeMs}:${stat.ino ?? 0}`,
+    );
+  }
+
+  try {
+    const content = readFileSync(fullPath);
+    return createHash("sha256").update(content).digest("hex");
+  } catch (err) {
+    debugLog("file-index", `Cannot read file for hashing ${fullPath}: ${err}`);
+    return hashValue(
+      `meta:${entryPath}:${stat.size}:${stat.mtimeMs}:${stat.ino ?? 0}`,
+    );
+  }
 }
 
 function lowerBound(sorted: string[], target: string): number {
@@ -145,114 +198,15 @@ function findPrefixRange(sorted: string[], prefix: string): [number, number] {
 }
 
 function preparePreviousIndexData(cache: FileIndexCache): PreviousIndexData {
-  const entryPaths = cache.entries.map((entry) => entry.path);
-  const merkleKeys = Object.keys(cache.merkle).sort();
   const stats: StatsMap = { ...cache.stats };
   const statsKeys = Object.keys(stats).sort();
 
   return {
     entries: cache.entries,
-    entryPaths,
     merkle: cache.merkle,
-    merkleKeys,
     stats,
     statsKeys,
   };
-}
-
-function appendSubtreeEntries(
-  targetEntries: FileIndexEntry[],
-  previous: PreviousIndexData,
-  path: string,
-  context: BuildContext,
-): void {
-  // Don't copy if we've already hit the cap
-  if (context.totalEntryCount >= MAX_CACHE_ENTRIES) {
-    context.truncated = true;
-    return;
-  }
-
-  if (path === "") {
-    // Copy all entries up to cap
-    const toCopy = previous.entries.slice(
-      0,
-      MAX_CACHE_ENTRIES - context.totalEntryCount,
-    );
-    for (const e of toCopy) {
-      targetEntries.push(e);
-      context.totalEntryCount++;
-    }
-    if (previous.entries.length > toCopy.length) {
-      context.truncated = true;
-    }
-    return;
-  }
-
-  const { entryPaths, entries: previousEntries } = previous;
-  // Do NOT push the directory's own entry here — the parent loop already did
-  // that before making the recursive buildDirectory call. Only copy children.
-  const prefix = `${path}/`;
-  const [start, end] = findPrefixRange(entryPaths, prefix);
-
-  let copied = 0;
-  const maxToCopy = MAX_CACHE_ENTRIES - context.totalEntryCount;
-  for (let i = start; i < end && copied < maxToCopy; i++) {
-    const entry = previousEntries[i];
-    if (entry !== undefined) {
-      targetEntries.push(entry);
-      context.totalEntryCount++;
-      copied++;
-    }
-  }
-
-  if (start + copied < end) {
-    context.truncated = true;
-  }
-}
-
-function copyMerkleSubtree(
-  previous: PreviousIndexData,
-  path: string,
-  target: MerkleMap,
-): void {
-  if (path !== "" && previous.merkle[path]) {
-    target[path] = previous.merkle[path];
-  }
-
-  const prefix = path === "" ? "" : `${path}/`;
-  const [start, end] =
-    prefix === ""
-      ? [0, previous.merkleKeys.length]
-      : findPrefixRange(previous.merkleKeys, prefix);
-
-  for (let i = start; i < end; i++) {
-    const key = previous.merkleKeys[i];
-    if (key === undefined) continue;
-    target[key] = previous.merkle[key] ?? "";
-  }
-}
-
-function copyStatsSubtree(
-  previous: PreviousIndexData,
-  path: string,
-  target: StatsMap,
-): void {
-  if (path !== "" && previous.stats[path]) {
-    target[path] = previous.stats[path];
-  }
-
-  const prefix = path === "" ? "" : `${path}/`;
-  const [start, end] =
-    prefix === ""
-      ? [0, previous.statsKeys.length]
-      : findPrefixRange(previous.statsKeys, prefix);
-
-  for (let i = start; i < end; i++) {
-    const key = previous.statsKeys[i];
-    if (key === undefined) continue;
-    const val = previous.stats[key];
-    if (val !== undefined) target[key] = val;
-  }
 }
 
 function collectPreviousChildNames(
@@ -260,7 +214,7 @@ function collectPreviousChildNames(
   path: string,
 ): Set<string> {
   const names = new Set<string>();
-  const prefix = path === "" ? "" : `${path}/`;
+  const prefix = path === "" ? "" : `${path}${sep}`;
 
   // Use binary search to jump to the relevant range instead of scanning all
   // statsKeys. For root (prefix="") every key qualifies so we start at 0;
@@ -277,7 +231,7 @@ function collectPreviousChildNames(
     }
 
     const remainder = key.slice(prefix.length);
-    const slashIndex = remainder.indexOf("/");
+    const slashIndex = remainder.indexOf(sep);
     const childName =
       slashIndex === -1 ? remainder : remainder.slice(0, slashIndex);
     if (childName.length > 0) {
@@ -297,68 +251,15 @@ function statsMatch(prev: FileStats, current: FsStats): boolean {
     return false;
   }
 
-  if (prev.mtimeMs !== current.mtimeMs || prev.ino !== (current.ino ?? 0)) {
+  if (
+    prev.mtimeMs !== current.mtimeMs ||
+    Number(prev.ino) !== Number(current.ino ?? 0)
+  ) {
     return false;
   }
 
   if (prev.type === "file") {
     return typeof prev.size === "number" ? prev.size === current.size : true;
-  }
-
-  return true;
-}
-
-function shouldReuseDirectory(
-  previous: PreviousIndexData | undefined,
-  path: string,
-  stats: FileStats,
-  childNames: string[],
-  childStats: Map<string, FsStats>,
-): boolean {
-  if (!previous) {
-    return false;
-  }
-
-  const previousStats = previous.stats[path];
-
-  if (!previousStats || previousStats.type !== "dir") {
-    return false;
-  }
-
-  if (
-    previousStats.mtimeMs !== stats.mtimeMs ||
-    previousStats.ino !== stats.ino
-  ) {
-    return false;
-  }
-
-  const previousChildNames = collectPreviousChildNames(previous, path);
-  const seen = new Set<string>();
-
-  for (const childName of childNames) {
-    const childPath = path === "" ? childName : `${path}/${childName}`;
-    const prevStats = previous.stats[childPath];
-    const currentStats = childStats.get(childName);
-
-    if (!prevStats || !currentStats) {
-      return false;
-    }
-
-    if (!statsMatch(prevStats, currentStats)) {
-      return false;
-    }
-
-    seen.add(childName);
-  }
-
-  if (seen.size !== previousChildNames.size) {
-    return false;
-  }
-
-  for (const name of previousChildNames) {
-    if (!seen.has(name)) {
-      return false;
-    }
   }
 
   return true;
@@ -378,7 +279,8 @@ async function buildDirectory(
 
   try {
     dirStats = statSync(dir);
-  } catch {
+  } catch (err) {
+    debugLog("file-index", `Cannot stat directory ${dir}: ${err}`);
     const unreadableHash = hashValue("__unreadable__");
     merkle[relativePath] = unreadableHash;
     return unreadableHash;
@@ -387,49 +289,88 @@ async function buildDirectory(
   const currentStats: FileStats = {
     type: "dir",
     mtimeMs: dirStats.mtimeMs,
-    ino: dirStats.ino ?? 0,
+    ino: Number(dirStats.ino ?? 0),
   };
 
-  let dirEntries: string[];
-  try {
-    dirEntries = readdirSync(dir);
-  } catch {
-    const unreadableHash = hashValue("__unreadable__");
-    merkle[relativePath] = unreadableHash;
-    return unreadableHash;
-  }
+  // ── Collect children ───────────────────────────────────────────────
+  // If the directory's own mtime+ino match the previous build, the child
+  // list hasn't changed (no adds/removes/renames). Skip readdir and use
+  // the previous child list. Otherwise do a full readdir.
+  //
+  // Unlike the old approach we NEVER skip entire subtrees — child
+  // directories are always recursed into so that deep content changes
+  // propagate up through the Merkle hashes. The optimizations here are:
+  //   1. Skip readdir when dir metadata is unchanged
+  //   2. Skip file content hashing when file metadata is unchanged
+  let childNames: string[];
+  let childStatsMap: Map<string, FsStats>;
 
-  const childNames: string[] = [];
-  const childStatsMap = new Map<string, FsStats>();
+  const prevDirStats = previous?.stats[relativePath];
+  const dirMetadataUnchanged =
+    prevDirStats !== undefined &&
+    prevDirStats.type === "dir" &&
+    prevDirStats.mtimeMs === currentStats.mtimeMs &&
+    prevDirStats.ino === currentStats.ino;
 
-  for (const entry of dirEntries) {
-    const entryRelPath =
-      relativePath === "" ? entry : `${relativePath}/${entry}`;
-    if (shouldExcludeEntry(entry, entryRelPath)) {
-      continue;
+  if (dirMetadataUnchanged && previous !== undefined) {
+    // Dir metadata unchanged — skip readdir, use previous child list
+    const prevChildSet = collectPreviousChildNames(previous, relativePath);
+    childNames = [];
+    childStatsMap = new Map<string, FsStats>();
+
+    // Normalize to forward slashes for picomatch pattern matching.
+    const fwdRelPath = relativePath.replaceAll("\\", "/");
+    for (const childName of prevChildSet) {
+      // Re-check exclusions so that .lettaignore changes take effect
+      // even when the directory structure hasn't changed.
+      const entryRelPath =
+        fwdRelPath === "" ? childName : `${fwdRelPath}/${childName}`;
+      if (shouldExcludeEntry(childName, entryRelPath, indexRoot)) {
+        continue;
+      }
+
+      try {
+        const currentChildStats = statSync(join(dir, childName));
+        childNames.push(childName);
+        childStatsMap.set(childName, currentChildStats);
+      } catch (err) {
+        debugLog(
+          "file-index",
+          `Cannot stat entry ${join(dir, childName)}: ${err}`,
+        );
+      }
+    }
+  } else {
+    // Dir is new or structurally changed — full readdir
+    let dirEntries: string[];
+    try {
+      dirEntries = readdirSync(dir);
+    } catch (err) {
+      debugLog("file-index", `Cannot read directory ${dir}: ${err}`);
+      const unreadableHash = hashValue("__unreadable__");
+      merkle[relativePath] = unreadableHash;
+      return unreadableHash;
     }
 
-    try {
-      const childStat = statSync(join(dir, entry));
-      childNames.push(entry);
-      childStatsMap.set(entry, childStat);
-    } catch {}
-  }
+    childNames = [];
+    childStatsMap = new Map<string, FsStats>();
 
-  if (
-    previous !== undefined &&
-    shouldReuseDirectory(
-      previous,
-      relativePath,
-      currentStats,
-      childNames,
-      childStatsMap,
-    )
-  ) {
-    copyStatsSubtree(previous, relativePath, statsMap);
-    appendSubtreeEntries(entries, previous, relativePath, context);
-    copyMerkleSubtree(previous, relativePath, merkle);
-    return previous.merkle[relativePath] ?? hashValue("__reused__");
+    // Normalize to forward slashes for picomatch pattern matching.
+    const fwdRelPath = relativePath.replaceAll("\\", "/");
+    for (const entry of dirEntries) {
+      const entryRelPath = fwdRelPath === "" ? entry : `${fwdRelPath}/${entry}`;
+      if (shouldExcludeEntry(entry, entryRelPath, indexRoot)) {
+        continue;
+      }
+
+      try {
+        const childStat = statSync(join(dir, entry));
+        childNames.push(entry);
+        childStatsMap.set(entry, childStat);
+      } catch (err) {
+        debugLog("file-index", `Cannot stat entry ${join(dir, entry)}: ${err}`);
+      }
+    }
   }
 
   statsMap[relativePath] = currentStats;
@@ -500,9 +441,20 @@ async function buildDirectory(
         childHashes.push(`dir:${entry}:${hashValue("__truncated__")}`);
       }
     } else {
-      const fileHash = hashValue(
-        `${entryPath}:${entryStat.size}:${entryStat.mtimeMs}:${entryStat.ino ?? 0}`,
-      );
+      // Skip content hashing when file metadata is unchanged — reuse
+      // the previous hash. This avoids reading file bytes for the
+      // vast majority of files on incremental rebuilds.
+      const prevFileStats = previous?.stats[entryPath];
+      let fileHash: string;
+      if (
+        prevFileStats &&
+        previous?.merkle[entryPath] &&
+        statsMatch(prevFileStats, entryStat)
+      ) {
+        fileHash = previous.merkle[entryPath];
+      } else {
+        fileHash = hashFile(fullPath, entryPath, entryStat);
+      }
 
       // Only add to merkle and stats if we haven't hit the cap
       // This prevents unbounded memory growth for large workspaces
@@ -510,7 +462,7 @@ async function buildDirectory(
         statsMap[entryPath] = {
           type: "file",
           mtimeMs: entryStat.mtimeMs,
-          ino: entryStat.ino ?? 0,
+          ino: Number(entryStat.ino ?? 0),
           size: entryStat.size,
         };
 
@@ -560,10 +512,8 @@ async function buildIndex(
 
   entries.sort((a, b) => a.path.localeCompare(b.path));
 
-  // Deduplicate by path. Duplicates can occur when a dirty cache is reused
-  // via appendSubtreeEntries — the parent pushed the dir entry, and the cache
-  // contained it again. This is a one-time cleanup that also writes a clean
-  // cache to disk so subsequent sessions start fresh.
+  // Deduplicate by path — a safety net against any edge cases that could
+  // produce duplicate entries during incremental rebuilds.
   const seen = new Set<string>();
   const deduped = entries.filter((e) => {
     if (seen.has(e.path)) return false;
@@ -625,8 +575,11 @@ function loadCachedIndex(): FileIndexCache | null {
       // Delete the bloated cache immediately, then rebuild
       try {
         unlinkSync(indexPath);
-      } catch {
-        // Ignore deletion errors - rebuild will overwrite anyway
+      } catch (err) {
+        debugLog(
+          "file-index",
+          `Failed to delete bloated cache ${indexPath}: ${err}`,
+        );
       }
       return null;
     }
@@ -641,6 +594,25 @@ function loadCachedIndex(): FileIndexCache | null {
       parsed.merkle &&
       typeof parsed.merkle === "object"
     ) {
+      // Version gate: discard caches written by an older (or missing) format
+      // so we rebuild with content-based hashes. This is a one-time cost on
+      // upgrade — subsequent sessions will load the v2 cache normally.
+      if (parsed.metadata.version !== CACHE_VERSION) {
+        debugLog(
+          "file-index",
+          `Cache version mismatch (got ${parsed.metadata.version ?? "none"}, need ${CACHE_VERSION}), rebuilding`,
+        );
+        try {
+          unlinkSync(indexPath);
+        } catch (err) {
+          debugLog(
+            "file-index",
+            `Failed to delete stale cache ${indexPath}: ${err}`,
+          );
+        }
+        return null;
+      }
+
       const merkle: MerkleMap = {};
       for (const [key, value] of Object.entries(parsed.merkle)) {
         if (typeof value === "string") {
@@ -662,6 +634,7 @@ function loadCachedIndex(): FileIndexCache | null {
               type: sv.type as "file" | "dir",
               mtimeMs: sv.mtimeMs,
               ino: sv.ino,
+              size: typeof sv.size === "number" ? sv.size : undefined,
             };
           }
         }
@@ -670,14 +643,15 @@ function loadCachedIndex(): FileIndexCache | null {
       return {
         metadata: {
           rootHash: parsed.metadata.rootHash,
+          version: CACHE_VERSION,
         },
         entries: parsed.entries,
         merkle,
         stats,
       };
     }
-  } catch {
-    // Ignore parse errors
+  } catch (err) {
+    debugLog("file-index", `Failed to parse index cache ${indexPath}: ${err}`);
   }
 
   return null;
@@ -686,7 +660,7 @@ function loadCachedIndex(): FileIndexCache | null {
 function cacheProjectIndex(result: FileIndexBuildResult): void {
   // Don't cache when running from home directory - it's too large and would
   // cause OOM on next load. The in-memory cache still works for this session.
-  if (process.cwd() === homedir()) {
+  if (indexRoot === homedir()) {
     return;
   }
 
@@ -720,14 +694,15 @@ function cacheProjectIndex(result: FileIndexBuildResult): void {
     const payload: FileIndexCache = {
       metadata: {
         rootHash: result.rootHash,
+        version: CACHE_VERSION,
       },
       entries: cappedEntries,
       merkle: cappedMerkle,
       stats: cappedStats,
     };
     writeFileSync(indexPath, JSON.stringify(payload), "utf-8");
-  } catch {
-    // Silently ignore persistence errors to avoid breaking search.
+  } catch (err) {
+    debugLog("file-index", `Failed to persist index cache: ${err}`);
   }
 }
 
@@ -737,7 +712,7 @@ function cacheProjectIndex(result: FileIndexBuildResult): void {
  * appear first in results), and caps at MAX_CACHE_ENTRIES.
  *
  * NOTE: buildIndex keeps entries sorted by path — that ordering is load-bearing
- * for the binary searches in appendSubtreeEntries/findPrefixRange. This helper
+ * for binary searches in collectPreviousChildNames/findPrefixRange. This helper
  * produces a separate mtime-sorted copy only for the in-memory search cache.
  */
 function buildCachedEntries(
@@ -759,18 +734,33 @@ function buildCachedEntries(
 /**
  * Ensure the file index is built at least once per session.
  */
-export function ensureFileIndex(): Promise<void> {
-  if (hasCompletedBuild) return Promise.resolve();
+export function ensureFileIndex(fullRebuild = false): Promise<void> {
+  if (hasCompletedBuild && !fullRebuild) return Promise.resolve();
   if (!buildPromise) {
     let currentPromise!: Promise<void>;
+    // Capture the generation at the time the build is kicked off. If a
+    // newer refresh is requested while this build is in progress, the
+    // generation will be bumped and this build should NOT write its
+    // (now stale) results to disk or to the in-memory cache.
+    const myGeneration = buildGeneration;
     currentPromise = (async () => {
       let succeeded = false;
       try {
-        const diskIndex = loadCachedIndex();
+        // When fullRebuild is true (e.g. refreshFileIndex), skip loading
+        // the on-disk cache so the entire tree is scanned from scratch.
+        // This avoids subtle mtime-granularity bugs where a directory's
+        // mtime doesn't change even though children were added/removed.
+        const diskIndex = fullRebuild ? null : loadCachedIndex();
         const previousData = diskIndex
           ? preparePreviousIndexData(diskIndex)
           : undefined;
         const buildResult = await buildIndex(previousData);
+
+        // A newer build was requested while we were running — our results
+        // are stale, so bail out without writing anything.
+        if (myGeneration !== buildGeneration) {
+          return;
+        }
 
         if (diskIndex && diskIndex.metadata.rootHash === buildResult.rootHash) {
           ({ entries: cachedEntries, paths: cachedEntryPaths } =
@@ -805,9 +795,10 @@ export function ensureFileIndex(): Promise<void> {
 }
 
 export function refreshFileIndex(): Promise<void> {
+  buildGeneration++;
   hasCompletedBuild = false;
   buildPromise = null;
-  return ensureFileIndex();
+  return ensureFileIndex(/* fullRebuild */ true);
 }
 
 /**
