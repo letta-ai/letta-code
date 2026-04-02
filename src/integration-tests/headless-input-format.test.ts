@@ -551,7 +551,7 @@ describe("input-format stream-json", () => {
     "Task tool with explore subagent works",
     async () => {
       // Prescriptive prompt to ensure Task tool is used
-      const objects = (await runBidirectional(
+      const objects = (await runBidirectionalWithRetry(
         [
           JSON.stringify({
             type: "user",
@@ -565,6 +565,7 @@ describe("input-format stream-json", () => {
         ],
         [],
         420000, // 7 min timeout - subagent spawn + execution can be very slow on Linux CI
+        1, // one retry for long-tail CI/API latency
       )) as WireMessage[];
 
       // Should have a successful result

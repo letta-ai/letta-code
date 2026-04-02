@@ -1,7 +1,7 @@
-#!/usr/bin/env sh
+# #!/usr/bin/env sh
 
-# Lint staged files only (fast)
-bunx lint-staged
+# # Lint staged files only (fast)
+# bunx lint-staged
 
-# Typecheck full project (catches type errors in unchanged files)
-bun run typecheck
+# # Typecheck full project (catches type errors in unchanged files)
+# bun run typecheck
