@@ -329,6 +329,24 @@ async function prepareHeadlessToolExecutionContext(params: {
   };
 }
 
+async function flushAndExit(code: number): Promise<never> {
+  const flushWritable = (stream: NodeJS.WriteStream): Promise<void> =>
+    new Promise((resolve) => {
+      if (stream.destroyed || stream.writableEnded) {
+        resolve();
+        return;
+      }
+      stream.write("", () => resolve());
+    });
+
+  await Promise.allSettled([
+    flushWritable(process.stdout),
+    flushWritable(process.stderr),
+  ]);
+
+  process.exit(code);
+}
+
 export async function handleHeadlessCommand(
   parsedArgs: ParsedCliArgs,
   model?: string,
@@ -2649,6 +2667,7 @@ ${SYSTEM_REMINDER_CLOSE}
   // Report all milestones at the end for latency audit
   markMilestone("HEADLESS_COMPLETE");
   reportAllMilestones();
+  await flushAndExit(0);
 }
 
 /**
