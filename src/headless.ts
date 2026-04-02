@@ -1640,8 +1640,17 @@ ${SYSTEM_REMINDER_CLOSE}
 
   try {
     while (true) {
-      // Check max turns limit before starting a new turn (uses server-side step count)
-      checkMaxTurns();
+      const hasApprovalContinuation = currentInput.some(
+        (item) => item.type === "approval",
+      );
+
+      // Check max turns limit before starting a new user turn.
+      // Do NOT enforce before approval continuations: otherwise we can exit
+      // with max_steps while the backend is still waiting for the approval
+      // response, leaving the run stuck in requires_approval.
+      if (!hasApprovalContinuation) {
+        checkMaxTurns();
+      }
 
       // Inject queued skill content as user message parts (LET-7353)
       {
@@ -2013,8 +2022,13 @@ ${SYSTEM_REMINDER_CLOSE}
       // Track API duration for this stream
       sessionStats.endTurn(apiDurationMs);
 
-      // Check max turns after each turn (server may have taken multiple steps)
-      checkMaxTurns();
+      // Check max turns after each turn (server may have taken multiple steps),
+      // but defer the limit when we're still resolving pending approvals.
+      // Otherwise we can exit while the backend is waiting for approval input,
+      // leaving the run stuck in requires_approval.
+      if (stopReason !== "requires_approval" && !approvalPendingRecovery) {
+        checkMaxTurns();
+      }
 
       if (approvalPendingRecovery) {
         await resolveAllPendingApprovals();
