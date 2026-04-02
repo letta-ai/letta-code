@@ -11,7 +11,6 @@ import {
   backgroundProcesses,
   backgroundTasks,
 } from "../../tools/impl/process_manager";
-import { getToolNames } from "../../tools/manager";
 import type {
   BackgroundProcessSummary,
   DeviceStatus,
@@ -148,7 +147,7 @@ export function buildDeviceStatus(
       letta_code_version: process.env.npm_package_version || null,
       current_toolset: null,
       current_toolset_preference: "auto",
-      current_loaded_tools: getToolNames(),
+      current_loaded_tools: [],
       current_available_skills: [],
       background_processes: buildBackgroundProcessSnapshot(),
       pending_control_requests: [],
@@ -206,9 +205,12 @@ export function buildDeviceStatus(
     current_working_directory: resolvedCwd,
     git_context: getGitContext(resolvedCwd),
     letta_code_version: process.env.npm_package_version || null,
-    current_toolset: toolsetPreference === "auto" ? null : toolsetPreference,
-    current_toolset_preference: toolsetPreference,
-    current_loaded_tools: getToolNames(),
+    current_toolset:
+      conversationRuntime?.currentToolset ??
+      (toolsetPreference === "auto" ? null : toolsetPreference),
+    current_toolset_preference:
+      conversationRuntime?.currentToolsetPreference ?? toolsetPreference,
+    current_loaded_tools: conversationRuntime?.currentLoadedTools ?? [],
     current_available_skills: [],
     background_processes: buildBackgroundProcessSnapshot(),
     pending_control_requests: interruptedCacheActive

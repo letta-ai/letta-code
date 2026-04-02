@@ -13,6 +13,7 @@ import {
   type ClientTool,
   captureToolExecutionContext,
   type PermissionModeState,
+  type PreparedToolExecutionContext,
   waitForToolsetReady,
 } from "../tools/manager";
 import { debugLog, debugWarn, isDebugEnabled } from "../utils/debug";
@@ -69,6 +70,8 @@ export type SendMessageStreamOptions = {
    * does not mutate agent/conversation persisted model configuration.
    */
   overrideModel?: string;
+  /** Explicit turn-scoped tool snapshot. When present, bypasses the global registry. */
+  preparedToolContext?: PreparedToolExecutionContext;
 };
 
 export function buildConversationMessagesCreateRequestBody(
@@ -130,13 +133,18 @@ export async function sendMessageStream(
   const requestStartedAtMs = Date.now();
   const client = await getClient();
 
-  // Wait for any in-progress toolset switch to complete before reading tools
-  // This prevents sending messages with stale tools during a switch
-  await waitForToolsetReady();
-  const { clientTools, contextId } = captureToolExecutionContext(
-    opts.workingDirectory,
-    opts.permissionModeState,
-  );
+  const preparedToolContext = opts.preparedToolContext
+    ? opts.preparedToolContext
+    : await (async () => {
+        // Wait for any in-progress toolset switch to complete before reading tools
+        // This prevents sending messages with stale tools during a switch
+        await waitForToolsetReady();
+        return captureToolExecutionContext(
+          opts.workingDirectory,
+          opts.permissionModeState,
+        );
+      })();
+  const { clientTools, contextId } = preparedToolContext;
   const { clientSkills, errors: clientSkillDiscoveryErrors } =
     await buildClientSkillsPayload({
       agentId: opts.agentId,

@@ -127,7 +127,12 @@ import {
   savePermissionRule,
   type ToolExecutionResult,
 } from "../tools/manager";
-import type { ToolsetName, ToolsetPreference } from "../tools/toolset";
+import {
+  prepareToolExecutionContextForResolvedTarget,
+  prepareToolExecutionContextForScope,
+  type ToolsetName,
+  type ToolsetPreference,
+} from "../tools/toolset";
 import { formatToolsetName } from "../tools/toolset-labels";
 import {
   debugLog,
@@ -2094,6 +2099,36 @@ export default function App({
     approvalToolContextIdRef.current = null;
     releaseToolExecutionContext(contextId);
   }, []);
+  const prepareScopedToolExecutionContext = useCallback(
+    async (overrideModel?: string | null) => {
+      const workingDirectory = process.env.USER_CWD || process.cwd();
+      const desiredModel = overrideModel ?? currentModelHandle;
+
+      if (desiredModel) {
+        return prepareToolExecutionContextForResolvedTarget({
+          modelIdentifier: desiredModel,
+          toolsetPreference: currentToolsetPreference,
+          workingDirectory,
+        });
+      }
+
+      if (agentIdRef.current) {
+        return prepareToolExecutionContextForScope({
+          agentId: agentIdRef.current,
+          conversationId: conversationIdRef.current,
+          overrideModel,
+          workingDirectory,
+        });
+      }
+
+      return prepareToolExecutionContextForResolvedTarget({
+        modelIdentifier: null,
+        toolsetPreference: currentToolsetPreference,
+        workingDirectory,
+      });
+    },
+    [currentModelHandle, currentToolsetPreference],
+  );
   // Non-null only when the previous turn was explicitly interrupted by the user.
   // Used to gate recovery alert injection to true user-interrupt retries.
   const pendingInterruptRecoveryConversationIdRef = useRef<string | null>(null);
@@ -4239,12 +4274,16 @@ export default function App({
           let turnToolContextId: string | null = null;
           let preStreamResumeResult: DrainResult | null = null;
           try {
+            const preparedToolContext = await prepareScopedToolExecutionContext(
+              tempModelOverrideRef.current ?? undefined,
+            );
             const nextStream = await sendMessageStream(
               conversationIdRef.current,
               currentInput,
               {
                 agentId: agentIdRef.current,
                 overrideModel: tempModelOverrideRef.current ?? undefined,
+                preparedToolContext: preparedToolContext.preparedToolContext,
               },
             );
             stream = nextStream;
@@ -5326,6 +5365,13 @@ export default function App({
               }
 
               // Execute auto-allowed tools (sequential for writes, parallel for reads)
+              const approvalToolContextId =
+                approvalToolContextIdRef.current ??
+                (
+                  await prepareScopedToolExecutionContext(
+                    tempModelOverrideRef.current ?? undefined,
+                  )
+                ).preparedToolContext.contextId;
               autoAllowedResults =
                 autoAllowed.length > 0
                   ? await executeAutoAllowedTools(
@@ -5334,8 +5380,7 @@ export default function App({
                       {
                         abortSignal: autoAllowedAbortController.signal,
                         onStreamingOutput: updateStreamingOutput,
-                        toolContextId:
-                          approvalToolContextIdRef.current ?? undefined,
+                        toolContextId: approvalToolContextId,
                       },
                     )
                   : [];
@@ -6385,6 +6430,13 @@ export default function App({
             refreshDerived();
           }
 
+          const approvalToolContextId =
+            approvalToolContextIdRef.current ??
+            (
+              await prepareScopedToolExecutionContext(
+                tempModelOverrideRef.current ?? undefined,
+              )
+            ).preparedToolContext.contextId;
           autoAllowedResults =
             autoAllowed.length > 0
               ? await executeAutoAllowedTools(
@@ -6393,8 +6445,7 @@ export default function App({
                   {
                     abortSignal: autoAllowedAbortController.signal,
                     onStreamingOutput: updateStreamingOutput,
-                    toolContextId:
-                      approvalToolContextIdRef.current ?? undefined,
+                    toolContextId: approvalToolContextId,
                   },
                 )
               : [];
@@ -6522,6 +6573,7 @@ export default function App({
       queueApprovalResults,
       refreshDerived,
       restorePendingApprovalUi,
+      prepareScopedToolExecutionContext,
       updateStreamingOutput,
     ],
   );
@@ -7474,13 +7526,20 @@ export default function App({
           setToolCallsRunning(buffersRef.current, autoAllowedToolCallIds);
           refreshDerived();
 
+          const approvalToolContextId =
+            approvalToolContextIdRef.current ??
+            (
+              await prepareScopedToolExecutionContext(
+                tempModelOverrideRef.current ?? undefined,
+              )
+            ).preparedToolContext.contextId;
           autoAllowedResults = await executeAutoAllowedTools(
             autoAllowed,
             (chunk) => onChunk(buffersRef.current, chunk),
             {
               abortSignal: autoAllowedAbortController.signal,
               onStreamingOutput: updateStreamingOutput,
-              toolContextId: approvalToolContextIdRef.current ?? undefined,
+              toolContextId: approvalToolContextId,
             },
           );
           // Map to ApprovalResult format (ToolReturn)
@@ -7572,6 +7631,7 @@ export default function App({
     refreshDerived,
     updateStreamingOutput,
     needsEagerApprovalCheck,
+    prepareScopedToolExecutionContext,
     queueApprovalResults,
   ]);
 
@@ -11086,6 +11146,13 @@ ${SYSTEM_REMINDER_CLOSE}
                 }
 
                 // Execute auto-allowed tools (sequential for writes, parallel for reads)
+                const approvalToolContextId =
+                  approvalToolContextIdRef.current ??
+                  (
+                    await prepareScopedToolExecutionContext(
+                      tempModelOverrideRef.current ?? undefined,
+                    )
+                  ).preparedToolContext.contextId;
                 autoAllowedResults =
                   autoAllowed.length > 0
                     ? await executeAutoAllowedTools(
@@ -11094,8 +11161,7 @@ ${SYSTEM_REMINDER_CLOSE}
                         {
                           abortSignal: autoAllowedAbortController.signal,
                           onStreamingOutput: updateStreamingOutput,
-                          toolContextId:
-                            approvalToolContextIdRef.current ?? undefined,
+                          toolContextId: approvalToolContextId,
                         },
                       )
                     : [];
@@ -11336,6 +11402,13 @@ ${SYSTEM_REMINDER_CLOSE}
 
               try {
                 // Execute auto-allowed tools (sequential for writes, parallel for reads)
+                const approvalToolContextId =
+                  approvalToolContextIdRef.current ??
+                  (
+                    await prepareScopedToolExecutionContext(
+                      tempModelOverrideRef.current ?? undefined,
+                    )
+                  ).preparedToolContext.contextId;
                 autoAllowedWithResults =
                   autoAllowed.length > 0
                     ? await executeAutoAllowedTools(
@@ -11344,8 +11417,7 @@ ${SYSTEM_REMINDER_CLOSE}
                         {
                           abortSignal: autoAllowedAbortController.signal,
                           onStreamingOutput: updateStreamingOutput,
-                          toolContextId:
-                            approvalToolContextIdRef.current ?? undefined,
+                          toolContextId: approvalToolContextId,
                         },
                       )
                     : [];
@@ -11704,6 +11776,13 @@ ${SYSTEM_REMINDER_CLOSE}
         const toolRunStart = performance.now();
         let executedResults: Awaited<ReturnType<typeof executeApprovalBatch>>;
         try {
+          const approvalToolContextId =
+            approvalToolContextIdRef.current ??
+            (
+              await prepareScopedToolExecutionContext(
+                tempModelOverrideRef.current ?? undefined,
+              )
+            ).preparedToolContext.contextId;
           executedResults = await executeApprovalBatch(
             allDecisions,
             (chunk) => {
@@ -11729,7 +11808,7 @@ ${SYSTEM_REMINDER_CLOSE}
             {
               abortSignal: approvalAbortController.signal,
               onStreamingOutput: updateStreamingOutput,
-              toolContextId: approvalToolContextIdRef.current ?? undefined,
+              toolContextId: approvalToolContextId,
             },
           );
         } finally {
@@ -11890,6 +11969,7 @@ ${SYSTEM_REMINDER_CLOSE}
       closeTrajectorySegment,
       openTrajectorySegment,
       commitEligibleLines,
+      prepareScopedToolExecutionContext,
     ],
   );
 
@@ -12070,6 +12150,13 @@ ${SYSTEM_REMINDER_CLOSE}
             const { executeApprovalBatch } = await import(
               "../agent/approval-execution"
             );
+            const approvalToolContextId =
+              approvalToolContextIdRef.current ??
+              (
+                await prepareScopedToolExecutionContext(
+                  tempModelOverrideRef.current ?? undefined,
+                )
+              ).preparedToolContext.contextId;
             const executedResults = await executeApprovalBatch(
               allDecisions,
               (chunk) => {
@@ -12078,7 +12165,7 @@ ${SYSTEM_REMINDER_CLOSE}
               },
               {
                 onStreamingOutput: updateStreamingOutput,
-                toolContextId: approvalToolContextIdRef.current ?? undefined,
+                toolContextId: approvalToolContextId,
               },
             );
 
@@ -12136,6 +12223,7 @@ ${SYSTEM_REMINDER_CLOSE}
       isExecutingTool,
       setStreaming,
       openTrajectorySegment,
+      prepareScopedToolExecutionContext,
       updateStreamingOutput,
     ],
   );

@@ -25,6 +25,7 @@ import { getRetryStatusMessage } from "../../cli/helpers/errorFormatter";
 
 import { computeDiffPreviews } from "../../helpers/diffPreview";
 import { isInteractiveApprovalTool } from "../../tools/interactivePolicy";
+import { prepareToolExecutionContextForScope } from "../../tools/toolset";
 import type { ControlRequest } from "../../types/protocol_v2";
 import {
   rememberPendingApprovalBatchIds,
@@ -141,6 +142,20 @@ export async function resolveStaleApprovals(
     agent_id: runtime.agentId,
     conversation_id: recoveryConversationId,
   } as const;
+  const preparedToolContext = await prepareToolExecutionContextForScope({
+    agentId: runtime.agentId,
+    conversationId: recoveryConversationId,
+    workingDirectory: recoveryWorkingDirectory,
+    permissionModeState: getOrCreateConversationPermissionModeStateRef(
+      runtime.listener,
+      runtime.agentId,
+      runtime.conversationId,
+    ),
+  });
+  runtime.currentToolset = preparedToolContext.toolset;
+  runtime.currentToolsetPreference = preparedToolContext.toolsetPreference;
+  runtime.currentLoadedTools =
+    preparedToolContext.preparedToolContext.loadedToolNames;
 
   while (pendingApprovals.length > 0) {
     const recoveryBatchId = resolveRecoveryBatchId(runtime, pendingApprovals);
@@ -271,6 +286,7 @@ export async function resolveStaleApprovals(
     try {
       const approvalResults = await executeApprovalBatch(decisions, undefined, {
         abortSignal,
+        toolContextId: preparedToolContext.preparedToolContext.contextId,
         workingDirectory: recoveryWorkingDirectory,
         parentScope:
           runtime.agentId && runtime.conversationId
@@ -318,6 +334,7 @@ export async function resolveStaleApprovals(
           streamTokens: true,
           background: true,
           workingDirectory: recoveryWorkingDirectory,
+          preparedToolContext: preparedToolContext.preparedToolContext,
         },
         socket,
         runtime,

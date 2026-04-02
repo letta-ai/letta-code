@@ -60,10 +60,10 @@ import {
 import { settingsManager } from "../../settings-manager";
 import { telemetry } from "../../telemetry";
 import { trackBoundaryError } from "../../telemetry/errorReporting";
-import { getToolNames, loadTools } from "../../tools/manager";
+import { loadTools } from "../../tools/manager";
 import {
-  forceToolsetSwitch,
-  switchToolsetForModel,
+  ensureCorrectMemoryTool,
+  prepareToolExecutionContextForResolvedTarget,
   type ToolsetName,
 } from "../../tools/toolset";
 import { formatToolsetName } from "../../tools/toolset-labels";
@@ -495,17 +495,24 @@ async function applyModelUpdateForRuntime(params: {
   }
 
   const toolsetPreference = settingsManager.getToolsetPreference(agentId);
-  const previousToolNames = getToolNames();
+  const previousToolNames = scopedRuntime.currentLoadedTools;
   let nextToolset: ToolsetName;
+  let nextLoadedTools: string[] = previousToolNames;
   let toolsetError: string | null = null;
 
   try {
-    if (toolsetPreference === "auto") {
-      nextToolset = await switchToolsetForModel(model.handle, agentId);
-    } else {
-      await forceToolsetSwitch(toolsetPreference, agentId);
-      nextToolset = toolsetPreference;
-    }
+    await ensureCorrectMemoryTool(agentId, model.handle);
+    const preparedToolContext =
+      await prepareToolExecutionContextForResolvedTarget({
+        modelIdentifier: model.handle,
+        toolsetPreference,
+      });
+    nextToolset = preparedToolContext.toolset;
+    nextLoadedTools = preparedToolContext.preparedToolContext.loadedToolNames;
+    scopedRuntime.currentToolset = preparedToolContext.toolset;
+    scopedRuntime.currentToolsetPreference =
+      preparedToolContext.toolsetPreference;
+    scopedRuntime.currentLoadedTools = nextLoadedTools;
   } catch (error) {
     nextToolset = toolsetPreference === "auto" ? "default" : toolsetPreference;
     toolsetError =
@@ -515,7 +522,7 @@ async function applyModelUpdateForRuntime(params: {
   // Only mention toolset in the status message when it actually changed
   const toolsetChanged =
     !toolsetError &&
-    JSON.stringify(previousToolNames) !== JSON.stringify(getToolNames());
+    JSON.stringify(previousToolNames) !== JSON.stringify(nextLoadedTools);
   const { message: statusMessage, level: statusLevel } =
     buildModelUpdateStatusMessage({
       modelLabel: model.label,

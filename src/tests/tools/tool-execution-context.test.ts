@@ -7,6 +7,7 @@ import {
   executeTool,
   getToolNames,
   loadSpecificTools,
+  prepareToolExecutionContextForSpecificTools,
 } from "../../tools/manager";
 
 function asText(
@@ -74,5 +75,24 @@ describe("tool execution context snapshot", () => {
       { toolContextId: contextId },
     );
     expect(withContext.status).toBe("success");
+  });
+
+  test("prepares explicit tool snapshots without reading the global registry", async () => {
+    await loadSpecificTools(["Edit"]);
+
+    const prepared = await prepareToolExecutionContextForSpecificTools([
+      "Read",
+    ]);
+
+    expect(prepared.loadedToolNames).toContain("Read");
+    expect(prepared.loadedToolNames).not.toContain("Edit");
+
+    const withPreparedContext = await executeTool(
+      "Read",
+      { file_path: "README.md" },
+      { toolContextId: prepared.contextId },
+    );
+
+    expect(withPreparedContext.status).toBe("success");
   });
 });

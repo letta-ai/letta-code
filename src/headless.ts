@@ -104,7 +104,10 @@ import {
   registerExternalTools,
   setExternalToolExecutor,
 } from "./tools/manager";
-import { clearPersistedClientToolRules } from "./tools/toolset";
+import {
+  clearPersistedClientToolRules,
+  prepareToolExecutionContextForScope,
+} from "./tools/toolset";
 import type {
   AutoApprovalMessage,
   BootstrapSessionStateRequest,
@@ -298,6 +301,32 @@ async function applyReflectionOverrides(
   await persistReflectionSettingsForAgent(agentId, merged);
 
   return merged;
+}
+
+async function prepareHeadlessToolExecutionContext(params: {
+  agentId: string;
+  conversationId: string;
+  overrideModel?: string | null;
+}): Promise<{
+  preparedToolContext: Awaited<
+    ReturnType<typeof prepareToolExecutionContextForScope>
+  >;
+  availableTools: string[];
+}> {
+  const preparedToolContext = await prepareToolExecutionContextForScope({
+    agentId: params.agentId,
+    conversationId: params.conversationId,
+    overrideModel: params.overrideModel,
+    workingDirectory: process.env.USER_CWD || process.cwd(),
+    exclude: ["AskUserQuestion"],
+  });
+
+  return {
+    preparedToolContext,
+    availableTools: preparedToolContext.preparedToolContext.clientTools.map(
+      (tool) => tool.name,
+    ),
+  };
 }
 
 export async function handleHeadlessCommand(
@@ -1252,12 +1281,15 @@ export async function handleHeadlessCommand(
     process.exit(1);
   }
 
-  const { getClientToolsFromRegistry } = await import("./tools/manager");
-  const loadedToolNames = getClientToolsFromRegistry().map((t) => t.name);
-  const availableTools =
-    loadedToolNames.length > 0
-      ? loadedToolNames
-      : agent.tools?.map((t) => t.name).filter((n): n is string => !!n) || [];
+  let availableTools =
+    agent.tools?.map((t) => t.name).filter((n): n is string => !!n) || [];
+  {
+    const initialToolContext = await prepareHeadlessToolExecutionContext({
+      agentId: agent.id,
+      conversationId,
+    });
+    availableTools = initialToolContext.availableTools;
+  }
 
   // If input-format is stream-json, use bidirectional mode
   if (isBidirectionalMode) {
@@ -1420,7 +1452,15 @@ export async function handleHeadlessCommand(
         }
       }
 
-      const executedResults = await executeApprovalBatch(decisions);
+      const recoveryToolContext = await prepareHeadlessToolExecutionContext({
+        agentId: agent.id,
+        conversationId,
+      });
+      availableTools = recoveryToolContext.availableTools;
+      const executedResults = await executeApprovalBatch(decisions, undefined, {
+        toolContextId:
+          recoveryToolContext.preparedToolContext.preparedToolContext.contextId,
+      });
 
       // Send all results in one batch
       const approvalInput: ApprovalCreate = {
@@ -1455,7 +1495,11 @@ export async function handleHeadlessCommand(
       const approvalStream = await sendMessageStream(
         conversationId,
         approvalMessages,
-        { agentId: agent.id },
+        {
+          agentId: agent.id,
+          preparedToolContext:
+            recoveryToolContext.preparedToolContext.preparedToolContext,
+        },
       );
       const drainResult = await drainStreamWithResume(
         approvalStream,
@@ -1668,9 +1712,17 @@ ${SYSTEM_REMINDER_CLOSE}
       let stream: Awaited<ReturnType<typeof sendMessageStream>>;
       let turnToolContextId: string | null = null;
       try {
+        const turnToolContext = await prepareHeadlessToolExecutionContext({
+          agentId: agent.id,
+          conversationId,
+          overrideModel: overrideModelHandle,
+        });
+        availableTools = turnToolContext.availableTools;
         stream = await sendMessageStream(conversationId, currentInput, {
           agentId: agent.id,
           overrideModel: overrideModelHandle,
+          preparedToolContext:
+            turnToolContext.preparedToolContext.preparedToolContext,
         });
         turnToolContextId = getStreamToolContextId(stream);
       } catch (preStreamError) {
@@ -2716,7 +2768,15 @@ async function runBidirectionalMode(
       const { executeApprovalBatch } = await import(
         "./agent/approval-execution"
       );
-      const executedResults = await executeApprovalBatch(decisions);
+      const recoveryToolContext = await prepareHeadlessToolExecutionContext({
+        agentId: agent.id,
+        conversationId,
+      });
+      availableTools = recoveryToolContext.availableTools;
+      const executedResults = await executeApprovalBatch(decisions, undefined, {
+        toolContextId:
+          recoveryToolContext.preparedToolContext.preparedToolContext.contextId,
+      });
 
       const approvalInput: ApprovalCreate = {
         type: "approval",
@@ -2749,7 +2809,11 @@ async function runBidirectionalMode(
       const approvalStream = await sendMessageStream(
         conversationId,
         approvalMessages,
-        { agentId: agent.id },
+        {
+          agentId: agent.id,
+          preparedToolContext:
+            recoveryToolContext.preparedToolContext.preparedToolContext,
+        },
       );
       const drainResult = await drainStreamWithResume(
         approvalStream,
@@ -3144,7 +3208,15 @@ async function runBidirectionalMode(
         };
       }
 
-      const executedResults = await executeApprovalBatch(decisions);
+      const recoveryToolContext = await prepareHeadlessToolExecutionContext({
+        agentId: agent.id,
+        conversationId: targetConversationId,
+      });
+      availableTools = recoveryToolContext.availableTools;
+      const executedResults = await executeApprovalBatch(decisions, undefined, {
+        toolContextId:
+          recoveryToolContext.preparedToolContext.preparedToolContext.contextId,
+      });
       approvalsProcessed += executedResults.length;
 
       const approvalInput: ApprovalCreate = {
@@ -3155,7 +3227,11 @@ async function runBidirectionalMode(
       const approvalStream = await sendMessageStream(
         targetConversationId,
         [approvalInput],
-        { agentId: agent.id },
+        {
+          agentId: agent.id,
+          preparedToolContext:
+            recoveryToolContext.preparedToolContext.preparedToolContext,
+        },
       );
 
       const drainResult = await drainStreamWithResume(
@@ -3585,8 +3661,15 @@ async function runBidirectionalMode(
           let stream: Awaited<ReturnType<typeof sendMessageStream>>;
           let turnToolContextId: string | null = null;
           try {
+            const turnToolContext = await prepareHeadlessToolExecutionContext({
+              agentId: agent.id,
+              conversationId,
+            });
+            availableTools = turnToolContext.availableTools;
             stream = await sendMessageStream(conversationId, currentInput, {
               agentId: agent.id,
+              preparedToolContext:
+                turnToolContext.preparedToolContext.preparedToolContext,
             });
             turnToolContextId = getStreamToolContextId(stream);
           } catch (preStreamError) {

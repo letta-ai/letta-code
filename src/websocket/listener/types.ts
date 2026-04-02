@@ -14,6 +14,7 @@ import type {
   QueueRuntime,
 } from "../../queue/queueRuntime";
 import type { SharedReminderState } from "../../reminders/state";
+import type { ToolsetName, ToolsetPreference } from "../../tools/toolset";
 import type {
   ApprovalResponseBody,
   ControlRequest,
@@ -124,6 +125,9 @@ export type ConversationRuntime = {
   pendingTurns: number;
   isRecoveringApprovals: boolean;
   loopStatus: LoopStatus;
+  currentToolset: ToolsetName | null;
+  currentToolsetPreference: ToolsetPreference;
+  currentLoadedTools: string[];
   pendingApprovalBatchByToolCallId: Map<string, string>;
   pendingInterruptedResults: Array<ApprovalResult> | null;
   pendingInterruptedContext: {
