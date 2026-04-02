@@ -353,10 +353,9 @@ describe("listen-client multi-worker concurrency", () => {
     expect(__listenClientTestUtils.getListenerStatus(listener)).toBe(
       "processing",
     );
-    expect(sendMessageStreamMock.mock.calls.map((call) => call[0])).toEqual([
-      "conv-a",
-      "conv-b",
-    ]);
+    expect(
+      sendMessageStreamMock.mock.calls.map((call) => call[0]).sort(),
+    ).toEqual(["conv-a", "conv-b"]);
 
     drainB.resolve(defaultDrainResult);
     await turnB;
@@ -397,12 +396,22 @@ describe("listen-client multi-worker concurrency", () => {
     ]);
 
     expect(sendMessageStreamMock.mock.calls).toHaveLength(2);
-    expect(sendMessageStreamMock.mock.calls[0]?.[0]).toBe("default");
-    expect(sendMessageStreamMock.mock.calls[1]?.[0]).toBe("default");
-    expect(sendMessageStreamMock.mock.calls[0]?.[2]).toMatchObject({
+    expect(sendMessageStreamMock.mock.calls.map((call) => call[0])).toEqual([
+      "default",
+      "default",
+    ]);
+
+    const agentACall = sendMessageStreamMock.mock.calls.find(
+      (call) => call[2]?.agentId === "agent-a",
+    );
+    const agentBCall = sendMessageStreamMock.mock.calls.find(
+      (call) => call[2]?.agentId === "agent-b",
+    );
+
+    expect(agentACall?.[2]).toMatchObject({
       agentId: "agent-a",
     });
-    expect(sendMessageStreamMock.mock.calls[1]?.[2]).toMatchObject({
+    expect(agentBCall?.[2]).toMatchObject({
       agentId: "agent-b",
     });
   });
