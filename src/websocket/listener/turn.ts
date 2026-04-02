@@ -46,6 +46,7 @@ import { getPlanModeReminder } from "../../reminders/planModeReminder";
 import { syncReminderStateFromContextTracker } from "../../reminders/state";
 import { settingsManager } from "../../settings-manager";
 import { trackBoundaryError } from "../../telemetry/errorReporting";
+import { prepareToolExecutionContextForScope } from "../../tools/toolset";
 import type { StopReasonType, StreamDelta } from "../../types/protocol_v2";
 import { debugLog, debugWarn, isDebugEnabled } from "../../utils/debug";
 import {
@@ -440,12 +441,23 @@ export async function handleIncomingMessage(
     let pendingNormalizationInterruptedToolCallIds = [
       ...queuedInterruptedToolCallIds,
     ];
+    const preparedToolContext = await prepareToolExecutionContextForScope({
+      agentId,
+      conversationId,
+      workingDirectory: turnWorkingDirectory,
+      permissionModeState: turnPermissionModeState,
+    });
+    runtime.currentToolset = preparedToolContext.toolset;
+    runtime.currentToolsetPreference = preparedToolContext.toolsetPreference;
+    runtime.currentLoadedTools =
+      preparedToolContext.preparedToolContext.loadedToolNames;
     const buildSendOptions = (): Parameters<typeof sendMessageStream>[2] => ({
       agentId,
       streamTokens: true,
       background: true,
       workingDirectory: turnWorkingDirectory,
       permissionModeState: turnPermissionModeState,
+      preparedToolContext: preparedToolContext.preparedToolContext,
       ...(pendingNormalizationInterruptedToolCallIds.length > 0
         ? {
             approvalNormalization: {

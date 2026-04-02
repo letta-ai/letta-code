@@ -23,6 +23,7 @@ import { classifyApprovals } from "../../cli/helpers/approvalClassification";
 import { drainStreamWithResume } from "../../cli/helpers/stream";
 import { computeDiffPreviews } from "../../helpers/diffPreview";
 import { isInteractiveApprovalTool } from "../../tools/interactivePolicy";
+import { prepareToolExecutionContextForScope } from "../../tools/toolset";
 import type {
   ApprovalResponseBody,
   StopReasonType,
@@ -596,9 +597,24 @@ export async function resolveRecoveredApprovalResponse(
   });
   const recoveryAbortController = new AbortController();
   runtime.activeAbortController = recoveryAbortController;
+  const preparedToolContext = await prepareToolExecutionContextForScope({
+    agentId: recovered.agentId,
+    conversationId: recovered.conversationId,
+    workingDirectory: runtime.activeWorkingDirectory,
+    permissionModeState: getOrCreateConversationPermissionModeStateRef(
+      runtime.listener,
+      recovered.agentId,
+      recovered.conversationId,
+    ),
+  });
+  runtime.currentToolset = preparedToolContext.toolset;
+  runtime.currentToolsetPreference = preparedToolContext.toolsetPreference;
+  runtime.currentLoadedTools =
+    preparedToolContext.preparedToolContext.loadedToolNames;
   try {
     const approvalResults = await executeApprovalBatch(decisions, undefined, {
       abortSignal: recoveryAbortController.signal,
+      toolContextId: preparedToolContext.preparedToolContext.contextId,
       workingDirectory: getConversationWorkingDirectory(
         runtime.listener,
         recovered.agentId,

@@ -9,6 +9,7 @@ import type {
 } from "../../queue/queueRuntime";
 import { sharedReminderProviders } from "../../reminders/engine";
 import { queueSkillContent } from "../../tools/impl/skillContentRegistry";
+import { clearTools, loadSpecificTools } from "../../tools/manager";
 import { resolveRecoveredApprovalResponse } from "../../websocket/listener/recovery";
 import { injectQueuedSkillContent } from "../../websocket/listener/skill-injection";
 import type { IncomingMessage } from "../../websocket/listener/types";
@@ -37,13 +38,25 @@ const defaultDrainResult: DrainResult = {
 const sendMessageStreamCalls: Array<{
   conversationId: string;
   messages: unknown[];
-  opts?: { agentId?: string };
+  opts?: {
+    agentId?: string;
+    preparedToolContext?: {
+      clientTools: Array<{ name: string }>;
+      loadedToolNames: string[];
+    };
+  };
 }> = [];
 const sendMessageStreamMock = mock(
   async (
     conversationId: string,
     messages: unknown[],
-    opts?: { agentId?: string },
+    opts?: {
+      agentId?: string;
+      preparedToolContext?: {
+        clientTools: Array<{ name: string }>;
+        loadedToolNames: string[];
+      };
+    },
   ): Promise<MockStream> => {
     sendMessageStreamCalls.push({ conversationId, messages, opts });
     return {
@@ -71,9 +84,15 @@ const drainStreamWithResumeMock = mock(
     return defaultDrainResult;
   },
 );
-const retrieveAgentMock = mock(async (agentId: string) => ({ id: agentId }));
+const agentModelById = new Map<string, string>();
+const conversationModelById = new Map<string, string | null>();
+const retrieveAgentMock = mock(async (agentId: string) => ({
+  id: agentId,
+  model: agentModelById.get(agentId) ?? "anthropic/claude-sonnet-4",
+}));
 const retrieveConversationMock = mock(async (conversationId: string) => ({
   id: conversationId,
+  model: conversationModelById.get(conversationId) ?? null,
   in_context_message_ids: ["msg-recovered-approval"],
 }));
 const retrieveMessageMock = mock(async () => [
@@ -264,6 +283,9 @@ describe("listen-client multi-worker concurrency", () => {
 
     queueSkillContent("__test-cleanup__", "__test-cleanup__");
     injectQueuedSkillContent([]);
+    agentModelById.clear();
+    conversationModelById.clear();
+    clearTools();
     permissionMode.reset();
     sendMessageStreamMock.mockClear();
     sendMessageStreamCalls.length = 0;
@@ -287,6 +309,7 @@ describe("listen-client multi-worker concurrency", () => {
   afterEach(() => {
     sharedReminderProviders["session-context"] = origSessionContext;
     sharedReminderProviders["agent-info"] = origAgentInfo;
+    clearTools();
   });
 
   afterEach(() => {
@@ -330,10 +353,9 @@ describe("listen-client multi-worker concurrency", () => {
     expect(__listenClientTestUtils.getListenerStatus(listener)).toBe(
       "processing",
     );
-    expect(sendMessageStreamMock.mock.calls.map((call) => call[0])).toEqual([
-      "conv-a",
-      "conv-b",
-    ]);
+    expect(
+      sendMessageStreamMock.mock.calls.map((call) => call[0]).sort(),
+    ).toEqual(["conv-a", "conv-b"]);
 
     drainB.resolve(defaultDrainResult);
     await turnB;
@@ -374,14 +396,99 @@ describe("listen-client multi-worker concurrency", () => {
     ]);
 
     expect(sendMessageStreamMock.mock.calls).toHaveLength(2);
-    expect(sendMessageStreamMock.mock.calls[0]?.[0]).toBe("default");
-    expect(sendMessageStreamMock.mock.calls[1]?.[0]).toBe("default");
-    expect(sendMessageStreamMock.mock.calls[0]?.[2]).toMatchObject({
+    expect(sendMessageStreamMock.mock.calls.map((call) => call[0])).toEqual([
+      "default",
+      "default",
+    ]);
+
+    const agentACall = sendMessageStreamMock.mock.calls.find(
+      (call) => call[2]?.agentId === "agent-a",
+    );
+    const agentBCall = sendMessageStreamMock.mock.calls.find(
+      (call) => call[2]?.agentId === "agent-b",
+    );
+
+    expect(agentACall?.[2]).toMatchObject({
       agentId: "agent-a",
     });
-    expect(sendMessageStreamMock.mock.calls[1]?.[2]).toMatchObject({
+    expect(agentBCall?.[2]).toMatchObject({
       agentId: "agent-b",
     });
+  });
+
+  test("prepares isolated tool snapshots for concurrent mixed-provider turns", async () => {
+    await loadSpecificTools(["Edit"]);
+    agentModelById.set("agent-openai", "openai/gpt-5.3-codex");
+    agentModelById.set("agent-anthropic", "anthropic/claude-sonnet-4");
+
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const runtimeOpenAI =
+      __listenClientTestUtils.getOrCreateConversationRuntime(
+        listener,
+        "agent-openai",
+        "conv-openai",
+      );
+    const runtimeAnthropic =
+      __listenClientTestUtils.getOrCreateConversationRuntime(
+        listener,
+        "agent-anthropic",
+        "conv-anthropic",
+      );
+    const socket = new MockSocket();
+    const drainOpenAI = createDeferredDrain();
+    const drainAnthropic = createDeferredDrain();
+    drainHandlers.set("conv-openai", () => drainOpenAI.promise);
+    drainHandlers.set("conv-anthropic", () => drainAnthropic.promise);
+
+    const openAITurn = __listenClientTestUtils.handleIncomingMessage(
+      makeIncomingMessage("agent-openai", "conv-openai", "codex turn"),
+      socket as unknown as WebSocket,
+      runtimeOpenAI,
+    );
+    const anthropicTurn = __listenClientTestUtils.handleIncomingMessage(
+      makeIncomingMessage(
+        "agent-anthropic",
+        "conv-anthropic",
+        "anthropic turn",
+      ),
+      socket as unknown as WebSocket,
+      runtimeAnthropic,
+    );
+
+    await waitFor(() => sendMessageStreamCalls.length === 2);
+
+    const openAICall = sendMessageStreamCalls.find(
+      (call) => call.conversationId === "conv-openai",
+    );
+    const anthropicCall = sendMessageStreamCalls.find(
+      (call) => call.conversationId === "conv-anthropic",
+    );
+
+    const openAITools =
+      openAICall?.opts?.preparedToolContext?.clientTools.map(
+        (tool) => tool.name,
+      ) ?? [];
+    const anthropicTools =
+      anthropicCall?.opts?.preparedToolContext?.clientTools.map(
+        (tool) => tool.name,
+      ) ?? [];
+
+    expect(openAITools).toContain("ApplyPatch");
+    expect(openAITools).not.toContain("Edit");
+    expect(anthropicTools).toContain("Edit");
+    expect(anthropicTools).not.toContain("ApplyPatch");
+    expect(openAICall?.opts?.preparedToolContext?.loadedToolNames).toContain(
+      "ApplyPatch",
+    );
+    expect(anthropicCall?.opts?.preparedToolContext?.loadedToolNames).toContain(
+      "Edit",
+    );
+    expect(runtimeOpenAI.currentLoadedTools).toContain("ApplyPatch");
+    expect(runtimeAnthropic.currentLoadedTools).toContain("Edit");
+
+    drainOpenAI.resolve(defaultDrainResult);
+    drainAnthropic.resolve(defaultDrainResult);
+    await Promise.all([openAITurn, anthropicTurn]);
   });
 
   test("cancelling one conversation runtime does not cancel another", async () => {
@@ -1079,6 +1186,7 @@ describe("listen-client multi-worker concurrency", () => {
 
     retrieveConversationMock.mockResolvedValueOnce({
       id: "conv-mixed-sync",
+      model: null,
       in_context_message_ids: ["msg-recovered-approval"],
     });
     retrieveMessageMock.mockResolvedValueOnce([
