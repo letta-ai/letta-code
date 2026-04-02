@@ -81,11 +81,27 @@ jobs:
             echo "previous_tag=" >> $GITHUB_OUTPUT
           else
             PREVIOUS_TAG=$(
-              git tag --merged "$GITHUB_SHA" --sort=-version:refname \
-                | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
-                | grep -Fxv "$TAG" \
-                | head -n 1 || true
+              curl -fsSL \
+                -H "Accept: application/vnd.github+json" \
+                -H "Authorization: Bearer ${{ github.token }}" \
+                "https://api.github.com/repos/${{ github.repository }}/releases?per_page=100" \
+                | jq -r --arg tag "$TAG" '
+                    map(select(.draft == false and .prerelease == false and .tag_name != $tag))
+                    | sort_by(.published_at // .created_at)
+                    | last
+                    | .tag_name // empty
+                  ' || true
             )
+
+            if [ -z "$PREVIOUS_TAG" ]; then
+              PREVIOUS_TAG=$(
+                git tag --sort=-version:refname \
+                  | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+                  | grep -Fxv "$TAG" \
+                  | head -n 1 || true
+              )
+            fi
+
             echo "is_prerelease=false" >> $GITHUB_OUTPUT
             echo "npm_tag=latest" >> $GITHUB_OUTPUT
             echo "previous_tag=$PREVIOUS_TAG" >> $GITHUB_OUTPUT
