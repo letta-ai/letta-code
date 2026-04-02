@@ -12068,19 +12068,24 @@ ${SYSTEM_REMINDER_CLOSE}
         "Adding permission...",
       );
 
-      // Save the permission rule
-      try {
-        await savePermissionRule(rule, "allow", actualScope);
-      } catch (error) {
-        const errorDetails = formatErrorDetails(error, agentId);
-        cmd.fail(`Failed to add permission: ${errorDetails}`);
-        return;
-      }
+      if (rule === "Edit(**)" && actualScope === "session") {
+        setUiPermissionMode("acceptEdits");
+        cmd.finish("Permission mode set to acceptEdits (session only)", true);
+      } else {
+        // Save the permission rule
+        try {
+          await savePermissionRule(rule, "allow", actualScope);
+        } catch (error) {
+          const errorDetails = formatErrorDetails(error, agentId);
+          cmd.fail(`Failed to add permission: ${errorDetails}`);
+          return;
+        }
 
-      // Show confirmation in transcript
-      const scopeText =
-        actualScope === "session" ? " (session only)" : " (project)";
-      cmd.finish(`Added permission: ${rule}${scopeText}`, true);
+        // Show confirmation in transcript
+        const scopeText =
+          actualScope === "session" ? " (session only)" : " (project)";
+        cmd.finish(`Added permission: ${rule}${scopeText}`, true);
+      }
 
       // Re-check remaining approvals against the newly saved permission
       // This allows subsequent approvals that match the new rule to be auto-allowed
@@ -12238,6 +12243,7 @@ ${SYSTEM_REMINDER_CLOSE}
       refreshDerived,
       isExecutingTool,
       setStreaming,
+      setUiPermissionMode,
       openTrajectorySegment,
       prepareScopedToolExecutionContext,
       updateStreamingOutput,

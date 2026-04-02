@@ -24,6 +24,13 @@ test("/approve-always re-analyzes the current tool before saving", () => {
     "const rule = latestApprovalContext.recommendedRule;",
   );
   expect(segment).toContain('fail("This approval cannot be persisted.")');
+  expect(segment).toContain(
+    'if (rule === "Edit(**)" && actualScope === "session")',
+  );
+  expect(segment).toContain('setUiPermissionMode("acceptEdits");');
+  expect(segment).toContain(
+    'cmd.finish("Permission mode set to acceptEdits (session only)", true);',
+  );
   expect(segment).not.toContain(
     "const rule = approvalContext.recommendedRule;",
   );

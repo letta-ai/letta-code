@@ -252,6 +252,17 @@ function analyzeEditApproval(
       ? "**"
       : `${relativeDirPath}/**`;
 
+  if (pattern === "**") {
+    return {
+      recommendedRule: "Edit(**)",
+      ruleDescription: "accept edits mode for this session",
+      approveAlwaysText: "Yes, switch to accept edits mode for this session",
+      defaultScope: "session",
+      allowPersistence: true,
+      safetyLevel: "safe",
+    };
+  }
+
   return {
     recommendedRule: `Edit(${pattern})`,
     ruleDescription: `editing files in ${relativeDirPath || "project"}/`,

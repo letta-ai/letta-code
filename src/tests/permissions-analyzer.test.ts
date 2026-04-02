@@ -438,7 +438,7 @@ test("Edit suggests directory pattern for project-level", () => {
   expect(context.safetyLevel).toBe("safe");
 });
 
-test("Edit at project root suggests project pattern", () => {
+test("Edit at project root suggests accept edits mode for this session", () => {
   if (process.platform === "win32") return; // Skip on Windows - Unix paths
 
   const context = analyzeApprovalContext(
@@ -447,7 +447,9 @@ test("Edit at project root suggests project pattern", () => {
     "/Users/test/project",
   );
 
-  expect(context.approveAlwaysText).toContain("project");
+  expect(context.recommendedRule).toBe("Edit(**)");
+  expect(context.approveAlwaysText).toContain("accept edits mode");
+  expect(context.defaultScope).toBe("session");
   expect(context.safetyLevel).toBe("safe");
 });
 
