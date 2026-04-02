@@ -57,7 +57,13 @@ Each file should have a clear structure and a well-defined purpose.
 - Any file/folder name collisions (e.g. `system/human.md` and `system/human/identity.md`)?
 
 **Discovery paths** ← *Progressive disclosure*
-Files outside `system/` must be dynamically loaded — you must index them so your future self can discover them.
+Files outside `system/` must be dynamically loaded — you must index them so your future self can discover them. Reference external context from the relevant parts of in-context memory, e.g.:
+```
+Sarah's active projects are: Letta Code [[projects/letta_code.md]] and Letta Cloud [[projects/letta_cloud.md]]
+```
+```
+When running a migration, always use the skill [[skills/db-migrations]]
+```
 - Can you find external files when you need them? Are they referenced from `system/` with `[[path]]` links or clear descriptions?
 - Do file names and frontmatter descriptions let you decide whether to load a file without reading it?
 - Do skills have informative names and descriptions so you know when to load them?
