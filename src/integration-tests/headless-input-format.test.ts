@@ -44,6 +44,7 @@ async function runBidirectional(
         "--output-format",
         "stream-json",
         "--new-agent",
+        "--no-memfs",
         "-m",
         "sonnet-4.6-low",
         "--yolo",

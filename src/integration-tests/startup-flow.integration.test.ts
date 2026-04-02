@@ -24,7 +24,7 @@ async function runCli(
   const runOnce = () =>
     new Promise<{ stdout: string; stderr: string; exitCode: number | null }>(
       (resolve, reject) => {
-        const proc = spawn("bun", ["run", "dev", ...args], {
+        const proc = spawn("bun", ["run", "dev", "--no-memfs", ...args], {
           cwd: projectRoot,
           env: createIsolatedCliTestEnv(),
         });

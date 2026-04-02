@@ -73,6 +73,7 @@ async function runCLI(
     scenarioPrompt(),
     "--yolo",
     "--new-agent",
+    "--no-memfs",
     "--base-tools",
     "memory,web_search,fetch_webpage,conversation_search",
     "--output-format",
@@ -80,7 +81,7 @@ async function runCLI(
     "-m",
     model,
   ];
-  // Mark as subagent to prevent polluting user's LRU settings
+  // Use an isolated env so the scenario doesn't mutate the user's saved session state.
   const proc = Bun.spawn(cmd, {
     stdout: "pipe",
     stderr: "pipe",

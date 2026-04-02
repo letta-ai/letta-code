@@ -64,12 +64,13 @@ async function runCLI(
     windowsScenarioPrompt(),
     "--yolo",
     "--new-agent",
+    "--no-memfs",
     "--output-format",
     "text",
     "-m",
     model,
   ];
-  // Mark as subagent to prevent polluting user's LRU settings
+  // Use an isolated env so the scenario doesn't mutate the user's saved session state.
   const proc = Bun.spawn(cmd, {
     stdout: "pipe",
     stderr: "pipe",

@@ -24,6 +24,7 @@ async function runHeadlessCommand(
         "run",
         "dev",
         "--new-agent",
+        "--no-memfs",
         "-p",
         prompt,
         "--output-format",
