@@ -9,6 +9,72 @@ on:
       - main
 
 jobs:
+  classify:
+    name: Classify change
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      release_bump_only: ${{ steps.classify.outputs.release_bump_only }}
+      run_heavy_ci: ${{ steps.classify.outputs.run_heavy_ci }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Detect release-bump-only change
+        id: classify
+        run: |
+          set -euo pipefail
+
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            TITLE="${{ github.event.pull_request.title }}"
+            BASE_SHA="${{ github.event.pull_request.base.sha }}"
+            HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+          else
+            TITLE=$(git log --format=%s "${{ github.event.before }}..${{ github.sha }}" | tail -n 1)
+            BASE_SHA="${{ github.event.before }}"
+            HEAD_SHA="${{ github.sha }}"
+          fi
+
+          CHANGED_FILES=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")
+
+          TITLE_MATCH=false
+          if [[ "$TITLE" == chore:\ bump\ version\ to* ]]; then
+            TITLE_MATCH=true
+          fi
+
+          FILES_MATCH=true
+          if [ -z "$CHANGED_FILES" ]; then
+            FILES_MATCH=false
+          fi
+
+          for file in $CHANGED_FILES; do
+            case "$file" in
+              package.json|package-lock.json) ;;
+              *)
+                FILES_MATCH=false
+                ;;
+            esac
+          done
+
+          RELEASE_BUMP_ONLY=false
+          if [ "$TITLE_MATCH" = true ] && [ "$FILES_MATCH" = true ]; then
+            RELEASE_BUMP_ONLY=true
+          fi
+
+          echo "release_bump_only=$RELEASE_BUMP_ONLY" >> "$GITHUB_OUTPUT"
+
+          if [ "$RELEASE_BUMP_ONLY" = true ]; then
+            echo "run_heavy_ci=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run_heavy_ci=true" >> "$GITHUB_OUTPUT"
+          fi
+
+          echo "title=$TITLE"
+          printf 'changed_files=%s\n' "$CHANGED_FILES"
+
   check:
     name: Lint & Type Check
     runs-on: ubuntu-latest
@@ -63,7 +129,8 @@ jobs:
         run: bun run test:update-chain:manual
 
   build:
-    needs: check
+    needs: [classify, check]
+    if: needs.classify.outputs.run_heavy_ci == 'true'
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     strategy:
@@ -182,7 +249,8 @@ jobs:
         run: bun pm pack
 
   node18-smoke:
-    needs: check
+    needs: [classify, check]
+    if: needs.classify.outputs.run_heavy_ci == 'true'
     name: Node 18 Smoke Test
     runs-on: ubuntu-24.04
     permissions:
@@ -216,7 +284,8 @@ jobs:
         run: node ./letta.js --help
 
   headless:
-    needs: check
+    needs: [classify, check]
+    if: needs.classify.outputs.run_heavy_ci == 'true'
     name: Headless / ${{ matrix.model }}
     runs-on: ubuntu-latest
     strategy:
@@ -248,11 +317,11 @@ jobs:
           bun run src/tests/headless-scenario.ts --model "${{ matrix.model }}" --output stream-json --parallel on
 
   docker:
-    needs: check
+    needs: [classify, check]
     name: Docker Integration
     runs-on: ubuntu-latest
     # Only run on push to main or PRs from the same repo (not forks, to protect secrets)
-    if: ${{ github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) }}
+    if: ${{ needs.classify.outputs.run_heavy_ci == 'true' && (github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
