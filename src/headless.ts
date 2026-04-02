@@ -92,7 +92,8 @@ import {
   createSharedReminderState,
   syncReminderStateFromContextTracker,
 } from "./reminders/state";
-import { settingsManager } from "./settings-manager";
+import { getCurrentWorkingDirectory } from "./runtime-context";
+import { settingsManager, shouldPersistSessionState } from "./settings-manager";
 import { telemetry } from "./telemetry";
 import { trackBoundaryError } from "./telemetry/errorReporting";
 import {
@@ -317,7 +318,7 @@ async function prepareHeadlessToolExecutionContext(params: {
     agentId: params.agentId,
     conversationId: params.conversationId,
     overrideModel: params.overrideModel,
-    workingDirectory: process.env.USER_CWD || process.cwd(),
+    workingDirectory: getCurrentWorkingDirectory(),
     exclude: ["AskUserQuestion"],
   });
 
@@ -327,6 +328,24 @@ async function prepareHeadlessToolExecutionContext(params: {
       (tool) => tool.name,
     ),
   };
+}
+
+async function flushAndExit(code: number): Promise<never> {
+  const flushWritable = (stream: NodeJS.WriteStream): Promise<void> =>
+    new Promise((resolve) => {
+      if (stream.destroyed || stream.writableEnded) {
+        resolve();
+        return;
+      }
+      stream.write("", () => resolve());
+    });
+
+  await Promise.allSettled([
+    flushWritable(process.stdout),
+    flushWritable(process.stderr),
+  ]);
+
+  process.exit(code);
 }
 
 export async function handleHeadlessCommand(
@@ -453,6 +472,7 @@ export async function handleHeadlessCommand(
 
   // Resolve agent (same logic as interactive mode)
   let agent: AgentState | null = null;
+  let autoEnableMemfsForFreshAgent = false;
   let specifiedAgentId = values.agent;
   const specifiedAgentName = values.name;
   let specifiedConversationId = values.conversation;
@@ -883,9 +903,7 @@ export async function handleHeadlessCommand(
   if (!agent && forceNew) {
     const updateArgs = getModelUpdateArgs(model);
     // Pre-determine memfs mode so the agent is created with the correct prompt.
-    const { isLettaCloud, enableMemfsIfCloud } = await import(
-      "./agent/memoryFilesystem"
-    );
+    const { isLettaCloud } = await import("./agent/memoryFilesystem");
     const willAutoEnableMemfs =
       shouldAutoEnableMemfsForNewAgent && (await isLettaCloud());
     const effectiveMemoryMode =
@@ -908,17 +926,15 @@ export async function handleHeadlessCommand(
     };
     const result = await createAgent(createOptions);
     agent = result.agent;
-
-    // Enable memfs on Letta Cloud (tags, repo clone, tool detach).
-    if (willAutoEnableMemfs) {
-      await enableMemfsIfCloud(agent.id);
-    }
+    autoEnableMemfsForFreshAgent = willAutoEnableMemfs;
   }
 
   // Priority 4: Try to resume from project settings (.letta/settings.local.json)
   if (!agent) {
     await settingsManager.loadLocalProjectSettings();
-    const localAgentId = settingsManager.getLocalLastAgentId(process.cwd());
+    const localAgentId = settingsManager.getLocalLastAgentId(
+      getCurrentWorkingDirectory(),
+    );
     if (localAgentId) {
       try {
         agent = await client.agents.retrieve(localAgentId);
@@ -1002,6 +1018,7 @@ export async function handleHeadlessCommand(
   let effectiveReflectionSettings: ReflectionSettings;
 
   const isSubagent = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
+  const startupMemfsFlag = autoEnableMemfsForFreshAgent ? true : memfsFlag;
 
   // Captured so prompt logic below can await it when needed.
   let memfsBgPromise: Promise<unknown> | undefined;
@@ -1023,7 +1040,7 @@ export async function handleHeadlessCommand(
     // Run enable/disable logic but skip the git pull.
     try {
       const { applyMemfsFlags } = await import("./agent/memoryFilesystem");
-      await applyMemfsFlags(agent.id, memfsFlag, noMemfsFlag, {
+      await applyMemfsFlags(agent.id, startupMemfsFlag, noMemfsFlag, {
         pullOnExistingRepo: false,
         agentTags: agent.tags,
         skipPromptUpdate: forceNew,
@@ -1042,7 +1059,7 @@ export async function handleHeadlessCommand(
   } else if (memfsStartupPolicy === "background") {
     // Fire pull async; don't block session initialisation.
     const { applyMemfsFlags } = await import("./agent/memoryFilesystem");
-    memfsBgPromise = applyMemfsFlags(agent.id, memfsFlag, noMemfsFlag, {
+    memfsBgPromise = applyMemfsFlags(agent.id, startupMemfsFlag, noMemfsFlag, {
       pullOnExistingRepo: true,
       agentTags: agent.tags,
       skipPromptUpdate: forceNew,
@@ -1063,7 +1080,7 @@ export async function handleHeadlessCommand(
       const { applyMemfsFlags } = await import("./agent/memoryFilesystem");
       const memfsResult = await applyMemfsFlags(
         agent.id,
-        memfsFlag,
+        startupMemfsFlag,
         noMemfsFlag,
         {
           pullOnExistingRepo: true,
@@ -1257,7 +1274,7 @@ export async function handleHeadlessCommand(
 
   // Save session (agent + conversation) to both project and global settings
   // Skip for subagents - they shouldn't pollute the LRU settings
-  if (!isSubagent) {
+  if (shouldPersistSessionState()) {
     await settingsManager.loadLocalProjectSettings();
     settingsManager.persistSession(agent.id, conversationId);
   }
@@ -1326,7 +1343,7 @@ export async function handleHeadlessCommand(
       conversation_id: conversationId,
       model: agent.llm_config?.model ?? "",
       tools: availableTools,
-      cwd: process.cwd(),
+      cwd: getCurrentWorkingDirectory(),
       mcp_servers: [],
       permission_mode: "",
       slash_commands: [],
@@ -1587,6 +1604,7 @@ ${SYSTEM_REMINDER_CLOSE}
     },
     state: sharedReminderState,
     sessionContextReminderEnabled: systemInfoReminderEnabled,
+    workingDirectory: getCurrentWorkingDirectory(),
     reflectionSettings: effectiveReflectionSettings,
     skillSources: resolvedSkillSources,
     resolvePlanModeReminder: async () => {
@@ -2653,6 +2671,7 @@ ${SYSTEM_REMINDER_CLOSE}
   // Report all milestones at the end for latency audit
   markMilestone("HEADLESS_COMPLETE");
   reportAllMilestones();
+  await flushAndExit(0);
 }
 
 /**
@@ -2683,7 +2702,7 @@ async function runBidirectionalMode(
     conversation_id: conversationId,
     model: agent.llm_config?.model,
     tools: availableTools,
-    cwd: process.cwd(),
+    cwd: getCurrentWorkingDirectory(),
     memfs_enabled: settingsManager.isMemfsEnabled(agent.id),
     skill_sources: skillSources,
     system_info_reminder_enabled: systemInfoReminderEnabled,
@@ -3624,6 +3643,7 @@ async function runBidirectionalMode(
           },
           state: sharedReminderState,
           sessionContextReminderEnabled: systemInfoReminderEnabled,
+          workingDirectory: getCurrentWorkingDirectory(),
           reflectionSettings,
           skillSources,
           resolvePlanModeReminder: async () => {

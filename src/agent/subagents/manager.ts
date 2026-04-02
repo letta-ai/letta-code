@@ -471,6 +471,13 @@ interface SubagentLauncher {
   args: string[];
 }
 
+export function resolveSubagentWorkingDirectory(
+  env: NodeJS.ProcessEnv = process.env,
+  fallbackCwd: string = process.cwd(),
+): string {
+  return env.USER_CWD || fallbackCwd;
+}
+
 export function resolveSubagentLauncher(
   cliArgs: string[],
   options: ResolveSubagentLauncherOptions = {},
@@ -688,9 +695,10 @@ async function executeSubagent(
       process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
     const inheritedBaseUrl =
       process.env.LETTA_BASE_URL || settings.env?.LETTA_BASE_URL;
+    const subagentWorkingDirectory = resolveSubagentWorkingDirectory();
 
     const proc = spawn(launcher.command, launcher.args, {
-      cwd: process.cwd(),
+      cwd: subagentWorkingDirectory,
       env: {
         ...process.env,
         ...(inheritedApiKey && { LETTA_API_KEY: inheritedApiKey }),

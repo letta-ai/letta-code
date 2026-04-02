@@ -44,7 +44,7 @@ import {
 } from "./cli/startupFlagValidation";
 import { runSubcommand } from "./cli/subcommands/router";
 import { permissionMode } from "./permissions/mode";
-import { settingsManager } from "./settings-manager";
+import { settingsManager, shouldPersistSessionState } from "./settings-manager";
 import { startStartupAutoUpdateCheck } from "./startup-auto-update";
 import { telemetry } from "./telemetry";
 import { trackBoundaryError } from "./telemetry/errorReporting";
@@ -385,20 +385,6 @@ async function main(): Promise<void> {
   const { checkAndAutoUpdate } = await import("./updater/auto-update");
   const autoUpdatePromise = startStartupAutoUpdateCheck(checkAndAutoUpdate);
 
-  // Check Docker version for self-hosted users (non-blocking)
-  const { startDockerVersionCheck } = await import("./startup-docker-check");
-  startDockerVersionCheck().catch(() => {});
-
-  // Clean up old overflow files (non-blocking, 24h retention)
-  const { cleanupOldOverflowFiles } = await import("./tools/impl/overflow");
-  Promise.resolve().then(() => {
-    try {
-      cleanupOldOverflowFiles(process.cwd());
-    } catch {
-      // Silently ignore cleanup failures
-    }
-  });
-
   // Parse command-line arguments from a shared schema used by both TUI and headless flows.
   // Preprocess args to support --conv as an alias for --conversation.
   const processedArgs = preprocessCliArgs(process.argv);
@@ -563,6 +549,21 @@ async function main(): Promise<void> {
   // Surface is set here so session_start captures the correct mode.
   telemetry.setSurface(isHeadless ? "headless" : "tui");
   telemetry.init();
+
+  if (!isHeadless) {
+    // TUI-only startup tasks: keep headless runs free of extra background work.
+    const { startDockerVersionCheck } = await import("./startup-docker-check");
+    startDockerVersionCheck().catch(() => {});
+
+    const { cleanupOldOverflowFiles } = await import("./tools/impl/overflow");
+    Promise.resolve().then(() => {
+      try {
+        cleanupOldOverflowFiles(process.cwd());
+      } catch {
+        // Silently ignore cleanup failures
+      }
+    });
+  }
 
   // Fail if an unknown command/argument is passed (and we're not in headless mode where it might be a prompt)
   if (command && !isHeadless) {
@@ -1528,6 +1529,7 @@ async function main(): Promise<void> {
         const { createAgent } = await import("./agent/create");
 
         let agent: AgentState | null = null;
+        let autoEnableMemfsForFreshAgent = false;
 
         // Priority 1: Import from AgentFile template (local file or registry)
         if (fromAfFile) {
@@ -1652,14 +1654,7 @@ async function main(): Promise<void> {
           });
           agent = result.agent;
           setAgentProvenance(result.provenance);
-
-          // Enable memfs on Letta Cloud (tags, repo clone, tool detach).
-          if (willAutoEnableMemfs) {
-            const { enableMemfsIfCloud } = await import(
-              "./agent/memoryFilesystem"
-            );
-            await enableMemfsIfCloud(agent.id);
-          }
+          autoEnableMemfsForFreshAgent = willAutoEnableMemfs;
         }
 
         // Priority 4: Try to resume from project settings LRU (.letta/settings.local.json)
@@ -1706,13 +1701,16 @@ async function main(): Promise<void> {
         setAgentContext(agent.id, skillsDirectory, resolvedSkillSources);
 
         // Start memfs sync early — awaited in parallel with getResumeData below
-        const isSubagent = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
         const agentId = agent.id;
         const agentTags = agent.tags ?? undefined;
+        const startupMemfsFlag = autoEnableMemfsForFreshAgent
+          ? true
+          : memfsFlag;
         const memfsSyncPromise = import("./agent/memoryFilesystem").then(
           ({ applyMemfsFlags }) =>
-            applyMemfsFlags(agentId, memfsFlag, noMemfsFlag, {
+            applyMemfsFlags(agentId, startupMemfsFlag, noMemfsFlag, {
               agentTags,
+              skipPromptUpdate: shouldCreateNew,
             }),
         );
 
@@ -1975,7 +1973,7 @@ async function main(): Promise<void> {
 
         // Save the session (agent + conversation) to settings
         // Skip for subagents - they shouldn't pollute the LRU settings
-        if (!isSubagent) {
+        if (shouldPersistSessionState()) {
           settingsManager.persistSession(agent.id, conversationIdToUse);
         }
 
