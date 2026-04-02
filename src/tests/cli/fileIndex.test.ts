@@ -571,12 +571,12 @@ describe("content-based hashing", () => {
 
     const cacheBefore = JSON.parse(readFileSync(cachePath, "utf-8"));
     const rootHashBefore = cacheBefore.metadata.rootHash;
-    const srcHashBefore = cacheBefore.merkle["src"];
+    const srcHashBefore = cacheBefore.merkle.src;
     const componentsHashBefore = cacheBefore.merkle[join("src", "components")];
     const buttonHashBefore =
       cacheBefore.merkle[join("src", "components", "Button.tsx")];
     // A sibling directory that should NOT change
-    const testsHashBefore = cacheBefore.merkle["tests"];
+    const testsHashBefore = cacheBefore.merkle.tests;
 
     // Modify a deeply nested file (2 levels deep) without adding/removing files
     writeFileSync(
@@ -597,11 +597,11 @@ describe("content-based hashing", () => {
     expect(cacheAfter.merkle[join("src", "components")]).not.toBe(
       componentsHashBefore,
     );
-    expect(cacheAfter.merkle["src"]).not.toBe(srcHashBefore);
+    expect(cacheAfter.merkle.src).not.toBe(srcHashBefore);
     expect(cacheAfter.metadata.rootHash).not.toBe(rootHashBefore);
 
     // Unrelated sibling subtree should remain unchanged
-    expect(cacheAfter.merkle["tests"]).toBe(testsHashBefore);
+    expect(cacheAfter.merkle.tests).toBe(testsHashBefore);
   });
 
   test("files with identical content produce the same hash", async () => {

@@ -25,10 +25,13 @@ import { formatTaskNotification } from "../../cli/helpers/taskNotifications.js";
 import { runSubagentStopHooks } from "../../hooks";
 import {
   appendToOutputFile,
+  assertBackgroundTaskCapacity,
   type BackgroundTask,
   backgroundTasks,
   createBackgroundOutputFile,
   getNextTaskId,
+  scheduleBackgroundTaskCleanup,
+  setBackgroundTaskOutput,
 } from "./process_manager.js";
 import { LIMITS, truncateByChars } from "./truncation.js";
 import { validateRequiredParams } from "./validation";
@@ -230,6 +233,8 @@ export async function waitForBackgroundSubagentLink(
 export function spawnBackgroundSubagentTask(
   args: SpawnBackgroundSubagentTaskArgs,
 ): SpawnBackgroundSubagentTaskResult {
+  assertBackgroundTaskCapacity();
+
   const {
     subagentType,
     prompt,
@@ -317,8 +322,9 @@ export function spawnBackgroundSubagentTask(
       );
       writeTaskTranscriptResult(outputFile, result, header);
       if (result.success) {
-        bgTask.output.push(result.report || "");
+        setBackgroundTaskOutput(bgTask, result.report || "");
       }
+      scheduleBackgroundTaskCleanup(taskId);
 
       completeSubagentFn(subagentId, {
         success: result.success,
@@ -392,6 +398,7 @@ export function spawnBackgroundSubagentTask(
       bgTask.status = "failed";
       bgTask.error = errorMessage;
       appendToOutputFile(outputFile, `[error] ${errorMessage}\n`);
+      scheduleBackgroundTaskCleanup(taskId);
       completeSubagentFn(subagentId, { success: false, error: errorMessage });
 
       try {
