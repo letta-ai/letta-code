@@ -1,116 +1,223 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { spawn } from "node:child_process";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
-type MockSettings = {
-  env: Record<string, string>;
-  refreshToken: string | null;
-  tokenExpiresAt: number | null;
+const projectRoot = process.cwd();
+const RESULT_PREFIX = "__CLIENT_SOFT_FAIL_RESULT__";
+
+type IsolatedRunResult = {
+  stdout: string;
+  stderr: string;
+  exitCode: number | null;
 };
 
-const mockGetSettingsWithSecureTokens = mock(
-  async (): Promise<MockSettings> => ({
-    env: {},
-    refreshToken: null,
-    tokenExpiresAt: null,
-  }),
-);
-const mockGetSettings = mock(() => ({ env: {} }));
-const mockGetOrCreateDeviceId = mock(() => "device-test");
-const mockUpdateSettings = mock(() => {});
-const mockRefreshAccessToken = mock(async () => ({
-  access_token: "refreshed-token",
-  refresh_token: "refresh-token",
-  expires_in: 3600,
-}));
-const mockTrackBoundaryError = mock(() => {});
+type MissingCredentialsResult = {
+  resolved: boolean;
+  message?: string;
+};
 
-mock.module("../../settings-manager", () => ({
-  settingsManager: {
-    getSettingsWithSecureTokens: mockGetSettingsWithSecureTokens,
-    getSettings: mockGetSettings,
-    getOrCreateDeviceId: mockGetOrCreateDeviceId,
-    updateSettings: mockUpdateSettings,
-  },
-}));
+type RefreshFailureResult = {
+  resolved: boolean;
+  message?: string;
+  trackCalls: Array<{
+    errorType: string;
+    message: string;
+    context: string;
+    metadata: {
+      httpStatus: string;
+      modelId: string;
+      runId: string;
+      recentChunks: string;
+    };
+  }>;
+};
 
-mock.module("../../auth/oauth", () => ({
-  LETTA_CLOUD_API_URL: "https://cloud.example",
-  refreshAccessToken: mockRefreshAccessToken,
-}));
+async function runIsolatedClientScript(
+  script: string,
+  homeDir: string,
+): Promise<IsolatedRunResult> {
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    HOME: homeDir,
+    USERPROFILE: homeDir,
+    LETTA_CODE_AGENT_ROLE: "subagent",
+  };
+  delete env.LETTA_API_KEY;
+  delete env.LETTA_BASE_URL;
 
-mock.module("../../telemetry/errorReporting", () => ({
-  trackBoundaryError: mockTrackBoundaryError,
-}));
+  return new Promise((resolve, reject) => {
+    const proc = spawn("bun", ["--eval", script], {
+      cwd: projectRoot,
+      env,
+    });
+
+    let stdout = "";
+    let stderr = "";
+
+    proc.stdout?.on("data", (data) => {
+      stdout += data.toString();
+    });
+
+    proc.stderr?.on("data", (data) => {
+      stderr += data.toString();
+    });
+
+    const timeout = setTimeout(() => {
+      proc.kill();
+      reject(
+        new Error(
+          `Timed out running isolated getClient test. stdout: ${stdout} stderr: ${stderr}`,
+        ),
+      );
+    }, 15000);
+
+    proc.on("close", (code) => {
+      clearTimeout(timeout);
+      resolve({ stdout, stderr, exitCode: code });
+    });
+
+    proc.on("error", (error) => {
+      clearTimeout(timeout);
+      reject(error);
+    });
+  });
+}
+
+function parseIsolatedResult<T>(stdout: string): T {
+  const resultLine = stdout
+    .split("\n")
+    .find((line) => line.startsWith(RESULT_PREFIX));
+
+  if (!resultLine) {
+    throw new Error(`Missing isolated test result marker in stdout: ${stdout}`);
+  }
+
+  return JSON.parse(resultLine.slice(RESULT_PREFIX.length)) as T;
+}
 
 describe("getClient soft failures", () => {
-  const originalConsoleError = console.error;
-  const originalApiKey = process.env.LETTA_API_KEY;
-  const originalBaseUrl = process.env.LETTA_BASE_URL;
+  let testHomeDir = "";
 
-  beforeEach(() => {
-    mockGetSettingsWithSecureTokens.mockClear();
-    mockGetSettings.mockClear();
-    mockGetOrCreateDeviceId.mockClear();
-    mockUpdateSettings.mockClear();
-    mockRefreshAccessToken.mockClear();
-    mockTrackBoundaryError.mockClear();
-
-    mockGetSettingsWithSecureTokens.mockResolvedValue({
-      env: {},
-      refreshToken: null,
-      tokenExpiresAt: null,
-    });
-    mockGetSettings.mockReturnValue({ env: {} });
-    mockRefreshAccessToken.mockResolvedValue({
-      access_token: "refreshed-token",
-      refresh_token: "refresh-token",
-      expires_in: 3600,
-    });
-
-    delete process.env.LETTA_API_KEY;
-    delete process.env.LETTA_BASE_URL;
-    console.error = mock(() => {});
+  beforeEach(async () => {
+    testHomeDir = await mkdtemp(join(tmpdir(), "letta-client-test-home-"));
   });
 
-  afterEach(() => {
-    console.error = originalConsoleError;
-
-    if (originalApiKey === undefined) {
-      delete process.env.LETTA_API_KEY;
-    } else {
-      process.env.LETTA_API_KEY = originalApiKey;
-    }
-
-    if (originalBaseUrl === undefined) {
-      delete process.env.LETTA_BASE_URL;
-    } else {
-      process.env.LETTA_BASE_URL = originalBaseUrl;
+  afterEach(async () => {
+    if (testHomeDir) {
+      await rm(testHomeDir, { recursive: true, force: true });
+      testHomeDir = "";
     }
   });
 
   test("throws when credentials are missing instead of exiting the process", async () => {
-    const { getClient } = await import("../../agent/client");
+    const result = await runIsolatedClientScript(
+      `
+        import { getClient } from "./src/agent/client";
+        import { settingsManager } from "./src/settings-manager";
 
-    await expect(getClient()).rejects.toThrow("Missing LETTA_API_KEY");
+        settingsManager.isKeychainAvailable = async () => false;
+        await settingsManager.initialize();
+
+        try {
+          await getClient();
+          console.log("${RESULT_PREFIX}" + JSON.stringify({ resolved: true }));
+        } catch (error) {
+          console.log(
+            "${RESULT_PREFIX}" +
+              JSON.stringify({
+                resolved: false,
+                message: error instanceof Error ? error.message : String(error),
+              }),
+          );
+        }
+      `,
+      testHomeDir,
+    );
+
+    expect(result.exitCode).toBe(0);
+
+    const payload = parseIsolatedResult<MissingCredentialsResult>(
+      result.stdout,
+    );
+    expect(payload.resolved).toBe(false);
+    expect(payload.message).toContain("Missing LETTA_API_KEY");
   });
 
   test("throws when token refresh fails instead of exiting the process", async () => {
-    mockGetSettingsWithSecureTokens.mockResolvedValue({
-      env: {},
-      refreshToken: "refresh-token",
-      tokenExpiresAt: Date.now() - 1_000,
-    });
-    mockRefreshAccessToken.mockRejectedValue(new Error("refresh broke"));
+    const result = await runIsolatedClientScript(
+      `
+        import { getClient } from "./src/agent/client";
+        import { settingsManager } from "./src/settings-manager";
+        import { telemetry } from "./src/telemetry";
 
-    const { getClient } = await import("../../agent/client");
+        const trackCalls = [];
+        telemetry.trackError = (errorType, message, context, metadata) => {
+          trackCalls.push({
+            errorType,
+            message,
+            context,
+            metadata: {
+              httpStatus: String(metadata?.httpStatus),
+              modelId: String(metadata?.modelId),
+              runId: String(metadata?.runId),
+              recentChunks: String(metadata?.recentChunks),
+            },
+          });
+        };
+        settingsManager.isKeychainAvailable = async () => false;
+        await settingsManager.initialize();
+        settingsManager.updateSettings({
+          env: {},
+          refreshToken: "refresh-token",
+          tokenExpiresAt: Date.now() - 1000,
+        });
+        await settingsManager.flush();
+        globalThis.fetch = async () => {
+          throw new Error("refresh broke");
+        };
 
-    await expect(getClient()).rejects.toThrow(
+        try {
+          await getClient();
+          console.log(
+            "${RESULT_PREFIX}" + JSON.stringify({ resolved: true, trackCalls }),
+          );
+        } catch (error) {
+          console.log(
+            "${RESULT_PREFIX}" +
+              JSON.stringify({
+                resolved: false,
+                message: error instanceof Error ? error.message : String(error),
+                trackCalls,
+              }),
+          );
+        }
+      `,
+      testHomeDir,
+    );
+
+    expect(result.exitCode).toBe(0);
+
+    const payload = parseIsolatedResult<RefreshFailureResult>(result.stdout);
+    expect(payload.resolved).toBe(false);
+    expect(payload.message).toBe(
       "Failed to refresh access token: refresh broke",
     );
-    expect(mockTrackBoundaryError).toHaveBeenCalledWith(
-      expect.objectContaining({
+    expect(payload.trackCalls).toEqual([
+      {
         errorType: "auth_token_refresh_failed",
+        message: "refresh broke",
         context: "auth_client_token_refresh",
-      }),
-    );
+        metadata: {
+          httpStatus: "undefined",
+          modelId: "undefined",
+          runId: "undefined",
+          recentChunks: "undefined",
+        },
+      },
+    ]);
+    expect(result.stderr).toContain("Failed to refresh access token:");
+    expect(result.stderr).not.toContain("process.exit");
   });
 });

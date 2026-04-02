@@ -318,17 +318,14 @@ describe("update config resolution", () => {
 });
 
 describe("checkForUpdate with fetch", () => {
-  let originalFetch: typeof globalThis.fetch;
   let originalRegistry: string | undefined;
 
   beforeEach(() => {
-    originalFetch = globalThis.fetch;
     originalRegistry = process.env.LETTA_UPDATE_REGISTRY_BASE_URL;
     delete process.env.LETTA_UPDATE_REGISTRY_BASE_URL;
   });
 
   afterEach(() => {
-    globalThis.fetch = originalFetch;
     if (originalRegistry === undefined) {
       delete process.env.LETTA_UPDATE_REGISTRY_BASE_URL;
     } else {
@@ -337,46 +334,46 @@ describe("checkForUpdate with fetch", () => {
   });
 
   test("returns updateAvailable when registry version differs", async () => {
-    globalThis.fetch = mock(() =>
+    const fetchMock = mock(() =>
       Promise.resolve(
         new Response(JSON.stringify({ version: "99.0.0" }), { status: 200 }),
       ),
     ) as unknown as typeof fetch;
 
-    const result = await checkForUpdate();
+    const result = await checkForUpdate(fetchMock);
     expect(result.updateAvailable).toBe(true);
     expect(result.latestVersion).toBe("99.0.0");
     expect(result.checkFailed).toBeUndefined();
   });
 
   test("returns checkFailed on non-2xx response", async () => {
-    globalThis.fetch = mock(() =>
+    const fetchMock = mock(() =>
       Promise.resolve(new Response("Not Found", { status: 404 })),
     ) as unknown as typeof fetch;
 
-    const result = await checkForUpdate();
+    const result = await checkForUpdate(fetchMock);
     expect(result.updateAvailable).toBe(false);
     expect(result.checkFailed).toBe(true);
   });
 
   test("returns checkFailed on malformed JSON (no version field)", async () => {
-    globalThis.fetch = mock(() =>
+    const fetchMock = mock(() =>
       Promise.resolve(
         new Response(JSON.stringify({ name: "test" }), { status: 200 }),
       ),
     ) as unknown as typeof fetch;
 
-    const result = await checkForUpdate();
+    const result = await checkForUpdate(fetchMock);
     expect(result.updateAvailable).toBe(false);
     expect(result.checkFailed).toBe(true);
   });
 
   test("returns checkFailed on network error", async () => {
-    globalThis.fetch = mock(() =>
+    const fetchMock = mock(() =>
       Promise.reject(new Error("fetch failed")),
     ) as unknown as typeof fetch;
 
-    const result = await checkForUpdate();
+    const result = await checkForUpdate(fetchMock);
     expect(result.updateAvailable).toBe(false);
     expect(result.checkFailed).toBe(true);
   });
@@ -384,14 +381,14 @@ describe("checkForUpdate with fetch", () => {
   test("uses registry override URL", async () => {
     process.env.LETTA_UPDATE_REGISTRY_BASE_URL = "http://localhost:4873";
     const capturedUrls: string[] = [];
-    globalThis.fetch = mock((url: string | URL | Request) => {
+    const fetchMock = mock((url: string | URL | Request) => {
       capturedUrls.push(String(url));
       return Promise.resolve(
         new Response(JSON.stringify({ version: "99.0.0" }), { status: 200 }),
       );
     }) as unknown as typeof fetch;
 
-    await checkForUpdate();
+    await checkForUpdate(fetchMock);
 
     expect(capturedUrls.length).toBe(1);
     expect(capturedUrls[0]).toBe(

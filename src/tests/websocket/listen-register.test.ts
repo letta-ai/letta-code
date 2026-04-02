@@ -14,7 +14,6 @@ const mockFetch = mock(() => {
 
 beforeEach(() => {
   mockFetch.mockReset();
-  globalThis.fetch = mockFetch as unknown as typeof globalThis.fetch;
 });
 
 describe("registerWithCloud", () => {
@@ -26,7 +25,10 @@ describe("registerWithCloud", () => {
       ),
     );
 
-    const result = await registerWithCloud(defaultOpts);
+    const result = await registerWithCloud(
+      defaultOpts,
+      mockFetch as unknown as typeof fetch,
+    );
 
     expect(result).toEqual({
       connectionId: "conn-1",
@@ -66,9 +68,9 @@ describe("registerWithCloud", () => {
       }),
     );
 
-    await expect(registerWithCloud(defaultOpts)).rejects.toThrow(
-      "Unauthorized",
-    );
+    await expect(
+      registerWithCloud(defaultOpts, mockFetch as unknown as typeof fetch),
+    ).rejects.toThrow("Unauthorized");
   });
 
   it("throws with HTTP status and truncated body on non-OK non-JSON response", async () => {
@@ -76,17 +78,17 @@ describe("registerWithCloud", () => {
       new Response("<html>Bad Gateway</html>", { status: 502 }),
     );
 
-    await expect(registerWithCloud(defaultOpts)).rejects.toThrow(
-      "HTTP 502: <html>Bad Gateway</html>",
-    );
+    await expect(
+      registerWithCloud(defaultOpts, mockFetch as unknown as typeof fetch),
+    ).rejects.toThrow("HTTP 502: <html>Bad Gateway</html>");
   });
 
   it("throws actionable message on 200 with non-JSON body", async () => {
     mockFetch.mockResolvedValueOnce(new Response("OK", { status: 200 }));
 
-    await expect(registerWithCloud(defaultOpts)).rejects.toThrow(
-      "is the server running?",
-    );
+    await expect(
+      registerWithCloud(defaultOpts, mockFetch as unknown as typeof fetch),
+    ).rejects.toThrow("is the server running?");
   });
 
   it("throws on unexpected response shape (missing fields)", async () => {
@@ -97,8 +99,8 @@ describe("registerWithCloud", () => {
       }),
     );
 
-    await expect(registerWithCloud(defaultOpts)).rejects.toThrow(
-      "missing connectionId or wsUrl",
-    );
+    await expect(
+      registerWithCloud(defaultOpts, mockFetch as unknown as typeof fetch),
+    ).rejects.toThrow("missing connectionId or wsUrl");
   });
 });
