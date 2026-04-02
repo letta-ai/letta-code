@@ -100,7 +100,7 @@ export const BtwPane = memo(
               {"  "}Fork: {state.forkedConversationId}
             </Text>
             {onJumpToConversation && (
-              <Text dimColor>{"  "}[j] Jump to fork [esc] Dismiss</Text>
+              <Text dimColor>{"  "}[j] Switch to fork  [esc] Dismiss</Text>
             )}
           </Box>
         )}
