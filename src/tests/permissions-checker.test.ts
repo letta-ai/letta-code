@@ -85,6 +85,27 @@ test("Long bash commands should use wildcard patterns, not exact match", () => {
   expect(result2.decision).toBe("allow");
 });
 
+test("npx tsc wildcard permissions match compound TypeScript check commands", () => {
+  const permissions: PermissionRules = {
+    allow: ["Bash(npx tsc:*)"],
+    deny: [],
+    ask: [],
+  };
+
+  const result = checkPermission(
+    "Bash",
+    {
+      command:
+        'cd /Users/test/project && npx tsc --noEmit --project libs/utils-server/tsconfig.lib.json 2>&1 | grep -i handleStatus || echo "No errors"',
+    },
+    permissions,
+    "/Users/test/project",
+  );
+
+  expect(result.decision).toBe("allow");
+  expect(result.matchedRule).toBe("Bash(npx tsc:*)");
+});
+
 test("Grep within working directory is auto-allowed", () => {
   const result = checkPermission(
     "Grep",

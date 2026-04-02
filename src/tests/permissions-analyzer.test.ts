@@ -157,6 +157,19 @@ test("bun run commands suggest safe rule", () => {
   expect(context.safetyLevel).toBe("safe");
 });
 
+test("npx commands suggest moderate wildcard rule", () => {
+  const context = analyzeApprovalContext(
+    "Bash",
+    { command: "npx tsc --noEmit --project libs/types/tsconfig.lib.json" },
+    "/Users/test/project",
+  );
+
+  expect(context.recommendedRule).toBe("Bash(npx tsc:*)");
+  expect(context.approveAlwaysText).toContain("npx tsc");
+  expect(context.safetyLevel).toBe("moderate");
+  expect(context.defaultScope).toBe("project");
+});
+
 test("yarn commands suggest safe rule", () => {
   const context = analyzeApprovalContext(
     "Bash",
@@ -587,6 +600,21 @@ test("Very long non-git commands should generate prefix-based wildcards", () => 
   // Should generate wildcard for "npm run lint"
   expect(context.recommendedRule).toBe("Bash(npm run lint:*)");
   expect(context.approveAlwaysText).toContain("npm run lint");
+});
+
+test("Complex npx tsc commands strip cd and pipe suffixes when building approval rules", () => {
+  const context = analyzeApprovalContext(
+    "Bash",
+    {
+      command:
+        'cd /Users/test/project && npx tsc --noEmit --project libs/utils-server/tsconfig.lib.json 2>&1 | grep -i handleStatus || echo "No errors"',
+    },
+    "/Users/test/project",
+  );
+
+  expect(context.recommendedRule).toBe("Bash(npx tsc:*)");
+  expect(context.approveAlwaysText).toContain("npx tsc");
+  expect(context.approveAlwaysText).not.toContain("...");
 });
 
 test("WriteFileGemini uses write-family wildcard rule", () => {

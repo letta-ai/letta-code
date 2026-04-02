@@ -538,6 +538,20 @@ function getSkillApprovalText(
   return `Yes, and don't ask again for scripts in ${source} skill '${skillName}'`;
 }
 
+function buildPackageStyleRule(
+  fullCommand: string,
+  safetyLevel: "safe" | "moderate",
+): ApprovalContext {
+  return {
+    recommendedRule: `Bash(${fullCommand}:*)`,
+    ruleDescription: `'${fullCommand}' commands`,
+    approveAlwaysText: `Yes, and don't ask again for '${fullCommand}' commands in this project`,
+    defaultScope: "project",
+    allowPersistence: true,
+    safetyLevel,
+  };
+}
+
 function analyzeBashApproval(
   command: string,
   workingDir: string,
@@ -646,27 +660,22 @@ function analyzeBashApproval(
     // Handle "npm run test" format (include both "run" and script name)
     if (subcommand === "run" && thirdPart) {
       const fullCommand = `${baseCommand} ${subcommand} ${thirdPart}`;
-      return {
-        recommendedRule: `Bash(${fullCommand}:*)`,
-        ruleDescription: `'${fullCommand}' commands`,
-        approveAlwaysText: `Yes, and don't ask again for '${fullCommand}' commands in this project`,
-        defaultScope: "project",
-        allowPersistence: true,
-        safetyLevel: "safe",
-      };
+      return buildPackageStyleRule(fullCommand, "safe");
     }
 
     // Handle other subcommands (npm install, bun build, etc.)
     if (subcommand) {
       const fullCommand = `${baseCommand} ${subcommand}`;
-      return {
-        recommendedRule: `Bash(${fullCommand}:*)`,
-        ruleDescription: `'${fullCommand}' commands`,
-        approveAlwaysText: `Yes, and don't ask again for '${fullCommand}' commands in this project`,
-        defaultScope: "project",
-        allowPersistence: true,
-        safetyLevel: "safe",
-      };
+      return buildPackageStyleRule(fullCommand, "safe");
+    }
+  }
+
+  // Package executors are useful to generalize, but broader than plain package
+  // manager subcommands because they can invoke arbitrary binaries/packages.
+  if (baseCommand && ["npx", "bunx"].includes(baseCommand)) {
+    const subcommand = firstArg;
+    if (subcommand) {
+      return buildPackageStyleRule(`${baseCommand} ${subcommand}`, "moderate");
     }
   }
 
@@ -751,26 +760,22 @@ function analyzeBashApproval(
 
         if (subcommand === "run" && thirdPart) {
           const fullCommand = `${segmentBase} ${subcommand} ${thirdPart}`;
-          return {
-            recommendedRule: `Bash(${fullCommand}:*)`,
-            ruleDescription: `'${fullCommand}' commands`,
-            approveAlwaysText: `Yes, and don't ask again for '${fullCommand}' commands in this project`,
-            defaultScope: "project",
-            allowPersistence: true,
-            safetyLevel: "safe",
-          };
+          return buildPackageStyleRule(fullCommand, "safe");
         }
 
         if (subcommand) {
           const fullCommand = `${segmentBase} ${subcommand}`;
-          return {
-            recommendedRule: `Bash(${fullCommand}:*)`,
-            ruleDescription: `'${fullCommand}' commands`,
-            approveAlwaysText: `Yes, and don't ask again for '${fullCommand}' commands in this project`,
-            defaultScope: "project",
-            allowPersistence: true,
-            safetyLevel: "safe",
-          };
+          return buildPackageStyleRule(fullCommand, "safe");
+        }
+      }
+
+      if (segmentBase && ["npx", "bunx"].includes(segmentBase)) {
+        const subcommand = segmentArg;
+        if (subcommand) {
+          return buildPackageStyleRule(
+            `${segmentBase} ${subcommand}`,
+            "moderate",
+          );
         }
       }
 
