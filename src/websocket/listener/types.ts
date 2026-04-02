@@ -7,6 +7,7 @@ import type {
 } from "../../agent/approval-execution";
 import type { ContextTracker } from "../../cli/helpers/contextTracker";
 import type { ApprovalRequest } from "../../cli/helpers/stream";
+import type { ApprovalContext } from "../../permissions/analyzer";
 import type {
   DequeuedBatch,
   QueueBlockedReason,
@@ -91,6 +92,7 @@ export type PendingApprovalResolver = {
 export type RecoveredPendingApproval = {
   approval: ApprovalRequest;
   controlRequest: ControlRequest;
+  approvalContext: ApprovalContext | null;
 };
 
 export type RecoveredApprovalState = {
