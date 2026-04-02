@@ -384,20 +384,6 @@ async function main(): Promise<void> {
   const { checkAndAutoUpdate } = await import("./updater/auto-update");
   const autoUpdatePromise = startStartupAutoUpdateCheck(checkAndAutoUpdate);
 
-  // Check Docker version for self-hosted users (non-blocking)
-  const { startDockerVersionCheck } = await import("./startup-docker-check");
-  startDockerVersionCheck().catch(() => {});
-
-  // Clean up old overflow files (non-blocking, 24h retention)
-  const { cleanupOldOverflowFiles } = await import("./tools/impl/overflow");
-  Promise.resolve().then(() => {
-    try {
-      cleanupOldOverflowFiles(process.cwd());
-    } catch {
-      // Silently ignore cleanup failures
-    }
-  });
-
   // Parse command-line arguments from a shared schema used by both TUI and headless flows.
   // Preprocess args to support --conv as an alias for --conversation.
   const processedArgs = preprocessCliArgs(process.argv);
@@ -562,6 +548,21 @@ async function main(): Promise<void> {
   // Surface is set here so session_start captures the correct mode.
   telemetry.setSurface(isHeadless ? "headless" : "tui");
   telemetry.init();
+
+  if (!isHeadless) {
+    // TUI-only startup tasks: keep headless runs free of extra background work.
+    const { startDockerVersionCheck } = await import("./startup-docker-check");
+    startDockerVersionCheck().catch(() => {});
+
+    const { cleanupOldOverflowFiles } = await import("./tools/impl/overflow");
+    Promise.resolve().then(() => {
+      try {
+        cleanupOldOverflowFiles(process.cwd());
+      } catch {
+        // Silently ignore cleanup failures
+      }
+    });
+  }
 
   // Fail if an unknown command/argument is passed (and we're not in headless mode where it might be a prompt)
   if (command && !isHeadless) {
