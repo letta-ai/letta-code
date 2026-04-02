@@ -91,6 +91,9 @@ export interface SpawnBackgroundSubagentTaskArgs {
   onComplete?: (result: {
     success: boolean;
     error?: string;
+    agentId?: string;
+    conversationId?: string;
+    totalTokens?: number;
   }) => void | Promise<void>;
   /**
    * Optional dependency overrides for tests.
@@ -333,7 +336,13 @@ export function spawnBackgroundSubagentTask(
       });
 
       try {
-        await onComplete?.({ success: result.success, error: result.error });
+        await onComplete?.({
+          success: result.success,
+          error: result.error,
+          agentId: result.agentId,
+          conversationId: result.conversationId,
+          totalTokens: result.totalTokens,
+        });
       } catch (error) {
         const errorMessage =
           error instanceof Error ? error.message : String(error);
@@ -402,7 +411,12 @@ export function spawnBackgroundSubagentTask(
       completeSubagentFn(subagentId, { success: false, error: errorMessage });
 
       try {
-        await onComplete?.({ success: false, error: errorMessage });
+        await onComplete?.({
+          success: false,
+          error: errorMessage,
+          agentId: existingAgentId,
+          conversationId: existingConversationId,
+        });
       } catch (onCompleteError) {
         const callbackMessage =
           onCompleteError instanceof Error

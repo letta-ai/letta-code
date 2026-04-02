@@ -281,6 +281,12 @@ import {
 } from "./helpers/queuedMessageParts";
 import { resolveReasoningTabToggleCommand } from "./helpers/reasoningTabToggle";
 import {
+  collectReflectionSweepSegments,
+  finalizeReflectionSegmentReview,
+  getReflectionReviewDebugInfo,
+  logReflectionTrigger,
+} from "./helpers/reflectionReview";
+import {
   appendTranscriptDeltaJsonl,
   buildAutoReflectionPayload,
   buildParentMemorySnapshot,
@@ -1023,13 +1029,29 @@ function formatReflectionSettings(settings: ReflectionSettings): string {
 
 const AUTO_REFLECTION_DESCRIPTION = "Reflect on recent conversations";
 
-function hasActiveReflectionSubagent(): boolean {
+function hasActiveReflectionSubagent(
+  parentAgentId?: string,
+  parentConversationId?: string,
+): boolean {
   const snapshot = getSubagentSnapshot();
-  return snapshot.agents.some(
-    (agent) =>
-      agent.type.toLowerCase() === "reflection" &&
-      (agent.status === "pending" || agent.status === "running"),
-  );
+  return snapshot.agents.some((agent) => {
+    if (agent.type.toLowerCase() !== "reflection") {
+      return false;
+    }
+    if (agent.status !== "pending" && agent.status !== "running") {
+      return false;
+    }
+    if (parentAgentId && agent.parentAgentId !== parentAgentId) {
+      return false;
+    }
+    if (parentConversationId) {
+      const candidateConversationId = agent.parentConversationId ?? "default";
+      if (candidateConversationId !== parentConversationId) {
+        return false;
+      }
+    }
+    return true;
+  });
 }
 
 function buildTextParts(
@@ -10373,6 +10395,51 @@ export default function App({
           return { submitted: true };
         }
 
+        // Special handling for /reflection-state command - show reflection review checkpoint
+        if (
+          trimmed === "/reflection-state" ||
+          trimmed.startsWith("/reflection-state ")
+        ) {
+          const cmd = commandRunner.start(
+            msg,
+            "Loading reflection checkpoint state...",
+          );
+          const requestedConversationId = trimmed
+            .slice("/reflection-state".length)
+            .trim();
+          const targetConversationId =
+            requestedConversationId || conversationIdRef.current || "default";
+
+          try {
+            const info = await getReflectionReviewDebugInfo(
+              agentId,
+              targetConversationId,
+            );
+            cmd.finish(
+              JSON.stringify(
+                {
+                  agent_id: agentId,
+                  conversation_id: targetConversationId,
+                  state_path: info.statePath,
+                  trigger_log_path: info.triggerLogPath,
+                  checkpoint: info.checkpoint,
+                },
+                null,
+                2,
+              ),
+              true,
+              true,
+            );
+          } catch (error) {
+            const errorDetails = formatErrorDetails(error, agentId);
+            cmd.fail(
+              `Failed to load reflection checkpoint state: ${errorDetails}`,
+            );
+          }
+
+          return { submitted: true };
+        }
+
         // Special handling for /plan command - enter plan mode
         if (trimmed === "/plan") {
           // Generate plan file path and enter plan mode
@@ -10793,78 +10860,140 @@ ${SYSTEM_REMINDER_CLOSE}
         if (!memfsEnabledForAgent) {
           return false;
         }
-        if (hasActiveReflectionSubagent()) {
-          debugLog(
-            "memory",
-            `Skipping auto reflection launch (${triggerSource}) because one is already active`,
-          );
-          return false;
-        }
         try {
-          const reflectionConversationId = conversationIdRef.current;
-          const autoPayload = await buildAutoReflectionPayload(
+          const primaryConversationId = conversationIdRef.current;
+          const segments = await collectReflectionSweepSegments({
             agentId,
-            reflectionConversationId,
-          );
-          if (!autoPayload) {
+            primaryConversationId,
+            idleMinutes: 60,
+          });
+
+          if (segments.length === 0) {
+            await logReflectionTrigger(agentId, {
+              primary_agent_id: agentId,
+              primary_conversation_id: primaryConversationId,
+              reviewed_conversation_id: null,
+              starting_message_id: null,
+              ending_message_id: null,
+              reflection_agent_id: null,
+              starting_timestamp: null,
+              ending_timestamp: null,
+              trigger_source: triggerSource,
+              status: "skipped",
+            });
             debugLog(
               "memory",
-              `Skipping auto reflection launch (${triggerSource}) because transcript has no new content`,
+              `Skipping auto reflection launch (${triggerSource}) because no unreviewed segments were found`,
             );
             return false;
           }
 
           const memoryDir = getMemoryFilesystemRoot(agentId);
           const parentMemory = await buildParentMemorySnapshot(memoryDir);
-          const reflectionPrompt = buildReflectionSubagentPrompt({
-            transcriptPath: autoPayload.payloadPath,
-            memoryDir,
-            cwd: process.cwd(),
-            parentMemory,
-          });
 
           const { spawnBackgroundSubagentTask } = await import(
             "../tools/impl/Task"
           );
-          spawnBackgroundSubagentTask({
-            subagentType: "reflection",
-            prompt: reflectionPrompt,
-            description: AUTO_REFLECTION_DESCRIPTION,
-            silentCompletion: true,
-            onComplete: async ({ success, error }) => {
-              await finalizeAutoReflectionPayload(
-                agentId,
-                reflectionConversationId,
-                autoPayload.payloadPath,
-                autoPayload.endSnapshotLine,
-                success,
-              );
 
-              const msg = await handleMemorySubagentCompletion(
-                {
+          let launchedAny = false;
+          for (const segment of segments) {
+            if (hasActiveReflectionSubagent(agentId, segment.conversationId)) {
+              await logReflectionTrigger(agentId, {
+                primary_agent_id: agentId,
+                primary_conversation_id: primaryConversationId,
+                reviewed_conversation_id: segment.conversationId,
+                starting_message_id: segment.startMessageId,
+                ending_message_id: segment.endMessageId,
+                reflection_agent_id:
+                  segment.checkpointBefore.reflection_agent_id ?? null,
+                starting_timestamp: segment.startTimestamp,
+                ending_timestamp: segment.endTimestamp,
+                trigger_source: triggerSource,
+                status: "skipped",
+              });
+              continue;
+            }
+
+            const reflectionPrompt = buildReflectionSubagentPrompt({
+              transcriptPath: segment.transcriptPath,
+              memoryDir,
+              cwd: process.cwd(),
+              parentMemory,
+            });
+
+            await logReflectionTrigger(agentId, {
+              primary_agent_id: agentId,
+              primary_conversation_id: primaryConversationId,
+              reviewed_conversation_id: segment.conversationId,
+              starting_message_id: segment.startMessageId,
+              ending_message_id: segment.endMessageId,
+              reflection_agent_id:
+                segment.checkpointBefore.reflection_agent_id ?? null,
+              starting_timestamp: segment.startTimestamp,
+              ending_timestamp: segment.endTimestamp,
+              trigger_source: triggerSource,
+              status: "launched",
+            });
+
+            spawnBackgroundSubagentTask({
+              subagentType: "reflection",
+              prompt: reflectionPrompt,
+              description: AUTO_REFLECTION_DESCRIPTION,
+              silentCompletion: true,
+              parentScope: {
+                agentId,
+                conversationId: segment.conversationId,
+              },
+              onComplete: async ({
+                success,
+                error,
+                agentId: reflectionAgentId,
+              }) => {
+                await finalizeReflectionSegmentReview({
                   agentId,
-                  conversationId: conversationIdRef.current,
-                  subagentType: "reflection",
+                  segment,
+                  triggerSource,
                   success,
-                  error,
-                },
-                {
-                  recompileByConversation:
-                    systemPromptRecompileByConversationRef.current,
-                  recompileQueuedByConversation:
-                    queuedSystemPromptRecompileByConversationRef.current,
-                  logRecompileFailure: (message) =>
-                    debugWarn("memory", message),
-                },
-              );
-              appendTaskNotificationEvents([msg]);
-            },
-          });
+                  reflectionAgentId: reflectionAgentId ?? null,
+                  ...(error ? { error } : {}),
+                });
+
+                const msg = await handleMemorySubagentCompletion(
+                  {
+                    agentId,
+                    conversationId: segment.conversationId,
+                    subagentType: "reflection",
+                    success,
+                    error,
+                  },
+                  {
+                    recompileByConversation:
+                      systemPromptRecompileByConversationRef.current,
+                    recompileQueuedByConversation:
+                      queuedSystemPromptRecompileByConversationRef.current,
+                    logRecompileFailure: (message) =>
+                      debugWarn("memory", message),
+                  },
+                );
+                appendTaskNotificationEvents([msg]);
+              },
+            });
+            launchedAny = true;
+          }
+
+          if (!launchedAny) {
+            debugLog(
+              "memory",
+              `Skipping auto reflection launch (${triggerSource}) because all segments are already in-flight`,
+            );
+            return false;
+          }
+
           debugLog(
             "memory",
             `Auto-launched reflection subagent (${triggerSource})`,
           );
-          return true;
+          return launchedAny;
         } catch (error) {
           debugWarn(
             "memory",

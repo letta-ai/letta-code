@@ -15,8 +15,9 @@ describe("reflection auto-launch wiring", () => {
 
     expect(appSource).toContain("const maybeLaunchReflectionSubagent = async");
     expect(appSource).toContain("hasActiveReflectionSubagent()");
-    expect(appSource).toContain("buildAutoReflectionPayload(");
-    expect(appSource).toContain("finalizeAutoReflectionPayload(");
+    expect(appSource).toContain("collectReflectionSweepSegments(");
+    expect(appSource).toContain("finalizeReflectionSegmentReview(");
+    expect(appSource).toContain("logReflectionTrigger(");
     expect(appSource).toContain("spawnBackgroundSubagentTask({");
     expect(appSource).toContain("maybeLaunchReflectionSubagent,");
 

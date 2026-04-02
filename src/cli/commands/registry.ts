@@ -76,6 +76,15 @@ export const commands: Record<string, Command> = {
       return "Launching reflection agent...";
     },
   },
+  "/reflection-state": {
+    desc: "Show reflection checkpoint state (/reflection-state [conversation_id])",
+    args: "[conversation_id]",
+    order: 50.1,
+    handler: () => {
+      // Handled specially in App.tsx
+      return "Loading reflection checkpoint state...";
+    },
+  },
   "/skills": {
     desc: "Browse available skills",
     order: 28,
