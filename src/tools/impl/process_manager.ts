@@ -41,6 +41,9 @@ interface BackgroundRetentionConfig {
   maxProcessLinesPerStream: number;
   maxProcessCharsPerStream: number;
   maxTaskOutputChars: number;
+  maxOutputFileReadBytes: number;
+  maxRunningProcesses: number;
+  maxRunningTasks: number;
 }
 
 const DEFAULT_BACKGROUND_RETENTION_CONFIG: BackgroundRetentionConfig = {
@@ -48,6 +51,9 @@ const DEFAULT_BACKGROUND_RETENTION_CONFIG: BackgroundRetentionConfig = {
   maxProcessLinesPerStream: 500,
   maxProcessCharsPerStream: 30_000,
   maxTaskOutputChars: 30_000,
+  maxOutputFileReadBytes: 1_000_000,
+  maxRunningProcesses: 32,
+  maxRunningTasks: 32,
 };
 
 let backgroundRetentionConfig: BackgroundRetentionConfig = {
@@ -61,7 +67,7 @@ function clearCleanupTimer(entry: { cleanupTimer?: TimerHandle }): void {
   }
 }
 
-function unrefTimer(timer: TimerHandle): void {
+export function unrefTimer(timer: TimerHandle): void {
   if (
     typeof timer === "object" &&
     timer !== null &&
@@ -109,6 +115,7 @@ function trimBufferedLines(lines: string[]): string[] {
     charCount -= (removed?.length ?? 0) + 1;
   }
 
+  // Keep the most recent tail when a single line is still too long.
   if (retained.length === 1 && charCount > maxChars) {
     retained[0] = retained[0].slice(-maxChars);
   }
@@ -154,6 +161,40 @@ export function clearBackgroundTaskCleanup(id: string): void {
   const entry = backgroundTasks.get(id);
   if (entry) {
     clearCleanupTimer(entry);
+  }
+}
+
+function countRunningEntries<
+  T extends { status: "running" | "completed" | "failed" },
+>(entries: Map<string, T>): number {
+  let count = 0;
+  for (const entry of entries.values()) {
+    if (entry.status === "running") {
+      count += 1;
+    }
+  }
+  return count;
+}
+
+export function getBackgroundOutputFileReadBytes(): number {
+  return backgroundRetentionConfig.maxOutputFileReadBytes;
+}
+
+export function assertBackgroundProcessCapacity(): void {
+  const runningCount = countRunningEntries(backgroundProcesses);
+  if (runningCount >= backgroundRetentionConfig.maxRunningProcesses) {
+    throw new Error(
+      `Too many background processes already running (${runningCount}/${backgroundRetentionConfig.maxRunningProcesses}). Stop one before starting another.`,
+    );
+  }
+}
+
+export function assertBackgroundTaskCapacity(): void {
+  const runningCount = countRunningEntries(backgroundTasks);
+  if (runningCount >= backgroundRetentionConfig.maxRunningTasks) {
+    throw new Error(
+      `Too many background tasks already running (${runningCount}/${backgroundRetentionConfig.maxRunningTasks}). Wait for one to finish before starting another.`,
+    );
   }
 }
 

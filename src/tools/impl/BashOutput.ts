@@ -1,5 +1,9 @@
-import { readFileSync } from "node:fs";
-import { backgroundProcesses, backgroundTasks } from "./process_manager.js";
+import { readFileSync, statSync } from "node:fs";
+import {
+  backgroundProcesses,
+  backgroundTasks,
+  getBackgroundOutputFileReadBytes,
+} from "./process_manager.js";
 import { LIMITS, truncateByChars } from "./truncation.js";
 import { validateRequiredParams } from "./validation.js";
 
@@ -23,15 +27,27 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function readOutputFile(filePath?: string): string | null {
+function readOutputFile(filePath?: string): {
+  content: string | null;
+  fallbackNotice?: string;
+} {
   if (!filePath) {
-    return null;
+    return { content: null };
   }
 
   try {
-    return readFileSync(filePath, "utf-8");
+    const stats = statSync(filePath);
+    const maxBytes = getBackgroundOutputFileReadBytes();
+    if (stats.size > maxBytes) {
+      return {
+        content: null,
+        fallbackNotice: `[Output file too large to load fully here (${stats.size.toLocaleString()} bytes). Showing the bounded in-memory buffer instead. Full transcript: ${filePath}]`,
+      };
+    }
+
+    return { content: readFileSync(filePath, "utf-8") };
   } catch {
-    return null;
+    return { content: null };
   }
 }
 
@@ -238,9 +254,19 @@ async function getProcessOutput(
   const stdout = currentProc.stdout.join("\n");
   const stderr = currentProc.stderr.join("\n");
   let text =
-    retainedOutput && retainedOutput.length > 0 ? retainedOutput : stdout;
-  if ((!retainedOutput || retainedOutput.length === 0) && stderr) {
+    retainedOutput.content && retainedOutput.content.length > 0
+      ? retainedOutput.content
+      : stdout;
+  if (
+    (!retainedOutput.content || retainedOutput.content.length === 0) &&
+    stderr
+  ) {
     text = text ? `${text}\n${stderr}` : stderr;
+  }
+  if (retainedOutput.fallbackNotice) {
+    text = text
+      ? `${retainedOutput.fallbackNotice}\n${text}`
+      : retainedOutput.fallbackNotice;
   }
 
   if (filter) {
@@ -331,13 +357,21 @@ async function getBackgroundTaskOutput(
 
   const retainedOutput = readOutputFile(currentTask.outputFile);
   let text =
-    retainedOutput && retainedOutput.length > 0
-      ? retainedOutput
+    retainedOutput.content && retainedOutput.content.length > 0
+      ? retainedOutput.content
       : currentTask.output.join("\n");
-  if ((!retainedOutput || retainedOutput.length === 0) && currentTask.error) {
+  if (
+    (!retainedOutput.content || retainedOutput.content.length === 0) &&
+    currentTask.error
+  ) {
     text = text
       ? `${text}\n[error] ${currentTask.error}`
       : `[error] ${currentTask.error}`;
+  }
+  if (retainedOutput.fallbackNotice) {
+    text = text
+      ? `${retainedOutput.fallbackNotice}\n${text}`
+      : retainedOutput.fallbackNotice;
   }
 
   if (filter) {

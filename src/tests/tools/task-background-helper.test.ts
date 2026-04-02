@@ -317,6 +317,46 @@ describe("spawnBackgroundSubagentTask", () => {
     unlinkSync(launched.outputFile);
   });
 
+  test("refuses to start a new background task after the running cap", () => {
+    __setBackgroundRetentionConfigForTests({ maxRunningTasks: 1 });
+
+    const spawnSubagentImpl = mock(() => new Promise<never>(() => {}));
+
+    spawnBackgroundSubagentTask({
+      subagentType: "reflection",
+      prompt: "Reflect",
+      description: "Reflect on memory",
+      deps: {
+        spawnSubagentImpl,
+        addToMessageQueueImpl,
+        formatTaskNotificationImpl,
+        runSubagentStopHooksImpl,
+        generateSubagentIdImpl,
+        registerSubagentImpl,
+        completeSubagentImpl,
+        getSubagentSnapshotImpl,
+      },
+    });
+
+    expect(() =>
+      spawnBackgroundSubagentTask({
+        subagentType: "reflection",
+        prompt: "Reflect again",
+        description: "Reflect on memory again",
+        deps: {
+          spawnSubagentImpl,
+          addToMessageQueueImpl,
+          formatTaskNotificationImpl,
+          runSubagentStopHooksImpl,
+          generateSubagentIdImpl,
+          registerSubagentImpl,
+          completeSubagentImpl,
+          getSubagentSnapshotImpl,
+        },
+      }),
+    ).toThrow("Too many background tasks already running");
+  });
+
   test("marks background task failed and emits notification on error", async () => {
     const spawnSubagentImpl = mock(async () => {
       throw new Error("subagent exploded");

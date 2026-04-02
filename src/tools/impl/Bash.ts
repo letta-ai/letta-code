@@ -3,10 +3,12 @@ import { INTERRUPTED_BY_USER } from "../../constants";
 import {
   appendBackgroundProcessOutput,
   appendToOutputFile,
+  assertBackgroundProcessCapacity,
   backgroundProcesses,
   createBackgroundOutputFile,
   getNextBashId,
   scheduleBackgroundProcessCleanup,
+  unrefTimer,
 } from "./process_manager.js";
 import { getShellEnv } from "./shellEnv.js";
 import { buildShellLaunchers } from "./shellLaunchers.js";
@@ -16,17 +18,6 @@ import { validateRequiredParams } from "./validation.js";
 
 // Cache the working shell launcher after first successful spawn
 let cachedWorkingLauncher: string[] | null = null;
-
-function unrefTimer(timer: ReturnType<typeof setTimeout>): void {
-  if (
-    typeof timer === "object" &&
-    timer !== null &&
-    "unref" in timer &&
-    typeof timer.unref === "function"
-  ) {
-    timer.unref();
-  }
-}
 
 /**
  * Get the first working shell launcher for background processes.
@@ -185,6 +176,20 @@ export async function bash(args: BashArgs): Promise<BashResult> {
   }
 
   if (run_in_background) {
+    try {
+      assertBackgroundProcessCapacity();
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: error instanceof Error ? error.message : String(error),
+          },
+        ],
+        status: "error",
+      };
+    }
+
     const bashId = getNextBashId();
     const outputFile = createBackgroundOutputFile(bashId);
     const launcher = getBackgroundLauncher(command);

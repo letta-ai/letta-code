@@ -186,4 +186,26 @@ describe.skipIf(isWindows)("Bash background tools", () => {
     await new Promise((resolve) => setTimeout(resolve, 180));
     expect(backgroundProcesses.has(bashId)).toBe(false);
   });
+
+  test("refuses to start a new background process after the running cap", async () => {
+    __setBackgroundRetentionConfigForTests({ maxRunningProcesses: 1 });
+
+    const first = await bash({
+      command: "sleep 10",
+      description: "First running process",
+      run_in_background: true,
+    });
+    expect(first.status).toBe("success");
+
+    const second = await bash({
+      command: "sleep 10",
+      description: "Second running process",
+      run_in_background: true,
+    });
+
+    expect(second.status).toBe("error");
+    expect(second.content[0]?.text).toContain(
+      "Too many background processes already running",
+    );
+  });
 });

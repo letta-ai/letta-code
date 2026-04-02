@@ -679,15 +679,18 @@ function emitCronsUpdated(
   socket: WebSocket,
   scope?: { agent_id?: string; conversation_id?: string | null },
 ): void {
-  socket.send(
-    JSON.stringify({
+  safeSocketSend(
+    socket,
+    {
       type: "crons_updated",
       timestamp: Date.now(),
       ...(scope?.agent_id ? { agent_id: scope.agent_id } : {}),
       ...(scope?.conversation_id !== undefined
         ? { conversation_id: scope.conversation_id }
         : {}),
-    }),
+    },
+    "listener_cron_send_failed",
+    "listener_cron_command",
   );
 }
 
@@ -701,23 +704,29 @@ async function handleCronCommand(
         agent_id: parsed.agent_id,
         conversation_id: parsed.conversation_id,
       });
-      socket.send(
-        JSON.stringify({
+      safeSocketSend(
+        socket,
+        {
           type: "cron_list_response",
           request_id: parsed.request_id,
           tasks,
           success: true,
-        }),
+        },
+        "listener_cron_send_failed",
+        "listener_cron_command",
       );
     } catch (err) {
-      socket.send(
-        JSON.stringify({
+      safeSocketSend(
+        socket,
+        {
           type: "cron_list_response",
           request_id: parsed.request_id,
           tasks: [],
           success: false,
           error: err instanceof Error ? err.message : "Failed to list crons",
-        }),
+        },
+        "listener_cron_send_failed",
+        "listener_cron_command",
       );
     }
     return true;
@@ -742,27 +751,33 @@ async function handleCronCommand(
         prompt: parsed.prompt,
         scheduled_for: scheduledFor,
       });
-      socket.send(
-        JSON.stringify({
+      safeSocketSend(
+        socket,
+        {
           type: "cron_add_response",
           request_id: parsed.request_id,
           success: true,
           task: result.task,
           ...(result.warning ? { warning: result.warning } : {}),
-        }),
+        },
+        "listener_cron_send_failed",
+        "listener_cron_command",
       );
       emitCronsUpdated(socket, {
         agent_id: result.task.agent_id,
         conversation_id: result.task.conversation_id,
       });
     } catch (err) {
-      socket.send(
-        JSON.stringify({
+      safeSocketSend(
+        socket,
+        {
           type: "cron_add_response",
           request_id: parsed.request_id,
           success: false,
           error: err instanceof Error ? err.message : "Failed to add cron",
-        }),
+        },
+        "listener_cron_send_failed",
+        "listener_cron_command",
       );
     }
     return true;
@@ -771,25 +786,31 @@ async function handleCronCommand(
   if (parsed.type === "cron_get") {
     try {
       const task = getCronTask(parsed.task_id);
-      socket.send(
-        JSON.stringify({
+      safeSocketSend(
+        socket,
+        {
           type: "cron_get_response",
           request_id: parsed.request_id,
           success: true,
           found: task !== null,
           task,
-        }),
+        },
+        "listener_cron_send_failed",
+        "listener_cron_command",
       );
     } catch (err) {
-      socket.send(
-        JSON.stringify({
+      safeSocketSend(
+        socket,
+        {
           type: "cron_get_response",
           request_id: parsed.request_id,
           success: false,
           found: false,
           task: null,
           error: err instanceof Error ? err.message : "Failed to get cron",
-        }),
+        },
+        "listener_cron_send_failed",
+        "listener_cron_command",
       );
     }
     return true;
@@ -799,13 +820,16 @@ async function handleCronCommand(
     try {
       const existingTask = getCronTask(parsed.task_id);
       const found = deleteCronTask(parsed.task_id);
-      socket.send(
-        JSON.stringify({
+      safeSocketSend(
+        socket,
+        {
           type: "cron_delete_response",
           request_id: parsed.request_id,
           success: true,
           found,
-        }),
+        },
+        "listener_cron_send_failed",
+        "listener_cron_command",
       );
       if (found) {
         emitCronsUpdated(socket, {
@@ -814,14 +838,17 @@ async function handleCronCommand(
         });
       }
     } catch (err) {
-      socket.send(
-        JSON.stringify({
+      safeSocketSend(
+        socket,
+        {
           type: "cron_delete_response",
           request_id: parsed.request_id,
           success: false,
           found: false,
           error: err instanceof Error ? err.message : "Failed to delete cron",
-        }),
+        },
+        "listener_cron_send_failed",
+        "listener_cron_command",
       );
     }
     return true;
@@ -829,14 +856,17 @@ async function handleCronCommand(
 
   try {
     const deleted = deleteAllCronTasks(parsed.agent_id);
-    socket.send(
-      JSON.stringify({
+    safeSocketSend(
+      socket,
+      {
         type: "cron_delete_all_response",
         request_id: parsed.request_id,
         success: true,
         agent_id: parsed.agent_id,
         deleted,
-      }),
+      },
+      "listener_cron_send_failed",
+      "listener_cron_command",
     );
     if (deleted > 0) {
       emitCronsUpdated(socket, {
@@ -844,15 +874,18 @@ async function handleCronCommand(
       });
     }
   } catch (err) {
-    socket.send(
-      JSON.stringify({
+    safeSocketSend(
+      socket,
+      {
         type: "cron_delete_all_response",
         request_id: parsed.request_id,
         success: false,
         agent_id: parsed.agent_id,
         deleted: 0,
         error: err instanceof Error ? err.message : "Failed to delete crons",
-      }),
+      },
+      "listener_cron_send_failed",
+      "listener_cron_command",
     );
   }
   return true;
@@ -861,11 +894,14 @@ async function handleCronCommand(
 type SkillCommand = SkillEnableCommand | SkillDisableCommand;
 
 function emitSkillsUpdated(socket: WebSocket): void {
-  socket.send(
-    JSON.stringify({
+  safeSocketSend(
+    socket,
+    {
       type: "skills_updated",
       timestamp: Date.now(),
-    }),
+    },
+    "listener_skill_send_failed",
+    "listener_skill_command",
   );
 }
 
@@ -893,13 +929,16 @@ async function handleSkillCommand(
     try {
       // Validate the skill path exists
       if (!existsSync(parsed.skill_path)) {
-        socket.send(
-          JSON.stringify({
+        safeSocketSend(
+          socket,
+          {
             type: "skill_enable_response",
             request_id: parsed.request_id,
             success: false,
             error: `Path does not exist: ${parsed.skill_path}`,
-          }),
+          },
+          "listener_skill_send_failed",
+          "listener_skill_command",
         );
         return true;
       }
@@ -907,13 +946,16 @@ async function handleSkillCommand(
       // Check it contains a SKILL.md
       const skillMdPath = join(parsed.skill_path, "SKILL.md");
       if (!existsSync(skillMdPath)) {
-        socket.send(
-          JSON.stringify({
+        safeSocketSend(
+          socket,
+          {
             type: "skill_enable_response",
             request_id: parsed.request_id,
             success: false,
             error: `No SKILL.md found in ${parsed.skill_path}`,
-          }),
+          },
+          "listener_skill_send_failed",
+          "listener_skill_command",
         );
         return true;
       }
@@ -934,13 +976,16 @@ async function handleSkillCommand(
             unlinkSync(linkPath);
           }
         } else {
-          socket.send(
-            JSON.stringify({
+          safeSocketSend(
+            socket,
+            {
               type: "skill_enable_response",
               request_id: parsed.request_id,
               success: false,
               error: `${linkPath} already exists and is not a symlink — refusing to overwrite`,
-            }),
+            },
+            "listener_skill_send_failed",
+            "listener_skill_command",
           );
           return true;
         }
@@ -950,25 +995,31 @@ async function handleSkillCommand(
       const linkType = process.platform === "win32" ? "junction" : "dir";
       symlinkSync(parsed.skill_path, linkPath, linkType);
 
-      socket.send(
-        JSON.stringify({
+      safeSocketSend(
+        socket,
+        {
           type: "skill_enable_response",
           request_id: parsed.request_id,
           success: true,
           name: linkName,
           skill_path: parsed.skill_path,
           link_path: linkPath,
-        }),
+        },
+        "listener_skill_send_failed",
+        "listener_skill_command",
       );
       emitSkillsUpdated(socket);
     } catch (err) {
-      socket.send(
-        JSON.stringify({
+      safeSocketSend(
+        socket,
+        {
           type: "skill_enable_response",
           request_id: parsed.request_id,
           success: false,
           error: err instanceof Error ? err.message : "Failed to enable skill",
-        }),
+        },
+        "listener_skill_send_failed",
+        "listener_skill_command",
       );
     }
     return true;
@@ -979,26 +1030,32 @@ async function handleSkillCommand(
       const linkPath = join(globalSkillsDir, parsed.name);
 
       if (!existsSync(linkPath)) {
-        socket.send(
-          JSON.stringify({
+        safeSocketSend(
+          socket,
+          {
             type: "skill_disable_response",
             request_id: parsed.request_id,
             success: false,
             error: `Skill not found: ${parsed.name}`,
-          }),
+          },
+          "listener_skill_send_failed",
+          "listener_skill_command",
         );
         return true;
       }
 
       const stat = lstatSync(linkPath);
       if (!stat.isSymbolicLink()) {
-        socket.send(
-          JSON.stringify({
+        safeSocketSend(
+          socket,
+          {
             type: "skill_disable_response",
             request_id: parsed.request_id,
             success: false,
             error: `${parsed.name} is not a symlink — refusing to delete. Remove it manually if intended.`,
-          }),
+          },
+          "listener_skill_send_failed",
+          "listener_skill_command",
         );
         return true;
       }
@@ -1009,23 +1066,29 @@ async function handleSkillCommand(
         unlinkSync(linkPath);
       }
 
-      socket.send(
-        JSON.stringify({
+      safeSocketSend(
+        socket,
+        {
           type: "skill_disable_response",
           request_id: parsed.request_id,
           success: true,
           name: parsed.name,
-        }),
+        },
+        "listener_skill_send_failed",
+        "listener_skill_command",
       );
       emitSkillsUpdated(socket);
     } catch (err) {
-      socket.send(
-        JSON.stringify({
+      safeSocketSend(
+        socket,
+        {
           type: "skill_disable_response",
           request_id: parsed.request_id,
           success: false,
           error: err instanceof Error ? err.message : "Failed to disable skill",
-        }),
+        },
+        "listener_skill_send_failed",
+        "listener_skill_command",
       );
     }
     return true;
@@ -1157,8 +1220,9 @@ async function handleReflectionSettingsCommand(
 
   if (parsed.type === "get_reflection_settings") {
     try {
-      socket.send(
-        JSON.stringify({
+      safeSocketSend(
+        socket,
+        {
           type: "get_reflection_settings_response",
           request_id: parsed.request_id,
           success: true,
@@ -1166,11 +1230,14 @@ async function handleReflectionSettingsCommand(
             agentId,
             workingDirectory,
           ),
-        }),
+        },
+        "listener_reflection_settings_send_failed",
+        "listener_reflection_settings",
       );
     } catch (err) {
-      socket.send(
-        JSON.stringify({
+      safeSocketSend(
+        socket,
+        {
           type: "get_reflection_settings_response",
           request_id: parsed.request_id,
           success: false,
@@ -1179,7 +1246,9 @@ async function handleReflectionSettingsCommand(
             err instanceof Error
               ? err.message
               : "Failed to load reflection settings",
-        }),
+        },
+        "listener_reflection_settings_send_failed",
+        "listener_reflection_settings",
       );
     }
     return true;
@@ -1201,8 +1270,9 @@ async function handleReflectionSettingsCommand(
         persistGlobal,
       },
     );
-    socket.send(
-      JSON.stringify({
+    safeSocketSend(
+      socket,
+      {
         type: "set_reflection_settings_response",
         request_id: parsed.request_id,
         success: true,
@@ -1211,12 +1281,15 @@ async function handleReflectionSettingsCommand(
           agentId,
           workingDirectory,
         ),
-      }),
+      },
+      "listener_reflection_settings_send_failed",
+      "listener_reflection_settings",
     );
     emitDeviceStatusUpdate(socket, listener, parsed.runtime);
   } catch (err) {
-    socket.send(
-      JSON.stringify({
+    safeSocketSend(
+      socket,
+      {
         type: "set_reflection_settings_response",
         request_id: parsed.request_id,
         success: false,
@@ -1226,7 +1299,9 @@ async function handleReflectionSettingsCommand(
           err instanceof Error
             ? err.message
             : "Failed to update reflection settings",
-      }),
+      },
+      "listener_reflection_settings_send_failed",
+      "listener_reflection_settings",
     );
   }
   return true;
@@ -2457,7 +2532,12 @@ async function connectWithRetry(
             console.log(
               `[Listen] Sending list_in_directory_response: ${folders.length} folders, ${files?.length ?? 0} files`,
             );
-            socket.send(JSON.stringify(response));
+            safeSocketSend(
+              socket,
+              response,
+              "listener_list_directory_send_failed",
+              "listener_list_in_directory",
+            );
           } catch (err) {
             trackListenerError(
               "listener_list_directory_failed",
@@ -2467,8 +2547,9 @@ async function connectWithRetry(
             console.error(
               `[Listen] list_in_directory error: ${err instanceof Error ? err.message : "Unknown error"}`,
             );
-            socket.send(
-              JSON.stringify({
+            safeSocketSend(
+              socket,
+              {
                 type: "list_in_directory_response",
                 path: parsed.path,
                 folders: [],
@@ -2479,7 +2560,9 @@ async function connectWithRetry(
                     ? err.message
                     : "Failed to list directory",
                 ...(parsed.request_id ? { request_id: parsed.request_id } : {}),
-              }),
+              },
+              "listener_list_directory_send_failed",
+              "listener_list_in_directory",
             );
           }
         });
@@ -2498,14 +2581,17 @@ async function connectWithRetry(
             console.log(
               `[Listen] read_file success: ${parsed.path} (${content.length} bytes)`,
             );
-            socket.send(
-              JSON.stringify({
+            safeSocketSend(
+              socket,
+              {
                 type: "read_file_response",
                 request_id: parsed.request_id,
                 path: parsed.path,
                 content,
                 success: true,
-              }),
+              },
+              "listener_read_file_send_failed",
+              "listener_read_file",
             );
           } catch (err) {
             trackListenerError(
@@ -2516,8 +2602,9 @@ async function connectWithRetry(
             console.error(
               `[Listen] read_file error: ${err instanceof Error ? err.message : "Unknown error"}`,
             );
-            socket.send(
-              JSON.stringify({
+            safeSocketSend(
+              socket,
+              {
                 type: "read_file_response",
                 request_id: parsed.request_id,
                 path: parsed.path,
@@ -2525,7 +2612,9 @@ async function connectWithRetry(
                 success: false,
                 error:
                   err instanceof Error ? err.message : "Failed to read file",
-              }),
+              },
+              "listener_read_file_send_failed",
+              "listener_read_file",
             );
           }
         });
@@ -2544,27 +2633,33 @@ async function connectWithRetry(
             console.log(
               `[Listen] write_file success: ${parsed.path} (${parsed.content.length} bytes)`,
             );
-            socket.send(
-              JSON.stringify({
+            safeSocketSend(
+              socket,
+              {
                 type: "write_file_response",
                 request_id: parsed.request_id,
                 path: parsed.path,
                 success: true,
-              }),
+              },
+              "listener_write_file_send_failed",
+              "listener_write_file",
             );
           } catch (err) {
             console.error(
               `[Listen] write_file error: ${err instanceof Error ? err.message : "Unknown error"}`,
             );
-            socket.send(
-              JSON.stringify({
+            safeSocketSend(
+              socket,
+              {
                 type: "write_file_response",
                 request_id: parsed.request_id,
                 path: parsed.path,
                 success: false,
                 error:
                   err instanceof Error ? err.message : "Failed to write file",
-              }),
+              },
+              "listener_write_file_send_failed",
+              "listener_write_file",
             );
           }
         });
@@ -2592,8 +2687,9 @@ async function connectWithRetry(
             console.log(
               `[Listen] edit_file success: ${result.replacements} replacement(s) at line ${result.startLine}`,
             );
-            socket.send(
-              JSON.stringify({
+            safeSocketSend(
+              socket,
+              {
                 type: "edit_file_response",
                 request_id: parsed.request_id,
                 file_path: parsed.file_path,
@@ -2601,7 +2697,9 @@ async function connectWithRetry(
                 replacements: result.replacements,
                 start_line: result.startLine,
                 success: true,
-              }),
+              },
+              "listener_edit_file_send_failed",
+              "listener_edit_file",
             );
           } catch (err) {
             trackListenerError(
@@ -2612,8 +2710,9 @@ async function connectWithRetry(
             console.error(
               `[Listen] edit_file error: ${err instanceof Error ? err.message : "Unknown error"}`,
             );
-            socket.send(
-              JSON.stringify({
+            safeSocketSend(
+              socket,
+              {
                 type: "edit_file_response",
                 request_id: parsed.request_id,
                 file_path: parsed.file_path,
@@ -2622,7 +2721,9 @@ async function connectWithRetry(
                 success: false,
                 error:
                   err instanceof Error ? err.message : "Failed to edit file",
-              }),
+              },
+              "listener_edit_file_send_failed",
+              "listener_edit_file",
             );
           }
         });
@@ -2653,8 +2754,9 @@ async function connectWithRetry(
             const memfsInitialized = existsSync(join(memoryRoot, ".git"));
 
             if (!memfsInitialized) {
-              socket.send(
-                JSON.stringify({
+              safeSocketSend(
+                socket,
+                {
                   type: "list_memory_response",
                   request_id: parsed.request_id,
                   entries: [],
@@ -2662,7 +2764,9 @@ async function connectWithRetry(
                   total: 0,
                   success: true,
                   memfs_initialized: false,
-                }),
+                },
+                "listener_list_memory_send_failed",
+                "listener_list_memory",
               );
               return;
             }
@@ -2693,8 +2797,9 @@ async function connectWithRetry(
               });
 
               const done = i + CHUNK_SIZE >= total;
-              socket.send(
-                JSON.stringify({
+              const sent = safeSocketSend(
+                socket,
+                {
                   type: "list_memory_response",
                   request_id: parsed.request_id,
                   entries,
@@ -2702,14 +2807,20 @@ async function connectWithRetry(
                   total,
                   success: true,
                   memfs_initialized: true,
-                }),
+                },
+                "listener_list_memory_send_failed",
+                "listener_list_memory",
               );
+              if (!sent) {
+                return;
+              }
             }
 
             // Edge case: no files at all (repo exists but empty)
             if (total === 0) {
-              socket.send(
-                JSON.stringify({
+              safeSocketSend(
+                socket,
+                {
                   type: "list_memory_response",
                   request_id: parsed.request_id,
                   entries: [],
@@ -2717,7 +2828,9 @@ async function connectWithRetry(
                   total: 0,
                   success: true,
                   memfs_initialized: true,
-                }),
+                },
+                "listener_list_memory_send_failed",
+                "listener_list_memory",
               );
             }
           } catch (err) {
@@ -2726,8 +2839,9 @@ async function connectWithRetry(
               err,
               "listener_memory_browser",
             );
-            socket.send(
-              JSON.stringify({
+            safeSocketSend(
+              socket,
+              {
                 type: "list_memory_response",
                 request_id: parsed.request_id,
                 entries: [],
@@ -2736,7 +2850,9 @@ async function connectWithRetry(
                 success: false,
                 error:
                   err instanceof Error ? err.message : "Failed to list memory",
-              }),
+              },
+              "listener_list_memory_send_failed",
+              "listener_list_memory",
             );
           }
         });
@@ -2751,21 +2867,27 @@ async function connectWithRetry(
               "../../agent/memoryFilesystem"
             );
             const result = await applyMemfsFlags(parsed.agent_id, true, false);
-            socket.send(
-              JSON.stringify({
+            safeSocketSend(
+              socket,
+              {
                 type: "enable_memfs_response",
                 request_id: parsed.request_id,
                 success: true,
                 memory_directory: result.memoryDir,
-              }),
+              },
+              "listener_enable_memfs_send_failed",
+              "listener_enable_memfs",
             );
             // Push memory_updated so the UI auto-refreshes its file list
-            socket.send(
-              JSON.stringify({
+            safeSocketSend(
+              socket,
+              {
                 type: "memory_updated",
                 affected_paths: ["*"],
                 timestamp: Date.now(),
-              }),
+              },
+              "listener_enable_memfs_send_failed",
+              "listener_enable_memfs",
             );
           } catch (err) {
             trackListenerError(
@@ -2773,14 +2895,17 @@ async function connectWithRetry(
               err,
               "listener_memfs_enable",
             );
-            socket.send(
-              JSON.stringify({
+            safeSocketSend(
+              socket,
+              {
                 type: "enable_memfs_response",
                 request_id: parsed.request_id,
                 success: false,
                 error:
                   err instanceof Error ? err.message : "Failed to enable memfs",
-              }),
+              },
+              "listener_enable_memfs_send_failed",
+              "listener_enable_memfs",
             );
           }
         });
@@ -2792,10 +2917,16 @@ async function connectWithRetry(
         runDetachedListenerTask("list_models", async () => {
           try {
             const response = await buildListModelsResponse(parsed.request_id);
-            socket.send(JSON.stringify(response));
+            safeSocketSend(
+              socket,
+              response,
+              "listener_list_models_send_failed",
+              "listener_list_models",
+            );
           } catch (error) {
-            socket.send(
-              JSON.stringify({
+            safeSocketSend(
+              socket,
+              {
                 type: "list_models_response",
                 request_id: parsed.request_id,
                 success: false,
@@ -2804,7 +2935,9 @@ async function connectWithRetry(
                   error instanceof Error
                     ? error.message
                     : "Failed to list models",
-              }),
+              },
+              "listener_list_models_send_failed",
+              "listener_list_models",
             );
           }
         });
@@ -2829,7 +2962,12 @@ async function connectWithRetry(
               error:
                 "Model not found. Provide a valid model_id from list_models or a model_handle.",
             };
-            socket.send(JSON.stringify(failure));
+            safeSocketSend(
+              socket,
+              failure,
+              "listener_update_model_send_failed",
+              "listener_update_model",
+            );
             return;
           }
 
@@ -2841,7 +2979,12 @@ async function connectWithRetry(
               requestId: parsed.request_id,
               model: resolvedModel,
             });
-            socket.send(JSON.stringify(response));
+            safeSocketSend(
+              socket,
+              response,
+              "listener_update_model_send_failed",
+              "listener_update_model",
+            );
           } catch (error) {
             const failure: UpdateModelResponseMessage = {
               type: "update_model_response",
@@ -2858,7 +3001,12 @@ async function connectWithRetry(
                   ? error.message
                   : "Failed to update model",
             };
-            socket.send(JSON.stringify(failure));
+            safeSocketSend(
+              socket,
+              failure,
+              "listener_update_model_send_failed",
+              "listener_update_model",
+            );
           }
         });
         return;
@@ -2960,17 +3108,21 @@ async function connectWithRetry(
               )
               .slice(0, maxResults);
 
-            socket.send(
-              JSON.stringify({
+            safeSocketSend(
+              socket,
+              {
                 type: "search_branches_response",
                 request_id: parsed.request_id,
                 branches,
                 success: true,
-              }),
+              },
+              "listener_search_branches_send_failed",
+              "listener_search_branches",
             );
           } catch (error) {
-            socket.send(
-              JSON.stringify({
+            safeSocketSend(
+              socket,
+              {
                 type: "search_branches_response",
                 request_id: parsed.request_id,
                 branches: [],
@@ -2979,7 +3131,9 @@ async function connectWithRetry(
                   error instanceof Error
                     ? error.message
                     : "Failed to search branches",
-              }),
+              },
+              "listener_search_branches_send_failed",
+              "listener_search_branches",
             );
           }
         });
@@ -3005,20 +3159,24 @@ async function connectWithRetry(
             // Re-read the current branch after checkout to confirm
             const gitCtx = getGitContext(cwd);
 
-            socket.send(
-              JSON.stringify({
+            safeSocketSend(
+              socket,
+              {
                 type: "checkout_branch_response",
                 request_id: parsed.request_id,
                 branch: gitCtx?.branch ?? parsed.branch,
                 success: true,
-              }),
+              },
+              "listener_checkout_branch_send_failed",
+              "listener_checkout_branch",
             );
 
             // Emit updated device status so UIs pick up the new branch
             emitDeviceStatusUpdate(socket, runtime);
           } catch (error) {
-            socket.send(
-              JSON.stringify({
+            safeSocketSend(
+              socket,
+              {
                 type: "checkout_branch_response",
                 request_id: parsed.request_id,
                 branch: parsed.branch,
@@ -3027,7 +3185,9 @@ async function connectWithRetry(
                   error instanceof Error
                     ? error.message
                     : "Failed to checkout branch",
-              }),
+              },
+              "listener_checkout_branch_send_failed",
+              "listener_checkout_branch",
             );
           }
         });

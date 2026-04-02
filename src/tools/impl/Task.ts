@@ -25,6 +25,7 @@ import { formatTaskNotification } from "../../cli/helpers/taskNotifications.js";
 import { runSubagentStopHooks } from "../../hooks";
 import {
   appendToOutputFile,
+  assertBackgroundTaskCapacity,
   type BackgroundTask,
   backgroundTasks,
   createBackgroundOutputFile,
@@ -232,6 +233,8 @@ export async function waitForBackgroundSubagentLink(
 export function spawnBackgroundSubagentTask(
   args: SpawnBackgroundSubagentTaskArgs,
 ): SpawnBackgroundSubagentTaskResult {
+  assertBackgroundTaskCapacity();
+
   const {
     subagentType,
     prompt,
