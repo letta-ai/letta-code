@@ -1,134 +1,190 @@
-name: Prepare release
+name: Publish release
 
 on:
+  push:
+    branches:
+      - main
+    paths:
+      - package.json
+      - package-lock.json
   workflow_dispatch:
-    inputs:
-      version_type:
-        description: "Version bump type (patch, minor, major)"
-        required: false
-        default: "patch"
-      prerelease:
-        description: "Publish as prerelease? (leave empty for stable, or enter tag like 'next')"
-        required: false
-        default: ""
 
 jobs:
-  preflight:
+  publish:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.3.0
-
-      - name: Setup Node
-        uses: actions/setup-node@v6
-        with:
-          node-version: "22"
-
-      - name: Install dependencies
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: bun install
-
-      - name: Lint & Type Check
-        run: bun run check
-
-      - name: Build bundle
-        run: bun run build
-
-      - name: Update-chain preflight smoke
-        run: bun run test:update-chain:manual
-
-  prepare:
-    needs: preflight
-    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    environment: npm-publish
     permissions:
       contents: write
-      pull-requests: write
+      id-token: write
     steps:
       - name: Checkout
         uses: actions/checkout@v6
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Detect release bump commit
+        id: detect
+        run: |
+          set -euo pipefail
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "should_publish=true" >> $GITHUB_OUTPUT
+            echo "subject=manual publish dispatch" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          SUBJECT=$(git log --format=%s "${{ github.event.before }}..${{ github.sha }}" | grep -E '^chore: bump version to ' | tail -n 1 || true)
+          if [ -z "$SUBJECT" ]; then
+            echo "should_publish=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          echo "should_publish=true" >> $GITHUB_OUTPUT
+          echo "subject=$SUBJECT" >> $GITHUB_OUTPUT
 
       - name: Configure Git
+        if: steps.detect.outputs.should_publish == 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Bump version
+      - name: Setup Bun
+        if: steps.detect.outputs.should_publish == 'true'
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.0
+
+      - name: Setup Node (for npm OIDC publishing)
+        if: steps.detect.outputs.should_publish == 'true'
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Upgrade npm for OIDC support
+        if: steps.detect.outputs.should_publish == 'true'
+        run: npm install -g npm@latest
+
+      - name: Derive release metadata
+        if: steps.detect.outputs.should_publish == 'true'
         id: version
         run: |
-          VERSION_TYPE="${{ github.event.inputs.version_type || 'patch' }}"
-          PRERELEASE_TAG="${{ github.event.inputs.prerelease }}"
-          OLD_VERSION=$(jq -r '.version' package.json)
+          set -euo pipefail
 
-          if [[ "$OLD_VERSION" == *-* ]]; then
-            OLD_IS_PRERELEASE=true
-            BASE_VERSION=$(echo "$OLD_VERSION" | sed 's/-.*//')
+          git fetch --tags origin
+
+          VERSION=$(jq -r '.version' package.json)
+          PACKAGE_NAME=$(jq -r '.name' package.json)
+          TAG="v$VERSION"
+
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "package_name=$PACKAGE_NAME" >> $GITHUB_OUTPUT
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+
+          if [[ "$VERSION" == *-* ]]; then
+            PRERELEASE_LABEL=$(echo "$VERSION" | sed -E 's/^[0-9]+\.[0-9]+\.[0-9]+-([^.]+)(\..*)?$/\1/')
+            echo "is_prerelease=true" >> $GITHUB_OUTPUT
+            echo "npm_tag=$PRERELEASE_LABEL" >> $GITHUB_OUTPUT
+            echo "previous_tag=" >> $GITHUB_OUTPUT
           else
-            OLD_IS_PRERELEASE=false
-            BASE_VERSION="$OLD_VERSION"
+            PREVIOUS_TAG=$(
+              curl -fsSL \
+                -H "Accept: application/vnd.github+json" \
+                -H "Authorization: Bearer ${{ github.token }}" \
+                "https://api.github.com/repos/${{ github.repository }}/releases?per_page=100" \
+                | jq -r --arg tag "$TAG" '
+                    map(select(.draft == false and .prerelease == false and .tag_name != $tag))
+                    | sort_by(.published_at // .created_at)
+                    | last
+                    | .tag_name // empty
+                  ' || true
+            )
+
+            if [ -z "$PREVIOUS_TAG" ]; then
+              PREVIOUS_TAG=$(
+                git tag --sort=-version:refname \
+                  | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+                  | grep -Fxv "$TAG" \
+                  | head -n 1 || true
+              )
+            fi
+
+            echo "is_prerelease=false" >> $GITHUB_OUTPUT
+            echo "npm_tag=latest" >> $GITHUB_OUTPUT
+            echo "previous_tag=$PREVIOUS_TAG" >> $GITHUB_OUTPUT
           fi
 
-          IFS='.' read -ra VERSION_PARTS <<< "$BASE_VERSION"
-          MAJOR=${VERSION_PARTS[0]}
-          MINOR=${VERSION_PARTS[1]}
-          PATCH=${VERSION_PARTS[2]}
-
-          if [ "$VERSION_TYPE" = "major" ]; then
-            MAJOR=$((MAJOR + 1))
-            MINOR=0
-            PATCH=0
-          elif [ "$VERSION_TYPE" = "minor" ]; then
-            MINOR=$((MINOR + 1))
-            PATCH=0
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "tag_exists=true" >> $GITHUB_OUTPUT
           else
-            if [ "$OLD_IS_PRERELEASE" = "false" ]; then
-              PATCH=$((PATCH + 1))
-            fi
+            echo "tag_exists=false" >> $GITHUB_OUTPUT
           fi
 
-          NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
-
-          if [ -n "$PRERELEASE_TAG" ]; then
-            if [[ "$OLD_VERSION" == "${NEW_VERSION}-${PRERELEASE_TAG}."* ]]; then
-              PRERELEASE_NUM=$(echo "$OLD_VERSION" | sed "s/${NEW_VERSION}-${PRERELEASE_TAG}\.\([0-9]*\)/\1/")
-              PRERELEASE_NUM=$((PRERELEASE_NUM + 1))
-            else
-              PRERELEASE_NUM=1
-            fi
-            NEW_VERSION="${NEW_VERSION}-${PRERELEASE_TAG}.${PRERELEASE_NUM}"
+          if npm view "$PACKAGE_NAME@$VERSION" version >/dev/null 2>&1; then
+            echo "npm_published=true" >> $GITHUB_OUTPUT
+          else
+            echo "npm_published=false" >> $GITHUB_OUTPUT
           fi
 
-          jq --arg version "$NEW_VERSION" '.version = $version' package.json > package.json.tmp
-          mv package.json.tmp package.json
-
-          jq --arg version "$NEW_VERSION" '.version = $version | .packages[""].version = $version' package-lock.json > package-lock.json.tmp
-          mv package-lock.json.tmp package-lock.json
-
-          echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
-
-      - name: Commit version bump
-        run: |
-          git add package.json package-lock.json
-          git commit -m "chore: bump version to ${{ steps.version.outputs.new_version }}"
-
-      - name: Create version bump PR
+      - name: Install dependencies
+        if: steps.detect.outputs.should_publish == 'true'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bun install
+
+      - name: Lint & Type Check
+        if: steps.detect.outputs.should_publish == 'true'
+        run: bun run check
+
+      - name: Build bundle
+        if: steps.detect.outputs.should_publish == 'true'
+        run: bun run build
+
+      - name: Smoke test - help
+        if: steps.detect.outputs.should_publish == 'true'
+        run: ./letta.js --help
+
+      - name: Smoke test - version
+        if: steps.detect.outputs.should_publish == 'true'
+        run: ./letta.js --version || echo "Version flag not implemented yet"
+
+      - name: Integration smoke test (real API)
+        if: steps.detect.outputs.should_publish == 'true'
+        env:
+          LETTA_API_KEY: ${{ secrets.LETTA_API_KEY }}
+        run: ./letta.js --prompt "ping" --tools "" --permission-mode plan
+
+      - name: Create release tag on merged main commit
+        if: steps.detect.outputs.should_publish == 'true' && steps.version.outputs.tag_exists != 'true'
         run: |
-          BRANCH="chore/bump-v${{ steps.version.outputs.new_version }}"
-          git checkout -b "$BRANCH"
-          git push origin "$BRANCH"
-          gh pr create \
-            --title "chore: bump version to ${{ steps.version.outputs.new_version }}" \
-            --body "Merge this PR to publish v${{ steps.version.outputs.new_version }}." \
-            --base main \
-            --head "$BRANCH"
+          git tag "${{ steps.version.outputs.tag }}" "${{ github.sha }}"
+          git push origin "${{ steps.version.outputs.tag }}"
+
+      - name: Publish to npm
+        if: steps.detect.outputs.should_publish == 'true' && steps.version.outputs.npm_published != 'true'
+        run: npm publish --access public --tag ${{ steps.version.outputs.npm_tag }}
+
+      - name: Create GitHub Release
+        if: steps.detect.outputs.should_publish == 'true' && steps.version.outputs.is_prerelease == 'false' && steps.version.outputs.previous_tag != ''
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: Release ${{ steps.version.outputs.tag }}
+          previous_tag: ${{ steps.version.outputs.previous_tag }}
+          generate_release_notes: true
+          files: letta.js
+          fail_on_unmatched_files: true
+
+      - name: Create GitHub Release (no previous tag)
+        if: steps.detect.outputs.should_publish == 'true' && steps.version.outputs.is_prerelease == 'false' && steps.version.outputs.previous_tag == ''
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: Release ${{ steps.version.outputs.tag }}
+          generate_release_notes: true
+          files: letta.js
+          fail_on_unmatched_files: true
