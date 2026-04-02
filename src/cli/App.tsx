@@ -7140,9 +7140,7 @@ export default function App({
 
         // Restore pending approvals if any
         if (resumeData.pendingApprovals.length > 0) {
-          await recoverRestoredPendingApprovals(
-            resumeData.pendingApprovals,
-          );
+          await recoverRestoredPendingApprovals(resumeData.pendingApprovals);
         }
 
         sessionHooksRanRef.current = false;
