@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
+import { createIsolatedCliTestEnv } from "../tests/testProcessEnv";
 
 const TOOL_TRIGGER_PROMPT =
   "Use the Bash tool exactly once with command: echo test123. Do not ask clarifying questions.";
@@ -55,7 +56,7 @@ async function startPendingApprovalSession(
       ],
       {
         cwd: process.cwd(),
-        env: { ...process.env, LETTA_CODE_AGENT_ROLE: "subagent" },
+        env: createIsolatedCliTestEnv(),
       },
     );
 
@@ -196,7 +197,7 @@ async function runOneShotAgainstConversation(
       ],
       {
         cwd: process.cwd(),
-        env: { ...process.env, LETTA_CODE_AGENT_ROLE: "subagent" },
+        env: createIsolatedCliTestEnv(),
       },
     );
 

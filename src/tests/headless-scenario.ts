@@ -9,6 +9,8 @@
  *   bun tsx src/tests/headless-scenario.ts --model gpt-4.1 --output stream-json --parallel on
  */
 
+import { createIsolatedCliTestEnv } from "./testProcessEnv";
+
 type Args = {
   model: string;
   output: "text" | "json" | "stream-json";
@@ -82,7 +84,7 @@ async function runCLI(
   const proc = Bun.spawn(cmd, {
     stdout: "pipe",
     stderr: "pipe",
-    env: { ...process.env, LETTA_CODE_AGENT_ROLE: "subagent" },
+    env: createIsolatedCliTestEnv(),
   });
   const out = await new Response(proc.stdout).text();
   const err = await new Response(proc.stderr).text();

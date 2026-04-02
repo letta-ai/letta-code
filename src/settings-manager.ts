@@ -168,6 +168,13 @@ function isSubagentProcess(): boolean {
   return process.env.LETTA_CODE_AGENT_ROLE === "subagent";
 }
 
+export function shouldPersistSessionState(): boolean {
+  return (
+    process.env.LETTA_CODE_AGENT_ROLE !== "subagent" &&
+    process.env.LETTA_DISABLE_SESSION_PERSIST !== "1"
+  );
+}
+
 /**
  * Normalize a base URL for use as a settings key.
  * Strips protocol (https://, http://) and returns host:port.

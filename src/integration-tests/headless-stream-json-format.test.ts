@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { spawn } from "node:child_process";
+import { createIsolatedCliTestEnv } from "../tests/testProcessEnv";
 import type {
   ResultMessage,
   StreamEvent,
@@ -34,8 +35,7 @@ async function runHeadlessCommand(
       ],
       {
         cwd: process.cwd(),
-        // Mark as subagent to prevent polluting user's LRU settings
-        env: { ...process.env, LETTA_CODE_AGENT_ROLE: "subagent" },
+        env: createIsolatedCliTestEnv(),
       },
     );
 

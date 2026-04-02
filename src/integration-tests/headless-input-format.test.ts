@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import { join } from "node:path";
+import { createIsolatedCliTestEnv } from "../tests/testProcessEnv";
 import type {
   ControlResponse,
   ErrorMessage,
@@ -50,12 +51,7 @@ async function runBidirectional(
       ],
       {
         cwd: process.cwd(),
-        // Mark as subagent to prevent polluting user's LRU settings
-        env: {
-          ...process.env,
-          LETTA_CODE_AGENT_ROLE: "subagent",
-          ...extraEnv,
-        },
+        env: createIsolatedCliTestEnv(extraEnv),
       },
     );
 

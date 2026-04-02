@@ -44,7 +44,7 @@ import {
 } from "./cli/startupFlagValidation";
 import { runSubcommand } from "./cli/subcommands/router";
 import { permissionMode } from "./permissions/mode";
-import { settingsManager } from "./settings-manager";
+import { settingsManager, shouldPersistSessionState } from "./settings-manager";
 import { startStartupAutoUpdateCheck } from "./startup-auto-update";
 import { telemetry } from "./telemetry";
 import { trackBoundaryError } from "./telemetry/errorReporting";
@@ -1705,7 +1705,6 @@ async function main(): Promise<void> {
         setAgentContext(agent.id, skillsDirectory, resolvedSkillSources);
 
         // Start memfs sync early — awaited in parallel with getResumeData below
-        const isSubagent = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
         const agentId = agent.id;
         const agentTags = agent.tags ?? undefined;
         const memfsSyncPromise = import("./agent/memoryFilesystem").then(
@@ -1974,7 +1973,7 @@ async function main(): Promise<void> {
 
         // Save the session (agent + conversation) to settings
         // Skip for subagents - they shouldn't pollute the LRU settings
-        if (!isSubagent) {
+        if (shouldPersistSessionState()) {
           settingsManager.persistSession(agent.id, conversationIdToUse);
         }
 

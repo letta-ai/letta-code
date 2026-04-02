@@ -92,7 +92,7 @@ import {
   createSharedReminderState,
   syncReminderStateFromContextTracker,
 } from "./reminders/state";
-import { settingsManager } from "./settings-manager";
+import { settingsManager, shouldPersistSessionState } from "./settings-manager";
 import { telemetry } from "./telemetry";
 import { trackBoundaryError } from "./telemetry/errorReporting";
 import {
@@ -1257,7 +1257,7 @@ export async function handleHeadlessCommand(
 
   // Save session (agent + conversation) to both project and global settings
   // Skip for subagents - they shouldn't pollute the LRU settings
-  if (!isSubagent) {
+  if (shouldPersistSessionState()) {
     await settingsManager.loadLocalProjectSettings();
     settingsManager.persistSession(agent.id, conversationId);
   }

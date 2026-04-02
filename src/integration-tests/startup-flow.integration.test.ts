@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { spawn } from "node:child_process";
+import { createIsolatedCliTestEnv } from "../tests/testProcessEnv";
 
 /**
  * Startup flow integration tests.
@@ -25,8 +26,7 @@ async function runCli(
       (resolve, reject) => {
         const proc = spawn("bun", ["run", "dev", ...args], {
           cwd: projectRoot,
-          // Mark as subagent to prevent polluting user's LRU settings
-          env: { ...process.env, LETTA_CODE_AGENT_ROLE: "subagent" },
+          env: createIsolatedCliTestEnv(),
         });
 
         let stdout = "";
