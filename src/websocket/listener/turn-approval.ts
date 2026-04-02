@@ -9,7 +9,6 @@ import {
   type ApprovalResult,
   executeApprovalBatch,
 } from "../../agent/approval-execution";
-import { classifyApprovals } from "../../cli/helpers/approvalClassification";
 import { computeDiffPreviews } from "../../helpers/diffPreview";
 import { isInteractiveApprovalTool } from "../../tools/interactivePolicy";
 import type {
@@ -25,6 +24,11 @@ import {
   requestApprovalOverWS,
   validateApprovalResultIds,
 } from "./approval";
+import {
+  applySuggestedPermissionsForApproval,
+  buildApprovalSuggestionPayload,
+  classifyApprovalsWithSuggestions,
+} from "./approval-suggestions";
 import {
   emitInterruptToolReturnMessage,
   emitToolExecutionFinishedEvents,
@@ -163,19 +167,18 @@ export async function handleApprovalStop(params: {
   clearPendingApprovalBatchIds(runtime, approvals);
   rememberPendingApprovalBatchIds(runtime, approvals, dequeuedBatchId);
 
-  const { autoAllowed, autoDenied, needsUserInput } = await classifyApprovals(
-    approvals,
-    {
+  const { autoAllowed, autoDenied, needsUserInput } =
+    await classifyApprovalsWithSuggestions(approvals, {
       alwaysRequiresUserInput: isInteractiveApprovalTool,
       treatAskAsDeny: false,
       requireArgsForAutoApprove: true,
       missingNameReason: "Tool call incomplete - missing name",
       workingDirectory: turnWorkingDirectory,
       permissionModeState: turnPermissionModeState,
-    },
-  );
+    });
 
-  const lastNeedsUserInputToolCallIds = needsUserInput.map(
+  let pendingNeedsUserInput = [...needsUserInput];
+  let lastNeedsUserInputToolCallIds = pendingNeedsUserInput.map(
     (ac) => ac.approval.toolCallId,
   );
   let lastExecutionResults: ApprovalResult[] | null = null;
@@ -225,7 +228,7 @@ export async function handleApprovalStop(params: {
     return interruptTermination();
   }
 
-  if (needsUserInput.length > 0) {
+  if (pendingNeedsUserInput.length > 0) {
     if (shouldInterrupt()) {
       return interruptTermination();
     }
@@ -236,7 +239,12 @@ export async function handleApprovalStop(params: {
       conversation_id: conversationId,
     });
 
-    for (const ac of needsUserInput) {
+    while (pendingNeedsUserInput.length > 0) {
+      const ac = pendingNeedsUserInput.shift();
+      if (!ac) {
+        break;
+      }
+
       if (shouldInterrupt()) {
         return interruptTermination();
       }
@@ -258,7 +266,7 @@ export async function handleApprovalStop(params: {
           tool_name: ac.approval.toolName,
           input: ac.parsedArgs,
           tool_call_id: ac.approval.toolCallId,
-          permission_suggestions: [],
+          ...buildApprovalSuggestionPayload(ac.context),
           blocked_path: null,
           ...(diffs.length > 0 ? { diffs } : {}),
         },
@@ -288,6 +296,11 @@ export async function handleApprovalStop(params: {
       if ("decision" in responseBody) {
         const response = responseBody.decision as ApprovalResponseDecision;
         if (response.behavior === "allow") {
+          const savedSuggestions = await applySuggestedPermissionsForApproval({
+            decision: response,
+            context: ac.context,
+            workingDirectory: turnWorkingDirectory,
+          });
           const finalApproval = response.updated_input
             ? {
                 ...ac.approval,
@@ -299,6 +312,39 @@ export async function handleApprovalStop(params: {
             approval: finalApproval,
             reason: response.message,
           });
+
+          if (savedSuggestions && pendingNeedsUserInput.length > 0) {
+            const reclassified = await classifyApprovalsWithSuggestions(
+              pendingNeedsUserInput.map((entry) => entry.approval),
+              {
+                alwaysRequiresUserInput: isInteractiveApprovalTool,
+                treatAskAsDeny: false,
+                requireArgsForAutoApprove: true,
+                missingNameReason: "Tool call incomplete - missing name",
+                workingDirectory: turnWorkingDirectory,
+                permissionModeState: turnPermissionModeState,
+              },
+            );
+
+            decisions.push(
+              ...reclassified.autoAllowed.map((entry) => ({
+                type: "approve" as const,
+                approval: entry.approval,
+              })),
+              ...reclassified.autoDenied.map((entry) => ({
+                type: "deny" as const,
+                approval: entry.approval,
+                reason:
+                  entry.denyReason ||
+                  entry.permission.reason ||
+                  "Permission denied",
+              })),
+            );
+            pendingNeedsUserInput = [...reclassified.needsUserInput];
+            lastNeedsUserInputToolCallIds = pendingNeedsUserInput.map(
+              (entry) => entry.approval.toolCallId,
+            );
+          }
         } else {
           decisions.push({
             type: "deny",

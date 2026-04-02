@@ -662,6 +662,7 @@ describe("listen-client multi-worker concurrency", () => {
               toolName: "Bash",
               toolArgs: "{}",
             },
+            approvalContext: null,
             controlRequest: {
               type: "control_request",
               request_id: "perm-a",
@@ -1100,6 +1101,7 @@ describe("listen-client multi-worker concurrency", () => {
               toolName: "Write",
               toolArgs: '{"file_path":"foo.ts"}',
             },
+            approvalContext: null,
             controlRequest: {
               type: "control_request",
               request_id: "perm-recovered-1",
@@ -1234,6 +1236,15 @@ describe("listen-client multi-worker concurrency", () => {
           approval: manualApproval,
           parsedArgs: { command: "rm -rf tmp" },
           permission: { decision: "ask", reason: "needs approval" },
+          context: {
+            recommendedRule: "Bash(rm:*)",
+            ruleDescription: "rm commands",
+            approveAlwaysText:
+              "Yes, and don't ask again for 'rm' commands in this project",
+            defaultScope: "project",
+            allowPersistence: true,
+            safetyLevel: "moderate",
+          },
         },
       ],
     } as never);
@@ -1274,6 +1285,12 @@ describe("listen-client multi-worker concurrency", () => {
           subtype: "can_use_tool",
           tool_name: "Bash",
           tool_call_id: "tool-manual",
+          permission_suggestions: [
+            {
+              id: "save-default",
+              text: "Yes, and don't ask again for 'rm' commands in this project",
+            },
+          ],
         }),
       },
     ]);
@@ -1334,6 +1351,7 @@ describe("listen-client multi-worker concurrency", () => {
           "perm-tool-manual",
           {
             approval: manualApproval,
+            approvalContext: null,
             controlRequest: {
               type: "control_request",
               request_id: "perm-tool-manual",
@@ -1446,6 +1464,7 @@ describe("listen-client multi-worker concurrency", () => {
               toolName: "Bash",
               toolArgs: '{"command":"sleep 300"}',
             },
+            approvalContext: null,
             controlRequest: {
               type: "control_request",
               request_id: "perm-sync",
@@ -1529,6 +1548,7 @@ describe("listen-client multi-worker concurrency", () => {
               toolName: "Bash",
               toolArgs: '{"command":"sleep 300"}',
             },
+            approvalContext: null,
             controlRequest: {
               type: "control_request",
               request_id: "perm-stale",

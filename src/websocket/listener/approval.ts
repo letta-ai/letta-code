@@ -91,7 +91,7 @@ export function isValidApprovalResponseBody(
     behavior?: unknown;
     message?: unknown;
     updated_input?: unknown;
-    updated_permissions?: unknown;
+    selected_permission_suggestion_ids?: unknown;
   };
   if (decision.behavior === "allow") {
     const hasMessage =
@@ -100,13 +100,13 @@ export function isValidApprovalResponseBody(
       decision.updated_input === undefined ||
       decision.updated_input === null ||
       typeof decision.updated_input === "object";
-    const hasUpdatedPermissions =
-      decision.updated_permissions === undefined ||
-      (Array.isArray(decision.updated_permissions) &&
-        decision.updated_permissions.every(
+    const hasSelectedPermissionSuggestionIds =
+      decision.selected_permission_suggestion_ids === undefined ||
+      (Array.isArray(decision.selected_permission_suggestion_ids) &&
+        decision.selected_permission_suggestion_ids.every(
           (entry) => typeof entry === "string",
         ));
-    return hasMessage && hasUpdatedInput && hasUpdatedPermissions;
+    return hasMessage && hasUpdatedInput && hasSelectedPermissionSuggestionIds;
   }
   if (decision.behavior === "deny") {
     return typeof decision.message === "string";
