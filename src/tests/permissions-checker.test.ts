@@ -85,6 +85,71 @@ test("Long bash commands should use wildcard patterns, not exact match", () => {
   expect(result2.decision).toBe("allow");
 });
 
+test("npx tsc wildcard permissions match compound TypeScript check commands", () => {
+  const permissions: PermissionRules = {
+    allow: ["Bash(npx tsc:*)"],
+    deny: [],
+    ask: [],
+  };
+
+  const result = checkPermission(
+    "Bash",
+    {
+      command:
+        'cd /Users/test/project && npx tsc --noEmit --project libs/utils-server/tsconfig.lib.json 2>&1 | grep -i handleStatus || echo "No errors"',
+    },
+    permissions,
+    "/Users/test/project",
+  );
+
+  expect(result.decision).toBe("allow");
+  expect(result.matchedRule).toBe("Bash(npx tsc:*)");
+});
+
+test("read-only compound directory listing command is auto-allowed", () => {
+  const result = checkPermission(
+    "Bash",
+    {
+      command:
+        "pwd && ls -la /Users/test/Downloads/LettaCodePage && printf '\\n---\\n' && find /Users/test/Downloads/LettaCodePage -maxdepth 2 -mindepth 1 | sed 's#^/Users/test/Downloads/LettaCodePage#.#' | sort | head -200",
+    },
+    { allow: [], deny: [], ask: [] },
+    "/Users/test/dev",
+  );
+
+  expect(result.decision).toBe("allow");
+  expect(result.reason).toBe("Read-only shell command");
+});
+
+test("git -C read-only status command is auto-allowed", () => {
+  const result = checkPermission(
+    "Bash",
+    {
+      command: "git -C /Users/test/project/repo status --short || true",
+    },
+    { allow: [], deny: [], ask: [] },
+    "/Users/test/project",
+  );
+
+  expect(result.decision).toBe("allow");
+  expect(result.reason).toBe("Read-only shell command");
+});
+
+test("absolute read-only file commands inside working directory are auto-allowed", () => {
+  const result = checkPermission(
+    "Bash",
+    {
+      command:
+        "tail -n 40 /Users/test/project/repo/index.html && printf '\\n---\\n' && grep -RIn title /Users/test/project/repo",
+    },
+    { allow: [], deny: [], ask: [] },
+    "/Users/test/project",
+  );
+
+  expect(result.decision).toBe("allow");
+  expect(result.reason).toBe("Read-only shell command");
+});
+
 test("Grep within working directory is auto-allowed", () => {
   const result = checkPermission(
     "Grep",

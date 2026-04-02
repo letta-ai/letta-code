@@ -12042,29 +12042,50 @@ ${SYSTEM_REMINDER_CLOSE}
 
       const currentIndex = approvalResults.length;
       const approvalContext = approvalContexts[currentIndex];
-      if (!approvalContext) return;
+      const currentApproval = pendingApprovals[currentIndex];
+      if (!approvalContext || !currentApproval) return;
 
-      const rule = approvalContext.recommendedRule;
-      const actualScope = scope || approvalContext.defaultScope;
+      const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
+        currentApproval.toolArgs,
+        {},
+      );
+      const latestApprovalContext = await analyzeToolApproval(
+        currentApproval.toolName,
+        parsedArgs,
+      );
+      const rule = latestApprovalContext.recommendedRule;
+      const actualScope = scope || latestApprovalContext.defaultScope;
+
+      if (!latestApprovalContext.allowPersistence || !rule) {
+        commandRunner
+          .start("/approve-always", "Adding permission...")
+          .fail("This approval cannot be persisted.");
+        return;
+      }
 
       const cmd = commandRunner.start(
         "/approve-always",
         "Adding permission...",
       );
 
-      // Save the permission rule
-      try {
-        await savePermissionRule(rule, "allow", actualScope);
-      } catch (error) {
-        const errorDetails = formatErrorDetails(error, agentId);
-        cmd.fail(`Failed to add permission: ${errorDetails}`);
-        return;
-      }
+      if (rule === "Edit(**)" && actualScope === "session") {
+        setUiPermissionMode("acceptEdits");
+        cmd.finish("Permission mode set to acceptEdits (session only)", true);
+      } else {
+        // Save the permission rule
+        try {
+          await savePermissionRule(rule, "allow", actualScope);
+        } catch (error) {
+          const errorDetails = formatErrorDetails(error, agentId);
+          cmd.fail(`Failed to add permission: ${errorDetails}`);
+          return;
+        }
 
-      // Show confirmation in transcript
-      const scopeText =
-        actualScope === "session" ? " (session only)" : " (project)";
-      cmd.finish(`Added permission: ${rule}${scopeText}`, true);
+        // Show confirmation in transcript
+        const scopeText =
+          actualScope === "session" ? " (session only)" : " (project)";
+        cmd.finish(`Added permission: ${rule}${scopeText}`, true);
+      }
 
       // Re-check remaining approvals against the newly saved permission
       // This allows subsequent approvals that match the new rule to be auto-allowed
@@ -12222,6 +12243,7 @@ ${SYSTEM_REMINDER_CLOSE}
       refreshDerived,
       isExecutingTool,
       setStreaming,
+      setUiPermissionMode,
       openTrajectorySegment,
       prepareScopedToolExecutionContext,
       updateStreamingOutput,

@@ -185,9 +185,43 @@ export function normalizeBashRulePayload(payload: string): string {
     ? trimmed.slice(0, -2).trimEnd()
     : trimmed;
   const unwrapped = unwrapShellLauncherCommand(withoutWildcard);
+  const normalized = normalizeGitCommandPrefix(unwrapped);
 
   if (hasWildcardSuffix) {
-    return `${unwrapped}:*`;
+    return `${normalized}:*`;
   }
-  return unwrapped;
+  return normalized;
+}
+
+function normalizeGitCommandPrefix(command: string): string {
+  const trimmed = command.trim();
+  if (!trimmed.startsWith("git ")) {
+    return trimmed;
+  }
+
+  const tokens = tokenizeShell(trimmed);
+  if (tokens[0] !== "git") {
+    return trimmed;
+  }
+
+  const normalizedTokens = ["git"];
+  let index = 1;
+
+  while (index < tokens.length) {
+    const token = tokens[index];
+    if (!token) {
+      index += 1;
+      continue;
+    }
+
+    if (token === "-C") {
+      index += 2;
+      continue;
+    }
+
+    normalizedTokens.push(...tokens.slice(index));
+    return normalizedTokens.join(" ");
+  }
+
+  return normalizedTokens.join(" ");
 }

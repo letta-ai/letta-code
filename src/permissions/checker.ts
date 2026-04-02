@@ -375,7 +375,15 @@ function checkPermissionForEngine(
 
   if (READ_ONLY_SHELL_TOOLS.has(toolName) || isShellToolName(canonicalTool)) {
     const shellCommand = extractShellCommand(toolArgs);
-    if (shellCommand && isReadOnlyShellCommand(shellCommand)) {
+    if (
+      shellCommand &&
+      isReadOnlyShellCommand(shellCommand, {
+        allowedPathRoots: getAllowedShellPathRoots(
+          permissions,
+          workingDirectory,
+        ),
+      })
+    ) {
       traceEvent(trace, "readonly-shell-auto-allow", "Read-only shell command");
       return {
         result: {
@@ -556,6 +564,21 @@ function isWithinAllowedDirectories(
   }
 
   return false;
+}
+
+function getAllowedShellPathRoots(
+  permissions: PermissionRules,
+  workingDirectory: string,
+): string[] {
+  const roots = [workingDirectory];
+
+  if (permissions.additionalDirectories) {
+    for (const dir of permissions.additionalDirectories) {
+      roots.push(resolve(workingDirectory, dir));
+    }
+  }
+
+  return roots;
 }
 
 /**
