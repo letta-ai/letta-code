@@ -5,101 +5,109 @@ description: Identify and repair degradation in system prompt, external memory, 
 ---
 
 # Context Doctor
+Your context is managed by yourself, along with additional memory subagents. Your context includes: 
+- Your system prompt and instructions (contained in `system/`)
+- Your external memory 
+- Your skills (procedural memory) 
 
-Your context — system prompt, memory files (both `system/` and external), and skills (procedural memory) — is what makes you *you* across sessions. Over time it can degrade — bloat and poor prompt quality erode your ability to remember the right things and follow instructions properly. This skill helps you identify issues and repair them collaboratively with the user.
-
-## Context Principles
-
-These principles define what healthy context looks like. Use them as your diagnostic lens:
-
-- **System/ is the core program**: Only durable knowledge needed every turn belongs in `system/`. Identity, active preferences, behavioral rules, project index with discovery paths, gotchas. Everything else lives outside `system/` and is loaded on demand.
-- **Progressive disclosure**: Summaries and principles in `system/`; detail and evidence outside it. Frontmatter descriptions should let you decide whether to load a file without reading it. Use `[[path]]` links to create discovery paths between related context.
-- **Generalize, don't memorize**: Store patterns and principles that generalize across situations, not raw events or one-off facts retrievable from conversation history.
-- **Identity is project-agnostic**: `human.md` is about the user as a person — not project conventions. `persona.md` is personality and values — not project rules. The same agent may work across multiple projects.
-- **Preserve semantics**: Refine, tighten, and restructure to improve clarity — but never change intended meaning. Don't alter persona-defining content, user identity, or behavioral instructions.
+Over time, context can degrade — bloat and poor prompt quality erode your ability to remember the right things and follow instructions properly. This skill helps you identify issues with your context and repair them collaboratively with the user.
 
 ## Operating Procedure
 
-### Step 1: Diagnose
+### Step 1: Identifying and resolving context issues 
+Explore your memory files to identify issues. Consider what is confusing about your own prompts and context, and resolve the issues.
 
-Evaluate your memory against the principles above (using subagents for efficiency) by:
-- Reading all memory files (`system/` and optionally external as needed)
-- Analyzing git history for $MEMORY_DIR
-- Running the token estimator:
+Below are additional common issues with context and how they can be resolved: 
 
+### Context quality 
+Your system prompt and memory filesystem should be well structured and clear. 
+
+**Questions to ask**: 
+- Is my system prompt clear and well formatted? 
+- Are there wasteful or unnecessary tokens in my prompts? 
+- Do I know when to load which files in my memory filesystem? 
+
+#### System prompt bloat 
+Prompts that are compiled as part of the system prompt (contained in `system/`) should only take up about 10% of the total context size, though this is a recommendation, not a hard requirement. Usually this means about 15-20k tokens. 
+
+Use the following script to evaluate the token usage of the system prompt: 
 ```bash
 npx tsx <SKILL_DIR>/scripts/estimate_system_tokens.ts --memory-dir "$MEMORY_DIR"
 ```
-
 Where `<SKILL_DIR>` is the Skill Directory shown when the skill was loaded (visible in the injection header).
 
-Check for these categories of issues. Each maps to one or more context principles:
+**Questions to ask**:
+- Do all these tokens need to be passed to the LLM on every turn, or can they be retrieved when needed through being part of external memory or conversation history? 
+- Do any of these prompts confuse or distract me? 
+- Am I able to effectively follow critical instructions (e.g. persona information, user preferences) given the current prompt structure and contents? 
 
-**System prompt bloat** ← *System/ is the core program*
-Prompts compiled into the system prompt (contained in `system/`) should take up roughly 10% of total context (~15-20k tokens).
-- Is the system prompt over budget? What's consuming the most tokens?
-- Do all these tokens need to be passed to the LLM on every turn, or can they be retrieved when needed from external memory or conversation history?
-- Am I able to effectively follow critical instructions (e.g. persona, user preferences) given the current prompt structure and contents?
-- Is verbose content (evidence trails, detailed reference, long lists) living in `system/` when a lean summary + external `[[path]]` link would suffice?
+**Solution**: Reduce the size of the system prompt if needed: 
+- Move files outside of `system/` so they are no longer part of the system prompt
+- Compact information to be more information dense or eliminate redundancy
+- Leverage progressive disclosure: move some context outside of `system/` and reference it via `[[path]]` links to create discovery paths
 
-**Content quality** ← *Generalize, don't memorize*
-- Does each `system/` file contain generalized, actionable knowledge — or raw facts, one-off events, transient items (specific commits, current tickets, session notes)?
-- Do any of these prompts confuse or distract me?
-- Is there low-value content that can simply be deleted — stale facts, things retrievable on demand from conversation history?
+**Scope**: You may refine, tighten, and restructure prompts to improve clarity and adherence — but do not change the intended semantics. The goal is better signal, not different behavior.
+- Do not alter persona-defining content (who you are, how you communicate)
+- Do not remove or change user identity or preferences (e.g. the human's name, their stated goals)
+- Do not rewrite instructions in ways that shift their meaning — only reduce noise and improve structure
 
-**Identity separation** ← *Identity is project-agnostic*
-- Is `human.md` about the user as a person, or has project-specific context leaked in?
-- Is `persona.md` about personality and values, or does it contain project rules?
-- Are project conventions stored in project-specific files (e.g. `system/letta-code/`), not mixed into identity files?
+#### Context redundancy and unclear organization 
+The context in the memory filesystem should have a clear structure, with a well-defined purpose for each file. Memory file descriptions should be precise and non-overlapping. Their contents should be consistent with the description, and have non-overlapping content to other files. 
 
-**Organization and redundancy** ← *System/ is the core program*, *Progressive disclosure*
-Each file should have a clear structure and a well-defined purpose.
-- One concept per file? Or do files mix distinct topics that should be split?
-- Do the descriptions make clear what each file is for? Do the contents match?
-- Any redundancy — same information in multiple files? Consolidate to one canonical location.
-- Any file/folder name collisions (e.g. `system/human.md` and `system/human/identity.md`)?
+**Questions to ask**: 
+- Do the descriptions make clear what file is for what? 
+- Do the contents of the file match the descriptions? (you can ask subagents to check)
 
-**Discovery paths** ← *Progressive disclosure*
-Files outside `system/` must be dynamically loaded — you must index them so your future self can discover them. Reference external context from the relevant parts of in-context memory, e.g.:
+**Solution**: Read all memory files (use subagents for efficiency), then:
+- Consolidate redundant files
+- Reorganize files and rewrite descriptions to have clear separation of concerns
+- Avoid duplication by referencing common files from multiple places (e.g. `[[reference/api]]`)
+- Rewrite unclear or low-quality content
+
+#### Invalid context format
+Files in the memory filesystem must follow certain structural requirements: 
+- Must have a `system/persona.md`
+- Must NOT have overlapping file and folder names (e.g. `system/human.md` and `system/human/identity.md`) 
+- Must follow specification for skills (e.g. `skills/{skill_name}/`) with the format:
 ```
-Sarah's active projects are: Letta Code [[projects/letta_code.md]] and Letta Cloud [[projects/letta_cloud.md]]
+skill-name/
+├── SKILL.md          # Required: metadata + instructions
+├── scripts/          # Optional: executable code
+├── references/       # Optional: documentation
+├── assets/           # Optional: templates, resources
+└── ...               # Any additional files or directories
 ```
+
+**Solution**: Reorganize files to follow the required structure
+
+### Poor use of progressive disclosure
+Only critical information should be in the system prompt, since it's passed on every turn. Use progressive disclosure so that context only *sometimes* needed can be dynamically retrieved.
+
+Files that are outside of `system/` are not part of the system prompt, and must be dynamically loaded. You must index your files to ensure your future self can discover them: for example, make sure that files have informative names and descriptions, or are referenced from parts of your system prompt via `[[path]]` links to create discovery paths. Otherwise, you will never discover the external context or make use of it. 
+
+**Solution**: 
+- Reference external skills from the relevant parts of in-context memory:
 ```
 When running a migration, always use the skill [[skills/db-migrations]]
 ```
-- Can you find external files when you need them? Are they referenced from `system/` with `[[path]]` links or clear descriptions?
-- Do file names and frontmatter descriptions let you decide whether to load a file without reading it?
-- Do skills have informative names and descriptions so you know when to load them?
+or external memory files: 
+```
+Sarah's active projects are: Letta Code [[projects/letta_code.md]] and Letta Cloud [[projects/letta_cloud]]
+```
+- Ensure that contents of files match the file name and descriptions 
+- Make sure your future self will be able to find and load external files when needed. 
 
-**Structural validity**:
-- `system/persona.md` must exist
-- Skills must follow spec: `skills/{name}/SKILL.md` with optional `scripts/`, `references/`, `assets/`
-- Project directories use the project's **real name** (e.g. `letta-code/`), not generic `project/`
-
-### Step 2: Plan and implement fixes
-
-Present findings to the user, then create a plan and implement. Common fixes:
-
-- **Move verbose content** outside `system/`, add `[[path]]` reference from a lean summary
-- **Compact information** to be more dense or eliminate redundancy
-- **Consolidate redundant files** into one canonical location
-- **Rewrite unclear descriptions** so they enable progressive disclosure
-- **Split mixed-topic files** into focused single-concept files
-- **Add `[[path]]` links** to connect related context into a navigable graph
-- **Separate identity from project context** — move project conventions out of `human.md`/`persona.md`
-- **Delete low-value content** — stale facts, transient items, anything retrievable on demand
-
-**Scope** ← *Preserve semantics*: You may refine, tighten, and restructure to improve clarity — but do not change intended meaning. Don't alter persona-defining content, user identity, or behavioral instructions. Only reduce noise and improve structure.
+### Step 2: Implement context fixes
+Create a plan for what fixes you want to make, then implement them.
 
 Before moving on, verify:
-- [ ] All identified issues addressed
+- [ ] System prompt token budget reviewed (target ~10% of context, usually 15-20k tokens)
 - [ ] No overlapping or redundant files remain
 - [ ] All file descriptions are unique, accurate, and match their contents
-- [ ] Moved-out knowledge has `[[path]]` references from `system/` so it can be discovered
+- [ ] Moved-out knowledge has `[[path]]` references from in-context memory so it can be discovered
 - [ ] No semantic changes to persona, user identity, or behavioral instructions
 
 ### Step 3: Commit and push
-
 Review changes, then commit with a descriptive message:
 
 ```bash
@@ -113,14 +121,13 @@ git commit --author="<AGENT_NAME> <<ACTUAL_AGENT_ID>@letta.com>" -m "fix(doctor)
 git push
 ```
 
-### Step 4: Report to user
+### Step 4: Final checklist and message
+Tell the user what issues you identified, the fixes you made, the commit you made, and also recommend that they run `/recompile` to apply these changes to the current system prompt. 
 
-Tell the user what issues you identified, the fixes you made, and the commit. Recommend they run `/recompile` to apply changes to the current system prompt.
+Before finishing make sure you: 
+- [ ] Resolved all the identified context issues
+- [ ] Pushed your changes successfully 
+- [ ] Told the user to run `/recompile` to refresh the system prompt and apply changes
 
-Before finishing:
-- [ ] Resolved all identified context issues
-- [ ] Pushed changes successfully
-- [ ] Told the user to run `/recompile`
-
-## Critical information
-- **Ask the user about their goals for you, not the implementation**: You understand your own context best, and should follow the guidelines in this document. Do NOT ask the user about their structural preferences — the context is for YOU, not them. Ask them how they want YOU to behave or know instead.
+## Critical information 
+- **Ask the user about their goals for you, not the implementation**: You understand your own context best, and should follow the guidelines in this document. Do NOT ask the user about their structural preferences — the context is for YOU, not them. Ask them how they want YOU to behave or know instead. 
