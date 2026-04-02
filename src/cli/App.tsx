@@ -7140,7 +7140,9 @@ export default function App({
 
         // Restore pending approvals if any
         if (resumeData.pendingApprovals.length > 0) {
-          setPendingApprovals(resumeData.pendingApprovals);
+          await recoverRestoredPendingApprovals(
+            resumeData.pendingApprovals,
+          );
         }
 
         sessionHooksRanRef.current = false;
@@ -7180,6 +7182,7 @@ export default function App({
       resetBootstrapReminderState,
       setCommandRunning,
       setStreaming,
+      recoverRestoredPendingApprovals,
       resetDeferredToolCallCommits,
       resetTrajectoryBases,
     ],
