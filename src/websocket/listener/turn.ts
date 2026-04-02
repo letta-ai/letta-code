@@ -389,6 +389,27 @@ export async function handleIncomingMessage(
           runtime.reminderState,
           runtime.contextTracker,
         );
+        let listenAgentMetadata: {
+          name: string | null;
+          description: string | null;
+          lastRunAt: string | null;
+        } | null = null;
+        if (!runtime.reminderState.hasSentAgentInfo && agentId) {
+          try {
+            const client = await getClient();
+            const agent = await client.agents.retrieve(agentId);
+            listenAgentMetadata = {
+              name: agent.name ?? null,
+              description: agent.description ?? null,
+              lastRunAt:
+                (agent as { last_run_completion?: string | null })
+                  .last_run_completion ?? null,
+            };
+          } catch {
+            // Best-effort only. If the fetch fails, reminder building will
+            // fall back to the existing null/placeholder behavior.
+          }
+        }
         const reflectionSettings = getReflectionSettings(
           agentId || undefined,
           turnWorkingDirectory,
@@ -397,6 +418,9 @@ export async function handleIncomingMessage(
           buildListenReminderContext({
             agentId: agentId || "",
             conversationId,
+            agentName: listenAgentMetadata?.name ?? null,
+            agentDescription: listenAgentMetadata?.description ?? null,
+            agentLastRunAt: listenAgentMetadata?.lastRunAt ?? null,
             state: runtime.reminderState,
             reflectionSettings,
             maybeLaunchReflectionSubagent: agentId
