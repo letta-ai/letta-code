@@ -532,6 +532,30 @@ export interface ListMemoryCommand {
   agent_id: string;
 }
 
+export interface MemoryHistoryCommand {
+  type: "memory_history";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  /** The agent whose memory history to fetch. */
+  agent_id: string;
+  /** Relative path within the memory directory (e.g. "system/persona.md"). */
+  file_path: string;
+  /** Max commits to return (default 50). */
+  limit?: number;
+}
+
+export interface MemoryFileAtRefCommand {
+  type: "memory_file_at_ref";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  /** The agent whose memory to read. */
+  agent_id: string;
+  /** Relative path within the memory directory. */
+  file_path: string;
+  /** Git SHA to read the file at. */
+  ref: string;
+}
+
 export interface EnableMemfsCommand {
   type: "enable_memfs";
   /** Echoed back in the response for request correlation. */
@@ -851,6 +875,8 @@ export type WsProtocolCommand =
   | WriteFileCommand
   | EditFileCommand
   | ListMemoryCommand
+  | MemoryHistoryCommand
+  | MemoryFileAtRefCommand
   | EnableMemfsCommand
   | ListModelsCommand
   | UpdateModelCommand

@@ -17,6 +17,8 @@ import type {
   ListInDirectoryCommand,
   ListMemoryCommand,
   ListModelsCommand,
+  MemoryFileAtRefCommand,
+  MemoryHistoryCommand,
   ReadFileCommand,
   RuntimeScope,
   SearchBranchesCommand,
@@ -346,6 +348,44 @@ export function isListMemoryCommand(
     c.type === "list_memory" &&
     typeof c.request_id === "string" &&
     typeof c.agent_id === "string"
+  );
+}
+
+export function isMemoryHistoryCommand(
+  value: unknown,
+): value is MemoryHistoryCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    agent_id?: unknown;
+    file_path?: unknown;
+  };
+  return (
+    c.type === "memory_history" &&
+    typeof c.request_id === "string" &&
+    typeof c.agent_id === "string" &&
+    typeof c.file_path === "string"
+  );
+}
+
+export function isMemoryFileAtRefCommand(
+  value: unknown,
+): value is MemoryFileAtRefCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    agent_id?: unknown;
+    file_path?: unknown;
+    ref?: unknown;
+  };
+  return (
+    c.type === "memory_file_at_ref" &&
+    typeof c.request_id === "string" &&
+    typeof c.agent_id === "string" &&
+    typeof c.file_path === "string" &&
+    typeof c.ref === "string"
   );
 }
 
@@ -690,6 +730,8 @@ export function parseServerMessage(
       isWriteFileCommand(parsed) ||
       isEditFileCommand(parsed) ||
       isListMemoryCommand(parsed) ||
+      isMemoryHistoryCommand(parsed) ||
+      isMemoryFileAtRefCommand(parsed) ||
       isEnableMemfsCommand(parsed) ||
       isListModelsCommand(parsed) ||
       isUpdateModelCommand(parsed) ||

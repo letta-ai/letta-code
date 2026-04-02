@@ -143,6 +143,8 @@ import {
   isListInDirectoryCommand,
   isListMemoryCommand,
   isListModelsCommand,
+  isMemoryFileAtRefCommand,
+  isMemoryHistoryCommand,
   isReadFileCommand,
   isSearchBranchesCommand,
   isSearchFilesCommand,
@@ -2619,6 +2621,133 @@ async function connectWithRetry(
               success: false,
               error:
                 err instanceof Error ? err.message : "Failed to list memory",
+            }),
+          );
+        }
+      })();
+      return;
+    }
+
+    // ── Memory history (git log for a specific file) ───────────────────
+    if (isMemoryHistoryCommand(parsed)) {
+      void (async () => {
+        try {
+          const { getMemoryFilesystemRoot } = await import(
+            "../../agent/memoryFilesystem"
+          );
+          const { execFile: execFileCb } = await import("node:child_process");
+          const { promisify } = await import("node:util");
+          const execFileAsync = promisify(execFileCb);
+
+          const memoryRoot = getMemoryFilesystemRoot(parsed.agent_id);
+          const limit = parsed.limit ?? 50;
+
+          const { stdout } = await execFileAsync(
+            "git",
+            [
+              "log",
+              `--max-count=${limit}`,
+              "--format=%H|%s|%aI|%an",
+              "--",
+              parsed.file_path,
+            ],
+            { cwd: memoryRoot, timeout: 10000 },
+          );
+
+          const commits = stdout
+            .trim()
+            .split("\n")
+            .filter((line) => line.length > 0)
+            .map((line) => {
+              const [sha, message, timestamp, authorName] = line.split("|");
+              return {
+                sha: sha ?? "",
+                message: message ?? "",
+                timestamp: timestamp ?? "",
+                author_name: authorName ?? null,
+              };
+            });
+
+          socket.send(
+            JSON.stringify({
+              type: "memory_history_response",
+              request_id: parsed.request_id,
+              file_path: parsed.file_path,
+              commits,
+              success: true,
+            }),
+          );
+        } catch (err) {
+          trackListenerError(
+            "listener_memory_history_failed",
+            err,
+            "listener_memory_history",
+          );
+          socket.send(
+            JSON.stringify({
+              type: "memory_history_response",
+              request_id: parsed.request_id,
+              file_path: parsed.file_path,
+              commits: [],
+              success: false,
+              error:
+                err instanceof Error
+                  ? err.message
+                  : "Failed to get memory history",
+            }),
+          );
+        }
+      })();
+      return;
+    }
+
+    // ── Memory file at ref (git show for content at a commit) ────────
+    if (isMemoryFileAtRefCommand(parsed)) {
+      void (async () => {
+        try {
+          const { getMemoryFilesystemRoot } = await import(
+            "../../agent/memoryFilesystem"
+          );
+          const { execFile: execFileCb } = await import("node:child_process");
+          const { promisify } = await import("node:util");
+          const execFileAsync = promisify(execFileCb);
+
+          const memoryRoot = getMemoryFilesystemRoot(parsed.agent_id);
+
+          const { stdout } = await execFileAsync(
+            "git",
+            ["show", `${parsed.ref}:${parsed.file_path}`],
+            { cwd: memoryRoot, timeout: 10000 },
+          );
+
+          socket.send(
+            JSON.stringify({
+              type: "memory_file_at_ref_response",
+              request_id: parsed.request_id,
+              file_path: parsed.file_path,
+              ref: parsed.ref,
+              content: stdout,
+              success: true,
+            }),
+          );
+        } catch (err) {
+          trackListenerError(
+            "listener_memory_file_at_ref_failed",
+            err,
+            "listener_memory_file_at_ref",
+          );
+          socket.send(
+            JSON.stringify({
+              type: "memory_file_at_ref_response",
+              request_id: parsed.request_id,
+              file_path: parsed.file_path,
+              ref: parsed.ref,
+              content: null,
+              success: false,
+              error:
+                err instanceof Error
+                  ? err.message
+                  : "Failed to read file at ref",
             }),
           );
         }
