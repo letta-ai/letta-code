@@ -8710,6 +8710,7 @@ export default function App({
               "",
               "USAGE",
               "  /rename agent <name>      — rename the agent",
+              "  /rename convo             — generate a conversation title",
               "  /rename convo <summary>   — set a manual conversation title",
               "  /rename convo auto        — generate a conversation title",
               "  /rename help              — show this help",
@@ -8723,27 +8724,25 @@ export default function App({
             (subcommand !== "agent" && subcommand !== "convo")
           ) {
             cmd.fail(
-              "Usage: /rename agent <name> or /rename convo <summary|auto>",
+              "Usage: /rename agent <name> or /rename convo [summary|auto]",
             );
             return { submitted: true };
           }
 
           const newValue = parts.slice(2).join(" ");
-          if (!newValue) {
-            cmd.fail(
-              subcommand === "convo"
-                ? "Please provide a title or use /rename convo auto"
-                : "Please provide a name: /rename agent <name>",
-            );
+          if (subcommand === "agent" && !newValue) {
+            cmd.fail("Please provide a name: /rename agent <name>");
             return { submitted: true };
           }
 
           if (subcommand === "convo") {
-            const shouldAutoGenerate = newValue.trim().toLowerCase() === "auto";
+            const trimmedValue = newValue.trim();
+            const shouldAutoGenerate =
+              !trimmedValue || trimmedValue.toLowerCase() === "auto";
             cmd.update({
               output: shouldAutoGenerate
                 ? "Generating conversation title..."
-                : `Renaming conversation to "${newValue}"...`,
+                : `Renaming conversation to "${trimmedValue}"...`,
               phase: "running",
             });
 
@@ -8772,10 +8771,10 @@ export default function App({
                 }
               } else {
                 await client.conversations.update(conversationId, {
-                  summary: newValue,
+                  summary: trimmedValue,
                 });
                 setConversationAutoSummaryEligibility(false);
-                cmd.finish(`Conversation renamed to "${newValue}"`, true);
+                cmd.finish(`Conversation renamed to "${trimmedValue}"`, true);
               }
             } catch (error) {
               const errorDetails = formatErrorDetails(error, agentId);
