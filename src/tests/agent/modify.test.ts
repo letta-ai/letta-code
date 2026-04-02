@@ -110,7 +110,8 @@ describe("updateAgentLLMConfig", () => {
     mockGetServerUrl.mockReturnValue("https://api.letta.com");
     mockGetModelContextWindow.mockResolvedValue(128000);
 
-    const currentAgent = {
+    const finalAgent = {
+      id: "agent-1",
       llm_config: {
         context_window: 128000,
         model: "kimi-k2.5:cloud",
@@ -127,9 +128,7 @@ describe("updateAgentLLMConfig", () => {
       },
     };
 
-    mockAgentsRetrieve
-      .mockResolvedValueOnce(currentAgent)
-      .mockResolvedValueOnce({ id: "agent-1", ...currentAgent });
+    mockAgentsRetrieve.mockResolvedValueOnce(finalAgent);
     mockAgentsUpdate.mockResolvedValue({});
 
     const { updateAgentLLMConfig } = await import("../../agent/modify");
@@ -151,5 +150,6 @@ describe("updateAgentLLMConfig", () => {
         model: "anthropic/claude-sonnet-4-5-20250929",
       }),
     );
+    expect(mockAgentsRetrieve).toHaveBeenCalledTimes(1);
   });
 });

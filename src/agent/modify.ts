@@ -196,7 +196,10 @@ function buildModelSettings(
 /**
  * Updates an agent's model and model settings.
  *
- * Uses the new model_settings field instead of deprecated llm_config.
+ * Uses the new model_settings field for model configuration. On self-hosted
+ * servers, this may also preserve existing llm_config/embedding_config
+ * endpoint values when they are required to keep custom providers such as
+ * Ollama working across model changes.
  *
  * @param agentId - The agent ID
  * @param modelHandle - The model handle (e.g., "anthropic/claude-sonnet-4-5-20250929")
@@ -279,7 +282,10 @@ export async function updateAgentLLMConfig(
   options?: UpdateAgentLLMConfigOptions,
 ): Promise<AgentState> {
   const client = await getClient();
-  const currentAgent = await client.agents.retrieve(agentId);
+  const shouldPreserveSelfHostedConfig = isSelfHostedServer();
+  const currentAgent = shouldPreserveSelfHostedConfig
+    ? await client.agents.retrieve(agentId)
+    : null;
 
   const modelSettings = buildModelSettings(modelHandle, updateArgs);
   const explicitContextWindow = updateArgs?.context_window as
@@ -305,6 +311,7 @@ export async function updateAgentLLMConfig(
   };
 
   if (
+    currentAgent &&
     shouldPreserveSelfHostedLlmConfig(currentAgent, modelHandle) &&
     currentAgent.llm_config
   ) {
@@ -315,6 +322,7 @@ export async function updateAgentLLMConfig(
   }
 
   if (
+    currentAgent &&
     shouldPreserveSelfHostedEmbeddingConfig(currentAgent) &&
     currentAgent.embedding_config
   ) {

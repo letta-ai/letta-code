@@ -40,9 +40,9 @@ describe("model preset refresh wiring", () => {
     expect(updateSegment).not.toContain(
       "(updateArgs?.context_window as number | undefined) ??\n    (await getModelContextWindow(modelHandle));",
     );
-    expect(updateSegment).toContain(
-      "const currentAgent = await client.agents.retrieve(agentId);",
-    );
+    expect(updateSegment).toContain("const shouldPreserveSelfHostedConfig");
+    expect(updateSegment).toContain("isSelfHostedServer()");
+    expect(updateSegment).toContain("? await client.agents.retrieve(agentId)");
     expect(updateSegment).toContain(
       "shouldPreserveSelfHostedLlmConfig(currentAgent, modelHandle)",
     );
