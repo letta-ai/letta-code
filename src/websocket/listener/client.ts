@@ -2205,10 +2205,11 @@ async function connectWithRetry(
 
   socket.on("message", async (data: WebSocket.RawData) => {
     const raw = data.toString();
-    let parsed: ReturnType<typeof parseServerMessage> = null;
+    let parsedScope: ReturnType<typeof getParsedRuntimeScope> = null;
 
     try {
-      parsed = parseServerMessage(data);
+      const parsed = parseServerMessage(data);
+      parsedScope = getParsedRuntimeScope(parsed);
       if (parsed) {
         safeEmitWsEvent("recv", "client", parsed);
       } else {
@@ -3228,8 +3229,7 @@ async function connectWithRetry(
         console.error("[Listen] Unhandled message handler error:", error);
       }
 
-      const scope = getParsedRuntimeScope(parsed);
-      if (!scope) {
+      if (!parsedScope) {
         return;
       }
 
@@ -3240,8 +3240,8 @@ async function connectWithRetry(
             : "Failed to process listener message",
         stopReason: "error",
         isTerminal: false,
-        agentId: scope.agent_id,
-        conversationId: scope.conversation_id,
+        agentId: parsedScope.agent_id,
+        conversationId: parsedScope.conversation_id,
       });
     }
   });

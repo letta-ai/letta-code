@@ -1,10 +1,18 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 
-const mockGetSettingsWithSecureTokens = mock(async () => ({
-  env: {},
-  refreshToken: null,
-  tokenExpiresAt: null,
-}));
+type MockSettings = {
+  env: Record<string, string>;
+  refreshToken: string | null;
+  tokenExpiresAt: number | null;
+};
+
+const mockGetSettingsWithSecureTokens = mock(
+  async (): Promise<MockSettings> => ({
+    env: {},
+    refreshToken: null,
+    tokenExpiresAt: null,
+  }),
+);
 const mockGetSettings = mock(() => ({ env: {} }));
 const mockGetOrCreateDeviceId = mock(() => "device-test");
 const mockUpdateSettings = mock(() => {});

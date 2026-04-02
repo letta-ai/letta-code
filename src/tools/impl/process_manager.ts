@@ -117,7 +117,10 @@ function trimBufferedLines(lines: string[]): string[] {
 
   // Keep the most recent tail when a single line is still too long.
   if (retained.length === 1 && charCount > maxChars) {
-    retained[0] = retained[0].slice(-maxChars);
+    const [line] = retained;
+    if (line !== undefined) {
+      retained[0] = line.slice(-maxChars);
+    }
   }
 
   return retained;
