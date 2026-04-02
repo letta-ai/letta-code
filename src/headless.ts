@@ -453,6 +453,7 @@ export async function handleHeadlessCommand(
 
   // Resolve agent (same logic as interactive mode)
   let agent: AgentState | null = null;
+  let autoEnableMemfsForFreshAgent = false;
   let specifiedAgentId = values.agent;
   const specifiedAgentName = values.name;
   let specifiedConversationId = values.conversation;
@@ -883,9 +884,7 @@ export async function handleHeadlessCommand(
   if (!agent && forceNew) {
     const updateArgs = getModelUpdateArgs(model);
     // Pre-determine memfs mode so the agent is created with the correct prompt.
-    const { isLettaCloud, enableMemfsIfCloud } = await import(
-      "./agent/memoryFilesystem"
-    );
+    const { isLettaCloud } = await import("./agent/memoryFilesystem");
     const willAutoEnableMemfs =
       shouldAutoEnableMemfsForNewAgent && (await isLettaCloud());
     const effectiveMemoryMode =
@@ -908,11 +907,7 @@ export async function handleHeadlessCommand(
     };
     const result = await createAgent(createOptions);
     agent = result.agent;
-
-    // Enable memfs on Letta Cloud (tags, repo clone, tool detach).
-    if (willAutoEnableMemfs) {
-      await enableMemfsIfCloud(agent.id);
-    }
+    autoEnableMemfsForFreshAgent = willAutoEnableMemfs;
   }
 
   // Priority 4: Try to resume from project settings (.letta/settings.local.json)
@@ -1002,6 +997,7 @@ export async function handleHeadlessCommand(
   let effectiveReflectionSettings: ReflectionSettings;
 
   const isSubagent = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
+  const startupMemfsFlag = autoEnableMemfsForFreshAgent ? true : memfsFlag;
 
   // Captured so prompt logic below can await it when needed.
   let memfsBgPromise: Promise<unknown> | undefined;
@@ -1023,7 +1019,7 @@ export async function handleHeadlessCommand(
     // Run enable/disable logic but skip the git pull.
     try {
       const { applyMemfsFlags } = await import("./agent/memoryFilesystem");
-      await applyMemfsFlags(agent.id, memfsFlag, noMemfsFlag, {
+      await applyMemfsFlags(agent.id, startupMemfsFlag, noMemfsFlag, {
         pullOnExistingRepo: false,
         agentTags: agent.tags,
         skipPromptUpdate: forceNew,
@@ -1042,7 +1038,7 @@ export async function handleHeadlessCommand(
   } else if (memfsStartupPolicy === "background") {
     // Fire pull async; don't block session initialisation.
     const { applyMemfsFlags } = await import("./agent/memoryFilesystem");
-    memfsBgPromise = applyMemfsFlags(agent.id, memfsFlag, noMemfsFlag, {
+    memfsBgPromise = applyMemfsFlags(agent.id, startupMemfsFlag, noMemfsFlag, {
       pullOnExistingRepo: true,
       agentTags: agent.tags,
       skipPromptUpdate: forceNew,
@@ -1063,7 +1059,7 @@ export async function handleHeadlessCommand(
       const { applyMemfsFlags } = await import("./agent/memoryFilesystem");
       const memfsResult = await applyMemfsFlags(
         agent.id,
-        memfsFlag,
+        startupMemfsFlag,
         noMemfsFlag,
         {
           pullOnExistingRepo: true,

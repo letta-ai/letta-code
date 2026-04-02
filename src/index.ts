@@ -1527,6 +1527,7 @@ async function main(): Promise<void> {
         const { createAgent } = await import("./agent/create");
 
         let agent: AgentState | null = null;
+        let autoEnableMemfsForFreshAgent = false;
 
         // Priority 1: Import from AgentFile template (local file or registry)
         if (fromAfFile) {
@@ -1651,14 +1652,7 @@ async function main(): Promise<void> {
           });
           agent = result.agent;
           setAgentProvenance(result.provenance);
-
-          // Enable memfs on Letta Cloud (tags, repo clone, tool detach).
-          if (willAutoEnableMemfs) {
-            const { enableMemfsIfCloud } = await import(
-              "./agent/memoryFilesystem"
-            );
-            await enableMemfsIfCloud(agent.id);
-          }
+          autoEnableMemfsForFreshAgent = willAutoEnableMemfs;
         }
 
         // Priority 4: Try to resume from project settings LRU (.letta/settings.local.json)
@@ -1707,10 +1701,14 @@ async function main(): Promise<void> {
         // Start memfs sync early — awaited in parallel with getResumeData below
         const agentId = agent.id;
         const agentTags = agent.tags ?? undefined;
+        const startupMemfsFlag = autoEnableMemfsForFreshAgent
+          ? true
+          : memfsFlag;
         const memfsSyncPromise = import("./agent/memoryFilesystem").then(
           ({ applyMemfsFlags }) =>
-            applyMemfsFlags(agentId, memfsFlag, noMemfsFlag, {
+            applyMemfsFlags(agentId, startupMemfsFlag, noMemfsFlag, {
               agentTags,
+              skipPromptUpdate: shouldCreateNew,
             }),
         );
 
