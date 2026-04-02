@@ -92,6 +92,7 @@ import {
   createSharedReminderState,
   syncReminderStateFromContextTracker,
 } from "./reminders/state";
+import { getCurrentWorkingDirectory } from "./runtime-context";
 import { settingsManager, shouldPersistSessionState } from "./settings-manager";
 import { telemetry } from "./telemetry";
 import { trackBoundaryError } from "./telemetry/errorReporting";
@@ -317,7 +318,7 @@ async function prepareHeadlessToolExecutionContext(params: {
     agentId: params.agentId,
     conversationId: params.conversationId,
     overrideModel: params.overrideModel,
-    workingDirectory: process.env.USER_CWD || process.cwd(),
+    workingDirectory: getCurrentWorkingDirectory(),
     exclude: ["AskUserQuestion"],
   });
 
@@ -931,7 +932,9 @@ export async function handleHeadlessCommand(
   // Priority 4: Try to resume from project settings (.letta/settings.local.json)
   if (!agent) {
     await settingsManager.loadLocalProjectSettings();
-    const localAgentId = settingsManager.getLocalLastAgentId(process.cwd());
+    const localAgentId = settingsManager.getLocalLastAgentId(
+      getCurrentWorkingDirectory(),
+    );
     if (localAgentId) {
       try {
         agent = await client.agents.retrieve(localAgentId);
@@ -1340,7 +1343,7 @@ export async function handleHeadlessCommand(
       conversation_id: conversationId,
       model: agent.llm_config?.model ?? "",
       tools: availableTools,
-      cwd: process.cwd(),
+      cwd: getCurrentWorkingDirectory(),
       mcp_servers: [],
       permission_mode: "",
       slash_commands: [],
@@ -1601,6 +1604,7 @@ ${SYSTEM_REMINDER_CLOSE}
     },
     state: sharedReminderState,
     sessionContextReminderEnabled: systemInfoReminderEnabled,
+    workingDirectory: getCurrentWorkingDirectory(),
     reflectionSettings: effectiveReflectionSettings,
     skillSources: resolvedSkillSources,
     resolvePlanModeReminder: async () => {
@@ -2698,7 +2702,7 @@ async function runBidirectionalMode(
     conversation_id: conversationId,
     model: agent.llm_config?.model,
     tools: availableTools,
-    cwd: process.cwd(),
+    cwd: getCurrentWorkingDirectory(),
     memfs_enabled: settingsManager.isMemfsEnabled(agent.id),
     skill_sources: skillSources,
     system_info_reminder_enabled: systemInfoReminderEnabled,
@@ -3639,6 +3643,7 @@ async function runBidirectionalMode(
           },
           state: sharedReminderState,
           sessionContextReminderEnabled: systemInfoReminderEnabled,
+          workingDirectory: getCurrentWorkingDirectory(),
           reflectionSettings,
           skillSources,
           resolvePlanModeReminder: async () => {
