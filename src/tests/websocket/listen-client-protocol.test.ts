@@ -37,6 +37,11 @@ import {
   resolvePendingApprovalResolver,
 } from "../../websocket/listen-client";
 import { isEditFileCommand } from "../../websocket/listener/protocol-inbound";
+import {
+  DESKTOP_DEBUG_PANEL_INFO_PREFIX,
+  emitRecoverableStatusNotice,
+  getRecoverableStatusNoticeVisibility,
+} from "../../websocket/listener/recoverable-notices";
 
 class MockSocket {
   readyState: number;
@@ -2467,6 +2472,55 @@ describe("listen-client runtime metadata", () => {
     const runtime = __listenClientTestUtils.createRuntime();
     expect(runtime.sessionId).toMatch(/^listen-/);
     expect(runtime.sessionId.length).toBeGreaterThan(10);
+  });
+});
+
+describe("listen-client recoverable status notices", () => {
+  test("marks stale approval recovery as debug-only", () => {
+    expect(
+      getRecoverableStatusNoticeVisibility("stale_approval_conflict_recovery"),
+    ).toBe("debug_only");
+  });
+
+  test("suppresses stale approval recovery from transcript and mirrors it to desktop logs", () => {
+    const runtime = __listenClientTestUtils.createRuntime();
+    const socket = new MockSocket();
+    const originalFlag = process.env.LETTA_DESKTOP_DEBUG_PANEL;
+    const originalWrite = process.stderr.write.bind(process.stderr);
+    const mirroredLines: string[] = [];
+
+    process.env.LETTA_DESKTOP_DEBUG_PANEL = "1";
+    process.stderr.write = ((chunk: string | Uint8Array) => {
+      mirroredLines.push(
+        typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8"),
+      );
+      return true;
+    }) as typeof process.stderr.write;
+
+    try {
+      emitRecoverableStatusNotice(socket as unknown as WebSocket, runtime, {
+        kind: "stale_approval_conflict_recovery",
+        message:
+          "Recovering from stale approval conflict after interrupted/reconnected turn",
+        level: "warning",
+        agentId: "agent-1",
+        conversationId: "default",
+      });
+    } finally {
+      process.stderr.write = originalWrite as typeof process.stderr.write;
+      if (originalFlag === undefined) {
+        delete process.env.LETTA_DESKTOP_DEBUG_PANEL;
+      } else {
+        process.env.LETTA_DESKTOP_DEBUG_PANEL = originalFlag;
+      }
+    }
+
+    expect(socket.sentPayloads).toHaveLength(0);
+    expect(mirroredLines).toHaveLength(1);
+    expect(mirroredLines[0]).toContain(DESKTOP_DEBUG_PANEL_INFO_PREFIX);
+    expect(mirroredLines[0]).toContain(
+      "Recovering from stale approval conflict after interrupted/reconnected turn",
+    );
   });
 });
 

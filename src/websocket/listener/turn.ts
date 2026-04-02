@@ -75,9 +75,9 @@ import {
   emitLoopStatusUpdate,
   emitRetryDelta,
   emitRuntimeStateUpdates,
-  emitStatusDelta,
   setLoopStatus,
 } from "./protocol-outbound";
+import { emitRecoverableStatusNotice } from "./recoverable-notices";
 import {
   isRetriablePostStopError,
   shouldAttemptPostStopApprovalRecovery,
@@ -670,7 +670,8 @@ export async function handleIncomingMessage(
           })
         ) {
           postStopApprovalRecoveryRetries += 1;
-          emitStatusDelta(socket, runtime, {
+          emitRecoverableStatusNotice(socket, runtime, {
+            kind: "stale_approval_conflict_recovery",
             message:
               "Recovering from stale approval conflict after interrupted/reconnected turn",
             level: "warning",
