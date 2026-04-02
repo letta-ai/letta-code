@@ -285,6 +285,19 @@ describe("isReadOnlyShellCommand", () => {
       expect(isReadOnlyShellCommand("cat ../file.txt")).toBe(false);
     });
 
+    test("allows external directory listing by default", () => {
+      expect(isReadOnlyShellCommand("ls -la /tmp")).toBe(true);
+      expect(isReadOnlyShellCommand("tree ~/Downloads")).toBe(true);
+    });
+
+    test("allows compound read-only listing commands outside cwd", () => {
+      expect(
+        isReadOnlyShellCommand(
+          "pwd && ls -la ~/Downloads/LettaCodePage && printf \"\\n---\\n\" && find ~/Downloads/LettaCodePage -maxdepth 2 -mindepth 1 | sed 's#^/Users/test/Downloads/LettaCodePage#.#' | sort | head -200",
+        ),
+      ).toBe(true);
+    });
+
     test("allows external paths when explicitly enabled", () => {
       expect(
         isReadOnlyShellCommand("cat /tmp/file.txt", {

@@ -106,6 +106,21 @@ test("npx tsc wildcard permissions match compound TypeScript check commands", ()
   expect(result.matchedRule).toBe("Bash(npx tsc:*)");
 });
 
+test("read-only compound directory listing command is auto-allowed", () => {
+  const result = checkPermission(
+    "Bash",
+    {
+      command:
+        "pwd && ls -la /Users/test/Downloads/LettaCodePage && printf '\\n---\\n' && find /Users/test/Downloads/LettaCodePage -maxdepth 2 -mindepth 1 | sed 's#^/Users/test/Downloads/LettaCodePage#.#' | sort | head -200",
+    },
+    { allow: [], deny: [], ask: [] },
+    "/Users/test/dev",
+  );
+
+  expect(result.decision).toBe("allow");
+  expect(result.reason).toBe("Read-only shell command");
+});
+
 test("Grep within working directory is auto-allowed", () => {
   const result = checkPermission(
     "Grep",

@@ -80,6 +80,19 @@ const ALWAYS_SAFE_COMMANDS = new Set([
   "cd",
 ]);
 
+// These commands inspect directory/path metadata but do not read file contents,
+// so absolute or home-anchored paths are still considered read-only.
+const EXTERNAL_PATH_METADATA_COMMANDS = new Set([
+  "ls",
+  "tree",
+  "stat",
+  "du",
+  "realpath",
+  "readlink",
+  "basename",
+  "dirname",
+]);
+
 const SAFE_GIT_SUBCOMMANDS = new Set([
   "status",
   "diff",
@@ -295,8 +308,14 @@ function isSafeSegment(
       return !tokens.slice(1).some((t) => hasAbsoluteOrTraversalPathArg(t));
     }
 
-    // For other "always safe" commands, ensure they don't read sensitive files
-    // outside the allowed directories.
+    // Metadata-only commands are safe to run against external paths because they
+    // do not expose file contents.
+    if (EXTERNAL_PATH_METADATA_COMMANDS.has(command)) {
+      return true;
+    }
+
+    // For other "always safe" commands, ensure they don't read file contents
+    // from outside the allowed directories.
     const hasExternalPath =
       !options.allowExternalPaths &&
       tokens.slice(1).some((t) => hasAbsoluteOrTraversalPathArg(t));
