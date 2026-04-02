@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { createIsolatedCliTestEnv } from "../tests/testProcessEnv";
+import {
+  formatCapturedOutput,
+  summarizeRecentMessages,
+} from "./processDiagnostics";
 
 const TOOL_TRIGGER_PROMPT =
   "Use the Bash tool exactly once with command: echo test123. Do not ask clarifying questions.";
@@ -91,7 +95,19 @@ async function startPendingApprovalSession(
       stop();
       reject(
         new Error(
-          `Timed out waiting for pending approval after ${timeoutMs}ms\nSTDERR:\n${stderrBuffer}`,
+          `Timed out waiting for pending approval after ${timeoutMs}ms\n${formatCapturedOutput(
+            {
+              stdout: stdoutBuffer,
+              stderr: stderrBuffer,
+              extra: {
+                prompt_attempts: promptAttempts,
+                conversation_id: conversationId ?? "(unknown)",
+                recent_messages: summarizeRecentMessages(
+                  messages as Array<Record<string, unknown>>,
+                ),
+              },
+            },
+          )}`,
         ),
       );
     }, timeoutMs);
@@ -165,7 +181,19 @@ async function startPendingApprovalSession(
       clearTimeout(timeout);
       reject(
         new Error(
-          `Pending-approval process exited early (code=${code ?? "null"})\nSTDERR:\n${stderrBuffer}`,
+          `Pending-approval process exited early (code=${code ?? "null"})\n${formatCapturedOutput(
+            {
+              stdout: stdoutBuffer,
+              stderr: stderrBuffer,
+              extra: {
+                prompt_attempts: promptAttempts,
+                conversation_id: conversationId ?? "(unknown)",
+                recent_messages: summarizeRecentMessages(
+                  messages as Array<Record<string, unknown>>,
+                ),
+              },
+            },
+          )}`,
         ),
       );
     });
@@ -212,7 +240,17 @@ async function runOneShotAgainstConversation(
       settled = true;
       proc.kill();
       reject(
-        new Error(`Timed out waiting for one-shot run after ${timeoutMs}ms`),
+        new Error(
+          `Timed out waiting for one-shot run after ${timeoutMs}ms\n${formatCapturedOutput(
+            {
+              stdout,
+              stderr,
+              extra: {
+                saw_result_event: stdout.includes('"type":"result"'),
+              },
+            },
+          )}`,
+        ),
       );
     }, timeoutMs);
 
@@ -258,7 +296,16 @@ describe("pre-stream approval recovery", () => {
 
         if (result.code !== 0) {
           throw new Error(
-            `Expected one-shot run to succeed, got exit code ${result.code}\nSTDERR:\n${result.stderr}`,
+            `Expected one-shot run to succeed, got exit code ${result.code}\n${formatCapturedOutput(
+              {
+                stderr: result.stderr,
+                extra: {
+                  recent_messages: summarizeRecentMessages(
+                    result.messages as Array<Record<string, unknown>>,
+                  ),
+                },
+              },
+            )}`,
           );
         }
 

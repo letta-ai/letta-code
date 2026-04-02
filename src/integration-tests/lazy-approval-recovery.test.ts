@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { spawn } from "node:child_process";
 import { createIsolatedCliTestEnv } from "../tests/testProcessEnv";
+import {
+  formatCapturedOutput,
+  summarizeRecentMessages,
+} from "./processDiagnostics";
 
 /**
  * Integration test for lazy approval recovery (LET-7101).
@@ -74,6 +78,8 @@ async function runLazyRecoveryTest(timeoutMs = 300000): Promise<{
 
     const messages: StreamMessage[] = [];
     let buffer = "";
+    let stdout = "";
+    let stderr = "";
     let initReceived = false;
     let approvalSeen = false;
     let interruptSent = false;
@@ -96,7 +102,24 @@ async function runLazyRecoveryTest(timeoutMs = 300000): Promise<{
     const timeout = setTimeout(() => {
       if (!closing) {
         proc.kill();
-        reject(new Error(`Test timed out after ${timeoutMs}ms`));
+        reject(
+          new Error(
+            `Test timed out after ${timeoutMs}ms.\n${formatCapturedOutput({
+              stdout,
+              stderr,
+              extra: {
+                init_received: initReceived,
+                approval_seen: approvalSeen,
+                interrupt_sent: interruptSent,
+                result_count: resultCount,
+                prompt_attempts: promptAttempts,
+                recent_messages: summarizeRecentMessages(
+                  messages as Array<Record<string, unknown>>,
+                ),
+              },
+            })}`,
+          ),
+        );
       }
     }, timeoutMs);
 
@@ -253,7 +276,9 @@ async function runLazyRecoveryTest(timeoutMs = 300000): Promise<{
     };
 
     proc.stdout?.on("data", (data) => {
-      buffer += data.toString();
+      const chunk = data.toString();
+      stdout += chunk;
+      buffer += chunk;
       const lines = buffer.split("\n");
       buffer = lines.pop() || "";
       for (const line of lines) {
@@ -261,9 +286,8 @@ async function runLazyRecoveryTest(timeoutMs = 300000): Promise<{
       }
     });
 
-    let _stderr = "";
     proc.stderr?.on("data", (data) => {
-      _stderr += data.toString();
+      stderr += data.toString();
     });
 
     proc.on("close", (_code) => {
