@@ -6,7 +6,7 @@ description: Identify and repair degradation in system prompt, external memory, 
 
 # Context Doctor
 
-Your context — system prompt, memory files (both `system/` and external), and skills (procedural memory) — is what makes you *you* across sessions. Over time it can degrade: bloat erodes signal, redundancy wastes tokens, poor organization makes knowledge hard to find. This skill helps you diagnose issues and repair them collaboratively with the user.
+Your context — system prompt, memory files (both `system/` and external), and skills (procedural memory) — is what makes you *you* across sessions. Over time it can degrade — bloat and poor prompt quality erode your ability to remember the right things and follow instructions properly. This skill helps you identify issues and repair them collaboratively with the user.
 
 ## Context Principles
 
@@ -30,26 +30,36 @@ npx tsx <SKILL_DIR>/scripts/estimate_system_tokens.ts --memory-dir "$MEMORY_DIR"
 
 Where `<SKILL_DIR>` is the Skill Directory shown when the skill was loaded (visible in the injection header).
 
-Check for these categories of issues:
+Check for these categories of issues. Each maps to one or more context principles:
 
-**Token bloat** — `system/` memory should take up roughly 10% of total context (~15-20k tokens):
+**System prompt bloat** ← *System/ is the core program*
+Prompts compiled into the system prompt (contained in `system/`) should take up roughly 10% of total context (~15-20k tokens).
 - Is the system prompt over budget? What's consuming the most tokens?
-- Are there files in `system/` that could live outside it without hurting near-term responses? Move them out and link with `[[path]]`.
-- Is verbose content (evidence trails, detailed reference, long lists) living in `system/` when a lean summary + external link would suffice?
+- Do all these tokens need to be passed to the LLM on every turn, or can they be retrieved when needed from external memory or conversation history?
+- Am I able to effectively follow critical instructions (e.g. persona, user preferences) given the current prompt structure and contents?
+- Is verbose content (evidence trails, detailed reference, long lists) living in `system/` when a lean summary + external `[[path]]` link would suffice?
 
-**Content quality**:
+**Content quality** ← *Generalize, don't memorize*
 - Does each `system/` file contain generalized, actionable knowledge — or raw facts, one-off events, transient items (specific commits, current tickets, session notes)?
-- Do any prompts confuse or distract you? Are critical instructions (persona, user preferences) easy to follow?
+- Do any of these prompts confuse or distract me?
 - Is there low-value content that can simply be deleted — stale facts, things retrievable on demand from conversation history?
 
-**Organization**:
+**Identity separation** ← *Identity is project-agnostic*
+- Is `human.md` about the user as a person, or has project-specific context leaked in?
+- Is `persona.md` about personality and values, or does it contain project rules?
+- Are project conventions stored in project-specific files (e.g. `system/letta-code/`), not mixed into identity files?
+
+**Organization and redundancy** ← *System/ is the core program*, *Progressive disclosure*
+Each file should have a clear structure and a well-defined purpose.
 - One concept per file? Or do files mix distinct topics that should be split?
-- Are file descriptions precise, non-overlapping, and accurate to their contents?
+- Do the descriptions make clear what each file is for? Do the contents match?
 - Any redundancy — same information in multiple files? Consolidate to one canonical location.
 - Any file/folder name collisions (e.g. `system/human.md` and `system/human/identity.md`)?
 
-**Discovery paths**:
-- Can you find external files (outside `system/`) when you need them? Are they referenced from `system/` with `[[path]]` links or clear descriptions?
+**Discovery paths** ← *Progressive disclosure*
+Files outside `system/` must be dynamically loaded — you must index them so your future self can discover them.
+- Can you find external files when you need them? Are they referenced from `system/` with `[[path]]` links or clear descriptions?
+- Do file names and frontmatter descriptions let you decide whether to load a file without reading it?
 - Do skills have informative names and descriptions so you know when to load them?
 
 **Structural validity**:
@@ -62,11 +72,15 @@ Check for these categories of issues:
 Present findings to the user, then create a plan and implement. Common fixes:
 
 - **Move verbose content** outside `system/`, add `[[path]]` reference from a lean summary
+- **Compact information** to be more dense or eliminate redundancy
 - **Consolidate redundant files** into one canonical location
 - **Rewrite unclear descriptions** so they enable progressive disclosure
 - **Split mixed-topic files** into focused single-concept files
 - **Add `[[path]]` links** to connect related context into a navigable graph
+- **Separate identity from project context** — move project conventions out of `human.md`/`persona.md`
 - **Delete low-value content** — stale facts, transient items, anything retrievable on demand
+
+**Scope** ← *Preserve semantics*: You may refine, tighten, and restructure to improve clarity — but do not change intended meaning. Don't alter persona-defining content, user identity, or behavioral instructions. Only reduce noise and improve structure.
 
 Before moving on, verify:
 - [ ] All identified issues addressed
