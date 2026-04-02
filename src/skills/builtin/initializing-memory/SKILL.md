@@ -26,7 +26,7 @@ Your context is not just data storage — it is your identity, memory, and conti
 - `[[skills/commit]]` — link to procedural guidance when useful
 These breadcrumbs let your future self find relevant detail without searching. Like synaptic connections, these paths should tighten over time as you gain experience.
 
-**Generalize, don't memorize**: Store patterns and principles that generalize across situations, not raw events that can be dynamically retrieved from conversation history. \"**CRITICAL: Always use `uv` for Python** — chronic failure, never use bare `python` or `pip`\" is a durable pattern worth storing. \"On March 3rd we debugged a crash\" is a raw event better left to message search. The exception: keep references to important events or time ranges you may want to retrieve later.
+**Generalize, don't memorize**: Store patterns and principles that generalize across situations, not raw events that can be dynamically retrieved from conversation history. \"**IMPORTANT: Always use `uv` for Python** — chronic failure, never use bare `python` or `pip`\" is a durable pattern worth storing. \"On March 3rd we debugged a crash\" is a raw event better left to message search. The exception: keep references to important events or time ranges you may want to retrieve later.
 
 ## Understanding Your Context
 
@@ -117,10 +117,7 @@ Each meaningful preference, workflow, or gotcha should include at least one of:
 
 **Good**:
 - "Prefers terse responses for execution tasks, but values detailed comparative analysis when debugging or evaluating designs"
-- "**CRITICAL: Use `bun` for letta-code** — `vitest` and `jest` are wrong; this is a `bun:test` codebase" 
 - "Rejects monolithic memory files; prefers focused paths that can be selectively reloaded later"
-
-**Chronic failures** (rules the agent repeatedly breaks) should be written with maximum emphasis (e.g. "**CRITICAL**") - but do NOT overuse this. Only a few points in your memory should be marked as such. 
 
 ### What Goes Where
 
