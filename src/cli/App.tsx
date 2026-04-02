@@ -12042,10 +12042,26 @@ ${SYSTEM_REMINDER_CLOSE}
 
       const currentIndex = approvalResults.length;
       const approvalContext = approvalContexts[currentIndex];
-      if (!approvalContext) return;
+      const currentApproval = pendingApprovals[currentIndex];
+      if (!approvalContext || !currentApproval) return;
 
-      const rule = approvalContext.recommendedRule;
-      const actualScope = scope || approvalContext.defaultScope;
+      const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
+        currentApproval.toolArgs,
+        {},
+      );
+      const latestApprovalContext = await analyzeToolApproval(
+        currentApproval.toolName,
+        parsedArgs,
+      );
+      const rule = latestApprovalContext.recommendedRule;
+      const actualScope = scope || latestApprovalContext.defaultScope;
+
+      if (!latestApprovalContext.allowPersistence || !rule) {
+        commandRunner
+          .start("/approve-always", "Adding permission...")
+          .fail("This approval cannot be persisted.");
+        return;
+      }
 
       const cmd = commandRunner.start(
         "/approve-always",
