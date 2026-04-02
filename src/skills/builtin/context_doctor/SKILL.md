@@ -22,7 +22,7 @@ These principles define what healthy context looks like. Use them as your diagno
 
 ### Step 1: Diagnose
 
-Read all memory files (`system/` and external) and evaluate against the principles above. Run the token estimator alongside your review:
+Read all memory files (`system/` and optionally external as needed; use subagents for efficiency) and evaluate against the principles above. Run the token estimator alongside your review:
 
 ```bash
 npx tsx <SKILL_DIR>/scripts/estimate_system_tokens.ts --memory-dir "$MEMORY_DIR"
