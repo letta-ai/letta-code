@@ -5,16 +5,16 @@ description: Identify and repair degradation in system prompt, external memory, 
 ---
 
 # Context Doctor
-Your context is managed by yourself, along with additional memory subagents. Your context includes: 
-- Your system prompt and instructions (contained in `system/`)
-- Your external memory 
+Your context is what makes you *you* across sessions. You are responsible for managing it (along with memory subagents). It includes:
+- Your system prompt and memories (contained in `system/`)
+- Your external memory (contained in the memory filesystem)
 - Your skills (procedural memory) 
 
 Over time, context can degrade — bloat and poor prompt quality erode your ability to remember the right things and follow instructions properly. This skill helps you identify issues with your context and repair them collaboratively with the user.
 
 ## Operating Procedure
 
-### Step 1: Identifying and resolving context issues 
+### Step 1: Identify and resolve context issues 
 Explore your memory files to identify issues. Consider what is confusing about your own prompts and context, and resolve the issues.
 
 Below are additional common issues with context and how they can be resolved: 
@@ -28,7 +28,7 @@ Your system prompt and memory filesystem should be well structured and clear.
 - Do I know when to load which files in my memory filesystem? 
 
 #### System prompt bloat 
-Prompts that are compiled as part of the system prompt (contained in `system/`) should only take up about 10% of the total context size, though this is a recommendation, not a hard requirement. Usually this means about 15-20k tokens. 
+Memories that are compiled as part of the system prompt (contained in `system/`) should only take up about 10% of the total context size (usually ~15-20K tokens), though this is a recommendation, not a hard requirement.
 
 Use the following script to evaluate the token usage of the system prompt: 
 ```bash
