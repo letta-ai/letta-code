@@ -92,7 +92,8 @@ import {
   createSharedReminderState,
   syncReminderStateFromContextTracker,
 } from "./reminders/state";
-import { settingsManager } from "./settings-manager";
+import { getCurrentWorkingDirectory } from "./runtime-context";
+import { settingsManager, shouldPersistSessionState } from "./settings-manager";
 import { telemetry } from "./telemetry";
 import { trackBoundaryError } from "./telemetry/errorReporting";
 import {
@@ -104,7 +105,10 @@ import {
   registerExternalTools,
   setExternalToolExecutor,
 } from "./tools/manager";
-import { clearPersistedClientToolRules } from "./tools/toolset";
+import {
+  clearPersistedClientToolRules,
+  prepareToolExecutionContextForScope,
+} from "./tools/toolset";
 import type {
   AutoApprovalMessage,
   BootstrapSessionStateRequest,
@@ -300,6 +304,50 @@ async function applyReflectionOverrides(
   return merged;
 }
 
+async function prepareHeadlessToolExecutionContext(params: {
+  agentId: string;
+  conversationId: string;
+  overrideModel?: string | null;
+}): Promise<{
+  preparedToolContext: Awaited<
+    ReturnType<typeof prepareToolExecutionContextForScope>
+  >;
+  availableTools: string[];
+}> {
+  const preparedToolContext = await prepareToolExecutionContextForScope({
+    agentId: params.agentId,
+    conversationId: params.conversationId,
+    overrideModel: params.overrideModel,
+    workingDirectory: getCurrentWorkingDirectory(),
+    exclude: ["AskUserQuestion"],
+  });
+
+  return {
+    preparedToolContext,
+    availableTools: preparedToolContext.preparedToolContext.clientTools.map(
+      (tool) => tool.name,
+    ),
+  };
+}
+
+async function flushAndExit(code: number): Promise<never> {
+  const flushWritable = (stream: NodeJS.WriteStream): Promise<void> =>
+    new Promise((resolve) => {
+      if (stream.destroyed || stream.writableEnded) {
+        resolve();
+        return;
+      }
+      stream.write("", () => resolve());
+    });
+
+  await Promise.allSettled([
+    flushWritable(process.stdout),
+    flushWritable(process.stderr),
+  ]);
+
+  process.exit(code);
+}
+
 export async function handleHeadlessCommand(
   parsedArgs: ParsedCliArgs,
   model?: string,
@@ -424,6 +472,7 @@ export async function handleHeadlessCommand(
 
   // Resolve agent (same logic as interactive mode)
   let agent: AgentState | null = null;
+  let autoEnableMemfsForFreshAgent = false;
   let specifiedAgentId = values.agent;
   const specifiedAgentName = values.name;
   let specifiedConversationId = values.conversation;
@@ -854,9 +903,7 @@ export async function handleHeadlessCommand(
   if (!agent && forceNew) {
     const updateArgs = getModelUpdateArgs(model);
     // Pre-determine memfs mode so the agent is created with the correct prompt.
-    const { isLettaCloud, enableMemfsIfCloud } = await import(
-      "./agent/memoryFilesystem"
-    );
+    const { isLettaCloud } = await import("./agent/memoryFilesystem");
     const willAutoEnableMemfs =
       shouldAutoEnableMemfsForNewAgent && (await isLettaCloud());
     const effectiveMemoryMode =
@@ -879,17 +926,15 @@ export async function handleHeadlessCommand(
     };
     const result = await createAgent(createOptions);
     agent = result.agent;
-
-    // Enable memfs on Letta Cloud (tags, repo clone, tool detach).
-    if (willAutoEnableMemfs) {
-      await enableMemfsIfCloud(agent.id);
-    }
+    autoEnableMemfsForFreshAgent = willAutoEnableMemfs;
   }
 
   // Priority 4: Try to resume from project settings (.letta/settings.local.json)
   if (!agent) {
     await settingsManager.loadLocalProjectSettings();
-    const localAgentId = settingsManager.getLocalLastAgentId(process.cwd());
+    const localAgentId = settingsManager.getLocalLastAgentId(
+      getCurrentWorkingDirectory(),
+    );
     if (localAgentId) {
       try {
         agent = await client.agents.retrieve(localAgentId);
@@ -973,6 +1018,7 @@ export async function handleHeadlessCommand(
   let effectiveReflectionSettings: ReflectionSettings;
 
   const isSubagent = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
+  const startupMemfsFlag = autoEnableMemfsForFreshAgent ? true : memfsFlag;
 
   // Captured so prompt logic below can await it when needed.
   let memfsBgPromise: Promise<unknown> | undefined;
@@ -994,7 +1040,7 @@ export async function handleHeadlessCommand(
     // Run enable/disable logic but skip the git pull.
     try {
       const { applyMemfsFlags } = await import("./agent/memoryFilesystem");
-      await applyMemfsFlags(agent.id, memfsFlag, noMemfsFlag, {
+      await applyMemfsFlags(agent.id, startupMemfsFlag, noMemfsFlag, {
         pullOnExistingRepo: false,
         agentTags: agent.tags,
         skipPromptUpdate: forceNew,
@@ -1013,7 +1059,7 @@ export async function handleHeadlessCommand(
   } else if (memfsStartupPolicy === "background") {
     // Fire pull async; don't block session initialisation.
     const { applyMemfsFlags } = await import("./agent/memoryFilesystem");
-    memfsBgPromise = applyMemfsFlags(agent.id, memfsFlag, noMemfsFlag, {
+    memfsBgPromise = applyMemfsFlags(agent.id, startupMemfsFlag, noMemfsFlag, {
       pullOnExistingRepo: true,
       agentTags: agent.tags,
       skipPromptUpdate: forceNew,
@@ -1034,7 +1080,7 @@ export async function handleHeadlessCommand(
       const { applyMemfsFlags } = await import("./agent/memoryFilesystem");
       const memfsResult = await applyMemfsFlags(
         agent.id,
-        memfsFlag,
+        startupMemfsFlag,
         noMemfsFlag,
         {
           pullOnExistingRepo: true,
@@ -1228,7 +1274,7 @@ export async function handleHeadlessCommand(
 
   // Save session (agent + conversation) to both project and global settings
   // Skip for subagents - they shouldn't pollute the LRU settings
-  if (!isSubagent) {
+  if (shouldPersistSessionState()) {
     await settingsManager.loadLocalProjectSettings();
     settingsManager.persistSession(agent.id, conversationId);
   }
@@ -1252,12 +1298,15 @@ export async function handleHeadlessCommand(
     process.exit(1);
   }
 
-  const { getClientToolsFromRegistry } = await import("./tools/manager");
-  const loadedToolNames = getClientToolsFromRegistry().map((t) => t.name);
-  const availableTools =
-    loadedToolNames.length > 0
-      ? loadedToolNames
-      : agent.tools?.map((t) => t.name).filter((n): n is string => !!n) || [];
+  let availableTools =
+    agent.tools?.map((t) => t.name).filter((n): n is string => !!n) || [];
+  {
+    const initialToolContext = await prepareHeadlessToolExecutionContext({
+      agentId: agent.id,
+      conversationId,
+    });
+    availableTools = initialToolContext.availableTools;
+  }
 
   // If input-format is stream-json, use bidirectional mode
   if (isBidirectionalMode) {
@@ -1294,7 +1343,7 @@ export async function handleHeadlessCommand(
       conversation_id: conversationId,
       model: agent.llm_config?.model ?? "",
       tools: availableTools,
-      cwd: process.cwd(),
+      cwd: getCurrentWorkingDirectory(),
       mcp_servers: [],
       permission_mode: "",
       slash_commands: [],
@@ -1420,7 +1469,15 @@ export async function handleHeadlessCommand(
         }
       }
 
-      const executedResults = await executeApprovalBatch(decisions);
+      const recoveryToolContext = await prepareHeadlessToolExecutionContext({
+        agentId: agent.id,
+        conversationId,
+      });
+      availableTools = recoveryToolContext.availableTools;
+      const executedResults = await executeApprovalBatch(decisions, undefined, {
+        toolContextId:
+          recoveryToolContext.preparedToolContext.preparedToolContext.contextId,
+      });
 
       // Send all results in one batch
       const approvalInput: ApprovalCreate = {
@@ -1455,7 +1512,11 @@ export async function handleHeadlessCommand(
       const approvalStream = await sendMessageStream(
         conversationId,
         approvalMessages,
-        { agentId: agent.id },
+        {
+          agentId: agent.id,
+          preparedToolContext:
+            recoveryToolContext.preparedToolContext.preparedToolContext,
+        },
       );
       const drainResult = await drainStreamWithResume(
         approvalStream,
@@ -1543,6 +1604,7 @@ ${SYSTEM_REMINDER_CLOSE}
     },
     state: sharedReminderState,
     sessionContextReminderEnabled: systemInfoReminderEnabled,
+    workingDirectory: getCurrentWorkingDirectory(),
     reflectionSettings: effectiveReflectionSettings,
     skillSources: resolvedSkillSources,
     resolvePlanModeReminder: async () => {
@@ -1640,8 +1702,17 @@ ${SYSTEM_REMINDER_CLOSE}
 
   try {
     while (true) {
-      // Check max turns limit before starting a new turn (uses server-side step count)
-      checkMaxTurns();
+      const hasApprovalContinuation = currentInput.some(
+        (item) => item.type === "approval",
+      );
+
+      // Check max turns limit before starting a new user turn.
+      // Do NOT enforce before approval continuations: otherwise we can exit
+      // with max_steps while the backend is still waiting for the approval
+      // response, leaving the run stuck in requires_approval.
+      if (!hasApprovalContinuation) {
+        checkMaxTurns();
+      }
 
       // Inject queued skill content as user message parts (LET-7353)
       {
@@ -1668,9 +1739,17 @@ ${SYSTEM_REMINDER_CLOSE}
       let stream: Awaited<ReturnType<typeof sendMessageStream>>;
       let turnToolContextId: string | null = null;
       try {
+        const turnToolContext = await prepareHeadlessToolExecutionContext({
+          agentId: agent.id,
+          conversationId,
+          overrideModel: overrideModelHandle,
+        });
+        availableTools = turnToolContext.availableTools;
         stream = await sendMessageStream(conversationId, currentInput, {
           agentId: agent.id,
           overrideModel: overrideModelHandle,
+          preparedToolContext:
+            turnToolContext.preparedToolContext.preparedToolContext,
         });
         turnToolContextId = getStreamToolContextId(stream);
       } catch (preStreamError) {
@@ -2013,8 +2092,13 @@ ${SYSTEM_REMINDER_CLOSE}
       // Track API duration for this stream
       sessionStats.endTurn(apiDurationMs);
 
-      // Check max turns after each turn (server may have taken multiple steps)
-      checkMaxTurns();
+      // Check max turns after each turn (server may have taken multiple steps),
+      // but defer the limit when we're still resolving pending approvals.
+      // Otherwise we can exit while the backend is waiting for approval input,
+      // leaving the run stuck in requires_approval.
+      if (stopReason !== "requires_approval" && !approvalPendingRecovery) {
+        checkMaxTurns();
+      }
 
       if (approvalPendingRecovery) {
         await resolveAllPendingApprovals();
@@ -2587,6 +2671,7 @@ ${SYSTEM_REMINDER_CLOSE}
   // Report all milestones at the end for latency audit
   markMilestone("HEADLESS_COMPLETE");
   reportAllMilestones();
+  await flushAndExit(0);
 }
 
 /**
@@ -2617,7 +2702,7 @@ async function runBidirectionalMode(
     conversation_id: conversationId,
     model: agent.llm_config?.model,
     tools: availableTools,
-    cwd: process.cwd(),
+    cwd: getCurrentWorkingDirectory(),
     memfs_enabled: settingsManager.isMemfsEnabled(agent.id),
     skill_sources: skillSources,
     system_info_reminder_enabled: systemInfoReminderEnabled,
@@ -2716,7 +2801,15 @@ async function runBidirectionalMode(
       const { executeApprovalBatch } = await import(
         "./agent/approval-execution"
       );
-      const executedResults = await executeApprovalBatch(decisions);
+      const recoveryToolContext = await prepareHeadlessToolExecutionContext({
+        agentId: agent.id,
+        conversationId,
+      });
+      availableTools = recoveryToolContext.availableTools;
+      const executedResults = await executeApprovalBatch(decisions, undefined, {
+        toolContextId:
+          recoveryToolContext.preparedToolContext.preparedToolContext.contextId,
+      });
 
       const approvalInput: ApprovalCreate = {
         type: "approval",
@@ -2749,7 +2842,11 @@ async function runBidirectionalMode(
       const approvalStream = await sendMessageStream(
         conversationId,
         approvalMessages,
-        { agentId: agent.id },
+        {
+          agentId: agent.id,
+          preparedToolContext:
+            recoveryToolContext.preparedToolContext.preparedToolContext,
+        },
       );
       const drainResult = await drainStreamWithResume(
         approvalStream,
@@ -3144,7 +3241,15 @@ async function runBidirectionalMode(
         };
       }
 
-      const executedResults = await executeApprovalBatch(decisions);
+      const recoveryToolContext = await prepareHeadlessToolExecutionContext({
+        agentId: agent.id,
+        conversationId: targetConversationId,
+      });
+      availableTools = recoveryToolContext.availableTools;
+      const executedResults = await executeApprovalBatch(decisions, undefined, {
+        toolContextId:
+          recoveryToolContext.preparedToolContext.preparedToolContext.contextId,
+      });
       approvalsProcessed += executedResults.length;
 
       const approvalInput: ApprovalCreate = {
@@ -3155,7 +3260,11 @@ async function runBidirectionalMode(
       const approvalStream = await sendMessageStream(
         targetConversationId,
         [approvalInput],
-        { agentId: agent.id },
+        {
+          agentId: agent.id,
+          preparedToolContext:
+            recoveryToolContext.preparedToolContext.preparedToolContext,
+        },
       );
 
       const drainResult = await drainStreamWithResume(
@@ -3534,6 +3643,7 @@ async function runBidirectionalMode(
           },
           state: sharedReminderState,
           sessionContextReminderEnabled: systemInfoReminderEnabled,
+          workingDirectory: getCurrentWorkingDirectory(),
           reflectionSettings,
           skillSources,
           resolvePlanModeReminder: async () => {
@@ -3585,8 +3695,15 @@ async function runBidirectionalMode(
           let stream: Awaited<ReturnType<typeof sendMessageStream>>;
           let turnToolContextId: string | null = null;
           try {
+            const turnToolContext = await prepareHeadlessToolExecutionContext({
+              agentId: agent.id,
+              conversationId,
+            });
+            availableTools = turnToolContext.availableTools;
             stream = await sendMessageStream(conversationId, currentInput, {
               agentId: agent.id,
+              preparedToolContext:
+                turnToolContext.preparedToolContext.preparedToolContext,
             });
             turnToolContextId = getStreamToolContextId(stream);
           } catch (preStreamError) {

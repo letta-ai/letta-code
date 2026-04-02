@@ -212,6 +212,21 @@ test("Bash pattern: git subcommands", () => {
   expect(matchesBashPattern("Bash(git pull)", "Bash(git push:*)")).toBe(false);
 });
 
+test("Bash pattern: canonical git -C commands match git subcommand rules", () => {
+  expect(
+    matchesBashPattern(
+      "Bash(git -C /Users/test/project/repo status --short)",
+      "Bash(git status:*)",
+    ),
+  ).toBe(true);
+  expect(
+    matchesBashPattern(
+      "Bash(git -C /Users/test/project/repo diff -- assets/css/styles.css)",
+      "Bash(git diff:*)",
+    ),
+  ).toBe(true);
+});
+
 test("Bash pattern: simple commands with wildcard", () => {
   expect(matchesBashPattern("Bash(ls)", "Bash(ls:*)")).toBe(true);
   expect(matchesBashPattern("Bash(ls -la)", "Bash(ls:*)")).toBe(true);

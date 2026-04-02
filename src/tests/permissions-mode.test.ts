@@ -188,6 +188,70 @@ test("acceptEdits mode - allows NotebookEdit", () => {
   expect(result.matchedRule).toBe("acceptEdits mode");
 });
 
+test("acceptEdits mode - allows ApplyPatch", () => {
+  permissionMode.setMode("acceptEdits");
+
+  const permissions: PermissionRules = {
+    allow: [],
+    deny: [],
+    ask: [],
+  };
+
+  const result = checkPermission(
+    "ApplyPatch",
+    {
+      input:
+        "*** Begin Patch\n*** Add File: hello.txt\n+hello\n*** End Patch\n",
+    },
+    permissions,
+    "/Users/test/project",
+  );
+
+  expect(result.decision).toBe("allow");
+  expect(result.matchedRule).toBe("acceptEdits mode");
+  expect(result.reason).toBe("Permission mode: acceptEdits");
+});
+
+test("acceptEdits mode - allows Replace", () => {
+  permissionMode.setMode("acceptEdits");
+
+  const permissions: PermissionRules = {
+    allow: [],
+    deny: [],
+    ask: [],
+  };
+
+  const result = checkPermission(
+    "Replace",
+    { file_path: "/tmp/test.txt", old_string: "old", new_string: "new" },
+    permissions,
+    "/Users/test/project",
+  );
+
+  expect(result.decision).toBe("allow");
+  expect(result.matchedRule).toBe("acceptEdits mode");
+});
+
+test("acceptEdits mode - allows WriteFileGemini", () => {
+  permissionMode.setMode("acceptEdits");
+
+  const permissions: PermissionRules = {
+    allow: [],
+    deny: [],
+    ask: [],
+  };
+
+  const result = checkPermission(
+    "WriteFileGemini",
+    { file_path: "/tmp/test.txt", content: "hello" },
+    permissions,
+    "/Users/test/project",
+  );
+
+  expect(result.decision).toBe("allow");
+  expect(result.matchedRule).toBe("acceptEdits mode");
+});
+
 test("acceptEdits mode - does NOT allow Bash", () => {
   permissionMode.setMode("acceptEdits");
 

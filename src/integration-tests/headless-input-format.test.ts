@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import { join } from "node:path";
+import { createIsolatedCliTestEnv } from "../tests/testProcessEnv";
 import type {
   ControlResponse,
   ErrorMessage,
@@ -11,6 +12,10 @@ import type {
   SystemInitMessage,
   WireMessage,
 } from "../types/protocol";
+import {
+  formatCapturedOutput,
+  summarizeRecentMessages,
+} from "./processDiagnostics";
 
 /**
  * Tests for --input-format stream-json bidirectional communication.
@@ -43,6 +48,7 @@ async function runBidirectional(
         "--output-format",
         "stream-json",
         "--new-agent",
+        "--no-memfs",
         "-m",
         "sonnet-4.6-low",
         "--yolo",
@@ -50,17 +56,13 @@ async function runBidirectional(
       ],
       {
         cwd: process.cwd(),
-        // Mark as subagent to prevent polluting user's LRU settings
-        env: {
-          ...process.env,
-          LETTA_CODE_AGENT_ROLE: "subagent",
-          ...extraEnv,
-        },
+        env: createIsolatedCliTestEnv(extraEnv),
       },
     );
 
     const objects: object[] = [];
     let buffer = "";
+    let stdout = "";
     let inputIndex = 0;
     let initReceived = false;
     let closing = false;
@@ -152,7 +154,9 @@ async function runBidirectional(
     };
 
     proc.stdout?.on("data", (data) => {
-      buffer += data.toString();
+      const chunk = data.toString();
+      stdout += chunk;
+      buffer += chunk;
       const lines = buffer.split("\n");
       buffer = lines.pop() || ""; // Keep incomplete line in buffer
       for (const line of lines) {
@@ -179,7 +183,15 @@ async function runBidirectional(
       if (objects.length === 0 && code !== 0) {
         reject(
           new Error(
-            `Process exited with code ${code}, no output received. stderr: ${stderr}`,
+            `Process exited with code ${code}, no output received.\n${formatCapturedOutput(
+              {
+                stdout,
+                stderr,
+                extra: {
+                  args: extraArgs.join(" "),
+                },
+              },
+            )}`,
           ),
         );
       } else if (!gotExpectedResults && code !== 0) {
@@ -188,7 +200,18 @@ async function runBidirectional(
             `Process exited with code ${code} before all results received. ` +
               `Got ${userResultsReceived}/${expectedUserResults} user results, ` +
               `${controlResponsesReceived}/${expectedControlResponses} control responses. ` +
-              `inputIndex: ${inputIndex}, initReceived: ${initReceived}. stderr: ${stderr}`,
+              `inputIndex: ${inputIndex}, initReceived: ${initReceived}.\n${formatCapturedOutput(
+                {
+                  stdout,
+                  stderr,
+                  extra: {
+                    args: extraArgs.join(" "),
+                    recent_messages: summarizeRecentMessages(
+                      objects as Array<Record<string, unknown>>,
+                    ),
+                  },
+                },
+              )}`,
           ),
         );
       } else {
@@ -201,7 +224,19 @@ async function runBidirectional(
       proc.kill();
       reject(
         new Error(
-          `Timeout after ${timeoutMs}ms. Received ${objects.length} objects, init: ${initReceived}, userResults: ${userResultsReceived}/${expectedUserResults}, controlResponses: ${controlResponsesReceived}/${expectedControlResponses}`,
+          `Timeout after ${timeoutMs}ms. Received ${objects.length} objects, init: ${initReceived}, userResults: ${userResultsReceived}/${expectedUserResults}, controlResponses: ${controlResponsesReceived}/${expectedControlResponses}.\n${formatCapturedOutput(
+            {
+              stdout,
+              stderr,
+              extra: {
+                args: extraArgs.join(" "),
+                recent_messages: summarizeRecentMessages(
+                  objects as Array<Record<string, unknown>>,
+                ),
+                saw_result_event: stdout.includes('"type":"result"'),
+              },
+            },
+          )}`,
         ),
       );
     }, timeoutMs);

@@ -95,12 +95,17 @@ export type DiffPreview =
   | { mode: "fallback"; fileName: string; reason: string }
   | { mode: "unpreviewable"; fileName: string; reason: string };
 
+export interface PermissionSuggestion {
+  id: string;
+  text: string;
+}
+
 export interface CanUseToolControlRequestBody {
   subtype: "can_use_tool";
   tool_name: string;
   input: Record<string, unknown>;
   tool_call_id: string;
-  permission_suggestions: string[];
+  permission_suggestions: PermissionSuggestion[];
   blocked_path: string | null;
   diffs?: DiffPreview[];
 }
@@ -365,7 +370,7 @@ export interface ApprovalResponseAllowDecision {
   behavior: "allow";
   message?: string;
   updated_input?: Record<string, unknown> | null;
-  updated_permissions?: string[];
+  selected_permission_suggestion_ids?: string[];
 }
 
 export interface ApprovalResponseDenyDecision {

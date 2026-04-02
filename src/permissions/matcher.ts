@@ -4,7 +4,10 @@
 import { resolve } from "node:path";
 import { minimatch } from "minimatch";
 import { canonicalToolName } from "./canonical";
-import { normalizeBashRulePayload } from "./shell-command-normalization";
+import {
+  normalizeBashRulePayload,
+  unwrapShellLauncherCommand,
+} from "./shell-command-normalization";
 
 export interface MatcherOptions {
   canonicalizeToolNames?: boolean;
@@ -262,6 +265,8 @@ export function matchesBashPattern(
   const command = extractActualCommand(rawCommand);
   const normalizedRawCommand = normalizeBashRulePayload(rawCommand);
   const normalizedCommand = normalizeBashRulePayload(command);
+  const legacyRawCommand = unwrapShellLauncherCommand(rawCommand).trim();
+  const legacyCommand = unwrapShellLauncherCommand(command).trim();
 
   // Extract the command pattern from permission rule
   // Format: "Tool(command pattern)" or "Tool()"
@@ -280,22 +285,34 @@ export function matchesBashPattern(
     return false;
   }
   const commandPattern = normalizeBashRulePayload(patternMatch[2]);
+  const legacyCommandPattern = unwrapShellLauncherCommand(
+    patternMatch[2],
+  ).trim();
+  const commandCandidates = [
+    normalizedCommand,
+    normalizedRawCommand,
+    legacyCommand,
+    legacyRawCommand,
+  ];
 
   // Check for wildcard suffix
   if (commandPattern.endsWith(":*")) {
     // Prefix match: command must start with pattern (minus :*)
     const prefix = commandPattern.slice(0, -2);
-    // Try matching against both raw and extracted command
-    return (
-      normalizedCommand.startsWith(prefix) ||
-      normalizedRawCommand.startsWith(prefix)
+    const legacyPrefix = legacyCommandPattern.endsWith(":*")
+      ? legacyCommandPattern.slice(0, -2)
+      : null;
+    return commandCandidates.some(
+      (candidate) =>
+        candidate.startsWith(prefix) ||
+        (legacyPrefix !== null && candidate.startsWith(legacyPrefix)),
     );
   }
 
-  // Exact match (try both raw and extracted)
-  return (
-    normalizedCommand === commandPattern ||
-    normalizedRawCommand === commandPattern
+  // Exact match (try both raw and extracted, canonicalized and legacy)
+  return commandCandidates.some(
+    (candidate) =>
+      candidate === commandPattern || candidate === legacyCommandPattern,
   );
 }
 

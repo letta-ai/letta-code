@@ -4,6 +4,7 @@ import {
   buildSubagentArgs,
   resolveSubagentLauncher,
   resolveSubagentModel,
+  resolveSubagentWorkingDirectory,
 } from "../../agent/subagents/manager";
 
 describe("resolveSubagentLauncher", () => {
@@ -117,6 +118,28 @@ describe("resolveSubagentLauncher", () => {
       command: "C:\\Users\\Example User\\AppData\\Roaming\\npm\\letta.cmd",
       args: ["--output-format", "stream-json"],
     });
+  });
+});
+
+describe("resolveSubagentWorkingDirectory", () => {
+  test("prefers USER_CWD when present", () => {
+    const cwd = resolveSubagentWorkingDirectory(
+      {
+        USER_CWD: "/tmp/fixture-dir",
+      } as NodeJS.ProcessEnv,
+      "/tmp/repo-root",
+    );
+
+    expect(cwd).toBe("/tmp/fixture-dir");
+  });
+
+  test("falls back to process cwd when USER_CWD is absent", () => {
+    const cwd = resolveSubagentWorkingDirectory(
+      {} as NodeJS.ProcessEnv,
+      "/tmp/repo-root",
+    );
+
+    expect(cwd).toBe("/tmp/repo-root");
   });
 });
 

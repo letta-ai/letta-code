@@ -40,6 +40,7 @@ const INSTALL_ARG_PREFIX: Record<PackageManager, string[]> = {
 };
 
 const VALID_PACKAGE_MANAGERS = new Set<string>(Object.keys(INSTALL_ARG_PREFIX));
+type FetchImpl = typeof fetch;
 
 function normalizeUpdatePackageName(raw: string | undefined): string | null {
   if (!raw) return null;
@@ -181,7 +182,9 @@ function isRunningLocally(): boolean {
   return !resolvedPath.includes("node_modules");
 }
 
-export async function checkForUpdate(): Promise<UpdateCheckResult> {
+export async function checkForUpdate(
+  fetchImpl: FetchImpl = fetch,
+): Promise<UpdateCheckResult> {
   const currentVersion = getVersion();
   debugLog("Current version:", currentVersion);
 
@@ -198,7 +201,7 @@ export async function checkForUpdate(): Promise<UpdateCheckResult> {
 
   try {
     debugLog("Checking registry for latest version:", latestUrl);
-    const res = await fetch(latestUrl, {
+    const res = await fetchImpl(latestUrl, {
       signal: AbortSignal.timeout(5000),
     });
     if (!res.ok) {

@@ -60,6 +60,9 @@ function withStubbedProviders(fn: () => Promise<void>): () => Promise<void> {
 function listenContext(
   state: SharedReminderState,
   overrides?: {
+    agentName?: string | null;
+    agentDescription?: string | null;
+    agentLastRunAt?: string | null;
     workingDirectory?: string;
     sessionContextReason?: "initial_attach" | "cwd_changed";
   },
@@ -210,6 +213,22 @@ describe("listen-mode session context", () => {
     );
     expect(stepCount.modes).toContain("listen");
     expect(compaction.modes).toContain("listen");
+  });
+
+  test("listen reminder context preserves provided agent metadata", () => {
+    const state = createSharedReminderState();
+    const ctx = listenContext(state, {
+      agentName: "Letta Code",
+      agentDescription: "Helpful coding agent",
+      agentLastRunAt: "2026-04-01T19:00:00.000Z",
+    });
+
+    expect(ctx.agent).toMatchObject({
+      id: "agent-test",
+      name: "Letta Code",
+      description: "Helpful coding agent",
+      lastRunAt: "2026-04-01T19:00:00.000Z",
+    });
   });
 });
 

@@ -139,21 +139,31 @@ describe("listen-client model update status message", () => {
 });
 
 describe("listen-client applyModelUpdateForRuntime wiring", () => {
-  test("uses getToolNames for change detection and wraps toolset switch in try/catch", () => {
+  test("uses scoped runtime tool snapshots for change detection and wraps toolset refresh in try/catch", () => {
     const clientPath = fileURLToPath(
       new URL("../../websocket/listener/client.ts", import.meta.url),
     );
     const source = readFileSync(clientPath, "utf-8");
 
-    // Fix #1: toolset change detection uses getToolNames() snapshot comparison
-    expect(source).toContain("const previousToolNames = getToolNames()");
+    // Toolset change detection should compare scoped loaded-tool snapshots,
+    // not the mutable process-global registry.
     expect(source).toContain(
-      "JSON.stringify(previousToolNames) !== JSON.stringify(getToolNames())",
+      "const previousToolNames = scopedRuntime.currentLoadedTools;",
+    );
+    expect(source).toContain(
+      "await ensureCorrectMemoryTool(agentId, model.handle)",
+    );
+    expect(source).toContain(
+      "await prepareToolExecutionContextForResolvedTarget({",
+    );
+    expect(source).toContain(
+      "scopedRuntime.currentLoadedTools = nextLoadedTools;",
+    );
+    expect(source).toContain(
+      "JSON.stringify(previousToolNames) !== JSON.stringify(nextLoadedTools)",
     );
 
-    // Fix #2: toolset switch is wrapped in its own try/catch
-    // The pattern: try { switchToolsetForModel/forceToolsetSwitch } catch { toolsetError = ... }
-    // followed by success: true in the return (model update succeeded even if toolset failed)
+    // Tool refresh failures should still degrade cleanly to a warning.
     expect(source).toContain("toolsetError =");
     expect(source).toContain(
       'error instanceof Error ? error.message : "Failed to switch toolset"',

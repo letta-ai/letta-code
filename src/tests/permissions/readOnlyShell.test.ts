@@ -273,6 +273,10 @@ describe("isReadOnlyShellCommand", () => {
       expect(isReadOnlyShellCommand("cd src && git status")).toBe(true);
     });
 
+    test("allows trailing true in read-only probe commands", () => {
+      expect(isReadOnlyShellCommand("git status || true")).toBe(true);
+    });
+
     test("blocks unknown commands", () => {
       expect(isReadOnlyShellCommand("rm file")).toBe(false);
       expect(isReadOnlyShellCommand("mv a b")).toBe(false);
@@ -283,6 +287,19 @@ describe("isReadOnlyShellCommand", () => {
     test("blocks external paths by default", () => {
       expect(isReadOnlyShellCommand("cat /tmp/file.txt")).toBe(false);
       expect(isReadOnlyShellCommand("cat ../file.txt")).toBe(false);
+    });
+
+    test("allows external directory listing by default", () => {
+      expect(isReadOnlyShellCommand("ls -la /tmp")).toBe(true);
+      expect(isReadOnlyShellCommand("tree ~/Downloads")).toBe(true);
+    });
+
+    test("allows compound read-only listing commands outside cwd", () => {
+      expect(
+        isReadOnlyShellCommand(
+          "pwd && ls -la ~/Downloads/LettaCodePage && printf \"\\n---\\n\" && find ~/Downloads/LettaCodePage -maxdepth 2 -mindepth 1 | sed 's#^/Users/test/Downloads/LettaCodePage#.#' | sort | head -200",
+        ),
+      ).toBe(true);
     });
 
     test("allows external paths when explicitly enabled", () => {
@@ -299,6 +316,41 @@ describe("isReadOnlyShellCommand", () => {
       expect(
         isReadOnlyShellCommand("cd /tmp && git status", {
           allowExternalPaths: true,
+        }),
+      ).toBe(true);
+    });
+
+    test("allows git -C read-only commands inside allowed roots", () => {
+      expect(
+        isReadOnlyShellCommand(
+          "git -C /Users/test/project/repo remote -v || true",
+          {
+            allowedPathRoots: ["/Users/test/project"],
+          },
+        ),
+      ).toBe(true);
+      expect(
+        isReadOnlyShellCommand(
+          "git -C /Users/test/project/repo status --short",
+          {
+            allowedPathRoots: ["/Users/test/project"],
+          },
+        ),
+      ).toBe(true);
+    });
+
+    test("allows absolute read-only file commands inside allowed roots", () => {
+      expect(
+        isReadOnlyShellCommand(
+          "tail -n 40 /Users/test/project/repo/index.html",
+          {
+            allowedPathRoots: ["/Users/test/project"],
+          },
+        ),
+      ).toBe(true);
+      expect(
+        isReadOnlyShellCommand("grep -RIn foo /Users/test/project/repo", {
+          allowedPathRoots: ["/Users/test/project"],
         }),
       ).toBe(true);
     });

@@ -106,6 +106,28 @@ describe("listen-client parseServerMessage", () => {
     expect(parsed?.type).toBe("input");
   });
 
+  test("parses approval_response with selected permission suggestion ids", () => {
+    const parsed = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "input",
+          runtime: { agent_id: "agent-1", conversation_id: "default" },
+          payload: {
+            kind: "approval_response",
+            request_id: "perm-1",
+            decision: {
+              behavior: "allow",
+              selected_permission_suggestion_ids: ["save-default"],
+            },
+          },
+        }),
+      ),
+    );
+
+    expect(parsed).not.toBeNull();
+    expect(parsed?.type).toBe("input");
+  });
+
   describe("listen-client create_agent command handling", () => {
     test("creates the memo, linus, and kawaii presets through the shared helper", async () => {
       expect(DEFAULT_CREATE_AGENT_PERSONALITIES).toEqual([
@@ -1588,6 +1610,7 @@ describe("listen-client v2 status builders", () => {
           requestId,
           {
             approval: {} as never,
+            approvalContext: null,
             controlRequest: makeControlRequest(requestId),
           },
         ],
@@ -1627,8 +1650,9 @@ describe("listen-client v2 status builders", () => {
     const source = readFileSync(recoveryPath, "utf-8");
 
     expect(source).toContain(
-      "const { needsUserInput, autoAllowed, autoDenied } = await classifyApprovals(",
+      "const { needsUserInput, autoAllowed, autoDenied } =",
     );
+    expect(source).toContain("classifyApprovalsWithSuggestions(");
     expect(source).toContain(
       "const autoDecisions = buildRecoveredAutoDecisions(autoAllowed, autoDenied);",
     );
@@ -1651,6 +1675,7 @@ describe("listen-client v2 status builders", () => {
           "perm-stale",
           {
             approval: {} as never,
+            approvalContext: null,
             controlRequest: makeControlRequest("perm-stale"),
           },
         ],
@@ -1682,6 +1707,7 @@ describe("listen-client v2 status builders", () => {
           "perm-stale",
           {
             approval: {} as never,
+            approvalContext: null,
             controlRequest: makeControlRequest("perm-stale"),
           },
         ],
@@ -1951,6 +1977,7 @@ describe("listen-client interrupt queue projection", () => {
               toolName: "Bash",
               toolArgs: '{"command":"ls"}',
             },
+            approvalContext: null,
             controlRequest: makeControlRequest("perm-tool-1"),
           },
         ],
@@ -1962,6 +1989,7 @@ describe("listen-client interrupt queue projection", () => {
               toolName: "Bash",
               toolArgs: '{"command":"pwd"}',
             },
+            approvalContext: null,
             controlRequest: makeControlRequest("perm-tool-2"),
           },
         ],

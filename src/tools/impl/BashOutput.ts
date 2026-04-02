@@ -1,4 +1,9 @@
-import { backgroundProcesses, backgroundTasks } from "./process_manager.js";
+import { readFileSync, statSync } from "node:fs";
+import {
+  backgroundProcesses,
+  backgroundTasks,
+  getBackgroundOutputFileReadBytes,
+} from "./process_manager.js";
 import { LIMITS, truncateByChars } from "./truncation.js";
 import { validateRequiredParams } from "./validation.js";
 
@@ -22,6 +27,53 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function readOutputFile(filePath?: string): {
+  content: string | null;
+  fallbackNotice?: string;
+} {
+  if (!filePath) {
+    return { content: null };
+  }
+
+  try {
+    const stats = statSync(filePath);
+    const maxBytes = getBackgroundOutputFileReadBytes();
+    if (stats.size > maxBytes) {
+      return {
+        content: null,
+        fallbackNotice: `[Output file too large to load fully here (${stats.size.toLocaleString()} bytes). Showing the bounded in-memory buffer instead. Full transcript: ${filePath}]`,
+      };
+    }
+
+    return { content: readFileSync(filePath, "utf-8") };
+  } catch {
+    return { content: null };
+  }
+}
+
+function getBufferedLineCount(
+  proc: typeof backgroundProcesses extends Map<string, infer V> ? V : never,
+  stream: "stdout" | "stderr",
+): number {
+  return stream === "stdout"
+    ? (proc.totalStdoutLines ?? proc.stdout.length)
+    : (proc.totalStderrLines ?? proc.stderr.length);
+}
+
+function getUnreadBufferedLines(
+  retainedLines: string[],
+  totalLinesSeen: number,
+  cursorIndex: number,
+): string[] {
+  const retainedStart = Math.max(0, totalLinesSeen - retainedLines.length);
+  if (cursorIndex <= retainedStart) {
+    return retainedLines;
+  }
+
+  const sliceStart = Math.max(0, cursorIndex - retainedStart);
+  return retainedLines.slice(sliceStart);
+}
+
 function emitNewProcessOutput(
   proc: typeof backgroundProcesses extends Map<string, infer V> ? V : never,
   onOutput: (chunk: string, stream: "stdout" | "stderr") => void,
@@ -30,26 +82,36 @@ function emitNewProcessOutput(
 ): { stdout: number; stderr: number } {
   const next = { ...indexes };
 
-  if (proc.stdout.length > next.stdout) {
-    const newStdoutLines = proc.stdout.slice(next.stdout);
+  const totalStdoutLines = getBufferedLineCount(proc, "stdout");
+  if (totalStdoutLines > next.stdout) {
+    const newStdoutLines = getUnreadBufferedLines(
+      proc.stdout,
+      totalStdoutLines,
+      next.stdout,
+    );
     const filtered = filter
       ? newStdoutLines.filter((line) => line.includes(filter))
       : newStdoutLines;
     if (filtered.length > 0) {
       onOutput(`${filtered.join("\n")}\n`, "stdout");
     }
-    next.stdout = proc.stdout.length;
+    next.stdout = totalStdoutLines;
   }
 
-  if (proc.stderr.length > next.stderr) {
-    const newStderrLines = proc.stderr.slice(next.stderr);
+  const totalStderrLines = getBufferedLineCount(proc, "stderr");
+  if (totalStderrLines > next.stderr) {
+    const newStderrLines = getUnreadBufferedLines(
+      proc.stderr,
+      totalStderrLines,
+      next.stderr,
+    );
     const filtered = filter
       ? newStderrLines.filter((line) => line.includes(filter))
       : newStderrLines;
     if (filtered.length > 0) {
       onOutput(`${filtered.join("\n")}\n`, "stderr");
     }
-    next.stderr = proc.stderr.length;
+    next.stderr = totalStderrLines;
   }
 
   return next;
@@ -188,10 +250,24 @@ async function getProcessOutput(
     return { message: "Task is still running...", status: "running" };
   }
 
+  const retainedOutput = readOutputFile(currentProc.outputFile);
   const stdout = currentProc.stdout.join("\n");
   const stderr = currentProc.stderr.join("\n");
-  let text = stdout;
-  if (stderr) text = text ? `${text}\n${stderr}` : stderr;
+  let text =
+    retainedOutput.content && retainedOutput.content.length > 0
+      ? retainedOutput.content
+      : stdout;
+  if (
+    (!retainedOutput.content || retainedOutput.content.length === 0) &&
+    stderr
+  ) {
+    text = text ? `${text}\n${stderr}` : stderr;
+  }
+  if (retainedOutput.fallbackNotice) {
+    text = text
+      ? `${retainedOutput.fallbackNotice}\n${text}`
+      : retainedOutput.fallbackNotice;
+  }
 
   if (filter) {
     text = text
@@ -279,11 +355,23 @@ async function getBackgroundTaskOutput(
     return { message: "Task is still running...", status: "running" };
   }
 
-  let text = currentTask.output.join("\n");
-  if (currentTask.error) {
+  const retainedOutput = readOutputFile(currentTask.outputFile);
+  let text =
+    retainedOutput.content && retainedOutput.content.length > 0
+      ? retainedOutput.content
+      : currentTask.output.join("\n");
+  if (
+    (!retainedOutput.content || retainedOutput.content.length === 0) &&
+    currentTask.error
+  ) {
     text = text
       ? `${text}\n[error] ${currentTask.error}`
       : `[error] ${currentTask.error}`;
+  }
+  if (retainedOutput.fallbackNotice) {
+    text = text
+      ? `${retainedOutput.fallbackNotice}\n${text}`
+      : retainedOutput.fallbackNotice;
   }
 
   if (filter) {

@@ -1,10 +1,14 @@
 import { spawn } from "node:child_process";
 import { INTERRUPTED_BY_USER } from "../../constants";
 import {
+  appendBackgroundProcessOutput,
   appendToOutputFile,
+  assertBackgroundProcessCapacity,
   backgroundProcesses,
   createBackgroundOutputFile,
   getNextBashId,
+  scheduleBackgroundProcessCleanup,
+  unrefTimer,
 } from "./process_manager.js";
 import { getShellEnv } from "./shellEnv.js";
 import { buildShellLaunchers } from "./shellLaunchers.js";
@@ -172,6 +176,20 @@ export async function bash(args: BashArgs): Promise<BashResult> {
   }
 
   if (run_in_background) {
+    try {
+      assertBackgroundProcessCapacity();
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: error instanceof Error ? error.message : String(error),
+          },
+        ],
+        status: "error",
+      };
+    }
+
     const bashId = getNextBashId();
     const outputFile = createBackgroundOutputFile(bashId);
     const launcher = getBackgroundLauncher(command);
@@ -197,6 +215,8 @@ export async function bash(args: BashArgs): Promise<BashResult> {
       lastReadIndex: { stdout: 0, stderr: 0 },
       startTime: new Date(),
       outputFile,
+      totalStdoutLines: 0,
+      totalStderrLines: 0,
     });
     const bgProcess = backgroundProcesses.get(bashId);
     if (!bgProcess) {
@@ -204,15 +224,13 @@ export async function bash(args: BashArgs): Promise<BashResult> {
     }
     childProcess.stdout?.on("data", (data: Buffer) => {
       const text = data.toString();
-      const lines = text.split("\n").filter(Boolean);
-      bgProcess.stdout.push(...lines);
+      appendBackgroundProcessOutput(bgProcess, "stdout", text);
       // Also write to output file
       appendToOutputFile(outputFile, text);
     });
     childProcess.stderr?.on("data", (data: Buffer) => {
       const text = data.toString();
-      const lines = text.split("\n").filter(Boolean);
-      bgProcess.stderr.push(...lines);
+      appendBackgroundProcessOutput(bgProcess, "stderr", text);
       // Also write to output file (prefixed with [stderr])
       appendToOutputFile(outputFile, `[stderr] ${text}`);
     });
@@ -220,21 +238,29 @@ export async function bash(args: BashArgs): Promise<BashResult> {
       bgProcess.status = code === 0 ? "completed" : "failed";
       bgProcess.exitCode = code;
       appendToOutputFile(outputFile, `\n[exit code: ${code}]\n`);
+      scheduleBackgroundProcessCleanup(bashId);
     });
     childProcess.on("error", (err: Error) => {
       bgProcess.status = "failed";
-      bgProcess.stderr.push(err.message);
+      appendBackgroundProcessOutput(bgProcess, "stderr", err.message);
       appendToOutputFile(outputFile, `\n[error] ${err.message}\n`);
+      scheduleBackgroundProcessCleanup(bashId);
     });
     if (timeout && timeout > 0) {
-      setTimeout(() => {
+      const timeoutHandle = setTimeout(() => {
         if (bgProcess.status === "running") {
           childProcess.kill("SIGTERM");
           bgProcess.status = "failed";
-          bgProcess.stderr.push(`Command timed out after ${timeout}ms`);
+          appendBackgroundProcessOutput(
+            bgProcess,
+            "stderr",
+            `Command timed out after ${timeout}ms`,
+          );
           appendToOutputFile(outputFile, `\n[timeout after ${timeout}ms]\n`);
+          scheduleBackgroundProcessCleanup(bashId);
         }
       }, timeout);
+      unrefTimer(timeoutHandle);
     }
     return {
       content: [

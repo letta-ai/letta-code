@@ -78,6 +78,20 @@ const ALWAYS_SAFE_COMMANDS = new Set([
   "xxd",
   "hexdump",
   "cd",
+  "true",
+]);
+
+// These commands inspect directory/path metadata but do not read file contents,
+// so absolute or home-anchored paths are still considered read-only.
+const EXTERNAL_PATH_METADATA_COMMANDS = new Set([
+  "ls",
+  "tree",
+  "stat",
+  "du",
+  "realpath",
+  "readlink",
+  "basename",
+  "dirname",
 ]);
 
 const SAFE_GIT_SUBCOMMANDS = new Set([
@@ -219,6 +233,12 @@ export interface ReadOnlyShellOptions {
    * Used in plan mode where read-only shell should not be restricted to cwd-relative paths.
    */
   allowExternalPaths?: boolean;
+
+  /**
+   * Absolute path roots that are safe to read from even when external paths
+   * are otherwise blocked.
+   */
+  allowedPathRoots?: string[];
 }
 
 export function isReadOnlyShellCommand(
@@ -292,14 +312,20 @@ function isSafeSegment(
       if (options.allowExternalPaths) {
         return true;
       }
-      return !tokens.slice(1).some((t) => hasAbsoluteOrTraversalPathArg(t));
+      return !tokens.slice(1).some((t) => hasDisallowedPathArg(t, options));
     }
 
-    // For other "always safe" commands, ensure they don't read sensitive files
-    // outside the allowed directories.
+    // Metadata-only commands are safe to run against external paths because they
+    // do not expose file contents.
+    if (EXTERNAL_PATH_METADATA_COMMANDS.has(command)) {
+      return true;
+    }
+
+    // For other "always safe" commands, ensure they don't read file contents
+    // from outside the allowed directories.
     const hasExternalPath =
       !options.allowExternalPaths &&
-      tokens.slice(1).some((t) => hasAbsoluteOrTraversalPathArg(t));
+      tokens.slice(1).some((t) => hasDisallowedPathArg(t, options));
 
     if (hasExternalPath) {
       return false;
@@ -319,7 +345,7 @@ function isSafeSegment(
 
     const hasExternalPath =
       !options.allowExternalPaths &&
-      tokens.slice(1).some((t) => hasAbsoluteOrTraversalPathArg(t));
+      tokens.slice(1).some((t) => hasDisallowedPathArg(t, options));
 
     if (hasExternalPath) {
       return false;
@@ -328,7 +354,10 @@ function isSafeSegment(
   }
 
   if (command === "git") {
-    const subcommand = tokens[1];
+    const { subcommand, isSafePath } = parseGitInvocation(tokens, options);
+    if (!isSafePath) {
+      return false;
+    }
     if (!subcommand) {
       return false;
     }
@@ -442,6 +471,43 @@ function isHomeAnchoredPathArg(value: string): boolean {
   );
 }
 
+function isUnderAllowedPathRoot(
+  value: string,
+  allowedPathRoots?: string[],
+): boolean {
+  if (!allowedPathRoots || allowedPathRoots.length === 0) {
+    return false;
+  }
+
+  const resolvedValue = expandPath(value);
+  return allowedPathRoots.some((root) => {
+    const normalizedRoot = normalizeSeparators(resolve(root));
+    return (
+      resolvedValue === normalizedRoot ||
+      resolvedValue.startsWith(`${normalizedRoot}/`)
+    );
+  });
+}
+
+function hasDisallowedPathArg(
+  value: string,
+  options: ReadOnlyShellOptions,
+): boolean {
+  if (!hasAbsoluteOrTraversalPathArg(value)) {
+    return false;
+  }
+
+  if (options.allowExternalPaths) {
+    return false;
+  }
+
+  if (isAbsolutePathArg(value) || isHomeAnchoredPathArg(value)) {
+    return !isUnderAllowedPathRoot(value, options.allowedPathRoots);
+  }
+
+  return true;
+}
+
 function hasAbsoluteOrTraversalPathArg(value: string): boolean {
   if (isAbsolutePathArg(value) || isHomeAnchoredPathArg(value)) {
     return true;
@@ -449,6 +515,34 @@ function hasAbsoluteOrTraversalPathArg(value: string): boolean {
 
   // Path traversal segments only
   return /(^|[\\/])\.\.([\\/]|$)/.test(value);
+}
+
+function parseGitInvocation(
+  tokens: string[],
+  options: ReadOnlyShellOptions,
+): { subcommand: string | null; isSafePath: boolean } {
+  let index = 1;
+
+  while (index < tokens.length) {
+    const token = tokens[index];
+    if (!token) {
+      index += 1;
+      continue;
+    }
+
+    if (token === "-C") {
+      const pathToken = tokens[index + 1];
+      if (!pathToken || hasDisallowedPathArg(pathToken, options)) {
+        return { subcommand: null, isSafePath: false };
+      }
+      index += 2;
+      continue;
+    }
+
+    return { subcommand: token, isSafePath: true };
+  }
+
+  return { subcommand: null, isSafePath: true };
 }
 
 /**

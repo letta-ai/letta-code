@@ -7,6 +7,7 @@ import type {
 } from "../../agent/approval-execution";
 import type { ContextTracker } from "../../cli/helpers/contextTracker";
 import type { ApprovalRequest } from "../../cli/helpers/stream";
+import type { ApprovalContext } from "../../permissions/analyzer";
 import type {
   DequeuedBatch,
   QueueBlockedReason,
@@ -14,6 +15,7 @@ import type {
   QueueRuntime,
 } from "../../queue/queueRuntime";
 import type { SharedReminderState } from "../../reminders/state";
+import type { ToolsetName, ToolsetPreference } from "../../tools/toolset";
 import type {
   ApprovalResponseBody,
   ControlRequest,
@@ -90,6 +92,7 @@ export type PendingApprovalResolver = {
 export type RecoveredPendingApproval = {
   approval: ApprovalRequest;
   controlRequest: ControlRequest;
+  approvalContext: ApprovalContext | null;
 };
 
 export type RecoveredApprovalState = {
@@ -124,6 +127,9 @@ export type ConversationRuntime = {
   pendingTurns: number;
   isRecoveringApprovals: boolean;
   loopStatus: LoopStatus;
+  currentToolset: ToolsetName | null;
+  currentToolsetPreference: ToolsetPreference;
+  currentLoadedTools: string[];
   pendingApprovalBatchByToolCallId: Map<string, string>;
   pendingInterruptedResults: Array<ApprovalResult> | null;
   pendingInterruptedContext: {

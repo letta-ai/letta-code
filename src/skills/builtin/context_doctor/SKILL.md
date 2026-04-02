@@ -5,16 +5,16 @@ description: Identify and repair degradation in system prompt, external memory, 
 ---
 
 # Context Doctor
-Your context is managed by yourself, along with additional memory subagents. Your context includes: 
-- Your system prompt and instructions (contained in `system/`)
-- Your external memory 
+Your context is what makes you *you* across sessions. You are responsible for managing it (along with memory subagents). It includes:
+- Your system prompt and memories (contained in `system/`)
+- Your external memory (contained in the memory filesystem)
 - Your skills (procedural memory) 
 
 Over time, context can degrade — bloat and poor prompt quality erode your ability to remember the right things and follow instructions properly. This skill helps you identify issues with your context and repair them collaboratively with the user.
 
 ## Operating Procedure
 
-### Step 1: Identifying and resolving context issues 
+### Step 1: Identify and resolve context issues 
 Explore your memory files to identify issues. Consider what is confusing about your own prompts and context, and resolve the issues.
 
 Below are additional common issues with context and how they can be resolved: 
@@ -28,7 +28,7 @@ Your system prompt and memory filesystem should be well structured and clear.
 - Do I know when to load which files in my memory filesystem? 
 
 #### System prompt bloat 
-Prompts that are compiled as part of the system prompt (contained in `system/`) should only take up about 10% of the total context size, though this is a recommendation, not a hard requirement. Usually this means about 15-20k tokens. 
+Memories that are compiled as part of the system prompt (contained in `system/`) should only take up about 10% of the total context size (usually ~15-20K tokens), though this is a recommendation, not a hard requirement.
 
 Use the following script to evaluate the token usage of the system prompt: 
 ```bash
@@ -37,14 +37,14 @@ npx tsx <SKILL_DIR>/scripts/estimate_system_tokens.ts --memory-dir "$MEMORY_DIR"
 Where `<SKILL_DIR>` is the Skill Directory shown when the skill was loaded (visible in the injection header).
 
 **Questions to ask**:
-- Do all these tokens need to be passed to the LLM on every turn, or can they be retrieved when needed through being part of external memory of my conversation history? 
+- Do all these tokens need to be passed to the LLM on every turn, or can they be retrieved when needed through being part of external memory or conversation history? 
 - Do any of these prompts confuse or distract me? 
 - Am I able to effectively follow critical instructions (e.g. persona information, user preferences) given the current prompt structure and contents? 
 
 **Solution**: Reduce the size of the system prompt if needed: 
 - Move files outside of `system/` so they are no longer part of the system prompt
 - Compact information to be more information dense or eliminate redundancy
-- Leverage progressive disclosure: move some context outside of `system/` and reference it to pull in dynamically
+- Leverage progressive disclosure: move some context outside of `system/` and reference it via `[[path]]` links to create discovery paths
 
 **Scope**: You may refine, tighten, and restructure prompts to improve clarity and adherence — but do not change the intended semantics. The goal is better signal, not different behavior.
 - Do not alter persona-defining content (who you are, how you communicate)
@@ -83,7 +83,7 @@ skill-name/
 ### Poor use of progressive disclosure
 Only critical information should be in the system prompt, since it's passed on every turn. Use progressive disclosure so that context only *sometimes* needed can be dynamically retrieved.
 
-Files that are outside of `system/` are not part of the system prompt, and must be dynamically loaded. You must index your files to ensure your future self can discover them: for example, make sure that files have informative names and descriptions, or are referenced from parts of your system prompt. Otherwise, you will never discover the external context or make use of it. 
+Files that are outside of `system/` are not part of the system prompt, and must be dynamically loaded. You must index your files to ensure your future self can discover them: for example, make sure that files have informative names and descriptions, or are referenced from parts of your system prompt via `[[path]]` links to create discovery paths. Otherwise, you will never discover the external context or make use of it. 
 
 **Solution**: 
 - Reference external skills from the relevant parts of in-context memory:
@@ -104,7 +104,7 @@ Before moving on, verify:
 - [ ] System prompt token budget reviewed (target ~10% of context, usually 15-20k tokens)
 - [ ] No overlapping or redundant files remain
 - [ ] All file descriptions are unique, accurate, and match their contents
-- [ ] Moved-out knowledge has references from in-context memory so it can be discovered
+- [ ] Moved-out knowledge has `[[path]]` references from in-context memory so it can be discovered
 - [ ] No semantic changes to persona, user identity, or behavioral instructions
 
 ### Step 3: Commit and push
@@ -122,7 +122,7 @@ git push
 ```
 
 ### Step 4: Final checklist and message
-Tell the user what issues you identitied, the fixes you made, the commit you made, and also recommend that they run `/recompile` to apply these changes to the current system prompt. 
+Tell the user what issues you identified, the fixes you made, the commit you made, and also recommend that they run `/recompile` to apply these changes to the current system prompt. 
 
 Before finishing make sure you: 
 - [ ] Resolved all the identified context issues
@@ -130,4 +130,4 @@ Before finishing make sure you:
 - [ ] Told the user to run `/recompile` to refresh the system prompt and apply changes
 
 ## Critical information 
-- **Ask the user about their goals for you, not the implementation**: You understand your own context best, and should follow the guidelines in this document. Do NOT ask the user about their structural preferences - the context is for YOU, not them. Ask them how they want YOU to behave or know instead. 
+- **Ask the user about their goals for you, not the implementation**: You understand your own context best, and should follow the guidelines in this document. Do NOT ask the user about their structural preferences — the context is for YOU, not them. Ask them how they want YOU to behave or know instead. 
