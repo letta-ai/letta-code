@@ -40,8 +40,14 @@ describe("model preset refresh wiring", () => {
     expect(updateSegment).not.toContain(
       "(updateArgs?.context_window as number | undefined) ??\n    (await getModelContextWindow(modelHandle));",
     );
-    expect(updateSegment).not.toContain(
-      "const currentAgent = await client.agents.retrieve(",
+    expect(updateSegment).toContain(
+      "const currentAgent = await client.agents.retrieve(agentId);",
+    );
+    expect(updateSegment).toContain(
+      "shouldPreserveSelfHostedLlmConfig(currentAgent, modelHandle)",
+    );
+    expect(updateSegment).toContain(
+      "shouldPreserveSelfHostedEmbeddingConfig(currentAgent)",
     );
     expect(source).not.toContain(
       'hasUpdateArg(updateArgs, "parallel_tool_calls")',
