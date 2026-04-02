@@ -121,6 +121,35 @@ test("read-only compound directory listing command is auto-allowed", () => {
   expect(result.reason).toBe("Read-only shell command");
 });
 
+test("git -C read-only status command is auto-allowed", () => {
+  const result = checkPermission(
+    "Bash",
+    {
+      command: "git -C /Users/test/project/repo status --short || true",
+    },
+    { allow: [], deny: [], ask: [] },
+    "/Users/test/project",
+  );
+
+  expect(result.decision).toBe("allow");
+  expect(result.reason).toBe("Read-only shell command");
+});
+
+test("absolute read-only file commands inside working directory are auto-allowed", () => {
+  const result = checkPermission(
+    "Bash",
+    {
+      command:
+        "tail -n 40 /Users/test/project/repo/index.html && printf '\\n---\\n' && grep -RIn title /Users/test/project/repo",
+    },
+    { allow: [], deny: [], ask: [] },
+    "/Users/test/project",
+  );
+
+  expect(result.decision).toBe("allow");
+  expect(result.reason).toBe("Read-only shell command");
+});
+
 test("Grep within working directory is auto-allowed", () => {
   const result = checkPermission(
     "Grep",

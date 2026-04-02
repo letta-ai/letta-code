@@ -30,6 +30,29 @@ test("Git status suggests safe subcommand rule", () => {
   expect(context.safetyLevel).toBe("safe");
 });
 
+test("Git -C status suggests safe subcommand rule", () => {
+  const context = analyzeApprovalContext(
+    "Bash",
+    { command: "git -C /Users/test/project status --short" },
+    "/Users/test",
+  );
+
+  expect(context.recommendedRule).toBe("Bash(git status:*)");
+  expect(context.approveAlwaysText).toContain("git status");
+  expect(context.safetyLevel).toBe("safe");
+});
+
+test("Git -C remote suggests safe subcommand rule", () => {
+  const context = analyzeApprovalContext(
+    "Bash",
+    { command: "git -C /Users/test/project remote -v || true" },
+    "/Users/test",
+  );
+
+  expect(context.recommendedRule).toBe("Bash(git remote:*)");
+  expect(context.safetyLevel).toBe("safe");
+});
+
 test("Git push suggests moderate safety rule", () => {
   const context = analyzeApprovalContext(
     "Bash",

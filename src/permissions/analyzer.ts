@@ -560,6 +560,8 @@ function analyzeBashApproval(
   const parts = normalizedCommand.trim().split(/\s+/);
   const baseCommand = parts[0] || "";
   const firstArg = parts[1] || "";
+  const topLevelGitSubcommand =
+    baseCommand === "git" ? extractGitSubcommand(parts) : null;
 
   // Check if command contains ANY dangerous commands (including in pipelines)
   if (
@@ -607,11 +609,18 @@ function analyzeBashApproval(
 
   // Git commands - be specific to subcommand
   if (baseCommand === "git") {
-    const gitSubcommand = firstArg;
+    const gitSubcommand = topLevelGitSubcommand;
 
     // Safe read-only git commands
-    const safeGitCommands = ["status", "diff", "log", "show", "branch"];
-    if (safeGitCommands.includes(gitSubcommand)) {
+    const safeGitCommands = [
+      "status",
+      "diff",
+      "log",
+      "show",
+      "branch",
+      "remote",
+    ];
+    if (gitSubcommand && safeGitCommands.includes(gitSubcommand)) {
       return {
         recommendedRule: `Bash(git ${gitSubcommand}:*)`,
         ruleDescription: `'git ${gitSubcommand}' commands`,
@@ -623,7 +632,10 @@ function analyzeBashApproval(
     }
 
     // Git write commands - moderate safety
-    if (["push", "pull", "fetch", "commit", "add"].includes(gitSubcommand)) {
+    if (
+      gitSubcommand &&
+      ["push", "pull", "fetch", "commit", "add"].includes(gitSubcommand)
+    ) {
       return {
         recommendedRule: `Bash(git ${gitSubcommand}:*)`,
         ruleDescription: `'git ${gitSubcommand}' commands`,
@@ -727,13 +739,21 @@ function analyzeBashApproval(
 
       // Check if this segment is git command
       if (segmentBase === "git") {
-        const gitSubcommand = segmentArg;
-        const safeGitCommands = ["status", "diff", "log", "show", "branch"];
+        const gitSubcommand = extractGitSubcommand(segmentParts);
+        const safeGitCommands = [
+          "status",
+          "diff",
+          "log",
+          "show",
+          "branch",
+          "remote",
+        ];
         const writeGitCommands = ["push", "pull", "fetch", "commit", "add"];
 
         if (
-          safeGitCommands.includes(gitSubcommand) ||
-          writeGitCommands.includes(gitSubcommand)
+          gitSubcommand &&
+          (safeGitCommands.includes(gitSubcommand) ||
+            writeGitCommands.includes(gitSubcommand))
         ) {
           return {
             recommendedRule: `Bash(git ${gitSubcommand}:*)`,
@@ -814,6 +834,27 @@ function analyzeBashApproval(
     allowPersistence: true,
     safetyLevel: "moderate",
   };
+}
+
+function extractGitSubcommand(parts: string[]): string | null {
+  let index = 1;
+
+  while (index < parts.length) {
+    const token = parts[index];
+    if (!token) {
+      index += 1;
+      continue;
+    }
+
+    if (token === "-C") {
+      index += 2;
+      continue;
+    }
+
+    return token;
+  }
+
+  return null;
 }
 
 /**
