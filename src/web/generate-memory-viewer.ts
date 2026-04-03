@@ -21,6 +21,8 @@ import {
 } from "../agent/memoryScanner";
 import memoryViewerTemplate from "./memory-viewer-template.txt";
 import type {
+  ConversationInfo,
+  MessageInfo,
   ContextData,
   MemoryCommit,
   MemoryFile,
@@ -282,6 +284,7 @@ async function collectMemoryData(
   // Fetch agent info and context breakdown (best-effort, parallel)
   let agentName = agentId;
   let context: ContextData | undefined;
+  let messages: MessageInfo[] | undefined;
   let model = "unknown";
 
   // Try SDK client for agent name + model info
@@ -307,6 +310,7 @@ async function collectMemoryData(
       );
       if (contextRes.ok) {
         const overview = (await contextRes.json()) as {
+          messages?: Array<{ id: string; role: string; content: string | unknown[]; conversation_id?: string | null; created_at: string; }>;
           context_window_size_max: number;
           context_window_size_current: number;
           num_tokens_system: number;
@@ -316,6 +320,13 @@ async function collectMemoryData(
           num_tokens_functions_definitions: number;
           num_tokens_messages: number;
         };
+        messages = overview.messages?.map((m) => ({
+            id: m.id,
+            role: m.role,
+            content: m.content,
+            conversation_id: m.conversation_id,
+            created_at: m.created_at,
+          }));
         context = {
           contextWindow: contextWindow || overview.context_window_size_max,
           usedTokens: overview.context_window_size_current,
@@ -361,6 +372,7 @@ async function collectMemoryData(
 
         if (contextRes?.ok) {
           const overview = (await contextRes.json()) as {
+          messages?: Array<{ id: string; role: string; content: string | unknown[]; conversation_id?: string | null; created_at: string; }>;
             context_window_size_max: number;
             context_window_size_current: number;
             num_tokens_system: number;
@@ -370,7 +382,14 @@ async function collectMemoryData(
             num_tokens_functions_definitions: number;
             num_tokens_messages: number;
           };
-          context = {
+          messages = overview.messages?.map((m) => ({
+            id: m.id,
+            role: m.role,
+            content: m.content,
+            conversation_id: m.conversation_id,
+            created_at: m.created_at,
+          }));
+        context = {
             contextWindow: overview.context_window_size_max,
             usedTokens: overview.context_window_size_current,
             model,
@@ -390,6 +409,42 @@ async function collectMemoryData(
     }
   }
 
+  // Fetch recent conversations (best-effort)
+  let conversations: ConversationInfo[] | undefined;
+  
+  try {
+    const client = await getClient();
+    const apiKey =
+      (client as unknown as { apiKey?: string }).apiKey ||
+      process.env.LETTA_API_KEY ||
+      "";
+    
+    // List recent conversations
+    const convRes = await fetch(
+      `${serverUrl}/v1/agents/${agentId}/conversations?limit=10&order=desc&order_by=last_run_completion`,
+      {
+        headers: { Authorization: `Bearer ${apiKey}` },
+        signal: AbortSignal.timeout(5000),
+      }
+    );
+    if (convRes.ok) {
+      const convData = (await convRes.json()) as Array<{
+        id: string;
+        created_at: string;
+        last_run_completion?: string | null;
+        label?: string | null;
+      }>;
+      conversations = convData.map((c) => ({
+        id: c.id,
+        created_at: c.created_at,
+        last_run_completion: c.last_run_completion,
+        label: c.label,
+      }));
+    }
+  } catch {
+    // Conversation fetch failed - continue without it
+  }
+
   return {
     agent: { id: agentId, name: agentName, serverUrl },
     generatedAt: new Date().toISOString(),
@@ -397,6 +452,8 @@ async function collectMemoryData(
     files,
     commits,
     context,
+    conversations,
+    messages,
   };
 }
 

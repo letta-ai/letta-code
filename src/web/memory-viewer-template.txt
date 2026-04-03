@@ -508,6 +508,49 @@ a:hover { text-decoration: underline; }
 }
 .stat-file:hover { color: var(--accent); text-decoration: underline; }
 .stat-bar { display: inline-flex; gap: 1px; }
+
+/* Conversations view */
+.conversations-layout {
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  gap: 16px;
+  height: 100%;
+}
+.conversations-list {
+  overflow-y: auto;
+  border-right: 1px solid var(--border);
+}
+.conversation-item {
+  padding: 10px 12px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--border);
+}
+.conversation-item:hover { background: var(--surface); }
+.conversation-item.active { background: var(--accent); color: white; }
+.conv-name { font-weight: 500; margin-bottom: 4px; }
+.conv-meta { font-size: 12px; color: var(--text-muted); }
+.messages-panel {
+  overflow-y: auto;
+  padding: 12px;
+}
+.message-item {
+  margin-bottom: 12px;
+  padding: 10px;
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.message-item.role-user { background: var(--panel); }
+.message-item.role-assistant { background: var(--accent-bg); }
+.msg-role {
+  font-size: 11px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+.msg-content {
+  font-size: 14px;
+  line-height: 1.6;
+}
 .stat-plus { color: #1a7f37; }
 .stat-minus { color: #cf222e; }
 .stat-summary {
@@ -801,6 +844,7 @@ html.dark .warning-badge { background: hsl(42, 30%, 18%); color: hsl(42, 80%, 70
     <div class="tab" data-tab="core" id="tab-core-label">Core Memory</div>
     <div class="tab" data-tab="external" id="tab-external-label">External Memory</div>
     <div class="tab" data-tab="history">History</div>
+    <div class="tab" data-tab="conversations" id="tab-conversations-label">Conversations</div>
   </nav>
 
   <main class="main">
@@ -837,6 +881,15 @@ html.dark .warning-badge { background: hsl(42, 30%, 18%); color: hsl(42, 80%, 70
       <ul class="commit-list" id="commit-list"></ul>
       <button class="show-more" id="show-more" style="display:none">Show older commits</button>
       <div class="empty" id="history-empty" style="display:none">No history yet</div>
+    </section>
+
+    <section id="tab-conversations" style="display:none">
+      <div class="conversations-layout">
+        <div class="panel conversations-list" id="conversations-list"></div>
+        <div class="panel messages-panel" id="messages-panel">
+          <div class="empty">Select a conversation</div>
+        </div>
+      </div>
     </section>
 
     <div class="generated" id="generated-at"></div>
@@ -1136,6 +1189,7 @@ html.dark .warning-badge { background: hsl(42, 30%, 18%); color: hsl(42, 80%, 70
     document.getElementById('tab-core').style.display = name === 'core' ? '' : 'none';
     document.getElementById('tab-external').style.display = name === 'external' ? '' : 'none';
     document.getElementById('tab-history').style.display = name === 'history' ? '' : 'none';
+    document.getElementById('tab-conversations').style.display = name === 'conversations' ? '' : 'none';
     location.hash = name;
   }
   tabs.forEach(function(el) {
@@ -1616,6 +1670,74 @@ html.dark .warning-badge { background: hsl(42, 30%, 18%); color: hsl(42, 80%, 70
     if (!item) return;
     item.classList.toggle('expanded');
   });
+
+
+  // ---- Conversations tab ----
+  var conversations = DATA.conversations || [];
+  var convListEl = document.getElementById('conversations-list');
+  var messagesPanelEl = document.getElementById('messages-panel');
+
+  function renderConversationsTab() {
+    if (!conversations.length) {
+      convListEl.innerHTML = '<div class="empty">No conversations found</div>';
+      return;
+    }
+
+    var html = '';
+    conversations.forEach(function(conv) {
+      var label = conv.label || conv.id;
+      var date = conv.last_run_completion || conv.created_at;
+      var dateStr = date ? new Date(date).toLocaleDateString() : '';
+      html += '<div class="conversation-item" data-conv-id="' + escAttr(conv.id) + '">';
+      html += '<div class="conv-name">' + escHtml(label) + '</div>';
+      html += '<div class="conv-meta">' + escHtml(dateStr) + '</div>';
+      html += '</div>';
+    });
+    convListEl.innerHTML = html;
+  }
+
+  convListEl.addEventListener('click', function(ev) {
+    var item = ev.target.closest('.conversation-item');
+    if (!item) return;
+    var convId = item.dataset.convId;
+    loadConversationMessages(convId);
+  });
+
+  function loadConversationMessages(convId) {
+    var msgs = DATA.messages || [];
+    var filtered = msgs.filter(function(m) { return m.conversation_id === convId; });
+
+    if (!filtered.length) {
+      messagesPanelEl.innerHTML = '<div class="empty">No messages in this conversation</div>';
+      return;
+    }
+
+    var html = '';
+    filtered.forEach(function(msg) {
+      html += '<div class="message-item role-' + escAttr(msg.role) + '">';
+      html += '<div class="msg-role">' + escHtml(msg.role) + '</div>';
+      html += '<div class="msg-content">' + renderContent(msg.content) + '</div>';
+      html += '</div>';
+    });
+    messagesPanelEl.innerHTML = html;
+  }
+
+  function renderContent(content) {
+    if (typeof content === 'string') {
+      return md.render(content);
+    }
+    if (Array.isArray(content)) {
+      return content.map(function(part) {
+        if (typeof part === 'string') return escHtml(part);
+        if (part && part.type === 'text') return md.render(part.text || '');
+        if (part && part.type === 'tool_use') return '<code>' + escHtml(part.name || 'tool') + '</code>';
+        return '';
+      }).join('');
+    }
+    return '';
+  }
+
+  renderConversationsTab();
 
   var hash = String(location.hash || '').replace('#', '');
   if (hash === 'context') activateTab('context');
