@@ -46,16 +46,6 @@ const DEFAULT_RESUME_MESSAGE_TYPES: MessageType[] = [
   "approval_response_message",
 ];
 
-function withIncludeReturnMessageTypes<T extends object>(
-  params: T,
-  messageTypes: MessageType[],
-): T {
-  return {
-    ...params,
-    include_return_message_types: messageTypes,
-  } as T;
-}
-
 function isPrimaryMessageType(messageType: string | undefined): boolean {
   return (
     messageType === "user_message" ||
@@ -295,17 +285,12 @@ async function fetchConversationBackfillMessages(
   let anchorCount = 0;
 
   for (let pageIndex = 0; pageIndex < BACKFILL_MAX_PAGES; pageIndex += 1) {
-    const page = await client.conversations.messages.list(
-      conversationId,
-      withIncludeReturnMessageTypes(
-        {
-          limit: BACKFILL_PAGE_LIMIT,
-          order: "desc",
-          ...(cursorBefore ? { before: cursorBefore } : {}),
-        },
-        RESUME_BACKFILL_MESSAGE_TYPES,
-      ),
-    );
+    const page = await client.conversations.messages.list(conversationId, {
+      limit: BACKFILL_PAGE_LIMIT,
+      order: "desc",
+      include_return_message_types: RESUME_BACKFILL_MESSAGE_TYPES,
+      ...(cursorBefore ? { before: cursorBefore } : {}),
+    });
     const items = page.getPaginatedItems();
     if (items.length === 0) break;
 
@@ -495,17 +480,12 @@ export async function getResumeData(
             ? BACKFILL_PAGE_LIMIT
             : 1;
         try {
-          const messagesPage = await client.agents.messages.list(
-            agent.id,
-            withIncludeReturnMessageTypes(
-              {
-                conversation_id: "default",
-                limit: listLimit,
-                order: "desc",
-              },
-              DEFAULT_RESUME_MESSAGE_TYPES,
-            ),
-          );
+          const messagesPage = await client.agents.messages.list(agent.id, {
+            conversation_id: "default",
+            limit: listLimit,
+            order: "desc",
+            include_return_message_types: DEFAULT_RESUME_MESSAGE_TYPES,
+          });
           defaultConversationMessages = sortChronological(
             messagesPage.getPaginatedItems(),
           );

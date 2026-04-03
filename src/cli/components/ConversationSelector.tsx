@@ -55,16 +55,6 @@ const RESUME_PREVIEW_MESSAGE_TYPES: MessageType[] = [
   "assistant_message",
 ];
 
-function withIncludeReturnMessageTypes<T extends object>(
-  params: T,
-  messageTypes: MessageType[],
-): T {
-  return {
-    ...params,
-    include_return_message_types: messageTypes,
-  } as T;
-}
-
 /**
  * Format a relative time string from a date
  */
@@ -247,16 +237,11 @@ export function ConversationSelector({
   const enrichConversation = useCallback(
     async (client: Letta, convId: string) => {
       try {
-        const messages = await client.conversations.messages.list(
-          convId,
-          withIncludeReturnMessageTypes(
-            {
-              limit: ENRICH_MESSAGE_LIMIT,
-              order: "desc",
-            },
-            RESUME_PREVIEW_MESSAGE_TYPES,
-          ),
-        );
+        const messages = await client.conversations.messages.list(convId, {
+          limit: ENRICH_MESSAGE_LIMIT,
+          order: "desc",
+          include_return_message_types: RESUME_PREVIEW_MESSAGE_TYPES,
+        });
         const chronological = [...messages.getPaginatedItems()].reverse();
         const stats = getMessageStats(chronological);
         setConversations((prev) =>
@@ -316,17 +301,12 @@ export function ConversationSelector({
         const defaultPromise: Promise<EnrichedConversation | null> =
           !afterCursor
             ? client.agents.messages
-                .list(
-                  agentId,
-                  withIncludeReturnMessageTypes(
-                    {
-                      conversation_id: "default",
-                      limit: ENRICH_MESSAGE_LIMIT,
-                      order: "desc",
-                    },
-                    RESUME_PREVIEW_MESSAGE_TYPES,
-                  ),
-                )
+                .list(agentId, {
+                  conversation_id: "default",
+                  limit: ENRICH_MESSAGE_LIMIT,
+                  order: "desc",
+                  include_return_message_types: RESUME_PREVIEW_MESSAGE_TYPES,
+                })
                 .then((msgs) => {
                   const items = msgs.getPaginatedItems();
                   if (items.length === 0) return null;
