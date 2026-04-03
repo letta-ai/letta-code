@@ -49,12 +49,12 @@ import {
   emitCanonicalMessageDelta,
   emitDequeuedUserMessage,
   emitInterruptedStatusDelta,
-  emitLoopErrorDelta,
   emitLoopStatusUpdate,
   emitRuntimeStateUpdates,
   setLoopStatus,
 } from "./protocol-outbound";
 import { consumeQueuedTurn } from "./queue";
+import { emitLoopErrorNotice } from "./recoverable-notices";
 import {
   clearActiveRunState,
   clearRecoveredApprovalState,
@@ -176,13 +176,15 @@ export async function drainRecoveryStreamWithEmission(
       }
 
       if (errorInfo) {
-        emitLoopErrorDelta(socket, runtime, {
+        emitLoopErrorNotice(socket, runtime, {
           message: errorInfo.message || "Stream error",
           stopReason: (errorInfo.error_type as StopReasonType) || "error",
           isTerminal: false,
           runId: runtime.activeRunId || errorInfo.run_id,
           agentId: params.agentId ?? undefined,
           conversationId: params.conversationId,
+          errorInfo,
+          abortSignal: params.abortSignal,
         });
       }
 
@@ -256,7 +258,7 @@ export function finalizeHandledRecoveryTurn(
   const runId = runtime.activeRunId;
   clearActiveRunState(runtime);
   emitRuntimeStateUpdates(runtime, scope);
-  emitLoopErrorDelta(socket, runtime, {
+  emitLoopErrorNotice(socket, runtime, {
     message: `Recovery continuation ended unexpectedly: ${terminalStopReason}`,
     stopReason: terminalStopReason,
     isTerminal: true,

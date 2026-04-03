@@ -10,7 +10,7 @@ import {
   type ApprovalDecision,
   executeApprovalBatch,
 } from "../../agent/approval-execution";
-import { fetchRunErrorDetail } from "../../agent/approval-recovery";
+import { fetchRunErrorInfo } from "../../agent/approval-recovery";
 import { getResumeData } from "../../agent/check-approval";
 import { getClient } from "../../agent/client";
 import { sendMessageStream } from "../../agent/message";
@@ -498,10 +498,14 @@ export async function sendMessageStreamWithRetry(
           }
         }
 
-        const detail = await fetchRunErrorDetail(runtime.activeRunId);
-        throw new Error(
-          detail ||
-            `Pre-stream approval conflict after ${preStreamRecoveryAttempts} recovery attempts`,
+        const runErrorInfo = await fetchRunErrorInfo(runtime.activeRunId);
+        throw Object.assign(
+          new Error(
+            runErrorInfo?.detail ||
+              runErrorInfo?.message ||
+              `Pre-stream approval conflict after ${preStreamRecoveryAttempts} recovery attempts`,
+          ),
+          { runErrorInfo },
         );
       }
 
@@ -710,10 +714,14 @@ export async function sendApprovalContinuationWithRetry(
           continue;
         }
 
-        const detail = await fetchRunErrorDetail(runtime.activeRunId);
-        throw new Error(
-          detail ||
-            `Approval continuation conflict after ${preStreamRecoveryAttempts} recovery attempts`,
+        const runErrorInfo = await fetchRunErrorInfo(runtime.activeRunId);
+        throw Object.assign(
+          new Error(
+            runErrorInfo?.detail ||
+              runErrorInfo?.message ||
+              `Approval continuation conflict after ${preStreamRecoveryAttempts} recovery attempts`,
+          ),
+          { runErrorInfo },
         );
       }
 

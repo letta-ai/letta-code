@@ -159,7 +159,6 @@ import {
   buildQueueSnapshot,
   emitDeviceStatusUpdate,
   emitInterruptedStatusDelta,
-  emitLoopErrorDelta,
   emitLoopStatusUpdate,
   emitRetryDelta,
   emitRuntimeStateUpdates,
@@ -179,6 +178,7 @@ import {
   scheduleQueuePump,
   shouldQueueInboundMessage,
 } from "./queue";
+import { emitLoopErrorNotice } from "./recoverable-notices";
 import {
   getApprovalContinuationRecoveryDisposition,
   recoverApprovalStateForSync,
@@ -351,12 +351,13 @@ function handleModeChange(
       error,
       "listener_mode_change",
     );
-    emitLoopErrorDelta(socket, runtime, {
+    emitLoopErrorNotice(socket, runtime, {
       message: error instanceof Error ? error.message : "Mode change failed",
       stopReason: "error",
       isTerminal: false,
       agentId: scope?.agent_id,
       conversationId: scope?.conversation_id,
+      error,
     });
 
     if (isDebugEnabled()) {
@@ -1868,7 +1869,7 @@ async function handleCwdChange(
       conversation_id: conversationId,
     });
   } catch (error) {
-    emitLoopErrorDelta(socket, runtime, {
+    emitLoopErrorNotice(socket, runtime, {
       message:
         error instanceof Error
           ? error.message
@@ -1877,6 +1878,7 @@ async function handleCwdChange(
       isTerminal: false,
       agentId,
       conversationId,
+      error,
     });
   }
 }
@@ -2237,7 +2239,7 @@ async function connectWithRetry(
       }
 
       if (parsed.type === "__invalid_input") {
-        emitLoopErrorDelta(socket, runtime, {
+        emitLoopErrorNotice(socket, runtime, {
           message: parsed.reason,
           stopReason: "error",
           isTerminal: false,
@@ -2295,7 +2297,7 @@ async function connectWithRetry(
 
         const inputPayload = parsed.payload;
         if (inputPayload.kind !== "create_message") {
-          emitLoopErrorDelta(socket, runtime, {
+          emitLoopErrorNotice(socket, runtime, {
             message: `Unsupported input payload kind: ${String((inputPayload as { kind?: unknown }).kind)}`,
             stopReason: "error",
             isTerminal: false,
@@ -2316,7 +2318,7 @@ async function connectWithRetry(
             "type" in payload && payload.type === "approval",
         );
         if (hasApprovalPayload) {
-          emitLoopErrorDelta(socket, runtime, {
+          emitLoopErrorNotice(socket, runtime, {
             message:
               "Protocol violation: approval payloads are not allowed in input.kind=create_message. Use input.kind=approval_response.",
             stopReason: "error",
@@ -3240,7 +3242,7 @@ async function connectWithRetry(
         return;
       }
 
-      emitLoopErrorDelta(socket, runtime, {
+      emitLoopErrorNotice(socket, runtime, {
         message:
           error instanceof Error
             ? error.message
@@ -3249,6 +3251,7 @@ async function connectWithRetry(
         isTerminal: false,
         agentId: parsedScope.agent_id,
         conversationId: parsedScope.conversation_id,
+        error,
       });
     }
   });
