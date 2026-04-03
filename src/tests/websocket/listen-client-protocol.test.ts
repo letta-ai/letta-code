@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { APIError } from "@letta-ai/letta-client/core/error";
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import WebSocket from "ws";
 import { buildConversationMessagesCreateRequestBody } from "../../agent/message";
@@ -12,6 +13,7 @@ import {
   DEFAULT_CREATE_AGENT_PERSONALITIES,
   getPersonalityOption,
 } from "../../agent/personality";
+import { formatErrorDetails } from "../../cli/helpers/errorFormatter";
 import {
   clearAllSubagents,
   registerSubagent,
@@ -39,8 +41,10 @@ import {
 import { isEditFileCommand } from "../../websocket/listener/protocol-inbound";
 import {
   DESKTOP_DEBUG_PANEL_INFO_PREFIX,
+  emitLoopErrorNotice,
   emitRecoverableRetryNotice,
   emitRecoverableStatusNotice,
+  getLoopErrorNoticeDecision,
   getRecoverableRetryNoticeVisibility,
   getRecoverableStatusNoticeVisibility,
 } from "../../websocket/listener/recoverable-notices";
@@ -2645,6 +2649,178 @@ describe("listen-client recoverable status notices", () => {
       max_attempts: 3,
       delay_ms: 2000,
     });
+  });
+});
+
+describe("listen-client loop error notices", () => {
+  test("suppresses terminated process noise from the transcript", () => {
+    expect(
+      getLoopErrorNoticeDecision({
+        message: "terminated",
+      }),
+    ).toEqual({
+      visibility: "debug_only",
+      message: "terminated",
+    });
+  });
+
+  test("normalizes Cloudflare HTML errors to match TUI formatting", () => {
+    const message = `520 <!DOCTYPE html><html><head><title>letta.com | 520: Web server is returning an unknown error</title></head><body>Error code 520 Visit <a href="https://www.cloudflare.com/5xx-error-landing?utm_campaign=api.letta.com">cloudflare</a> Cloudflare Ray ID: abc123</body></html>`;
+
+    expect(
+      getLoopErrorNoticeDecision({
+        message,
+      }),
+    ).toEqual({
+      visibility: "transcript",
+      message:
+        "Cloudflare 520: Web server is returning an unknown error for api.letta.com (Ray ID: abc123). This is usually a temporary edge/origin outage. Please retry in a moment.",
+    });
+  });
+
+  test("normalizes proxy transport errors into a friendly transcript message", () => {
+    const error = new APIError(
+      504,
+      {
+        detail:
+          "Error occurred while trying to proxy to: http://localhost:3000",
+      },
+      undefined,
+      new Headers(),
+    );
+
+    expect(
+      getLoopErrorNoticeDecision({
+        message:
+          "504 Error occurred while trying to proxy to: http://localhost:3000",
+        error,
+      }),
+    ).toEqual({
+      visibility: "transcript",
+      message: "Connection to Letta service failed. Please retry.",
+    });
+  });
+
+  test("reuses TUI formatter for structured run errors", () => {
+    const apiError = {
+      message_type: "error_message" as const,
+      error_type: "insufficient_credits_error",
+      message: "Insufficient credits",
+      detail: "Please add credits to continue.",
+      run_id: "run-123",
+    };
+    const expectedMessage = formatErrorDetails(
+      {
+        error: {
+          error: {
+            type: apiError.error_type,
+            message: apiError.message,
+            detail: apiError.detail,
+          },
+          run_id: apiError.run_id,
+        },
+      },
+      "agent-1",
+      "default",
+    );
+
+    expect(
+      getLoopErrorNoticeDecision({
+        message: apiError.detail,
+        runErrorInfo: {
+          error_type: apiError.error_type,
+          message: apiError.message,
+          detail: apiError.detail,
+          run_id: apiError.run_id,
+        },
+        agentId: "agent-1",
+        conversationId: "default",
+      }),
+    ).toEqual({
+      visibility: "transcript",
+      message: expectedMessage,
+      apiError,
+    });
+  });
+
+  test("emits structured api_error for loop errors when available", () => {
+    const runtime = __listenClientTestUtils.createRuntime();
+    runtime.activeAgentId = "agent-1";
+    runtime.activeConversationId = "default";
+    const socket = new MockSocket();
+    const apiError = {
+      message_type: "error_message" as const,
+      error_type: "internal_error",
+      message: "Internal error",
+      detail: "provider overloaded",
+      run_id: "run-123",
+    };
+
+    emitLoopErrorNotice(socket as unknown as WebSocket, runtime, {
+      message: apiError.detail,
+      stopReason: "llm_api_error",
+      isTerminal: true,
+      runId: apiError.run_id,
+      agentId: "agent-1",
+      conversationId: "default",
+      apiError,
+    });
+
+    expect(socket.sentPayloads).toHaveLength(1);
+    const [firstPayload] = socket.sentPayloads;
+    expect(firstPayload).toBeDefined();
+    const payload = JSON.parse(firstPayload as string) as {
+      type: string;
+      delta: Record<string, unknown>;
+    };
+
+    expect(payload.type).toBe("stream_delta");
+    expect(payload.delta).toMatchObject({
+      message_type: "loop_error",
+      stop_reason: "llm_api_error",
+      is_terminal: true,
+      api_error: apiError,
+    });
+  });
+
+  test("suppresses abort-like loop errors from transcript and mirrors them to desktop logs", () => {
+    const runtime = __listenClientTestUtils.createRuntime();
+    const socket = new MockSocket();
+    const originalFlag = process.env.LETTA_DESKTOP_DEBUG_PANEL;
+    const originalWrite = process.stderr.write.bind(process.stderr);
+    const mirroredLines: string[] = [];
+    const abortError = Object.assign(new Error("The operation was aborted"), {
+      name: "AbortError",
+    });
+
+    process.env.LETTA_DESKTOP_DEBUG_PANEL = "1";
+    process.stderr.write = ((chunk: string | Uint8Array) => {
+      mirroredLines.push(
+        typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8"),
+      );
+      return true;
+    }) as typeof process.stderr.write;
+
+    try {
+      emitLoopErrorNotice(socket as unknown as WebSocket, runtime, {
+        message: abortError.message,
+        stopReason: "error",
+        isTerminal: true,
+        error: abortError,
+      });
+    } finally {
+      process.stderr.write = originalWrite as typeof process.stderr.write;
+      if (originalFlag === undefined) {
+        delete process.env.LETTA_DESKTOP_DEBUG_PANEL;
+      } else {
+        process.env.LETTA_DESKTOP_DEBUG_PANEL = originalFlag;
+      }
+    }
+
+    expect(socket.sentPayloads).toHaveLength(0);
+    expect(mirroredLines).toHaveLength(1);
+    expect(mirroredLines[0]).toContain(DESKTOP_DEBUG_PANEL_INFO_PREFIX);
+    expect(mirroredLines[0]).toContain("The operation was aborted");
   });
 });
 

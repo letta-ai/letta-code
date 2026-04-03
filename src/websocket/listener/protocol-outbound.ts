@@ -1,4 +1,5 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
+import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import WebSocket from "ws";
 import { getMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
 import { getGitContext } from "../../cli/helpers/gitContext";
@@ -700,6 +701,7 @@ export function emitLoopErrorDelta(
     runId?: string | null;
     agentId?: string | null;
     conversationId?: string | null;
+    apiError?: LettaStreamingResponse.LettaErrorMessage;
   },
 ): void {
   emitCanonicalMessageDelta(
@@ -710,6 +712,7 @@ export function emitLoopErrorDelta(
       message: params.message,
       stop_reason: params.stopReason,
       is_terminal: params.isTerminal,
+      ...(params.apiError ? { api_error: params.apiError } : {}),
     } as StreamDelta,
     {
       agent_id: params.agentId,

@@ -38,11 +38,11 @@ import {
 } from "./interrupts";
 import {
   emitDequeuedUserMessage,
-  emitLoopErrorDelta,
   emitRuntimeStateUpdates,
   setLoopStatus,
 } from "./protocol-outbound";
 import { consumeQueuedTurn } from "./queue";
+import { emitLoopErrorNotice } from "./recoverable-notices";
 import { debugLogApprovalResumeState } from "./recovery";
 import {
   markAwaitingAcceptedApprovalContinuationRunId,
@@ -143,7 +143,7 @@ export async function handleApprovalStop(params: {
       conversation_id: conversationId,
     });
 
-    emitLoopErrorDelta(socket, runtime, {
+    emitLoopErrorNotice(socket, runtime, {
       message: "requires_approval stop returned no approvals",
       stopReason: "error",
       isTerminal: true,

@@ -94,6 +94,7 @@ export class StreamProcessor {
       const errorDetail = chunkWithError.error.detail || "";
       errorInfo = {
         message: errorDetail ? `${errorText}: ${errorDetail}` : errorText,
+        detail: errorDetail || undefined,
         run_id: this.lastRunId || undefined,
       };
     }

@@ -8,6 +8,13 @@
 
 import { getClient } from "./client";
 
+export interface RunErrorInfo {
+  error_type?: string;
+  message?: string;
+  detail?: string;
+  run_id?: string;
+}
+
 export type {
   PendingApprovalInfo,
   PreStreamConflictKind,
@@ -41,31 +48,53 @@ export {
 
 type RunErrorMetadata =
   | {
+      type?: string;
       error_type?: string;
       message?: string;
       detail?: string;
-      error?: { error_type?: string; message?: string; detail?: string };
+      run_id?: string;
+      error?: {
+        type?: string;
+        error_type?: string;
+        message?: string;
+        detail?: string;
+        run_id?: string;
+      };
     }
   | undefined
   | null;
 
-export async function fetchRunErrorDetail(
+export async function fetchRunErrorInfo(
   runId: string | null | undefined,
-): Promise<string | null> {
+): Promise<RunErrorInfo | null> {
   if (!runId) return null;
   try {
     const client = await getClient();
     const run = await client.runs.retrieve(runId);
     const metaError = run.metadata?.error as RunErrorMetadata;
+    const nestedError = metaError?.error;
+    const errorInfo: RunErrorInfo = {
+      error_type:
+        metaError?.error_type ??
+        metaError?.type ??
+        nestedError?.error_type ??
+        nestedError?.type,
+      message: metaError?.message ?? nestedError?.message,
+      detail: metaError?.detail ?? nestedError?.detail,
+      run_id: metaError?.run_id ?? nestedError?.run_id ?? runId,
+    };
 
-    return (
-      metaError?.detail ??
-      metaError?.message ??
-      metaError?.error?.detail ??
-      metaError?.error?.message ??
-      null
-    );
+    return errorInfo.error_type || errorInfo.message || errorInfo.detail
+      ? errorInfo
+      : null;
   } catch {
     return null;
   }
+}
+
+export async function fetchRunErrorDetail(
+  runId: string | null | undefined,
+): Promise<string | null> {
+  const errorInfo = await fetchRunErrorInfo(runId);
+  return errorInfo?.detail ?? errorInfo?.message ?? null;
 }
