@@ -375,7 +375,12 @@ export async function handleIncomingMessage(
 
     messagesToSend.push(
       ...normalizedMessages.map((m) =>
-        "content" in m && !m.otid ? { ...m, otid: crypto.randomUUID() } : m,
+        "content" in m
+          ? {
+              ...m,
+              otid: m.otid ?? crypto.randomUUID(),
+            }
+          : m,
       ),
     );
 

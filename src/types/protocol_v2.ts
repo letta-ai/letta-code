@@ -399,7 +399,9 @@ export type ApprovalResponseBody =
  */
 export interface InputCreateMessagePayload {
   kind: "create_message";
-  messages: Array<MessageCreate & { client_message_id?: string }>;
+  messages: Array<
+    MessageCreate & { client_message_id?: string; otid?: string | null }
+  >;
 }
 
 export type InputApprovalResponsePayload = {

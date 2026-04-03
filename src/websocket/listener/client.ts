@@ -2337,8 +2337,10 @@ async function connectWithRetry(
           const firstUserPayload = incoming.messages.find(
             (
               payload,
-            ): payload is MessageCreate & { client_message_id?: string } =>
-              "content" in payload,
+            ): payload is MessageCreate & {
+              client_message_id?: string;
+              otid?: string | null;
+            } => "content" in payload,
           );
           if (firstUserPayload) {
             const enqueuedItem = scopedRuntime.queueRuntime.enqueue({

@@ -1907,6 +1907,44 @@ describe("listen-client multi-worker concurrency", () => {
     await turnPromise;
   });
 
+  test("initial send preserves inbound message otid", async () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const runtime = __listenClientTestUtils.getOrCreateConversationRuntime(
+      listener,
+      "agent-preserve-otid",
+      "conv-preserve-otid",
+    );
+    const socket = new MockSocket();
+
+    await __listenClientTestUtils.handleIncomingMessage(
+      {
+        type: "message",
+        agentId: "agent-preserve-otid",
+        conversationId: "conv-preserve-otid",
+        messages: [
+          {
+            role: "user",
+            content: "hello",
+            otid: "otid-preserved",
+          } as unknown as IncomingMessage["messages"][number],
+        ],
+      },
+      socket as unknown as WebSocket,
+      runtime,
+    );
+
+    expect(sendMessageStreamMock.mock.calls.length).toBeGreaterThan(0);
+    const sentMessages = sendMessageStreamMock.mock.calls[0]?.[1] as
+      | Array<Record<string, unknown>>
+      | undefined;
+
+    expect(sentMessages?.[0]).toMatchObject({
+      role: "user",
+      content: "hello",
+      otid: "otid-preserved",
+    });
+  });
+
   test("pre-stream 409 resume on default conversation includes agent_id", async () => {
     const listener = __listenClientTestUtils.createListenerRuntime();
     const runtime = __listenClientTestUtils.getOrCreateConversationRuntime(

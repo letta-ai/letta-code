@@ -55,7 +55,8 @@ export interface IncomingMessage {
   agentId?: string;
   conversationId?: string;
   messages: Array<
-    (MessageCreate & { client_message_id?: string }) | ApprovalCreate
+    | (MessageCreate & { client_message_id?: string; otid?: string | null })
+    | ApprovalCreate
   >;
 }
 
@@ -70,7 +71,7 @@ export interface ChangeCwdMessage {
 }
 
 export type InboundMessagePayload =
-  | (MessageCreate & { client_message_id?: string })
+  | (MessageCreate & { client_message_id?: string; otid?: string | null })
   | ApprovalCreate;
 
 export type ServerMessage = WsProtocolCommand;

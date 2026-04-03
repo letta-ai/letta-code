@@ -259,8 +259,12 @@ function buildQueuedTurnMessage(
   }
 
   const firstMessageIndex = template.messages.findIndex(
-    (payload): payload is MessageCreate & { client_message_id?: string } =>
-      "content" in payload,
+    (
+      payload,
+    ): payload is MessageCreate & {
+      client_message_id?: string;
+      otid?: string | null;
+    } => "content" in payload,
   );
   if (firstMessageIndex === -1) {
     return null;
@@ -268,6 +272,7 @@ function buildQueuedTurnMessage(
 
   const firstMessage = template.messages[firstMessageIndex] as MessageCreate & {
     client_message_id?: string;
+    otid?: string | null;
   };
   const mergedFirstMessage = {
     ...firstMessage,
