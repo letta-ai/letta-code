@@ -2551,20 +2551,16 @@ describe("listen-client recoverable status notices", () => {
     }) as typeof process.stderr.write;
 
     try {
-      emitRecoverableRetryNotice(
-        firstSocket as unknown as WebSocket,
-        runtime,
-        {
-          kind: "transient_provider_retry",
-          message: "Anthropic API is overloaded, retrying...",
-          reason: "llm_api_error",
-          attempt: 1,
-          maxAttempts: 3,
-          delayMs: 1000,
-          agentId: "agent-1",
-          conversationId: "default",
-        },
-      );
+      emitRecoverableRetryNotice(firstSocket as unknown as WebSocket, runtime, {
+        kind: "transient_provider_retry",
+        message: "Anthropic API is overloaded, retrying...",
+        reason: "llm_api_error",
+        attempt: 1,
+        maxAttempts: 3,
+        delayMs: 1000,
+        agentId: "agent-1",
+        conversationId: "default",
+      });
 
       emitRecoverableRetryNotice(
         secondSocket as unknown as WebSocket,
@@ -2592,7 +2588,9 @@ describe("listen-client recoverable status notices", () => {
     expect(firstSocket.sentPayloads).toHaveLength(0);
     expect(mirroredLines).toHaveLength(1);
     expect(mirroredLines[0]).toContain(DESKTOP_DEBUG_PANEL_INFO_PREFIX);
-    expect(mirroredLines[0]).toContain("Anthropic API is overloaded, retrying...");
+    expect(mirroredLines[0]).toContain(
+      "Anthropic API is overloaded, retrying...",
+    );
 
     expect(secondSocket.sentPayloads).toHaveLength(1);
     const payload = JSON.parse(secondSocket.sentPayloads[0] as string) as {
