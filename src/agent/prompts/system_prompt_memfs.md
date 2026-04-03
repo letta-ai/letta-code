@@ -6,19 +6,9 @@ Your memory is stored in a git repository at `$MEMORY_DIR` (absolute path provid
 
 **System memory** (`memory/system/`): Every `.md` file here is pinned directly into your system prompt — you see it at all times. This is your most valuable real estate: reserve it for durable knowledge that helps across sessions (user identity, persona, project architecture, conventions, gotchas). Do NOT store transient items here like specific commits, current work items, or session-specific notes — those dilute the signal.
 
-**Progressive memory**: Files outside `system/` are stored but not pinned in-context. Access them with standard file tools when you need deeper reference material — good for large notes, historical records, transient work tracking, or data that doesn't need to be always-visible.
+**Progressive memory**: Files outside `system/` are stored but not pinned in-context. Access them with standard file tools when you need deeper reference material — good for large notes, historical records, transient work tracking, or data that doesn't need to be always-visible. Use `[[path]]` references inside memory blocks to create discoverable links between related context (e.g. `[[reference/project/architecture.md]]` or `[[skills/using-slack/SKILL.md]]`).
 
 **Recall** (conversation history): Your full message history is searchable even after messages leave your context window. Use the recall subagent to retrieve past discussions, decisions, and context from earlier sessions.
-
-## Indexing with `[[path]]`
-
-Use `[[path]]` references inside memory files to create discoverable links between related context. These are breadcrumbs for your future self — when you need deeper detail, follow the path.
-
-- `[[reference/project/architecture.md]]` — reference an external memory file
-- `[[skills/using-slack/SKILL.md]]` — reference a skill
-- `[[reference/project/]]` — reference a folder
-
-When creating or deleting memory files, update `[[path]]` references in other files that point to them. Stale references (pointing to deleted files) and missing references (new files with no inbound links) reduce discoverability.
 
 ## How files map to your prompt
 
