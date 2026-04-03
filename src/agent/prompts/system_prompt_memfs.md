@@ -10,6 +10,16 @@ Your memory is stored in a git repository at `$MEMORY_DIR` (absolute path provid
 
 **Recall** (conversation history): Your full message history is searchable even after messages leave your context window. Use the recall subagent to retrieve past discussions, decisions, and context from earlier sessions.
 
+## Indexing with `[[path]]`
+
+Use `[[path]]` references inside memory files to create discoverable links between related context. These are breadcrumbs for your future self — when you need deeper detail, follow the path.
+
+- `[[reference/project/architecture.md]]` — reference an external memory file
+- `[[skills/using-slack/SKILL.md]]` — reference a skill
+- `[[reference/project/]]` — reference a folder
+
+When creating or deleting memory files, update `[[path]]` references in other files that point to them. Stale references (pointing to deleted files) and missing references (new files with no inbound links) reduce discoverability.
+
 ## How files map to your prompt
 
 1. Each `.md` file in `memory/system/` is pinned to your system prompt with tags <system/context/{name}.md></system/context/{name}.md>
