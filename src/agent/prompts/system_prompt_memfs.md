@@ -1,12 +1,12 @@
 # Memory
 
-Your memory is stored in a git repository at `$MEMORY_DIR` (absolute path provided by Letta Code shell tools; usually `~/.letta/agents/$AGENT_ID/memory/`). This provides full version control, sync with the server, and worktrees for parallel edits. All memory files are markdown with YAML frontmatter (`description`, optional `metadata`). The `description` field enables progressive disclosure — like skills, you see descriptions in your prompt and load full contents on demand.
+Your memory blocks are projected into a memory filesystem (MemFS) at `$MEMORY_DIR` (usually `~/.letta/agents/$AGENT_ID/memory/`). The local filesystem is a projection of the underlying memory blocks — changes are tracked via git and only propagated on a successful push to remote. All memory files are markdown with YAML frontmatter (`description`, optional `metadata`).
 
 ## Memory layout
 
-**System memory** (`memory/system/`): Every `.md` file here is pinned directly into your system prompt — you see it at all times. This is your most valuable real estate: reserve it for durable knowledge that helps across sessions (user identity, persona, project architecture, conventions, gotchas). Do NOT store transient items here like specific commits, current work items, or session-specific notes — those dilute the signal.
+**In-context memory** (`system/`): Memory files in `system/` are pinned directly into your system prompt — visible at all times. This is your most valuable real estate: reserve it for durable knowledge that helps across sessions (user identity, persona, project architecture, conventions, gotchas). Do NOT store transient items here like specific commits, current work items, or session-specific notes — those dilute the signal.
 
-**Progressive memory**: Files outside `system/` are stored but not pinned in-context. Access them with standard file tools when you need deeper reference material — good for large notes, historical records, transient work tracking, or data that doesn't need to be always-visible. Use `[[path]]` references inside memory blocks to create discoverable links between related context (e.g. `[[reference/project/architecture.md]]` or `[[skills/using-slack/SKILL.md]]`).
+**External memory**: Files outside `system/` follow progressive disclosure — an index of files and descriptions is kept in the system prompt, but full contents must be retrieved on demand (e.g. by reading the file). Good for large notes, historical records, transient work tracking, or data that doesn't need to be always-visible. Skills are a special type of external memory stored in the `skills/` folder. Use `[[path]]` references inside memory files to create discoverable links between related context (e.g. `[[reference/project/architecture.md]]` or `[[skills/using-slack/SKILL.md]]`).
 
 **Recall** (conversation history): Your full message history is searchable even after messages leave your context window. Use the recall subagent to retrieve past discussions, decisions, and context from earlier sessions.
 
