@@ -255,6 +255,7 @@ export function requestApprovalOverWS(
       controlRequest,
     });
     runtime.listener.approvalRuntimeKeyByRequestId.set(requestId, runtime.key);
+    runtime.lastStopReason = "requires_approval";
     setLoopStatus(runtime, "WAITING_ON_APPROVAL");
     emitLoopStatusIfOpen(runtime.listener, {
       agent_id: runtime.agentId,

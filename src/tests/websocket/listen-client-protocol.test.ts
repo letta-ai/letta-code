@@ -2193,6 +2193,7 @@ describe("listen-client capability-gated approval flow", () => {
     expect(deviceStatus).toBeDefined();
     expect(loopStatus.type).toBe("update_loop_status");
     expect(loopStatus.loop_status.status).toBe("WAITING_ON_APPROVAL");
+    expect(runtime.lastStopReason).toBe("requires_approval");
     expect(deviceStatus.type).toBe("update_device_status");
     expect(deviceStatus.device_status.pending_control_requests).toEqual([
       {
@@ -2202,6 +2203,45 @@ describe("listen-client capability-gated approval flow", () => {
     ]);
 
     // Cleanup
+    rejectPendingApprovalResolvers(runtime, "test cleanup");
+  });
+
+  test("interrupted cache does not project WAITING_ON_APPROVAL when pending requests are suppressed", () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const runtime = __listenClientTestUtils.getOrCreateScopedRuntime(
+      listener,
+      "agent-1",
+      "default",
+    );
+    const socket = new MockSocket(WebSocket.OPEN);
+
+    runtime.isProcessing = true;
+    runtime.activeRunId = "run-1";
+    void requestApprovalOverWS(
+      runtime,
+      socket as unknown as WebSocket,
+      "perm-interrupted",
+      makeControlRequest("perm-interrupted"),
+    ).catch(() => {});
+    runtime.pendingInterruptedContext = {
+      agentId: "agent-1",
+      conversationId: "default",
+      continuationEpoch: runtime.continuationEpoch,
+    };
+
+    const deviceStatus = __listenClientTestUtils.buildDeviceStatus(listener, {
+      agent_id: "agent-1",
+      conversation_id: "default",
+    });
+    const loopStatus = __listenClientTestUtils.buildLoopStatus(listener, {
+      agent_id: "agent-1",
+      conversation_id: "default",
+    });
+
+    expect(deviceStatus.pending_control_requests).toEqual([]);
+    expect(loopStatus.status).toBe("WAITING_ON_INPUT");
+    expect(loopStatus.active_run_ids).toEqual(["run-1"]);
+
     rejectPendingApprovalResolvers(runtime, "test cleanup");
   });
 
