@@ -834,6 +834,7 @@ export function Input({
   const [isAutocompleteActive, setIsAutocompleteActive] = useState(false);
   const [cursorPos, setCursorPos] = useState<number | undefined>(undefined);
   const [currentCursorPosition, setCurrentCursorPosition] = useState(0);
+  const shiftTabHandlerRef = useRef<(() => void) | null>(null);
 
   // Terminal width is sourced from App.tsx to avoid duplicate resize subscriptions.
   const columns = terminalWidth;
@@ -1148,6 +1149,64 @@ export function Input({
   // Note: bash mode entry/exit is implemented inside PasteAwareTextInput so we can
   // consume the keystroke before it renders (no flicker).
 
+  // Extracted shift+tab logic so it can be called from both useInput and raw stdin
+  const handleShiftTab = useCallback(() => {
+    if (!interactionEnabled) return;
+
+    // If ralph mode is active, exit it first (goes to default mode)
+    if (ralphActive && onRalphExit) {
+      onRalphExit();
+      return;
+    }
+
+    // Cycle through permission modes
+    const modes: PermissionMode[] = [
+      "default",
+      "plan",
+      "acceptEdits",
+      "bypassPermissions",
+    ];
+    const currentIndex = modes.indexOf(currentMode);
+    const nextIndex = (currentIndex + 1) % modes.length;
+    const nextMode = modes[nextIndex] ?? "default";
+
+    permissionMode.setMode(nextMode);
+    setCurrentMode(nextMode);
+
+    if (onPermissionModeChange) {
+      onPermissionModeChange(nextMode);
+    }
+  }, [
+    interactionEnabled,
+    ralphActive,
+    onRalphExit,
+    currentMode,
+    onPermissionModeChange,
+  ]);
+
+  // Keep ref in sync so the stdin listener always calls the latest version
+  useEffect(() => {
+    shiftTabHandlerRef.current = handleShiftTab;
+  }, [handleShiftTab]);
+
+  // Raw stdin fallback for platforms where Ink does not parse \x1b[Z as shift+tab
+  // (primarily Windows CMD/PowerShell and some macOS terminals)
+  useEffect(() => {
+    if (!interactionEnabled) return;
+
+    const onData = (data: Buffer) => {
+      // \x1b[Z is the universal ANSI backtab sequence (Shift+Tab, all platforms)
+      if (data.toString() === "\x1b[Z") {
+        shiftTabHandlerRef.current?.();
+      }
+    };
+
+    process.stdin.on("data", onData);
+    return () => {
+      process.stdin.off("data", onData);
+    };
+  }, [interactionEnabled]);
+
   // Handle Shift+Tab for permission mode cycling (or ralph mode exit)
   useInput((_input, key) => {
     if (!interactionEnabled) return;
@@ -1173,32 +1232,9 @@ export function Input({
       );
     }
 
+    // useInput path (works on Linux/macOS/WSL where Ink correctly parses \x1b[Z)
     if (key.shift && key.tab) {
-      // If ralph mode is active, exit it first (goes to default mode)
-      if (ralphActive && onRalphExit) {
-        onRalphExit();
-        return;
-      }
-
-      // Cycle through permission modes
-      const modes: PermissionMode[] = [
-        "default",
-        "plan",
-        "acceptEdits",
-        "bypassPermissions",
-      ];
-      const currentIndex = modes.indexOf(currentMode);
-      const nextIndex = (currentIndex + 1) % modes.length;
-      const nextMode = modes[nextIndex] ?? "default";
-
-      // Update both singleton and local state
-      permissionMode.setMode(nextMode);
-      setCurrentMode(nextMode);
-
-      // Notify parent of mode change
-      if (onPermissionModeChange) {
-        onPermissionModeChange(nextMode);
-      }
+      handleShiftTab();
     }
   });
 
