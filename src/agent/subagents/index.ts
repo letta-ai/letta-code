@@ -21,10 +21,10 @@ import { MEMORY_BLOCK_LABELS, type MemoryBlockLabel } from "../memory";
 import exploreAgentMd from "./builtin/explore.md";
 import forkAgentMd from "./builtin/fork.md";
 import generalPurposeAgentMd from "./builtin/general-purpose.md";
+import gitHistoryAgentMd from "./builtin/git-history.md";
 import historyAnalyzerAgentMd from "./builtin/history-analyzer.md";
 import initAgentMd from "./builtin/init.md";
 import memoryAgentMd from "./builtin/memory.md";
-
 import recallAgentMd from "./builtin/recall.md";
 import reflectionAgentMd from "./builtin/reflection.md";
 
@@ -37,6 +37,7 @@ const BUILTIN_SOURCES = [
   memoryAgentMd,
   recallAgentMd,
   reflectionAgentMd,
+  gitHistoryAgentMd,
 ];
 
 // Re-export for convenience

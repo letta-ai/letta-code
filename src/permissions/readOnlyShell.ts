@@ -102,6 +102,7 @@ const SAFE_GIT_SUBCOMMANDS = new Set([
   "branch",
   "tag",
   "remote",
+  "blame",
 ]);
 
 // letta CLI read-only subcommands: group -> allowed actions
