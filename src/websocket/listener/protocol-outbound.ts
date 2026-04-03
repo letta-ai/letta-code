@@ -254,7 +254,9 @@ export function buildLoopStatus(
   const status = interruptedCacheActive
     ? !conversationRuntime?.isProcessing
       ? "WAITING_ON_INPUT"
-      : (conversationRuntime?.loopStatus ?? "WAITING_ON_INPUT")
+      : conversationRuntime?.loopStatus === "WAITING_ON_APPROVAL"
+        ? "WAITING_ON_INPUT"
+        : (conversationRuntime?.loopStatus ?? "WAITING_ON_INPUT")
     : recovered &&
         recovered.pendingRequestIds.size > 0 &&
         conversationRuntime?.loopStatus === "WAITING_ON_INPUT"

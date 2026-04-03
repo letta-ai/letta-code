@@ -233,12 +233,6 @@ export async function handleApprovalStop(params: {
       return interruptTermination();
     }
 
-    runtime.lastStopReason = "requires_approval";
-    setLoopStatus(runtime, "WAITING_ON_APPROVAL", {
-      agent_id: agentId,
-      conversation_id: conversationId,
-    });
-
     while (pendingNeedsUserInput.length > 0) {
       const ac = pendingNeedsUserInput.shift();
       if (!ac) {

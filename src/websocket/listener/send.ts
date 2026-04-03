@@ -198,10 +198,6 @@ export async function resolveStaleApprovals(
 
     let pendingNeedsUserInput = [...needsUserInput];
     if (pendingNeedsUserInput.length > 0) {
-      runtime.lastStopReason = "requires_approval";
-      setLoopStatus(runtime, "WAITING_ON_APPROVAL", scope);
-      emitRuntimeStateUpdates(runtime, scope);
-
       while (pendingNeedsUserInput.length > 0) {
         const ac = pendingNeedsUserInput.shift();
         if (!ac) {
