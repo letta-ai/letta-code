@@ -631,6 +631,9 @@ const NON_STATE_COMMANDS = new Set([
   "/statusline",
   "/reasoning-tab",
   "/secret",
+  "/palace",  // read-only memory viewer
+  "/exit",   // session exit
+  "/rename", // agent/convo rename
 ]);
 
 // Check if a command is interactive (opens overlay, should not be queued)
