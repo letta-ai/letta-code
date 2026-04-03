@@ -77,7 +77,10 @@ import {
   emitRuntimeStateUpdates,
   setLoopStatus,
 } from "./protocol-outbound";
-import { emitRecoverableStatusNotice } from "./recoverable-notices";
+import {
+  emitRecoverableRetryNotice,
+  emitRecoverableStatusNotice,
+} from "./recoverable-notices";
 import {
   isRetriablePostStopError,
   shouldAttemptPostStopApprovalRecovery,
@@ -837,7 +840,8 @@ export async function handleIncomingMessage(
           const retryMessage =
             getRetryStatusMessage(errorDetail) ||
             `LLM API error encountered, retrying (attempt ${attempt}/${LLM_API_ERROR_MAX_RETRIES})...`;
-          emitRetryDelta(socket, runtime, {
+          emitRecoverableRetryNotice(socket, runtime, {
+            kind: "transient_provider_retry",
             message: retryMessage,
             reason: "llm_api_error",
             attempt,

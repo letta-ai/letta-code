@@ -39,7 +39,9 @@ import {
 import { isEditFileCommand } from "../../websocket/listener/protocol-inbound";
 import {
   DESKTOP_DEBUG_PANEL_INFO_PREFIX,
+  emitRecoverableRetryNotice,
   emitRecoverableStatusNotice,
+  getRecoverableRetryNoticeVisibility,
   getRecoverableStatusNoticeVisibility,
 } from "../../websocket/listener/recoverable-notices";
 
@@ -2521,6 +2523,90 @@ describe("listen-client recoverable status notices", () => {
     expect(mirroredLines[0]).toContain(
       "Recovering from stale approval conflict after interrupted/reconnected turn",
     );
+  });
+
+  test("marks the first transient provider retry as debug-only", () => {
+    expect(
+      getRecoverableRetryNoticeVisibility("transient_provider_retry", 1),
+    ).toBe("debug_only");
+    expect(
+      getRecoverableRetryNoticeVisibility("transient_provider_retry", 2),
+    ).toBe("transcript");
+  });
+
+  test("suppresses only the first transient provider retry from transcript", () => {
+    const runtime = __listenClientTestUtils.createRuntime();
+    const firstSocket = new MockSocket();
+    const secondSocket = new MockSocket();
+    const originalFlag = process.env.LETTA_DESKTOP_DEBUG_PANEL;
+    const originalWrite = process.stderr.write.bind(process.stderr);
+    const mirroredLines: string[] = [];
+
+    process.env.LETTA_DESKTOP_DEBUG_PANEL = "1";
+    process.stderr.write = ((chunk: string | Uint8Array) => {
+      mirroredLines.push(
+        typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8"),
+      );
+      return true;
+    }) as typeof process.stderr.write;
+
+    try {
+      emitRecoverableRetryNotice(
+        firstSocket as unknown as WebSocket,
+        runtime,
+        {
+          kind: "transient_provider_retry",
+          message: "Anthropic API is overloaded, retrying...",
+          reason: "llm_api_error",
+          attempt: 1,
+          maxAttempts: 3,
+          delayMs: 1000,
+          agentId: "agent-1",
+          conversationId: "default",
+        },
+      );
+
+      emitRecoverableRetryNotice(
+        secondSocket as unknown as WebSocket,
+        runtime,
+        {
+          kind: "transient_provider_retry",
+          message: "Anthropic API is overloaded, retrying...",
+          reason: "llm_api_error",
+          attempt: 2,
+          maxAttempts: 3,
+          delayMs: 2000,
+          agentId: "agent-1",
+          conversationId: "default",
+        },
+      );
+    } finally {
+      process.stderr.write = originalWrite as typeof process.stderr.write;
+      if (originalFlag === undefined) {
+        delete process.env.LETTA_DESKTOP_DEBUG_PANEL;
+      } else {
+        process.env.LETTA_DESKTOP_DEBUG_PANEL = originalFlag;
+      }
+    }
+
+    expect(firstSocket.sentPayloads).toHaveLength(0);
+    expect(mirroredLines).toHaveLength(1);
+    expect(mirroredLines[0]).toContain(DESKTOP_DEBUG_PANEL_INFO_PREFIX);
+    expect(mirroredLines[0]).toContain("Anthropic API is overloaded, retrying...");
+
+    expect(secondSocket.sentPayloads).toHaveLength(1);
+    const payload = JSON.parse(secondSocket.sentPayloads[0] as string) as {
+      type: string;
+      delta: Record<string, unknown>;
+    };
+    expect(payload.type).toBe("stream_delta");
+    expect(payload.delta).toMatchObject({
+      message_type: "retry",
+      message: "Anthropic API is overloaded, retrying...",
+      attempt: 2,
+      max_attempts: 3,
+      delay_ms: 2000,
+    });
   });
 });
 
