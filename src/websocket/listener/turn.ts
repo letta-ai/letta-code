@@ -75,9 +75,12 @@ import {
   emitLoopStatusUpdate,
   emitRetryDelta,
   emitRuntimeStateUpdates,
-  emitStatusDelta,
   setLoopStatus,
 } from "./protocol-outbound";
+import {
+  emitRecoverableRetryNotice,
+  emitRecoverableStatusNotice,
+} from "./recoverable-notices";
 import {
   isRetriablePostStopError,
   shouldAttemptPostStopApprovalRecovery,
@@ -670,7 +673,8 @@ export async function handleIncomingMessage(
           })
         ) {
           postStopApprovalRecoveryRetries += 1;
-          emitStatusDelta(socket, runtime, {
+          emitRecoverableStatusNotice(socket, runtime, {
+            kind: "stale_approval_conflict_recovery",
             message:
               "Recovering from stale approval conflict after interrupted/reconnected turn",
             level: "warning",
@@ -836,7 +840,8 @@ export async function handleIncomingMessage(
           const retryMessage =
             getRetryStatusMessage(errorDetail) ||
             `LLM API error encountered, retrying (attempt ${attempt}/${LLM_API_ERROR_MAX_RETRIES})...`;
-          emitRetryDelta(socket, runtime, {
+          emitRecoverableRetryNotice(socket, runtime, {
+            kind: "transient_provider_retry",
             message: retryMessage,
             reason: "llm_api_error",
             attempt,
