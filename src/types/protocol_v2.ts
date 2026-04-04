@@ -212,6 +212,7 @@ export interface QueueMessage {
 export interface LoopState {
   status: LoopStatus;
   active_run_ids: string[];
+  plan_file_path: string | null;
 }
 
 export interface DeviceStatusUpdateMessage extends RuntimeEnvelope {
