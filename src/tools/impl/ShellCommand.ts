@@ -111,16 +111,25 @@ function getMemoryGitIdentityEnvOverrides(
 }
 
 function getCurrentAgentIdOrEnv(): string {
+  const envAgentId = (
+    process.env.AGENT_ID ||
+    process.env.LETTA_AGENT_ID ||
+    ""
+  ).trim();
+  if (envAgentId) {
+    return envAgentId;
+  }
+
   try {
     const agentId = getCurrentAgentId().trim();
     if (agentId) {
       return agentId;
     }
   } catch {
-    // Fall through to env vars.
+    // Fall through to empty string.
   }
 
-  return (process.env.AGENT_ID || process.env.LETTA_AGENT_ID || "").trim();
+  return "";
 }
 
 function containsGitCommitInvocation(command: string): boolean {

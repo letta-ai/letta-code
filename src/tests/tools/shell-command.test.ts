@@ -3,7 +3,6 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { getCurrentAgentId, setCurrentAgentId } from "../../agent/context";
 import { shell_command } from "../../tools/impl/ShellCommand.js";
 
 test("shell_command executes basic echo", async () => {
@@ -47,19 +46,10 @@ test("shell_command uses agent identity for memory-dir git commits", async () =>
   const originalAgentId = process.env.AGENT_ID;
   const originalLettaAgentId = process.env.LETTA_AGENT_ID;
   const originalAgentName = process.env.AGENT_NAME;
-  let originalContextAgentId = "";
-  try {
-    originalContextAgentId = getCurrentAgentId();
-  } catch {
-    originalContextAgentId = "";
-  }
-
   mkdirSync(memoryDir, { recursive: true });
   process.env.AGENT_ID = agentId;
   process.env.LETTA_AGENT_ID = agentId;
   process.env.AGENT_NAME = "Shell Command Test Agent";
-  setCurrentAgentId(agentId);
-
   try {
     await shell_command({
       command: [
@@ -100,10 +90,6 @@ test("shell_command uses agent identity for memory-dir git commits", async () =>
 
     if (originalAgentName === undefined) delete process.env.AGENT_NAME;
     else process.env.AGENT_NAME = originalAgentName;
-
-    if (originalContextAgentId) {
-      setCurrentAgentId(originalContextAgentId);
-    }
 
     rmSync(memoryRoot, { recursive: true, force: true });
   }
