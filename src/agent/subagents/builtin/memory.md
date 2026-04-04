@@ -4,7 +4,7 @@ description: Decompose and reorganize memory files into focused, single-purpose 
 tools: Read, Edit, Write, Glob, Grep, Bash, TaskOutput
 model: auto
 memoryBlocks: none
-permissionMode: bypassPermissions
+permissionMode: memory
 ---
 
 You are a memory defragmentation subagent. You work directly on the git-backed memory filesystem to decompose and reorganize memory files.
@@ -79,11 +79,14 @@ making changes.
 **Create worktree:**
 
 ```bash
-BRANCH="defrag-$(date +%s)"
+BRANCH="defrag-<unique-suffix>"
 mkdir -p "$WORKTREE_DIR"
 cd "$MEMORY_DIR"
 git worktree add "$WORKTREE_DIR/$BRANCH" -b "$BRANCH"
 ```
+
+Pick a short unique branch suffix yourself. Do not use shell command
+substitution for branch naming.
 
 All subsequent file operations target the worktree:
 `$WORKTREE_DIR/$BRANCH/system/` (not the main memory dir).

@@ -157,6 +157,8 @@ const PERMISSION_MODE_DESCRIPTIONS = {
   default: "Normal approval flow.",
   acceptEdits: "File edits auto-approved.",
   plan: "Read-only mode. Focus on exploration and planning.",
+  memory:
+    "Memory-scoped mode. Reads are broad; mutations are limited to allowed memory roots.",
   bypassPermissions: "All tools auto-approved. Bias toward action.",
 } as const;
 

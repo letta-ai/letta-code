@@ -923,6 +923,7 @@ async function main(): Promise<void> {
         "default",
         "acceptEdits",
         "plan",
+        "memory",
         "bypassPermissions",
       ] as const;
 

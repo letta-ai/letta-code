@@ -33,6 +33,7 @@ export type DevicePermissionMode =
   | "default"
   | "acceptEdits"
   | "plan"
+  | "memory"
   | "bypassPermissions";
 
 export type ToolsetName =
