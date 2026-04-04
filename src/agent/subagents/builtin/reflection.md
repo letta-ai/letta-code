@@ -5,7 +5,7 @@ tools: Read, Edit, Write, Glob, Grep, Bash, TaskOutput
 model: auto
 memoryBlocks: none
 mode: stateless
-permissionMode: bypassPermissions
+permissionMode: memory
 ---
 
 You are a reflection subagent — a background agent that asynchronously processes conversations after they occur, similar to a "sleep-time" memory consolidation process.

@@ -5,6 +5,7 @@ export type RuntimePermissionMode =
   | "default"
   | "acceptEdits"
   | "plan"
+  | "memory"
   | "bypassPermissions";
 
 export interface RuntimeContextSnapshot {

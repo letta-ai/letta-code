@@ -704,18 +704,18 @@ function matchesPattern(
 }
 
 /**
- * Subagent types that are read-only and safe to auto-approve.
- * These only have access to read-only tools (Glob, Grep, Read, LS, TaskOutput).
- * See: src/agent/subagents/builtin/*.md for definitions
+ * Subagent types that are safe to auto-approve by default.
+ * Some are read-only explorers; others are memory-scoped writers whose
+ * mutations are constrained by dedicated permission-mode enforcement.
  */
-const READ_ONLY_SUBAGENT_TYPES = new Set([
+const SAFE_AUTO_APPROVE_SUBAGENT_TYPES = new Set([
   "explore", // Codebase exploration - Glob, Grep, Read, LS, TaskOutput
   "Explore",
   "recall", // Conversation history search - Skill, Bash, Read, TaskOutput
   "Recall",
-  "reflection", // Memory reflection - reads history, writes to agent's own memory files
+  "reflection", // Memory reflection - writes constrained by memory mode
   "Reflection",
-  "history-analyzer", // History analysis - reads history files, writes to agent memory
+  "history-analyzer", // History analysis - writes constrained by memory mode
 ]);
 
 /**
@@ -768,14 +768,14 @@ function getDefaultDecision(
     return "allow";
   }
 
-  // Task tool: auto-approve read-only subagent types
+  // Task tool: auto-approve safe subagent types
   if (toolName === "Task" || toolName === "task") {
     const subagentType =
       typeof toolArgs?.subagent_type === "string" ? toolArgs.subagent_type : "";
-    if (READ_ONLY_SUBAGENT_TYPES.has(subagentType)) {
+    if (SAFE_AUTO_APPROVE_SUBAGENT_TYPES.has(subagentType)) {
       return "allow";
     }
-    // Non-read-only subagent types require approval
+    // Other subagent types require approval
     return "ask";
   }
 

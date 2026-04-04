@@ -2,12 +2,14 @@ import { afterEach, expect, test } from "bun:test";
 import { homedir } from "node:os";
 import { join, relative } from "node:path";
 import { checkPermission } from "../permissions/checker";
+import { cliPermissions } from "../permissions/cli";
 import { permissionMode } from "../permissions/mode";
 import type { PermissionRules } from "../permissions/types";
 
 // Clean up after each test
 afterEach(() => {
   permissionMode.reset();
+  cliPermissions.clear();
 });
 
 // ============================================================================
@@ -417,6 +419,296 @@ test("plan mode - denies Write", () => {
   expect(result.matchedRule).toBe("plan mode");
   // Reason now includes detailed guidance (planFilePath not set in test, so shows error fallback)
   expect(result.reason).toContain("Plan mode is active");
+});
+
+test("memory mode - allows broad read-only tools", () => {
+  permissionMode.setMode("memory");
+
+  const permissions: PermissionRules = {
+    allow: [],
+    deny: [],
+    ask: [],
+  };
+
+  const result = checkPermission(
+    "Read",
+    { file_path: "/tmp/test.txt" },
+    permissions,
+    "/Users/test/project",
+  );
+
+  expect(result.decision).toBe("allow");
+  expect(result.matchedRule).toBe("memory mode");
+});
+
+test("memory mode - denies non-memory mutation helper tools", () => {
+  permissionMode.setMode("memory");
+
+  const permissions: PermissionRules = {
+    allow: [],
+    deny: [],
+    ask: [],
+  };
+
+  const todoWriteResult = checkPermission(
+    "TodoWrite",
+    { todos: [{ content: "x", status: "pending", priority: "high" }] },
+    permissions,
+    "/Users/test/project",
+  );
+  expect(todoWriteResult.decision).toBe("deny");
+
+  const updatePlanResult = checkPermission(
+    "update_plan",
+    { plan: [{ step: "x", status: "in_progress" }] },
+    permissions,
+    "/Users/test/project",
+  );
+  expect(updatePlanResult.decision).toBe("deny");
+});
+
+test("memory mode - allows Write inside MEMORY_DIR", () => {
+  permissionMode.setMode("memory");
+  const originalMemoryDir = process.env.MEMORY_DIR;
+  process.env.MEMORY_DIR = "/Users/test/.letta/agents/agent-1/memory";
+
+  try {
+    const result = checkPermission(
+      "Write",
+      { file_path: "system/test.md" },
+      { allow: [], deny: [], ask: [] },
+      "/Users/test/.letta/agents/agent-1/memory",
+    );
+
+    expect(result.decision).toBe("allow");
+    expect(result.matchedRule).toBe("memory mode");
+  } finally {
+    if (originalMemoryDir === undefined) delete process.env.MEMORY_DIR;
+    else process.env.MEMORY_DIR = originalMemoryDir;
+  }
+});
+
+test("memory mode - denies Write outside memory roots", () => {
+  permissionMode.setMode("memory");
+  const originalMemoryDir = process.env.MEMORY_DIR;
+  process.env.MEMORY_DIR = "/Users/test/.letta/agents/agent-1/memory";
+
+  try {
+    const result = checkPermission(
+      "Write",
+      { file_path: "/Users/test/project/README.md" },
+      { allow: [], deny: [], ask: [] },
+      "/Users/test/project",
+    );
+
+    expect(result.decision).toBe("deny");
+    expect(result.matchedRule).toBe("memory mode");
+  } finally {
+    if (originalMemoryDir === undefined) delete process.env.MEMORY_DIR;
+    else process.env.MEMORY_DIR = originalMemoryDir;
+  }
+});
+
+test("memory mode - allows Write inside PARENT_MEMORY_DIR", () => {
+  permissionMode.setMode("memory");
+  const originalParentMemoryDir = process.env.PARENT_MEMORY_DIR;
+  delete process.env.MEMORY_DIR;
+  process.env.PARENT_MEMORY_DIR =
+    "/Users/test/.letta/agents/agent-parent/memory";
+
+  try {
+    const result = checkPermission(
+      "Write",
+      { file_path: "system/parent.md" },
+      { allow: [], deny: [], ask: [] },
+      "/Users/test/.letta/agents/agent-parent/memory",
+    );
+
+    expect(result.decision).toBe("allow");
+  } finally {
+    if (originalParentMemoryDir === undefined)
+      delete process.env.PARENT_MEMORY_DIR;
+    else process.env.PARENT_MEMORY_DIR = originalParentMemoryDir;
+  }
+});
+
+test("memory mode - no roots allows reads but denies mutations", () => {
+  permissionMode.setMode("memory");
+  const originalMemoryDir = process.env.MEMORY_DIR;
+  const originalParentMemoryDir = process.env.PARENT_MEMORY_DIR;
+  delete process.env.MEMORY_DIR;
+  delete process.env.PARENT_MEMORY_DIR;
+
+  try {
+    const readResult = checkPermission(
+      "Read",
+      { file_path: "/tmp/test.txt" },
+      { allow: [], deny: [], ask: [] },
+      "/Users/test/project",
+    );
+    expect(readResult.decision).toBe("allow");
+
+    const writeResult = checkPermission(
+      "Write",
+      { file_path: "/tmp/test.txt" },
+      { allow: [], deny: [], ask: [] },
+      "/Users/test/project",
+    );
+    expect(writeResult.decision).toBe("deny");
+  } finally {
+    if (originalMemoryDir === undefined) delete process.env.MEMORY_DIR;
+    else process.env.MEMORY_DIR = originalMemoryDir;
+    if (originalParentMemoryDir === undefined)
+      delete process.env.PARENT_MEMORY_DIR;
+    else process.env.PARENT_MEMORY_DIR = originalParentMemoryDir;
+  }
+});
+
+test("memory mode - denies mixed-target ApplyPatch when any target is outside allowed roots", () => {
+  permissionMode.setMode("memory");
+  const originalMemoryDir = process.env.MEMORY_DIR;
+  process.env.MEMORY_DIR = "/Users/test/.letta/agents/agent-1/memory";
+
+  try {
+    const result = checkPermission(
+      "ApplyPatch",
+      {
+        input:
+          "*** Begin Patch\n*** Add File: system/ok.md\n+ok\n*** Add File: /Users/test/project/bad.md\n+bad\n*** End Patch\n",
+      },
+      { allow: [], deny: [], ask: [] },
+      "/Users/test/.letta/agents/agent-1/memory",
+    );
+
+    expect(result.decision).toBe("deny");
+  } finally {
+    if (originalMemoryDir === undefined) delete process.env.MEMORY_DIR;
+    else process.env.MEMORY_DIR = originalMemoryDir;
+  }
+});
+
+test("memory mode - CLI allowedTools cannot widen writes outside roots", () => {
+  permissionMode.setMode("memory");
+  const originalMemoryDir = process.env.MEMORY_DIR;
+  process.env.MEMORY_DIR = "/Users/test/.letta/agents/agent-1/memory";
+  cliPermissions.setAllowedTools("Write,Bash");
+
+  try {
+    const writeResult = checkPermission(
+      "Write",
+      { file_path: "/Users/test/project/outside.md" },
+      { allow: [], deny: [], ask: [] },
+      "/Users/test/project",
+    );
+    expect(writeResult.decision).toBe("deny");
+
+    const bashResult = checkPermission(
+      "Bash",
+      { command: "cd /Users/test/project && git push" },
+      { allow: [], deny: [], ask: [] },
+      "/Users/test/project",
+    );
+    expect(bashResult.decision).toBe("deny");
+  } finally {
+    cliPermissions.clear();
+    if (originalMemoryDir === undefined) delete process.env.MEMORY_DIR;
+    else process.env.MEMORY_DIR = originalMemoryDir;
+  }
+});
+
+test("memory mode - allows scoped git push from MEMORY_DIR working directory", () => {
+  permissionMode.setMode("memory");
+  const originalMemoryDir = process.env.MEMORY_DIR;
+  process.env.MEMORY_DIR = "/Users/test/.letta/agents/agent-1/memory";
+
+  try {
+    const bashResult = checkPermission(
+      "Bash",
+      { command: "git push" },
+      { allow: [], deny: [], ask: [] },
+      "/Users/test/.letta/agents/agent-1/memory",
+    );
+    expect(bashResult.decision).toBe("allow");
+    expect(bashResult.matchedRule).toBe("memory mode");
+  } finally {
+    if (originalMemoryDir === undefined) delete process.env.MEMORY_DIR;
+    else process.env.MEMORY_DIR = originalMemoryDir;
+  }
+});
+
+test("memory mode - allows builtin env-based worktree setup commands", () => {
+  permissionMode.setMode("memory");
+  const originalMemoryDir = process.env.MEMORY_DIR;
+  const originalWorktreeDir = process.env.WORKTREE_DIR;
+  process.env.MEMORY_DIR = "/Users/test/.letta/agents/agent-1/memory";
+  process.env.WORKTREE_DIR =
+    "/Users/test/.letta/agents/agent-1/memory-worktrees";
+
+  try {
+    const bashResult = checkPermission(
+      "Bash",
+      {
+        command: [
+          'BRANCH="defrag-123"',
+          'mkdir -p "$WORKTREE_DIR"',
+          'cd "$MEMORY_DIR"',
+          'git worktree add "$WORKTREE_DIR/$BRANCH" -b "$BRANCH"',
+        ].join("\n"),
+      },
+      { allow: [], deny: [], ask: [] },
+      "/Users/test/.letta/agents/agent-1/memory",
+    );
+    expect(bashResult.decision).toBe("allow");
+  } finally {
+    if (originalMemoryDir === undefined) delete process.env.MEMORY_DIR;
+    else process.env.MEMORY_DIR = originalMemoryDir;
+    if (originalWorktreeDir === undefined) delete process.env.WORKTREE_DIR;
+    else process.env.WORKTREE_DIR = originalWorktreeDir;
+  }
+});
+
+test("memory mode - denies command substitution inside scoped shell commands", () => {
+  permissionMode.setMode("memory");
+  const originalMemoryDir = process.env.MEMORY_DIR;
+  process.env.MEMORY_DIR = "/Users/test/.letta/agents/agent-1/memory";
+
+  try {
+    const bashResult = checkPermission(
+      "Bash",
+      {
+        command:
+          'cd /Users/test/.letta/agents/agent-1/memory && git commit -m "$(touch /tmp/pwn)"',
+      },
+      { allow: [], deny: [], ask: [] },
+      "/Users/test/.letta/agents/agent-1/memory",
+    );
+    expect(bashResult.decision).toBe("deny");
+  } finally {
+    if (originalMemoryDir === undefined) delete process.env.MEMORY_DIR;
+    else process.env.MEMORY_DIR = originalMemoryDir;
+  }
+});
+
+test("memory mode - denies git rebase exec hooks inside scoped shell commands", () => {
+  permissionMode.setMode("memory");
+  const originalMemoryDir = process.env.MEMORY_DIR;
+  process.env.MEMORY_DIR = "/Users/test/.letta/agents/agent-1/memory";
+
+  try {
+    const bashResult = checkPermission(
+      "Bash",
+      {
+        command:
+          'cd /Users/test/.letta/agents/agent-1/memory && git rebase --exec "touch /tmp/pwn" main',
+      },
+      { allow: [], deny: [], ask: [] },
+      "/Users/test/.letta/agents/agent-1/memory",
+    );
+    expect(bashResult.decision).toBe("deny");
+  } finally {
+    if (originalMemoryDir === undefined) delete process.env.MEMORY_DIR;
+    else process.env.MEMORY_DIR = originalMemoryDir;
+  }
 });
 
 test("plan mode deny reason includes exact apply_patch relative path hint", () => {

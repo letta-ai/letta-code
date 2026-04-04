@@ -376,6 +376,7 @@ export async function handleHeadlessCommand(
         "acceptEdits",
         "bypassPermissions",
         "plan",
+        "memory",
       ];
       if (validModes.includes(permissionModeValue)) {
         permissionMode.setMode(
@@ -383,7 +384,8 @@ export async function handleHeadlessCommand(
             | "default"
             | "acceptEdits"
             | "bypassPermissions"
-            | "plan",
+            | "plan"
+            | "memory",
         );
       }
     }
