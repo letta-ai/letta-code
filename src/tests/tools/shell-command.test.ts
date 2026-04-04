@@ -61,7 +61,21 @@ test("shell_command uses agent identity for memory-dir git commits", async () =>
   setCurrentAgentId(agentId);
 
   try {
-    await shell_command({ command: "git init", workdir: memoryDir });
+    await shell_command({
+      command: [
+        "git init",
+        "git config user.name setup",
+        "git config user.email setup@example.com",
+      ].join(" && "),
+      workdir: memoryDir,
+    });
+
+    writeFileSync(join(memoryDir, ".gitkeep"), "", "utf8");
+    await shell_command({
+      command: 'git add .gitkeep && git commit -m "initial setup commit"',
+      workdir: memoryDir,
+    });
+
     writeFileSync(join(memoryDir, "test.md"), "hello\n", "utf8");
 
     await shell_command({
