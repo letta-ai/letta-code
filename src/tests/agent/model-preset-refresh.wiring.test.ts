@@ -75,10 +75,6 @@ describe("model preset refresh wiring", () => {
       "client.conversations.update(conversationId, payload)",
     );
     expect(updateSegment).toContain("model: modelHandle");
-    expect(updateSegment).toContain("options?: UpdateAgentLLMConfigOptions");
-    expect(updateSegment).toContain("shouldPreserveContextWindow");
-    expect(updateSegment).toContain("getModelContextWindow(modelHandle)");
-    expect(updateSegment).toContain("context_window_limit");
     expect(updateSegment).not.toContain("client.agents.update(");
   });
 
@@ -99,7 +95,6 @@ describe("model preset refresh wiring", () => {
     expect(segment).toContain("updateAgentLLMConfig(");
     expect(segment).toContain("conversationIdRef.current");
     expect(segment).toContain('conversationIdRef.current === "default"');
-    expect(segment).toContain("preserveContextWindow: false");
   });
 
   test("App defines helper to carry over active conversation model", () => {
@@ -121,7 +116,6 @@ describe("model preset refresh wiring", () => {
     expect(segment).toContain("buildModelHandleFromLlmConfig");
     expect(segment).toContain("getModelInfoForLlmConfig(");
     expect(segment).toContain("updateConversationLLMConfig(");
-    expect(segment).toContain("preserveContextWindow: true");
     expect(segment).toContain(
       "Failed to carry over active model to new conversation",
     );

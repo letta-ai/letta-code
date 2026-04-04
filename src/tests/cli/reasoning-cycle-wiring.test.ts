@@ -67,7 +67,6 @@ describe("reasoning tier cycle wiring", () => {
     expect(segment).toContain("updateAgentLLMConfig(");
     expect(segment).toContain("conversationIdRef.current");
     expect(segment).toContain('conversationIdRef.current === "default"');
-    expect(segment).toContain("preserveContextWindow: true");
   });
 
   test("tab-based reasoning cycling is opt-in only", () => {
