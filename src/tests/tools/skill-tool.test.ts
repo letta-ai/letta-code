@@ -1,12 +1,18 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { setAgentContext } from "../../agent/context";
-import { skill } from "../../tools/impl/Skill";
 import { consumeQueuedSkillContent } from "../../tools/impl/skillContentRegistry";
 
 const TEST_AGENT_ID = "agent-skill-memfs-test";
+let currentSkillsDirectory: string | null = null;
+
+mock.module("../../agent/context", () => ({
+  getCurrentAgentId: () => TEST_AGENT_ID,
+  getSkillsDirectory: () => currentSkillsDirectory,
+}));
+
+const { skill } = await import("../../tools/impl/Skill");
 
 describe("Skill tool memory filesystem lookup", () => {
   let tempRoot: string;
@@ -16,11 +22,13 @@ describe("Skill tool memory filesystem lookup", () => {
 
   beforeEach(() => {
     tempRoot = mkdtempSync(join(tmpdir(), "letta-skill-tool-"));
+    currentSkillsDirectory = join(tempRoot, ".skills");
     consumeQueuedSkillContent();
   });
 
   afterEach(() => {
     consumeQueuedSkillContent();
+    currentSkillsDirectory = null;
 
     if (originalMemoryDir === undefined) {
       delete process.env.MEMORY_DIR;
@@ -58,8 +66,6 @@ describe("Skill tool memory filesystem lookup", () => {
     process.env.MEMORY_DIR = memoryDir;
     delete process.env.LETTA_MEMORY_DIR;
 
-    setAgentContext(TEST_AGENT_ID, join(tempRoot, ".skills"));
-
     const result = await skill({
       skill: skillName,
       toolCallId: "tc-memory-dir",
@@ -93,8 +99,6 @@ describe("Skill tool memory filesystem lookup", () => {
     delete process.env.MEMORY_DIR;
     delete process.env.LETTA_MEMORY_DIR;
     process.env.HOME = tempRoot;
-
-    setAgentContext(TEST_AGENT_ID, join(tempRoot, ".skills"));
 
     const result = await skill({
       skill: skillName,
