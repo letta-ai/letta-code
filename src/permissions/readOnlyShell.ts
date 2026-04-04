@@ -702,6 +702,30 @@ function applyScopedAssignments(
   return true;
 }
 
+function hasUnsafeRebaseOption(tokens: string[], startIndex: number): boolean {
+  for (let i = startIndex; i < tokens.length; i += 1) {
+    const token = tokens[i];
+    if (!token) {
+      continue;
+    }
+    const lower = token.toLowerCase();
+
+    if (
+      lower === "--exec" ||
+      lower.startsWith("--exec=") ||
+      lower === "-x" ||
+      (lower.startsWith("-x") && lower.length > 2) ||
+      lower === "--interactive" ||
+      lower === "-i" ||
+      lower === "--edit-todo"
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 function parseScopedGitInvocation(
   tokens: string[],
   cwd: string | null,
@@ -803,6 +827,15 @@ function parseScopedGitInvocation(
       worktreeSubcommand &&
       !new Set(["add", "remove", "list"]).has(worktreeSubcommand)
     ) {
+      return {
+        subcommand,
+        worktreeSubcommand,
+        resolvedCwd,
+        isSafe: false,
+      };
+    }
+
+    if (subcommand === "rebase" && hasUnsafeRebaseOption(tokens, index + 1)) {
       return {
         subcommand,
         worktreeSubcommand,

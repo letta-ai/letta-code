@@ -689,6 +689,28 @@ test("memory mode - denies command substitution inside scoped shell commands", (
   }
 });
 
+test("memory mode - denies git rebase exec hooks inside scoped shell commands", () => {
+  permissionMode.setMode("memory");
+  const originalMemoryDir = process.env.MEMORY_DIR;
+  process.env.MEMORY_DIR = "/Users/test/.letta/agents/agent-1/memory";
+
+  try {
+    const bashResult = checkPermission(
+      "Bash",
+      {
+        command:
+          'cd /Users/test/.letta/agents/agent-1/memory && git rebase --exec "touch /tmp/pwn" main',
+      },
+      { allow: [], deny: [], ask: [] },
+      "/Users/test/.letta/agents/agent-1/memory",
+    );
+    expect(bashResult.decision).toBe("deny");
+  } finally {
+    if (originalMemoryDir === undefined) delete process.env.MEMORY_DIR;
+    else process.env.MEMORY_DIR = originalMemoryDir;
+  }
+});
+
 test("plan mode deny reason includes exact apply_patch relative path hint", () => {
   permissionMode.setMode("plan");
   const workingDirectory = join(homedir(), "dev", "repo");

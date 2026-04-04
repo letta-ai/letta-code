@@ -103,6 +103,36 @@ describe("isReadOnlyShellCommand", () => {
           ),
         ).toBe(false);
       });
+
+      test("denies git rebase exec hooks in memory-scoped commands", () => {
+        expect(
+          isScopedMemoryShellCommand(
+            'cd /Users/test/.letta/agents/agent-1/memory && git rebase --exec "touch /tmp/pwn" main',
+            roots,
+          ),
+        ).toBe(false);
+        expect(
+          isScopedMemoryShellCommand(
+            'cd /Users/test/.letta/agents/agent-1/memory && git rebase -x "touch /tmp/pwn" main',
+            roots,
+          ),
+        ).toBe(false);
+      });
+
+      test("allows safe git rebase continuation in memory-scoped commands", () => {
+        expect(
+          isScopedMemoryShellCommand(
+            "cd /Users/test/.letta/agents/agent-1/memory && git rebase --continue",
+            roots,
+          ),
+        ).toBe(true);
+        expect(
+          isScopedMemoryShellCommand(
+            "cd /Users/test/.letta/agents/agent-1/memory && git rebase --abort",
+            roots,
+          ),
+        ).toBe(true);
+      });
     });
 
     test("allows grep", () => {
