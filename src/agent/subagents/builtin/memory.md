@@ -79,14 +79,17 @@ making changes.
 **Create worktree:**
 
 ```bash
-BRANCH="defrag-<unique-suffix>"
+# Run `date +%s` first, then paste that exact output below.
+BRANCH="defrag-<epoch-seconds>"
 mkdir -p "$WORKTREE_DIR"
 cd "$MEMORY_DIR"
 git worktree add "$WORKTREE_DIR/$BRANCH" -b "$BRANCH"
 ```
 
-Pick a short unique branch suffix yourself. Do not use shell command
-substitution for branch naming.
+Use epoch seconds from a prior `date +%s` command so branch names match the
+old behavior. Do not use shell command substitution like `$(date +%s)` in the
+branch assignment because memory-mode shell permissions deny command
+substitution.
 
 All subsequent file operations target the worktree:
 `$WORKTREE_DIR/$BRANCH/system/` (not the main memory dir).
