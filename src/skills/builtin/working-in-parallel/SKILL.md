@@ -59,6 +59,10 @@ git worktree remove <path>                 # Remove worktree
 - Long-running task in one session, quick fix needed in another
 - User wants to continue development while an agent works on a separate feature
 
+## Pre-commit Hooks in Worktrees
+
+Worktrees share `.git`, but pre-commit hooks may need initialization depending on project setup. After creating a worktree and installing dependencies, verify hooks are active before committing. Check project docs or run the project's hook setup command if needed.
+
 ## Tips
 
 - **Check project setup docs before installing** - README, claude.md, project memory block
