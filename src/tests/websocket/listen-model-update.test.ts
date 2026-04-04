@@ -183,6 +183,7 @@ describe("listen-client applyModelUpdateForRuntime wiring", () => {
 
     // Conversation-scoped update for non-default
     expect(source).toContain("updateConversationLLMConfig(");
+    expect(source).toContain("preserveContextWindow: false");
     expect(source).toContain('appliedTo = "conversation"');
   });
 });
