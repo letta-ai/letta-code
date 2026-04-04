@@ -220,4 +220,117 @@ describe("getClient soft failures", () => {
     expect(result.stderr).toContain("Failed to refresh access token:");
     expect(result.stderr).not.toContain("process.exit");
   });
+
+  test("refresh token in keychain remains usable after one failed read", async () => {
+    const result = await runIsolatedClientScript(
+      `
+        import { getClient } from "./src/agent/client";
+        import { settingsManager } from "./src/settings-manager";
+        import {
+          __resetSecretWarningStateForTests,
+          __setSecretGetOverrideForTests,
+        } from "./src/utils/secrets";
+
+        await settingsManager.initialize();
+        settingsManager.updateSettings({
+          env: {},
+          tokenExpiresAt: Date.now() - 1000,
+        });
+        await settingsManager.flush();
+
+        settingsManager.updateSettings = () => {};
+
+        let refreshReadCount = 0;
+        let fetchCalls = 0;
+
+        settingsManager.isKeychainAvailable = async () => true;
+        __resetSecretWarningStateForTests();
+        __setSecretGetOverrideForTests(async ({ name }) => {
+          if (name === "letta-refresh-token") {
+            refreshReadCount += 1;
+            if (refreshReadCount === 1) {
+              throw new Error("transient refresh read failure");
+            }
+            return "rt-keychain-only";
+          }
+          if (name === "letta-api-key") {
+            return null;
+          }
+          return null;
+        });
+
+        globalThis.fetch = async (_url, init) => {
+          fetchCalls += 1;
+          const body = JSON.parse(String(init?.body ?? "{}"));
+          return {
+            ok: true,
+            async json() {
+              return {
+                access_token: "sk-refreshed-access-token",
+                refresh_token: body.refresh_token,
+                token_type: "Bearer",
+                expires_in: 3600,
+              };
+            },
+          };
+        };
+
+        let firstMessage = null;
+        try {
+          await getClient();
+        } catch (error) {
+          firstMessage = error instanceof Error ? error.message : String(error);
+        }
+
+        try {
+          const client = await getClient();
+          console.log(
+            "${RESULT_PREFIX}" +
+              JSON.stringify({
+                resolved: true,
+                firstMessage,
+                refreshReadCount,
+                fetchCalls,
+                hasClient: !!client,
+              }),
+          );
+        } catch (error) {
+          console.log(
+            "${RESULT_PREFIX}" +
+              JSON.stringify({
+                resolved: false,
+                message: error instanceof Error ? error.message : String(error),
+                firstMessage,
+                refreshReadCount,
+                fetchCalls,
+              }),
+          );
+        }
+      `,
+      testHomeDir,
+    );
+
+    expect(result.exitCode).toBe(0);
+
+    const payload = parseIsolatedResult<{
+      resolved: boolean;
+      message?: string;
+      firstMessage: string | null;
+      refreshReadCount: number;
+      fetchCalls: number;
+      hasClient?: boolean;
+    }>(result.stdout);
+
+    if (!payload.resolved) {
+      throw new Error(
+        `Expected keychain recovery scenario to succeed. stdout=${result.stdout} stderr=${result.stderr}`,
+      );
+    }
+
+    expect(payload.resolved).toBe(true);
+    expect(payload.refreshReadCount).toBeGreaterThanOrEqual(2);
+    expect(payload.firstMessage).toContain("Missing LETTA_API_KEY");
+    expect(payload.fetchCalls).toBe(1);
+    expect(payload.hasClient).toBe(true);
+  });
 });
