@@ -1171,6 +1171,25 @@ describe("listen-client requestApprovalOverWS", () => {
     expect(runtime.pendingApprovalResolvers.size).toBe(0);
   });
 
+  test("rejects immediately when interrupt is already active", async () => {
+    const runtime = __listenClientTestUtils.createRuntime();
+    const socket = new MockSocket(WebSocket.OPEN);
+    const requestId = "perm-cancelled";
+
+    runtime.cancelRequested = true;
+
+    await expect(
+      requestApprovalOverWS(
+        runtime,
+        socket as unknown as WebSocket,
+        requestId,
+        makeControlRequest(requestId),
+      ),
+    ).rejects.toThrow("Cancelled by user");
+    expect(runtime.pendingApprovalResolvers.size).toBe(0);
+    expect(runtime.listener.approvalRuntimeKeyByRequestId.size).toBe(0);
+  });
+
   test("registers a pending resolver until an approval response arrives", async () => {
     const runtime = __listenClientTestUtils.createRuntime();
     const socket = new MockSocket(WebSocket.OPEN);
@@ -1191,6 +1210,30 @@ describe("listen-client requestApprovalOverWS", () => {
     rejectPendingApprovalResolvers(runtime, "cleanup");
     await expect(pending).rejects.toThrow("cleanup");
     expect(runtime.pendingApprovalResolvers.size).toBe(0);
+  });
+
+  test("cleans up a pending resolver if abort lands immediately after registration", async () => {
+    const runtime = __listenClientTestUtils.createRuntime();
+    const socket = new MockSocket(WebSocket.OPEN);
+    const requestId = "perm-late-abort";
+
+    runtime.activeAbortController = new AbortController();
+
+    const pending = requestApprovalOverWS(
+      runtime,
+      socket as unknown as WebSocket,
+      requestId,
+      makeControlRequest(requestId),
+    );
+
+    expect(runtime.pendingApprovalResolvers.size).toBe(1);
+
+    runtime.cancelRequested = true;
+    runtime.activeAbortController.abort();
+
+    await expect(pending).rejects.toThrow("Cancelled by user");
+    expect(runtime.pendingApprovalResolvers.size).toBe(0);
+    expect(runtime.listener.approvalRuntimeKeyByRequestId.size).toBe(0);
   });
 });
 
@@ -1974,6 +2017,29 @@ describe("listen-client interrupt queue projection", () => {
     });
   });
 
+  test("consumeInterruptQueue clears matching empty interrupted context", () => {
+    const runtime = __listenClientTestUtils.createRuntime();
+
+    runtime.pendingInterruptedResults = [];
+    runtime.pendingInterruptedContext = {
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      continuationEpoch: runtime.continuationEpoch,
+    };
+    runtime.pendingInterruptedToolCallIds = [];
+
+    expect(
+      __listenClientTestUtils.consumeInterruptQueue(
+        runtime,
+        "agent-1",
+        "conv-1",
+      ),
+    ).toBeNull();
+    expect(runtime.pendingInterruptedResults).toBeNull();
+    expect(runtime.pendingInterruptedContext).toBeNull();
+    expect(runtime.pendingInterruptedToolCallIds).toBeNull();
+  });
+
   test("recovered approvals are stashed as denials on interrupt", () => {
     const runtime = __listenClientTestUtils.createRuntime();
     runtime.recoveredApprovalState = {
@@ -2435,6 +2501,216 @@ describe("listen-client capability-gated approval flow", () => {
     expect(interruptedStatus).toBeDefined();
     expect(loopUpdate?.loop_status?.active_run_ids).toEqual([]);
     expect(deviceUpdate).toBeDefined();
+
+    __listenClientTestUtils.setActiveRuntime(null);
+  });
+
+  test("late approval registration after abort_message is rejected immediately", async () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const socket = new MockSocket(WebSocket.OPEN);
+    listener.socket = socket as unknown as WebSocket;
+    __listenClientTestUtils.setActiveRuntime(listener);
+
+    const runtime = __listenClientTestUtils.getOrCreateScopedRuntime(
+      listener,
+      "agent-1",
+      "default",
+    );
+
+    runtime.isProcessing = true;
+    runtime.loopStatus = "PROCESSING_API_RESPONSE";
+    runtime.activeAbortController = new AbortController();
+    runtime.activeRunId = "run-active";
+
+    const handled = await __listenClientTestUtils.handleAbortMessageInput(
+      listener,
+      {
+        command: {
+          type: "abort_message",
+          runtime: { agent_id: "agent-1", conversation_id: "default" },
+        },
+        socket: socket as unknown as WebSocket,
+        opts: {
+          onStatusChange: undefined,
+          connectionId: "conn-1",
+        },
+        processQueuedTurn: async () => {},
+      },
+    );
+
+    expect(handled).toBe(true);
+    expect(runtime.cancelRequested).toBe(true);
+
+    await expect(
+      requestApprovalOverWS(
+        runtime,
+        socket as unknown as WebSocket,
+        "perm-late-after-abort",
+        makeControlRequest("perm-late-after-abort"),
+      ),
+    ).rejects.toThrow("Cancelled by user");
+    expect(runtime.pendingApprovalResolvers.size).toBe(0);
+    expect(runtime.listener.approvalRuntimeKeyByRequestId.size).toBe(0);
+
+    __listenClientTestUtils.setActiveRuntime(null);
+  });
+
+  test("abort_message preserves recovered approval denials instead of clobbering them to empty", async () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const socket = new MockSocket(WebSocket.OPEN);
+    listener.socket = socket as unknown as WebSocket;
+    __listenClientTestUtils.setActiveRuntime(listener);
+
+    const runtime = __listenClientTestUtils.getOrCreateScopedRuntime(
+      listener,
+      "agent-1",
+      "default",
+    );
+    const scheduleQueuePumpMock = mock(() => {});
+    const cancelConversationMock = mock(async () => {});
+
+    runtime.loopStatus = "WAITING_ON_APPROVAL";
+    runtime.recoveredApprovalState = {
+      agentId: "agent-1",
+      conversationId: "default",
+      approvalsByRequestId: new Map([
+        [
+          "perm-recovered",
+          {
+            approval: {
+              toolCallId: "call-1",
+              toolName: "Write",
+              toolArgs: '{"path":"foo.txt"}',
+            },
+            approvalContext: null,
+            controlRequest: makeControlRequest("perm-recovered"),
+          },
+        ],
+      ]),
+      pendingRequestIds: new Set(["perm-recovered"]),
+      responsesByRequestId: new Map(),
+    };
+
+    const handled = await __listenClientTestUtils.handleAbortMessageInput(
+      listener,
+      {
+        command: {
+          type: "abort_message",
+          runtime: { agent_id: "agent-1", conversation_id: "default" },
+        },
+        socket: socket as unknown as WebSocket,
+        opts: {
+          onStatusChange: undefined,
+          connectionId: "conn-1",
+        },
+        processQueuedTurn: async () => {},
+      },
+      {
+        scheduleQueuePump: scheduleQueuePumpMock,
+        cancelConversation: cancelConversationMock,
+      },
+    );
+
+    expect(handled).toBe(true);
+    expect(runtime.cancelRequested).toBe(false);
+    expect(runtime.pendingInterruptedResults).toEqual([
+      {
+        type: "approval",
+        tool_call_id: "call-1",
+        approve: false,
+        reason: "User interrupted the stream",
+      },
+    ]);
+
+    const consumed = __listenClientTestUtils.consumeInterruptQueue(
+      runtime,
+      "agent-1",
+      "default",
+    );
+    expect(consumed?.approvalMessage.approvals).toEqual([
+      {
+        type: "approval",
+        tool_call_id: "call-1",
+        approve: false,
+        reason: "User interrupted the stream",
+      },
+    ]);
+    expect(scheduleQueuePumpMock).toHaveBeenCalled();
+    expect(cancelConversationMock).toHaveBeenCalledWith("agent-1", "default");
+
+    __listenClientTestUtils.setActiveRuntime(null);
+  });
+
+  test("abort_message preserves live approval denials instead of clobbering them to empty", async () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const socket = new MockSocket(WebSocket.OPEN);
+    listener.socket = socket as unknown as WebSocket;
+    __listenClientTestUtils.setActiveRuntime(listener);
+
+    const runtime = __listenClientTestUtils.getOrCreateScopedRuntime(
+      listener,
+      "agent-1",
+      "default",
+    );
+    const scheduleQueuePumpMock = mock(() => {});
+    const cancelConversationMock = mock(async () => {});
+
+    runtime.loopStatus = "WAITING_ON_APPROVAL";
+    const pending = requestApprovalOverWS(
+      runtime,
+      socket as unknown as WebSocket,
+      "perm-live",
+      makeControlRequest("perm-live"),
+    );
+
+    const handled = await __listenClientTestUtils.handleAbortMessageInput(
+      listener,
+      {
+        command: {
+          type: "abort_message",
+          runtime: { agent_id: "agent-1", conversation_id: "default" },
+        },
+        socket: socket as unknown as WebSocket,
+        opts: {
+          onStatusChange: undefined,
+          connectionId: "conn-1",
+        },
+        processQueuedTurn: async () => {},
+      },
+      {
+        scheduleQueuePump: scheduleQueuePumpMock,
+        cancelConversation: cancelConversationMock,
+      },
+    );
+
+    expect(handled).toBe(true);
+    expect(runtime.cancelRequested).toBe(false);
+    await expect(pending).rejects.toThrow("Cancelled by user");
+    expect(runtime.pendingApprovalResolvers.size).toBe(0);
+    expect(runtime.pendingInterruptedResults).toEqual([
+      {
+        type: "approval",
+        tool_call_id: "call-1",
+        approve: false,
+        reason: "User interrupted the stream",
+      },
+    ]);
+
+    const consumed = __listenClientTestUtils.consumeInterruptQueue(
+      runtime,
+      "agent-1",
+      "default",
+    );
+    expect(consumed?.approvalMessage.approvals).toEqual([
+      {
+        type: "approval",
+        tool_call_id: "call-1",
+        approve: false,
+        reason: "User interrupted the stream",
+      },
+    ]);
+    expect(scheduleQueuePumpMock).toHaveBeenCalled();
+    expect(cancelConversationMock).toHaveBeenCalledWith("agent-1", "default");
 
     __listenClientTestUtils.setActiveRuntime(null);
   });
