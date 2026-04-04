@@ -2640,6 +2640,80 @@ describe("listen-client capability-gated approval flow", () => {
 
     __listenClientTestUtils.setActiveRuntime(null);
   });
+
+  test("abort_message preserves live approval denials instead of clobbering them to empty", async () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const socket = new MockSocket(WebSocket.OPEN);
+    listener.socket = socket as unknown as WebSocket;
+    __listenClientTestUtils.setActiveRuntime(listener);
+
+    const runtime = __listenClientTestUtils.getOrCreateScopedRuntime(
+      listener,
+      "agent-1",
+      "default",
+    );
+    const scheduleQueuePumpMock = mock(() => {});
+    const cancelConversationMock = mock(async () => {});
+
+    runtime.loopStatus = "WAITING_ON_APPROVAL";
+    const pending = requestApprovalOverWS(
+      runtime,
+      socket as unknown as WebSocket,
+      "perm-live",
+      makeControlRequest("perm-live"),
+    );
+
+    const handled = await __listenClientTestUtils.handleAbortMessageInput(
+      listener,
+      {
+        command: {
+          type: "abort_message",
+          runtime: { agent_id: "agent-1", conversation_id: "default" },
+        },
+        socket: socket as unknown as WebSocket,
+        opts: {
+          onStatusChange: undefined,
+          connectionId: "conn-1",
+        },
+        processQueuedTurn: async () => {},
+      },
+      {
+        scheduleQueuePump: scheduleQueuePumpMock,
+        cancelConversation: cancelConversationMock,
+      },
+    );
+
+    expect(handled).toBe(true);
+    expect(runtime.cancelRequested).toBe(false);
+    await expect(pending).rejects.toThrow("Cancelled by user");
+    expect(runtime.pendingApprovalResolvers.size).toBe(0);
+    expect(runtime.pendingInterruptedResults).toEqual([
+      {
+        type: "approval",
+        tool_call_id: "call-1",
+        approve: false,
+        reason: "User interrupted the stream",
+      },
+    ]);
+
+    const consumed = __listenClientTestUtils.consumeInterruptQueue(
+      runtime,
+      "agent-1",
+      "default",
+    );
+    expect(consumed?.approvalMessage.approvals).toEqual([
+      {
+        type: "approval",
+        tool_call_id: "call-1",
+        approve: false,
+        reason: "User interrupted the stream",
+      },
+    ]);
+    expect(scheduleQueuePumpMock).toHaveBeenCalled();
+    expect(cancelConversationMock).toHaveBeenCalledWith("agent-1", "default");
+
+    __listenClientTestUtils.setActiveRuntime(null);
+  });
 });
 
 describe("listen-client approval recovery batch correlation", () => {
