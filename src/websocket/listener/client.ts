@@ -1693,6 +1693,9 @@ async function handleAbortMessageInput(
 
   const interruptedRunId = scopedRuntime.activeRunId;
   scopedRuntime.cancelRequested = true;
+  const pendingRequestsSnapshot = hasPendingApprovals
+    ? resolvedDeps.getPendingControlRequests(listener, scope)
+    : [];
 
   if (
     scopedRuntime.activeExecutingToolCallIds.length > 0 &&
@@ -1768,23 +1771,27 @@ async function handleAbortMessageInput(
       agentId: scope.agent_id,
       conversationId: scope.conversation_id,
     });
-  } else if (hasPendingApprovals) {
+  } else if (
+    hasPendingApprovals &&
+    (!scopedRuntime.pendingInterruptedResults ||
+      scopedRuntime.pendingInterruptedResults.length === 0) &&
+    pendingRequestsSnapshot.length > 0
+  ) {
     // Populate interrupted cache to prevent stale approval recovery on sync
-    const pendingRequests = resolvedDeps.getPendingControlRequests(
-      listener,
-      scope,
+    scopedRuntime.pendingInterruptedResults = pendingRequestsSnapshot.map(
+      (req) => ({
+        type: "approval" as const,
+        tool_call_id: req.request.tool_call_id,
+        approve: false,
+        reason: "User interrupted the stream",
+      }),
     );
-    scopedRuntime.pendingInterruptedResults = pendingRequests.map((req) => ({
-      type: "approval" as const,
-      tool_call_id: req.request.tool_call_id,
-      approve: false,
-      reason: "User interrupted the stream",
-    }));
     scopedRuntime.pendingInterruptedContext = {
       agentId: scope.agent_id || "",
       conversationId: scope.conversation_id,
       continuationEpoch: scopedRuntime.continuationEpoch,
     };
+    scopedRuntime.pendingInterruptedToolCallIds = null;
     resolvedDeps.emitInterruptedStatusDelta(params.socket, scopedRuntime, {
       runId: interruptedRunId,
       agentId: scope.agent_id,

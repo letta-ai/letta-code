@@ -478,14 +478,25 @@ export function consumeInterruptQueue(
   };
   interruptedToolCallIds: string[];
 } | null {
+  const ctx = runtime.pendingInterruptedContext;
+  const matchingContext =
+    !!ctx &&
+    ctx.agentId === agentId &&
+    ctx.conversationId === conversationId &&
+    ctx.continuationEpoch === runtime.continuationEpoch;
+
   if (
     !runtime.pendingInterruptedResults ||
     runtime.pendingInterruptedResults.length === 0
   ) {
+    if (matchingContext) {
+      runtime.pendingInterruptedResults = null;
+      runtime.pendingInterruptedContext = null;
+      runtime.pendingInterruptedToolCallIds = null;
+    }
     return null;
   }
 
-  const ctx = runtime.pendingInterruptedContext;
   let result: {
     approvalMessage: {
       type: "approval";
@@ -495,12 +506,7 @@ export function consumeInterruptQueue(
     interruptedToolCallIds: string[];
   } | null = null;
 
-  if (
-    ctx &&
-    ctx.agentId === agentId &&
-    ctx.conversationId === conversationId &&
-    ctx.continuationEpoch === runtime.continuationEpoch
-  ) {
+  if (matchingContext) {
     result = {
       approvalMessage: {
         type: "approval",
