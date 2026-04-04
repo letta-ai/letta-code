@@ -1333,9 +1333,38 @@ describe("listen-client v2 status builders", () => {
     const loopStatus = __listenClientTestUtils.buildLoopStatus(runtime);
     expect(loopStatus.status).toBe("WAITING_ON_INPUT");
     expect(loopStatus.active_run_ids).toEqual([]);
+    expect(loopStatus.plan_file_path).toBeNull();
     // queue is now separate from loopStatus — verify via buildQueueSnapshot
     const queueSnapshot = __listenClientTestUtils.buildQueueSnapshot(runtime);
     expect(queueSnapshot).toEqual([]);
+  });
+
+  test("buildLoopStatus includes plan file path for scoped plan mode", () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    __listenClientTestUtils.getOrCreateScopedRuntime(
+      listener,
+      "agent-1",
+      "default",
+    );
+    listener.permissionModeByConversation.set(
+      "agent:agent-1::conversation:default",
+      {
+        mode: "plan",
+        planFilePath: "/tmp/listener-plan.md",
+        modeBeforePlan: "default",
+      },
+    );
+
+    expect(
+      __listenClientTestUtils.buildLoopStatus(listener, {
+        agent_id: "agent-1",
+        conversation_id: "default",
+      }),
+    ).toEqual({
+      status: "WAITING_ON_INPUT",
+      active_run_ids: [],
+      plan_file_path: "/tmp/listener-plan.md",
+    });
   });
 
   test("buildDeviceStatus includes the effective working directory", () => {
@@ -1694,6 +1723,7 @@ describe("listen-client v2 status builders", () => {
     expect(outbound[1].loop_status).toEqual({
       status: "WAITING_ON_APPROVAL",
       active_run_ids: [],
+      plan_file_path: null,
     });
   });
 
@@ -1831,6 +1861,7 @@ describe("listen-client v2 status builders", () => {
     ).toEqual({
       status: "WAITING_ON_APPROVAL",
       active_run_ids: [],
+      plan_file_path: null,
     });
   });
 

@@ -240,11 +240,20 @@ export function buildLoopStatus(
 ): LoopState {
   const listener = getListenerRuntime(runtime);
   if (!listener) {
-    return { status: "WAITING_ON_INPUT", active_run_ids: [] };
+    return {
+      status: "WAITING_ON_INPUT",
+      active_run_ids: [],
+      plan_file_path: null,
+    };
   }
   const scope = getScopeForRuntime(runtime, params);
   const scopedAgentId = resolveScopedAgentId(listener, scope);
   const scopedConversationId = resolveScopedConversationId(listener, scope);
+  const conversationPermissionModeState = getConversationPermissionModeState(
+    listener,
+    scopedAgentId,
+    scopedConversationId,
+  );
   const conversationRuntime = getConversationRuntime(
     listener,
     scopedAgentId,
@@ -271,6 +280,10 @@ export function buildLoopStatus(
         : conversationRuntime?.activeRunId
           ? [conversationRuntime.activeRunId]
           : [],
+    plan_file_path:
+      conversationPermissionModeState.mode === "plan"
+        ? conversationPermissionModeState.planFilePath
+        : null,
   };
 }
 
