@@ -1144,6 +1144,24 @@ html.dark .warning-badge { background: hsl(42, 30%, 18%); color: hsl(42, 80%, 70
     sHtml += '<div class="ctx-bar-track"><div class="ctx-bar-fill" id="ctx-bar-fill" style="width:0%;background:' + barColor + '"></div></div>';
     sHtml += '<div class="ctx-bar-text">' + (total - used > 0 ? fmtK(total - used) + ' tokens remaining' : 'Context full') + '</div>';
 
+    // Add conversation info if available
+    var selectedConvId = DATA.selectedConversationId || (DATA.conversations && DATA.conversations[0] && DATA.conversations[0].id);
+    if (selectedConvId && DATA.conversations) {
+      var conv = DATA.conversations.find(function(c) { return c.id === selectedConvId; });
+      if (conv) {
+        var convLabel = conv.label || conv.id;
+        var convDate = conv.last_run_completion || conv.created_at;
+        var convDateStr = convDate ? new Date(convDate).toLocaleDateString() : "";
+        sHtml += "<div class=\"ctx-conversation-info\" style=\"margin-top:12px;padding-top:12px;border-top:1px solid var(--border);\">";
+        sHtml += "<div class=\"ctx-conversation-label\" style=\"font-size:11px;color:var(--text-muted);margin-bottom:2px;text-transform:uppercase;\">Messages from</div>";
+        sHtml += "<div class=\"ctx-conversation-name\" style=\"font-weight:500;font-size:13px;\">" + escHtml(convLabel) + "</div>";
+        if (convDateStr) {
+          sHtml += "<div class=\"ctx-conversation-date\" style=\"font-size:11px;color:var(--text-muted);\">" + escHtml(convDateStr) + "</div>";
+        }
+        sHtml += "</div>";
+      }
+    }
+
     sHtml += '<div class="ctx-legend-title">Estimated usage</div>';
     cats.forEach(function(cat) {
       var cpct = total > 0 ? (cat.tokens / total * 100).toFixed(1) : '0';
