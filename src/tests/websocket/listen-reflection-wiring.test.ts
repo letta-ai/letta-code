@@ -14,8 +14,9 @@ describe("listen reflection wiring", () => {
     const listenContextSource = readFileSync(listenContextPath, "utf-8");
 
     expect(turnSource).toContain("function buildMaybeLaunchReflectionSubagent");
-    expect(turnSource).toContain("buildAutoReflectionPayload(");
-    expect(turnSource).toContain("finalizeAutoReflectionPayload(");
+    expect(turnSource).toContain("collectReflectionSweepSegments(");
+    expect(turnSource).toContain("finalizeReflectionSegmentReview(");
+    expect(turnSource).toContain("logReflectionTrigger(");
     expect(turnSource).toContain("handleMemorySubagentCompletion(");
     expect(turnSource).toContain('subagentType: "reflection"');
     expect(turnSource).toContain("appendTranscriptDeltaJsonl(");
