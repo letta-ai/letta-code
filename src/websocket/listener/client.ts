@@ -272,6 +272,41 @@ function runDetachedListenerTask(
   });
 }
 
+async function replaySyncStateForRuntime(
+  listenerRuntime: ListenerRuntime,
+  socket: WebSocket,
+  scope: { agent_id: string; conversation_id: string },
+  opts?: {
+    recoverApprovalStateForSync?: (
+      runtime: ConversationRuntime,
+      scope: { agent_id: string; conversation_id: string },
+    ) => Promise<void>;
+  },
+): Promise<void> {
+  const syncScopedRuntime = getOrCreateScopedRuntime(
+    listenerRuntime,
+    scope.agent_id,
+    scope.conversation_id,
+  );
+  const recoverFn =
+    opts?.recoverApprovalStateForSync ?? recoverApprovalStateForSync;
+
+  try {
+    await recoverFn(syncScopedRuntime, scope);
+  } catch (error) {
+    trackListenerError(
+      "listener_sync_recovery_failed",
+      error,
+      "listener_sync_recovery",
+    );
+    if (isDebugEnabled()) {
+      console.warn("[Listen] Sync approval recovery failed:", error);
+    }
+  }
+
+  emitStateSync(socket, listenerRuntime, scope);
+}
+
 function getParsedRuntimeScope(
   parsed: unknown,
 ): { agent_id: string; conversation_id: string } | null {
@@ -2264,14 +2299,7 @@ async function connectWithRetry(
           console.log(`[Listen V2] Dropping sync: runtime mismatch or closed`);
           return;
         }
-        const syncScopedRuntime = getOrCreateScopedRuntime(
-          runtime,
-          parsed.runtime.agent_id,
-          parsed.runtime.conversation_id,
-        );
-        await recoverApprovalStateForSync(syncScopedRuntime, parsed.runtime);
-
-        emitStateSync(socket, runtime, parsed.runtime);
+        await replaySyncStateForRuntime(runtime, socket, parsed.runtime);
         return;
       }
 
@@ -3698,6 +3726,7 @@ export const __listenClientTestUtils = {
   handleCreateAgentCommand,
   handleReflectionSettingsCommand,
   scheduleQueuePump,
+  replaySyncStateForRuntime,
   recoverApprovalStateForSync,
   clearRecoveredApprovalStateForScope: (
     runtime: ListenerRuntime | ConversationRuntime,
