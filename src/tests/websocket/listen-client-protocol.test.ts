@@ -2262,6 +2262,63 @@ describe("listen-client capability-gated approval flow", () => {
     }
   });
 
+  test("mode changes emit fresh loop status plan_file_path on enter exit and re-enter", async () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const socket = new MockSocket(WebSocket.OPEN);
+    listener.socket = socket as unknown as WebSocket;
+
+    const scope = {
+      agent_id: "agent-1",
+      conversation_id: "default",
+    } as const;
+
+    __listenClientTestUtils.handleModeChange(
+      { mode: "plan" },
+      socket as unknown as WebSocket,
+      listener,
+      scope,
+    );
+
+    const firstPlanPath = (socket.sentPayloads
+      .map((payload) => JSON.parse(payload as string))
+      .findLast((payload) => payload.type === "update_loop_status")?.loop_status
+      ?.plan_file_path ?? null) as string | null;
+
+    expect(firstPlanPath).toBeTruthy();
+
+    __listenClientTestUtils.handleModeChange(
+      { mode: "default" },
+      socket as unknown as WebSocket,
+      listener,
+      scope,
+    );
+
+    const afterExitLoopStatus = socket.sentPayloads
+      .map((payload) => JSON.parse(payload as string))
+      .findLast(
+        (payload) =>
+          payload.type === "update_loop_status" &&
+          payload.loop_status?.status === "WAITING_ON_INPUT",
+      );
+
+    expect(afterExitLoopStatus?.loop_status?.plan_file_path).toBeNull();
+
+    __listenClientTestUtils.handleModeChange(
+      { mode: "plan" },
+      socket as unknown as WebSocket,
+      listener,
+      scope,
+    );
+
+    const secondPlanPath = (socket.sentPayloads
+      .map((payload) => JSON.parse(payload as string))
+      .findLast((payload) => payload.type === "update_loop_status")?.loop_status
+      ?.plan_file_path ?? null) as string | null;
+
+    expect(secondPlanPath).toBeTruthy();
+    expect(secondPlanPath).not.toBe(firstPlanPath);
+  });
+
   test("requestApprovalOverWS exposes the control request through device status instead of stream_delta", () => {
     const listener = __listenClientTestUtils.createListenerRuntime();
     const runtime = __listenClientTestUtils.getOrCreateScopedRuntime(
