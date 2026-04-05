@@ -1,10 +1,12 @@
 import { describe, expect, test } from "bun:test";
+import { getEventListeners } from "node:events";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import type { Stream } from "@letta-ai/letta-client/core/streaming";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import { createBuffers } from "../../cli/helpers/accumulator";
 import { drainStream } from "../../cli/helpers/stream";
+import { createStreamAbortRelay } from "../../utils/streamAbortRelay";
 
 function makeStreamWithToolCall(
   toolCallId = "tc-1",
@@ -100,5 +102,36 @@ describe("drainStream stop reason wiring", () => {
     expect(tl2.phase).not.toBe("finished");
     // interrupted flag should still be set
     expect(buffers.interrupted).toBe(true);
+  });
+
+  test("drainStream cleans up registered relayed abort listeners after completion", async () => {
+    const parent = new AbortController();
+    const relay = createStreamAbortRelay(parent.signal);
+    if (!relay) {
+      throw new Error("expected stream abort relay");
+    }
+
+    const fakeStream = {
+      controller: new AbortController(),
+      async *[Symbol.asyncIterator]() {
+        yield {
+          message_type: "stop_reason",
+          stop_reason: "end_turn",
+        } as LettaStreamingResponse;
+      },
+    } as unknown as Stream<LettaStreamingResponse>;
+
+    relay.attach(fakeStream as object);
+    expect(getEventListeners(parent.signal, "abort")).toHaveLength(1);
+
+    const result = await drainStream(
+      fakeStream,
+      createBuffers("agent-test"),
+      () => {},
+      parent.signal,
+    );
+
+    expect(result.stopReason).toBe("end_turn");
+    expect(getEventListeners(parent.signal, "abort")).toHaveLength(0);
   });
 });

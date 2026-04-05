@@ -119,6 +119,9 @@ const conversationMessagesStreamMock = mock(
       starting_after?: number;
       batch_size?: number;
     },
+    _options?: {
+      signal?: AbortSignal;
+    },
   ): Promise<MockStream> => ({
     conversationId,
   }),
@@ -2030,10 +2033,12 @@ describe("listen-client multi-worker concurrency", () => {
       messageHistory: [],
     });
 
+    const parentAbortController = new AbortController();
+
     const result = await __listenClientTestUtils.resolveStaleApprovals(
       runtime,
       socket as unknown as WebSocket,
-      new AbortController().signal,
+      parentAbortController.signal,
       {
         getResumeData: getResumeDataMock,
       },
@@ -2049,5 +2054,9 @@ describe("listen-client multi-worker concurrency", () => {
       starting_after: 0,
       batch_size: 1000,
     });
+    expect(firstCall?.[2]).toMatchObject({
+      signal: expect.any(AbortSignal),
+    });
+    expect(firstCall?.[2]?.signal).not.toBe(parentAbortController.signal);
   });
 });
