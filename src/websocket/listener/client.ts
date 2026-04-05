@@ -340,7 +340,7 @@ function handleModeChange(
 
     persistPermissionModeMapForRuntime(runtime);
 
-    emitDeviceStatusUpdate(socket, runtime, scope);
+    emitRuntimeStateUpdates(runtime, scope);
 
     if (isDebugEnabled()) {
       console.log(`[Listen] Mode changed to: ${msg.mode}`);
@@ -3645,6 +3645,7 @@ export { emitInterruptedStatusDelta } from "./protocol-outbound";
 export const __listenClientTestUtils = {
   createRuntime: createLegacyTestRuntime,
   createListenerRuntime: createRuntime,
+  handleModeChange,
   getOrCreateScopedRuntime,
   buildListModelsEntries,
   buildListModelsResponse,
