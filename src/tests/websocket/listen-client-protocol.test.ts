@@ -1563,6 +1563,49 @@ describe("listen-client v2 status builders", () => {
     ]);
   });
 
+  test("sync replay soft-fails approval recovery errors without emitting loop_error rows", async () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    __listenClientTestUtils.getOrCreateScopedRuntime(
+      listener,
+      "agent-1",
+      "default",
+    );
+    const socket = new MockSocket(WebSocket.OPEN);
+
+    await __listenClientTestUtils.replaySyncStateForRuntime(
+      listener,
+      socket as unknown as WebSocket,
+      {
+        agent_id: "agent-1",
+        conversation_id: "default",
+      },
+      {
+        recoverApprovalStateForSync: async () => {
+          throw new Error(
+            "Unterminated string in JSON at position 183040 (line 1 column 183041)",
+          );
+        },
+      },
+    );
+
+    const outbound = socket.sentPayloads.map((payload) =>
+      JSON.parse(payload as string),
+    );
+    expect(outbound.map((message) => message.type)).toEqual([
+      "update_device_status",
+      "update_loop_status",
+      "update_queue",
+      "update_subagent_state",
+    ]);
+    expect(
+      outbound.some(
+        (message) =>
+          message.type === "stream_delta" &&
+          message.delta?.message_type === "loop_error",
+      ),
+    ).toBe(false);
+  });
+
   test("sync includes silent background reflection subagents in update_subagent_state", () => {
     clearAllSubagents();
     try {
