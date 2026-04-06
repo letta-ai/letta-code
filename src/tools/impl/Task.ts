@@ -84,6 +84,21 @@ export interface SpawnBackgroundSubagentTaskArgs {
    */
   silentCompletion?: boolean;
   /**
+   * Emit a completion notification even when `silentCompletion` is true.
+   * Useful when the parent should not stream subagent tokens but still wants
+   * a normal task notification event.
+   */
+  emitCompletionNotification?: boolean;
+  /**
+   * Optional override for the completion notification summary.
+   */
+  completionSummary?:
+    | string
+    | ((result: {
+        success: boolean;
+        error?: string;
+      }) => string | Promise<string>);
+  /**
    * Called after the subagent finishes (success or failure).
    * Runs regardless of `silentCompletion` and is awaited before
    * completion notifications/hooks continue.
@@ -114,6 +129,26 @@ interface SpawnBackgroundSubagentTaskDeps {
   registerSubagentImpl: typeof registerSubagent;
   completeSubagentImpl: typeof completeSubagent;
   getSubagentSnapshotImpl: typeof getSubagentSnapshot;
+}
+
+async function resolveCompletionSummary(
+  defaultSummary: string,
+  completionSummary:
+    | SpawnBackgroundSubagentTaskArgs["completionSummary"]
+    | undefined,
+  result: { success: boolean; error?: string },
+): Promise<string> {
+  if (!completionSummary) {
+    return defaultSummary;
+  }
+
+  const resolved =
+    typeof completionSummary === "function"
+      ? await completionSummary(result)
+      : completionSummary;
+
+  const trimmed = resolved.trim();
+  return trimmed.length > 0 ? trimmed : defaultSummary;
 }
 
 function buildTaskResultHeader(
@@ -247,9 +282,13 @@ export function spawnBackgroundSubagentTask(
     forkedContext,
     parentScope,
     silentCompletion,
+    emitCompletionNotification,
+    completionSummary,
     onComplete,
     deps,
   } = args;
+  const shouldEmitCompletionNotification =
+    emitCompletionNotification ?? !silentCompletion;
 
   const resolvedParentScope = resolveParentScope(parentScope);
 
@@ -340,7 +379,7 @@ export function spawnBackgroundSubagentTask(
         appendToOutputFile(outputFile, `[onComplete error] ${errorMessage}\n`);
       }
 
-      if (!silentCompletion) {
+      if (shouldEmitCompletionNotification) {
         const subagentSnapshot = getSubagentSnapshotFn();
         const subagentEntry = subagentSnapshot.agents.find(
           (agent) => agent.id === subagentId,
@@ -358,10 +397,17 @@ export function spawnBackgroundSubagentTask(
           { workingDirectory: userCwd, toolName: "Task" },
         );
 
+        const defaultSummary = `Agent "${description}" ${result.success ? "completed" : "failed"}`;
+        const summary = await resolveCompletionSummary(
+          defaultSummary,
+          completionSummary,
+          { success: result.success, error: result.error },
+        );
+
         const notificationXml = formatTaskNotificationFn({
           taskId,
           status: result.success ? "completed" : "failed",
-          summary: `Agent "${description}" ${result.success ? "completed" : "failed"}`,
+          summary,
           result: truncatedResult,
           outputFile,
           usage: {
@@ -414,7 +460,7 @@ export function spawnBackgroundSubagentTask(
         );
       }
 
-      if (!silentCompletion) {
+      if (shouldEmitCompletionNotification) {
         const subagentSnapshot = getSubagentSnapshotFn();
         const subagentEntry = subagentSnapshot.agents.find(
           (agent) => agent.id === subagentId,
@@ -429,10 +475,17 @@ export function spawnBackgroundSubagentTask(
           },
           "error",
         );
+        const defaultSummary = `Agent "${description}" failed`;
+        const summary = await resolveCompletionSummary(
+          defaultSummary,
+          completionSummary,
+          { success: false, error: errorMessage },
+        );
+
         const notificationXml = formatTaskNotificationFn({
           taskId,
           status: "failed",
-          summary: `Agent "${description}" failed`,
+          summary,
           result: `${header}\n\nError: ${errorMessage}`,
           outputFile,
           usage: {

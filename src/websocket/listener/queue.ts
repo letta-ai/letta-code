@@ -307,6 +307,18 @@ export function consumeQueuedTurn(runtime: ConversationRuntime): {
     ) {
       break;
     }
+
+    // Keep task notifications in their own dequeue batch so they don't get
+    // merged into adjacent user/cron payloads.
+    if (
+      (firstQueuedItem.kind === "task_notification" &&
+        item.kind !== "task_notification") ||
+      (firstQueuedItem.kind !== "task_notification" &&
+        item.kind === "task_notification")
+    ) {
+      break;
+    }
+
     queueLen += 1;
     if (item.kind === "message") {
       hasMessage = true;
