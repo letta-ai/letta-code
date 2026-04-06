@@ -221,6 +221,43 @@ describe("spawnBackgroundSubagentTask", () => {
     expect(formatTaskNotificationImpl).toHaveBeenCalledTimes(1);
   });
 
+  test("completionSummary overrides the notification summary", async () => {
+    const spawnSubagentImpl = mock(async () => ({
+      agentId: "agent-summary",
+      conversationId: "default",
+      report: "reflection done",
+      success: true,
+      totalTokens: 31,
+    }));
+
+    spawnBackgroundSubagentTask({
+      subagentType: "reflection",
+      prompt: "Reflect",
+      description: "Reflect on memory",
+      silentCompletion: true,
+      emitCompletionNotification: true,
+      completionSummary: "Reflected on my memory palace, the halls remember more now",
+      deps: {
+        spawnSubagentImpl,
+        addToMessageQueueImpl,
+        formatTaskNotificationImpl,
+        runSubagentStopHooksImpl,
+        generateSubagentIdImpl,
+        registerSubagentImpl,
+        completeSubagentImpl,
+        getSubagentSnapshotImpl,
+      },
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(formatTaskNotificationImpl).toHaveBeenCalledWith(
+      expect.objectContaining({
+        summary: "Reflected on my memory palace, the halls remember more now",
+      }),
+    );
+  });
+
   test("awaits async onComplete before queue notification and hooks", async () => {
     const callOrder: string[] = [];
     const spawnSubagentImpl = mock(async () => ({

@@ -169,12 +169,18 @@ function buildMaybeLaunchReflectionSubagent(params: {
       const { spawnBackgroundSubagentTask } = await import(
         "../../tools/impl/Task"
       );
+      const reflectionSuccessSummary =
+        "Reflected on the memory palace, the halls remember more now";
       spawnBackgroundSubagentTask({
         subagentType: "reflection",
         prompt: reflectionPrompt,
         description: AUTO_REFLECTION_DESCRIPTION,
         silentCompletion: true,
         emitCompletionNotification: true,
+        completionSummary: ({ success, error }) =>
+          success
+            ? reflectionSuccessSummary
+            : `Tried to reflect, but got lost in the palace: ${error || "Unknown error"}`,
         parentScope: { agentId, conversationId },
         onComplete: async ({ success, error }) => {
           await finalizeAutoReflectionPayload(
