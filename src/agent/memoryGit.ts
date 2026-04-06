@@ -28,6 +28,11 @@ const execFile = promisify(execFileCb);
 
 export const GIT_MEMORY_ENABLED_TAG = "git-memory-enabled";
 
+const RETRYABLE_GIT_HTTP_ERROR_RE =
+  /(?:\bHTTP\s+(?:520|521|522|523|524)\b|The requested URL returned error:\s*(?:520|521|522|523|524))/i;
+const RETRYABLE_GIT_NETWORK_ERROR_RE =
+  /(remote end hung up unexpectedly|connection reset by peer|operation timed out|timed out)/i;
+
 /** Get the agent root directory (~/.letta/agents/{id}/) */
 export function getAgentRootDir(agentId: string): string {
   return join(homedir(), ".letta", "agents", agentId);
@@ -112,6 +117,65 @@ async function runGit(
     stdout: result.stdout?.toString() ?? "",
     stderr: result.stderr?.toString() ?? "",
   };
+}
+
+/**
+ * Returns true when a git error looks transient/retryable (network/edge).
+ *
+ * These failures are commonly seen when Cloudflare returns temporary 52x
+ * errors during memfs clone/pull operations.
+ */
+export function isRetryableGitTransientError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+
+  if (RETRYABLE_GIT_HTTP_ERROR_RE.test(message)) {
+    return true;
+  }
+
+  // Git often emits both lines together:
+  // - "error: RPC failed; HTTP 520 ..."
+  // - "fatal: the remote end hung up unexpectedly"
+  if (
+    message.includes("RPC failed") &&
+    RETRYABLE_GIT_NETWORK_ERROR_RE.test(message)
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+async function runGitWithRetry(
+  cwd: string,
+  args: string[],
+  token?: string,
+  options?: { operation?: string; attempts?: number; baseDelayMs?: number },
+): Promise<{ stdout: string; stderr: string }> {
+  const attempts = options?.attempts ?? 3;
+  const baseDelayMs = options?.baseDelayMs ?? 500;
+  const operation = options?.operation ?? args[0] ?? "git op";
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await runGit(cwd, args, token);
+    } catch (error) {
+      if (!isRetryableGitTransientError(error) || attempt >= attempts) {
+        throw error;
+      }
+
+      const delayMs = baseDelayMs * 2 ** (attempt - 1);
+      const msg = error instanceof Error ? error.message : String(error);
+      debugWarn(
+        "memfs-git",
+        `${operation} failed with transient error (attempt ${attempt}/${attempts}): ${msg}. Retrying in ${delayMs}ms`,
+      );
+
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+
+  // Should never be reached (loop either returns or throws).
+  throw new Error(`Unexpected retry loop exit for ${operation}`);
 }
 
 /**
@@ -328,7 +392,9 @@ export async function cloneMemoryRepo(agentId: string): Promise<void> {
   if (!existsSync(dir)) {
     // Fresh clone into new memory directory
     mkdirSync(dir, { recursive: true });
-    await runGit(dir, ["clone", url, "."], token);
+    await runGitWithRetry(dir, ["clone", url, "."], token, {
+      operation: "clone memory repo",
+    });
   } else if (!existsSync(join(dir, ".git"))) {
     // Directory exists but isn't a git repo (legacy local layout)
     // Clone to temp, move .git/ into existing dir, then checkout files.
@@ -338,7 +404,9 @@ export async function cloneMemoryRepo(agentId: string): Promise<void> {
         rmSync(tmpDir, { recursive: true, force: true });
       }
       mkdirSync(tmpDir, { recursive: true });
-      await runGit(tmpDir, ["clone", url, "."], token);
+      await runGitWithRetry(tmpDir, ["clone", url, "."], token, {
+        operation: "clone memory repo (tmp migration)",
+      });
 
       // Move .git into the existing memory directory
       renameSync(join(tmpDir, ".git"), join(dir, ".git"));
@@ -377,7 +445,12 @@ export async function pullMemory(
   installPreCommitHook(dir);
 
   try {
-    const { stdout, stderr } = await runGit(dir, ["pull", "--ff-only"], token);
+    const { stdout, stderr } = await runGitWithRetry(
+      dir,
+      ["pull", "--ff-only"],
+      token,
+      { operation: "pull --ff-only" },
+    );
     const output = stdout + stderr;
     const updated = !output.includes("Already up to date");
     return {
@@ -388,7 +461,12 @@ export async function pullMemory(
     // If ff-only fails (diverged), try rebase
     debugWarn("memfs-git", "Fast-forward pull failed, trying rebase");
     try {
-      const { stdout, stderr } = await runGit(dir, ["pull", "--rebase"], token);
+      const { stdout, stderr } = await runGitWithRetry(
+        dir,
+        ["pull", "--rebase"],
+        token,
+        { operation: "pull --rebase" },
+      );
       return { updated: true, summary: (stdout + stderr).trim() };
     } catch (rebaseErr) {
       const msg =
