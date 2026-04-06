@@ -254,7 +254,7 @@ describe("spawnBackgroundSubagentTask", () => {
 
     expect(formatTaskNotificationImpl).toHaveBeenCalledWith(
       expect.objectContaining({
-        summary: "Reflected on my memory palace, the halls remember more now",
+        summary: "Reflected on the memory palace, the halls remember more now",
       }),
     );
   });
