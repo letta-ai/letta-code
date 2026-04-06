@@ -892,9 +892,9 @@ html.dark .warning-badge { background: hsl(42, 30%, 18%); color: hsl(42, 80%, 70
         <div class="history-search-group">
           <input id="history-search" class="history-search-input" type="search" placeholder="Search commit history" aria-label="Search commit history">
           <select id="history-search-mode" class="history-search-select" aria-label="History search mode">
+            <option value="content">Content</option>
             <option value="message">Message</option>
             <option value="committer">Committer</option>
-            <option value="content">Content</option>
           </select>
         </div>
         <div id="history-search-status" class="history-search-status"></div>
@@ -1431,7 +1431,7 @@ html.dark .warning-badge { background: hsl(42, 30%, 18%); color: hsl(42, 80%, 70
   var historySearchStatus = document.getElementById('history-search-status');
   var historySearchCoverage = document.getElementById('history-search-coverage');
   var historyQuery = '';
-  var historyMode = 'message';
+  var historyMode = 'content';
   var filteredCommits = commits.slice();
   var visible = 0;
   var STEP = 50;
