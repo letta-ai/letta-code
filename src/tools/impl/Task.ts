@@ -84,6 +84,12 @@ export interface SpawnBackgroundSubagentTaskArgs {
    */
   silentCompletion?: boolean;
   /**
+   * Emit a completion notification even when `silentCompletion` is true.
+   * Useful when the parent should not stream subagent tokens but still wants
+   * a normal task notification event.
+   */
+  emitCompletionNotification?: boolean;
+  /**
    * Called after the subagent finishes (success or failure).
    * Runs regardless of `silentCompletion` and is awaited before
    * completion notifications/hooks continue.
@@ -247,9 +253,12 @@ export function spawnBackgroundSubagentTask(
     forkedContext,
     parentScope,
     silentCompletion,
+    emitCompletionNotification,
     onComplete,
     deps,
   } = args;
+  const shouldEmitCompletionNotification =
+    emitCompletionNotification ?? !silentCompletion;
 
   const resolvedParentScope = resolveParentScope(parentScope);
 
@@ -340,7 +349,7 @@ export function spawnBackgroundSubagentTask(
         appendToOutputFile(outputFile, `[onComplete error] ${errorMessage}\n`);
       }
 
-      if (!silentCompletion) {
+      if (shouldEmitCompletionNotification) {
         const subagentSnapshot = getSubagentSnapshotFn();
         const subagentEntry = subagentSnapshot.agents.find(
           (agent) => agent.id === subagentId,
@@ -414,7 +423,7 @@ export function spawnBackgroundSubagentTask(
         );
       }
 
-      if (!silentCompletion) {
+      if (shouldEmitCompletionNotification) {
         const subagentSnapshot = getSubagentSnapshotFn();
         const subagentEntry = subagentSnapshot.agents.find(
           (agent) => agent.id === subagentId,
