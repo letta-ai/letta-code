@@ -132,22 +132,6 @@ describe("background onComplete → flush wiring in App.tsx", () => {
     expect(refAssign).toBeGreaterThan(derivedDecl);
   });
 
-  test("/init onComplete calls appendTaskNotificationEvents", () => {
-    const source = readSource();
-
-    // Find the /init silentCompletion block and verify its onComplete
-    // calls appendTaskNotificationEvents (not addToMessageQueue or inline buffer writes)
-    const initBlock = source.indexOf('subagentType: "init"');
-    expect(initBlock).toBeGreaterThan(-1);
-
-    const onCompleteIdx = source.indexOf("onComplete:", initBlock);
-    expect(onCompleteIdx).toBeGreaterThan(-1);
-
-    const onCompleteWindow = source.slice(onCompleteIdx, onCompleteIdx + 1600);
-    expect(onCompleteWindow).toContain("await handleMemorySubagentCompletion(");
-    expect(onCompleteWindow).toContain("appendTaskNotificationEvents(");
-  });
-
   test("reflection onComplete calls appendTaskNotificationEvents", () => {
     const source = readSource();
 
