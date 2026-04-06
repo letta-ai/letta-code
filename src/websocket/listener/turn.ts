@@ -836,6 +836,7 @@ export async function handleIncomingMessage(
         const retriable = await isRetriablePostStopError(
           (stopReason as StopReasonType) || "error",
           lastRunId,
+          errorDetail,
         );
         if (retriable && llmApiErrorRetries < LLM_API_ERROR_MAX_RETRIES) {
           llmApiErrorRetries += 1;

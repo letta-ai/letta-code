@@ -795,6 +795,7 @@ function sendDesktopNotification(
 async function isRetriableError(
   stopReason: StopReasonType,
   lastRunId: string | null | undefined,
+  fallbackDetail?: string | null,
 ): Promise<boolean> {
   // Primary check: backend sets stop_reason=llm_api_error for LLMError exceptions
   if (stopReason === "llm_api_error") return true;
@@ -838,10 +839,10 @@ async function isRetriableError(
 
       return false;
     } catch {
-      return false;
+      return shouldRetryRunMetadataError(undefined, fallbackDetail);
     }
   }
-  return false;
+  return shouldRetryRunMetadataError(undefined, fallbackDetail);
 }
 
 // Save current agent + conversation as last session before exiting.
@@ -5902,6 +5903,7 @@ export default function App({
           const retriable = await isRetriableError(
             stopReasonToHandle,
             lastRunId,
+            detailFromRun ?? latestErrorText ?? fallbackError,
           );
 
           if (
