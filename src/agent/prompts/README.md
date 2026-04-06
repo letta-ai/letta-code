@@ -77,6 +77,5 @@ Short XML-wrapped messages injected into the conversation as system events.
 |------|------|-------------|
 | `plan_mode_reminder.txt` | Plan mode active | Prevents the agent from making changes until plan is confirmed |
 | `memory_check_reminder.txt` | Periodic during conversation | Prompts the agent to review and update memory blocks |
-| `auto_init_reminder.txt` | Background init in progress | Tells the agent memory is being set up |
 | `approval_recovery_alert.txt` | Keep-alive ping | Automated message to resume after approval timeout |
 | `interrupt_recovery_alert.txt` | User interrupts stream | Notifies the agent the stream was interrupted |
