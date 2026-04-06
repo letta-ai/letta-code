@@ -108,8 +108,9 @@ describe("formatErrorDetails", () => {
 
     const message = formatErrorDetails(error);
 
-    expect(message).toContain("out of credits");
-    expect(message).toContain("/connect");
+    expect(message).toBe(
+      "Your account does not have credits for this model. Add your own API keys or upgrade your plan to purchase credits.",
+    );
     expect(message).not.toContain("not available on Free plan");
     expect(message).not.toContain("Selected hosted model");
   });
@@ -127,7 +128,9 @@ describe("formatErrorDetails", () => {
     );
 
     const message = formatErrorDetails(error);
-    expect(message).toContain("out of credits");
+    expect(message).toBe(
+      "Your account does not have credits for this model. Add your own API keys or upgrade your plan to purchase credits.",
+    );
   });
 
   test("shows explicit model availability guidance for model-unknown", () => {
