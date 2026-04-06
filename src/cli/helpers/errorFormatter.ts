@@ -599,7 +599,7 @@ export function formatErrorDetails(
 
     // Check for credit exhaustion error - provide a friendly message
     if (isCreditExhaustedError(e, reasons)) {
-      return `Your account is out of credits for hosted inference. Add credits, enable auto-recharge, or upgrade at ${LETTA_USAGE_URL}. You can also connect your own provider keys with /connect.`;
+      return `Your account does not have credits for this model. Add your own API keys or upgrade your plan to purchase credits.`;
     }
 
     const tierUsageLimitMsg = getTierUsageLimitMessage(reasons);
