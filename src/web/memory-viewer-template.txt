@@ -416,6 +416,44 @@ a:hover { text-decoration: underline; }
 }
 
 /* History view */
+.history-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+.history-search-group {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+}
+.history-search-input,
+.history-search-select {
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 9px 11px;
+  font: inherit;
+}
+.history-search-input {
+  flex: 1;
+  min-width: 220px;
+}
+.history-search-input::placeholder {
+  color: var(--text-dim);
+}
+.history-search-select {
+  flex: 0 0 auto;
+}
+.history-search-status {
+  font-size: 12px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
 .commit-list { list-style: none; }
 .commit-item {
   border: 1px solid var(--border);
@@ -565,6 +603,19 @@ a:hover { text-decoration: underline; }
   padding: 24px;
   text-align: center;
   color: var(--text-dim);
+}
+
+@media (max-width: 700px) {
+  .history-search-group {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+  .history-search-input,
+  .history-search-select,
+  .history-search-status {
+    width: 100%;
+    white-space: normal;
+  }
 }
 .generated {
   margin-top: 14px;
@@ -833,6 +884,16 @@ html.dark .warning-badge { background: hsl(42, 30%, 18%); color: hsl(42, 80%, 70
     </section>
 
     <section id="tab-history" style="display:none">
+      <div class="history-toolbar">
+        <div class="history-search-group">
+          <input id="history-search" class="history-search-input" type="search" placeholder="Search commit history" aria-label="Search commit history">
+          <select id="history-search-mode" class="history-search-select" aria-label="History search mode">
+            <option value="message">Message</option>
+            <option value="committer">Committer</option>
+          </select>
+        </div>
+        <div id="history-search-status" class="history-search-status"></div>
+      </div>
       <div id="history-cap" class="note" style="display:none"></div>
       <ul class="commit-list" id="commit-list"></ul>
       <button class="show-more" id="show-more" style="display:none">Show older commits</button>
@@ -1359,6 +1420,12 @@ html.dark .warning-badge { background: hsl(42, 30%, 18%); color: hsl(42, 80%, 70
   var showMore = document.getElementById('show-more');
   var historyEmpty = document.getElementById('history-empty');
   var historyCap = document.getElementById('history-cap');
+  var historySearch = document.getElementById('history-search');
+  var historySearchMode = document.getElementById('history-search-mode');
+  var historySearchStatus = document.getElementById('history-search-status');
+  var historyQuery = '';
+  var historyMode = 'message';
+  var filteredCommits = commits.slice();
   var visible = 0;
   var STEP = 50;
 
@@ -1474,21 +1541,8 @@ html.dark .warning-badge { background: hsl(42, 30%, 18%); color: hsl(42, 80%, 70
     if (lcBar) {
       var hash = lcBar.dataset.commitHash;
       activateTab('history');
-      // Ensure enough commits are rendered, then find and expand
       setTimeout(function() {
-        var commitEl = document.querySelector('.commit-item .commit-hash');
-        // Search all rendered commit hashes
-        var allHashes = commitList.querySelectorAll('.commit-hash');
-        for (var k = 0; k < allHashes.length; k++) {
-          if (allHashes[k].textContent.trim() === hash) {
-            var item = allHashes[k].closest('.commit-item');
-            if (item) {
-              item.classList.add('expanded');
-              item.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            }
-            break;
-          }
-        }
+        revealCommitByHash(hash);
       }, 50);
     }
   });
@@ -1540,12 +1594,64 @@ html.dark .warning-badge { background: hsl(42, 30%, 18%); color: hsl(42, 80%, 70
     return html;
   }
 
-  function renderCommitRange(start, end) {
+  function matchesCommitHash(commit, hash) {
+    if (!commit || !hash) return false;
+    return commit.shortHash === hash || commit.hash === hash;
+  }
+
+  function getHistoryMatchText(commit) {
+    if (historyMode === 'committer') {
+      return String(commit.author || '');
+    }
+    return String(commit.message || '');
+  }
+
+  function applyHistoryFilter() {
+    if (!historyQuery) {
+      filteredCommits = commits.slice();
+      return;
+    }
+    filteredCommits = commits.filter(function(commit) {
+      return getHistoryMatchText(commit).toLowerCase().indexOf(historyQuery) !== -1;
+    });
+  }
+
+  function updateHistorySearchStatus() {
+    if (!historySearchStatus) return;
+    if (!commits.length) {
+      historySearchStatus.textContent = '';
+      return;
+    }
+    if (!historyQuery) {
+      historySearchStatus.textContent = commits.length + ' commits';
+      return;
+    }
+    historySearchStatus.textContent = filteredCommits.length + ' of ' + commits.length + ' commits';
+  }
+
+  function updateHistoryEmptyState() {
+    if (commits.length === 0) {
+      historyEmpty.textContent = 'No history yet';
+      historyEmpty.style.display = '';
+      return true;
+    }
+    if (filteredCommits.length === 0) {
+      var label = historyMode === 'committer' ? 'committer' : 'message';
+      historyEmpty.textContent = 'No commits matched this ' + label + ' search';
+      historyEmpty.style.display = '';
+      return true;
+    }
+    historyEmpty.style.display = 'none';
+    historyEmpty.textContent = 'No history yet';
+    return false;
+  }
+
+  function renderCommitRange(commitSet, start, end) {
     var html = '';
     for (var i = start; i < end; i++) {
-      var c = commits[i];
+      var c = commitSet[i];
       var title = String(c.message || '').split('\n')[0];
-      html += '<li class="commit-item" data-idx="' + i + '">';
+      html += '<li class="commit-item" data-idx="' + i + '" data-commit-hash="' + escAttr(c.shortHash || c.hash || '') + '">';
       html += '<div class="commit-head">';
       var diffStats = parseDiffStats(c.stats);
       html += '<div style="display:flex;flex-direction:column;align-items:flex-start;gap:4px">';
@@ -1579,7 +1685,7 @@ html.dark .warning-badge { background: hsl(42, 30%, 18%); color: hsl(42, 80%, 70
         if (c.truncated) html += '<div class="note">[diff truncated]</div>';
       } else if (c.truncated) {
         html += '<div class="note">[diff not available due to payload cap]</div>';
-      } else if (i >= 50) {
+      } else if (commits.indexOf(c) >= 50) {
         html += '<div class="note">[diff not loaded for older commits]</div>';
       }
       html += '</div>';
@@ -1589,25 +1695,80 @@ html.dark .warning-badge { background: hsl(42, 30%, 18%); color: hsl(42, 80%, 70
   }
 
   function renderMore() {
-    var next = Math.min(visible + STEP, commits.length);
-    commitList.innerHTML += renderCommitRange(visible, next);
+    var next = Math.min(visible + STEP, filteredCommits.length);
+    commitList.innerHTML += renderCommitRange(filteredCommits, visible, next);
     visible = next;
 
-    if (visible >= commits.length) {
+    if (visible >= filteredCommits.length) {
       showMore.style.display = 'none';
     } else {
       showMore.style.display = '';
-      showMore.textContent = 'Show older commits (' + (commits.length - visible) + ' remaining)';
+      showMore.textContent = 'Show older commits (' + (filteredCommits.length - visible) + ' remaining)';
     }
   }
 
-  if (!commits.length) {
-    historyEmpty.style.display = '';
-  } else {
+  function rerenderHistory() {
+    visible = 0;
+    commitList.innerHTML = '';
+    updateHistorySearchStatus();
+    if (updateHistoryEmptyState()) {
+      showMore.style.display = 'none';
+      return;
+    }
     renderMore();
   }
 
+  function syncHistoryFilterFromControls() {
+    historyQuery = String(historySearch.value || '').trim().toLowerCase();
+    historyMode = historySearchMode.value === 'committer' ? 'committer' : 'message';
+    applyHistoryFilter();
+    rerenderHistory();
+  }
+
+  function revealCommitByHash(hash) {
+    if (!hash) return;
+    var targetIndex = -1;
+    for (var i = 0; i < filteredCommits.length; i++) {
+      if (matchesCommitHash(filteredCommits[i], hash)) {
+        targetIndex = i;
+        break;
+      }
+    }
+
+    if (targetIndex === -1 && historyQuery) {
+      historySearch.value = '';
+      historyQuery = '';
+      applyHistoryFilter();
+      rerenderHistory();
+      for (var j = 0; j < filteredCommits.length; j++) {
+        if (matchesCommitHash(filteredCommits[j], hash)) {
+          targetIndex = j;
+          break;
+        }
+      }
+    }
+
+    if (targetIndex === -1) return;
+    while (visible <= targetIndex) {
+      renderMore();
+    }
+
+    var items = commitList.querySelectorAll('.commit-item');
+    for (var k = 0; k < items.length; k++) {
+      if (items[k].dataset.commitHash === hash) {
+        items[k].classList.add('expanded');
+        items[k].scrollIntoView({ behavior: 'smooth', block: 'center' });
+        break;
+      }
+    }
+  }
+
+  applyHistoryFilter();
+  rerenderHistory();
+
   showMore.addEventListener('click', renderMore);
+  historySearch.addEventListener('input', syncHistoryFilterFromControls);
+  historySearchMode.addEventListener('change', syncHistoryFilterFromControls);
 
   commitList.addEventListener('click', function(ev) {
     var head = ev.target.closest('.commit-head');
