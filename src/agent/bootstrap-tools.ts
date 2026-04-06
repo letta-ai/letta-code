@@ -1,56 +1,34 @@
 /**
- * Bootstrap base tools on first connection to a server.
+ * Bootstrap base tools once per process lifetime.
  *
- * Calls POST /v1/tools/add-base-tools once per server URL, then writes a
- * marker file so subsequent runs skip the call. This ensures that orgs
- * created with an incomplete tool set (e.g., missing web_search/fetch_webpage)
- * get backfilled the first time letta-code connects.
+ * Calls POST /v1/tools/add-base-tools on startup to ensure all base tools
+ * exist. This backfills orgs that were created with an incomplete tool set
+ * (e.g., missing web_search/fetch_webpage due to a core server deployment
+ * that failed to load the builtin module).
  */
 
-import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
 import { getServerUrl } from "./client";
 import { addBaseToolsToServer } from "./create";
-import { settingsManager } from "../settings-manager";
-
-const MARKERS_DIR = join(homedir(), ".letta", ".tool-bootstrap-markers");
-
-function getMarkerPath(serverUrl: string, apiKey: string): string {
-  const hash = createHash("sha256")
-    .update(`${serverUrl}:${apiKey}`)
-    .digest("hex")
-    .slice(0, 16);
-  return join(MARKERS_DIR, hash);
-}
 
 /**
- * If this is the first time this user is connecting to the current server,
- * call add-base-tools to ensure all tools exist. Keyed by server URL + API
- * key so different users/orgs on the same machine each get bootstrapped.
+ * In-memory flag — ensures we only call add-base-tools once per process
+ * lifetime. We don't persist markers to disk because the identifiers
+ * available at startup (proxy port, session token) are ephemeral and
+ * change on every app launch. The POST is cheap (upsert, no-op if tools
+ * exist) so running once per launch is acceptable.
+ */
+let bootstrapped = false;
+
+/**
+ * Call add-base-tools once per process to ensure all base tools exist.
  * Fire-and-forget — failures are logged but don't block startup.
  */
 export async function bootstrapBaseToolsIfNeeded(): Promise<void> {
-  const serverUrl = getServerUrl();
-  const settings = await settingsManager.getSettingsWithSecureTokens();
-  const apiKey = process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
-
-  if (!apiKey) return;
-
-  const markerPath = getMarkerPath(serverUrl, apiKey);
-
-  if (existsSync(markerPath)) {
-    return;
-  }
+  if (bootstrapped) return;
+  bootstrapped = true;
 
   try {
-    const success = await addBaseToolsToServer();
-    if (success) {
-      // Write marker so we don't call again
-      mkdirSync(MARKERS_DIR, { recursive: true });
-      writeFileSync(markerPath, new Date().toISOString(), "utf-8");
-    }
+    await addBaseToolsToServer();
   } catch (err) {
     // Non-fatal — the retry in createAgentWithBaseToolsRecovery is the safety net
     console.warn(
