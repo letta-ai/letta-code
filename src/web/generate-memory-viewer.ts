@@ -21,12 +21,12 @@ import {
 } from "../agent/memoryScanner";
 import memoryViewerTemplate from "./memory-viewer-template.txt";
 import type {
-  ConversationInfo,
-  MessageInfo,
   ContextData,
+  ConversationInfo,
   MemoryCommit,
   MemoryFile,
   MemoryViewerData,
+  MessageInfo,
 } from "./types";
 
 const execFile = promisify(execFileCb);
@@ -310,7 +310,13 @@ async function collectMemoryData(
       );
       if (contextRes.ok) {
         const overview = (await contextRes.json()) as {
-          messages?: Array<{ id: string; role: string; content: string | unknown[]; conversation_id?: string | null; created_at: string; }>;
+          messages?: Array<{
+            id: string;
+            role: string;
+            content: string | unknown[];
+            conversation_id?: string | null;
+            created_at: string;
+          }>;
           context_window_size_max: number;
           context_window_size_current: number;
           num_tokens_system: number;
@@ -321,12 +327,12 @@ async function collectMemoryData(
           num_tokens_messages: number;
         };
         messages = overview.messages?.map((m) => ({
-            id: m.id,
-            role: m.role,
-            content: m.content,
-            conversation_id: m.conversation_id,
-            created_at: m.created_at,
-          }));
+          id: m.id,
+          role: m.role,
+          content: m.content,
+          conversation_id: m.conversation_id,
+          created_at: m.created_at,
+        }));
         context = {
           contextWindow: contextWindow || overview.context_window_size_max,
           usedTokens: overview.context_window_size_current,
@@ -372,7 +378,13 @@ async function collectMemoryData(
 
         if (contextRes?.ok) {
           const overview = (await contextRes.json()) as {
-          messages?: Array<{ id: string; role: string; content: string | unknown[]; conversation_id?: string | null; created_at: string; }>;
+            messages?: Array<{
+              id: string;
+              role: string;
+              content: string | unknown[];
+              conversation_id?: string | null;
+              created_at: string;
+            }>;
             context_window_size_max: number;
             context_window_size_current: number;
             num_tokens_system: number;
@@ -389,7 +401,7 @@ async function collectMemoryData(
             conversation_id: m.conversation_id,
             created_at: m.created_at,
           }));
-        context = {
+          context = {
             contextWindow: overview.context_window_size_max,
             usedTokens: overview.context_window_size_current,
             model,
@@ -411,36 +423,22 @@ async function collectMemoryData(
 
   // Fetch recent conversations (best-effort)
   let conversations: ConversationInfo[] | undefined;
-  
+
   try {
     const client = await getClient();
-    const apiKey =
-      (client as unknown as { apiKey?: string }).apiKey ||
-      process.env.LETTA_API_KEY ||
-      "";
-    
-    // List recent conversations
-    const convRes = await fetch(
-      `${serverUrl}/v1/agents/${agentId}/conversations?limit=10&order=desc&order_by=last_run_completion`,
-      {
-        headers: { Authorization: `Bearer ${apiKey}` },
-        signal: AbortSignal.timeout(5000),
-      }
-    );
-    if (convRes.ok) {
-      const convData = (await convRes.json()) as Array<{
-        id: string;
-        created_at: string;
-        last_run_completion?: string | null;
-        label?: string | null;
-      }>;
-      conversations = convData.map((c) => ({
-        id: c.id,
-        created_at: c.created_at,
-        last_run_completion: c.last_run_completion,
-        label: c.label,
-      }));
-    }
+    const convPage = await client.conversations.list({
+      agent_id: agentId,
+      limit: 10,
+      order: "desc",
+      order_by: "last_run_completion",
+    });
+    const convItems = convPage;
+    conversations = convItems.map((c: any) => ({
+      id: c.id,
+      created_at: c.created_at,
+      last_run_completion: c.last_run_completion ?? null,
+      label: c.label ?? null,
+    }));
   } catch {
     // Conversation fetch failed - continue without it
   }

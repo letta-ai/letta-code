@@ -844,7 +844,6 @@ html.dark .warning-badge { background: hsl(42, 30%, 18%); color: hsl(42, 80%, 70
     <div class="tab" data-tab="core" id="tab-core-label">Core Memory</div>
     <div class="tab" data-tab="external" id="tab-external-label">External Memory</div>
     <div class="tab" data-tab="history">History</div>
-    <div class="tab" data-tab="conversations" id="tab-conversations-label">Conversations</div>
   </nav>
 
   <main class="main">
@@ -884,14 +883,6 @@ html.dark .warning-badge { background: hsl(42, 30%, 18%); color: hsl(42, 80%, 70
     </section>
 
     <section id="tab-conversations" style="display:none">
-      <div class="conversations-layout">
-        <div class="panel conversations-list" id="conversations-list"></div>
-        <div class="panel messages-panel" id="messages-panel">
-          <div class="empty">Select a conversation</div>
-        </div>
-      </div>
-    </section>
-
     <div class="generated" id="generated-at"></div>
   </main>
 </div>
