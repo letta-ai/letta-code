@@ -100,6 +100,7 @@ export function shouldAttemptPostStopApprovalRecovery(params: {
 export async function isRetriablePostStopError(
   stopReason: StopReasonType,
   lastRunId: string | null | undefined,
+  fallbackDetail?: string | null,
 ): Promise<boolean> {
   if (stopReason === "llm_api_error") {
     return true;
@@ -120,7 +121,7 @@ export async function isRetriablePostStopError(
   }
 
   if (!lastRunId) {
-    return false;
+    return shouldRetryRunMetadataError(undefined, fallbackDetail);
   }
 
   try {
@@ -138,7 +139,7 @@ export async function isRetriablePostStopError(
     const detail = metaError?.detail ?? metaError?.error?.detail ?? "";
     return shouldRetryRunMetadataError(errorType, detail);
   } catch {
-    return false;
+    return shouldRetryRunMetadataError(undefined, fallbackDetail);
   }
 }
 

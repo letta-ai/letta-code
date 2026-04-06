@@ -24,6 +24,7 @@ interface CloudflareEdgeErrorInfo {
 const CLOUDFLARE_EDGE_5XX_MARKER_PATTERN =
   /(^|\s)(502|52[0-6])\s*<!doctype html|error code\s*(502|52[0-6])/i;
 const CLOUDFLARE_EDGE_5XX_TITLE_PATTERN = /\|\s*(502|52[0-6])\s*:/i;
+const CLOUDFLARE_EDGE_5XX_FORMATTED_PATTERN = /\bCloudflare\s+(502|52[0-6])\b/i;
 
 export function isCloudflareEdge52xHtmlError(text: string): boolean {
   const normalized = text.toLowerCase();
@@ -37,6 +38,13 @@ export function isCloudflareEdge52xHtmlError(text: string): boolean {
     CLOUDFLARE_EDGE_5XX_TITLE_PATTERN.test(text);
 
   return hasCloudflare && hasHtml && has52xCode;
+}
+
+export function isCloudflareEdge52xErrorText(text: string): boolean {
+  return (
+    CLOUDFLARE_EDGE_5XX_FORMATTED_PATTERN.test(text) ||
+    isCloudflareEdge52xHtmlError(text)
+  );
 }
 
 function parseCloudflareEdgeError(
@@ -703,7 +711,7 @@ export function getRetryStatusMessage(
   if (!errorDetail) return DEFAULT_RETRY_MESSAGE;
 
   // Cloudflare edge errors are transient and retried silently — no status line
-  if (parseCloudflareEdgeError(errorDetail)) return null;
+  if (isCloudflareEdge52xErrorText(errorDetail)) return null;
 
   if (checkZaiError(errorDetail)) return "Z.ai API error, retrying...";
 

@@ -9,7 +9,7 @@
 import { randomUUID } from "node:crypto";
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
-import { isCloudflareEdge52xHtmlError } from "../cli/helpers/errorFormatter";
+import { isCloudflareEdge52xErrorText } from "../cli/helpers/errorFormatter";
 import { isZaiNonRetryableError } from "../cli/helpers/zaiErrors";
 
 // ── Error fragment constants ────────────────────────────────────────
@@ -72,7 +72,7 @@ const EMPTY_RESPONSE_RETRY_BASE_DELAY_MS = 500;
 
 function isCloudflareEdge52xDetail(detail: unknown): boolean {
   if (typeof detail !== "string") return false;
-  return isCloudflareEdge52xHtmlError(detail);
+  return isCloudflareEdge52xErrorText(detail);
 }
 
 /**
