@@ -25,6 +25,7 @@ import ReadManyFilesGeminiDescription from "./descriptions/ReadManyFilesGemini.m
 import ReplaceGeminiDescription from "./descriptions/ReplaceGemini.md";
 import RunShellCommandGeminiDescription from "./descriptions/RunShellCommandGemini.md";
 import SearchFileContentGeminiDescription from "./descriptions/SearchFileContentGemini.md";
+import SetWorkingDirectoryDescription from "./descriptions/SetWorkingDirectory.md";
 import ShellDescription from "./descriptions/Shell.md";
 import ShellCommandDescription from "./descriptions/ShellCommand.md";
 import SkillDescription from "./descriptions/Skill.md";
@@ -64,6 +65,7 @@ import { read_many_files } from "./impl/ReadManyFilesGemini";
 import { replace } from "./impl/ReplaceGemini";
 import { run_shell_command } from "./impl/RunShellCommandGemini";
 import { search_file_content } from "./impl/SearchFileContentGemini";
+import { set_working_directory } from "./impl/SetWorkingDirectory";
 import { shell } from "./impl/Shell";
 import { shell_command } from "./impl/ShellCommand";
 import { skill } from "./impl/Skill";
@@ -103,6 +105,7 @@ import ReadManyFilesGeminiSchema from "./schemas/ReadManyFilesGemini.json";
 import ReplaceGeminiSchema from "./schemas/ReplaceGemini.json";
 import RunShellCommandGeminiSchema from "./schemas/RunShellCommandGemini.json";
 import SearchFileContentGeminiSchema from "./schemas/SearchFileContentGemini.json";
+import SetWorkingDirectorySchema from "./schemas/SetWorkingDirectory.json";
 import ShellSchema from "./schemas/Shell.json";
 import ShellCommandSchema from "./schemas/ShellCommand.json";
 import SkillSchema from "./schemas/Skill.json";
@@ -204,6 +207,11 @@ const toolDefinitions = {
     schema: ReadSchema,
     description: ReadDescription.trim(),
     impl: read as unknown as ToolImplementation,
+  },
+  SetWorkingDirectory: {
+    schema: SetWorkingDirectorySchema,
+    description: SetWorkingDirectoryDescription.trim(),
+    impl: set_working_directory as unknown as ToolImplementation,
   },
   view_image: {
     schema: ViewImageSchema,

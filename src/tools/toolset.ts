@@ -115,6 +115,7 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
   exclude?: ToolName[];
   workingDirectory?: string;
   permissionModeState?: PermissionModeState;
+  onCwdChange?: (newCwd: string) => void;
 }): Promise<PreparedScopeToolContext> {
   const {
     modelIdentifier,
@@ -122,6 +123,7 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
     exclude,
     workingDirectory,
     permissionModeState,
+    onCwdChange,
   } = params;
   const effectiveModel =
     modelIdentifier && modelIdentifier.length > 0
@@ -135,6 +137,7 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
         exclude,
         workingDirectory,
         permissionModeState,
+        onCwdChange,
       },
     );
 
@@ -155,6 +158,7 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
     {
       workingDirectory,
       permissionModeState,
+      onCwdChange,
     },
   );
 
@@ -173,6 +177,7 @@ export async function prepareToolExecutionContextForScope(params: {
   exclude?: ToolName[];
   workingDirectory?: string;
   permissionModeState?: PermissionModeState;
+  onCwdChange?: (newCwd: string) => void;
 }): Promise<PreparedScopeToolContext> {
   const {
     agentId,
@@ -181,6 +186,7 @@ export async function prepareToolExecutionContextForScope(params: {
     exclude,
     workingDirectory,
     permissionModeState,
+    onCwdChange,
   } = params;
 
   const client = await getClient();
@@ -216,6 +222,7 @@ export async function prepareToolExecutionContextForScope(params: {
     exclude,
     workingDirectory,
     permissionModeState,
+    onCwdChange,
   });
 }
 

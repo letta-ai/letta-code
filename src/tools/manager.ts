@@ -86,6 +86,7 @@ export const ANTHROPIC_DEFAULT_TOOLS: ToolName[] = [
   // "LS",
   "memory",
   "Read",
+  "SetWorkingDirectory",
   "Skill",
   "Task",
   "TodoWrite",
@@ -124,6 +125,7 @@ export const OPENAI_PASCAL_TOOLS: ToolName[] = [
   "EnterPlanMode",
   "ExitPlanMode",
   "memory_apply_patch",
+  "SetWorkingDirectory",
   "Task",
   "TaskOutput",
   "TaskStop",
@@ -141,6 +143,7 @@ export const GEMINI_PASCAL_TOOLS: ToolName[] = [
   "EnterPlanMode",
   "ExitPlanMode",
   "memory",
+  "SetWorkingDirectory",
   "Skill",
   "Task",
   // Standard Gemini tools
@@ -173,6 +176,7 @@ const TOOL_PERMISSIONS: Record<ToolName, { requiresApproval: boolean }> = {
   memory_apply_patch: { requiresApproval: true },
   MultiEdit: { requiresApproval: true },
   Read: { requiresApproval: false },
+  SetWorkingDirectory: { requiresApproval: true },
   view_image: { requiresApproval: false },
   ViewImage: { requiresApproval: false },
   ReadLSP: { requiresApproval: false },
@@ -309,6 +313,8 @@ type ToolExecutionContextSnapshot = {
   externalExecutor?: ExternalToolExecutor;
   workingDirectory: string;
   permissionModeState: PermissionModeState;
+  /** Called by SetWorkingDirectory to persist cwd changes across turns. */
+  onCwdChange?: (newCwd: string) => void;
 };
 
 export type CapturedToolExecutionContext = {
@@ -360,6 +366,24 @@ export function getExecutionContextPermissionModeState(
   contextId: string,
 ): PermissionModeState | undefined {
   return getExecutionContextById(contextId)?.permissionModeState;
+}
+
+/**
+ * Returns a callback that updates the working directory for an execution context.
+ * SetWorkingDirectory uses this to persist cwd changes across turns and update
+ * the snapshot so subsequent tools in the same turn use the new cwd.
+ */
+export function getExecutionContextCwdChanger(
+  contextId: string,
+): ((newCwd: string) => void) | undefined {
+  const context = getExecutionContextById(contextId);
+  if (!context) return undefined;
+  return (newCwd: string) => {
+    // Update the snapshot so subsequent tools in this turn see the new cwd
+    context.workingDirectory = newCwd;
+    // Invoke the listener-level callback to persist across turns
+    context.onCwdChange?.(newCwd);
+  };
 }
 
 export function clearCapturedToolExecutionContexts(): void {
@@ -670,6 +694,7 @@ function capturePreparedToolExecutionContext(
   options?: {
     workingDirectory?: string;
     permissionModeState?: PermissionModeState;
+    onCwdChange?: (newCwd: string) => void;
   },
 ): PreparedToolExecutionContext {
   const executionSnapshot: ToolExecutionContextSnapshot = {
@@ -681,6 +706,7 @@ function capturePreparedToolExecutionContext(
     permissionModeState: getEffectivePermissionModeState(
       options?.permissionModeState,
     ),
+    onCwdChange: options?.onCwdChange,
   };
   const contextId = saveExecutionContext(executionSnapshot);
 
@@ -721,6 +747,7 @@ export async function prepareToolExecutionContextForSpecificTools(
   options?: {
     workingDirectory?: string;
     permissionModeState?: PermissionModeState;
+    onCwdChange?: (newCwd: string) => void;
   },
 ): Promise<PreparedToolExecutionContext> {
   const toolRegistrySnapshot = await buildSpecificToolRegistry(toolNames);
@@ -740,6 +767,7 @@ export async function prepareToolExecutionContextForModel(
     exclude?: ToolName[];
     workingDirectory?: string;
     permissionModeState?: PermissionModeState;
+    onCwdChange?: (newCwd: string) => void;
   },
 ): Promise<PreparedToolExecutionContext> {
   const toolRegistrySnapshot = await buildRegistryForModel(
@@ -1422,15 +1450,17 @@ export async function executeTool(
       enhancedArgs = { ...enhancedArgs, toolCallId: options.toolCallId };
     }
 
-    // Inject the execution context id for plan-mode tools so they can update
-    // the per-conversation PermissionModeState without touching the global singleton.
-    const PLAN_MODE_TOOL_NAMES = new Set([
+    // Inject the execution context id for tools that need to update
+    // per-conversation state without touching global singletons.
+    const CONTEXT_AWARE_TOOL_NAMES = new Set([
       "EnterPlanMode",
       "enter_plan_mode",
       "ExitPlanMode",
       "exit_plan_mode",
+      "SetWorkingDirectory",
+      "set_working_directory",
     ]);
-    if (PLAN_MODE_TOOL_NAMES.has(internalName) && options?.toolContextId) {
+    if (CONTEXT_AWARE_TOOL_NAMES.has(internalName) && options?.toolContextId) {
       enhancedArgs = {
         ...enhancedArgs,
         _executionContextId: options.toolContextId,

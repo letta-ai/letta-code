@@ -1,0 +1,12 @@
+{
+  "type": "object",
+  "properties": {
+    "path": {
+      "type": "string",
+      "description": "The absolute or relative path to the new working directory. Relative paths are resolved against the current working directory."
+    }
+  },
+  "required": ["path"],
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

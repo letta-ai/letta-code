@@ -53,7 +53,10 @@ import {
   EMPTY_RESPONSE_MAX_RETRIES,
   LLM_API_ERROR_MAX_RETRIES,
 } from "./constants";
-import { getConversationWorkingDirectory } from "./cwd";
+import {
+  getConversationWorkingDirectory,
+  setConversationWorkingDirectory,
+} from "./cwd";
 import {
   consumeInterruptQueue,
   emitInterruptToolReturnMessage,
@@ -278,11 +281,27 @@ export async function handleIncomingMessage(
   const requestedConversationId = msg.conversationId || undefined;
   const conversationId = requestedConversationId ?? "default";
   const normalizedAgentId = normalizeCwdAgentId(agentId);
-  const turnWorkingDirectory = getConversationWorkingDirectory(
+  let turnWorkingDirectory = getConversationWorkingDirectory(
     runtime.listener,
     normalizedAgentId,
     conversationId,
   );
+
+  // Callback for the SetWorkingDirectory tool to persist cwd changes.
+  // Updates the per-conversation map, invalidates session context so the agent
+  // gets fresh git/cwd info, and updates turnWorkingDirectory for this turn.
+  const onCwdChange = (newCwd: string): void => {
+    setConversationWorkingDirectory(
+      runtime.listener,
+      normalizedAgentId ?? null,
+      conversationId,
+      newCwd,
+    );
+    runtime.reminderState.hasSentSessionContext = false;
+    runtime.reminderState.pendingSessionContextReason = "cwd_changed";
+    turnWorkingDirectory = newCwd;
+    runtime.activeWorkingDirectory = newCwd;
+  };
 
   // Get the canonical mutable permission mode state ref for this turn.
   // Websocket mode changes and tool implementations (EnterPlanMode/ExitPlanMode)
@@ -473,6 +492,7 @@ export async function handleIncomingMessage(
       conversationId,
       workingDirectory: turnWorkingDirectory,
       permissionModeState: turnPermissionModeState,
+      onCwdChange,
     });
     runtime.currentToolset = preparedToolContext.toolset;
     runtime.currentToolsetPreference = preparedToolContext.toolsetPreference;
