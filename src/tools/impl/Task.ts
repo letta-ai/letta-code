@@ -94,7 +94,10 @@ export interface SpawnBackgroundSubagentTaskArgs {
    */
   completionSummary?:
     | string
-    | ((result: { success: boolean; error?: string }) => string | Promise<string>);
+    | ((result: {
+        success: boolean;
+        error?: string;
+      }) => string | Promise<string>);
   /**
    * Called after the subagent finishes (success or failure).
    * Runs regardless of `silentCompletion` and is awaited before

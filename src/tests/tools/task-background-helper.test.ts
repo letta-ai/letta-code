@@ -236,7 +236,8 @@ describe("spawnBackgroundSubagentTask", () => {
       description: "Reflect on memory",
       silentCompletion: true,
       emitCompletionNotification: true,
-      completionSummary: "Reflected on my memory palace, the halls remember more now",
+      completionSummary:
+        "Reflected on the memory palace, the halls remember more now",
       deps: {
         spawnSubagentImpl,
         addToMessageQueueImpl,
