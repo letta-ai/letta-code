@@ -3623,14 +3623,6 @@ export default function App({
           agentState.llm_config,
         );
 
-        setHasConversationModelOverride(true);
-        setConversationOverrideModelSettings(conversationModelSettings ?? null);
-        setConversationOverrideContextWindowLimit((prev) =>
-          conversationContextWindowLimit === undefined
-            ? prev
-            : conversationContextWindowLimit,
-        );
-        setCurrentModelHandle(effectiveModelHandle);
         const modelInfo = getModelInfoForLlmConfig(effectiveModelHandle, {
           reasoning_effort: reasoningEffort,
           enable_reasoner:
@@ -3640,6 +3632,22 @@ export default function App({
               }
             ).enable_reasoner ?? null,
         });
+        const modelPresetContextWindow = (
+          modelInfo?.updateArgs as { context_window?: unknown } | undefined
+        )?.context_window;
+        const resolvedConversationContextWindowLimit =
+          conversationContextWindowLimit === undefined
+            ? typeof modelPresetContextWindow === "number"
+              ? modelPresetContextWindow
+              : null
+            : conversationContextWindowLimit;
+
+        setHasConversationModelOverride(true);
+        setConversationOverrideModelSettings(conversationModelSettings ?? null);
+        setConversationOverrideContextWindowLimit(
+          resolvedConversationContextWindowLimit,
+        );
+        setCurrentModelHandle(effectiveModelHandle);
         setCurrentModelId(modelInfo?.id ?? effectiveModelHandle);
         setLlmConfig({
           ...agentState.llm_config,
@@ -3647,8 +3655,8 @@ export default function App({
           ...(typeof reasoningEffort === "string"
             ? { reasoning_effort: reasoningEffort }
             : {}),
-          ...(typeof conversationContextWindowLimit === "number"
-            ? { context_window: conversationContextWindowLimit }
+          ...(typeof resolvedConversationContextWindowLimit === "number"
+            ? { context_window: resolvedConversationContextWindowLimit }
             : {}),
         });
       } catch (error) {
@@ -12553,12 +12561,10 @@ ${SYSTEM_REMINDER_CLOSE}
                 ? presetContextWindow
                 : undefined;
           if (!isDefaultConversation) {
-            setConversationOverrideContextWindowLimit((prev) =>
+            setConversationOverrideContextWindowLimit(
               typeof resolvedContextWindow === "number"
                 ? resolvedContextWindow
-                : conversationContextWindowLimit === null
-                  ? null
-                  : prev,
+                : null,
             );
           }
 
@@ -13535,6 +13541,12 @@ ${SYSTEM_REMINDER_CLOSE}
                 : conversationModelSettings,
               llmConfigRef.current,
             ) ?? desired.effort;
+          const resolvedConversationContextWindowLimit =
+            conversationContextWindowLimit === undefined
+              ? typeof llmConfigRef.current?.context_window === "number"
+                ? llmConfigRef.current.context_window
+                : null
+              : conversationContextWindowLimit;
 
           if (isDefaultConversation) {
             setHasConversationModelOverride(false);
@@ -13548,10 +13560,8 @@ ${SYSTEM_REMINDER_CLOSE}
             setConversationOverrideModelSettings(
               conversationModelSettings ?? null,
             );
-            setConversationOverrideContextWindowLimit((prev) =>
-              conversationContextWindowLimit === undefined
-                ? prev
-                : conversationContextWindowLimit,
+            setConversationOverrideContextWindowLimit(
+              resolvedConversationContextWindowLimit,
             );
           }
 
@@ -13562,8 +13572,8 @@ ${SYSTEM_REMINDER_CLOSE}
               ({} as LlmConfig)),
             ...mapHandleToLlmConfigPatch(desired.modelHandle),
             reasoning_effort: resolvedReasoningEffort as ModelReasoningEffort,
-            ...(typeof conversationContextWindowLimit === "number"
-              ? { context_window: conversationContextWindowLimit }
+            ...(typeof resolvedConversationContextWindowLimit === "number"
+              ? { context_window: resolvedConversationContextWindowLimit }
               : {}),
           });
           setCurrentModelId(desired.modelId);

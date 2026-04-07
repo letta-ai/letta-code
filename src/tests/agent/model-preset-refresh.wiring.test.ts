@@ -162,6 +162,9 @@ describe("model preset refresh wiring", () => {
     );
     expect(source).toContain("contextWindowSize: effectiveContextWindowSize");
     expect(source).toContain("const contextWindow = effectiveContextWindowSize ?? 0;");
+    expect(source).not.toMatch(
+      /setConversationOverrideContextWindowLimit\(\(prev\)\s*=>\s*conversationContextWindowLimit === undefined\s*\?\s*prev/s,
+    );
   });
 
   test("new conversation flows reapply active conversation model before switching", () => {
