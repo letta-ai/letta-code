@@ -32,6 +32,7 @@ import type {
   SubagentStateUpdateMessage,
   WsProtocolMessage,
 } from "../../types/protocol_v2";
+import { isDebugEnabled } from "../../utils/debug";
 import { SUPPORTED_REMOTE_COMMANDS } from "./commands";
 import { SYSTEM_REMINDER_RE } from "./constants";
 import { getConversationWorkingDirectory } from "./cwd";
@@ -56,6 +57,41 @@ import type {
 } from "./types";
 
 type RuntimeCarrier = ListenerRuntime | ConversationRuntime | null;
+
+const GIT_CONTEXT_CACHE_TTL_MS = 15_000;
+const MAX_GIT_CONTEXT_CACHE_ENTRIES = 64;
+const gitContextCache = new Map<
+  string,
+  {
+    expiresAt: number;
+    value: ReturnType<typeof getGitContext>;
+  }
+>();
+
+function getCachedDeviceGitContext(
+  cwd: string,
+): ReturnType<typeof getGitContext> {
+  const now = Date.now();
+  const cached = gitContextCache.get(cwd);
+  if (cached && cached.expiresAt > now) {
+    return cached.value;
+  }
+
+  const value = getGitContext(cwd);
+  gitContextCache.set(cwd, {
+    expiresAt: now + GIT_CONTEXT_CACHE_TTL_MS,
+    value,
+  });
+
+  if (gitContextCache.size > MAX_GIT_CONTEXT_CACHE_ENTRIES) {
+    const oldestKey = gitContextCache.keys().next().value;
+    if (oldestKey) {
+      gitContextCache.delete(oldestKey);
+    }
+  }
+
+  return value;
+}
 
 function getListenerRuntime(runtime: RuntimeCarrier): ListenerRuntime | null {
   if (!runtime) return null;
@@ -145,7 +181,7 @@ export function buildDeviceStatus(
       is_processing: false,
       current_permission_mode: permissionMode.getMode(),
       current_working_directory: fallbackCwd,
-      git_context: getGitContext(fallbackCwd),
+      git_context: getCachedDeviceGitContext(fallbackCwd),
       letta_code_version: process.env.npm_package_version || null,
       current_toolset: null,
       current_toolset_preference: "auto",
@@ -213,7 +249,7 @@ export function buildDeviceStatus(
     is_processing: !!conversationRuntime?.isProcessing,
     current_permission_mode: conversationPermissionModeState.mode,
     current_working_directory: resolvedCwd,
-    git_context: getGitContext(resolvedCwd),
+    git_context: getCachedDeviceGitContext(resolvedCwd),
     letta_code_version: process.env.npm_package_version || null,
     current_toolset:
       conversationRuntime?.currentToolset ??
@@ -388,7 +424,9 @@ export function emitProtocolV2Message(
     });
     return;
   }
-  console.log(`[Listen V2] Emitting ${message.type} (seq=${eventSeq})`);
+  if (isDebugEnabled()) {
+    console.log(`[Listen V2] Emitting ${message.type} (seq=${eventSeq})`);
+  }
   safeEmitWsEvent("send", "protocol", outbound);
 }
 

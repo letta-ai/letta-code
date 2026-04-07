@@ -587,6 +587,7 @@ async function applyModelUpdateForRuntime(params: {
       conversationId,
       model.handle,
       updateArgs,
+      { preserveContextWindow: false },
     );
     modelSettings =
       ((
