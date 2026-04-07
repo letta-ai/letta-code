@@ -18,7 +18,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, platform } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { debugLog, debugWarn } from "../utils/debug";
@@ -273,6 +273,9 @@ async function runGitWithRetry(
 /**
  * Configure a local credential helper in the repo's .git/config
  * so plain `git push` / `git pull` work without auth prefixes.
+ *
+ * On Windows, we write a batch script because the bash-style inline
+ * helper (`!f() { ... }; f`) doesn't work in PowerShell/cmd.
  */
 async function configureLocalCredentialHelper(
   dir: string,
@@ -280,7 +283,24 @@ async function configureLocalCredentialHelper(
 ): Promise<void> {
   const rawBaseUrl = getServerUrl();
   const normalizedBaseUrl = normalizeCredentialBaseUrl(rawBaseUrl);
-  const helper = `!f() { echo "username=letta"; echo "password=${token}"; }; f`;
+
+  let helper: string;
+
+  if (platform() === "win32") {
+    // Windows: write a batch script to .git/ and reference it
+    const helperScriptPath = join(dir, ".git", "letta-credential-helper.cmd");
+    const batchScript = `@echo off
+echo username=letta
+echo password=${token}
+`;
+    writeFileSync(helperScriptPath, batchScript, "utf-8");
+    // Git expects the helper path with forward slashes even on Windows
+    helper = helperScriptPath.replace(/\\/g, "/");
+    debugLog("memfs-git", `Wrote Windows credential helper script`);
+  } else {
+    // Unix/macOS: use inline bash helper
+    helper = `!f() { echo "username=letta"; echo "password=${token}"; }; f`;
+  }
 
   // Primary config: normalized origin key (most robust for git's credential lookup)
   await runGit(dir, [
