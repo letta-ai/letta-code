@@ -24,6 +24,8 @@ export interface PersonalityOption {
   id: "kawaii" | "codex" | "claude" | "linus" | "memo";
   label: string;
   description: string;
+  /** Model ID from models.json to use when no explicit model is provided. */
+  defaultModel?: string;
 }
 
 export const PERSONALITY_OPTIONS: PersonalityOption[] = [
@@ -41,6 +43,7 @@ export const PERSONALITY_OPTIONS: PersonalityOption[] = [
     id: "kawaii",
     label: "Letta-Chan",
     description: "sugoi~ (◕‿◕)✨",
+    defaultModel: "auto-chat",
   },
   {
     id: "claude",
@@ -362,7 +365,7 @@ export async function buildCreateAgentOptionsForPersonality(params: {
   return {
     name: name ?? personality.label,
     description: description ?? personality.description,
-    model,
+    model: model ?? personality.defaultModel,
     tags,
     memoryPromptMode: "memfs",
     memoryBlocks: defaultMemoryBlocks.map((block) => {
