@@ -217,12 +217,17 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       return result;
     };
 
-    // WS event logger: always writes to file, console only in --debug
+    const shouldLogWsEvents = debugMode || process.env.LETTA_LOG_WS_EVENTS === "1";
+
+    // WS event logger: optionally writes to file, console only in --debug
     const wsEventLogger = (
       direction: "send" | "recv",
       label: "client" | "protocol" | "control" | "lifecycle",
       event: unknown,
     ): void => {
+      if (!shouldLogWsEvents) {
+        return;
+      }
       sessionLog.wsEvent(direction, label, event);
       if (debugMode) {
         const arrow = direction === "send" ? "\u2192 send" : "\u2190 recv";
@@ -243,7 +248,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
           wsUrl: url,
           deviceId,
           connectionName,
-          onWsEvent: wsEventLogger,
+          onWsEvent: shouldLogWsEvents ? wsEventLogger : undefined,
           onStatusChange: (status) => {
             sessionLog.log(`status: ${status}`);
             console.log(`[${formatTimestamp()}] status: ${status}`);
@@ -326,7 +331,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
           wsUrl: url,
           deviceId,
           connectionName,
-          onWsEvent: wsEventLogger,
+          onWsEvent: shouldLogWsEvents ? wsEventLogger : undefined,
           onStatusChange: (status) => {
             sessionLog.log(`status: ${status}`);
             clearRetryStatusCallback?.();
