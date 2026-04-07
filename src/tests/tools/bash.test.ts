@@ -84,4 +84,32 @@ describe("Bash tool", () => {
       /missing required parameter.*command/,
     );
   });
+
+  test("blocks git worktree add outside .letta/worktrees/", async () => {
+    const result = await bash({
+      command: "git worktree add -b fix/feature ../my-worktree main",
+      description: "Test worktree path enforcement",
+    });
+
+    expect(result.status).toBe("error");
+    expect(result.content[0]?.text).toContain(
+      "Worktrees must be created under .letta/worktrees/",
+    );
+  });
+
+  test("allows git worktree add under .letta/worktrees/", async () => {
+    // This tests the validation only — the command itself will fail
+    // because there's no git repo, but it should NOT be blocked by
+    // the worktree path check.
+    const result = await bash({
+      command:
+        "git worktree add -b fix/feature .letta/worktrees/my-feature main",
+      description: "Test worktree path allowed",
+    });
+
+    // Should fail with a git error (not our validation error)
+    expect(result.content[0]?.text).not.toContain(
+      "Worktrees must be created under .letta/worktrees/",
+    );
+  });
 });
