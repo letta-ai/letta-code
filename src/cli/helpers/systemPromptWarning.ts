@@ -9,7 +9,7 @@ import { getMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
 import { settingsManager } from "../../settings-manager";
 import { debugWarn } from "../../utils/debug";
 
-const STARTUP_SYSTEM_PROMPT_WARNING_THRESHOLD_TOKENS = 30000; // can lower for testing to 10k
+const STARTUP_SYSTEM_PROMPT_WARNING_THRESHOLD_TOKENS = 30000;
 const STARTUP_SYSTEM_PROMPT_ESTIMATED_BYTES_PER_TOKEN = 4;
 
 export interface SystemPromptDoctorState {
@@ -33,7 +33,9 @@ export function estimateSystemTokens(text: string): number {
 /**
  * MemFS-based estimate of system prompt tokens (aggregate of all system/ files)
  */
-function estimateSystemPromptTokensFromMemoryDir(memoryDir: string): number {
+export function estimateSystemPromptTokensFromMemoryDir(
+  memoryDir: string,
+): number {
   const systemDir = join(memoryDir, "system");
   if (!existsSync(systemDir)) {
     return 0;
@@ -91,6 +93,12 @@ export function setSystemPromptDoctorState(
     JSON.stringify({ agentId, nextState }),
   );
   return nextState;
+}
+
+export function getSystemPromptDoctorState(
+  agentId: string,
+): SystemPromptDoctorState | null {
+  return systemPromptDoctorStateByAgent.get(agentId) ?? null;
 }
 
 /**

@@ -18,6 +18,7 @@ import {
   clearAllSubagents,
   registerSubagent,
 } from "../../cli/helpers/subagentState";
+import { setSystemPromptDoctorState } from "../../cli/helpers/systemPromptWarning";
 import { INTERRUPTED_BY_USER } from "../../constants";
 import type { MessageQueueItem } from "../../queue/queueRuntime";
 import type { LocalProjectSettings, Settings } from "../../settings-manager";
@@ -1375,6 +1376,18 @@ describe("listen-client v2 status builders", () => {
       (deviceStatus.current_working_directory ?? "").length,
     ).toBeGreaterThan(0);
     expect(deviceStatus.current_toolset_preference).toBe("auto");
+  });
+
+  test("buildDeviceStatus includes should_doctor state when available", () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    setSystemPromptDoctorState("agent-doctor-status", 31000);
+
+    const deviceStatus = __listenClientTestUtils.buildDeviceStatus(listener, {
+      agent_id: "agent-doctor-status",
+      conversation_id: "default",
+    });
+
+    expect(deviceStatus.should_doctor).toBe(true);
   });
 
   test("buildDeviceStatus includes only active bash and task background processes", () => {
