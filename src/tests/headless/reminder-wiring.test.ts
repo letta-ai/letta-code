@@ -38,6 +38,22 @@ describe("headless shared reminder wiring", () => {
     expect(source).toContain("reminderContextTracker");
   });
 
+  test("headless uses the effective runtime cwd for init events and reminders", () => {
+    const headlessPath = fileURLToPath(
+      new URL("../../headless.ts", import.meta.url),
+    );
+    const source = readFileSync(headlessPath, "utf-8");
+
+    expect(source).toContain(
+      'import { getCurrentWorkingDirectory } from "./runtime-context";',
+    );
+    expect(source).toContain("cwd: getCurrentWorkingDirectory()");
+    expect(source).toContain("workingDirectory: getCurrentWorkingDirectory()");
+    expect(source).toContain(
+      "settingsManager.getLocalLastAgentId(\n      getCurrentWorkingDirectory(),",
+    );
+  });
+
   test("subagent mode is wired via LETTA_CODE_AGENT_ROLE check", () => {
     const headlessPath = fileURLToPath(
       new URL("../../headless.ts", import.meta.url),

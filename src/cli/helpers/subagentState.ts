@@ -33,6 +33,8 @@ export interface SubagentState {
   toolCallId?: string; // Links this subagent to its parent Task tool call
   isBackground?: boolean; // True if running in background (fire-and-forget)
   silent?: boolean; // True if this subagent should be hidden from SubagentGroupDisplay
+  parentAgentId?: string; // Parent runtime scope agent id (for listener-mode WS scoping)
+  parentConversationId?: string; // Parent runtime scope conversation id
 }
 
 interface SubagentStore {
@@ -40,6 +42,8 @@ interface SubagentStore {
   expanded: boolean;
   listeners: Set<() => void>;
 }
+
+type TimerHandle = ReturnType<typeof setTimeout>;
 
 // ============================================================================
 // Store
@@ -57,6 +61,10 @@ let cachedSnapshot: { agents: SubagentState[]; expanded: boolean } = {
   expanded: false,
 };
 
+const DEFAULT_COMPLETED_SUBAGENT_RETENTION_MS = 30_000;
+let completedSubagentRetentionMs = DEFAULT_COMPLETED_SUBAGENT_RETENTION_MS;
+const completedSubagentCleanupTimers = new Map<string, TimerHandle>();
+
 // ============================================================================
 // Internal Helpers
 // ============================================================================
@@ -73,6 +81,52 @@ function notifyListeners(): void {
   for (const listener of store.listeners) {
     listener();
   }
+}
+
+function clearCompletedSubagentCleanup(id: string): void {
+  const existing = completedSubagentCleanupTimers.get(id);
+  if (!existing) {
+    return;
+  }
+
+  clearTimeout(existing);
+  completedSubagentCleanupTimers.delete(id);
+}
+
+function unrefTimer(timer: TimerHandle): void {
+  if (
+    typeof timer === "object" &&
+    timer !== null &&
+    "unref" in timer &&
+    typeof timer.unref === "function"
+  ) {
+    timer.unref();
+  }
+}
+
+function scheduleCompletedSubagentCleanup(id: string): void {
+  const agent = store.agents.get(id);
+  if (!agent || (agent.status !== "completed" && agent.status !== "error")) {
+    return;
+  }
+
+  clearCompletedSubagentCleanup(id);
+  const timer = setTimeout(() => {
+    const current = store.agents.get(id);
+    if (
+      !current ||
+      (current.status !== "completed" && current.status !== "error")
+    ) {
+      completedSubagentCleanupTimers.delete(id);
+      return;
+    }
+
+    store.agents.delete(id);
+    completedSubagentCleanupTimers.delete(id);
+    notifyListeners();
+  }, completedSubagentRetentionMs);
+  unrefTimer(timer);
+  completedSubagentCleanupTimers.set(id, timer);
 }
 
 let subagentCounter = 0;
@@ -112,6 +166,10 @@ export function registerSubagent(
   toolCallId?: string,
   isBackground?: boolean,
   silent?: boolean,
+  parentScope?: {
+    agentId?: string | null;
+    conversationId?: string | null;
+  },
 ): void {
   // Capitalize type for display (explore -> Explore)
   const displayType = type.charAt(0).toUpperCase() + type.slice(1);
@@ -130,8 +188,14 @@ export function registerSubagent(
     toolCallId,
     isBackground,
     silent,
+    parentAgentId: parentScope?.agentId ?? undefined,
+    parentConversationId:
+      parentScope?.conversationId && parentScope.conversationId.length > 0
+        ? parentScope.conversationId
+        : undefined,
   };
 
+  clearCompletedSubagentCleanup(id);
   store.agents.set(id, agent);
   notifyListeners();
 }
@@ -168,6 +232,11 @@ export function updateSubagent(
   // Create a new object to ensure React.memo detects the change
   const updatedAgent = { ...agent, ...updates, maxToolCallsSeen: nextMax };
   store.agents.set(id, updatedAgent);
+  if (updatedAgent.status === "completed" || updatedAgent.status === "error") {
+    scheduleCompletedSubagentCleanup(id);
+  } else {
+    clearCompletedSubagentCleanup(id);
+  }
   notifyListeners();
 }
 
@@ -222,7 +291,16 @@ export function completeSubagent(
     maxToolCallsSeen: Math.max(agent.maxToolCallsSeen, agent.toolCalls.length),
   } as SubagentState;
   store.agents.set(id, updatedAgent);
+  scheduleCompletedSubagentCleanup(id);
   notifyListeners();
+}
+
+export function __setCompletedSubagentRetentionMsForTests(ms: number): void {
+  completedSubagentRetentionMs = ms;
+}
+
+export function __resetCompletedSubagentRetentionMsForTests(): void {
+  completedSubagentRetentionMs = DEFAULT_COMPLETED_SUBAGENT_RETENTION_MS;
 }
 
 export function getSubagentToolCount(
@@ -280,28 +358,40 @@ export function getGroupedSubagents(): Map<string, SubagentState[]> {
  * Clear all completed subagents (call on new user message)
  */
 export function clearCompletedSubagents(): void {
+  let removedAny = false;
   for (const [id, agent] of store.agents.entries()) {
     if (agent.status === "completed" || agent.status === "error") {
+      clearCompletedSubagentCleanup(id);
       store.agents.delete(id);
+      removedAny = true;
     }
   }
-  notifyListeners();
+  if (removedAny) {
+    notifyListeners();
+  }
 }
 
 /**
  * Clear specific subagents by their IDs (call when committing to staticItems)
  */
 export function clearSubagentsByIds(ids: string[]): void {
+  let removedAny = false;
   for (const id of ids) {
-    store.agents.delete(id);
+    clearCompletedSubagentCleanup(id);
+    removedAny = store.agents.delete(id) || removedAny;
   }
-  notifyListeners();
+  if (removedAny) {
+    notifyListeners();
+  }
 }
 
 /**
  * Clear all subagents
  */
 export function clearAllSubagents(): void {
+  for (const id of Array.from(completedSubagentCleanupTimers.keys())) {
+    clearCompletedSubagentCleanup(id);
+  }
   store.agents.clear();
   notifyListeners();
 }
@@ -333,6 +423,7 @@ export function interruptActiveSubagents(errorMessage: string): void {
         durationMs: Date.now() - agent.startTime,
       };
       store.agents.set(id, updatedAgent);
+      scheduleCompletedSubagentCleanup(id);
       anyInterrupted = true;
     }
   }

@@ -1,9 +1,13 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import type WebSocket from "ws";
-import type { ApprovalResult } from "../../agent/approval-execution";
+import type {
+  ApprovalDecision,
+  ApprovalResult,
+} from "../../agent/approval-execution";
 import type { ContextTracker } from "../../cli/helpers/contextTracker";
 import type { ApprovalRequest } from "../../cli/helpers/stream";
+import type { ApprovalContext } from "../../permissions/analyzer";
 import type {
   DequeuedBatch,
   QueueBlockedReason,
@@ -11,6 +15,7 @@ import type {
   QueueRuntime,
 } from "../../queue/queueRuntime";
 import type { SharedReminderState } from "../../reminders/state";
+import type { ToolsetName, ToolsetPreference } from "../../tools/toolset";
 import type {
   ApprovalResponseBody,
   ControlRequest,
@@ -55,7 +60,7 @@ export interface IncomingMessage {
 }
 
 export interface ModeChangePayload {
-  mode: "default" | "acceptEdits" | "plan" | "bypassPermissions";
+  mode: "default" | "acceptEdits" | "plan" | "memory" | "bypassPermissions";
 }
 
 export interface ChangeCwdMessage {
@@ -87,6 +92,7 @@ export type PendingApprovalResolver = {
 export type RecoveredPendingApproval = {
   approval: ApprovalRequest;
   controlRequest: ControlRequest;
+  approvalContext: ApprovalContext | null;
 };
 
 export type RecoveredApprovalState = {
@@ -95,6 +101,8 @@ export type RecoveredApprovalState = {
   approvalsByRequestId: Map<string, RecoveredPendingApproval>;
   pendingRequestIds: Set<string>;
   responsesByRequestId: Map<string, ApprovalResponseBody>;
+  autoDecisions?: ApprovalDecision[];
+  allApprovals?: ApprovalRequest[];
 };
 
 export type ConversationRuntime = {
@@ -119,6 +127,9 @@ export type ConversationRuntime = {
   pendingTurns: number;
   isRecoveringApprovals: boolean;
   loopStatus: LoopStatus;
+  currentToolset: ToolsetName | null;
+  currentToolsetPreference: ToolsetPreference;
+  currentLoadedTools: string[];
   pendingApprovalBatchByToolCallId: Map<string, string>;
   pendingInterruptedResults: Array<ApprovalResult> | null;
   pendingInterruptedContext: {

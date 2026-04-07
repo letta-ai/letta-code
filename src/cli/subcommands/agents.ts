@@ -1,20 +1,39 @@
 import { parseArgs } from "node:util";
 import type { AgentListParams } from "@letta-ai/letta-client/resources/agents/agents";
 import { getClient } from "../../agent/client";
+import { type CreateAgentOptions, createAgent } from "../../agent/create";
+import {
+  buildCreateAgentOptionsForPersonality,
+  createAgentForPersonality,
+  enableMemfsForCreatedAgent,
+  resolvePersonalityId,
+} from "../../agent/personality";
+import { settingsManager } from "../../settings-manager";
 
 function printUsage(): void {
   console.log(
     `
 Usage:
   letta agents list [options]
+  letta agents create [options]
 
-Options:
+List Options:
   --name <name>         Exact name match
   --query <text>        Fuzzy search by name
   --tags <tag1,tag2>    Filter by tags (comma-separated)
   --match-all-tags      Require ALL tags (default: ANY)
   --include-blocks      Include agent.blocks in response
   --limit <n>           Max results (default: 20)
+
+Create Options:
+  --name <name>         Agent name (default: "Letta Code")
+  --model <model>       Model handle (e.g., anthropic/claude-sonnet-4-20250514)
+  --personality <name>  Personality preset: letta-code, linus, kawaii, claude, codex
+  --description <text>  Agent description
+  --tags <tag1,tag2>    Tags (comma-separated)
+  --pinned              Pin the created agent globally
+
+  Creates a memfs-enabled agent with persona.md pre-populated.
 
 Notes:
   - Output is JSON only.
@@ -46,6 +65,11 @@ const AGENTS_OPTIONS = {
   "match-all-tags": { type: "boolean" },
   "include-blocks": { type: "boolean" },
   limit: { type: "string" },
+  // Create options
+  model: { type: "string" },
+  personality: { type: "string" },
+  description: { type: "string" },
+  pinned: { type: "boolean" },
 } as const;
 
 function parseAgentsArgs(argv: string[]) {
@@ -74,33 +98,118 @@ export async function runAgentsSubcommand(argv: string[]): Promise<number> {
     return 0;
   }
 
-  if (action !== "list") {
-    console.error(`Unknown action: ${action}`);
-    printUsage();
+  if (action === "create") {
+    return runCreateAction(parsed.values);
+  }
+
+  if (action === "list") {
+    return runListAction(parsed.values);
+  }
+
+  console.error(`Unknown action: ${action}`);
+  printUsage();
+  return 1;
+}
+
+async function runCreateAction(
+  values: ReturnType<typeof parseAgentsArgs>["values"],
+): Promise<number> {
+  const personalityInput = values.personality as string | undefined;
+  const personality = personalityInput
+    ? resolvePersonalityId(personalityInput)
+    : undefined;
+
+  if (personalityInput && !personality) {
+    console.error(
+      `Unknown personality: ${personalityInput}. Valid: letta-code, linus, kawaii, claude, codex`,
+    );
     return 1;
   }
 
+  const options: CreateAgentOptions = personality
+    ? await buildCreateAgentOptionsForPersonality({
+        personalityId: personality,
+      })
+    : {
+        memoryPromptMode: "memfs",
+      };
+
+  if (typeof values.name === "string") {
+    options.name = values.name;
+  }
+
+  if (typeof values.model === "string") {
+    options.model = values.model;
+  }
+
+  if (typeof values.description === "string") {
+    options.description = values.description;
+  }
+
+  const tags = parseTags(values.tags);
+  if (tags) {
+    options.tags = tags;
+  }
+
+  try {
+    const result = personality
+      ? await createAgentForPersonality({
+          personalityId: personality,
+          name: options.name,
+          description: options.description,
+          model: options.model,
+          tags: options.tags,
+        })
+      : await createAgent(options);
+    const agentId = result.agent.id;
+
+    if (!personality) {
+      await enableMemfsForCreatedAgent({
+        agentId,
+        agentTags: result.agent.tags,
+      });
+    }
+
+    if (values.pinned) {
+      settingsManager.pinGlobal(agentId);
+    }
+
+    // Re-fetch agent to get updated tags in output
+    const client = await getClient();
+    const updatedAgent = await client.agents.retrieve(agentId);
+
+    console.log(JSON.stringify(updatedAgent, null, 2));
+    return 0;
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    return 1;
+  }
+}
+
+async function runListAction(
+  values: ReturnType<typeof parseAgentsArgs>["values"],
+): Promise<number> {
   const params: AgentListParams = {
-    limit: parseLimit(parsed.values.limit, 20),
+    limit: parseLimit(values.limit, 20),
   };
 
-  if (typeof parsed.values.name === "string") {
-    params.name = parsed.values.name;
+  if (typeof values.name === "string") {
+    params.name = values.name;
   }
 
-  if (typeof parsed.values.query === "string") {
-    params.query_text = parsed.values.query;
+  if (typeof values.query === "string") {
+    params.query_text = values.query;
   }
 
-  const tags = parseTags(parsed.values.tags);
+  const tags = parseTags(values.tags);
   if (tags) {
     params.tags = tags;
-    if (parsed.values["match-all-tags"]) {
+    if (values["match-all-tags"]) {
       params.match_all_tags = true;
     }
   }
 
-  if (parsed.values["include-blocks"]) {
+  if (values["include-blocks"]) {
     params.include = ["agent.blocks"];
   }
 

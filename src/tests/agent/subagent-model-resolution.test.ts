@@ -4,6 +4,7 @@ import {
   buildSubagentArgs,
   resolveSubagentLauncher,
   resolveSubagentModel,
+  resolveSubagentWorkingDirectory,
 } from "../../agent/subagents/manager";
 
 describe("resolveSubagentLauncher", () => {
@@ -120,6 +121,28 @@ describe("resolveSubagentLauncher", () => {
   });
 });
 
+describe("resolveSubagentWorkingDirectory", () => {
+  test("prefers USER_CWD when present", () => {
+    const cwd = resolveSubagentWorkingDirectory(
+      {
+        USER_CWD: "/tmp/fixture-dir",
+      } as NodeJS.ProcessEnv,
+      "/tmp/repo-root",
+    );
+
+    expect(cwd).toBe("/tmp/fixture-dir");
+  });
+
+  test("falls back to process cwd when USER_CWD is absent", () => {
+    const cwd = resolveSubagentWorkingDirectory(
+      {} as NodeJS.ProcessEnv,
+      "/tmp/repo-root",
+    );
+
+    expect(cwd).toBe("/tmp/repo-root");
+  });
+});
+
 describe("buildSubagentArgs", () => {
   const baseConfig: SubagentConfig = {
     name: "test-subagent",
@@ -154,6 +177,21 @@ describe("buildSubagentArgs", () => {
     expect(args).toContain("--agent");
     expect(args).not.toContain("--new-agent");
     expect(args).not.toContain("--no-memfs");
+  });
+
+  test("passes memory permission mode through when configured", () => {
+    const args = buildSubagentArgs(
+      "test-subagent",
+      {
+        ...baseConfig,
+        permissionMode: "memory",
+      },
+      null,
+      "hello",
+    );
+
+    expect(args).toContain("--permission-mode");
+    expect(args).toContain("memory");
   });
 });
 

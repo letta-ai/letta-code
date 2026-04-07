@@ -50,7 +50,7 @@ describe("init wiring", () => {
 
     expect(content).toContain("name: init");
     expect(content).toContain("model: auto-fast");
-    expect(content).toContain("permissionMode: bypassPermissions");
+    expect(content).toContain("permissionMode: memory");
   });
 
   test("init subagent is registered in BUILTIN_SOURCES", () => {
@@ -68,14 +68,13 @@ describe("init wiring", () => {
     expect(content).toContain("name: init");
     expect(content).toContain("model: auto-fast");
     expect(content).not.toContain("skills:");
-    expect(content).toContain("permissionMode: bypassPermissions");
+    expect(content).toContain("permissionMode: memory");
   });
 
   const baseArgs = {
     agentId: "test-agent",
     workingDirectory: "/tmp/test",
     memoryDir: "/tmp/test/.memory",
-    gitContext: "- branch: main\n- status: (clean)",
     gitIdentity: "Test User <test@example.com>",
     existingMemoryPaths: [] as string[],
     existingMemory: "",

@@ -269,11 +269,37 @@
       }
     },
     {
-      "id": "bedrock-opus",
+      "id": "bedrock-opus-4.5",
       "handle": "bedrock/us.anthropic.claude-opus-4-5-20251101-v1:0",
       "label": "Bedrock Opus 4.5",
       "shortLabel": "Opus 4.5 BR",
-      "description": "Anthropic's best model (via AWS Bedrock)",
+      "description": "Anthropic's Opus 4.5 (via AWS Bedrock)",
+      "updateArgs": {
+        "context_window": 180000,
+        "max_output_tokens": 64000,
+        "max_reasoning_tokens": 31999,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "bedrock-opus-4.6",
+      "handle": "bedrock/us.anthropic.claude-opus-4-6-v1",
+      "label": "Bedrock Opus 4.6",
+      "shortLabel": "Opus 4.6 BR",
+      "description": "Anthropic's Opus 4.6 (via AWS Bedrock)",
+      "updateArgs": {
+        "context_window": 180000,
+        "max_output_tokens": 64000,
+        "max_reasoning_tokens": 31999,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "bedrock-sonnet-4.6",
+      "handle": "bedrock/us.anthropic.claude-sonnet-4-6",
+      "label": "Bedrock Sonnet 4.6",
+      "shortLabel": "Sonnet 4.6 BR",
+      "description": "Anthropic's Sonnet 4.6 (via AWS Bedrock)",
       "updateArgs": {
         "context_window": 180000,
         "max_output_tokens": 64000,
@@ -944,72 +970,6 @@
       }
     },
     {
-      "id": "gpt-5.4-none",
-      "handle": "openai/gpt-5.4",
-      "label": "GPT-5.4",
-      "description": "OpenAI's most capable model (no reasoning)",
-      "updateArgs": {
-        "reasoning_effort": "none",
-        "verbosity": "medium",
-        "context_window": 272000,
-        "max_output_tokens": 128000,
-        "parallel_tool_calls": true
-      }
-    },
-    {
-      "id": "gpt-5.4-low",
-      "handle": "openai/gpt-5.4",
-      "label": "GPT-5.4",
-      "description": "OpenAI's most capable model (low reasoning)",
-      "updateArgs": {
-        "reasoning_effort": "low",
-        "verbosity": "medium",
-        "context_window": 272000,
-        "max_output_tokens": 128000,
-        "parallel_tool_calls": true
-      }
-    },
-    {
-      "id": "gpt-5.4-medium",
-      "handle": "openai/gpt-5.4",
-      "label": "GPT-5.4",
-      "description": "OpenAI's most capable model (med reasoning)",
-      "updateArgs": {
-        "reasoning_effort": "medium",
-        "verbosity": "medium",
-        "context_window": 272000,
-        "max_output_tokens": 128000,
-        "parallel_tool_calls": true
-      }
-    },
-    {
-      "id": "gpt-5.4-high",
-      "handle": "openai/gpt-5.4",
-      "label": "GPT-5.4",
-      "description": "OpenAI's most capable model (high reasoning)",
-      "isFeatured": true,
-      "updateArgs": {
-        "reasoning_effort": "high",
-        "verbosity": "medium",
-        "context_window": 272000,
-        "max_output_tokens": 128000,
-        "parallel_tool_calls": true
-      }
-    },
-    {
-      "id": "gpt-5.4-xhigh",
-      "handle": "openai/gpt-5.4",
-      "label": "GPT-5.4",
-      "description": "OpenAI's most capable model (max reasoning)",
-      "updateArgs": {
-        "reasoning_effort": "xhigh",
-        "verbosity": "medium",
-        "context_window": 272000,
-        "max_output_tokens": 128000,
-        "parallel_tool_calls": true
-      }
-    },
-    {
       "id": "gpt-5.4-pro-medium",
       "handle": "openai/gpt-5.4-pro",
       "label": "GPT-5.4 Pro",
@@ -1467,10 +1427,23 @@
       }
     },
     {
+      "id": "glm-5.1",
+      "handle": "zai/glm-5.1",
+      "label": "GLM-5.1",
+      "description": "zAI's latest coding model",
+      "isFeatured": true,
+      "free": true,
+      "updateArgs": {
+        "context_window": 180000,
+        "max_output_tokens": 16000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
       "id": "glm-5",
       "handle": "zai/glm-5",
       "label": "GLM-5",
-      "description": "zAI's latest coding model",
+      "description": "zAI's latest coding model (legacy)",
       "isFeatured": true,
       "free": true,
       "updateArgs": {

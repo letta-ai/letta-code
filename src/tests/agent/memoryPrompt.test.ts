@@ -36,12 +36,12 @@ describe("buildSystemPrompt", () => {
     expect(result).toContain(
       "Your memory consists of core memory (composed of memory blocks)",
     );
-    expect(result).not.toContain("## Memory layout");
+    expect(result).not.toContain("## Memory structure");
   });
 
   test("builds memfs prompt with memfs addon", () => {
     const result = buildSystemPrompt("letta", "memfs");
-    expect(result).toContain("## Memory layout");
+    expect(result).toContain("## Memory structure");
     expect(result).not.toContain(
       "Your memory consists of core memory (composed of memory blocks)",
     );
@@ -73,11 +73,11 @@ describe("swapMemoryAddon", () => {
 
     const result = swapMemoryAddon(standard, "memfs");
 
-    expect(result).toContain("## Memory layout");
+    expect(result).toContain("## Memory structure");
     expect(result).not.toContain(
       "Your memory consists of core memory (composed of memory blocks)",
     );
-    expect(countOccurrences(result, "## Memory layout")).toBe(1);
+    expect(countOccurrences(result, "## Memory structure")).toBe(1);
   });
 
   test("swaps memfs to standard without orphan fragments", () => {
@@ -89,7 +89,7 @@ describe("swapMemoryAddon", () => {
     expect(result).toContain(
       "Your memory consists of core memory (composed of memory blocks)",
     );
-    expect(result).not.toContain("## Memory layout");
+    expect(result).not.toContain("## Memory structure");
     expect(result).not.toContain("# See what changed");
     expect(result).not.toContain('git commit -m "<type>: <what changed>"');
   });
@@ -100,7 +100,7 @@ describe("swapMemoryAddon", () => {
 
     const result = swapMemoryAddon(doubled, "memfs");
 
-    expect(countOccurrences(result, "## Memory layout")).toBe(1);
+    expect(countOccurrences(result, "## Memory structure")).toBe(1);
     expect(result).not.toContain(
       "Your memory consists of core memory (composed of memory blocks)",
     );
@@ -126,9 +126,9 @@ describe("swapMemoryAddon", () => {
 
     const result = swapMemoryAddon(legacy, "memfs");
 
-    expect(result).toContain("## Memory layout");
+    expect(result).toContain("## Memory structure");
     expect(result).not.toContain("Legacy memory instructions");
-    expect(countOccurrences(result, "## Memory layout")).toBe(1);
+    expect(countOccurrences(result, "## Memory structure")).toBe(1);
   });
 
   test("strips legacy heading-based ## Memory Filesystem section", () => {

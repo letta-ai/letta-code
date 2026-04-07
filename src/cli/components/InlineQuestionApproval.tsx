@@ -1,5 +1,5 @@
 import { Box, useInput } from "ink";
-import { Fragment, memo, useMemo, useState } from "react";
+import { Fragment, memo, useEffect, useMemo, useState } from "react";
 import { useProgressIndicator } from "../hooks/useProgressIndicator";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { useTextInputCursor } from "../hooks/useTextInputCursor";
@@ -23,53 +23,83 @@ type Props = {
   questions: Question[];
   onSubmit: (answers: Record<string, string>) => void;
   onCancel?: () => void;
+  onConsumeDraft?: () => void;
   isFocused?: boolean;
+  initialDraft?: string;
 };
 
 // Horizontal line character for Claude Code style
 const SOLID_LINE = "─";
 
 export const InlineQuestionApproval = memo(
-  ({ questions, onSubmit, onCancel, isFocused = true }: Props) => {
+  ({
+    questions,
+    onSubmit,
+    onCancel,
+    onConsumeDraft,
+    isFocused = true,
+    initialDraft,
+  }: Props) => {
     const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
     const [answers, setAnswers] = useState<Record<string, string>>({});
     const [selectedOption, setSelectedOption] = useState(0);
-    const {
-      text: customText,
-      setText: setCustomText,
-      cursorPos,
-      setCursorPos,
-      handleKey,
-      clear: clearCustomText,
-    } = useTextInputCursor();
     const [selectedMulti, setSelectedMulti] = useState<Set<number>>(new Set());
     const columns = useTerminalWidth();
     useProgressIndicator();
 
     const currentQuestion = questions[currentQuestionIndex];
 
-    // Build options list: regular options + "Type something" (unless allowOther=false)
+    // Build options list: regular options + draft (if exists) + "Type new message" (unless allowOther=false)
     // For multi-select, we also track a separate "Submit" action
     const showOther = currentQuestion?.allowOther !== false;
-    const baseOptions = currentQuestion
+    const hasDraft = initialDraft && initialDraft.trim().length > 0;
+
+    const draftInput = useTextInputCursor(hasDraft ? initialDraft : "");
+    const customInput = useTextInputCursor("");
+
+    // Regular options from the question
+    const regularOptions = currentQuestion?.options ?? [];
+
+    // Draft option (if exists) - shows truncated preview
+    const draftOption = hasDraft
       ? [
-          ...currentQuestion.options,
-          ...(showOther ? [{ label: "Type something.", description: "" }] : []),
+          {
+            label: initialDraft,
+            description: "",
+          },
         ]
       : [];
+
+    // "Type new message" option
+    const typeNewOption = showOther
+      ? [{ label: "Type new message.", description: "" }]
+      : [];
+
+    const baseOptions = [...regularOptions, ...draftOption, ...typeNewOption];
 
     // For multi-select, add Submit as a separate selectable item
     const optionsWithOther = currentQuestion?.multiSelect
       ? [...baseOptions, { label: "Submit", description: "" }]
       : baseOptions;
 
-    const customOptionIndex = showOther ? baseOptions.length - 1 : -1; // "Type something" index (-1 if disabled)
+    // Track indices for special options
+    const draftOptionIndex = hasDraft ? regularOptions.length : -1;
+    const customOptionIndex = showOther ? baseOptions.length - 1 : -1; // "Type new message" index
     const submitOptionIndex = currentQuestion?.multiSelect
       ? optionsWithOther.length - 1
       : -1; // Submit index (only for multi-select)
 
+    const isOnDraftOption = hasDraft && selectedOption === draftOptionIndex;
     const isOnCustomOption = showOther && selectedOption === customOptionIndex;
     const isOnSubmitOption = selectedOption === submitOptionIndex;
+    // If a draft exists, default the selection to the draft option so it's
+    // immediately visible and the user can enter/edit it quickly.
+    // Run this in an effect so it updates when questions/currentQuestion changes.
+    useEffect(() => {
+      if (hasDraft && draftOptionIndex >= 0) {
+        setSelectedOption(draftOptionIndex);
+      }
+    }, [hasDraft, draftOptionIndex]);
 
     const handleSubmitAnswer = (answer: string) => {
       if (!currentQuestion) return;
@@ -82,7 +112,8 @@ export const InlineQuestionApproval = memo(
       if (currentQuestionIndex < questions.length - 1) {
         setCurrentQuestionIndex(currentQuestionIndex + 1);
         setSelectedOption(0);
-        clearCustomText();
+        draftInput.clear();
+        customInput.clear();
         setSelectedMulti(new Set());
       } else {
         onSubmit(newAnswers);
@@ -111,7 +142,27 @@ export const InlineQuestionApproval = memo(
           return;
         }
 
-        // When on custom input option ("Type something")
+        // When on draft input option
+        if (isOnDraftOption) {
+          if (key.return) {
+            if (draftInput.text.trim()) {
+              onConsumeDraft?.();
+              handleSubmitAnswer(draftInput.text.trim());
+            }
+            return;
+          }
+          if (key.escape) {
+            if (draftInput.text) {
+              draftInput.clear();
+            } else {
+              onCancel?.();
+            }
+            return;
+          }
+          if (draftInput.handleKey(input, key)) return;
+        }
+
+        // When on custom input option ("Type new message")
         if (isOnCustomOption) {
           if (key.return) {
             // Enter toggles the checkbox (same as other options)
@@ -127,8 +178,8 @@ export const InlineQuestionApproval = memo(
               });
             } else {
               // Single-select: submit the custom text if any
-              if (customText.trim()) {
-                handleSubmitAnswer(customText.trim());
+              if (customInput.text.trim()) {
+                handleSubmitAnswer(customInput.text.trim());
               }
             }
             return;
@@ -143,22 +194,23 @@ export const InlineQuestionApproval = memo(
               });
             }
             // Insert space at cursor position
-            setCustomText(
-              (prev) => `${prev.slice(0, cursorPos)} ${prev.slice(cursorPos)}`,
+            customInput.setText(
+              (prev) =>
+                `${prev.slice(0, customInput.cursorPos)} ${prev.slice(customInput.cursorPos)}`,
             );
-            setCursorPos((prev) => prev + 1);
+            customInput.setCursorPos((prev) => prev + 1);
             return;
           }
           if (key.escape) {
-            if (customText) {
-              clearCustomText();
+            if (customInput.text) {
+              customInput.clear();
             } else {
               onCancel?.();
             }
             return;
           }
           // Handle text input (arrows, backspace, typing)
-          if (handleKey(input, key)) return;
+          if (customInput.handleKey(input, key)) return;
         }
 
         // When on Submit option (multi-select only)
@@ -169,8 +221,8 @@ export const InlineQuestionApproval = memo(
             for (const i of selectedMulti) {
               if (i === customOptionIndex) {
                 // Include custom text if checkbox is checked and text was entered
-                if (customText.trim()) {
-                  selectedLabels.push(customText.trim());
+                if (customInput.text.trim()) {
+                  selectedLabels.push(customInput.text.trim());
                 }
               } else {
                 const label = baseOptions[i]?.label;
@@ -250,7 +302,18 @@ export const InlineQuestionApproval = memo(
                 return newSet;
               });
             } else {
-              handleSubmitAnswer(optionsWithOther[optionIndex]?.label || "");
+              if (optionIndex === draftOptionIndex) {
+                if (draftInput.text.trim()) {
+                  onConsumeDraft?.();
+                  handleSubmitAnswer(draftInput.text.trim());
+                }
+              } else if (optionIndex === customOptionIndex) {
+                if (customInput.text.trim()) {
+                  handleSubmitAnswer(customInput.text.trim());
+                }
+              } else {
+                handleSubmitAnswer(optionsWithOther[optionIndex]?.label || "");
+              }
             }
           }
         }
@@ -316,6 +379,7 @@ export const InlineQuestionApproval = memo(
             const isSelected = index === selectedOption;
             const isChecked = selectedMulti.has(index);
             const color = isSelected ? colors.approval.header : undefined;
+            const isDraftOption = index === draftOptionIndex;
             const isCustomOption = index === customOptionIndex;
             const isSubmitOption = index === submitOptionIndex;
 
@@ -347,7 +411,8 @@ export const InlineQuestionApproval = memo(
               );
             }
 
-            const hasDescription = option.description && !isCustomOption;
+            const hasDescription =
+              option.description && !isCustomOption && !isDraftOption;
 
             // Use Fragment to avoid column Box wrapper - render row and description as siblings
             // Note: Can't use <> shorthand with key, so we import Fragment
@@ -370,20 +435,34 @@ export const InlineQuestionApproval = memo(
                   )}
                   {/* Label */}
                   <Box flexGrow={1} width={Math.max(0, columns - prefixWidth)}>
-                    {isCustomOption ? (
-                      // Custom input option ("Type something")
-                      customText ? (
-                        <Text wrap="wrap">
-                          {customText.slice(0, cursorPos)}
-                          {isSelected && "█"}
-                          {customText.slice(cursorPos)}
-                        </Text>
-                      ) : (
-                        <Text wrap="wrap" dimColor>
-                          {option.label}
-                          {isSelected && "█"}
-                        </Text>
-                      )
+                    {isDraftOption || isCustomOption ? (
+                      (() => {
+                        const textValue = isDraftOption
+                          ? draftInput.text
+                          : customInput.text;
+                        const textCursor = isDraftOption
+                          ? draftInput.cursorPos
+                          : customInput.cursorPos;
+
+                        if (textValue) {
+                          const display = isSelected
+                            ? `${textValue.slice(0, textCursor)}█${textValue.slice(textCursor)}`
+                            : textValue;
+                          return <Text wrap="wrap">{display}</Text>;
+                        }
+
+                        const emptyDisplay = isDraftOption
+                          ? `${initialDraft}${isSelected ? "█" : ""}`
+                          : isSelected
+                            ? "█"
+                            : "";
+
+                        return (
+                          <Text wrap="wrap" dimColor>
+                            {emptyDisplay}
+                          </Text>
+                        );
+                      })()
                     ) : (
                       <Text wrap="wrap" color={color} bold={isSelected}>
                         {option.label}

@@ -167,8 +167,14 @@ export async function getClient() {
           context: "auth_client_token_refresh",
         });
         console.error("Failed to refresh access token:", error);
-        console.error("Please run 'letta login' to re-authenticate");
-        process.exit(1);
+        console.error(
+          "\nIf you experience this issue multiple times, move ~/.letta to ~/.letta_backup, and re-run 'letta' to re-authenticate",
+        );
+        throw new Error(
+          `Failed to refresh access token: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
       }
     }
   }
@@ -185,7 +191,9 @@ export async function getClient() {
       "Run 'letta' to configure authentication, or set LETTA_API_KEY to your API key",
     );
     console.error(new Error("getClient() called without credentials").stack);
-    process.exit(1);
+    throw new Error(
+      "Missing LETTA_API_KEY. Run 'letta' to configure authentication, or set LETTA_API_KEY to your API key.",
+    );
   }
 
   // Note: ChatGPT OAuth token refresh is handled by the Letta backend

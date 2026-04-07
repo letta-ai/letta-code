@@ -1,6 +1,15 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { createHash } from "node:crypto";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { homedir } from "node:os";
+import { join, normalize } from "node:path";
 import {
   addEntriesToCache,
   refreshFileIndex,
@@ -69,6 +78,14 @@ describe("build and search", () => {
       deep: true,
       maxResults: 100,
     });
+
+    // Diagnostic: print entries on CI failure so we can debug Windows issues.
+    if (all.length < 10) {
+      console.warn(
+        `[DIAGNOSTIC] Expected 10 entries but got ${all.length}:`,
+        JSON.stringify(all.map((e) => ({ path: e.path, type: e.type }))),
+      );
+    }
 
     // Should find all files
     const paths = all.map((r) => r.path);
@@ -391,5 +408,242 @@ describe("addEntriesToCache", () => {
 
     // Should still be exactly 1 (from the original build)
     expect(results.length).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Content-based hashing
+// ---------------------------------------------------------------------------
+
+/**
+ * Replicate the sanitization logic from fileIndex.ts so we can locate the
+ * on-disk cache file for a given index root.
+ */
+function getTestCachePath(indexRoot: string): string {
+  const normalizedPath = normalize(indexRoot);
+  const strippedPath = normalizedPath.replace(/^[/\\]+/, "");
+  const sanitized = strippedPath.replace(/[/\\:]/g, "_").replace(/\s+/g, "_");
+  const safeName = sanitized.length === 0 ? "workspace" : sanitized;
+  return join(homedir(), ".letta", "projects", safeName, "file-index.json");
+}
+
+describe("content-based hashing", () => {
+  test("cache file is written with version field", async () => {
+    await refreshFileIndex();
+
+    const cachePath = getTestCachePath(TEST_DIR);
+    if (!existsSync(cachePath)) {
+      // Cache may not be written in CI or when cwd === homedir; skip gracefully
+      return;
+    }
+
+    const cache = JSON.parse(readFileSync(cachePath, "utf-8"));
+    expect(cache.metadata.version).toBe(2);
+  });
+
+  test("old cache format (no version) triggers full rebuild", async () => {
+    // First build — creates a valid v2 cache
+    await refreshFileIndex();
+
+    const cachePath = getTestCachePath(TEST_DIR);
+    if (!existsSync(cachePath)) {
+      return;
+    }
+
+    // Overwrite with a v1-style cache (no version field)
+    const oldFormatCache = {
+      metadata: { rootHash: "stale-hash" },
+      entries: [],
+      merkle: {},
+      stats: {},
+    };
+    writeFileSync(cachePath, JSON.stringify(oldFormatCache), "utf-8");
+
+    // Rebuild — should discard the v1 cache and produce a full index
+    await refreshFileIndex();
+
+    const all = searchFileIndex({
+      searchDir: "",
+      pattern: "",
+      deep: true,
+      maxResults: 1000,
+    });
+
+    // All 10 entries (3 dirs + 7 files) should be present despite the stale cache
+    expect(all.length).toBe(10);
+
+    // Cache should now be v2 again
+    if (existsSync(cachePath)) {
+      const newCache = JSON.parse(readFileSync(cachePath, "utf-8"));
+      expect(newCache.metadata.version).toBe(2);
+    }
+  });
+
+  test("modified file content is reflected after rebuild", async () => {
+    await refreshFileIndex();
+
+    const cachePath = getTestCachePath(TEST_DIR);
+    let rootHashBefore: string | undefined;
+    if (existsSync(cachePath)) {
+      rootHashBefore = JSON.parse(readFileSync(cachePath, "utf-8")).metadata
+        .rootHash;
+    }
+
+    // Modify file content (content-based hash should change)
+    writeFileSync(join(TEST_DIR, "README.md"), "# Changed content");
+
+    await refreshFileIndex();
+
+    // The file should still be in the index
+    const results = searchFileIndex({
+      searchDir: "",
+      pattern: "README",
+      deep: true,
+      maxResults: 10,
+    });
+    expect(results.length).toBe(1);
+
+    // If we can read the cache, the root hash should have changed
+    if (existsSync(cachePath) && rootHashBefore) {
+      const rootHashAfter = JSON.parse(readFileSync(cachePath, "utf-8"))
+        .metadata.rootHash;
+      expect(rootHashAfter).not.toBe(rootHashBefore);
+    }
+  });
+
+  test("small file uses content-based hash (sha256 of bytes)", async () => {
+    await refreshFileIndex();
+
+    const cachePath = getTestCachePath(TEST_DIR);
+    if (!existsSync(cachePath)) {
+      return;
+    }
+
+    const cache = JSON.parse(readFileSync(cachePath, "utf-8"));
+
+    // Compute the expected content hash for README.md
+    const fileContent = readFileSync(join(TEST_DIR, "README.md"));
+    const expectedHash = createHash("sha256").update(fileContent).digest("hex");
+
+    // The merkle hash stored for this file should match sha256(file_bytes)
+    expect(cache.merkle["README.md"]).toBe(expectedHash);
+  });
+
+  test("large file falls back to metadata-based hash", async () => {
+    // Create a file just over the 5MB threshold
+    const largeBuf = Buffer.alloc(5 * 1024 * 1024 + 1, "x");
+    writeFileSync(join(TEST_DIR, "large.bin"), largeBuf);
+
+    await refreshFileIndex();
+
+    // File should be indexed and searchable
+    const results = searchFileIndex({
+      searchDir: "",
+      pattern: "large.bin",
+      deep: true,
+      maxResults: 10,
+    });
+    expect(results.length).toBe(1);
+    expect(results[0]?.type).toBe("file");
+
+    const cachePath = getTestCachePath(TEST_DIR);
+    if (!existsSync(cachePath)) {
+      return;
+    }
+
+    const cache = JSON.parse(readFileSync(cachePath, "utf-8"));
+    const storedHash = cache.merkle["large.bin"];
+
+    // The hash should NOT be sha256(file_bytes) — it should be a metadata hash
+    const contentHash = createHash("sha256").update(largeBuf).digest("hex");
+    expect(storedHash).not.toBe(contentHash);
+    // Sanity check: it IS a valid hex hash (64 chars for sha256)
+    expect(storedHash).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  test("deep content change propagates through Merkle hashes", async () => {
+    await refreshFileIndex();
+
+    const cachePath = getTestCachePath(TEST_DIR);
+    if (!existsSync(cachePath)) {
+      return;
+    }
+
+    const cacheBefore = JSON.parse(readFileSync(cachePath, "utf-8"));
+    const rootHashBefore = cacheBefore.metadata.rootHash;
+    const srcHashBefore = cacheBefore.merkle.src;
+    const componentsHashBefore = cacheBefore.merkle[join("src", "components")];
+    const buttonHashBefore =
+      cacheBefore.merkle[join("src", "components", "Button.tsx")];
+    // A sibling directory that should NOT change
+    const testsHashBefore = cacheBefore.merkle.tests;
+
+    // Modify a deeply nested file (2 levels deep) without adding/removing files
+    writeFileSync(
+      join(TEST_DIR, "src/components/Button.tsx"),
+      "export function Button() { return <button>Updated</button> }",
+    );
+
+    await refreshFileIndex();
+
+    const cacheAfter = JSON.parse(readFileSync(cachePath, "utf-8"));
+
+    // The modified file's hash should change
+    expect(cacheAfter.merkle[join("src", "components", "Button.tsx")]).not.toBe(
+      buttonHashBefore,
+    );
+
+    // Parent directory hashes should propagate the change upward
+    expect(cacheAfter.merkle[join("src", "components")]).not.toBe(
+      componentsHashBefore,
+    );
+    expect(cacheAfter.merkle.src).not.toBe(srcHashBefore);
+    expect(cacheAfter.metadata.rootHash).not.toBe(rootHashBefore);
+
+    // Unrelated sibling subtree should remain unchanged
+    expect(cacheAfter.merkle.tests).toBe(testsHashBefore);
+  });
+
+  test("files with identical content produce the same hash", async () => {
+    // Create two files at different paths with identical content
+    const sharedContent = "identical content for hash comparison";
+    writeFileSync(join(TEST_DIR, "src", "copy-a.ts"), sharedContent);
+    writeFileSync(join(TEST_DIR, "tests", "copy-b.ts"), sharedContent);
+
+    await refreshFileIndex();
+
+    const cachePath = getTestCachePath(TEST_DIR);
+    if (!existsSync(cachePath)) {
+      return;
+    }
+
+    const cache = JSON.parse(readFileSync(cachePath, "utf-8")) as {
+      merkle: Record<string, string>;
+      entries: { path: string }[];
+    };
+
+    // Diagnostic: if the new files aren't in the cache, log available keys.
+    const copyAKey = join("src", "copy-a.ts");
+    const copyBKey = join("tests", "copy-b.ts");
+    if (!cache.merkle[copyAKey]) {
+      const entryPaths = cache.entries.map((e) => e.path);
+      console.warn(
+        `[DIAGNOSTIC] merkle key "${copyAKey}" not found.`,
+        `\nEntry paths in cache: ${JSON.stringify(entryPaths)}`,
+        `\nMerkle keys: ${JSON.stringify(Object.keys(cache.merkle))}`,
+      );
+    }
+
+    const hashA = cache.merkle[copyAKey];
+    const hashB = cache.merkle[copyBKey];
+
+    // Content-based hashing: same bytes → same hash, regardless of path
+    expect(hashA).toBe(hashB);
+
+    // And it should equal sha256 of the raw content
+    const expectedHash = createHash("sha256")
+      .update(Buffer.from(sharedContent))
+      .digest("hex");
+    expect(hashA).toBe(expectedHash);
   });
 });

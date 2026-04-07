@@ -60,9 +60,17 @@ export const commands: Record<string, Command> = {
     },
   },
   "/reflect": {
-    desc: "Launch a background reflection agent to update memory",
+    desc: "Launch reflection (/reflect [transcript_file])",
+    args: "[transcript_file]",
     order: 50,
-    noArgs: true,
+    handler: () => {
+      // Handled specially in App.tsx
+      return "Launching reflection agent...";
+    },
+  },
+  "/reflection": {
+    desc: "Alias for /reflect",
+    args: "[transcript_file]",
     handler: () => {
       // Handled specially in App.tsx
       return "Launching reflection agent...";
@@ -253,6 +261,15 @@ export const commands: Record<string, Command> = {
     handler: () => {
       // Handled specially in App.tsx to open system prompt selector
       return "Opening system prompt selector...";
+    },
+  },
+  "/personality": {
+    desc: "Switch personality",
+    order: 30.5,
+    noArgs: true,
+    handler: () => {
+      // Handled specially in App.tsx to open personality selector
+      return "Opening personality selector...";
     },
   },
   "/subagents": {

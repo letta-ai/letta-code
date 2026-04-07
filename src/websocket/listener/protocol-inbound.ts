@@ -2,6 +2,8 @@ import type WebSocket from "ws";
 import type {
   AbortMessageCommand,
   ChangeDeviceStateCommand,
+  CheckoutBranchCommand,
+  CreateAgentCommand,
   CronAddCommand,
   CronDeleteAllCommand,
   CronDeleteCommand,
@@ -15,8 +17,11 @@ import type {
   ListInDirectoryCommand,
   ListMemoryCommand,
   ListModelsCommand,
+  MemoryFileAtRefCommand,
+  MemoryHistoryCommand,
   ReadFileCommand,
   RuntimeScope,
+  SearchBranchesCommand,
   SearchFilesCommand,
   SetReflectionSettingsCommand,
   SkillDisableCommand,
@@ -27,6 +32,7 @@ import type {
   TerminalResizeCommand,
   TerminalSpawnCommand,
   UpdateModelCommand,
+  WriteFileCommand,
   WsProtocolCommand,
 } from "../../types/protocol_v2";
 import { isValidApprovalResponseBody } from "./approval";
@@ -288,6 +294,22 @@ export function isReadFileCommand(value: unknown): value is ReadFileCommand {
   );
 }
 
+export function isWriteFileCommand(value: unknown): value is WriteFileCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    path?: unknown;
+    content?: unknown;
+    request_id?: unknown;
+  };
+  return (
+    c.type === "write_file" &&
+    typeof c.path === "string" &&
+    typeof c.content === "string" &&
+    typeof c.request_id === "string"
+  );
+}
+
 export function isEditFileCommand(value: unknown): value is EditFileCommand {
   if (!value || typeof value !== "object") return false;
   const c = value as {
@@ -326,6 +348,44 @@ export function isListMemoryCommand(
     c.type === "list_memory" &&
     typeof c.request_id === "string" &&
     typeof c.agent_id === "string"
+  );
+}
+
+export function isMemoryHistoryCommand(
+  value: unknown,
+): value is MemoryHistoryCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    agent_id?: unknown;
+    file_path?: unknown;
+  };
+  return (
+    c.type === "memory_history" &&
+    typeof c.request_id === "string" &&
+    typeof c.agent_id === "string" &&
+    typeof c.file_path === "string"
+  );
+}
+
+export function isMemoryFileAtRefCommand(
+  value: unknown,
+): value is MemoryFileAtRefCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    agent_id?: unknown;
+    file_path?: unknown;
+    ref?: unknown;
+  };
+  return (
+    c.type === "memory_file_at_ref" &&
+    typeof c.request_id === "string" &&
+    typeof c.agent_id === "string" &&
+    typeof c.file_path === "string" &&
+    typeof c.ref === "string"
   );
 }
 
@@ -520,6 +580,28 @@ export function isSkillDisableCommand(
   );
 }
 
+export function isCreateAgentCommand(
+  value: unknown,
+): value is CreateAgentCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    personality?: unknown;
+    model?: unknown;
+    pin_global?: unknown;
+  };
+  return (
+    c.type === "create_agent" &&
+    typeof c.request_id === "string" &&
+    (c.personality === "memo" ||
+      c.personality === "linus" ||
+      c.personality === "kawaii") &&
+    (c.model === undefined || typeof c.model === "string") &&
+    (c.pin_global === undefined || typeof c.pin_global === "boolean")
+  );
+}
+
 export function isGetReflectionSettingsCommand(
   value: unknown,
 ): value is GetReflectionSettingsCommand {
@@ -574,6 +656,38 @@ export function isSetReflectionSettingsCommand(
   );
 }
 
+export function isSearchBranchesCommand(
+  value: unknown,
+): value is SearchBranchesCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    query?: unknown;
+  };
+  return (
+    c.type === "search_branches" &&
+    typeof c.request_id === "string" &&
+    typeof c.query === "string"
+  );
+}
+
+export function isCheckoutBranchCommand(
+  value: unknown,
+): value is CheckoutBranchCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    branch?: unknown;
+  };
+  return (
+    c.type === "checkout_branch" &&
+    typeof c.request_id === "string" &&
+    typeof c.branch === "string"
+  );
+}
+
 export function isExecuteCommandCommand(
   value: unknown,
 ): value is ExecuteCommandCommand {
@@ -583,12 +697,15 @@ export function isExecuteCommandCommand(
     command_id?: unknown;
     request_id?: unknown;
     runtime?: unknown;
+    args?: unknown;
   };
+  const hasValidArgs = c.args === undefined || typeof c.args === "string";
   return (
     c.type === "execute_command" &&
     typeof c.command_id === "string" &&
     typeof c.request_id === "string" &&
-    isRuntimeScope(c.runtime)
+    isRuntimeScope(c.runtime) &&
+    hasValidArgs
   );
 }
 
@@ -610,8 +727,11 @@ export function parseServerMessage(
       isSearchFilesCommand(parsed) ||
       isListInDirectoryCommand(parsed) ||
       isReadFileCommand(parsed) ||
+      isWriteFileCommand(parsed) ||
       isEditFileCommand(parsed) ||
       isListMemoryCommand(parsed) ||
+      isMemoryHistoryCommand(parsed) ||
+      isMemoryFileAtRefCommand(parsed) ||
       isEnableMemfsCommand(parsed) ||
       isListModelsCommand(parsed) ||
       isUpdateModelCommand(parsed) ||
@@ -622,9 +742,12 @@ export function parseServerMessage(
       isCronDeleteAllCommand(parsed) ||
       isSkillEnableCommand(parsed) ||
       isSkillDisableCommand(parsed) ||
+      isCreateAgentCommand(parsed) ||
       isGetReflectionSettingsCommand(parsed) ||
       isSetReflectionSettingsCommand(parsed) ||
-      isExecuteCommandCommand(parsed)
+      isExecuteCommandCommand(parsed) ||
+      isSearchBranchesCommand(parsed) ||
+      isCheckoutBranchCommand(parsed)
     ) {
       return parsed as WsProtocolCommand;
     }

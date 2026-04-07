@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { spawn } from "node:child_process";
+import { createIsolatedCliTestEnv } from "../tests/testProcessEnv";
+import { formatCapturedOutput } from "./processDiagnostics";
 
 /**
  * Startup flow integration tests.
@@ -23,10 +25,9 @@ async function runCli(
   const runOnce = () =>
     new Promise<{ stdout: string; stderr: string; exitCode: number | null }>(
       (resolve, reject) => {
-        const proc = spawn("bun", ["run", "dev", ...args], {
+        const proc = spawn("bun", ["run", "dev", "--no-memfs", ...args], {
           cwd: projectRoot,
-          // Mark as subagent to prevent polluting user's LRU settings
-          env: { ...process.env, LETTA_CODE_AGENT_ROLE: "subagent" },
+          env: createIsolatedCliTestEnv(),
         });
 
         let stdout = "";
@@ -44,7 +45,16 @@ async function runCli(
           proc.kill();
           reject(
             new Error(
-              `Timeout after ${timeoutMs}ms. stdout: ${stdout}, stderr: ${stderr}`,
+              `Timeout after ${timeoutMs}ms.\n${formatCapturedOutput({
+                stdout,
+                stderr,
+                extra: {
+                  args: args.join(" "),
+                  saw_result_payload:
+                    stdout.includes('"type":"result"') ||
+                    stdout.includes('"type": "result"'),
+                },
+              })}`,
             ),
           );
         }, timeoutMs);
@@ -54,7 +64,18 @@ async function runCli(
           if (expectExit !== undefined && code !== expectExit) {
             reject(
               new Error(
-                `Expected exit code ${expectExit}, got ${code}. stdout: ${stdout}, stderr: ${stderr}`,
+                `Expected exit code ${expectExit}, got ${code}.\n${formatCapturedOutput(
+                  {
+                    stdout,
+                    stderr,
+                    extra: {
+                      args: args.join(" "),
+                      saw_result_payload:
+                        stdout.includes('"type":"result"') ||
+                        stdout.includes('"type": "result"'),
+                    },
+                  },
+                )}`,
               ),
             );
           } else {

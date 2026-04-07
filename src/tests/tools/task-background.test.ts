@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import {
+  __resetBackgroundRetentionConfigForTests,
+  __setBackgroundRetentionConfigForTests,
   appendToOutputFile,
   type BackgroundTask,
   backgroundTasks,
@@ -97,6 +99,7 @@ describe("Task background infrastructure", () => {
 
 describe("TaskOutput with background tasks", () => {
   afterEach(() => {
+    __resetBackgroundRetentionConfigForTests();
     backgroundTasks.clear();
   });
 
@@ -241,6 +244,42 @@ describe("TaskOutput with background tasks", () => {
     });
 
     expect(result.message).toContain("No background process found");
+  });
+
+  test("TaskOutput falls back to bounded in-memory output when the transcript file is too large", async () => {
+    __setBackgroundRetentionConfigForTests({ maxOutputFileReadBytes: 32 });
+
+    const taskId = "task_large_output_file";
+    const outputFile = createBackgroundOutputFile(taskId);
+    appendToOutputFile(
+      outputFile,
+      "This output file is intentionally much larger than the configured read limit.\n",
+    );
+
+    const bgTask: BackgroundTask = {
+      description: "Large file fallback",
+      subagentType: "explore",
+      subagentId: "subagent_large_file",
+      status: "completed",
+      output: ["recent buffered line"],
+      startTime: new Date(),
+      outputFile,
+    };
+
+    backgroundTasks.set(taskId, bgTask);
+
+    const result = await task_output({
+      task_id: taskId,
+      block: false,
+      timeout: 1000,
+    });
+
+    expect(result.message).toContain(
+      "Output file too large to load fully here",
+    );
+    expect(result.message).toContain("recent buffered line");
+
+    fs.unlinkSync(outputFile);
   });
 });
 

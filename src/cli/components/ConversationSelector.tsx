@@ -241,7 +241,9 @@ export function ConversationSelector({
           limit: ENRICH_MESSAGE_LIMIT,
           order: "desc",
           include_return_message_types: RESUME_PREVIEW_MESSAGE_TYPES,
-        });
+        } as unknown as Parameters<
+          typeof client.conversations.messages.list
+        >[1]);
         const chronological = [...messages.getPaginatedItems()].reverse();
         const stats = getMessageStats(chronological);
         setConversations((prev) =>
@@ -306,7 +308,9 @@ export function ConversationSelector({
                   limit: ENRICH_MESSAGE_LIMIT,
                   order: "desc",
                   include_return_message_types: RESUME_PREVIEW_MESSAGE_TYPES,
-                })
+                } as unknown as Parameters<
+                  typeof client.agents.messages.list
+                >[1])
                 .then((msgs) => {
                   const items = msgs.getPaginatedItems();
                   if (items.length === 0) return null;

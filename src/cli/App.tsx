@@ -48,6 +48,7 @@ import { getResumeData } from "../agent/check-approval";
 import { getClient, getServerUrl } from "../agent/client";
 import { getCurrentAgentId, setCurrentAgentId } from "../agent/context";
 import { type AgentProvenance, createAgent } from "../agent/create";
+import { selectDefaultAgentModel } from "../agent/defaults";
 import { getLettaCodeHeaders } from "../agent/http-headers";
 import { ISOLATED_BLOCK_LABELS } from "../agent/memory";
 import {
@@ -61,6 +62,13 @@ import {
   getModelShortName,
   type ModelReasoningEffort,
 } from "../agent/model";
+import {
+  applyPersonalityToMemory,
+  detectPersonalityFromPersonaFile,
+  getPersonalityBlockValues,
+  getPersonalityOption,
+  type PersonalityId,
+} from "../agent/personality";
 import {
   INTERRUPT_RECOVERY_ALERT,
   shouldRecommendDefaultPrompt,
@@ -119,7 +127,12 @@ import {
   savePermissionRule,
   type ToolExecutionResult,
 } from "../tools/manager";
-import type { ToolsetName, ToolsetPreference } from "../tools/toolset";
+import {
+  prepareToolExecutionContextForResolvedTarget,
+  prepareToolExecutionContextForScope,
+  type ToolsetName,
+  type ToolsetPreference,
+} from "../tools/toolset";
 import { formatToolsetName } from "../tools/toolset-labels";
 import {
   debugLog,
@@ -176,6 +189,7 @@ import { ModelReasoningSelector } from "./components/ModelReasoningSelector";
 import { ModelSelector } from "./components/ModelSelector";
 import { NewAgentDialog } from "./components/NewAgentDialog";
 import { PendingApprovalStub } from "./components/PendingApprovalStub";
+import { PersonalitySelector } from "./components/PersonalitySelector";
 import { PinDialog, validateAgentName } from "./components/PinDialog";
 import { ProviderSelector } from "./components/ProviderSelector";
 import { ReasoningMessage } from "./components/ReasoningMessageRich";
@@ -206,7 +220,10 @@ import {
   setToolCallsRunning,
   toLines,
 } from "./helpers/accumulator";
-import { classifyApprovals } from "./helpers/approvalClassification";
+import {
+  type ClassifiedApproval,
+  classifyApprovals,
+} from "./helpers/approvalClassification";
 import { buildChatUrl } from "./helpers/appUrls";
 import { backfillBuffers } from "./helpers/backfill";
 import { chunkLog } from "./helpers/chunkLog";
@@ -235,7 +252,6 @@ import { parsePatchOperations } from "./helpers/formatArgsDisplay";
 import {
   buildDoctorMessage,
   buildInitMessage,
-  fireAutoInit,
   gatherInitGitContext,
 } from "./helpers/initCommand";
 import {
@@ -361,6 +377,24 @@ const LLM_API_ERROR_MAX_RETRIES = 3;
 const EMPTY_RESPONSE_MAX_RETRIES = 2;
 const TEMP_QUOTA_OVERRIDE_MODEL = "letta/auto";
 
+// Provider fallback: Anthropic model ID → Bedrock model ID.
+// After 1 failed retry against Anthropic, automatically retry via Bedrock.
+const PROVIDER_FALLBACK_MAP: Record<string, string> = {
+  // Opus 4.6 variants → Bedrock Opus 4.6
+  opus: "bedrock-opus-4.6",
+  "opus-4.6-no-reasoning": "bedrock-opus-4.6",
+  "opus-4.6-low": "bedrock-opus-4.6",
+  "opus-4.6-medium": "bedrock-opus-4.6",
+  "opus-4.6-xhigh": "bedrock-opus-4.6",
+  // Sonnet 4.6 variants → Bedrock Sonnet 4.6
+  sonnet: "bedrock-sonnet-4.6",
+  "sonnet-1m": "bedrock-sonnet-4.6",
+  "sonnet-4.6-no-reasoning": "bedrock-sonnet-4.6",
+  "sonnet-4.6-low": "bedrock-sonnet-4.6",
+  "sonnet-4.6-medium": "bedrock-sonnet-4.6",
+  "sonnet-4.6-xhigh": "bedrock-sonnet-4.6",
+};
+
 // Retry config for 409 "conversation busy" errors (exponential backoff)
 const CONVERSATION_BUSY_MAX_RETRIES = 3; // 10s -> 20s -> 40s
 
@@ -482,6 +516,16 @@ function buildModelHandleFromLlmConfig(
   return llmConfig.model ?? null;
 }
 
+function getPreferredAgentModelHandle(
+  agent: Pick<AgentState, "model" | "llm_config"> | null | undefined,
+): string | null {
+  if (!agent) return null;
+  if (typeof agent.model === "string" && agent.model.length > 0) {
+    return agent.model;
+  }
+  return buildModelHandleFromLlmConfig(agent.llm_config);
+}
+
 function mapHandleToLlmConfigPatch(modelHandle: string): Partial<LlmConfig> {
   const [provider, ...modelParts] = modelHandle.split("/");
   const modelName = modelParts.join("/");
@@ -516,9 +560,9 @@ function getErrorHintForStopReason(
   const hasBedrockOpus =
     currentModelId === "opus" &&
     modelEndpointType === "anthropic" &&
-    getModelInfo("bedrock-opus");
+    getModelInfo("bedrock-opus-4.6");
   const modelSwapSuffix = hasBedrockOpus
-    ? " (e.g. Opus 4.5 via Amazon Bedrock)"
+    ? " (e.g. Opus 4.6 via Amazon Bedrock)"
     : "";
 
   if (statusInfo) {
@@ -553,6 +597,7 @@ const INTERACTIVE_SLASH_COMMANDS = new Set([
   "/model",
   "/toolset",
   "/system",
+  "/personality",
   "/subagents",
   "/memory",
   "/sleeptime",
@@ -658,6 +703,82 @@ function uid(prefix: string) {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+function buildApprovalBatchKey(approvals: ApprovalRequest[]): string {
+  return approvals
+    .map((approval) => approval.toolCallId)
+    .sort()
+    .join("|");
+}
+
+function precomputeDiffsForApprovalBatch(
+  approvals: Array<Pick<ClassifiedApproval, "approval" | "parsedArgs">>,
+  precomputedDiffs: Map<string, AdvancedDiffSuccess>,
+): void {
+  for (const ac of approvals) {
+    const toolName = ac.approval.toolName;
+    const toolCallId = ac.approval.toolCallId;
+    const args = ac.parsedArgs;
+
+    try {
+      if (isFileWriteTool(toolName)) {
+        const filePath = args.file_path as string | undefined;
+        if (filePath) {
+          const result = computeAdvancedDiff({
+            kind: "write",
+            filePath,
+            content: (args.content as string) || "",
+          });
+          if (result.mode === "advanced") {
+            precomputedDiffs.set(toolCallId, result);
+          }
+        }
+      } else if (isFileEditTool(toolName)) {
+        const filePath = args.file_path as string | undefined;
+        if (filePath) {
+          if (args.edits && Array.isArray(args.edits)) {
+            const result = computeAdvancedDiff({
+              kind: "multi_edit",
+              filePath,
+              edits: args.edits as Array<{
+                old_string: string;
+                new_string: string;
+                replace_all?: boolean;
+              }>,
+            });
+            if (result.mode === "advanced") {
+              precomputedDiffs.set(toolCallId, result);
+            }
+          } else {
+            const result = computeAdvancedDiff({
+              kind: "edit",
+              filePath,
+              oldString: (args.old_string as string) || "",
+              newString: (args.new_string as string) || "",
+              replaceAll: args.replace_all as boolean | undefined,
+            });
+            if (result.mode === "advanced") {
+              precomputedDiffs.set(toolCallId, result);
+            }
+          }
+        }
+      } else if (isPatchTool(toolName) && args.input) {
+        const operations = parsePatchOperations(args.input as string);
+        for (const op of operations) {
+          const key = `${toolCallId}:${op.path}`;
+          if (op.kind === "add" || op.kind === "update") {
+            const result = parsePatchToAdvancedDiff(op.patchLines, op.path);
+            if (result) {
+              precomputedDiffs.set(key, result);
+            }
+          }
+        }
+      }
+    } catch {
+      // Ignore diff computation errors for approval previews.
+    }
+  }
+}
+
 // Send desktop notification via terminal bell
 // Modern terminals (iTerm2, Ghostty, WezTerm, Kitty) convert this to a desktop
 // notification when the terminal is not focused
@@ -677,6 +798,7 @@ function sendDesktopNotification(
 async function isRetriableError(
   stopReason: StopReasonType,
   lastRunId: string | null | undefined,
+  fallbackDetail?: string | null,
 ): Promise<boolean> {
   // Primary check: backend sets stop_reason=llm_api_error for LLMError exceptions
   if (stopReason === "llm_api_error") return true;
@@ -720,10 +842,10 @@ async function isRetriableError(
 
       return false;
     } catch {
-      return false;
+      return shouldRetryRunMetadataError(undefined, fallbackDetail);
     }
   }
-  return false;
+  return shouldRetryRunMetadataError(undefined, fallbackDetail);
 }
 
 // Save current agent + conversation as last session before exiting.
@@ -1063,13 +1185,6 @@ export default function App({
     import("./helpers/conversationSwitchAlert").ConversationSwitchContext | null
   >(null);
 
-  // Pending auto-init for newly created agents — consumed on first user message.
-  // A Set so multiple agents created before any message is sent are all tracked.
-  const autoInitPendingAgentIdsRef = useRef<Set<string>>(new Set());
-  // Tracks whether we've already consumed the startup agentProvenance.isNew flag,
-  // so agent switches later in the session don't re-queue auto-init.
-  const startupAutoInitConsumedRef = useRef(false);
-
   // Track previous prop values to detect actual prop changes (not internal state changes)
   const prevInitialAgentIdRef = useRef(initialAgentId);
   const prevInitialAgentStateRef = useRef(initialAgentState);
@@ -1256,6 +1371,15 @@ export default function App({
     conversationId: string;
     generation: number;
   } | null>(null);
+  const restoredApprovalRecoveryRef = useRef<{
+    batchKey: string | null;
+    generation: number;
+    status: "idle" | "running" | "completed";
+  }>({
+    batchKey: null,
+    generation: -1,
+    status: "idle",
+  });
   const queuedApprovalMetadataRef = useRef<{
     conversationId: string;
     generation: number;
@@ -1402,6 +1526,7 @@ export default function App({
     | "compaction"
     | "toolset"
     | "system"
+    | "personality"
     | "agent"
     | "resume"
     | "conversations"
@@ -1487,6 +1612,11 @@ export default function App({
         commandId?: string;
       }
     | { type: "switch_system"; promptId: string; commandId?: string }
+    | {
+        type: "switch_personality";
+        personalityId: PersonalityId;
+        commandId?: string;
+      }
     | null;
   const [queuedOverlayAction, setQueuedOverlayAction] =
     useState<QueuedOverlayAction>(null);
@@ -1501,6 +1631,8 @@ export default function App({
   const [currentSystemPromptId, setCurrentSystemPromptId] = useState<
     string | null
   >("default");
+  const [currentPersonalityId, setCurrentPersonalityId] =
+    useState<PersonalityId | null>(null);
   const [currentToolset, setCurrentToolset] = useState<ToolsetName | null>(
     null,
   );
@@ -1861,6 +1993,7 @@ export default function App({
   // Retry counter for transient LLM API errors (ref for synchronous access in loop)
   const llmApiErrorRetriesRef = useRef(0);
   const quotaAutoSwapAttemptedRef = useRef(false);
+  const providerFallbackAttemptedRef = useRef(false);
   const emptyResponseRetriesRef = useRef(0);
 
   // Retry counter for 409 "conversation busy" errors
@@ -1963,6 +2096,36 @@ export default function App({
     approvalToolContextIdRef.current = null;
     releaseToolExecutionContext(contextId);
   }, []);
+  const prepareScopedToolExecutionContext = useCallback(
+    async (overrideModel?: string | null) => {
+      const workingDirectory = process.env.USER_CWD || process.cwd();
+      const desiredModel = overrideModel ?? currentModelHandle;
+
+      if (desiredModel) {
+        return prepareToolExecutionContextForResolvedTarget({
+          modelIdentifier: desiredModel,
+          toolsetPreference: currentToolsetPreference,
+          workingDirectory,
+        });
+      }
+
+      if (agentIdRef.current) {
+        return prepareToolExecutionContextForScope({
+          agentId: agentIdRef.current,
+          conversationId: conversationIdRef.current,
+          overrideModel,
+          workingDirectory,
+        });
+      }
+
+      return prepareToolExecutionContextForResolvedTarget({
+        modelIdentifier: null,
+        toolsetPreference: currentToolsetPreference,
+        workingDirectory,
+      });
+    },
+    [currentModelHandle, currentToolsetPreference],
+  );
   // Non-null only when the previous turn was explicitly interrupted by the user.
   // Used to gate recovery alert injection to true user-interrupt retries.
   const pendingInterruptRecoveryConversationIdRef = useRef<string | null>(null);
@@ -1979,6 +2142,9 @@ export default function App({
 
   // Restored input value - set when we need to restore a message to the input after error
   const [restoredInput, setRestoredInput] = useState<string | null>(null);
+
+  // Track current input draft for approval dialogs
+  const currentDraftRef = useRef<string>("");
 
   // Helper to check if agent is busy (streaming, executing tool, or running command)
   // Uses refs for synchronous access outside React's closure system
@@ -2995,49 +3161,6 @@ export default function App({
     }
   }, [refreshDerived]);
 
-  // Restore pending approval from startup when ready
-  // All approvals (including fancy UI tools) go through pendingApprovals
-  // The render logic determines which UI to show based on tool name
-  useEffect(() => {
-    // Use new plural field if available, otherwise wrap singular in array for backward compat
-    const approvals =
-      startupApprovals?.length > 0
-        ? startupApprovals
-        : startupApproval
-          ? [startupApproval]
-          : [];
-
-    if (loadingState === "ready" && approvals.length > 0) {
-      // All approvals go through the same flow - UI rendering decides which dialog to show
-      setPendingApprovals(approvals);
-
-      // Analyze approval contexts for all restored approvals
-      const analyzeStartupApprovals = async () => {
-        try {
-          const contexts = await Promise.all(
-            approvals.map(async (approval) => {
-              const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
-                approval.toolArgs,
-                {},
-              );
-              return await analyzeToolApproval(approval.toolName, parsedArgs);
-            }),
-          );
-          setApprovalContexts(contexts);
-        } catch (error) {
-          // If analysis fails, leave context as null (will show basic options)
-          debugLog(
-            "approvals",
-            "Failed to analyze startup approvals: %O",
-            error,
-          );
-        }
-      };
-
-      analyzeStartupApprovals();
-    }
-  }, [loadingState, startupApproval, startupApprovals]);
-
   // Eager commit for ExitPlanMode: Always commit plan preview to staticItems
   // This keeps the dynamic area small (just approval options) to avoid flicker
   useEffect(() => {
@@ -3318,11 +3441,8 @@ export default function App({
           ).last_run_completion;
           setAgentLastRunAt(lastRunCompletion ?? null);
 
-          // Derive model ID from llm_config for ModelSelector
-          const agentModelHandle =
-            agent.llm_config.model_endpoint_type && agent.llm_config.model
-              ? `${agent.llm_config.model_endpoint_type}/${agent.llm_config.model}`
-              : agent.llm_config.model;
+          // Derive model ID from the configured model handle for ModelSelector.
+          const agentModelHandle = getPreferredAgentModelHandle(agent);
           const { getModelInfoForLlmConfig } = await import("../agent/model");
           const modelInfo = getModelInfoForLlmConfig(
             agentModelHandle || "",
@@ -3411,9 +3531,7 @@ export default function App({
     let cancelled = false;
 
     const applyAgentModelLocally = () => {
-      const agentModelHandle =
-        agentState.model ??
-        buildModelHandleFromLlmConfig(agentState.llm_config);
+      const agentModelHandle = getPreferredAgentModelHandle(agentState);
       setHasConversationModelOverride(false);
       setConversationOverrideModelSettings(null);
       setLlmConfig(agentState.llm_config);
@@ -3469,9 +3587,7 @@ export default function App({
           return;
         }
 
-        const agentModelHandle =
-          agentState.model ??
-          buildModelHandleFromLlmConfig(agentState.llm_config);
+        const agentModelHandle = getPreferredAgentModelHandle(agentState);
         const effectiveModelHandle = conversationModel ?? agentModelHandle;
         if (!effectiveModelHandle) {
           applyAgentModelLocally();
@@ -4007,6 +4123,7 @@ export default function App({
         emptyResponseRetriesRef.current = 0;
         conversationBusyRetriesRef.current = 0;
         quotaAutoSwapAttemptedRef.current = false;
+        providerFallbackAttemptedRef.current = false;
       }
 
       // Track last run ID for error reporting (accessible in catch block)
@@ -4154,12 +4271,16 @@ export default function App({
           let turnToolContextId: string | null = null;
           let preStreamResumeResult: DrainResult | null = null;
           try {
+            const preparedToolContext = await prepareScopedToolExecutionContext(
+              tempModelOverrideRef.current ?? undefined,
+            );
             const nextStream = await sendMessageStream(
               conversationIdRef.current,
               currentInput,
               {
                 agentId: agentIdRef.current,
                 overrideModel: tempModelOverrideRef.current ?? undefined,
+                preparedToolContext: preparedToolContext.preparedToolContext,
               },
             );
             stream = nextStream;
@@ -4379,6 +4500,37 @@ export default function App({
             if (preStreamAction === "retry_transient") {
               llmApiErrorRetriesRef.current += 1;
               const attempt = llmApiErrorRetriesRef.current;
+
+              // Provider fallback: after 1 retry against Anthropic, switch to Bedrock
+              if (
+                attempt >= 2 &&
+                !providerFallbackAttemptedRef.current &&
+                currentModelId
+              ) {
+                const fallbackId = PROVIDER_FALLBACK_MAP[currentModelId];
+                const fallbackHandle = fallbackId
+                  ? getModelInfo(fallbackId)?.handle
+                  : undefined;
+                if (fallbackHandle) {
+                  providerFallbackAttemptedRef.current = true;
+                  setTempModelOverride(fallbackHandle);
+
+                  const statusId = uid("status");
+                  buffersRef.current.byId.set(statusId, {
+                    kind: "status",
+                    id: statusId,
+                    lines: ["Anthropic API error; falling back to Bedrock..."],
+                  });
+                  buffersRef.current.order.push(statusId);
+                  refreshDerived();
+
+                  buffersRef.current.interrupted = false;
+                  conversationBusyRetriesRef.current = 0;
+                  restorePinnedPermissionMode();
+                  continue;
+                }
+              }
+
               const retryAfterMs =
                 preStreamError instanceof APIError
                   ? parseRetryAfterHeaderMs(
@@ -4603,10 +4755,8 @@ export default function App({
                   // Model has changed at the agent level - update local state.
                   setLlmConfig(agent.llm_config);
 
-                  // Derive model ID from llm_config for ModelSelector.
-                  const agentModelHandle = buildModelHandleFromLlmConfig(
-                    agent.llm_config,
-                  );
+                  // Derive model ID from the configured model handle for ModelSelector.
+                  const agentModelHandle = getPreferredAgentModelHandle(agent);
 
                   const modelInfo = getModelInfoForLlmConfig(
                     agentModelHandle || "",
@@ -4756,6 +4906,7 @@ export default function App({
             llmApiErrorRetriesRef.current = 0; // Reset retry counter on success
             emptyResponseRetriesRef.current = 0;
             conversationBusyRetriesRef.current = 0;
+            providerFallbackAttemptedRef.current = false;
             lastDequeuedMessageRef.current = null; // Clear - message was processed successfully
             lastSentInputRef.current = null; // Clear - no recovery needed
             pendingInterruptRecoveryConversationIdRef.current = null;
@@ -5211,6 +5362,13 @@ export default function App({
               }
 
               // Execute auto-allowed tools (sequential for writes, parallel for reads)
+              const approvalToolContextId =
+                approvalToolContextIdRef.current ??
+                (
+                  await prepareScopedToolExecutionContext(
+                    tempModelOverrideRef.current ?? undefined,
+                  )
+                ).preparedToolContext.contextId;
               autoAllowedResults =
                 autoAllowed.length > 0
                   ? await executeAutoAllowedTools(
@@ -5219,8 +5377,7 @@ export default function App({
                       {
                         abortSignal: autoAllowedAbortController.signal,
                         onStreamingOutput: updateStreamingOutput,
-                        toolContextId:
-                          approvalToolContextIdRef.current ?? undefined,
+                        toolContextId: approvalToolContextId,
                       },
                     )
                   : [];
@@ -5742,6 +5899,7 @@ export default function App({
           const retriable = await isRetriableError(
             stopReasonToHandle,
             lastRunId,
+            detailFromRun ?? latestErrorText ?? fallbackError,
           );
 
           if (
@@ -5753,6 +5911,37 @@ export default function App({
 
             llmApiErrorRetriesRef.current += 1;
             const attempt = llmApiErrorRetriesRef.current;
+
+            // Provider fallback: after 1 retry against Anthropic, switch to Bedrock
+            if (
+              attempt >= 2 &&
+              !providerFallbackAttemptedRef.current &&
+              currentModelId
+            ) {
+              const fallbackId = PROVIDER_FALLBACK_MAP[currentModelId];
+              const fallbackHandle = fallbackId
+                ? getModelInfo(fallbackId)?.handle
+                : undefined;
+              if (fallbackHandle) {
+                providerFallbackAttemptedRef.current = true;
+                setTempModelOverride(fallbackHandle);
+
+                const statusId = uid("status");
+                buffersRef.current.byId.set(statusId, {
+                  kind: "status",
+                  id: statusId,
+                  lines: ["Anthropic API error; falling back to Bedrock..."],
+                });
+                buffersRef.current.order.push(statusId);
+                refreshDerived();
+
+                refreshCurrentInputOtids();
+                highestSeqIdSeen = null;
+                buffersRef.current.interrupted = false;
+                continue;
+              }
+            }
+
             const delayMs = getRetryDelayMs({
               category: "transient_provider",
               attempt,
@@ -6109,6 +6298,311 @@ export default function App({
       setUiPermissionMode,
     ],
   );
+
+  const restorePendingApprovalUi = useCallback(
+    async (
+      approvals: ApprovalRequest[],
+      contexts?: ApprovalContext[],
+    ): Promise<void> => {
+      setPendingApprovals(approvals);
+
+      if (contexts) {
+        setApprovalContexts(contexts);
+        return;
+      }
+
+      try {
+        const analyzedContexts = await Promise.all(
+          approvals.map(async (approval) => {
+            const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
+              approval.toolArgs,
+              {},
+            );
+            return await analyzeToolApproval(approval.toolName, parsedArgs);
+          }),
+        );
+        setApprovalContexts(analyzedContexts);
+      } catch (error) {
+        debugLog(
+          "approvals",
+          "Failed to analyze restored approvals: %O",
+          error,
+        );
+        setApprovalContexts([]);
+      }
+    },
+    [],
+  );
+
+  const recoverRestoredPendingApprovals = useCallback(
+    async (
+      approvals: ApprovalRequest[],
+      options: { notifyOnManualApproval?: boolean } = {},
+    ): Promise<void> => {
+      if (approvals.length === 0) {
+        return;
+      }
+
+      const generationAtStart = conversationGenerationRef.current;
+      const batchKey = buildApprovalBatchKey(approvals);
+      const currentRecovery = restoredApprovalRecoveryRef.current;
+      if (
+        currentRecovery.batchKey === batchKey &&
+        currentRecovery.generation === generationAtStart &&
+        currentRecovery.status !== "idle"
+      ) {
+        return;
+      }
+
+      restoredApprovalRecoveryRef.current = {
+        batchKey,
+        generation: generationAtStart,
+        status: "running",
+      };
+
+      setApprovalResults([]);
+      setAutoHandledResults([]);
+      setAutoDeniedApprovals([]);
+      setApprovalContexts([]);
+      setPendingApprovals([]);
+      queueApprovalResults(null);
+
+      try {
+        const desiredMode = uiPermissionModeRef.current;
+        if (permissionMode.getMode() !== desiredMode) {
+          permissionMode.setMode(desiredMode);
+        }
+
+        const { needsUserInput, autoAllowed, autoDenied } =
+          await classifyApprovals(approvals, {
+            getContext: analyzeToolApproval,
+            alwaysRequiresUserInput,
+            missingNameReason:
+              "Tool call incomplete - missing name or arguments",
+          });
+
+        if (conversationGenerationRef.current !== generationAtStart) {
+          restoredApprovalRecoveryRef.current = {
+            batchKey,
+            generation: generationAtStart,
+            status: "completed",
+          };
+          return;
+        }
+
+        precomputeDiffsForApprovalBatch(
+          [...autoAllowed, ...needsUserInput],
+          precomputedDiffsRef.current,
+        );
+
+        const autoAllowedToolCallIds = autoAllowed.map(
+          (ac) => ac.approval.toolCallId,
+        );
+        const autoAllowedAbortController =
+          abortControllerRef.current ?? new AbortController();
+        const shouldTrackAutoAllowed = autoAllowedToolCallIds.length > 0;
+        let autoAllowedResults: Array<{
+          toolCallId: string;
+          result: ToolExecutionResult;
+        }> = [];
+        let autoDeniedResults: Array<{
+          approval: ApprovalRequest;
+          reason: string;
+        }> = [];
+
+        if (shouldTrackAutoAllowed) {
+          setIsExecutingTool(true);
+          executingToolCallIdsRef.current = autoAllowedToolCallIds;
+          toolAbortControllerRef.current = autoAllowedAbortController;
+          autoAllowedExecutionRef.current = {
+            toolCallIds: autoAllowedToolCallIds,
+            results: null,
+            conversationId: conversationIdRef.current,
+            generation: generationAtStart,
+          };
+        }
+
+        try {
+          if (autoAllowedToolCallIds.length > 0) {
+            setToolCallsRunning(buffersRef.current, autoAllowedToolCallIds);
+            refreshDerived();
+          }
+
+          const approvalToolContextId =
+            approvalToolContextIdRef.current ??
+            (
+              await prepareScopedToolExecutionContext(
+                tempModelOverrideRef.current ?? undefined,
+              )
+            ).preparedToolContext.contextId;
+          autoAllowedResults =
+            autoAllowed.length > 0
+              ? await executeAutoAllowedTools(
+                  autoAllowed,
+                  (chunk) => onChunk(buffersRef.current, chunk),
+                  {
+                    abortSignal: autoAllowedAbortController.signal,
+                    onStreamingOutput: updateStreamingOutput,
+                    toolContextId: approvalToolContextId,
+                  },
+                )
+              : [];
+
+          autoDeniedResults = autoDenied.map((ac) => {
+            const reason = ac.permission.reason
+              ? `Permission denied: ${ac.permission.reason}`
+              : "matchedRule" in ac.permission && ac.permission.matchedRule
+                ? `Permission denied by rule: ${ac.permission.matchedRule}`
+                : "Permission denied: Unknown reason";
+
+            onChunk(buffersRef.current, {
+              message_type: "tool_return_message",
+              id: "dummy",
+              date: new Date().toISOString(),
+              tool_call_id: ac.approval.toolCallId,
+              tool_return: `Error: request to call tool denied. User reason: ${reason}`,
+              status: "error",
+              stdout: null,
+              stderr: null,
+            });
+
+            return {
+              approval: ac.approval,
+              reason,
+            };
+          });
+        } finally {
+          if (shouldTrackAutoAllowed) {
+            setIsExecutingTool(false);
+            toolAbortControllerRef.current = null;
+            executingToolCallIdsRef.current = [];
+            autoAllowedExecutionRef.current = null;
+            toolResultsInFlightRef.current = false;
+          }
+        }
+
+        if (conversationGenerationRef.current !== generationAtStart) {
+          restoredApprovalRecoveryRef.current = {
+            batchKey,
+            generation: generationAtStart,
+            status: "completed",
+          };
+          return;
+        }
+
+        if (needsUserInput.length > 0) {
+          await restorePendingApprovalUi(
+            needsUserInput.map((ac) => ac.approval),
+            needsUserInput
+              .map((ac) => ac.context)
+              .filter((ctx): ctx is ApprovalContext => ctx !== null),
+          );
+          setAutoHandledResults(autoAllowedResults);
+          setAutoDeniedApprovals(autoDeniedResults);
+          if (options.notifyOnManualApproval !== false) {
+            sendDesktopNotification("Approval needed");
+          }
+          restoredApprovalRecoveryRef.current = {
+            batchKey,
+            generation: generationAtStart,
+            status: "completed",
+          };
+          return;
+        }
+
+        const allResults = [
+          ...autoAllowedResults.map((ar) => ({
+            type: "tool" as const,
+            tool_call_id: ar.toolCallId,
+            tool_return: ar.result.toolReturn,
+            status: ar.result.status,
+            stdout: ar.result.stdout,
+            stderr: ar.result.stderr,
+          })),
+          ...autoDeniedResults.map((ad) => ({
+            type: "approval" as const,
+            tool_call_id: ad.approval.toolCallId,
+            approve: false,
+            reason: ad.reason,
+          })),
+        ];
+
+        if (allResults.length > 0) {
+          setThinkingMessage(getRandomThinkingVerb());
+          refreshDerived();
+          toolResultsInFlightRef.current = true;
+          await processConversation(
+            [
+              {
+                type: "approval",
+                approvals: allResults,
+                otid: randomUUID(),
+              },
+            ],
+            { allowReentry: true },
+          );
+          toolResultsInFlightRef.current = false;
+        }
+
+        restoredApprovalRecoveryRef.current = {
+          batchKey,
+          generation: generationAtStart,
+          status: "completed",
+        };
+      } catch (error) {
+        debugLog(
+          "approvals",
+          "Failed to recover restored approvals automatically: %O",
+          error,
+        );
+        await restorePendingApprovalUi(approvals);
+        setAutoHandledResults([]);
+        setAutoDeniedApprovals([]);
+        sendDesktopNotification("Approval needed");
+        restoredApprovalRecoveryRef.current = {
+          batchKey,
+          generation: generationAtStart,
+          status: "completed",
+        };
+      }
+    },
+    [
+      processConversation,
+      queueApprovalResults,
+      refreshDerived,
+      restorePendingApprovalUi,
+      prepareScopedToolExecutionContext,
+      updateStreamingOutput,
+    ],
+  );
+
+  useEffect(() => {
+    void conversationId;
+    restoredApprovalRecoveryRef.current = {
+      batchKey: null,
+      generation: conversationGenerationRef.current,
+      status: "idle",
+    };
+  }, [conversationId]);
+
+  // Restore pending approval from startup when ready.
+  useEffect(() => {
+    const approvals =
+      startupApprovals?.length > 0
+        ? startupApprovals
+        : startupApproval
+          ? [startupApproval]
+          : [];
+
+    if (loadingState === "ready" && approvals.length > 0) {
+      void recoverRestoredPendingApprovals(approvals);
+    }
+  }, [
+    loadingState,
+    recoverRestoredPendingApprovals,
+    startupApproval,
+    startupApprovals,
+  ]);
 
   const handleExit = useCallback(async () => {
     saveLastSessionBeforeExit(conversationIdRef.current);
@@ -6570,12 +7064,7 @@ export default function App({
         setAgentId(targetAgentId);
         setAgentState(agent);
         setLlmConfig(agent.llm_config);
-        const agentModelHandle =
-          agent.llm_config.model_endpoint_type && agent.llm_config.model
-            ? agent.llm_config.model_endpoint_type +
-              "/" +
-              agent.llm_config.model
-            : (agent.llm_config.model ?? null);
+        const agentModelHandle = getPreferredAgentModelHandle(agent);
         setCurrentModelHandle(agentModelHandle);
         setConversationId(targetConversationId);
 
@@ -6671,19 +7160,36 @@ export default function App({
         );
         const willAutoEnableMemfs = await isLettaCloud();
 
+        let effectiveModel = currentModelId || currentModelHandle || undefined;
+        const isSelfHosted = !getServerUrl().includes("api.letta.com");
+        if (isSelfHosted) {
+          try {
+            const client = await getClient();
+            const availableHandles = (await client.models.list())
+              .map((model) => model.handle)
+              .filter((handle): handle is string => typeof handle === "string");
+            effectiveModel = selectDefaultAgentModel({
+              preferredModel: effectiveModel,
+              isSelfHosted: true,
+              availableHandles,
+            });
+          } catch {
+            effectiveModel = selectDefaultAgentModel({
+              preferredModel: effectiveModel,
+              isSelfHosted: true,
+            });
+          }
+        }
+
         // Create the new agent
         const { agent } = await createAgent({
           name,
+          model: effectiveModel,
           memoryPromptMode: willAutoEnableMemfs ? "memfs" : undefined,
         });
 
         // Enable memfs on Letta Cloud (tags, repo clone, tool detach).
         await enableMemfsIfCloud(agent.id);
-
-        // Queue auto-init for first message if memfs is enabled
-        if (settingsManager.isMemfsEnabled(agent.id)) {
-          autoInitPendingAgentIdsRef.current.add(agent.id);
-        }
 
         // Update project settings with new agent
         await updateProjectSettings({ lastAgent: agent.id });
@@ -6696,9 +7202,8 @@ export default function App({
 
         // Build success message with hints
         const agentUrl = buildChatUrl(agent.id);
-        const memfsTip = settingsManager.isMemfsEnabled(agent.id)
-          ? "Memory will be auto-initialized on your first message."
-          : "Tip: use /init to initialize your agent's memory system!";
+        const memfsTip =
+          "Tip: use /init to initialize your agent's memory system!";
         const successOutput = [
           `Created **${agent.name || agent.id}** (use /pin to save)`,
           `⎿  ${agentUrl}`,
@@ -6729,12 +7234,7 @@ export default function App({
         setAgentId(agent.id);
         setAgentState(agent);
         setLlmConfig(agent.llm_config);
-        const agentModelHandle =
-          agent.llm_config.model_endpoint_type && agent.llm_config.model
-            ? agent.llm_config.model_endpoint_type +
-              "/" +
-              agent.llm_config.model
-            : (agent.llm_config.model ?? null);
+        const agentModelHandle = getPreferredAgentModelHandle(agent);
         setCurrentModelHandle(agentModelHandle);
         setConversationId(targetConversationId);
 
@@ -6779,6 +7279,8 @@ export default function App({
     [
       agentId,
       commandRunner,
+      currentModelHandle,
+      currentModelId,
       setCommandRunning,
       resetDeferredToolCallCommits,
       resetTrajectoryBases,
@@ -7016,13 +7518,20 @@ export default function App({
           setToolCallsRunning(buffersRef.current, autoAllowedToolCallIds);
           refreshDerived();
 
+          const approvalToolContextId =
+            approvalToolContextIdRef.current ??
+            (
+              await prepareScopedToolExecutionContext(
+                tempModelOverrideRef.current ?? undefined,
+              )
+            ).preparedToolContext.contextId;
           autoAllowedResults = await executeAutoAllowedTools(
             autoAllowed,
             (chunk) => onChunk(buffersRef.current, chunk),
             {
               abortSignal: autoAllowedAbortController.signal,
               onStreamingOutput: updateStreamingOutput,
-              toolContextId: approvalToolContextIdRef.current ?? undefined,
+              toolContextId: approvalToolContextId,
             },
           );
           // Map to ApprovalResult format (ToolReturn)
@@ -7114,6 +7623,7 @@ export default function App({
     refreshDerived,
     updateStreamingOutput,
     needsEagerApprovalCheck,
+    prepareScopedToolExecutionContext,
     queueApprovalResults,
   ]);
 
@@ -7411,6 +7921,45 @@ export default function App({
             "System prompt dialog dismissed",
           );
           setActiveOverlay("system");
+          return { submitted: true };
+        }
+
+        // Special handling for /personality command - opens personality selector
+        if (trimmed === "/personality") {
+          startOverlayCommand(
+            "personality",
+            "/personality",
+            "Opening personality selector...",
+            "Personality selector dismissed",
+          );
+
+          if (settingsManager.isMemfsEnabled(agentId)) {
+            try {
+              const memoryRoot = getMemoryFilesystemRoot(agentId);
+              const personaCandidates = [
+                join(memoryRoot, "system", "persona.md"),
+                join(memoryRoot, "memory", "system", "persona.md"),
+              ];
+              const personaPath = personaCandidates.find((candidate) =>
+                existsSync(candidate),
+              );
+
+              if (personaPath) {
+                const personaContent = readFileSync(personaPath, "utf-8");
+                setCurrentPersonalityId(
+                  detectPersonalityFromPersonaFile(personaContent),
+                );
+              } else {
+                setCurrentPersonalityId(null);
+              }
+            } catch {
+              setCurrentPersonalityId(null);
+            }
+          } else {
+            setCurrentPersonalityId(null);
+          }
+
+          setActiveOverlay("personality");
           return { submitted: true };
         }
 
@@ -8404,7 +8953,7 @@ export default function App({
             const forked = (await client.post(
               `/v1/conversations/${encodeURIComponent(conversationIdRef.current)}/fork`,
               {
-                body: isDefault ? { agent_id: agentId } : {},
+                query: isDefault ? { agent_id: agentId } : {},
               },
             )) as { id: string };
 
@@ -8662,9 +9211,6 @@ export default function App({
             // post-compaction reflection reminder/auto-launch on the next user turn.
             contextTrackerRef.current.pendingReflectionTrigger = true;
           } catch (error) {
-            let errorOutput: string;
-
-            // Check for summarization failure - format it cleanly
             const apiError = error as {
               status?: number;
               error?: { detail?: string };
@@ -8672,22 +9218,18 @@ export default function App({
             const detail = apiError?.error?.detail;
             if (
               apiError?.status === 400 &&
-              detail?.includes("Summarization failed")
+              detail?.includes(
+                "Summarization failed to reduce the number of messages",
+              )
             ) {
-              // Clean format for this specific error, but preserve raw JSON
-              const cleanDetail = detail.replace(/^\d{3}:\s*/, "");
-              const rawJson = JSON.stringify(apiError.error);
-              errorOutput = [
-                `Request failed (code=400)`,
-                `Raw: ${rawJson}`,
-                `Detail: ${cleanDetail}`,
-                "",
-                "Tip: Use /clear instead to clear the current message buffer.",
-              ].join("\n");
-            } else {
-              errorOutput = formatErrorDetails(error, agentId);
+              cmd.finish(
+                "Compaction run, but the number of messages is the same",
+                true,
+              );
+              return { submitted: true };
             }
 
+            const errorOutput = formatErrorDetails(error, agentId);
             cmd.fail(`Failed: ${errorOutput}`);
           } finally {
             setCommandRunning(false);
@@ -8984,30 +9526,9 @@ export default function App({
 
                 // Restore pending approvals if any (fixes #540 for /resume command)
                 if (resumeData.pendingApprovals.length > 0) {
-                  setPendingApprovals(resumeData.pendingApprovals);
-
-                  // Analyze approval contexts (same logic as startup)
-                  try {
-                    const contexts = await Promise.all(
-                      resumeData.pendingApprovals.map(async (approval) => {
-                        const parsedArgs = safeJsonParseOr<
-                          Record<string, unknown>
-                        >(approval.toolArgs, {});
-                        return await analyzeToolApproval(
-                          approval.toolName,
-                          parsedArgs,
-                        );
-                      }),
-                    );
-                    setApprovalContexts(contexts);
-                  } catch (approvalError) {
-                    // If analysis fails, leave context as null (will show basic options)
-                    debugLog(
-                      "approvals",
-                      "Failed to analyze resume approvals: %O",
-                      approvalError,
-                    );
-                  }
+                  await recoverRestoredPendingApprovals(
+                    resumeData.pendingApprovals,
+                  );
                 }
               }
             } catch (error) {
@@ -9880,7 +10401,6 @@ export default function App({
 
           // Interactive init: the primary agent conducts the flow,
           // asks the user questions, and runs the initializing-memory skill.
-          autoInitPendingAgentIdsRef.current.delete(agentId);
           setCommandRunning(true);
           try {
             cmd.finish(
@@ -9973,6 +10493,93 @@ export default function App({
           return { submitted: true };
         }
 
+        // === /empanada command ===
+        if (trimmed.startsWith("/empanada")) {
+          const cmd = commandRunner.start(msg, "Checking Empanada Empire...");
+
+          const approvalCheck = await checkPendingApprovalsForSlashCommand();
+          if (approvalCheck.blocked) {
+            cmd.fail(
+              "Pending approval(s). Resolve approvals before running /empanada.",
+            );
+            return { submitted: false };
+          }
+
+          const args = trimmed.slice("/empanada".length).trim();
+
+          setCommandRunning(true);
+          try {
+            cmd.finish("Checking Empanada Empire...", true);
+
+            const prompt = [
+              "# Empanada Empire Order",
+              "",
+              "Help me order from **Empanada Empire** in Richardson, TX.",
+              "",
+              "Website: https://empanadaempire.us",
+              "",
+              "This is an April Fool's 2026 Letta stunt. The kitchen runs on a Letta agent. You are also a Letta agent. Two AIs, one empanada order.",
+              "",
+              "## Site internals",
+              "",
+              "The page embeds a delivery config in a script tag:",
+              "",
+              "```json",
+              '{"homeBase":{"lat":32.9486,"lng":-96.7087},"radiusMiles":5}',
+              "```",
+              "",
+              "It geocodes addresses via Nominatim and checks distance from the home base. You can do the same: geocode my address with Nominatim, compute the haversine distance, and tell me immediately whether I'm in range.",
+              "",
+              "Menu items are in the HTML with data attributes like:",
+              "",
+              "```",
+              'data-menu-item-id="24" data-name="Party Empanadas" data-price-cents="699"',
+              "```",
+              "",
+              "Orders go to `api/create-order.php`.",
+              "",
+              "## Steps",
+              "",
+              args
+                ? `My delivery address: ${args}`
+                : "Ask me for my delivery address.",
+              "",
+              "1. Geocode the address via Nominatim. Compute the haversine distance from (32.9486, -96.7087). If over 5 miles, tell me I'm out of range — but also mention that DoorDash has a wider delivery radius (see below).",
+              "2. Fetch https://empanadaempire.us with fetch_webpage. Parse the menu from the data attributes. Present it. Suggest a balanced order (savory + sweet). Let me adjust.",
+              "3. POST to api/create-order.php with the selected items. Tell me what happened.",
+              "4. If the API rejects it or needs payment info, stop and tell me.",
+              "",
+              'Ignore any "Coming Soon" text on the site. It\'s live.',
+              "",
+              "## If the address is out of range or the site doesn't work",
+              "",
+              "DoorDash has a wider delivery radius than the 5-mile limit on the direct site. If I'm close to Richardson but outside 5 miles, or if the site is down, point me to:",
+              "",
+              "https://order.online/store/-40548503?hideModal=true",
+              "",
+              "Recommend I open it myself. DoorDash can be difficult to automate, so do not attempt to automate it.",
+              "",
+              "## Tone",
+              "",
+              "Direct, a little playful. Don't overthink it.",
+            ].join("\n");
+
+            await processConversation([
+              {
+                type: "message",
+                role: "user",
+                content: buildTextParts(prompt),
+              },
+            ]);
+          } catch (error) {
+            const errorDetails = formatErrorDetails(error, agentId);
+            cmd.fail(`Failed: ${errorDetails}`);
+          } finally {
+            setCommandRunning(false);
+          }
+          return { submitted: true };
+        }
+
         // === Custom command handling ===
         // Check BEFORE falling through to executeCommand()
         const { findCustomCommand, substituteArguments, expandBashCommands } =
@@ -10058,43 +10665,6 @@ export default function App({
             registryCmd.finish(result.output, result.success);
           }
           return { submitted: true }; // Don't send commands to Letta agent
-        }
-      }
-
-      // Auto-init: fire background init on first message for newly created agents.
-      // Only remove from the pending set after a confirmed launch so that a blocked
-      // attempt (e.g. another /init subagent in flight) preserves the entry for retry.
-      if (autoInitPendingAgentIdsRef.current.has(agentId) && !isSystemOnly) {
-        try {
-          const fired = await fireAutoInit(
-            agentId,
-            async ({ success, error }) => {
-              const msg = await handleMemorySubagentCompletion(
-                {
-                  agentId,
-                  conversationId: conversationIdRef.current,
-                  subagentType: "init",
-                  success,
-                  error,
-                },
-                {
-                  recompileByConversation:
-                    systemPromptRecompileByConversationRef.current,
-                  recompileQueuedByConversation:
-                    queuedSystemPromptRecompileByConversationRef.current,
-                  logRecompileFailure: (message) =>
-                    debugWarn("memory", message),
-                },
-              );
-              appendTaskNotificationEvents([msg]);
-            },
-          );
-          if (fired) {
-            autoInitPendingAgentIdsRef.current.delete(agentId);
-            sharedReminderStateRef.current.pendingAutoInitReminder = true;
-          }
-        } catch {
-          // Non-blocking: swallow failures so the user's message still goes through
         }
       }
 
@@ -10534,6 +11104,13 @@ ${SYSTEM_REMINDER_CLOSE}
                 }
 
                 // Execute auto-allowed tools (sequential for writes, parallel for reads)
+                const approvalToolContextId =
+                  approvalToolContextIdRef.current ??
+                  (
+                    await prepareScopedToolExecutionContext(
+                      tempModelOverrideRef.current ?? undefined,
+                    )
+                  ).preparedToolContext.contextId;
                 autoAllowedResults =
                   autoAllowed.length > 0
                     ? await executeAutoAllowedTools(
@@ -10542,8 +11119,7 @@ ${SYSTEM_REMINDER_CLOSE}
                         {
                           abortSignal: autoAllowedAbortController.signal,
                           onStreamingOutput: updateStreamingOutput,
-                          toolContextId:
-                            approvalToolContextIdRef.current ?? undefined,
+                          toolContextId: approvalToolContextId,
                         },
                       )
                     : [];
@@ -10784,6 +11360,13 @@ ${SYSTEM_REMINDER_CLOSE}
 
               try {
                 // Execute auto-allowed tools (sequential for writes, parallel for reads)
+                const approvalToolContextId =
+                  approvalToolContextIdRef.current ??
+                  (
+                    await prepareScopedToolExecutionContext(
+                      tempModelOverrideRef.current ?? undefined,
+                    )
+                  ).preparedToolContext.contextId;
                 autoAllowedWithResults =
                   autoAllowed.length > 0
                     ? await executeAutoAllowedTools(
@@ -10792,8 +11375,7 @@ ${SYSTEM_REMINDER_CLOSE}
                         {
                           abortSignal: autoAllowedAbortController.signal,
                           onStreamingOutput: updateStreamingOutput,
-                          toolContextId:
-                            approvalToolContextIdRef.current ?? undefined,
+                          toolContextId: approvalToolContextId,
                         },
                       )
                     : [];
@@ -11152,6 +11734,13 @@ ${SYSTEM_REMINDER_CLOSE}
         const toolRunStart = performance.now();
         let executedResults: Awaited<ReturnType<typeof executeApprovalBatch>>;
         try {
+          const approvalToolContextId =
+            approvalToolContextIdRef.current ??
+            (
+              await prepareScopedToolExecutionContext(
+                tempModelOverrideRef.current ?? undefined,
+              )
+            ).preparedToolContext.contextId;
           executedResults = await executeApprovalBatch(
             allDecisions,
             (chunk) => {
@@ -11177,7 +11766,7 @@ ${SYSTEM_REMINDER_CLOSE}
             {
               abortSignal: approvalAbortController.signal,
               onStreamingOutput: updateStreamingOutput,
-              toolContextId: approvalToolContextIdRef.current ?? undefined,
+              toolContextId: approvalToolContextId,
             },
           );
         } finally {
@@ -11338,6 +11927,7 @@ ${SYSTEM_REMINDER_CLOSE}
       closeTrajectorySegment,
       openTrajectorySegment,
       commitEligibleLines,
+      prepareScopedToolExecutionContext,
     ],
   );
 
@@ -11410,29 +12000,50 @@ ${SYSTEM_REMINDER_CLOSE}
 
       const currentIndex = approvalResults.length;
       const approvalContext = approvalContexts[currentIndex];
-      if (!approvalContext) return;
+      const currentApproval = pendingApprovals[currentIndex];
+      if (!approvalContext || !currentApproval) return;
 
-      const rule = approvalContext.recommendedRule;
-      const actualScope = scope || approvalContext.defaultScope;
+      const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
+        currentApproval.toolArgs,
+        {},
+      );
+      const latestApprovalContext = await analyzeToolApproval(
+        currentApproval.toolName,
+        parsedArgs,
+      );
+      const rule = latestApprovalContext.recommendedRule;
+      const actualScope = scope || latestApprovalContext.defaultScope;
+
+      if (!latestApprovalContext.allowPersistence || !rule) {
+        commandRunner
+          .start("/approve-always", "Adding permission...")
+          .fail("This approval cannot be persisted.");
+        return;
+      }
 
       const cmd = commandRunner.start(
         "/approve-always",
         "Adding permission...",
       );
 
-      // Save the permission rule
-      try {
-        await savePermissionRule(rule, "allow", actualScope);
-      } catch (error) {
-        const errorDetails = formatErrorDetails(error, agentId);
-        cmd.fail(`Failed to add permission: ${errorDetails}`);
-        return;
-      }
+      if (rule === "Edit(**)" && actualScope === "session") {
+        setUiPermissionMode("acceptEdits");
+        cmd.finish("Permission mode set to acceptEdits (session only)", true);
+      } else {
+        // Save the permission rule
+        try {
+          await savePermissionRule(rule, "allow", actualScope);
+        } catch (error) {
+          const errorDetails = formatErrorDetails(error, agentId);
+          cmd.fail(`Failed to add permission: ${errorDetails}`);
+          return;
+        }
 
-      // Show confirmation in transcript
-      const scopeText =
-        actualScope === "session" ? " (session only)" : " (project)";
-      cmd.finish(`Added permission: ${rule}${scopeText}`, true);
+        // Show confirmation in transcript
+        const scopeText =
+          actualScope === "session" ? " (session only)" : " (project)";
+        cmd.finish(`Added permission: ${rule}${scopeText}`, true);
+      }
 
       // Re-check remaining approvals against the newly saved permission
       // This allows subsequent approvals that match the new rule to be auto-allowed
@@ -11518,6 +12129,13 @@ ${SYSTEM_REMINDER_CLOSE}
             const { executeApprovalBatch } = await import(
               "../agent/approval-execution"
             );
+            const approvalToolContextId =
+              approvalToolContextIdRef.current ??
+              (
+                await prepareScopedToolExecutionContext(
+                  tempModelOverrideRef.current ?? undefined,
+                )
+              ).preparedToolContext.contextId;
             const executedResults = await executeApprovalBatch(
               allDecisions,
               (chunk) => {
@@ -11526,7 +12144,7 @@ ${SYSTEM_REMINDER_CLOSE}
               },
               {
                 onStreamingOutput: updateStreamingOutput,
-                toolContextId: approvalToolContextIdRef.current ?? undefined,
+                toolContextId: approvalToolContextId,
               },
             );
 
@@ -11583,7 +12201,9 @@ ${SYSTEM_REMINDER_CLOSE}
       refreshDerived,
       isExecutingTool,
       setStreaming,
+      setUiPermissionMode,
       openTrajectorySegment,
+      prepareScopedToolExecutionContext,
       updateStreamingOutput,
     ],
   );
@@ -12079,6 +12699,179 @@ ${SYSTEM_REMINDER_CLOSE}
     ],
   );
 
+  const handlePersonalitySelect = useCallback(
+    async (personalityId: PersonalityId, commandId?: string | null) => {
+      const overlayCommand = commandId
+        ? commandRunner.getHandle(commandId, "/personality")
+        : consumeOverlayCommand("personality");
+
+      const personality = getPersonalityOption(personalityId);
+
+      if (!settingsManager.isMemfsEnabled(agentId)) {
+        const cmd =
+          overlayCommand ??
+          commandRunner.start(
+            "/personality",
+            "Memory filesystem is disabled. Run /memfs enable first.",
+          );
+        cmd.fail("Memory filesystem is disabled. Run `/memfs enable` first.");
+        return;
+      }
+
+      if (isAgentBusy()) {
+        setActiveOverlay(null);
+        const cmd =
+          overlayCommand ??
+          commandRunner.start(
+            "/personality",
+            "Personality switch queued – will apply after current task completes",
+          );
+        cmd.update({
+          output:
+            "Personality switch queued – will apply after current task completes",
+          phase: "running",
+        });
+        setQueuedOverlayAction({
+          type: "switch_personality",
+          personalityId,
+          commandId: cmd.id,
+        });
+        return;
+      }
+
+      try {
+        await withCommandLock(async () => {
+          const cmd =
+            overlayCommand ??
+            commandRunner.start(
+              "/personality",
+              `Switching personality to ${personality.label}...`,
+            );
+          cmd.update({
+            output: `Switching personality to ${personality.label}...`,
+            phase: "running",
+          });
+
+          const result = await applyPersonalityToMemory({
+            agentId,
+            personalityId,
+          });
+
+          if (!result.changed) {
+            setCurrentPersonalityId(personalityId);
+            cmd.finish(`Personality already set to ${personality.label}`, true);
+            return;
+          }
+
+          setCurrentPersonalityId(personalityId);
+
+          // Wait for the remote block to pick up the git push
+          cmd.update({
+            output: "Waiting for changes to propagate...",
+            phase: "running",
+          });
+
+          const expectedBlocks = new Map<string, string>([
+            [
+              "system/persona",
+              getPersonalityBlockValues(personalityId).persona.trim(),
+            ],
+            [
+              "system/human",
+              getPersonalityBlockValues(personalityId).human.trim(),
+            ],
+          ]);
+          const client = await getClient();
+          const maxWaitMs = 300_000;
+          const pollIntervalMs = 1_000;
+          const start = Date.now();
+          let propagated = false;
+
+          while (Date.now() - start < maxWaitMs) {
+            try {
+              const blockPage = await client.agents.blocks.list(agentId);
+              const missingLabels = Array.from(expectedBlocks.keys()).filter(
+                (label) =>
+                  !blockPage.items.some((block) => block.label === label),
+              );
+              if (missingLabels.length > 0) {
+                throw new Error(
+                  `${missingLabels.join(", ")} block not found on agent. Run \`/doctor\` to diagnose.`,
+                );
+              }
+
+              const allBlocksPropagated = Array.from(
+                expectedBlocks.entries(),
+              ).every(([label, expectedContent]) =>
+                blockPage.items.some(
+                  (block) =>
+                    block.label === label &&
+                    block.value.includes(expectedContent),
+                ),
+              );
+              if (allBlocksPropagated) {
+                propagated = true;
+                break;
+              }
+            } catch (pollErr) {
+              if (
+                pollErr instanceof Error &&
+                pollErr.message.includes("not found on agent")
+              ) {
+                throw pollErr;
+              }
+              // Transient API error — keep polling
+            }
+            await new Promise((r) => setTimeout(r, pollIntervalMs));
+          }
+
+          if (propagated) {
+            cmd.update({
+              output: "Recompiling agent...",
+              phase: "running",
+            });
+
+            const currentConversationId = conversationIdRef.current;
+            await client.agents.recompile(agentId, {
+              update_timestamp: true,
+            });
+            const conversationParams =
+              currentConversationId === "default"
+                ? { agent_id: agentId }
+                : undefined;
+            await client.conversations.recompile(
+              currentConversationId,
+              conversationParams,
+            );
+
+            cmd.finish(
+              `Personality swapped to ${personality.label}. Run \`/clear\` or \`/new\` to reset your message history for the personality to take full effect.`,
+              true,
+            );
+          } else {
+            cmd.finish(
+              `Personality swapped to ${personality.label}. Block propagation timed out — run \`/recompile\` manually`,
+              true,
+            );
+          }
+        });
+      } catch (error) {
+        const errorDetails = formatErrorDetails(error, agentId);
+        const cmd =
+          overlayCommand ??
+          commandRunner.start("/personality", "Failed to switch personality.");
+        cmd.fail(`Failed to switch personality: ${errorDetails}`);
+      }
+    },
+    [
+      agentId,
+      commandRunner,
+      consumeOverlayCommand,
+      isAgentBusy,
+      withCommandLock,
+    ],
+  );
+
   const handleSleeptimeModeSelect = useCallback(
     async (
       reflectionSettings: ReflectionSettings,
@@ -12391,6 +13184,12 @@ ${SYSTEM_REMINDER_CLOSE}
                 resetContextHistory(contextTrackerRef.current);
                 resetBootstrapReminderState();
 
+                if (resumeData.pendingApprovals.length > 0) {
+                  await recoverRestoredPendingApprovals(
+                    resumeData.pendingApprovals,
+                  );
+                }
+
                 cmd.finish(
                   `Switched to conversation (${resumeData.messageHistory.length} messages)`,
                   true,
@@ -12410,6 +13209,8 @@ ${SYSTEM_REMINDER_CLOSE}
         handleToolsetSelect(action.toolsetId, action.commandId);
       } else if (action.type === "switch_system") {
         handleSystemPromptSelect(action.promptId, action.commandId);
+      } else if (action.type === "switch_personality") {
+        handlePersonalitySelect(action.personalityId, action.commandId);
       }
     }
   }, [
@@ -12424,6 +13225,7 @@ ${SYSTEM_REMINDER_CLOSE}
     handleCompactionModeSelect,
     handleToolsetSelect,
     handleSystemPromptSelect,
+    handlePersonalitySelect,
     agentId,
     agentState,
     conversationId,
@@ -12431,6 +13233,7 @@ ${SYSTEM_REMINDER_CLOSE}
     setCommandRunning,
     commandRunner.getHandle,
     commandRunner.start,
+    recoverRestoredPendingApprovals,
     resetBootstrapReminderState,
   ]);
 
@@ -13096,6 +13899,11 @@ ${SYSTEM_REMINDER_CLOSE}
     queueApprovalResults,
   ]);
 
+  const handleConsumeDraft = useCallback(() => {
+    currentDraftRef.current = "";
+    setRestoredInput("");
+  }, []);
+
   const handleQuestionSubmit = useCallback(
     async (answers: Record<string, string>) => {
       const currentIndex = approvalResults.length;
@@ -13407,26 +14215,6 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
     });
   }, [estimatedLiveHeight, terminalRows]);
 
-  // Queue auto-init for startup-created agents (--new-agent, --import, profile selector "new").
-  // The consumed ref ensures this fires at most once per app lifetime, so later
-  // agent switches (which change agentId but leave agentProvenance stale) don't
-  // accidentally re-queue auto-init for an existing agent. This also means if
-  // the user switches away from the startup agent and back, auto-init won't
-  // re-queue — that's intentional (init is a one-shot at creation time).
-  useEffect(() => {
-    if (
-      loadingState === "ready" &&
-      agentProvenance?.isNew &&
-      agentId &&
-      !startupAutoInitConsumedRef.current
-    ) {
-      startupAutoInitConsumedRef.current = true;
-      if (settingsManager.isMemfsEnabled(agentId)) {
-        autoInitPendingAgentIdsRef.current.add(agentId);
-      }
-    }
-  }, [loadingState, agentProvenance, agentId]);
-
   // Commit welcome snapshot once when ready for fresh sessions (no history)
   // Wait for agentProvenance to be available for new agents (continueSession=false)
   useEffect(() => {
@@ -13733,6 +14521,8 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
                                 : undefined
                             }
                             agentName={agentName ?? undefined}
+                            initialDraft={currentDraftRef.current || undefined}
+                            onConsumeDraft={handleConsumeDraft}
                           />
                         ) : ln.kind === "user" ? (
                           <UserMessage line={ln} prompt={statusLine.prompt} />
@@ -13830,6 +14620,8 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
                         : undefined
                     }
                     agentName={agentName ?? undefined}
+                    initialDraft={currentDraftRef.current || undefined}
+                    onConsumeDraft={handleConsumeDraft}
                   />
                 </Box>
               )}
@@ -13942,6 +14734,9 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
                 onPasteError={handlePasteError}
                 restoredInput={restoredInput}
                 onRestoredInputConsumed={() => setRestoredInput(null)}
+                onDraftChange={(draft) => {
+                  currentDraftRef.current = draft;
+                }}
                 networkPhase={networkPhase}
                 terminalWidth={chromeColumns}
                 shouldAnimate={shouldAnimate}
@@ -14146,6 +14941,14 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
               />
             )}
 
+            {activeOverlay === "personality" && (
+              <PersonalitySelector
+                currentPersonalityId={currentPersonalityId ?? undefined}
+                onSelect={handlePersonalitySelect}
+                onCancel={closeOverlay}
+              />
+            )}
+
             {/* Subagent Manager - for managing custom subagents */}
             {activeOverlay === "subagent" && (
               <SubagentManager onClose={closeOverlay} />
@@ -14334,32 +15137,9 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
 
                       // Restore pending approvals if any (fixes #540 for ConversationSelector)
                       if (resumeData.pendingApprovals.length > 0) {
-                        setPendingApprovals(resumeData.pendingApprovals);
-
-                        // Analyze approval contexts (same logic as startup)
-                        try {
-                          const contexts = await Promise.all(
-                            resumeData.pendingApprovals.map(
-                              async (approval) => {
-                                const parsedArgs = safeJsonParseOr<
-                                  Record<string, unknown>
-                                >(approval.toolArgs, {});
-                                return await analyzeToolApproval(
-                                  approval.toolName,
-                                  parsedArgs,
-                                );
-                              },
-                            ),
-                          );
-                          setApprovalContexts(contexts);
-                        } catch (approvalError) {
-                          // If analysis fails, leave context as null (will show basic options)
-                          debugLog(
-                            "approvals",
-                            "Failed to analyze resume approvals: %O",
-                            approvalError,
-                          );
-                        }
+                        await recoverRestoredPendingApprovals(
+                          resumeData.pendingApprovals,
+                        );
                       }
                     }
                   } catch (error) {
@@ -14616,25 +15396,9 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
 
                       // Restore pending approvals if any
                       if (resumeData.pendingApprovals.length > 0) {
-                        setPendingApprovals(resumeData.pendingApprovals);
-                        try {
-                          const contexts = await Promise.all(
-                            resumeData.pendingApprovals.map(
-                              async (approval) => {
-                                const parsedArgs = safeJsonParseOr<
-                                  Record<string, unknown>
-                                >(approval.toolArgs, {});
-                                return await analyzeToolApproval(
-                                  approval.toolName,
-                                  parsedArgs,
-                                );
-                              },
-                            ),
-                          );
-                          setApprovalContexts(contexts);
-                        } catch {
-                          // If analysis fails, leave context as null
-                        }
+                        await recoverRestoredPendingApprovals(
+                          resumeData.pendingApprovals,
+                        );
                       }
                     }
                   } catch (error) {

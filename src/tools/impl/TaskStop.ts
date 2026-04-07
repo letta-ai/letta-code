@@ -1,5 +1,8 @@
 import { kill_bash } from "./KillBash.js";
-import { backgroundTasks } from "./process_manager.js";
+import {
+  backgroundTasks,
+  scheduleBackgroundTaskCleanup,
+} from "./process_manager.js";
 import { validateRequiredParams } from "./validation.js";
 
 interface TaskStopArgs {
@@ -26,6 +29,7 @@ export async function task_stop(args: TaskStopArgs): Promise<TaskStopResult> {
       task.abortController.abort();
       task.status = "failed";
       task.error = "Aborted by user";
+      scheduleBackgroundTaskCleanup(id);
       return { killed: true };
     }
     // Task exists but isn't running or doesn't have abort controller

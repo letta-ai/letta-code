@@ -9,6 +9,8 @@
  *   bun tsx src/tests/headless-scenario.ts --model gpt-4.1 --output stream-json --parallel on
  */
 
+import { createIsolatedCliTestEnv } from "./testProcessEnv";
+
 type Args = {
   model: string;
   output: "text" | "json" | "stream-json";
@@ -71,6 +73,7 @@ async function runCLI(
     scenarioPrompt(),
     "--yolo",
     "--new-agent",
+    "--no-memfs",
     "--base-tools",
     "memory,web_search,fetch_webpage,conversation_search",
     "--output-format",
@@ -78,11 +81,11 @@ async function runCLI(
     "-m",
     model,
   ];
-  // Mark as subagent to prevent polluting user's LRU settings
+  // Use an isolated env so the scenario doesn't mutate the user's saved session state.
   const proc = Bun.spawn(cmd, {
     stdout: "pipe",
     stderr: "pipe",
-    env: { ...process.env, LETTA_CODE_AGENT_ROLE: "subagent" },
+    env: createIsolatedCliTestEnv(),
   });
   const out = await new Response(proc.stdout).text();
   const err = await new Response(proc.stderr).text();

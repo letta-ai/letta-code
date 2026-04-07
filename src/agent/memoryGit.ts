@@ -28,6 +28,11 @@ const execFile = promisify(execFileCb);
 
 export const GIT_MEMORY_ENABLED_TAG = "git-memory-enabled";
 
+const RETRYABLE_GIT_HTTP_ERROR_RE =
+  /(?:\bHTTP\s+(?:520|521|522|523|524)\b|The requested URL returned error:\s*(?:520|521|522|523|524))/i;
+const RETRYABLE_GIT_NETWORK_ERROR_RE =
+  /(remote end hung up unexpectedly|connection reset by peer|operation timed out|timed out)/i;
+
 /** Get the agent root directory (~/.letta/agents/{id}/) */
 export function getAgentRootDir(agentId: string): string {
   return join(homedir(), ".letta", "agents", agentId);
@@ -57,10 +62,82 @@ export function normalizeCredentialBaseUrl(serverUrl: string): string {
   }
 }
 
+function normalizeRemoteUrl(url: string): string {
+  return url.trim().replace(/\/+$/, "");
+}
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Returns true when a remote URL points to this agent's memfs git endpoint.
+ */
+export function isMemfsRemoteUrlForAgent(
+  remoteUrl: string,
+  agentId: string,
+): boolean {
+  const normalized = normalizeRemoteUrl(remoteUrl);
+  const escapedAgentId = escapeRegex(agentId);
+  return new RegExp(
+    `^https?://[^\\s]+/v1/git/${escapedAgentId}/state\\.git$`,
+    "i",
+  ).test(normalized);
+}
+
 /** Git remote URL for the agent's state repo */
-function getGitRemoteUrl(agentId: string): string {
-  const baseUrl = getServerUrl().trim().replace(/\/+$/, "");
-  return `${baseUrl}/v1/git/${agentId}/state.git`;
+export function getGitRemoteUrl(agentId: string, baseUrl?: string): string {
+  const resolvedBaseUrl = (baseUrl ?? getServerUrl())
+    .trim()
+    .replace(/\/+$/, "");
+  return `${resolvedBaseUrl}/v1/git/${agentId}/state.git`;
+}
+
+/**
+ * Keep the local repo's `origin` URL aligned with the current server base URL.
+ *
+ * Best-effort: if origin is missing or not a memfs endpoint for this agent,
+ * this function is a no-op.
+ */
+export async function maybeUpdateMemoryRemoteOrigin(
+  repoDir: string,
+  agentId: string,
+): Promise<void> {
+  let currentOrigin = "";
+  try {
+    const { stdout } = await runGit(repoDir, ["remote", "get-url", "origin"]);
+    currentOrigin = stdout.trim();
+  } catch {
+    // No origin remote configured — leave as-is.
+    return;
+  }
+
+  if (!currentOrigin) {
+    return;
+  }
+
+  if (!isMemfsRemoteUrlForAgent(currentOrigin, agentId)) {
+    return;
+  }
+
+  const expectedOrigin = normalizeRemoteUrl(getGitRemoteUrl(agentId));
+  const normalizedCurrent = normalizeRemoteUrl(currentOrigin);
+
+  if (normalizedCurrent === expectedOrigin) {
+    return;
+  }
+
+  await runGit(repoDir, ["remote", "set-url", "origin", expectedOrigin]);
+
+  debugLog(
+    "memfs-git",
+    `Updated origin remote for ${agentId}: ${normalizedCurrent} -> ${expectedOrigin}`,
+  );
+}
+
+/** Git remote URL for the agent's state repo */
+function getMemoryRemoteUrl(agentId: string): string {
+  return getGitRemoteUrl(agentId);
 }
 
 /**
@@ -112,6 +189,65 @@ async function runGit(
     stdout: result.stdout?.toString() ?? "",
     stderr: result.stderr?.toString() ?? "",
   };
+}
+
+/**
+ * Returns true when a git error looks transient/retryable (network/edge).
+ *
+ * These failures are commonly seen when Cloudflare returns temporary 52x
+ * errors during memfs clone/pull operations.
+ */
+export function isRetryableGitTransientError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+
+  if (RETRYABLE_GIT_HTTP_ERROR_RE.test(message)) {
+    return true;
+  }
+
+  // Git often emits both lines together:
+  // - "error: RPC failed; HTTP 520 ..."
+  // - "fatal: the remote end hung up unexpectedly"
+  if (
+    message.includes("RPC failed") &&
+    RETRYABLE_GIT_NETWORK_ERROR_RE.test(message)
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+async function runGitWithRetry(
+  cwd: string,
+  args: string[],
+  token?: string,
+  options?: { operation?: string; attempts?: number; baseDelayMs?: number },
+): Promise<{ stdout: string; stderr: string }> {
+  const attempts = options?.attempts ?? 3;
+  const baseDelayMs = options?.baseDelayMs ?? 500;
+  const operation = options?.operation ?? args[0] ?? "git op";
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await runGit(cwd, args, token);
+    } catch (error) {
+      if (!isRetryableGitTransientError(error) || attempt >= attempts) {
+        throw error;
+      }
+
+      const delayMs = baseDelayMs * 2 ** (attempt - 1);
+      const msg = error instanceof Error ? error.message : String(error);
+      debugWarn(
+        "memfs-git",
+        `${operation} failed with transient error (attempt ${attempt}/${attempts}): ${msg}. Retrying in ${delayMs}ms`,
+      );
+
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+
+  // Should never be reached (loop either returns or throws).
+  throw new Error(`Unexpected retry loop exit for ${operation}`);
 }
 
 /**
@@ -320,7 +456,7 @@ export function isGitRepo(agentId: string): boolean {
  */
 export async function cloneMemoryRepo(agentId: string): Promise<void> {
   const token = await getAuthToken();
-  const url = getGitRemoteUrl(agentId);
+  const url = getMemoryRemoteUrl(agentId);
   const dir = getMemoryRepoDir(agentId);
 
   debugLog("memfs-git", `Cloning ${url} → ${dir}`);
@@ -328,7 +464,9 @@ export async function cloneMemoryRepo(agentId: string): Promise<void> {
   if (!existsSync(dir)) {
     // Fresh clone into new memory directory
     mkdirSync(dir, { recursive: true });
-    await runGit(dir, ["clone", url, "."], token);
+    await runGitWithRetry(dir, ["clone", url, "."], token, {
+      operation: "clone memory repo",
+    });
   } else if (!existsSync(join(dir, ".git"))) {
     // Directory exists but isn't a git repo (legacy local layout)
     // Clone to temp, move .git/ into existing dir, then checkout files.
@@ -338,7 +476,9 @@ export async function cloneMemoryRepo(agentId: string): Promise<void> {
         rmSync(tmpDir, { recursive: true, force: true });
       }
       mkdirSync(tmpDir, { recursive: true });
-      await runGit(tmpDir, ["clone", url, "."], token);
+      await runGitWithRetry(tmpDir, ["clone", url, "."], token, {
+        operation: "clone memory repo (tmp migration)",
+      });
 
       // Move .git into the existing memory directory
       renameSync(join(tmpDir, ".git"), join(dir, ".git"));
@@ -372,12 +512,19 @@ export async function pullMemory(
   const token = await getAuthToken();
   const dir = getMemoryRepoDir(agentId);
 
+  await maybeUpdateMemoryRemoteOrigin(dir, agentId);
+
   // Self-healing: ensure credential helper and pre-commit hook are configured
   await configureLocalCredentialHelper(dir, token);
   installPreCommitHook(dir);
 
   try {
-    const { stdout, stderr } = await runGit(dir, ["pull", "--ff-only"], token);
+    const { stdout, stderr } = await runGitWithRetry(
+      dir,
+      ["pull", "--ff-only"],
+      token,
+      { operation: "pull --ff-only" },
+    );
     const output = stdout + stderr;
     const updated = !output.includes("Already up to date");
     return {
@@ -388,7 +535,12 @@ export async function pullMemory(
     // If ff-only fails (diverged), try rebase
     debugWarn("memfs-git", "Fast-forward pull failed, trying rebase");
     try {
-      const { stdout, stderr } = await runGit(dir, ["pull", "--rebase"], token);
+      const { stdout, stderr } = await runGitWithRetry(
+        dir,
+        ["pull", "--rebase"],
+        token,
+        { operation: "pull --rebase" },
+      );
       return { updated: true, summary: (stdout + stderr).trim() };
     } catch (rebaseErr) {
       const msg =
@@ -399,6 +551,53 @@ export async function pullMemory(
         summary: `Pull failed: ${msg}\nHint: verify remote and auth:\n- git -C ${dir} remote -v\n- git -C ${dir} config --get-regexp '^credential\\..*\\.helper$'`,
       };
     }
+  }
+}
+
+/**
+ * Push local memory commits to the server.
+ * Handles auth, retries with rebase on conflict, and gracefully
+ * handles empty remotes (no branch on server yet).
+ */
+export async function pushMemory(agentId: string): Promise<void> {
+  const token = await getAuthToken();
+  const dir = getMemoryRepoDir(agentId);
+
+  await maybeUpdateMemoryRemoteOrigin(dir, agentId);
+
+  await configureLocalCredentialHelper(dir, token);
+
+  try {
+    await runGit(dir, ["push"], token);
+    return;
+  } catch (pushError) {
+    debugWarn(
+      "memfs-git",
+      `Push failed, attempting pull --rebase: ${pushError instanceof Error ? pushError.message : String(pushError)}`,
+    );
+  }
+
+  // Push failed — try pull --rebase then retry push.
+  // The pull itself may fail (e.g. empty remote with no branch), so catch that.
+  try {
+    await runGit(dir, ["pull", "--rebase"], token);
+  } catch (pullError) {
+    debugWarn(
+      "memfs-git",
+      `Pull --rebase also failed (remote may be empty): ${pullError instanceof Error ? pullError.message : String(pullError)}`,
+    );
+    // If pull fails, the push won't succeed either — surface original push error
+    // but don't crash; the commit is saved locally and can be pushed later.
+    return;
+  }
+
+  try {
+    await runGit(dir, ["push"], token);
+  } catch (retryError) {
+    debugWarn(
+      "memfs-git",
+      `Push failed after rebase: ${retryError instanceof Error ? retryError.message : String(retryError)}`,
+    );
   }
 }
 

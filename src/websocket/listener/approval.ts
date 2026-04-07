@@ -91,7 +91,7 @@ export function isValidApprovalResponseBody(
     behavior?: unknown;
     message?: unknown;
     updated_input?: unknown;
-    updated_permissions?: unknown;
+    selected_permission_suggestion_ids?: unknown;
   };
   if (decision.behavior === "allow") {
     const hasMessage =
@@ -100,13 +100,13 @@ export function isValidApprovalResponseBody(
       decision.updated_input === undefined ||
       decision.updated_input === null ||
       typeof decision.updated_input === "object";
-    const hasUpdatedPermissions =
-      decision.updated_permissions === undefined ||
-      (Array.isArray(decision.updated_permissions) &&
-        decision.updated_permissions.every(
+    const hasSelectedPermissionSuggestionIds =
+      decision.selected_permission_suggestion_ids === undefined ||
+      (Array.isArray(decision.selected_permission_suggestion_ids) &&
+        decision.selected_permission_suggestion_ids.every(
           (entry) => typeof entry === "string",
         ));
-    return hasMessage && hasUpdatedInput && hasUpdatedPermissions;
+    return hasMessage && hasUpdatedInput && hasSelectedPermissionSuggestionIds;
   }
   if (decision.behavior === "deny") {
     return typeof decision.message === "string";
@@ -248,13 +248,58 @@ export function requestApprovalOverWS(
     return Promise.reject(new Error("WebSocket not open"));
   }
 
+  const abortSignal = runtime.activeAbortController?.signal ?? null;
+  const isInterrupted = () =>
+    runtime.cancelRequested || abortSignal?.aborted === true;
+
+  if (isInterrupted()) {
+    return Promise.reject(new Error("Cancelled by user"));
+  }
+
   return new Promise<ApprovalResponseBody>((resolve, reject) => {
+    let settled = false;
+    const cleanupAbortListener = () => {
+      abortSignal?.removeEventListener("abort", handleAbort);
+    };
+    const wrappedResolve = (response: ApprovalResponseBody) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanupAbortListener();
+      resolve(response);
+    };
+    const wrappedReject = (error: Error) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanupAbortListener();
+      reject(error);
+    };
+    const handleAbort = () => {
+      runtime.pendingApprovalResolvers.delete(requestId);
+      runtime.listener.approvalRuntimeKeyByRequestId.delete(requestId);
+      wrappedReject(new Error("Cancelled by user"));
+    };
+
+    abortSignal?.addEventListener("abort", handleAbort, { once: true });
+    if (isInterrupted()) {
+      handleAbort();
+      return;
+    }
+
     runtime.pendingApprovalResolvers.set(requestId, {
-      resolve,
-      reject,
+      resolve: wrappedResolve,
+      reject: wrappedReject,
       controlRequest,
     });
     runtime.listener.approvalRuntimeKeyByRequestId.set(requestId, runtime.key);
+    if (isInterrupted()) {
+      handleAbort();
+      return;
+    }
+    runtime.lastStopReason = "requires_approval";
     setLoopStatus(runtime, "WAITING_ON_APPROVAL");
     emitLoopStatusIfOpen(runtime.listener, {
       agent_id: runtime.agentId,

@@ -27,6 +27,14 @@ Default to using Bun instead of Node.js.
 
 Use `bun test` to run tests.
 
+### Bun Module Mocking
+
+- Treat `mock.module()` as process-global. In Bun, module mocks can leak across test files via the shared module cache and cause unrelated failures later in the full suite.
+- Do not mock broad/shared modules like `settings-manager`, telemetry helpers, or other hot imports unless there is no better seam.
+- Prefer test seams, object-level stubbing, or patching a specific exported instance over module-level mocking of transitive dependencies.
+- If you must use `mock.module()`, install the mock inside per-test setup, restore it in teardown, and do not assume that dynamic `import()` gives you a fresh copy of a previously imported module.
+- If a test only passes in isolation but fails in `bun test src/tests`, suspect module-mock leakage first.
+
 ```ts#index.test.ts
 import { test, expect } from "bun:test";
 

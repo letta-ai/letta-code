@@ -16,6 +16,8 @@ export interface RegisterOptions {
   connectionName: string;
 }
 
+type FetchImpl = typeof fetch;
+
 /**
  * Error thrown by registration that carries the HTTP status code (if any).
  * Network errors (fetch failure) have `statusCode = 0`.
@@ -46,10 +48,11 @@ function isTransientRegistrationError(error: unknown): boolean {
  */
 export async function registerWithCloud(
   opts: RegisterOptions,
+  fetchImpl: FetchImpl = fetch,
 ): Promise<RegisterResult> {
   const registerUrl = `${opts.serverUrl}/v1/environments/register`;
 
-  const response = await fetch(registerUrl, {
+  const response = await fetchImpl(registerUrl, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

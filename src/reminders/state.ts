@@ -28,7 +28,6 @@ export interface SharedReminderState {
   lastNotifiedPermissionMode: PermissionMode | null;
   turnCount: number;
   pendingReflectionTrigger: boolean;
-  pendingAutoInitReminder: boolean;
   pendingCommandIoReminders: CommandIoReminder[];
   pendingToolsetChangeReminders: ToolsetChangeReminder[];
   /** When set, the next session-context reminder uses this reason for its intro text. */
@@ -43,7 +42,6 @@ export function createSharedReminderState(): SharedReminderState {
     lastNotifiedPermissionMode: null,
     turnCount: 0,
     pendingReflectionTrigger: false,
-    pendingAutoInitReminder: false,
     pendingCommandIoReminders: [],
     pendingToolsetChangeReminders: [],
   };

@@ -1,31 +1,7 @@
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 
-/**
- * When true, ANY command scoped entirely to the agent's memory directory is auto-approved.
- * When false, only git + safe file operations are auto-approved in the memory dir.
- */
-const MEMORY_DIR_APPROVE_ALL = true;
-
-/** Commands allowed in memory dir when MEMORY_DIR_APPROVE_ALL is false */
-const SAFE_MEMORY_DIR_COMMANDS = new Set([
-  "git",
-  "rm",
-  "mv",
-  "mkdir",
-  "cp",
-  "ls",
-  "cat",
-  "head",
-  "tail",
-  "tree",
-  "find",
-  "wc",
-  "split",
-  "echo",
-  "sort",
-  "cd",
-]);
+import { isPathWithinRoots, normalizeScopedPath } from "./memoryScope";
 
 const ALWAYS_SAFE_COMMANDS = new Set([
   "cat",
@@ -78,6 +54,20 @@ const ALWAYS_SAFE_COMMANDS = new Set([
   "xxd",
   "hexdump",
   "cd",
+  "true",
+]);
+
+// These commands inspect directory/path metadata but do not read file contents,
+// so absolute or home-anchored paths are still considered read-only.
+const EXTERNAL_PATH_METADATA_COMMANDS = new Set([
+  "ls",
+  "tree",
+  "stat",
+  "du",
+  "realpath",
+  "readlink",
+  "basename",
+  "dirname",
 ]);
 
 const SAFE_GIT_SUBCOMMANDS = new Set([
@@ -88,6 +78,44 @@ const SAFE_GIT_SUBCOMMANDS = new Set([
   "branch",
   "tag",
   "remote",
+]);
+
+const SAFE_MEMORY_GIT_SUBCOMMANDS = new Set([
+  "add",
+  "commit",
+  "push",
+  "pull",
+  "rebase",
+  "status",
+  "diff",
+  "log",
+  "show",
+  "branch",
+  "tag",
+  "remote",
+  "rm",
+  "mv",
+  "merge",
+  "worktree",
+]);
+
+const SAFE_MEMORY_COMMANDS = new Set([
+  "git",
+  "rm",
+  "mv",
+  "mkdir",
+  "cp",
+  "ls",
+  "cat",
+  "head",
+  "tail",
+  "find",
+  "sort",
+  "echo",
+  "wc",
+  "split",
+  "cd",
+  "sleep",
 ]);
 
 // letta CLI read-only subcommands: group -> allowed actions
@@ -106,9 +134,9 @@ export const SAFE_GH_COMMANDS: Record<string, Set<string> | null> = {
   repo: new Set(["list", "view", "gitignore", "license"]),
   run: new Set(["list", "view", "watch", "download"]),
   release: new Set(["list", "view", "download"]),
-  search: null, // all search subcommands are read-only
-  api: null, // usually GET requests for exploration
-  status: null, // top-level command, no action needed
+  search: null,
+  api: null,
+  status: null,
 };
 
 /**
@@ -147,7 +175,6 @@ function splitShellSegments(input: string): string[] | null {
         continue;
       }
 
-      // Command substitution still evaluates inside double quotes.
       if (ch === "`" || input.startsWith("$(", i)) {
         return null;
       }
@@ -198,6 +225,12 @@ function splitShellSegments(input: string): string[] | null {
       i += 1;
       continue;
     }
+    if (ch === "\n" || ch === "\r") {
+      segments.push(current);
+      current = "";
+      i += 1;
+      continue;
+    }
     if (ch === "|") {
       segments.push(current);
       current = "";
@@ -214,11 +247,8 @@ function splitShellSegments(input: string): string[] | null {
 }
 
 export interface ReadOnlyShellOptions {
-  /**
-   * Allow absolute/home/traversal path arguments for read-only commands.
-   * Used in plan mode where read-only shell should not be restricted to cwd-relative paths.
-   */
   allowExternalPaths?: boolean;
+  allowedPathRoots?: string[];
 }
 
 export function isReadOnlyShellCommand(
@@ -286,20 +316,20 @@ function isSafeSegment(
   }
 
   if (ALWAYS_SAFE_COMMANDS.has(command)) {
-    // `cd` is read-only, but it should still respect path restrictions so
-    // `cd / && cat relative/path` cannot bypass path checks on later segments.
     if (command === "cd") {
       if (options.allowExternalPaths) {
         return true;
       }
-      return !tokens.slice(1).some((t) => hasAbsoluteOrTraversalPathArg(t));
+      return !tokens.slice(1).some((t) => hasDisallowedPathArg(t, options));
     }
 
-    // For other "always safe" commands, ensure they don't read sensitive files
-    // outside the allowed directories.
+    if (EXTERNAL_PATH_METADATA_COMMANDS.has(command)) {
+      return true;
+    }
+
     const hasExternalPath =
       !options.allowExternalPaths &&
-      tokens.slice(1).some((t) => hasAbsoluteOrTraversalPathArg(t));
+      tokens.slice(1).some((t) => hasDisallowedPathArg(t, options));
 
     if (hasExternalPath) {
       return false;
@@ -308,7 +338,6 @@ function isSafeSegment(
   }
 
   if (command === "sed") {
-    // sed is read-only unless in-place edit flags are used.
     const usesInPlace = tokens.some(
       (token) =>
         token === "-i" || token.startsWith("-i") || token === "--in-place",
@@ -319,7 +348,7 @@ function isSafeSegment(
 
     const hasExternalPath =
       !options.allowExternalPaths &&
-      tokens.slice(1).some((t) => hasAbsoluteOrTraversalPathArg(t));
+      tokens.slice(1).some((t) => hasDisallowedPathArg(t, options));
 
     if (hasExternalPath) {
       return false;
@@ -328,12 +357,16 @@ function isSafeSegment(
   }
 
   if (command === "git") {
-    const subcommand = tokens[1];
+    const { subcommand, isSafePath } = parseGitInvocation(tokens, options);
+    if (!isSafePath) {
+      return false;
+    }
     if (!subcommand) {
       return false;
     }
     return SAFE_GIT_SUBCOMMANDS.has(subcommand);
   }
+
   if (command === "gh") {
     const category = tokens[1];
     if (!category) {
@@ -343,11 +376,9 @@ function isSafeSegment(
       return false;
     }
     const allowedActions = SAFE_GH_COMMANDS[category];
-    // null means any action is allowed (e.g., gh search, gh api, gh status)
     if (allowedActions === null) {
       return true;
     }
-    // undefined means category not in map (shouldn't happen after 'in' check)
     if (allowedActions === undefined) {
       return false;
     }
@@ -357,6 +388,7 @@ function isSafeSegment(
     }
     return allowedActions.has(action);
   }
+
   if (command === "letta") {
     const group = tokens[1];
     if (!group) {
@@ -371,6 +403,7 @@ function isSafeSegment(
     }
     return SAFE_LETTA_COMMANDS[group]?.has(action) ?? false;
   }
+
   if (command === "find") {
     return !/-delete|\s-exec\b/.test(segment);
   }
@@ -420,12 +453,10 @@ function isAbsolutePathArg(value: string): boolean {
     return false;
   }
 
-  // POSIX absolute paths
   if (value.startsWith("/")) {
     return true;
   }
 
-  // Windows absolute paths (drive letter and UNC)
   return /^[a-zA-Z]:[\\/]/.test(value) || value.startsWith("\\\\");
 }
 
@@ -442,24 +473,79 @@ function isHomeAnchoredPathArg(value: string): boolean {
   );
 }
 
+function isUnderAllowedPathRoot(
+  value: string,
+  allowedPathRoots?: string[],
+): boolean {
+  if (!allowedPathRoots || allowedPathRoots.length === 0) {
+    return false;
+  }
+
+  const resolvedValue = expandPath(value);
+  return allowedPathRoots.some((root) => {
+    const normalizedRoot = normalizeSeparators(resolve(root));
+    return (
+      resolvedValue === normalizedRoot ||
+      resolvedValue.startsWith(`${normalizedRoot}/`)
+    );
+  });
+}
+
+function hasDisallowedPathArg(
+  value: string,
+  options: ReadOnlyShellOptions,
+): boolean {
+  if (!hasAbsoluteOrTraversalPathArg(value)) {
+    return false;
+  }
+
+  if (options.allowExternalPaths) {
+    return false;
+  }
+
+  if (isAbsolutePathArg(value) || isHomeAnchoredPathArg(value)) {
+    return !isUnderAllowedPathRoot(value, options.allowedPathRoots);
+  }
+
+  return true;
+}
+
 function hasAbsoluteOrTraversalPathArg(value: string): boolean {
   if (isAbsolutePathArg(value) || isHomeAnchoredPathArg(value)) {
     return true;
   }
 
-  // Path traversal segments only
   return /(^|[\\/])\.\.([\\/]|$)/.test(value);
 }
 
-/**
- * Build the set of allowed memory directory prefixes for the current agent.
- * Includes:
- * - ~/.letta/agents/<agentId>/memory/
- * - ~/.letta/agents/<agentId>/memory-worktrees/
- * And if LETTA_PARENT_AGENT_ID is set (subagent context):
- * - ~/.letta/agents/<parentAgentId>/memory/
- * - ~/.letta/agents/<parentAgentId>/memory-worktrees/
- */
+function parseGitInvocation(
+  tokens: string[],
+  options: ReadOnlyShellOptions,
+): { subcommand: string | null; isSafePath: boolean } {
+  let index = 1;
+
+  while (index < tokens.length) {
+    const token = tokens[index];
+    if (!token) {
+      index += 1;
+      continue;
+    }
+
+    if (token === "-C") {
+      const pathToken = tokens[index + 1];
+      if (!pathToken || hasDisallowedPathArg(pathToken, options)) {
+        return { subcommand: null, isSafePath: false };
+      }
+      index += 2;
+      continue;
+    }
+
+    return { subcommand: token, isSafePath: true };
+  }
+
+  return { subcommand: null, isSafePath: true };
+}
+
 function getAllowedMemoryPrefixes(agentId: string): string[] {
   const home = homedir();
   const prefixes: string[] = [
@@ -482,62 +568,489 @@ function getAllowedMemoryPrefixes(agentId: string): string[] {
   return prefixes;
 }
 
-/**
- * Normalize a path to forward slashes (for consistent comparison on Windows).
- */
 function normalizeSeparators(p: string): string {
   return p.replace(/\\/g, "/");
 }
 
-/**
- * Resolve a path that may contain ~ or $HOME to an absolute path.
- * Always returns forward slashes for cross-platform consistency.
- */
 function expandPath(p: string): string {
-  const home = homedir();
-  if (p.startsWith("~/")) {
-    return normalizeSeparators(resolve(home, p.slice(2)));
-  }
-  if (p.startsWith("$HOME/")) {
-    return normalizeSeparators(resolve(home, p.slice(6)));
-  }
-  if (p.startsWith('"$HOME/')) {
-    return normalizeSeparators(resolve(home, p.slice(7).replace(/"$/, "")));
-  }
-  return normalizeSeparators(resolve(p));
+  return normalizeScopedPath(p);
 }
 
-/**
- * Check if a path falls within any of the allowed memory directory prefixes.
- */
-function isUnderMemoryDir(path: string, prefixes: string[]): boolean {
-  const resolved = expandPath(path);
-  return prefixes.some(
-    (prefix) => resolved === prefix || resolved.startsWith(`${prefix}/`),
+type ScopedShellOptions = {
+  env?: NodeJS.ProcessEnv;
+  workingDirectory?: string;
+};
+
+type ScopedShellVars = Record<string, string>;
+
+function expandScopedVariables(
+  value: string,
+  env: NodeJS.ProcessEnv,
+  shellVars: ScopedShellVars,
+): string | null {
+  let unresolved = false;
+  const expanded = value.replace(
+    /\$(?:{([A-Za-z_][A-Za-z0-9_]*)}|([A-Za-z_][A-Za-z0-9_]*))/g,
+    (_match, bracedName: string | undefined, bareName: string | undefined) => {
+      const name = bracedName || bareName;
+      if (!name) {
+        unresolved = true;
+        return "";
+      }
+
+      if (name === "HOME") {
+        return homedir();
+      }
+
+      const scopedValue = shellVars[name];
+      if (typeof scopedValue === "string") {
+        return scopedValue;
+      }
+
+      const envValue = env[name];
+      if (typeof envValue === "string") {
+        return envValue;
+      }
+
+      unresolved = true;
+      return "";
+    },
+  );
+
+  return unresolved ? null : expanded;
+}
+
+function normalizeScopePath(
+  path: string,
+  cwd: string | null,
+  env: NodeJS.ProcessEnv,
+  shellVars: ScopedShellVars,
+): string | null {
+  const expandedPath = expandScopedVariables(path, env, shellVars);
+  if (!expandedPath) {
+    return null;
+  }
+
+  if (
+    expandedPath.startsWith("~/") ||
+    expandedPath.startsWith("$HOME/") ||
+    expandedPath.startsWith('"$HOME/') ||
+    expandedPath.startsWith("/") ||
+    /^[a-zA-Z]:[\\/]/.test(expandedPath)
+  ) {
+    return normalizeScopedPath(expandedPath);
+  }
+
+  if (cwd) {
+    return normalizeScopedPath(resolve(cwd, expandedPath));
+  }
+
+  return null;
+}
+
+function parseScopedAssignmentToken(
+  token: string,
+): { name: string; value: string } | null {
+  const match = token.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
+  if (!match) {
+    return null;
+  }
+
+  return {
+    name: match[1] ?? "",
+    value: stripQuotes(match[2] ?? ""),
+  };
+}
+
+function applyScopedAssignments(
+  tokens: string[],
+  env: NodeJS.ProcessEnv,
+  shellVars: ScopedShellVars,
+): boolean {
+  if (tokens.length === 0) {
+    return false;
+  }
+
+  for (const token of tokens) {
+    const assignment = parseScopedAssignmentToken(token);
+    if (!assignment) {
+      return false;
+    }
+
+    const expandedValue = expandScopedVariables(
+      assignment.value,
+      env,
+      shellVars,
+    );
+    if (expandedValue === null) {
+      return false;
+    }
+
+    if (
+      expandedValue.startsWith("~/") ||
+      expandedValue.startsWith("$HOME/") ||
+      expandedValue.startsWith('"$HOME/') ||
+      expandedValue.startsWith("/") ||
+      /^[a-zA-Z]:[\\/]/.test(expandedValue)
+    ) {
+      shellVars[assignment.name] = normalizeScopedPath(expandedValue);
+    } else {
+      shellVars[assignment.name] = expandedValue;
+    }
+  }
+
+  return true;
+}
+
+function hasUnsafeRebaseOption(tokens: string[], startIndex: number): boolean {
+  for (let i = startIndex; i < tokens.length; i += 1) {
+    const token = tokens[i];
+    if (!token) {
+      continue;
+    }
+    const lower = token.toLowerCase();
+
+    if (
+      lower === "--exec" ||
+      lower.startsWith("--exec=") ||
+      lower === "-x" ||
+      (lower.startsWith("-x") && lower.length > 2) ||
+      lower === "--interactive" ||
+      lower === "-i" ||
+      lower === "--edit-todo"
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function parseScopedGitInvocation(
+  tokens: string[],
+  cwd: string | null,
+  allowedRoots: string[],
+  env: NodeJS.ProcessEnv,
+  shellVars: ScopedShellVars,
+): {
+  subcommand: string | null;
+  worktreeSubcommand: string | null;
+  resolvedCwd: string | null;
+  isSafe: boolean;
+} {
+  let index = 1;
+  let resolvedCwd = cwd;
+
+  while (index < tokens.length) {
+    const token = tokens[index];
+    if (!token) {
+      index += 1;
+      continue;
+    }
+
+    if (token === "-C") {
+      const pathToken = tokens[index + 1];
+      if (!pathToken) {
+        return {
+          subcommand: null,
+          worktreeSubcommand: null,
+          resolvedCwd,
+          isSafe: false,
+        };
+      }
+      const nextCwd = normalizeScopePath(
+        pathToken,
+        resolvedCwd,
+        env,
+        shellVars,
+      );
+      if (!nextCwd || !isPathWithinRoots(nextCwd, allowedRoots)) {
+        return {
+          subcommand: null,
+          worktreeSubcommand: null,
+          resolvedCwd,
+          isSafe: false,
+        };
+      }
+      resolvedCwd = nextCwd;
+      index += 2;
+      continue;
+    }
+
+    if (token === "-c") {
+      const configToken = tokens[index + 1];
+      if (!configToken) {
+        return {
+          subcommand: null,
+          worktreeSubcommand: null,
+          resolvedCwd,
+          isSafe: false,
+        };
+      }
+      if (!/^http\.extraHeader=/.test(configToken)) {
+        return {
+          subcommand: null,
+          worktreeSubcommand: null,
+          resolvedCwd,
+          isSafe: false,
+        };
+      }
+      index += 2;
+      continue;
+    }
+
+    const subcommand = token;
+    if (!SAFE_MEMORY_GIT_SUBCOMMANDS.has(subcommand)) {
+      if (resolvedCwd && SAFE_MEMORY_COMMANDS.has("git")) {
+        const rawSegment = tokens.join(" ");
+        if (subcommand === "ls-tree" && !/\s-o\b/.test(rawSegment)) {
+          return {
+            subcommand,
+            worktreeSubcommand: null,
+            resolvedCwd,
+            isSafe: true,
+          };
+        }
+      }
+      return {
+        subcommand,
+        worktreeSubcommand: null,
+        resolvedCwd,
+        isSafe: false,
+      };
+    }
+
+    const worktreeSubcommand =
+      subcommand === "worktree" ? (tokens[index + 1] ?? null) : null;
+    if (
+      subcommand === "worktree" &&
+      worktreeSubcommand &&
+      !new Set(["add", "remove", "list"]).has(worktreeSubcommand)
+    ) {
+      return {
+        subcommand,
+        worktreeSubcommand,
+        resolvedCwd,
+        isSafe: false,
+      };
+    }
+
+    if (subcommand === "rebase" && hasUnsafeRebaseOption(tokens, index + 1)) {
+      return {
+        subcommand,
+        worktreeSubcommand,
+        resolvedCwd,
+        isSafe: false,
+      };
+    }
+
+    return { subcommand, worktreeSubcommand, resolvedCwd, isSafe: true };
+  }
+
+  return {
+    subcommand: null,
+    worktreeSubcommand: null,
+    resolvedCwd,
+    isSafe: false,
+  };
+}
+
+function tokenLooksLikePath(token: string): boolean {
+  return (
+    token.includes("/") ||
+    token.includes("\\") ||
+    token === "." ||
+    token === ".." ||
+    token.startsWith("$") ||
+    token.startsWith("~") ||
+    token.startsWith("$HOME")
   );
 }
 
-/**
- * Extract the working directory from a command that starts with `cd <path>`.
- * Returns null if the command doesn't start with cd.
- */
-function extractCdTarget(segment: string): string | null {
+function validateScopedTokens(
+  tokens: string[],
+  cwd: string | null,
+  allowedRoots: string[],
+  env: NodeJS.ProcessEnv,
+  shellVars: ScopedShellVars,
+): boolean {
+  return tokens.every((token, index) => {
+    if (!tokenLooksLikePath(token)) {
+      return true;
+    }
+
+    const previous = index > 0 ? tokens[index - 1] : null;
+    if (
+      previous &&
+      ["-m", "--message", "--author", "--format"].includes(previous)
+    ) {
+      return true;
+    }
+
+    const resolved = normalizeScopePath(token, cwd, env, shellVars);
+    return resolved ? isPathWithinRoots(resolved, allowedRoots) : false;
+  });
+}
+
+function isAllowedMemorySegment(
+  segment: string,
+  cwd: string | null,
+  allowedRoots: string[],
+  env: NodeJS.ProcessEnv,
+  shellVars: ScopedShellVars,
+): { nextCwd: string | null; safe: boolean } {
   const tokens = tokenize(segment);
-  if (tokens[0] === "cd" && tokens[1]) {
-    return tokens[1];
+  if (tokens.length === 0) {
+    return { nextCwd: cwd, safe: false };
   }
-  return null;
+
+  if (applyScopedAssignments(tokens, env, shellVars)) {
+    return { nextCwd: cwd, safe: true };
+  }
+
+  const command = tokens[0];
+  if (!command) {
+    return { nextCwd: cwd, safe: false };
+  }
+
+  if (command === "cd") {
+    const target = tokens[1];
+    if (!target) {
+      return { nextCwd: cwd, safe: false };
+    }
+    const resolved = normalizeScopePath(target, cwd, env, shellVars);
+    return {
+      nextCwd: resolved,
+      safe: resolved ? isPathWithinRoots(resolved, allowedRoots) : false,
+    };
+  }
+
+  if (!SAFE_MEMORY_COMMANDS.has(command)) {
+    return { nextCwd: cwd, safe: false };
+  }
+
+  if (command === "git") {
+    const parsed = parseScopedGitInvocation(
+      tokens,
+      cwd,
+      allowedRoots,
+      env,
+      shellVars,
+    );
+    if (!parsed.isSafe) {
+      return { nextCwd: parsed.resolvedCwd, safe: false };
+    }
+
+    const effectiveCwd = parsed.resolvedCwd;
+    if (!effectiveCwd || !isPathWithinRoots(effectiveCwd, allowedRoots)) {
+      return { nextCwd: effectiveCwd, safe: false };
+    }
+
+    if (
+      !validateScopedTokens(tokens, effectiveCwd, allowedRoots, env, shellVars)
+    ) {
+      return { nextCwd: effectiveCwd, safe: false };
+    }
+
+    return { nextCwd: effectiveCwd, safe: true };
+  }
+
+  if (tokens.some((token) => tokenLooksLikePath(token))) {
+    if (
+      !validateScopedTokens(tokens.slice(1), cwd, allowedRoots, env, shellVars)
+    ) {
+      return { nextCwd: cwd, safe: false };
+    }
+    return { nextCwd: cwd, safe: true };
+  }
+
+  if (!cwd || !isPathWithinRoots(cwd, allowedRoots)) {
+    return { nextCwd: cwd, safe: false };
+  }
+
+  if (command === "find" && /-delete|\s-exec\b/.test(segment)) {
+    return { nextCwd: cwd, safe: false };
+  }
+
+  if (command === "sort" && /\s-o\b/.test(segment)) {
+    return { nextCwd: cwd, safe: false };
+  }
+
+  if (
+    !validateScopedTokens(tokens.slice(1), cwd, allowedRoots, env, shellVars)
+  ) {
+    return { nextCwd: cwd, safe: false };
+  }
+
+  return { nextCwd: cwd, safe: true };
+}
+
+export function isScopedMemoryShellCommand(
+  command: string | string[] | undefined | null,
+  allowedRoots: string[],
+  options: ScopedShellOptions = {},
+): boolean {
+  if (!command || allowedRoots.length === 0) {
+    return false;
+  }
+
+  if (Array.isArray(command)) {
+    if (command.length === 0) {
+      return false;
+    }
+    const [executable, ...rest] = command;
+    if (executable && isShellExecutor(executable)) {
+      const nested = extractDashCArgument(rest);
+      if (!nested) {
+        return false;
+      }
+      return isScopedMemoryShellCommand(
+        stripQuotes(nested),
+        allowedRoots,
+        options,
+      );
+    }
+  }
+
+  const commandStr = typeof command === "string" ? command : command.join(" ");
+  const trimmed = commandStr.trim();
+  if (!trimmed) {
+    return false;
+  }
+
+  const segments = splitShellSegments(trimmed);
+  if (!segments) {
+    return false;
+  }
+  if (segments.length === 0) {
+    return false;
+  }
+
+  const env = options.env ?? process.env;
+  const shellVars: ScopedShellVars = {};
+  const initialCwd = options.workingDirectory
+    ? normalizeScopePath(options.workingDirectory, null, env, shellVars)
+    : null;
+  let cwd: string | null = initialCwd;
+  for (const segment of segments) {
+    const result = isAllowedMemorySegment(
+      segment,
+      cwd,
+      allowedRoots,
+      env,
+      shellVars,
+    );
+    if (!result.safe) {
+      return false;
+    }
+    cwd = result.nextCwd;
+  }
+
+  return true;
 }
 
 /**
  * Check if a shell command exclusively targets the agent's memory directory.
- *
- * Unlike isReadOnlyShellCommand, this allows WRITE operations (git commit, rm, etc.)
- * but only when all paths in the command resolve to the agent's own memory dir.
- *
- * @param command - The shell command string
- * @param agentId - The current agent's ID
- * @returns true if the command should be auto-approved as a memory dir operation
  */
 export function isMemoryDirCommand(
   command: string | string[] | undefined | null,
@@ -547,117 +1060,5 @@ export function isMemoryDirCommand(
     return false;
   }
 
-  const commandStr = typeof command === "string" ? command : command.join(" ");
-  const trimmed = commandStr.trim();
-  if (!trimmed) {
-    return false;
-  }
-
-  const prefixes = getAllowedMemoryPrefixes(agentId);
-
-  // Split on && || ; to get individual command segments.
-  // We intentionally do NOT reject $() or > here — those are valid
-  // in memory dir commands (e.g. git push with auth header, echo > file).
-  const segments = trimmed
-    .split(/&&|\|\||;/)
-    .map((s) => s.trim())
-    .filter(Boolean);
-
-  if (segments.length === 0) {
-    return false;
-  }
-
-  // Track the current working directory through the chain.
-  // If first segment is `cd <memory-dir>`, subsequent commands inherit that context.
-  let cwd: string | null = null;
-
-  for (const segment of segments) {
-    // Handle pipe chains: split on | and check each part
-    const pipeParts = segment
-      .split(/\|/)
-      .map((s) => s.trim())
-      .filter(Boolean);
-
-    for (const part of pipeParts) {
-      const cdTarget = extractCdTarget(part);
-      if (cdTarget) {
-        // This is a cd command — check if it targets memory dir
-        const resolved: string = cwd
-          ? expandPath(resolve(expandPath(cwd), cdTarget))
-          : expandPath(cdTarget);
-        if (!isUnderMemoryDir(resolved, prefixes)) {
-          return false;
-        }
-        cwd = resolved;
-        continue;
-      }
-
-      // For non-cd commands, check if we have a memory dir cwd
-      // OR if all path-like arguments point to the memory dir
-      if (cwd && isUnderMemoryDir(cwd, prefixes)) {
-        // We're operating within the memory dir
-        const tokens = tokenize(part);
-
-        const currentCwd = cwd;
-        if (!currentCwd) {
-          return false;
-        }
-
-        // Even if we're in the memory dir, we must ensure the command doesn't
-        // escape it via absolute paths or parent directory references.
-        const hasExternalPath = tokens.some((t) => {
-          if (isAbsolutePathArg(t) || isHomeAnchoredPathArg(t)) {
-            return !isUnderMemoryDir(t, prefixes);
-          }
-
-          if (hasAbsoluteOrTraversalPathArg(t)) {
-            const resolved = expandPath(resolve(expandPath(currentCwd), t));
-            return !isUnderMemoryDir(resolved, prefixes);
-          }
-
-          return false;
-        });
-
-        if (hasExternalPath) {
-          return false;
-        }
-
-        if (!MEMORY_DIR_APPROVE_ALL) {
-          // Strict mode: validate command type
-          const cmd = tokens[0];
-          if (!cmd || !SAFE_MEMORY_DIR_COMMANDS.has(cmd)) {
-            return false;
-          }
-        }
-        continue;
-      }
-
-      // No cd context — check if the command itself references memory dir paths
-      const tokens = tokenize(part);
-      const hasMemoryPath = tokens.some(
-        (t) =>
-          (t.includes(".letta/agents/") && t.includes("/memory")) ||
-          (t.includes(".letta/agents/") && t.includes("/memory-worktrees")),
-      );
-
-      if (hasMemoryPath) {
-        // Verify ALL path-like tokens that reference .letta/agents/ are within allowed prefixes
-        const agentPaths = tokens.filter((t) => t.includes(".letta/agents/"));
-        if (agentPaths.every((p) => isUnderMemoryDir(p, prefixes))) {
-          if (!MEMORY_DIR_APPROVE_ALL) {
-            const cmd = tokens[0];
-            if (!cmd || !SAFE_MEMORY_DIR_COMMANDS.has(cmd)) {
-              return false;
-            }
-          }
-          continue;
-        }
-      }
-
-      // This segment doesn't target memory dir and we're not in a memory dir cwd
-      return false;
-    }
-  }
-
-  return true;
+  return isScopedMemoryShellCommand(command, getAllowedMemoryPrefixes(agentId));
 }

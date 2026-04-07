@@ -24,11 +24,25 @@ describe("isOpenAIModel", () => {
   test("does not detect anthropic handles", () => {
     expect(isOpenAIModel("anthropic/claude-sonnet-4-6")).toBe(false);
   });
+
+  test("does not detect auto model ids/handles", () => {
+    expect(isOpenAIModel("auto")).toBe(false);
+    expect(isOpenAIModel("letta/auto")).toBe(false);
+    expect(isOpenAIModel("auto-fast")).toBe(false);
+    expect(isOpenAIModel("letta/auto-fast")).toBe(false);
+  });
 });
 
 describe("deriveToolsetFromModel", () => {
   test("maps chatgpt_oauth handles to codex toolset", () => {
     expect(deriveToolsetFromModel("chatgpt_oauth/gpt-5.3-codex")).toBe("codex");
+  });
+
+  test("maps auto models to default (anthropic) toolset", () => {
+    expect(deriveToolsetFromModel("auto")).toBe("default");
+    expect(deriveToolsetFromModel("letta/auto")).toBe("default");
+    expect(deriveToolsetFromModel("auto-fast")).toBe("default");
+    expect(deriveToolsetFromModel("letta/auto-fast")).toBe("default");
   });
 });
 

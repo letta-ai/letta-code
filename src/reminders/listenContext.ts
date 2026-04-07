@@ -5,6 +5,9 @@ import type { SessionContextReason, SharedReminderState } from "./state";
 interface BuildListenReminderContextParams {
   agentId: string;
   conversationId?: string;
+  agentName?: string | null;
+  agentDescription?: string | null;
+  agentLastRunAt?: string | null;
   state: SharedReminderState;
   reflectionSettings: ReflectionSettings;
   maybeLaunchReflectionSubagent?: SharedReminderContext["maybeLaunchReflectionSubagent"];
@@ -22,9 +25,9 @@ export function buildListenReminderContext(
     mode: "listen",
     agent: {
       id: params.agentId,
-      name: null,
-      description: null,
-      lastRunAt: null,
+      name: params.agentName ?? null,
+      description: params.agentDescription ?? null,
+      lastRunAt: params.agentLastRunAt ?? null,
       conversationId: params.conversationId,
     },
     state: params.state,

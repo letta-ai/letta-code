@@ -1,10 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { spawn } from "node:child_process";
+import { createIsolatedCliTestEnv } from "../tests/testProcessEnv";
 import type {
   ResultMessage,
   StreamEvent,
   SystemInitMessage,
 } from "../types/protocol";
+import { formatCapturedOutput } from "./processDiagnostics";
 
 /**
  * Tests for stream-json output format.
@@ -23,6 +25,7 @@ async function runHeadlessCommand(
         "run",
         "dev",
         "--new-agent",
+        "--no-memfs",
         "-p",
         prompt,
         "--output-format",
@@ -34,8 +37,7 @@ async function runHeadlessCommand(
       ],
       {
         cwd: process.cwd(),
-        // Mark as subagent to prevent polluting user's LRU settings
-        env: { ...process.env, LETTA_CODE_AGENT_ROLE: "subagent" },
+        env: createIsolatedCliTestEnv(),
       },
     );
 
@@ -53,13 +55,35 @@ async function runHeadlessCommand(
     // Safety timeout for CI
     const timeout = setTimeout(() => {
       proc.kill();
-      reject(new Error(`Process timeout after ${timeoutMs}ms: ${stderr}`));
+      reject(
+        new Error(
+          `Process timeout after ${timeoutMs}ms.\n${formatCapturedOutput({
+            stdout,
+            stderr,
+            extra: {
+              args: extraArgs.join(" "),
+              saw_result_event: stdout.includes('"type":"result"'),
+            },
+          })}`,
+        ),
+      );
     }, timeoutMs);
 
     proc.on("close", (code) => {
       clearTimeout(timeout);
       if (code !== 0 && !stdout.includes('"type":"result"')) {
-        reject(new Error(`Process exited with code ${code}: ${stderr}`));
+        reject(
+          new Error(
+            `Process exited with code ${code}.\n${formatCapturedOutput({
+              stdout,
+              stderr,
+              extra: {
+                args: extraArgs.join(" "),
+                saw_result_event: stdout.includes('"type":"result"'),
+              },
+            })}`,
+          ),
+        );
       } else {
         // Parse line-delimited JSON
         const lines = stdout

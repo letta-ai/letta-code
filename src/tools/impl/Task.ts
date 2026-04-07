@@ -25,10 +25,13 @@ import { formatTaskNotification } from "../../cli/helpers/taskNotifications.js";
 import { runSubagentStopHooks } from "../../hooks";
 import {
   appendToOutputFile,
+  assertBackgroundTaskCapacity,
   type BackgroundTask,
   backgroundTasks,
   createBackgroundOutputFile,
   getNextTaskId,
+  scheduleBackgroundTaskCleanup,
+  setBackgroundTaskOutput,
 } from "./process_manager.js";
 import { LIMITS, truncateByChars } from "./truncation.js";
 import { validateRequiredParams } from "./validation";
@@ -81,6 +84,21 @@ export interface SpawnBackgroundSubagentTaskArgs {
    */
   silentCompletion?: boolean;
   /**
+   * Emit a completion notification even when `silentCompletion` is true.
+   * Useful when the parent should not stream subagent tokens but still wants
+   * a normal task notification event.
+   */
+  emitCompletionNotification?: boolean;
+  /**
+   * Optional override for the completion notification summary.
+   */
+  completionSummary?:
+    | string
+    | ((result: {
+        success: boolean;
+        error?: string;
+      }) => string | Promise<string>);
+  /**
    * Called after the subagent finishes (success or failure).
    * Runs regardless of `silentCompletion` and is awaited before
    * completion notifications/hooks continue.
@@ -111,6 +129,26 @@ interface SpawnBackgroundSubagentTaskDeps {
   registerSubagentImpl: typeof registerSubagent;
   completeSubagentImpl: typeof completeSubagent;
   getSubagentSnapshotImpl: typeof getSubagentSnapshot;
+}
+
+async function resolveCompletionSummary(
+  defaultSummary: string,
+  completionSummary:
+    | SpawnBackgroundSubagentTaskArgs["completionSummary"]
+    | undefined,
+  result: { success: boolean; error?: string },
+): Promise<string> {
+  if (!completionSummary) {
+    return defaultSummary;
+  }
+
+  const resolved =
+    typeof completionSummary === "function"
+      ? await completionSummary(result)
+      : completionSummary;
+
+  const trimmed = resolved.trim();
+  return trimmed.length > 0 ? trimmed : defaultSummary;
 }
 
 function buildTaskResultHeader(
@@ -166,6 +204,27 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function resolveParentScope(parentScope?: {
+  agentId: string;
+  conversationId: string;
+}): { agentId: string; conversationId: string } | undefined {
+  if (parentScope?.agentId) {
+    return {
+      agentId: parentScope.agentId,
+      conversationId: parentScope.conversationId || "default",
+    };
+  }
+
+  try {
+    return {
+      agentId: getCurrentAgentId(),
+      conversationId: getConversationId() ?? "default",
+    };
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Wait briefly for a background subagent to publish its agent URL.
  * This keeps Task mostly non-blocking while allowing static transcript rows
@@ -209,6 +268,8 @@ export async function waitForBackgroundSubagentLink(
 export function spawnBackgroundSubagentTask(
   args: SpawnBackgroundSubagentTaskArgs,
 ): SpawnBackgroundSubagentTaskResult {
+  assertBackgroundTaskCapacity();
+
   const {
     subagentType,
     prompt,
@@ -221,9 +282,15 @@ export function spawnBackgroundSubagentTask(
     forkedContext,
     parentScope,
     silentCompletion,
+    emitCompletionNotification,
+    completionSummary,
     onComplete,
     deps,
   } = args;
+  const shouldEmitCompletionNotification =
+    emitCompletionNotification ?? !silentCompletion;
+
+  const resolvedParentScope = resolveParentScope(parentScope);
 
   const spawnSubagentFn = deps?.spawnSubagentImpl ?? spawnSubagent;
   const addToMessageQueueFn = deps?.addToMessageQueueImpl ?? addToMessageQueue;
@@ -246,6 +313,7 @@ export function spawnBackgroundSubagentTask(
     toolCallId,
     true,
     silentCompletion,
+    resolvedParentScope,
   );
 
   const taskId = getNextTaskId();
@@ -293,8 +361,9 @@ export function spawnBackgroundSubagentTask(
       );
       writeTaskTranscriptResult(outputFile, result, header);
       if (result.success) {
-        bgTask.output.push(result.report || "");
+        setBackgroundTaskOutput(bgTask, result.report || "");
       }
+      scheduleBackgroundTaskCleanup(taskId);
 
       completeSubagentFn(subagentId, {
         success: result.success,
@@ -310,7 +379,7 @@ export function spawnBackgroundSubagentTask(
         appendToOutputFile(outputFile, `[onComplete error] ${errorMessage}\n`);
       }
 
-      if (!silentCompletion) {
+      if (shouldEmitCompletionNotification) {
         const subagentSnapshot = getSubagentSnapshotFn();
         const subagentEntry = subagentSnapshot.agents.find(
           (agent) => agent.id === subagentId,
@@ -328,10 +397,17 @@ export function spawnBackgroundSubagentTask(
           { workingDirectory: userCwd, toolName: "Task" },
         );
 
+        const defaultSummary = `Agent "${description}" ${result.success ? "completed" : "failed"}`;
+        const summary = await resolveCompletionSummary(
+          defaultSummary,
+          completionSummary,
+          { success: result.success, error: result.error },
+        );
+
         const notificationXml = formatTaskNotificationFn({
           taskId,
           status: result.success ? "completed" : "failed",
-          summary: `Agent "${description}" ${result.success ? "completed" : "failed"}`,
+          summary,
           result: truncatedResult,
           outputFile,
           usage: {
@@ -346,8 +422,8 @@ export function spawnBackgroundSubagentTask(
         addToMessageQueueFn({
           kind: "task_notification",
           text: notificationXml,
-          agentId: parentScope?.agentId,
-          conversationId: parentScope?.conversationId,
+          agentId: resolvedParentScope?.agentId,
+          conversationId: resolvedParentScope?.conversationId,
         });
       }
 
@@ -368,6 +444,7 @@ export function spawnBackgroundSubagentTask(
       bgTask.status = "failed";
       bgTask.error = errorMessage;
       appendToOutputFile(outputFile, `[error] ${errorMessage}\n`);
+      scheduleBackgroundTaskCleanup(taskId);
       completeSubagentFn(subagentId, { success: false, error: errorMessage });
 
       try {
@@ -383,7 +460,7 @@ export function spawnBackgroundSubagentTask(
         );
       }
 
-      if (!silentCompletion) {
+      if (shouldEmitCompletionNotification) {
         const subagentSnapshot = getSubagentSnapshotFn();
         const subagentEntry = subagentSnapshot.agents.find(
           (agent) => agent.id === subagentId,
@@ -398,10 +475,17 @@ export function spawnBackgroundSubagentTask(
           },
           "error",
         );
+        const defaultSummary = `Agent "${description}" failed`;
+        const summary = await resolveCompletionSummary(
+          defaultSummary,
+          completionSummary,
+          { success: false, error: errorMessage },
+        );
+
         const notificationXml = formatTaskNotificationFn({
           taskId,
           status: "failed",
-          summary: `Agent "${description}" failed`,
+          summary,
           result: `${header}\n\nError: ${errorMessage}`,
           outputFile,
           usage: {
@@ -415,8 +499,8 @@ export function spawnBackgroundSubagentTask(
         addToMessageQueueFn({
           kind: "task_notification",
           text: notificationXml,
-          agentId: parentScope?.agentId,
-          conversationId: parentScope?.conversationId,
+          agentId: resolvedParentScope?.agentId,
+          conversationId: resolvedParentScope?.conversationId,
         });
       }
 
@@ -537,6 +621,7 @@ export async function task(args: TaskArgs): Promise<string> {
   const prompt = inputPrompt;
 
   const isBackground = args.run_in_background ?? config.background;
+  const resolvedParentScope = resolveParentScope(args.parentScope);
 
   // Handle background execution
   if (isBackground) {
@@ -550,7 +635,7 @@ export async function task(args: TaskArgs): Promise<string> {
       existingConversationId: effectiveConversationId,
       maxTurns: args.max_turns,
       forkedContext: config.fork,
-      parentScope: args.parentScope,
+      parentScope: resolvedParentScope,
     });
 
     await waitForBackgroundSubagentLink(subagentId, null, signal);
@@ -567,7 +652,15 @@ export async function task(args: TaskArgs): Promise<string> {
 
   // Register subagent with state store for UI display (foreground path)
   const subagentId = generateSubagentId();
-  registerSubagent(subagentId, subagent_type, description, toolCallId, false);
+  registerSubagent(
+    subagentId,
+    subagent_type,
+    description,
+    toolCallId,
+    false,
+    false,
+    resolvedParentScope,
+  );
 
   // Foreground tasks now also write transcripts so users can inspect full output
   // even when inline content is truncated.

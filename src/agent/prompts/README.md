@@ -47,12 +47,12 @@ Appended to the system prompt at build time based on the agent's memory mode. Ex
 
 ## Memory blocks (`.mdx`)
 
-Default values for agent memory blocks. Loaded via `MEMORY_PROMPTS` in `promptAssets.ts`. Each has YAML frontmatter with `label`, `description`, and optional `limit`.
+Default values for agent memory blocks. Loaded via `MEMORY_PROMPTS` in `promptAssets.ts`. Each has YAML frontmatter with `label` and `description`.
 
 | File | Used | Description |
 |------|------|-------------|
 | `persona.mdx` | Default persona for all new agents | Blank-slate "ready to be shaped" |
-| `persona_memo.mdx` | Overrides persona for the default Memo agent | Warm, curious collaborator personality |
+| `persona_memo.mdx` | Overrides persona for the default Letta Code agent | Warm, curious collaborator personality |
 | `persona_kawaii.mdx` | Not wired into any agent creation flow | Kawaii voice persona preset |
 | `human.mdx` | Default human block for all new agents | Placeholder for learning about the user |
 | `project.mdx` | Registered but not loaded into agents | Placeholder for codebase knowledge |
@@ -77,6 +77,5 @@ Short XML-wrapped messages injected into the conversation as system events.
 |------|------|-------------|
 | `plan_mode_reminder.txt` | Plan mode active | Prevents the agent from making changes until plan is confirmed |
 | `memory_check_reminder.txt` | Periodic during conversation | Prompts the agent to review and update memory blocks |
-| `auto_init_reminder.txt` | Background init in progress | Tells the agent memory is being set up |
 | `approval_recovery_alert.txt` | Keep-alive ping | Automated message to resume after approval timeout |
 | `interrupt_recovery_alert.txt` | User interrupts stream | Notifies the agent the stream was interrupted |

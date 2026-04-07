@@ -24,6 +24,7 @@ interface CloudflareEdgeErrorInfo {
 const CLOUDFLARE_EDGE_5XX_MARKER_PATTERN =
   /(^|\s)(502|52[0-6])\s*<!doctype html|error code\s*(502|52[0-6])/i;
 const CLOUDFLARE_EDGE_5XX_TITLE_PATTERN = /\|\s*(502|52[0-6])\s*:/i;
+const CLOUDFLARE_EDGE_5XX_FORMATTED_PATTERN = /\bCloudflare\s+(502|52[0-6])\b/i;
 
 export function isCloudflareEdge52xHtmlError(text: string): boolean {
   const normalized = text.toLowerCase();
@@ -37,6 +38,13 @@ export function isCloudflareEdge52xHtmlError(text: string): boolean {
     CLOUDFLARE_EDGE_5XX_TITLE_PATTERN.test(text);
 
   return hasCloudflare && hasHtml && has52xCode;
+}
+
+export function isCloudflareEdge52xErrorText(text: string): boolean {
+  return (
+    CLOUDFLARE_EDGE_5XX_FORMATTED_PATTERN.test(text) ||
+    isCloudflareEdge52xHtmlError(text)
+  );
 }
 
 function parseCloudflareEdgeError(
@@ -599,7 +607,7 @@ export function formatErrorDetails(
 
     // Check for credit exhaustion error - provide a friendly message
     if (isCreditExhaustedError(e, reasons)) {
-      return `Your account is out of credits for hosted inference. Add credits, enable auto-recharge, or upgrade at ${LETTA_USAGE_URL}. You can also connect your own provider keys with /connect.`;
+      return `Your account does not have credits for this model. Add your own API keys or upgrade your plan to purchase credits.`;
     }
 
     const tierUsageLimitMsg = getTierUsageLimitMessage(reasons);
@@ -703,7 +711,7 @@ export function getRetryStatusMessage(
   if (!errorDetail) return DEFAULT_RETRY_MESSAGE;
 
   // Cloudflare edge errors are transient and retried silently — no status line
-  if (parseCloudflareEdgeError(errorDetail)) return null;
+  if (isCloudflareEdge52xErrorText(errorDetail)) return null;
 
   if (checkZaiError(errorDetail)) return "Z.ai API error, retrying...";
 

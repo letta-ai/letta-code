@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { spawn } from "node:child_process";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import { join } from "node:path";
+import { createIsolatedCliTestEnv } from "../tests/testProcessEnv";
 import type {
   ControlResponse,
   ErrorMessage,
@@ -8,6 +12,10 @@ import type {
   SystemInitMessage,
   WireMessage,
 } from "../types/protocol";
+import {
+  formatCapturedOutput,
+  summarizeRecentMessages,
+} from "./processDiagnostics";
 
 /**
  * Tests for --input-format stream-json bidirectional communication.
@@ -26,6 +34,7 @@ async function runBidirectional(
   inputs: string[],
   extraArgs: string[] = [],
   timeoutMs = 180000, // 180s timeout - CI can be very slow
+  extraEnv: NodeJS.ProcessEnv = {},
 ): Promise<object[]> {
   return new Promise((resolve, reject) => {
     const proc = spawn(
@@ -39,6 +48,7 @@ async function runBidirectional(
         "--output-format",
         "stream-json",
         "--new-agent",
+        "--no-memfs",
         "-m",
         "sonnet-4.6-low",
         "--yolo",
@@ -46,13 +56,13 @@ async function runBidirectional(
       ],
       {
         cwd: process.cwd(),
-        // Mark as subagent to prevent polluting user's LRU settings
-        env: { ...process.env, LETTA_CODE_AGENT_ROLE: "subagent" },
+        env: createIsolatedCliTestEnv(extraEnv),
       },
     );
 
     const objects: object[] = [];
     let buffer = "";
+    let stdout = "";
     let inputIndex = 0;
     let initReceived = false;
     let closing = false;
@@ -144,7 +154,9 @@ async function runBidirectional(
     };
 
     proc.stdout?.on("data", (data) => {
-      buffer += data.toString();
+      const chunk = data.toString();
+      stdout += chunk;
+      buffer += chunk;
       const lines = buffer.split("\n");
       buffer = lines.pop() || ""; // Keep incomplete line in buffer
       for (const line of lines) {
@@ -171,7 +183,15 @@ async function runBidirectional(
       if (objects.length === 0 && code !== 0) {
         reject(
           new Error(
-            `Process exited with code ${code}, no output received. stderr: ${stderr}`,
+            `Process exited with code ${code}, no output received.\n${formatCapturedOutput(
+              {
+                stdout,
+                stderr,
+                extra: {
+                  args: extraArgs.join(" "),
+                },
+              },
+            )}`,
           ),
         );
       } else if (!gotExpectedResults && code !== 0) {
@@ -180,7 +200,18 @@ async function runBidirectional(
             `Process exited with code ${code} before all results received. ` +
               `Got ${userResultsReceived}/${expectedUserResults} user results, ` +
               `${controlResponsesReceived}/${expectedControlResponses} control responses. ` +
-              `inputIndex: ${inputIndex}, initReceived: ${initReceived}. stderr: ${stderr}`,
+              `inputIndex: ${inputIndex}, initReceived: ${initReceived}.\n${formatCapturedOutput(
+                {
+                  stdout,
+                  stderr,
+                  extra: {
+                    args: extraArgs.join(" "),
+                    recent_messages: summarizeRecentMessages(
+                      objects as Array<Record<string, unknown>>,
+                    ),
+                  },
+                },
+              )}`,
           ),
         );
       } else {
@@ -193,7 +224,19 @@ async function runBidirectional(
       proc.kill();
       reject(
         new Error(
-          `Timeout after ${timeoutMs}ms. Received ${objects.length} objects, init: ${initReceived}, userResults: ${userResultsReceived}/${expectedUserResults}, controlResponses: ${controlResponsesReceived}/${expectedControlResponses}`,
+          `Timeout after ${timeoutMs}ms. Received ${objects.length} objects, init: ${initReceived}, userResults: ${userResultsReceived}/${expectedUserResults}, controlResponses: ${controlResponsesReceived}/${expectedControlResponses}.\n${formatCapturedOutput(
+            {
+              stdout,
+              stderr,
+              extra: {
+                args: extraArgs.join(" "),
+                recent_messages: summarizeRecentMessages(
+                  objects as Array<Record<string, unknown>>,
+                ),
+                saw_result_event: stdout.includes('"type":"result"'),
+              },
+            },
+          )}`,
         ),
       );
     }, timeoutMs);
@@ -207,11 +250,12 @@ async function runBidirectionalWithRetry(
   extraArgs: string[] = [],
   timeoutMs = 180000,
   retryOnTimeouts = 1,
+  extraEnv: NodeJS.ProcessEnv = {},
 ): Promise<object[]> {
   let attempt = 0;
   while (true) {
     try {
-      return await runBidirectional(inputs, extraArgs, timeoutMs);
+      return await runBidirectional(inputs, extraArgs, timeoutMs, extraEnv);
     } catch (error) {
       const isTimeoutError =
         error instanceof Error && error.message.includes("Timeout after");
@@ -225,6 +269,26 @@ async function runBidirectionalWithRetry(
       );
     }
   }
+}
+
+async function createTaskExploreFixture(): Promise<{
+  rootDir: string;
+  expectedTsFiles: string[];
+  unexpectedFiles: string[];
+}> {
+  const rootDir = await mkdtemp(join(os.tmpdir(), "letta-headless-task-"));
+  await mkdir(join(rootDir, "nested"), { recursive: true });
+  await Promise.all([
+    writeFile(join(rootDir, "alpha.ts"), "export const alpha = 1;\n"),
+    writeFile(join(rootDir, "nested", "beta.ts"), "export const beta = 2;\n"),
+    writeFile(join(rootDir, "ignore.js"), "module.exports = 3;\n"),
+  ]);
+
+  return {
+    rootDir,
+    expectedTsFiles: ["alpha.ts", "nested/beta.ts"],
+    unexpectedFiles: ["ignore.js"],
+  };
 }
 
 describe("input-format stream-json", () => {
@@ -550,34 +614,55 @@ describe("input-format stream-json", () => {
   test(
     "Task tool with explore subagent works",
     async () => {
-      // Prescriptive prompt to ensure Task tool is used
-      const objects = (await runBidirectional(
-        [
-          JSON.stringify({
-            type: "user",
-            message: {
-              role: "user",
-              content:
-                "You MUST use the Task tool with subagent_type='explore' to find TypeScript files (*.ts) in the src directory. " +
-                "Return only the subagent's report, nothing else.",
-            },
-          }),
-        ],
-        [],
-        420000, // 7 min timeout - subagent spawn + execution can be very slow on Linux CI
-      )) as WireMessage[];
+      const fixture = await createTaskExploreFixture();
 
-      // Should have a successful result
-      const result = objects.find(
-        (o): o is ResultMessage => o.type === "result",
-      );
-      expect(result).toBeDefined();
-      expect(result?.subtype).toBe("success");
+      try {
+        const objects = (await runBidirectionalWithRetry(
+          [
+            JSON.stringify({
+              type: "user",
+              message: {
+                role: "user",
+                content:
+                  "You MUST use the Task tool with subagent_type='explore' to recursively find all TypeScript files (*.ts) in the current working directory. " +
+                  "Return only the matching relative file paths, one per line, and do not mention any non-TypeScript files.",
+              },
+            }),
+          ],
+          [],
+          240000,
+          1,
+          { USER_CWD: fixture.rootDir },
+        )) as WireMessage[];
 
-      // Should have auto_approval events (Task tool was auto-approved via --yolo)
-      const autoApprovals = objects.filter((o) => o.type === "auto_approval");
-      expect(autoApprovals.length).toBeGreaterThan(0);
+        const result = objects.find(
+          (o): o is ResultMessage => o.type === "result",
+        );
+        expect(result).toBeDefined();
+        expect(result?.subtype).toBe("success");
+
+        const autoApprovals = objects.filter(
+          (o) =>
+            o.type === "auto_approval" &&
+            "tool_call" in o &&
+            o.tool_call?.name === "Task",
+        );
+        expect(autoApprovals.length).toBeGreaterThan(0);
+
+        const resultText = result?.result ?? "";
+        const normalizedResultText = resultText.replaceAll("\\", "/");
+        for (const path of fixture.expectedTsFiles) {
+          expect(normalizedResultText).toContain(path);
+        }
+        for (const path of fixture.unexpectedFiles) {
+          expect(normalizedResultText).not.toContain(path);
+        }
+      } finally {
+        await rm(fixture.rootDir, { recursive: true, force: true });
+      }
     },
-    { timeout: 450000 },
+    // Must exceed the helper timeout + retry budget, otherwise Bun can kill the
+    // retry attempt before runBidirectionalWithRetry() finishes.
+    { timeout: 520000 },
   );
 });

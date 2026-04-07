@@ -21,6 +21,7 @@ import {
   SYSTEM_REMINDER_OPEN,
 } from "../../constants";
 import { cliPermissions } from "../../permissions/cli";
+import { resolveAllowedMemoryRoots } from "../../permissions/memoryScope";
 import { permissionMode } from "../../permissions/mode";
 import { sessionPermissions } from "../../permissions/session";
 import { settingsManager } from "../../settings-manager";
@@ -471,6 +472,13 @@ interface SubagentLauncher {
   args: string[];
 }
 
+export function resolveSubagentWorkingDirectory(
+  env: NodeJS.ProcessEnv = process.env,
+  fallbackCwd: string = process.cwd(),
+): string {
+  return env.USER_CWD || fallbackCwd;
+}
+
 export function resolveSubagentLauncher(
   cliArgs: string[],
   options: ResolveSubagentLauncherOptions = {},
@@ -688,18 +696,37 @@ async function executeSubagent(
       process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
     const inheritedBaseUrl =
       process.env.LETTA_BASE_URL || settings.env?.LETTA_BASE_URL;
+    const subagentWorkingDirectory = resolveSubagentWorkingDirectory();
+    const inheritedMemoryRoots = resolveAllowedMemoryRoots();
+    const childEnv: NodeJS.ProcessEnv = {
+      ...process.env,
+      ...(inheritedApiKey && { LETTA_API_KEY: inheritedApiKey }),
+      ...(inheritedBaseUrl && { LETTA_BASE_URL: inheritedBaseUrl }),
+      LETTA_CODE_AGENT_ROLE: "subagent",
+      ...(parentAgentId && { LETTA_PARENT_AGENT_ID: parentAgentId }),
+    };
+
+    if (config.permissionMode === "memory") {
+      if (inheritedMemoryRoots.primaryRoot) {
+        childEnv.MEMORY_DIR = inheritedMemoryRoots.primaryRoot;
+        childEnv.LETTA_MEMORY_DIR = inheritedMemoryRoots.primaryRoot;
+      } else {
+        delete childEnv.MEMORY_DIR;
+        delete childEnv.LETTA_MEMORY_DIR;
+      }
+
+      const parentMemoryDir =
+        process.env.MEMORY_DIR || process.env.LETTA_MEMORY_DIR;
+      if (parentMemoryDir && parentMemoryDir.trim().length > 0) {
+        childEnv.PARENT_MEMORY_DIR = parentMemoryDir;
+      } else {
+        delete childEnv.PARENT_MEMORY_DIR;
+      }
+    }
 
     const proc = spawn(launcher.command, launcher.args, {
-      cwd: process.cwd(),
-      env: {
-        ...process.env,
-        ...(inheritedApiKey && { LETTA_API_KEY: inheritedApiKey }),
-        ...(inheritedBaseUrl && { LETTA_BASE_URL: inheritedBaseUrl }),
-        // Tag Task-spawned agents for easy filtering.
-        LETTA_CODE_AGENT_ROLE: "subagent",
-        // Pass parent agent ID for subagents that need to access parent's context
-        ...(parentAgentId && { LETTA_PARENT_AGENT_ID: parentAgentId }),
-      },
+      cwd: subagentWorkingDirectory,
+      env: childEnv,
     });
 
     // Consider execution "running" once the child process has successfully spawned.
