@@ -3699,6 +3699,7 @@ export default function App({
           targetConversationId,
           modelHandle,
           Object.keys(updateArgs).length > 0 ? updateArgs : undefined,
+          { preserveContextWindow: true },
         );
       } catch (error) {
         debugWarn(
@@ -12466,6 +12467,7 @@ ${SYSTEM_REMINDER_CLOSE}
               conversationIdRef.current,
               modelHandle,
               model.updateArgs,
+              { preserveContextWindow: false },
             );
             conversationModelSettings = (
               updatedConversation as {
@@ -13447,6 +13449,7 @@ ${SYSTEM_REMINDER_CLOSE}
               {
                 reasoning_effort: desired.effort,
               },
+              { preserveContextWindow: true },
             );
             conversationModelSettings = (
               updatedConversation as {
