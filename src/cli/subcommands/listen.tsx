@@ -217,7 +217,8 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       return result;
     };
 
-    const shouldLogWsEvents = debugMode || process.env.LETTA_LOG_WS_EVENTS === "1";
+    const shouldLogWsEvents =
+      debugMode || process.env.LETTA_LOG_WS_EVENTS === "1";
 
     // WS event logger: optionally writes to file, console only in --debug
     const wsEventLogger = (

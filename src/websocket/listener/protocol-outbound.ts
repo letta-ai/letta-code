@@ -6,7 +6,6 @@ import { getGitContext } from "../../cli/helpers/gitContext";
 import { getReflectionSettings } from "../../cli/helpers/memoryReminder";
 import { getSubagents } from "../../cli/helpers/subagentState";
 import { permissionMode } from "../../permissions/mode";
-import { isDebugEnabled } from "../../utils/debug";
 import type { DequeuedBatch } from "../../queue/queueRuntime";
 import { settingsManager } from "../../settings-manager";
 import {
@@ -32,6 +31,7 @@ import type {
   SubagentStateUpdateMessage,
   WsProtocolMessage,
 } from "../../types/protocol_v2";
+import { isDebugEnabled } from "../../utils/debug";
 import { SUPPORTED_REMOTE_COMMANDS } from "./commands";
 import { SYSTEM_REMINDER_RE } from "./constants";
 import { getConversationWorkingDirectory } from "./cwd";
@@ -67,7 +67,9 @@ const gitContextCache = new Map<
   }
 >();
 
-function getCachedDeviceGitContext(cwd: string): ReturnType<typeof getGitContext> {
+function getCachedDeviceGitContext(
+  cwd: string,
+): ReturnType<typeof getGitContext> {
   const now = Date.now();
   const cached = gitContextCache.get(cwd);
   if (cached && cached.expiresAt > now) {
