@@ -241,7 +241,7 @@ import {
   type ClassifiedApproval,
   classifyApprovals,
 } from "./helpers/approvalClassification";
-import { buildChatUrl } from "./helpers/appUrls";
+import { buildAdeUrl, buildChatUrl } from "./helpers/appUrls";
 import { backfillBuffers } from "./helpers/backfill";
 import { chunkLog } from "./helpers/chunkLog";
 import {
@@ -650,6 +650,7 @@ const INTERACTIVE_SLASH_COMMANDS = new Set([
 // These don't modify agent state, so they should bypass queueing
 const NON_STATE_COMMANDS = new Set([
   "/ade",
+  "/chat",
   "/bg",
   "/btw",
   "/usage",
@@ -7964,9 +7965,9 @@ export default function App({
           return { submitted: true };
         }
 
-        // Special handling for /ade command - open agent in browser
+        // Special handling for /ade command - open ADE in browser
         if (trimmed === "/ade") {
-          const adeUrl = buildChatUrl(agentId, {
+          const adeUrl = buildAdeUrl(agentId, {
             conversationId: conversationIdRef.current,
           });
 
@@ -7981,6 +7982,26 @@ export default function App({
 
           // Always show the URL in case browser doesn't open
           cmd.finish(`Opening ADE...\n→ ${adeUrl}`, true);
+          return { submitted: true };
+        }
+
+        // Special handling for /chat command - open chat UI in browser
+        if (trimmed === "/chat") {
+          const chatUrl = buildChatUrl(agentId, {
+            conversationId: conversationIdRef.current,
+          });
+
+          const cmd = commandRunner.start("/chat", "Opening chat...");
+
+          // Fire-and-forget browser open
+          import("open")
+            .then(({ default: open }) => open(chatUrl, { wait: false }))
+            .catch(() => {
+              // Silently ignore - user can use the URL from the output
+            });
+
+          // Always show the URL in case browser doesn't open
+          cmd.finish(`Opening chat...\n→ ${chatUrl}`, true);
           return { submitted: true };
         }
 
