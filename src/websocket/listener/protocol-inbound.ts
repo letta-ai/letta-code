@@ -343,11 +343,14 @@ export function isListMemoryCommand(
     type?: unknown;
     request_id?: unknown;
     agent_id?: unknown;
+    include_references?: unknown;
   };
   return (
     c.type === "list_memory" &&
     typeof c.request_id === "string" &&
-    typeof c.agent_id === "string"
+    typeof c.agent_id === "string" &&
+    (c.include_references === undefined ||
+      typeof c.include_references === "boolean")
   );
 }
 

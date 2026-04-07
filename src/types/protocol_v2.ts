@@ -537,6 +537,8 @@ export interface ListMemoryCommand {
   request_id: string;
   /** The agent whose memory to list. */
   agent_id: string;
+  /** When true, include parsed file references for graph edges. */
+  include_references?: boolean;
 }
 
 export interface MemoryHistoryCommand {

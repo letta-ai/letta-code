@@ -222,6 +222,9 @@ import type {
   StartListenerOptions,
 } from "./types";
 
+const WIKI_LINK_REGEX = /\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g;
+const MARKDOWN_LINK_REGEX = /\[[^\]]*\]\(([^)]+)\)/g;
+
 function trackListenerError(
   errorType: string,
   error: unknown,
@@ -2836,6 +2839,7 @@ async function connectWithRetry(
             const fileNodes = getFileNodes(treeNodes).filter((n) =>
               n.name.endsWith(".md"),
             );
+            const includeReferences = parsed.include_references === true;
 
             const allPaths = new Set(
               fileNodes.map((node) => node.relativePath),
@@ -2928,11 +2932,15 @@ async function connectWithRetry(
               body: string,
               sourcePath: string,
             ): string[] => {
+              // Fast-path: skip all parsing for files without any markdown-link tokens.
+              if (!body.includes("[[") && !body.includes("](")) {
+                return [];
+              }
+
               const refs = new Set<string>();
 
-              const wikiLinkRegex = /\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g;
-              let wikiMatch: RegExpExecArray | null;
-              while ((wikiMatch = wikiLinkRegex.exec(body))) {
+              WIKI_LINK_REGEX.lastIndex = 0;
+              for (const wikiMatch of body.matchAll(WIKI_LINK_REGEX)) {
                 const rawTarget = wikiMatch[1];
                 if (!rawTarget) continue;
                 const normalized = normalizeMemoryReference(
@@ -2944,9 +2952,8 @@ async function connectWithRetry(
                 }
               }
 
-              const markdownLinkRegex = /\[[^\]]*\]\(([^)]+)\)/g;
-              let markdownMatch: RegExpExecArray | null;
-              while ((markdownMatch = markdownLinkRegex.exec(body))) {
+              MARKDOWN_LINK_REGEX.lastIndex = 0;
+              for (const markdownMatch of body.matchAll(MARKDOWN_LINK_REGEX)) {
                 const rawTarget = markdownMatch[1];
                 if (!rawTarget) continue;
                 const normalized = normalizeMemoryReference(
@@ -2958,7 +2965,7 @@ async function connectWithRetry(
                 }
               }
 
-              return [...refs].sort((a, b) => a.localeCompare(b));
+              return [...refs];
             };
 
             const CHUNK_SIZE = 5;
@@ -2978,7 +2985,14 @@ async function connectWithRetry(
                   description: typeof desc === "string" ? desc : null,
                   content: body,
                   size: body.length,
-                  references: extractMemoryReferences(body, node.relativePath),
+                  ...(includeReferences
+                    ? {
+                        references: extractMemoryReferences(
+                          body,
+                          node.relativePath,
+                        ),
+                      }
+                    : {}),
                 };
               });
 
