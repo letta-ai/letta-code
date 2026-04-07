@@ -760,8 +760,10 @@ function getDefaultDecision(
     "SearchFileContent",
     "WriteTodos",
     "ReadManyFiles",
-    // client-side memory tool is mutating + git side effects
-    // and should require approval by default
+    // Memory tools are constrained to the memfs repo and include their
+    // own path/read_only guardrails, so allow by default.
+    "memory",
+    "memory_apply_patch",
   ];
 
   if (autoAllowTools.includes(toolName)) {
