@@ -37,6 +37,56 @@ test("default mode - no overrides", () => {
   expect(result.reason).toBe("Default behavior for tool");
 });
 
+test("default mode - auto-allows memory", () => {
+  permissionMode.setMode("default");
+
+  const permissions: PermissionRules = {
+    allow: [],
+    deny: [],
+    ask: [],
+  };
+
+  const result = checkPermission(
+    "memory",
+    {
+      command: "create",
+      reason: "seed",
+      path: "system/human/profile.md",
+      description: "Profile",
+      file_text: "hello",
+    },
+    permissions,
+    "/Users/test/project",
+  );
+
+  expect(result.decision).toBe("allow");
+  expect(result.reason).toBe("Default behavior for tool");
+});
+
+test("default mode - auto-allows memory_apply_patch", () => {
+  permissionMode.setMode("default");
+
+  const permissions: PermissionRules = {
+    allow: [],
+    deny: [],
+    ask: [],
+  };
+
+  const result = checkPermission(
+    "memory_apply_patch",
+    {
+      reason: "seed",
+      input:
+        "*** Begin Patch\n*** Add File: system/human/profile.md\n+---\n+description: Profile\n+---\n+hello\n*** End Patch\n",
+    },
+    permissions,
+    "/Users/test/project",
+  );
+
+  expect(result.decision).toBe("allow");
+  expect(result.reason).toBe("Default behavior for tool");
+});
+
 // ============================================================================
 // Permission Mode: bypassPermissions
 // ============================================================================
