@@ -22,9 +22,11 @@ import {
 import memoryViewerTemplate from "./memory-viewer-template.txt";
 import type {
   ContextData,
+  ConversationInfo,
   MemoryCommit,
   MemoryFile,
   MemoryViewerData,
+  MessageInfo,
 } from "./types";
 
 const execFile = promisify(execFileCb);
@@ -227,6 +229,7 @@ async function collectMemoryData(
   agentId: string,
   repoDir: string,
   memoryRoot: string,
+  conversationId?: string,
 ): Promise<MemoryViewerData> {
   // Filesystem scan (synchronous)
   const files = collectFiles(memoryRoot);
@@ -282,6 +285,7 @@ async function collectMemoryData(
   // Fetch agent info and context breakdown (best-effort, parallel)
   let agentName = agentId;
   let context: ContextData | undefined;
+  let messages: MessageInfo[] | undefined;
   let model = "unknown";
 
   // Try SDK client for agent name + model info
@@ -307,6 +311,13 @@ async function collectMemoryData(
       );
       if (contextRes.ok) {
         const overview = (await contextRes.json()) as {
+          messages?: Array<{
+            id: string;
+            role: string;
+            content: string | unknown[];
+            conversation_id?: string | null;
+            created_at: string;
+          }>;
           context_window_size_max: number;
           context_window_size_current: number;
           num_tokens_system: number;
@@ -316,6 +327,13 @@ async function collectMemoryData(
           num_tokens_functions_definitions: number;
           num_tokens_messages: number;
         };
+        messages = overview.messages?.map((m) => ({
+          id: m.id,
+          role: m.role,
+          content: m.content,
+          conversation_id: m.conversation_id,
+          created_at: m.created_at,
+        }));
         context = {
           contextWindow: contextWindow || overview.context_window_size_max,
           usedTokens: overview.context_window_size_current,
@@ -361,6 +379,13 @@ async function collectMemoryData(
 
         if (contextRes?.ok) {
           const overview = (await contextRes.json()) as {
+            messages?: Array<{
+              id: string;
+              role: string;
+              content: string | unknown[];
+              conversation_id?: string | null;
+              created_at: string;
+            }>;
             context_window_size_max: number;
             context_window_size_current: number;
             num_tokens_system: number;
@@ -370,6 +395,13 @@ async function collectMemoryData(
             num_tokens_functions_definitions: number;
             num_tokens_messages: number;
           };
+          messages = overview.messages?.map((m) => ({
+            id: m.id,
+            role: m.role,
+            content: m.content,
+            conversation_id: m.conversation_id,
+            created_at: m.created_at,
+          }));
           context = {
             contextWindow: overview.context_window_size_max,
             usedTokens: overview.context_window_size_current,
@@ -390,6 +422,28 @@ async function collectMemoryData(
     }
   }
 
+  // Fetch recent conversations (best-effort)
+  let conversations: ConversationInfo[] | undefined;
+
+  try {
+    const client = await getClient();
+    const convPage = await client.conversations.list({
+      agent_id: agentId,
+      limit: 10,
+      order: "desc",
+      order_by: "last_run_completion",
+    });
+    const convItems = convPage;
+    conversations = convItems.map((c: any) => ({
+      id: c.id,
+      created_at: c.created_at,
+      last_run_completion: c.last_run_completion ?? null,
+      label: c.label ?? null,
+    }));
+  } catch {
+    // Conversation fetch failed - continue without it
+  }
+
   return {
     agent: { id: agentId, name: agentName, serverUrl },
     generatedAt: new Date().toISOString(),
@@ -397,6 +451,9 @@ async function collectMemoryData(
     files,
     commits,
     context,
+    conversations,
+    messages,
+    selectedConversationId: conversationId ?? undefined,
   };
 }
 
@@ -406,7 +463,7 @@ async function collectMemoryData(
 
 export async function generateAndOpenMemoryViewer(
   agentId: string,
-  options?: { agentName?: string },
+  options?: { agentName?: string; conversationId?: string },
 ): Promise<GenerateResult> {
   const repoDir = getMemoryRepoDir(agentId);
   const memoryRoot = getMemoryFilesystemRoot(agentId);
@@ -416,7 +473,12 @@ export async function generateAndOpenMemoryViewer(
   }
 
   // 1. Collect data
-  const data = await collectMemoryData(agentId, repoDir, memoryRoot);
+  const data = await collectMemoryData(
+    agentId,
+    repoDir,
+    memoryRoot,
+    options?.conversationId,
+  );
 
   // Override agent name if provided by caller
   if (options?.agentName) {
