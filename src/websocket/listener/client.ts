@@ -2805,7 +2805,7 @@ async function connectWithRetry(
             );
 
             const { existsSync } = await import("node:fs");
-            const { join } = await import("node:path");
+            const { join, posix } = await import("node:path");
 
             const memoryRoot = getMemoryFilesystemRoot(parsed.agent_id);
 
@@ -2837,6 +2837,94 @@ async function connectWithRetry(
               n.name.endsWith(".md"),
             );
 
+            const allPaths = new Set(fileNodes.map((node) => node.relativePath));
+
+            const normalizeMemoryReference = (
+              rawReference: string,
+              sourcePath: string,
+            ): string | null => {
+              let target = rawReference.trim();
+              if (!target) {
+                return null;
+              }
+
+              if (
+                target.startsWith("http://") ||
+                target.startsWith("https://") ||
+                target.startsWith("mailto:")
+              ) {
+                return null;
+              }
+
+              target = target.replace(/^<|>$/g, "");
+              target = target.split("#")[0] ?? "";
+              target = target.split("?")[0] ?? "";
+              target = target.trim().replace(/\\/g, "/");
+
+              if (!target || target.startsWith("#")) {
+                return null;
+              }
+
+              if (target.includes("|")) {
+                target = target.split("|")[0] ?? "";
+              }
+
+              if (!target) {
+                return null;
+              }
+
+              const sourceDir = posix.dirname(sourcePath.replace(/\\/g, "/"));
+              const candidate = target.startsWith("./") || target.startsWith("../")
+                ? posix.normalize(posix.join(sourceDir, target))
+                : posix.normalize(target.startsWith("/") ? target.slice(1) : target);
+
+              if (
+                !candidate ||
+                candidate.startsWith("../") ||
+                candidate === "." ||
+                candidate === ".."
+              ) {
+                return null;
+              }
+
+              const withExtension = candidate.endsWith(".md")
+                ? candidate
+                : `${candidate}.md`;
+
+              return allPaths.has(withExtension) ? withExtension : null;
+            };
+
+            const extractMemoryReferences = (
+              body: string,
+              sourcePath: string,
+            ): string[] => {
+              const refs = new Set<string>();
+
+              const wikiLinkRegex = /\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g;
+              let wikiMatch: RegExpExecArray | null;
+              while ((wikiMatch = wikiLinkRegex.exec(body))) {
+                const rawTarget = wikiMatch[1];
+                if (!rawTarget) continue;
+                const normalized = normalizeMemoryReference(rawTarget, sourcePath);
+                if (normalized && normalized !== sourcePath) {
+                  refs.add(normalized);
+                }
+              }
+
+              const markdownLinkRegex = /\[[^\]]*\]\(([^)]+)\)/g;
+              let markdownMatch: RegExpExecArray | null;
+              while ((markdownMatch = markdownLinkRegex.exec(body))) {
+                const rawTarget = markdownMatch[1];
+                if (!rawTarget) continue;
+                const normalized = normalizeMemoryReference(rawTarget, sourcePath);
+                if (normalized && normalized !== sourcePath) {
+                  refs.add(normalized);
+                }
+              }
+
+              return [...refs].sort((a, b) => a.localeCompare(b));
+            };
+            
             const CHUNK_SIZE = 5;
             const total = fileNodes.length;
 
@@ -2854,6 +2942,7 @@ async function connectWithRetry(
                   description: typeof desc === "string" ? desc : null,
                   content: body,
                   size: body.length,
+                  references: extractMemoryReferences(body, node.relativePath),
                 };
               });
 
