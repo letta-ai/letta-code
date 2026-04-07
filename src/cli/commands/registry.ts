@@ -252,6 +252,15 @@ export const commands: Record<string, Command> = {
       return "Opening ADE...";
     },
   },
+  "/chat": {
+    desc: "Open agent in chat UI (browser)",
+    order: 28.1,
+    noArgs: true,
+    handler: () => {
+      // Handled specially in App.tsx to access agent ID and open browser
+      return "Opening chat...";
+    },
+  },
 
   // === Page 3: Advanced features (order 30-39) ===
   "/system": {

@@ -1,17 +1,12 @@
 const APP_BASE = "https://app.letta.com";
 
-/**
- * Build a chat URL for an agent, with optional conversation and extra query params.
- */
-export function buildChatUrl(
-  agentId: string,
-  options?: {
-    conversationId?: string;
-    view?: string;
-    deviceId?: string;
-  },
-): string {
-  const base = `${APP_BASE}/chat/${agentId}`;
+type AgentUrlOptions = {
+  conversationId?: string;
+  view?: string;
+  deviceId?: string;
+};
+
+function buildAgentUrl(base: string, options?: AgentUrlOptions): string {
   const params = new URLSearchParams();
 
   if (options?.view) {
@@ -26,6 +21,26 @@ export function buildChatUrl(
 
   const qs = params.toString();
   return qs ? `${base}?${qs}` : base;
+}
+
+/**
+ * Build the ADE URL for an agent, with optional conversation and extra query params.
+ */
+export function buildAdeUrl(
+  agentId: string,
+  options?: AgentUrlOptions,
+): string {
+  return buildAgentUrl(`${APP_BASE}/agents/${agentId}`, options);
+}
+
+/**
+ * Build a chat URL for an agent, with optional conversation and extra query params.
+ */
+export function buildChatUrl(
+  agentId: string,
+  options?: AgentUrlOptions,
+): string {
+  return buildAgentUrl(`${APP_BASE}/chat/${agentId}`, options);
 }
 
 /**
