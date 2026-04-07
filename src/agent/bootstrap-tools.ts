@@ -12,7 +12,7 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { addBaseToolsToServer } from "./create";
-import { debugWarn } from "../utils/debug";
+import { debugLog, debugWarn } from "../utils/debug";
 
 const MARKER_PATH = join(homedir(), ".letta", ".bootstrapped");
 
@@ -22,6 +22,8 @@ const MARKER_PATH = join(homedir(), ".letta", ".bootstrapped");
  */
 export async function bootstrapBaseToolsIfNeeded(): Promise<void> {
   if (existsSync(MARKER_PATH)) return;
+
+  debugLog("[bootstrap] No marker found, bootstrapping base tools...");
 
   try {
     const success = await addBaseToolsToServer();
