@@ -606,9 +606,12 @@ export async function task(args: TaskArgs): Promise<string> {
       const client = await getClient();
       const parentAgentId = getCurrentAgentId();
       const parentConvId = getConversationId() ?? "default";
-      const forkedConv = await client.conversations.fork(parentConvId, {
-        agent_id: parentAgentId,
-      });
+      const forkedConv = (await client.post(
+        `/v1/conversations/${encodeURIComponent(parentConvId)}/fork`,
+        {
+          query: parentConvId === "default" ? { agent_id: parentAgentId } : {},
+        },
+      )) as { id: string };
       effectiveAgentId = parentAgentId;
       effectiveConversationId = forkedConv.id;
     } catch (error) {

@@ -1753,13 +1753,11 @@ export default function App({
     const rawContextWindow = (
       info?.updateArgs as { context_window?: unknown } | undefined
     )?.context_window;
-    return typeof rawContextWindow === "number"
-      ? rawContextWindow
-      : undefined;
+    return typeof rawContextWindow === "number" ? rawContextWindow : undefined;
   }, [currentModelLabel, derivedReasoningEffort, llmConfig]);
   const effectiveContextWindowSize =
     (hasConversationModelOverride
-      ? conversationOverrideContextWindowLimit ?? modelPresetContextWindow
+      ? (conversationOverrideContextWindowLimit ?? modelPresetContextWindow)
       : undefined) ??
     llmConfig?.context_window ??
     modelPresetContextWindow;

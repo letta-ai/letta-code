@@ -155,13 +155,17 @@ describe("model preset refresh wiring", () => {
 
     expect(source).toContain("conversationOverrideContextWindowLimit");
     expect(source).toContain("setConversationOverrideContextWindowLimit(");
-    expect(source).toContain("const modelPresetContextWindow = useMemo(() => {");
-    expect(source).toContain("const effectiveContextWindowSize =");
     expect(source).toContain(
-      "? conversationOverrideContextWindowLimit ?? modelPresetContextWindow",
+      "const modelPresetContextWindow = useMemo(() => {",
+    );
+    expect(source).toContain("const effectiveContextWindowSize =");
+    expect(source).toMatch(
+      /\?\s*\(?conversationOverrideContextWindowLimit\s*\?\?\s*modelPresetContextWindow\)?/,
     );
     expect(source).toContain("contextWindowSize: effectiveContextWindowSize");
-    expect(source).toContain("const contextWindow = effectiveContextWindowSize ?? 0;");
+    expect(source).toContain(
+      "const contextWindow = effectiveContextWindowSize ?? 0;",
+    );
     expect(source).not.toMatch(
       /setConversationOverrideContextWindowLimit\(\(prev\)\s*=>\s*conversationContextWindowLimit === undefined\s*\?\s*prev/s,
     );
