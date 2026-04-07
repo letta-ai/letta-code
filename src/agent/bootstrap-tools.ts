@@ -1,34 +1,33 @@
 /**
- * Bootstrap base tools once per process lifetime.
+ * Bootstrap base tools once per machine.
  *
- * Calls POST /v1/tools/add-base-tools on startup to ensure all base tools
- * exist. This backfills orgs that were created with an incomplete tool set
- * (e.g., missing web_search/fetch_webpage due to a core server deployment
- * that failed to load the builtin module).
+ * Calls POST /v1/tools/add-base-tools on first startup, then writes a
+ * marker file to ~/.letta/ so subsequent launches skip the call. This
+ * backfills orgs created with an incomplete tool set (e.g., missing
+ * web_search/fetch_webpage due to a core server deployment that failed
+ * to load the builtin module).
  */
 
-import { getServerUrl } from "./client";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { addBaseToolsToServer } from "./create";
 
-/**
- * In-memory flag — ensures we only call add-base-tools once per process
- * lifetime. We don't persist markers to disk because the identifiers
- * available at startup (proxy port, session token) are ephemeral and
- * change on every app launch. The POST is cheap (upsert, no-op if tools
- * exist) so running once per launch is acceptable.
- */
-let bootstrapped = false;
+const MARKER_PATH = join(homedir(), ".letta", ".tools-bootstrapped");
 
 /**
- * Call add-base-tools once per process to ensure all base tools exist.
+ * Call add-base-tools once, then write a marker so future launches skip it.
  * Fire-and-forget — failures are logged but don't block startup.
  */
 export async function bootstrapBaseToolsIfNeeded(): Promise<void> {
-  if (bootstrapped) return;
-  bootstrapped = true;
+  if (existsSync(MARKER_PATH)) return;
 
   try {
-    await addBaseToolsToServer();
+    const success = await addBaseToolsToServer();
+    if (success) {
+      mkdirSync(join(homedir(), ".letta"), { recursive: true });
+      writeFileSync(MARKER_PATH, new Date().toISOString(), "utf-8");
+    }
   } catch (err) {
     // Non-fatal — the retry in createAgentWithBaseToolsRecovery is the safety net
     console.warn(
