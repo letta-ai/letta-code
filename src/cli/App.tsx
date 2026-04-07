@@ -1654,6 +1654,10 @@ export default function App({
     conversationOverrideModelSettings,
     setConversationOverrideModelSettings,
   ] = useState<AgentState["model_settings"] | null>(null);
+  const [
+    conversationOverrideContextWindowLimit,
+    setConversationOverrideContextWindowLimit,
+  ] = useState<number | null>(null);
   const agentStateRef = useRef(agentState);
   useEffect(() => {
     agentStateRef.current = agentState;
@@ -1738,6 +1742,27 @@ export default function App({
       ? null
       : (derivedReasoningEffort ??
         inferReasoningEffortFromModelPreset(currentModelId, currentModelLabel));
+  const modelPresetContextWindow = useMemo(() => {
+    if (!currentModelLabel) return undefined;
+    const info = getModelInfoForLlmConfig(currentModelLabel, {
+      reasoning_effort: derivedReasoningEffort ?? null,
+      enable_reasoner:
+        (llmConfig as { enable_reasoner?: boolean | null })?.enable_reasoner ??
+        null,
+    });
+    const rawContextWindow = (
+      info?.updateArgs as { context_window?: unknown } | undefined
+    )?.context_window;
+    return typeof rawContextWindow === "number"
+      ? rawContextWindow
+      : undefined;
+  }, [currentModelLabel, derivedReasoningEffort, llmConfig]);
+  const effectiveContextWindowSize =
+    (hasConversationModelOverride
+      ? conversationOverrideContextWindowLimit ?? modelPresetContextWindow
+      : undefined) ??
+    llmConfig?.context_window ??
+    modelPresetContextWindow;
 
   const hasTemporaryModelOverride = tempModelOverride !== null;
 
@@ -2729,7 +2754,6 @@ export default function App({
 
   // Configurable status line hook
   const sessionStatsSnapshot = sessionStatsRef.current.getSnapshot();
-  const contextWindowSize = llmConfigRef.current?.context_window;
   const reflectionSettings = getReflectionSettings(agentId);
   const memfsEnabled = settingsManager.isMemfsEnabled(agentId);
   const memfsDirectory =
@@ -2752,7 +2776,7 @@ export default function App({
     totalApiDurationMs: sessionStatsSnapshot.totalApiMs,
     totalInputTokens: sessionStatsSnapshot.usage.promptTokens,
     totalOutputTokens: sessionStatsSnapshot.usage.completionTokens,
-    contextWindowSize,
+    contextWindowSize: effectiveContextWindowSize,
     usedContextTokens: contextTrackerRef.current.lastContextTokens,
     stepCount: sessionStatsSnapshot.usage.stepCount,
     turnCount: sharedReminderStateRef.current.turnCount,
@@ -2780,7 +2804,7 @@ export default function App({
     previousStreamingForStatusLineRef.current = streaming;
   }, [streaming, triggerStatusLineRefresh]);
 
-  const statusLineRefreshIdentity = `${conversationId}|${currentModelDisplay ?? ""}|${currentModelProvider ?? ""}|${agentName ?? ""}|${columns}|${contextWindowSize ?? ""}|${currentReasoningEffort ?? ""}|${currentSystemPromptId ?? ""}|${currentToolset ?? ""}`;
+  const statusLineRefreshIdentity = `${conversationId}|${currentModelDisplay ?? ""}|${currentModelProvider ?? ""}|${agentName ?? ""}|${columns}|${effectiveContextWindowSize ?? ""}|${currentReasoningEffort ?? ""}|${currentSystemPromptId ?? ""}|${currentToolset ?? ""}`;
 
   // Trigger status line when key session identity/display state changes.
   useEffect(() => {
@@ -3530,6 +3554,7 @@ export default function App({
       const agentModelHandle = getPreferredAgentModelHandle(agentState);
       setHasConversationModelOverride(false);
       setConversationOverrideModelSettings(null);
+      setConversationOverrideContextWindowLimit(null);
       setLlmConfig(agentState.llm_config);
       setCurrentModelHandle(agentModelHandle ?? null);
 
@@ -3572,6 +3597,9 @@ export default function App({
             model_settings?: AgentState["model_settings"] | null;
           }
         ).model_settings;
+        const conversationContextWindowLimit = (
+          conversation as { context_window_limit?: number | null }
+        ).context_window_limit;
         const hasOverride =
           conversationModel !== undefined && conversationModel !== null
             ? true
@@ -3597,6 +3625,11 @@ export default function App({
 
         setHasConversationModelOverride(true);
         setConversationOverrideModelSettings(conversationModelSettings ?? null);
+        setConversationOverrideContextWindowLimit((prev) =>
+          conversationContextWindowLimit === undefined
+            ? prev
+            : conversationContextWindowLimit,
+        );
         setCurrentModelHandle(effectiveModelHandle);
         const modelInfo = getModelInfoForLlmConfig(effectiveModelHandle, {
           reasoning_effort: reasoningEffort,
@@ -3613,6 +3646,9 @@ export default function App({
           ...mapHandleToLlmConfigPatch(effectiveModelHandle),
           ...(typeof reasoningEffort === "string"
             ? { reasoning_effort: reasoningEffort }
+            : {}),
+          ...(typeof conversationContextWindowLimit === "number"
+            ? { context_window: conversationContextWindowLimit }
             : {}),
         });
       } catch (error) {
@@ -8372,7 +8408,7 @@ export default function App({
                     totalApiDurationMs: stats.totalApiMs,
                     totalInputTokens: stats.usage.promptTokens,
                     totalOutputTokens: stats.usage.completionTokens,
-                    contextWindowSize: llmConfigRef.current?.context_window,
+                    contextWindowSize: effectiveContextWindowSize,
                     usedContextTokens:
                       contextTrackerRef.current.lastContextTokens,
                     stepCount: stats.usage.stepCount,
@@ -8516,7 +8552,7 @@ export default function App({
 
         // Special handling for /context command - show context window usage
         if (trimmed === "/context") {
-          const contextWindow = llmConfigRef.current?.context_window ?? 0;
+          const contextWindow = effectiveContextWindowSize ?? 0;
           const model = llmConfigRef.current?.model ?? "unknown";
 
           // Use most recent total tokens from usage_statistics as context size (after turn)
@@ -12450,6 +12486,7 @@ ${SYSTEM_REMINDER_CLOSE}
             | AgentState["model_settings"]
             | null
             | undefined;
+          let conversationContextWindowLimit: number | null | undefined;
           let updatedAgent: AgentState | null = null;
           if (isDefaultConversation) {
             const { updateAgentLLMConfig } = await import("../agent/modify");
@@ -12474,6 +12511,11 @@ ${SYSTEM_REMINDER_CLOSE}
                 model_settings?: AgentState["model_settings"] | null;
               }
             ).model_settings;
+            conversationContextWindowLimit = (
+              updatedConversation as {
+                context_window_limit?: number | null;
+              }
+            ).context_window_limit;
           }
 
           // The API may not echo reasoning_effort back, so populate it from
@@ -12490,6 +12532,7 @@ ${SYSTEM_REMINDER_CLOSE}
           if (isDefaultConversation) {
             setHasConversationModelOverride(false);
             setConversationOverrideModelSettings(null);
+            setConversationOverrideContextWindowLimit(null);
             if (updatedAgent) {
               setAgentState(updatedAgent);
             }
@@ -12497,6 +12540,25 @@ ${SYSTEM_REMINDER_CLOSE}
             setHasConversationModelOverride(true);
             setConversationOverrideModelSettings(
               conversationModelSettings ?? null,
+            );
+          }
+
+          const presetContextWindow = (
+            model.updateArgs as { context_window?: unknown } | undefined
+          )?.context_window;
+          const resolvedContextWindow =
+            typeof conversationContextWindowLimit === "number"
+              ? conversationContextWindowLimit
+              : typeof presetContextWindow === "number"
+                ? presetContextWindow
+                : undefined;
+          if (!isDefaultConversation) {
+            setConversationOverrideContextWindowLimit((prev) =>
+              typeof resolvedContextWindow === "number"
+                ? resolvedContextWindow
+                : conversationContextWindowLimit === null
+                  ? null
+                  : prev,
             );
           }
 
@@ -12510,6 +12572,9 @@ ${SYSTEM_REMINDER_CLOSE}
                   reasoning_effort:
                     resolvedReasoningEffort as ModelReasoningEffort,
                 }
+              : {}),
+            ...(typeof resolvedContextWindow === "number"
+              ? { context_window: resolvedContextWindow }
               : {}),
           });
           setCurrentModelId(modelId);
@@ -13429,6 +13494,7 @@ ${SYSTEM_REMINDER_CLOSE}
             | AgentState["model_settings"]
             | null
             | undefined;
+          let conversationContextWindowLimit: number | null | undefined;
           let updatedAgent: AgentState | null = null;
           if (isDefaultConversation) {
             const { updateAgentLLMConfig } = await import("../agent/modify");
@@ -13456,6 +13522,11 @@ ${SYSTEM_REMINDER_CLOSE}
                 model_settings?: AgentState["model_settings"] | null;
               }
             ).model_settings;
+            conversationContextWindowLimit = (
+              updatedConversation as {
+                context_window_limit?: number | null;
+              }
+            ).context_window_limit;
           }
           const resolvedReasoningEffort =
             deriveReasoningEffort(
@@ -13468,6 +13539,7 @@ ${SYSTEM_REMINDER_CLOSE}
           if (isDefaultConversation) {
             setHasConversationModelOverride(false);
             setConversationOverrideModelSettings(null);
+            setConversationOverrideContextWindowLimit(null);
             if (updatedAgent) {
               setAgentState(updatedAgent);
             }
@@ -13475,6 +13547,11 @@ ${SYSTEM_REMINDER_CLOSE}
             setHasConversationModelOverride(true);
             setConversationOverrideModelSettings(
               conversationModelSettings ?? null,
+            );
+            setConversationOverrideContextWindowLimit((prev) =>
+              conversationContextWindowLimit === undefined
+                ? prev
+                : conversationContextWindowLimit,
             );
           }
 
@@ -13485,6 +13562,9 @@ ${SYSTEM_REMINDER_CLOSE}
               ({} as LlmConfig)),
             ...mapHandleToLlmConfigPatch(desired.modelHandle),
             reasoning_effort: resolvedReasoningEffort as ModelReasoningEffort,
+            ...(typeof conversationContextWindowLimit === "number"
+              ? { context_window: conversationContextWindowLimit }
+              : {}),
           });
           setCurrentModelId(desired.modelId);
           setCurrentModelHandle(desired.modelHandle);
