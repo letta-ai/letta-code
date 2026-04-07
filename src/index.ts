@@ -365,7 +365,9 @@ async function main(): Promise<void> {
   markMilestone("SETTINGS_LOADED");
 
   // Ensure base tools exist on the server (first-run-per-server)
-  const { bootstrapBaseToolsIfNeeded } = await import("./agent/bootstrap-tools");
+  const { bootstrapBaseToolsIfNeeded } = await import(
+    "./agent/bootstrap-tools"
+  );
   await bootstrapBaseToolsIfNeeded();
 
   // Handle CLI subcommands (e.g., `letta memfs ...`) before parsing global flags
