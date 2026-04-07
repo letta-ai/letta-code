@@ -12,6 +12,7 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { addBaseToolsToServer } from "./create";
+import { debugWarn } from "../utils/debug";
 
 const MARKER_PATH = join(homedir(), ".letta", ".bootstrapped");
 
@@ -30,7 +31,7 @@ export async function bootstrapBaseToolsIfNeeded(): Promise<void> {
     }
   } catch (err) {
     // Non-fatal — the retry in createAgentWithBaseToolsRecovery is the safety net
-    console.warn(
+    debugWarn(
       `[bootstrap] Failed to bootstrap base tools: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
