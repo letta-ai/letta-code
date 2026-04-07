@@ -2837,7 +2837,9 @@ async function connectWithRetry(
               n.name.endsWith(".md"),
             );
 
-            const allPaths = new Set(fileNodes.map((node) => node.relativePath));
+            const allPaths = new Set(
+              fileNodes.map((node) => node.relativePath),
+            );
 
             const normalizeMemoryReference = (
               rawReference: string,
@@ -2874,9 +2876,12 @@ async function connectWithRetry(
               }
 
               const sourceDir = posix.dirname(sourcePath.replace(/\\/g, "/"));
-              const candidate = target.startsWith("./") || target.startsWith("../")
-                ? posix.normalize(posix.join(sourceDir, target))
-                : posix.normalize(target.startsWith("/") ? target.slice(1) : target);
+              const candidate =
+                target.startsWith("./") || target.startsWith("../")
+                  ? posix.normalize(posix.join(sourceDir, target))
+                  : posix.normalize(
+                      target.startsWith("/") ? target.slice(1) : target,
+                    );
 
               if (
                 !candidate ||
@@ -2901,7 +2906,9 @@ async function connectWithRetry(
                 sourceDir &&
                 sourceDir !== "."
               ) {
-                candidates.add(posix.normalize(posix.join(sourceDir, withExtension)));
+                candidates.add(
+                  posix.normalize(posix.join(sourceDir, withExtension)),
+                );
               }
 
               if (!withExtension.startsWith("system/")) {
@@ -2928,7 +2935,10 @@ async function connectWithRetry(
               while ((wikiMatch = wikiLinkRegex.exec(body))) {
                 const rawTarget = wikiMatch[1];
                 if (!rawTarget) continue;
-                const normalized = normalizeMemoryReference(rawTarget, sourcePath);
+                const normalized = normalizeMemoryReference(
+                  rawTarget,
+                  sourcePath,
+                );
                 if (normalized && normalized !== sourcePath) {
                   refs.add(normalized);
                 }
@@ -2939,7 +2949,10 @@ async function connectWithRetry(
               while ((markdownMatch = markdownLinkRegex.exec(body))) {
                 const rawTarget = markdownMatch[1];
                 if (!rawTarget) continue;
-                const normalized = normalizeMemoryReference(rawTarget, sourcePath);
+                const normalized = normalizeMemoryReference(
+                  rawTarget,
+                  sourcePath,
+                );
                 if (normalized && normalized !== sourcePath) {
                   refs.add(normalized);
                 }
@@ -2947,7 +2960,7 @@ async function connectWithRetry(
 
               return [...refs].sort((a, b) => a.localeCompare(b));
             };
-            
+
             const CHUNK_SIZE = 5;
             const total = fileNodes.length;
 
