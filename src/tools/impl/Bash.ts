@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { resolve } from "node:path";
 import { INTERRUPTED_BY_USER } from "../../constants";
 import {
   appendBackgroundProcessOutput,
@@ -15,7 +16,6 @@ import { buildShellLaunchers } from "./shellLaunchers.js";
 import { spawnWithLauncher } from "./shellRunner.js";
 import { LIMITS, truncateByChars } from "./truncation.js";
 import { validateRequiredParams } from "./validation.js";
-import { resolve } from "node:path";
 
 /**
  * Check if a `git worktree add` command targets `.letta/worktrees/`.
@@ -23,9 +23,7 @@ import { resolve } from "node:path";
  */
 function validateWorktreePath(command: string, cwd: string): string | null {
   // Match `git worktree add` with optional flags before the path
-  const match = command.match(
-    /\bgit\s+worktree\s+add\s+(?:-b\s+\S+\s+)?(\S+)/,
-  );
+  const match = command.match(/\bgit\s+worktree\s+add\s+(?:-b\s+\S+\s+)?(\S+)/);
   if (!match?.[1]) return null;
 
   const targetPath = match[1];
