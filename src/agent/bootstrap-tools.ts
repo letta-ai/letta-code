@@ -23,7 +23,7 @@ const MARKER_PATH = join(homedir(), ".letta", ".bootstrapped");
 export async function bootstrapBaseToolsIfNeeded(): Promise<void> {
   if (existsSync(MARKER_PATH)) return;
 
-  debugLog("[bootstrap] No marker found, bootstrapping base tools...");
+  debugLog("bootstrap", "No marker found, bootstrapping base tools...");
 
   try {
     const success = await addBaseToolsToServer();
@@ -34,7 +34,8 @@ export async function bootstrapBaseToolsIfNeeded(): Promise<void> {
   } catch (err) {
     // Non-fatal — the retry in createAgentWithBaseToolsRecovery is the safety net
     debugWarn(
-      `[bootstrap] Failed to bootstrap base tools: ${err instanceof Error ? err.message : String(err)}`,
+      "bootstrap",
+      `Failed to bootstrap base tools: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
 }
