@@ -62,10 +62,82 @@ export function normalizeCredentialBaseUrl(serverUrl: string): string {
   }
 }
 
+function normalizeRemoteUrl(url: string): string {
+  return url.trim().replace(/\/+$/, "");
+}
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Returns true when a remote URL points to this agent's memfs git endpoint.
+ */
+export function isMemfsRemoteUrlForAgent(
+  remoteUrl: string,
+  agentId: string,
+): boolean {
+  const normalized = normalizeRemoteUrl(remoteUrl);
+  const escapedAgentId = escapeRegex(agentId);
+  return new RegExp(
+    `^https?://[^\\s]+/v1/git/${escapedAgentId}/state\\.git$`,
+    "i",
+  ).test(normalized);
+}
+
 /** Git remote URL for the agent's state repo */
-function getGitRemoteUrl(agentId: string): string {
-  const baseUrl = getServerUrl().trim().replace(/\/+$/, "");
-  return `${baseUrl}/v1/git/${agentId}/state.git`;
+export function getGitRemoteUrl(agentId: string, baseUrl?: string): string {
+  const resolvedBaseUrl = (baseUrl ?? getServerUrl())
+    .trim()
+    .replace(/\/+$/, "");
+  return `${resolvedBaseUrl}/v1/git/${agentId}/state.git`;
+}
+
+/**
+ * Keep the local repo's `origin` URL aligned with the current server base URL.
+ *
+ * Best-effort: if origin is missing or not a memfs endpoint for this agent,
+ * this function is a no-op.
+ */
+export async function maybeUpdateMemoryRemoteOrigin(
+  repoDir: string,
+  agentId: string,
+): Promise<void> {
+  let currentOrigin = "";
+  try {
+    const { stdout } = await runGit(repoDir, ["remote", "get-url", "origin"]);
+    currentOrigin = stdout.trim();
+  } catch {
+    // No origin remote configured — leave as-is.
+    return;
+  }
+
+  if (!currentOrigin) {
+    return;
+  }
+
+  if (!isMemfsRemoteUrlForAgent(currentOrigin, agentId)) {
+    return;
+  }
+
+  const expectedOrigin = normalizeRemoteUrl(getGitRemoteUrl(agentId));
+  const normalizedCurrent = normalizeRemoteUrl(currentOrigin);
+
+  if (normalizedCurrent === expectedOrigin) {
+    return;
+  }
+
+  await runGit(repoDir, ["remote", "set-url", "origin", expectedOrigin]);
+
+  debugLog(
+    "memfs-git",
+    `Updated origin remote for ${agentId}: ${normalizedCurrent} -> ${expectedOrigin}`,
+  );
+}
+
+/** Git remote URL for the agent's state repo */
+function getMemoryRemoteUrl(agentId: string): string {
+  return getGitRemoteUrl(agentId);
 }
 
 /**
@@ -384,7 +456,7 @@ export function isGitRepo(agentId: string): boolean {
  */
 export async function cloneMemoryRepo(agentId: string): Promise<void> {
   const token = await getAuthToken();
-  const url = getGitRemoteUrl(agentId);
+  const url = getMemoryRemoteUrl(agentId);
   const dir = getMemoryRepoDir(agentId);
 
   debugLog("memfs-git", `Cloning ${url} → ${dir}`);
@@ -440,6 +512,8 @@ export async function pullMemory(
   const token = await getAuthToken();
   const dir = getMemoryRepoDir(agentId);
 
+  await maybeUpdateMemoryRemoteOrigin(dir, agentId);
+
   // Self-healing: ensure credential helper and pre-commit hook are configured
   await configureLocalCredentialHelper(dir, token);
   installPreCommitHook(dir);
@@ -488,6 +562,8 @@ export async function pullMemory(
 export async function pushMemory(agentId: string): Promise<void> {
   const token = await getAuthToken();
   const dir = getMemoryRepoDir(agentId);
+
+  await maybeUpdateMemoryRemoteOrigin(dir, agentId);
 
   await configureLocalCredentialHelper(dir, token);
 
