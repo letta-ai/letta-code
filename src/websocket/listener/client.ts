@@ -2891,7 +2891,30 @@ async function connectWithRetry(
                 ? candidate
                 : `${candidate}.md`;
 
-              return allPaths.has(withExtension) ? withExtension : null;
+              const candidates = new Set<string>([withExtension]);
+
+              const isExplicitRelative =
+                target.startsWith("./") || target.startsWith("../");
+              if (
+                !isExplicitRelative &&
+                !target.startsWith("/") &&
+                sourceDir &&
+                sourceDir !== "."
+              ) {
+                candidates.add(posix.normalize(posix.join(sourceDir, withExtension)));
+              }
+
+              if (!withExtension.startsWith("system/")) {
+                candidates.add(posix.normalize(`system/${withExtension}`));
+              }
+
+              for (const resolved of candidates) {
+                if (allPaths.has(resolved)) {
+                  return resolved;
+                }
+              }
+
+              return null;
             };
 
             const extractMemoryReferences = (
