@@ -2462,16 +2462,29 @@ async function connectWithRetry(
       if (isSearchFilesCommand(parsed)) {
         runDetachedListenerTask("search_files", async () => {
           try {
+            // When the requested cwd lives outside the current index root
+            // (e.g. a persisted CWD restored on startup that was never fed
+            // through handleCwdChange), re-root the file index first so
+            // the search covers the correct workspace.
+            if (parsed.cwd) {
+              const currentRoot = getIndexRoot();
+              if (
+                !parsed.cwd.startsWith(currentRoot + path.sep) &&
+                parsed.cwd !== currentRoot
+              ) {
+                setIndexRoot(parsed.cwd);
+              }
+            }
+
             await ensureFileIndex();
 
             // Scope search to the conversation's cwd when provided.
-            // The file index stores paths relative to process.cwd(), so we
-            // compute the relative path from the index root to the requested cwd.
+            // The file index stores paths relative to the index root.
             let searchDir = ".";
             if (parsed.cwd) {
               const rel = path.relative(getIndexRoot(), parsed.cwd);
               // Only scope if cwd is within the index root (not "../" etc.)
-              if (rel && !rel.startsWith("..")) {
+              if (rel && !rel.startsWith("..") && rel !== "") {
                 searchDir = rel;
               }
             }
