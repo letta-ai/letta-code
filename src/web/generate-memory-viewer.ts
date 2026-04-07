@@ -229,6 +229,7 @@ async function collectMemoryData(
   agentId: string,
   repoDir: string,
   memoryRoot: string,
+  conversationId?: string,
 ): Promise<MemoryViewerData> {
   // Filesystem scan (synchronous)
   const files = collectFiles(memoryRoot);
@@ -452,6 +453,7 @@ async function collectMemoryData(
     context,
     conversations,
     messages,
+    selectedConversationId: conversationId ?? undefined,
   };
 }
 
@@ -461,7 +463,7 @@ async function collectMemoryData(
 
 export async function generateAndOpenMemoryViewer(
   agentId: string,
-  options?: { agentName?: string },
+  options?: { agentName?: string; conversationId?: string },
 ): Promise<GenerateResult> {
   const repoDir = getMemoryRepoDir(agentId);
   const memoryRoot = getMemoryFilesystemRoot(agentId);
@@ -471,7 +473,12 @@ export async function generateAndOpenMemoryViewer(
   }
 
   // 1. Collect data
-  const data = await collectMemoryData(agentId, repoDir, memoryRoot);
+  const data = await collectMemoryData(
+    agentId,
+    repoDir,
+    memoryRoot,
+    options?.conversationId,
+  );
 
   // Override agent name if provided by caller
   if (options?.agentName) {
