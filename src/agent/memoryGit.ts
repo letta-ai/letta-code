@@ -33,6 +33,9 @@ const RETRYABLE_GIT_HTTP_ERROR_RE =
 const RETRYABLE_GIT_NETWORK_ERROR_RE =
   /(remote end hung up unexpectedly|connection reset by peer|operation timed out|timed out)/i;
 
+const MISSING_CWD_GIT_ERROR_RE =
+  /(Unable to read current working directory: No such file or directory|\buv_cwd\b|\bcwd\b.*\bENOENT\b)/i;
+
 /** Get the agent root directory (~/.letta/agents/{id}/) */
 export function getAgentRootDir(agentId: string): string {
   return join(homedir(), ".letta", "agents", agentId);
@@ -217,6 +220,11 @@ export function isRetryableGitTransientError(error: unknown): boolean {
   return false;
 }
 
+export function isMissingCwdGitError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return MISSING_CWD_GIT_ERROR_RE.test(message);
+}
+
 async function runGitWithRetry(
   cwd: string,
   args: string[],
@@ -229,8 +237,20 @@ async function runGitWithRetry(
 
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
+      // Self-heal against transient cwd removal races.
+      if (!existsSync(cwd)) {
+        mkdirSync(cwd, { recursive: true });
+      }
       return await runGit(cwd, args, token);
     } catch (error) {
+      if (isMissingCwdGitError(error)) {
+        // Recreate cwd and retry once through the normal loop.
+        mkdirSync(cwd, { recursive: true });
+        if (attempt < attempts) {
+          continue;
+        }
+      }
+
       if (!isRetryableGitTransientError(error) || attempt >= attempts) {
         throw error;
       }

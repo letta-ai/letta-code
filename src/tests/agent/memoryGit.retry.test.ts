@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 
-import { isRetryableGitTransientError } from "../../agent/memoryGit";
+import {
+  isMissingCwdGitError,
+  isRetryableGitTransientError,
+} from "../../agent/memoryGit";
 
 describe("isRetryableGitTransientError", () => {
   test("returns true for Cloudflare 52x HTTP errors", () => {
@@ -17,6 +20,26 @@ describe("isRetryableGitTransientError", () => {
         new Error("error: RPC failed; HTTP 520 curl 22"),
       ),
     ).toBe(true);
+  });
+
+  describe("isMissingCwdGitError", () => {
+    test("returns true for missing cwd git error", () => {
+      expect(
+        isMissingCwdGitError(
+          new Error(
+            "fatal: Unable to read current working directory: No such file or directory",
+          ),
+        ),
+      ).toBe(true);
+    });
+
+    test("returns false for non-cwd errors", () => {
+      expect(
+        isMissingCwdGitError(
+          new Error("fatal: the remote end hung up unexpectedly"),
+        ),
+      ).toBe(false);
+    });
   });
 
   test("returns true for RPC failed + remote hung up", () => {
