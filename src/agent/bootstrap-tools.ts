@@ -13,7 +13,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { addBaseToolsToServer } from "./create";
 
-const MARKER_PATH = join(homedir(), ".letta", ".tools-bootstrapped");
+const MARKER_PATH = join(homedir(), ".letta", ".bootstrapped");
 
 /**
  * Call add-base-tools once, then write a marker so future launches skip it.
