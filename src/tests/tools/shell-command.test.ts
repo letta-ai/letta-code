@@ -11,6 +11,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { shell_command } from "../../tools/impl/ShellCommand.js";
 import { LIMITS } from "../../tools/impl/truncation.js";
+import { createTempRuntimeScriptCommand } from "./runtimeScript.js";
 
 test("shell_command executes basic echo", async () => {
   const result = await shell_command({ command: "echo shell-basic" });
@@ -18,14 +19,22 @@ test("shell_command executes basic echo", async () => {
 });
 
 test("shell_command preserves stdout and stderr arrays when output is not truncated", async () => {
-  const result = await shell_command({
-    command: `${JSON.stringify(process.execPath)} -e ${JSON.stringify("process.stdout.write('stdout'); process.stderr.write('stderr');")}`,
-  });
+  const runtimeScript = createTempRuntimeScriptCommand(
+    "process.stdout.write('stdout'); process.stderr.write('stderr');",
+  );
 
-  expect(result.output).toContain("stdout");
-  expect(result.output).toContain("stderr");
-  expect(result.stdout).toEqual(["stdout"]);
-  expect(result.stderr).toEqual(["stderr"]);
+  try {
+    const result = await shell_command({
+      command: runtimeScript.command,
+    });
+
+    expect(result.output).toContain("stdout");
+    expect(result.output).toContain("stderr");
+    expect(result.stdout).toEqual(["stdout"]);
+    expect(result.stderr).toEqual(["stderr"]);
+  } finally {
+    runtimeScript.cleanup();
+  }
 });
 
 test("shell_command falls back when preferred shell is missing", async () => {
@@ -67,30 +76,39 @@ test("shell_command truncates oversized output with overflow-file notice", async
   process.env.LETTA_TOOL_OVERFLOW_TO_FILE = "true";
 
   try {
-    const script = `process.stdout.write("x".repeat(${LIMITS.BASH_OUTPUT_CHARS + 500}))`;
-    const result = await shell_command({
-      command: `${JSON.stringify(process.execPath)} -e ${JSON.stringify(script)}`,
-      workdir,
-    });
-
-    expect(result.output).toContain("[Output truncated:");
-    expect(result.output).toContain("[Full output written to:");
-    expect(result.stdout).toBeUndefined();
-    expect(result.stderr).toBeUndefined();
-
-    const overflowMatch = result.output.match(
-      /\[Full output written to: (.+)\]/,
+    const runtimeScript = createTempRuntimeScriptCommand(
+      `process.stdout.write("x".repeat(${LIMITS.BASH_OUTPUT_CHARS + 500}))`,
     );
-    overflowPath = overflowMatch?.[1]?.trim();
-    expect(overflowPath).toBeDefined();
-    if (!overflowPath) {
-      throw new Error("Expected overflow file pointer in shell_command output");
+
+    try {
+      const result = await shell_command({
+        command: runtimeScript.command,
+        workdir,
+      });
+
+      expect(result.output).toContain("[Output truncated:");
+      expect(result.output).toContain("[Full output written to:");
+      expect(result.stdout).toBeUndefined();
+      expect(result.stderr).toBeUndefined();
+
+      const overflowMatch = result.output.match(
+        /\[Full output written to: (.+)\]/,
+      );
+      overflowPath = overflowMatch?.[1]?.trim();
+      expect(overflowPath).toBeDefined();
+      if (!overflowPath) {
+        throw new Error(
+          "Expected overflow file pointer in shell_command output",
+        );
+      }
+
+      expect(existsSync(overflowPath)).toBe(true);
+      expect(readFileSync(overflowPath, "utf8").length).toBe(
+        LIMITS.BASH_OUTPUT_CHARS + 500,
+      );
+    } finally {
+      runtimeScript.cleanup();
     }
-
-    expect(existsSync(overflowPath)).toBe(true);
-    expect(readFileSync(overflowPath, "utf8").length).toBe(
-      LIMITS.BASH_OUTPUT_CHARS + 500,
-    );
   } finally {
     if (originalOverflow === undefined) {
       delete process.env.LETTA_TOOL_OVERFLOW_TO_FILE;

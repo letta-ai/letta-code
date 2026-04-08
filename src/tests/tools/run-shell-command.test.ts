@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { run_shell_command } from "../../tools/impl/RunShellCommandGemini";
 import { LIMITS } from "../../tools/impl/truncation.js";
+import { createTempRuntimeScriptCommand } from "./runtimeScript.js";
 
 describe("RunShellCommand tool (Gemini)", () => {
   test("executes simple command", async () => {
@@ -33,12 +34,19 @@ describe("RunShellCommand tool (Gemini)", () => {
   });
 
   test("truncates oversized output with overflow-file notice", async () => {
-    const script = `process.stdout.write("x".repeat(${LIMITS.BASH_OUTPUT_CHARS + 500}))`;
-    const result = await run_shell_command({
-      command: `${JSON.stringify(process.execPath)} -e ${JSON.stringify(script)}`,
-    });
+    const runtimeScript = createTempRuntimeScriptCommand(
+      `process.stdout.write("x".repeat(${LIMITS.BASH_OUTPUT_CHARS + 500}))`,
+    );
 
-    expect(result.message).toContain("[Output truncated:");
-    expect(result.message).toContain("[Full output written to:");
+    try {
+      const result = await run_shell_command({
+        command: runtimeScript.command,
+      });
+
+      expect(result.message).toContain("[Output truncated:");
+      expect(result.message).toContain("[Full output written to:");
+    } finally {
+      runtimeScript.cleanup();
+    }
   });
 });
