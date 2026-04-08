@@ -298,6 +298,11 @@ export async function applyMemfsFlags(
       if (!promptUpdate.success) {
         throw new Error(promptUpdate.message);
       }
+      // Force recompile of the system message so the updated template
+      // (with/without memfs addon) is reflected in the compiled prompt.
+      const { getClient } = await import("./client");
+      const client = await getClient();
+      await client.agents.recompile(agentId, { update_timestamp: false });
     }
     settingsManager.setMemfsEnabled(agentId, targetEnabled);
   }
