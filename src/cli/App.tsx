@@ -9882,46 +9882,21 @@ export default function App({
             const { packageSkills } = await import("../agent/export");
             const skills = await packageSkills(agentId);
 
-            // Export agent with skills
-            let fileContent: unknown;
+            // Export agent via SDK (GET endpoint), then embed skills client-side
+            const baseContent = await client.agents.exportFile(
+              agentId,
+              exportParams,
+            );
+
+            // Parse if returned as a string, otherwise use as-is
+            const fileContent: Record<string, unknown> =
+              typeof baseContent === "string"
+                ? JSON.parse(baseContent)
+                : (baseContent as Record<string, unknown>);
+
+            // Embed skills into the .af JSON (client-side, no server support needed)
             if (skills.length > 0) {
-              // Use raw fetch with auth from settings
-              const { settingsManager } = await import("../settings-manager");
-              const { getServerUrl } = await import("../agent/client");
-              const settings =
-                await settingsManager.getSettingsWithSecureTokens();
-              const apiKey =
-                process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
-              const baseUrl = getServerUrl();
-
-              const body: Record<string, unknown> = {
-                ...exportParams,
-                skills,
-              };
-
-              const response = await fetch(
-                `${baseUrl}/v1/agents/${agentId}/export`,
-                {
-                  method: "POST",
-                  headers: {
-                    Authorization: `Bearer ${apiKey}`,
-                    "Content-Type": "application/json",
-                  },
-                  body: JSON.stringify(body),
-                },
-              );
-
-              if (!response.ok) {
-                throw new Error(`Export failed: ${response.statusText}`);
-              }
-
-              fileContent = await response.json();
-            } else {
-              // No skills to include, use SDK
-              fileContent = await client.agents.exportFile(
-                agentId,
-                exportParams,
-              );
+              fileContent.skills = skills;
             }
 
             // Generate filename
