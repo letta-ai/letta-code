@@ -55,7 +55,7 @@ describe("apply_patch tool", () => {
     });
 
     expect(existsSync(absolutePath)).toBe(true);
-    expect(readFileSync(absolutePath, "utf-8")).toBe("hello");
+    expect(readFileSync(absolutePath, "utf-8")).toBe("hello\n");
   });
 
   test("overwrites existing file on Add File", async () => {
@@ -73,7 +73,7 @@ describe("apply_patch tool", () => {
     });
 
     const existsPath = join(testDir.path, "exists.txt");
-    expect(readFileSync(existsPath, "utf-8")).toBe("new");
+    expect(readFileSync(existsPath, "utf-8")).toBe("new\n");
   });
 
   test("fails when deleting a missing file", async () => {
@@ -145,7 +145,25 @@ EOF`,
     });
 
     const filePath = join(testDir.path, "heredoc.txt");
-    expect(readFileSync(filePath, "utf-8")).toBe("hello");
+    expect(readFileSync(filePath, "utf-8")).toBe("hello\n");
+  });
+
+  test("rejects blank top-level lines between file hunks", async () => {
+    testDir = new TestDirectory();
+    originalUserCwd = process.env.USER_CWD;
+    process.env.USER_CWD = testDir.path;
+
+    await expect(
+      apply_patch({
+        input: `*** Begin Patch
+*** Add File: a.txt
++a
+
+*** Add File: b.txt
++b
+*** End Patch`,
+      }),
+    ).rejects.toThrow(/is not a valid hunk header/);
   });
 
   test("applies context-anchored chunks after @@ marker", async () => {

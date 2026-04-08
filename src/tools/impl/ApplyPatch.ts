@@ -75,7 +75,7 @@ export async function apply_patch(
         await fs.mkdir(parent, { recursive: true });
       }
 
-      const content = op.contentLines.join("\n");
+      const content = op.contentLines.map((line) => `${line}\n`).join("");
       await fs.writeFile(targetPath, content, "utf8");
       affected.added.push(op.path);
       continue;
@@ -162,11 +162,6 @@ function parsePatch(input: string): FileOperation[] {
   while (index < endIndex) {
     const rawLine = lines[index] ?? "";
     const firstLine = rawLine.trim();
-
-    if (!firstLine) {
-      index += 1;
-      continue;
-    }
 
     if (firstLine.startsWith(ADD_FILE_MARKER)) {
       const filePath = firstLine.slice(ADD_FILE_MARKER.length);
