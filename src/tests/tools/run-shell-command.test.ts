@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { run_shell_command } from "../../tools/impl/RunShellCommandGemini";
+import { LIMITS } from "../../tools/impl/truncation.js";
 
 describe("RunShellCommand tool (Gemini)", () => {
   test("executes simple command", async () => {
@@ -29,5 +30,15 @@ describe("RunShellCommand tool (Gemini)", () => {
         command: "",
       } as Parameters<typeof run_shell_command>[0]),
     ).rejects.toThrow(/non-empty string/);
+  });
+
+  test("truncates oversized output with overflow-file notice", async () => {
+    const script = `process.stdout.write("x".repeat(${LIMITS.BASH_OUTPUT_CHARS + 500}))`;
+    const result = await run_shell_command({
+      command: `${JSON.stringify(process.execPath)} -e ${JSON.stringify(script)}`,
+    });
+
+    expect(result.message).toContain("[Output truncated:");
+    expect(result.message).toContain("[Full output written to:");
   });
 });

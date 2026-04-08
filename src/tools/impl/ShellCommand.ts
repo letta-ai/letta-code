@@ -26,9 +26,8 @@ interface ShellCommandResult {
 
 function normalizeShellCommandResult(
   result: ShellResult,
-  workdir?: string,
+  resolvedWorkdir: string,
 ): ShellCommandResult {
-  const resolvedWorkdir = resolveShellWorkdir(workdir);
   const { content: truncatedOutput, wasTruncated } = truncateByChars(
     result.output || "(Command completed with no output)",
     LIMITS.BASH_OUTPUT_CHARS,
@@ -64,6 +63,7 @@ export async function shell_command(
     onOutput,
   } = args;
   const envOverrides = getMemoryGitIdentityEnvOverrides(command, workdir);
+  const resolvedWorkdir = resolveShellWorkdir(workdir);
   const launchers = buildShellLaunchers(command, { login });
   if (launchers.length === 0) {
     throw new Error("Command must be a non-empty string");
@@ -76,14 +76,14 @@ export async function shell_command(
     try {
       const result = await shell({
         command: launcher,
-        workdir,
+        workdir: resolvedWorkdir,
         env_overrides: envOverrides,
         timeout_ms,
         justification,
         signal,
         onOutput,
       });
-      return normalizeShellCommandResult(result, workdir);
+      return normalizeShellCommandResult(result, resolvedWorkdir);
     } catch (error) {
       if (error instanceof ShellExecutionError && error.code === "ENOENT") {
         tried.push(launcher[0] || "");

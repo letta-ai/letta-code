@@ -17,6 +17,17 @@ test("shell_command executes basic echo", async () => {
   expect(result.output).toContain("shell-basic");
 });
 
+test("shell_command preserves stdout and stderr arrays when output is not truncated", async () => {
+  const result = await shell_command({
+    command: `${JSON.stringify(process.execPath)} -e ${JSON.stringify("process.stdout.write('stdout'); process.stderr.write('stderr');")}`,
+  });
+
+  expect(result.output).toContain("stdout");
+  expect(result.output).toContain("stderr");
+  expect(result.stdout).toEqual(["stdout"]);
+  expect(result.stderr).toEqual(["stderr"]);
+});
+
 test("shell_command falls back when preferred shell is missing", async () => {
   const marker = "shell-fallback";
   if (process.platform === "win32") {
