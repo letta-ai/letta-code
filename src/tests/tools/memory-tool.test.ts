@@ -23,6 +23,7 @@ mock.module("../../agent/client", () => ({
       },
     }),
   ),
+  getServerUrl: () => "http://localhost:8283",
 }));
 
 const { memory } = await import("../../tools/impl/Memory");

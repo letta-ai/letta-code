@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { APIError } from "@letta-ai/letta-client/core/error";
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import WebSocket from "ws";
 import { buildConversationMessagesCreateRequestBody } from "../../agent/message";
@@ -12,6 +13,7 @@ import {
   DEFAULT_CREATE_AGENT_PERSONALITIES,
   getPersonalityOption,
 } from "../../agent/personality";
+import { formatErrorDetails } from "../../cli/helpers/errorFormatter";
 import {
   clearAllSubagents,
   registerSubagent,
@@ -37,6 +39,15 @@ import {
   resolvePendingApprovalResolver,
 } from "../../websocket/listen-client";
 import { isEditFileCommand } from "../../websocket/listener/protocol-inbound";
+import {
+  DESKTOP_DEBUG_PANEL_INFO_PREFIX,
+  emitLoopErrorNotice,
+  emitRecoverableRetryNotice,
+  emitRecoverableStatusNotice,
+  getLoopErrorNoticeDecision,
+  getRecoverableRetryNoticeVisibility,
+  getRecoverableStatusNoticeVisibility,
+} from "../../websocket/listener/recoverable-notices";
 
 class MockSocket {
   readyState: number;
@@ -1160,6 +1171,25 @@ describe("listen-client requestApprovalOverWS", () => {
     expect(runtime.pendingApprovalResolvers.size).toBe(0);
   });
 
+  test("rejects immediately when interrupt is already active", async () => {
+    const runtime = __listenClientTestUtils.createRuntime();
+    const socket = new MockSocket(WebSocket.OPEN);
+    const requestId = "perm-cancelled";
+
+    runtime.cancelRequested = true;
+
+    await expect(
+      requestApprovalOverWS(
+        runtime,
+        socket as unknown as WebSocket,
+        requestId,
+        makeControlRequest(requestId),
+      ),
+    ).rejects.toThrow("Cancelled by user");
+    expect(runtime.pendingApprovalResolvers.size).toBe(0);
+    expect(runtime.listener.approvalRuntimeKeyByRequestId.size).toBe(0);
+  });
+
   test("registers a pending resolver until an approval response arrives", async () => {
     const runtime = __listenClientTestUtils.createRuntime();
     const socket = new MockSocket(WebSocket.OPEN);
@@ -1180,6 +1210,30 @@ describe("listen-client requestApprovalOverWS", () => {
     rejectPendingApprovalResolvers(runtime, "cleanup");
     await expect(pending).rejects.toThrow("cleanup");
     expect(runtime.pendingApprovalResolvers.size).toBe(0);
+  });
+
+  test("cleans up a pending resolver if abort lands immediately after registration", async () => {
+    const runtime = __listenClientTestUtils.createRuntime();
+    const socket = new MockSocket(WebSocket.OPEN);
+    const requestId = "perm-late-abort";
+
+    runtime.activeAbortController = new AbortController();
+
+    const pending = requestApprovalOverWS(
+      runtime,
+      socket as unknown as WebSocket,
+      requestId,
+      makeControlRequest(requestId),
+    );
+
+    expect(runtime.pendingApprovalResolvers.size).toBe(1);
+
+    runtime.cancelRequested = true;
+    runtime.activeAbortController.abort();
+
+    await expect(pending).rejects.toThrow("Cancelled by user");
+    expect(runtime.pendingApprovalResolvers.size).toBe(0);
+    expect(runtime.listener.approvalRuntimeKeyByRequestId.size).toBe(0);
   });
 });
 
@@ -1279,9 +1333,38 @@ describe("listen-client v2 status builders", () => {
     const loopStatus = __listenClientTestUtils.buildLoopStatus(runtime);
     expect(loopStatus.status).toBe("WAITING_ON_INPUT");
     expect(loopStatus.active_run_ids).toEqual([]);
+    expect(loopStatus.plan_file_path).toBeNull();
     // queue is now separate from loopStatus — verify via buildQueueSnapshot
     const queueSnapshot = __listenClientTestUtils.buildQueueSnapshot(runtime);
     expect(queueSnapshot).toEqual([]);
+  });
+
+  test("buildLoopStatus includes plan file path for scoped plan mode", () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    __listenClientTestUtils.getOrCreateScopedRuntime(
+      listener,
+      "agent-1",
+      "default",
+    );
+    listener.permissionModeByConversation.set(
+      "agent:agent-1::conversation:default",
+      {
+        mode: "plan",
+        planFilePath: "/tmp/listener-plan.md",
+        modeBeforePlan: "default",
+      },
+    );
+
+    expect(
+      __listenClientTestUtils.buildLoopStatus(listener, {
+        agent_id: "agent-1",
+        conversation_id: "default",
+      }),
+    ).toEqual({
+      status: "WAITING_ON_INPUT",
+      active_run_ids: [],
+      plan_file_path: "/tmp/listener-plan.md",
+    });
   });
 
   test("buildDeviceStatus includes the effective working directory", () => {
@@ -1480,6 +1563,49 @@ describe("listen-client v2 status builders", () => {
     ]);
   });
 
+  test("sync replay soft-fails approval recovery errors without emitting loop_error rows", async () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    __listenClientTestUtils.getOrCreateScopedRuntime(
+      listener,
+      "agent-1",
+      "default",
+    );
+    const socket = new MockSocket(WebSocket.OPEN);
+
+    await __listenClientTestUtils.replaySyncStateForRuntime(
+      listener,
+      socket as unknown as WebSocket,
+      {
+        agent_id: "agent-1",
+        conversation_id: "default",
+      },
+      {
+        recoverApprovalStateForSync: async () => {
+          throw new Error(
+            "Unterminated string in JSON at position 183040 (line 1 column 183041)",
+          );
+        },
+      },
+    );
+
+    const outbound = socket.sentPayloads.map((payload) =>
+      JSON.parse(payload as string),
+    );
+    expect(outbound.map((message) => message.type)).toEqual([
+      "update_device_status",
+      "update_loop_status",
+      "update_queue",
+      "update_subagent_state",
+    ]);
+    expect(
+      outbound.some(
+        (message) =>
+          message.type === "stream_delta" &&
+          message.delta?.message_type === "loop_error",
+      ),
+    ).toBe(false);
+  });
+
   test("sync includes silent background reflection subagents in update_subagent_state", () => {
     clearAllSubagents();
     try {
@@ -1640,6 +1766,7 @@ describe("listen-client v2 status builders", () => {
     expect(outbound[1].loop_status).toEqual({
       status: "WAITING_ON_APPROVAL",
       active_run_ids: [],
+      plan_file_path: null,
     });
   });
 
@@ -1777,6 +1904,7 @@ describe("listen-client v2 status builders", () => {
     ).toEqual({
       status: "WAITING_ON_APPROVAL",
       active_run_ids: [],
+      plan_file_path: null,
     });
   });
 
@@ -1961,6 +2089,29 @@ describe("listen-client interrupt queue projection", () => {
       tool_call_id: "call-awaiting-approval",
       approve: false,
     });
+  });
+
+  test("consumeInterruptQueue clears matching empty interrupted context", () => {
+    const runtime = __listenClientTestUtils.createRuntime();
+
+    runtime.pendingInterruptedResults = [];
+    runtime.pendingInterruptedContext = {
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      continuationEpoch: runtime.continuationEpoch,
+    };
+    runtime.pendingInterruptedToolCallIds = [];
+
+    expect(
+      __listenClientTestUtils.consumeInterruptQueue(
+        runtime,
+        "agent-1",
+        "conv-1",
+      ),
+    ).toBeNull();
+    expect(runtime.pendingInterruptedResults).toBeNull();
+    expect(runtime.pendingInterruptedContext).toBeNull();
+    expect(runtime.pendingInterruptedToolCallIds).toBeNull();
   });
 
   test("recovered approvals are stashed as denials on interrupt", () => {
@@ -2154,6 +2305,63 @@ describe("listen-client capability-gated approval flow", () => {
     }
   });
 
+  test("mode changes emit fresh loop status plan_file_path on enter exit and re-enter", async () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const socket = new MockSocket(WebSocket.OPEN);
+    listener.socket = socket as unknown as WebSocket;
+
+    const scope = {
+      agent_id: "agent-1",
+      conversation_id: "default",
+    } as const;
+
+    __listenClientTestUtils.handleModeChange(
+      { mode: "plan" },
+      socket as unknown as WebSocket,
+      listener,
+      scope,
+    );
+
+    const firstPlanPath = (socket.sentPayloads
+      .map((payload) => JSON.parse(payload as string))
+      .findLast((payload) => payload.type === "update_loop_status")?.loop_status
+      ?.plan_file_path ?? null) as string | null;
+
+    expect(firstPlanPath).toBeTruthy();
+
+    __listenClientTestUtils.handleModeChange(
+      { mode: "default" },
+      socket as unknown as WebSocket,
+      listener,
+      scope,
+    );
+
+    const afterExitLoopStatus = socket.sentPayloads
+      .map((payload) => JSON.parse(payload as string))
+      .findLast(
+        (payload) =>
+          payload.type === "update_loop_status" &&
+          payload.loop_status?.status === "WAITING_ON_INPUT",
+      );
+
+    expect(afterExitLoopStatus?.loop_status?.plan_file_path).toBeNull();
+
+    __listenClientTestUtils.handleModeChange(
+      { mode: "plan" },
+      socket as unknown as WebSocket,
+      listener,
+      scope,
+    );
+
+    const secondPlanPath = (socket.sentPayloads
+      .map((payload) => JSON.parse(payload as string))
+      .findLast((payload) => payload.type === "update_loop_status")?.loop_status
+      ?.plan_file_path ?? null) as string | null;
+
+    expect(secondPlanPath).toBeTruthy();
+    expect(secondPlanPath).not.toBe(firstPlanPath);
+  });
+
   test("requestApprovalOverWS exposes the control request through device status instead of stream_delta", () => {
     const listener = __listenClientTestUtils.createListenerRuntime();
     const runtime = __listenClientTestUtils.getOrCreateScopedRuntime(
@@ -2186,6 +2394,7 @@ describe("listen-client capability-gated approval flow", () => {
     expect(deviceStatus).toBeDefined();
     expect(loopStatus.type).toBe("update_loop_status");
     expect(loopStatus.loop_status.status).toBe("WAITING_ON_APPROVAL");
+    expect(runtime.lastStopReason).toBe("requires_approval");
     expect(deviceStatus.type).toBe("update_device_status");
     expect(deviceStatus.device_status.pending_control_requests).toEqual([
       {
@@ -2195,6 +2404,45 @@ describe("listen-client capability-gated approval flow", () => {
     ]);
 
     // Cleanup
+    rejectPendingApprovalResolvers(runtime, "test cleanup");
+  });
+
+  test("interrupted cache does not project WAITING_ON_APPROVAL when pending requests are suppressed", () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const runtime = __listenClientTestUtils.getOrCreateScopedRuntime(
+      listener,
+      "agent-1",
+      "default",
+    );
+    const socket = new MockSocket(WebSocket.OPEN);
+
+    runtime.isProcessing = true;
+    runtime.activeRunId = "run-1";
+    void requestApprovalOverWS(
+      runtime,
+      socket as unknown as WebSocket,
+      "perm-interrupted",
+      makeControlRequest("perm-interrupted"),
+    ).catch(() => {});
+    runtime.pendingInterruptedContext = {
+      agentId: "agent-1",
+      conversationId: "default",
+      continuationEpoch: runtime.continuationEpoch,
+    };
+
+    const deviceStatus = __listenClientTestUtils.buildDeviceStatus(listener, {
+      agent_id: "agent-1",
+      conversation_id: "default",
+    });
+    const loopStatus = __listenClientTestUtils.buildLoopStatus(listener, {
+      agent_id: "agent-1",
+      conversation_id: "default",
+    });
+
+    expect(deviceStatus.pending_control_requests).toEqual([]);
+    expect(loopStatus.status).toBe("WAITING_ON_INPUT");
+    expect(loopStatus.active_run_ids).toEqual(["run-1"]);
+
     rejectPendingApprovalResolvers(runtime, "test cleanup");
   });
 
@@ -2387,6 +2635,216 @@ describe("listen-client capability-gated approval flow", () => {
 
     __listenClientTestUtils.setActiveRuntime(null);
   });
+
+  test("late approval registration after abort_message is rejected immediately", async () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const socket = new MockSocket(WebSocket.OPEN);
+    listener.socket = socket as unknown as WebSocket;
+    __listenClientTestUtils.setActiveRuntime(listener);
+
+    const runtime = __listenClientTestUtils.getOrCreateScopedRuntime(
+      listener,
+      "agent-1",
+      "default",
+    );
+
+    runtime.isProcessing = true;
+    runtime.loopStatus = "PROCESSING_API_RESPONSE";
+    runtime.activeAbortController = new AbortController();
+    runtime.activeRunId = "run-active";
+
+    const handled = await __listenClientTestUtils.handleAbortMessageInput(
+      listener,
+      {
+        command: {
+          type: "abort_message",
+          runtime: { agent_id: "agent-1", conversation_id: "default" },
+        },
+        socket: socket as unknown as WebSocket,
+        opts: {
+          onStatusChange: undefined,
+          connectionId: "conn-1",
+        },
+        processQueuedTurn: async () => {},
+      },
+    );
+
+    expect(handled).toBe(true);
+    expect(runtime.cancelRequested).toBe(true);
+
+    await expect(
+      requestApprovalOverWS(
+        runtime,
+        socket as unknown as WebSocket,
+        "perm-late-after-abort",
+        makeControlRequest("perm-late-after-abort"),
+      ),
+    ).rejects.toThrow("Cancelled by user");
+    expect(runtime.pendingApprovalResolvers.size).toBe(0);
+    expect(runtime.listener.approvalRuntimeKeyByRequestId.size).toBe(0);
+
+    __listenClientTestUtils.setActiveRuntime(null);
+  });
+
+  test("abort_message preserves recovered approval denials instead of clobbering them to empty", async () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const socket = new MockSocket(WebSocket.OPEN);
+    listener.socket = socket as unknown as WebSocket;
+    __listenClientTestUtils.setActiveRuntime(listener);
+
+    const runtime = __listenClientTestUtils.getOrCreateScopedRuntime(
+      listener,
+      "agent-1",
+      "default",
+    );
+    const scheduleQueuePumpMock = mock(() => {});
+    const cancelConversationMock = mock(async () => {});
+
+    runtime.loopStatus = "WAITING_ON_APPROVAL";
+    runtime.recoveredApprovalState = {
+      agentId: "agent-1",
+      conversationId: "default",
+      approvalsByRequestId: new Map([
+        [
+          "perm-recovered",
+          {
+            approval: {
+              toolCallId: "call-1",
+              toolName: "Write",
+              toolArgs: '{"path":"foo.txt"}',
+            },
+            approvalContext: null,
+            controlRequest: makeControlRequest("perm-recovered"),
+          },
+        ],
+      ]),
+      pendingRequestIds: new Set(["perm-recovered"]),
+      responsesByRequestId: new Map(),
+    };
+
+    const handled = await __listenClientTestUtils.handleAbortMessageInput(
+      listener,
+      {
+        command: {
+          type: "abort_message",
+          runtime: { agent_id: "agent-1", conversation_id: "default" },
+        },
+        socket: socket as unknown as WebSocket,
+        opts: {
+          onStatusChange: undefined,
+          connectionId: "conn-1",
+        },
+        processQueuedTurn: async () => {},
+      },
+      {
+        scheduleQueuePump: scheduleQueuePumpMock,
+        cancelConversation: cancelConversationMock,
+      },
+    );
+
+    expect(handled).toBe(true);
+    expect(runtime.cancelRequested).toBe(false);
+    expect(runtime.pendingInterruptedResults).toEqual([
+      {
+        type: "approval",
+        tool_call_id: "call-1",
+        approve: false,
+        reason: "User interrupted the stream",
+      },
+    ]);
+
+    const consumed = __listenClientTestUtils.consumeInterruptQueue(
+      runtime,
+      "agent-1",
+      "default",
+    );
+    expect(consumed?.approvalMessage.approvals).toEqual([
+      {
+        type: "approval",
+        tool_call_id: "call-1",
+        approve: false,
+        reason: "User interrupted the stream",
+      },
+    ]);
+    expect(scheduleQueuePumpMock).toHaveBeenCalled();
+    expect(cancelConversationMock).toHaveBeenCalledWith("agent-1", "default");
+
+    __listenClientTestUtils.setActiveRuntime(null);
+  });
+
+  test("abort_message preserves live approval denials instead of clobbering them to empty", async () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const socket = new MockSocket(WebSocket.OPEN);
+    listener.socket = socket as unknown as WebSocket;
+    __listenClientTestUtils.setActiveRuntime(listener);
+
+    const runtime = __listenClientTestUtils.getOrCreateScopedRuntime(
+      listener,
+      "agent-1",
+      "default",
+    );
+    const scheduleQueuePumpMock = mock(() => {});
+    const cancelConversationMock = mock(async () => {});
+
+    runtime.loopStatus = "WAITING_ON_APPROVAL";
+    const pending = requestApprovalOverWS(
+      runtime,
+      socket as unknown as WebSocket,
+      "perm-live",
+      makeControlRequest("perm-live"),
+    );
+
+    const handled = await __listenClientTestUtils.handleAbortMessageInput(
+      listener,
+      {
+        command: {
+          type: "abort_message",
+          runtime: { agent_id: "agent-1", conversation_id: "default" },
+        },
+        socket: socket as unknown as WebSocket,
+        opts: {
+          onStatusChange: undefined,
+          connectionId: "conn-1",
+        },
+        processQueuedTurn: async () => {},
+      },
+      {
+        scheduleQueuePump: scheduleQueuePumpMock,
+        cancelConversation: cancelConversationMock,
+      },
+    );
+
+    expect(handled).toBe(true);
+    expect(runtime.cancelRequested).toBe(false);
+    await expect(pending).rejects.toThrow("Cancelled by user");
+    expect(runtime.pendingApprovalResolvers.size).toBe(0);
+    expect(runtime.pendingInterruptedResults).toEqual([
+      {
+        type: "approval",
+        tool_call_id: "call-1",
+        approve: false,
+        reason: "User interrupted the stream",
+      },
+    ]);
+
+    const consumed = __listenClientTestUtils.consumeInterruptQueue(
+      runtime,
+      "agent-1",
+      "default",
+    );
+    expect(consumed?.approvalMessage.approvals).toEqual([
+      {
+        type: "approval",
+        tool_call_id: "call-1",
+        approve: false,
+        reason: "User interrupted the stream",
+      },
+    ]);
+    expect(scheduleQueuePumpMock).toHaveBeenCalled();
+    expect(cancelConversationMock).toHaveBeenCalledWith("agent-1", "default");
+
+    __listenClientTestUtils.setActiveRuntime(null);
+  });
 });
 
 describe("listen-client approval recovery batch correlation", () => {
@@ -2467,6 +2925,309 @@ describe("listen-client runtime metadata", () => {
     const runtime = __listenClientTestUtils.createRuntime();
     expect(runtime.sessionId).toMatch(/^listen-/);
     expect(runtime.sessionId.length).toBeGreaterThan(10);
+  });
+});
+
+describe("listen-client recoverable status notices", () => {
+  test("marks stale approval recovery as debug-only", () => {
+    expect(
+      getRecoverableStatusNoticeVisibility("stale_approval_conflict_recovery"),
+    ).toBe("debug_only");
+  });
+
+  test("suppresses stale approval recovery from transcript and mirrors it to desktop logs", () => {
+    const runtime = __listenClientTestUtils.createRuntime();
+    const socket = new MockSocket();
+    const originalFlag = process.env.LETTA_DESKTOP_DEBUG_PANEL;
+    const originalWrite = process.stderr.write.bind(process.stderr);
+    const mirroredLines: string[] = [];
+
+    process.env.LETTA_DESKTOP_DEBUG_PANEL = "1";
+    process.stderr.write = ((chunk: string | Uint8Array) => {
+      mirroredLines.push(
+        typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8"),
+      );
+      return true;
+    }) as typeof process.stderr.write;
+
+    try {
+      emitRecoverableStatusNotice(socket as unknown as WebSocket, runtime, {
+        kind: "stale_approval_conflict_recovery",
+        message:
+          "Recovering from stale approval conflict after interrupted/reconnected turn",
+        level: "warning",
+        agentId: "agent-1",
+        conversationId: "default",
+      });
+    } finally {
+      process.stderr.write = originalWrite as typeof process.stderr.write;
+      if (originalFlag === undefined) {
+        delete process.env.LETTA_DESKTOP_DEBUG_PANEL;
+      } else {
+        process.env.LETTA_DESKTOP_DEBUG_PANEL = originalFlag;
+      }
+    }
+
+    expect(socket.sentPayloads).toHaveLength(0);
+    expect(mirroredLines).toHaveLength(1);
+    expect(mirroredLines[0]).toContain(DESKTOP_DEBUG_PANEL_INFO_PREFIX);
+    expect(mirroredLines[0]).toContain(
+      "Recovering from stale approval conflict after interrupted/reconnected turn",
+    );
+  });
+
+  test("marks the first transient provider retry as debug-only", () => {
+    expect(
+      getRecoverableRetryNoticeVisibility("transient_provider_retry", 1),
+    ).toBe("debug_only");
+    expect(
+      getRecoverableRetryNoticeVisibility("transient_provider_retry", 2),
+    ).toBe("transcript");
+  });
+
+  test("suppresses only the first transient provider retry from transcript", () => {
+    const runtime = __listenClientTestUtils.createRuntime();
+    const firstSocket = new MockSocket();
+    const secondSocket = new MockSocket();
+    const originalFlag = process.env.LETTA_DESKTOP_DEBUG_PANEL;
+    const originalWrite = process.stderr.write.bind(process.stderr);
+    const mirroredLines: string[] = [];
+
+    process.env.LETTA_DESKTOP_DEBUG_PANEL = "1";
+    process.stderr.write = ((chunk: string | Uint8Array) => {
+      mirroredLines.push(
+        typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8"),
+      );
+      return true;
+    }) as typeof process.stderr.write;
+
+    try {
+      emitRecoverableRetryNotice(firstSocket as unknown as WebSocket, runtime, {
+        kind: "transient_provider_retry",
+        message: "Anthropic API is overloaded, retrying...",
+        reason: "llm_api_error",
+        attempt: 1,
+        maxAttempts: 3,
+        delayMs: 1000,
+        agentId: "agent-1",
+        conversationId: "default",
+      });
+
+      emitRecoverableRetryNotice(
+        secondSocket as unknown as WebSocket,
+        runtime,
+        {
+          kind: "transient_provider_retry",
+          message: "Anthropic API is overloaded, retrying...",
+          reason: "llm_api_error",
+          attempt: 2,
+          maxAttempts: 3,
+          delayMs: 2000,
+          agentId: "agent-1",
+          conversationId: "default",
+        },
+      );
+    } finally {
+      process.stderr.write = originalWrite as typeof process.stderr.write;
+      if (originalFlag === undefined) {
+        delete process.env.LETTA_DESKTOP_DEBUG_PANEL;
+      } else {
+        process.env.LETTA_DESKTOP_DEBUG_PANEL = originalFlag;
+      }
+    }
+
+    expect(firstSocket.sentPayloads).toHaveLength(0);
+    expect(mirroredLines).toHaveLength(1);
+    expect(mirroredLines[0]).toContain(DESKTOP_DEBUG_PANEL_INFO_PREFIX);
+    expect(mirroredLines[0]).toContain(
+      "Anthropic API is overloaded, retrying...",
+    );
+
+    expect(secondSocket.sentPayloads).toHaveLength(1);
+    const payload = JSON.parse(secondSocket.sentPayloads[0] as string) as {
+      type: string;
+      delta: Record<string, unknown>;
+    };
+    expect(payload.type).toBe("stream_delta");
+    expect(payload.delta).toMatchObject({
+      message_type: "retry",
+      message: "Anthropic API is overloaded, retrying...",
+      attempt: 2,
+      max_attempts: 3,
+      delay_ms: 2000,
+    });
+  });
+});
+
+describe("listen-client loop error notices", () => {
+  test("suppresses terminated process noise from the transcript", () => {
+    expect(
+      getLoopErrorNoticeDecision({
+        message: "terminated",
+      }),
+    ).toEqual({
+      visibility: "debug_only",
+      message: "terminated",
+    });
+  });
+
+  test("normalizes Cloudflare HTML errors to match TUI formatting", () => {
+    const message = `520 <!DOCTYPE html><html><head><title>letta.com | 520: Web server is returning an unknown error</title></head><body>Error code 520 Visit <a href="https://www.cloudflare.com/5xx-error-landing?utm_campaign=api.letta.com">cloudflare</a> Cloudflare Ray ID: abc123</body></html>`;
+
+    expect(
+      getLoopErrorNoticeDecision({
+        message,
+      }),
+    ).toEqual({
+      visibility: "transcript",
+      message:
+        "Cloudflare 520: Web server is returning an unknown error for api.letta.com (Ray ID: abc123). This is usually a temporary edge/origin outage. Please retry in a moment.",
+    });
+  });
+
+  test("normalizes proxy transport errors into a friendly transcript message", () => {
+    const error = new APIError(
+      504,
+      {
+        detail:
+          "Error occurred while trying to proxy to: http://localhost:3000",
+      },
+      undefined,
+      new Headers(),
+    );
+
+    expect(
+      getLoopErrorNoticeDecision({
+        message:
+          "504 Error occurred while trying to proxy to: http://localhost:3000",
+        error,
+      }),
+    ).toEqual({
+      visibility: "transcript",
+      message: "Connection to Letta service failed. Please retry.",
+    });
+  });
+
+  test("reuses TUI formatter for structured run errors", () => {
+    const apiError = {
+      message_type: "error_message" as const,
+      error_type: "insufficient_credits_error",
+      message: "Insufficient credits",
+      detail: "Please add credits to continue.",
+      run_id: "run-123",
+    };
+    const expectedMessage = formatErrorDetails(
+      {
+        error: {
+          error: {
+            type: apiError.error_type,
+            message: apiError.message,
+            detail: apiError.detail,
+          },
+          run_id: apiError.run_id,
+        },
+      },
+      "agent-1",
+      "default",
+    );
+
+    expect(
+      getLoopErrorNoticeDecision({
+        message: apiError.detail,
+        runErrorInfo: {
+          error_type: apiError.error_type,
+          message: apiError.message,
+          detail: apiError.detail,
+          run_id: apiError.run_id,
+        },
+        agentId: "agent-1",
+        conversationId: "default",
+      }),
+    ).toEqual({
+      visibility: "transcript",
+      message: expectedMessage,
+      apiError,
+    });
+  });
+
+  test("emits structured api_error for loop errors when available", () => {
+    const runtime = __listenClientTestUtils.createRuntime();
+    runtime.activeAgentId = "agent-1";
+    runtime.activeConversationId = "default";
+    const socket = new MockSocket();
+    const apiError = {
+      message_type: "error_message" as const,
+      error_type: "internal_error",
+      message: "Internal error",
+      detail: "provider overloaded",
+      run_id: "run-123",
+    };
+
+    emitLoopErrorNotice(socket as unknown as WebSocket, runtime, {
+      message: apiError.detail,
+      stopReason: "llm_api_error",
+      isTerminal: true,
+      runId: apiError.run_id,
+      agentId: "agent-1",
+      conversationId: "default",
+      apiError,
+    });
+
+    expect(socket.sentPayloads).toHaveLength(1);
+    const [firstPayload] = socket.sentPayloads;
+    expect(firstPayload).toBeDefined();
+    const payload = JSON.parse(firstPayload as string) as {
+      type: string;
+      delta: Record<string, unknown>;
+    };
+
+    expect(payload.type).toBe("stream_delta");
+    expect(payload.delta).toMatchObject({
+      message_type: "loop_error",
+      stop_reason: "llm_api_error",
+      is_terminal: true,
+      api_error: apiError,
+    });
+  });
+
+  test("suppresses abort-like loop errors from transcript and mirrors them to desktop logs", () => {
+    const runtime = __listenClientTestUtils.createRuntime();
+    const socket = new MockSocket();
+    const originalFlag = process.env.LETTA_DESKTOP_DEBUG_PANEL;
+    const originalWrite = process.stderr.write.bind(process.stderr);
+    const mirroredLines: string[] = [];
+    const abortError = Object.assign(new Error("The operation was aborted"), {
+      name: "AbortError",
+    });
+
+    process.env.LETTA_DESKTOP_DEBUG_PANEL = "1";
+    process.stderr.write = ((chunk: string | Uint8Array) => {
+      mirroredLines.push(
+        typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8"),
+      );
+      return true;
+    }) as typeof process.stderr.write;
+
+    try {
+      emitLoopErrorNotice(socket as unknown as WebSocket, runtime, {
+        message: abortError.message,
+        stopReason: "error",
+        isTerminal: true,
+        error: abortError,
+      });
+    } finally {
+      process.stderr.write = originalWrite as typeof process.stderr.write;
+      if (originalFlag === undefined) {
+        delete process.env.LETTA_DESKTOP_DEBUG_PANEL;
+      } else {
+        process.env.LETTA_DESKTOP_DEBUG_PANEL = originalFlag;
+      }
+    }
+
+    expect(socket.sentPayloads).toHaveLength(0);
+    expect(mirroredLines).toHaveLength(1);
+    expect(mirroredLines[0]).toContain(DESKTOP_DEBUG_PANEL_INFO_PREFIX);
+    expect(mirroredLines[0]).toContain("The operation was aborted");
   });
 });
 

@@ -11,6 +11,17 @@ Git worktrees let you check out multiple branches into separate directories. Eac
 
 Learn more: [Git worktree documentation](https://git-scm.com/docs/git-worktree)
 
+## IMPORTANT: Worktree Location
+
+**All worktrees MUST be created under `.letta/worktrees/` in the repo root.** This keeps worktrees organized, gitignored, and out of the user's project directory.
+
+Before creating the first worktree, ensure `.letta/worktrees` is in the repo's `.gitignore`:
+
+```bash
+# Add to .gitignore if not already present
+grep -q '.letta/worktrees' .gitignore 2>/dev/null || echo '.letta/worktrees' >> .gitignore
+```
+
 ## IMPORTANT: Check Project Setup First
 
 Before running ANY commands in a new worktree, check the project's setup instructions:
@@ -24,11 +35,14 @@ Don't assume `npm` vs `bun` vs `pnpm` - **check the project first!**
 ## Quick Start
 
 ```bash
-# Create worktree with new branch (from main repo)
-git worktree add -b fix/my-feature ../repo-my-feature main
+# Ensure .letta/worktrees is gitignored
+grep -q '.letta/worktrees' .gitignore 2>/dev/null || echo '.letta/worktrees' >> .gitignore
+
+# Create worktree with new branch (from repo root)
+git worktree add -b fix/my-feature .letta/worktrees/my-feature main
 
 # Work in the worktree
-cd ../repo-my-feature
+cd .letta/worktrees/my-feature
 
 # CHECK PROJECT SETUP FIRST - then install dependencies
 # Read README.md or check project memory block for correct command
@@ -40,17 +54,17 @@ git commit -m "fix: description"
 git push -u origin fix/my-feature
 gh pr create --title "Fix: description" --body "## Summary..."
 
-# Clean up when done (from main repo)
-git worktree remove ../repo-my-feature
+# Clean up when done (from repo root)
+git worktree remove .letta/worktrees/my-feature
 ```
 
 ## Key Commands
 
 ```bash
-git worktree add -b <branch> <path> main  # Create with new branch
-git worktree add <path> <existing-branch>  # Use existing branch
-git worktree list                          # Show all worktrees
-git worktree remove <path>                 # Remove worktree
+git worktree add -b <branch> .letta/worktrees/<name> main  # Create with new branch
+git worktree add .letta/worktrees/<name> <existing-branch>  # Use existing branch
+git worktree list                                            # Show all worktrees
+git worktree remove .letta/worktrees/<name>                  # Remove worktree
 ```
 
 ## When to Use
@@ -59,10 +73,15 @@ git worktree remove <path>                 # Remove worktree
 - Long-running task in one session, quick fix needed in another
 - User wants to continue development while an agent works on a separate feature
 
+## Pre-commit Hooks in Worktrees
+
+Worktrees share `.git`, but pre-commit hooks may need initialization depending on project setup. After creating a worktree and installing dependencies, verify hooks are active before committing. Check project docs or run the project's hook setup command if needed.
+
 ## Tips
 
+- **Always use `.letta/worktrees/`** - never create worktrees outside this directory
 - **Check project setup docs before installing** - README, claude.md, project memory block
-- Name directories clearly: `../repo-feature-auth`, `../repo-bugfix-123`
+- Name worktrees clearly: `.letta/worktrees/feature-auth`, `.letta/worktrees/bugfix-123`
 - Install dependencies using the project's package manager (check first!)
 - Push changes before removing worktrees
 

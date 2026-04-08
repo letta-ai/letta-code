@@ -8,6 +8,8 @@ import {
   checkChatGptUsageLimitError,
   checkCloudflareEdgeError,
   formatErrorDetails,
+  getRetryStatusMessage,
+  isCloudflareEdge52xErrorText,
 } from "../../cli/helpers/errorFormatter";
 
 describe("formatErrorDetails", () => {
@@ -108,8 +110,9 @@ describe("formatErrorDetails", () => {
 
     const message = formatErrorDetails(error);
 
-    expect(message).toContain("out of credits");
-    expect(message).toContain("/connect");
+    expect(message).toBe(
+      "Your account does not have credits for this model. Add your own API keys or upgrade your plan to purchase credits.",
+    );
     expect(message).not.toContain("not available on Free plan");
     expect(message).not.toContain("Selected hosted model");
   });
@@ -127,7 +130,9 @@ describe("formatErrorDetails", () => {
     );
 
     const message = formatErrorDetails(error);
-    expect(message).toContain("out of credits");
+    expect(message).toBe(
+      "Your account does not have credits for this model. Add your own API keys or upgrade your plan to purchase credits.",
+    );
   });
 
   test("shows explicit model availability guidance for model-unknown", () => {
@@ -411,6 +416,14 @@ Cloudflare Ray ID: <strong>9d43b2d6dab269e2</strong>
       expect(result).toContain("Bad gateway");
       expect(result).toContain("api.letta.com");
       expect(result).toContain("Ray ID: 9d43b2d6dab269e2");
+    });
+
+    test("detects already-formatted Cloudflare 521 error text", () => {
+      const formatted =
+        "Cloudflare 521: Web server is down for api.letta.com (Ray ID: 9e829917ee973824). This is usually a temporary edge/origin outage. Please retry in a moment.";
+
+      expect(isCloudflareEdge52xErrorText(formatted)).toBe(true);
+      expect(getRetryStatusMessage(formatted)).toBeNull();
     });
   });
 });

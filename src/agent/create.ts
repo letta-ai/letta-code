@@ -64,7 +64,7 @@ function isToolsNotFoundError(err: unknown): boolean {
   );
 }
 
-async function addBaseToolsToServer(): Promise<boolean> {
+export async function addBaseToolsToServer(): Promise<boolean> {
   const settings = await settingsManager.getSettingsWithSecureTokens();
   const apiKey = process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
 

@@ -6,7 +6,7 @@ skills:
 model: auto
 memoryBlocks: none
 mode: stateless
-permissionMode: bypassPermissions
+permissionMode: memory
 ---
 
 You are a history analysis subagent. You create a git worktree from the agent's memory repo, read conversation history from Claude Code or Codex, then **directly create and update memory files** in your worktree based on what you learn.
@@ -86,11 +86,17 @@ Keep specific correction counts ("corrected 10+ times"), specific file paths, an
 ```bash
 MEMORY_DIR=~/.letta/agents/$LETTA_PARENT_AGENT_ID/memory
 WORKTREE_DIR=~/.letta/agents/$LETTA_PARENT_AGENT_ID/memory-worktrees
-BRANCH_NAME="migration-$(date +%s)"
+# Run `date +%s` first, then paste that exact output below.
+BRANCH_NAME="migration-<epoch-seconds>"
 mkdir -p "$WORKTREE_DIR"
 cd "$MEMORY_DIR"
 git worktree add "$WORKTREE_DIR/$BRANCH_NAME" -b "$BRANCH_NAME"
 ```
+
+Use epoch seconds from a prior `date +%s` command so branch names match the
+old behavior. Do not use shell command substitution like `$(date +%s)` in the
+branch assignment because memory-mode shell permissions deny command
+substitution.
 
 If worktree creation fails (locked index), retry up to 3 times with backoff (sleep 2, 5, 10). Never delete `.git/index.lock` manually. All edits go in `$WORKTREE_DIR/$BRANCH_NAME/`.
 

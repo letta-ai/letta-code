@@ -178,6 +178,21 @@ describe("buildSubagentArgs", () => {
     expect(args).not.toContain("--new-agent");
     expect(args).not.toContain("--no-memfs");
   });
+
+  test("passes memory permission mode through when configured", () => {
+    const args = buildSubagentArgs(
+      "test-subagent",
+      {
+        ...baseConfig,
+        permissionMode: "memory",
+      },
+      null,
+      "hello",
+    );
+
+    expect(args).toContain("--permission-mode");
+    expect(args).toContain("memory");
+  });
 });
 
 describe("resolveSubagentModel", () => {

@@ -1,4 +1,5 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
+import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import WebSocket from "ws";
 import { getMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
 import { getGitContext } from "../../cli/helpers/gitContext";
@@ -30,6 +31,7 @@ import type {
   SubagentStateUpdateMessage,
   WsProtocolMessage,
 } from "../../types/protocol_v2";
+import { isDebugEnabled } from "../../utils/debug";
 import { SUPPORTED_REMOTE_COMMANDS } from "./commands";
 import { SYSTEM_REMINDER_RE } from "./constants";
 import { getConversationWorkingDirectory } from "./cwd";
@@ -54,6 +56,41 @@ import type {
 } from "./types";
 
 type RuntimeCarrier = ListenerRuntime | ConversationRuntime | null;
+
+const GIT_CONTEXT_CACHE_TTL_MS = 15_000;
+const MAX_GIT_CONTEXT_CACHE_ENTRIES = 64;
+const gitContextCache = new Map<
+  string,
+  {
+    expiresAt: number;
+    value: ReturnType<typeof getGitContext>;
+  }
+>();
+
+function getCachedDeviceGitContext(
+  cwd: string,
+): ReturnType<typeof getGitContext> {
+  const now = Date.now();
+  const cached = gitContextCache.get(cwd);
+  if (cached && cached.expiresAt > now) {
+    return cached.value;
+  }
+
+  const value = getGitContext(cwd);
+  gitContextCache.set(cwd, {
+    expiresAt: now + GIT_CONTEXT_CACHE_TTL_MS,
+    value,
+  });
+
+  if (gitContextCache.size > MAX_GIT_CONTEXT_CACHE_ENTRIES) {
+    const oldestKey = gitContextCache.keys().next().value;
+    if (oldestKey) {
+      gitContextCache.delete(oldestKey);
+    }
+  }
+
+  return value;
+}
 
 function getListenerRuntime(runtime: RuntimeCarrier): ListenerRuntime | null {
   if (!runtime) return null;
@@ -143,7 +180,7 @@ export function buildDeviceStatus(
       is_processing: false,
       current_permission_mode: permissionMode.getMode(),
       current_working_directory: fallbackCwd,
-      git_context: getGitContext(fallbackCwd),
+      git_context: getCachedDeviceGitContext(fallbackCwd),
       letta_code_version: process.env.npm_package_version || null,
       current_toolset: null,
       current_toolset_preference: "auto",
@@ -203,7 +240,7 @@ export function buildDeviceStatus(
     is_processing: !!conversationRuntime?.isProcessing,
     current_permission_mode: conversationPermissionModeState.mode,
     current_working_directory: resolvedCwd,
-    git_context: getGitContext(resolvedCwd),
+    git_context: getCachedDeviceGitContext(resolvedCwd),
     letta_code_version: process.env.npm_package_version || null,
     current_toolset:
       conversationRuntime?.currentToolset ??
@@ -239,11 +276,20 @@ export function buildLoopStatus(
 ): LoopState {
   const listener = getListenerRuntime(runtime);
   if (!listener) {
-    return { status: "WAITING_ON_INPUT", active_run_ids: [] };
+    return {
+      status: "WAITING_ON_INPUT",
+      active_run_ids: [],
+      plan_file_path: null,
+    };
   }
   const scope = getScopeForRuntime(runtime, params);
   const scopedAgentId = resolveScopedAgentId(listener, scope);
   const scopedConversationId = resolveScopedConversationId(listener, scope);
+  const conversationPermissionModeState = getConversationPermissionModeState(
+    listener,
+    scopedAgentId,
+    scopedConversationId,
+  );
   const conversationRuntime = getConversationRuntime(
     listener,
     scopedAgentId,
@@ -254,7 +300,9 @@ export function buildLoopStatus(
   const status = interruptedCacheActive
     ? !conversationRuntime?.isProcessing
       ? "WAITING_ON_INPUT"
-      : (conversationRuntime?.loopStatus ?? "WAITING_ON_INPUT")
+      : conversationRuntime?.loopStatus === "WAITING_ON_APPROVAL"
+        ? "WAITING_ON_INPUT"
+        : (conversationRuntime?.loopStatus ?? "WAITING_ON_INPUT")
     : recovered &&
         recovered.pendingRequestIds.size > 0 &&
         conversationRuntime?.loopStatus === "WAITING_ON_INPUT"
@@ -268,6 +316,10 @@ export function buildLoopStatus(
         : conversationRuntime?.activeRunId
           ? [conversationRuntime.activeRunId]
           : [],
+    plan_file_path:
+      conversationPermissionModeState.mode === "plan"
+        ? conversationPermissionModeState.planFilePath
+        : null,
   };
 }
 
@@ -362,7 +414,9 @@ export function emitProtocolV2Message(
     });
     return;
   }
-  console.log(`[Listen V2] Emitting ${message.type} (seq=${eventSeq})`);
+  if (isDebugEnabled()) {
+    console.log(`[Listen V2] Emitting ${message.type} (seq=${eventSeq})`);
+  }
   safeEmitWsEvent("send", "protocol", outbound);
 }
 
@@ -568,9 +622,9 @@ export function buildSubagentSnapshot(
 
   return getSubagents()
     .filter((a) => {
-      if (a.status !== "pending" && a.status !== "running") {
-        return false;
-      }
+      // Include all statuses (pending, running, completed, error) so the
+      // web UI receives the final state with tool calls and agent URL
+      // before the subagent is cleaned up from the store.
       if (a.silent && a.isBackground !== true) {
         return false;
       }
@@ -698,6 +752,7 @@ export function emitLoopErrorDelta(
     runId?: string | null;
     agentId?: string | null;
     conversationId?: string | null;
+    apiError?: LettaStreamingResponse.LettaErrorMessage;
   },
 ): void {
   emitCanonicalMessageDelta(
@@ -708,6 +763,7 @@ export function emitLoopErrorDelta(
       message: params.message,
       stop_reason: params.stopReason,
       is_terminal: params.isTerminal,
+      ...(params.apiError ? { api_error: params.apiError } : {}),
     } as StreamDelta,
     {
       agent_id: params.agentId,

@@ -3,12 +3,136 @@ import { homedir } from "node:os";
 import {
   isMemoryDirCommand,
   isReadOnlyShellCommand,
+  isScopedMemoryShellCommand,
 } from "../../permissions/readOnlyShell";
 
 describe("isReadOnlyShellCommand", () => {
   describe("always safe commands", () => {
     test("allows cat", () => {
       expect(isReadOnlyShellCommand("cat file.txt")).toBe(true);
+    });
+
+    describe("isScopedMemoryShellCommand", () => {
+      const roots = [
+        "/Users/test/.letta/agents/agent-1/memory",
+        "/Users/test/.letta/agents/agent-1/memory-worktrees",
+      ];
+
+      test("allows memory-scoped git commands", () => {
+        expect(
+          isScopedMemoryShellCommand(
+            "cd /Users/test/.letta/agents/agent-1/memory && git status && git pull --ff-only && git push",
+            roots,
+          ),
+        ).toBe(true);
+      });
+
+      test("allows builtin-required worktree and backoff commands", () => {
+        expect(
+          isScopedMemoryShellCommand(
+            "cd /Users/test/.letta/agents/agent-1/memory && git worktree remove ../memory-worktrees/foo && git branch -d foo && sleep 2",
+            roots,
+          ),
+        ).toBe(true);
+      });
+
+      test("denies wrong-cwd git commit", () => {
+        expect(
+          isScopedMemoryShellCommand(
+            "cd /Users/test/project && git commit -m 'oops'",
+            roots,
+          ),
+        ).toBe(false);
+      });
+
+      test("denies path escape via git -C", () => {
+        expect(
+          isScopedMemoryShellCommand("git -C /Users/test/project push", roots),
+        ).toBe(false);
+      });
+
+      test("denies arbitrary shell mutation under memory cwd", () => {
+        expect(
+          isScopedMemoryShellCommand(
+            "cd /Users/test/.letta/agents/agent-1/memory && python script.py",
+            roots,
+          ),
+        ).toBe(false);
+      });
+
+      test("allows git push from an allowed working directory without explicit cd", () => {
+        expect(
+          isScopedMemoryShellCommand("git push", roots, {
+            workingDirectory: "/Users/test/.letta/agents/agent-1/memory",
+          }),
+        ).toBe(true);
+      });
+
+      test("allows env-based memory/worktree commands used by builtins", () => {
+        expect(
+          isScopedMemoryShellCommand(
+            [
+              'BRANCH="defrag-123"',
+              'mkdir -p "$WORKTREE_DIR"',
+              'cd "$MEMORY_DIR"',
+              'git worktree add "$WORKTREE_DIR/$BRANCH" -b "$BRANCH"',
+            ].join("\n"),
+            roots,
+            {
+              env: {
+                MEMORY_DIR: "/Users/test/.letta/agents/agent-1/memory",
+                WORKTREE_DIR:
+                  "/Users/test/.letta/agents/agent-1/memory-worktrees",
+              } as NodeJS.ProcessEnv,
+            },
+          ),
+        ).toBe(true);
+      });
+
+      test("denies command substitution in memory-scoped commands", () => {
+        expect(
+          isScopedMemoryShellCommand(
+            'cd /Users/test/.letta/agents/agent-1/memory && git commit -m "$(touch /tmp/pwn)"',
+            roots,
+          ),
+        ).toBe(false);
+        expect(
+          isScopedMemoryShellCommand(
+            'cd /Users/test/.letta/agents/agent-1/memory && git commit -m "`touch /tmp/pwn`"',
+            roots,
+          ),
+        ).toBe(false);
+      });
+
+      test("denies git rebase exec hooks in memory-scoped commands", () => {
+        expect(
+          isScopedMemoryShellCommand(
+            'cd /Users/test/.letta/agents/agent-1/memory && git rebase --exec "touch /tmp/pwn" main',
+            roots,
+          ),
+        ).toBe(false);
+        expect(
+          isScopedMemoryShellCommand(
+            'cd /Users/test/.letta/agents/agent-1/memory && git rebase -x "touch /tmp/pwn" main',
+            roots,
+          ),
+        ).toBe(false);
+      });
+
+      test("allows safe git rebase continuation in memory-scoped commands", () => {
+        expect(
+          isScopedMemoryShellCommand(
+            "cd /Users/test/.letta/agents/agent-1/memory && git rebase --continue",
+            roots,
+          ),
+        ).toBe(true);
+        expect(
+          isScopedMemoryShellCommand(
+            "cd /Users/test/.letta/agents/agent-1/memory && git rebase --abort",
+            roots,
+          ),
+        ).toBe(true);
+      });
     });
 
     test("allows grep", () => {

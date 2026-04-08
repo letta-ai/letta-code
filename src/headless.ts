@@ -376,6 +376,7 @@ export async function handleHeadlessCommand(
         "acceptEdits",
         "bypassPermissions",
         "plan",
+        "memory",
       ];
       if (validModes.includes(permissionModeValue)) {
         permissionMode.setMode(
@@ -383,7 +384,8 @@ export async function handleHeadlessCommand(
             | "default"
             | "acceptEdits"
             | "bypassPermissions"
-            | "plan",
+            | "plan"
+            | "memory",
         );
       }
     }
@@ -2358,24 +2360,27 @@ ${SYSTEM_REMINDER_CLOSE}
       ];
       if (nonRetriableReasons.includes(stopReason)) {
         // Fall through to error display
-      } else if (lastRunId && llmApiErrorRetries < LLM_API_ERROR_MAX_RETRIES) {
+      } else if (llmApiErrorRetries < LLM_API_ERROR_MAX_RETRIES) {
         try {
-          const run = await client.runs.retrieve(lastRunId);
-          const metaError = run.metadata?.error as
-            | {
-                error_type?: string;
-                message?: string;
-                detail?: string;
-                // Handle nested error structure (error.error) that can occur in some edge cases
-                error?: { error_type?: string; detail?: string };
-              }
-            | undefined;
+          let errorType: string | undefined;
+          let detail = detailFromRun ?? latestErrorText ?? "";
 
-          // Check for llm_error at top level or nested (handles error.error nesting)
-          const errorType =
-            metaError?.error_type ?? metaError?.error?.error_type;
+          if (lastRunId) {
+            const run = await client.runs.retrieve(lastRunId);
+            const metaError = run.metadata?.error as
+              | {
+                  error_type?: string;
+                  message?: string;
+                  detail?: string;
+                  // Handle nested error structure (error.error) that can occur in some edge cases
+                  error?: { error_type?: string; detail?: string };
+                }
+              | undefined;
 
-          const detail = metaError?.detail ?? metaError?.error?.detail ?? "";
+            // Check for llm_error at top level or nested (handles error.error nesting)
+            errorType = metaError?.error_type ?? metaError?.error?.error_type;
+            detail = metaError?.detail ?? metaError?.error?.detail ?? detail;
+          }
 
           // Special handling for empty response errors (Opus 4.6 SADs)
           // Empty LLM response retry (e.g. Opus 4.6 occasionally returns no content).
@@ -2465,6 +2470,47 @@ ${SYSTEM_REMINDER_CLOSE}
             continue;
           }
         } catch (_e) {
+          if (
+            shouldRetryRunMetadataError(
+              undefined,
+              detailFromRun ?? latestErrorText,
+            )
+          ) {
+            const attempt = llmApiErrorRetries + 1;
+            const detail = detailFromRun ?? latestErrorText;
+            const delayMs = getRetryDelayMs({
+              category: "transient_provider",
+              attempt,
+              detail,
+            });
+
+            llmApiErrorRetries = attempt;
+
+            if (outputFormat === "stream-json") {
+              const retryMsg: RetryMessage = {
+                type: "retry",
+                reason: "llm_api_error",
+                attempt,
+                max_attempts: LLM_API_ERROR_MAX_RETRIES,
+                delay_ms: delayMs,
+                run_id: lastRunId ?? undefined,
+                session_id: sessionId,
+                uuid: `retry-${lastRunId || randomUUID()}`,
+              };
+              console.log(JSON.stringify(retryMsg));
+            } else {
+              const delaySeconds = Math.round(delayMs / 1000);
+              console.error(
+                `LLM API error encountered (attempt ${attempt} of ${LLM_API_ERROR_MAX_RETRIES}), retrying in ${delaySeconds}s...`,
+              );
+            }
+
+            await new Promise((resolve) => setTimeout(resolve, delayMs));
+            // Post-stream retry creates a new run/request.
+            refreshCurrentInputOtids();
+            continue;
+          }
+
           // If we can't fetch run metadata, fall through to normal error handling
         }
       }

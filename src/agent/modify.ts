@@ -258,14 +258,25 @@ export async function updateConversationLLMConfig(
   conversationId: string,
   modelHandle: string,
   updateArgs?: Record<string, unknown>,
+  options?: UpdateAgentLLMConfigOptions,
 ): Promise<Conversation> {
   const client = await getClient();
 
   const modelSettings = buildModelSettings(modelHandle, updateArgs);
+  const explicitContextWindow = updateArgs?.context_window as
+    | number
+    | undefined;
+  const shouldPreserveContextWindow = options?.preserveContextWindow === true;
+  const contextWindow =
+    explicitContextWindow ??
+    (!shouldPreserveContextWindow
+      ? await getModelContextWindow(modelHandle)
+      : undefined);
   const hasModelSettings = Object.keys(modelSettings).length > 0;
   const payload = {
     model: modelHandle,
     ...(hasModelSettings && { model_settings: modelSettings }),
+    ...(contextWindow && { context_window_limit: contextWindow }),
   } as unknown as Parameters<typeof client.conversations.update>[1];
 
   return client.conversations.update(conversationId, payload);

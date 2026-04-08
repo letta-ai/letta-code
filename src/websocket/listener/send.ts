@@ -10,7 +10,7 @@ import {
   type ApprovalDecision,
   executeApprovalBatch,
 } from "../../agent/approval-execution";
-import { fetchRunErrorDetail } from "../../agent/approval-recovery";
+import { fetchRunErrorInfo } from "../../agent/approval-recovery";
 import { getResumeData } from "../../agent/check-approval";
 import { getClient } from "../../agent/client";
 import { sendMessageStream } from "../../agent/message";
@@ -26,6 +26,7 @@ import { computeDiffPreviews } from "../../helpers/diffPreview";
 import { isInteractiveApprovalTool } from "../../tools/interactivePolicy";
 import { prepareToolExecutionContextForScope } from "../../tools/toolset";
 import type { ControlRequest } from "../../types/protocol_v2";
+import { createStreamAbortRelay } from "../../utils/streamAbortRelay";
 import {
   rememberPendingApprovalBatchIds,
   requestApprovalOverWS,
@@ -198,10 +199,6 @@ export async function resolveStaleApprovals(
 
     let pendingNeedsUserInput = [...needsUserInput];
     if (pendingNeedsUserInput.length > 0) {
-      runtime.lastStopReason = "requires_approval";
-      setLoopStatus(runtime, "WAITING_ON_APPROVAL", scope);
-      emitRuntimeStateUpdates(runtime, scope);
-
       while (pendingNeedsUserInput.length > 0) {
         const ac = pendingNeedsUserInput.shift();
         if (!ac) {
@@ -502,10 +499,14 @@ export async function sendMessageStreamWithRetry(
           }
         }
 
-        const detail = await fetchRunErrorDetail(runtime.activeRunId);
-        throw new Error(
-          detail ||
-            `Pre-stream approval conflict after ${preStreamRecoveryAttempts} recovery attempts`,
+        const runErrorInfo = await fetchRunErrorInfo(runtime.activeRunId);
+        throw Object.assign(
+          new Error(
+            runErrorInfo?.detail ||
+              runErrorInfo?.message ||
+              `Pre-stream approval conflict after ${preStreamRecoveryAttempts} recovery attempts`,
+          ),
+          { runErrorInfo },
         );
       }
 
@@ -561,22 +562,36 @@ export async function sendMessageStreamWithRetry(
           const messageOtid = messages
             .map((item) => (item as Record<string, unknown>).otid)
             .find((value): value is string => typeof value === "string");
+          const resumeAbortRelay = createStreamAbortRelay(abortSignal);
 
           if (abortSignal?.aborted) {
             throw new Error("Cancelled by user");
           }
 
-          return await client.conversations.messages.stream(conversationId, {
-            agent_id:
-              conversationId === "default"
-                ? (runtime.agentId ?? undefined)
+          try {
+            const resumeStream = await client.conversations.messages.stream(
+              conversationId,
+              {
+                agent_id:
+                  conversationId === "default"
+                    ? (runtime.agentId ?? undefined)
+                    : undefined,
+                otid: messageOtid ?? undefined,
+                starting_after: 0,
+                batch_size: 1000,
+              } as unknown as Parameters<
+                typeof client.conversations.messages.stream
+              >[1],
+              resumeAbortRelay
+                ? { signal: resumeAbortRelay.signal }
                 : undefined,
-            otid: messageOtid ?? undefined,
-            starting_after: 0,
-            batch_size: 1000,
-          } as unknown as Parameters<
-            typeof client.conversations.messages.stream
-          >[1]);
+            );
+            resumeAbortRelay?.attach(resumeStream as object);
+            return resumeStream;
+          } catch (resumeError) {
+            resumeAbortRelay?.cleanup();
+            throw resumeError;
+          }
         } catch (resumeError) {
           if (abortSignal?.aborted) {
             throw new Error("Cancelled by user");
@@ -714,10 +729,14 @@ export async function sendApprovalContinuationWithRetry(
           continue;
         }
 
-        const detail = await fetchRunErrorDetail(runtime.activeRunId);
-        throw new Error(
-          detail ||
-            `Approval continuation conflict after ${preStreamRecoveryAttempts} recovery attempts`,
+        const runErrorInfo = await fetchRunErrorInfo(runtime.activeRunId);
+        throw Object.assign(
+          new Error(
+            runErrorInfo?.detail ||
+              runErrorInfo?.message ||
+              `Approval continuation conflict after ${preStreamRecoveryAttempts} recovery attempts`,
+          ),
+          { runErrorInfo },
         );
       }
 
@@ -761,22 +780,36 @@ export async function sendApprovalContinuationWithRetry(
           const messageOtid = messages
             .map((item) => (item as Record<string, unknown>).otid)
             .find((value): value is string => typeof value === "string");
+          const resumeAbortRelay = createStreamAbortRelay(abortSignal);
 
           if (abortSignal?.aborted) {
             throw new Error("Cancelled by user");
           }
 
-          return await client.conversations.messages.stream(conversationId, {
-            agent_id:
-              conversationId === "default"
-                ? (runtime.agentId ?? undefined)
+          try {
+            const resumeStream = await client.conversations.messages.stream(
+              conversationId,
+              {
+                agent_id:
+                  conversationId === "default"
+                    ? (runtime.agentId ?? undefined)
+                    : undefined,
+                otid: messageOtid ?? undefined,
+                starting_after: 0,
+                batch_size: 1000,
+              } as unknown as Parameters<
+                typeof client.conversations.messages.stream
+              >[1],
+              resumeAbortRelay
+                ? { signal: resumeAbortRelay.signal }
                 : undefined,
-            otid: messageOtid ?? undefined,
-            starting_after: 0,
-            batch_size: 1000,
-          } as unknown as Parameters<
-            typeof client.conversations.messages.stream
-          >[1]);
+            );
+            resumeAbortRelay?.attach(resumeStream as object);
+            return resumeStream;
+          } catch (resumeError) {
+            resumeAbortRelay?.cleanup();
+            throw resumeError;
+          }
         } catch (resumeError) {
           if (abortSignal?.aborted) {
             throw new Error("Cancelled by user");

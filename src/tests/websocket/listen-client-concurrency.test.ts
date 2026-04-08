@@ -119,6 +119,9 @@ const conversationMessagesStreamMock = mock(
       starting_after?: number;
       batch_size?: number;
     },
+    _options?: {
+      signal?: AbortSignal;
+    },
   ): Promise<MockStream> => ({
     conversationId,
   }),
@@ -851,22 +854,19 @@ describe("listen-client multi-worker concurrency", () => {
     expect(consumed).not.toBeNull();
     expect(
       consumed?.dequeuedBatch.items.map((item: { id: string }) => item.id),
-    ).toEqual([messageItem.id, taskItem.id]);
+    ).toEqual([messageItem.id]);
     expect(consumed?.queuedTurn.messages).toEqual([
       {
         role: "user",
-        content: [
-          { type: "text", text: "queued user" },
-          { type: "text", text: "\n" },
-          {
-            type: "text",
-            text: "<task-notification>done</task-notification>",
-          },
-        ],
+        content: [{ type: "text", text: "queued user" }],
       },
     ]);
-    expect(runtime.queueRuntime.length).toBe(1);
+    expect(runtime.queueRuntime.length).toBe(2);
     expect(runtime.queuedMessagesByItemId.has(otherMessageItem.id)).toBe(true);
+    expect(runtime.queueRuntime.peek().map((item) => item.id)).toEqual([
+      taskItem.id,
+      otherMessageItem.id,
+    ]);
   });
 
   test("resolveStaleApprovals injects queued turns and marks recovery drain as processing", async () => {
@@ -967,14 +967,7 @@ describe("listen-client multi-worker concurrency", () => {
     );
     expect(continuationMessages?.[1]).toEqual({
       role: "user",
-      content: [
-        { type: "text", text: "queued user" },
-        { type: "text", text: "\n" },
-        {
-          type: "text",
-          text: "<task-notification>done</task-notification>",
-        },
-      ],
+      content: [{ type: "text", text: "queued user" }],
     });
     expect(continuationMessages?.[2]).toEqual({
       role: "user",
@@ -987,15 +980,17 @@ describe("listen-client multi-worker concurrency", () => {
       otid: expect.any(String),
     });
     expect(runtime.loopStatus as string).toBe("PROCESSING_API_RESPONSE");
-    expect(runtime.queueRuntime.length).toBe(0);
+    expect(runtime.queueRuntime.length).toBe(1);
+    expect(runtime.queueRuntime.peek()[0]?.kind).toBe("task_notification");
     expect(runtime.queuedMessagesByItemId.size).toBe(0);
     expect(
-      socket.sentPayloads.some(
-        (payload) =>
-          payload.includes("queued user") &&
-          payload.includes("<task-notification>done</task-notification>"),
-      ),
+      socket.sentPayloads.some((payload) => payload.includes("queued user")),
     ).toBe(true);
+    expect(
+      socket.sentPayloads.some((payload) =>
+        payload.includes("<task-notification>done</task-notification>"),
+      ),
+    ).toBe(false);
 
     drain.resolve({
       stopReason: "end_turn",
@@ -2030,10 +2025,12 @@ describe("listen-client multi-worker concurrency", () => {
       messageHistory: [],
     });
 
+    const parentAbortController = new AbortController();
+
     const result = await __listenClientTestUtils.resolveStaleApprovals(
       runtime,
       socket as unknown as WebSocket,
-      new AbortController().signal,
+      parentAbortController.signal,
       {
         getResumeData: getResumeDataMock,
       },
@@ -2049,5 +2046,9 @@ describe("listen-client multi-worker concurrency", () => {
       starting_after: 0,
       batch_size: 1000,
     });
+    expect(firstCall?.[2]).toMatchObject({
+      signal: expect.any(AbortSignal),
+    });
+    expect(firstCall?.[2]?.signal).not.toBe(parentAbortController.signal);
   });
 });

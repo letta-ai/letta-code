@@ -17,6 +17,10 @@ import {
 } from "../../agent/message";
 import { telemetry } from "../../telemetry";
 import { debugLog, debugWarn } from "../../utils/debug";
+import {
+  cleanupStreamAbortRelay,
+  createStreamAbortRelay,
+} from "../../utils/streamAbortRelay";
 import { formatDuration, logTiming } from "../../utils/timing";
 
 import {
@@ -423,6 +427,8 @@ export async function drainStream(
       abortSignal.removeEventListener("abort", abortHandler);
     }
 
+    cleanupStreamAbortRelay(stream as object);
+
     // Clear SDK parse diagnostics on stream completion so they don't leak
     // into a future stream. On error paths the catch block already consumed
     // them; this handles the success path.
@@ -680,28 +686,45 @@ export async function drainStreamWithResume(
       // Create the resume stream: use OTID-based conversations endpoint only when
       // run_id is unavailable (server resolves the exact run, safe for multi-client).
       // When we already have run_id from stream chunks, use the run stream directly.
-      const resumeStream =
-        runIdSource === "otid" && streamOtid && streamRequestContext
-          ? await client.conversations.messages.stream(
-              streamRequestContext.resolvedConversationId,
-              {
-                agent_id:
-                  streamRequestContext.conversationId === "default"
-                    ? (streamRequestContext.agentId ?? undefined)
-                    : undefined,
-                otid: streamOtid,
-                starting_after: result.lastSeqId ?? 0,
-                batch_size: 1000,
-              } as unknown as Parameters<
-                typeof client.conversations.messages.stream
-              >[1],
-            )
-          : await client.runs.messages.stream(runIdToResume as string, {
-              // If lastSeqId is null the stream failed before any seq_id-bearing
-              // chunk arrived; use 0 to replay the run from the beginning.
-              starting_after: result.lastSeqId ?? 0,
-              batch_size: 1000,
-            });
+      const resumeAbortRelay = createStreamAbortRelay(abortSignal);
+      let resumeStream: Stream<LettaStreamingResponse>;
+      try {
+        resumeStream =
+          runIdSource === "otid" && streamOtid && streamRequestContext
+            ? await client.conversations.messages.stream(
+                streamRequestContext.resolvedConversationId,
+                {
+                  agent_id:
+                    streamRequestContext.conversationId === "default"
+                      ? (streamRequestContext.agentId ?? undefined)
+                      : undefined,
+                  otid: streamOtid,
+                  starting_after: result.lastSeqId ?? 0,
+                  batch_size: 1000,
+                } as unknown as Parameters<
+                  typeof client.conversations.messages.stream
+                >[1],
+                resumeAbortRelay
+                  ? { signal: resumeAbortRelay.signal }
+                  : undefined,
+              )
+            : await client.runs.messages.stream(
+                runIdToResume as string,
+                {
+                  // If lastSeqId is null the stream failed before any seq_id-bearing
+                  // chunk arrived; use 0 to replay the run from the beginning.
+                  starting_after: result.lastSeqId ?? 0,
+                  batch_size: 1000,
+                },
+                resumeAbortRelay
+                  ? { signal: resumeAbortRelay.signal }
+                  : undefined,
+              );
+      } catch (resumeError) {
+        resumeAbortRelay?.cleanup();
+        throw resumeError;
+      }
+      resumeAbortRelay?.attach(resumeStream as object);
 
       // Continue draining from where we left off
       // Note: Don't pass onFirstMessage again - already called in initial drain

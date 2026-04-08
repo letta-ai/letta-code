@@ -364,6 +364,12 @@ async function main(): Promise<void> {
   const settings = await settingsManager.getSettingsWithSecureTokens();
   markMilestone("SETTINGS_LOADED");
 
+  // Ensure base tools exist on the server (first-run-per-server)
+  const { bootstrapBaseToolsIfNeeded } = await import(
+    "./agent/bootstrap-tools"
+  );
+  await bootstrapBaseToolsIfNeeded();
+
   // Handle CLI subcommands (e.g., `letta memfs ...`) before parsing global flags
   const subcommandResult = await runSubcommand(process.argv.slice(2));
   if (subcommandResult !== null) {
@@ -923,6 +929,7 @@ async function main(): Promise<void> {
         "default",
         "acceptEdits",
         "plan",
+        "memory",
         "bypassPermissions",
       ] as const;
 

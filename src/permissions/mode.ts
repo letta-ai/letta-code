@@ -1,16 +1,24 @@
 // src/permissions/mode.ts
-// Permission mode management (default, acceptEdits, plan, bypassPermissions)
+// Permission mode management (default, acceptEdits, plan, memory, bypassPermissions)
 
 import { homedir } from "node:os";
-import { isAbsolute, join, relative, resolve } from "node:path";
-
-import { isReadOnlyShellCommand } from "./readOnlyShell";
+import { isAbsolute, join, relative } from "node:path";
+import {
+  isPathWithinRoots,
+  resolveAllowedMemoryRoots,
+  resolveScopedTargetPath,
+} from "./memoryScope";
+import {
+  isReadOnlyShellCommand,
+  isScopedMemoryShellCommand,
+} from "./readOnlyShell";
 import { unwrapShellLauncherCommand } from "./shell-command-normalization";
 
 export type PermissionMode =
   | "default"
   | "acceptEdits"
   | "plan"
+  | "memory"
   | "bypassPermissions";
 
 // Use globalThis to ensure singleton across bundle
@@ -24,6 +32,20 @@ type GlobalWithMode = typeof globalThis & {
   [PLAN_FILE_KEY]: string | null;
   [MODE_BEFORE_PLAN_KEY]?: PermissionMode | null;
 };
+
+function everyResolvedTargetIsWithinRoots(
+  candidatePaths: string[],
+  roots: string[],
+  workingDirectory: string,
+): boolean {
+  return (
+    candidatePaths.length > 0 &&
+    candidatePaths.every((path) => {
+      const resolvedPath = resolveScopedTargetPath(path, workingDirectory);
+      return resolvedPath ? isPathWithinRoots(resolvedPath, roots) : false;
+    })
+  );
+}
 
 function getGlobalMode(): PermissionMode {
   const global = globalThis as GlobalWithMode;
@@ -62,16 +84,7 @@ function resolvePlanTargetPath(
   targetPath: string,
   workingDirectory: string,
 ): string | null {
-  const trimmedPath = targetPath.trim();
-  if (!trimmedPath) return null;
-
-  if (trimmedPath.startsWith("~/")) {
-    return resolve(homedir(), trimmedPath.slice(2));
-  }
-  if (isAbsolute(trimmedPath)) {
-    return resolve(trimmedPath);
-  }
-  return resolve(workingDirectory, trimmedPath);
+  return resolveScopedTargetPath(targetPath, workingDirectory);
 }
 
 function isPathInPlansDir(path: string, plansDir: string): boolean {
@@ -283,6 +296,7 @@ class PermissionModeManager {
             "Edit",
             "MultiEdit",
             "NotebookEdit",
+            "memory",
             "apply_patch",
             "ApplyPatch",
             "memory_apply_patch",
@@ -463,6 +477,127 @@ class PermissionModeManager {
         }
 
         // Everything else denied in plan mode
+        return "deny";
+      }
+
+      case "memory": {
+        const allowedMemoryRoots = resolveAllowedMemoryRoots().roots;
+        const allowedReadOnlyTools = [
+          // Anthropic toolset
+          "Read",
+          "Glob",
+          "Grep",
+          "NotebookRead",
+          // Image / task output / skills
+          "ViewImage",
+          "view_image",
+          "TaskOutput",
+          "task_output",
+          "Skill",
+          "skill",
+          // Codex toolset
+          "read_file",
+          "list_dir",
+          "grep_files",
+          "ReadFile",
+          "ListDir",
+          "GrepFiles",
+          // Gemini toolset
+          "read_file_gemini",
+          "glob_gemini",
+          "list_directory",
+          "search_file_content",
+          "read_many_files",
+          "ReadFileGemini",
+          "GlobGemini",
+          "ListDirectory",
+          "SearchFileContent",
+          "ReadManyFiles",
+        ];
+        const writeTools = [
+          "Write",
+          "Edit",
+          "MultiEdit",
+          "NotebookEdit",
+          "apply_patch",
+          "ApplyPatch",
+          "replace",
+          "Replace",
+          "write_file",
+          "WriteFile",
+          "write_file_gemini",
+          "WriteFileGemini",
+        ];
+        const shellTools = [
+          "Bash",
+          "shell",
+          "Shell",
+          "shell_command",
+          "ShellCommand",
+          "run_shell_command",
+          "RunShellCommand",
+          "run_shell_command_gemini",
+          "RunShellCommandGemini",
+        ];
+
+        if (allowedReadOnlyTools.includes(toolName)) {
+          return "allow";
+        }
+
+        if (toolName === "memory_apply_patch") {
+          return allowedMemoryRoots.length > 0 ? "allow" : "deny";
+        }
+
+        if (writeTools.includes(toolName)) {
+          const targetPath =
+            (toolArgs?.file_path as string) || (toolArgs?.path as string);
+          let candidatePaths: string[] = [];
+
+          if (
+            (toolName === "ApplyPatch" || toolName === "apply_patch") &&
+            toolArgs?.input
+          ) {
+            candidatePaths = extractApplyPatchPaths(toolArgs.input as string);
+          } else if (typeof targetPath === "string") {
+            candidatePaths = [targetPath];
+          }
+
+          if (
+            allowedMemoryRoots.length > 0 &&
+            everyResolvedTargetIsWithinRoots(
+              candidatePaths,
+              allowedMemoryRoots,
+              workingDirectory,
+            )
+          ) {
+            return "allow";
+          }
+
+          return "deny";
+        }
+
+        if (shellTools.includes(toolName)) {
+          const command = toolArgs?.command as string | string[] | undefined;
+          if (
+            command &&
+            isReadOnlyShellCommand(command, { allowExternalPaths: true })
+          ) {
+            return "allow";
+          }
+
+          if (
+            command &&
+            allowedMemoryRoots.length > 0 &&
+            isScopedMemoryShellCommand(command, allowedMemoryRoots, {
+              workingDirectory,
+            })
+          ) {
+            return "allow";
+          }
+
+          return "deny";
+        }
+
         return "deny";
       }
 

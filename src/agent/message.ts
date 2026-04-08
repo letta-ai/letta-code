@@ -17,6 +17,7 @@ import {
   waitForToolsetReady,
 } from "../tools/manager";
 import { debugLog, debugWarn, isDebugEnabled } from "../utils/debug";
+import { createStreamAbortRelay } from "../utils/streamAbortRelay";
 import { isTimingsEnabled } from "../utils/timing";
 import {
   type ApprovalNormalizationOptions,
@@ -225,12 +226,14 @@ export async function sendMessageStream(
   );
 
   let stream: Stream<LettaStreamingResponse>;
+  const abortRelay = createStreamAbortRelay(requestOptions.signal);
   try {
     stream = await client.conversations.messages.create(
       resolvedConversationId,
       requestBody,
       {
         ...requestOptions,
+        ...(abortRelay ? { signal: abortRelay.signal } : {}),
         headers: {
           ...((requestOptions.headers as Record<string, string>) ?? {}),
           ...extraHeaders,
@@ -238,6 +241,7 @@ export async function sendMessageStream(
       },
     );
   } catch (error) {
+    abortRelay?.cleanup();
     debugWarn(
       "send-message-stream",
       "request_error conversation_id=%s otid=%s status=%s error=%s",
@@ -255,6 +259,8 @@ export async function sendMessageStream(
     resolvedConversationId,
     firstOtid ?? "none",
   );
+
+  abortRelay?.attach(stream as object);
 
   if (requestStartTime !== undefined) {
     streamRequestStartTimes.set(stream as object, requestStartTime);

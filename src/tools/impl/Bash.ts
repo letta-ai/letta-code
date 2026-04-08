@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { resolve } from "node:path";
 import { INTERRUPTED_BY_USER } from "../../constants";
 import {
   appendBackgroundProcessOutput,
@@ -15,6 +16,29 @@ import { buildShellLaunchers } from "./shellLaunchers.js";
 import { spawnWithLauncher } from "./shellRunner.js";
 import { LIMITS, truncateByChars } from "./truncation.js";
 import { validateRequiredParams } from "./validation.js";
+
+/**
+ * Check if a `git worktree add` command targets `.letta/worktrees/`.
+ * Returns an error message if the path is invalid, or null if OK.
+ */
+function validateWorktreePath(command: string, cwd: string): string | null {
+  // Match `git worktree add` with optional flags before the path
+  const match = command.match(/\bgit\s+worktree\s+add\s+(?:-b\s+\S+\s+)?(\S+)/);
+  if (!match?.[1]) return null;
+
+  const targetPath = match[1];
+  const resolved = resolve(cwd, targetPath);
+  const requiredPrefix = resolve(cwd, ".letta/worktrees");
+
+  if (!resolved.startsWith(requiredPrefix)) {
+    return (
+      `Error: Worktrees must be created under .letta/worktrees/. ` +
+      `Use: git worktree add -b <branch> .letta/worktrees/<name> main\n` +
+      `Got: ${targetPath}`
+    );
+  }
+  return null;
+}
 
 // Cache the working shell launcher after first successful spawn
 let cachedWorkingLauncher: string[] | null = null;
@@ -153,6 +177,15 @@ export async function bash(args: BashArgs): Promise<BashResult> {
     onOutput,
   } = args;
   const userCwd = process.env.USER_CWD || process.cwd();
+
+  // Block worktree creation outside .letta/worktrees/
+  const worktreeError = validateWorktreePath(command, userCwd);
+  if (worktreeError) {
+    return {
+      content: [{ type: "text", text: worktreeError }],
+      status: "error",
+    };
+  }
 
   if (command === "/bg") {
     const processes = Array.from(backgroundProcesses.entries());

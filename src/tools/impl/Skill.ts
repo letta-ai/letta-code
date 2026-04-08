@@ -22,6 +22,29 @@ interface SkillResult {
   message: string;
 }
 
+function getMemorySkillsDirs(agentId?: string): string[] {
+  const dirs = new Set<string>();
+
+  const memoryDir = process.env.MEMORY_DIR || process.env.LETTA_MEMORY_DIR;
+  if (memoryDir && memoryDir.trim().length > 0) {
+    dirs.add(join(memoryDir.trim(), "skills"));
+  }
+
+  if (agentId) {
+    dirs.add(
+      join(
+        process.env.HOME || process.env.USERPROFILE || "~",
+        ".letta/agents",
+        agentId,
+        "memory",
+        "skills",
+      ),
+    );
+  }
+
+  return Array.from(dirs);
+}
+
 /**
  * Check if a skill directory has additional files beyond SKILL.md
  */
@@ -42,8 +65,9 @@ function hasAdditionalFiles(skillMdPath: string): boolean {
  * Search order (highest priority first):
  * 1. Project skills (.skills/)
  * 2. Agent skills (~/.letta/agents/{id}/skills/)
- * 3. Global skills (~/.letta/skills/)
- * 4. Bundled skills
+ * 3. Agent memory skills ($MEMORY_DIR/skills/ or ~/.letta/agents/{id}/memory/skills/)
+ * 4. Global skills (~/.letta/skills/)
+ * 5. Bundled skills
  */
 async function readSkillContent(
   skillId: string,
@@ -74,7 +98,18 @@ async function readSkillContent(
     }
   }
 
-  // 3. Try global skills directory
+  // 3. Try agent memory skills directories
+  for (const memorySkillsDir of getMemorySkillsDirs(agentId)) {
+    const memorySkillPath = join(memorySkillsDir, skillId, "SKILL.md");
+    try {
+      const content = await readFile(memorySkillPath, "utf-8");
+      return { content, path: memorySkillPath };
+    } catch {
+      // Not in this memory skills dir, continue
+    }
+  }
+
+  // 4. Try global skills directory
   const globalSkillPath = join(GLOBAL_SKILLS_DIR, skillId, "SKILL.md");
   try {
     const content = await readFile(globalSkillPath, "utf-8");
@@ -83,7 +118,7 @@ async function readSkillContent(
     // Not in global, continue
   }
 
-  // 4. Try bundled skills (lowest priority)
+  // 5. Try bundled skills (lowest priority)
   const bundledSkills = await getBundledSkills();
   const bundledSkill = bundledSkills.find((s) => s.id === skillId);
   if (bundledSkill?.path) {

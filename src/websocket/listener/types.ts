@@ -60,7 +60,7 @@ export interface IncomingMessage {
 }
 
 export interface ModeChangePayload {
-  mode: "default" | "acceptEdits" | "plan" | "bypassPermissions";
+  mode: "default" | "acceptEdits" | "plan" | "memory" | "bypassPermissions";
 }
 
 export interface ChangeCwdMessage {

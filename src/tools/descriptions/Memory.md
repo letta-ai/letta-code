@@ -18,6 +18,8 @@ Path formats accepted:
 
 Note: absolute paths outside `$MEMORY_DIR` are rejected.
 
+When creating or deleting files, check for `[[path]]` references in other memory files that may need to be added or updated. Keeping references consistent ensures future discoverability.
+
 Examples:
 
 ```python

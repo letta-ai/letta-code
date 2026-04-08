@@ -143,6 +143,8 @@ import {
   isListInDirectoryCommand,
   isListMemoryCommand,
   isListModelsCommand,
+  isMemoryFileAtRefCommand,
+  isMemoryHistoryCommand,
   isReadFileCommand,
   isSearchBranchesCommand,
   isSearchFilesCommand,
@@ -159,7 +161,6 @@ import {
   buildQueueSnapshot,
   emitDeviceStatusUpdate,
   emitInterruptedStatusDelta,
-  emitLoopErrorDelta,
   emitLoopStatusUpdate,
   emitRetryDelta,
   emitRuntimeStateUpdates,
@@ -179,6 +180,7 @@ import {
   scheduleQueuePump,
   shouldQueueInboundMessage,
 } from "./queue";
+import { emitLoopErrorNotice } from "./recoverable-notices";
 import {
   getApprovalContinuationRecoveryDisposition,
   recoverApprovalStateForSync,
@@ -272,6 +274,41 @@ function runDetachedListenerTask(
   });
 }
 
+async function replaySyncStateForRuntime(
+  listenerRuntime: ListenerRuntime,
+  socket: WebSocket,
+  scope: { agent_id: string; conversation_id: string },
+  opts?: {
+    recoverApprovalStateForSync?: (
+      runtime: ConversationRuntime,
+      scope: { agent_id: string; conversation_id: string },
+    ) => Promise<void>;
+  },
+): Promise<void> {
+  const syncScopedRuntime = getOrCreateScopedRuntime(
+    listenerRuntime,
+    scope.agent_id,
+    scope.conversation_id,
+  );
+  const recoverFn =
+    opts?.recoverApprovalStateForSync ?? recoverApprovalStateForSync;
+
+  try {
+    await recoverFn(syncScopedRuntime, scope);
+  } catch (error) {
+    trackListenerError(
+      "listener_sync_recovery_failed",
+      error,
+      "listener_sync_recovery",
+    );
+    if (isDebugEnabled()) {
+      console.warn("[Listen] Sync approval recovery failed:", error);
+    }
+  }
+
+  emitStateSync(socket, listenerRuntime, scope);
+}
+
 function getParsedRuntimeScope(
   parsed: unknown,
 ): { agent_id: string; conversation_id: string } | null {
@@ -340,7 +377,7 @@ function handleModeChange(
 
     persistPermissionModeMapForRuntime(runtime);
 
-    emitDeviceStatusUpdate(socket, runtime, scope);
+    emitRuntimeStateUpdates(runtime, scope);
 
     if (isDebugEnabled()) {
       console.log(`[Listen] Mode changed to: ${msg.mode}`);
@@ -351,12 +388,13 @@ function handleModeChange(
       error,
       "listener_mode_change",
     );
-    emitLoopErrorDelta(socket, runtime, {
+    emitLoopErrorNotice(socket, runtime, {
       message: error instanceof Error ? error.message : "Mode change failed",
       stopReason: "error",
       isTerminal: false,
       agentId: scope?.agent_id,
       conversationId: scope?.conversation_id,
+      error,
     });
 
     if (isDebugEnabled()) {
@@ -549,6 +587,7 @@ async function applyModelUpdateForRuntime(params: {
       conversationId,
       model.handle,
       updateArgs,
+      { preserveContextWindow: false },
     );
     modelSettings =
       ((
@@ -1692,6 +1731,9 @@ async function handleAbortMessageInput(
 
   const interruptedRunId = scopedRuntime.activeRunId;
   scopedRuntime.cancelRequested = true;
+  const pendingRequestsSnapshot = hasPendingApprovals
+    ? resolvedDeps.getPendingControlRequests(listener, scope)
+    : [];
 
   if (
     scopedRuntime.activeExecutingToolCallIds.length > 0 &&
@@ -1767,23 +1809,27 @@ async function handleAbortMessageInput(
       agentId: scope.agent_id,
       conversationId: scope.conversation_id,
     });
-  } else if (hasPendingApprovals) {
+  } else if (
+    hasPendingApprovals &&
+    (!scopedRuntime.pendingInterruptedResults ||
+      scopedRuntime.pendingInterruptedResults.length === 0) &&
+    pendingRequestsSnapshot.length > 0
+  ) {
     // Populate interrupted cache to prevent stale approval recovery on sync
-    const pendingRequests = resolvedDeps.getPendingControlRequests(
-      listener,
-      scope,
+    scopedRuntime.pendingInterruptedResults = pendingRequestsSnapshot.map(
+      (req) => ({
+        type: "approval" as const,
+        tool_call_id: req.request.tool_call_id,
+        approve: false,
+        reason: "User interrupted the stream",
+      }),
     );
-    scopedRuntime.pendingInterruptedResults = pendingRequests.map((req) => ({
-      type: "approval" as const,
-      tool_call_id: req.request.tool_call_id,
-      approve: false,
-      reason: "User interrupted the stream",
-    }));
     scopedRuntime.pendingInterruptedContext = {
       agentId: scope.agent_id || "",
       conversationId: scope.conversation_id,
       continuationEpoch: scopedRuntime.continuationEpoch,
     };
+    scopedRuntime.pendingInterruptedToolCallIds = null;
     resolvedDeps.emitInterruptedStatusDelta(params.socket, scopedRuntime, {
       runId: interruptedRunId,
       agentId: scope.agent_id,
@@ -1868,7 +1914,7 @@ async function handleCwdChange(
       conversation_id: conversationId,
     });
   } catch (error) {
-    emitLoopErrorDelta(socket, runtime, {
+    emitLoopErrorNotice(socket, runtime, {
       message:
         error instanceof Error
           ? error.message
@@ -1877,6 +1923,7 @@ async function handleCwdChange(
       isTerminal: false,
       agentId,
       conversationId,
+      error,
     });
   }
 }
@@ -2237,7 +2284,7 @@ async function connectWithRetry(
       }
 
       if (parsed.type === "__invalid_input") {
-        emitLoopErrorDelta(socket, runtime, {
+        emitLoopErrorNotice(socket, runtime, {
           message: parsed.reason,
           stopReason: "error",
           isTerminal: false,
@@ -2255,14 +2302,7 @@ async function connectWithRetry(
           console.log(`[Listen V2] Dropping sync: runtime mismatch or closed`);
           return;
         }
-        const syncScopedRuntime = getOrCreateScopedRuntime(
-          runtime,
-          parsed.runtime.agent_id,
-          parsed.runtime.conversation_id,
-        );
-        await recoverApprovalStateForSync(syncScopedRuntime, parsed.runtime);
-
-        emitStateSync(socket, runtime, parsed.runtime);
+        await replaySyncStateForRuntime(runtime, socket, parsed.runtime);
         return;
       }
 
@@ -2295,7 +2335,7 @@ async function connectWithRetry(
 
         const inputPayload = parsed.payload;
         if (inputPayload.kind !== "create_message") {
-          emitLoopErrorDelta(socket, runtime, {
+          emitLoopErrorNotice(socket, runtime, {
             message: `Unsupported input payload kind: ${String((inputPayload as { kind?: unknown }).kind)}`,
             stopReason: "error",
             isTerminal: false,
@@ -2316,7 +2356,7 @@ async function connectWithRetry(
             "type" in payload && payload.type === "approval",
         );
         if (hasApprovalPayload) {
-          emitLoopErrorDelta(socket, runtime, {
+          emitLoopErrorNotice(socket, runtime, {
             message:
               "Protocol violation: approval payloads are not allowed in input.kind=create_message. Use input.kind=approval_response.",
             stopReason: "error",
@@ -2423,16 +2463,29 @@ async function connectWithRetry(
       if (isSearchFilesCommand(parsed)) {
         runDetachedListenerTask("search_files", async () => {
           try {
+            // When the requested cwd lives outside the current index root
+            // (e.g. a persisted CWD restored on startup that was never fed
+            // through handleCwdChange), re-root the file index first so
+            // the search covers the correct workspace.
+            if (parsed.cwd) {
+              const currentRoot = getIndexRoot();
+              if (
+                !parsed.cwd.startsWith(currentRoot + path.sep) &&
+                parsed.cwd !== currentRoot
+              ) {
+                setIndexRoot(parsed.cwd);
+              }
+            }
+
             await ensureFileIndex();
 
             // Scope search to the conversation's cwd when provided.
-            // The file index stores paths relative to process.cwd(), so we
-            // compute the relative path from the index root to the requested cwd.
+            // The file index stores paths relative to the index root.
             let searchDir = ".";
             if (parsed.cwd) {
               const rel = path.relative(getIndexRoot(), parsed.cwd);
               // Only scope if cwd is within the index root (not "../" etc.)
-              if (rel && !rel.startsWith("..")) {
+              if (rel && !rel.startsWith("..") && rel !== "") {
                 searchDir = rel;
               }
             }
@@ -2996,6 +3049,7 @@ async function connectWithRetry(
           } catch (error) {
             const failure: UpdateModelResponseMessage = {
               type: "update_model_response",
+
               request_id: parsed.request_id,
               success: false,
               runtime: {
@@ -3014,6 +3068,116 @@ async function connectWithRetry(
               failure,
               "listener_update_model_send_failed",
               "listener_update_model",
+            );
+          }
+        });
+        return;
+      }
+
+      // ── Memory history (git log for a specific file) ─────────────────
+      if (isMemoryHistoryCommand(parsed)) {
+        runDetachedListenerTask("memory_history", async () => {
+          const { getMemoryFilesystemRoot } = await import(
+            "../../agent/memoryFilesystem"
+          );
+          const { execFile: execFileCb } = await import("node:child_process");
+          const { promisify } = await import("node:util");
+          const execFileAsync = promisify(execFileCb);
+
+          const memoryRoot = getMemoryFilesystemRoot(parsed.agent_id);
+          const limit = parsed.limit ?? 50;
+
+          const { stdout } = await execFileAsync(
+            "git",
+            [
+              "log",
+              `--max-count=${limit}`,
+              "--format=%H|%s|%aI|%an",
+              "--",
+              parsed.file_path,
+            ],
+            { cwd: memoryRoot, timeout: 10000 },
+          );
+
+          const commits = stdout
+            .trim()
+            .split("\n")
+            .filter((line) => line.length > 0)
+            .map((line) => {
+              const [sha, message, timestamp, authorName] = line.split("|");
+              return {
+                sha: sha ?? "",
+                message: message ?? "",
+                timestamp: timestamp ?? "",
+                author_name: authorName ?? null,
+              };
+            });
+
+          safeSocketSend(
+            socket,
+            {
+              type: "memory_history_response",
+              request_id: parsed.request_id,
+              file_path: parsed.file_path,
+              commits,
+              success: true,
+            },
+            "listener_memory_history_send_failed",
+            "listener_memory_history",
+          );
+        });
+        return;
+      }
+
+      // ── Memory file at ref (git show for content at a commit) ────────
+      if (isMemoryFileAtRefCommand(parsed)) {
+        runDetachedListenerTask("memory_file_at_ref", async () => {
+          const { getMemoryFilesystemRoot } = await import(
+            "../../agent/memoryFilesystem"
+          );
+          const { execFile: execFileCb } = await import("node:child_process");
+          const { promisify } = await import("node:util");
+          const execFileAsync = promisify(execFileCb);
+
+          const memoryRoot = getMemoryFilesystemRoot(parsed.agent_id);
+
+          try {
+            const { stdout } = await execFileAsync(
+              "git",
+              ["show", `${parsed.ref}:${parsed.file_path}`],
+              { cwd: memoryRoot, timeout: 10000 },
+            );
+
+            safeSocketSend(
+              socket,
+              {
+                type: "memory_file_at_ref_response",
+                request_id: parsed.request_id,
+                file_path: parsed.file_path,
+                ref: parsed.ref,
+                content: stdout,
+                success: true,
+              },
+              "listener_memory_file_at_ref_send_failed",
+              "listener_memory_file_at_ref",
+            );
+          } catch (err) {
+            safeSocketSend(
+              socket,
+              {
+                type: "memory_file_at_ref_response",
+                request_id: parsed.request_id,
+                file_path: parsed.file_path,
+                ref: parsed.ref,
+                content: null,
+                success: false,
+                error:
+                  err instanceof Error
+                    ? err.message
+                    : "Failed to read file at ref",
+              },
+              "listener_memory_file_at_ref_send_failed",
+              "listener_memory_file_at_ref",
             );
           }
         });
@@ -3240,7 +3404,7 @@ async function connectWithRetry(
         return;
       }
 
-      emitLoopErrorDelta(socket, runtime, {
+      emitLoopErrorNotice(socket, runtime, {
         message:
           error instanceof Error
             ? error.message
@@ -3249,6 +3413,7 @@ async function connectWithRetry(
         isTerminal: false,
         agentId: parsedScope.agent_id,
         conversationId: parsedScope.conversation_id,
+        error,
       });
     }
   });
@@ -3635,6 +3800,7 @@ export { emitInterruptedStatusDelta } from "./protocol-outbound";
 export const __listenClientTestUtils = {
   createRuntime: createLegacyTestRuntime,
   createListenerRuntime: createRuntime,
+  handleModeChange,
   getOrCreateScopedRuntime,
   buildListModelsEntries,
   buildListModelsResponse,
@@ -3687,6 +3853,7 @@ export const __listenClientTestUtils = {
   handleCreateAgentCommand,
   handleReflectionSettingsCommand,
   scheduleQueuePump,
+  replaySyncStateForRuntime,
   recoverApprovalStateForSync,
   clearRecoveredApprovalStateForScope: (
     runtime: ListenerRuntime | ConversationRuntime,
