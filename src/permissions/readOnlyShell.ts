@@ -78,6 +78,19 @@ const SAFE_GIT_SUBCOMMANDS = new Set([
   "branch",
   "tag",
   "remote",
+  "rev-parse",
+  "ls-files",
+  "ls-tree",
+  "cat-file",
+  "describe",
+  "blame",
+  "shortlog",
+  "name-rev",
+  "rev-list",
+  "for-each-ref",
+  "count-objects",
+  "verify-commit",
+  "verify-tag",
 ]);
 
 const SAFE_MEMORY_GIT_SUBCOMMANDS = new Set([
@@ -140,9 +153,56 @@ export const SAFE_GH_COMMANDS: Record<string, Set<string> | null> = {
 };
 
 /**
+ * Check if a redirect at position `pos` in `input` is safe to allow.
+ * Safe redirects write only to /dev/null or duplicate file descriptors (>&N).
+ * Returns the number of characters consumed by the redirect operator and target
+ * (0 if the redirect is not safe and should cause rejection).
+ */
+function tryConsumeSafeRedirect(input: string, pos: number): number {
+  const isAppend = input.startsWith(">>", pos);
+  const opLen = isAppend ? 2 : 1;
+  let cursor = pos + opLen;
+
+  // Check for fd duplication: >&N (e.g., 2>&1)
+  if (cursor < input.length && input[cursor] === "&") {
+    cursor += 1;
+    const fdStart = cursor;
+    while (cursor < input.length && /[0-9]/.test(input[cursor] ?? "")) {
+      cursor += 1;
+    }
+    // Valid fd duplication requires at least one digit after &
+    return cursor > fdStart ? cursor - pos : 0;
+  }
+
+  // Skip whitespace between operator and target
+  while (
+    cursor < input.length &&
+    (input[cursor] === " " || input[cursor] === "\t")
+  ) {
+    cursor += 1;
+  }
+
+  if (cursor >= input.length) {
+    return 0;
+  }
+
+  // Read target path (stop at whitespace or shell metacharacters)
+  const targetStart = cursor;
+  while (
+    cursor < input.length &&
+    !/[\s;|&><()`$'"]/.test(input[cursor] ?? "")
+  ) {
+    cursor += 1;
+  }
+
+  const target = input.slice(targetStart, cursor);
+  return target === "/dev/null" ? cursor - pos : 0;
+}
+
+/**
  * Split a shell command into segments on unquoted separators: |, &&, ||, ;
  * Returns null if dangerous operators are found:
- * - redirects (>, >>) outside quotes
+ * - redirects (>, >>) outside quotes (unless targeting /dev/null or fd duplication)
  * - command substitution ($(), backticks) outside single quotes
  */
 function splitShellSegments(input: string): string[] | null {
@@ -201,6 +261,15 @@ function splitShellSegments(input: string): string[] | null {
     }
 
     if (input.startsWith(">>", i) || ch === ">") {
+      const skipLen = tryConsumeSafeRedirect(input, i);
+      if (skipLen > 0) {
+        // Strip preceding fd digit if present (e.g., the "2" in "2>/dev/null")
+        if (i > 0 && current.length > 0 && /[0-9]/.test(input[i - 1] ?? "")) {
+          current = current.slice(0, -1);
+        }
+        i += skipLen;
+        continue;
+      }
       return null;
     }
     if (ch === "`" || input.startsWith("$(", i)) {

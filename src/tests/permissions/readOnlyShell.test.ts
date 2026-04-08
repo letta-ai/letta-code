@@ -193,6 +193,34 @@ describe("isReadOnlyShellCommand", () => {
       expect(isReadOnlyShellCommand("git branch -a")).toBe(true);
     });
 
+    test("allows additional read-only git subcommands", () => {
+      expect(isReadOnlyShellCommand("git rev-parse --abbrev-ref HEAD")).toBe(
+        true,
+      );
+      expect(isReadOnlyShellCommand("git rev-parse HEAD")).toBe(true);
+      expect(isReadOnlyShellCommand("git ls-files")).toBe(true);
+      expect(isReadOnlyShellCommand("git ls-files --modified")).toBe(true);
+      expect(isReadOnlyShellCommand("git ls-tree -r HEAD")).toBe(true);
+      expect(isReadOnlyShellCommand("git cat-file -p HEAD")).toBe(true);
+      expect(isReadOnlyShellCommand("git describe --tags")).toBe(true);
+      expect(isReadOnlyShellCommand("git blame src/file.ts")).toBe(true);
+      expect(isReadOnlyShellCommand("git shortlog -sn")).toBe(true);
+      expect(isReadOnlyShellCommand("git name-rev HEAD")).toBe(true);
+      expect(isReadOnlyShellCommand("git rev-list --count HEAD")).toBe(true);
+      expect(
+        isReadOnlyShellCommand("git for-each-ref --format='%(refname)'"),
+      ).toBe(true);
+      expect(isReadOnlyShellCommand("git count-objects -v")).toBe(true);
+      expect(isReadOnlyShellCommand("git verify-commit HEAD")).toBe(true);
+      expect(isReadOnlyShellCommand("git verify-tag v1.0")).toBe(true);
+    });
+
+    test("allows compound commands with read-only git subcommands", () => {
+      expect(
+        isReadOnlyShellCommand("pwd && git rev-parse --abbrev-ref HEAD && ls"),
+      ).toBe(true);
+    });
+
     test("blocks write git commands", () => {
       expect(isReadOnlyShellCommand("git push")).toBe(false);
       expect(isReadOnlyShellCommand("git commit -m 'msg'")).toBe(false);
@@ -322,9 +350,33 @@ describe("isReadOnlyShellCommand", () => {
   });
 
   describe("dangerous operators", () => {
-    test("blocks output redirection", () => {
+    test("blocks output redirection to files", () => {
       expect(isReadOnlyShellCommand("cat file > output.txt")).toBe(false);
       expect(isReadOnlyShellCommand("cat file >> output.txt")).toBe(false);
+      expect(isReadOnlyShellCommand("cmd > /tmp/out")).toBe(false);
+      expect(isReadOnlyShellCommand("cmd 2>/tmp/err")).toBe(false);
+    });
+
+    test("allows safe redirects to /dev/null", () => {
+      expect(isReadOnlyShellCommand("rg -n pattern src/ 2>/dev/null")).toBe(
+        true,
+      );
+      expect(
+        isReadOnlyShellCommand(
+          'rg -n "pattern" src/ 2>/dev/null | head -n 200',
+        ),
+      ).toBe(true);
+      expect(isReadOnlyShellCommand("git status 2>/dev/null")).toBe(true);
+      expect(isReadOnlyShellCommand("ls >/dev/null")).toBe(true);
+      expect(isReadOnlyShellCommand("cat file.txt 1>/dev/null")).toBe(true);
+      expect(isReadOnlyShellCommand("ls 2>>/dev/null")).toBe(true);
+      expect(isReadOnlyShellCommand("ls 2> /dev/null")).toBe(true);
+    });
+
+    test("allows fd duplication redirects", () => {
+      expect(isReadOnlyShellCommand("ls 2>&1")).toBe(true);
+      expect(isReadOnlyShellCommand("ls 2>&1 | grep error")).toBe(true);
+      expect(isReadOnlyShellCommand("git status 2>&1")).toBe(true);
     });
 
     test("blocks command chaining", () => {

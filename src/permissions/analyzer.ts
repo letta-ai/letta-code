@@ -629,7 +629,21 @@ function analyzeBashApproval(
       "log",
       "show",
       "branch",
+      "tag",
       "remote",
+      "rev-parse",
+      "ls-files",
+      "ls-tree",
+      "cat-file",
+      "describe",
+      "blame",
+      "shortlog",
+      "name-rev",
+      "rev-list",
+      "for-each-ref",
+      "count-objects",
+      "verify-commit",
+      "verify-tag",
     ];
     if (gitSubcommand && safeGitCommands.includes(gitSubcommand)) {
       return {
@@ -757,7 +771,21 @@ function analyzeBashApproval(
           "log",
           "show",
           "branch",
+          "tag",
           "remote",
+          "rev-parse",
+          "ls-files",
+          "ls-tree",
+          "cat-file",
+          "describe",
+          "blame",
+          "shortlog",
+          "name-rev",
+          "rev-list",
+          "for-each-ref",
+          "count-objects",
+          "verify-commit",
+          "verify-tag",
         ];
         const writeGitCommands = ["push", "pull", "fetch", "commit", "add"];
 
