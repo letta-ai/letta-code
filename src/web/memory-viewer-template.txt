@@ -454,6 +454,10 @@ a:hover { text-decoration: underline; }
   color: var(--text-dim);
   white-space: nowrap;
 }
+.history-search-note {
+  width: 100%;
+  margin-top: -4px;
+}
 .commit-list { list-style: none; }
 .commit-item {
   border: 1px solid var(--border);
@@ -931,11 +935,13 @@ html.dark .warning-badge { background: hsl(42, 30%, 18%); color: hsl(42, 80%, 70
         <div class="history-search-group">
           <input id="history-search" class="history-search-input" type="search" placeholder="Search commit history" aria-label="Search commit history">
           <select id="history-search-mode" class="history-search-select" aria-label="History search mode">
+            <option value="content">Content</option>
             <option value="message">Message</option>
             <option value="committer">Committer</option>
           </select>
         </div>
         <div id="history-search-status" class="history-search-status"></div>
+        <div id="history-search-coverage" class="note history-search-note" style="display:none"></div>
       </div>
       <div id="history-cap" class="note" style="display:none"></div>
       <ul class="commit-list" id="commit-list"></ul>
@@ -1484,8 +1490,9 @@ html.dark .warning-badge { background: hsl(42, 30%, 18%); color: hsl(42, 80%, 70
   var historySearch = document.getElementById('history-search');
   var historySearchMode = document.getElementById('history-search-mode');
   var historySearchStatus = document.getElementById('history-search-status');
+  var historySearchCoverage = document.getElementById('history-search-coverage');
   var historyQuery = '';
-  var historyMode = 'message';
+  var historyMode = 'content';
   var filteredCommits = commits.slice();
   var visible = 0;
   var STEP = 50;
@@ -1660,13 +1667,51 @@ html.dark .warning-badge { background: hsl(42, 30%, 18%); color: hsl(42, 80%, 70
     return commit.shortHash === hash || commit.hash === hash;
   }
 
+  function getHistoryModeLabel() {
+    if (historyMode === 'committer') return 'committer';
+    if (historyMode === 'content') return 'content';
+    return 'message';
+  }
+
   function getHistoryMatchText(commit) {
     if (historyMode === 'committer') {
       return String(commit.author || '');
     }
+    if (historyMode === 'content') {
+      var parts = [];
+      if (commit.stats) parts.push(String(commit.stats));
+      if (commit.diff) parts.push(String(commit.diff));
+      return parts.join('\n');
+    }
     return String(commit.message || '');
   }
 
+  function updateHistorySearchCoverage() {
+    if (!historySearchCoverage) return;
+    if (!commits.length || historyMode !== 'content') {
+      historySearchCoverage.style.display = 'none';
+      historySearchCoverage.textContent = '';
+      return;
+    }
+
+    var diffLoadedCount = 0;
+    var truncatedCount = 0;
+    for (var i = 0; i < commits.length; i++) {
+      if (commits[i].diff) diffLoadedCount++;
+      if (commits[i].truncated) truncatedCount++;
+    }
+
+    var statsOnlyCount = commits.length - diffLoadedCount;
+    var message = 'Content search scans diff text for ' + diffLoadedCount + ' recent commits';
+    if (statsOnlyCount > 0) {
+      message += ' and stats/file paths for ' + statsOnlyCount + ' older or capped commits';
+    }
+    if (truncatedCount > 0) {
+      message += '. Some loaded diffs are partial';
+    }
+    historySearchCoverage.textContent = message + '.';
+    historySearchCoverage.style.display = '';
+  }
   function applyHistoryFilter() {
     if (!historyQuery) {
       filteredCommits = commits.slice();
@@ -1697,8 +1742,7 @@ html.dark .warning-badge { background: hsl(42, 30%, 18%); color: hsl(42, 80%, 70
       return true;
     }
     if (filteredCommits.length === 0) {
-      var label = historyMode === 'committer' ? 'committer' : 'message';
-      historyEmpty.textContent = 'No commits matched this ' + label + ' search';
+      historyEmpty.textContent = 'No commits matched this ' + getHistoryModeLabel() + ' search';
       historyEmpty.style.display = '';
       return true;
     }
@@ -1772,6 +1816,7 @@ html.dark .warning-badge { background: hsl(42, 30%, 18%); color: hsl(42, 80%, 70
     visible = 0;
     commitList.innerHTML = '';
     updateHistorySearchStatus();
+    updateHistorySearchCoverage();
     if (updateHistoryEmptyState()) {
       showMore.style.display = 'none';
       return;
@@ -1781,7 +1826,11 @@ html.dark .warning-badge { background: hsl(42, 30%, 18%); color: hsl(42, 80%, 70
 
   function syncHistoryFilterFromControls() {
     historyQuery = String(historySearch.value || '').trim().toLowerCase();
-    historyMode = historySearchMode.value === 'committer' ? 'committer' : 'message';
+    historyMode = historySearchMode.value === 'committer'
+      ? 'committer'
+      : historySearchMode.value === 'content'
+        ? 'content'
+        : 'message';
     applyHistoryFilter();
     rerenderHistory();
   }
