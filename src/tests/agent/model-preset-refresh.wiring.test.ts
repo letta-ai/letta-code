@@ -149,6 +149,28 @@ describe("model preset refresh wiring", () => {
     );
   });
 
+  test("App derives effective context window from active conversation override", () => {
+    const path = fileURLToPath(new URL("../../cli/App.tsx", import.meta.url));
+    const source = readFileSync(path, "utf-8");
+
+    expect(source).toContain("conversationOverrideContextWindowLimit");
+    expect(source).toContain("setConversationOverrideContextWindowLimit(");
+    expect(source).toContain(
+      "const modelPresetContextWindow = useMemo(() => {",
+    );
+    expect(source).toContain("const effectiveContextWindowSize =");
+    expect(source).toMatch(
+      /\?\s*\(?conversationOverrideContextWindowLimit\s*\?\?\s*modelPresetContextWindow\)?/,
+    );
+    expect(source).toContain("contextWindowSize: effectiveContextWindowSize");
+    expect(source).toContain(
+      "const contextWindow = effectiveContextWindowSize ?? 0;",
+    );
+    expect(source).not.toMatch(
+      /setConversationOverrideContextWindowLimit\(\(prev\)\s*=>\s*conversationContextWindowLimit === undefined\s*\?\s*prev/s,
+    );
+  });
+
   test("new conversation flows reapply active conversation model before switching", () => {
     const path = fileURLToPath(new URL("../../cli/App.tsx", import.meta.url));
     const source = readFileSync(path, "utf-8");
