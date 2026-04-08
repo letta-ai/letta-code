@@ -31,7 +31,9 @@ import type {
   TerminalKillCommand,
   TerminalResizeCommand,
   TerminalSpawnCommand,
+  UnwatchFileCommand,
   UpdateModelCommand,
+  WatchFileCommand,
   WriteFileCommand,
   WsProtocolCommand,
 } from "../../types/protocol_v2";
@@ -306,6 +308,28 @@ export function isWriteFileCommand(value: unknown): value is WriteFileCommand {
     c.type === "write_file" &&
     typeof c.path === "string" &&
     typeof c.content === "string" &&
+    typeof c.request_id === "string"
+  );
+}
+
+export function isWatchFileCommand(value: unknown): value is WatchFileCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as { type?: unknown; path?: unknown; request_id?: unknown };
+  return (
+    c.type === "watch_file" &&
+    typeof c.path === "string" &&
+    typeof c.request_id === "string"
+  );
+}
+
+export function isUnwatchFileCommand(
+  value: unknown,
+): value is UnwatchFileCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as { type?: unknown; path?: unknown; request_id?: unknown };
+  return (
+    c.type === "unwatch_file" &&
+    typeof c.path === "string" &&
     typeof c.request_id === "string"
   );
 }
@@ -731,6 +755,8 @@ export function parseServerMessage(
       isListInDirectoryCommand(parsed) ||
       isReadFileCommand(parsed) ||
       isWriteFileCommand(parsed) ||
+      isWatchFileCommand(parsed) ||
+      isUnwatchFileCommand(parsed) ||
       isEditFileCommand(parsed) ||
       isListMemoryCommand(parsed) ||
       isMemoryHistoryCommand(parsed) ||

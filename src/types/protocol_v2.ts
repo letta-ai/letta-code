@@ -515,6 +515,20 @@ export interface WriteFileCommand {
   request_id: string;
 }
 
+export interface WatchFileCommand {
+  type: "watch_file";
+  /** Absolute path to the file to watch for external changes. */
+  path: string;
+  request_id: string;
+}
+
+export interface UnwatchFileCommand {
+  type: "unwatch_file";
+  /** Absolute path to the file to stop watching. */
+  path: string;
+  request_id: string;
+}
+
 export interface EditFileCommand {
   type: "edit_file";
   /** Absolute path to the file to edit. */
@@ -882,6 +896,8 @@ export type WsProtocolCommand =
   | ListInDirectoryCommand
   | ReadFileCommand
   | WriteFileCommand
+  | WatchFileCommand
+  | UnwatchFileCommand
   | EditFileCommand
   | ListMemoryCommand
   | MemoryHistoryCommand
