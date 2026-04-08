@@ -88,10 +88,6 @@ export function setSystemPromptDoctorState(
     updated_at_ms: Date.now(),
   };
   systemPromptDoctorStateByAgent.set(agentId, nextState);
-  console.log(
-    "setSystemPromptDoctorState: ",
-    JSON.stringify({ agentId, nextState }),
-  );
   return nextState;
 }
 
