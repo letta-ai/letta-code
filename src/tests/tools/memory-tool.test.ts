@@ -85,7 +85,7 @@ describe("memory tool", () => {
     await expect(
       memory({
         command: "create",
-        path: "system/test.md",
+        file_path: "system/test.md",
         description: "test desc",
       } as Parameters<typeof memory>[0]),
     ).rejects.toThrow(/missing required parameter/i);
@@ -97,7 +97,7 @@ describe("memory tool", () => {
     await memory({
       command: "create",
       reason,
-      path: "system/human/prefs/coding.md",
+      file_path: "system/human/prefs/coding.md",
       description: "The user's coding preferences.",
       file_text: "The user likes explicit types.",
     });
@@ -125,7 +125,7 @@ describe("memory tool", () => {
     await memory({
       command: "create",
       reason: "Seed notes",
-      path: "reference/history/notes.md",
+      file_path: "reference/history/notes.md",
       description: "Notes block",
       file_text: "old value",
     });
@@ -143,7 +143,7 @@ describe("memory tool", () => {
       memory({
         command: "str_replace",
         reason,
-        path: "reference/history/notes.md",
+        file_path: "reference/history/notes.md",
         old_string: "old value",
         new_string: "new value",
       }),
@@ -165,7 +165,7 @@ describe("memory tool", () => {
     await memory({
       command: "create",
       reason,
-      path: "system/human/identity.md",
+      file_path: "system/human/identity.md",
       description: "Identity block",
       file_text: "Name: Bob",
     });
@@ -184,7 +184,7 @@ describe("memory tool", () => {
     await memory({
       command: "create",
       reason,
-      path: "system/contacts.md",
+      file_path: "system/contacts.md",
       description: "Contacts memory",
       file_text: "Sarah: +1-555-0100",
     });
@@ -203,7 +203,7 @@ describe("memory tool", () => {
     await memory({
       command: "create",
       reason: "Create contacts via absolute path",
-      path: absolutePath,
+      file_path: absolutePath,
       description: "Contacts memory absolute",
       file_text: "Timber: good dog",
     });
@@ -220,7 +220,7 @@ describe("memory tool", () => {
     await memory({
       command: "create",
       reason: "Create coding prefs",
-      path: "system/human/prefs/coding.md",
+      file_path: "system/human/prefs/coding.md",
       description: "Old description",
       file_text: "keep body unchanged",
     });
@@ -228,7 +228,7 @@ describe("memory tool", () => {
     await memory({
       command: "update_description",
       reason: "Update coding prefs description",
-      path: "system/human/prefs/coding.md",
+      file_path: "system/human/prefs/coding.md",
       description: "New description",
     });
 
@@ -245,7 +245,7 @@ describe("memory tool", () => {
       memory({
         command: "rename",
         reason: "should fail",
-        path: "system/contacts.md",
+        file_path: "system/contacts.md",
         description: "Should not update description via rename",
       } as Parameters<typeof memory>[0]),
     ).rejects.toThrow(/memory rename: 'old_path' must be a non-empty string/i);
@@ -255,7 +255,7 @@ describe("memory tool", () => {
     await memory({
       command: "create",
       reason: "Create draft note one",
-      path: "reference/history/draft-one.md",
+      file_path: "reference/history/draft-one.md",
       description: "Draft one",
       file_text: "one",
     });
@@ -263,7 +263,7 @@ describe("memory tool", () => {
     await memory({
       command: "create",
       reason: "Create draft note two",
-      path: "reference/history/draft-two.md",
+      file_path: "reference/history/draft-two.md",
       description: "Draft two",
       file_text: "two",
     });
@@ -271,7 +271,7 @@ describe("memory tool", () => {
     await memory({
       command: "delete",
       reason: "Delete history directory",
-      path: "reference/history",
+      file_path: "reference/history",
     });
 
     const fileTree = await runGit(memoryDir, [
@@ -289,7 +289,7 @@ describe("memory tool", () => {
       memory({
         command: "create",
         reason: "should fail",
-        path: "/memories/contacts",
+        file_path: "/memories/contacts",
         description: "Contacts memory",
       }),
     ).rejects.toThrow(

@@ -30,7 +30,7 @@ type MemoryCommand =
 interface MemoryArgs {
   command: MemoryCommand;
   reason: string;
-  path?: string;
+  file_path?: string;
   old_path?: string;
   new_path?: string;
   old_string?: string;
@@ -106,13 +106,13 @@ export async function memory(args: MemoryArgs): Promise<MemoryResult> {
   const command = args.command;
 
   if (command === "create") {
-    const pathArg = requireString(args.path, "path", "create");
+    const pathArg = requireString(args.file_path, "file_path", "create");
     const description = requireString(
       args.description,
       "description",
       "create",
     );
-    const label = normalizeMemoryLabel(memoryDir, pathArg, "path");
+    const label = normalizeMemoryLabel(memoryDir, pathArg, "file_path");
     const filePath = resolveMemoryFilePath(memoryDir, label);
     const relPath = toRepoRelative(memoryDir, filePath);
 
@@ -132,7 +132,7 @@ export async function memory(args: MemoryArgs): Promise<MemoryResult> {
     await writeFile(filePath, rendered, "utf8");
     affectedPaths = [relPath];
   } else if (command === "str_replace") {
-    const pathArg = requireString(args.path, "path", "str_replace");
+    const pathArg = requireString(args.file_path, "file_path", "str_replace");
     const oldString = requireString(
       args.old_string,
       "old_string",
@@ -144,7 +144,7 @@ export async function memory(args: MemoryArgs): Promise<MemoryResult> {
       "str_replace",
     );
 
-    const label = normalizeMemoryLabel(memoryDir, pathArg, "path");
+    const label = normalizeMemoryLabel(memoryDir, pathArg, "file_path");
     const filePath = resolveMemoryFilePath(memoryDir, label);
     const relPath = toRepoRelative(memoryDir, filePath);
     const file = await loadEditableMemoryFile(filePath, pathArg);
@@ -161,7 +161,7 @@ export async function memory(args: MemoryArgs): Promise<MemoryResult> {
     await writeFile(filePath, rendered, "utf8");
     affectedPaths = [relPath];
   } else if (command === "insert") {
-    const pathArg = requireString(args.path, "path", "insert");
+    const pathArg = requireString(args.file_path, "file_path", "insert");
     const insertText = requireString(args.insert_text, "insert_text", "insert");
 
     if (
@@ -171,7 +171,7 @@ export async function memory(args: MemoryArgs): Promise<MemoryResult> {
       throw new Error("memory insert: 'insert_line' must be a number");
     }
 
-    const label = normalizeMemoryLabel(memoryDir, pathArg, "path");
+    const label = normalizeMemoryLabel(memoryDir, pathArg, "file_path");
     const filePath = resolveMemoryFilePath(memoryDir, label);
     const relPath = toRepoRelative(memoryDir, filePath);
     const file = await loadEditableMemoryFile(filePath, pathArg);
@@ -191,8 +191,8 @@ export async function memory(args: MemoryArgs): Promise<MemoryResult> {
     await writeFile(filePath, rendered, "utf8");
     affectedPaths = [relPath];
   } else if (command === "delete") {
-    const pathArg = requireString(args.path, "path", "delete");
-    const label = normalizeMemoryLabel(memoryDir, pathArg, "path");
+    const pathArg = requireString(args.file_path, "file_path", "delete");
+    const label = normalizeMemoryLabel(memoryDir, pathArg, "file_path");
     const targetPath = resolveMemoryPath(memoryDir, label);
 
     if (existsSync(targetPath) && (await stat(targetPath)).isDirectory()) {
@@ -231,14 +231,18 @@ export async function memory(args: MemoryArgs): Promise<MemoryResult> {
     await rename(oldFilePath, newFilePath);
     affectedPaths = [oldRelPath, newRelPath];
   } else if (command === "update_description") {
-    const pathArg = requireString(args.path, "path", "update_description");
+    const pathArg = requireString(
+      args.file_path,
+      "file_path",
+      "update_description",
+    );
     const newDescription = requireString(
       args.description,
       "description",
       "update_description",
     );
 
-    const label = normalizeMemoryLabel(memoryDir, pathArg, "path");
+    const label = normalizeMemoryLabel(memoryDir, pathArg, "file_path");
     const filePath = resolveMemoryFilePath(memoryDir, label);
     const relPath = toRepoRelative(memoryDir, filePath);
     const file = await loadEditableMemoryFile(filePath, pathArg);

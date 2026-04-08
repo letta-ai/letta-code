@@ -18,7 +18,7 @@
       "type": "string",
       "description": "Required commit message for this memory change. Used as the git commit message."
     },
-    "path": {
+    "file_path": {
       "type": "string",
       "description": "Target memory path (file or directory). Accepts relative paths like system/contacts.md or absolute paths under MEMORY_DIR"
     },
