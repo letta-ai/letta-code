@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import { join } from "node:path";
 import type {
   Skill,
   SkillDiscoveryResult,
@@ -214,5 +217,165 @@ describe("buildClientSkillsPayload", () => {
         m.includes("Failed to build some client_skills entries"),
       ),
     ).toBe(true);
+  });
+
+  test("includes memfs skills in client_skills and lets memfs override global/bundled", async () => {
+    const { buildClientSkillsPayload } = await import(
+      "../../agent/clientSkills"
+    );
+
+    const originalMemoryDir = process.env.MEMORY_DIR;
+    const originalLettaMemoryDir = process.env.LETTA_MEMORY_DIR;
+    const tempRoot = await mkdtemp(join(os.tmpdir(), "letta-client-skills-"));
+
+    try {
+      const memoryDir = join(tempRoot, "memory");
+      const memorySkillDir = join(memoryDir, "skills", "shared-skill");
+      await mkdir(memorySkillDir, { recursive: true });
+      await writeFile(
+        join(memorySkillDir, "SKILL.md"),
+        [
+          "---",
+          "id: shared-skill",
+          "name: shared-skill",
+          "description: from memfs",
+          "---",
+          "",
+          "Memfs body",
+        ].join("\n"),
+      );
+
+      process.env.MEMORY_DIR = memoryDir;
+      delete process.env.LETTA_MEMORY_DIR;
+
+      const discoverSkillsFn = async (): Promise<SkillDiscoveryResult> => ({
+        skills: [
+          {
+            ...baseSkill,
+            id: "shared-skill",
+            description: "from global",
+            path: "/tmp/global/shared-skill/SKILL.md",
+            source: "global",
+          },
+        ],
+        errors: [],
+      });
+
+      const result = await buildClientSkillsPayload({
+        agentId: "agent-1",
+        skillsDirectory: "/tmp/.skills",
+        skillSources: ["global"],
+        discoverSkillsFn,
+      });
+
+      expect(result.clientSkills).toEqual([
+        {
+          name: "shared-skill",
+          description: "from memfs",
+          location: join(memorySkillDir, "SKILL.md"),
+        },
+      ]);
+      expect(result.skillPathById).toEqual({
+        "shared-skill": join(memorySkillDir, "SKILL.md"),
+      });
+    } finally {
+      if (originalMemoryDir === undefined) {
+        delete process.env.MEMORY_DIR;
+      } else {
+        process.env.MEMORY_DIR = originalMemoryDir;
+      }
+      if (originalLettaMemoryDir === undefined) {
+        delete process.env.LETTA_MEMORY_DIR;
+      } else {
+        process.env.LETTA_MEMORY_DIR = originalLettaMemoryDir;
+      }
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("does not let memfs skills override agent or project sources", async () => {
+    const { buildClientSkillsPayload } = await import(
+      "../../agent/clientSkills"
+    );
+
+    const originalMemoryDir = process.env.MEMORY_DIR;
+    const originalLettaMemoryDir = process.env.LETTA_MEMORY_DIR;
+    const tempRoot = await mkdtemp(join(os.tmpdir(), "letta-client-skills-"));
+
+    try {
+      const memoryDir = join(tempRoot, "memory");
+      const memorySkillDir = join(memoryDir, "skills", "shared-skill");
+      await mkdir(memorySkillDir, { recursive: true });
+      await writeFile(
+        join(memorySkillDir, "SKILL.md"),
+        [
+          "---",
+          "id: shared-skill",
+          "name: shared-skill",
+          "description: from memfs",
+          "---",
+          "",
+          "Memfs body",
+        ].join("\n"),
+      );
+
+      process.env.MEMORY_DIR = memoryDir;
+      delete process.env.LETTA_MEMORY_DIR;
+
+      const discoverSkillsFn = async (): Promise<SkillDiscoveryResult> => ({
+        skills: [
+          {
+            ...baseSkill,
+            id: "shared-skill",
+            description: "from agent",
+            path: "/tmp/agent/shared-skill/SKILL.md",
+            source: "agent",
+          },
+          {
+            ...baseSkill,
+            id: "project-wins",
+            description: "from project",
+            path: "/tmp/project/project-wins/SKILL.md",
+            source: "project",
+          },
+        ],
+        errors: [],
+      });
+
+      const result = await buildClientSkillsPayload({
+        agentId: "agent-1",
+        skillsDirectory: "/tmp/.skills",
+        skillSources: ["agent", "project"],
+        discoverSkillsFn,
+      });
+
+      expect(result.clientSkills).toContainEqual({
+        name: "shared-skill",
+        description: "from agent",
+        location: "/tmp/agent/shared-skill/SKILL.md",
+      });
+      expect(result.clientSkills).toContainEqual({
+        name: "project-wins",
+        description: "from project",
+        location: "/tmp/project/project-wins/SKILL.md",
+      });
+      expect(result.clientSkills).not.toContainEqual({
+        name: "shared-skill",
+        description: "from memfs",
+        location: join(memorySkillDir, "SKILL.md"),
+      });
+    } finally {
+      if (originalMemoryDir === undefined) {
+        delete process.env.MEMORY_DIR;
+      } else {
+        process.env.MEMORY_DIR = originalMemoryDir;
+      }
+      if (originalLettaMemoryDir === undefined) {
+        delete process.env.LETTA_MEMORY_DIR;
+      } else {
+        process.env.LETTA_MEMORY_DIR = originalLettaMemoryDir;
+      }
+      await rm(tempRoot, { recursive: true, force: true });
+    }
   });
 });
