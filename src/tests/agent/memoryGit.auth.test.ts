@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import {
+  formatGitCredentialHelperPath,
   getGitRemoteUrl,
   isMemfsRemoteUrlForAgent,
   normalizeCredentialBaseUrl,
@@ -70,6 +71,18 @@ describe("normalizeCredentialBaseUrl", () => {
   test("falls back to trimmed value when URL parsing fails", () => {
     expect(normalizeCredentialBaseUrl("not-a-valid-url///")).toBe(
       "not-a-valid-url",
+    );
+  });
+});
+
+describe("formatGitCredentialHelperPath", () => {
+  test("normalizes slashes and escapes whitespace for helper command parsing", () => {
+    expect(
+      formatGitCredentialHelperPath(
+        String.raw`C:\Users\Jane Doe\.letta\agents\agent-1\memory\.git\letta-credential-helper.cmd`,
+      ),
+    ).toBe(
+      "C:/Users/Jane\\ Doe/.letta/agents/agent-1/memory/.git/letta-credential-helper.cmd",
     );
   });
 });
