@@ -1310,6 +1310,45 @@ function flattenToolResponse(result: unknown): ToolReturnContent {
   return JSON.stringify(result);
 }
 
+function estimateToolResponseSize(response: ToolReturnContent): number {
+  if (typeof response === "string") {
+    return response.length;
+  }
+
+  let total = 0;
+  for (const block of response) {
+    if (block.type === "text") {
+      total += block.text.length;
+      continue;
+    }
+
+    if (block.type === "image") {
+      const { source } = block;
+      if ("url" in source && typeof source.url === "string") {
+        total += source.url.length;
+      }
+      if ("data" in source && typeof source.data === "string") {
+        total += source.data.length;
+      }
+      if ("file_id" in source && typeof source.file_id === "string") {
+        total += source.file_id.length;
+      }
+      if ("media_type" in source && typeof source.media_type === "string") {
+        total += source.media_type.length;
+      }
+      if ("detail" in source && typeof source.detail === "string") {
+        total += source.detail.length;
+      }
+    }
+  }
+
+  return total;
+}
+
+export const __toolTelemetryTestUtils = {
+  estimateToolResponseSize,
+};
+
 /**
  * Executes a tool by name with the provided arguments.
  *
@@ -1491,10 +1530,7 @@ export async function executeTool(
     }
 
     // Track tool usage (calculate size for multimodal content)
-    const responseSize =
-      typeof flattenedResponse === "string"
-        ? flattenedResponse.length
-        : JSON.stringify(flattenedResponse).length;
+    const responseSize = estimateToolResponseSize(flattenedResponse);
     telemetry.trackToolUsage(
       internalName,
       toolStatus === "success",
