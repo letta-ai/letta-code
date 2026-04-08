@@ -209,9 +209,7 @@ export async function createAgent(
       console.error(`Error: Unknown model "${options.model}"`);
       console.error("Available models:");
       console.error(availableModels);
-      throw new Error(
-        `Unknown model "${options.model}". Available models:\n${availableModels}`,
-      );
+      throw new Error(`Unknown model "${options.model}".`);
     }
     modelHandle = resolved;
   } else {
