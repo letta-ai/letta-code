@@ -4,27 +4,12 @@ import type {
   ImageContent,
   TextContent,
 } from "@letta-ai/letta-client/resources/agents/messages";
-import { LETTA_CLOUD_API_URL } from "../../auth/oauth.js";
 import { resizeImageIfNeeded } from "../../cli/helpers/imageResize.js";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "../../constants";
-import { settingsManager } from "../../settings-manager.js";
 import { debugLog } from "../../utils/debug.js";
 import { OVERFLOW_CONFIG, writeOverflowFile } from "./overflow.js";
 import { LIMITS } from "./truncation.js";
 import { validateRequiredParams } from "./validation.js";
-
-/**
- * Check if the server supports images in tool responses.
- * Currently only api.letta.com supports this feature.
- */
-function serverSupportsImageToolReturns(): boolean {
-  const settings = settingsManager.getSettings();
-  const baseURL =
-    process.env.LETTA_BASE_URL ||
-    settings.env?.LETTA_BASE_URL ||
-    LETTA_CLOUD_API_URL;
-  return baseURL === LETTA_CLOUD_API_URL;
-}
 
 interface ReadArgs {
   file_path: string;
@@ -222,13 +207,6 @@ export async function read(args: ReadArgs): Promise<ReadResult> {
 
     // Check if this is an image file
     if (isImageFile(resolvedPath)) {
-      // Check if server supports images in tool responses
-      if (!serverSupportsImageToolReturns()) {
-        throw new Error(
-          `This server does not support images in tool responses.`,
-        );
-      }
-
       // Images have a higher size limit (20MB raw, will be resized if needed)
       const maxImageSize = 20 * 1024 * 1024;
       if (stats.size > maxImageSize) {

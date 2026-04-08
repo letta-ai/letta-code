@@ -129,4 +129,42 @@ export default box;
     expect(result.content).toContain(SYSTEM_REMINDER_OPEN);
     expect(result.content).toContain("empty contents");
   });
+
+  test("reads images when LETTA_BASE_URL points to a local proxy", async () => {
+    testDir = new TestDirectory();
+    const originalBaseUrl = process.env.LETTA_BASE_URL;
+    process.env.LETTA_BASE_URL = "http://localhost:58064";
+
+    try {
+      const pngBuffer = Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/5XQAAAAASUVORK5CYII=",
+        "base64",
+      );
+      const imagePath = testDir.createBinaryFile("pixel.png", pngBuffer);
+
+      const result = await read({ file_path: imagePath });
+
+      expect(Array.isArray(result.content)).toBe(true);
+      if (!Array.isArray(result.content)) {
+        throw new Error("Expected image read to return multimodal content");
+      }
+
+      expect(result.content[0]).toMatchObject({ type: "text" });
+      expect(result.content[1]).toMatchObject({ type: "image" });
+      const imagePart = result.content[1];
+      if (!imagePart || imagePart.type !== "image") {
+        throw new Error("Expected second content part to be an image");
+      }
+      if (imagePart.source.type !== "base64") {
+        throw new Error("Expected image content source to be base64");
+      }
+      expect(imagePart.source.media_type).toBe("image/png");
+    } finally {
+      if (originalBaseUrl === undefined) {
+        delete process.env.LETTA_BASE_URL;
+      } else {
+        process.env.LETTA_BASE_URL = originalBaseUrl;
+      }
+    }
+  });
 });
