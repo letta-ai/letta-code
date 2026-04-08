@@ -77,6 +77,7 @@ class TelemetryManager {
   private sessionEndTracked = false;
   private initialized = false;
   private flushInterval: NodeJS.Timeout | null = null;
+  private flushInFlight: Promise<void> | null = null;
   private serverVersion: string | null = null;
 
   private async resolveTelemetryApiKey(): Promise<string | undefined> {
@@ -499,48 +500,69 @@ class TelemetryManager {
    * Flush events to the server
    */
   async flush(): Promise<void> {
-    if (this.events.length === 0 || !this.isTelemetryEnabled()) {
+    if (!this.isTelemetryEnabled()) {
       return;
     }
 
-    const eventsToSend = [...this.events];
-    this.events = [];
+    if (this.flushInFlight) {
+      await this.flushInFlight;
+      if (this.events.length === 0) {
+        return;
+      }
+    }
 
-    const apiKey = await this.resolveTelemetryApiKey();
+    this.flushInFlight = (async () => {
+      while (this.events.length > 0 && this.isTelemetryEnabled()) {
+        const eventsToSend = [...this.events];
+        this.events = [];
+
+        const apiKey = await this.resolveTelemetryApiKey();
+
+        try {
+          // Add 5 second timeout to prevent telemetry from blocking shutdown
+          const timeoutPromise = new Promise((_, reject) =>
+            setTimeout(
+              () => reject(new Error("Telemetry request timeout")),
+              5000,
+            ),
+          );
+
+          const fetchPromise = fetch(
+            "https://api.letta.com/v1/metadata/telemetry",
+            {
+              method: "POST",
+              headers: {
+                ...getLettaCodeHeaders(apiKey),
+                "X-Letta-Code-Device-ID": this.deviceId || "",
+              },
+              body: JSON.stringify({
+                service: "letta-code",
+                server_version: this.serverVersion || undefined,
+                events: eventsToSend,
+              }),
+            },
+          );
+
+          const response = (await Promise.race([
+            fetchPromise,
+            timeoutPromise,
+          ])) as Response;
+
+          if (!response.ok) {
+            throw new Error(`Telemetry flush failed: ${response.status}`);
+          }
+        } catch {
+          // If flush fails, put events back in queue, but don't throw error
+          this.events.unshift(...eventsToSend);
+          break;
+        }
+      }
+    })();
 
     try {
-      // Add 5 second timeout to prevent telemetry from blocking shutdown
-      const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error("Telemetry request timeout")), 5000),
-      );
-
-      const fetchPromise = fetch(
-        "https://api.letta.com/v1/metadata/telemetry",
-        {
-          method: "POST",
-          headers: {
-            ...getLettaCodeHeaders(apiKey),
-            "X-Letta-Code-Device-ID": this.deviceId || "",
-          },
-          body: JSON.stringify({
-            service: "letta-code",
-            server_version: this.serverVersion || undefined,
-            events: eventsToSend,
-          }),
-        },
-      );
-
-      const response = (await Promise.race([
-        fetchPromise,
-        timeoutPromise,
-      ])) as Response;
-
-      if (!response.ok) {
-        throw new Error(`Telemetry flush failed: ${response.status}`);
-      }
-    } catch {
-      // If flush fails, put events back in queue, but don't throw error
-      this.events.unshift(...eventsToSend);
+      await this.flushInFlight;
+    } finally {
+      this.flushInFlight = null;
     }
   }
 

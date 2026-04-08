@@ -4,6 +4,7 @@ import { telemetry } from "../../telemetry";
 
 type TelemetryTestState = {
   events: unknown[];
+  flushInFlight: Promise<void> | null;
   messageCount: number;
   currentAgentId: string | null;
   surface: "tui" | "headless" | "websocket";
@@ -20,6 +21,7 @@ describe("telemetry flush auth", () => {
   beforeEach(() => {
     telemetry.cleanup();
     telemetryState.events = [];
+    telemetryState.flushInFlight = null;
     telemetryState.messageCount = 0;
     telemetryState.currentAgentId = null;
     telemetryState.surface = "tui";
@@ -78,6 +80,39 @@ describe("telemetry flush auth", () => {
 
     telemetry.trackUserInput("hello", "user", "model-1");
     await telemetry.flush();
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("concurrent flush calls share one in-flight request", async () => {
+    let resolveFetch!: () => void;
+    const fetchStarted = new Promise<void>((resolve) => {
+      resolveFetch = resolve;
+    });
+
+    const fetchMock = mock(async () => {
+      await fetchStarted;
+      return new Response(null, { status: 200 });
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    settingsManager.getSettingsWithSecureTokens = mock(async () => ({
+      env: {
+        LETTA_API_KEY: "settings-key",
+      },
+    })) as unknown as typeof settingsManager.getSettingsWithSecureTokens;
+
+    telemetry.trackUserInput("hello", "user", "model-1");
+
+    const flushA = telemetry.flush();
+    const flushB = telemetry.flush();
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    resolveFetch();
+    await Promise.all([flushA, flushB]);
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });

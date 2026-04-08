@@ -40,6 +40,19 @@ export type ApprovalRequest = {
   toolArgs: string;
 };
 
+type MidStreamResumeSource = "stream_chunk" | "discovery" | "otid" | null;
+
+type FinalStreamTelemetryParams = {
+  stopReason: StopReasonType;
+  fallbackError?: string | null;
+  lastRunId?: string | null;
+  resumeAttempted: boolean;
+  resumeSource: MidStreamResumeSource;
+  resumeErrorMessage?: string | null;
+  lookupErrorMessage?: string | null;
+  skipReasons?: string[];
+};
+
 export type DrainStreamHookContext = {
   chunk: LettaStreamingResponse;
   shouldOutput: boolean;
@@ -90,6 +103,105 @@ type RunsListClient = {
 };
 
 const FALLBACK_RUN_DISCOVERY_TIMEOUT_MS = 5000;
+
+function shouldAttemptMidStreamResume(params: {
+  stopReason: StopReasonType;
+  fallbackError?: string | null;
+  runIdToResume?: string | null;
+  runIdSource: MidStreamResumeSource;
+  abortSignal?: AbortSignal;
+}): boolean {
+  const { stopReason, fallbackError, runIdToResume, runIdSource, abortSignal } =
+    params;
+
+  const isApprovalPendingConflict =
+    fallbackError?.includes("waiting for approval on a tool call") ?? false;
+
+  return (
+    stopReason === "error" &&
+    !isApprovalPendingConflict &&
+    (Boolean(runIdToResume) || runIdSource === "otid") &&
+    !abortSignal?.aborted
+  );
+}
+
+function getMidStreamResumeSkipReasons(params: {
+  stopReason: StopReasonType;
+  runIdToResume?: string | null;
+  runIdSource: MidStreamResumeSource;
+  abortSignal?: AbortSignal;
+  lookupErrorMessage?: string | null;
+  fallbackError?: string | null;
+}): string[] {
+  const reasons: string[] = [];
+  const {
+    stopReason,
+    runIdToResume,
+    runIdSource,
+    abortSignal,
+    lookupErrorMessage,
+    fallbackError,
+  } = params;
+
+  if (stopReason !== "error") {
+    return reasons;
+  }
+
+  const isApprovalPendingConflict =
+    fallbackError?.includes("waiting for approval on a tool call") ?? false;
+  if (isApprovalPendingConflict) {
+    reasons.push("approval_pending_conflict");
+  }
+  if (!runIdToResume && runIdSource !== "otid") {
+    reasons.push("no_run_id");
+  }
+  if (abortSignal?.aborted) {
+    reasons.push("user_aborted");
+  }
+  if (lookupErrorMessage) {
+    reasons.push(`lookup_failed: ${lookupErrorMessage}`);
+  }
+
+  return reasons;
+}
+
+function buildFinalStreamTelemetry(params: FinalStreamTelemetryParams): {
+  errorType: string;
+  errorMessage: string;
+  context: string;
+  runId?: string;
+} | null {
+  if (params.stopReason !== "error") {
+    return null;
+  }
+
+  const messageParts = [
+    params.fallbackError || "Stream error (no client-side detail)",
+  ];
+
+  if (params.resumeAttempted) {
+    if (params.resumeErrorMessage) {
+      messageParts.push(`[resume failed: ${params.resumeErrorMessage}]`);
+    } else if (params.resumeSource) {
+      messageParts.push(`[resume attempted via ${params.resumeSource}]`);
+    }
+  } else if ((params.skipReasons?.length ?? 0) > 0) {
+    messageParts.push(`[resume skipped: ${params.skipReasons?.join(", ")}]`);
+  }
+
+  return {
+    errorType: "stream_drain_error",
+    errorMessage: messageParts.join(" "),
+    context: "stream_drain",
+    ...(params.lastRunId ? { runId: params.lastRunId } : {}),
+  };
+}
+
+export const __streamTelemetryTestUtils = {
+  buildFinalStreamTelemetry,
+  getMidStreamResumeSkipReasons,
+  shouldAttemptMidStreamResume,
+};
 
 function hasPaginatedItems(
   response: RunsListResponse,
@@ -387,15 +499,6 @@ export async function drainStream(
     // is still in-progress and has no error metadata yet.
     fallbackError = errorMessageWithDiagnostic;
 
-    telemetry.trackError(
-      "stream_drain_error",
-      errorMessageWithDiagnostic,
-      "stream_drain",
-      {
-        runId: streamProcessor.lastRunId || undefined,
-      },
-    );
-
     // Preserve a stop reason already parsed from stream chunks (e.g. llm_api_error)
     // and only fall back to generic "error" when none is available.
     stopReason = streamProcessor.stopReason || "error";
@@ -562,8 +665,12 @@ export async function drainStreamWithResume(
   );
 
   let runIdToResume = result.lastRunId ?? null;
-  let runIdSource: "stream_chunk" | "discovery" | "otid" | null =
-    result.lastRunId ? "stream_chunk" : null;
+  let runIdSource: MidStreamResumeSource = result.lastRunId
+    ? "stream_chunk"
+    : null;
+  let resumeAttempted = false;
+  let resumeErrorMessage: string | null = null;
+  let lookupErrorMessage: string | null = null;
 
   // If the stream failed before exposing run_id, attempt to find the right run.
   // Prefer OTID-based lookup via the conversations stream endpoint: it lets the
@@ -613,11 +720,7 @@ export async function drainStreamWithResume(
           lookupError instanceof Error
             ? lookupError.message
             : String(lookupError);
-        telemetry.trackError(
-          "stream_resume_lookup_failed",
-          lookupErrorMsg,
-          "stream_resume",
-        );
+        lookupErrorMessage = lookupErrorMsg;
         debugWarn(
           "drainStreamWithResume",
           "Fallback run_id lookup failed:",
@@ -634,15 +737,13 @@ export async function drainStreamWithResume(
   // recovery path handle them instead.
   // "waiting for approval on a tool call" = server in requires_approval state, not resumable
   // (distinct from "is currently being processed" = conversation-busy 409, which IS resumable)
-  const isApprovalPendingConflict =
-    result.fallbackError?.includes("waiting for approval on a tool call") ??
-    false;
-  const canResume =
-    result.stopReason === "error" &&
-    !isApprovalPendingConflict &&
-    (runIdToResume || runIdSource === "otid") &&
-    abortSignal &&
-    !abortSignal.aborted;
+  const canResume = shouldAttemptMidStreamResume({
+    stopReason: result.stopReason,
+    fallbackError: result.fallbackError,
+    runIdToResume,
+    runIdSource,
+    abortSignal,
+  });
 
   if (canResume) {
     // Resume path: markCurrentLineAsFinished was skipped in the catch block.
@@ -654,14 +755,7 @@ export async function drainStreamWithResume(
     const originalApproval = result.approval;
 
     // Log that we're attempting a stream resume
-    telemetry.trackError(
-      "stream_resume_attempt",
-      originalFallbackError || "Stream error (no client-side detail)",
-      "stream_resume",
-      {
-        runId: result.lastRunId ?? undefined,
-      },
-    );
+    resumeAttempted = true;
 
     debugWarn(
       "stream",
@@ -803,51 +897,38 @@ export async function drainStreamWithResume(
         resumeError instanceof Error
           ? resumeError.message
           : String(resumeError);
+      resumeErrorMessage = resumeErrorMsg;
       debugWarn(
         "stream",
         "[MID-STREAM RESUME] ❌ Failed (runId=%s): %s",
         runIdToResume,
         resumeErrorMsg,
       );
-      telemetry.trackError(
-        "stream_resume_failed",
-        resumeErrorMsg,
-        "stream_resume",
-        {
-          runId: result.lastRunId ?? undefined,
-        },
-      );
     }
   }
 
-  // Log when stream errored but resume was NOT attempted, with reasons why
-  if (result.stopReason === "error") {
-    const skipReasons: string[] = [];
-    if (!result.lastRunId && runIdSource !== "otid")
-      skipReasons.push("no_run_id");
-    if (!abortSignal) skipReasons.push("no_abort_signal");
-    if (abortSignal?.aborted) skipReasons.push("user_aborted");
+  // Log when stream errored but resume was NOT attempted, with reasons why.
+  // This remains a local debug diagnostic only; telemetry is emitted once below
+  // after the final outcome is known.
+  const skipReasons = getMidStreamResumeSkipReasons({
+    stopReason: result.stopReason,
+    runIdToResume: result.lastRunId,
+    runIdSource,
+    abortSignal,
+    lookupErrorMessage,
+    fallbackError: result.fallbackError,
+  });
 
-    // Only log if we actually skipped for a reason (i.e., we didn't enter the resume branch above)
-    if (skipReasons.length > 0) {
-      // No resume — cancel tools and finalize the streaming line now
-      // (both were skipped in the initial drain's catch block above)
-      markIncompleteToolsAsCancelled(buffers, false, "stream_error", true);
-      markCurrentLineAsFinished(buffers);
-      debugLog(
-        "stream",
-        "Mid-stream resume skipped: %s",
-        skipReasons.join(", "),
-      );
-      telemetry.trackError(
-        "stream_resume_skipped",
-        `${result.fallbackError || "Stream error (no client-side detail)"} [skip: ${skipReasons.join(", ")}]`,
-        "stream_resume",
-        {
-          runId: result.lastRunId ?? undefined,
-        },
-      );
-    }
+  if (
+    result.stopReason === "error" &&
+    !resumeAttempted &&
+    skipReasons.length > 0
+  ) {
+    // No resume — cancel tools and finalize the streaming line now
+    // (both were skipped in the initial drain's catch block above)
+    markIncompleteToolsAsCancelled(buffers, false, "stream_error", true);
+    markCurrentLineAsFinished(buffers);
+    debugLog("stream", "Mid-stream resume skipped: %s", skipReasons.join(", "));
   }
 
   // If the initial drain's catch block set buffers.interrupted=true (skipCancelToolsOnError)
@@ -864,6 +945,28 @@ export async function drainStreamWithResume(
 
   // Update duration to reflect total time (including resume attempt)
   result.apiDurationMs = performance.now() - overallStartTime;
+
+  const finalStreamTelemetry = buildFinalStreamTelemetry({
+    stopReason: result.stopReason,
+    fallbackError: result.fallbackError,
+    lastRunId: result.lastRunId,
+    resumeAttempted,
+    resumeSource: runIdSource,
+    resumeErrorMessage,
+    lookupErrorMessage,
+    skipReasons,
+  });
+
+  if (finalStreamTelemetry) {
+    telemetry.trackError(
+      finalStreamTelemetry.errorType,
+      finalStreamTelemetry.errorMessage,
+      finalStreamTelemetry.context,
+      {
+        runId: finalStreamTelemetry.runId,
+      },
+    );
+  }
 
   return result;
 }
