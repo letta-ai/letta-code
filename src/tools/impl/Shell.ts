@@ -16,7 +16,18 @@ interface ShellArgs {
   onOutput?: (chunk: string, stream: "stdout" | "stderr") => void;
 }
 
-interface ShellResult {
+export function resolveShellWorkdir(workdir?: string): string {
+  const defaultCwd = process.env.USER_CWD || process.cwd();
+  const requestedCwd = workdir
+    ? path.isAbsolute(workdir)
+      ? workdir
+      : path.resolve(defaultCwd, workdir)
+    : defaultCwd;
+
+  return isUsableDirectory(requestedCwd) ? requestedCwd : defaultCwd;
+}
+
+export interface ShellResult {
   output: string;
   stdout: string[];
   stderr: string[];
@@ -79,13 +90,7 @@ export async function shell(args: ShellArgs): Promise<ShellResult> {
   }
 
   const timeout = timeout_ms ?? DEFAULT_TIMEOUT;
-  const defaultCwd = process.env.USER_CWD || process.cwd();
-  const requestedCwd = workdir
-    ? path.isAbsolute(workdir)
-      ? workdir
-      : path.resolve(defaultCwd, workdir)
-    : defaultCwd;
-  const cwd = isUsableDirectory(requestedCwd) ? requestedCwd : defaultCwd;
+  const cwd = resolveShellWorkdir(workdir);
 
   const context: SpawnContext = {
     command,
