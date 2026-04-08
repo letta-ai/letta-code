@@ -1,8 +1,7 @@
 // src/cli/helpers/agentInfo.ts
-// Generates agent info system reminder (agent identity, server, memory dir)
+// Generates agent info system reminder (agent identity, memory dir)
 
 import { getMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
-import { LETTA_CLOUD_API_URL } from "../../auth/oauth";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "../../constants";
 import { settingsManager } from "../../settings-manager";
 
@@ -15,7 +14,6 @@ export interface AgentInfo {
 
 export interface AgentInfoOptions {
   agentInfo: AgentInfo;
-  serverUrl?: string;
   conversationId?: string;
 }
 
@@ -45,25 +43,12 @@ function getRelativeTime(dateStr: string): string {
 
 /**
  * Build the agent info system reminder.
- * Contains agent identity information (ID, name, description, memory dir, server).
+ * Contains agent identity information (ID, name, description, memory dir).
  * Returns empty string on any failure (graceful degradation).
  */
 export function buildAgentInfo(options: AgentInfoOptions): string {
   try {
-    const { agentInfo, serverUrl, conversationId } = options;
-
-    // Get server URL
-    let actualServerUrl = LETTA_CLOUD_API_URL;
-    try {
-      const settings = settingsManager.getSettings();
-      actualServerUrl =
-        serverUrl ||
-        process.env.LETTA_BASE_URL ||
-        settings.env?.LETTA_BASE_URL ||
-        LETTA_CLOUD_API_URL;
-    } catch {
-      // actualServerUrl stays default
-    }
+    const { agentInfo, conversationId } = options;
 
     // Format last run info
     let lastRunInfo = "No previous messages";
@@ -98,7 +83,6 @@ export function buildAgentInfo(options: AgentInfoOptions): string {
 - **Agent name**: ${agentInfo.name || "(unnamed)"} (the user can change this with /rename)
 - **Agent description**: ${agentInfo.description || "(no description)"} (the user can change this with /description)
 - **Last message**: ${lastRunInfo}
-- **Server location**: ${actualServerUrl}
 ${SYSTEM_REMINDER_CLOSE}`;
   } catch {
     // If anything fails catastrophically, return empty string
