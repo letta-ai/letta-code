@@ -2232,8 +2232,8 @@ ${SYSTEM_REMINDER_CLOSE}
           })),
           ...needsUserInput.map((ac) => {
             // One-shot headless mode has no control channel for interactive
-            // approvals. Auto-allow plan-mode entry/exit tools, while denying
-            // tools that need runtime user responses.
+            // approvals. Auto-allow plan-mode entry/exit only when the shared
+            // policy says to, while denying tools that need runtime user responses.
             if (isHeadlessAutoAllowTool(ac.approval.toolName)) {
               return {
                 type: "approve" as const,
