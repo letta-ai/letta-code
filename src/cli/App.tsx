@@ -1736,6 +1736,7 @@ export default function App({
       enable_reasoner:
         (llmConfig as { enable_reasoner?: boolean | null })?.enable_reasoner ??
         null,
+      context_window: llmConfig?.context_window ?? null,
     });
     if (info) {
       return (info as { shortLabel?: string }).shortLabel ?? info.label;
@@ -1759,6 +1760,7 @@ export default function App({
       enable_reasoner:
         (llmConfig as { enable_reasoner?: boolean | null })?.enable_reasoner ??
         null,
+      context_window: llmConfig?.context_window ?? null,
     });
     const rawContextWindow = (
       info?.updateArgs as { context_window?: unknown } | undefined
@@ -3566,13 +3568,24 @@ export default function App({
       setLlmConfig(agentState.llm_config);
       setCurrentModelHandle(agentModelHandle ?? null);
 
-      const modelInfo = getModelInfoForLlmConfig(
-        agentModelHandle || "",
-        agentState.llm_config as unknown as {
+      // If the model handle hasn't changed, skip re-deriving the model ID.
+      // The current ID (set by handleModelSelect or a prior derivation) is
+      // already correct. Re-deriving is lossy for variants that share a
+      // handle but differ only by context_window (e.g. 1M vs 200k).
+      const currentHandle = buildModelHandleFromLlmConfig(llmConfigRef.current);
+      if (agentModelHandle && agentModelHandle === currentHandle) {
+        return;
+      }
+
+      const modelInfo = getModelInfoForLlmConfig(agentModelHandle || "", {
+        ...(agentState.llm_config as unknown as {
           reasoning_effort?: string | null;
           enable_reasoner?: boolean | null;
-        },
-      );
+        }),
+        context_window:
+          (agentState as unknown as { context_window_limit?: number | null })
+            .context_window_limit ?? null,
+      });
       setCurrentModelId(modelInfo?.id ?? (agentModelHandle || null));
     };
 
@@ -3639,6 +3652,7 @@ export default function App({
                 enable_reasoner?: boolean | null;
               }
             ).enable_reasoner ?? null,
+          context_window: conversationContextWindowLimit ?? null,
         });
         const modelPresetContextWindow = (
           modelInfo?.updateArgs as { context_window?: unknown } | undefined
@@ -12621,8 +12635,13 @@ ${SYSTEM_REMINDER_CLOSE}
             : modelUpdateArgs?.enable_reasoner === false
               ? "no"
               : null;
-        const reasoningTierOptions =
-          getReasoningTierOptionsForHandle(modelHandle);
+        const selectedContextWindow = (
+          model.updateArgs as { context_window?: number } | undefined
+        )?.context_window;
+        const reasoningTierOptions = getReasoningTierOptionsForHandle(
+          modelHandle,
+          selectedContextWindow,
+        );
 
         if (
           !opts?.skipReasoningPrompt &&
