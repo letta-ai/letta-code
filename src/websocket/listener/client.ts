@@ -2023,6 +2023,7 @@ export async function startListenerClient(
   runtime.connectionName = opts.connectionName;
   setActiveRuntime(runtime);
   telemetry.setSurface("websocket");
+  telemetry.init();
 
   await connectWithRetry(runtime, opts);
 }

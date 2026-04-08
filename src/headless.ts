@@ -96,6 +96,7 @@ import { getCurrentWorkingDirectory } from "./runtime-context";
 import { settingsManager, shouldPersistSessionState } from "./settings-manager";
 import { telemetry } from "./telemetry";
 import { trackBoundaryError } from "./telemetry/errorReporting";
+import { extractTelemetryInputText } from "./telemetry/input";
 import {
   isHeadlessAutoAllowTool,
   isInteractiveApprovalTool,
@@ -200,6 +201,21 @@ export function mergeBidirectionalQueuedInput(
     normalizeUserContent: (content) => content,
   });
 }
+
+function trackTelemetryUserInputFromContent(
+  content: MessageCreate["content"],
+  modelId: string,
+): void {
+  const inputText = extractTelemetryInputText(content);
+  if (inputText.length === 0) {
+    return;
+  }
+  telemetry.trackUserInput(inputText, "user", modelId);
+}
+
+export const __headlessTestUtils = {
+  trackTelemetryUserInputFromContent,
+};
 
 type ReflectionOverrides = {
   trigger?: ReflectionTrigger;
@@ -1331,9 +1347,22 @@ export async function handleHeadlessCommand(
 
   // Initialize session stats
   const sessionStats = new SessionStats();
+  telemetry.setSessionStatsGetter(() => sessionStats.getSnapshot());
 
   // Use agent.id as session_id for all stream-json messages
   const sessionId = agent.id;
+  const exitHeadless = async (
+    code: number,
+    exitReason: string,
+  ): Promise<never> => {
+    try {
+      telemetry.trackSessionEnd(sessionStats.getSnapshot(), exitReason);
+      await telemetry.flush();
+    } finally {
+      telemetry.setSessionStatsGetter(undefined);
+    }
+    return await flushAndExit(code);
+  };
 
   // Output init event for stream-json format
   if (outputFormat === "stream-json") {
@@ -1654,6 +1683,12 @@ ${SYSTEM_REMINDER_CLOSE}
 
   // Add user prompt
   pushPart(prompt);
+
+  telemetry.trackUserInput(
+    prompt,
+    "user",
+    agent.llm_config?.model ?? "unknown",
+  );
 
   // Start with the user message
   let currentInput: Array<MessageCreate | ApprovalCreate> = [
@@ -2575,7 +2610,7 @@ ${SYSTEM_REMINDER_CLOSE}
       } else {
         console.error(`Error: ${errorMessage}`);
       }
-      process.exit(1);
+      await exitHeadless(1, "headless_stop_reason_error");
     }
   } catch (error) {
     // Mark incomplete tool calls as cancelled
@@ -2602,7 +2637,7 @@ ${SYSTEM_REMINDER_CLOSE}
     } else {
       console.error(`Error: ${errorDetails}`);
     }
-    process.exit(1);
+    await exitHeadless(1, "headless_runtime_exception");
   }
 
   // Update stats with final usage data from buffers
@@ -2709,7 +2744,7 @@ ${SYSTEM_REMINDER_CLOSE}
     // text format (default)
     if (!resultText || resultText === "No assistant response found") {
       console.error("No assistant response found");
-      process.exit(1);
+      await exitHeadless(1, "headless_missing_result_text");
     }
     console.log(resultText);
   }
@@ -2717,7 +2752,7 @@ ${SYSTEM_REMINDER_CLOSE}
   // Report all milestones at the end for latency audit
   markMilestone("HEADLESS_COMPLETE");
   reportAllMilestones();
-  await flushAndExit(0);
+  await exitHeadless(0, "headless_complete");
 }
 
 /**
@@ -2737,7 +2772,16 @@ async function runBidirectionalMode(
   reflectionSettings: ReflectionSettings,
 ): Promise<void> {
   const sessionId = agent.id;
+  const telemetryModelId = agent.llm_config?.model ?? "unknown";
   const readline = await import("node:readline");
+  const exitBidirectional = async (
+    code: number,
+    exitReason: string,
+  ): Promise<never> => {
+    telemetry.trackSessionEnd(undefined, exitReason);
+    await telemetry.flush();
+    return await flushAndExit(code);
+  };
 
   // Emit init event
   const initEvent = {
@@ -3576,6 +3620,11 @@ async function runBidirectionalMode(
 
     // Handle user messages
     if (message.type === "user" && message.message?.content !== undefined) {
+      trackTelemetryUserInputFromContent(
+        message.message.content,
+        telemetryModelId,
+      );
+
       const queuedInputs: BidirectionalQueuedInput[] = [
         {
           kind: "user",
@@ -3630,6 +3679,10 @@ async function runBidirectionalMode(
               text: notificationText,
             });
           } else {
+            trackTelemetryUserInputFromContent(
+              parsedCandidate.message.content,
+              telemetryModelId,
+            );
             queuedInputs.push({
               kind: "user",
               content: parsedCandidate.message.content,
@@ -4181,5 +4234,5 @@ async function runBidirectionalMode(
 
   // Stdin closed, exit gracefully
   setMessageQueueAdder(null);
-  process.exit(0);
+  await exitBidirectional(0, "headless_bidirectional_stdin_closed");
 }
