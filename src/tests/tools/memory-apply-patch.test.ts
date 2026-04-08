@@ -151,6 +151,30 @@ describe("memory_apply_patch tool", () => {
     ).rejects.toThrow(/only be used to modify files/i);
   });
 
+  test("accepts absolute paths under MEMORY_DIR", async () => {
+    const absolutePath = join(memoryDir, "system", "absolute.md");
+
+    await memory_apply_patch({
+      reason: "add absolute memory path",
+      input: [
+        "*** Begin Patch",
+        `*** Add File: ${absolutePath}`,
+        "+---",
+        "+description: Absolute path test",
+        "+---",
+        "+hello",
+        "*** End Patch",
+      ].join("\n"),
+    });
+
+    const content = await runGit(memoryDir, [
+      "show",
+      "HEAD:system/absolute.md",
+    ]);
+    expect(content).toContain("description: Absolute path test");
+    expect(content).toContain("hello");
+  });
+
   test("rejects editing read_only memory files", async () => {
     await memory_apply_patch({
       reason: "seed read only",
