@@ -29,7 +29,6 @@ export interface AgentReminderContext {
   name: string | null;
   description?: string | null;
   lastRunAt?: string | null;
-  serverUrl?: string;
   conversationId?: string;
 }
 
@@ -77,7 +76,6 @@ async function buildAgentInfoReminder(
       description: context.agent.description,
       lastRunAt: context.agent.lastRunAt,
     },
-    serverUrl: context.agent.serverUrl,
     conversationId: context.agent.conversationId,
   });
 

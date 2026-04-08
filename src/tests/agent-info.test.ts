@@ -13,7 +13,6 @@ describe("agent info reminder", () => {
         description: "Test description",
         lastRunAt: null,
       },
-      serverUrl: "https://api.letta.com",
     });
 
     expect(context).toContain(
@@ -38,7 +37,6 @@ describe("agent info reminder", () => {
           description: "Test description",
           lastRunAt: null,
         },
-        serverUrl: "https://api.letta.com",
       });
 
       expect(context).not.toContain(
@@ -71,7 +69,6 @@ describe("agent info reminder", () => {
           description: "Test description",
           lastRunAt: null,
         },
-        serverUrl: "https://api.letta.com",
       });
 
       expect(context).toContain(
@@ -94,14 +91,13 @@ describe("agent info reminder", () => {
         description: "Does cool stuff",
         lastRunAt: null,
       },
-      serverUrl: "https://api.letta.com",
     });
 
     expect(context).toContain("**Agent name**: My Agent");
     expect(context).toContain("**Agent description**: Does cool stuff");
   });
 
-  test("includes server location", () => {
+  test("does not include server location", () => {
     const context = buildAgentInfo({
       agentInfo: {
         id: "agent-test",
@@ -110,7 +106,7 @@ describe("agent info reminder", () => {
       },
     });
 
-    expect(context).toContain("**Server location**:");
+    expect(context).not.toContain("Server location");
   });
 
   test("includes CONVERSATION_ID when provided", () => {
@@ -148,7 +144,6 @@ describe("agent info reminder", () => {
         name: "Test Agent",
         lastRunAt: null,
       },
-      serverUrl: "https://api.letta.com",
     });
 
     expect(context).not.toContain("## Device Information");
