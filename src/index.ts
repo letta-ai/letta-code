@@ -355,12 +355,21 @@ async function getPinnedAgentNames(): Promise<{ id: string; name: string }[]> {
 async function main(): Promise<void> {
   markMilestone("CLI_START");
 
-  // Initialize terminal theme detection (OSC 11 query with fallback)
+  // Initialize settings manager (loads settings once into memory)
+  await settingsManager.initialize();
+
+  // Early exit for CLI subcommands (e.g., `letta server`, `letta memfs`).
+  // Subcommands handle their own setup and don't need TUI init, theme
+  // detection, or base tool bootstrapping.
+  const subcommandResult = await runSubcommand(process.argv.slice(2));
+  if (subcommandResult !== null) {
+    process.exit(subcommandResult);
+  }
+
+  // Everything below only runs for interactive TUI mode
   const { initTerminalTheme } = await import("./cli/helpers/terminalTheme");
   await initTerminalTheme();
 
-  // Initialize settings manager (loads settings once into memory)
-  await settingsManager.initialize();
   const settings = await settingsManager.getSettingsWithSecureTokens();
   markMilestone("SETTINGS_LOADED");
 
@@ -370,12 +379,6 @@ async function main(): Promise<void> {
       "./agent/bootstrap-tools"
     );
     await bootstrapBaseToolsIfNeeded();
-  }
-
-  // Handle CLI subcommands (e.g., `letta memfs ...`) before parsing global flags
-  const subcommandResult = await runSubcommand(process.argv.slice(2));
-  if (subcommandResult !== null) {
-    process.exit(subcommandResult);
   }
 
   // Initialize LSP infrastructure for type checking
