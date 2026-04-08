@@ -448,7 +448,7 @@ function getStringProp(obj: Record<string, unknown>, key: string) {
   return typeof v === "string" ? v : undefined;
 }
 
-function extractTextPart(v: unknown): string {
+export function extractTextPart(v: unknown): string {
   if (typeof v === "string") return v;
   if (Array.isArray(v)) {
     return v
