@@ -64,4 +64,5 @@ It is important to remember:
 
 - You must include a header with your intended action (Add/Delete/Update)
 - You must prefix new lines with `+` even when creating a new file
-- File references can only be relative, NEVER ABSOLUTE.
+- Relative file references are interpreted from the current working directory.
+- Absolute file references are also accepted.
