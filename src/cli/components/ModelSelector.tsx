@@ -193,8 +193,14 @@ export function ModelSelector({
   }, []);
 
   const pickPreferredStaticModel = useCallback(
-    (handle: string): UiModel | undefined => {
-      const staticCandidates = typedModels.filter((m) => m.handle === handle);
+    (handle: string, contextWindow?: number): UiModel | undefined => {
+      const staticCandidates = typedModels.filter(
+        (m) =>
+          m.handle === handle &&
+          (contextWindow === undefined ||
+            (m.updateArgs?.context_window as number | undefined) ===
+              contextWindow),
+      );
       return (
         staticCandidates.find((m) => m.isDefault) ??
         staticCandidates.find((m) => m.isFeatured) ??
@@ -241,15 +247,18 @@ export function ModelSelector({
       );
     }
 
-    // Deduplicate by handle: keep one representative entry per unique handle.
+    // Deduplicate by handle+context_window: keep one representative entry per unique combo.
     // Models with multiple reasoning tiers (e.g., gpt-5.3-codex none/low/med/high/max)
     // share the same handle — the ModelReasoningSelector handles tier selection after pick.
+    // Models with different context_window (e.g., 200k vs 1M) show separately.
     const seen = new Set<string>();
     const deduped: UiModel[] = [];
     for (const m of available) {
-      if (seen.has(m.handle)) continue;
-      seen.add(m.handle);
-      deduped.push(pickPreferredStaticModel(m.handle) ?? m);
+      const contextWindow = m.updateArgs?.context_window as number | undefined;
+      const key = `${m.handle}:${contextWindow ?? 0}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      deduped.push(pickPreferredStaticModel(m.handle, contextWindow) ?? m);
     }
 
     const featured = deduped.filter((m) => m.isFeatured);
@@ -409,13 +418,15 @@ export function ModelSelector({
           m.handle.toLowerCase().includes(query),
       );
     }
-    // Deduplicate by handle (same as supportedModels)
+    // Deduplicate by handle+context_window (same as supportedModels)
     const seen = new Set<string>();
     const deduped: UiModel[] = [];
     for (const m of available) {
-      if (seen.has(m.handle)) continue;
-      seen.add(m.handle);
-      deduped.push(pickPreferredStaticModel(m.handle) ?? m);
+      const contextWindow = m.updateArgs?.context_window as number | undefined;
+      const key = `${m.handle}:${contextWindow ?? 0}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      deduped.push(pickPreferredStaticModel(m.handle, contextWindow) ?? m);
     }
     return deduped;
   }, [
