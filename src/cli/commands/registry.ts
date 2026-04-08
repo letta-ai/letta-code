@@ -210,7 +210,7 @@ export const commands: Record<string, Command> = {
     },
   },
   "/rename": {
-    desc: "Rename agent or conversation (/rename agent|convo <name>)",
+    desc: "Rename agent or conversation (/rename agent <name>|convo [title])",
     order: 24,
     handler: () => {
       // Handled specially in App.tsx to access agent ID and client
