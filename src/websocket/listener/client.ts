@@ -2710,8 +2710,41 @@ async function connectWithRetry(
         );
         runDetachedListenerTask("write_file", async () => {
           try {
-            const { writeFile } = await import("node:fs/promises");
-            await writeFile(parsed.path, parsed.content, "utf-8");
+            const { edit } = await import("../../tools/impl/Edit");
+            const { write } = await import("../../tools/impl/Write");
+            const { readFile } = await import("node:fs/promises");
+
+            // Read current content so we can use edit for an atomic
+            // read-modify-write that goes through the same code path as
+            // the agent's Edit tool (CRLF normalisation, rich errors, etc.).
+            let currentContent: string | null = null;
+            try {
+              currentContent = await readFile(parsed.path, "utf-8");
+            } catch (readErr) {
+              const e = readErr as NodeJS.ErrnoException;
+              if (e.code !== "ENOENT") throw readErr;
+              // ENOENT — new file, fall through to write below
+            }
+
+            if (currentContent === null) {
+              // New file — use write so directories are created as needed.
+              await write({ file_path: parsed.path, content: parsed.content });
+            } else {
+              // Existing file — use edit for a full-content replacement.
+              // Normalise line endings before comparing to avoid a spurious
+              // "no changes" error when the only difference is CRLF vs LF.
+              const normalizedCurrent = currentContent.replace(/\r\n/g, "\n");
+              const normalizedNew = parsed.content.replace(/\r\n/g, "\n");
+              if (normalizedCurrent !== normalizedNew) {
+                await edit({
+                  file_path: parsed.path,
+                  old_string: currentContent,
+                  new_string: parsed.content,
+                });
+              }
+              // else: content unchanged — no-op, still respond success below
+            }
+
             console.log(
               `[Listen] write_file success: ${parsed.path} (${parsed.content.length} bytes)`,
             );
