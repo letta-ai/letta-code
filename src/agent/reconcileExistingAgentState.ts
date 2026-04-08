@@ -165,12 +165,21 @@ export async function reconcileExistingAgentState(
       `sync_attached_tools_missing:${desiredTools.missingToolNames.join(",")}`,
     );
   } else {
+    // Only ADD missing base tools — never remove existing tools.
+    // The previous logic replaced the entire tool_ids array with just the
+    // base tools, which wiped every other tool (MCP, memory, custom, etc.)
+    // on every agent startup.
     const currentToolIds = (agent.tools ?? [])
       .map((tool) => tool.id)
       .filter((toolId): toolId is string => Boolean(toolId));
 
-    if (!areToolSetsEqual(currentToolIds, desiredTools.toolIds)) {
-      patch.tool_ids = desiredTools.toolIds;
+    const currentSet = new Set(currentToolIds);
+    const missingBaseToolIds = desiredTools.toolIds.filter(
+      (id) => !currentSet.has(id),
+    );
+
+    if (missingBaseToolIds.length > 0) {
+      patch.tool_ids = [...currentToolIds, ...missingBaseToolIds];
       appliedTweaks.push("sync_attached_tools");
     }
   }

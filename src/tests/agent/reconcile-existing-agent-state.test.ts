@@ -58,7 +58,7 @@ describe("reconcileExistingAgentState", () => {
     expect(list).not.toHaveBeenCalled();
   });
 
-  test("updates missing compaction model and enforces only default base tools", async () => {
+  test("adds missing base tool while preserving existing non-base tools", async () => {
     const initialAgent = mkAgentState({
       tools: [
         mkTool("tool-web", "web_search"),
@@ -73,6 +73,7 @@ describe("reconcileExistingAgentState", () => {
     const updatedAgent = mkAgentState({
       tools: [
         mkTool("tool-web", "web_search"),
+        mkTool("tool-convo", "conversation_search"),
         mkTool("tool-fetch", "fetch_webpage"),
       ],
       compaction_settings: {
@@ -111,18 +112,48 @@ describe("reconcileExistingAgentState", () => {
     expect(list).toHaveBeenCalledTimes(1);
     expect(list).toHaveBeenCalledWith({ name: "fetch_webpage", limit: 10 });
 
+    // Must preserve existing tools and only append the missing base tool
     expect(update).toHaveBeenCalledTimes(1);
     expect(update).toHaveBeenCalledWith("agent-test", {
       compaction_settings: {
         mode: "sliding_window",
         model: "letta/auto",
       },
-      tool_ids: ["tool-web", "tool-fetch"],
+      tool_ids: ["tool-web", "tool-convo", "tool-fetch"],
     });
 
     expect(DEFAULT_ATTACHED_BASE_TOOLS).toEqual([
       "web_search",
       "fetch_webpage",
     ]);
+  });
+
+  test("does not update tools when base tools are already present alongside extra tools", async () => {
+    const agent = mkAgentState({
+      tools: [
+        mkTool("tool-web", "web_search"),
+        mkTool("tool-fetch", "fetch_webpage"),
+        mkTool("tool-memory", "memory"),
+        mkTool("tool-mcp", "custom_mcp_tool"),
+      ],
+      compaction_settings: {
+        model: "letta/auto",
+      },
+    });
+
+    const update = mock(() => Promise.resolve(agent));
+    const list = mock(() => Promise.resolve({ items: [] as Tool[] }));
+
+    const result = await reconcileExistingAgentState(
+      {
+        agents: { update },
+        tools: { list },
+      },
+      agent,
+    );
+
+    expect(result.updated).toBe(false);
+    expect(result.appliedTweaks).toEqual([]);
+    expect(update).not.toHaveBeenCalled();
   });
 });
