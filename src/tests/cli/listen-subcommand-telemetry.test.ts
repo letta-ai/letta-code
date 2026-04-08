@@ -49,7 +49,7 @@ describe("listen subcommand telemetry", () => {
       trackSessionEndMock as typeof telemetry.trackSessionEnd;
     telemetry.flush = flushMock as typeof telemetry.flush;
 
-    const exitCode = await runListenSubcommand(["--envName", "ci-env"]);
+    const exitCode = await runListenSubcommand(["--env-name", "ci-env"]);
 
     expect(exitCode).toBe(1);
     expect(trackSessionEndMock).toHaveBeenCalledWith(
