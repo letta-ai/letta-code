@@ -11,6 +11,7 @@ import type React from "react";
 import { useState } from "react";
 import { getServerUrl } from "../../agent/client";
 import { settingsManager } from "../../settings-manager";
+import { telemetry } from "../../telemetry";
 import { RemoteSessionLog } from "../../websocket/listen-log";
 import {
   registerWithCloud,
@@ -49,6 +50,19 @@ function formatTimestamp(): string {
   const ms = String(now.getMilliseconds()).padStart(3, "0");
   return `${h}:${m}:${s}.${ms}`;
 }
+
+async function flushListenerTelemetryEnd(exitReason: string): Promise<void> {
+  try {
+    telemetry.trackSessionEnd(undefined, exitReason);
+    await telemetry.flush();
+  } catch {
+    // Best-effort only.
+  }
+}
+
+export const __listenSubcommandTestUtils = {
+  flushListenerTelemetryEnd,
+};
 
 export async function runListenSubcommand(argv: string[]): Promise<number> {
   // Parse arguments
@@ -92,6 +106,17 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     );
     return 0;
   }
+
+  telemetry.setSurface("websocket");
+  telemetry.init();
+
+  const exitWithTelemetry = async (
+    code: number,
+    exitReason: string,
+  ): Promise<never> => {
+    await flushListenerTelemetryEnd(exitReason);
+    process.exit(code);
+  };
 
   // Load local project settings to access saved environment name
   await settingsManager.loadLocalProjectSettings();
@@ -148,6 +173,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     if (!apiKey) {
       console.error("Error: LETTA_API_KEY not found");
       console.error("Set your API key with: export LETTA_API_KEY=<your-key>");
+      await flushListenerTelemetryEnd("listener_missing_api_key");
       return 1;
     }
 
@@ -283,18 +309,18 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
               console.error(
                 `[${formatTimestamp()}] Re-registration failed: ${msg}`,
               );
-              process.exit(1);
+              await exitWithTelemetry(1, "listener_reregister_failed");
             }
           },
           onDisconnected: () => {
             sessionLog.log("Disconnected.");
             console.log(`[${formatTimestamp()}] Disconnected.`);
-            process.exit(1);
+            void exitWithTelemetry(1, "listener_disconnected");
           },
           onError: (error: Error) => {
             sessionLog.log(`Error: ${error.message}`);
             console.error(`[${formatTimestamp()}] Error: ${error.message}`);
-            process.exit(1);
+            void exitWithTelemetry(1, "listener_error");
           },
         });
       };
@@ -360,7 +386,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
               sessionLog.log(`Re-registration failed: ${msg}`);
               unmount();
               console.error(`\n\u2717 Re-registration failed: ${msg}\n`);
-              process.exit(1);
+              await exitWithTelemetry(1, "listener_reregister_failed");
             }
           },
           onDisconnected: () => {
@@ -368,13 +394,13 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
             unmount();
             console.log("\n\u2717 Listener disconnected");
             console.log("Connection to Letta Cloud was lost.\n");
-            process.exit(1);
+            void exitWithTelemetry(1, "listener_disconnected");
           },
           onError: (error: Error) => {
             sessionLog.log(`Error: ${error.message}`);
             unmount();
             console.error(`\n\u2717 Listener error: ${error.message}\n`);
-            process.exit(1);
+            void exitWithTelemetry(1, "listener_error");
           },
         });
       };
@@ -389,6 +415,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     const msg = error instanceof Error ? error.message : String(error);
     sessionLog.log(`FATAL: ${msg}`);
     console.error(`Failed to start listener: ${msg}`);
+    await flushListenerTelemetryEnd("listener_start_failed");
     return 1;
   }
 }

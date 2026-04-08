@@ -44,7 +44,9 @@ import { buildListenReminderContext } from "../../reminders/listenContext";
 import { getPlanModeReminder } from "../../reminders/planModeReminder";
 import { syncReminderStateFromContextTracker } from "../../reminders/state";
 import { settingsManager } from "../../settings-manager";
+import { telemetry } from "../../telemetry";
 import { trackBoundaryError } from "../../telemetry/errorReporting";
+import { extractTelemetryInputText } from "../../telemetry/input";
 import { prepareToolExecutionContextForScope } from "../../tools/toolset";
 import type { StopReasonType, StreamDelta } from "../../types/protocol_v2";
 import { debugLog, debugWarn, isDebugEnabled } from "../../utils/debug";
@@ -98,9 +100,35 @@ import {
 } from "./send";
 import { injectQueuedSkillContent } from "./skill-injection";
 import { handleApprovalStop } from "./turn-approval";
-import type { ConversationRuntime, IncomingMessage } from "./types";
+import type {
+  ConversationRuntime,
+  InboundMessagePayload,
+  IncomingMessage,
+} from "./types";
 
 const AUTO_REFLECTION_DESCRIPTION = "Reflect on recent conversations";
+
+function trackListenerUserInput(
+  messages: InboundMessagePayload[],
+  modelId: string,
+): void {
+  for (const message of messages) {
+    if (!("role" in message) || message.role !== "user") {
+      continue;
+    }
+
+    const inputText = extractTelemetryInputText(message.content);
+    if (inputText.length === 0) {
+      continue;
+    }
+
+    telemetry.trackUserInput(inputText, "user", modelId);
+  }
+}
+
+export const __listenerTurnTestUtils = {
+  trackListenerUserInput,
+};
 
 function hasActiveReflectionSubagent(
   agentId: string,
@@ -326,6 +354,8 @@ export async function handleIncomingMessage(
   });
 
   try {
+    telemetry.setCurrentAgentId(agentId ?? null);
+
     if (!agentId) {
       runtime.isProcessing = false;
       clearActiveRunState(runtime);
@@ -358,6 +388,7 @@ export async function handleIncomingMessage(
 
     const { normalizeInboundMessages } = await import("./queue");
     const normalizedMessages = await normalizeInboundMessages(msg.messages);
+    trackListenerUserInput(normalizedMessages, "unknown");
     const messagesToSend: Array<MessageCreate | ApprovalCreate> = [];
     let turnToolContextId: string | null = null;
     let queuedInterruptedToolCallIds: string[] = [];

@@ -78,6 +78,19 @@ class TelemetryManager {
   private initialized = false;
   private flushInterval: NodeJS.Timeout | null = null;
   private serverVersion: string | null = null;
+
+  private async resolveTelemetryApiKey(): Promise<string | undefined> {
+    if (process.env.LETTA_API_KEY) {
+      return process.env.LETTA_API_KEY;
+    }
+
+    try {
+      const settings = await settingsManager.getSettingsWithSecureTokens();
+      return settings.env?.LETTA_API_KEY || undefined;
+    } catch {
+      return undefined;
+    }
+  }
   private readonly FLUSH_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
   private readonly MAX_BATCH_SIZE = 100;
   private sessionStatsGetter?: () => {
@@ -493,7 +506,7 @@ class TelemetryManager {
     const eventsToSend = [...this.events];
     this.events = [];
 
-    const apiKey = process.env.LETTA_API_KEY;
+    const apiKey = await this.resolveTelemetryApiKey();
 
     try {
       // Add 5 second timeout to prevent telemetry from blocking shutdown
