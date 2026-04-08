@@ -223,7 +223,6 @@ import type {
 } from "./types";
 
 const WIKI_LINK_REGEX = /\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g;
-const MARKDOWN_LINK_REGEX = /\[[^\]]*\]\(([^)]+)\)/g;
 
 function trackListenerError(
   errorType: string,
@@ -2932,29 +2931,14 @@ async function connectWithRetry(
               body: string,
               sourcePath: string,
             ): string[] => {
-              // Fast-path: skip all parsing for files without any markdown-link tokens.
-              if (!body.includes("[[") && !body.includes("](")) {
+              if (!body.includes("[[")) {
                 return [];
               }
 
               const refs = new Set<string>();
 
-              WIKI_LINK_REGEX.lastIndex = 0;
               for (const wikiMatch of body.matchAll(WIKI_LINK_REGEX)) {
                 const rawTarget = wikiMatch[1];
-                if (!rawTarget) continue;
-                const normalized = normalizeMemoryReference(
-                  rawTarget,
-                  sourcePath,
-                );
-                if (normalized && normalized !== sourcePath) {
-                  refs.add(normalized);
-                }
-              }
-
-              MARKDOWN_LINK_REGEX.lastIndex = 0;
-              for (const markdownMatch of body.matchAll(MARKDOWN_LINK_REGEX)) {
-                const rawTarget = markdownMatch[1];
                 if (!rawTarget) continue;
                 const normalized = normalizeMemoryReference(
                   rawTarget,
