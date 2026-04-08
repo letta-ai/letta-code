@@ -65,6 +65,16 @@ export function normalizeCredentialBaseUrl(serverUrl: string): string {
   }
 }
 
+/**
+ * Format an executable helper path for git config values.
+ *
+ * Git splits helper commands on whitespace, so we must escape any
+ * spaces/tabs in absolute paths (common on Windows profile paths).
+ */
+export function formatGitCredentialHelperPath(path: string): string {
+  return path.replace(/\\/g, "/").replace(/\s/g, "\\$&");
+}
+
 function normalizeRemoteUrl(url: string): string {
   return url.trim().replace(/\/+$/, "");
 }
@@ -294,8 +304,8 @@ echo username=letta
 echo password=${token}
 `;
     writeFileSync(helperScriptPath, batchScript, "utf-8");
-    // Git expects the helper path with forward slashes even on Windows
-    helper = helperScriptPath.replace(/\\/g, "/");
+    // Use a normalized path and escape whitespace for profiles like "Jane Doe".
+    helper = formatGitCredentialHelperPath(helperScriptPath);
     debugLog("memfs-git", `Wrote Windows credential helper script`);
   } else {
     // Unix/macOS: use inline bash helper
