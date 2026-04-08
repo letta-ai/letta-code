@@ -51,4 +51,27 @@ describe("headless telemetry input tracking", () => {
       telemetry.trackUserInput = originalTrackUserInput;
     }
   });
+
+  test("does not track task-notification queued lines as user input", () => {
+    expect(
+      __headlessTestUtils.shouldTrackTelemetryForQueuedMessage(
+        "task_notification",
+      ),
+    ).toBe(false);
+    expect(__headlessTestUtils.shouldTrackTelemetryForQueuedMessage()).toBe(
+      true,
+    );
+  });
+
+  test("maps task-notification queued lines to task_notification input kind", () => {
+    const queued = __headlessTestUtils.toBidirectionalQueuedInput(
+      [{ type: "text", text: "<task-notification/>" }],
+      "task_notification",
+    );
+
+    expect(queued).toEqual({
+      kind: "task_notification",
+      text: "<task-notification/>",
+    });
+  });
 });

@@ -51,6 +51,19 @@ function formatTimestamp(): string {
   return `${h}:${m}:${s}.${ms}`;
 }
 
+async function flushListenerTelemetryEnd(exitReason: string): Promise<void> {
+  try {
+    telemetry.trackSessionEnd(undefined, exitReason);
+    await telemetry.flush();
+  } catch {
+    // Best-effort only.
+  }
+}
+
+export const __listenSubcommandTestUtils = {
+  flushListenerTelemetryEnd,
+};
+
 export async function runListenSubcommand(argv: string[]): Promise<number> {
   // Parse arguments
   const { values } = parseArgs({
@@ -101,12 +114,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     code: number,
     exitReason: string,
   ): Promise<never> => {
-    try {
-      telemetry.trackSessionEnd(undefined, exitReason);
-      await telemetry.flush();
-    } catch {
-      // Best-effort only - listener shutdown should still complete.
-    }
+    await flushListenerTelemetryEnd(exitReason);
     process.exit(code);
   };
 
@@ -165,6 +173,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     if (!apiKey) {
       console.error("Error: LETTA_API_KEY not found");
       console.error("Set your API key with: export LETTA_API_KEY=<your-key>");
+      await flushListenerTelemetryEnd("listener_missing_api_key");
       return 1;
     }
 
@@ -406,12 +415,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     const msg = error instanceof Error ? error.message : String(error);
     sessionLog.log(`FATAL: ${msg}`);
     console.error(`Failed to start listener: ${msg}`);
-    try {
-      telemetry.trackSessionEnd(undefined, "listener_start_failed");
-      await telemetry.flush();
-    } catch {
-      // Best-effort only.
-    }
+    await flushListenerTelemetryEnd("listener_start_failed");
     return 1;
   }
 }

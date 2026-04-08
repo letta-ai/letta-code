@@ -213,8 +213,48 @@ function trackTelemetryUserInputFromContent(
   telemetry.trackUserInput(inputText, "user", modelId);
 }
 
+function shouldTrackTelemetryForQueuedMessage(
+  queuedKind?: QueuedMessage["kind"],
+): boolean {
+  return queuedKind !== "task_notification";
+}
+
+function contentToTaskNotificationText(
+  content: MessageCreate["content"],
+): string {
+  if (typeof content === "string") {
+    return content;
+  }
+
+  return content
+    .flatMap((part) =>
+      part.type === "text" && typeof part.text === "string" ? [part.text] : [],
+    )
+    .join("");
+}
+
+function toBidirectionalQueuedInput(
+  content: MessageCreate["content"],
+  queuedKind?: QueuedMessage["kind"],
+): BidirectionalQueuedInput {
+  if (queuedKind === "task_notification") {
+    return {
+      kind: "task_notification",
+      text: contentToTaskNotificationText(content),
+    };
+  }
+
+  return {
+    kind: "user",
+    content,
+  };
+}
+
 export const __headlessTestUtils = {
   trackTelemetryUserInputFromContent,
+  shouldTrackTelemetryForQueuedMessage,
+  contentToTaskNotificationText,
+  toBidirectionalQueuedInput,
 };
 
 type ReflectionOverrides = {
@@ -1717,7 +1757,7 @@ ${SYSTEM_REMINDER_CLOSE}
   measureSinceMilestone("headless-setup-total", "HEADLESS_CLIENT_READY");
 
   // Helper to check max turns limit using server-side step count from buffers
-  const checkMaxTurns = () => {
+  const checkMaxTurns = async (): Promise<void> => {
     if (maxTurns !== undefined && buffers.usage.stepCount >= maxTurns) {
       if (outputFormat === "stream-json") {
         const errorMsg: ErrorMessage = {
@@ -1733,7 +1773,7 @@ ${SYSTEM_REMINDER_CLOSE}
           `Maximum turns limit reached (${buffers.usage.stepCount}/${maxTurns} steps)`,
         );
       }
-      process.exit(1);
+      await exitHeadless(1, "headless_max_steps_reached");
     }
   };
 
@@ -1748,7 +1788,7 @@ ${SYSTEM_REMINDER_CLOSE}
       // with max_steps while the backend is still waiting for the approval
       // response, leaving the run stuck in requires_approval.
       if (!hasApprovalContinuation) {
-        checkMaxTurns();
+        await checkMaxTurns();
       }
 
       // Inject queued skill content as user message parts (LET-7353)
@@ -2134,7 +2174,7 @@ ${SYSTEM_REMINDER_CLOSE}
       // Otherwise we can exit while the backend is waiting for approval input,
       // leaving the run stuck in requires_approval.
       if (stopReason !== "requires_approval" && !approvalPendingRecovery) {
-        checkMaxTurns();
+        await checkMaxTurns();
       }
 
       if (approvalPendingRecovery) {
@@ -2155,7 +2195,7 @@ ${SYSTEM_REMINDER_CLOSE}
       if (stopReason === "requires_approval") {
         if (approvals.length === 0) {
           console.error("Unexpected empty approvals array");
-          process.exit(1);
+          await exitHeadless(1, "headless_requires_approval_empty");
         }
 
         // Phase 1: Collect decisions for all approvals
@@ -2373,7 +2413,7 @@ ${SYSTEM_REMINDER_CLOSE}
           } else {
             console.error("Failed to fetch pending approvals for resync");
           }
-          process.exit(1);
+          await exitHeadless(1, "headless_approval_resync_failed");
         }
       }
 
@@ -3394,6 +3434,7 @@ async function runBidirectionalMode(
       request_id?: string;
       request?: { subtype: string };
       session_id?: string;
+      _queuedKind?: QueuedMessage["kind"];
     };
 
     try {
@@ -3620,17 +3661,21 @@ async function runBidirectionalMode(
 
     // Handle user messages
     if (message.type === "user" && message.message?.content !== undefined) {
-      trackTelemetryUserInputFromContent(
+      const firstQueuedInput = toBidirectionalQueuedInput(
         message.message.content,
-        telemetryModelId,
+        message._queuedKind,
       );
+      if (
+        firstQueuedInput.kind === "user" &&
+        shouldTrackTelemetryForQueuedMessage(message._queuedKind)
+      ) {
+        trackTelemetryUserInputFromContent(
+          message.message.content,
+          telemetryModelId,
+        );
+      }
 
-      const queuedInputs: BidirectionalQueuedInput[] = [
-        {
-          kind: "user",
-          content: message.message.content,
-        },
-      ];
+      const queuedInputs: BidirectionalQueuedInput[] = [firstQueuedInput];
 
       // Batch any already-buffered user lines into the same turn, mirroring
       // TUI queue dequeue behavior (single coalesced submit when idle).
@@ -3658,36 +3703,20 @@ async function runBidirectionalMode(
           parsedCandidate.message?.content !== undefined
         ) {
           lineQueue.shift();
-          if (parsedCandidate._queuedKind === "task_notification") {
-            const notificationText =
-              typeof parsedCandidate.message.content === "string"
-                ? parsedCandidate.message.content
-                : parsedCandidate.message.content
-                    .reduce((texts: string[], part) => {
-                      if (
-                        part.type === "text" &&
-                        "text" in part &&
-                        typeof part.text === "string"
-                      ) {
-                        texts.push(part.text);
-                      }
-                      return texts;
-                    }, [])
-                    .join("");
-            queuedInputs.push({
-              kind: "task_notification",
-              text: notificationText,
-            });
-          } else {
+          const queuedInput = toBidirectionalQueuedInput(
+            parsedCandidate.message.content,
+            parsedCandidate._queuedKind,
+          );
+          if (
+            queuedInput.kind === "user" &&
+            shouldTrackTelemetryForQueuedMessage(parsedCandidate._queuedKind)
+          ) {
             trackTelemetryUserInputFromContent(
               parsedCandidate.message.content,
               telemetryModelId,
             );
-            queuedInputs.push({
-              kind: "user",
-              content: parsedCandidate.message.content,
-            });
           }
+          queuedInputs.push(queuedInput);
           continue;
         }
 
