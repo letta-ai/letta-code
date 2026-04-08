@@ -263,10 +263,12 @@ function splitShellSegments(input: string): string[] | null {
     if (input.startsWith(">>", i) || ch === ">") {
       const skipLen = tryConsumeSafeRedirect(input, i);
       if (skipLen > 0) {
-        // Strip preceding fd digit if present (e.g., the "2" in "2>/dev/null")
-        if (i > 0 && current.length > 0 && /[0-9]/.test(input[i - 1] ?? "")) {
-          current = current.slice(0, -1);
-        }
+        // Don't strip the preceding fd digit (e.g., "2" in "cmd 2>/dev/null").
+        // It remains as a trailing token in the segment, which is harmless:
+        // isSafeSegment checks the first token (command name), so the extra
+        // "2" is treated as an inert argument.  Stripping it would be
+        // dangerous because "ls3>/dev/null" would become "ls" — altering the
+        // evaluated command identity.
         i += skipLen;
         continue;
       }

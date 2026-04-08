@@ -373,6 +373,14 @@ describe("isReadOnlyShellCommand", () => {
       expect(isReadOnlyShellCommand("ls 2> /dev/null")).toBe(true);
     });
 
+    test("does not misclassify commands with trailing digits before redirect", () => {
+      // "ls3>/dev/null" should evaluate as command "ls3" (not "ls")
+      // ls3 is not in the safe list, so it must be blocked
+      expect(isReadOnlyShellCommand("ls3>/dev/null")).toBe(false);
+      expect(isReadOnlyShellCommand("git branch3>/dev/null")).toBe(false);
+      expect(isReadOnlyShellCommand("evil9>/dev/null")).toBe(false);
+    });
+
     test("allows fd duplication redirects", () => {
       expect(isReadOnlyShellCommand("ls 2>&1")).toBe(true);
       expect(isReadOnlyShellCommand("ls 2>&1 | grep error")).toBe(true);
