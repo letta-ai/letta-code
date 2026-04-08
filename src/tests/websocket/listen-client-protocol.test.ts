@@ -26,6 +26,7 @@ import {
   backgroundProcesses,
   backgroundTasks,
 } from "../../tools/impl/process_manager";
+import { LIMITS } from "../../tools/impl/truncation";
 import type {
   ApprovalResponseBody,
   ControlRequest,
@@ -3560,6 +3561,35 @@ describe("listen-client tool_return wire normalization", () => {
     });
 
     expect(normalized).toBeNull();
+  });
+
+  test("truncates oversized inbound tool returns and drops oversized stdout metadata", () => {
+    const hugeOutput = "x".repeat(LIMITS.BASH_OUTPUT_CHARS + 500);
+    const normalized = __listenClientTestUtils.normalizeToolReturnWireMessage({
+      message_type: "tool_return_message",
+      id: "message-3",
+      run_id: "run-3",
+      tool_returns: [
+        {
+          tool_call_id: "call-3",
+          status: "success",
+          tool_return: hugeOutput,
+          stdout: [hugeOutput],
+        },
+      ],
+    });
+
+    expect(normalized).not.toBeNull();
+    const toolReturns = (
+      normalized as {
+        tool_returns: Array<{ tool_return: string; stdout?: string[] }>;
+      }
+    ).tool_returns;
+
+    expect(toolReturns).toHaveLength(1);
+    expect(toolReturns[0]?.tool_return).toContain("[Output truncated:");
+    expect(toolReturns[0]?.tool_return.length).toBeLessThan(hugeOutput.length);
+    expect(toolReturns[0]).not.toHaveProperty("stdout");
   });
 });
 

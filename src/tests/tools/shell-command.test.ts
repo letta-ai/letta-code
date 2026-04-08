@@ -1,13 +1,31 @@
 import { expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { shell_command } from "../../tools/impl/ShellCommand.js";
+import { LIMITS } from "../../tools/impl/truncation.js";
 
 test("shell_command executes basic echo", async () => {
   const result = await shell_command({ command: "echo shell-basic" });
   expect(result.output).toContain("shell-basic");
+});
+
+test("shell_command preserves stdout and stderr arrays when output is not truncated", async () => {
+  const result = await shell_command({
+    command: `${JSON.stringify(process.execPath)} -e ${JSON.stringify("process.stdout.write('stdout'); process.stderr.write('stderr');")}`,
+  });
+
+  expect(result.output).toContain("stdout");
+  expect(result.output).toContain("stderr");
+  expect(result.stdout).toEqual(["stdout"]);
+  expect(result.stderr).toEqual(["stderr"]);
 });
 
 test("shell_command falls back when preferred shell is missing", async () => {
@@ -36,6 +54,55 @@ test("shell_command falls back when preferred shell is missing", async () => {
       if (original === undefined) delete process.env.SHELL;
       else process.env.SHELL = original;
     }
+  }
+});
+
+test("shell_command truncates oversized output with overflow-file notice", async () => {
+  const tempId = randomUUID();
+  const workdir = join(homedir(), ".letta", "tmp-shell-command", tempId);
+  const originalOverflow = process.env.LETTA_TOOL_OVERFLOW_TO_FILE;
+  let overflowPath: string | undefined;
+
+  mkdirSync(workdir, { recursive: true });
+  process.env.LETTA_TOOL_OVERFLOW_TO_FILE = "true";
+
+  try {
+    const script = `process.stdout.write("x".repeat(${LIMITS.BASH_OUTPUT_CHARS + 500}))`;
+    const result = await shell_command({
+      command: `${JSON.stringify(process.execPath)} -e ${JSON.stringify(script)}`,
+      workdir,
+    });
+
+    expect(result.output).toContain("[Output truncated:");
+    expect(result.output).toContain("[Full output written to:");
+    expect(result.stdout).toBeUndefined();
+    expect(result.stderr).toBeUndefined();
+
+    const overflowMatch = result.output.match(
+      /\[Full output written to: (.+)\]/,
+    );
+    overflowPath = overflowMatch?.[1]?.trim();
+    expect(overflowPath).toBeDefined();
+    if (!overflowPath) {
+      throw new Error("Expected overflow file pointer in shell_command output");
+    }
+
+    expect(existsSync(overflowPath)).toBe(true);
+    expect(readFileSync(overflowPath, "utf8").length).toBe(
+      LIMITS.BASH_OUTPUT_CHARS + 500,
+    );
+  } finally {
+    if (originalOverflow === undefined) {
+      delete process.env.LETTA_TOOL_OVERFLOW_TO_FILE;
+    } else {
+      process.env.LETTA_TOOL_OVERFLOW_TO_FILE = originalOverflow;
+    }
+
+    if (overflowPath) {
+      rmSync(dirname(overflowPath), { recursive: true, force: true });
+    }
+
+    rmSync(workdir, { recursive: true, force: true });
   }
 });
 

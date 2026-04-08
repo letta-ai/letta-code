@@ -1,8 +1,9 @@
 import { getCurrentAgentId } from "../../agent/context";
 import { isMemoryDirCommand } from "../../permissions/readOnlyShell";
-import { shell } from "./Shell.js";
+import { resolveShellWorkdir, type ShellResult, shell } from "./Shell.js";
 import { buildShellLaunchers } from "./shellLaunchers.js";
 import { ShellExecutionError } from "./shellRunner.js";
+import { LIMITS, truncateByChars } from "./truncation.js";
 import { validateRequiredParams } from "./validation.js";
 
 interface ShellCommandArgs {
@@ -19,8 +20,28 @@ interface ShellCommandArgs {
 
 interface ShellCommandResult {
   output: string;
-  stdout: string[];
-  stderr: string[];
+  stdout?: string[];
+  stderr?: string[];
+}
+
+function normalizeShellCommandResult(
+  result: ShellResult,
+  resolvedWorkdir: string,
+): ShellCommandResult {
+  const { content: truncatedOutput, wasTruncated } = truncateByChars(
+    result.output || "(Command completed with no output)",
+    LIMITS.BASH_OUTPUT_CHARS,
+    "Bash",
+    {
+      workingDirectory: resolvedWorkdir,
+      toolName: "Bash",
+    },
+  );
+
+  return {
+    output: truncatedOutput,
+    ...(wasTruncated ? {} : { stdout: result.stdout, stderr: result.stderr }),
+  };
 }
 
 /**
@@ -42,6 +63,7 @@ export async function shell_command(
     onOutput,
   } = args;
   const envOverrides = getMemoryGitIdentityEnvOverrides(command, workdir);
+  const resolvedWorkdir = resolveShellWorkdir(workdir);
   const launchers = buildShellLaunchers(command, { login });
   if (launchers.length === 0) {
     throw new Error("Command must be a non-empty string");
@@ -52,15 +74,16 @@ export async function shell_command(
 
   for (const launcher of launchers) {
     try {
-      return await shell({
+      const result = await shell({
         command: launcher,
-        workdir,
+        workdir: resolvedWorkdir,
         env_overrides: envOverrides,
         timeout_ms,
         justification,
         signal,
         onOutput,
       });
+      return normalizeShellCommandResult(result, resolvedWorkdir);
     } catch (error) {
       if (error instanceof ShellExecutionError && error.code === "ENOENT") {
         tried.push(launcher[0] || "");

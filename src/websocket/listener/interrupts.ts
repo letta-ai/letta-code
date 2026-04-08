@@ -2,6 +2,7 @@ import type WebSocket from "ws";
 import type { ApprovalResult } from "../../agent/approval-execution";
 import { normalizeApprovalResultsForPersistence } from "../../agent/approval-result-normalization";
 import { INTERRUPTED_BY_USER } from "../../constants";
+import { LIMITS, truncateByChars } from "../../tools/impl/truncation";
 import type {
   ClientToolEndMessage,
   ClientToolStartMessage,
@@ -20,6 +21,35 @@ import type {
   RecoveredApprovalState,
 } from "./types";
 
+const INTERRUPT_TOOL_RETURN_MAX_CHARS = LIMITS.BASH_OUTPUT_CHARS;
+
+function truncateInterruptToolReturn(text: string): string {
+  const { content } = truncateByChars(
+    text,
+    INTERRUPT_TOOL_RETURN_MAX_CHARS,
+    "tool_return_message",
+  );
+  return content;
+}
+
+function normalizeInterruptOutputLines(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const filtered = value.filter(
+    (entry): entry is string => typeof entry === "string",
+  );
+  if (filtered.length === 0) {
+    return undefined;
+  }
+
+  const combinedLength = filtered.reduce((sum, entry) => sum + entry.length, 0);
+  return combinedLength <= INTERRUPT_TOOL_RETURN_MAX_CHARS
+    ? filtered
+    : undefined;
+}
+
 export function asToolReturnStatus(value: unknown): "success" | "error" | null {
   if (value === "success" || value === "error") {
     return value;
@@ -29,7 +59,7 @@ export function asToolReturnStatus(value: unknown): "success" | "error" | null {
 
 export function normalizeToolReturnValue(value: unknown): string {
   if (typeof value === "string") {
-    return value;
+    return truncateInterruptToolReturn(value);
   }
   if (Array.isArray(value)) {
     const textParts = value
@@ -49,7 +79,7 @@ export function normalizeToolReturnValue(value: unknown): string {
       )
       .map((part) => part.text);
     if (textParts.length > 0) {
-      return textParts.join("\n");
+      return truncateInterruptToolReturn(textParts.join("\n"));
     }
   }
   if (
@@ -60,15 +90,15 @@ export function normalizeToolReturnValue(value: unknown): string {
     "text" in value &&
     typeof value.text === "string"
   ) {
-    return value.text;
+    return truncateInterruptToolReturn(value.text);
   }
   if (value === null || value === undefined) {
     return "";
   }
   try {
-    return JSON.stringify(value);
+    return truncateInterruptToolReturn(JSON.stringify(value));
   } catch {
-    return String(value);
+    return truncateInterruptToolReturn(String(value));
   }
 }
 
@@ -117,16 +147,8 @@ export function extractCanonicalToolReturnsFromWire(
       if (!toolCallId || !status) {
         continue;
       }
-      const stdout = Array.isArray(rec.stdout)
-        ? rec.stdout.filter(
-            (entry): entry is string => typeof entry === "string",
-          )
-        : undefined;
-      const stderr = Array.isArray(rec.stderr)
-        ? rec.stderr.filter(
-            (entry): entry is string => typeof entry === "string",
-          )
-        : undefined;
+      const stdout = normalizeInterruptOutputLines(rec.stdout);
+      const stderr = normalizeInterruptOutputLines(rec.stderr);
       fromArray.push({
         tool_call_id: toolCallId,
         status,
@@ -146,16 +168,8 @@ export function extractCanonicalToolReturnsFromWire(
   if (!topLevelToolCallId || !topLevelStatus) {
     return [];
   }
-  const stdout = Array.isArray(payload.stdout)
-    ? payload.stdout.filter(
-        (entry): entry is string => typeof entry === "string",
-      )
-    : undefined;
-  const stderr = Array.isArray(payload.stderr)
-    ? payload.stderr.filter(
-        (entry): entry is string => typeof entry === "string",
-      )
-    : undefined;
+  const stdout = normalizeInterruptOutputLines(payload.stdout);
+  const stderr = normalizeInterruptOutputLines(payload.stderr);
   return [
     {
       tool_call_id: topLevelToolCallId,
@@ -220,16 +234,12 @@ export function extractInterruptToolReturns(
           ? "success"
           : "error";
       const stdout =
-        "stdout" in approval && Array.isArray(approval.stdout)
-          ? approval.stdout.filter(
-              (entry): entry is string => typeof entry === "string",
-            )
+        "stdout" in approval
+          ? normalizeInterruptOutputLines(approval.stdout)
           : undefined;
       const stderr =
-        "stderr" in approval && Array.isArray(approval.stderr)
-          ? approval.stderr.filter(
-              (entry): entry is string => typeof entry === "string",
-            )
+        "stderr" in approval
+          ? normalizeInterruptOutputLines(approval.stderr)
           : undefined;
 
       return [
