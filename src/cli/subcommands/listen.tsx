@@ -69,7 +69,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
   const { values } = parseArgs({
     args: argv,
     options: {
-      envName: { type: "string" },
+      "env-name": { type: "string" },
       help: { type: "boolean", short: "h" },
       debug: { type: "boolean" },
     },
@@ -124,9 +124,9 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
   // Determine connection name
   let connectionName: string;
 
-  if (values.envName) {
+  if (values["env-name"]) {
     // Explicitly provided - use it and save to local project settings
-    connectionName = values.envName;
+    connectionName = values["env-name"];
     settingsManager.setListenerEnvName(connectionName);
   } else {
     // Not provided - check saved local project settings
