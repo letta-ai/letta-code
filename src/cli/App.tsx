@@ -550,9 +550,15 @@ function getErrorHintForStopReason(
     return ERROR_FEEDBACK_HINT;
   }
 
-  const statusInfo = modelEndpointType
-    ? PROVIDER_STATUS_PAGES[modelEndpointType]
-    : undefined;
+  // When the user is on an auto-routed model (letta/auto*), the reported
+  // model_endpoint_type reflects whichever downstream provider the proxy chose,
+  // not a provider the user explicitly selected.  Don't blame a specific
+  // provider in that case — the issue may be on the proxy side.
+  const isAutoModel = currentModelId?.startsWith("auto") ?? false;
+  const statusInfo =
+    modelEndpointType && !isAutoModel
+      ? PROVIDER_STATUS_PAGES[modelEndpointType]
+      : undefined;
 
   // Build the /model swap suggestion — mention Bedrock Opus if applicable
   const hasBedrockOpus =
