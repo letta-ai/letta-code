@@ -364,11 +364,13 @@ async function main(): Promise<void> {
   const settings = await settingsManager.getSettingsWithSecureTokens();
   markMilestone("SETTINGS_LOADED");
 
-  // Ensure base tools exist on the server (first-run-per-server)
-  const { bootstrapBaseToolsIfNeeded } = await import(
-    "./agent/bootstrap-tools"
-  );
-  await bootstrapBaseToolsIfNeeded();
+  // Bootstrap base tools for subcommands that have LETTA_API_KEY set (e.g., remote via code-desktop)
+  if (process.env.LETTA_API_KEY) {
+    const { bootstrapBaseToolsIfNeeded } = await import(
+      "./agent/bootstrap-tools"
+    );
+    await bootstrapBaseToolsIfNeeded();
+  }
 
   // Handle CLI subcommands (e.g., `letta memfs ...`) before parsing global flags
   const subcommandResult = await runSubcommand(process.argv.slice(2));
@@ -842,6 +844,15 @@ async function main(): Promise<void> {
   const { validateCredentials } = await import("./auth/oauth");
   const isValid = await validateCredentials(baseURL, apiKey ?? "");
   markMilestone("CREDENTIALS_VALIDATED");
+
+  // Ensure base tools exist on the server (first-run-per-machine, non-blocking).
+  // Must run after credentials are validated so OAuth tokens are available.
+  if (isValid) {
+    const { bootstrapBaseToolsIfNeeded } = await import(
+      "./agent/bootstrap-tools"
+    );
+    await bootstrapBaseToolsIfNeeded();
+  }
 
   if (!isValid) {
     // For headless mode, error out with helpful message
