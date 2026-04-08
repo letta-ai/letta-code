@@ -53,6 +53,50 @@ test("Git -C remote suggests safe subcommand rule", () => {
   expect(context.safetyLevel).toBe("safe");
 });
 
+test("Git branch --list suggests safe subcommand rule", () => {
+  const context = analyzeApprovalContext(
+    "Bash",
+    { command: "git branch --list 'feature/*'" },
+    "/Users/test/project",
+  );
+
+  expect(context.recommendedRule).toBe("Bash(git branch:*)");
+  expect(context.safetyLevel).toBe("safe");
+});
+
+test("Git branch mutation suggests moderate safety rule", () => {
+  const context = analyzeApprovalContext(
+    "Bash",
+    { command: "git branch feature/new-work" },
+    "/Users/test/project",
+  );
+
+  expect(context.recommendedRule).toBe("Bash(git branch:*)");
+  expect(context.safetyLevel).toBe("moderate");
+});
+
+test("Git read-only subcommand with unsafe flag suggests moderate safety rule", () => {
+  const context = analyzeApprovalContext(
+    "Bash",
+    { command: "git show --ext-diff HEAD" },
+    "/Users/test/project",
+  );
+
+  expect(context.recommendedRule).toBe("Bash(git show:*)");
+  expect(context.safetyLevel).toBe("moderate");
+});
+
+test("Git global config override is parsed to true subcommand and remains moderate", () => {
+  const context = analyzeApprovalContext(
+    "Bash",
+    { command: "git -c core.pager=cat status" },
+    "/Users/test/project",
+  );
+
+  expect(context.recommendedRule).toBe("Bash(git status:*)");
+  expect(context.safetyLevel).toBe("moderate");
+});
+
 test("Git push suggests moderate safety rule", () => {
   const context = analyzeApprovalContext(
     "Bash",
