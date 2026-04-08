@@ -166,6 +166,18 @@ describe("isReadOnlyShellCommand", () => {
       expect(isReadOnlyShellCommand("date")).toBe(true);
       expect(isReadOnlyShellCommand("hostname")).toBe(true);
     });
+
+    test("handles env safely", () => {
+      expect(isReadOnlyShellCommand("env")).toBe(true);
+      expect(isReadOnlyShellCommand("env --help")).toBe(true);
+      expect(isReadOnlyShellCommand("env ls -la")).toBe(true);
+      expect(isReadOnlyShellCommand("env bash -lc 'touch /tmp/pwn'")).toBe(
+        false,
+      );
+      expect(
+        isReadOnlyShellCommand("env FOO=1 bash -lc 'touch /tmp/pwn'"),
+      ).toBe(false);
+    });
   });
 
   describe("sed command", () => {
@@ -228,6 +240,30 @@ describe("isReadOnlyShellCommand", () => {
       expect(isReadOnlyShellCommand("git checkout branch")).toBe(false);
     });
 
+    test("blocks mutating git branch operations", () => {
+      expect(isReadOnlyShellCommand("git branch feature/foo")).toBe(false);
+      expect(isReadOnlyShellCommand("git branch -m old new")).toBe(false);
+      expect(isReadOnlyShellCommand("git branch -D stale")).toBe(false);
+      expect(isReadOnlyShellCommand("git branch --list")).toBe(true);
+      expect(isReadOnlyShellCommand("git branch --list 'feature/*'")).toBe(
+        true,
+      );
+    });
+
+    test("blocks unsafe git flags on read-only subcommands", () => {
+      expect(isReadOnlyShellCommand("git show --output=/tmp/out HEAD")).toBe(
+        false,
+      );
+      expect(isReadOnlyShellCommand("git show --ext-diff")).toBe(false);
+      expect(isReadOnlyShellCommand("git status --paginate")).toBe(false);
+      expect(
+        isReadOnlyShellCommand("git -c core.pager='sh -c \"echo pwn\"' status"),
+      ).toBe(false);
+      expect(
+        isReadOnlyShellCommand("git --config-env=core.pager=GIT_PAGER status"),
+      ).toBe(false);
+    });
+
     test("blocks bare git", () => {
       expect(isReadOnlyShellCommand("git")).toBe(false);
     });
@@ -278,6 +314,22 @@ describe("isReadOnlyShellCommand", () => {
       ).toBe(true);
     });
 
+    test("blocks mutating gh api commands", () => {
+      expect(
+        isReadOnlyShellCommand(
+          "gh api -X POST repos/owner/repo/issues -f title=test",
+        ),
+      ).toBe(false);
+      expect(
+        isReadOnlyShellCommand(
+          "gh api --method DELETE repos/owner/repo/issues/1",
+        ),
+      ).toBe(false);
+      expect(
+        isReadOnlyShellCommand("gh api repos/owner/repo --field foo=bar"),
+      ).toBe(false);
+    });
+
     test("allows gh status command", () => {
       expect(isReadOnlyShellCommand("gh status")).toBe(true);
     });
@@ -309,8 +361,18 @@ describe("isReadOnlyShellCommand", () => {
       );
     });
 
-    test("blocks find with -exec", () => {
+    test("blocks find with command execution options", () => {
       expect(isReadOnlyShellCommand("find . -exec rm {} \\;")).toBe(false);
+      expect(isReadOnlyShellCommand("find . -execdir rm {} \\;")).toBe(false);
+      expect(isReadOnlyShellCommand("find . -ok rm {} \\;")).toBe(false);
+      expect(isReadOnlyShellCommand("find . -okdir rm {} \\;")).toBe(false);
+    });
+
+    test("blocks find options that write output files", () => {
+      expect(isReadOnlyShellCommand("find . -fprint out.txt")).toBe(false);
+      expect(isReadOnlyShellCommand("find . -fprintf out.txt '%p\\n'")).toBe(
+        false,
+      );
     });
   });
 
@@ -403,6 +465,19 @@ describe("isReadOnlyShellCommand", () => {
     test("allows literal redirects inside quotes", () => {
       expect(isReadOnlyShellCommand('echo "a > b"')).toBe(true);
       expect(isReadOnlyShellCommand("echo 'a >> b'")).toBe(true);
+    });
+  });
+
+  describe("rg safety flags", () => {
+    test("blocks ripgrep flags that can execute external programs", () => {
+      expect(isReadOnlyShellCommand("rg --pre 'python pre.py' foo .")).toBe(
+        false,
+      );
+      expect(isReadOnlyShellCommand("rg --hostname-bin /bin/echo foo .")).toBe(
+        false,
+      );
+      expect(isReadOnlyShellCommand("rg --search-zip foo .")).toBe(false);
+      expect(isReadOnlyShellCommand("rg -z foo .")).toBe(false);
     });
   });
 

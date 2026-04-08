@@ -39,7 +39,6 @@ const ALWAYS_SAFE_COMMANDS = new Set([
   "id",
   "echo",
   "printf",
-  "env",
   "printenv",
   "which",
   "whereis",
@@ -70,7 +69,7 @@ const EXTERNAL_PATH_METADATA_COMMANDS = new Set([
   "dirname",
 ]);
 
-const SAFE_GIT_SUBCOMMANDS = new Set([
+export const SAFE_GIT_SUBCOMMAND_LIST = [
   "status",
   "diff",
   "log",
@@ -91,6 +90,32 @@ const SAFE_GIT_SUBCOMMANDS = new Set([
   "count-objects",
   "verify-commit",
   "verify-tag",
+] as const;
+
+const SAFE_GIT_SUBCOMMANDS = new Set<string>(SAFE_GIT_SUBCOMMAND_LIST);
+
+const UNSAFE_FIND_OPTIONS = new Set([
+  "-exec",
+  "-execdir",
+  "-ok",
+  "-okdir",
+  "-delete",
+  "-fls",
+  "-fprint",
+  "-fprint0",
+  "-fprintf",
+]);
+
+const UNSAFE_RIPGREP_OPTIONS_WITH_ARGS = new Set(["--pre", "--hostname-bin"]);
+
+const UNSAFE_RIPGREP_OPTIONS_WITHOUT_ARGS = new Set(["--search-zip", "-z"]);
+
+const UNSAFE_GIT_FLAGS = new Set([
+  "--output",
+  "--ext-diff",
+  "--textconv",
+  "--exec",
+  "--paginate",
 ]);
 
 const SAFE_MEMORY_GIT_SUBCOMMANDS = new Set([
@@ -317,6 +342,205 @@ function splitShellSegments(input: string): string[] | null {
   return segments.map((segment) => segment.trim()).filter(Boolean);
 }
 
+function hasUnsafeFindOptions(tokens: string[]): boolean {
+  return tokens.slice(1).some((token) => UNSAFE_FIND_OPTIONS.has(token));
+}
+
+function hasUnsafeRipgrepOptions(tokens: string[]): boolean {
+  return tokens.slice(1).some((token) => {
+    if (UNSAFE_RIPGREP_OPTIONS_WITHOUT_ARGS.has(token)) {
+      return true;
+    }
+    if (
+      UNSAFE_RIPGREP_OPTIONS_WITH_ARGS.has(token) ||
+      token.startsWith("--pre=") ||
+      token.startsWith("--hostname-bin=")
+    ) {
+      return true;
+    }
+    return false;
+  });
+}
+
+function hasUnsafeGitFlags(tokens: string[]): boolean {
+  return tokens.slice(1).some((token) => {
+    if (
+      token === "-c" ||
+      token === "--config-env" ||
+      (token.startsWith("-c") && token.length > 2) ||
+      token.startsWith("--config-env=")
+    ) {
+      return true;
+    }
+    if (
+      UNSAFE_GIT_FLAGS.has(token) ||
+      token.startsWith("--output=") ||
+      token.startsWith("--exec=")
+    ) {
+      return true;
+    }
+    return false;
+  });
+}
+
+function isReadOnlyGitBranchArgs(args: string[]): boolean {
+  if (args.length === 0) {
+    return true;
+  }
+
+  const readOnlyFlags = new Set([
+    "--list",
+    "-l",
+    "--show-current",
+    "-a",
+    "--all",
+    "-r",
+    "--remotes",
+    "-v",
+    "-vv",
+    "--verbose",
+  ]);
+
+  let sawReadOnlyFlag = false;
+  let sawListFlag = false;
+
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i];
+    if (!arg) {
+      continue;
+    }
+
+    if (readOnlyFlags.has(arg)) {
+      sawReadOnlyFlag = true;
+      if (arg === "--list" || arg === "-l") {
+        sawListFlag = true;
+      }
+      continue;
+    }
+
+    if (arg === "--format") {
+      if (typeof args[i + 1] !== "string") {
+        return false;
+      }
+      sawReadOnlyFlag = true;
+      i += 1;
+      continue;
+    }
+
+    if (arg.startsWith("--format=")) {
+      sawReadOnlyFlag = true;
+      continue;
+    }
+
+    // Pattern arguments are read-only only when listing explicitly.
+    if (sawListFlag && !arg.startsWith("-")) {
+      sawReadOnlyFlag = true;
+      continue;
+    }
+
+    return false;
+  }
+
+  return sawReadOnlyFlag;
+}
+
+function isSafeEnvInvocation(
+  tokens: string[],
+  options: ReadOnlyShellOptions,
+): boolean {
+  if (tokens.length === 1) {
+    return true;
+  }
+
+  let index = 1;
+  while (index < tokens.length) {
+    const token = tokens[index];
+    if (!token) {
+      index += 1;
+      continue;
+    }
+
+    if (token === "--help" || token === "--version") {
+      return tokens.length === 2;
+    }
+
+    if (
+      token === "-i" ||
+      token === "--ignore-environment" ||
+      token === "-0" ||
+      token === "--null" ||
+      token === "-u" ||
+      token === "--unset"
+    ) {
+      // -u/--unset require a following variable name.
+      if (token === "-u" || token === "--unset") {
+        if (!tokens[index + 1]) {
+          return false;
+        }
+        index += 2;
+        continue;
+      }
+      index += 1;
+      continue;
+    }
+
+    if (parseScopedAssignmentToken(token)) {
+      index += 1;
+      continue;
+    }
+
+    return isReadOnlyShellCommand(tokens.slice(index).join(" "), options);
+  }
+
+  return true;
+}
+
+function isReadOnlyGhApiInvocation(args: string[]): boolean {
+  let method = "GET";
+
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i];
+    if (!arg) {
+      continue;
+    }
+
+    if (arg === "-X" || arg === "--method") {
+      const next = args[i + 1];
+      if (!next) {
+        return false;
+      }
+      method = next.toUpperCase();
+      i += 1;
+      continue;
+    }
+
+    if (arg.startsWith("--method=")) {
+      method = arg.slice("--method=".length).toUpperCase();
+      continue;
+    }
+
+    if (arg.startsWith("-X") && arg.length > 2) {
+      method = arg.slice(2).toUpperCase();
+      continue;
+    }
+
+    if (
+      arg === "-f" ||
+      arg === "-F" ||
+      arg === "--field" ||
+      arg === "--raw-field" ||
+      arg === "--input" ||
+      arg.startsWith("--field=") ||
+      arg.startsWith("--raw-field=") ||
+      arg.startsWith("--input=")
+    ) {
+      return false;
+    }
+  }
+
+  return method === "GET" || method === "HEAD";
+}
+
 export interface ReadOnlyShellOptions {
   allowExternalPaths?: boolean;
   allowedPathRoots?: string[];
@@ -386,6 +610,14 @@ function isSafeSegment(
     return isReadOnlyShellCommand(stripQuotes(nested), options);
   }
 
+  if (command === "env") {
+    return isSafeEnvInvocation(tokens, options);
+  }
+
+  if (command === "rg" && hasUnsafeRipgrepOptions(tokens)) {
+    return false;
+  }
+
   if (ALWAYS_SAFE_COMMANDS.has(command)) {
     if (command === "cd") {
       if (options.allowExternalPaths) {
@@ -428,14 +660,26 @@ function isSafeSegment(
   }
 
   if (command === "git") {
-    const { subcommand, isSafePath } = parseGitInvocation(tokens, options);
+    const { subcommand, subcommandIndex, isSafePath } = parseGitInvocation(
+      tokens,
+      options,
+    );
     if (!isSafePath) {
       return false;
     }
     if (!subcommand) {
       return false;
     }
-    return SAFE_GIT_SUBCOMMANDS.has(subcommand);
+    if (hasUnsafeGitFlags(tokens)) {
+      return false;
+    }
+    if (!SAFE_GIT_SUBCOMMANDS.has(subcommand)) {
+      return false;
+    }
+    if (subcommand === "branch") {
+      return isReadOnlyGitBranchArgs(tokens.slice(subcommandIndex + 1));
+    }
+    return true;
   }
 
   if (command === "gh") {
@@ -448,6 +692,9 @@ function isSafeSegment(
     }
     const allowedActions = SAFE_GH_COMMANDS[category];
     if (allowedActions === null) {
+      if (category === "api") {
+        return isReadOnlyGhApiInvocation(tokens.slice(2));
+      }
       return true;
     }
     if (allowedActions === undefined) {
@@ -476,7 +723,7 @@ function isSafeSegment(
   }
 
   if (command === "find") {
-    return !/-delete|\s-exec\b/.test(segment);
+    return !hasUnsafeFindOptions(tokens);
   }
   if (command === "sort") {
     return !/\s-o\b/.test(segment);
@@ -592,7 +839,7 @@ function hasAbsoluteOrTraversalPathArg(value: string): boolean {
 function parseGitInvocation(
   tokens: string[],
   options: ReadOnlyShellOptions,
-): { subcommand: string | null; isSafePath: boolean } {
+): { subcommand: string | null; subcommandIndex: number; isSafePath: boolean } {
   let index = 1;
 
   while (index < tokens.length) {
@@ -605,16 +852,16 @@ function parseGitInvocation(
     if (token === "-C") {
       const pathToken = tokens[index + 1];
       if (!pathToken || hasDisallowedPathArg(pathToken, options)) {
-        return { subcommand: null, isSafePath: false };
+        return { subcommand: null, subcommandIndex: -1, isSafePath: false };
       }
       index += 2;
       continue;
     }
 
-    return { subcommand: token, isSafePath: true };
+    return { subcommand: token, subcommandIndex: index, isSafePath: true };
   }
 
-  return { subcommand: null, isSafePath: true };
+  return { subcommand: null, subcommandIndex: -1, isSafePath: true };
 }
 
 function getAllowedMemoryPrefixes(agentId: string): string[] {
@@ -1039,7 +1286,7 @@ function isAllowedMemorySegment(
     return { nextCwd: cwd, safe: false };
   }
 
-  if (command === "find" && /-delete|\s-exec\b/.test(segment)) {
+  if (command === "find" && hasUnsafeFindOptions(tokens)) {
     return { nextCwd: cwd, safe: false };
   }
 

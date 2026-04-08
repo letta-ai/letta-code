@@ -4,8 +4,14 @@
 import { homedir } from "node:os";
 import { dirname, relative, resolve, win32 } from "node:path";
 import { canonicalToolName, isFileToolName } from "./canonical";
-import { isReadOnlyShellCommand, SAFE_GH_COMMANDS } from "./readOnlyShell";
+import {
+  isReadOnlyShellCommand,
+  SAFE_GH_COMMANDS,
+  SAFE_GIT_SUBCOMMAND_LIST,
+} from "./readOnlyShell";
 import { unwrapShellLauncherCommand } from "./shell-command-normalization";
+
+const SAFE_GIT_COMMANDS: readonly string[] = SAFE_GIT_SUBCOMMAND_LIST;
 
 export interface ApprovalContext {
   // What rule should be saved if user clicks "approve always"
@@ -623,29 +629,11 @@ function analyzeBashApproval(
     const gitSubcommand = topLevelGitSubcommand;
 
     // Safe read-only git commands
-    const safeGitCommands = [
-      "status",
-      "diff",
-      "log",
-      "show",
-      "branch",
-      "tag",
-      "remote",
-      "rev-parse",
-      "ls-files",
-      "ls-tree",
-      "cat-file",
-      "describe",
-      "blame",
-      "shortlog",
-      "name-rev",
-      "rev-list",
-      "for-each-ref",
-      "count-objects",
-      "verify-commit",
-      "verify-tag",
-    ];
-    if (gitSubcommand && safeGitCommands.includes(gitSubcommand)) {
+    if (
+      gitSubcommand &&
+      SAFE_GIT_COMMANDS.includes(gitSubcommand) &&
+      isReadOnlyShellCommand(normalizedCommand, { allowExternalPaths: true })
+    ) {
       return {
         recommendedRule: `Bash(git ${gitSubcommand}:*)`,
         ruleDescription: `'git ${gitSubcommand}' commands`,
@@ -765,33 +753,15 @@ function analyzeBashApproval(
       // Check if this segment is git command
       if (segmentBase === "git") {
         const gitSubcommand = extractGitSubcommand(segmentParts);
-        const safeGitCommands = [
-          "status",
-          "diff",
-          "log",
-          "show",
-          "branch",
-          "tag",
-          "remote",
-          "rev-parse",
-          "ls-files",
-          "ls-tree",
-          "cat-file",
-          "describe",
-          "blame",
-          "shortlog",
-          "name-rev",
-          "rev-list",
-          "for-each-ref",
-          "count-objects",
-          "verify-commit",
-          "verify-tag",
-        ];
         const writeGitCommands = ["push", "pull", "fetch", "commit", "add"];
+        const isReadOnlyGitSegment = isReadOnlyShellCommand(segment, {
+          allowExternalPaths: true,
+        });
 
         if (
           gitSubcommand &&
-          (safeGitCommands.includes(gitSubcommand) ||
+          ((SAFE_GIT_COMMANDS.includes(gitSubcommand) &&
+            isReadOnlyGitSegment) ||
             writeGitCommands.includes(gitSubcommand))
         ) {
           return {
@@ -800,7 +770,7 @@ function analyzeBashApproval(
             approveAlwaysText: `Yes, and don't ask again for 'git ${gitSubcommand}' commands in this project`,
             defaultScope: "project",
             allowPersistence: true,
-            safetyLevel: safeGitCommands.includes(gitSubcommand)
+            safetyLevel: SAFE_GIT_COMMANDS.includes(gitSubcommand)
               ? "safe"
               : "moderate",
           };
@@ -877,6 +847,7 @@ function analyzeBashApproval(
 
 function extractGitSubcommand(parts: string[]): string | null {
   let index = 1;
+  let skipNext = false;
 
   while (index < parts.length) {
     const token = parts[index];
@@ -885,8 +856,49 @@ function extractGitSubcommand(parts: string[]): string | null {
       continue;
     }
 
-    if (token === "-C") {
-      index += 2;
+    if (skipNext) {
+      skipNext = false;
+      index += 1;
+      continue;
+    }
+
+    if (
+      token === "-C" ||
+      token === "-c" ||
+      token === "--config-env" ||
+      token === "--exec-path" ||
+      token === "--git-dir" ||
+      token === "--namespace" ||
+      token === "--super-prefix" ||
+      token === "--work-tree"
+    ) {
+      skipNext = true;
+      index += 1;
+      continue;
+    }
+
+    if (
+      (token.startsWith("-C") || token.startsWith("-c")) &&
+      token.length > 2
+    ) {
+      index += 1;
+      continue;
+    }
+
+    if (
+      token.startsWith("--config-env=") ||
+      token.startsWith("--exec-path=") ||
+      token.startsWith("--git-dir=") ||
+      token.startsWith("--namespace=") ||
+      token.startsWith("--super-prefix=") ||
+      token.startsWith("--work-tree=")
+    ) {
+      index += 1;
+      continue;
+    }
+
+    if (token === "--" || token.startsWith("-")) {
+      index += 1;
       continue;
     }
 
