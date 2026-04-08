@@ -166,9 +166,10 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     // Get device ID
     const deviceId = settingsManager.getOrCreateDeviceId();
 
-    // Get API key (include secure token storage fallback)
+    // Get API key — prefer keychain/settings over env var so a stale
+    // shell export doesn't shadow the real key from OAuth login.
     const settings = await settingsManager.getSettingsWithSecureTokens();
-    const apiKey = process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
+    const apiKey = settings.env?.LETTA_API_KEY || process.env.LETTA_API_KEY;
 
     if (!apiKey) {
       console.error("Error: LETTA_API_KEY not found");
