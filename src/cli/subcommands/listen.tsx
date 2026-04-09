@@ -10,6 +10,12 @@ import TextInput from "ink-text-input";
 import type React from "react";
 import { useState } from "react";
 import { getServerUrl } from "../../agent/client";
+import {
+  LETTA_CLOUD_API_URL,
+  pollForToken,
+  refreshAccessToken,
+  requestDeviceCode,
+} from "../../auth/oauth";
 import { settingsManager } from "../../settings-manager";
 import { telemetry } from "../../telemetry";
 import { RemoteSessionLog } from "../../websocket/listen-log";
@@ -166,15 +172,99 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     // Get device ID
     const deviceId = settingsManager.getOrCreateDeviceId();
 
-    // Get API key (include secure token storage fallback)
+    // Get API key — prefer keychain/settings over env var so a stale
+    // shell export doesn't shadow the real key from OAuth login.
     const settings = await settingsManager.getSettingsWithSecureTokens();
-    const apiKey = process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
+    let apiKey = settings.env?.LETTA_API_KEY || process.env.LETTA_API_KEY;
 
+    // If access token is saved but expired, try refreshing it
+    if (apiKey && settings.refreshToken && settings.tokenExpiresAt) {
+      const now = Date.now();
+      // Refresh if token expires within 5 minutes
+      if (now >= settings.tokenExpiresAt - 5 * 60 * 1000) {
+        try {
+          console.log("Access token expired, refreshing...");
+          const tokens = await refreshAccessToken(
+            settings.refreshToken,
+            deviceId,
+            connectionName,
+          );
+          apiKey = tokens.access_token;
+          settingsManager.updateSettings({
+            env: {
+              ...settingsManager.getSettings().env,
+              LETTA_API_KEY: tokens.access_token,
+            },
+            refreshToken: tokens.refresh_token ?? settings.refreshToken,
+            tokenExpiresAt: now + tokens.expires_in * 1000,
+          });
+          await settingsManager.flush();
+          console.log("Token refreshed successfully.");
+        } catch (refreshErr) {
+          // Refresh failed — clear stale tokens and fall through to re-auth
+          console.warn(
+            "Token refresh failed:",
+            refreshErr instanceof Error
+              ? refreshErr.message
+              : String(refreshErr),
+          );
+          apiKey = undefined;
+        }
+      }
+    }
+
+    // No API key found — attempt Device Code OAuth if pointing at Letta Cloud
     if (!apiKey) {
-      console.error("Error: LETTA_API_KEY not found");
-      console.error("Set your API key with: export LETTA_API_KEY=<your-key>");
-      await flushListenerTelemetryEnd("listener_missing_api_key");
-      return 1;
+      const serverUrl = getServerUrl();
+      if (serverUrl !== LETTA_CLOUD_API_URL) {
+        // Self-hosted: can't use Letta Cloud OAuth
+        console.error("Error: LETTA_API_KEY not found");
+        console.error("Set your API key with: export LETTA_API_KEY=<your-key>");
+        await flushListenerTelemetryEnd("listener_missing_api_key");
+        return 1;
+      }
+
+      console.log("No API key found. Starting OAuth login...\n");
+
+      try {
+        const deviceData = await requestDeviceCode();
+
+        console.log(
+          `To authenticate, visit: ${deviceData.verification_uri_complete}`,
+        );
+        console.log(`Your code: ${deviceData.user_code}\n`);
+        console.log("Waiting for authorization...\n");
+
+        const tokens = await pollForToken(
+          deviceData.device_code,
+          deviceData.interval,
+          deviceData.expires_in,
+          deviceId,
+          connectionName,
+        );
+
+        apiKey = tokens.access_token;
+        const now = Date.now();
+
+        settingsManager.updateSettings({
+          env: {
+            ...settingsManager.getSettings().env,
+            LETTA_API_KEY: tokens.access_token,
+          },
+          refreshToken: tokens.refresh_token,
+          tokenExpiresAt: now + tokens.expires_in * 1000,
+        });
+        await settingsManager.flush();
+
+        console.log("Authenticated successfully.\n");
+      } catch (authErr) {
+        console.error(
+          "OAuth login failed:",
+          authErr instanceof Error ? authErr.message : String(authErr),
+        );
+        await flushListenerTelemetryEnd("listener_oauth_failed");
+        return 1;
+      }
     }
 
     sessionLog.log(`Session started (debug=${debugMode})`);
