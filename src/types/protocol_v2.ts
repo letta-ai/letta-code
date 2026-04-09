@@ -193,7 +193,8 @@ export type QueueMessageSource =
   | "task_notification"
   | "cron"
   | "subagent"
-  | "system";
+  | "system"
+  | "channel";
 
 export interface QueueMessage {
   id: string;

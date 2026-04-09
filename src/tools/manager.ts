@@ -1,6 +1,7 @@
 import { getDisplayableToolReturn } from "../agent/approval-execution";
 import { getModelInfo } from "../agent/model";
 import { getAllSubagentConfigs } from "../agent/subagents";
+import { getActiveChannelIds } from "../channels/registry";
 import { refreshFileIndex } from "../cli/helpers/fileIndex";
 import { INTERRUPTED_BY_USER } from "../constants";
 import {
@@ -22,6 +23,41 @@ import {
 import { TOOL_DEFINITIONS, type ToolName } from "./toolDefinitions";
 
 export const TOOL_NAMES = Object.keys(TOOL_DEFINITIONS) as ToolName[];
+
+/**
+ * Append MessageChannel tool if any channels are active.
+ * Used by both resolveBaseToolNamesForModel() and getToolNamesForToolset().
+ */
+function maybeAppendChannelTools(toolNames: ToolName[]): ToolName[] {
+  if (
+    getActiveChannelIds().length > 0 &&
+    !toolNames.includes("MessageChannel" as ToolName)
+  ) {
+    return [...toolNames, "MessageChannel" as ToolName];
+  }
+  return toolNames;
+}
+
+/**
+ * Inject channel enum into MessageChannel schema if channels are active.
+ * Used by both buildRegistryForModel() and buildSpecificToolRegistry().
+ */
+function maybeInjectChannelEnum(
+  name: string,
+  schema: Record<string, unknown>,
+): Record<string, unknown> {
+  if (name !== "MessageChannel") return schema;
+  const activeChannels = getActiveChannelIds();
+  if (activeChannels.length === 0) return schema;
+  const injected = structuredClone(schema);
+  const props = injected.properties as
+    | Record<string, Record<string, unknown>>
+    | undefined;
+  if (props?.channel) {
+    props.channel.enum = activeChannels;
+  }
+  return injected;
+}
 const STREAMING_SHELL_TOOLS = new Set([
   "Bash",
   "BashOutput",
@@ -171,6 +207,7 @@ const TOOL_PERMISSIONS: Record<ToolName, { requiresApproval: boolean }> = {
   LS: { requiresApproval: false },
   memory: { requiresApproval: false },
   memory_apply_patch: { requiresApproval: false },
+  MessageChannel: { requiresApproval: true },
   MultiEdit: { requiresApproval: true },
   Read: { requiresApproval: false },
   view_image: { requiresApproval: false },
@@ -928,7 +965,7 @@ async function buildSpecificToolRegistry(
     const toolSchema: ToolSchema = {
       name: internalName,
       description: definition.description,
-      input_schema: definition.schema,
+      input_schema: maybeInjectChannelEnum(internalName, definition.schema),
     };
 
     newRegistry.set(internalName, {
@@ -969,6 +1006,9 @@ async function resolveBaseToolNamesForModel(
     const excludeSet = new Set(options.exclude);
     baseToolNames = baseToolNames.filter((name) => !excludeSet.has(name));
   }
+
+  // Append channel tool if channels are active
+  baseToolNames = maybeAppendChannelTools(baseToolNames);
 
   return baseToolNames;
 }
@@ -1018,7 +1058,7 @@ async function buildRegistryForModel(
       const toolSchema: ToolSchema = {
         name,
         description,
-        input_schema: definition.schema,
+        input_schema: maybeInjectChannelEnum(name, definition.schema),
       };
 
       newRegistry.set(name, {
@@ -1420,6 +1460,11 @@ export async function executeTool(
     // Inject toolCallId for Skill tool (used for skill content registry)
     if (internalName === "Skill" && options?.toolCallId) {
       enhancedArgs = { ...enhancedArgs, toolCallId: options.toolCallId };
+    }
+
+    // Inject parent scope for MessageChannel tool (per-execution, not global singleton)
+    if (internalName === "MessageChannel" && options?.parentScope) {
+      enhancedArgs = { ...enhancedArgs, parentScope: options.parentScope };
     }
 
     // Inject the execution context id for plan-mode tools so they can update

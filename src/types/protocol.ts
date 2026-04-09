@@ -350,6 +350,7 @@ export type QueueItemSource =
   | "user"
   | "task_notification"
   | "cron"
+  | "channel"
   | "subagent"
   | "system";
 
