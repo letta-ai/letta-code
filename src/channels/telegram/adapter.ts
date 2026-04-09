@@ -19,6 +19,15 @@ export function createTelegramAdapter(
   const bot = new Bot(config.token);
   let running = false;
 
+  bot.catch((error) => {
+    const updateId = error.ctx?.update?.update_id;
+    const prefix =
+      updateId === undefined
+        ? "[Telegram] Unhandled bot error:"
+        : `[Telegram] Unhandled bot error for update ${updateId}:`;
+    console.error(prefix, error.error);
+  });
+
   // Wire message handlers
   bot.on("message:text", async (ctx) => {
     const msg = ctx.message;
@@ -79,16 +88,21 @@ export function createTelegramAdapter(
       );
 
       // Start long-polling in background (non-blocking)
-      bot.start({
-        onStart: () => {
-          running = true;
-        },
-      });
+      void bot
+        .start({
+          onStart: () => {
+            running = true;
+          },
+        })
+        .catch((error) => {
+          running = false;
+          console.error("[Telegram] Long-polling stopped unexpectedly:", error);
+        });
     },
 
     async stop(): Promise<void> {
       if (!running) return;
-      bot.stop();
+      await bot.stop();
       running = false;
       console.log("[Telegram] Bot stopped");
     },

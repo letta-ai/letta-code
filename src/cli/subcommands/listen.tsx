@@ -100,6 +100,9 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     console.log("  -h, --help         Show this help message\n");
     console.log("Examples:");
     console.log(
+      "  letta channels configure telegram          # Configure Telegram first",
+    );
+    console.log(
       "  letta server                              # Uses hostname as default",
     );
     console.log('  letta server --env-name "work-laptop"');
@@ -114,6 +117,12 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     );
     console.log(
       "Messages will be executed locally using your letta-code environment.",
+    );
+    console.log(
+      "Telegram flow: configure the bot, start the listener with --channels telegram,",
+    );
+    console.log(
+      "then message the bot from Telegram and run /channels telegram pair <code> in the target conversation.",
     );
     return 0;
   }

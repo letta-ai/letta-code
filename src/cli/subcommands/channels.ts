@@ -56,6 +56,18 @@ Note: "configure" and "status" are standalone-safe. "route add/remove" and
 "pair" modify files but do NOT update a running listener — use the /channels
 WS command from ADE/desktop for live changes, or restart the server.
 
+Recommended Telegram flow:
+  1. letta channels configure telegram
+  2. letta server --channels telegram
+  3. Message the bot from Telegram once to get a pairing code
+  4. In the target ADE/desktop conversation, run:
+     /channels telegram pair <code>
+
+State files:
+  ~/.letta/channels/telegram/config.yaml
+  ~/.letta/channels/telegram/pairing.yaml
+  ~/.letta/channels/telegram/routing.yaml
+
 Output is JSON.
 `.trim(),
   );

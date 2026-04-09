@@ -1375,16 +1375,9 @@ function wireChannelIngress(
   processQueuedTurn: ProcessQueuedTurn,
 ): void {
   const registry = getChannelRegistry();
-  if (!registry) {
-    console.log("[wireChannelIngress] No channel registry found, skipping");
-    return;
-  }
+  if (!registry) return;
 
-  console.log("[wireChannelIngress] Setting message handler and marking ready");
   registry.setMessageHandler((route, xmlContent) => {
-    console.log(
-      `[wireChannelIngress] Delivering message to ${route.agentId}/${route.conversationId}`,
-    );
     // Follow the same pattern as cron/scheduler.ts:131-157
     const rawRuntime = getOrCreateConversationRuntime(
       listener,

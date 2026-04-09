@@ -6,6 +6,9 @@
  * 2. Validate via getMe()
  * 3. Choose DM policy
  * 4. Write config to ~/.letta/channels/telegram/config.yaml
+ * 5. Start `letta server --channels telegram`
+ * 6. Message the bot from Telegram to get a pairing code
+ * 7. Run `/channels telegram pair <code>` in the target ADE/Desktop conversation
  */
 
 import { createInterface } from "node:readline/promises";
@@ -80,7 +83,13 @@ export async function runTelegramSetup(): Promise<boolean> {
 
     writeChannelConfig("telegram", config);
     console.log("\n✓ Telegram bot configured!");
-    console.log("Start with: letta server --channels telegram\n");
+    console.log("Config written to: ~/.letta/channels/telegram/config.yaml\n");
+    console.log("Next steps:");
+    console.log("  1. Start the listener: letta server --channels telegram");
+    console.log("  2. Message the bot from Telegram to get a pairing code");
+    console.log(
+      "  3. In the target ADE/Desktop conversation, run: /channels telegram pair <code>\n",
+    );
 
     return true;
   } finally {
