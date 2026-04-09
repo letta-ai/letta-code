@@ -26,6 +26,18 @@ describe("ExitPlanMode tool", () => {
     expect(permissionMode.getPlanFilePath()).toBeNull();
   });
 
+  test("restores to default (not memory) when entering plan from memory mode", async () => {
+    permissionMode.reset();
+    permissionMode.setMode("memory");
+    permissionMode.setMode("plan");
+    permissionMode.setPlanFilePath("/tmp/test-plan.md");
+
+    await exit_plan_mode();
+
+    expect(permissionMode.getMode()).toBe("default");
+    expect(permissionMode.getPlanFilePath()).toBeNull();
+  });
+
   test("returns approval message", async () => {
     permissionMode.reset();
     const result = await exit_plan_mode();
