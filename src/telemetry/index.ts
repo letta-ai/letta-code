@@ -132,6 +132,21 @@ class TelemetryManager {
   }
 
   /**
+   * Check if the user is connected to Letta Cloud (api.letta.com)
+   */
+  private isCloudUser(): boolean {
+    try {
+      return getServerUrl().includes("api.letta.com");
+    } catch {
+      // Settings not initialized yet — check env var directly
+      return (
+        !process.env.LETTA_BASE_URL ||
+        process.env.LETTA_BASE_URL.includes("api.letta.com")
+      );
+    }
+  }
+
+  /**
    * Initialize telemetry and start periodic flushing
    */
   init() {
@@ -462,6 +477,11 @@ class TelemetryManager {
       recentChunks?: Record<string, unknown>[];
     },
   ) {
+    // Skip error telemetry for self-hosted users to avoid spamming cloud analytics
+    if (!this.isCloudUser()) {
+      return;
+    }
+
     const data: ErrorData = {
       error_type: errorType,
       error_message: errorMessage,
