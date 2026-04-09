@@ -1375,9 +1375,16 @@ function wireChannelIngress(
   processQueuedTurn: ProcessQueuedTurn,
 ): void {
   const registry = getChannelRegistry();
-  if (!registry) return;
+  if (!registry) {
+    console.log("[wireChannelIngress] No channel registry found, skipping");
+    return;
+  }
 
+  console.log("[wireChannelIngress] Setting message handler and marking ready");
   registry.setMessageHandler((route, xmlContent) => {
+    console.log(
+      `[wireChannelIngress] Delivering message to ${route.agentId}/${route.conversationId}`,
+    );
     // Follow the same pattern as cron/scheduler.ts:131-157
     const rawRuntime = getOrCreateConversationRuntime(
       listener,
@@ -1391,21 +1398,53 @@ function wireChannelIngress(
       rawRuntime,
     );
 
-    conversationRuntime.queueRuntime.enqueue({
-      kind: "message",
-      source: "channel" as import("../../types/protocol").QueueItemSource,
-      content: xmlContent,
-      agentId: route.agentId,
-      conversationId: route.conversationId,
-    } as Omit<
-      import("../../queue/queueRuntime").MessageQueueItem,
-      "id" | "enqueuedAt"
-    >);
+    enqueueChannelTurn(conversationRuntime, route, xmlContent);
 
     scheduleQueuePump(conversationRuntime, socket, opts, processQueuedTurn);
   });
 
   registry.setReady();
+}
+
+function enqueueChannelTurn(
+  runtime: ConversationRuntime,
+  route: {
+    agentId: string;
+    conversationId: string;
+  },
+  xmlContent: MessageCreate["content"],
+): { id: string } | null {
+  const clientMessageId = `cm-channel-${crypto.randomUUID()}`;
+  const enqueuedItem = runtime.queueRuntime.enqueue({
+    kind: "message",
+    source: "channel" as import("../../types/protocol").QueueItemSource,
+    content: xmlContent,
+    clientMessageId,
+    agentId: route.agentId,
+    conversationId: route.conversationId,
+  } as Omit<
+    import("../../queue/queueRuntime").MessageQueueItem,
+    "id" | "enqueuedAt"
+  >);
+
+  if (!enqueuedItem) {
+    return null;
+  }
+
+  runtime.queuedMessagesByItemId.set(enqueuedItem.id, {
+    type: "message",
+    agentId: route.agentId,
+    conversationId: route.conversationId,
+    messages: [
+      {
+        role: "user",
+        content: xmlContent,
+        client_message_id: clientMessageId,
+      } satisfies MessageCreate & { client_message_id?: string },
+    ],
+  });
+
+  return enqueuedItem;
 }
 
 export function ensureConversationQueueRuntime(
@@ -4186,6 +4225,7 @@ export const __listenClientTestUtils = {
   handleSkillCommand,
   handleCreateAgentCommand,
   handleReflectionSettingsCommand,
+  enqueueChannelTurn,
   scheduleQueuePump,
   replaySyncStateForRuntime,
   recoverApprovalStateForSync,

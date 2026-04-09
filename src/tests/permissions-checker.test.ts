@@ -484,6 +484,18 @@ test("TodoWrite defaults to allow", () => {
   expect(result.decision).toBe("allow");
 });
 
+test("MessageChannel defaults to allow", () => {
+  const result = checkPermission(
+    "MessageChannel",
+    { channel: "telegram", message: "hello there" },
+    { allow: [], deny: [], ask: [] },
+    "/Users/test/project",
+  );
+
+  expect(result.decision).toBe("allow");
+  expect(result.reason).toBe("Default behavior for tool");
+});
+
 // ============================================================================
 // Precedence Order Tests
 // ============================================================================

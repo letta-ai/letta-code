@@ -207,7 +207,7 @@ const TOOL_PERMISSIONS: Record<ToolName, { requiresApproval: boolean }> = {
   LS: { requiresApproval: false },
   memory: { requiresApproval: false },
   memory_apply_patch: { requiresApproval: false },
-  MessageChannel: { requiresApproval: true },
+  MessageChannel: { requiresApproval: false },
   MultiEdit: { requiresApproval: true },
   Read: { requiresApproval: false },
   view_image: { requiresApproval: false },
