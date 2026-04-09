@@ -14042,7 +14042,9 @@ ${SYSTEM_REMINDER_CLOSE}
             ? "bypassPermissions"
             : acceptEdits
               ? "acceptEdits"
-              : (previousMode ?? "default");
+              : previousMode === "memory"
+                ? "default"
+                : (previousMode ?? "default");
         permissionMode.setMode(restoreMode);
         setUiPermissionMode(restoreMode);
       } else {
