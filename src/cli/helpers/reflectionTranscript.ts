@@ -27,6 +27,7 @@ type TranscriptEntry =
       kind: "user" | "assistant" | "reasoning" | "error";
       text: string;
       captured_at: string;
+      source_line_id?: string;
     }
   | {
       kind: "tool_call";
@@ -35,6 +36,7 @@ type TranscriptEntry =
       resultText?: string;
       resultOk?: boolean;
       captured_at: string;
+      source_line_id?: string;
     };
 
 export interface ReflectionTranscriptPaths {
@@ -46,6 +48,8 @@ export interface ReflectionTranscriptPaths {
 
 export interface AutoReflectionPayload {
   payloadPath: string;
+  startMessageId?: string;
+  endMessageId?: string;
   endSnapshotLine: number;
 }
 
@@ -386,13 +390,33 @@ function lineToTranscriptEntry(
 ): TranscriptEntry | null {
   switch (line.kind) {
     case "user":
-      return { kind: "user", text: line.text, captured_at: capturedAt };
+      return {
+        kind: "user",
+        text: line.text,
+        captured_at: capturedAt,
+        source_line_id: line.id,
+      };
     case "assistant":
-      return { kind: "assistant", text: line.text, captured_at: capturedAt };
+      return {
+        kind: "assistant",
+        text: line.text,
+        captured_at: capturedAt,
+        source_line_id: line.id,
+      };
     case "reasoning":
-      return { kind: "reasoning", text: line.text, captured_at: capturedAt };
+      return {
+        kind: "reasoning",
+        text: line.text,
+        captured_at: capturedAt,
+        source_line_id: line.id,
+      };
     case "error":
-      return { kind: "error", text: line.text, captured_at: capturedAt };
+      return {
+        kind: "error",
+        text: line.text,
+        captured_at: capturedAt,
+        source_line_id: line.id,
+      };
     case "tool_call":
       return {
         kind: "tool_call",
@@ -401,6 +425,7 @@ function lineToTranscriptEntry(
         resultText: line.resultText,
         resultOk: line.resultOk,
         captured_at: capturedAt,
+        source_line_id: line.id,
       };
     default:
       return null;
@@ -537,6 +562,11 @@ export async function buildAutoReflectionPayload(
   const entries = snapshotLines
     .map((line) => parseJsonLine<TranscriptEntry>(line))
     .filter((entry): entry is TranscriptEntry => entry !== null);
+  const messageIds = entries
+    .map((entry) => entry.source_line_id)
+    .filter((id): id is string => typeof id === "string" && id.length > 0);
+  const startMessageId = messageIds[0];
+  const endMessageId = messageIds[messageIds.length - 1];
   const transcript = formatTaggedTranscript(entries);
   if (!transcript) {
     return null;
@@ -550,6 +580,8 @@ export async function buildAutoReflectionPayload(
 
   return {
     payloadPath,
+    startMessageId,
+    endMessageId,
     endSnapshotLine: lines.length,
   };
 }

@@ -199,7 +199,7 @@ function buildMaybeLaunchReflectionSubagent(params: {
       );
       const reflectionSuccessSummary =
         "Reflected on the memory palace, the halls remember more now";
-      spawnBackgroundSubagentTask({
+      const { subagentId } = spawnBackgroundSubagentTask({
         subagentType: "reflection",
         prompt: reflectionPrompt,
         description: AUTO_REFLECTION_DESCRIPTION,
@@ -211,6 +211,11 @@ function buildMaybeLaunchReflectionSubagent(params: {
             : `Tried to reflect, but got lost in the palace: ${error || "Unknown error"}`,
         parentScope: { agentId, conversationId },
         onComplete: async ({ success, error }) => {
+          telemetry.trackReflectionEnd(triggerSource, success, {
+            subagentId,
+            conversationId,
+            error,
+          });
           await finalizeAutoReflectionPayload(
             agentId,
             conversationId,
@@ -236,6 +241,12 @@ function buildMaybeLaunchReflectionSubagent(params: {
             },
           );
         },
+      });
+      telemetry.trackReflectionStart(triggerSource, {
+        subagentId,
+        conversationId,
+        startMessageId: autoPayload.startMessageId,
+        endMessageId: autoPayload.endMessageId,
       });
 
       debugLog(

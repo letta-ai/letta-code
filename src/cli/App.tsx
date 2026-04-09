@@ -10578,12 +10578,17 @@ export default function App({
             const { spawnBackgroundSubagentTask } = await import(
               "../tools/impl/Task"
             );
-            spawnBackgroundSubagentTask({
+            const { subagentId } = spawnBackgroundSubagentTask({
               subagentType: "reflection",
               prompt: reflectionPrompt,
               description: "Reflecting on conversation",
               silentCompletion: true,
               onComplete: async ({ success, error }) => {
+                telemetry.trackReflectionEnd("manual", success, {
+                  subagentId,
+                  conversationId: reflectionConversationId,
+                  error,
+                });
                 await finalizeAutoReflectionPayload(
                   agentId,
                   reflectionConversationId,
@@ -10611,6 +10616,12 @@ export default function App({
                 );
                 appendTaskNotificationEvents([msg]);
               },
+            });
+            telemetry.trackReflectionStart("manual", {
+              subagentId,
+              conversationId: reflectionConversationId,
+              startMessageId: autoPayload.startMessageId,
+              endMessageId: autoPayload.endMessageId,
             });
 
             cmd.finish(
@@ -11040,12 +11051,17 @@ ${SYSTEM_REMINDER_CLOSE}
           const { spawnBackgroundSubagentTask } = await import(
             "../tools/impl/Task"
           );
-          spawnBackgroundSubagentTask({
+          const { subagentId } = spawnBackgroundSubagentTask({
             subagentType: "reflection",
             prompt: reflectionPrompt,
             description: AUTO_REFLECTION_DESCRIPTION,
             silentCompletion: true,
             onComplete: async ({ success, error }) => {
+              telemetry.trackReflectionEnd(triggerSource, success, {
+                subagentId,
+                conversationId: reflectionConversationId,
+                error,
+              });
               await finalizeAutoReflectionPayload(
                 agentId,
                 reflectionConversationId,
@@ -11073,6 +11089,12 @@ ${SYSTEM_REMINDER_CLOSE}
               );
               appendTaskNotificationEvents([msg]);
             },
+          });
+          telemetry.trackReflectionStart(triggerSource, {
+            subagentId,
+            conversationId: reflectionConversationId,
+            startMessageId: autoPayload.startMessageId,
+            endMessageId: autoPayload.endMessageId,
           });
           debugLog(
             "memory",

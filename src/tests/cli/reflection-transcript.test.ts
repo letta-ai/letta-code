@@ -59,6 +59,8 @@ describe("reflectionTranscript helper", () => {
     const payload = await buildAutoReflectionPayload(agentId, conversationId);
     expect(payload).not.toBeNull();
     if (!payload) return;
+    expect(payload.startMessageId).toBe("u1");
+    expect(payload.endMessageId).toBe("a1");
 
     const payloadText = await readFile(payload.payloadPath, "utf-8");
     expect(payloadText).toContain("<user>hello</user>");
@@ -94,6 +96,8 @@ describe("reflectionTranscript helper", () => {
     const payload = await buildAutoReflectionPayload(agentId, conversationId);
     expect(payload).not.toBeNull();
     if (!payload) return;
+    expect(payload.startMessageId).toBe("u1");
+    expect(payload.endMessageId).toBe("u1");
 
     await finalizeAutoReflectionPayload(
       agentId,
@@ -144,6 +148,8 @@ describe("reflectionTranscript helper", () => {
     );
     expect(secondAttempt).not.toBeNull();
     if (!secondAttempt) return;
+    expect(secondAttempt.startMessageId).toBe("a2");
+    expect(secondAttempt.endMessageId).toBe("a2");
 
     const payloadText = await readFile(secondAttempt.payloadPath, "utf-8");
     expect(payloadText).toContain("<assistant>second</assistant>");
