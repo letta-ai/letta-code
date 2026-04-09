@@ -199,8 +199,12 @@ export class ChannelRegistry {
     }
     // dm_policy === "open" → skip check
 
-    // 2. Route lookup
-    const route = getRouteFromStore(msg.channel, msg.chatId);
+    // 2. Route lookup (reload from disk on miss — allows standalone CLI pairing)
+    let route = getRouteFromStore(msg.channel, msg.chatId);
+    if (!route) {
+      loadRoutes(msg.channel);
+      route = getRouteFromStore(msg.channel, msg.chatId);
+    }
     if (!route) {
       await adapter.sendDirectReply(
         msg.chatId,
