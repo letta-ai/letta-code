@@ -180,6 +180,10 @@ export class ChannelRegistry {
         return;
       }
     } else if (config.dmPolicy === "pairing") {
+      // Reload pairing store from disk on miss (allows standalone CLI pairing)
+      if (!isUserApproved(msg.channel, msg.senderId)) {
+        loadPairingStore(msg.channel);
+      }
       if (!isUserApproved(msg.channel, msg.senderId)) {
         // Generate pairing code
         const code = createPairingCode(
