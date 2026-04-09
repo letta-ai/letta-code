@@ -5,3 +5,9 @@
 
 # WebSocket listener and protocol code
 /src/websocket/ @cpacker @4shub
+
+# Headless mode runtime
+/src/headless.ts @cpacker @4shub @kl2806 @devanshrj @sarahwooders
+
+# TUI/CLI runtime and UI
+/src/cli/ @cpacker @4shub @sarahwooders @jnjpng
