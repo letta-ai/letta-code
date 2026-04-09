@@ -70,6 +70,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     args: argv,
     options: {
       "env-name": { type: "string" },
+      channels: { type: "string" },
       help: { type: "boolean", short: "h" },
       debug: { type: "boolean" },
     },
@@ -80,7 +81,9 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
 
   // Show help
   if (values.help) {
-    console.log("Usage: letta server [--env-name <name>] [--debug]\n");
+    console.log(
+      "Usage: letta server [--env-name <name>] [--channels <list>] [--debug]\n",
+    );
     console.log(
       "Register this letta-code instance to receive messages from Letta Cloud.\n",
     );
@@ -89,20 +92,37 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       "  --env-name <name>  Friendly name for this environment (uses hostname if not provided)",
     );
     console.log(
+      "  --channels <list>  Comma-separated channel names to enable (e.g. telegram)",
+    );
+    console.log(
       "  --debug            Plain-text mode: log all WebSocket events instead of interactive UI",
     );
     console.log("  -h, --help         Show this help message\n");
     console.log("Examples:");
     console.log(
-      "  letta server                      # Uses hostname as default",
+      "  letta channels configure telegram          # Configure Telegram first",
+    );
+    console.log(
+      "  letta server                              # Uses hostname as default",
     );
     console.log('  letta server --env-name "work-laptop"');
-    console.log("  letta server --debug              # Log all WS events\n");
+    console.log(
+      "  letta server --channels telegram           # Enable Telegram channel",
+    );
+    console.log(
+      "  letta server --debug                       # Log all WS events\n",
+    );
     console.log(
       "Once connected, this instance will listen for incoming messages from cloud agents.",
     );
     console.log(
       "Messages will be executed locally using your letta-code environment.",
+    );
+    console.log(
+      "Telegram flow: configure the bot, start the listener with --channels telegram,",
+    );
+    console.log(
+      "then message the bot from Telegram and run /channels telegram pair <code> in the target conversation.",
     );
     return 0;
   }
@@ -114,12 +134,34 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     code: number,
     exitReason: string,
   ): Promise<never> => {
+    // Stop channel adapters on actual process exit
+    try {
+      const { getChannelRegistry } = await import("../../channels/registry");
+      const registry = getChannelRegistry();
+      if (registry) {
+        await registry.stopAll();
+      }
+    } catch {
+      // Best effort — don't block exit on channel cleanup failure
+    }
     await flushListenerTelemetryEnd(exitReason);
     process.exit(code);
   };
 
   // Load local project settings to access saved environment name
   await settingsManager.loadLocalProjectSettings();
+
+  // Initialize channels if --channels flag provided
+  if (values.channels) {
+    const channelNames = values.channels
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (channelNames.length > 0) {
+      const { initializeChannels } = await import("../../channels/registry");
+      await initializeChannels(channelNames);
+    }
+  }
 
   // Determine connection name
   let connectionName: string;

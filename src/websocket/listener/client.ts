@@ -17,6 +17,7 @@ import {
   updateAgentLLMConfig,
   updateConversationLLMConfig,
 } from "../../agent/modify";
+import { getChannelRegistry } from "../../channels/registry";
 import { resetContextHistory } from "../../cli/helpers/contextTracker";
 import {
   ensureFileIndex,
@@ -1357,6 +1358,88 @@ async function handleReflectionSettingsCommand(
   return true;
 }
 
+/**
+ * Wire channel ingress into the listener.
+ *
+ * Registers the ChannelRegistry's message handler and marks it as ready,
+ * allowing buffered and future inbound channel messages to flow through
+ * the queue pump.
+ *
+ * Called from the socket "open" handler — same pattern as startCronScheduler.
+ * Uses closure-scoped socket/opts/processQueuedTurn.
+ */
+function wireChannelIngress(
+  listener: ListenerRuntime,
+  socket: WebSocket,
+  opts: StartListenerOptions,
+  processQueuedTurn: ProcessQueuedTurn,
+): void {
+  const registry = getChannelRegistry();
+  if (!registry) return;
+
+  registry.setMessageHandler((route, xmlContent) => {
+    // Follow the same pattern as cron/scheduler.ts:131-157
+    const rawRuntime = getOrCreateConversationRuntime(
+      listener,
+      route.agentId,
+      route.conversationId,
+    );
+    if (!rawRuntime) return;
+
+    const conversationRuntime = ensureConversationQueueRuntime(
+      listener,
+      rawRuntime,
+    );
+
+    enqueueChannelTurn(conversationRuntime, route, xmlContent);
+
+    scheduleQueuePump(conversationRuntime, socket, opts, processQueuedTurn);
+  });
+
+  registry.setReady();
+}
+
+function enqueueChannelTurn(
+  runtime: ConversationRuntime,
+  route: {
+    agentId: string;
+    conversationId: string;
+  },
+  xmlContent: MessageCreate["content"],
+): { id: string } | null {
+  const clientMessageId = `cm-channel-${crypto.randomUUID()}`;
+  const enqueuedItem = runtime.queueRuntime.enqueue({
+    kind: "message",
+    source: "channel" as import("../../types/protocol").QueueItemSource,
+    content: xmlContent,
+    clientMessageId,
+    agentId: route.agentId,
+    conversationId: route.conversationId,
+  } as Omit<
+    import("../../queue/queueRuntime").MessageQueueItem,
+    "id" | "enqueuedAt"
+  >);
+
+  if (!enqueuedItem) {
+    return null;
+  }
+
+  runtime.queuedMessagesByItemId.set(enqueuedItem.id, {
+    type: "message",
+    agentId: route.agentId,
+    conversationId: route.conversationId,
+    messages: [
+      {
+        role: "user",
+        content: xmlContent,
+        client_message_id: clientMessageId,
+      } satisfies MessageCreate & { client_message_id?: string },
+    ],
+  });
+
+  return enqueuedItem;
+}
+
 export function ensureConversationQueueRuntime(
   listener: ListenerRuntime,
   runtime: ConversationRuntime,
@@ -2276,6 +2359,9 @@ async function connectWithRetry(
 
     // Start cron scheduler if tasks exist
     startCronScheduler(socket, opts, processQueuedTurn);
+
+    // Wire channel ingress (if channels are active)
+    wireChannelIngress(runtime, socket, opts, processQueuedTurn);
   });
 
   socket.on("message", async (data: WebSocket.RawData) => {
@@ -3705,6 +3791,13 @@ async function connectWithRetry(
     // Stop cron scheduler on disconnect
     stopCronScheduler();
 
+    // Pause channel delivery on disconnect (adapters keep polling, messages buffer).
+    // On reconnect, wireChannelIngress() re-registers the handler and calls setReady().
+    const channelRegistry = getChannelRegistry();
+    if (channelRegistry) {
+      channelRegistry.pause();
+    }
+
     // Clear the bridge before queue clearing to prevent a race where a task
     // completion enqueues into a shutting-down runtime.
     setMessageQueueAdder(null);
@@ -4125,6 +4218,7 @@ export const __listenClientTestUtils = {
   handleSkillCommand,
   handleCreateAgentCommand,
   handleReflectionSettingsCommand,
+  enqueueChannelTurn,
   scheduleQueuePump,
   replaySyncStateForRuntime,
   recoverApprovalStateForSync,

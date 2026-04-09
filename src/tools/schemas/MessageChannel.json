@@ -1,0 +1,23 @@
+{
+  "type": "object",
+  "properties": {
+    "channel": {
+      "type": "string",
+      "description": "The channel to send the message to (e.g., 'telegram')"
+    },
+    "chat_id": {
+      "type": "string",
+      "description": "The chat/conversation ID to send to (from the channel-notification attributes)"
+    },
+    "text": {
+      "type": "string",
+      "description": "The message text to send"
+    },
+    "reply_to_message_id": {
+      "type": "string",
+      "description": "Optional message ID to reply to"
+    }
+  },
+  "required": ["channel", "chat_id", "text"],
+  "additionalProperties": false
+}

@@ -795,6 +795,64 @@ describe("listen-client multi-worker concurrency", () => {
     expect(runtimeB.queuedMessagesByItemId.size).toBe(0);
   });
 
+  test("channel queue items re-enter the listener loop as normal queued turns", async () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    __listenClientTestUtils.setActiveRuntime(listener);
+    const runtime = __listenClientTestUtils.getOrCreateScopedRuntime(
+      listener,
+      "agent-1",
+      "conv-channel",
+    );
+    const socket = new MockSocket();
+    const processed: IncomingMessage[] = [];
+    const xml =
+      '<channel-notification source="telegram" chat_id="7952253975">hello from telegram</channel-notification>';
+
+    const enqueuedItem = __listenClientTestUtils.enqueueChannelTurn(
+      runtime,
+      {
+        agentId: "agent-1",
+        conversationId: "conv-channel",
+      },
+      xml,
+    );
+
+    expect(enqueuedItem).not.toBeNull();
+    expect(runtime.queueRuntime.length).toBe(1);
+    expect(runtime.queuedMessagesByItemId.size).toBe(1);
+
+    __listenClientTestUtils.scheduleQueuePump(
+      runtime,
+      socket as unknown as WebSocket,
+      {
+        connectionId: "conn-1",
+        onStatusChange: undefined,
+      } as never,
+      async (queuedTurn: IncomingMessage) => {
+        processed.push(queuedTurn);
+      },
+    );
+
+    await waitFor(() => processed.length === 1);
+
+    expect(processed[0]).toEqual(
+      expect.objectContaining({
+        type: "message",
+        agentId: "agent-1",
+        conversationId: "conv-channel",
+        messages: [
+          expect.objectContaining({
+            role: "user",
+            content: [{ type: "text", text: xml }],
+            client_message_id: expect.stringMatching(/^cm-channel-/),
+          }),
+        ],
+      }),
+    );
+    expect(runtime.queueRuntime.length).toBe(0);
+    expect(runtime.queuedMessagesByItemId.size).toBe(0);
+  });
+
   test("consumeQueuedTurn only drains the next same-scope queued turn batch", () => {
     const runtime = __listenClientTestUtils.createRuntime();
     const messageInput = {
