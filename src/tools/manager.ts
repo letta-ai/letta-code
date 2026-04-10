@@ -1327,6 +1327,9 @@ export async function executeTool(
     onOutput?: (chunk: string, stream: "stdout" | "stderr") => void;
     toolContextId?: string;
     parentScope?: { agentId: string; conversationId: string };
+    /** Called after a file-mutating tool (Edit, Write, MultiEdit) writes to disk.
+     *  The listener layer uses this to broadcast the new content via WebSocket. */
+    onFileWrite?: (filePath: string, content: string) => void;
   },
 ): Promise<ToolExecutionResult> {
   const context = options?.toolContextId
@@ -1447,6 +1450,38 @@ export async function executeTool(
     // The incremental rebuild is cheap (metadata-based skip for unchanged
     // subtrees), so running on every tool adds negligible overhead.
     void refreshFileIndex();
+
+    // Broadcast file content after file-mutating tools so web clients update
+    // in real time without waiting for fs.watch → file_changed → re-read.
+    const FILE_MUTATING_TOOLS = new Set([
+      "Edit",
+      "Write",
+      "MultiEdit",
+      "replace",
+    ]);
+    if (options?.onFileWrite && FILE_MUTATING_TOOLS.has(internalName)) {
+      const rawArgs = enhancedArgs as Record<string, unknown>;
+      const filePath =
+        (rawArgs.file_path as string | undefined) ??
+        // MultiEdit uses edits[].file_path — broadcast the first one.
+        (rawArgs.edits as Array<{ file_path?: string }> | undefined)?.[0]
+          ?.file_path ??
+        undefined;
+      if (filePath) {
+        try {
+          const nodePath = await import("node:path");
+          const { readFile } = await import("node:fs/promises");
+          const userCwd = process.env.USER_CWD || process.cwd();
+          const resolvedPath = nodePath.isAbsolute(filePath)
+            ? filePath
+            : nodePath.resolve(userCwd, filePath);
+          const content = await readFile(resolvedPath, "utf-8");
+          options.onFileWrite(resolvedPath, content);
+        } catch {
+          // Best-effort — don't fail the tool call if the read fails.
+        }
+      }
+    }
 
     // Extract stdout/stderr if present (for bash tools)
     const recordResult = isRecord(result) ? result : undefined;

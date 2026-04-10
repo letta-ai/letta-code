@@ -199,6 +199,7 @@ async function executeSingleDecision(
     ) => void;
     toolContextId?: string;
     parentScope?: { agentId: string; conversationId: string };
+    onFileWrite?: (filePath: string, content: string) => void;
   },
 ): Promise<ApprovalResult> {
   // If aborted, record an interrupted result
@@ -266,6 +267,7 @@ async function executeSingleDecision(
                   stream === "stderr",
                 )
             : undefined,
+          onFileWrite: options?.onFileWrite,
         },
       );
 
@@ -375,6 +377,7 @@ export async function executeApprovalBatch(
     toolContextId?: string;
     workingDirectory?: string;
     parentScope?: { agentId: string; conversationId: string };
+    onFileWrite?: (filePath: string, content: string) => void;
   },
 ): Promise<ApprovalResult[]> {
   const toolContextId =
@@ -485,6 +488,7 @@ export async function executeAutoAllowedTools(
     ) => void;
     toolContextId?: string;
     workingDirectory?: string;
+    onFileWrite?: (filePath: string, content: string) => void;
   },
 ): Promise<AutoAllowedResult[]> {
   const decisions: ApprovalDecision[] = autoAllowed.map((ac) => ({

@@ -529,6 +529,30 @@ export interface UnwatchFileCommand {
   request_id: string;
 }
 
+/** Bidirectional: Egwalker CRDT ops for collaborative editing. */
+export interface FileOpsCommand {
+  type: "file_ops";
+  /** Absolute path to the file being edited. */
+  path: string;
+  /** Serialized causal-graph entries. */
+  cg_entries: {
+    agent: string;
+    seq: number;
+    len: number;
+    parents: [string, number][];
+  }[];
+  /** The operations (insert / delete). */
+  ops: {
+    type: "ins" | "del";
+    pos: number;
+    content?: string;
+  }[];
+  /** Who generated these ops (e.g. 'window-abc', 'agent-xyz'). */
+  source: string;
+  /** Full document content after these ops were applied. */
+  document_content?: string;
+}
+
 export interface EditFileCommand {
   type: "edit_file";
   /** Absolute path to the file to edit. */
@@ -899,6 +923,7 @@ export type WsProtocolCommand =
   | WatchFileCommand
   | UnwatchFileCommand
   | EditFileCommand
+  | FileOpsCommand
   | ListMemoryCommand
   | MemoryHistoryCommand
   | MemoryFileAtRefCommand

@@ -4,7 +4,7 @@ import type {
   ApprovalCreate,
   LettaStreamingResponse,
 } from "@letta-ai/letta-client/resources/agents/messages";
-import type WebSocket from "ws";
+import WebSocket from "ws";
 import {
   type ApprovalResult,
   executeApprovalBatch,
@@ -388,12 +388,30 @@ export async function handleApprovalStop(params: {
     return interruptTermination();
   }
 
+  // Broadcast new file content to web clients when a file-mutating tool
+  // (Edit, Write, MultiEdit) writes to disk, so all windows update immediately.
+  const onFileWrite = (filePath: string, content: string) => {
+    if (socket.readyState === WebSocket.OPEN) {
+      socket.send(
+        JSON.stringify({
+          type: "file_ops",
+          path: filePath,
+          cg_entries: [],
+          ops: [],
+          source: "agent",
+          document_content: content,
+        }),
+      );
+    }
+  };
+
   const executionResults = await executeApprovalBatch(decisions, undefined, {
     toolContextId: turnToolContextId ?? undefined,
     abortSignal: abortController.signal,
     workingDirectory: turnWorkingDirectory,
     parentScope:
       agentId && conversationId ? { agentId, conversationId } : undefined,
+    onFileWrite,
   });
   const persistedExecutionResults = normalizeExecutionResultsForInterruptParity(
     runtime,
