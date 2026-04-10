@@ -17,6 +17,18 @@ describe("telemetry flush auth", () => {
   const originalGetSettingsWithSecureTokens =
     settingsManager.getSettingsWithSecureTokens;
   const originalGetSettings = settingsManager.getSettings;
+  const originalLettaApiKey = process.env.LETTA_API_KEY;
+  const originalTelemetryDisabled = process.env.LETTA_TELEMETRY_DISABLED;
+  const originalLettaBaseUrl = process.env.LETTA_BASE_URL;
+
+  function restoreEnvVar(name: string, value: string | undefined): void {
+    if (value === undefined) {
+      delete process.env[name];
+      return;
+    }
+
+    process.env[name] = value;
+  }
 
   beforeEach(() => {
     telemetry.cleanup();
@@ -38,6 +50,9 @@ describe("telemetry flush auth", () => {
     settingsManager.getSettingsWithSecureTokens =
       originalGetSettingsWithSecureTokens;
     settingsManager.getSettings = originalGetSettings;
+    restoreEnvVar("LETTA_API_KEY", originalLettaApiKey);
+    restoreEnvVar("LETTA_TELEMETRY_DISABLED", originalTelemetryDisabled);
+    restoreEnvVar("LETTA_BASE_URL", originalLettaBaseUrl);
   });
 
   test("flush falls back to secure settings token when env var is absent", async () => {
