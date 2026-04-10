@@ -55,8 +55,8 @@ export function formatChannelNotification(msg: InboundChannelMessage): string {
 
   const reminder = [
     SYSTEM_REMINDER_OPEN,
-    `This message came from an external ${escapedChannel} channel.`,
-    `If you want the user on ${escapedChannel} to see your reply, you must call the MessageChannel tool. A normal assistant response in Letta Code is not delivered back to the external user.`,
+    `This message originated from an external ${escapedChannel} channel.`,
+    `If you want the ensure the user on ${escapedChannel} will see your reply, you must call the MessageChannel tool to send a message back on the same channel.`,
     `Use channel="${escapedChannel}" and chat_id="${escapedChatId}" when calling MessageChannel.`,
     "Only pass reply_to_message_id if you intentionally want the platform's quote/reply UI.",
     `Current local time on this device: ${localTime}`,
