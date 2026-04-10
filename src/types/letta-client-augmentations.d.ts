@@ -6,5 +6,3 @@ declare module "@letta-ai/letta-client/resources/agents/messages" {
     otid?: string | null;
   }
 }
-
-export {};
