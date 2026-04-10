@@ -10,6 +10,7 @@ describe("listen subcommand telemetry", () => {
   const originalGetOrCreateDeviceId = settingsManager.getOrCreateDeviceId;
   const originalGetSettingsWithSecureTokens =
     settingsManager.getSettingsWithSecureTokens;
+  const originalBaseUrl = process.env.LETTA_BASE_URL;
 
   const originalTrackSessionEnd = telemetry.trackSessionEnd;
   const originalFlush = telemetry.flush;
@@ -17,6 +18,7 @@ describe("listen subcommand telemetry", () => {
   beforeEach(() => {
     telemetry.cleanup();
     delete process.env.LETTA_API_KEY;
+    delete process.env.LETTA_BASE_URL;
 
     settingsManager.loadLocalProjectSettings = mock(async () => ({
       lastAgent: null,
@@ -38,6 +40,13 @@ describe("listen subcommand telemetry", () => {
     settingsManager.getOrCreateDeviceId = originalGetOrCreateDeviceId;
     settingsManager.getSettingsWithSecureTokens =
       originalGetSettingsWithSecureTokens;
+
+    if (originalBaseUrl === undefined) {
+      delete process.env.LETTA_BASE_URL;
+    } else {
+      process.env.LETTA_BASE_URL = originalBaseUrl;
+    }
+
     telemetry.trackSessionEnd = originalTrackSessionEnd;
     telemetry.flush = originalFlush;
   });
@@ -48,6 +57,7 @@ describe("listen subcommand telemetry", () => {
     telemetry.trackSessionEnd =
       trackSessionEndMock as typeof telemetry.trackSessionEnd;
     telemetry.flush = flushMock as typeof telemetry.flush;
+    process.env.LETTA_BASE_URL = "https://self-hosted.example.com";
 
     const exitCode = await runListenSubcommand(["--env-name", "ci-env"]);
 

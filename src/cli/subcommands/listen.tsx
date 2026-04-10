@@ -9,7 +9,6 @@ import { Box, render, Text } from "ink";
 import TextInput from "ink-text-input";
 import type React from "react";
 import { useState } from "react";
-import { getServerUrl } from "../../agent/client";
 import {
   LETTA_CLOUD_API_URL,
   pollForToken,
@@ -20,10 +19,20 @@ import { settingsManager } from "../../settings-manager";
 import { telemetry } from "../../telemetry";
 import { RemoteSessionLog } from "../../websocket/listen-log";
 import {
+  type RegisterOptions,
   registerWithCloud,
   registerWithCloudRetry,
 } from "../../websocket/listen-register";
 import { ListenerStatusUI } from "../components/ListenerStatusUI";
+
+const LISTENER_TOKEN_REFRESH_WINDOW_MS = 5 * 60 * 1000;
+
+class MissingListenerApiKeyError extends Error {
+  constructor() {
+    super("LETTA_API_KEY not found");
+    this.name = "MissingListenerApiKeyError";
+  }
+}
 
 /**
  * Interactive prompt for environment name
@@ -66,8 +75,154 @@ async function flushListenerTelemetryEnd(exitReason: string): Promise<void> {
   }
 }
 
+function getListenerServerUrl(settings: {
+  env?: Record<string, string>;
+}): string {
+  return (
+    process.env.LETTA_BASE_URL ||
+    settings.env?.LETTA_BASE_URL ||
+    LETTA_CLOUD_API_URL
+  );
+}
+
+async function refreshListenerAccessToken(
+  settings: Awaited<
+    ReturnType<typeof settingsManager.getSettingsWithSecureTokens>
+  >,
+  deviceId: string,
+  connectionName: string,
+): Promise<string> {
+  const now = Date.now();
+
+  console.log("Access token expired, refreshing...");
+
+  const tokens = await refreshAccessToken(
+    settings.refreshToken as string,
+    deviceId,
+    connectionName,
+  );
+
+  settingsManager.updateSettings({
+    env: {
+      ...settings.env,
+      LETTA_API_KEY: tokens.access_token,
+    },
+    tokenExpiresAt: now + tokens.expires_in * 1000,
+    ...(tokens.refresh_token ? { refreshToken: tokens.refresh_token } : {}),
+  });
+  await settingsManager.flush();
+
+  console.log("Token refreshed successfully.");
+
+  return tokens.access_token;
+}
+
+async function runListenerOAuthLogin(
+  currentEnv: Record<string, string> | undefined,
+  deviceId: string,
+  connectionName: string,
+): Promise<string> {
+  console.log("No API key found. Starting OAuth login...\n");
+
+  const deviceData = await requestDeviceCode();
+
+  console.log(
+    `To authenticate, visit: ${deviceData.verification_uri_complete}`,
+  );
+  console.log(`Your code: ${deviceData.user_code}\n`);
+  console.log("Waiting for authorization...\n");
+
+  const tokens = await pollForToken(
+    deviceData.device_code,
+    deviceData.interval,
+    deviceData.expires_in,
+    deviceId,
+    connectionName,
+  );
+  const now = Date.now();
+
+  settingsManager.updateSettings({
+    env: {
+      ...currentEnv,
+      LETTA_API_KEY: tokens.access_token,
+    },
+    tokenExpiresAt: now + tokens.expires_in * 1000,
+    ...(tokens.refresh_token ? { refreshToken: tokens.refresh_token } : {}),
+  });
+  await settingsManager.flush();
+
+  console.log("Authenticated successfully.\n");
+
+  return tokens.access_token;
+}
+
+async function resolveListenerRegistrationOptions(
+  deviceId: string,
+  connectionName: string,
+): Promise<RegisterOptions> {
+  const settings = await settingsManager.getSettingsWithSecureTokens();
+  const serverUrl = getListenerServerUrl(settings);
+  const envApiKey = process.env.LETTA_API_KEY;
+
+  if (envApiKey) {
+    return {
+      serverUrl,
+      apiKey: envApiKey,
+      deviceId,
+      connectionName,
+    };
+  }
+
+  let apiKey = settings.env?.LETTA_API_KEY;
+
+  if (serverUrl === LETTA_CLOUD_API_URL) {
+    const expiresAt = settings.tokenExpiresAt;
+    if (settings.refreshToken && expiresAt) {
+      const now = Date.now();
+      if (!apiKey || now >= expiresAt - LISTENER_TOKEN_REFRESH_WINDOW_MS) {
+        try {
+          apiKey = await refreshListenerAccessToken(
+            settings,
+            deviceId,
+            connectionName,
+          );
+        } catch (refreshErr) {
+          console.warn(
+            "Token refresh failed:",
+            refreshErr instanceof Error
+              ? refreshErr.message
+              : String(refreshErr),
+          );
+          apiKey = undefined;
+        }
+      }
+    }
+
+    if (!apiKey) {
+      apiKey = await runListenerOAuthLogin(
+        settings.env,
+        deviceId,
+        connectionName,
+      );
+    }
+  }
+
+  if (!apiKey) {
+    throw new MissingListenerApiKeyError();
+  }
+
+  return {
+    serverUrl,
+    apiKey,
+    deviceId,
+    connectionName,
+  };
+}
+
 export const __listenSubcommandTestUtils = {
   flushListenerTelemetryEnd,
+  getListenerServerUrl,
+  resolveListenerRegistrationOptions,
 };
 
 export async function runListenSubcommand(argv: string[]): Promise<number> {
@@ -171,124 +326,45 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
   try {
     // Get device ID
     const deviceId = settingsManager.getOrCreateDeviceId();
+    let registerOptions: RegisterOptions;
 
-    // Get API key — prefer keychain/settings over env var so a stale
-    // shell export doesn't shadow the real key from OAuth login.
-    const settings = await settingsManager.getSettingsWithSecureTokens();
-    let apiKey = settings.env?.LETTA_API_KEY || process.env.LETTA_API_KEY;
-
-    // If access token is saved but expired, try refreshing it
-    if (apiKey && settings.refreshToken && settings.tokenExpiresAt) {
-      const now = Date.now();
-      // Refresh if token expires within 5 minutes
-      if (now >= settings.tokenExpiresAt - 5 * 60 * 1000) {
-        try {
-          console.log("Access token expired, refreshing...");
-          const tokens = await refreshAccessToken(
-            settings.refreshToken,
-            deviceId,
-            connectionName,
-          );
-          apiKey = tokens.access_token;
-          settingsManager.updateSettings({
-            env: {
-              ...settingsManager.getSettings().env,
-              LETTA_API_KEY: tokens.access_token,
-            },
-            refreshToken: tokens.refresh_token ?? settings.refreshToken,
-            tokenExpiresAt: now + tokens.expires_in * 1000,
-          });
-          await settingsManager.flush();
-          console.log("Token refreshed successfully.");
-        } catch (refreshErr) {
-          // Refresh failed — clear stale tokens and fall through to re-auth
-          console.warn(
-            "Token refresh failed:",
-            refreshErr instanceof Error
-              ? refreshErr.message
-              : String(refreshErr),
-          );
-          apiKey = undefined;
-        }
-      }
-    }
-
-    // No API key found — attempt Device Code OAuth if pointing at Letta Cloud
-    if (!apiKey) {
-      const serverUrl = getServerUrl();
-      if (serverUrl !== LETTA_CLOUD_API_URL) {
-        // Self-hosted: can't use Letta Cloud OAuth
+    try {
+      registerOptions = await resolveListenerRegistrationOptions(
+        deviceId,
+        connectionName,
+      );
+    } catch (authErr) {
+      if (authErr instanceof MissingListenerApiKeyError) {
         console.error("Error: LETTA_API_KEY not found");
         console.error("Set your API key with: export LETTA_API_KEY=<your-key>");
         await flushListenerTelemetryEnd("listener_missing_api_key");
         return 1;
       }
 
-      console.log("No API key found. Starting OAuth login...\n");
-
-      try {
-        const deviceData = await requestDeviceCode();
-
-        console.log(
-          `To authenticate, visit: ${deviceData.verification_uri_complete}`,
-        );
-        console.log(`Your code: ${deviceData.user_code}\n`);
-        console.log("Waiting for authorization...\n");
-
-        const tokens = await pollForToken(
-          deviceData.device_code,
-          deviceData.interval,
-          deviceData.expires_in,
-          deviceId,
-          connectionName,
-        );
-
-        apiKey = tokens.access_token;
-        const now = Date.now();
-
-        settingsManager.updateSettings({
-          env: {
-            ...settingsManager.getSettings().env,
-            LETTA_API_KEY: tokens.access_token,
-          },
-          refreshToken: tokens.refresh_token,
-          tokenExpiresAt: now + tokens.expires_in * 1000,
-        });
-        await settingsManager.flush();
-
-        console.log("Authenticated successfully.\n");
-      } catch (authErr) {
-        console.error(
-          "OAuth login failed:",
-          authErr instanceof Error ? authErr.message : String(authErr),
-        );
-        await flushListenerTelemetryEnd("listener_oauth_failed");
-        return 1;
-      }
+      console.error(
+        "OAuth login failed:",
+        authErr instanceof Error ? authErr.message : String(authErr),
+      );
+      await flushListenerTelemetryEnd("listener_oauth_failed");
+      return 1;
     }
 
     sessionLog.log(`Session started (debug=${debugMode})`);
     sessionLog.log(`deviceId: ${deviceId}`);
     sessionLog.log(`connectionName: ${connectionName}`);
 
-    // Register with cloud
-    const serverUrl = getServerUrl();
-
     if (debugMode) {
       console.log(
-        `[${formatTimestamp()}] Registering with ${serverUrl}/v1/environments/register`,
+        `[${formatTimestamp()}] Registering with ${registerOptions.serverUrl}/v1/environments/register`,
       );
       console.log(`[${formatTimestamp()}]   deviceId: ${deviceId}`);
       console.log(`[${formatTimestamp()}]   connectionName: ${connectionName}`);
     }
-    sessionLog.log(`Registering with ${serverUrl}/v1/environments/register`);
+    sessionLog.log(
+      `Registering with ${registerOptions.serverUrl}/v1/environments/register`,
+    );
 
-    const { connectionId, wsUrl } = await registerWithCloud({
-      serverUrl,
-      apiKey,
-      deviceId,
-      connectionName,
-    });
+    const { connectionId, wsUrl } = await registerWithCloud(registerOptions);
 
     sessionLog.log(`Registered: connectionId=${connectionId}`);
     sessionLog.log(`wsUrl: ${wsUrl}`);
@@ -314,21 +390,22 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       wsUrl: string;
     }> => {
       sessionLog.log("Re-registering with retry...");
-      const result = await registerWithCloudRetry(
-        { serverUrl, apiKey, deviceId, connectionName },
-        {
-          onRetry: (attempt, delayMs, error) => {
-            sessionLog.log(
-              `Registration retry ${attempt} in ${Math.round(delayMs / 1000)}s: ${error.message}`,
-            );
-            if (debugMode) {
-              console.log(
-                `[${formatTimestamp()}] Registration retry ${attempt} in ${Math.round(delayMs / 1000)}s: ${error.message}`,
-              );
-            }
-          },
-        },
+      const nextRegisterOptions = await resolveListenerRegistrationOptions(
+        deviceId,
+        connectionName,
       );
+      const result = await registerWithCloudRetry(nextRegisterOptions, {
+        onRetry: (attempt, delayMs, error) => {
+          sessionLog.log(
+            `Registration retry ${attempt} in ${Math.round(delayMs / 1000)}s: ${error.message}`,
+          );
+          if (debugMode) {
+            console.log(
+              `[${formatTimestamp()}] Registration retry ${attempt} in ${Math.round(delayMs / 1000)}s: ${error.message}`,
+            );
+          }
+        },
+      });
       sessionLog.log(`Re-registered: connectionId=${result.connectionId}`);
       return result;
     };
