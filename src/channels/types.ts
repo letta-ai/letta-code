@@ -71,6 +71,8 @@ export interface OutboundChannelMessage {
   text: string;
   /** Optional: reply to a specific message. */
   replyToMessageId?: string;
+  /** Optional: parse mode hint for the adapter (e.g. "HTML", "MarkdownV2"). */
+  parseMode?: string;
 }
 
 // ── Routing ───────────────────────────────────────────────────────

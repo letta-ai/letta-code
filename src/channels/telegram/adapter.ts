@@ -130,12 +130,20 @@ export function createTelegramAdapter(
     async sendMessage(
       msg: OutboundChannelMessage,
     ): Promise<{ messageId: string }> {
+      const opts: Record<string, unknown> = {};
+      if (msg.replyToMessageId) {
+        opts.reply_parameters = {
+          message_id: Number(msg.replyToMessageId),
+        };
+      }
+      if (msg.parseMode) {
+        opts.parse_mode = msg.parseMode;
+      }
+
       const result = await bot.api.sendMessage(
         msg.chatId,
         msg.text,
-        msg.replyToMessageId
-          ? { reply_parameters: { message_id: Number(msg.replyToMessageId) } }
-          : undefined,
+        opts,
       );
       return { messageId: String(result.message_id) };
     },
