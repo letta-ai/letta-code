@@ -75,7 +75,6 @@ import {
   emitLoopStatusUpdate,
   emitRetryDelta,
   emitRuntimeStateUpdates,
-  emitStatusDelta,
   setLoopStatus,
 } from "./protocol-outbound";
 import {
@@ -150,6 +149,13 @@ function hasActiveReflectionSubagent(
       agent.parentAgentId === agentId && parentConversationId === conversationId
     );
   });
+}
+
+function escapeTaskNotificationSummary(summary: string): string {
+  return summary
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
 }
 
 function buildMaybeLaunchReflectionSubagent(params: {
@@ -236,12 +242,24 @@ function buildMaybeLaunchReflectionSubagent(params: {
               logRecompileFailure: (message) => debugWarn("memory", message),
             },
           );
-          emitStatusDelta(socket, runtime, {
-            message: completionMessage,
-            level: success ? "success" : "warning",
-            agentId,
-            conversationId,
-          });
+          const notificationXml = `<task-notification><summary>${escapeTaskNotificationSummary(
+            completionMessage,
+          )}</summary></task-notification>`;
+          emitCanonicalMessageDelta(
+            socket,
+            runtime,
+            {
+              type: "message",
+              id: `user-msg-${crypto.randomUUID()}`,
+              date: new Date().toISOString(),
+              message_type: "user_message",
+              content: notificationXml,
+            } as StreamDelta,
+            {
+              agent_id: agentId,
+              conversation_id: conversationId,
+            },
+          );
         },
       });
       telemetry.trackReflectionStart(triggerSource, {
