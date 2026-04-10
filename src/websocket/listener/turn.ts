@@ -151,14 +151,23 @@ function hasActiveReflectionSubagent(
   });
 }
 
+function escapeTaskNotificationSummary(summary: string): string {
+  return summary
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
 function buildMaybeLaunchReflectionSubagent(params: {
   runtime: ConversationRuntime;
+  socket: WebSocket;
   agentId: string;
   conversationId: string;
   workingDirectory: string;
 }): (triggerSource: Exclude<ReflectionTrigger, "off">) => Promise<boolean> {
   return async (triggerSource) => {
-    const { runtime, agentId, conversationId, workingDirectory } = params;
+    const { runtime, socket, agentId, conversationId, workingDirectory } =
+      params;
 
     if (!agentId || !settingsManager.isMemfsEnabled(agentId)) {
       return false;
@@ -197,18 +206,11 @@ function buildMaybeLaunchReflectionSubagent(params: {
       const { spawnBackgroundSubagentTask } = await import(
         "../../tools/impl/Task"
       );
-      const reflectionSuccessSummary =
-        "Reflected on the memory palace, the halls remember more now";
       const { subagentId } = spawnBackgroundSubagentTask({
         subagentType: "reflection",
         prompt: reflectionPrompt,
         description: AUTO_REFLECTION_DESCRIPTION,
         silentCompletion: true,
-        emitCompletionNotification: true,
-        completionSummary: ({ success, error }) =>
-          success
-            ? reflectionSuccessSummary
-            : `Tried to reflect, but got lost in the palace: ${error || "Unknown error"}`,
         parentScope: { agentId, conversationId },
         onComplete: async ({ success, error }) => {
           telemetry.trackReflectionEnd(triggerSource, success, {
@@ -224,7 +226,7 @@ function buildMaybeLaunchReflectionSubagent(params: {
             success,
           );
 
-          await handleMemorySubagentCompletion(
+          const completionMessage = await handleMemorySubagentCompletion(
             {
               agentId,
               conversationId,
@@ -238,6 +240,24 @@ function buildMaybeLaunchReflectionSubagent(params: {
               recompileQueuedByConversation:
                 runtime.listener.queuedSystemPromptRecompileByConversation,
               logRecompileFailure: (message) => debugWarn("memory", message),
+            },
+          );
+          const notificationXml = `<task-notification><summary>${escapeTaskNotificationSummary(
+            completionMessage,
+          )}</summary></task-notification>`;
+          emitCanonicalMessageDelta(
+            socket,
+            runtime,
+            {
+              type: "message",
+              id: `user-msg-${crypto.randomUUID()}`,
+              date: new Date().toISOString(),
+              message_type: "user_message",
+              content: [{ type: "text", text: notificationXml }],
+            } as StreamDelta,
+            {
+              agent_id: agentId,
+              conversation_id: conversationId,
             },
           );
         },
@@ -470,6 +490,7 @@ export async function handleIncomingMessage(
             maybeLaunchReflectionSubagent: agentId
               ? buildMaybeLaunchReflectionSubagent({
                   runtime,
+                  socket,
                   agentId,
                   conversationId,
                   workingDirectory: turnWorkingDirectory,
