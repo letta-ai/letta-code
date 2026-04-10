@@ -2,7 +2,7 @@
 
 Send a message to an external channel (Telegram, Slack, etc.) in response to a channel notification.
 
-When you receive a `<channel-notification>`, use this tool if you want the external user to see your reply. A normal assistant response in Letta Code is not delivered back to Telegram/Slack/etc. Extract the `source` and `chat_id` from the notification attributes and pass them as `channel` and `chat_id`.
+When you receive a `<channel-notification>`, use this tool to reply directly to the user on the same external channel (a normal assistant response is not delivered back to Telegram/Slack/etc). Extract the `source` and `chat_id` from the notification attributes and pass them as `channel` and `chat_id`.
 
 Parameters:
 - `channel`: The platform to send to (matches the `source` attribute)
