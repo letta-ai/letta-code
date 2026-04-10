@@ -1,8 +1,10 @@
 // src/tests/keychain.test.ts
 // Tests for secrets utility functions
 
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import {
+  __resetSecretWarningStateForTests,
+  __setSecretGetOverrideForTests,
   deleteApiKey,
   deleteRefreshToken,
   deleteSecureTokens,
@@ -19,13 +21,21 @@ import {
 const keychainAvailablePrecompute = await isKeychainAvailable();
 
 describe("Secrets utilities", () => {
+  const originalConsoleWarn = console.warn;
+
   beforeEach(async () => {
+    __resetSecretWarningStateForTests();
+    __setSecretGetOverrideForTests(null);
+    console.warn = originalConsoleWarn;
     if (keychainAvailablePrecompute) {
       await deleteSecureTokens();
     }
   });
 
   afterEach(async () => {
+    __resetSecretWarningStateForTests();
+    __setSecretGetOverrideForTests(null);
+    console.warn = originalConsoleWarn;
     if (keychainAvailablePrecompute) {
       await deleteSecureTokens();
     }
@@ -188,5 +198,85 @@ describe("Secrets utilities", () => {
       await expect(deleteApiKey()).resolves.toBeUndefined();
       await expect(deleteRefreshToken()).resolves.toBeUndefined();
     }
+  });
+
+  test("dedupes API key retrieval warnings after the first failure", async () => {
+    console.warn = mock(() => {});
+
+    const warn = console.warn as ReturnType<typeof mock>;
+    let calls = 0;
+
+    __setSecretGetOverrideForTests(async (options) => {
+      if (options.name === "letta-api-key") {
+        calls += 1;
+        throw new Error(`api key failure ${calls}`);
+      }
+      return null;
+    });
+
+    expect(await getApiKey()).toBe(null);
+    expect(await getApiKey()).toBe(null);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0]?.[0])).toContain(
+      "Failed to retrieve API key from secrets",
+    );
+  });
+
+  test("warns once per token type when both reads fail", async () => {
+    console.warn = mock(() => {});
+
+    const warn = console.warn as ReturnType<typeof mock>;
+
+    __setSecretGetOverrideForTests(async (options) => {
+      if (
+        options.name === "letta-api-key" ||
+        options.name === "letta-refresh-token"
+      ) {
+        throw new Error(`failure for ${options.name}`);
+      }
+      return null;
+    });
+
+    expect(await getApiKey()).toBe(null);
+    expect(await getRefreshToken()).toBe(null);
+    expect(await getApiKey()).toBe(null);
+    expect(await getRefreshToken()).toBe(null);
+    expect(warn).toHaveBeenCalledTimes(2);
+    expect(String(warn.mock.calls[0]?.[0])).toContain(
+      "Failed to retrieve API key from secrets",
+    );
+    expect(String(warn.mock.calls[1]?.[0])).toContain(
+      "Failed to retrieve refresh token from secrets",
+    );
+  });
+
+  test("warns again after a successful recovery read", async () => {
+    console.warn = mock(() => {});
+
+    const warn = console.warn as ReturnType<typeof mock>;
+    let calls = 0;
+
+    __setSecretGetOverrideForTests(async (options) => {
+      if (options.name !== "letta-api-key") {
+        return null;
+      }
+
+      calls += 1;
+      if (calls === 1) {
+        throw new Error("api key failure 1");
+      }
+      if (calls === 2) {
+        return "sk-recovered";
+      }
+      throw new Error("api key failure 2");
+    });
+
+    expect(await getApiKey()).toBe(null);
+    expect(await getApiKey()).toBe("sk-recovered");
+    expect(await getApiKey()).toBe(null);
+
+    expect(warn).toHaveBeenCalledTimes(2);
+    expect(String(warn.mock.calls[0]?.[0])).toContain("api key failure 1");
+    expect(String(warn.mock.calls[1]?.[0])).toContain("api key failure 2");
   });
 });
