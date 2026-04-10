@@ -26,6 +26,26 @@ describe("formatChannelNotification", () => {
     expect(xml).toContain("</channel-notification>");
   });
 
+  test("prepends a system reminder describing reply semantics", () => {
+    const msg: InboundChannelMessage = {
+      channel: "telegram",
+      chatId: "12345",
+      senderId: "67890",
+      text: "ping",
+      timestamp: Date.now(),
+    };
+
+    const xml = formatChannelNotification(msg);
+
+    expect(xml).toContain("<system-reminder>");
+    expect(xml).toContain("must call the MessageChannel tool");
+    expect(xml).toContain('channel="telegram" and chat_id="12345"');
+    expect(xml).toContain("Current local time on this device:");
+    expect(xml.indexOf("<system-reminder>")).toBeLessThan(
+      xml.indexOf("<channel-notification"),
+    );
+  });
+
   test("escapes XML special characters in text", () => {
     const msg: InboundChannelMessage = {
       channel: "telegram",

@@ -5,6 +5,8 @@
  * Follows the same escaping patterns used in taskNotifications.ts.
  */
 
+import { getLocalTime } from "../cli/helpers/sessionContext";
+import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "../constants";
 import type { InboundChannelMessage } from "./types";
 
 /**
@@ -31,6 +33,7 @@ function escapeXml(text: string): string {
  * ```
  */
 export function formatChannelNotification(msg: InboundChannelMessage): string {
+  const localTime = escapeXml(getLocalTime());
   const attrs: string[] = [
     `source="${escapeXml(msg.channel)}"`,
     `chat_id="${escapeXml(msg.chatId)}"`,
@@ -47,6 +50,18 @@ export function formatChannelNotification(msg: InboundChannelMessage): string {
 
   const attrString = attrs.join(" ");
   const escapedText = escapeXml(msg.text);
+  const escapedChannel = escapeXml(msg.channel);
+  const escapedChatId = escapeXml(msg.chatId);
 
-  return `<channel-notification ${attrString}>\n${escapedText}\n</channel-notification>`;
+  const reminder = [
+    SYSTEM_REMINDER_OPEN,
+    `This message came from an external ${escapedChannel} channel.`,
+    `If you want the user on ${escapedChannel} to see your reply, you must call the MessageChannel tool. A normal assistant response in Letta Code is not delivered back to the external user.`,
+    `Use channel="${escapedChannel}" and chat_id="${escapedChatId}" when calling MessageChannel.`,
+    "Only pass reply_to_message_id if you intentionally want the platform's quote/reply UI.",
+    `Current local time on this device: ${localTime}`,
+    SYSTEM_REMINDER_CLOSE,
+  ].join("\n");
+
+  return `${reminder}\n<channel-notification ${attrString}>\n${escapedText}\n</channel-notification>`;
 }
