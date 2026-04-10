@@ -253,7 +253,7 @@ function buildMaybeLaunchReflectionSubagent(params: {
               id: `user-msg-${crypto.randomUUID()}`,
               date: new Date().toISOString(),
               message_type: "user_message",
-              content: notificationXml,
+              content: [{ type: "text", text: notificationXml }],
             } as StreamDelta,
             {
               agent_id: agentId,
