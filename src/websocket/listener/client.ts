@@ -2879,14 +2879,6 @@ async function connectWithRetry(
             const { readFile } = await import("node:fs/promises");
             const { edit } = await import("../../tools/impl/Edit");
 
-            // Read file BEFORE the edit so we can diff for CRDT ops.
-            let contentBefore: string | null = null;
-            try {
-              contentBefore = await readFile(parsed.file_path, "utf-8");
-            } catch {
-              // If we can't read, we'll skip CRDT op generation.
-            }
-
             console.log(
               `[Listen] Executing edit: old_string="${parsed.old_string.slice(0, 50)}${parsed.old_string.length > 50 ? "..." : ""}"`,
             );

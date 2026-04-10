@@ -1,3 +1,5 @@
+import * as nodeFs from "node:fs/promises";
+import * as nodePath from "node:path";
 import { getDisplayableToolReturn } from "../agent/approval-execution";
 import { getModelInfo } from "../agent/model";
 import { getAllSubagentConfigs } from "../agent/subagents";
@@ -33,6 +35,9 @@ const STREAMING_SHELL_TOOLS = new Set([
   "run_shell_command",
   "RunShellCommand",
 ]);
+
+// Tools that write files — used to trigger onFileWrite broadcast after execution.
+const FILE_MUTATING_TOOLS = new Set(["Edit", "Write", "MultiEdit", "replace"]);
 
 // Maps internal tool names to server/model-facing tool names
 // This allows us to have multiple implementations (e.g., write_file_gemini, Write from Anthropic)
@@ -1453,29 +1458,16 @@ export async function executeTool(
 
     // Broadcast file content after file-mutating tools so web clients update
     // in real time without waiting for fs.watch → file_changed → re-read.
-    const FILE_MUTATING_TOOLS = new Set([
-      "Edit",
-      "Write",
-      "MultiEdit",
-      "replace",
-    ]);
     if (options?.onFileWrite && FILE_MUTATING_TOOLS.has(internalName)) {
-      const rawArgs = enhancedArgs as Record<string, unknown>;
-      const filePath =
-        (rawArgs.file_path as string | undefined) ??
-        // MultiEdit uses edits[].file_path — broadcast the first one.
-        (rawArgs.edits as Array<{ file_path?: string }> | undefined)?.[0]
-          ?.file_path ??
-        undefined;
+      const filePath = (enhancedArgs as Record<string, unknown>).file_path as
+        | string
+        | undefined;
       if (filePath) {
         try {
-          const nodePath = await import("node:path");
-          const { readFile } = await import("node:fs/promises");
-          const userCwd = process.env.USER_CWD || process.cwd();
           const resolvedPath = nodePath.isAbsolute(filePath)
             ? filePath
-            : nodePath.resolve(userCwd, filePath);
-          const content = await readFile(resolvedPath, "utf-8");
+            : nodePath.resolve(process.env.USER_CWD || process.cwd(), filePath);
+          const content = await nodeFs.readFile(resolvedPath, "utf-8");
           options.onFileWrite(resolvedPath, content);
         } catch {
           // Best-effort — don't fail the tool call if the read fails.
