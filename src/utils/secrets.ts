@@ -2,6 +2,8 @@
 // src/utils/secrets.ts
 // Secure storage utilities for tokens using Bun's secrets API with Node.js fallback
 
+import { debugWarn } from "./debug.js";
+
 let secrets: typeof Bun.secrets;
 let secretsAvailable = false;
 
@@ -18,6 +20,11 @@ let SERVICE_NAME = "letta-code";
 const API_KEY_NAME = "letta-api-key";
 const REFRESH_TOKEN_NAME = "letta-refresh-token";
 
+const warnedSecretReadFailures = new Set<string>();
+let secretGetOverrideForTests:
+  | ((options: { service: string; name: string }) => Promise<string | null>)
+  | null = null;
+
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -28,6 +35,36 @@ function isDuplicateKeychainItemError(error: unknown): boolean {
     message.includes("already exists in the keychain") ||
     message.includes("code: -25299")
   );
+}
+
+async function getSecretValue(
+  name: string,
+  label: string,
+): Promise<string | null> {
+  if (!secretsAvailable && !secretGetOverrideForTests) {
+    return null;
+  }
+
+  try {
+    const options = {
+      service: SERVICE_NAME,
+      name,
+    };
+    const value = secretGetOverrideForTests
+      ? await secretGetOverrideForTests(options)
+      : await secrets.get(options);
+    warnedSecretReadFailures.delete(name);
+    return value;
+  } catch (error) {
+    const message = `Failed to retrieve ${label} from secrets: ${error}`;
+    if (!warnedSecretReadFailures.has(name)) {
+      warnedSecretReadFailures.add(name);
+      console.warn(message);
+    } else {
+      debugWarn("secrets", message);
+    }
+    return null;
+  }
 }
 
 async function setSecretValue(name: string, value: string): Promise<void> {
@@ -97,19 +134,7 @@ export async function setApiKey(apiKey: string): Promise<void> {
  * Retrieve API key from system secrets
  */
 export async function getApiKey(): Promise<string | null> {
-  if (secretsAvailable) {
-    try {
-      return await secrets.get({
-        service: SERVICE_NAME,
-        name: API_KEY_NAME,
-      });
-    } catch (error) {
-      console.warn(`Failed to retrieve API key from secrets: ${error}`);
-    }
-  }
-
-  // When secrets unavailable, return null (settings manager will use fallback)
-  return null;
+  return getSecretValue(API_KEY_NAME, "API key");
 }
 
 /**
@@ -128,19 +153,7 @@ export async function setRefreshToken(refreshToken: string): Promise<void> {
  * Retrieve refresh token from system secrets
  */
 export async function getRefreshToken(): Promise<string | null> {
-  if (secretsAvailable) {
-    try {
-      return await secrets.get({
-        service: SERVICE_NAME,
-        name: REFRESH_TOKEN_NAME,
-      });
-    } catch (error) {
-      console.warn(`Failed to retrieve refresh token from secrets: ${error}`);
-    }
-  }
-
-  // When secrets unavailable, return null (settings manager will use fallback)
-  return null;
+  return getSecretValue(REFRESH_TOKEN_NAME, "refresh token");
 }
 
 /**
@@ -258,3 +271,15 @@ export async function isKeychainAvailable(): Promise<boolean> {
  * Precomputed for tests
  */
 export const keychainAvailablePrecompute = await isKeychainAvailable();
+
+export function __resetSecretWarningStateForTests(): void {
+  warnedSecretReadFailures.clear();
+}
+
+export function __setSecretGetOverrideForTests(
+  override:
+    | ((options: { service: string; name: string }) => Promise<string | null>)
+    | null,
+): void {
+  secretGetOverrideForTests = override;
+}
