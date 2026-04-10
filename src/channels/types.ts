@@ -7,6 +7,9 @@
  * platform chat IDs to agent+conversation pairs.
  */
 
+export const SUPPORTED_CHANNEL_IDS = ["telegram"] as const;
+export type SupportedChannelId = (typeof SUPPORTED_CHANNEL_IDS)[number];
+
 // ── Adapter interface ─────────────────────────────────────────────
 
 export interface ChannelAdapter {

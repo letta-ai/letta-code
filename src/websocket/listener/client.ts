@@ -72,6 +72,15 @@ import type {
   AbortMessageCommand,
   ApprovalResponseBody,
   ChangeDeviceStateCommand,
+  ChannelGetConfigCommand,
+  ChannelPairingBindCommand,
+  ChannelPairingsListCommand,
+  ChannelRouteRemoveCommand,
+  ChannelRoutesListCommand,
+  ChannelSetConfigCommand,
+  ChannelStartCommand,
+  ChannelStopCommand,
+  ChannelsListCommand,
   CreateAgentCommand,
   CronAddCommand,
   CronDeleteAllCommand,
@@ -130,6 +139,15 @@ import {
   persistPermissionModeMapForRuntime,
 } from "./permissionMode";
 import {
+  isChannelGetConfigCommand,
+  isChannelPairingBindCommand,
+  isChannelPairingsListCommand,
+  isChannelRouteRemoveCommand,
+  isChannelRoutesListCommand,
+  isChannelSetConfigCommand,
+  isChannelStartCommand,
+  isChannelStopCommand,
+  isChannelsListCommand,
   isCheckoutBranchCommand,
   isCreateAgentCommand,
   isCronAddCommand,
@@ -726,6 +744,17 @@ type ReflectionSettingsCommand =
   | GetReflectionSettingsCommand
   | SetReflectionSettingsCommand;
 
+type ChannelsCommand =
+  | ChannelsListCommand
+  | ChannelGetConfigCommand
+  | ChannelSetConfigCommand
+  | ChannelStartCommand
+  | ChannelStopCommand
+  | ChannelPairingsListCommand
+  | ChannelPairingBindCommand
+  | ChannelRoutesListCommand
+  | ChannelRouteRemoveCommand;
+
 function emitCronsUpdated(
   socket: WebSocket,
   scope?: { agent_id?: string; conversation_id?: string | null },
@@ -742,6 +771,59 @@ function emitCronsUpdated(
     },
     "listener_cron_send_failed",
     "listener_cron_command",
+  );
+}
+
+function emitChannelsUpdated(socket: WebSocket, channelId?: "telegram"): void {
+  safeSocketSend(
+    socket,
+    {
+      type: "channels_updated",
+      timestamp: Date.now(),
+      ...(channelId ? { channel_id: channelId } : {}),
+    },
+    "listener_channels_send_failed",
+    "listener_channels_command",
+  );
+}
+
+function emitChannelPairingsUpdated(
+  socket: WebSocket,
+  channelId: "telegram",
+): void {
+  safeSocketSend(
+    socket,
+    {
+      type: "channel_pairings_updated",
+      timestamp: Date.now(),
+      channel_id: channelId,
+    },
+    "listener_channels_send_failed",
+    "listener_channels_command",
+  );
+}
+
+function emitChannelRoutesUpdated(
+  socket: WebSocket,
+  params: {
+    channelId: "telegram";
+    agentId?: string;
+    conversationId?: string | null;
+  },
+): void {
+  safeSocketSend(
+    socket,
+    {
+      type: "channel_routes_updated",
+      timestamp: Date.now(),
+      channel_id: params.channelId,
+      ...(params.agentId ? { agent_id: params.agentId } : {}),
+      ...(params.conversationId !== undefined
+        ? { conversation_id: params.conversationId }
+        : {}),
+    },
+    "listener_channels_send_failed",
+    "listener_channels_command",
   );
 }
 
@@ -939,6 +1021,436 @@ async function handleCronCommand(
       "listener_cron_command",
     );
   }
+  return true;
+}
+
+async function handleChannelsProtocolCommand(
+  parsed: ChannelsCommand,
+  socket: WebSocket,
+  runtime: ListenerRuntime,
+  opts: Pick<StartListenerOptions, "onStatusChange" | "connectionId">,
+  processQueuedTurn: ProcessQueuedTurn,
+): Promise<boolean> {
+  const {
+    bindChannelPairing,
+    getChannelConfigSnapshot,
+    listChannelRouteSnapshots,
+    listChannelSummaries,
+    listPendingPairingSnapshots,
+    removeChannelRouteLive,
+    setChannelConfigLive,
+    startChannelLive,
+    stopChannelLive,
+  } = await import("../../channels/service");
+
+  if (parsed.type === "channels_list") {
+    try {
+      safeSocketSend(
+        socket,
+        {
+          type: "channels_list_response",
+          request_id: parsed.request_id,
+          success: true,
+          channels: listChannelSummaries().map((summary) => ({
+            channel_id: summary.channelId,
+            display_name: summary.displayName,
+            configured: summary.configured,
+            enabled: summary.enabled,
+            running: summary.running,
+            dm_policy: summary.dmPolicy,
+            pending_pairings_count: summary.pendingPairingsCount,
+            approved_users_count: summary.approvedUsersCount,
+            routes_count: summary.routesCount,
+          })),
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+    } catch (err) {
+      safeSocketSend(
+        socket,
+        {
+          type: "channels_list_response",
+          request_id: parsed.request_id,
+          success: false,
+          channels: [],
+          error: err instanceof Error ? err.message : "Failed to list channels",
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+    }
+    return true;
+  }
+
+  if (parsed.type === "channel_get_config") {
+    try {
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_get_config_response",
+          request_id: parsed.request_id,
+          success: true,
+          config: (() => {
+            const snapshot = getChannelConfigSnapshot(parsed.channel_id);
+            return snapshot
+              ? {
+                  channel_id: snapshot.channelId,
+                  enabled: snapshot.enabled,
+                  dm_policy: snapshot.dmPolicy,
+                  allowed_users: snapshot.allowedUsers,
+                  has_token: snapshot.hasToken,
+                }
+              : null;
+          })(),
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+    } catch (err) {
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_get_config_response",
+          request_id: parsed.request_id,
+          success: false,
+          config: null,
+          error:
+            err instanceof Error
+              ? err.message
+              : "Failed to read channel config",
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+    }
+    return true;
+  }
+
+  if (parsed.type === "channel_set_config") {
+    try {
+      const snapshot = await setChannelConfigLive(parsed.channel_id, {
+        token: parsed.config.token,
+        dmPolicy: parsed.config.dm_policy,
+        allowedUsers: parsed.config.allowed_users,
+      });
+
+      if (snapshot.enabled) {
+        wireChannelIngress(
+          runtime,
+          socket,
+          opts as StartListenerOptions,
+          processQueuedTurn,
+        );
+      }
+
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_set_config_response",
+          request_id: parsed.request_id,
+          success: true,
+          config: {
+            channel_id: snapshot.channelId,
+            enabled: snapshot.enabled,
+            dm_policy: snapshot.dmPolicy,
+            allowed_users: snapshot.allowedUsers,
+            has_token: snapshot.hasToken,
+          },
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+      emitChannelsUpdated(socket, parsed.channel_id);
+    } catch (err) {
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_set_config_response",
+          request_id: parsed.request_id,
+          success: false,
+          config: null,
+          error:
+            err instanceof Error
+              ? err.message
+              : "Failed to update channel config",
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+    }
+    return true;
+  }
+
+  if (parsed.type === "channel_start") {
+    try {
+      const summary = await startChannelLive(parsed.channel_id);
+      wireChannelIngress(
+        runtime,
+        socket,
+        opts as StartListenerOptions,
+        processQueuedTurn,
+      );
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_start_response",
+          request_id: parsed.request_id,
+          success: true,
+          channel: {
+            channel_id: summary.channelId,
+            display_name: summary.displayName,
+            configured: summary.configured,
+            enabled: summary.enabled,
+            running: summary.running,
+            dm_policy: summary.dmPolicy,
+            pending_pairings_count: summary.pendingPairingsCount,
+            approved_users_count: summary.approvedUsersCount,
+            routes_count: summary.routesCount,
+          },
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+      emitChannelsUpdated(socket, parsed.channel_id);
+    } catch (err) {
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_start_response",
+          request_id: parsed.request_id,
+          success: false,
+          channel: null,
+          error: err instanceof Error ? err.message : "Failed to start channel",
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+    }
+    return true;
+  }
+
+  if (parsed.type === "channel_stop") {
+    try {
+      const summary = await stopChannelLive(parsed.channel_id);
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_stop_response",
+          request_id: parsed.request_id,
+          success: true,
+          channel: {
+            channel_id: summary.channelId,
+            display_name: summary.displayName,
+            configured: summary.configured,
+            enabled: summary.enabled,
+            running: summary.running,
+            dm_policy: summary.dmPolicy,
+            pending_pairings_count: summary.pendingPairingsCount,
+            approved_users_count: summary.approvedUsersCount,
+            routes_count: summary.routesCount,
+          },
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+      emitChannelsUpdated(socket, parsed.channel_id);
+    } catch (err) {
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_stop_response",
+          request_id: parsed.request_id,
+          success: false,
+          channel: null,
+          error: err instanceof Error ? err.message : "Failed to stop channel",
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+    }
+    return true;
+  }
+
+  if (parsed.type === "channel_pairings_list") {
+    try {
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_pairings_list_response",
+          request_id: parsed.request_id,
+          success: true,
+          channel_id: parsed.channel_id,
+          pending: listPendingPairingSnapshots(parsed.channel_id).map(
+            (pending) => ({
+              code: pending.code,
+              sender_id: pending.senderId,
+              sender_name: pending.senderName,
+              chat_id: pending.chatId,
+              created_at: pending.createdAt,
+              expires_at: pending.expiresAt,
+            }),
+          ),
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+    } catch (err) {
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_pairings_list_response",
+          request_id: parsed.request_id,
+          success: false,
+          channel_id: parsed.channel_id,
+          pending: [],
+          error:
+            err instanceof Error
+              ? err.message
+              : "Failed to list pending pairings",
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+    }
+    return true;
+  }
+
+  if (parsed.type === "channel_pairing_bind") {
+    try {
+      const result = bindChannelPairing(
+        parsed.channel_id,
+        parsed.code,
+        parsed.runtime.agent_id,
+        parsed.runtime.conversation_id,
+      );
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_pairing_bind_response",
+          request_id: parsed.request_id,
+          success: true,
+          channel_id: parsed.channel_id,
+          chat_id: result.chatId,
+          route: {
+            channel_id: result.route.channelId,
+            chat_id: result.route.chatId,
+            agent_id: result.route.agentId,
+            conversation_id: result.route.conversationId,
+            enabled: result.route.enabled,
+            created_at: result.route.createdAt,
+          },
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+      emitChannelPairingsUpdated(socket, parsed.channel_id);
+      emitChannelRoutesUpdated(socket, {
+        channelId: parsed.channel_id,
+        agentId: parsed.runtime.agent_id,
+        conversationId: parsed.runtime.conversation_id,
+      });
+      emitChannelsUpdated(socket, parsed.channel_id);
+    } catch (err) {
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_pairing_bind_response",
+          request_id: parsed.request_id,
+          success: false,
+          channel_id: parsed.channel_id,
+          route: null,
+          error: err instanceof Error ? err.message : "Failed to bind pairing",
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+    }
+    return true;
+  }
+
+  if (parsed.type === "channel_routes_list") {
+    try {
+      const channelId = parsed.channel_id ?? "telegram";
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_routes_list_response",
+          request_id: parsed.request_id,
+          success: true,
+          channel_id: channelId,
+          routes: listChannelRouteSnapshots({
+            channelId,
+            agentId: parsed.agent_id,
+            conversationId: parsed.conversation_id,
+          }).map((route) => ({
+            channel_id: route.channelId,
+            chat_id: route.chatId,
+            agent_id: route.agentId,
+            conversation_id: route.conversationId,
+            enabled: route.enabled,
+            created_at: route.createdAt,
+          })),
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+    } catch (err) {
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_routes_list_response",
+          request_id: parsed.request_id,
+          success: false,
+          channel_id: parsed.channel_id,
+          routes: [],
+          error: err instanceof Error ? err.message : "Failed to list routes",
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+    }
+    return true;
+  }
+
+  try {
+    const found = removeChannelRouteLive(parsed.channel_id, parsed.chat_id);
+    safeSocketSend(
+      socket,
+      {
+        type: "channel_route_remove_response",
+        request_id: parsed.request_id,
+        success: true,
+        channel_id: parsed.channel_id,
+        chat_id: parsed.chat_id,
+        found,
+      },
+      "listener_channels_send_failed",
+      "listener_channels_command",
+    );
+    if (found) {
+      emitChannelRoutesUpdated(socket, {
+        channelId: parsed.channel_id,
+      });
+      emitChannelsUpdated(socket, parsed.channel_id);
+    }
+  } catch (err) {
+    safeSocketSend(
+      socket,
+      {
+        type: "channel_route_remove_response",
+        request_id: parsed.request_id,
+        success: false,
+        channel_id: parsed.channel_id,
+        chat_id: parsed.chat_id,
+        found: false,
+        error: err instanceof Error ? err.message : "Failed to remove route",
+      },
+      "listener_channels_send_failed",
+      "listener_channels_command",
+    );
+  }
+
   return true;
 }
 
@@ -1394,6 +1906,13 @@ function wireChannelIngress(
     enqueueChannelTurn(conversationRuntime, route, xmlContent);
 
     scheduleQueuePump(conversationRuntime, socket, opts, processQueuedTurn);
+  });
+
+  registry.setEventHandler((event) => {
+    if (event.type === "pairings_updated") {
+      emitChannelPairingsUpdated(socket, event.channelId as "telegram");
+      emitChannelsUpdated(socket, event.channelId as "telegram");
+    }
   });
 
   registry.setReady();
@@ -3546,6 +4065,30 @@ async function connectWithRetry(
         return;
       }
 
+      // ── Channels management commands (device/live management) ─────────
+      if (
+        isChannelsListCommand(parsed) ||
+        isChannelGetConfigCommand(parsed) ||
+        isChannelSetConfigCommand(parsed) ||
+        isChannelStartCommand(parsed) ||
+        isChannelStopCommand(parsed) ||
+        isChannelPairingsListCommand(parsed) ||
+        isChannelPairingBindCommand(parsed) ||
+        isChannelRoutesListCommand(parsed) ||
+        isChannelRouteRemoveCommand(parsed)
+      ) {
+        runDetachedListenerTask("channels_command", async () => {
+          await handleChannelsProtocolCommand(
+            parsed,
+            socket,
+            runtime,
+            opts,
+            processQueuedTurn,
+          );
+        });
+        return;
+      }
+
       // ── Skill enable/disable commands (no runtime scope required) ─────
       if (isSkillEnableCommand(parsed) || isSkillDisableCommand(parsed)) {
         runDetachedListenerTask("skill_command", async () => {
@@ -4215,6 +4758,7 @@ export const __listenClientTestUtils = {
   handleAbortMessageInput,
   handleChangeDeviceStateInput,
   handleCronCommand,
+  handleChannelsProtocolCommand,
   handleSkillCommand,
   handleCreateAgentCommand,
   handleReflectionSettingsCommand,
