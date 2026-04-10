@@ -10,6 +10,7 @@ describe("listen subcommand telemetry", () => {
   const originalGetOrCreateDeviceId = settingsManager.getOrCreateDeviceId;
   const originalGetSettingsWithSecureTokens =
     settingsManager.getSettingsWithSecureTokens;
+  const originalInitialize = settingsManager.initialize;
   const originalBaseUrl = process.env.LETTA_BASE_URL;
 
   const originalTrackSessionEnd = telemetry.trackSessionEnd;
@@ -26,6 +27,9 @@ describe("listen subcommand telemetry", () => {
     settingsManager.setListenerEnvName = mock(
       () => {},
     ) as typeof settingsManager.setListenerEnvName;
+    settingsManager.initialize = mock(
+      async () => {},
+    ) as typeof settingsManager.initialize;
     settingsManager.getOrCreateDeviceId = mock(
       () => "device-test",
     ) as typeof settingsManager.getOrCreateDeviceId;
@@ -37,6 +41,7 @@ describe("listen subcommand telemetry", () => {
   afterEach(() => {
     settingsManager.loadLocalProjectSettings = originalLoadLocalProjectSettings;
     settingsManager.setListenerEnvName = originalSetListenerEnvName;
+    settingsManager.initialize = originalInitialize;
     settingsManager.getOrCreateDeviceId = originalGetOrCreateDeviceId;
     settingsManager.getSettingsWithSecureTokens =
       originalGetSettingsWithSecureTokens;

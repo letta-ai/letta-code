@@ -251,6 +251,15 @@ export async function isKeychainAvailable(): Promise<boolean> {
     return false;
   }
 
+  // Headless Linux environments frequently lack a session bus, so avoid
+  // probing the keychain when Secret Service cannot work.
+  if (
+    process.platform === "linux" &&
+    !process.env.DBUS_SESSION_BUS_ADDRESS?.trim()
+  ) {
+    return false;
+  }
+
   if (!secretsAvailable) {
     return false;
   }
@@ -266,11 +275,6 @@ export async function isKeychainAvailable(): Promise<boolean> {
     return false;
   }
 }
-
-/** Const value of isKeychainAvailable
- * Precomputed for tests
- */
-export const keychainAvailablePrecompute = await isKeychainAvailable();
 
 export function __resetSecretWarningStateForTests(): void {
   warnedSecretReadFailures.clear();
