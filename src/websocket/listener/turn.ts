@@ -75,6 +75,7 @@ import {
   emitLoopStatusUpdate,
   emitRetryDelta,
   emitRuntimeStateUpdates,
+  emitStatusDelta,
   setLoopStatus,
 } from "./protocol-outbound";
 import {
@@ -153,12 +154,14 @@ function hasActiveReflectionSubagent(
 
 function buildMaybeLaunchReflectionSubagent(params: {
   runtime: ConversationRuntime;
+  socket: WebSocket;
   agentId: string;
   conversationId: string;
   workingDirectory: string;
 }): (triggerSource: Exclude<ReflectionTrigger, "off">) => Promise<boolean> {
   return async (triggerSource) => {
-    const { runtime, agentId, conversationId, workingDirectory } = params;
+    const { runtime, socket, agentId, conversationId, workingDirectory } =
+      params;
 
     if (!agentId || !settingsManager.isMemfsEnabled(agentId)) {
       return false;
@@ -197,18 +200,11 @@ function buildMaybeLaunchReflectionSubagent(params: {
       const { spawnBackgroundSubagentTask } = await import(
         "../../tools/impl/Task"
       );
-      const reflectionSuccessSummary =
-        "Reflected on the memory palace, the halls remember more now";
       const { subagentId } = spawnBackgroundSubagentTask({
         subagentType: "reflection",
         prompt: reflectionPrompt,
         description: AUTO_REFLECTION_DESCRIPTION,
         silentCompletion: true,
-        emitCompletionNotification: true,
-        completionSummary: ({ success, error }) =>
-          success
-            ? reflectionSuccessSummary
-            : `Tried to reflect, but got lost in the palace: ${error || "Unknown error"}`,
         parentScope: { agentId, conversationId },
         onComplete: async ({ success, error }) => {
           telemetry.trackReflectionEnd(triggerSource, success, {
@@ -224,7 +220,7 @@ function buildMaybeLaunchReflectionSubagent(params: {
             success,
           );
 
-          await handleMemorySubagentCompletion(
+          const completionMessage = await handleMemorySubagentCompletion(
             {
               agentId,
               conversationId,
@@ -240,6 +236,12 @@ function buildMaybeLaunchReflectionSubagent(params: {
               logRecompileFailure: (message) => debugWarn("memory", message),
             },
           );
+          emitStatusDelta(socket, runtime, {
+            message: completionMessage,
+            level: success ? "success" : "warning",
+            agentId,
+            conversationId,
+          });
         },
       });
       telemetry.trackReflectionStart(triggerSource, {
@@ -470,6 +472,7 @@ export async function handleIncomingMessage(
             maybeLaunchReflectionSubagent: agentId
               ? buildMaybeLaunchReflectionSubagent({
                   runtime,
+                  socket,
                   agentId,
                   conversationId,
                   workingDirectory: turnWorkingDirectory,

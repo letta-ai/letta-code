@@ -17,12 +17,14 @@ describe("listen reflection wiring", () => {
     expect(turnSource).toContain("buildAutoReflectionPayload(");
     expect(turnSource).toContain("finalizeAutoReflectionPayload(");
     expect(turnSource).toContain("handleMemorySubagentCompletion(");
+    expect(turnSource).toContain("emitStatusDelta(socket, runtime, {");
     expect(turnSource).toContain('subagentType: "reflection"');
     expect(turnSource).toContain("appendTranscriptDeltaJsonl(");
     expect(turnSource).toContain("syncReminderStateFromContextTracker(");
     expect(turnSource).toContain("getReflectionSettings(");
     expect(turnSource).toContain("maybeLaunchReflectionSubagent:");
     expect(turnSource).toContain("runtime.contextTracker,");
+    expect(turnSource).not.toContain("emitCompletionNotification: true");
 
     expect(listenContextSource).toContain(
       "reflectionSettings: ReflectionSettings",
