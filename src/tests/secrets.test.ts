@@ -248,4 +248,34 @@ describe("Secrets utilities", () => {
       "Failed to retrieve refresh token from secrets",
     );
   });
+
+  test("warns again after a successful recovery read", async () => {
+    console.warn = mock(() => {});
+
+    const warn = console.warn as ReturnType<typeof mock>;
+    let calls = 0;
+
+    __setSecretGetOverrideForTests(async (options) => {
+      if (options.name !== "letta-api-key") {
+        return null;
+      }
+
+      calls += 1;
+      if (calls === 1) {
+        throw new Error("api key failure 1");
+      }
+      if (calls === 2) {
+        return "sk-recovered";
+      }
+      throw new Error("api key failure 2");
+    });
+
+    expect(await getApiKey()).toBe(null);
+    expect(await getApiKey()).toBe("sk-recovered");
+    expect(await getApiKey()).toBe(null);
+
+    expect(warn).toHaveBeenCalledTimes(2);
+    expect(String(warn.mock.calls[0]?.[0])).toContain("api key failure 1");
+    expect(String(warn.mock.calls[1]?.[0])).toContain("api key failure 2");
+  });
 });

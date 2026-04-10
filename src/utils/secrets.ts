@@ -50,9 +50,11 @@ async function getSecretValue(
       service: SERVICE_NAME,
       name,
     };
-    return secretGetOverrideForTests
+    const value = secretGetOverrideForTests
       ? await secretGetOverrideForTests(options)
       : await secrets.get(options);
+    warnedSecretReadFailures.delete(name);
+    return value;
   } catch (error) {
     const message = `Failed to retrieve ${label} from secrets: ${error}`;
     if (!warnedSecretReadFailures.has(name)) {
