@@ -44,12 +44,14 @@ await Bun.build({
     ".md": "text",
     ".mdx": "text",
     ".txt": "text",
-
   },
-  // Keep most native Node.js modules external to avoid bundling issues
+  // Keep most native Node.js modules external to avoid bundling issues.
+  // grammY must stay external too: bundling its node-fetch/abort-controller
+  // stack into letta.js breaks Telegram startup because node-fetch rejects the
+  // bundled AbortSignal class during bot.init().
   // But don't make `sharp` external, causes issues with global Bun-based installs
   // ref: #745, #1200
-  external: ["ws", "@vscode/ripgrep", "node-pty"],
+  external: ["ws", "@vscode/ripgrep", "node-pty", "grammy"],
   features: features,
 });
 
