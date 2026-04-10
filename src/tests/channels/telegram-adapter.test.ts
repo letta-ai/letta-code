@@ -9,7 +9,17 @@ type FakeBotStartOptions = {
 
 class FakeBot {
   static instances: FakeBot[] = [];
-  static nextStartImpl: () => Promise<void> = async () => {};
+  static nextStartImpl: (
+    options?: FakeBotStartOptions,
+    botInfo?: { username?: string; id: number },
+  ) => Promise<void> = async (options, botInfo) => {
+    await options?.onStart?.(
+      botInfo ?? {
+        username: "test_bot",
+        id: 12345,
+      },
+    );
+  };
 
   readonly token: string;
   botInfo = { username: "test_bot", id: 12345 };
@@ -39,8 +49,7 @@ class FakeBot {
   async init(): Promise<void> {}
 
   start(options?: FakeBotStartOptions): Promise<void> {
-    void options?.onStart?.(this.botInfo);
-    return FakeBot.nextStartImpl();
+    return FakeBot.nextStartImpl(options, this.botInfo);
   }
 
   async stop(): Promise<void> {}
@@ -68,7 +77,14 @@ const originalConsoleError = console.error;
 
 beforeEach(() => {
   FakeBot.instances.length = 0;
-  FakeBot.nextStartImpl = async () => {};
+  FakeBot.nextStartImpl = async (options, botInfo) => {
+    await options?.onStart?.(
+      botInfo ?? {
+        username: "test_bot",
+        id: 12345,
+      },
+    );
+  };
   consoleErrorSpy.mockClear();
   console.error = consoleErrorSpy as typeof console.error;
 });
@@ -104,8 +120,54 @@ test("telegram adapter logs unhandled grammY errors with update context", async 
   );
 });
 
+test("telegram adapter start waits until polling is live before resolving", async () => {
+  let releaseStart: (() => Promise<void>) | undefined;
+
+  FakeBot.nextStartImpl = async (options, botInfo) => {
+    await new Promise<void>((resolve) => {
+      releaseStart = async () => {
+        await options?.onStart?.(
+          botInfo ?? {
+            username: "test_bot",
+            id: 12345,
+          },
+        );
+        resolve();
+      };
+    });
+  };
+
+  const adapter = createTelegramAdapter({
+    channel: "telegram",
+    enabled: true,
+    token: "test-token",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  const startPromise = adapter.start();
+  expect(adapter.isRunning()).toBe(false);
+
+  await Promise.resolve();
+  expect(releaseStart).toBeDefined();
+  const triggerStart = releaseStart;
+  if (!triggerStart) {
+    throw new Error("Expected start callback to be registered");
+  }
+  await triggerStart();
+  await startPromise;
+
+  expect(adapter.isRunning()).toBe(true);
+});
+
 test("telegram adapter logs and clears running state when polling exits unexpectedly", async () => {
-  FakeBot.nextStartImpl = async () => {
+  FakeBot.nextStartImpl = async (options, botInfo) => {
+    await options?.onStart?.(
+      botInfo ?? {
+        username: "test_bot",
+        id: 12345,
+      },
+    );
     throw new Error("polling failed");
   };
 

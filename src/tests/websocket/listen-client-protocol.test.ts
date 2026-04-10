@@ -1,4 +1,4 @@
-import { describe, expect, mock, test } from "bun:test";
+import { afterEach, describe, expect, mock, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -76,6 +76,12 @@ class MockSocket {
     return this;
   }
 }
+
+const actualChannelsService = await import("../../channels/service");
+
+afterEach(() => {
+  mock.module("../../channels/service", () => actualChannelsService);
+});
 
 function makeControlRequest(requestId: string): ControlRequest {
   return {
@@ -384,6 +390,109 @@ describe("listen-client parseServerMessage", () => {
     expect(cronGet?.type).toBe("cron_get");
     expect(cronDelete?.type).toBe("cron_delete");
     expect(cronDeleteAll?.type).toBe("cron_delete_all");
+  });
+
+  test("parses channels management commands", () => {
+    const channelsList = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "channels_list",
+          request_id: "channels-list-1",
+        }),
+      ),
+    );
+    const channelGetConfig = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "channel_get_config",
+          request_id: "channel-get-config-1",
+          channel_id: "telegram",
+        }),
+      ),
+    );
+    const channelSetConfig = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "channel_set_config",
+          request_id: "channel-set-config-1",
+          channel_id: "telegram",
+          config: {
+            token: "123:abc",
+            dm_policy: "pairing",
+            allowed_users: ["user-1"],
+          },
+        }),
+      ),
+    );
+    const channelStart = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "channel_start",
+          request_id: "channel-start-1",
+          channel_id: "telegram",
+        }),
+      ),
+    );
+    const channelStop = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "channel_stop",
+          request_id: "channel-stop-1",
+          channel_id: "telegram",
+        }),
+      ),
+    );
+    const channelPairingsList = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "channel_pairings_list",
+          request_id: "channel-pairings-list-1",
+          channel_id: "telegram",
+        }),
+      ),
+    );
+    const channelPairingBind = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "channel_pairing_bind",
+          request_id: "channel-pairing-bind-1",
+          channel_id: "telegram",
+          runtime: { agent_id: "agent-1", conversation_id: "default" },
+          code: "A7X9K2",
+        }),
+      ),
+    );
+    const channelRoutesList = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "channel_routes_list",
+          request_id: "channel-routes-list-1",
+          channel_id: "telegram",
+          agent_id: "agent-1",
+          conversation_id: "default",
+        }),
+      ),
+    );
+    const channelRouteRemove = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "channel_route_remove",
+          request_id: "channel-route-remove-1",
+          channel_id: "telegram",
+          chat_id: "chat-1",
+        }),
+      ),
+    );
+
+    expect(channelsList?.type).toBe("channels_list");
+    expect(channelGetConfig?.type).toBe("channel_get_config");
+    expect(channelSetConfig?.type).toBe("channel_set_config");
+    expect(channelStart?.type).toBe("channel_start");
+    expect(channelStop?.type).toBe("channel_stop");
+    expect(channelPairingsList?.type).toBe("channel_pairings_list");
+    expect(channelPairingBind?.type).toBe("channel_pairing_bind");
+    expect(channelRoutesList?.type).toBe("channel_routes_list");
+    expect(channelRouteRemove?.type).toBe("channel_route_remove");
   });
 
   test("parses list_models command", () => {
@@ -806,6 +915,146 @@ describe("listen-client cron command handling", () => {
         delete process.env.LETTA_HOME;
       }
       await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("listen-client channels command handling", () => {
+  test("returns typed channel summaries over WS", async () => {
+    const socket = new MockSocket(WebSocket.OPEN);
+    const runtime = __listenClientTestUtils.createListenerRuntime();
+
+    mock.module("../../channels/service", () => ({
+      ...actualChannelsService,
+      listChannelSummaries: () => [
+        {
+          channelId: "telegram" as const,
+          displayName: "Telegram",
+          configured: true,
+          enabled: true,
+          running: true,
+          dmPolicy: "pairing" as const,
+          pendingPairingsCount: 2,
+          approvedUsersCount: 3,
+          routesCount: 4,
+        },
+      ],
+    }));
+
+    try {
+      await __listenClientTestUtils.handleChannelsProtocolCommand(
+        {
+          type: "channels_list",
+          request_id: "channels-list-1",
+        },
+        socket as unknown as WebSocket,
+        runtime,
+        {
+          onStatusChange: undefined,
+          connectionId: "conn-test",
+        },
+        async () => {},
+      );
+
+      expect(socket.sentPayloads).toHaveLength(1);
+      expect(JSON.parse(socket.sentPayloads[0] as string)).toMatchObject({
+        type: "channels_list_response",
+        request_id: "channels-list-1",
+        success: true,
+        channels: [
+          {
+            channel_id: "telegram",
+            display_name: "Telegram",
+            configured: true,
+            enabled: true,
+            running: true,
+            dm_policy: "pairing",
+            pending_pairings_count: 2,
+            approved_users_count: 3,
+            routes_count: 4,
+          },
+        ],
+      });
+    } finally {
+      __listenClientTestUtils.stopRuntime(runtime, true);
+    }
+  });
+
+  test("bind emits pairing, route, and channel update events", async () => {
+    const socket = new MockSocket(WebSocket.OPEN);
+    const runtime = __listenClientTestUtils.createListenerRuntime();
+
+    mock.module("../../channels/service", () => ({
+      ...actualChannelsService,
+      bindChannelPairing: () => ({
+        chatId: "chat-42",
+        route: {
+          channelId: "telegram" as const,
+          chatId: "chat-42",
+          agentId: "agent-1",
+          conversationId: "conv-1",
+          enabled: true,
+          createdAt: "2026-04-09T00:00:00.000Z",
+        },
+      }),
+    }));
+
+    try {
+      await __listenClientTestUtils.handleChannelsProtocolCommand(
+        {
+          type: "channel_pairing_bind",
+          request_id: "channel-bind-1",
+          channel_id: "telegram",
+          runtime: {
+            agent_id: "agent-1",
+            conversation_id: "conv-1",
+          },
+          code: "A7X9K2",
+        },
+        socket as unknown as WebSocket,
+        runtime,
+        {
+          onStatusChange: undefined,
+          connectionId: "conn-test",
+        },
+        async () => {},
+      );
+
+      const messages = socket.sentPayloads.map((payload) =>
+        JSON.parse(payload as string),
+      );
+
+      expect(messages[0]).toMatchObject({
+        type: "channel_pairing_bind_response",
+        request_id: "channel-bind-1",
+        success: true,
+        channel_id: "telegram",
+        chat_id: "chat-42",
+        route: {
+          channel_id: "telegram",
+          chat_id: "chat-42",
+          agent_id: "agent-1",
+          conversation_id: "conv-1",
+          enabled: true,
+          created_at: "2026-04-09T00:00:00.000Z",
+        },
+      });
+      expect(messages[1]).toMatchObject({
+        type: "channel_pairings_updated",
+        channel_id: "telegram",
+      });
+      expect(messages[2]).toMatchObject({
+        type: "channel_routes_updated",
+        channel_id: "telegram",
+        agent_id: "agent-1",
+        conversation_id: "conv-1",
+      });
+      expect(messages[3]).toMatchObject({
+        type: "channels_updated",
+        channel_id: "telegram",
+      });
+    } finally {
+      __listenClientTestUtils.stopRuntime(runtime, true);
     }
   });
 });

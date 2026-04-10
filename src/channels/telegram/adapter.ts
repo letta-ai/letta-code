@@ -87,17 +87,33 @@ export function createTelegramAdapter(
         `[Telegram] Bot started as @${info.username} (dm_policy: ${config.dmPolicy})`,
       );
 
-      // Start long-polling in background (non-blocking)
-      void bot
-        .start({
-          onStart: () => {
-            running = true;
-          },
-        })
-        .catch((error) => {
-          running = false;
-          console.error("[Telegram] Long-polling stopped unexpectedly:", error);
-        });
+      // Wait until grammY confirms polling has started so live status queries
+      // can report a real running state immediately after channel_start.
+      await new Promise<void>((resolve, reject) => {
+        let started = false;
+
+        void bot
+          .start({
+            onStart: () => {
+              running = true;
+              started = true;
+              resolve();
+            },
+          })
+          .catch((error) => {
+            running = false;
+
+            if (!started) {
+              reject(error);
+              return;
+            }
+
+            console.error(
+              "[Telegram] Long-polling stopped unexpectedly:",
+              error,
+            );
+          });
+      });
     },
 
     async stop(): Promise<void> {

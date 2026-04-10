@@ -9,6 +9,7 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
+import type { DmPolicy } from "../channels/types";
 import type { CronTask } from "../cron";
 
 /**
@@ -134,6 +135,46 @@ export interface ReflectionSettingsSnapshot {
   agent_id: string;
   trigger: ReflectionTriggerMode;
   step_count: number;
+}
+
+export type ChannelId = "telegram";
+
+export interface ChannelSummary {
+  channel_id: ChannelId;
+  display_name: string;
+  configured: boolean;
+  enabled: boolean;
+  running: boolean;
+  dm_policy: DmPolicy | null;
+  pending_pairings_count: number;
+  approved_users_count: number;
+  routes_count: number;
+}
+
+export interface ChannelConfigSnapshot {
+  channel_id: ChannelId;
+  enabled: boolean;
+  dm_policy: DmPolicy;
+  allowed_users: string[];
+  has_token: boolean;
+}
+
+export interface ChannelPendingPairing {
+  code: string;
+  sender_id: string;
+  sender_name?: string;
+  chat_id: string;
+  created_at: string;
+  expires_at: string;
+}
+
+export interface ChannelRouteSnapshot {
+  channel_id: ChannelId;
+  chat_id: string;
+  agent_id: string;
+  conversation_id: string;
+  enabled: boolean;
+  created_at: string;
 }
 
 /**
@@ -739,6 +780,69 @@ export interface SetReflectionSettingsCommand {
   scope?: ReflectionSettingsScope;
 }
 
+export interface ChannelsListCommand {
+  type: "channels_list";
+  request_id: string;
+}
+
+export interface ChannelGetConfigCommand {
+  type: "channel_get_config";
+  request_id: string;
+  channel_id: ChannelId;
+}
+
+export interface ChannelSetConfigCommand {
+  type: "channel_set_config";
+  request_id: string;
+  channel_id: ChannelId;
+  config: {
+    token?: string;
+    dm_policy?: DmPolicy;
+    allowed_users?: string[];
+  };
+}
+
+export interface ChannelStartCommand {
+  type: "channel_start";
+  request_id: string;
+  channel_id: ChannelId;
+}
+
+export interface ChannelStopCommand {
+  type: "channel_stop";
+  request_id: string;
+  channel_id: ChannelId;
+}
+
+export interface ChannelPairingsListCommand {
+  type: "channel_pairings_list";
+  request_id: string;
+  channel_id: ChannelId;
+}
+
+export interface ChannelPairingBindCommand {
+  type: "channel_pairing_bind";
+  request_id: string;
+  channel_id: ChannelId;
+  runtime: RuntimeScope;
+  code: string;
+}
+
+export interface ChannelRoutesListCommand {
+  type: "channel_routes_list";
+  request_id: string;
+  channel_id?: ChannelId;
+  agent_id?: string;
+  conversation_id?: string;
+}
+
+export interface ChannelRouteRemoveCommand {
+  type: "channel_route_remove";
+  request_id: string;
+  channel_id: ChannelId;
+  chat_id: string;
+}
+
 export interface CronListResponseMessage {
   type: "cron_list_response";
   request_id: string;
@@ -814,6 +918,104 @@ export interface SetReflectionSettingsResponseMessage {
   reflection_settings: ReflectionSettingsSnapshot | null;
   scope: ReflectionSettingsScope;
   error?: string;
+}
+
+export interface ChannelsListResponseMessage {
+  type: "channels_list_response";
+  request_id: string;
+  success: boolean;
+  channels: ChannelSummary[];
+  error?: string;
+}
+
+export interface ChannelGetConfigResponseMessage {
+  type: "channel_get_config_response";
+  request_id: string;
+  success: boolean;
+  config: ChannelConfigSnapshot | null;
+  error?: string;
+}
+
+export interface ChannelSetConfigResponseMessage {
+  type: "channel_set_config_response";
+  request_id: string;
+  success: boolean;
+  config: ChannelConfigSnapshot | null;
+  error?: string;
+}
+
+export interface ChannelStartResponseMessage {
+  type: "channel_start_response";
+  request_id: string;
+  success: boolean;
+  channel: ChannelSummary | null;
+  error?: string;
+}
+
+export interface ChannelStopResponseMessage {
+  type: "channel_stop_response";
+  request_id: string;
+  success: boolean;
+  channel: ChannelSummary | null;
+  error?: string;
+}
+
+export interface ChannelPairingsListResponseMessage {
+  type: "channel_pairings_list_response";
+  request_id: string;
+  success: boolean;
+  channel_id: ChannelId;
+  pending: ChannelPendingPairing[];
+  error?: string;
+}
+
+export interface ChannelPairingBindResponseMessage {
+  type: "channel_pairing_bind_response";
+  request_id: string;
+  success: boolean;
+  channel_id: ChannelId;
+  chat_id?: string;
+  route?: ChannelRouteSnapshot | null;
+  error?: string;
+}
+
+export interface ChannelRoutesListResponseMessage {
+  type: "channel_routes_list_response";
+  request_id: string;
+  success: boolean;
+  channel_id?: ChannelId;
+  routes: ChannelRouteSnapshot[];
+  error?: string;
+}
+
+export interface ChannelRouteRemoveResponseMessage {
+  type: "channel_route_remove_response";
+  request_id: string;
+  success: boolean;
+  channel_id: ChannelId;
+  chat_id: string;
+  found: boolean;
+  error?: string;
+}
+
+export interface ChannelsUpdatedMessage {
+  type: "channels_updated";
+  timestamp: number;
+  channel_id?: ChannelId;
+}
+
+export interface ChannelPairingsUpdatedMessage {
+  type: "channel_pairings_updated";
+  timestamp: number;
+  channel_id: ChannelId;
+}
+
+export interface ChannelRoutesUpdatedMessage {
+  type: "channel_routes_updated";
+  timestamp: number;
+  channel_id: ChannelId;
+  agent_id?: string;
+  conversation_id?: string | null;
 }
 
 /**
@@ -916,6 +1118,15 @@ export type WsProtocolCommand =
   | CreateAgentCommand
   | GetReflectionSettingsCommand
   | SetReflectionSettingsCommand
+  | ChannelsListCommand
+  | ChannelGetConfigCommand
+  | ChannelSetConfigCommand
+  | ChannelStartCommand
+  | ChannelStopCommand
+  | ChannelPairingsListCommand
+  | ChannelPairingBindCommand
+  | ChannelRoutesListCommand
+  | ChannelRouteRemoveCommand
   | ExecuteCommandCommand
   | SearchBranchesCommand
   | CheckoutBranchCommand;
@@ -927,6 +1138,18 @@ export type WsProtocolMessage =
   | StreamDeltaMessage
   | SubagentStateUpdateMessage
   | ListModelsResponseMessage
-  | UpdateModelResponseMessage;
+  | UpdateModelResponseMessage
+  | ChannelsListResponseMessage
+  | ChannelGetConfigResponseMessage
+  | ChannelSetConfigResponseMessage
+  | ChannelStartResponseMessage
+  | ChannelStopResponseMessage
+  | ChannelPairingsListResponseMessage
+  | ChannelPairingBindResponseMessage
+  | ChannelRoutesListResponseMessage
+  | ChannelRouteRemoveResponseMessage
+  | ChannelsUpdatedMessage
+  | ChannelPairingsUpdatedMessage
+  | ChannelRoutesUpdatedMessage;
 
 export type { StopReasonType };

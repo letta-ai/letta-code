@@ -40,6 +40,10 @@ export function getChannelRegistry(): ChannelRegistry | null {
   return instance;
 }
 
+export function ensureChannelRegistry(): ChannelRegistry {
+  return instance ?? new ChannelRegistry();
+}
+
 export function getActiveChannelIds(): string[] {
   if (!instance) return [];
   return instance.getActiveChannelIds();
@@ -52,12 +56,18 @@ export type ChannelMessageHandler = (
   xmlContent: string,
 ) => void;
 
+export type ChannelRegistryEvent = {
+  type: "pairings_updated";
+  channelId: string;
+};
+
 // ── Registry ──────────────────────────────────────────────────────
 
 export class ChannelRegistry {
   private readonly adapters = new Map<string, ChannelAdapter>();
   private ready = false;
   private messageHandler: ChannelMessageHandler | null = null;
+  private eventHandler: ((event: ChannelRegistryEvent) => void) | null = null;
   private readonly buffer: Array<{
     route: ChannelRoute;
     xmlContent: string;
@@ -103,6 +113,12 @@ export class ChannelRegistry {
     this.messageHandler = handler;
   }
 
+  setEventHandler(
+    handler: ((event: ChannelRegistryEvent) => void) | null,
+  ): void {
+    this.eventHandler = handler;
+  }
+
   /**
    * Mark the registry as ready, flushing any buffered messages.
    */
@@ -124,6 +140,45 @@ export class ChannelRegistry {
     return getRouteFromStore(channel, chatId);
   }
 
+  async startChannel(channelId: string): Promise<boolean> {
+    const config = readChannelConfig(channelId);
+    if (!config) {
+      return false;
+    }
+
+    loadRoutes(channelId);
+    loadPairingStore(channelId);
+
+    const existing = this.adapters.get(channelId);
+    if (existing?.isRunning()) {
+      await existing.stop();
+    }
+    this.adapters.delete(channelId);
+
+    if (channelId === "telegram") {
+      const { createTelegramAdapter } = await import("./telegram/adapter");
+      const adapter = createTelegramAdapter(config);
+      this.registerAdapter(adapter);
+      await adapter.start();
+      return true;
+    }
+
+    console.error(`Unknown channel "${channelId}". Supported: telegram`);
+    return false;
+  }
+
+  async stopChannel(channelId: string): Promise<boolean> {
+    const adapter = this.adapters.get(channelId);
+    if (!adapter) {
+      return false;
+    }
+    if (adapter.isRunning()) {
+      await adapter.stop();
+    }
+    this.adapters.delete(channelId);
+    return true;
+  }
+
   // ── Lifecycle ─────────────────────────────────────────────────
 
   async startAll(): Promise<void> {
@@ -142,6 +197,7 @@ export class ChannelRegistry {
   pause(): void {
     this.ready = false;
     this.messageHandler = null;
+    this.eventHandler = null;
   }
 
   /**
@@ -156,6 +212,7 @@ export class ChannelRegistry {
     }
     this.ready = false;
     this.messageHandler = null;
+    this.eventHandler = null;
     instance = null;
   }
 
@@ -192,6 +249,10 @@ export class ChannelRegistry {
           msg.chatId,
           msg.senderName,
         );
+        this.eventHandler?.({
+          type: "pairings_updated",
+          channelId: msg.channel,
+        });
         await adapter.sendDirectReply(
           msg.chatId,
           `To connect this chat to a Letta Code agent, run:\n\n` +
@@ -258,7 +319,7 @@ export class ChannelRegistry {
 export async function initializeChannels(
   channelNames: string[],
 ): Promise<ChannelRegistry> {
-  const registry = new ChannelRegistry();
+  const registry = ensureChannelRegistry();
 
   for (const channelId of channelNames) {
     const config = readChannelConfig(channelId);
@@ -274,22 +335,8 @@ export async function initializeChannels(
       continue;
     }
 
-    // Load persistent state
-    loadRoutes(channelId);
-    loadPairingStore(channelId);
-
-    // Create and register adapter
-    if (channelId === "telegram") {
-      const { createTelegramAdapter } = await import("./telegram/adapter");
-      const adapter = createTelegramAdapter(config);
-      registry.registerAdapter(adapter);
-    } else {
-      console.error(`Unknown channel: "${channelId}". Supported: telegram`);
-    }
+    await registry.startChannel(channelId);
   }
-
-  // Start all adapters (begin receiving, buffer until ready)
-  await registry.startAll();
 
   return registry;
 }
