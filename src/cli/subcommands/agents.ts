@@ -114,6 +114,8 @@ export async function runAgentsSubcommand(argv: string[]): Promise<number> {
 async function runCreateAction(
   values: ReturnType<typeof parseAgentsArgs>["values"],
 ): Promise<number> {
+  await settingsManager.initialize();
+
   const personalityInput = values.personality as string | undefined;
   const personality = personalityInput
     ? resolvePersonalityId(personalityInput)
@@ -189,6 +191,8 @@ async function runCreateAction(
 async function runListAction(
   values: ReturnType<typeof parseAgentsArgs>["values"],
 ): Promise<number> {
+  await settingsManager.initialize();
+
   const params: AgentListParams = {
     limit: parseLimit(values.limit, 20),
   };

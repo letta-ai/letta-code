@@ -27,6 +27,43 @@ describe("getModelInfoForLlmConfig", () => {
     // models.json order currently lists gpt-5.2-none first.
     expect(info?.id).toBe("gpt-5.2-none");
   });
+
+  test("selects opus 1M variant by context_window", () => {
+    const handle = "anthropic/claude-opus-4-6";
+
+    const withEffort = getModelInfoForLlmConfig(handle, {
+      context_window: 950000,
+      reasoning_effort: "high",
+    });
+    expect(withEffort?.id).toBe("opus-1m");
+
+    // With 1M context_window but no effort → still a 1M variant (not 200k "opus")
+    const noEffort = getModelInfoForLlmConfig(handle, {
+      context_window: 950000,
+    });
+    expect(noEffort?.id).not.toBe("opus");
+    expect(
+      (noEffort?.updateArgs as { context_window?: number })?.context_window,
+    ).toBe(950000);
+  });
+
+  test("selects sonnet 1M variant by context_window", () => {
+    const handle = "anthropic/claude-sonnet-4-6";
+
+    const withEffort = getModelInfoForLlmConfig(handle, {
+      context_window: 9500000,
+      reasoning_effort: "high",
+    });
+    expect(withEffort?.id).toBe("sonnet-1m");
+
+    const noEffort = getModelInfoForLlmConfig(handle, {
+      context_window: 9500000,
+    });
+    expect(noEffort?.id).not.toBe("sonnet");
+    expect(
+      (noEffort?.updateArgs as { context_window?: number })?.context_window,
+    ).toBe(9500000);
+  });
 });
 
 describe("getReasoningTierOptionsForHandle", () => {
@@ -142,6 +179,25 @@ describe("getReasoningTierOptionsForHandle", () => {
       "opus-4.5-medium",
       "opus-4.5",
     ]);
+  });
+
+  test("returns only 1M reasoning options when context_window specified for opus", () => {
+    const options = getReasoningTierOptionsForHandle(
+      "anthropic/claude-opus-4-6",
+      950000,
+    );
+    for (const option of options) {
+      expect(option.modelId).toContain("1m");
+    }
+  });
+
+  test("returns only 200k reasoning options when no context_window for opus", () => {
+    const options = getReasoningTierOptionsForHandle(
+      "anthropic/claude-opus-4-6",
+    );
+    for (const option of options) {
+      expect(option.modelId).not.toContain("1m");
+    }
   });
 
   test("returns empty options for models without reasoning tiers", () => {

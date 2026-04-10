@@ -405,6 +405,10 @@ for file in $(git diff --cached --name-only --diff-filter=ACM | grep -E '^(memor
   # Validate each line
   while IFS= read -r line; do
     [ -z "$line" ] && continue
+    # Skip YAML multiline continuation lines (indented lines that continue a previous value)
+    case "$line" in
+      " "*|$'\t'*) continue ;;
+    esac
 
     key=$(echo "$line" | cut -d: -f1 | tr -d ' ')
     value=$(echo "$line" | cut -d: -f2- | sed 's/^ *//;s/ *$//')

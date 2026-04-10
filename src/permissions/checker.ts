@@ -764,6 +764,8 @@ function getDefaultDecision(
     // own path/read_only guardrails, so allow by default.
     "memory",
     "memory_apply_patch",
+    // Channel sends are scoped by routing + parentScope checks in the tool.
+    "MessageChannel",
   ];
 
   if (autoAllowTools.includes(toolName)) {

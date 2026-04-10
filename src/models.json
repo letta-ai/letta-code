@@ -55,19 +55,6 @@
       }
     },
     {
-      "id": "sonnet-1m",
-      "handle": "anthropic/claude-sonnet-4-6",
-      "label": "Sonnet 4.6 1M",
-      "description": "Claude Sonnet 4.6 with 1M token context window (high reasoning)",
-      "updateArgs": {
-        "context_window": 1000000,
-        "max_output_tokens": 128000,
-        "reasoning_effort": "high",
-        "enable_reasoner": true,
-        "parallel_tool_calls": true
-      }
-    },
-    {
       "id": "sonnet-4.6-no-reasoning",
       "handle": "anthropic/claude-sonnet-4-6",
       "label": "Sonnet 4.6",
@@ -115,6 +102,74 @@
       "description": "Sonnet 4.6 (max reasoning)",
       "updateArgs": {
         "context_window": 200000,
+        "max_output_tokens": 128000,
+        "reasoning_effort": "xhigh",
+        "enable_reasoner": true,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "sonnet-1m",
+      "handle": "anthropic/claude-sonnet-4-6",
+      "label": "Sonnet 4.6 1M",
+      "description": "Claude Sonnet 4.6 with 1M token context window (high reasoning)",
+      "isFeatured": true,
+      "updateArgs": {
+        "context_window": 9500000,
+        "max_output_tokens": 128000,
+        "reasoning_effort": "high",
+        "enable_reasoner": true,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "sonnet-1m-no-reasoning",
+      "handle": "anthropic/claude-sonnet-4-6",
+      "label": "Sonnet 4.6 1M",
+      "description": "Sonnet 4.6 1M with no reasoning (faster)",
+      "updateArgs": {
+        "context_window": 9500000,
+        "max_output_tokens": 128000,
+        "reasoning_effort": "none",
+        "enable_reasoner": false,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "sonnet-1m-low",
+      "handle": "anthropic/claude-sonnet-4-6",
+      "label": "Sonnet 4.6 1M",
+      "description": "Sonnet 4.6 1M (low reasoning)",
+      "updateArgs": {
+        "context_window": 9500000,
+        "max_output_tokens": 128000,
+        "reasoning_effort": "low",
+        "enable_reasoner": true,
+        "max_reasoning_tokens": 4000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "sonnet-1m-medium",
+      "handle": "anthropic/claude-sonnet-4-6",
+      "label": "Sonnet 4.6 1M",
+      "description": "Sonnet 4.6 1M (med reasoning)",
+      "updateArgs": {
+        "context_window": 9500000,
+        "max_output_tokens": 128000,
+        "reasoning_effort": "medium",
+        "enable_reasoner": true,
+        "max_reasoning_tokens": 12000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "sonnet-1m-xhigh",
+      "handle": "anthropic/claude-sonnet-4-6",
+      "label": "Sonnet 4.6 1M",
+      "description": "Sonnet 4.6 1M (max reasoning)",
+      "updateArgs": {
+        "context_window": 9500000,
         "max_output_tokens": 128000,
         "reasoning_effort": "xhigh",
         "enable_reasoner": true,

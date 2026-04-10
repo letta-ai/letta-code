@@ -569,15 +569,23 @@ async function commitAndPush(
   const authorName = agentName.trim() || agentId;
   const authorEmail = `${agentId}@letta.com`;
 
-  await runGit(memoryDir, [
-    "-c",
-    `user.name=${authorName}`,
-    "-c",
-    `user.email=${authorEmail}`,
-    "commit",
-    "-m",
-    reason,
-  ]);
+  try {
+    await runGit(memoryDir, [
+      "-c",
+      `user.name=${authorName}`,
+      "-c",
+      `user.email=${authorEmail}`,
+      "commit",
+      "-m",
+      reason,
+    ]);
+  } catch (error) {
+    // If commit fails (e.g. pre-commit hook rejects staged changes),
+    // unstage just the paths this memory operation added so future memory
+    // commands do not inherit stale staged entries.
+    await unstagePaths(memoryDir, pathspecs);
+    throw error;
+  }
 
   const head = await runGit(memoryDir, ["rev-parse", "HEAD"]);
   const sha = head.stdout.trim();
@@ -597,6 +605,21 @@ async function commitAndPush(
     committed: true,
     sha,
   };
+}
+
+async function unstagePaths(
+  memoryDir: string,
+  pathspecs: string[],
+): Promise<void> {
+  if (pathspecs.length === 0) {
+    return;
+  }
+
+  try {
+    await runGit(memoryDir, ["reset", "HEAD", "--", ...pathspecs]);
+  } catch {
+    // Best-effort cleanup only — keep original error from commit path.
+  }
 }
 
 function requireString(

@@ -10,12 +10,13 @@ import {
   getRefreshToken,
   getSecureTokens,
   isKeychainAvailable,
-  keychainAvailablePrecompute,
   type SecureTokens,
   setApiKey,
   setRefreshToken,
   setSecureTokens,
 } from "../utils/secrets";
+
+const keychainAvailablePrecompute = await isKeychainAvailable();
 
 describe("Secrets utilities", () => {
   beforeEach(async () => {

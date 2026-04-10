@@ -7,7 +7,14 @@ import { getVersion } from "../version";
 export type TelemetrySurface = "tui" | "headless" | "websocket";
 
 export interface TelemetryEvent {
-  type: "session_start" | "session_end" | "tool_usage" | "error" | "user_input";
+  type:
+    | "session_start"
+    | "session_end"
+    | "tool_usage"
+    | "error"
+    | "user_input"
+    | "reflection_start"
+    | "reflection_end";
   timestamp: string;
   data: Record<string, unknown>;
 }
@@ -63,6 +70,22 @@ export interface UserInputData {
   command_name?: string;
   message_type: string;
   model_id: string;
+}
+
+export interface ReflectionStartData {
+  trigger_source: "manual" | "step-count" | "compaction-event";
+  subagent_id?: string;
+  conversation_id?: string;
+  start_message_id?: string;
+  end_message_id?: string;
+}
+
+export interface ReflectionEndData {
+  trigger_source: "manual" | "step-count" | "compaction-event";
+  success: boolean;
+  subagent_id?: string;
+  conversation_id?: string;
+  error?: string;
 }
 
 class TelemetryManager {
@@ -129,6 +152,21 @@ class TelemetryManager {
     }
 
     return true;
+  }
+
+  /**
+   * Check if the user is connected to Letta Cloud (api.letta.com)
+   */
+  private isCloudUser(): boolean {
+    try {
+      return getServerUrl().includes("api.letta.com");
+    } catch {
+      // Settings not initialized yet — check env var directly
+      return (
+        !process.env.LETTA_BASE_URL ||
+        process.env.LETTA_BASE_URL.includes("api.letta.com")
+      );
+    }
   }
 
   /**
@@ -226,7 +264,9 @@ class TelemetryManager {
       | SessionEndData
       | ToolUsageData
       | ErrorData
-      | UserInputData,
+      | UserInputData
+      | ReflectionStartData
+      | ReflectionEndData,
   ) {
     if (!this.isTelemetryEnabled()) {
       return;
@@ -462,6 +502,11 @@ class TelemetryManager {
       recentChunks?: Record<string, unknown>[];
     },
   ) {
+    // Skip error telemetry for self-hosted users to avoid spamming cloud analytics
+    if (!this.isCloudUser()) {
+      return;
+    }
+
     const data: ErrorData = {
       error_type: errorType,
       error_message: errorMessage,
@@ -493,6 +538,50 @@ class TelemetryManager {
       model_id: modelId,
     };
     this.track("user_input", data);
+  }
+
+  /**
+   * Track reflection start events (manual and auto-triggered).
+   */
+  trackReflectionStart(
+    triggerSource: "manual" | "step-count" | "compaction-event",
+    options?: {
+      subagentId?: string;
+      conversationId?: string;
+      startMessageId?: string;
+      endMessageId?: string;
+    },
+  ) {
+    const data: ReflectionStartData = {
+      trigger_source: triggerSource,
+      subagent_id: options?.subagentId,
+      conversation_id: options?.conversationId,
+      start_message_id: options?.startMessageId,
+      end_message_id: options?.endMessageId,
+    };
+    this.track("reflection_start", data);
+  }
+
+  /**
+   * Track reflection completion events.
+   */
+  trackReflectionEnd(
+    triggerSource: "manual" | "step-count" | "compaction-event",
+    success: boolean,
+    options?: {
+      subagentId?: string;
+      conversationId?: string;
+      error?: string;
+    },
+  ) {
+    const data: ReflectionEndData = {
+      trigger_source: triggerSource,
+      success,
+      subagent_id: options?.subagentId,
+      conversation_id: options?.conversationId,
+      error: options?.error,
+    };
+    this.track("reflection_end", data);
   }
 
   /**

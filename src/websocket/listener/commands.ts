@@ -37,6 +37,7 @@ export const SUPPORTED_REMOTE_COMMANDS: readonly string[] = [
   "doctor",
   "init",
   "remember",
+  "channels",
 ];
 
 /**
@@ -96,6 +97,15 @@ export async function handleExecuteCommand(
 
       case "remember":
         output = await handleRememberCommand(
+          socket,
+          conversationRuntime,
+          trimmedArgs,
+          opts,
+        );
+        break;
+
+      case "channels":
+        output = await handleChannelsCommand(
           socket,
           conversationRuntime,
           trimmedArgs,
@@ -367,4 +377,125 @@ async function handleRememberCommand(
   );
 
   return "Memory request submitted";
+}
+
+/**
+ * /channels — Manage external channel integrations.
+ *
+ * Subcommands (via WS):
+ *   /channels telegram pair <code>    — Approve pairing + bind chat to this agent/conversation
+ *   /channels telegram enable --chat-id <id> — Bind a known chat to this agent/conversation
+ *   /channels telegram disable        — Unbind this agent/conversation
+ *   /channels status                  — Show channel status
+ */
+async function handleChannelsCommand(
+  _socket: WebSocket,
+  conversationRuntime: ConversationRuntime,
+  args: string | undefined,
+  _opts: {
+    onStatusChange?: StartListenerOptions["onStatusChange"];
+    connectionId?: string;
+  },
+): Promise<string> {
+  const parts = (args ?? "").trim().split(/\s+/);
+  const [subCmd, action, ...rest] = parts;
+
+  const agentId = conversationRuntime.agentId;
+  const conversationId = conversationRuntime.conversationId;
+
+  if (!agentId) {
+    return "Error: No agent ID in current context.";
+  }
+
+  if (subCmd === "status") {
+    const { readChannelConfig } = await import("../../channels/config");
+    const { getRoutesForChannel, loadRoutes } = await import(
+      "../../channels/routing"
+    );
+    const { getPendingPairings, getApprovedUsers, loadPairingStore } =
+      await import("../../channels/pairing");
+
+    const channels = ["telegram"];
+    const lines: string[] = [];
+
+    for (const ch of channels) {
+      const config = readChannelConfig(ch);
+      if (!config) {
+        lines.push(`${ch}: not configured`);
+        continue;
+      }
+      loadRoutes(ch);
+      loadPairingStore(ch);
+      const routes = getRoutesForChannel(ch);
+      const pending = getPendingPairings(ch);
+      const approved = getApprovedUsers(ch);
+      lines.push(
+        `${ch}: enabled=${config.enabled}, policy=${config.dmPolicy}, ` +
+          `routes=${routes.length}, pending=${pending.length}, approved=${approved.length}`,
+      );
+    }
+
+    return lines.join("\n") || "No channels configured.";
+  }
+
+  if (subCmd === "telegram") {
+    if (action === "pair") {
+      const code = rest[0];
+      if (!code) {
+        return "Usage: /channels telegram pair <code>";
+      }
+
+      const { completePairing } = await import("../../channels/registry");
+      const { loadRoutes } = await import("../../channels/routing");
+      const { loadPairingStore } = await import("../../channels/pairing");
+
+      loadRoutes("telegram");
+      loadPairingStore("telegram");
+
+      const result = completePairing("telegram", code, agentId, conversationId);
+
+      if (result.success) {
+        return `Pairing approved! Chat ${result.chatId} is now bound to this agent/conversation.`;
+      }
+      return `Pairing failed: ${result.error}`;
+    }
+
+    if (action === "enable") {
+      const chatIdFlag = rest.indexOf("--chat-id");
+      const chatId = chatIdFlag >= 0 ? rest[chatIdFlag + 1] : undefined;
+
+      if (!chatId) {
+        return "Usage: /channels telegram enable --chat-id <id>";
+      }
+
+      const { addRoute, loadRoutes } = await import("../../channels/routing");
+
+      loadRoutes("telegram");
+      addRoute("telegram", {
+        chatId,
+        agentId,
+        conversationId,
+        enabled: true,
+        createdAt: new Date().toISOString(),
+      });
+
+      return `Route created: telegram:${chatId} → ${agentId}/${conversationId}`;
+    }
+
+    if (action === "disable") {
+      const { removeRoutesForScope, loadRoutes } = await import(
+        "../../channels/routing"
+      );
+
+      loadRoutes("telegram");
+      const removed = removeRoutesForScope("telegram", agentId, conversationId);
+      return removed > 0
+        ? `Removed ${removed} route(s) for this agent/conversation.`
+        : "No routes found for this agent/conversation.";
+    }
+
+    return "Usage: /channels telegram <pair|enable|disable>";
+  }
+
+  return "Usage: /channels <telegram|status>";
 }

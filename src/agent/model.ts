@@ -30,7 +30,10 @@ function isModelReasoningEffort(value: unknown): value is ModelReasoningEffort {
   );
 }
 
-export function getReasoningTierOptionsForHandle(modelHandle: string): Array<{
+export function getReasoningTierOptionsForHandle(
+  modelHandle: string,
+  contextWindow?: number,
+): Array<{
   effort: ModelReasoningEffort;
   modelId: string;
 }> {
@@ -38,6 +41,11 @@ export function getReasoningTierOptionsForHandle(modelHandle: string): Array<{
 
   for (const model of models) {
     if (model.handle !== modelHandle) continue;
+    if (contextWindow !== undefined) {
+      const mCtx = (model.updateArgs as { context_window?: number } | null)
+        ?.context_window;
+      if (mCtx !== contextWindow) continue;
+    }
     const effort = (model.updateArgs as { reasoning_effort?: unknown } | null)
       ?.reasoning_effort;
     if (!isModelReasoningEffort(effort)) continue;
@@ -138,15 +146,32 @@ export function getModelInfoForLlmConfig(
   llmConfig?: {
     reasoning_effort?: string | null;
     enable_reasoner?: boolean | null;
+    context_window?: number | null;
   } | null,
 ) {
   // Try ID/handle direct resolution first.
   const direct = getModelInfo(modelHandle);
 
   // Collect all candidates that share this handle.
-  const candidates = models.filter((m) => m.handle === modelHandle);
+  let candidates = models.filter((m) => m.handle === modelHandle);
   if (candidates.length === 0) {
     return direct;
+  }
+
+  // When context_window is known, narrow candidates to the matching tier
+  // so that e.g. 1M variants don't collapse into 200k variants.
+  let narrowedByCtx = false;
+  const ctxWindow = llmConfig?.context_window ?? null;
+  if (ctxWindow !== null) {
+    const ctxMatches = candidates.filter(
+      (m) =>
+        (m.updateArgs as { context_window?: number } | undefined)
+          ?.context_window === ctxWindow,
+    );
+    if (ctxMatches.length > 0) {
+      candidates = ctxMatches;
+      narrowedByCtx = true;
+    }
   }
 
   const effort = llmConfig?.reasoning_effort ?? null;
@@ -169,7 +194,12 @@ export function getModelInfoForLlmConfig(
     if (match) return match;
   }
 
-  // Fall back to whatever models.json considers the default for this handle.
+  // When candidates were narrowed by context_window, prefer the narrowed set
+  // over `direct` (which is the first model with this handle — always the 200k
+  // variant — and ignores context_window entirely).
+  if (narrowedByCtx) {
+    return candidates[0] ?? direct ?? null;
+  }
   return direct ?? candidates[0] ?? null;
 }
 

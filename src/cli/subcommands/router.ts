@@ -1,5 +1,6 @@
 import { runAgentsSubcommand } from "./agents";
 import { runBlocksSubcommand } from "./blocks";
+import { runChannelsSubcommand } from "./channels";
 import { runConnectSubcommand } from "./connect";
 import { runCronSubcommand } from "./cron";
 import { runListenSubcommand } from "./listen.tsx";
@@ -29,6 +30,8 @@ export async function runSubcommand(argv: string[]): Promise<number | null> {
       return runConnectSubcommand(rest);
     case "cron":
       return runCronSubcommand(rest);
+    case "channels":
+      return runChannelsSubcommand(rest);
     default:
       return null;
   }

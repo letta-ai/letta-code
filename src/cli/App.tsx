@@ -1742,6 +1742,7 @@ export default function App({
       enable_reasoner:
         (llmConfig as { enable_reasoner?: boolean | null })?.enable_reasoner ??
         null,
+      context_window: llmConfig?.context_window ?? null,
     });
     if (info) {
       return (info as { shortLabel?: string }).shortLabel ?? info.label;
@@ -1765,6 +1766,7 @@ export default function App({
       enable_reasoner:
         (llmConfig as { enable_reasoner?: boolean | null })?.enable_reasoner ??
         null,
+      context_window: llmConfig?.context_window ?? null,
     });
     const rawContextWindow = (
       info?.updateArgs as { context_window?: unknown } | undefined
@@ -3572,13 +3574,24 @@ export default function App({
       setLlmConfig(agentState.llm_config);
       setCurrentModelHandle(agentModelHandle ?? null);
 
-      const modelInfo = getModelInfoForLlmConfig(
-        agentModelHandle || "",
-        agentState.llm_config as unknown as {
+      // If the model handle hasn't changed, skip re-deriving the model ID.
+      // The current ID (set by handleModelSelect or a prior derivation) is
+      // already correct. Re-deriving is lossy for variants that share a
+      // handle but differ only by context_window (e.g. 1M vs 200k).
+      const currentHandle = buildModelHandleFromLlmConfig(llmConfigRef.current);
+      if (agentModelHandle && agentModelHandle === currentHandle) {
+        return;
+      }
+
+      const modelInfo = getModelInfoForLlmConfig(agentModelHandle || "", {
+        ...(agentState.llm_config as unknown as {
           reasoning_effort?: string | null;
           enable_reasoner?: boolean | null;
-        },
-      );
+        }),
+        context_window:
+          (agentState as unknown as { context_window_limit?: number | null })
+            .context_window_limit ?? null,
+      });
       setCurrentModelId(modelInfo?.id ?? (agentModelHandle || null));
     };
 
@@ -3645,6 +3658,7 @@ export default function App({
                 enable_reasoner?: boolean | null;
               }
             ).enable_reasoner ?? null,
+          context_window: conversationContextWindowLimit ?? null,
         });
         const modelPresetContextWindow = (
           modelInfo?.updateArgs as { context_window?: unknown } | undefined
@@ -10564,12 +10578,17 @@ export default function App({
             const { spawnBackgroundSubagentTask } = await import(
               "../tools/impl/Task"
             );
-            spawnBackgroundSubagentTask({
+            const { subagentId } = spawnBackgroundSubagentTask({
               subagentType: "reflection",
               prompt: reflectionPrompt,
               description: "Reflecting on conversation",
               silentCompletion: true,
               onComplete: async ({ success, error }) => {
+                telemetry.trackReflectionEnd("manual", success, {
+                  subagentId,
+                  conversationId: reflectionConversationId,
+                  error,
+                });
                 await finalizeAutoReflectionPayload(
                   agentId,
                   reflectionConversationId,
@@ -10597,6 +10616,12 @@ export default function App({
                 );
                 appendTaskNotificationEvents([msg]);
               },
+            });
+            telemetry.trackReflectionStart("manual", {
+              subagentId,
+              conversationId: reflectionConversationId,
+              startMessageId: autoPayload.startMessageId,
+              endMessageId: autoPayload.endMessageId,
             });
 
             cmd.finish(
@@ -10767,7 +10792,7 @@ export default function App({
               "The page embeds a delivery config in a script tag:",
               "",
               "```json",
-              '{"homeBase":{"lat":32.9486,"lng":-96.7087},"radiusMiles":5}',
+              '{"homeBase":{"lat":32.9486,"lng":-96.7087},"radiusMiles":10}',
               "```",
               "",
               "It geocodes addresses via Nominatim and checks distance from the home base. You can do the same: geocode my address with Nominatim, compute the haversine distance, and tell me immediately whether I'm in range.",
@@ -10786,7 +10811,7 @@ export default function App({
                 ? `My delivery address: ${args}`
                 : "Ask me for my delivery address.",
               "",
-              "1. Geocode the address via Nominatim. Compute the haversine distance from (32.9486, -96.7087). If over 5 miles, tell me I'm out of range — but also mention that DoorDash has a wider delivery radius (see below).",
+              "1. Geocode the address via Nominatim. Compute the haversine distance from (32.9486, -96.7087). If over 10 miles, tell me I'm out of range — but also mention that DoorDash has a wider delivery radius (see below).",
               "2. Fetch https://empanadaempire.us with fetch_webpage. Parse the menu from the data attributes. Present it. Suggest a balanced order (savory + sweet). Let me adjust.",
               "3. POST to api/create-order.php with the selected items. Tell me what happened.",
               "4. If the API rejects it or needs payment info, stop and tell me.",
@@ -10795,7 +10820,7 @@ export default function App({
               "",
               "## If the address is out of range or the site doesn't work",
               "",
-              "DoorDash has a wider delivery radius than the 5-mile limit on the direct site. If I'm close to Richardson but outside 5 miles, or if the site is down, point me to:",
+              "DoorDash has a wider delivery radius than the 10-mile limit on the direct site. If I'm close to Richardson but outside 10 miles, or if the site is down, point me to:",
               "",
               "https://order.online/store/-40548503?hideModal=true",
               "",
@@ -11026,12 +11051,17 @@ ${SYSTEM_REMINDER_CLOSE}
           const { spawnBackgroundSubagentTask } = await import(
             "../tools/impl/Task"
           );
-          spawnBackgroundSubagentTask({
+          const { subagentId } = spawnBackgroundSubagentTask({
             subagentType: "reflection",
             prompt: reflectionPrompt,
             description: AUTO_REFLECTION_DESCRIPTION,
             silentCompletion: true,
             onComplete: async ({ success, error }) => {
+              telemetry.trackReflectionEnd(triggerSource, success, {
+                subagentId,
+                conversationId: reflectionConversationId,
+                error,
+              });
               await finalizeAutoReflectionPayload(
                 agentId,
                 reflectionConversationId,
@@ -11059,6 +11089,12 @@ ${SYSTEM_REMINDER_CLOSE}
               );
               appendTaskNotificationEvents([msg]);
             },
+          });
+          telemetry.trackReflectionStart(triggerSource, {
+            subagentId,
+            conversationId: reflectionConversationId,
+            startMessageId: autoPayload.startMessageId,
+            endMessageId: autoPayload.endMessageId,
           });
           debugLog(
             "memory",
@@ -12627,8 +12663,13 @@ ${SYSTEM_REMINDER_CLOSE}
             : modelUpdateArgs?.enable_reasoner === false
               ? "no"
               : null;
-        const reasoningTierOptions =
-          getReasoningTierOptionsForHandle(modelHandle);
+        const selectedContextWindow = (
+          model.updateArgs as { context_window?: number } | undefined
+        )?.context_window;
+        const reasoningTierOptions = getReasoningTierOptionsForHandle(
+          modelHandle,
+          selectedContextWindow,
+        );
 
         if (
           !opts?.skipReasoningPrompt &&
@@ -14001,7 +14042,9 @@ ${SYSTEM_REMINDER_CLOSE}
             ? "bypassPermissions"
             : acceptEdits
               ? "acceptEdits"
-              : (previousMode ?? "default");
+              : previousMode === "memory"
+                ? "default"
+                : (previousMode ?? "default");
         permissionMode.setMode(restoreMode);
         setUiPermissionMode(restoreMode);
       } else {

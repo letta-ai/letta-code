@@ -355,9 +355,6 @@ async function getPinnedAgentNames(): Promise<{ id: string; name: string }[]> {
 async function main(): Promise<void> {
   markMilestone("CLI_START");
 
-  // Initialize settings manager (loads settings once into memory)
-  await settingsManager.initialize();
-
   // Early exit for CLI subcommands (e.g., `letta server`, `letta memfs`).
   // Subcommands handle their own setup and don't need TUI init, theme
   // detection, or base tool bootstrapping.
@@ -367,6 +364,7 @@ async function main(): Promise<void> {
   }
 
   // Everything below only runs for interactive TUI mode
+  await settingsManager.initialize();
   const { initTerminalTheme } = await import("./cli/helpers/terminalTheme");
   await initTerminalTheme();
 

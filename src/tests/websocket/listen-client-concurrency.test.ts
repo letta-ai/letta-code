@@ -795,7 +795,126 @@ describe("listen-client multi-worker concurrency", () => {
     expect(runtimeB.queuedMessagesByItemId.size).toBe(0);
   });
 
-  test("consumeQueuedTurn only drains the next same-scope queued turn batch", () => {
+  test("channel queue items re-enter the listener loop as normal queued turns", async () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    __listenClientTestUtils.setActiveRuntime(listener);
+    const runtime = __listenClientTestUtils.getOrCreateScopedRuntime(
+      listener,
+      "agent-1",
+      "conv-channel",
+    );
+    const socket = new MockSocket();
+    const processed: IncomingMessage[] = [];
+    const xml =
+      '<channel-notification source="telegram" chat_id="7952253975">hello from telegram</channel-notification>';
+
+    const enqueuedItem = __listenClientTestUtils.enqueueChannelTurn(
+      runtime,
+      {
+        agentId: "agent-1",
+        conversationId: "conv-channel",
+      },
+      xml,
+    );
+
+    expect(enqueuedItem).not.toBeNull();
+    expect(runtime.queueRuntime.length).toBe(1);
+    expect(runtime.queuedMessagesByItemId.size).toBe(1);
+
+    __listenClientTestUtils.scheduleQueuePump(
+      runtime,
+      socket as unknown as WebSocket,
+      {
+        connectionId: "conn-1",
+        onStatusChange: undefined,
+      } as never,
+      async (queuedTurn: IncomingMessage) => {
+        processed.push(queuedTurn);
+      },
+    );
+
+    await waitFor(() => processed.length === 1);
+
+    expect(processed[0]).toEqual(
+      expect.objectContaining({
+        type: "message",
+        agentId: "agent-1",
+        conversationId: "conv-channel",
+        messages: [
+          expect.objectContaining({
+            role: "user",
+            content: [{ type: "text", text: xml }],
+            client_message_id: expect.stringMatching(/^cm-channel-/),
+          }),
+        ],
+      }),
+    );
+    expect(runtime.queueRuntime.length).toBe(0);
+    expect(runtime.queuedMessagesByItemId.size).toBe(0);
+  });
+
+  test("task_notification-only queue items re-enter the listener loop as standalone turns", async () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    __listenClientTestUtils.setActiveRuntime(listener);
+    const runtime = __listenClientTestUtils.getOrCreateScopedRuntime(
+      listener,
+      "agent-1",
+      "conv-task",
+    );
+    const socket = new MockSocket();
+    const processed: IncomingMessage[] = [];
+
+    const taskInput = {
+      kind: "task_notification",
+      source: "task_notification",
+      text: "<task-notification>done</task-notification>",
+      clientMessageId: "cm-task-only",
+      agentId: "agent-1",
+      conversationId: "conv-task",
+    } satisfies Omit<TaskNotificationQueueItem, "id" | "enqueuedAt">;
+
+    const taskItem = runtime.queueRuntime.enqueue(taskInput);
+
+    expect(taskItem).not.toBeNull();
+    expect(runtime.queueRuntime.length).toBe(1);
+
+    __listenClientTestUtils.scheduleQueuePump(
+      runtime,
+      socket as unknown as WebSocket,
+      {
+        connectionId: "conn-1",
+        onStatusChange: undefined,
+      } as never,
+      async (queuedTurn: IncomingMessage) => {
+        processed.push(queuedTurn);
+      },
+    );
+
+    await waitFor(() => processed.length === 1);
+
+    expect(processed[0]).toEqual(
+      expect.objectContaining({
+        type: "message",
+        agentId: "agent-1",
+        conversationId: "conv-task",
+        messages: [
+          {
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text: "<task-notification>done</task-notification>",
+              },
+            ],
+          },
+        ],
+      }),
+    );
+    expect(runtime.queueRuntime.length).toBe(0);
+    expect(runtime.queuedMessagesByItemId.size).toBe(0);
+  });
+
+  test("consumeQueuedTurn coalesces same-scope task notifications into the next queued turn batch", () => {
     const runtime = __listenClientTestUtils.createRuntime();
     const messageInput = {
       kind: "message",
@@ -854,17 +973,23 @@ describe("listen-client multi-worker concurrency", () => {
     expect(consumed).not.toBeNull();
     expect(
       consumed?.dequeuedBatch.items.map((item: { id: string }) => item.id),
-    ).toEqual([messageItem.id]);
+    ).toEqual([messageItem.id, taskItem.id]);
     expect(consumed?.queuedTurn.messages).toEqual([
       {
         role: "user",
-        content: [{ type: "text", text: "queued user" }],
+        content: [
+          { type: "text", text: "queued user" },
+          { type: "text", text: "\n" },
+          {
+            type: "text",
+            text: "<task-notification>done</task-notification>",
+          },
+        ],
       },
     ]);
-    expect(runtime.queueRuntime.length).toBe(2);
+    expect(runtime.queueRuntime.length).toBe(1);
     expect(runtime.queuedMessagesByItemId.has(otherMessageItem.id)).toBe(true);
     expect(runtime.queueRuntime.peek().map((item) => item.id)).toEqual([
-      taskItem.id,
       otherMessageItem.id,
     ]);
   });
@@ -967,7 +1092,14 @@ describe("listen-client multi-worker concurrency", () => {
     );
     expect(continuationMessages?.[1]).toEqual({
       role: "user",
-      content: [{ type: "text", text: "queued user" }],
+      content: [
+        { type: "text", text: "queued user" },
+        { type: "text", text: "\n" },
+        {
+          type: "text",
+          text: "<task-notification>done</task-notification>",
+        },
+      ],
     });
     expect(continuationMessages?.[2]).toEqual({
       role: "user",
@@ -980,8 +1112,7 @@ describe("listen-client multi-worker concurrency", () => {
       otid: expect.any(String),
     });
     expect(runtime.loopStatus as string).toBe("PROCESSING_API_RESPONSE");
-    expect(runtime.queueRuntime.length).toBe(1);
-    expect(runtime.queueRuntime.peek()[0]?.kind).toBe("task_notification");
+    expect(runtime.queueRuntime.length).toBe(0);
     expect(runtime.queuedMessagesByItemId.size).toBe(0);
     expect(
       socket.sentPayloads.some((payload) => payload.includes("queued user")),
@@ -990,7 +1121,7 @@ describe("listen-client multi-worker concurrency", () => {
       socket.sentPayloads.some((payload) =>
         payload.includes("<task-notification>done</task-notification>"),
       ),
-    ).toBe(false);
+    ).toBe(true);
 
     drain.resolve({
       stopReason: "end_turn",

@@ -9,15 +9,30 @@ import { Box, render, Text } from "ink";
 import TextInput from "ink-text-input";
 import type React from "react";
 import { useState } from "react";
-import { getServerUrl } from "../../agent/client";
+import {
+  LETTA_CLOUD_API_URL,
+  pollForToken,
+  refreshAccessToken,
+  requestDeviceCode,
+} from "../../auth/oauth";
 import { settingsManager } from "../../settings-manager";
 import { telemetry } from "../../telemetry";
 import { RemoteSessionLog } from "../../websocket/listen-log";
 import {
+  type RegisterOptions,
   registerWithCloud,
   registerWithCloudRetry,
 } from "../../websocket/listen-register";
 import { ListenerStatusUI } from "../components/ListenerStatusUI";
+
+const LISTENER_TOKEN_REFRESH_WINDOW_MS = 5 * 60 * 1000;
+
+class MissingListenerApiKeyError extends Error {
+  constructor() {
+    super("LETTA_API_KEY not found");
+    this.name = "MissingListenerApiKeyError";
+  }
+}
 
 /**
  * Interactive prompt for environment name
@@ -60,8 +75,154 @@ async function flushListenerTelemetryEnd(exitReason: string): Promise<void> {
   }
 }
 
+function getListenerServerUrl(settings: {
+  env?: Record<string, string>;
+}): string {
+  return (
+    process.env.LETTA_BASE_URL ||
+    settings.env?.LETTA_BASE_URL ||
+    LETTA_CLOUD_API_URL
+  );
+}
+
+async function refreshListenerAccessToken(
+  settings: Awaited<
+    ReturnType<typeof settingsManager.getSettingsWithSecureTokens>
+  >,
+  deviceId: string,
+  connectionName: string,
+): Promise<string> {
+  const now = Date.now();
+
+  console.log("Access token expired, refreshing...");
+
+  const tokens = await refreshAccessToken(
+    settings.refreshToken as string,
+    deviceId,
+    connectionName,
+  );
+
+  settingsManager.updateSettings({
+    env: {
+      ...settings.env,
+      LETTA_API_KEY: tokens.access_token,
+    },
+    tokenExpiresAt: now + tokens.expires_in * 1000,
+    ...(tokens.refresh_token ? { refreshToken: tokens.refresh_token } : {}),
+  });
+  await settingsManager.flush();
+
+  console.log("Token refreshed successfully.");
+
+  return tokens.access_token;
+}
+
+async function runListenerOAuthLogin(
+  currentEnv: Record<string, string> | undefined,
+  deviceId: string,
+  connectionName: string,
+): Promise<string> {
+  console.log("No API key found. Starting OAuth login...\n");
+
+  const deviceData = await requestDeviceCode();
+
+  console.log(
+    `To authenticate, visit: ${deviceData.verification_uri_complete}`,
+  );
+  console.log(`Your code: ${deviceData.user_code}\n`);
+  console.log("Waiting for authorization...\n");
+
+  const tokens = await pollForToken(
+    deviceData.device_code,
+    deviceData.interval,
+    deviceData.expires_in,
+    deviceId,
+    connectionName,
+  );
+  const now = Date.now();
+
+  settingsManager.updateSettings({
+    env: {
+      ...currentEnv,
+      LETTA_API_KEY: tokens.access_token,
+    },
+    tokenExpiresAt: now + tokens.expires_in * 1000,
+    ...(tokens.refresh_token ? { refreshToken: tokens.refresh_token } : {}),
+  });
+  await settingsManager.flush();
+
+  console.log("Authenticated successfully.\n");
+
+  return tokens.access_token;
+}
+
+async function resolveListenerRegistrationOptions(
+  deviceId: string,
+  connectionName: string,
+): Promise<RegisterOptions> {
+  const settings = await settingsManager.getSettingsWithSecureTokens();
+  const serverUrl = getListenerServerUrl(settings);
+  const envApiKey = process.env.LETTA_API_KEY;
+
+  if (envApiKey) {
+    return {
+      serverUrl,
+      apiKey: envApiKey,
+      deviceId,
+      connectionName,
+    };
+  }
+
+  let apiKey = settings.env?.LETTA_API_KEY;
+
+  if (serverUrl === LETTA_CLOUD_API_URL) {
+    const expiresAt = settings.tokenExpiresAt;
+    if (settings.refreshToken && expiresAt) {
+      const now = Date.now();
+      if (!apiKey || now >= expiresAt - LISTENER_TOKEN_REFRESH_WINDOW_MS) {
+        try {
+          apiKey = await refreshListenerAccessToken(
+            settings,
+            deviceId,
+            connectionName,
+          );
+        } catch (refreshErr) {
+          console.warn(
+            "Token refresh failed:",
+            refreshErr instanceof Error
+              ? refreshErr.message
+              : String(refreshErr),
+          );
+          apiKey = undefined;
+        }
+      }
+    }
+
+    if (!apiKey) {
+      apiKey = await runListenerOAuthLogin(
+        settings.env,
+        deviceId,
+        connectionName,
+      );
+    }
+  }
+
+  if (!apiKey) {
+    throw new MissingListenerApiKeyError();
+  }
+
+  return {
+    serverUrl,
+    apiKey,
+    deviceId,
+    connectionName,
+  };
+}
+
 export const __listenSubcommandTestUtils = {
   flushListenerTelemetryEnd,
+  getListenerServerUrl,
+  resolveListenerRegistrationOptions,
 };
 
 export async function runListenSubcommand(argv: string[]): Promise<number> {
@@ -70,6 +231,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     args: argv,
     options: {
       "env-name": { type: "string" },
+      channels: { type: "string" },
       help: { type: "boolean", short: "h" },
       debug: { type: "boolean" },
     },
@@ -80,7 +242,9 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
 
   // Show help
   if (values.help) {
-    console.log("Usage: letta server [--env-name <name>] [--debug]\n");
+    console.log(
+      "Usage: letta server [--env-name <name>] [--channels <list>] [--debug]\n",
+    );
     console.log(
       "Register this letta-code instance to receive messages from Letta Cloud.\n",
     );
@@ -89,20 +253,37 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       "  --env-name <name>  Friendly name for this environment (uses hostname if not provided)",
     );
     console.log(
+      "  --channels <list>  Comma-separated channel names to enable (e.g. telegram)",
+    );
+    console.log(
       "  --debug            Plain-text mode: log all WebSocket events instead of interactive UI",
     );
     console.log("  -h, --help         Show this help message\n");
     console.log("Examples:");
     console.log(
-      "  letta server                      # Uses hostname as default",
+      "  letta channels configure telegram          # Configure Telegram first",
+    );
+    console.log(
+      "  letta server                              # Uses hostname as default",
     );
     console.log('  letta server --env-name "work-laptop"');
-    console.log("  letta server --debug              # Log all WS events\n");
+    console.log(
+      "  letta server --channels telegram           # Enable Telegram channel",
+    );
+    console.log(
+      "  letta server --debug                       # Log all WS events\n",
+    );
     console.log(
       "Once connected, this instance will listen for incoming messages from cloud agents.",
     );
     console.log(
       "Messages will be executed locally using your letta-code environment.",
+    );
+    console.log(
+      "Telegram flow: configure the bot, start the listener with --channels telegram,",
+    );
+    console.log(
+      "then message the bot from Telegram and run /channels telegram pair <code> in the target conversation.",
     );
     return 0;
   }
@@ -114,12 +295,34 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     code: number,
     exitReason: string,
   ): Promise<never> => {
+    // Stop channel adapters on actual process exit
+    try {
+      const { getChannelRegistry } = await import("../../channels/registry");
+      const registry = getChannelRegistry();
+      if (registry) {
+        await registry.stopAll();
+      }
+    } catch {
+      // Best effort — don't block exit on channel cleanup failure
+    }
     await flushListenerTelemetryEnd(exitReason);
     process.exit(code);
   };
 
   // Load local project settings to access saved environment name
   await settingsManager.loadLocalProjectSettings();
+
+  // Initialize channels if --channels flag provided
+  if (values.channels) {
+    const channelNames = values.channels
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (channelNames.length > 0) {
+      const { initializeChannels } = await import("../../channels/registry");
+      await initializeChannels(channelNames);
+    }
+  }
 
   // Determine connection name
   let connectionName: string;
@@ -163,18 +366,30 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
   console.log(`Log file: ${sessionLog.path}`);
 
   try {
+    await settingsManager.initialize();
+
     // Get device ID
     const deviceId = settingsManager.getOrCreateDeviceId();
+    let registerOptions: RegisterOptions;
 
-    // Get API key — prefer keychain/settings over env var so a stale
-    // shell export doesn't shadow the real key from OAuth login.
-    const settings = await settingsManager.getSettingsWithSecureTokens();
-    const apiKey = settings.env?.LETTA_API_KEY || process.env.LETTA_API_KEY;
+    try {
+      registerOptions = await resolveListenerRegistrationOptions(
+        deviceId,
+        connectionName,
+      );
+    } catch (authErr) {
+      if (authErr instanceof MissingListenerApiKeyError) {
+        console.error("Error: LETTA_API_KEY not found");
+        console.error("Set your API key with: export LETTA_API_KEY=<your-key>");
+        await flushListenerTelemetryEnd("listener_missing_api_key");
+        return 1;
+      }
 
-    if (!apiKey) {
-      console.error("Error: LETTA_API_KEY not found");
-      console.error("Set your API key with: export LETTA_API_KEY=<your-key>");
-      await flushListenerTelemetryEnd("listener_missing_api_key");
+      console.error(
+        "OAuth login failed:",
+        authErr instanceof Error ? authErr.message : String(authErr),
+      );
+      await flushListenerTelemetryEnd("listener_oauth_failed");
       return 1;
     }
 
@@ -182,24 +397,18 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     sessionLog.log(`deviceId: ${deviceId}`);
     sessionLog.log(`connectionName: ${connectionName}`);
 
-    // Register with cloud
-    const serverUrl = getServerUrl();
-
     if (debugMode) {
       console.log(
-        `[${formatTimestamp()}] Registering with ${serverUrl}/v1/environments/register`,
+        `[${formatTimestamp()}] Registering with ${registerOptions.serverUrl}/v1/environments/register`,
       );
       console.log(`[${formatTimestamp()}]   deviceId: ${deviceId}`);
       console.log(`[${formatTimestamp()}]   connectionName: ${connectionName}`);
     }
-    sessionLog.log(`Registering with ${serverUrl}/v1/environments/register`);
+    sessionLog.log(
+      `Registering with ${registerOptions.serverUrl}/v1/environments/register`,
+    );
 
-    const { connectionId, wsUrl } = await registerWithCloud({
-      serverUrl,
-      apiKey,
-      deviceId,
-      connectionName,
-    });
+    const { connectionId, wsUrl } = await registerWithCloud(registerOptions);
 
     sessionLog.log(`Registered: connectionId=${connectionId}`);
     sessionLog.log(`wsUrl: ${wsUrl}`);
@@ -225,21 +434,22 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       wsUrl: string;
     }> => {
       sessionLog.log("Re-registering with retry...");
-      const result = await registerWithCloudRetry(
-        { serverUrl, apiKey, deviceId, connectionName },
-        {
-          onRetry: (attempt, delayMs, error) => {
-            sessionLog.log(
-              `Registration retry ${attempt} in ${Math.round(delayMs / 1000)}s: ${error.message}`,
-            );
-            if (debugMode) {
-              console.log(
-                `[${formatTimestamp()}] Registration retry ${attempt} in ${Math.round(delayMs / 1000)}s: ${error.message}`,
-              );
-            }
-          },
-        },
+      const nextRegisterOptions = await resolveListenerRegistrationOptions(
+        deviceId,
+        connectionName,
       );
+      const result = await registerWithCloudRetry(nextRegisterOptions, {
+        onRetry: (attempt, delayMs, error) => {
+          sessionLog.log(
+            `Registration retry ${attempt} in ${Math.round(delayMs / 1000)}s: ${error.message}`,
+          );
+          if (debugMode) {
+            console.log(
+              `[${formatTimestamp()}] Registration retry ${attempt} in ${Math.round(delayMs / 1000)}s: ${error.message}`,
+            );
+          }
+        },
+      });
       sessionLog.log(`Re-registered: connectionId=${result.connectionId}`);
       return result;
     };

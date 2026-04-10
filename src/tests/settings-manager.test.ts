@@ -18,9 +18,10 @@ function asCommand(
 import {
   deleteSecureTokens,
   isKeychainAvailable,
-  keychainAvailablePrecompute,
   setServiceName,
 } from "../utils/secrets.js";
+
+const keychainAvailablePrecompute = await isKeychainAvailable();
 
 // Store original HOME to restore after tests
 const originalHome = process.env.HOME;

@@ -1,5 +1,6 @@
 import { parseArgs } from "node:util";
 import { getClient } from "../../agent/client";
+import { settingsManager } from "../../settings-manager";
 
 function printUsage(): void {
   console.log(
@@ -290,6 +291,7 @@ export async function runBlocksSubcommand(argv: string[]): Promise<number> {
   }
 
   try {
+    await settingsManager.initialize();
     const client = await getClient();
 
     if (action === "list") {

@@ -1,6 +1,7 @@
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import { getClient } from "../agent/client";
 import { resolveModel } from "../agent/model";
+import { getActiveChannelIds } from "../channels/registry";
 import { settingsManager } from "../settings-manager";
 import { toolFilter } from "./filter";
 import {
@@ -93,20 +94,36 @@ function getPreferredAgentModelHandle(
 }
 
 function getToolNamesForToolset(toolsetName: ToolsetName): ToolName[] {
+  let tools: ToolName[];
   switch (toolsetName) {
     case "codex":
-      return [...OPENAI_PASCAL_TOOLS];
+      tools = [...OPENAI_PASCAL_TOOLS];
+      break;
     case "codex_snake":
-      return [...OPENAI_DEFAULT_TOOLS];
+      tools = [...OPENAI_DEFAULT_TOOLS];
+      break;
     case "gemini":
-      return [...GEMINI_PASCAL_TOOLS];
+      tools = [...GEMINI_PASCAL_TOOLS];
+      break;
     case "gemini_snake":
-      return [...GEMINI_DEFAULT_TOOLS];
+      tools = [...GEMINI_DEFAULT_TOOLS];
+      break;
     case "none":
       return [];
     default:
-      return [...ANTHROPIC_DEFAULT_TOOLS];
+      tools = [...ANTHROPIC_DEFAULT_TOOLS];
+      break;
   }
+
+  // Append channel tool if channels are active (covers ALL pinned toolsets)
+  if (
+    getActiveChannelIds().length > 0 &&
+    !tools.includes("MessageChannel" as ToolName)
+  ) {
+    tools.push("MessageChannel" as ToolName);
+  }
+
+  return tools;
 }
 
 export async function prepareToolExecutionContextForResolvedTarget(params: {
