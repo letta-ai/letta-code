@@ -20,10 +20,7 @@ describe("OAuth network errors", () => {
   test("requestDeviceCode includes auth host and network detail", async () => {
     globalThis.fetch = mock(() =>
       Promise.reject(
-        makeFetchFailure(
-          "getaddrinfo ENOTFOUND app.letta.com",
-          "ENOTFOUND",
-        ),
+        makeFetchFailure("getaddrinfo ENOTFOUND app.letta.com", "ENOTFOUND"),
       ),
     ) as unknown as typeof fetch;
 
@@ -44,10 +41,7 @@ describe("OAuth network errors", () => {
   test("pollForToken explains that browser auth may have succeeded", async () => {
     globalThis.fetch = mock(() =>
       Promise.reject(
-        makeFetchFailure(
-          "connect ECONNRESET 104.18.34.223:443",
-          "ECONNRESET",
-        ),
+        makeFetchFailure("connect ECONNRESET 104.18.34.223:443", "ECONNRESET"),
       ),
     ) as unknown as typeof fetch;
 
@@ -68,10 +62,7 @@ describe("OAuth network errors", () => {
   test("refreshAccessToken includes auth host and low-level cause", async () => {
     globalThis.fetch = mock(() =>
       Promise.reject(
-        makeFetchFailure(
-          "certificate has expired",
-          "CERT_HAS_EXPIRED",
-        ),
+        makeFetchFailure("certificate has expired", "CERT_HAS_EXPIRED"),
       ),
     ) as unknown as typeof fetch;
 
@@ -92,8 +83,8 @@ describe("OAuth network errors", () => {
       ),
     ) as unknown as typeof fetch;
 
-    await expect(pollForToken("device-code", 0, 60, "device-id")).rejects.toThrow(
-      "User denied authorization",
-    );
+    await expect(
+      pollForToken("device-code", 0, 60, "device-id"),
+    ).rejects.toThrow("User denied authorization");
   });
 });

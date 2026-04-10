@@ -73,7 +73,9 @@ function getErrorLikeCode(value: unknown): string | null {
 
 function isGenericFetchFailureMessage(message: string): boolean {
   const normalized = message.trim().toLowerCase();
-  return normalized === "fetch failed" || normalized === "network request failed";
+  return (
+    normalized === "fetch failed" || normalized === "network request failed"
+  );
 }
 
 function isOAuthTransportError(error: unknown): error is Error {
@@ -250,18 +252,21 @@ export async function refreshAccessToken(
 ): Promise<TokenResponse> {
   const authHost = getOAuthAuthHost();
   try {
-    const response = await fetch(`${OAUTH_CONFIG.authBaseUrl}/api/oauth/token`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        grant_type: "refresh_token",
-        client_id: OAUTH_CONFIG.clientId,
-        refresh_token: refreshToken,
-        refresh_token_mode: "new",
-        device_id: deviceId,
-        ...(deviceName && { device_name: deviceName }),
-      }),
-    });
+    const response = await fetch(
+      `${OAUTH_CONFIG.authBaseUrl}/api/oauth/token`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          grant_type: "refresh_token",
+          client_id: OAUTH_CONFIG.clientId,
+          refresh_token: refreshToken,
+          refresh_token_mode: "new",
+          device_id: deviceId,
+          ...(deviceName && { device_name: deviceName }),
+        }),
+      },
+    );
 
     if (!response.ok) {
       const error = (await response.json()) as OAuthError;
