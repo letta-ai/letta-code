@@ -213,6 +213,16 @@ export function markdownToTelegramHtml(text: string): string {
   return formatTelegramText(text);
 }
 
+export function markdownToSlackMrkdwn(text: string): string {
+  return text
+    .replace(/```[a-zA-Z0-9_-]+\n/g, "```\n")
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, "<$2|$1>")
+    .replace(/(?<!\*)\*([^*\n]+?)\*(?!\*)/g, "_$1_")
+    .replace(/\*\*([^*]+?)\*\*/g, "*$1*")
+    .replace(/__([^_]+?)__/g, "*$1*")
+    .replace(/~~([^~]+?)~~/g, "~$1~");
+}
+
 const CHANNEL_OUTBOUND_FORMATTERS: Partial<
   Record<string, OutboundChannelFormatter>
 > = {
@@ -220,6 +230,11 @@ const CHANNEL_OUTBOUND_FORMATTERS: Partial<
     return {
       text: markdownToTelegramHtml(text),
       parseMode: "HTML",
+    };
+  },
+  slack(text) {
+    return {
+      text: markdownToSlackMrkdwn(text),
     };
   },
 };

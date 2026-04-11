@@ -72,6 +72,7 @@ export function createTelegramAdapter(
         text: msg.text,
         timestamp: msg.date * 1000,
         messageId: String(msg.message_id),
+        chatType: "direct",
         raw: msg,
       };
 
@@ -179,9 +180,22 @@ export function createTelegramAdapter(
       return { messageId: String(result.message_id) };
     },
 
-    async sendDirectReply(chatId: string, text: string): Promise<void> {
+    async sendDirectReply(
+      chatId: string,
+      text: string,
+      options?: { replyToMessageId?: string },
+    ): Promise<void> {
       const telegramBot = await ensureBot();
-      await telegramBot.api.sendMessage(chatId, text);
+      const reply_parameters = options?.replyToMessageId
+        ? {
+            message_id: Number(options.replyToMessageId),
+          }
+        : undefined;
+      await telegramBot.api.sendMessage(
+        chatId,
+        text,
+        reply_parameters ? { reply_parameters } : {},
+      );
     },
 
     onMessage: undefined,

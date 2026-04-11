@@ -65,6 +65,23 @@ describe("formatChannelNotification", () => {
     expect(reminder).toContain("Current local time on this device:");
   });
 
+  test("adds Slack thread guidance for channel notifications", () => {
+    const msg: InboundChannelMessage = {
+      channel: "slack",
+      chatId: "C123",
+      senderId: "U123",
+      text: "ping",
+      timestamp: Date.now(),
+      messageId: "1712800000.000100",
+      chatType: "channel",
+    };
+
+    const reminder = buildChannelReminderText(msg);
+
+    expect(reminder).toContain('reply_to_message_id="1712800000.000100"');
+    expect(reminder).toContain("stay in the same Slack thread");
+  });
+
   test("escapes XML special characters in notification text", () => {
     const msg: InboundChannelMessage = {
       channel: "telegram",

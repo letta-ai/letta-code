@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 
 import {
   formatOutboundChannelMessage,
+  markdownToSlackMrkdwn,
   markdownToTelegramHtml,
 } from "../../tools/impl/MessageChannel";
 
@@ -17,10 +18,16 @@ test("formats Telegram markdown as HTML", () => {
   });
 });
 
-test("leaves non-Telegram channel messages unchanged", () => {
+test("formats Slack markdown as mrkdwn", () => {
   expect(formatOutboundChannelMessage("slack", "**bold**")).toEqual({
-    text: "**bold**",
+    text: "*bold*",
   });
+});
+
+test("converts markdown links for Slack mrkdwn", () => {
+  expect(markdownToSlackMrkdwn("[docs](https://example.com)")).toBe(
+    "<https://example.com|docs>",
+  );
 });
 
 test("preserves markdown markers inside inline code", () => {

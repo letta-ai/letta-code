@@ -81,6 +81,8 @@ import type {
   ChannelStartCommand,
   ChannelStopCommand,
   ChannelsListCommand,
+  ChannelTargetBindCommand,
+  ChannelTargetsListCommand,
   CreateAgentCommand,
   CronAddCommand,
   CronDeleteAllCommand,
@@ -148,6 +150,8 @@ import {
   isChannelStartCommand,
   isChannelStopCommand,
   isChannelsListCommand,
+  isChannelTargetBindCommand,
+  isChannelTargetsListCommand,
   isCheckoutBranchCommand,
   isCreateAgentCommand,
   isCronAddCommand,
@@ -753,6 +757,8 @@ type ChannelsCommand =
   | ChannelPairingsListCommand
   | ChannelPairingBindCommand
   | ChannelRoutesListCommand
+  | ChannelTargetsListCommand
+  | ChannelTargetBindCommand
   | ChannelRouteRemoveCommand;
 
 function emitCronsUpdated(
@@ -774,7 +780,10 @@ function emitCronsUpdated(
   );
 }
 
-function emitChannelsUpdated(socket: WebSocket, channelId?: "telegram"): void {
+function emitChannelsUpdated(
+  socket: WebSocket,
+  channelId?: "telegram" | "slack",
+): void {
   safeSocketSend(
     socket,
     {
@@ -789,7 +798,7 @@ function emitChannelsUpdated(socket: WebSocket, channelId?: "telegram"): void {
 
 function emitChannelPairingsUpdated(
   socket: WebSocket,
-  channelId: "telegram",
+  channelId: "telegram" | "slack",
 ): void {
   safeSocketSend(
     socket,
@@ -806,7 +815,7 @@ function emitChannelPairingsUpdated(
 function emitChannelRoutesUpdated(
   socket: WebSocket,
   params: {
-    channelId: "telegram";
+    channelId: "telegram" | "slack";
     agentId?: string;
     conversationId?: string | null;
   },
@@ -821,6 +830,22 @@ function emitChannelRoutesUpdated(
       ...(params.conversationId !== undefined
         ? { conversation_id: params.conversationId }
         : {}),
+    },
+    "listener_channels_send_failed",
+    "listener_channels_command",
+  );
+}
+
+function emitChannelTargetsUpdated(
+  socket: WebSocket,
+  channelId: "telegram" | "slack",
+): void {
+  safeSocketSend(
+    socket,
+    {
+      type: "channel_targets_updated",
+      timestamp: Date.now(),
+      channel_id: channelId,
     },
     "listener_channels_send_failed",
     "listener_channels_command",
@@ -1033,15 +1058,81 @@ async function handleChannelsProtocolCommand(
 ): Promise<boolean> {
   const {
     bindChannelPairing,
+    bindChannelTarget,
     getChannelConfigSnapshot,
     listChannelRouteSnapshots,
     listChannelSummaries,
     listPendingPairingSnapshots,
+    listChannelTargetSnapshots,
     removeChannelRouteLive,
     setChannelConfigLive,
     startChannelLive,
     stopChannelLive,
   } = await import("../../channels/service");
+
+  const mapChannelSummary = (
+    summary: ReturnType<typeof listChannelSummaries>[number],
+  ) => ({
+    channel_id: summary.channelId,
+    display_name: summary.displayName,
+    configured: summary.configured,
+    enabled: summary.enabled,
+    running: summary.running,
+    dm_policy: summary.dmPolicy,
+    pending_pairings_count: summary.pendingPairingsCount,
+    approved_users_count: summary.approvedUsersCount,
+    routes_count: summary.routesCount,
+  });
+
+  const mapChannelConfig = (
+    snapshot: ReturnType<typeof getChannelConfigSnapshot>,
+  ) => {
+    if (!snapshot) {
+      return null;
+    }
+    if (snapshot.channelId === "telegram") {
+      return {
+        channel_id: snapshot.channelId,
+        enabled: snapshot.enabled,
+        dm_policy: snapshot.dmPolicy,
+        allowed_users: snapshot.allowedUsers,
+        has_token: snapshot.hasToken,
+      };
+    }
+    return {
+      channel_id: snapshot.channelId,
+      enabled: snapshot.enabled,
+      mode: snapshot.mode,
+      dm_policy: snapshot.dmPolicy,
+      allowed_users: snapshot.allowedUsers,
+      has_bot_token: snapshot.hasBotToken,
+      has_app_token: snapshot.hasAppToken,
+    };
+  };
+
+  const mapRouteSnapshot = (
+    route: ReturnType<typeof listChannelRouteSnapshots>[number],
+  ) => ({
+    channel_id: route.channelId,
+    chat_id: route.chatId,
+    agent_id: route.agentId,
+    conversation_id: route.conversationId,
+    enabled: route.enabled,
+    created_at: route.createdAt,
+  });
+
+  const mapTargetSnapshot = (
+    target: ReturnType<typeof listChannelTargetSnapshots>[number],
+  ) => ({
+    channel_id: target.channelId,
+    target_id: target.targetId,
+    target_type: target.targetType,
+    chat_id: target.chatId,
+    label: target.label,
+    discovered_at: target.discoveredAt,
+    last_seen_at: target.lastSeenAt,
+    ...(target.lastMessageId ? { last_message_id: target.lastMessageId } : {}),
+  });
 
   if (parsed.type === "channels_list") {
     try {
@@ -1051,17 +1142,7 @@ async function handleChannelsProtocolCommand(
           type: "channels_list_response",
           request_id: parsed.request_id,
           success: true,
-          channels: listChannelSummaries().map((summary) => ({
-            channel_id: summary.channelId,
-            display_name: summary.displayName,
-            configured: summary.configured,
-            enabled: summary.enabled,
-            running: summary.running,
-            dm_policy: summary.dmPolicy,
-            pending_pairings_count: summary.pendingPairingsCount,
-            approved_users_count: summary.approvedUsersCount,
-            routes_count: summary.routesCount,
-          })),
+          channels: listChannelSummaries().map(mapChannelSummary),
         },
         "listener_channels_send_failed",
         "listener_channels_command",
@@ -1091,18 +1172,7 @@ async function handleChannelsProtocolCommand(
           type: "channel_get_config_response",
           request_id: parsed.request_id,
           success: true,
-          config: (() => {
-            const snapshot = getChannelConfigSnapshot(parsed.channel_id);
-            return snapshot
-              ? {
-                  channel_id: snapshot.channelId,
-                  enabled: snapshot.enabled,
-                  dm_policy: snapshot.dmPolicy,
-                  allowed_users: snapshot.allowedUsers,
-                  has_token: snapshot.hasToken,
-                }
-              : null;
-          })(),
+          config: mapChannelConfig(getChannelConfigSnapshot(parsed.channel_id)),
         },
         "listener_channels_send_failed",
         "listener_channels_command",
@@ -1130,7 +1200,12 @@ async function handleChannelsProtocolCommand(
   if (parsed.type === "channel_set_config") {
     try {
       const snapshot = await setChannelConfigLive(parsed.channel_id, {
-        token: parsed.config.token,
+        token: "token" in parsed.config ? parsed.config.token : undefined,
+        botToken:
+          "bot_token" in parsed.config ? parsed.config.bot_token : undefined,
+        appToken:
+          "app_token" in parsed.config ? parsed.config.app_token : undefined,
+        mode: "mode" in parsed.config ? parsed.config.mode : undefined,
         dmPolicy: parsed.config.dm_policy,
         allowedUsers: parsed.config.allowed_users,
       });
@@ -1150,13 +1225,7 @@ async function handleChannelsProtocolCommand(
           type: "channel_set_config_response",
           request_id: parsed.request_id,
           success: true,
-          config: {
-            channel_id: snapshot.channelId,
-            enabled: snapshot.enabled,
-            dm_policy: snapshot.dmPolicy,
-            allowed_users: snapshot.allowedUsers,
-            has_token: snapshot.hasToken,
-          },
+          config: mapChannelConfig(snapshot),
         },
         "listener_channels_send_failed",
         "listener_channels_command",
@@ -1197,17 +1266,7 @@ async function handleChannelsProtocolCommand(
           type: "channel_start_response",
           request_id: parsed.request_id,
           success: true,
-          channel: {
-            channel_id: summary.channelId,
-            display_name: summary.displayName,
-            configured: summary.configured,
-            enabled: summary.enabled,
-            running: summary.running,
-            dm_policy: summary.dmPolicy,
-            pending_pairings_count: summary.pendingPairingsCount,
-            approved_users_count: summary.approvedUsersCount,
-            routes_count: summary.routesCount,
-          },
+          channel: mapChannelSummary(summary),
         },
         "listener_channels_send_failed",
         "listener_channels_command",
@@ -1239,17 +1298,7 @@ async function handleChannelsProtocolCommand(
           type: "channel_stop_response",
           request_id: parsed.request_id,
           success: true,
-          channel: {
-            channel_id: summary.channelId,
-            display_name: summary.displayName,
-            configured: summary.configured,
-            enabled: summary.enabled,
-            running: summary.running,
-            dm_policy: summary.dmPolicy,
-            pending_pairings_count: summary.pendingPairingsCount,
-            approved_users_count: summary.approvedUsersCount,
-            routes_count: summary.routesCount,
-          },
+          channel: mapChannelSummary(summary),
         },
         "listener_channels_send_failed",
         "listener_channels_command",
@@ -1332,14 +1381,7 @@ async function handleChannelsProtocolCommand(
           success: true,
           channel_id: parsed.channel_id,
           chat_id: result.chatId,
-          route: {
-            channel_id: result.route.channelId,
-            chat_id: result.route.chatId,
-            agent_id: result.route.agentId,
-            conversation_id: result.route.conversationId,
-            enabled: result.route.enabled,
-            created_at: result.route.createdAt,
-          },
+          route: mapRouteSnapshot(result.route),
         },
         "listener_channels_send_failed",
         "listener_channels_command",
@@ -1383,14 +1425,7 @@ async function handleChannelsProtocolCommand(
             channelId,
             agentId: parsed.agent_id,
             conversationId: parsed.conversation_id,
-          }).map((route) => ({
-            channel_id: route.channelId,
-            chat_id: route.chatId,
-            agent_id: route.agentId,
-            conversation_id: route.conversationId,
-            enabled: route.enabled,
-            created_at: route.createdAt,
-          })),
+          }).map(mapRouteSnapshot),
         },
         "listener_channels_send_failed",
         "listener_channels_command",
@@ -1405,6 +1440,94 @@ async function handleChannelsProtocolCommand(
           channel_id: parsed.channel_id,
           routes: [],
           error: err instanceof Error ? err.message : "Failed to list routes",
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+    }
+    return true;
+  }
+
+  if (parsed.type === "channel_targets_list") {
+    try {
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_targets_list_response",
+          request_id: parsed.request_id,
+          success: true,
+          channel_id: parsed.channel_id,
+          targets: listChannelTargetSnapshots(parsed.channel_id).map(
+            mapTargetSnapshot,
+          ),
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+    } catch (err) {
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_targets_list_response",
+          request_id: parsed.request_id,
+          success: false,
+          channel_id: parsed.channel_id,
+          targets: [],
+          error:
+            err instanceof Error
+              ? err.message
+              : "Failed to list channel targets",
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+    }
+    return true;
+  }
+
+  if (parsed.type === "channel_target_bind") {
+    try {
+      const result = bindChannelTarget(
+        parsed.channel_id,
+        parsed.target_id,
+        parsed.runtime.agent_id,
+        parsed.runtime.conversation_id,
+      );
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_target_bind_response",
+          request_id: parsed.request_id,
+          success: true,
+          channel_id: parsed.channel_id,
+          target_id: parsed.target_id,
+          chat_id: result.chatId,
+          route: mapRouteSnapshot(result.route),
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+      emitChannelTargetsUpdated(socket, parsed.channel_id);
+      emitChannelRoutesUpdated(socket, {
+        channelId: parsed.channel_id,
+        agentId: parsed.runtime.agent_id,
+        conversationId: parsed.runtime.conversation_id,
+      });
+      emitChannelsUpdated(socket, parsed.channel_id);
+    } catch (err) {
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_target_bind_response",
+          request_id: parsed.request_id,
+          success: false,
+          channel_id: parsed.channel_id,
+          target_id: parsed.target_id,
+          route: null,
+          error:
+            err instanceof Error
+              ? err.message
+              : "Failed to bind channel target",
         },
         "listener_channels_send_failed",
         "listener_channels_command",
@@ -1910,9 +2033,15 @@ function wireChannelIngress(
 
   registry.setEventHandler((event) => {
     if (event.type === "pairings_updated") {
-      emitChannelPairingsUpdated(socket, event.channelId as "telegram");
-      emitChannelsUpdated(socket, event.channelId as "telegram");
+      emitChannelPairingsUpdated(
+        socket,
+        event.channelId as "telegram" | "slack",
+      );
+      emitChannelsUpdated(socket, event.channelId as "telegram" | "slack");
+      return;
     }
+    emitChannelTargetsUpdated(socket, event.channelId as "telegram" | "slack");
+    emitChannelsUpdated(socket, event.channelId as "telegram" | "slack");
   });
 
   registry.setReady();
@@ -4075,6 +4204,8 @@ async function connectWithRetry(
         isChannelPairingsListCommand(parsed) ||
         isChannelPairingBindCommand(parsed) ||
         isChannelRoutesListCommand(parsed) ||
+        isChannelTargetsListCommand(parsed) ||
+        isChannelTargetBindCommand(parsed) ||
         isChannelRouteRemoveCommand(parsed)
       ) {
         runDetachedListenerTask("channels_command", async () => {

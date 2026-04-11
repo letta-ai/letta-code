@@ -30,16 +30,28 @@ export function buildChannelReminderText(msg: InboundChannelMessage): string {
   const localTime = escapeXml(getLocalTime());
   const escapedChannel = escapeXml(msg.channel);
   const escapedChatId = escapeXml(msg.chatId);
+  const threadLine =
+    msg.channel === "slack" &&
+    msg.chatType === "channel" &&
+    msg.messageId?.trim()
+      ? `Use reply_to_message_id="${escapeXml(msg.messageId)}" if you want your reply to stay in the same Slack thread.`
+      : null;
 
-  return [
+  const lines = [
     SYSTEM_REMINDER_OPEN,
     `This message originated from an external ${escapedChannel} channel.`,
-    `If you want the ensure the user on ${escapedChannel} will see your reply, you must call the MessageChannel tool to send a message back on the same channel.`,
+    `If you want to ensure the user on ${escapedChannel} will see your reply, you must call the MessageChannel tool to send a message back on the same channel.`,
     `Use channel="${escapedChannel}" and chat_id="${escapedChatId}" when calling MessageChannel.`,
     "Only pass reply_to_message_id if you intentionally want the platform's quote/reply UI.",
     `Current local time on this device: ${localTime}`,
     SYSTEM_REMINDER_CLOSE,
-  ].join("\n");
+  ];
+
+  if (threadLine) {
+    lines.splice(lines.length - 2, 0, threadLine);
+  }
+
+  return lines.join("\n");
 }
 
 /**

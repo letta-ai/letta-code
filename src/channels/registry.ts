@@ -27,6 +27,7 @@ import {
   removeRouteInMemory,
   setRouteInMemory,
 } from "./routing";
+import { loadTargetStore, upsertChannelTarget } from "./targets";
 import type {
   ChannelAdapter,
   ChannelRoute,
@@ -50,6 +51,14 @@ function buildUnboundRouteInstructions(
     `This chat isn't bound to an agent. ` +
     `Run \`/channels ${channelId} enable --chat-id ${chatId}\` ` +
     `on your Letta Code agent to connect.`
+  );
+}
+
+function buildSlackTargetInstructions(): string {
+  return (
+    "This Slack channel isn't connected to an agent yet.\n\n" +
+    "Open Channels > Slack > Connections in Letta Code to bind this channel, " +
+    "then mention the bot again."
   );
 }
 
@@ -77,10 +86,15 @@ export type ChannelMessageHandler = (
   content: MessageCreate["content"],
 ) => void;
 
-export type ChannelRegistryEvent = {
-  type: "pairings_updated";
-  channelId: string;
-};
+export type ChannelRegistryEvent =
+  | {
+      type: "pairings_updated";
+      channelId: string;
+    }
+  | {
+      type: "targets_updated";
+      channelId: string;
+    };
 
 // ── Registry ──────────────────────────────────────────────────────
 
@@ -169,6 +183,7 @@ export class ChannelRegistry {
 
     loadRoutes(channelId);
     loadPairingStore(channelId);
+    loadTargetStore(channelId);
 
     const existing = this.adapters.get(channelId);
     if (existing?.isRunning()) {
@@ -243,6 +258,11 @@ export class ChannelRegistry {
     const config = readChannelConfig(msg.channel);
     if (!config) return;
 
+    if (msg.channel === "slack" && msg.chatType === "channel") {
+      await this.handleSlackChannelMessage(adapter, msg);
+      return;
+    }
+
     // 1. Check pairing/allowlist policy
     if (config.dmPolicy === "allowlist") {
       if (!config.allowedUsers.includes(msg.senderId)) {
@@ -296,11 +316,56 @@ export class ChannelRegistry {
     const content = formatChannelNotification(msg);
 
     // 4. Deliver or buffer
+    this.deliverOrBuffer(route, content);
+  }
+
+  private async handleSlackChannelMessage(
+    adapter: ChannelAdapter,
+    msg: InboundChannelMessage,
+  ): Promise<void> {
+    let route = getRouteFromStore(msg.channel, msg.chatId);
+    if (!route) {
+      loadRoutes(msg.channel);
+      route = getRouteFromStore(msg.channel, msg.chatId);
+    }
+
+    if (!route) {
+      const now = new Date().toISOString();
+      loadTargetStore(msg.channel);
+      upsertChannelTarget(msg.channel, {
+        targetId: msg.chatId,
+        targetType: "channel",
+        chatId: msg.chatId,
+        label: msg.chatLabel ?? `Slack channel ${msg.chatId}`,
+        discoveredAt: now,
+        lastSeenAt: now,
+        lastMessageId: msg.messageId,
+      });
+      this.eventHandler?.({
+        type: "targets_updated",
+        channelId: msg.channel,
+      });
+      await adapter.sendDirectReply(
+        msg.chatId,
+        buildSlackTargetInstructions(),
+        msg.messageId ? { replyToMessageId: msg.messageId } : undefined,
+      );
+      return;
+    }
+
+    this.deliverOrBuffer(route, formatChannelNotification(msg));
+  }
+
+  private deliverOrBuffer(
+    route: ChannelRoute,
+    content: MessageCreate["content"],
+  ): void {
     if (this.isReady()) {
       this.messageHandler?.(route, content);
-    } else {
-      this.buffer.push({ route, content });
+      return;
     }
+
+    this.buffer.push({ route, content });
   }
 
   private flushBuffer(): void {

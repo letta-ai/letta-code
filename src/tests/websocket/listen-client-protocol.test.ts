@@ -415,9 +415,11 @@ describe("listen-client parseServerMessage", () => {
         JSON.stringify({
           type: "channel_set_config",
           request_id: "channel-set-config-1",
-          channel_id: "telegram",
+          channel_id: "slack",
           config: {
-            token: "123:abc",
+            bot_token: "xoxb-test",
+            app_token: "xapp-test",
+            mode: "socket",
             dm_policy: "pairing",
             allowed_users: ["user-1"],
           },
@@ -483,6 +485,26 @@ describe("listen-client parseServerMessage", () => {
         }),
       ),
     );
+    const channelTargetsList = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "channel_targets_list",
+          request_id: "channel-targets-list-1",
+          channel_id: "slack",
+        }),
+      ),
+    );
+    const channelTargetBind = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "channel_target_bind",
+          request_id: "channel-target-bind-1",
+          channel_id: "slack",
+          runtime: { agent_id: "agent-1", conversation_id: "default" },
+          target_id: "C123",
+        }),
+      ),
+    );
 
     expect(channelsList?.type).toBe("channels_list");
     expect(channelGetConfig?.type).toBe("channel_get_config");
@@ -493,6 +515,8 @@ describe("listen-client parseServerMessage", () => {
     expect(channelPairingBind?.type).toBe("channel_pairing_bind");
     expect(channelRoutesList?.type).toBe("channel_routes_list");
     expect(channelRouteRemove?.type).toBe("channel_route_remove");
+    expect(channelTargetsList?.type).toBe("channel_targets_list");
+    expect(channelTargetBind?.type).toBe("channel_target_bind");
   });
 
   test("parses list_models command", () => {
@@ -1052,6 +1076,86 @@ describe("listen-client channels command handling", () => {
       expect(messages[3]).toMatchObject({
         type: "channels_updated",
         channel_id: "telegram",
+      });
+    } finally {
+      __listenClientTestUtils.stopRuntime(runtime, true);
+    }
+  });
+
+  test("target bind emits target, route, and channel update events", async () => {
+    const socket = new MockSocket(WebSocket.OPEN);
+    const runtime = __listenClientTestUtils.createListenerRuntime();
+
+    mock.module("../../channels/service", () => ({
+      ...actualChannelsService,
+      bindChannelTarget: () => ({
+        chatId: "C123",
+        route: {
+          channelId: "slack" as const,
+          chatId: "C123",
+          agentId: "agent-1",
+          conversationId: "conv-1",
+          enabled: true,
+          createdAt: "2026-04-10T00:00:00.000Z",
+        },
+      }),
+      listChannelTargetSnapshots: () => [],
+    }));
+
+    try {
+      await __listenClientTestUtils.handleChannelsProtocolCommand(
+        {
+          type: "channel_target_bind",
+          request_id: "channel-target-bind-1",
+          channel_id: "slack",
+          runtime: {
+            agent_id: "agent-1",
+            conversation_id: "conv-1",
+          },
+          target_id: "C123",
+        },
+        socket as unknown as WebSocket,
+        runtime,
+        {
+          onStatusChange: undefined,
+          connectionId: "conn-test",
+        },
+        async () => {},
+      );
+
+      const messages = socket.sentPayloads.map((payload) =>
+        JSON.parse(payload as string),
+      );
+
+      expect(messages[0]).toMatchObject({
+        type: "channel_target_bind_response",
+        request_id: "channel-target-bind-1",
+        success: true,
+        channel_id: "slack",
+        target_id: "C123",
+        chat_id: "C123",
+        route: {
+          channel_id: "slack",
+          chat_id: "C123",
+          agent_id: "agent-1",
+          conversation_id: "conv-1",
+          enabled: true,
+          created_at: "2026-04-10T00:00:00.000Z",
+        },
+      });
+      expect(messages[1]).toMatchObject({
+        type: "channel_targets_updated",
+        channel_id: "slack",
+      });
+      expect(messages[2]).toMatchObject({
+        type: "channel_routes_updated",
+        channel_id: "slack",
+        agent_id: "agent-1",
+        conversation_id: "conv-1",
+      });
+      expect(messages[3]).toMatchObject({
+        type: "channels_updated",
+        channel_id: "slack",
       });
     } finally {
       __listenClientTestUtils.stopRuntime(runtime, true);

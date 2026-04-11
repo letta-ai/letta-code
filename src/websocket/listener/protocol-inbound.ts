@@ -11,6 +11,8 @@ import type {
   ChannelStartCommand,
   ChannelStopCommand,
   ChannelsListCommand,
+  ChannelTargetBindCommand,
+  ChannelTargetsListCommand,
   CheckoutBranchCommand,
   CreateAgentCommand,
   CronAddCommand,
@@ -692,8 +694,8 @@ export function isSetReflectionSettingsCommand(
   );
 }
 
-function isChannelId(value: unknown): value is "telegram" {
-  return value === "telegram";
+function isChannelId(value: unknown): value is "telegram" | "slack" {
+  return value === "telegram" || value === "slack";
 }
 
 export function isChannelsListCommand(
@@ -739,20 +741,29 @@ export function isChannelSetConfigCommand(
   ) {
     return false;
   }
-  const config = c.config as {
-    token?: unknown;
-    dm_policy?: unknown;
-    allowed_users?: unknown;
-  };
+  const config = c.config as Record<string, unknown>;
+  const hasValidDmPolicy =
+    config.dm_policy === undefined ||
+    config.dm_policy === "pairing" ||
+    config.dm_policy === "allowlist" ||
+    config.dm_policy === "open";
+  const hasValidAllowedUsers =
+    config.allowed_users === undefined ||
+    (Array.isArray(config.allowed_users) &&
+      config.allowed_users.every((entry) => typeof entry === "string"));
+
+  if (!hasValidDmPolicy || !hasValidAllowedUsers) {
+    return false;
+  }
+
+  if (c.channel_id === "telegram") {
+    return config.token === undefined || typeof config.token === "string";
+  }
+
   return (
-    (config.token === undefined || typeof config.token === "string") &&
-    (config.dm_policy === undefined ||
-      config.dm_policy === "pairing" ||
-      config.dm_policy === "allowlist" ||
-      config.dm_policy === "open") &&
-    (config.allowed_users === undefined ||
-      (Array.isArray(config.allowed_users) &&
-        config.allowed_users.every((entry) => typeof entry === "string")))
+    (config.bot_token === undefined || typeof config.bot_token === "string") &&
+    (config.app_token === undefined || typeof config.app_token === "string") &&
+    (config.mode === undefined || config.mode === "socket")
   );
 }
 
@@ -864,6 +875,43 @@ export function isChannelRouteRemoveCommand(
   );
 }
 
+export function isChannelTargetsListCommand(
+  value: unknown,
+): value is ChannelTargetsListCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    channel_id?: unknown;
+  };
+  return (
+    c.type === "channel_targets_list" &&
+    typeof c.request_id === "string" &&
+    isChannelId(c.channel_id)
+  );
+}
+
+export function isChannelTargetBindCommand(
+  value: unknown,
+): value is ChannelTargetBindCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    channel_id?: unknown;
+    runtime?: unknown;
+    target_id?: unknown;
+  };
+  return (
+    c.type === "channel_target_bind" &&
+    typeof c.request_id === "string" &&
+    isChannelId(c.channel_id) &&
+    isRuntimeScope(c.runtime) &&
+    typeof c.target_id === "string" &&
+    c.target_id.length > 0
+  );
+}
+
 export function isSearchBranchesCommand(
   value: unknown,
 ): value is SearchBranchesCommand {
@@ -963,6 +1011,8 @@ export function parseServerMessage(
       isChannelPairingsListCommand(parsed) ||
       isChannelPairingBindCommand(parsed) ||
       isChannelRoutesListCommand(parsed) ||
+      isChannelTargetsListCommand(parsed) ||
+      isChannelTargetBindCommand(parsed) ||
       isChannelRouteRemoveCommand(parsed) ||
       isExecuteCommandCommand(parsed) ||
       isSearchBranchesCommand(parsed) ||

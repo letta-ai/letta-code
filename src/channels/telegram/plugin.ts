@@ -1,5 +1,5 @@
 import type { ChannelPlugin } from "../pluginTypes";
-import type { ChannelConfig } from "../types";
+import type { ChannelConfig, TelegramChannelConfig } from "../types";
 import { createTelegramAdapter } from "./adapter";
 import { runTelegramSetup } from "./setup";
 
@@ -11,7 +11,7 @@ export const telegramChannelPlugin: ChannelPlugin = {
     runtimeModules: ["grammy"],
   },
   createAdapter(config: ChannelConfig) {
-    return createTelegramAdapter(config);
+    return createTelegramAdapter(config as TelegramChannelConfig);
   },
   runSetup() {
     return runTelegramSetup();

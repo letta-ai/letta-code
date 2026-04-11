@@ -7,8 +7,9 @@
  * platform chat IDs to agent+conversation pairs.
  */
 
-export const SUPPORTED_CHANNEL_IDS = ["telegram"] as const;
+export const SUPPORTED_CHANNEL_IDS = ["telegram", "slack"] as const;
 export type SupportedChannelId = (typeof SUPPORTED_CHANNEL_IDS)[number];
+export type ChannelChatType = "direct" | "channel";
 
 // ── Adapter interface ─────────────────────────────────────────────
 
@@ -32,7 +33,11 @@ export interface ChannelAdapter {
    * Send a direct reply on the platform (for pairing codes, no-route
    * messages, etc.) without going through the agent.
    */
-  sendDirectReply(chatId: string, text: string): Promise<void>;
+  sendDirectReply(
+    chatId: string,
+    text: string,
+    options?: { replyToMessageId?: string },
+  ): Promise<void>;
 
   /**
    * Called by the registry when the adapter receives an inbound message.
@@ -52,6 +57,8 @@ export interface InboundChannelMessage {
   senderId: string;
   /** Sender display name, if available. */
   senderName?: string;
+  /** Chat/channel label, if available (for discovery UIs). */
+  chatLabel?: string;
   /** Message text content. */
   text: string;
   /** Unix timestamp (ms) of the message. */
@@ -60,6 +67,8 @@ export interface InboundChannelMessage {
   messageId?: string;
   /** Raw platform-specific event data for future use. */
   raw?: unknown;
+  /** Broad chat surface type used for routing/pairing decisions. */
+  chatType?: ChannelChatType;
 }
 
 export interface OutboundChannelMessage {
@@ -93,6 +102,7 @@ export interface ChannelRoute {
 // ── Config ────────────────────────────────────────────────────────
 
 export type DmPolicy = "pairing" | "allowlist" | "open";
+export type SlackChannelMode = "socket";
 
 export interface TelegramChannelConfig {
   channel: "telegram";
@@ -102,7 +112,17 @@ export interface TelegramChannelConfig {
   allowedUsers: string[];
 }
 
-export type ChannelConfig = TelegramChannelConfig;
+export interface SlackChannelConfig {
+  channel: "slack";
+  enabled: boolean;
+  mode: SlackChannelMode;
+  botToken: string;
+  appToken: string;
+  dmPolicy: DmPolicy;
+  allowedUsers: string[];
+}
+
+export type ChannelConfig = TelegramChannelConfig | SlackChannelConfig;
 
 // ── Pairing ───────────────────────────────────────────────────────
 
@@ -124,4 +144,16 @@ export interface ApprovedUser {
 export interface PairingStore {
   pending: PendingPairing[];
   approved: ApprovedUser[];
+}
+
+// ── Discovered bind targets ───────────────────────────────────────
+
+export interface ChannelBindableTarget {
+  targetId: string;
+  targetType: "channel";
+  chatId: string;
+  label: string;
+  discoveredAt: string;
+  lastSeenAt: string;
+  lastMessageId?: string;
 }
