@@ -288,6 +288,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     return 0;
   }
 
+  await settingsManager.initialize();
   telemetry.setSurface("websocket");
   telemetry.init();
 
@@ -366,8 +367,6 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
   console.log(`Log file: ${sessionLog.path}`);
 
   try {
-    await settingsManager.initialize();
-
     // Get device ID
     const deviceId = settingsManager.getOrCreateDeviceId();
     let registerOptions: RegisterOptions;
