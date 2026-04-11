@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
-import { fileURLToPath, pathToFileURL } from "node:url";
 import { clearPairingStores } from "../../channels/pairing";
 import {
   __testOverrideSaveRoutes,
@@ -8,18 +7,15 @@ import {
   getRoute,
 } from "../../channels/routing";
 import {
+  bindChannelTarget,
+  listChannelTargetSnapshots,
+} from "../../channels/service";
+import {
   __testOverrideLoadTargetStore,
   __testOverrideSaveTargetStore,
   clearTargetStores,
   upsertChannelTarget,
 } from "../../channels/targets";
-
-const serviceModuleUrl = pathToFileURL(
-  fileURLToPath(new URL("../../channels/service.ts", import.meta.url)),
-).href;
-const { bindChannelTarget, listChannelTargetSnapshots } = await import(
-  serviceModuleUrl
-);
 
 describe("channel service", () => {
   function resetState(): void {

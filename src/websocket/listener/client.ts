@@ -247,6 +247,19 @@ import type {
   StartListenerOptions,
 } from "./types";
 
+type ChannelsServiceModule = typeof import("../../channels/service");
+
+let channelsServiceLoaderOverride:
+  | null
+  | (() => Promise<ChannelsServiceModule>) = null;
+
+async function loadChannelsService(): Promise<ChannelsServiceModule> {
+  if (channelsServiceLoaderOverride) {
+    return channelsServiceLoaderOverride();
+  }
+  return import("../../channels/service");
+}
+
 const WIKI_LINK_REGEX = /\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g;
 
 function trackListenerError(
@@ -1068,7 +1081,7 @@ async function handleChannelsProtocolCommand(
     setChannelConfigLive,
     startChannelLive,
     stopChannelLive,
-  } = await import("../../channels/service");
+  } = await loadChannelsService();
 
   const mapChannelSummary = (
     summary: ReturnType<typeof listChannelSummaries>[number],
@@ -4838,6 +4851,11 @@ export { parseServerMessage } from "./protocol-inbound";
 export { emitInterruptedStatusDelta } from "./protocol-outbound";
 
 export const __listenClientTestUtils = {
+  setChannelsServiceLoaderForTests: (
+    loader: null | (() => Promise<ChannelsServiceModule>),
+  ) => {
+    channelsServiceLoaderOverride = loader;
+  },
   createRuntime: createLegacyTestRuntime,
   createListenerRuntime: createRuntime,
   handleModeChange,

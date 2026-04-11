@@ -80,7 +80,7 @@ class MockSocket {
 const actualChannelsService = await import("../../channels/service");
 
 afterEach(() => {
-  mock.module("../../channels/service", () => actualChannelsService);
+  __listenClientTestUtils.setChannelsServiceLoaderForTests(null);
 });
 
 function makeControlRequest(requestId: string): ControlRequest {
@@ -948,7 +948,7 @@ describe("listen-client channels command handling", () => {
     const socket = new MockSocket(WebSocket.OPEN);
     const runtime = __listenClientTestUtils.createListenerRuntime();
 
-    mock.module("../../channels/service", () => ({
+    __listenClientTestUtils.setChannelsServiceLoaderForTests(async () => ({
       ...actualChannelsService,
       listChannelSummaries: () => [
         {
@@ -1008,7 +1008,7 @@ describe("listen-client channels command handling", () => {
     const socket = new MockSocket(WebSocket.OPEN);
     const runtime = __listenClientTestUtils.createListenerRuntime();
 
-    mock.module("../../channels/service", () => ({
+    __listenClientTestUtils.setChannelsServiceLoaderForTests(async () => ({
       ...actualChannelsService,
       bindChannelPairing: () => ({
         chatId: "chat-42",
@@ -1086,7 +1086,7 @@ describe("listen-client channels command handling", () => {
     const socket = new MockSocket(WebSocket.OPEN);
     const runtime = __listenClientTestUtils.createListenerRuntime();
 
-    mock.module("../../channels/service", () => ({
+    __listenClientTestUtils.setChannelsServiceLoaderForTests(async () => ({
       ...actualChannelsService,
       bindChannelTarget: () => ({
         chatId: "C123",
