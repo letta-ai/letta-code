@@ -108,12 +108,15 @@ function isReadOnlyFind(tokens: string[]): boolean {
 }
 
 function formatDisplayPath(filePath: string): string {
+  const normalizePathSeparators = (value: string): string =>
+    value.replace(/\\/g, "/");
+
   const cwd = process.cwd();
   const relativePath = relative(cwd, filePath);
   if (relativePath.startsWith("..")) {
-    return filePath;
+    return normalizePathSeparators(filePath);
   }
-  return relativePath;
+  return normalizePathSeparators(relativePath);
 }
 
 function tokenizeShell(input: string): string[] {
