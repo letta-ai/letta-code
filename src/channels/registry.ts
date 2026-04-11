@@ -9,6 +9,7 @@
  * 4. Buffered messages flush through the registered onMessage handler
  */
 
+import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import { readChannelConfig } from "./config";
 import {
   consumePairingCode,
@@ -53,7 +54,7 @@ export function getActiveChannelIds(): string[] {
 
 export type ChannelMessageHandler = (
   route: ChannelRoute,
-  xmlContent: string,
+  content: MessageCreate["content"],
 ) => void;
 
 export type ChannelRegistryEvent = {
@@ -70,7 +71,7 @@ export class ChannelRegistry {
   private eventHandler: ((event: ChannelRegistryEvent) => void) | null = null;
   private readonly buffer: Array<{
     route: ChannelRoute;
-    xmlContent: string;
+    content: MessageCreate["content"];
   }> = [];
 
   constructor() {
@@ -281,13 +282,13 @@ export class ChannelRegistry {
     }
 
     // 3. Format as XML
-    const xmlContent = formatChannelNotification(msg);
+    const content = formatChannelNotification(msg);
 
     // 4. Deliver or buffer
     if (this.isReady()) {
-      this.messageHandler?.(route, xmlContent);
+      this.messageHandler?.(route, content);
     } else {
-      this.buffer.push({ route, xmlContent });
+      this.buffer.push({ route, content });
     }
   }
 
@@ -297,7 +298,7 @@ export class ChannelRegistry {
     while (this.buffer.length > 0) {
       const item = this.buffer.shift();
       if (item) {
-        this.messageHandler(item.route, item.xmlContent);
+        this.messageHandler(item.route, item.content);
       }
     }
   }
