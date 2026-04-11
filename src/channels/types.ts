@@ -108,16 +108,16 @@ export type ChannelConfig = TelegramChannelConfig;
 
 export interface PendingPairing {
   code: string;
-  telegramUserId: string;
-  telegramUsername?: string;
+  senderId: string;
+  senderName?: string;
   chatId: string;
   createdAt: string;
   expiresAt: string;
 }
 
 export interface ApprovedUser {
-  telegramUserId: string;
-  telegramUsername?: string;
+  senderId: string;
+  senderName?: string;
   approvedAt: string;
 }
 

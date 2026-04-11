@@ -17,6 +17,10 @@ const TELEGRAM_PLACEHOLDER_PREFIX = "LCTELEGRAMHTMLPLACEHOLDER";
 const TELEGRAM_PLACEHOLDER_SUFFIX = "X";
 const TELEGRAM_PLACEHOLDER_PATTERN = /LCTELEGRAMHTMLPLACEHOLDER(\d+)X/g;
 
+type OutboundChannelFormatter = (
+  text: string,
+) => Pick<OutboundChannelMessage, "text" | "parseMode">;
+
 function escapeTelegramHtml(text: string): string {
   return text
     .replace(/&/g, "&amp;")
@@ -209,18 +213,26 @@ export function markdownToTelegramHtml(text: string): string {
   return formatTelegramText(text);
 }
 
+const CHANNEL_OUTBOUND_FORMATTERS: Partial<
+  Record<string, OutboundChannelFormatter>
+> = {
+  [TELEGRAM_CHANNEL_ID](text) {
+    return {
+      text: markdownToTelegramHtml(text),
+      parseMode: "HTML",
+    };
+  },
+};
+
 export function formatOutboundChannelMessage(
   channel: string,
   text: string,
 ): Pick<OutboundChannelMessage, "text" | "parseMode"> {
-  if (channel !== TELEGRAM_CHANNEL_ID) {
+  const formatter = CHANNEL_OUTBOUND_FORMATTERS[channel];
+  if (!formatter) {
     return { text };
   }
-
-  return {
-    text: markdownToTelegramHtml(text),
-    parseMode: "HTML",
-  };
+  return formatter(text);
 }
 
 interface MessageChannelArgs {
