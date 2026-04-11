@@ -201,6 +201,7 @@ describe("resolveSubagentModel", () => {
       { parentProvider: "lc-anthropic", baseProvider: "anthropic" },
       { parentProvider: "lc-openai", baseProvider: "openai" },
       { parentProvider: "lc-zai", baseProvider: "zai" },
+      { parentProvider: "lc-zai-coding", baseProvider: "zai" },
       { parentProvider: "lc-gemini", baseProvider: "google_ai" },
       { parentProvider: "lc-openrouter", baseProvider: "openrouter" },
       { parentProvider: "lc-minimax", baseProvider: "minimax" },

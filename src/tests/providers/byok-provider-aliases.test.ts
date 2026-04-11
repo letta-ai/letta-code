@@ -21,6 +21,7 @@ describe("buildByokProviderAliases", () => {
     expect(aliases["lc-anthropic"]).toBe("anthropic");
     expect(aliases["lc-openai"]).toBe("openai");
     expect(aliases["lc-zai"]).toBe("zai");
+    expect(aliases["lc-zai-coding"]).toBe("zai");
     expect(aliases["lc-gemini"]).toBe("google_ai");
     expect(aliases["lc-minimax"]).toBe("minimax");
     expect(aliases["lc-openrouter"]).toBe("openrouter");
@@ -73,6 +74,9 @@ describe("isByokHandleForSelector", () => {
   test("matches lc-* prefix", () => {
     expect(
       isByokHandleForSelector("lc-anthropic/claude-sonnet-4", defaultAliases),
+    ).toBe(true);
+    expect(
+      isByokHandleForSelector("lc-zai-coding/glm-5.1", defaultAliases),
     ).toBe(true);
   });
 

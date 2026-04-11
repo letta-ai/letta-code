@@ -4,6 +4,7 @@ import { parseArgs } from "node:util";
 import {
   checkProviderApiKey,
   createOrUpdateProvider,
+  getByokProviderBaseUrl,
 } from "../../providers/byok-providers";
 import { settingsManager } from "../../settings-manager";
 import { getErrorMessage } from "../../utils/error";
@@ -44,6 +45,7 @@ interface ConnectSubcommandDeps {
     accessKey?: string,
     region?: string,
     profile?: string,
+    baseUrl?: string,
   ) => Promise<void>;
   createOrUpdateProvider: (
     providerType: string,
@@ -52,6 +54,7 @@ interface ConnectSubcommandDeps {
     accessKey?: string,
     region?: string,
     profile?: string,
+    baseUrl?: string,
   ) => Promise<unknown>;
   isChatGPTOAuthConnected: () => Promise<boolean>;
   runChatGPTOAuthConnectFlow: (
@@ -242,6 +245,7 @@ export async function runConnectSubcommand(
         method === "iam" ? accessKey : undefined,
         region,
         method === "profile" ? profile : undefined,
+        getByokProviderBaseUrl(provider.byokId),
       );
 
       io.stdout("Saving provider...");
@@ -252,6 +256,7 @@ export async function runConnectSubcommand(
         method === "iam" ? accessKey : undefined,
         region,
         method === "profile" ? profile : undefined,
+        getByokProviderBaseUrl(provider.byokId),
       );
 
       io.stdout(
@@ -294,13 +299,24 @@ export async function runConnectSubcommand(
 
     try {
       io.stdout(`Validating ${provider.byokProvider.displayName} API key...`);
-      await io.checkProviderApiKey(provider.byokProvider.providerType, apiKey);
+      await io.checkProviderApiKey(
+        provider.byokProvider.providerType,
+        apiKey,
+        undefined,
+        undefined,
+        undefined,
+        getByokProviderBaseUrl(provider.byokId),
+      );
 
       io.stdout("Saving provider...");
       await io.createOrUpdateProvider(
         provider.byokProvider.providerType,
         provider.byokProvider.providerName,
         apiKey,
+        undefined,
+        undefined,
+        undefined,
+        getByokProviderBaseUrl(provider.byokId),
       );
 
       io.stdout(

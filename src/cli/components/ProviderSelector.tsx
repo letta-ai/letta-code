@@ -6,6 +6,7 @@ import {
   type ByokProvider,
   checkProviderApiKey,
   createOrUpdateProvider,
+  getByokProviderBaseUrl,
   getConnectedProviders,
   type ProviderField,
   type ProviderResponse,
@@ -226,6 +227,10 @@ export function ProviderSelector({
           provider.providerType,
           provider.providerName,
           apiKeyInput.trim(),
+          undefined,
+          undefined,
+          undefined,
+          getByokProviderBaseUrl(provider.id),
         );
         // Refresh connected providers
         const providers = await getConnectedProviders();
@@ -251,7 +256,14 @@ export function ProviderSelector({
     setValidationError(null);
 
     try {
-      await checkProviderApiKey(provider.providerType, apiKeyInput.trim());
+      await checkProviderApiKey(
+        provider.providerType,
+        apiKeyInput.trim(),
+        undefined,
+        undefined,
+        undefined,
+        getByokProviderBaseUrl(provider.id),
+      );
       if (mountedRef.current) {
         setValidationState("valid");
       }
@@ -296,6 +308,7 @@ export function ProviderSelector({
           accessKey,
           region,
           profile,
+          getByokProviderBaseUrl(provider.id),
         );
         // Refresh connected providers
         const providers = await getConnectedProviders();
@@ -327,6 +340,7 @@ export function ProviderSelector({
         accessKey,
         region,
         profile,
+        getByokProviderBaseUrl(provider.id),
       );
       if (mountedRef.current) {
         setValidationState("valid");

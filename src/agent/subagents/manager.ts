@@ -120,6 +120,7 @@ const BYOK_PROVIDER_TO_BASE: Record<string, string> = {
   "lc-anthropic": "anthropic",
   "lc-openai": "openai",
   "lc-zai": "zai",
+  "lc-zai-coding": "zai",
   "lc-gemini": "google_ai",
   "lc-openrouter": "openrouter",
   "lc-minimax": "minimax",

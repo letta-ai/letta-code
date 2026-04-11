@@ -25,6 +25,11 @@ describe("isOpenAIModel", () => {
     expect(isOpenAIModel("anthropic/claude-sonnet-4-6")).toBe(false);
   });
 
+  test("does not detect zAI coding-plan handles as openai models", () => {
+    expect(isOpenAIModel("lc-zai-coding/glm-5.1")).toBe(false);
+    expect(isOpenAIModel("zai/glm-5.1")).toBe(false);
+  });
+
   test("does not detect auto model ids/handles", () => {
     expect(isOpenAIModel("auto")).toBe(false);
     expect(isOpenAIModel("letta/auto")).toBe(false);

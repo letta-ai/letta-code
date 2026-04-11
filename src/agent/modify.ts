@@ -13,6 +13,14 @@ import { debugLog } from "../utils/debug";
 import { getModelContextWindow } from "./available-models";
 import { getClient } from "./client";
 
+function isZaiFamilyModel(modelHandle: string): boolean {
+  return (
+    modelHandle.startsWith("zai/") ||
+    modelHandle.startsWith("lc-zai/") ||
+    modelHandle.startsWith("lc-zai-coding/")
+  );
+}
+
 type ModelSettings =
   | OpenAIModelSettings
   | AnthropicModelSettings
@@ -36,7 +44,7 @@ function buildModelSettings(
     modelHandle.startsWith("anthropic/") ||
     modelHandle.startsWith("claude-pro-max/") ||
     modelHandle.startsWith("minimax/");
-  const isZai = modelHandle.startsWith("zai/");
+  const isZai = isZaiFamilyModel(modelHandle);
   const isGoogleAI = modelHandle.startsWith("google_ai/");
   const isGoogleVertex = modelHandle.startsWith("google_vertex/");
   const isOpenRouter = modelHandle.startsWith("openrouter/");
