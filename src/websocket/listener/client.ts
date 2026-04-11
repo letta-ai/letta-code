@@ -2966,9 +2966,10 @@ async function connectWithRetry(
           runDetachedListenerTask("file_ops", async () => {
             try {
               const { writeFile } = await import("node:fs/promises");
-              await writeFile(parsed.path, parsed.document_content!, "utf-8");
+              const content = parsed.document_content as string;
+              await writeFile(parsed.path, content, "utf-8");
               console.log(
-                `[Listen] file_ops: wrote ${parsed.document_content!.length} bytes to ${parsed.path}`,
+                `[Listen] file_ops: wrote ${content.length} bytes to ${parsed.path}`,
               );
             } catch (err) {
               console.error(
