@@ -50,7 +50,10 @@ beforeEach(() => {
   bundledRuntimeRoot = mkdtempSync(
     join(tmpdir(), "letta-channel-runtime-bundled-"),
   );
-  __testOverrideChannelRuntimeDeps({ runtimeRoot });
+  __testOverrideChannelRuntimeDeps({
+    runtimeRoot,
+    platform: "linux",
+  });
 });
 
 afterEach(() => {
