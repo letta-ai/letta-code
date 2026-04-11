@@ -2,6 +2,16 @@ import { homedir } from "node:os";
 import { resolve } from "node:path";
 
 import { isPathWithinRoots, normalizeScopedPath } from "./memoryScope";
+import {
+  extractDashCArgument,
+  isShellExecutor,
+  parseShellAnalysis,
+  type ShellAnalysisNode,
+  splitShellSegments,
+  stripShellQuotes,
+  substituteShellVariable,
+  tokenizeShellWords,
+} from "./shellAnalysis";
 
 const ALWAYS_SAFE_COMMANDS = new Set([
   "cat",
@@ -177,199 +187,13 @@ export const SAFE_GH_COMMANDS: Record<string, Set<string> | null> = {
   status: null,
 };
 
-/**
- * Check if a redirect at position `pos` in `input` is safe to allow.
- * Safe redirects write only to /dev/null or duplicate file descriptors (>&N).
- * Returns the number of characters consumed by the redirect operator and target
- * (0 if the redirect is not safe and should cause rejection).
- */
-function tryConsumeSafeRedirect(input: string, pos: number): number {
-  const isAppend = input.startsWith(">>", pos);
-  const opLen = isAppend ? 2 : 1;
-  let cursor = pos + opLen;
-
-  // Check for fd duplication: >&N (e.g., 2>&1)
-  if (cursor < input.length && input[cursor] === "&") {
-    cursor += 1;
-    const fdStart = cursor;
-    while (cursor < input.length && /[0-9]/.test(input[cursor] ?? "")) {
-      cursor += 1;
-    }
-    // Valid fd duplication requires at least one digit after &
-    return cursor > fdStart ? cursor - pos : 0;
-  }
-
-  // Skip whitespace between operator and target
-  while (
-    cursor < input.length &&
-    (input[cursor] === " " || input[cursor] === "\t")
-  ) {
-    cursor += 1;
-  }
-
-  if (cursor >= input.length) {
-    return 0;
-  }
-
-  // Read target path (stop at whitespace or shell metacharacters)
-  const targetStart = cursor;
-  while (
-    cursor < input.length &&
-    !/[\s;|&><()`$'"]/.test(input[cursor] ?? "")
-  ) {
-    cursor += 1;
-  }
-
-  const target = input.slice(targetStart, cursor);
-  return target === "/dev/null" ? cursor - pos : 0;
-}
-
-/**
- * Split a shell command into segments on unquoted separators: |, &&, ||, ;
- * Returns null if dangerous operators are found:
- * - redirects (>, >>) outside quotes (unless targeting /dev/null or fd duplication)
- * - command substitution ($(), backticks) outside single quotes
- */
-function splitShellSegments(input: string): string[] | null {
-  const segments: string[] = [];
-  let current = "";
-  let i = 0;
-  let quote: "single" | "double" | null = null;
-
-  while (i < input.length) {
-    const ch = input[i];
-
-    if (!ch) {
-      i += 1;
-      continue;
-    }
-
-    if (quote === "single") {
-      current += ch;
-      if (ch === "'") {
-        quote = null;
-      }
-      i += 1;
-      continue;
-    }
-
-    if (quote === "double") {
-      if (ch === "\\" && i + 1 < input.length) {
-        current += input.slice(i, i + 2);
-        i += 2;
-        continue;
-      }
-
-      if (ch === "`" || input.startsWith("$(", i)) {
-        return null;
-      }
-
-      current += ch;
-      if (ch === '"') {
-        quote = null;
-      }
-      i += 1;
-      continue;
-    }
-
-    if (ch === "'") {
-      quote = "single";
-      current += ch;
-      i += 1;
-      continue;
-    }
-    if (ch === '"') {
-      quote = "double";
-      current += ch;
-      i += 1;
-      continue;
-    }
-
-    if (ch === "\\" && i + 1 < input.length) {
-      current += input.slice(i, i + 2);
-      i += 2;
-      continue;
-    }
-
-    if (input.startsWith(">>", i) || ch === ">") {
-      const skipLen = tryConsumeSafeRedirect(input, i);
-      if (skipLen > 0) {
-        // Don't strip the preceding fd digit (e.g., "2" in "cmd 2>/dev/null").
-        // It remains as a trailing token in the segment, which is harmless:
-        // isSafeSegment checks the first token (command name), so the extra
-        // "2" is treated as an inert argument.  Stripping it would be
-        // dangerous because "ls3>/dev/null" would become "ls" — altering the
-        // evaluated command identity.
-        i += skipLen;
-        continue;
-      }
-      return null;
-    }
-    if (ch === "`" || input.startsWith("$(", i)) {
-      return null;
-    }
-
-    if (input.startsWith("&&", i)) {
-      segments.push(current);
-      current = "";
-      i += 2;
-      continue;
-    }
-    if (input.startsWith("||", i)) {
-      segments.push(current);
-      current = "";
-      i += 2;
-      continue;
-    }
-    if (ch === ";") {
-      segments.push(current);
-      current = "";
-      i += 1;
-      continue;
-    }
-    if (ch === "\n" || ch === "\r") {
-      segments.push(current);
-      current = "";
-      i += 1;
-      continue;
-    }
-    if (ch === "|") {
-      segments.push(current);
-      current = "";
-      i += 1;
-      continue;
-    }
-
-    current += ch;
-    i += 1;
-  }
-
-  segments.push(current);
-  return segments.map((segment) => segment.trim()).filter(Boolean);
-}
-
 const SAFE_FILE_TEST_FLAGS = new Set(["-e", "-f", "-d", "-s", "-L"]);
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function substituteLoopVariable(
-  segment: string,
-  variableName: string,
-  value: string,
-): string {
-  const escapedName = escapeRegExp(variableName);
-  return segment
-    .replace(new RegExp(`\\$\\{${escapedName}\\}`, "g"), value)
-    .replace(new RegExp(`\\$${escapedName}(?![A-Za-z0-9_])`, "g"), value);
-}
 
 function isSafeConditionalTest(
   condition: string,
   options: ReadOnlyShellOptions,
 ): boolean {
-  let tokens = tokenize(condition);
+  let tokens = tokenizeShellWords(condition);
   if (tokens.length === 0) {
     return false;
   }
@@ -403,183 +227,74 @@ function isSafeConditionalTest(
   return true;
 }
 
-function parseIfSegments(
-  segments: string[],
-  startIndex: number,
-  options: ReadOnlyShellOptions,
-): { nextIndex: number; safe: boolean } {
-  const firstSegment = segments[startIndex]?.trim() ?? "";
-  if (!firstSegment.startsWith("if ")) {
-    return { nextIndex: startIndex, safe: false };
-  }
-
-  if (!isSafeConditionalTest(firstSegment.slice(3).trim(), options)) {
-    return { nextIndex: startIndex + 1, safe: false };
-  }
-
-  const bodySegments: string[] = [];
-  let sawThen = false;
-
-  for (let index = startIndex + 1; index < segments.length; index += 1) {
-    const segment = segments[index]?.trim() ?? "";
-    if (!segment) {
-      continue;
-    }
-
-    if (segment === "fi") {
+function substituteAnalysisNode(
+  node: ShellAnalysisNode,
+  variableName: string,
+  value: string,
+): ShellAnalysisNode {
+  switch (node.type) {
+    case "command":
       return {
-        nextIndex: index + 1,
-        safe:
-          sawThen &&
-          bodySegments.length > 0 &&
-          areReadOnlySegments(bodySegments, options),
+        type: "command",
+        segment: substituteShellVariable(node.segment, variableName, value),
       };
-    }
-
-    if (!sawThen) {
-      if (segment === "then") {
-        sawThen = true;
-        continue;
-      }
-      if (segment.startsWith("then ")) {
-        sawThen = true;
-        const inlineBody = segment.slice(5).trim();
-        if (inlineBody) {
-          bodySegments.push(inlineBody);
-        }
-        continue;
-      }
-      return { nextIndex: index, safe: false };
-    }
-
-    if (segment === "else" || segment.startsWith("else ")) {
-      return { nextIndex: index, safe: false };
-    }
-
-    bodySegments.push(segment);
+    case "if":
+      return {
+        type: "if",
+        condition: substituteShellVariable(node.condition, variableName, value),
+        thenBody: node.thenBody.map((child) =>
+          substituteAnalysisNode(child, variableName, value),
+        ),
+      };
+    case "for":
+      return {
+        type: "for",
+        variableName: node.variableName,
+        items: node.items.map((item) =>
+          substituteShellVariable(item, variableName, value),
+        ),
+        body: node.body.map((child) =>
+          substituteAnalysisNode(child, variableName, value),
+        ),
+      };
   }
-
-  return { nextIndex: segments.length, safe: false };
 }
 
-function parseForSegments(
-  segments: string[],
-  startIndex: number,
-  options: ReadOnlyShellOptions,
-): { nextIndex: number; safe: boolean } {
-  const firstSegment = segments[startIndex]?.trim() ?? "";
-  const tokens = tokenize(firstSegment);
-  const variableName = tokens[1];
-
-  if (
-    tokens[0] !== "for" ||
-    !variableName ||
-    !/^[A-Za-z_][A-Za-z0-9_]*$/.test(variableName) ||
-    tokens[2] !== "in"
-  ) {
-    return { nextIndex: startIndex, safe: false };
-  }
-
-  const items = tokens.slice(3);
-  if (items.length === 0) {
-    return { nextIndex: startIndex + 1, safe: false };
-  }
-
-  const bodySegments: string[] = [];
-  let sawDo = false;
-
-  for (let index = startIndex + 1; index < segments.length; index += 1) {
-    const segment = segments[index]?.trim() ?? "";
-    if (!segment) {
-      continue;
-    }
-
-    if (segment === "done") {
-      if (!sawDo || bodySegments.length === 0) {
-        return { nextIndex: index + 1, safe: false };
-      }
-
-      for (const item of items) {
-        const substitutedBody = bodySegments.map((bodySegment) =>
-          substituteLoopVariable(bodySegment, variableName, item),
-        );
-        if (!areReadOnlySegments(substitutedBody, options)) {
-          return { nextIndex: index + 1, safe: false };
-        }
-      }
-
-      return { nextIndex: index + 1, safe: true };
-    }
-
-    if (!sawDo) {
-      if (segment === "do") {
-        sawDo = true;
-        continue;
-      }
-      if (segment.startsWith("do ")) {
-        sawDo = true;
-        const inlineBody = segment.slice(3).trim();
-        if (inlineBody) {
-          bodySegments.push(inlineBody);
-        }
-        continue;
-      }
-      return { nextIndex: index, safe: false };
-    }
-
-    bodySegments.push(segment);
-  }
-
-  return { nextIndex: segments.length, safe: false };
-}
-
-function areReadOnlySegments(
-  segments: string[],
+function areReadOnlyNodes(
+  nodes: ShellAnalysisNode[],
   options: ReadOnlyShellOptions,
 ): boolean {
-  for (let index = 0; index < segments.length; ) {
-    const segment = segments[index]?.trim() ?? "";
-    if (!segment) {
-      index += 1;
-      continue;
-    }
-
-    if (segment.startsWith("if ")) {
-      const parsed = parseIfSegments(segments, index, options);
-      if (!parsed.safe) {
+  for (const node of nodes) {
+    if (node.type === "command") {
+      if (!isSafeSegment(node.segment, options)) {
         return false;
       }
-      index = parsed.nextIndex;
       continue;
     }
 
-    if (segment.startsWith("for ")) {
-      const parsed = parseForSegments(segments, index, options);
-      if (!parsed.safe) {
+    if (node.type === "if") {
+      if (
+        !isSafeConditionalTest(node.condition, options) ||
+        node.thenBody.length === 0 ||
+        !areReadOnlyNodes(node.thenBody, options)
+      ) {
         return false;
       }
-      index = parsed.nextIndex;
       continue;
     }
 
-    if (
-      segment === "fi" ||
-      segment === "done" ||
-      segment === "then" ||
-      segment === "do" ||
-      segment.startsWith("then ") ||
-      segment.startsWith("do ") ||
-      segment === "else" ||
-      segment.startsWith("else ")
-    ) {
+    if (node.body.length === 0) {
       return false;
     }
 
-    if (!isSafeSegment(segment, options)) {
-      return false;
+    for (const item of node.items) {
+      const substitutedBody = node.body.map((child) =>
+        substituteAnalysisNode(child, node.variableName, item),
+      );
+      if (!areReadOnlyNodes(substitutedBody, options)) {
+        return false;
+      }
     }
-
-    index += 1;
   }
 
   return true;
@@ -867,19 +582,19 @@ export function isReadOnlyShellCommand(
     return false;
   }
 
-  const segments = splitShellSegments(trimmed);
-  if (!segments || segments.length === 0) {
+  const nodes = parseShellAnalysis(trimmed);
+  if (!nodes || nodes.length === 0) {
     return false;
   }
 
-  return areReadOnlySegments(segments, options);
+  return areReadOnlyNodes(nodes, options);
 }
 
 function isSafeSegment(
   segment: string,
   options: ReadOnlyShellOptions,
 ): boolean {
-  const tokens = tokenize(segment);
+  const tokens = tokenizeShellWords(segment);
   if (tokens.length === 0) {
     return false;
   }
@@ -893,7 +608,7 @@ function isSafeSegment(
     if (!nested) {
       return false;
     }
-    return isReadOnlyShellCommand(stripQuotes(nested), options);
+    return isReadOnlyShellCommand(stripShellQuotes(nested), options);
   }
 
   if (command === "env") {
@@ -1015,41 +730,6 @@ function isSafeSegment(
     return !/\s-o\b/.test(segment);
   }
   return false;
-}
-
-function isShellExecutor(command: string): boolean {
-  return command === "bash" || command === "sh";
-}
-
-function tokenize(segment: string): string[] {
-  const matches = segment.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g);
-  if (!matches) {
-    return [];
-  }
-  return matches.map((token) => stripQuotes(token));
-}
-
-function stripQuotes(value: string): string {
-  if (
-    (value.startsWith('"') && value.endsWith('"')) ||
-    (value.startsWith("'") && value.endsWith("'"))
-  ) {
-    return value.slice(1, -1);
-  }
-  return value;
-}
-
-function extractDashCArgument(tokens: string[]): string | undefined {
-  for (let i = 0; i < tokens.length; i += 1) {
-    const token = tokens[i];
-    if (!token) {
-      continue;
-    }
-    if (token === "-c" || token === "-lc" || /^-[a-zA-Z]*c$/.test(token)) {
-      return tokens[i + 1];
-    }
-  }
-  return undefined;
 }
 
 function isAbsolutePathArg(value: string): boolean {
@@ -1262,7 +942,7 @@ function parseScopedAssignmentToken(
 
   return {
     name: match[1] ?? "",
-    value: stripQuotes(match[2] ?? ""),
+    value: stripShellQuotes(match[2] ?? ""),
   };
 }
 
@@ -1503,7 +1183,7 @@ function isAllowedMemorySegment(
   env: NodeJS.ProcessEnv,
   shellVars: ScopedShellVars,
 ): { nextCwd: string | null; safe: boolean } {
-  const tokens = tokenize(segment);
+  const tokens = tokenizeShellWords(segment);
   if (tokens.length === 0) {
     return { nextCwd: cwd, safe: false };
   }
@@ -1609,7 +1289,7 @@ export function isScopedMemoryShellCommand(
         return false;
       }
       return isScopedMemoryShellCommand(
-        stripQuotes(nested),
+        stripShellQuotes(nested),
         allowedRoots,
         options,
       );
