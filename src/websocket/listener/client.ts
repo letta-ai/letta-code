@@ -1889,7 +1889,7 @@ function wireChannelIngress(
   const registry = getChannelRegistry();
   if (!registry) return;
 
-  registry.setMessageHandler((route, xmlContent) => {
+  registry.setMessageHandler((route, messageContent) => {
     // Follow the same pattern as cron/scheduler.ts:131-157
     const rawRuntime = getOrCreateConversationRuntime(
       listener,
@@ -1903,7 +1903,7 @@ function wireChannelIngress(
       rawRuntime,
     );
 
-    enqueueChannelTurn(conversationRuntime, route, xmlContent);
+    enqueueChannelTurn(conversationRuntime, route, messageContent);
 
     scheduleQueuePump(conversationRuntime, socket, opts, processQueuedTurn);
   });
@@ -1924,13 +1924,13 @@ function enqueueChannelTurn(
     agentId: string;
     conversationId: string;
   },
-  xmlContent: MessageCreate["content"],
+  messageContent: MessageCreate["content"],
 ): { id: string } | null {
   const clientMessageId = `cm-channel-${crypto.randomUUID()}`;
   const enqueuedItem = runtime.queueRuntime.enqueue({
     kind: "message",
     source: "channel" as import("../../types/protocol").QueueItemSource,
-    content: xmlContent,
+    content: messageContent,
     clientMessageId,
     agentId: route.agentId,
     conversationId: route.conversationId,
@@ -1950,7 +1950,7 @@ function enqueueChannelTurn(
     messages: [
       {
         role: "user",
-        content: xmlContent,
+        content: messageContent,
         client_message_id: clientMessageId,
       } satisfies MessageCreate & { client_message_id?: string },
     ],

@@ -805,8 +805,16 @@ describe("listen-client multi-worker concurrency", () => {
     );
     const socket = new MockSocket();
     const processed: IncomingMessage[] = [];
-    const xml =
-      '<channel-notification source="telegram" chat_id="7952253975">hello from telegram</channel-notification>';
+    const channelContent = [
+      {
+        type: "text" as const,
+        text: "<system-reminder>Call MessageChannel to reply.</system-reminder>",
+      },
+      {
+        type: "text" as const,
+        text: '<channel-notification source="telegram" chat_id="7952253975">hello from telegram</channel-notification>',
+      },
+    ];
 
     const enqueuedItem = __listenClientTestUtils.enqueueChannelTurn(
       runtime,
@@ -814,7 +822,7 @@ describe("listen-client multi-worker concurrency", () => {
         agentId: "agent-1",
         conversationId: "conv-channel",
       },
-      xml,
+      channelContent,
     );
 
     expect(enqueuedItem).not.toBeNull();
@@ -843,7 +851,7 @@ describe("listen-client multi-worker concurrency", () => {
         messages: [
           expect.objectContaining({
             role: "user",
-            content: [{ type: "text", text: xml }],
+            content: channelContent,
             client_message_id: expect.stringMatching(/^cm-channel-/),
           }),
         ],
