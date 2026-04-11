@@ -85,6 +85,7 @@ test("loadChannelRuntimeModule resolves a module from the bundled runtime direct
   __testOverrideChannelRuntimeDeps({
     runtimeRoot,
     bundledRuntimeRoot,
+    platform: "linux",
   });
 
   const bundledRuntimeDir = getBundledChannelRuntimeDir("telegram");
@@ -124,6 +125,7 @@ test("installChannelRuntime writes a manifest and invokes npm in the runtime dir
     runtimeRoot,
     spawnImpl: spawnImpl as never,
     packageManager: "npm",
+    platform: "linux",
   });
 
   await installChannelRuntime("telegram");
@@ -172,6 +174,7 @@ test("installChannelRuntime uses bun add --no-save for bun installs", async () =
     runtimeRoot,
     spawnImpl: spawnImpl as never,
     packageManager: "bun",
+    platform: "linux",
   });
 
   await installChannelRuntime("telegram");
@@ -207,6 +210,7 @@ test("installChannelRuntime uses pnpm add for pnpm installs", async () => {
     runtimeRoot,
     spawnImpl: spawnImpl as never,
     packageManager: "pnpm",
+    platform: "linux",
   });
 
   await installChannelRuntime("telegram");
@@ -265,6 +269,7 @@ test("ensureChannelRuntimeInstalled skips installation when runtime already exis
   __testOverrideChannelRuntimeDeps({
     runtimeRoot,
     spawnImpl: spawnImpl as never,
+    platform: "linux",
   });
 
   const installed = await ensureChannelRuntimeInstalled("telegram");
