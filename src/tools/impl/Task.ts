@@ -12,7 +12,12 @@ import {
   discoverSubagents,
   getAllSubagentConfigs,
 } from "../../agent/subagents";
-import { spawnSubagent } from "../../agent/subagents/manager";
+import {
+  getTaskBudgetFromEnv,
+  getTaskDepthFromEnv,
+  getTaskMaxDepthFromEnv,
+  spawnSubagent,
+} from "../../agent/subagents/manager";
 import { addToMessageQueue } from "../../cli/helpers/messageQueueBridge.js";
 import {
   completeSubagent,
@@ -46,6 +51,7 @@ interface TaskArgs {
   conversation_id?: string; // Resume from an existing conversation
   run_in_background?: boolean; // Run the task in background
   max_turns?: number; // Maximum number of agentic turns
+  budget_tokens?: number; // Advisory token budget for the spawned subtree
   toolCallId?: string; // Injected by executeTool for linking subagent to parent tool call
   signal?: AbortSignal; // Injected by executeTool for interruption handling
   parentScope?: { agentId: string; conversationId: string }; // Injected by executeTool for notification routing
@@ -73,6 +79,7 @@ export interface SpawnBackgroundSubagentTaskArgs {
   existingAgentId?: string;
   existingConversationId?: string;
   maxTurns?: number;
+  budgetTokens?: number;
   forkedContext?: boolean;
   /** Parent conversation scope for routing notifications in listener mode. */
   parentScope?: { agentId: string; conversationId: string };
@@ -151,11 +158,55 @@ async function resolveCompletionSummary(
   return trimmed.length > 0 ? trimmed : defaultSummary;
 }
 
+interface TaskExecutionMetadata {
+  currentDepth: number;
+  childDepth: number;
+  maxDepth: number;
+  budgetTokens?: number;
+}
+
+export function getTaskExecutionMetadata(
+  argsBudgetTokens?: number,
+  env: NodeJS.ProcessEnv = process.env,
+): TaskExecutionMetadata {
+  const currentDepth = getTaskDepthFromEnv(env);
+  return {
+    currentDepth,
+    childDepth: currentDepth + 1,
+    maxDepth: getTaskMaxDepthFromEnv(env),
+    budgetTokens: argsBudgetTokens ?? getTaskBudgetFromEnv(env),
+  };
+}
+
+export function getTaskRecursionLimitError(
+  env: NodeJS.ProcessEnv = process.env,
+): string | null {
+  const currentDepth = getTaskDepthFromEnv(env);
+  const maxDepth = getTaskMaxDepthFromEnv(env);
+
+  if (currentDepth < maxDepth) {
+    return null;
+  }
+
+  return `Error: Task recursion limit reached at depth ${currentDepth} (max ${maxDepth}). Further delegation is blocked.`;
+}
+
+function formatTaskMetadataHeader(metadata: TaskExecutionMetadata): string[] {
+  return [
+    `task_depth=${metadata.childDepth}`,
+    `task_max_depth=${metadata.maxDepth}`,
+    metadata.budgetTokens !== undefined
+      ? `task_budget_tokens=${metadata.budgetTokens}`
+      : undefined,
+  ].filter(Boolean) as string[];
+}
+
 function buildTaskResultHeader(
   subagentType: string,
   subagentId: string,
   result?: Pick<TaskRunResult, "agentId" | "conversationId">,
   status?: "success" | "error",
+  metadata?: TaskExecutionMetadata,
 ): string {
   return [
     `subagent_type=${subagentType}`,
@@ -165,6 +216,9 @@ function buildTaskResultHeader(
     result?.conversationId
       ? `conversation_id=${result.conversationId}`
       : undefined,
+    ...formatTaskMetadataHeader(
+      metadata ?? getTaskExecutionMetadata(undefined, process.env),
+    ),
   ]
     .filter(Boolean)
     .join(" ");
@@ -174,10 +228,11 @@ function writeTaskTranscriptStart(
   outputFile: string,
   description: string,
   subagentType: string,
+  metadata: TaskExecutionMetadata,
 ): void {
   appendToOutputFile(
     outputFile,
-    `[Task started: ${description}]\n[subagent_type: ${subagentType}]\n\n`,
+    `[Task started: ${description}]\n[subagent_type: ${subagentType}]\n[task_depth: ${metadata.childDepth}]\n[task_max_depth: ${metadata.maxDepth}]${metadata.budgetTokens !== undefined ? `\n[task_budget_tokens: ${metadata.budgetTokens}]` : ""}\n\n`,
   );
 }
 
@@ -279,6 +334,7 @@ export function spawnBackgroundSubagentTask(
     existingAgentId,
     existingConversationId,
     maxTurns,
+    budgetTokens,
     forkedContext,
     parentScope,
     silentCompletion,
@@ -331,7 +387,8 @@ export function spawnBackgroundSubagentTask(
     abortController,
   };
   backgroundTasks.set(taskId, bgTask);
-  writeTaskTranscriptStart(outputFile, description, subagentType);
+  const metadata = getTaskExecutionMetadata(budgetTokens);
+  writeTaskTranscriptStart(outputFile, description, subagentType, metadata);
 
   // Intentionally fire-and-forget: background tasks own their lifecycle and
   // capture failures in task state/transcripts instead of surfacing a promise
@@ -346,6 +403,7 @@ export function spawnBackgroundSubagentTask(
     existingConversationId,
     maxTurns,
     forkedContext,
+    budgetTokens,
   )
     .then(async (result) => {
       bgTask.status = result.success ? "completed" : "failed";
@@ -358,6 +416,7 @@ export function spawnBackgroundSubagentTask(
         subagentId,
         result,
         result.success ? "success" : "error",
+        metadata,
       );
       writeTaskTranscriptResult(outputFile, result, header);
       if (result.success) {
@@ -553,6 +612,10 @@ export async function task(args: TaskArgs): Promise<string> {
 
   // Determine if deploying an existing agent
   const isDeployingExisting = Boolean(args.agent_id || args.conversation_id);
+  const recursionLimitError = getTaskRecursionLimitError(process.env);
+  if (recursionLimitError) {
+    return recursionLimitError;
+  }
 
   // Validate required parameters based on mode
   if (isDeployingExisting) {
@@ -622,6 +685,7 @@ export async function task(args: TaskArgs): Promise<string> {
   }
 
   const prompt = inputPrompt;
+  const taskMetadata = getTaskExecutionMetadata(args.budget_tokens);
 
   const isBackground = args.run_in_background ?? config.background;
   const resolvedParentScope = resolveParentScope(args.parentScope);
@@ -637,6 +701,7 @@ export async function task(args: TaskArgs): Promise<string> {
       existingAgentId: effectiveAgentId,
       existingConversationId: effectiveConversationId,
       maxTurns: args.max_turns,
+      budgetTokens: taskMetadata.budgetTokens,
       forkedContext: config.fork,
       parentScope: resolvedParentScope,
     });
@@ -669,7 +734,12 @@ export async function task(args: TaskArgs): Promise<string> {
   // even when inline content is truncated.
   const foregroundTaskId = getNextTaskId();
   const outputFile = createBackgroundOutputFile(foregroundTaskId);
-  writeTaskTranscriptStart(outputFile, description, subagent_type);
+  writeTaskTranscriptStart(
+    outputFile,
+    description,
+    subagent_type,
+    taskMetadata,
+  );
 
   try {
     const result = await spawnSubagent(
@@ -682,6 +752,7 @@ export async function task(args: TaskArgs): Promise<string> {
       effectiveConversationId,
       args.max_turns,
       config.fork,
+      taskMetadata.budgetTokens,
     );
 
     // Mark subagent as completed in state store
@@ -714,6 +785,7 @@ export async function task(args: TaskArgs): Promise<string> {
         subagentId,
         failedResult,
         "error",
+        taskMetadata,
       );
       writeTaskTranscriptResult(outputFile, failedResult, header);
       return `${header}\n\nError: ${errorMessage}\nOutput file: ${outputFile}`;
@@ -726,6 +798,7 @@ export async function task(args: TaskArgs): Promise<string> {
       subagentId,
       result,
       "success",
+      taskMetadata,
     );
 
     const fullOutput = `${header}\n\n${result.report}`;
@@ -752,6 +825,7 @@ export async function task(args: TaskArgs): Promise<string> {
         conversationId: effectiveConversationId,
       },
       "error",
+      taskMetadata,
     );
     completeSubagent(subagentId, { success: false, error: errorMessage });
 

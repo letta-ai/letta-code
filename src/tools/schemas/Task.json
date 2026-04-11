@@ -21,6 +21,10 @@
       "type": "boolean",
       "description": "Set to true to run this agent in the background. The tool result will include an output_file path - use Read tool or Bash tail to check on output."
     },
+    "budget_tokens": {
+      "type": "integer",
+      "description": "Optional advisory token budget for the spawned subtree. Propagated to child Task calls for reporting and budgeting decisions."
+    },
     "agent_id": {
       "type": "string",
       "description": "Deploy an existing agent instead of creating a new one. Starts a new conversation with that agent."

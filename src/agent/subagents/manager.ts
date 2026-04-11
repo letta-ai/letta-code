@@ -50,6 +50,11 @@ export interface SubagentResult {
   totalTokens?: number;
 }
 
+const DEFAULT_TASK_MAX_DEPTH = 5;
+const TASK_DEPTH_ENV_VAR = "LETTA_TASK_DEPTH";
+const TASK_MAX_DEPTH_ENV_VAR = "LETTA_TASK_MAX_DEPTH";
+const TASK_BUDGET_ENV_VAR = "LETTA_TASK_BUDGET_TOKENS";
+
 /**
  * State tracked during subagent execution
  */
@@ -80,6 +85,95 @@ function getModelHandleFromAgent(agent: {
     return `${endpoint}/${model}`;
   }
   return model || null;
+}
+
+function parseNonNegativeInteger(value: string | undefined): number | null {
+  if (!value) return null;
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return null;
+  }
+  return parsed;
+}
+
+export function getTaskDepthFromEnv(
+  env: NodeJS.ProcessEnv = process.env,
+): number {
+  return parseNonNegativeInteger(env[TASK_DEPTH_ENV_VAR]) ?? 0;
+}
+
+export function getTaskMaxDepthFromEnv(
+  env: NodeJS.ProcessEnv = process.env,
+): number {
+  return (
+    parseNonNegativeInteger(env[TASK_MAX_DEPTH_ENV_VAR]) ??
+    DEFAULT_TASK_MAX_DEPTH
+  );
+}
+
+export function getTaskBudgetFromEnv(
+  env: NodeJS.ProcessEnv = process.env,
+): number | undefined {
+  const parsed = parseNonNegativeInteger(env[TASK_BUDGET_ENV_VAR]);
+  return parsed === null ? undefined : parsed;
+}
+
+export function buildSubagentChildEnv(
+  baseEnv: NodeJS.ProcessEnv,
+  options: {
+    config: SubagentConfig;
+    parentAgentId?: string;
+    budgetTokens?: number;
+    inheritedApiKey?: string;
+    inheritedBaseUrl?: string;
+    inheritedMemoryRoots?: ReturnType<typeof resolveAllowedMemoryRoots>;
+  },
+): NodeJS.ProcessEnv {
+  const {
+    config,
+    parentAgentId,
+    budgetTokens,
+    inheritedApiKey,
+    inheritedBaseUrl,
+    inheritedMemoryRoots,
+  } = options;
+
+  const childEnv: NodeJS.ProcessEnv = {
+    ...baseEnv,
+    ...(inheritedApiKey && { LETTA_API_KEY: inheritedApiKey }),
+    ...(inheritedBaseUrl && { LETTA_BASE_URL: inheritedBaseUrl }),
+    LETTA_CODE_AGENT_ROLE: "subagent",
+    ...(parentAgentId && { LETTA_PARENT_AGENT_ID: parentAgentId }),
+    [TASK_DEPTH_ENV_VAR]: String(getTaskDepthFromEnv(baseEnv) + 1),
+    [TASK_MAX_DEPTH_ENV_VAR]: String(getTaskMaxDepthFromEnv(baseEnv)),
+  };
+
+  if (budgetTokens !== undefined) {
+    childEnv[TASK_BUDGET_ENV_VAR] = String(budgetTokens);
+  } else if (baseEnv[TASK_BUDGET_ENV_VAR] !== undefined) {
+    childEnv[TASK_BUDGET_ENV_VAR] = baseEnv[TASK_BUDGET_ENV_VAR];
+  } else {
+    delete childEnv[TASK_BUDGET_ENV_VAR];
+  }
+
+  if (config.permissionMode === "memory") {
+    if (inheritedMemoryRoots?.primaryRoot) {
+      childEnv.MEMORY_DIR = inheritedMemoryRoots.primaryRoot;
+      childEnv.LETTA_MEMORY_DIR = inheritedMemoryRoots.primaryRoot;
+    } else {
+      delete childEnv.MEMORY_DIR;
+      delete childEnv.LETTA_MEMORY_DIR;
+    }
+
+    const parentMemoryDir = baseEnv.MEMORY_DIR || baseEnv.LETTA_MEMORY_DIR;
+    if (parentMemoryDir && parentMemoryDir.trim().length > 0) {
+      childEnv.PARENT_MEMORY_DIR = parentMemoryDir;
+    } else {
+      delete childEnv.PARENT_MEMORY_DIR;
+    }
+  }
+
+  return childEnv;
 }
 
 async function getPrimaryAgentModelHandle(): Promise<string | null> {
@@ -653,6 +747,7 @@ async function executeSubagent(
   existingAgentId?: string,
   existingConversationId?: string,
   maxTurns?: number,
+  budgetTokens?: number,
 ): Promise<SubagentResult> {
   // Check if already aborted before starting
   if (signal?.aborted) {
@@ -698,31 +793,14 @@ async function executeSubagent(
       process.env.LETTA_BASE_URL || settings.env?.LETTA_BASE_URL;
     const subagentWorkingDirectory = resolveSubagentWorkingDirectory();
     const inheritedMemoryRoots = resolveAllowedMemoryRoots();
-    const childEnv: NodeJS.ProcessEnv = {
-      ...process.env,
-      ...(inheritedApiKey && { LETTA_API_KEY: inheritedApiKey }),
-      ...(inheritedBaseUrl && { LETTA_BASE_URL: inheritedBaseUrl }),
-      LETTA_CODE_AGENT_ROLE: "subagent",
-      ...(parentAgentId && { LETTA_PARENT_AGENT_ID: parentAgentId }),
-    };
-
-    if (config.permissionMode === "memory") {
-      if (inheritedMemoryRoots.primaryRoot) {
-        childEnv.MEMORY_DIR = inheritedMemoryRoots.primaryRoot;
-        childEnv.LETTA_MEMORY_DIR = inheritedMemoryRoots.primaryRoot;
-      } else {
-        delete childEnv.MEMORY_DIR;
-        delete childEnv.LETTA_MEMORY_DIR;
-      }
-
-      const parentMemoryDir =
-        process.env.MEMORY_DIR || process.env.LETTA_MEMORY_DIR;
-      if (parentMemoryDir && parentMemoryDir.trim().length > 0) {
-        childEnv.PARENT_MEMORY_DIR = parentMemoryDir;
-      } else {
-        delete childEnv.PARENT_MEMORY_DIR;
-      }
-    }
+    const childEnv = buildSubagentChildEnv(process.env, {
+      config,
+      parentAgentId,
+      budgetTokens,
+      inheritedApiKey,
+      inheritedBaseUrl,
+      inheritedMemoryRoots,
+    });
 
     const proc = spawn(launcher.command, launcher.args, {
       cwd: subagentWorkingDirectory,
@@ -828,6 +906,7 @@ async function executeSubagent(
             undefined, // existingAgentId
             undefined, // existingConversationId
             maxTurns,
+            budgetTokens,
           );
         }
       }
@@ -953,6 +1032,7 @@ export async function spawnSubagent(
   existingConversationId?: string,
   maxTurns?: number,
   forkedContext?: boolean,
+  budgetTokens?: number,
 ): Promise<SubagentResult> {
   const allConfigs = await getAllSubagentConfigs();
   const config = allConfigs[type];
@@ -1020,6 +1100,7 @@ export async function spawnSubagent(
     existingAgentId,
     existingConversationId,
     maxTurns,
+    budgetTokens,
   );
 
   return result;

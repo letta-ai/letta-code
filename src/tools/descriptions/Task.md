@@ -19,6 +19,8 @@ When using the Task tool, you must specify a subagent_type parameter to select w
 - Launch multiple agents concurrently whenever possible, to maximize performance; to do that, use a single message with multiple tool uses
 - When the agent is done, it will return a single message back to you. The result returned by the agent is not visible to the user. To show the user the result, you should send a text message back to the user with a concise summary of the result.
 - You can optionally run agents in the background using the run_in_background parameter. When an agent runs in the background, the tool result will include an output_file path. To check on the agent's progress or retrieve its results, use the Read tool to read the output file, or use Bash with `tail` to see recent output. You can continue working while background agents run.
+- Recursive Task delegation is allowed only for subagent types whose tool lists include `Task`, and the runtime enforces a recursion depth limit via environment metadata.
+- You can optionally pass `budget_tokens` as an advisory subtree budget. This budget is propagated to child Task calls for reporting and planning, but is not a hard enforcement boundary in Phase 1.
 - Agents can be resumed using the `conversation_id` parameter by passing the conversation ID from a previous invocation. When resumed, the agent continues with its full previous context preserved.
 - When the agent is done, it will return a single message back to you along with its conversation ID. You can use this ID to resume the agent later if needed for follow-up work.
 - Provide clear, detailed prompts so the agent can work autonomously and return exactly the information you need.

@@ -59,6 +59,14 @@ describe("built-in subagents", () => {
     expect(configs.memory?.mode).toBe("stateful");
   });
 
+  test("recursive delegation is enabled only for selected built-ins", async () => {
+    const configs = await getAllSubagentConfigs();
+
+    expect(configs["general-purpose"]?.allowedTools).toContain("Task");
+    expect(configs.fork?.allowedTools).toContain("Task");
+    expect(configs.explore?.allowedTools).not.toContain("Task");
+  });
+
   test("custom CRLF reflection override replaces built-in reflection", async () => {
     tempDir = createTempProjectDir();
     writeCustomSubagent(

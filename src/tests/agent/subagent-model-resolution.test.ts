@@ -2,6 +2,10 @@ import { describe, expect, test } from "bun:test";
 import type { SubagentConfig } from "../../agent/subagents";
 import {
   buildSubagentArgs,
+  buildSubagentChildEnv,
+  getTaskBudgetFromEnv,
+  getTaskDepthFromEnv,
+  getTaskMaxDepthFromEnv,
   resolveSubagentLauncher,
   resolveSubagentModel,
   resolveSubagentWorkingDirectory,
@@ -192,6 +196,48 @@ describe("buildSubagentArgs", () => {
 
     expect(args).toContain("--permission-mode");
     expect(args).toContain("memory");
+  });
+
+  test("buildSubagentChildEnv increments depth and inherits depth limit", () => {
+    const childEnv = buildSubagentChildEnv(
+      {
+        LETTA_TASK_DEPTH: "2",
+        LETTA_TASK_MAX_DEPTH: "7",
+      } as NodeJS.ProcessEnv,
+      {
+        config: baseConfig,
+      },
+    );
+
+    expect(getTaskDepthFromEnv(childEnv)).toBe(3);
+    expect(getTaskMaxDepthFromEnv(childEnv)).toBe(7);
+  });
+
+  test("buildSubagentChildEnv inherits advisory budget by default", () => {
+    const childEnv = buildSubagentChildEnv(
+      {
+        LETTA_TASK_BUDGET_TOKENS: "1200",
+      } as NodeJS.ProcessEnv,
+      {
+        config: baseConfig,
+      },
+    );
+
+    expect(getTaskBudgetFromEnv(childEnv)).toBe(1200);
+  });
+
+  test("buildSubagentChildEnv allows explicit advisory budget override", () => {
+    const childEnv = buildSubagentChildEnv(
+      {
+        LETTA_TASK_BUDGET_TOKENS: "1200",
+      } as NodeJS.ProcessEnv,
+      {
+        config: baseConfig,
+        budgetTokens: 300,
+      },
+    );
+
+    expect(getTaskBudgetFromEnv(childEnv)).toBe(300);
   });
 });
 
