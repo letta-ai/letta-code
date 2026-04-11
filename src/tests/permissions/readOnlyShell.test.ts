@@ -642,6 +642,20 @@ describe("isReadOnlyShellCommand", () => {
         expect(isReadOnlyShellCommand(command)).toBe(expected);
       }
     });
+
+    test("rejects supported control flow when any branch body is unsafe", () => {
+      expect(
+        isReadOnlyShellCommand(
+          "if [ -f package.json ]; then sed -n '1,20p' package.json; rm package.json; fi",
+        ),
+      ).toBe(false);
+
+      expect(
+        isReadOnlyShellCommand(
+          'for f in package.json bun.lock; do sed -n \'1,20p\' "$f"; rm "$f"; done',
+        ),
+      ).toBe(false);
+    });
   });
 });
 
