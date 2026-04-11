@@ -9,9 +9,17 @@ import {
 
 function expectTextParts(
   content: MessageCreate["content"],
-): Array<{ type: "text"; text: string }> {
+): [{ type: "text"; text: string }, { type: "text"; text: string }] {
   expect(Array.isArray(content)).toBe(true);
-  return content as Array<{ type: "text"; text: string }>;
+  const parts = content as Array<{ type: "text"; text: string }>;
+  expect(parts).toHaveLength(2);
+
+  const [reminderPart, notificationPart] = parts;
+  if (!reminderPart || !notificationPart) {
+    throw new Error("Expected reminder and notification text parts");
+  }
+
+  return [reminderPart, notificationPart];
 }
 
 describe("formatChannelNotification", () => {
@@ -27,18 +35,17 @@ describe("formatChannelNotification", () => {
     };
 
     const content = formatChannelNotification(msg);
-    const parts = expectTextParts(content);
+    const [reminderPart, notificationPart] = expectTextParts(content);
 
-    expect(parts).toHaveLength(2);
-    expect(parts[0].text).toContain("<system-reminder>");
-    expect(parts[1].text).toContain("<channel-notification");
-    expect(parts[1].text).toContain('source="telegram"');
-    expect(parts[1].text).toContain('chat_id="12345"');
-    expect(parts[1].text).toContain('sender_id="67890"');
-    expect(parts[1].text).toContain('sender_name="John"');
-    expect(parts[1].text).toContain('message_id="msg-42"');
-    expect(parts[1].text).toContain("Hello from Telegram!");
-    expect(parts[1].text).toContain("</channel-notification>");
+    expect(reminderPart.text).toContain("<system-reminder>");
+    expect(notificationPart.text).toContain("<channel-notification");
+    expect(notificationPart.text).toContain('source="telegram"');
+    expect(notificationPart.text).toContain('chat_id="12345"');
+    expect(notificationPart.text).toContain('sender_id="67890"');
+    expect(notificationPart.text).toContain('sender_name="John"');
+    expect(notificationPart.text).toContain('message_id="msg-42"');
+    expect(notificationPart.text).toContain("Hello from Telegram!");
+    expect(notificationPart.text).toContain("</channel-notification>");
   });
 
   test("builds a reminder part describing reply semantics", () => {
