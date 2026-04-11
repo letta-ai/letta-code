@@ -35,7 +35,6 @@
   "dependencies": {
     "@letta-ai/letta-client": "1.10.1",
     "glob": "^13.0.0",
-    "grammy": "^1.42.0",
     "highlight.js": "^11.11.1",
     "ink-link": "^5.0.0",
     "lowlight": "^3.3.0",
@@ -54,6 +53,7 @@
     "@types/react": "^19.2.9",
     "@types/ws": "^8.18.1",
     "diff": "^8.0.2",
+    "grammy": "^1.42.0",
     "husky": "9.1.7",
     "ink": "^5.0.0",
     "ink-spinner": "^5.0.0",

@@ -18,6 +18,7 @@ import {
   loadPairingStore,
   rollbackPairingApproval,
 } from "./pairing";
+import { loadChannelPlugin } from "./pluginRegistry";
 import {
   addRoute,
   getRoute as getRouteFromStore,
@@ -30,18 +31,8 @@ import type {
   ChannelAdapter,
   ChannelRoute,
   InboundChannelMessage,
-  TelegramChannelConfig,
 } from "./types";
 import { formatChannelNotification } from "./xml";
-
-type ChannelAdapterFactory = (config: unknown) => Promise<ChannelAdapter>;
-
-const CHANNEL_ADAPTER_FACTORIES: Record<string, ChannelAdapterFactory> = {
-  async telegram(config) {
-    const { createTelegramAdapter } = await import("./telegram/adapter");
-    return createTelegramAdapter(config as TelegramChannelConfig);
-  },
-};
 
 function buildPairingInstructions(channelId: string, code: string): string {
   return (
@@ -185,14 +176,8 @@ export class ChannelRegistry {
     }
     this.adapters.delete(channelId);
 
-    const createAdapter = CHANNEL_ADAPTER_FACTORIES[channelId];
-    if (!createAdapter) {
-      const supported = Object.keys(CHANNEL_ADAPTER_FACTORIES).join(", ");
-      console.error(`Unknown channel "${channelId}". Supported: ${supported}`);
-      return false;
-    }
-
-    const adapter = await createAdapter(config);
+    const plugin = await loadChannelPlugin(config.channel);
+    const adapter = await plugin.createAdapter(config);
     this.registerAdapter(adapter);
     await adapter.start();
     return true;
@@ -362,7 +347,14 @@ export async function initializeChannels(
       continue;
     }
 
-    await registry.startChannel(channelId);
+    try {
+      await registry.startChannel(channelId);
+    } catch (error) {
+      console.error(
+        `[Channels] Failed to start ${channelId}:`,
+        error instanceof Error ? error.message : error,
+      );
+    }
   }
 
   return registry;

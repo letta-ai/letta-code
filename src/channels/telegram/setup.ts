@@ -15,6 +15,7 @@ import { createInterface } from "node:readline/promises";
 import { writeChannelConfig } from "../config";
 import type { DmPolicy, TelegramChannelConfig } from "../types";
 import { validateTelegramToken } from "./adapter";
+import { ensureTelegramRuntimeInstalled } from "./runtime";
 
 export async function runTelegramSetup(): Promise<boolean> {
   const rl = createInterface({
@@ -26,6 +27,8 @@ export async function runTelegramSetup(): Promise<boolean> {
     console.log("\n🤖 Telegram Bot Setup\n");
     console.log("You'll need a bot token from @BotFather on Telegram.");
     console.log("Create one by messaging @BotFather and using /newbot.\n");
+
+    await ensureTelegramRuntimeInstalled();
 
     // Step 1: Get token
     const token = await rl.question("Enter your Telegram bot token: ");
@@ -92,6 +95,11 @@ export async function runTelegramSetup(): Promise<boolean> {
     );
 
     return true;
+  } catch (error) {
+    console.error(
+      `Setup failed: ${error instanceof Error ? error.message : "unknown error"}`,
+    );
+    return false;
   } finally {
     rl.close();
   }

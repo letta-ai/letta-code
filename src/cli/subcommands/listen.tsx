@@ -232,6 +232,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     options: {
       "env-name": { type: "string" },
       channels: { type: "string" },
+      "install-channel-runtimes": { type: "boolean" },
       help: { type: "boolean", short: "h" },
       debug: { type: "boolean" },
     },
@@ -256,6 +257,9 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       "  --channels <list>  Comma-separated channel names to enable (e.g. telegram)",
     );
     console.log(
+      "  --install-channel-runtimes  Install missing runtime deps for the selected channels before startup",
+    );
+    console.log(
       "  --debug            Plain-text mode: log all WebSocket events instead of interactive UI",
     );
     console.log("  -h, --help         Show this help message\n");
@@ -269,6 +273,9 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     console.log('  letta server --env-name "work-laptop"');
     console.log(
       "  letta server --channels telegram           # Enable Telegram channel",
+    );
+    console.log(
+      "  letta server --channels telegram --install-channel-runtimes",
     );
     console.log(
       "  letta server --debug                       # Log all WS events\n",
@@ -320,6 +327,25 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       .map((s) => s.trim())
       .filter(Boolean);
     if (channelNames.length > 0) {
+      if (values["install-channel-runtimes"]) {
+        const { ensureChannelRuntimeInstalled } = await import(
+          "../../channels/runtimeDeps"
+        );
+        const { isSupportedChannelId } = await import(
+          "../../channels/pluginRegistry"
+        );
+
+        for (const channelName of channelNames) {
+          if (!isSupportedChannelId(channelName)) {
+            console.error(
+              `Unknown channel "${channelName}" passed to --channels.`,
+            );
+            return 1;
+          }
+          await ensureChannelRuntimeInstalled(channelName);
+        }
+      }
+
       const { initializeChannels } = await import("../../channels/registry");
       await initializeChannels(channelNames);
     }
