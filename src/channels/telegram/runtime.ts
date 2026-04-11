@@ -5,8 +5,11 @@ import {
   loadChannelRuntimeModule,
 } from "../runtimeDeps";
 
-export async function loadGrammyModule<T>(): Promise<T> {
-  return loadChannelRuntimeModule<T>("telegram");
+export async function loadGrammyModule(): Promise<typeof import("grammy")> {
+  return loadChannelRuntimeModule<typeof import("grammy")>(
+    "telegram",
+    "grammy",
+  );
 }
 
 export function isTelegramRuntimeInstalled(): boolean {

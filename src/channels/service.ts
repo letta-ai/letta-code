@@ -5,6 +5,11 @@ import {
   loadPairingStore,
 } from "./pairing";
 import {
+  getChannelDisplayName,
+  getSupportedChannelIds,
+  isSupportedChannelId,
+} from "./pluginRegistry";
+import {
   completePairing,
   ensureChannelRegistry,
   getChannelRegistry,
@@ -24,11 +29,6 @@ import type {
   SupportedChannelId,
   TelegramChannelConfig,
 } from "./types";
-import { SUPPORTED_CHANNEL_IDS } from "./types";
-
-export const CHANNEL_DISPLAY_NAMES: Record<SupportedChannelId, string> = {
-  telegram: "Telegram",
-};
 
 export interface ChannelSummary {
   channelId: SupportedChannelId;
@@ -77,7 +77,7 @@ export interface ChannelConfigPatch {
 function assertSupportedChannelId(
   channelId: string,
 ): asserts channelId is SupportedChannelId {
-  if (!SUPPORTED_CHANNEL_IDS.includes(channelId as SupportedChannelId)) {
+  if (!isSupportedChannelId(channelId)) {
     throw new Error(`Unsupported channel: ${channelId}`);
   }
 }
@@ -127,14 +127,13 @@ function toRouteSnapshot(
 
 export function listChannelSummaries(): ChannelSummary[] {
   const registry = getChannelRegistry();
-  const channelId = "telegram" as const;
-  const config = readChannelConfig(channelId);
+  return getSupportedChannelIds().map((channelId) => {
+    const config = readChannelConfig(channelId);
 
-  if (!config) {
-    return [
-      {
+    if (!config) {
+      return {
         channelId,
-        displayName: CHANNEL_DISPLAY_NAMES[channelId],
+        displayName: getChannelDisplayName(channelId),
         configured: false,
         enabled: false,
         running: false,
@@ -142,17 +141,15 @@ export function listChannelSummaries(): ChannelSummary[] {
         pendingPairingsCount: 0,
         approvedUsersCount: 0,
         routesCount: 0,
-      },
-    ];
-  }
+      };
+    }
 
-  loadRoutes(channelId);
-  loadPairingStore(channelId);
+    loadRoutes(channelId);
+    loadPairingStore(channelId);
 
-  return [
-    {
+    return {
       channelId,
-      displayName: CHANNEL_DISPLAY_NAMES[channelId],
+      displayName: getChannelDisplayName(channelId),
       configured: true,
       enabled: config.enabled,
       running: registry?.getAdapter(channelId)?.isRunning() ?? false,
@@ -160,8 +157,8 @@ export function listChannelSummaries(): ChannelSummary[] {
       pendingPairingsCount: getPendingPairings(channelId).length,
       approvedUsersCount: getApprovedUsers(channelId).length,
       routesCount: getRoutesForChannel(channelId).length,
-    },
-  ];
+    };
+  });
 }
 
 export function getChannelConfigSnapshot(
@@ -183,7 +180,7 @@ export async function setChannelConfigLive(
 
   const existing = readChannelConfig(channelId);
   const merged: TelegramChannelConfig = {
-    channel: "telegram",
+    channel: channelId,
     enabled: existing?.enabled ?? false,
     token: patch.token ?? existing?.token ?? "",
     dmPolicy: patch.dmPolicy ?? existing?.dmPolicy ?? "pairing",

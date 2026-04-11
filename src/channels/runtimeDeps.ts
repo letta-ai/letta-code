@@ -8,35 +8,24 @@ import {
   type PackageManager,
 } from "../updater/auto-update";
 import { getChannelDir } from "./config";
+import { getChannelPluginMetadata } from "./pluginRegistry";
 import type { SupportedChannelId } from "./types";
 
-type ChannelRuntimeSpec = {
-  displayName: string;
-  installPackages: string[];
-  loadModule: string;
-};
-
-const CHANNEL_RUNTIME_SPECS: Record<SupportedChannelId, ChannelRuntimeSpec> = {
-  telegram: {
-    displayName: "Telegram",
-    installPackages: ["grammy@1.42.0"],
-    loadModule: "grammy",
-  },
-};
+export const CHANNEL_RUNTIME_ROOT_ENV = "LETTA_CHANNEL_RUNTIME_ROOT";
 
 type InstallProcessFactory = typeof spawn;
 type RuntimePackageManager = PackageManager;
 
+type RuntimeResolver = {
+  runtimeDir: string;
+  resolve: (moduleName: string) => string;
+};
+
 let spawnInstallProcess: InstallProcessFactory = spawn;
-let runtimeRootOverride: string | null = null;
+let userRuntimeRootOverride: string | null = null;
+let bundledRuntimeRootOverride: string | null = null;
 let packageManagerOverride: RuntimePackageManager | null = null;
 let platformOverride: NodeJS.Platform | null = null;
-
-function getChannelRuntimeSpec(
-  channelId: SupportedChannelId,
-): ChannelRuntimeSpec {
-  return CHANNEL_RUNTIME_SPECS[channelId];
-}
 
 function getPackageDisplayName(packageSpec: string): string {
   if (!packageSpec.startsWith("@")) {
@@ -47,19 +36,75 @@ function getPackageDisplayName(packageSpec: string): string {
   return atIndex > 0 ? packageSpec.slice(0, atIndex) : packageSpec;
 }
 
+function getRuntimePackagePath(runtimeDir: string): string {
+  return join(runtimeDir, "package.json");
+}
+
 export function getChannelRuntimeDir(channelId: SupportedChannelId): string {
-  const parentDir = runtimeRootOverride ?? getChannelDir(channelId);
+  const parentDir = userRuntimeRootOverride ?? getChannelDir(channelId);
   return join(parentDir, "runtime");
+}
+
+export function getBundledChannelRuntimeDir(
+  channelId: SupportedChannelId,
+): string | null {
+  const root =
+    bundledRuntimeRootOverride ?? process.env[CHANNEL_RUNTIME_ROOT_ENV] ?? null;
+  if (!root) {
+    return null;
+  }
+  return join(root, channelId, "runtime");
 }
 
 export function getChannelRuntimePackagePath(
   channelId: SupportedChannelId,
 ): string {
-  return join(getChannelRuntimeDir(channelId), "package.json");
+  return getRuntimePackagePath(getChannelRuntimeDir(channelId));
 }
 
-function getChannelRuntimeRequire(channelId: SupportedChannelId) {
-  return createRequire(getChannelRuntimePackagePath(channelId));
+function getRuntimeResolvers(channelId: SupportedChannelId): RuntimeResolver[] {
+  const resolvers: RuntimeResolver[] = [];
+  const bundledRuntimeDir = getBundledChannelRuntimeDir(channelId);
+
+  if (bundledRuntimeDir) {
+    resolvers.push({
+      runtimeDir: bundledRuntimeDir,
+      resolve: (moduleName) =>
+        createRequire(getRuntimePackagePath(bundledRuntimeDir)).resolve(
+          moduleName,
+        ),
+    });
+  }
+
+  const userRuntimeDir = getChannelRuntimeDir(channelId);
+  resolvers.push({
+    runtimeDir: userRuntimeDir,
+    resolve: (moduleName) =>
+      createRequire(getRuntimePackagePath(userRuntimeDir)).resolve(moduleName),
+  });
+
+  return resolvers;
+}
+
+export function getChannelRuntimeSearchPaths(
+  channelId: SupportedChannelId,
+): string[] {
+  return getRuntimeResolvers(channelId).map((resolver) => resolver.runtimeDir);
+}
+
+function resolveChannelRuntimeModulePath(
+  channelId: SupportedChannelId,
+  moduleName: string,
+): string | null {
+  for (const resolver of getRuntimeResolvers(channelId)) {
+    try {
+      return resolver.resolve(moduleName);
+    } catch {
+      // Try next resolver.
+    }
+  }
+
+  return null;
 }
 
 export function getChannelInstallCommand(
@@ -71,22 +116,20 @@ export function getChannelInstallCommand(
 export function buildMissingChannelRuntimeError(
   channelId: SupportedChannelId,
 ): Error {
-  const spec = getChannelRuntimeSpec(channelId);
+  const spec = getChannelPluginMetadata(channelId);
   return new Error(
-    `${spec.displayName} support is not installed. Run: ${getChannelInstallCommand(channelId)}`,
+    `${spec.displayName} support is not installed. Run: ${getChannelInstallCommand(channelId)} or start the listener with --install-channel-runtimes.`,
   );
 }
 
 export function isChannelRuntimeInstalled(
   channelId: SupportedChannelId,
 ): boolean {
-  const spec = getChannelRuntimeSpec(channelId);
-  try {
-    getChannelRuntimeRequire(channelId).resolve(spec.loadModule);
-    return true;
-  } catch {
-    return false;
-  }
+  const spec = getChannelPluginMetadata(channelId);
+  return spec.runtimeModules.every(
+    (moduleName) =>
+      resolveChannelRuntimeModulePath(channelId, moduleName) !== null,
+  );
 }
 
 async function writeChannelRuntimeManifest(
@@ -139,12 +182,12 @@ function getInstallArgs(
 export async function installChannelRuntime(
   channelId: SupportedChannelId,
 ): Promise<void> {
-  const spec = getChannelRuntimeSpec(channelId);
+  const spec = getChannelPluginMetadata(channelId);
   await writeChannelRuntimeManifest(channelId);
 
   const packageManager = resolveInstallPackageManager();
   const command = getPackageManagerExecutable(packageManager);
-  const args = getInstallArgs(packageManager, spec.installPackages);
+  const args = getInstallArgs(packageManager, spec.runtimePackages);
 
   await new Promise<void>((resolve, reject) => {
     const proc = spawnInstallProcess(command, args, {
@@ -174,8 +217,8 @@ export async function ensureChannelRuntimeInstalled(
     return false;
   }
 
-  const spec = getChannelRuntimeSpec(channelId);
-  const packageLabels = spec.installPackages.map((pkg) =>
+  const spec = getChannelPluginMetadata(channelId);
+  const packageLabels = spec.runtimePackages.map((pkg) =>
     basename(getPackageDisplayName(pkg)),
   );
   console.log(
@@ -188,13 +231,18 @@ export async function ensureChannelRuntimeInstalled(
 
 export async function loadChannelRuntimeModule<T>(
   channelId: SupportedChannelId,
+  moduleName?: string,
 ): Promise<T> {
-  const spec = getChannelRuntimeSpec(channelId);
+  const spec = getChannelPluginMetadata(channelId);
+  const targetModule = moduleName ?? spec.runtimeModules[0];
+  if (!targetModule) {
+    throw new Error(
+      `No runtime module is configured for channel "${channelId}".`,
+    );
+  }
 
-  let resolvedPath: string;
-  try {
-    resolvedPath = getChannelRuntimeRequire(channelId).resolve(spec.loadModule);
-  } catch {
+  const resolvedPath = resolveChannelRuntimeModulePath(channelId, targetModule);
+  if (!resolvedPath) {
     throw buildMissingChannelRuntimeError(channelId);
   }
 
@@ -204,12 +252,14 @@ export async function loadChannelRuntimeModule<T>(
 export function __testOverrideChannelRuntimeDeps(
   overrides: {
     runtimeRoot?: string | null;
+    bundledRuntimeRoot?: string | null;
     spawnImpl?: InstallProcessFactory | null;
     packageManager?: RuntimePackageManager | null;
     platform?: NodeJS.Platform | null;
   } | null,
 ): void {
-  runtimeRootOverride = overrides?.runtimeRoot ?? null;
+  userRuntimeRootOverride = overrides?.runtimeRoot ?? null;
+  bundledRuntimeRootOverride = overrides?.bundledRuntimeRoot ?? null;
   spawnInstallProcess = overrides?.spawnImpl ?? spawn;
   packageManagerOverride = overrides?.packageManager ?? null;
   platformOverride = overrides?.platform ?? null;

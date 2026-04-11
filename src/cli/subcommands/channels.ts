@@ -18,6 +18,12 @@ import {
   getPendingPairings,
   loadPairingStore,
 } from "../../channels/pairing";
+import {
+  getChannelDisplayName,
+  getSupportedChannelIds,
+  isSupportedChannelId,
+  loadChannelPlugin,
+} from "../../channels/pluginRegistry";
 import { completePairing } from "../../channels/registry";
 import {
   addRoute,
@@ -30,7 +36,7 @@ import {
   getChannelRuntimeDir,
   isChannelRuntimeInstalled,
 } from "../../channels/runtimeDeps";
-import type { ChannelRoute } from "../../channels/types";
+import type { ChannelRoute, SupportedChannelId } from "../../channels/types";
 
 // ── Usage ───────────────────────────────────────────────────────────
 
@@ -70,6 +76,9 @@ Recommended Telegram flow:
   5. In the target ADE/desktop conversation, run:
      /channels telegram pair <code>
 
+Headless deploy flow:
+  letta server --channels telegram --install-channel-runtimes
+
 State files:
   ~/.letta/channels/telegram/config.yaml
   ~/.letta/channels/telegram/pairing.yaml
@@ -108,79 +117,98 @@ function getConversationId(fromArgs?: string): string {
   return fromArgs || process.env.LETTA_CONVERSATION_ID || "default";
 }
 
+function assertKnownChannelId(channel: string): SupportedChannelId {
+  if (!isSupportedChannelId(channel)) {
+    const supported = getSupportedChannelIds().join(", ");
+    throw new Error(`Unknown channel: "${channel}". Supported: ${supported}`);
+  }
+  return channel;
+}
+
 // ── Handlers ────────────────────────────────────────────────────────
 
 async function handleInstall(channel: string): Promise<number> {
-  if (channel === "telegram") {
-    const { installTelegramRuntime } = await import(
-      "../../channels/telegram/runtime"
-    );
-
-    if (isChannelRuntimeInstalled("telegram")) {
-      console.log(
-        JSON.stringify(
-          {
-            success: true,
-            channel,
-            installed: true,
-            runtimeDir: getChannelRuntimeDir("telegram"),
-            alreadyInstalled: true,
-          },
-          null,
-          2,
-        ),
-      );
-      return 0;
-    }
-
-    try {
-      await installTelegramRuntime();
-      console.log(
-        JSON.stringify(
-          {
-            success: true,
-            channel,
-            installed: true,
-            runtimeDir: getChannelRuntimeDir("telegram"),
-          },
-          null,
-          2,
-        ),
-      );
-      return 0;
-    } catch (error) {
-      console.error(
-        `Failed to install Telegram runtime: ${error instanceof Error ? error.message : "unknown error"}`,
-      );
-      return 1;
-    }
+  let channelId: SupportedChannelId;
+  try {
+    channelId = assertKnownChannelId(channel);
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    return 1;
   }
 
-  console.error(`Unknown channel: "${channel}". Supported: telegram`);
-  return 1;
+  if (isChannelRuntimeInstalled(channelId)) {
+    console.log(
+      JSON.stringify(
+        {
+          success: true,
+          channel: channelId,
+          installed: true,
+          runtimeDir: getChannelRuntimeDir(channelId),
+          alreadyInstalled: true,
+        },
+        null,
+        2,
+      ),
+    );
+    return 0;
+  }
+
+  try {
+    const { installChannelRuntime } = await import(
+      "../../channels/runtimeDeps"
+    );
+    await installChannelRuntime(channelId);
+    console.log(
+      JSON.stringify(
+        {
+          success: true,
+          channel: channelId,
+          installed: true,
+          runtimeDir: getChannelRuntimeDir(channelId),
+        },
+        null,
+        2,
+      ),
+    );
+    return 0;
+  } catch (error) {
+    console.error(
+      `Failed to install ${getChannelDisplayName(channelId)} runtime: ${error instanceof Error ? error.message : "unknown error"}`,
+    );
+    return 1;
+  }
 }
 
 async function handleConfigure(channel: string): Promise<number> {
-  if (channel === "telegram") {
-    const { runTelegramSetup } = await import("../../channels/telegram/setup");
-    const success = await runTelegramSetup();
-    return success ? 0 : 1;
+  let channelId: SupportedChannelId;
+  try {
+    channelId = assertKnownChannelId(channel);
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    return 1;
   }
 
-  console.error(`Unknown channel: "${channel}". Supported: telegram`);
-  return 1;
+  const plugin = await loadChannelPlugin(channelId);
+  if (!plugin.runSetup) {
+    console.error(
+      `Channel "${channelId}" does not support interactive setup yet.`,
+    );
+    return 1;
+  }
+
+  const success = await plugin.runSetup();
+  return success ? 0 : 1;
 }
 
 function handleStatus(): number {
-  const channels = ["telegram"];
   const result: Record<string, unknown> = {};
 
-  for (const channelId of channels) {
+  for (const channelId of getSupportedChannelIds()) {
     const config = readChannelConfig(channelId);
     if (!config) {
       result[channelId] = {
         configured: false,
-        runtimeInstalled: isChannelRuntimeInstalled("telegram"),
+        runtimeInstalled: isChannelRuntimeInstalled(channelId),
       };
       continue;
     }
@@ -195,7 +223,7 @@ function handleStatus(): number {
       configured: true,
       enabled: config.enabled,
       dmPolicy: config.dmPolicy,
-      runtimeInstalled: isChannelRuntimeInstalled("telegram"),
+      runtimeInstalled: isChannelRuntimeInstalled(channelId),
       routes: routes.length,
       pendingPairings: pending.length,
       approvedUsers: approved.length,
@@ -212,12 +240,17 @@ function handleRouteList(
   const channelId = values.channel;
 
   if (channelId) {
+    if (!isSupportedChannelId(channelId)) {
+      console.error(
+        `Unknown channel: "${channelId}". Supported: ${getSupportedChannelIds().join(", ")}`,
+      );
+      return 1;
+    }
     loadRoutes(channelId);
     const routes = getRoutesForChannel(channelId);
     console.log(JSON.stringify(routes, null, 2));
   } else {
-    // Load all known channels
-    for (const ch of ["telegram"]) {
+    for (const ch of getSupportedChannelIds()) {
       loadRoutes(ch);
     }
     const routes = getAllRoutes();
@@ -237,6 +270,12 @@ function handleRouteAdd(
 
   if (!channelId) {
     console.error("Error: --channel is required.");
+    return 1;
+  }
+  if (!isSupportedChannelId(channelId)) {
+    console.error(
+      `Unknown channel: "${channelId}". Supported: ${getSupportedChannelIds().join(", ")}`,
+    );
     return 1;
   }
   if (!chatId) {
@@ -262,7 +301,7 @@ function handleRouteAdd(
   addRoute(channelId, route);
   console.log(JSON.stringify({ success: true, route }, null, 2));
   console.warn(
-    "Note: If a listener is running, restart it or use /channels telegram enable via WS.",
+    `Note: If a listener is running, restart it or use /channels ${channelId} enable via WS.`,
   );
   return 0;
 }
@@ -275,6 +314,12 @@ function handleRouteRemove(
 
   if (!channelId) {
     console.error("Error: --channel is required.");
+    return 1;
+  }
+  if (!isSupportedChannelId(channelId)) {
+    console.error(
+      `Unknown channel: "${channelId}". Supported: ${getSupportedChannelIds().join(", ")}`,
+    );
     return 1;
   }
   if (!chatId) {
@@ -303,6 +348,12 @@ async function handlePair(
 
   if (!channelId) {
     console.error("Error: --channel is required.");
+    return 1;
+  }
+  if (!isSupportedChannelId(channelId)) {
+    console.error(
+      `Unknown channel: "${channelId}". Supported: ${getSupportedChannelIds().join(", ")}`,
+    );
     return 1;
   }
   if (!code) {

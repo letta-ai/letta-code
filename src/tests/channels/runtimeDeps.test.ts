@@ -13,6 +13,7 @@ import { join } from "node:path";
 const {
   __testOverrideChannelRuntimeDeps,
   ensureChannelRuntimeInstalled,
+  getBundledChannelRuntimeDir,
   getChannelRuntimeDir,
   getChannelRuntimePackagePath,
   installChannelRuntime,
@@ -42,15 +43,20 @@ function writeFakeGrammyModule(runtimeDir: string): void {
 }
 
 let runtimeRoot: string;
+let bundledRuntimeRoot: string;
 
 beforeEach(() => {
   runtimeRoot = mkdtempSync(join(tmpdir(), "letta-channel-runtime-"));
+  bundledRuntimeRoot = mkdtempSync(
+    join(tmpdir(), "letta-channel-runtime-bundled-"),
+  );
   __testOverrideChannelRuntimeDeps({ runtimeRoot });
 });
 
 afterEach(() => {
   __testOverrideChannelRuntimeDeps(null);
   rmSync(runtimeRoot, { recursive: true, force: true });
+  rmSync(bundledRuntimeRoot, { recursive: true, force: true });
 });
 
 test("loadChannelRuntimeModule throws a friendly install hint when runtime is missing", async () => {
@@ -63,6 +69,27 @@ test("loadChannelRuntimeModule throws a friendly install hint when runtime is mi
 test("loadChannelRuntimeModule resolves a module from the channel runtime directory", async () => {
   const runtimeDir = getChannelRuntimeDir("telegram");
   writeFakeGrammyModule(runtimeDir);
+
+  expect(isChannelRuntimeInstalled("telegram")).toBe(true);
+
+  const mod = await loadChannelRuntimeModule<{ Bot: { label: string } }>(
+    "telegram",
+  );
+  expect(mod.Bot.label).toBe("fake-grammy");
+});
+
+test("loadChannelRuntimeModule resolves a module from the bundled runtime directory first", async () => {
+  __testOverrideChannelRuntimeDeps({
+    runtimeRoot,
+    bundledRuntimeRoot,
+  });
+
+  const bundledRuntimeDir = getBundledChannelRuntimeDir("telegram");
+  if (!bundledRuntimeDir) {
+    throw new Error("Expected bundled runtime dir to exist");
+  }
+
+  writeFakeGrammyModule(bundledRuntimeDir);
 
   expect(isChannelRuntimeInstalled("telegram")).toBe(true);
 
