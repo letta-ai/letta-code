@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type { InboundChannelMessage } from "../../channels/types";
 import {
@@ -11,8 +14,10 @@ function expectTextParts(
   content: MessageCreate["content"],
 ): [{ type: "text"; text: string }, { type: "text"; text: string }] {
   expect(Array.isArray(content)).toBe(true);
-  const parts = content as Array<{ type: "text"; text: string }>;
-  expect(parts).toHaveLength(2);
+  const parts = (content as Array<{ type: "text"; text: string }>).filter(
+    (part) => part.type === "text",
+  );
+  expect(parts.length).toBeGreaterThanOrEqual(2);
 
   const [reminderPart, notificationPart] = parts;
   if (!reminderPart || !notificationPart) {
@@ -23,7 +28,7 @@ function expectTextParts(
 }
 
 describe("formatChannelNotification", () => {
-  test("formats structured content parts with reminder first and xml second", () => {
+  test("formats structured content parts with reminder first and xml second", async () => {
     const msg: InboundChannelMessage = {
       channel: "telegram",
       chatId: "12345",
@@ -34,7 +39,7 @@ describe("formatChannelNotification", () => {
       messageId: "msg-42",
     };
 
-    const content = formatChannelNotification(msg);
+    const content = await formatChannelNotification(msg);
     const [reminderPart, notificationPart] = expectTextParts(content);
 
     expect(reminderPart.text).toContain("<system-reminder>");
@@ -110,5 +115,81 @@ describe("formatChannelNotification", () => {
 
     expect(xml).not.toContain("sender_name=");
     expect(xml).not.toContain("message_id=");
+  });
+
+  test("serializes attachment metadata in xml when attachments are present", () => {
+    const msg: InboundChannelMessage = {
+      channel: "telegram",
+      chatId: "123",
+      senderId: "456",
+      text: "",
+      timestamp: Date.now(),
+      attachments: [
+        {
+          kind: "file",
+          name: "report.pdf",
+          mimeType: "application/pdf",
+          sizeBytes: 2048,
+          localPath: "/tmp/report.pdf",
+        },
+      ],
+    };
+
+    const xml = buildChannelNotificationXml(msg);
+
+    expect(xml).toContain("<attachments>");
+    expect(xml).toContain('kind="file"');
+    expect(xml).toContain('name="report.pdf"');
+    expect(xml).toContain('mime_type="application/pdf"');
+    expect(xml).toContain('size_bytes="2048"');
+    expect(xml).toContain('local_path="/tmp/report.pdf"');
+  });
+
+  test("appends inline image parts for downloaded image attachments", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "letta-channel-image-"));
+    const imagePath = join(dir, "tiny.png");
+    writeFileSync(
+      imagePath,
+      Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+XM7sAAAAASUVORK5CYII=",
+        "base64",
+      ),
+    );
+
+    try {
+      const msg: InboundChannelMessage = {
+        channel: "telegram",
+        chatId: "123",
+        senderId: "456",
+        text: "see attached",
+        timestamp: Date.now(),
+        attachments: [
+          {
+            kind: "image",
+            name: "tiny.png",
+            mimeType: "image/png",
+            localPath: imagePath,
+          },
+        ],
+      };
+
+      const content = await formatChannelNotification(msg);
+      expect(Array.isArray(content)).toBe(true);
+      if (!Array.isArray(content)) {
+        return;
+      }
+
+      expect(content).toHaveLength(3);
+      expect(content[2]).toEqual({
+        type: "image",
+        source: {
+          type: "base64",
+          media_type: "image/png",
+          data: expect.any(String),
+        },
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

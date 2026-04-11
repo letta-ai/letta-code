@@ -282,7 +282,7 @@ export class ChannelRegistry {
     }
 
     // 3. Format as XML
-    const content = formatChannelNotification(msg);
+    const content = await formatChannelNotification(msg);
 
     // 4. Deliver or buffer
     if (this.isReady()) {

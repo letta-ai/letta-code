@@ -43,6 +43,21 @@ export interface ChannelAdapter {
 
 // ── Message types ─────────────────────────────────────────────────
 
+export type InboundChannelAttachmentKind = "image" | "file" | "audio" | "video";
+
+export interface InboundChannelAttachment {
+  /** Normalized attachment kind used by channel formatters/adapters. */
+  kind: InboundChannelAttachmentKind;
+  /** Best-effort original filename, if provided by the platform. */
+  name?: string;
+  /** MIME type reported by the platform or inferred from filename. */
+  mimeType?: string;
+  /** Attachment size in bytes, if reported by the platform. */
+  sizeBytes?: number;
+  /** Local filesystem path where the inbound attachment was saved. */
+  localPath?: string;
+}
+
 export interface InboundChannelMessage {
   /** Platform identifier, e.g. "telegram". */
   channel: string;
@@ -58,6 +73,8 @@ export interface InboundChannelMessage {
   timestamp: number;
   /** Platform message ID for threading/replies. */
   messageId?: string;
+  /** Structured metadata for inbound attachments. */
+  attachments?: InboundChannelAttachment[];
   /** Raw platform-specific event data for future use. */
   raw?: unknown;
 }

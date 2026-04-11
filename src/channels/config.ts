@@ -34,6 +34,10 @@ export function getChannelPairingPath(channelId: string): string {
   return join(getChannelDir(channelId), "pairing.yaml");
 }
 
+export function getChannelInboundMediaDir(channelId: string): string {
+  return join(getChannelDir(channelId), "inbound");
+}
+
 // ── YAML helpers ──────────────────────────────────────────────────
 
 /**

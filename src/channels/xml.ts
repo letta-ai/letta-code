@@ -5,10 +5,13 @@
  * Follows the same escaping patterns used in taskNotifications.ts.
  */
 
+import { promises as fs } from "node:fs";
+import * as path from "node:path";
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
+import { resizeImageIfNeeded } from "../cli/helpers/imageResize";
 import { getLocalTime } from "../cli/helpers/sessionContext";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "../constants";
-import type { InboundChannelMessage } from "./types";
+import type { InboundChannelAttachment, InboundChannelMessage } from "./types";
 
 /**
  * Escape special XML characters in text content.
@@ -70,9 +73,25 @@ export function buildChannelNotificationXml(
   }
 
   const attrString = attrs.join(" ");
-  const escapedText = escapeXml(msg.text);
+  if (!msg.attachments || msg.attachments.length === 0) {
+    const escapedText = escapeXml(msg.text);
+    return `<channel-notification ${attrString}>\n${escapedText}\n</channel-notification>`;
+  }
 
-  return `<channel-notification ${attrString}>\n${escapedText}\n</channel-notification>`;
+  const lines = [`<channel-notification ${attrString}>`];
+
+  if (msg.text.length > 0) {
+    lines.push(`  <text>${escapeXml(msg.text)}</text>`);
+  }
+
+  lines.push("  <attachments>");
+  for (const attachment of msg.attachments) {
+    lines.push(`    ${buildAttachmentXml(attachment)}`);
+  }
+  lines.push("  </attachments>");
+  lines.push("</channel-notification>");
+
+  return lines.join("\n");
 }
 
 /**
@@ -82,11 +101,133 @@ export function buildChannelNotificationXml(
  * UIs that already know how to hide pure system-reminder parts can do so
  * without needing to parse concatenated XML blobs.
  */
-export function formatChannelNotification(
+export async function formatChannelNotification(
   msg: InboundChannelMessage,
-): MessageCreate["content"] {
+): Promise<MessageCreate["content"]> {
+  const imageParts = await buildInlineImageParts(msg.attachments);
+
   return [
     { type: "text", text: buildChannelReminderText(msg) },
     { type: "text", text: buildChannelNotificationXml(msg) },
+    ...imageParts,
   ] as MessageCreate["content"];
+}
+
+const INLINE_IMAGE_MIME_TYPES = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/gif",
+  "image/webp",
+]);
+
+const INLINE_IMAGE_EXTENSIONS = new Set([
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".gif",
+  ".webp",
+]);
+
+function buildAttachmentXml(attachment: InboundChannelAttachment): string {
+  const attrs = [`kind="${escapeXml(attachment.kind)}"`];
+
+  if (attachment.name) {
+    attrs.push(`name="${escapeXml(attachment.name)}"`);
+  }
+  if (attachment.mimeType) {
+    attrs.push(`mime_type="${escapeXml(attachment.mimeType)}"`);
+  }
+  if (typeof attachment.sizeBytes === "number") {
+    attrs.push(`size_bytes="${attachment.sizeBytes}"`);
+  }
+  if (attachment.localPath) {
+    attrs.push(`local_path="${escapeXml(attachment.localPath)}"`);
+  }
+
+  return `<attachment ${attrs.join(" ")} />`;
+}
+
+function normalizeImageMimeType(mimeType?: string): string | null {
+  if (!mimeType) {
+    return null;
+  }
+  const normalized = mimeType.split(";")[0]?.trim().toLowerCase();
+  return normalized && INLINE_IMAGE_MIME_TYPES.has(normalized)
+    ? normalized
+    : null;
+}
+
+function inferImageMimeTypeFromPath(filePath: string): string | null {
+  const ext = path.extname(filePath).toLowerCase();
+  if (!INLINE_IMAGE_EXTENSIONS.has(ext)) {
+    return null;
+  }
+
+  if (ext === ".png") {
+    return "image/png";
+  }
+  if (ext === ".gif") {
+    return "image/gif";
+  }
+  if (ext === ".webp") {
+    return "image/webp";
+  }
+
+  return "image/jpeg";
+}
+
+function canInlineImageAttachment(
+  attachment: InboundChannelAttachment,
+): attachment is InboundChannelAttachment & { localPath: string } {
+  if (attachment.kind !== "image" || !attachment.localPath) {
+    return false;
+  }
+
+  return Boolean(
+    normalizeImageMimeType(attachment.mimeType) ??
+      inferImageMimeTypeFromPath(attachment.localPath),
+  );
+}
+
+async function buildInlineImagePart(
+  attachment: InboundChannelAttachment & { localPath: string },
+): Promise<Exclude<MessageCreate["content"], string>[number] | null> {
+  const mediaType =
+    normalizeImageMimeType(attachment.mimeType) ??
+    inferImageMimeTypeFromPath(attachment.localPath);
+  if (!mediaType) {
+    return null;
+  }
+
+  try {
+    const buffer = await fs.readFile(attachment.localPath);
+    const resized = await resizeImageIfNeeded(buffer, mediaType);
+    return {
+      type: "image",
+      source: {
+        type: "base64",
+        media_type: resized.mediaType,
+        data: resized.data,
+      },
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function buildInlineImageParts(
+  attachments: InboundChannelAttachment[] | undefined,
+): Promise<Array<Exclude<MessageCreate["content"], string>[number]>> {
+  const inlineCandidates = (attachments ?? []).filter(canInlineImageAttachment);
+  if (inlineCandidates.length === 0) {
+    return [];
+  }
+
+  const parts = await Promise.all(
+    inlineCandidates.map((attachment) => buildInlineImagePart(attachment)),
+  );
+  return parts.filter(
+    (part): part is Exclude<MessageCreate["content"], string>[number] =>
+      part !== null,
+  );
 }
