@@ -9,7 +9,7 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
-import type { DmPolicy } from "../channels/types";
+import type { DmPolicy, SlackChannelMode } from "../channels/types";
 import type { CronTask } from "../cron";
 
 /**
@@ -137,7 +137,7 @@ export interface ReflectionSettingsSnapshot {
   step_count: number;
 }
 
-export type ChannelId = "telegram";
+export type ChannelId = "telegram" | "slack";
 
 export interface ChannelSummary {
   channel_id: ChannelId;
@@ -151,13 +151,23 @@ export interface ChannelSummary {
   routes_count: number;
 }
 
-export interface ChannelConfigSnapshot {
-  channel_id: ChannelId;
-  enabled: boolean;
-  dm_policy: DmPolicy;
-  allowed_users: string[];
-  has_token: boolean;
-}
+export type ChannelConfigSnapshot =
+  | {
+      channel_id: "telegram";
+      enabled: boolean;
+      dm_policy: DmPolicy;
+      allowed_users: string[];
+      has_token: boolean;
+    }
+  | {
+      channel_id: "slack";
+      enabled: boolean;
+      mode: SlackChannelMode;
+      dm_policy: DmPolicy;
+      allowed_users: string[];
+      has_bot_token: boolean;
+      has_app_token: boolean;
+    };
 
 export interface ChannelPendingPairing {
   code: string;
@@ -175,6 +185,17 @@ export interface ChannelRouteSnapshot {
   conversation_id: string;
   enabled: boolean;
   created_at: string;
+}
+
+export interface ChannelTargetSnapshot {
+  channel_id: ChannelId;
+  target_id: string;
+  target_type: "channel";
+  chat_id: string;
+  label: string;
+  discovered_at: string;
+  last_seen_at: string;
+  last_message_id?: string;
 }
 
 /**
@@ -795,11 +816,19 @@ export interface ChannelSetConfigCommand {
   type: "channel_set_config";
   request_id: string;
   channel_id: ChannelId;
-  config: {
-    token?: string;
-    dm_policy?: DmPolicy;
-    allowed_users?: string[];
-  };
+  config:
+    | {
+        token?: string;
+        dm_policy?: DmPolicy;
+        allowed_users?: string[];
+      }
+    | {
+        bot_token?: string;
+        app_token?: string;
+        mode?: SlackChannelMode;
+        dm_policy?: DmPolicy;
+        allowed_users?: string[];
+      };
 }
 
 export interface ChannelStartCommand {
@@ -834,6 +863,20 @@ export interface ChannelRoutesListCommand {
   channel_id?: ChannelId;
   agent_id?: string;
   conversation_id?: string;
+}
+
+export interface ChannelTargetsListCommand {
+  type: "channel_targets_list";
+  request_id: string;
+  channel_id: ChannelId;
+}
+
+export interface ChannelTargetBindCommand {
+  type: "channel_target_bind";
+  request_id: string;
+  channel_id: ChannelId;
+  runtime: RuntimeScope;
+  target_id: string;
 }
 
 export interface ChannelRouteRemoveCommand {
@@ -998,6 +1041,26 @@ export interface ChannelRouteRemoveResponseMessage {
   error?: string;
 }
 
+export interface ChannelTargetsListResponseMessage {
+  type: "channel_targets_list_response";
+  request_id: string;
+  success: boolean;
+  channel_id: ChannelId;
+  targets: ChannelTargetSnapshot[];
+  error?: string;
+}
+
+export interface ChannelTargetBindResponseMessage {
+  type: "channel_target_bind_response";
+  request_id: string;
+  success: boolean;
+  channel_id: ChannelId;
+  target_id: string;
+  chat_id?: string;
+  route?: ChannelRouteSnapshot | null;
+  error?: string;
+}
+
 export interface ChannelsUpdatedMessage {
   type: "channels_updated";
   timestamp: number;
@@ -1016,6 +1079,12 @@ export interface ChannelRoutesUpdatedMessage {
   channel_id: ChannelId;
   agent_id?: string;
   conversation_id?: string | null;
+}
+
+export interface ChannelTargetsUpdatedMessage {
+  type: "channel_targets_updated";
+  timestamp: number;
+  channel_id: ChannelId;
 }
 
 /**
@@ -1126,6 +1195,8 @@ export type WsProtocolCommand =
   | ChannelPairingsListCommand
   | ChannelPairingBindCommand
   | ChannelRoutesListCommand
+  | ChannelTargetsListCommand
+  | ChannelTargetBindCommand
   | ChannelRouteRemoveCommand
   | ExecuteCommandCommand
   | SearchBranchesCommand
@@ -1147,9 +1218,12 @@ export type WsProtocolMessage =
   | ChannelPairingsListResponseMessage
   | ChannelPairingBindResponseMessage
   | ChannelRoutesListResponseMessage
+  | ChannelTargetsListResponseMessage
+  | ChannelTargetBindResponseMessage
   | ChannelRouteRemoveResponseMessage
   | ChannelsUpdatedMessage
   | ChannelPairingsUpdatedMessage
-  | ChannelRoutesUpdatedMessage;
+  | ChannelRoutesUpdatedMessage
+  | ChannelTargetsUpdatedMessage;
 
 export type { StopReasonType };

@@ -16,16 +16,28 @@ import {
   initializeChannels,
 } from "./registry";
 import {
+  addRoute,
   getRoute,
   getRoutesForChannel,
   loadRoutes,
   removeRoute,
+  removeRouteInMemory,
 } from "./routing";
+import {
+  getChannelTarget,
+  listChannelTargets,
+  loadTargetStore,
+  removeChannelTarget,
+  upsertChannelTarget,
+} from "./targets";
 import type {
+  ChannelBindableTarget,
   ChannelConfig,
   ChannelRoute,
   DmPolicy,
   PendingPairing,
+  SlackChannelConfig,
+  SlackChannelMode,
   SupportedChannelId,
   TelegramChannelConfig,
 } from "./types";
@@ -42,13 +54,23 @@ export interface ChannelSummary {
   routesCount: number;
 }
 
-export interface ChannelConfigSnapshot {
-  channelId: SupportedChannelId;
-  enabled: boolean;
-  dmPolicy: DmPolicy;
-  allowedUsers: string[];
-  hasToken: boolean;
-}
+export type ChannelConfigSnapshot =
+  | {
+      channelId: "telegram";
+      enabled: boolean;
+      dmPolicy: DmPolicy;
+      allowedUsers: string[];
+      hasToken: boolean;
+    }
+  | {
+      channelId: "slack";
+      enabled: boolean;
+      mode: SlackChannelMode;
+      dmPolicy: DmPolicy;
+      allowedUsers: string[];
+      hasBotToken: boolean;
+      hasAppToken: boolean;
+    };
 
 export interface PendingPairingSnapshot {
   code: string;
@@ -68,8 +90,22 @@ export interface ChannelRouteSnapshot {
   createdAt: string;
 }
 
+export interface ChannelTargetSnapshot {
+  channelId: SupportedChannelId;
+  targetId: string;
+  targetType: "channel";
+  chatId: string;
+  label: string;
+  discoveredAt: string;
+  lastSeenAt: string;
+  lastMessageId?: string;
+}
+
 export interface ChannelConfigPatch {
   token?: string;
+  botToken?: string;
+  appToken?: string;
+  mode?: SlackChannelMode;
   dmPolicy?: DmPolicy;
   allowedUsers?: string[];
 }
@@ -82,16 +118,29 @@ function assertSupportedChannelId(
   }
 }
 
-function toConfigSnapshot(
-  channelId: SupportedChannelId,
-  config: ChannelConfig,
-): ChannelConfigSnapshot {
+function getErrorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : fallback;
+}
+
+function toConfigSnapshot(config: ChannelConfig): ChannelConfigSnapshot {
+  if (config.channel === "telegram") {
+    return {
+      channelId: "telegram",
+      enabled: config.enabled,
+      dmPolicy: config.dmPolicy,
+      allowedUsers: [...config.allowedUsers],
+      hasToken: config.token.trim().length > 0,
+    };
+  }
+
   return {
-    channelId,
+    channelId: "slack",
     enabled: config.enabled,
+    mode: config.mode,
     dmPolicy: config.dmPolicy,
     allowedUsers: [...config.allowedUsers],
-    hasToken: config.token.trim().length > 0,
+    hasBotToken: config.botToken.trim().length > 0,
+    hasAppToken: config.appToken.trim().length > 0,
   };
 }
 
@@ -125,11 +174,70 @@ function toRouteSnapshot(
   };
 }
 
+function toTargetSnapshot(
+  channelId: SupportedChannelId,
+  target: ChannelBindableTarget,
+): ChannelTargetSnapshot {
+  return {
+    channelId,
+    targetId: target.targetId,
+    targetType: target.targetType,
+    chatId: target.chatId,
+    label: target.label,
+    discoveredAt: target.discoveredAt,
+    lastSeenAt: target.lastSeenAt,
+    lastMessageId: target.lastMessageId,
+  };
+}
+
+function isConfigReadyToStart(config: ChannelConfig): boolean {
+  if (config.channel === "telegram") {
+    return config.token.trim().length > 0;
+  }
+  return config.botToken.trim().length > 0 && config.appToken.trim().length > 0;
+}
+
+function getMissingCredentialError(config: ChannelConfig): string {
+  if (config.channel === "telegram") {
+    return 'Channel "telegram" is missing a token. Configure it first.';
+  }
+  return 'Channel "slack" is missing a bot token or app token. Configure it first.';
+}
+
+function mergeChannelConfig(
+  channelId: SupportedChannelId,
+  existing: ChannelConfig | null,
+  patch: ChannelConfigPatch,
+): ChannelConfig {
+  if (channelId === "telegram") {
+    const telegramExisting = existing?.channel === "telegram" ? existing : null;
+    const merged: TelegramChannelConfig = {
+      channel: "telegram",
+      enabled: telegramExisting?.enabled ?? false,
+      token: patch.token ?? telegramExisting?.token ?? "",
+      dmPolicy: patch.dmPolicy ?? telegramExisting?.dmPolicy ?? "pairing",
+      allowedUsers: patch.allowedUsers ?? telegramExisting?.allowedUsers ?? [],
+    };
+    return merged;
+  }
+
+  const slackExisting = existing?.channel === "slack" ? existing : null;
+  const merged: SlackChannelConfig = {
+    channel: "slack",
+    enabled: slackExisting?.enabled ?? false,
+    mode: patch.mode ?? slackExisting?.mode ?? "socket",
+    botToken: patch.botToken ?? slackExisting?.botToken ?? "",
+    appToken: patch.appToken ?? slackExisting?.appToken ?? "",
+    dmPolicy: patch.dmPolicy ?? slackExisting?.dmPolicy ?? "pairing",
+    allowedUsers: patch.allowedUsers ?? slackExisting?.allowedUsers ?? [],
+  };
+  return merged;
+}
+
 export function listChannelSummaries(): ChannelSummary[] {
   const registry = getChannelRegistry();
   return getSupportedChannelIds().map((channelId) => {
     const config = readChannelConfig(channelId);
-
     if (!config) {
       return {
         channelId,
@@ -169,7 +277,7 @@ export function getChannelConfigSnapshot(
   if (!config) {
     return null;
   }
-  return toConfigSnapshot(channelId, config);
+  return toConfigSnapshot(config);
 }
 
 export async function setChannelConfigLive(
@@ -178,23 +286,18 @@ export async function setChannelConfigLive(
 ): Promise<ChannelConfigSnapshot> {
   assertSupportedChannelId(channelId);
 
-  const existing = readChannelConfig(channelId);
-  const merged: TelegramChannelConfig = {
-    channel: channelId,
-    enabled: existing?.enabled ?? false,
-    token: patch.token ?? existing?.token ?? "",
-    dmPolicy: patch.dmPolicy ?? existing?.dmPolicy ?? "pairing",
-    allowedUsers: patch.allowedUsers ?? existing?.allowedUsers ?? [],
-  };
-
+  const merged = mergeChannelConfig(
+    channelId,
+    readChannelConfig(channelId),
+    patch,
+  );
   writeChannelConfig(channelId, merged);
 
   if (merged.enabled) {
-    const registry = ensureChannelRegistry();
-    await registry.startChannel(channelId);
+    await ensureChannelRegistry().startChannel(channelId);
   }
 
-  return toConfigSnapshot(channelId, merged);
+  return toConfigSnapshot(merged);
 }
 
 export async function startChannelLive(
@@ -208,10 +311,8 @@ export async function startChannelLive(
       `Channel "${channelId}" is not configured. Configure it first.`,
     );
   }
-  if (!existing.token.trim()) {
-    throw new Error(
-      `Channel "${channelId}" is missing a token. Configure it first.`,
-    );
+  if (!isConfigReadyToStart(existing)) {
+    throw new Error(getMissingCredentialError(existing));
   }
 
   if (!existing.enabled) {
@@ -294,6 +395,94 @@ export function bindChannelPairing(
 
   return {
     chatId: result.chatId,
+    route: toRouteSnapshot(channelId, route),
+  };
+}
+
+export function listChannelTargetSnapshots(
+  channelId: string,
+): ChannelTargetSnapshot[] {
+  assertSupportedChannelId(channelId);
+  loadTargetStore(channelId);
+  return listChannelTargets(channelId).map((target) =>
+    toTargetSnapshot(channelId, target),
+  );
+}
+
+export function bindChannelTarget(
+  channelId: string,
+  targetId: string,
+  agentId: string,
+  conversationId: string,
+): { chatId: string; route: ChannelRouteSnapshot } {
+  assertSupportedChannelId(channelId);
+  loadRoutes(channelId);
+  loadTargetStore(channelId);
+
+  const target = getChannelTarget(channelId, targetId);
+  if (!target) {
+    throw new Error(`Unknown channel target: ${targetId}`);
+  }
+
+  const route: ChannelRoute = {
+    chatId: target.chatId,
+    agentId,
+    conversationId,
+    enabled: true,
+    createdAt: new Date().toISOString(),
+  };
+
+  try {
+    removeChannelTarget(channelId, targetId);
+  } catch (error) {
+    try {
+      upsertChannelTarget(channelId, target);
+    } catch (rollbackError) {
+      throw new Error(
+        `Failed to bind channel target: ${getErrorMessage(
+          error,
+          "Failed to remove pending target",
+        )}. Failed to restore pending target: ${getErrorMessage(
+          rollbackError,
+          "Target rollback failed",
+        )}`,
+      );
+    }
+    throw new Error(
+      `Failed to bind channel target: ${getErrorMessage(
+        error,
+        "Failed to remove pending target",
+      )}`,
+    );
+  }
+
+  try {
+    addRoute(channelId, route);
+  } catch (error) {
+    removeRouteInMemory(channelId, route.chatId);
+    try {
+      upsertChannelTarget(channelId, target);
+    } catch (rollbackError) {
+      throw new Error(
+        `Failed to bind channel target: ${getErrorMessage(
+          error,
+          "Failed to create route",
+        )}. Failed to restore pending target: ${getErrorMessage(
+          rollbackError,
+          "Target rollback failed",
+        )}`,
+      );
+    }
+    throw new Error(
+      `Failed to bind channel target: ${getErrorMessage(
+        error,
+        "Failed to create route",
+      )}. Changes were rolled back.`,
+    );
+  }
+
+  return {
+    chatId: route.chatId,
     route: toRouteSnapshot(channelId, route),
   };
 }

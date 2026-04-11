@@ -23,6 +23,18 @@ const CHANNEL_PLUGIN_REGISTRATIONS: Record<
       return telegramChannelPlugin;
     },
   },
+  slack: {
+    metadata: {
+      id: "slack",
+      displayName: "Slack",
+      runtimePackages: ["@slack/bolt@4.7.0"],
+      runtimeModules: ["@slack/bolt"],
+    },
+    load: async () => {
+      const { slackChannelPlugin } = await import("./slack/plugin");
+      return slackChannelPlugin;
+    },
+  },
 };
 
 export function isSupportedChannelId(

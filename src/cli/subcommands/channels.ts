@@ -135,7 +135,6 @@ async function handleInstall(channel: string): Promise<number> {
     console.error(error instanceof Error ? error.message : String(error));
     return 1;
   }
-
   if (isChannelRuntimeInstalled(channelId)) {
     console.log(
       JSON.stringify(
@@ -408,7 +407,9 @@ export async function runChannelsSubcommand(argv: string[]): Promise<number> {
     case "configure": {
       const channel = rest[0];
       if (!channel) {
-        console.error("Error: specify a channel to configure (e.g., telegram)");
+        console.error(
+          "Error: specify a channel to configure (e.g., telegram or slack)",
+        );
         return 1;
       }
       return handleConfigure(channel);

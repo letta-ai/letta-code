@@ -16,6 +16,10 @@ const TELEGRAM_CHANNEL_ID = "telegram";
 const TELEGRAM_PLACEHOLDER_PREFIX = "LCTELEGRAMHTMLPLACEHOLDER";
 const TELEGRAM_PLACEHOLDER_SUFFIX = "X";
 const TELEGRAM_PLACEHOLDER_PATTERN = /LCTELEGRAMHTMLPLACEHOLDER(\d+)X/g;
+const SLACK_PLACEHOLDER_PREFIX = "LCSLACKMRKDWNPLACEHOLDER";
+const SLACK_PLACEHOLDER_SUFFIX = "X";
+const SLACK_PLACEHOLDER_PATTERN = /LCSLACKMRKDWNPLACEHOLDER(\d+)X/g;
+const SLACK_ANGLE_TOKEN_RE = /<[^>\n]+>/g;
 
 type OutboundChannelFormatter = (
   text: string,
@@ -48,6 +52,21 @@ function restoreTelegramPlaceholders(
   placeholders: string[],
 ): string {
   return text.replace(TELEGRAM_PLACEHOLDER_PATTERN, (_match, index) => {
+    return placeholders[Number(index)] ?? "";
+  });
+}
+
+function createSlackPlaceholder(placeholders: string[], value: string): string {
+  const placeholder = `${SLACK_PLACEHOLDER_PREFIX}${placeholders.length}${SLACK_PLACEHOLDER_SUFFIX}`;
+  placeholders.push(value);
+  return placeholder;
+}
+
+function restoreSlackPlaceholders(
+  text: string,
+  placeholders: string[],
+): string {
+  return text.replace(SLACK_PLACEHOLDER_PATTERN, (_match, index) => {
     return placeholders[Number(index)] ?? "";
   });
 }
@@ -213,6 +232,188 @@ export function markdownToTelegramHtml(text: string): string {
   return formatTelegramText(text);
 }
 
+function escapeSlackMrkdwnSegment(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function isAllowedSlackAngleToken(token: string): boolean {
+  if (!token.startsWith("<") || !token.endsWith(">")) {
+    return false;
+  }
+  const inner = token.slice(1, -1);
+  return (
+    inner.startsWith("@") ||
+    inner.startsWith("#") ||
+    inner.startsWith("!") ||
+    inner.startsWith("mailto:") ||
+    inner.startsWith("tel:") ||
+    inner.startsWith("http://") ||
+    inner.startsWith("https://") ||
+    inner.startsWith("slack://")
+  );
+}
+
+function escapeSlackMrkdwnContent(text: string): string {
+  if (!text) {
+    return "";
+  }
+  if (!text.includes("&") && !text.includes("<") && !text.includes(">")) {
+    return text;
+  }
+
+  SLACK_ANGLE_TOKEN_RE.lastIndex = 0;
+  const out: string[] = [];
+  let lastIndex = 0;
+
+  for (
+    let match = SLACK_ANGLE_TOKEN_RE.exec(text);
+    match;
+    match = SLACK_ANGLE_TOKEN_RE.exec(text)
+  ) {
+    const matchIndex = match.index ?? 0;
+    out.push(escapeSlackMrkdwnSegment(text.slice(lastIndex, matchIndex)));
+    const token = match[0] ?? "";
+    out.push(
+      isAllowedSlackAngleToken(token) ? token : escapeSlackMrkdwnSegment(token),
+    );
+    lastIndex = matchIndex + token.length;
+  }
+
+  out.push(escapeSlackMrkdwnSegment(text.slice(lastIndex)));
+  return out.join("");
+}
+
+function escapeSlackMrkdwnText(text: string): string {
+  if (!text) {
+    return "";
+  }
+  if (!text.includes("&") && !text.includes("<") && !text.includes(">")) {
+    return text;
+  }
+
+  return text
+    .split("\n")
+    .map((line) => {
+      if (line.startsWith("> ")) {
+        return `> ${escapeSlackMrkdwnContent(line.slice(2))}`;
+      }
+      return escapeSlackMrkdwnContent(line);
+    })
+    .join("\n");
+}
+
+function replaceSlackFencedCodeBlocks(
+  text: string,
+  placeholders: string[],
+): string {
+  return text.replace(
+    /```([^\n`]*)\n?([\s\S]*?)```/g,
+    (_match, _lang, code) => {
+      const normalized = String(code).trimEnd();
+      return createSlackPlaceholder(
+        placeholders,
+        normalized.length > 0 ? `\`\`\`\n${normalized}\n\`\`\`` : "```\n```",
+      );
+    },
+  );
+}
+
+function replaceSlackInlineCode(text: string, placeholders: string[]): string {
+  return text.replace(/`([^`\n]+)`/g, (_match, code) => {
+    return createSlackPlaceholder(placeholders, `\`${String(code)}\``);
+  });
+}
+
+function applySlackInlineFormatting(text: string): string {
+  return text
+    .replace(/~~([^\s~](?:[\s\S]*?[^\s~])?)~~/g, "~$1~")
+    .replace(/(^|[^\w*])\*([^\s*](?:[\s\S]*?[^\s*])?)\*(?!\w)/g, "$1_$2_")
+    .replace(/\*\*\*([^\s*](?:[\s\S]*?[^\s*])?)\*\*\*/g, "_*$1*_")
+    .replace(/___([^\s_](?:[\s\S]*?[^\s_])?)___/g, "_*$1*_")
+    .replace(/\*\*([^\s*](?:[\s\S]*?[^\s*])?)\*\*/g, "*$1*")
+    .replace(/__([^\s_](?:[\s\S]*?[^\s_])?)__/g, "*$1*");
+}
+
+function formatSlackLinkLabel(text: string): string {
+  return applySlackInlineFormatting(escapeSlackMrkdwnText(text));
+}
+
+function replaceSlackMarkdownLinks(
+  text: string,
+  placeholders: string[],
+): string {
+  let result = "";
+  let index = 0;
+
+  while (index < text.length) {
+    if (text[index] !== "[") {
+      result += text[index];
+      index++;
+      continue;
+    }
+
+    const link = parseMarkdownLink(text, index);
+    if (!link) {
+      result += text[index];
+      index++;
+      continue;
+    }
+
+    result += createSlackPlaceholder(
+      placeholders,
+      `<${escapeSlackMrkdwnSegment(link.url)}|${formatSlackLinkLabel(link.label)}>`,
+    );
+    index = link.endIndex;
+  }
+
+  return result;
+}
+
+function normalizeSlackBlockFormatting(text: string): string {
+  return text
+    .split("\n")
+    .map((line) => {
+      const headingMatch = line.match(/^\s{0,3}#{1,6}\s+(.+)$/);
+      if (headingMatch) {
+        return `*${headingMatch[1]?.trim() ?? ""}*`;
+      }
+
+      const bulletMatch = line.match(/^(\s*)[-+*]\s+(.+)$/);
+      if (bulletMatch) {
+        return `${bulletMatch[1] ?? ""}• ${bulletMatch[2] ?? ""}`;
+      }
+
+      return line;
+    })
+    .join("\n");
+}
+
+function formatSlackText(
+  text: string,
+  options?: { enableLinks?: boolean },
+): string {
+  const placeholders: string[] = [];
+  let result = replaceSlackFencedCodeBlocks(text, placeholders);
+  result = replaceSlackInlineCode(result, placeholders);
+
+  if (options?.enableLinks !== false) {
+    result = replaceSlackMarkdownLinks(result, placeholders);
+  }
+
+  result = escapeSlackMrkdwnText(result);
+  result = applySlackInlineFormatting(result);
+  result = normalizeSlackBlockFormatting(result);
+
+  return restoreSlackPlaceholders(result, placeholders);
+}
+
+export function markdownToSlackMrkdwn(text: string): string {
+  return formatSlackText(text);
+}
+
 const CHANNEL_OUTBOUND_FORMATTERS: Partial<
   Record<string, OutboundChannelFormatter>
 > = {
@@ -220,6 +421,11 @@ const CHANNEL_OUTBOUND_FORMATTERS: Partial<
     return {
       text: markdownToTelegramHtml(text),
       parseMode: "HTML",
+    };
+  },
+  slack(text) {
+    return {
+      text: markdownToSlackMrkdwn(text),
     };
   },
 };

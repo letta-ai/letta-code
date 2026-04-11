@@ -8,7 +8,12 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { ChannelConfig, DmPolicy, TelegramChannelConfig } from "./types";
+import type {
+  ChannelConfig,
+  DmPolicy,
+  SlackChannelConfig,
+  TelegramChannelConfig,
+} from "./types";
 
 // ── Paths ─────────────────────────────────────────────────────────
 
@@ -32,6 +37,10 @@ export function getChannelRoutingPath(channelId: string): string {
 
 export function getChannelPairingPath(channelId: string): string {
   return join(getChannelDir(channelId), "pairing.yaml");
+}
+
+export function getChannelTargetsPath(channelId: string): string {
+  return join(getChannelDir(channelId), "targets.json");
 }
 
 // ── YAML helpers ──────────────────────────────────────────────────
@@ -186,10 +195,36 @@ const telegramConfigCodec: ChannelConfigCodec<TelegramChannelConfig> = {
   },
 };
 
+const slackConfigCodec: ChannelConfigCodec<SlackChannelConfig> = {
+  parse(parsed) {
+    return {
+      channel: "slack",
+      enabled: parsed.enabled !== false,
+      mode: "socket",
+      botToken: String(parsed.bot_token ?? ""),
+      appToken: String(parsed.app_token ?? ""),
+      dmPolicy: (parsed.dm_policy as DmPolicy) ?? "pairing",
+      allowedUsers: (parsed.allowed_users as string[]) ?? [],
+    };
+  },
+  serialize(config) {
+    return {
+      channel: config.channel,
+      enabled: config.enabled,
+      mode: config.mode,
+      bot_token: config.botToken,
+      app_token: config.appToken,
+      dm_policy: config.dmPolicy,
+      allowed_users: config.allowedUsers,
+    };
+  },
+};
+
 const CHANNEL_CONFIG_CODECS: Partial<
   Record<string, ChannelConfigCodec<ChannelConfig>>
 > = {
   telegram: telegramConfigCodec as ChannelConfigCodec<ChannelConfig>,
+  slack: slackConfigCodec as ChannelConfigCodec<ChannelConfig>,
 };
 
 function getChannelConfigCodec(
