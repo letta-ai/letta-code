@@ -9,7 +9,12 @@ import {
   bindChannelTarget,
   listChannelTargetSnapshots,
 } from "../../channels/service";
-import { clearTargetStores, upsertChannelTarget } from "../../channels/targets";
+import {
+  __testOverrideLoadTargetStore,
+  __testOverrideSaveTargetStore,
+  clearTargetStores,
+  upsertChannelTarget,
+} from "../../channels/targets";
 
 describe("channel service", () => {
   afterEach(() => {
@@ -17,9 +22,14 @@ describe("channel service", () => {
     clearPairingStores();
     clearTargetStores();
     __testOverrideSaveRoutes(null);
+    __testOverrideLoadTargetStore(null);
+    __testOverrideSaveTargetStore(null);
   });
 
   test("bindChannelTarget rolls back the route and restores the target when route save fails", () => {
+    __testOverrideLoadTargetStore(() => {});
+    __testOverrideSaveTargetStore(() => {});
+
     upsertChannelTarget("slack", {
       targetId: "test-target-bind-rollback",
       targetType: "channel",

@@ -7,6 +7,10 @@ interface ChannelTargetStore {
 }
 
 const stores = new Map<string, ChannelTargetStore>();
+let loadTargetStoreOverride: ((channelId: string) => void) | null = null;
+let saveTargetStoreOverride:
+  | ((channelId: string, store: ChannelTargetStore) => void)
+  | null = null;
 
 function getStore(channelId: string): ChannelTargetStore {
   let store = stores.get(channelId);
@@ -18,6 +22,11 @@ function getStore(channelId: string): ChannelTargetStore {
 }
 
 export function loadTargetStore(channelId: string): void {
+  if (loadTargetStoreOverride) {
+    loadTargetStoreOverride(channelId);
+    return;
+  }
+
   const path = getChannelTargetsPath(channelId);
   if (!existsSync(path)) {
     return;
@@ -35,6 +44,11 @@ export function loadTargetStore(channelId: string): void {
 }
 
 function saveTargetStore(channelId: string): void {
+  if (saveTargetStoreOverride) {
+    saveTargetStoreOverride(channelId, getStore(channelId));
+    return;
+  }
+
   const dir = getChannelDir(channelId);
   mkdirSync(dir, { recursive: true });
 
@@ -110,4 +124,18 @@ export function removeChannelTarget(
 
 export function clearTargetStores(): void {
   stores.clear();
+}
+
+/** @internal Test-only: override loadTargetStore behavior. Pass null to restore. */
+export function __testOverrideLoadTargetStore(
+  fn: ((channelId: string) => void) | null,
+): void {
+  loadTargetStoreOverride = fn;
+}
+
+/** @internal Test-only: override saveTargetStore behavior. Pass null to restore. */
+export function __testOverrideSaveTargetStore(
+  fn: ((channelId: string, store: ChannelTargetStore) => void) | null,
+): void {
+  saveTargetStoreOverride = fn;
 }
