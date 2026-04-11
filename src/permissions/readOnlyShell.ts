@@ -285,6 +285,12 @@ function splitShellSegments(input: string): string[] | null {
       continue;
     }
 
+    if (ch === "\\" && i + 1 < input.length) {
+      current += input.slice(i, i + 2);
+      i += 2;
+      continue;
+    }
+
     if (input.startsWith(">>", i) || ch === ">") {
       const skipLen = tryConsumeSafeRedirect(input, i);
       if (skipLen > 0) {
@@ -342,8 +348,294 @@ function splitShellSegments(input: string): string[] | null {
   return segments.map((segment) => segment.trim()).filter(Boolean);
 }
 
-function hasUnsafeFindOptions(tokens: string[]): boolean {
-  return tokens.slice(1).some((token) => UNSAFE_FIND_OPTIONS.has(token));
+const SAFE_FILE_TEST_FLAGS = new Set(["-e", "-f", "-d", "-s", "-L"]);
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function substituteLoopVariable(
+  segment: string,
+  variableName: string,
+  value: string,
+): string {
+  const escapedName = escapeRegExp(variableName);
+  return segment
+    .replace(new RegExp(`\\$\\{${escapedName}\\}`, "g"), value)
+    .replace(new RegExp(`\\$${escapedName}(?![A-Za-z0-9_])`, "g"), value);
+}
+
+function isSafeConditionalTest(
+  condition: string,
+  options: ReadOnlyShellOptions,
+): boolean {
+  let tokens = tokenize(condition);
+  if (tokens.length === 0) {
+    return false;
+  }
+
+  if (tokens[0] === "!") {
+    tokens = tokens.slice(1);
+  }
+
+  if (tokens[0] === "[") {
+    if (tokens[tokens.length - 1] !== "]") {
+      return false;
+    }
+    tokens = tokens.slice(1, -1);
+  } else if (tokens[0] === "test") {
+    tokens = tokens.slice(1);
+  }
+
+  if (tokens.length !== 2) {
+    return false;
+  }
+
+  const [flag, pathToken] = tokens;
+  if (!flag || !pathToken || !SAFE_FILE_TEST_FLAGS.has(flag)) {
+    return false;
+  }
+
+  if (!options.allowExternalPaths && hasDisallowedPathArg(pathToken, options)) {
+    return false;
+  }
+
+  return true;
+}
+
+function parseIfSegments(
+  segments: string[],
+  startIndex: number,
+  options: ReadOnlyShellOptions,
+): { nextIndex: number; safe: boolean } {
+  const firstSegment = segments[startIndex]?.trim() ?? "";
+  if (!firstSegment.startsWith("if ")) {
+    return { nextIndex: startIndex, safe: false };
+  }
+
+  if (!isSafeConditionalTest(firstSegment.slice(3).trim(), options)) {
+    return { nextIndex: startIndex + 1, safe: false };
+  }
+
+  const bodySegments: string[] = [];
+  let sawThen = false;
+
+  for (let index = startIndex + 1; index < segments.length; index += 1) {
+    const segment = segments[index]?.trim() ?? "";
+    if (!segment) {
+      continue;
+    }
+
+    if (segment === "fi") {
+      return {
+        nextIndex: index + 1,
+        safe:
+          sawThen &&
+          bodySegments.length > 0 &&
+          areReadOnlySegments(bodySegments, options),
+      };
+    }
+
+    if (!sawThen) {
+      if (segment === "then") {
+        sawThen = true;
+        continue;
+      }
+      if (segment.startsWith("then ")) {
+        sawThen = true;
+        const inlineBody = segment.slice(5).trim();
+        if (inlineBody) {
+          bodySegments.push(inlineBody);
+        }
+        continue;
+      }
+      return { nextIndex: index, safe: false };
+    }
+
+    if (segment === "else" || segment.startsWith("else ")) {
+      return { nextIndex: index, safe: false };
+    }
+
+    bodySegments.push(segment);
+  }
+
+  return { nextIndex: segments.length, safe: false };
+}
+
+function parseForSegments(
+  segments: string[],
+  startIndex: number,
+  options: ReadOnlyShellOptions,
+): { nextIndex: number; safe: boolean } {
+  const firstSegment = segments[startIndex]?.trim() ?? "";
+  const tokens = tokenize(firstSegment);
+  const variableName = tokens[1];
+
+  if (
+    tokens[0] !== "for" ||
+    !variableName ||
+    !/^[A-Za-z_][A-Za-z0-9_]*$/.test(variableName) ||
+    tokens[2] !== "in"
+  ) {
+    return { nextIndex: startIndex, safe: false };
+  }
+
+  const items = tokens.slice(3);
+  if (items.length === 0) {
+    return { nextIndex: startIndex + 1, safe: false };
+  }
+
+  const bodySegments: string[] = [];
+  let sawDo = false;
+
+  for (let index = startIndex + 1; index < segments.length; index += 1) {
+    const segment = segments[index]?.trim() ?? "";
+    if (!segment) {
+      continue;
+    }
+
+    if (segment === "done") {
+      if (!sawDo || bodySegments.length === 0) {
+        return { nextIndex: index + 1, safe: false };
+      }
+
+      for (const item of items) {
+        const substitutedBody = bodySegments.map((bodySegment) =>
+          substituteLoopVariable(bodySegment, variableName, item),
+        );
+        if (!areReadOnlySegments(substitutedBody, options)) {
+          return { nextIndex: index + 1, safe: false };
+        }
+      }
+
+      return { nextIndex: index + 1, safe: true };
+    }
+
+    if (!sawDo) {
+      if (segment === "do") {
+        sawDo = true;
+        continue;
+      }
+      if (segment.startsWith("do ")) {
+        sawDo = true;
+        const inlineBody = segment.slice(3).trim();
+        if (inlineBody) {
+          bodySegments.push(inlineBody);
+        }
+        continue;
+      }
+      return { nextIndex: index, safe: false };
+    }
+
+    bodySegments.push(segment);
+  }
+
+  return { nextIndex: segments.length, safe: false };
+}
+
+function areReadOnlySegments(
+  segments: string[],
+  options: ReadOnlyShellOptions,
+): boolean {
+  for (let index = 0; index < segments.length; ) {
+    const segment = segments[index]?.trim() ?? "";
+    if (!segment) {
+      index += 1;
+      continue;
+    }
+
+    if (segment.startsWith("if ")) {
+      const parsed = parseIfSegments(segments, index, options);
+      if (!parsed.safe) {
+        return false;
+      }
+      index = parsed.nextIndex;
+      continue;
+    }
+
+    if (segment.startsWith("for ")) {
+      const parsed = parseForSegments(segments, index, options);
+      if (!parsed.safe) {
+        return false;
+      }
+      index = parsed.nextIndex;
+      continue;
+    }
+
+    if (
+      segment === "fi" ||
+      segment === "done" ||
+      segment === "then" ||
+      segment === "do" ||
+      segment.startsWith("then ") ||
+      segment.startsWith("do ") ||
+      segment === "else" ||
+      segment.startsWith("else ")
+    ) {
+      return false;
+    }
+
+    if (!isSafeSegment(segment, options)) {
+      return false;
+    }
+
+    index += 1;
+  }
+
+  return true;
+}
+
+function isSafeFindExecCommand(tokens: string[]): boolean {
+  if (tokens.length === 0) {
+    return false;
+  }
+
+  if (tokens[0] !== "stat") {
+    return false;
+  }
+
+  return tokens.some((token) => token === "{}");
+}
+
+function isSafeFindInvocation(tokens: string[]): boolean {
+  for (let index = 1; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    if (!token) {
+      continue;
+    }
+
+    if (UNSAFE_FIND_OPTIONS.has(token) && token !== "-exec") {
+      return false;
+    }
+
+    if (token !== "-exec") {
+      continue;
+    }
+
+    const execTokens: string[] = [];
+    let terminator: string | null = null;
+    for (index += 1; index < tokens.length; index += 1) {
+      const execToken = tokens[index];
+      if (!execToken) {
+        continue;
+      }
+      if (execToken === ";" || execToken === "\\;" || execToken === "+") {
+        terminator = execToken;
+        break;
+      }
+      execTokens.push(execToken);
+    }
+
+    if (terminator !== "\\;" && terminator !== ";") {
+      return false;
+    }
+
+    if (!isSafeFindExecCommand(execTokens)) {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 function hasUnsafeRipgrepOptions(tokens: string[]): boolean {
@@ -580,13 +872,7 @@ export function isReadOnlyShellCommand(
     return false;
   }
 
-  for (const segment of segments) {
-    if (!isSafeSegment(segment, options)) {
-      return false;
-    }
-  }
-
-  return true;
+  return areReadOnlySegments(segments, options);
 }
 
 function isSafeSegment(
@@ -723,7 +1009,7 @@ function isSafeSegment(
   }
 
   if (command === "find") {
-    return !hasUnsafeFindOptions(tokens);
+    return isSafeFindInvocation(tokens);
   }
   if (command === "sort") {
     return !/\s-o\b/.test(segment);
@@ -1286,7 +1572,7 @@ function isAllowedMemorySegment(
     return { nextCwd: cwd, safe: false };
   }
 
-  if (command === "find" && hasUnsafeFindOptions(tokens)) {
+  if (command === "find" && !isSafeFindInvocation(tokens)) {
     return { nextCwd: cwd, safe: false };
   }
 

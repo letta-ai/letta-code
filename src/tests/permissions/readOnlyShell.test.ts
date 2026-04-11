@@ -613,6 +613,35 @@ describe("isReadOnlyShellCommand", () => {
         }),
       ).toBe(true);
     });
+
+    test("allows captured read-only inspection scripts with conditionals, loops, and safe find execs", () => {
+      const capturedInspectionScripts = [
+        [
+          "printf '== apps/client-ui/vite.config.ts ==\\n'; sed -n '1,240p' apps/client-ui/vite.config.ts; printf '\\n== apps/client-ui/package.json ==\\n'; if [ -f apps/client-ui/package.json ]; then sed -n '1,240p' apps/client-ui/package.json; fi",
+          true,
+        ],
+        [
+          "printf '== workstation ui config files ==\\n'; rg --files apps/workstation/ui | rg '(vite\\.config|package\\.json|project\\.json|index\\.html|main\\.tsx|main\\.ts|tsconfig|sentry|source|map)' ; printf '\\n== apps/workstation/ui/project.json ==\\n'; sed -n '1,240p' apps/workstation/ui/project.json 2>/dev/null; printf '\\n== apps/workstation/ui/vite.config.* ==\\n'; for f in apps/workstation/ui/vite.config.*; do echo \"--- $f ---\"; sed -n '1,260p' \"$f\"; done",
+          true,
+        ],
+        [
+          "printf '== workstation packaging files ==\\n'; rg --files apps/workstation apps/workstation/electron | rg '(project\\.json|builder|forge|tsup|esbuild|vite\\.config|package\\.json|entitlements|plist|yaml|yml|desktop.*config|notarize|afterSign)' ; printf '\\n== relevant project/build files contents ==\\n'; for f in apps/workstation/project.json apps/workstation/electron/project.json apps/workstation/project.config.json apps/workstation/electron-builder.yml apps/workstation/electron/builder.yml; do if [ -f \"$f\" ]; then echo \"--- $f ---\"; sed -n '1,260p' \"$f\"; fi; done",
+          true,
+        ],
+        [
+          "printf '== stale asset summary ==\\n'; printf 'JS bundles: '; find apps/workstation/dist/assets -maxdepth 1 -type f -name 'index-*.js' | wc -l; printf 'CSS bundles: '; find apps/workstation/dist/assets -maxdepth 1 -type f -name 'index-*.css' | wc -l; printf 'All asset files: '; find apps/workstation/dist/assets -maxdepth 1 -type f | wc -l; printf '\\nRecent asset mtimes:\\n'; find apps/workstation/dist/assets -maxdepth 1 -type f -name 'index-*.*' -exec stat -f '%Sm %N' -t '%Y-%m-%d %H:%M' {} \\; | sort | tail -n 20",
+          true,
+        ],
+        [
+          "printf '== referenced renderer asset sizes ==\\n'; node - <<'NODE'\\nconst fs = require('fs');\\nconst html = fs.readFileSync('apps/workstation/dist/index.html', 'utf8');\\nconst js = html.match(/src=\"\\.\\/([^\"]+)\"/)?.[1];\\nconst css = html.match(/href=\"\\.\\/([^\"]+)\"/)?.[1];\\nfor (const f of [js, css]) {\\n  if (!f) continue;\\n  const st = fs.statSync('apps/workstation/dist/' + f);\\n  console.log(f, st.size);\\n}\\nNODE",
+          false,
+        ],
+      ] as const;
+
+      for (const [command, expected] of capturedInspectionScripts) {
+        expect(isReadOnlyShellCommand(command)).toBe(expected);
+      }
+    });
   });
 });
 
