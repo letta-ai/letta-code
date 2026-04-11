@@ -36,4 +36,33 @@ describe("formatArgsDisplay compact plan/todo headers", () => {
     expect(formatArgsDisplay(args, "TodoWrite").display).toBe("2 items");
     expect(formatArgsDisplay(args, "write_todos").display).toBe("2 items");
   });
+
+  test("uses semantic summaries for read-only shell commands", () => {
+    const args = JSON.stringify({
+      command: "sed -n '1,80p' src/cli/helpers/formatArgsDisplay.ts",
+    });
+
+    const formatted = formatArgsDisplay(args, "Bash");
+    expect(formatted.display).toBe(
+      "path: src/cli/helpers/formatArgsDisplay.ts, lines: 1-80",
+    );
+    expect(formatted.shellSemantic).toMatchObject({
+      kind: "read",
+      label: "Read",
+    });
+  });
+
+  test("keeps generic shell commands on the run path", () => {
+    const args = JSON.stringify({
+      command: "git status --short",
+    });
+
+    const formatted = formatArgsDisplay(args, "Bash");
+    expect(formatted.display).toBe("git status --short");
+    expect(formatted.shellSemantic).toMatchObject({
+      kind: "run",
+      label: "Run",
+      rawCommand: "git status --short",
+    });
+  });
 });

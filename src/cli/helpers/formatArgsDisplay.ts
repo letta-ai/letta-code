@@ -3,6 +3,10 @@
 
 import { relative } from "node:path";
 import {
+  type ShellSemanticDisplay,
+  summarizeShellDisplay,
+} from "./shellSemanticDisplay.js";
+import {
   isFileEditTool,
   isFileReadTool,
   isFileWriteTool,
@@ -209,9 +213,11 @@ export function formatArgsDisplay(
 ): {
   display: string;
   parsed: Record<string, unknown>;
+  shellSemantic?: ShellSemanticDisplay;
 } {
   let parsed: Record<string, unknown> = {};
   let display = "…";
+  let shellSemantic: ShellSemanticDisplay | undefined;
 
   try {
     if (argsJson?.trim()) {
@@ -300,23 +306,15 @@ export function formatArgsDisplay(
 
           // Shell/Bash tools: show just the command
           if (isShellTool(toolName) && parsed.command) {
-            // Handle both string and array command formats
-            if (Array.isArray(parsed.command)) {
-              // For ["bash", "-c", "actual command"], show just the actual command
-              const cmd = parsed.command;
-              if (
-                cmd.length >= 3 &&
-                (cmd[0] === "bash" || cmd[0] === "sh") &&
-                (cmd[1] === "-c" || cmd[1] === "-lc")
-              ) {
-                display = cmd.slice(2).join(" ");
-              } else {
-                display = cmd.join(" ");
-              }
-            } else {
-              display = String(parsed.command);
-            }
-            return { display, parsed };
+            shellSemantic = summarizeShellDisplay(
+              Array.isArray(parsed.command)
+                ? parsed.command.filter(
+                    (part): part is string => typeof part === "string",
+                  )
+                : String(parsed.command),
+            );
+            display = shellSemantic.summary;
+            return { display, parsed, shellSemantic };
           }
         }
 
@@ -375,5 +373,5 @@ export function formatArgsDisplay(
       // If all else fails, use the ellipsis
     }
   }
-  return { display, parsed };
+  return { display, parsed, shellSemantic };
 }
