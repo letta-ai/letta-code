@@ -64,8 +64,10 @@ class FakeBot {
   }
 }
 
-mock.module("grammy", () => ({
-  Bot: FakeBot,
+mock.module("../../channels/telegram/runtime", () => ({
+  loadGrammyModule: async () => ({
+    Bot: FakeBot,
+  }),
 }));
 
 const { createTelegramAdapter } = await import(
@@ -148,7 +150,7 @@ test("telegram adapter start waits until polling is live before resolving", asyn
   const startPromise = adapter.start();
   expect(adapter.isRunning()).toBe(false);
 
-  await Promise.resolve();
+  await new Promise((resolve) => setTimeout(resolve, 0));
   expect(releaseStart).toBeDefined();
   const triggerStart = releaseStart;
   if (!triggerStart) {

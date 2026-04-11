@@ -362,7 +362,14 @@ export async function initializeChannels(
       continue;
     }
 
-    await registry.startChannel(channelId);
+    try {
+      await registry.startChannel(channelId);
+    } catch (error) {
+      console.error(
+        `[Channels] Failed to start ${channelId}:`,
+        error instanceof Error ? error.message : error,
+      );
+    }
   }
 
   return registry;

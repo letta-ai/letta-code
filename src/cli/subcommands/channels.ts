@@ -2,6 +2,7 @@
  * `letta channels` CLI subcommand.
  *
  * Usage:
+ *   letta channels install telegram
  *   letta channels configure telegram
  *   letta channels status
  *   letta channels route list
@@ -25,6 +26,10 @@ import {
   loadRoutes,
   removeRoute,
 } from "../../channels/routing";
+import {
+  getChannelRuntimeDir,
+  isChannelRuntimeInstalled,
+} from "../../channels/runtimeDeps";
 import type { ChannelRoute } from "../../channels/types";
 
 // ── Usage ───────────────────────────────────────────────────────────
@@ -33,6 +38,7 @@ function printUsage(): void {
   console.log(
     `
 Usage:
+  letta channels install <channel>            Install channel runtime dependencies
   letta channels configure <channel>          Set up a channel (interactive wizard)
   letta channels status                       Show channel config, routing, pairing state
   letta channels route list [--channel <ch>]  Show routing table
@@ -57,10 +63,11 @@ Note: "configure" and "status" are standalone-safe. "route add/remove" and
 WS command from ADE/desktop for live changes, or restart the server.
 
 Recommended Telegram flow:
-  1. letta channels configure telegram
-  2. letta server --channels telegram
-  3. Message the bot from Telegram once to get a pairing code
-  4. In the target ADE/desktop conversation, run:
+  1. letta channels install telegram          # optional, configure will auto-install too
+  2. letta channels configure telegram
+  3. letta server --channels telegram
+  4. Message the bot from Telegram once to get a pairing code
+  5. In the target ADE/desktop conversation, run:
      /channels telegram pair <code>
 
 State files:
@@ -103,6 +110,56 @@ function getConversationId(fromArgs?: string): string {
 
 // ── Handlers ────────────────────────────────────────────────────────
 
+async function handleInstall(channel: string): Promise<number> {
+  if (channel === "telegram") {
+    const { installTelegramRuntime } = await import(
+      "../../channels/telegram/runtime"
+    );
+
+    if (isChannelRuntimeInstalled("telegram")) {
+      console.log(
+        JSON.stringify(
+          {
+            success: true,
+            channel,
+            installed: true,
+            runtimeDir: getChannelRuntimeDir("telegram"),
+            alreadyInstalled: true,
+          },
+          null,
+          2,
+        ),
+      );
+      return 0;
+    }
+
+    try {
+      await installTelegramRuntime();
+      console.log(
+        JSON.stringify(
+          {
+            success: true,
+            channel,
+            installed: true,
+            runtimeDir: getChannelRuntimeDir("telegram"),
+          },
+          null,
+          2,
+        ),
+      );
+      return 0;
+    } catch (error) {
+      console.error(
+        `Failed to install Telegram runtime: ${error instanceof Error ? error.message : "unknown error"}`,
+      );
+      return 1;
+    }
+  }
+
+  console.error(`Unknown channel: "${channel}". Supported: telegram`);
+  return 1;
+}
+
 async function handleConfigure(channel: string): Promise<number> {
   if (channel === "telegram") {
     const { runTelegramSetup } = await import("../../channels/telegram/setup");
@@ -121,7 +178,10 @@ function handleStatus(): number {
   for (const channelId of channels) {
     const config = readChannelConfig(channelId);
     if (!config) {
-      result[channelId] = { configured: false };
+      result[channelId] = {
+        configured: false,
+        runtimeInstalled: isChannelRuntimeInstalled("telegram"),
+      };
       continue;
     }
 
@@ -135,6 +195,7 @@ function handleStatus(): number {
       configured: true,
       enabled: config.enabled,
       dmPolicy: config.dmPolicy,
+      runtimeInstalled: isChannelRuntimeInstalled("telegram"),
       routes: routes.length,
       pendingPairings: pending.length,
       approvedUsers: approved.length,
@@ -266,7 +327,7 @@ async function handlePair(
   console.log(JSON.stringify(result, null, 2));
   if (result.success) {
     console.warn(
-      "Note: If a listener is running, restart it or use /channels telegram pair via WS.",
+      `Note: If a listener is running, restart it or use /channels ${channelId} pair via WS.`,
     );
   }
   return result.success ? 0 : 1;
@@ -285,6 +346,14 @@ export async function runChannelsSubcommand(argv: string[]): Promise<number> {
   const [action, ...rest] = positionals;
 
   switch (action) {
+    case "install": {
+      const channel = rest[0];
+      if (!channel) {
+        console.error("Error: specify a channel to install (e.g., telegram)");
+        return 1;
+      }
+      return handleInstall(channel);
+    }
     case "configure": {
       const channel = rest[0];
       if (!channel) {
@@ -319,7 +388,7 @@ export async function runChannelsSubcommand(argv: string[]): Promise<number> {
         return 0;
       }
       console.error(
-        `Unknown channels action: "${action}". Use: configure, status, route, pair`,
+        `Unknown channels action: "${action}". Use: install, configure, status, route, pair`,
       );
       return 1;
   }
