@@ -11,7 +11,7 @@ import type { Conversation } from "@letta-ai/letta-client/resources/conversation
 import { OPENAI_CODEX_PROVIDER_NAME } from "../providers/openai-codex-provider";
 import { debugLog } from "../utils/debug";
 import { getModelContextWindow } from "./available-models";
-import { getClient } from "./client";
+import { getClient, getServerUrl } from "./client";
 
 type ModelSettings =
   | OpenAIModelSettings
@@ -196,7 +196,10 @@ function buildModelSettings(
 /**
  * Updates an agent's model and model settings.
  *
- * Uses the new model_settings field instead of deprecated llm_config.
+ * Uses the new model_settings field for model configuration. On self-hosted
+ * servers, this may also preserve existing llm_config/embedding_config
+ * endpoint values when they are required to keep custom providers such as
+ * Ollama working across model changes.
  *
  * @param agentId - The agent ID
  * @param modelHandle - The model handle (e.g., "anthropic/claude-sonnet-4-5-20250929")
@@ -208,6 +211,70 @@ export interface UpdateAgentLLMConfigOptions {
   preserveContextWindow?: boolean;
 }
 
+function parseModelHandle(modelHandle: string): {
+  provider: string | null;
+  modelName: string;
+} {
+  const slash = modelHandle.indexOf("/");
+  if (slash === -1) {
+    return { provider: null, modelName: modelHandle };
+  }
+
+  return {
+    provider: modelHandle.slice(0, slash),
+    modelName: modelHandle.slice(slash + 1),
+  };
+}
+
+function isSelfHostedServer(): boolean {
+  return !getServerUrl().includes("api.letta.com");
+}
+
+function shouldPreserveSelfHostedLlmConfig(
+  agent: AgentState,
+  nextHandle: string,
+): boolean {
+  if (!isSelfHostedServer()) {
+    return false;
+  }
+
+  const current = agent.llm_config;
+  if (!current?.model_endpoint) {
+    return false;
+  }
+
+  const { provider } = parseModelHandle(nextHandle);
+  if (!provider) {
+    return false;
+  }
+
+  const currentProvider =
+    current.provider_name ??
+    (current.handle?.includes("/") ? current.handle.split("/", 1)[0] : null);
+
+  return currentProvider === provider;
+}
+
+function buildPreservedLlmConfig(
+  current: NonNullable<AgentState["llm_config"]>,
+  nextHandle: string,
+): NonNullable<AgentState["llm_config"]> {
+  const { provider, modelName } = parseModelHandle(nextHandle);
+
+  return {
+    ...current,
+    handle: nextHandle,
+    model: modelName,
+    provider_name: provider ?? current.provider_name,
+  };
+}
+
+function shouldPreserveSelfHostedEmbeddingConfig(agent: AgentState): boolean {
+  return (
+    isSelfHostedServer() && !!agent.embedding_config?.embedding_endpoint
+  );
+}
+
 export async function updateAgentLLMConfig(
   agentId: string,
   modelHandle: string,
@@ -215,6 +282,10 @@ export async function updateAgentLLMConfig(
   options?: UpdateAgentLLMConfigOptions,
 ): Promise<AgentState> {
   const client = await getClient();
+  const shouldPreserveSelfHostedConfig = isSelfHostedServer();
+  const currentAgent = shouldPreserveSelfHostedConfig
+    ? await client.agents.retrieve(agentId)
+    : null;
 
   const modelSettings = buildModelSettings(modelHandle, updateArgs);
   const explicitContextWindow = updateArgs?.context_window as
@@ -229,7 +300,7 @@ export async function updateAgentLLMConfig(
       : undefined);
   const hasModelSettings = Object.keys(modelSettings).length > 0;
 
-  await client.agents.update(agentId, {
+  const updatePayload: Parameters<typeof client.agents.update>[1] = {
     model: modelHandle,
     ...(hasModelSettings && { model_settings: modelSettings }),
     ...(contextWindow && { context_window_limit: contextWindow }),
@@ -237,7 +308,28 @@ export async function updateAgentLLMConfig(
       updateArgs?.max_output_tokens === null) && {
       max_tokens: updateArgs.max_output_tokens,
     }),
-  });
+  };
+
+  if (
+    currentAgent &&
+    shouldPreserveSelfHostedLlmConfig(currentAgent, modelHandle) &&
+    currentAgent.llm_config
+  ) {
+    updatePayload.llm_config = buildPreservedLlmConfig(
+      currentAgent.llm_config,
+      modelHandle,
+    );
+  }
+
+  if (
+    currentAgent &&
+    shouldPreserveSelfHostedEmbeddingConfig(currentAgent) &&
+    currentAgent.embedding_config
+  ) {
+    updatePayload.embedding_config = { ...currentAgent.embedding_config };
+  }
+
+  await client.agents.update(agentId, updatePayload);
 
   const finalAgent = await client.agents.retrieve(agentId);
   return finalAgent;
