@@ -3,7 +3,7 @@
  *
  * Handles the pairing flow for channels with dm_policy: "pairing".
  * When an unknown user messages the bot, they get a pairing code.
- * The user runs `/channels telegram pair <code>` to approve the connection.
+ * The user runs `/channels <channel> pair <code>` to approve the connection.
  *
  * Persisted in ~/.letta/channels/<channel>/pairing.yaml.
  *
@@ -85,7 +85,7 @@ function generateCode(length = 6): string {
  */
 export function isUserApproved(channelId: string, userId: string): boolean {
   const store = getStore(channelId);
-  return store.approved.some((u) => u.telegramUserId === userId);
+  return store.approved.some((u) => u.senderId === userId);
 }
 
 /**
@@ -101,7 +101,7 @@ export function createPairingCode(
   const store = getStore(channelId);
 
   // Remove any existing pending code for this user
-  store.pending = store.pending.filter((p) => p.telegramUserId !== userId);
+  store.pending = store.pending.filter((p) => p.senderId !== userId);
 
   // Prune expired codes
   const now = Date.now();
@@ -117,8 +117,8 @@ export function createPairingCode(
   const code = generateCode();
   const pending: PendingPairing = {
     code,
-    telegramUserId: userId,
-    telegramUsername: username,
+    senderId: userId,
+    senderName: username,
     chatId,
     createdAt: new Date().toISOString(),
     expiresAt: new Date(now + PAIRING_CODE_TTL_MS).toISOString(),
@@ -158,12 +158,10 @@ export function consumePairingCode(
   store.pending.splice(index, 1);
 
   // Add to approved (if not already)
-  if (
-    !store.approved.some((u) => u.telegramUserId === pending.telegramUserId)
-  ) {
+  if (!store.approved.some((u) => u.senderId === pending.senderId)) {
     const approved: ApprovedUser = {
-      telegramUserId: pending.telegramUserId,
-      telegramUsername: pending.telegramUsername,
+      senderId: pending.senderId,
+      senderName: pending.senderName,
       approvedAt: new Date().toISOString(),
     };
     store.approved.push(approved);
@@ -203,7 +201,7 @@ export function rollbackPairingApproval(
 
   // Remove from approved
   store.approved = store.approved.filter(
-    (u) => u.telegramUserId !== pending.telegramUserId,
+    (u) => u.senderId !== pending.senderId,
   );
 
   // Re-add to pending

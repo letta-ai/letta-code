@@ -20,9 +20,11 @@ import type {
   ChannelConfig,
   ChannelRoute,
   DmPolicy,
+  PendingPairing,
   SupportedChannelId,
   TelegramChannelConfig,
 } from "./types";
+import { SUPPORTED_CHANNEL_IDS } from "./types";
 
 export const CHANNEL_DISPLAY_NAMES: Record<SupportedChannelId, string> = {
   telegram: "Telegram",
@@ -75,7 +77,7 @@ export interface ChannelConfigPatch {
 function assertSupportedChannelId(
   channelId: string,
 ): asserts channelId is SupportedChannelId {
-  if (channelId !== "telegram") {
+  if (!SUPPORTED_CHANNEL_IDS.includes(channelId as SupportedChannelId)) {
     throw new Error(`Unsupported channel: ${channelId}`);
   }
 }
@@ -93,18 +95,16 @@ function toConfigSnapshot(
   };
 }
 
-function toPendingPairingSnapshot(pending: {
-  code: string;
-  telegramUserId: string;
-  telegramUsername?: string;
-  chatId: string;
-  createdAt: string;
-  expiresAt: string;
-}): PendingPairingSnapshot {
+function toPendingPairingSnapshot(
+  pending: Pick<
+    PendingPairing,
+    "code" | "senderId" | "senderName" | "chatId" | "createdAt" | "expiresAt"
+  >,
+): PendingPairingSnapshot {
   return {
     code: pending.code,
-    senderId: pending.telegramUserId,
-    senderName: pending.telegramUsername,
+    senderId: pending.senderId,
+    senderName: pending.senderName,
     chatId: pending.chatId,
     createdAt: pending.createdAt,
     expiresAt: pending.expiresAt,

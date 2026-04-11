@@ -30,8 +30,37 @@ import type {
   ChannelAdapter,
   ChannelRoute,
   InboundChannelMessage,
+  TelegramChannelConfig,
 } from "./types";
 import { formatChannelNotification } from "./xml";
+
+type ChannelAdapterFactory = (config: unknown) => Promise<ChannelAdapter>;
+
+const CHANNEL_ADAPTER_FACTORIES: Record<string, ChannelAdapterFactory> = {
+  async telegram(config) {
+    const { createTelegramAdapter } = await import("./telegram/adapter");
+    return createTelegramAdapter(config as TelegramChannelConfig);
+  },
+};
+
+function buildPairingInstructions(channelId: string, code: string): string {
+  return (
+    `To connect this chat to a Letta Code agent, run:\n\n` +
+    `/channels ${channelId} pair ${code}\n\n` +
+    `This code expires in 15 minutes.`
+  );
+}
+
+function buildUnboundRouteInstructions(
+  channelId: string,
+  chatId: string,
+): string {
+  return (
+    `This chat isn't bound to an agent. ` +
+    `Run \`/channels ${channelId} enable --chat-id ${chatId}\` ` +
+    `on your Letta Code agent to connect.`
+  );
+}
 
 // ── Singleton ─────────────────────────────────────────────────────
 
@@ -156,16 +185,17 @@ export class ChannelRegistry {
     }
     this.adapters.delete(channelId);
 
-    if (channelId === "telegram") {
-      const { createTelegramAdapter } = await import("./telegram/adapter");
-      const adapter = createTelegramAdapter(config);
-      this.registerAdapter(adapter);
-      await adapter.start();
-      return true;
+    const createAdapter = CHANNEL_ADAPTER_FACTORIES[channelId];
+    if (!createAdapter) {
+      const supported = Object.keys(CHANNEL_ADAPTER_FACTORIES).join(", ");
+      console.error(`Unknown channel "${channelId}". Supported: ${supported}`);
+      return false;
     }
 
-    console.error(`Unknown channel "${channelId}". Supported: telegram`);
-    return false;
+    const adapter = await createAdapter(config);
+    this.registerAdapter(adapter);
+    await adapter.start();
+    return true;
   }
 
   async stopChannel(channelId: string): Promise<boolean> {
@@ -256,9 +286,7 @@ export class ChannelRegistry {
         });
         await adapter.sendDirectReply(
           msg.chatId,
-          `To connect this chat to a Letta Code agent, run:\n\n` +
-            `/channels telegram pair ${code}\n\n` +
-            `This code expires in 15 minutes.`,
+          buildPairingInstructions(msg.channel, code),
         );
         return;
       }
@@ -274,9 +302,7 @@ export class ChannelRegistry {
     if (!route) {
       await adapter.sendDirectReply(
         msg.chatId,
-        `This chat isn't bound to an agent. ` +
-          `Run \`/channels telegram enable --chat-id ${msg.chatId}\` ` +
-          `on your Letta Code agent to connect.`,
+        buildUnboundRouteInstructions(msg.channel, msg.chatId),
       );
       return;
     }

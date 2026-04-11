@@ -160,6 +160,44 @@ function parseYamlValue(raw: string): unknown {
 
 // ── Config read/write ─────────────────────────────────────────────
 
+interface ChannelConfigCodec<TConfig extends ChannelConfig> {
+  parse(parsed: Record<string, unknown>): TConfig;
+  serialize(config: TConfig): Record<string, unknown>;
+}
+
+const telegramConfigCodec: ChannelConfigCodec<TelegramChannelConfig> = {
+  parse(parsed) {
+    return {
+      channel: "telegram",
+      enabled: parsed.enabled !== false,
+      token: String(parsed.token ?? ""),
+      dmPolicy: (parsed.dm_policy as DmPolicy) ?? "pairing",
+      allowedUsers: (parsed.allowed_users as string[]) ?? [],
+    };
+  },
+  serialize(config) {
+    return {
+      channel: config.channel,
+      enabled: config.enabled,
+      token: config.token,
+      dm_policy: config.dmPolicy,
+      allowed_users: config.allowedUsers,
+    };
+  },
+};
+
+const CHANNEL_CONFIG_CODECS: Partial<
+  Record<string, ChannelConfigCodec<ChannelConfig>>
+> = {
+  telegram: telegramConfigCodec as ChannelConfigCodec<ChannelConfig>,
+};
+
+function getChannelConfigCodec(
+  channelId: string,
+): ChannelConfigCodec<ChannelConfig> | null {
+  return CHANNEL_CONFIG_CODECS[channelId] ?? null;
+}
+
 export function channelConfigExists(channelId: string): boolean {
   return existsSync(getChannelConfigPath(channelId));
 }
@@ -171,18 +209,9 @@ export function readChannelConfig(channelId: string): ChannelConfig | null {
   try {
     const text = readFileSync(configPath, "utf-8");
     const parsed = parseSimpleYaml(text);
-
-    if (channelId === "telegram") {
-      return {
-        channel: "telegram",
-        enabled: parsed.enabled !== false,
-        token: String(parsed.token ?? ""),
-        dmPolicy: (parsed.dm_policy as DmPolicy) ?? "pairing",
-        allowedUsers: (parsed.allowed_users as string[]) ?? [],
-      } satisfies TelegramChannelConfig;
-    }
-
-    return null;
+    const codec = getChannelConfigCodec(channelId);
+    if (!codec) return null;
+    return codec.parse(parsed);
   } catch {
     return null;
   }
@@ -194,17 +223,11 @@ export function writeChannelConfig(
 ): void {
   const dir = getChannelDir(channelId);
   mkdirSync(dir, { recursive: true });
-
-  const yamlObj: Record<string, unknown> = {};
-
-  if (config.channel === "telegram") {
-    yamlObj.channel = config.channel;
-    yamlObj.enabled = config.enabled;
-    yamlObj.token = config.token;
-    yamlObj.dm_policy = config.dmPolicy;
-    yamlObj.allowed_users = config.allowedUsers;
+  const codec = getChannelConfigCodec(channelId);
+  if (!codec) {
+    throw new Error(`Unsupported channel config: ${channelId}`);
   }
 
-  const text = toSimpleYaml(yamlObj);
+  const text = toSimpleYaml(codec.serialize(config));
   writeFileSync(getChannelConfigPath(channelId), `${text}\n`, "utf-8");
 }

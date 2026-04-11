@@ -22,7 +22,7 @@ describe("pairing", () => {
     const pending = getPendingPairings("telegram");
     expect(pending).toHaveLength(1);
     expect(pending[0]?.code).toBe(code);
-    expect(pending[0]?.telegramUserId).toBe("user-1");
+    expect(pending[0]?.senderId).toBe("user-1");
     expect(pending[0]?.chatId).toBe("chat-1");
   });
 
@@ -31,7 +31,7 @@ describe("pairing", () => {
 
     const result = consumePairingCode("telegram", code);
     expect(result).not.toBeNull();
-    expect(result?.telegramUserId).toBe("user-1");
+    expect(result?.senderId).toBe("user-1");
     expect(result?.chatId).toBe("chat-1");
 
     // User should now be approved
@@ -83,7 +83,10 @@ describe("pairing", () => {
     expect(getPendingPairings("telegram")).toHaveLength(0);
 
     // Roll back
-    rollbackPairingApproval("telegram", pending!);
+    if (!pending) {
+      throw new Error("Expected pending pairing to exist");
+    }
+    rollbackPairingApproval("telegram", pending);
 
     // User should no longer be approved, pending code restored
     expect(isUserApproved("telegram", "user-1")).toBe(false);
