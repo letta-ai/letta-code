@@ -192,3 +192,40 @@ test("slack adapter forwards app mentions as channel input", async () => {
     }),
   );
 });
+
+test("slack adapter preserves non-leading user mentions in app mention text", async () => {
+  const adapter = createSlackAdapter({
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  const onMessage = mock(async () => {});
+  adapter.onMessage = onMessage;
+
+  await adapter.start();
+  const app = FakeSlackApp.instances[0];
+  const handler = app?.eventHandlers.get("app_mention");
+  if (!handler) {
+    throw new Error("Expected app_mention handler");
+  }
+
+  await handler({
+    event: {
+      channel: "C123",
+      user: "U123",
+      text: "<@U999> ask <@U555> for help",
+      ts: "1712800000.000100",
+    },
+  });
+
+  expect(onMessage).toHaveBeenCalledWith(
+    expect.objectContaining({
+      text: "ask <@U555> for help",
+    }),
+  );
+});

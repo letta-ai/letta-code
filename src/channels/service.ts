@@ -21,12 +21,14 @@ import {
   getRoutesForChannel,
   loadRoutes,
   removeRoute,
+  removeRouteInMemory,
 } from "./routing";
 import {
   getChannelTarget,
   listChannelTargets,
   loadTargetStore,
   removeChannelTarget,
+  upsertChannelTarget,
 } from "./targets";
 import type {
   ChannelBindableTarget,
@@ -114,6 +116,10 @@ function assertSupportedChannelId(
   if (!isSupportedChannelId(channelId)) {
     throw new Error(`Unsupported channel: ${channelId}`);
   }
+}
+
+function getErrorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : fallback;
 }
 
 function toConfigSnapshot(config: ChannelConfig): ChannelConfigSnapshot {
@@ -427,11 +433,51 @@ export function bindChannelTarget(
   };
 
   try {
-    addRoute(channelId, route);
     removeChannelTarget(channelId, targetId);
   } catch (error) {
+    try {
+      upsertChannelTarget(channelId, target);
+    } catch (rollbackError) {
+      throw new Error(
+        `Failed to bind channel target: ${getErrorMessage(
+          error,
+          "Failed to remove pending target",
+        )}. Failed to restore pending target: ${getErrorMessage(
+          rollbackError,
+          "Target rollback failed",
+        )}`,
+      );
+    }
     throw new Error(
-      error instanceof Error ? error.message : "Failed to bind channel target",
+      `Failed to bind channel target: ${getErrorMessage(
+        error,
+        "Failed to remove pending target",
+      )}`,
+    );
+  }
+
+  try {
+    addRoute(channelId, route);
+  } catch (error) {
+    removeRouteInMemory(channelId, route.chatId);
+    try {
+      upsertChannelTarget(channelId, target);
+    } catch (rollbackError) {
+      throw new Error(
+        `Failed to bind channel target: ${getErrorMessage(
+          error,
+          "Failed to create route",
+        )}. Failed to restore pending target: ${getErrorMessage(
+          rollbackError,
+          "Target rollback failed",
+        )}`,
+      );
+    }
+    throw new Error(
+      `Failed to bind channel target: ${getErrorMessage(
+        error,
+        "Failed to create route",
+      )}. Changes were rolled back.`,
     );
   }
 

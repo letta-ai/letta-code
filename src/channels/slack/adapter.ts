@@ -29,7 +29,7 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 }
 
 function normalizeSlackText(text: string): string {
-  return text.replace(/<@[A-Z0-9]+>/g, "").trim();
+  return text.replace(/^(?:\s*<@[A-Z0-9]+>\s*)+/, "").trim();
 }
 
 function slackTimestampToMillis(timestamp: string): number {

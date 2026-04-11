@@ -30,6 +30,38 @@ test("converts markdown links for Slack mrkdwn", () => {
   );
 });
 
+test("preserves markdown markers inside inline code for Slack", () => {
+  expect(markdownToSlackMrkdwn("`**bold**`")).toBe("`**bold**`");
+});
+
+test("preserves markdown markers inside fenced code blocks for Slack", () => {
+  expect(markdownToSlackMrkdwn('```js\nconst x = "**bold**";\n```')).toBe(
+    '```\nconst x = "**bold**";\n```',
+  );
+});
+
+test("escapes unsafe characters for Slack mrkdwn", () => {
+  expect(markdownToSlackMrkdwn("a & b < c > d")).toBe(
+    "a &amp; b &lt; c &gt; d",
+  );
+});
+
+test("preserves existing Slack angle-bracket tokens", () => {
+  expect(
+    markdownToSlackMrkdwn(
+      "hi <@U123> see <https://example.com|docs> and <!here>",
+    ),
+  ).toBe("hi <@U123> see <https://example.com|docs> and <!here>");
+});
+
+test("renders bullet lists for Slack", () => {
+  expect(markdownToSlackMrkdwn("- one\n- two")).toBe("• one\n• two");
+});
+
+test("renders headings as bold text for Slack", () => {
+  expect(markdownToSlackMrkdwn("# Title")).toBe("*Title*");
+});
+
 test("preserves markdown markers inside inline code", () => {
   expect(markdownToTelegramHtml("`**bold**`")).toBe("<code>**bold**</code>");
 });
