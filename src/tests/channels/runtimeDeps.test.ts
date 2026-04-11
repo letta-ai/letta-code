@@ -45,15 +45,21 @@ function writeFakeGrammyModule(runtimeDir: string): void {
 let runtimeRoot: string;
 let bundledRuntimeRoot: string;
 
+function expectedPackageManagerCommand(
+  packageManager: "bun" | "npm" | "pnpm",
+  platform: NodeJS.Platform = process.platform,
+): string {
+  return platform === "win32" && packageManager !== "bun"
+    ? `${packageManager}.cmd`
+    : packageManager;
+}
+
 beforeEach(() => {
   runtimeRoot = mkdtempSync(join(tmpdir(), "letta-channel-runtime-"));
   bundledRuntimeRoot = mkdtempSync(
     join(tmpdir(), "letta-channel-runtime-bundled-"),
   );
-  __testOverrideChannelRuntimeDeps({
-    runtimeRoot,
-    platform: "linux",
-  });
+  __testOverrideChannelRuntimeDeps({ runtimeRoot });
 });
 
 afterEach(() => {
@@ -85,7 +91,6 @@ test("loadChannelRuntimeModule resolves a module from the bundled runtime direct
   __testOverrideChannelRuntimeDeps({
     runtimeRoot,
     bundledRuntimeRoot,
-    platform: "linux",
   });
 
   const bundledRuntimeDir = getBundledChannelRuntimeDir("telegram");
@@ -125,7 +130,6 @@ test("installChannelRuntime writes a manifest and invokes npm in the runtime dir
     runtimeRoot,
     spawnImpl: spawnImpl as never,
     packageManager: "npm",
-    platform: "linux",
   });
 
   await installChannelRuntime("telegram");
@@ -145,7 +149,7 @@ test("installChannelRuntime writes a manifest and invokes npm in the runtime dir
   );
   expect(spawnCalls).toEqual([
     {
-      cmd: "npm",
+      cmd: expectedPackageManagerCommand("npm"),
       args: ["install", "--no-save", "grammy@1.42.0"],
       cwd: getChannelRuntimeDir("telegram"),
     },
@@ -174,7 +178,6 @@ test("installChannelRuntime uses bun add --no-save for bun installs", async () =
     runtimeRoot,
     spawnImpl: spawnImpl as never,
     packageManager: "bun",
-    platform: "linux",
   });
 
   await installChannelRuntime("telegram");
@@ -210,14 +213,13 @@ test("installChannelRuntime uses pnpm add for pnpm installs", async () => {
     runtimeRoot,
     spawnImpl: spawnImpl as never,
     packageManager: "pnpm",
-    platform: "linux",
   });
 
   await installChannelRuntime("telegram");
 
   expect(spawnCalls).toEqual([
     {
-      cmd: "pnpm",
+      cmd: expectedPackageManagerCommand("pnpm"),
       args: ["add", "grammy@1.42.0"],
       cwd: getChannelRuntimeDir("telegram"),
     },
@@ -260,6 +262,42 @@ test("installChannelRuntime uses cmd shims for npm on Windows", async () => {
   ]);
 });
 
+test("installChannelRuntime uses cmd shims for pnpm on Windows", async () => {
+  const spawnCalls: Array<{
+    cmd: string;
+    args: string[];
+    cwd?: string;
+  }> = [];
+
+  const spawnImpl = mock(
+    (cmd: string, args: string[], opts?: { cwd?: string }) => {
+      spawnCalls.push({ cmd, args, cwd: opts?.cwd });
+      const proc = new EventEmitter();
+      queueMicrotask(() => {
+        proc.emit("exit", 0);
+      });
+      return proc as unknown as ReturnType<typeof mock>;
+    },
+  );
+
+  __testOverrideChannelRuntimeDeps({
+    runtimeRoot,
+    spawnImpl: spawnImpl as never,
+    packageManager: "pnpm",
+    platform: "win32",
+  });
+
+  await installChannelRuntime("telegram");
+
+  expect(spawnCalls).toEqual([
+    {
+      cmd: "pnpm.cmd",
+      args: ["add", "grammy@1.42.0"],
+      cwd: getChannelRuntimeDir("telegram"),
+    },
+  ]);
+});
+
 test("ensureChannelRuntimeInstalled skips installation when runtime already exists", async () => {
   writeFakeGrammyModule(getChannelRuntimeDir("telegram"));
 
@@ -269,7 +307,6 @@ test("ensureChannelRuntimeInstalled skips installation when runtime already exis
   __testOverrideChannelRuntimeDeps({
     runtimeRoot,
     spawnImpl: spawnImpl as never,
-    platform: "linux",
   });
 
   const installed = await ensureChannelRuntimeInstalled("telegram");
