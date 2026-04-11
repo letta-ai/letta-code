@@ -8,6 +8,11 @@ export type ShellSemanticDisplay = {
   rawCommand: string;
 };
 
+type SequenceContext = {
+  contextPath?: string;
+  loopVariables: Map<string, string>;
+};
+
 function formatSummaryFields(
   fields: Array<[label: string, value: string | number | undefined]>,
 ): string {
@@ -78,20 +83,6 @@ function parseSedRange(expression: string | undefined): {
   return {};
 }
 
-function parsePipelineLimit(helperSegments: string[][]): number | undefined {
-  const firstHelper = helperSegments[0];
-  if (!firstHelper?.length) {
-    return undefined;
-  }
-
-  const [head, ...tail] = firstHelper;
-  if (head !== "head") {
-    return undefined;
-  }
-
-  return parseCountArgument(tail);
-}
-
 function isReadOnlyFind(tokens: string[]): boolean {
   return !tokens.some((token) =>
     [
@@ -111,8 +102,15 @@ function formatDisplayPath(filePath: string): string {
   const normalizePathSeparators = (value: string): string =>
     value.replace(/\\/g, "/");
 
+  if (filePath === ".") {
+    return ".";
+  }
+
   const cwd = process.cwd();
   const relativePath = relative(cwd, filePath);
+  if (relativePath === "") {
+    return ".";
+  }
   if (relativePath.startsWith("..")) {
     return normalizePathSeparators(filePath);
   }
@@ -231,29 +229,26 @@ function splitByOperator(tokens: string[], operator: string): string[][] {
   return segments;
 }
 
-function stripLeadingCd(tokens: string[]): {
-  contextPath?: string;
-  commandTokens: string[];
-} {
-  const andSegments = splitByOperator(tokens, "&&");
-  if (andSegments.length !== 2) {
-    return { commandTokens: tokens };
+function splitOnSequenceConnectors(tokens: string[]): string[][] {
+  const segments: string[][] = [];
+  let current: string[] = [];
+
+  for (const token of tokens) {
+    if (token === ";" || token === "&&" || token === "||") {
+      if (current.length > 0) {
+        segments.push(current);
+        current = [];
+      }
+      continue;
+    }
+    current.push(token);
   }
 
-  const [firstSegment, secondSegment] = andSegments;
-  if (
-    firstSegment?.[0] === "cd" &&
-    typeof firstSegment[1] === "string" &&
-    firstSegment.length === 2 &&
-    secondSegment
-  ) {
-    return {
-      contextPath: firstSegment[1],
-      commandTokens: secondSegment,
-    };
+  if (current.length > 0) {
+    segments.push(current);
   }
 
-  return { commandTokens: tokens };
+  return segments;
 }
 
 function hasUnsupportedSyntax(rawCommand: string, tokens: string[]): boolean {
@@ -263,15 +258,20 @@ function hasUnsupportedSyntax(rawCommand: string, tokens: string[]): boolean {
 
   return tokens.some(
     (token) =>
-      token === "&&" ||
-      token === "||" ||
-      token === ";" ||
       token === "&" ||
       token === ">" ||
       token === ">>" ||
       token === "<" ||
       token === "<<",
   );
+}
+
+function stripNonSemanticRedirections(command: string): string {
+  return command
+    .replace(/\b\d*>\s*\/dev\/null\b/g, "")
+    .replace(/\b\d*>\s*&\d\b/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function splitPipeline(tokens: string[]): string[][] {
@@ -293,11 +293,13 @@ function isFormatterSegment(tokens: string[]): boolean {
     case "uniq":
     case "column":
     case "nl":
+    case "printf":
+    case "echo":
       return nonFlagOperands(tail).length === 0;
     case "sed":
       return (
         tokens[1] === "-n" &&
-        nonFlagOperands(tail, new Set(["-e", "-f"])).length === 1
+        nonFlagOperands(tail, new Set(["-e", "-f"])).length <= 1
       );
     default:
       return false;
@@ -378,6 +380,152 @@ function nonFlagOperands(
   return operands;
 }
 
+function parseQueryOperand(
+  tokens: string[],
+  flagsWithValues: Set<string>,
+): string | undefined {
+  return nonFlagOperands(tokens, flagsWithValues)[0];
+}
+
+function parsePathFilterSegment(tokens: string[]): string | undefined {
+  const [head, ...tail] = tokens;
+  if (!head) {
+    return undefined;
+  }
+
+  if (
+    head === "rg" ||
+    head === "rga" ||
+    head === "ripgrep-all" ||
+    head === "grep" ||
+    head === "egrep" ||
+    head === "fgrep" ||
+    head === "ag" ||
+    head === "ack"
+  ) {
+    if (tail.includes("--files")) {
+      return undefined;
+    }
+
+    return parseQueryOperand(
+      tail,
+      new Set(["-e", "-f", "-m", "-A", "-B", "-C", "--max-count"]),
+    );
+  }
+
+  return undefined;
+}
+
+function trimLeadingControlTokens(tokens: string[]): string[] {
+  let current = tokens;
+  while (current[0] === "then" || current[0] === "do") {
+    current = current.slice(1);
+  }
+  return current;
+}
+
+function isIgnoredSequenceSegment(tokens: string[]): boolean {
+  const [head] = tokens;
+  if (!head) {
+    return true;
+  }
+
+  return [
+    "printf",
+    "echo",
+    ":",
+    "true",
+    "if",
+    "fi",
+    "else",
+    "[",
+    "]",
+    "test",
+  ].includes(head);
+}
+
+function maybeCaptureLoopVariable(
+  tokens: string[],
+  loopVariables: Map<string, string>,
+): boolean {
+  if (tokens[0] !== "for" || tokens[2] !== "in") {
+    return false;
+  }
+
+  const variableName = tokens[1];
+  const loopValue = tokens[3];
+  if (!variableName || !loopValue) {
+    return true;
+  }
+
+  loopVariables.set(variableName, loopValue);
+  return true;
+}
+
+function substituteLoopVariables(
+  tokens: string[],
+  loopVariables: Map<string, string>,
+): string[] {
+  return tokens.map((token) => {
+    const variableName =
+      /^\$([A-Za-z_][A-Za-z0-9_]*)$/.exec(token)?.[1] ??
+      /^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$/.exec(token)?.[1];
+    if (!variableName) {
+      return token;
+    }
+
+    return loopVariables.get(variableName) ?? token;
+  });
+}
+
+function analyzeHelperSegments(
+  primaryTokens: string[],
+  primaryKind: ShellSemanticDisplay["kind"],
+  helperSegments: string[][],
+): {
+  filter?: string;
+  limit?: number;
+  valid: boolean;
+} {
+  let filter: string | undefined;
+  let limit: number | undefined;
+
+  for (const segment of helperSegments) {
+    if (segment.length === 0) {
+      continue;
+    }
+
+    const [head, ...tail] = segment;
+    if (head === "head") {
+      limit = parseCountArgument(tail) ?? limit;
+      continue;
+    }
+
+    if (isFormatterSegment(segment)) {
+      continue;
+    }
+
+    if (primaryKind === "list") {
+      const pathFilter = parsePathFilterSegment(segment);
+      if (pathFilter) {
+        filter = pathFilter;
+        continue;
+      }
+    }
+
+    if (
+      primaryTokens.length === 1 &&
+      (primaryTokens[0] === "yes" || primaryTokens[0] === "no")
+    ) {
+      continue;
+    }
+
+    return { valid: false };
+  }
+
+  return { filter, limit, valid: true };
+}
+
 function buildReadSummary(
   path: string,
   options: {
@@ -412,13 +560,17 @@ function buildReadSummary(
 
 function buildListSummary(
   path: string | undefined,
-  options: { limit?: number } = {},
+  options: { filter?: string; limit?: number } = {},
 ): ShellSemanticDisplay {
   return {
     kind: "list",
     label: "List",
     summary: formatSummaryFields([
       ["path", path ? formatDisplayPath(path) : "."],
+      [
+        "filter",
+        options.filter ? quoteSummaryValue(options.filter) : undefined,
+      ],
       ["limit", options.limit],
     ]),
     rawCommand: "",
@@ -445,14 +597,15 @@ function buildSearchSummary(
 function classifyPrimaryCommand(
   tokens: string[],
   contextPath: string | undefined,
-  helperSegments: string[][],
+  helperAnalysis: {
+    filter?: string;
+    limit?: number;
+  },
 ): Omit<ShellSemanticDisplay, "rawCommand"> | null {
   const [head, ...tail] = tokens;
   if (!head) {
     return null;
   }
-
-  const pipelineLimit = parsePipelineLimit(helperSegments);
 
   if (head === "git") {
     const [subcommand, ...subTail] = tail;
@@ -462,8 +615,11 @@ function classifyPrimaryCommand(
         new Set(["-e", "-f", "-m", "-A", "-B", "-C", "--max-count"]),
       );
       const [query, path] = operands;
+      if (!query) {
+        return null;
+      }
       return buildSearchSummary(query, combineContextPath(contextPath, path), {
-        limit: pipelineLimit,
+        limit: helperAnalysis.limit,
       });
     }
     if (subcommand === "ls-files") {
@@ -472,7 +628,8 @@ function classifyPrimaryCommand(
         new Set(["--exclude", "--exclude-from", "--pathspec-from-file"]),
       );
       return buildListSummary(combineContextPath(contextPath, operands[0]), {
-        limit: pipelineLimit,
+        filter: helperAnalysis.filter,
+        limit: helperAnalysis.limit,
       });
     }
     return null;
@@ -502,13 +659,17 @@ function classifyPrimaryCommand(
 
     if (hasFilesFlag) {
       return buildListSummary(combineContextPath(contextPath, operands[0]), {
-        limit: pipelineLimit,
+        filter: helperAnalysis.filter,
+        limit: helperAnalysis.limit,
       });
     }
 
     const [query, path] = operands;
+    if (!query) {
+      return null;
+    }
     return buildSearchSummary(query, combineContextPath(contextPath, path), {
-      limit: pipelineLimit,
+      limit: helperAnalysis.limit,
     });
   }
 
@@ -524,8 +685,11 @@ function classifyPrimaryCommand(
       new Set(["-e", "-f", "-m", "-A", "-B", "-C", "--max-count"]),
     );
     const [query, path] = operands;
+    if (!query) {
+      return null;
+    }
     return buildSearchSummary(query, combineContextPath(contextPath, path), {
-      limit: pipelineLimit,
+      limit: helperAnalysis.limit,
     });
   }
 
@@ -546,7 +710,8 @@ function classifyPrimaryCommand(
       ]),
     );
     return buildListSummary(combineContextPath(contextPath, operands[0]), {
-      limit: pipelineLimit,
+      filter: helperAnalysis.filter,
+      limit: helperAnalysis.limit,
     });
   }
 
@@ -556,7 +721,8 @@ function classifyPrimaryCommand(
       new Set(["-L", "-P", "-I", "--charset", "--filelimit", "--sort"]),
     );
     return buildListSummary(combineContextPath(contextPath, operands[0]), {
-      limit: pipelineLimit,
+      filter: helperAnalysis.filter,
+      limit: helperAnalysis.limit,
     });
   }
 
@@ -573,7 +739,8 @@ function classifyPrimaryCommand(
       ]),
     );
     return buildListSummary(combineContextPath(contextPath, operands[0]), {
-      limit: pipelineLimit,
+      filter: helperAnalysis.filter,
+      limit: helperAnalysis.limit,
     });
   }
 
@@ -595,7 +762,8 @@ function classifyPrimaryCommand(
         ? combineContextPath(contextPath, tail[0])
         : combineContextPath(contextPath, undefined);
     return buildListSummary(root ?? operands[0], {
-      limit: pipelineLimit,
+      filter: helperAnalysis.filter,
+      limit: helperAnalysis.limit,
     });
   }
 
@@ -664,6 +832,101 @@ function classifyPrimaryCommand(
   return null;
 }
 
+function classifyPipelineCommand(
+  tokens: string[],
+  contextPath: string | undefined,
+): Omit<ShellSemanticDisplay, "rawCommand"> | null {
+  const pipelineSegments = splitPipeline(tokens);
+  if (pipelineSegments.length === 0) {
+    return null;
+  }
+
+  let primaryTokens = pipelineSegments[0] ?? [];
+  let helperSegments = pipelineSegments.slice(1);
+
+  while (
+    primaryTokens.length === 1 &&
+    (primaryTokens[0] === "yes" || primaryTokens[0] === "no") &&
+    helperSegments.length > 0
+  ) {
+    primaryTokens = helperSegments[0] ?? [];
+    helperSegments = helperSegments.slice(1);
+  }
+
+  if (primaryTokens.length === 0) {
+    return null;
+  }
+
+  const primaryGuess = classifyPrimaryCommand(primaryTokens, contextPath, {});
+  if (!primaryGuess) {
+    return null;
+  }
+
+  const helperAnalysis = analyzeHelperSegments(
+    primaryTokens,
+    primaryGuess.kind,
+    helperSegments,
+  );
+  if (!helperAnalysis.valid) {
+    return null;
+  }
+
+  return classifyPrimaryCommand(primaryTokens, contextPath, helperAnalysis);
+}
+
+function classifySemanticSequence(
+  rawCommand: string,
+): Omit<ShellSemanticDisplay, "rawCommand"> | null {
+  const sanitizedCommand = stripNonSemanticRedirections(rawCommand);
+  const tokens = tokenizeShell(sanitizedCommand);
+
+  if (hasUnsupportedSyntax(sanitizedCommand, tokens)) {
+    return null;
+  }
+
+  const segments = splitOnSequenceConnectors(tokens);
+  if (segments.length === 0) {
+    return null;
+  }
+
+  const context: SequenceContext = {
+    loopVariables: new Map<string, string>(),
+  };
+
+  for (const segment of segments) {
+    const trimmed = trimLeadingControlTokens(segment);
+    if (trimmed.length === 0) {
+      continue;
+    }
+
+    if (trimmed[0] === "done") {
+      context.loopVariables.clear();
+      continue;
+    }
+
+    if (maybeCaptureLoopVariable(trimmed, context.loopVariables)) {
+      continue;
+    }
+
+    if (trimmed[0] === "cd" && trimmed[1] && trimmed.length === 2) {
+      context.contextPath = combineContextPath(context.contextPath, trimmed[1]);
+      continue;
+    }
+
+    if (isIgnoredSequenceSegment(trimmed)) {
+      continue;
+    }
+
+    const substituted = substituteLoopVariables(trimmed, context.loopVariables);
+    const parsed = classifyPipelineCommand(substituted, context.contextPath);
+    if (parsed) {
+      return parsed;
+    }
+  }
+
+  return null;
+}
+
 export function summarizeShellDisplay(
   command: string | string[],
 ): ShellSemanticDisplay {
@@ -677,63 +940,7 @@ export function summarizeShellDisplay(
     };
   }
 
-  const tokens = tokenizeShell(rawCommand);
-  const { contextPath, commandTokens } = stripLeadingCd(tokens);
-
-  if (hasUnsupportedSyntax(rawCommand, commandTokens)) {
-    return {
-      kind: "run",
-      label: "Run",
-      summary: rawCommand,
-      rawCommand,
-    };
-  }
-
-  const pipelineSegments = splitPipeline(commandTokens);
-  if (pipelineSegments.length === 0) {
-    return {
-      kind: "run",
-      label: "Run",
-      summary: rawCommand,
-      rawCommand,
-    };
-  }
-
-  let primaryTokens = pipelineSegments[0] ?? [];
-  let helperSegments = pipelineSegments.slice(1);
-
-  if (
-    primaryTokens.length === 1 &&
-    (primaryTokens[0] === "yes" || primaryTokens[0] === "no") &&
-    helperSegments.length > 0
-  ) {
-    primaryTokens = helperSegments[0] ?? [];
-    helperSegments = helperSegments.slice(1);
-  }
-
-  if (primaryTokens.length === 0) {
-    return {
-      kind: "run",
-      label: "Run",
-      summary: rawCommand,
-      rawCommand,
-    };
-  }
-
-  if (helperSegments.some((segment) => !isFormatterSegment(segment))) {
-    return {
-      kind: "run",
-      label: "Run",
-      summary: rawCommand,
-      rawCommand,
-    };
-  }
-
-  const classified = classifyPrimaryCommand(
-    primaryTokens,
-    contextPath,
-    helperSegments,
-  );
+  const classified = classifySemanticSequence(rawCommand);
   if (!classified) {
     return {
       kind: "run",
