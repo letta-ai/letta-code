@@ -140,11 +140,7 @@ export function createTelegramAdapter(
         opts.parse_mode = msg.parseMode;
       }
 
-      const result = await bot.api.sendMessage(
-        msg.chatId,
-        msg.text,
-        opts,
-      );
+      const result = await bot.api.sendMessage(msg.chatId, msg.text, opts);
       return { messageId: String(result.message_id) };
     },
 

@@ -188,3 +188,29 @@ test("telegram adapter logs and clears running state when polling exits unexpect
     expect.objectContaining({ message: "polling failed" }),
   );
 });
+
+test("telegram adapter forwards parse mode and reply parameters", async () => {
+  const adapter = createTelegramAdapter({
+    channel: "telegram",
+    enabled: true,
+    token: "test-token",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  await adapter.start();
+  await adapter.sendMessage({
+    channel: "telegram",
+    chatId: "123",
+    text: "<b>hello</b>",
+    replyToMessageId: "456",
+    parseMode: "HTML",
+  });
+
+  const bot = FakeBot.instances[0];
+  expect(bot).toBeDefined();
+  expect(bot?.api.sendMessage).toHaveBeenCalledWith("123", "<b>hello</b>", {
+    parse_mode: "HTML",
+    reply_parameters: { message_id: 456 },
+  });
+});
