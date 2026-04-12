@@ -3,6 +3,11 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { consumeQueuedSkillContent } from "../../tools/impl/skillContentRegistry";
+import {
+  clearTools,
+  executeTool,
+  loadSpecificTools,
+} from "../../tools/manager";
 
 const TEST_AGENT_ID = "agent-skill-memfs-test";
 let currentSkillsDirectory: string | null = null;
@@ -19,6 +24,7 @@ describe("Skill tool memory filesystem lookup", () => {
   const originalMemoryDir = process.env.MEMORY_DIR;
   const originalLettaMemoryDir = process.env.LETTA_MEMORY_DIR;
   const originalHome = process.env.HOME;
+  const originalUserCwd = process.env.USER_CWD;
 
   beforeEach(() => {
     tempRoot = mkdtempSync(join(tmpdir(), "letta-skill-tool-"));
@@ -29,6 +35,7 @@ describe("Skill tool memory filesystem lookup", () => {
   afterEach(() => {
     consumeQueuedSkillContent();
     currentSkillsDirectory = null;
+    clearTools();
 
     if (originalMemoryDir === undefined) {
       delete process.env.MEMORY_DIR;
@@ -46,6 +53,12 @@ describe("Skill tool memory filesystem lookup", () => {
       delete process.env.HOME;
     } else {
       process.env.HOME = originalHome;
+    }
+
+    if (originalUserCwd === undefined) {
+      delete process.env.USER_CWD;
+    } else {
+      process.env.USER_CWD = originalUserCwd;
     }
 
     rmSync(tempRoot, { recursive: true, force: true });
@@ -109,5 +122,121 @@ describe("Skill tool memory filesystem lookup", () => {
     const queued = consumeQueuedSkillContent();
     expect(queued).toHaveLength(1);
     expect(queued[0]?.content).toContain("Loaded from agent memory fallback.");
+  });
+
+  test("prefers injected parentScope.agentId over global agent context for memfs fallback", async () => {
+    const skillName = "scoped-agent-skill";
+    const injectedAgentId = "agent-scoped-parent";
+    const skillDir = join(
+      tempRoot,
+      ".letta",
+      "agents",
+      injectedAgentId,
+      "memory",
+      "skills",
+      skillName,
+    );
+
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(
+      join(skillDir, "SKILL.md"),
+      "---\nname: scoped-agent-skill\ndescription: test\n---\n\nLoaded from injected agent scope.",
+      "utf8",
+    );
+
+    delete process.env.MEMORY_DIR;
+    delete process.env.LETTA_MEMORY_DIR;
+    process.env.HOME = tempRoot;
+
+    const result = await skill({
+      skill: skillName,
+      toolCallId: "tc-scoped-agent",
+      parentScope: {
+        agentId: injectedAgentId,
+        conversationId: "conversation-scoped-parent",
+      },
+    });
+    expect(result.message).toBe(`Launching skill: ${skillName}`);
+
+    const queued = consumeQueuedSkillContent();
+    expect(queued).toHaveLength(1);
+    expect(queued[0]?.content).toContain("Loaded from injected agent scope.");
+  });
+
+  test("uses USER_CWD fallback for project skill lookup when no explicit skills directory is set", async () => {
+    const skillName = "cwd-project-skill";
+    const projectRoot = join(tempRoot, "project-root");
+    const skillDir = join(projectRoot, ".skills", skillName);
+
+    currentSkillsDirectory = null;
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(
+      join(skillDir, "SKILL.md"),
+      "---\nname: cwd-project-skill\ndescription: test\n---\n\nLoaded from USER_CWD project skills.",
+      "utf8",
+    );
+
+    process.env.USER_CWD = projectRoot;
+
+    const result = await skill({
+      skill: skillName,
+      toolCallId: "tc-user-cwd",
+    });
+    expect(result.message).toBe(`Launching skill: ${skillName}`);
+
+    const queued = consumeQueuedSkillContent();
+    expect(queued).toHaveLength(1);
+    expect(queued[0]?.content).toContain(
+      "Loaded from USER_CWD project skills.",
+    );
+  });
+
+  test("executeTool forwards parentScope to Skill for listener-scoped memfs lookup", async () => {
+    const skillName = "execute-tool-scoped-skill";
+    const injectedAgentId = "agent-execute-tool-parent";
+    const skillDir = join(
+      tempRoot,
+      ".letta",
+      "agents",
+      injectedAgentId,
+      "memory",
+      "skills",
+      skillName,
+    );
+
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(
+      join(skillDir, "SKILL.md"),
+      "---\nname: execute-tool-scoped-skill\ndescription: test\n---\n\nLoaded through executeTool parent scope.",
+      "utf8",
+    );
+
+    delete process.env.MEMORY_DIR;
+    delete process.env.LETTA_MEMORY_DIR;
+    process.env.HOME = tempRoot;
+
+    clearTools();
+    await loadSpecificTools(["Skill"]);
+
+    const result = await executeTool(
+      "Skill",
+      { skill: skillName },
+      {
+        toolCallId: "tc-execute-tool-scoped",
+        parentScope: {
+          agentId: injectedAgentId,
+          conversationId: "conversation-execute-tool",
+        },
+      },
+    );
+
+    expect(result.status).toBe("success");
+    expect(result.toolReturn).toBe(`Launching skill: ${skillName}`);
+
+    const queued = consumeQueuedSkillContent();
+    expect(queued).toHaveLength(1);
+    expect(queued[0]?.content).toContain(
+      "Loaded through executeTool parent scope.",
+    );
   });
 });
