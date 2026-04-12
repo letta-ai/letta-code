@@ -93,12 +93,36 @@ export function buildChannelNotificationXml(
  * The reminder and the notification XML are emitted as separate text parts so
  * UIs that already know how to hide pure system-reminder parts can do so
  * without needing to parse concatenated XML blobs.
+ *
+ * When the inbound message includes images, they are appended as ImageContent
+ * parts so the agent can see them inline.
  */
 export function formatChannelNotification(
   msg: InboundChannelMessage,
 ): MessageCreate["content"] {
-  return [
+  const parts: Array<
+    | { type: "text"; text: string }
+    | {
+        type: "image";
+        source: { type: "base64"; media_type: string; data: string };
+      }
+  > = [
     { type: "text", text: buildChannelReminderText(msg) },
     { type: "text", text: buildChannelNotificationXml(msg) },
-  ] as MessageCreate["content"];
+  ];
+
+  if (msg.images?.length) {
+    for (const img of msg.images) {
+      parts.push({
+        type: "image",
+        source: {
+          type: "base64",
+          media_type: img.mediaType,
+          data: img.data,
+        },
+      });
+    }
+  }
+
+  return parts as MessageCreate["content"];
 }

@@ -9,6 +9,7 @@ import type { Bot as GrammYBot, Context as GrammYContext } from "grammy";
 import type {
   ChannelAdapter,
   InboundChannelMessage,
+  InboundImageAttachment,
   OutboundChannelMessage,
   TelegramChannelConfig,
 } from "../types";
@@ -81,6 +82,111 @@ export function createTelegramAdapter(
           await adapter.onMessage(inbound);
         } catch (err) {
           console.error("[Telegram] Error handling inbound message:", err);
+        }
+      }
+    });
+
+    // Handle photo messages (and image documents)
+    // Match the desktop app's 5MB limit (see imageResize.ts).
+    const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+    const FETCH_TIMEOUT_MS = 15_000;
+
+    instance.on(["message:photo", "message:document"], async (ctx) => {
+      const msg = ctx.message;
+      if (!msg.from) return;
+
+      // Determine if this is a photo or an image document
+      const photos = msg.photo ?? [];
+      const isPhoto = photos.length > 0;
+      const doc = msg.document;
+      const isImageDoc = !!doc?.mime_type?.startsWith("image/");
+      if (!isPhoto && !isImageDoc) return;
+
+      const displayName =
+        msg.from.username ??
+        [msg.from.first_name, msg.from.last_name].filter(Boolean).join(" ");
+
+      // Download the image
+      const images: InboundImageAttachment[] = [];
+      try {
+        let fileId: string;
+        let mediaType: string;
+        let reportedSize: number | undefined;
+
+        if (isPhoto) {
+          // Use the largest photo size (last in array).
+          // isPhoto guarantees photos.length > 0, so the index is safe.
+          const photo = photos[photos.length - 1] as (typeof photos)[number];
+          fileId = photo.file_id;
+          mediaType = "image/jpeg"; // Telegram photos are always JPEG
+          reportedSize = photo.file_size;
+        } else {
+          fileId = doc!.file_id;
+          mediaType = doc!.mime_type ?? "image/jpeg";
+          reportedSize = doc!.file_size;
+        }
+
+        // Skip oversized files before downloading
+        if (reportedSize && reportedSize > MAX_IMAGE_BYTES) {
+          console.warn(
+            `[Telegram] Image too large (${(reportedSize / 1024 / 1024).toFixed(1)}MB), skipping download.`,
+          );
+        } else {
+          const file = await instance.api.getFile(fileId);
+          if (file.file_path) {
+            // Note: Telegram Bot API requires the token in the download URL.
+            // We avoid logging the URL to prevent token leakage.
+            const fileUrl = `https://api.telegram.org/file/bot${config.token}/${file.file_path}`;
+            let response: Response;
+            try {
+              response = await fetch(fileUrl, {
+                signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+              });
+            } catch (fetchErr) {
+              // Log without the URL to avoid leaking the bot token
+              console.error("[Telegram] Failed to fetch image file.");
+              throw fetchErr;
+            }
+            if (response.ok) {
+              const buffer = await response.arrayBuffer();
+              if (buffer.byteLength <= MAX_IMAGE_BYTES) {
+                const base64 = Buffer.from(buffer).toString("base64");
+                images.push({ data: base64, mediaType });
+              } else {
+                console.warn(
+                  `[Telegram] Downloaded image too large (${(buffer.byteLength / 1024 / 1024).toFixed(1)}MB), discarding.`,
+                );
+              }
+            }
+          }
+        }
+      } catch (err) {
+        // Intentionally terse to avoid leaking the bot token from URLs in error messages
+        const errMsg = err instanceof Error ? err.message : "unknown error";
+        console.error(`[Telegram] Failed to download image: ${errMsg}`);
+      }
+
+      // If we couldn't download the image, still forward the caption if present
+      if (images.length === 0 && !msg.caption) return;
+
+      const inbound: InboundChannelMessage = {
+        channel: "telegram",
+        chatId: String(msg.chat.id),
+        senderId: String(msg.from.id),
+        senderName: displayName || undefined,
+        text: msg.caption ?? "",
+        timestamp: msg.date * 1000,
+        messageId: String(msg.message_id),
+        chatType: "direct",
+        raw: msg,
+        images: images.length > 0 ? images : undefined,
+      };
+
+      if (adapter.onMessage) {
+        try {
+          await adapter.onMessage(inbound);
+        } catch (err) {
+          console.error("[Telegram] Error handling inbound photo:", err);
         }
       }
     });

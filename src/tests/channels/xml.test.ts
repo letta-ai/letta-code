@@ -11,15 +11,19 @@ function expectTextParts(
   content: MessageCreate["content"],
 ): [{ type: "text"; text: string }, { type: "text"; text: string }] {
   expect(Array.isArray(content)).toBe(true);
-  const parts = content as Array<{ type: "text"; text: string }>;
-  expect(parts).toHaveLength(2);
+  const parts = content as Array<{ type: string; text?: string }>;
+  // At least 2 text parts (reminder + notification); may have more (images)
+  expect(parts.length).toBeGreaterThanOrEqual(2);
 
   const [reminderPart, notificationPart] = parts;
   if (!reminderPart || !notificationPart) {
     throw new Error("Expected reminder and notification text parts");
   }
 
-  return [reminderPart, notificationPart];
+  return [
+    reminderPart as { type: "text"; text: string },
+    notificationPart as { type: "text"; text: string },
+  ];
 }
 
 describe("formatChannelNotification", () => {
@@ -112,6 +116,57 @@ describe("formatChannelNotification", () => {
     const xml = buildChannelNotificationXml(msg);
 
     expect(xml).toContain("John &quot;The &lt;Bot&gt;&quot;");
+  });
+
+  test("includes ImageContent parts when message has images", () => {
+    const msg: InboundChannelMessage = {
+      channel: "telegram",
+      chatId: "12345",
+      senderId: "67890",
+      senderName: "John",
+      text: "Check this photo",
+      timestamp: Date.now(),
+      messageId: "msg-99",
+      images: [{ data: "aGVsbG8=", mediaType: "image/jpeg" }],
+    };
+
+    const content = formatChannelNotification(msg);
+    const parts = content as Array<{
+      type: string;
+      text?: string;
+      source?: { type: string; media_type: string; data: string };
+    }>;
+
+    expect(parts).toHaveLength(3);
+    expect(parts[0]!.type).toBe("text");
+    expect(parts[1]!.type).toBe("text");
+    expect(parts[2]!.type).toBe("image");
+    expect(parts[2]!.source).toEqual({
+      type: "base64",
+      media_type: "image/jpeg",
+      data: "aGVsbG8=",
+    });
+  });
+
+  test("handles multiple images", () => {
+    const msg: InboundChannelMessage = {
+      channel: "telegram",
+      chatId: "12345",
+      senderId: "67890",
+      text: "",
+      timestamp: Date.now(),
+      images: [
+        { data: "img1data", mediaType: "image/jpeg" },
+        { data: "img2data", mediaType: "image/png" },
+      ],
+    };
+
+    const content = formatChannelNotification(msg);
+    const parts = content as Array<{ type: string }>;
+
+    expect(parts).toHaveLength(4); // 2 text + 2 images
+    expect(parts[2]!.type).toBe("image");
+    expect(parts[3]!.type).toBe("image");
   });
 
   test("omits optional notification attributes when not present", () => {

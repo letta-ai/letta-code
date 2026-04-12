@@ -46,6 +46,15 @@ export interface ChannelAdapter {
   onMessage?: (msg: InboundChannelMessage) => Promise<void>;
 }
 
+// ── Attachments ───────────────────────────────────────────────────
+
+export interface InboundImageAttachment {
+  /** Base64-encoded image data. */
+  data: string;
+  /** MIME type, e.g. "image/jpeg". */
+  mediaType: string;
+}
+
 // ── Message types ─────────────────────────────────────────────────
 
 export interface InboundChannelMessage {
@@ -69,6 +78,8 @@ export interface InboundChannelMessage {
   raw?: unknown;
   /** Broad chat surface type used for routing/pairing decisions. */
   chatType?: ChannelChatType;
+  /** Inbound image attachments (photos, image documents). */
+  images?: InboundImageAttachment[];
 }
 
 export interface OutboundChannelMessage {
