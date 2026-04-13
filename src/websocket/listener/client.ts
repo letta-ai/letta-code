@@ -265,6 +265,10 @@ import type {
   ModeChangePayload,
   StartListenerOptions,
 } from "./types";
+import {
+  restartWorktreeWatcher,
+  stopAllWorktreeWatchers,
+} from "./worktree-watcher";
 
 type ChannelsServiceModule = typeof import("../../channels/service");
 
@@ -3313,6 +3317,14 @@ async function handleCwdChange(
       agent_id: agentId,
       conversation_id: conversationId,
     });
+
+    // Restart the worktree file watcher for the new CWD so we detect
+    // any future worktree creation under the updated directory.
+    restartWorktreeWatcher({
+      runtime: runtime.listener,
+      agentId,
+      conversationId,
+    });
   } catch (error) {
     emitLoopErrorNotice(socket, runtime, {
       message:
@@ -3346,6 +3358,7 @@ function createRuntime(): ListenerRuntime {
     reminderState: createSharedReminderState(),
     bootWorkingDirectory,
     workingDirectoryByConversation: loadPersistedCwdMap(),
+    worktreeWatcherByConversation: new Map(),
     permissionModeByConversation: loadPersistedPermissionModeMap(),
     reminderStateByConversation: new Map(),
     contextTrackerByConversation: new Map(),
@@ -3384,6 +3397,7 @@ function stopRuntime(
   runtime.contextTrackerByConversation.clear();
   runtime.systemPromptRecompileByConversation.clear();
   runtime.queuedSystemPromptRecompileByConversation.clear();
+  stopAllWorktreeWatchers(runtime);
 
   if (!runtime.socket) {
     return;
@@ -5311,6 +5325,7 @@ function createLegacyTestRuntime(): ConversationRuntime & {
   conversationRuntimes: ListenerRuntime["conversationRuntimes"];
   approvalRuntimeKeyByRequestId: ListenerRuntime["approvalRuntimeKeyByRequestId"];
   memfsSyncedAgents: ListenerRuntime["memfsSyncedAgents"];
+  worktreeWatcherByConversation: ListenerRuntime["worktreeWatcherByConversation"];
   lastEmittedStatus: ListenerRuntime["lastEmittedStatus"];
 } {
   const listener = createRuntime();
@@ -5345,6 +5360,7 @@ function createLegacyTestRuntime(): ConversationRuntime & {
     conversationRuntimes: ListenerRuntime["conversationRuntimes"];
     approvalRuntimeKeyByRequestId: ListenerRuntime["approvalRuntimeKeyByRequestId"];
     memfsSyncedAgents: ListenerRuntime["memfsSyncedAgents"];
+    worktreeWatcherByConversation: ListenerRuntime["worktreeWatcherByConversation"];
     lastEmittedStatus: ListenerRuntime["lastEmittedStatus"];
   };
   for (const [prop, getSet] of Object.entries({
@@ -5499,6 +5515,12 @@ function createLegacyTestRuntime(): ConversationRuntime & {
       get: () => listener.memfsSyncedAgents,
       set: (value: ListenerRuntime["memfsSyncedAgents"]) => {
         listener.memfsSyncedAgents = value;
+      },
+    },
+    worktreeWatcherByConversation: {
+      get: () => listener.worktreeWatcherByConversation,
+      set: (value: ListenerRuntime["worktreeWatcherByConversation"]) => {
+        listener.worktreeWatcherByConversation = value;
       },
     },
     lastEmittedStatus: {
