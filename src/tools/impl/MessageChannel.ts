@@ -1,11 +1,23 @@
 /**
- * MessageChannel tool — sends messages to external channels.
+ * Shared MessageChannel tool — sends messages to external channels.
  *
  * Uses parentScope (injected per-execution by manager.ts executeTool())
  * for agent+conversation authorization. Does NOT use global context
  * singleton, which is unsafe in the listener's multi-runtime model.
+ *
+ * The public tool surface is intentionally shared across channels.
+ * Channel plugins own action discovery and dispatch underneath it via
+ * plugin.messageActions, following the OpenClaw-style architecture.
  */
 
+import {
+  isSupportedChannelId,
+  loadChannelPlugin,
+} from "../../channels/pluginRegistry";
+import type {
+  ChannelMessageActionName,
+  ChannelMessageActionRequest,
+} from "../../channels/pluginTypes";
 import { getChannelRegistry } from "../../channels/registry";
 import type {
   ChannelRoute,
@@ -443,11 +455,118 @@ export function formatOutboundChannelMessage(
 
 interface MessageChannelArgs {
   channel: string;
+  action: string;
   chat_id: string;
-  text: string;
-  reply_to_message_id?: string;
+  message?: string;
+  replyTo?: string;
+  threadId?: string;
+  messageId?: string;
+  emoji?: string;
+  remove?: boolean;
+  media?: string;
+  filename?: string;
+  title?: string;
   /** Injected by executeTool() — NOT read from global context. */
   parentScope?: { agentId: string; conversationId: string };
+}
+
+function firstNonEmptyString(...values: unknown[]): string | undefined {
+  for (const value of values) {
+    if (typeof value === "string") {
+      const trimmed = value.trim();
+      if (trimmed.length > 0) {
+        return trimmed;
+      }
+    }
+  }
+  return undefined;
+}
+
+function firstDefinedBoolean(...values: unknown[]): boolean | undefined {
+  for (const value of values) {
+    if (typeof value === "boolean") {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function normalizeChatTarget(value: string): string {
+  const trimmed = value.trim();
+  const parts = trimmed
+    .split(":")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (parts.length === 2 && /^[a-z_-]+$/i.test(parts[0] ?? "")) {
+    return parts[1] ?? trimmed;
+  }
+  if (
+    parts.length === 3 &&
+    /^[a-z_-]+$/i.test(parts[0] ?? "") &&
+    /^[a-z_-]+$/i.test(parts[1] ?? "")
+  ) {
+    return parts[2] ?? trimmed;
+  }
+  return trimmed;
+}
+
+function normalizeMessageAction(
+  rawAction: string,
+): ChannelMessageActionName | null {
+  const normalized = rawAction.trim().toLowerCase();
+
+  switch (normalized) {
+    case "send":
+      return "send";
+    case "react":
+      return "react";
+    case "upload-file":
+      return "upload-file";
+    default:
+      return null;
+  }
+}
+
+function normalizeMessageChannelRequest(
+  args: MessageChannelArgs,
+): ChannelMessageActionRequest | string {
+  const channel = firstNonEmptyString(args.channel)?.toLowerCase();
+  if (!channel) {
+    return "Error: MessageChannel requires channel.";
+  }
+  if (!isSupportedChannelId(channel)) {
+    return `Error: Unsupported channel "${channel}".`;
+  }
+
+  const rawAction = firstNonEmptyString(args.action);
+  if (!rawAction) {
+    return "Error: MessageChannel requires action.";
+  }
+
+  const action = normalizeMessageAction(rawAction);
+  if (!action) {
+    return `Error: Unsupported MessageChannel action "${args.action}".`;
+  }
+
+  const rawChatId = firstNonEmptyString(args.chat_id);
+  if (!rawChatId) {
+    return "Error: MessageChannel requires chat_id.";
+  }
+
+  return {
+    action,
+    channel,
+    chatId: normalizeChatTarget(rawChatId),
+    message: firstNonEmptyString(args.message),
+    replyToMessageId: firstNonEmptyString(args.replyTo),
+    threadId: firstNonEmptyString(args.threadId) ?? null,
+    messageId: firstNonEmptyString(args.messageId),
+    emoji: firstNonEmptyString(args.emoji),
+    remove: firstDefinedBoolean(args.remove),
+    mediaPath: firstNonEmptyString(args.media),
+    filename: firstNonEmptyString(args.filename),
+    title: firstNonEmptyString(args.title),
+  };
 }
 
 export async function message_channel(
@@ -458,15 +577,6 @@ export async function message_channel(
     return "Error: Channel system is not initialized. Start with --channels flag.";
   }
 
-  const adapter = registry.getAdapter(args.channel);
-  if (!adapter) {
-    return `Error: Channel "${args.channel}" is not configured or not running.`;
-  }
-
-  if (!adapter.isRunning()) {
-    return `Error: Channel "${args.channel}" is not currently running.`;
-  }
-
   // Per-agent+conversation authorization via injected scope.
   // parentScope comes from executeTool() options in manager.ts,
   // NOT the global context singleton (agent/context.ts).
@@ -475,35 +585,55 @@ export async function message_channel(
     return "Error: MessageChannel requires execution scope (agentId + conversationId).";
   }
 
-  const route: ChannelRoute | null = registry.getRoute(
-    args.channel,
-    args.chat_id,
+  const request = normalizeMessageChannelRequest(args);
+  if (typeof request === "string") {
+    return request;
+  }
+
+  const route: ChannelRoute | null = registry.getRouteForScope(
+    request.channel,
+    request.chatId,
+    scope.agentId,
+    scope.conversationId,
   );
-  if (
-    !route ||
-    route.agentId !== scope.agentId ||
-    route.conversationId !== scope.conversationId
-  ) {
-    return `Error: No route for chat_id "${args.chat_id}" on "${args.channel}" for this agent/conversation.`;
+  if (!route) {
+    return `Error: No route for chat_id "${request.chatId}" on "${request.channel}" for this agent/conversation.`;
+  }
+
+  const adapter = registry.getAdapter(request.channel, route.accountId);
+  if (!adapter) {
+    return `Error: Channel "${request.channel}" is not configured or not running.`;
+  }
+
+  if (!adapter.isRunning()) {
+    return `Error: Channel "${request.channel}" is not currently running.`;
   }
 
   try {
-    const formattedMessage = formatOutboundChannelMessage(
-      args.channel,
-      args.text,
-    );
+    const plugin = await loadChannelPlugin(request.channel);
+    if (!plugin.messageActions) {
+      return `Error: Channel "${request.channel}" does not expose MessageChannel actions.`;
+    }
 
-    const result = await adapter.sendMessage({
-      channel: args.channel,
-      chatId: args.chat_id,
-      text: formattedMessage.text,
-      replyToMessageId: args.reply_to_message_id,
-      parseMode: formattedMessage.parseMode,
+    const discovery = plugin.messageActions.describeMessageTool({
+      accountId: route.accountId ?? null,
     });
+    const supportedActions = new Set<string>(["send"]);
+    for (const action of discovery.actions ?? []) {
+      supportedActions.add(action);
+    }
+    if (!supportedActions.has(request.action)) {
+      return `Error: Action "${request.action}" is not supported on ${request.channel}.`;
+    }
 
-    return `Message sent to ${args.channel} (message_id: ${result.messageId})`;
+    return await plugin.messageActions.handleAction({
+      request,
+      route,
+      adapter,
+      formatText: (text) => formatOutboundChannelMessage(request.channel, text),
+    });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "unknown error";
-    return `Error sending message to ${args.channel}: ${msg}`;
+    return `Error sending message to ${request.channel}: ${msg}`;
   }
 }

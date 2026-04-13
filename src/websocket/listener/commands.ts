@@ -408,7 +408,9 @@ async function handleChannelsCommand(
   }
 
   if (subCmd === "status") {
-    const { readChannelConfig } = await import("../../channels/config");
+    const { listChannelAccountSnapshots } = await import(
+      "../../channels/service"
+    );
     const { getRoutesForChannel, loadRoutes } = await import(
       "../../channels/routing"
     );
@@ -419,8 +421,8 @@ async function handleChannelsCommand(
     const lines: string[] = [];
 
     for (const ch of channels) {
-      const config = readChannelConfig(ch);
-      if (!config) {
+      const accounts = listChannelAccountSnapshots(ch);
+      if (accounts.length === 0) {
         lines.push(`${ch}: not configured`);
         continue;
       }
@@ -430,8 +432,8 @@ async function handleChannelsCommand(
       const pending = getPendingPairings(ch);
       const approved = getApprovedUsers(ch);
       lines.push(
-        `${ch}: enabled=${config.enabled}, policy=${config.dmPolicy}, ` +
-          `routes=${routes.length}, pending=${pending.length}, approved=${approved.length}`,
+        `${ch}: accounts=${accounts.length}, enabled=${accounts.some((account) => account.enabled)}, ` +
+          `policy=${accounts[0]?.dmPolicy ?? "unknown"}, routes=${routes.length}, pending=${pending.length}, approved=${approved.length}`,
       );
     }
 
@@ -439,6 +441,10 @@ async function handleChannelsCommand(
   }
 
   if (subCmd === "telegram") {
+    const accountIdFlag = rest.indexOf("--account-id");
+    const accountId =
+      accountIdFlag >= 0 ? (rest[accountIdFlag + 1] ?? undefined) : undefined;
+
     if (action === "pair") {
       const code = rest[0];
       if (!code) {
@@ -452,7 +458,13 @@ async function handleChannelsCommand(
       loadRoutes("telegram");
       loadPairingStore("telegram");
 
-      const result = completePairing("telegram", code, agentId, conversationId);
+      const result = completePairing(
+        "telegram",
+        code,
+        agentId,
+        conversationId,
+        accountId,
+      );
 
       if (result.success) {
         return `Pairing approved! Chat ${result.chatId} is now bound to this agent/conversation.`;
@@ -465,13 +477,37 @@ async function handleChannelsCommand(
       const chatId = chatIdFlag >= 0 ? rest[chatIdFlag + 1] : undefined;
 
       if (!chatId) {
-        return "Usage: /channels telegram enable --chat-id <id>";
+        return "Usage: /channels telegram enable --chat-id <id> [--account-id <id>]";
       }
 
+      const { getChannelAccount, listChannelAccounts } = await import(
+        "../../channels/accounts"
+      );
       const { addRoute, loadRoutes } = await import("../../channels/routing");
+
+      let resolvedAccountId = accountId?.trim();
+      if (resolvedAccountId) {
+        if (!getChannelAccount("telegram", resolvedAccountId)) {
+          return `Unknown Telegram account: ${resolvedAccountId}`;
+        }
+      } else {
+        const accounts = listChannelAccounts("telegram");
+        if (accounts.length === 0) {
+          return "Telegram is not configured yet.";
+        }
+        if (accounts.length > 1) {
+          return "Telegram has multiple accounts. Re-run with --account-id <id>.";
+        }
+        resolvedAccountId = accounts[0]?.accountId;
+      }
+
+      if (!resolvedAccountId) {
+        return "Could not resolve a Telegram account for this route.";
+      }
 
       loadRoutes("telegram");
       addRoute("telegram", {
+        accountId: resolvedAccountId,
         chatId,
         agentId,
         conversationId,

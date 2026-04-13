@@ -2,11 +2,20 @@ import type WebSocket from "ws";
 import type {
   AbortMessageCommand,
   ChangeDeviceStateCommand,
+  ChannelAccountBindCommand,
+  ChannelAccountCreateCommand,
+  ChannelAccountDeleteCommand,
+  ChannelAccountStartCommand,
+  ChannelAccountStopCommand,
+  ChannelAccountsListCommand,
+  ChannelAccountUnbindCommand,
+  ChannelAccountUpdateCommand,
   ChannelGetConfigCommand,
   ChannelPairingBindCommand,
   ChannelPairingsListCommand,
   ChannelRouteRemoveCommand,
   ChannelRoutesListCommand,
+  ChannelRouteUpdateCommand,
   ChannelSetConfigCommand,
   ChannelStartCommand,
   ChannelStopCommand,
@@ -698,12 +707,230 @@ function isChannelId(value: unknown): value is "telegram" | "slack" {
   return value === "telegram" || value === "slack";
 }
 
+function hasValidChannelPolicyFields(config: Record<string, unknown>): boolean {
+  const hasValidDmPolicy =
+    config.dm_policy === undefined ||
+    config.dm_policy === "pairing" ||
+    config.dm_policy === "allowlist" ||
+    config.dm_policy === "open";
+  const hasValidAllowedUsers =
+    config.allowed_users === undefined ||
+    (Array.isArray(config.allowed_users) &&
+      config.allowed_users.every((entry) => typeof entry === "string"));
+  const hasValidDisplayName =
+    config.display_name === undefined ||
+    typeof config.display_name === "string";
+  const hasValidEnabled =
+    config.enabled === undefined || typeof config.enabled === "boolean";
+
+  return (
+    hasValidDmPolicy &&
+    hasValidAllowedUsers &&
+    hasValidDisplayName &&
+    hasValidEnabled
+  );
+}
+
 export function isChannelsListCommand(
   value: unknown,
 ): value is ChannelsListCommand {
   if (!value || typeof value !== "object") return false;
   const c = value as { type?: unknown; request_id?: unknown };
   return c.type === "channels_list" && typeof c.request_id === "string";
+}
+
+export function isChannelAccountsListCommand(
+  value: unknown,
+): value is ChannelAccountsListCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    channel_id?: unknown;
+  };
+  return (
+    c.type === "channel_accounts_list" &&
+    typeof c.request_id === "string" &&
+    isChannelId(c.channel_id)
+  );
+}
+
+export function isChannelAccountCreateCommand(
+  value: unknown,
+): value is ChannelAccountCreateCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    channel_id?: unknown;
+    account?: unknown;
+  };
+  if (
+    c.type !== "channel_account_create" ||
+    typeof c.request_id !== "string" ||
+    !isChannelId(c.channel_id) ||
+    !c.account ||
+    typeof c.account !== "object"
+  ) {
+    return false;
+  }
+
+  const account = c.account as Record<string, unknown>;
+  if (
+    (account.account_id !== undefined &&
+      typeof account.account_id !== "string") ||
+    !hasValidChannelPolicyFields(account)
+  ) {
+    return false;
+  }
+
+  if (c.channel_id === "telegram") {
+    return account.token === undefined || typeof account.token === "string";
+  }
+
+  return (
+    (account.bot_token === undefined ||
+      typeof account.bot_token === "string") &&
+    (account.app_token === undefined ||
+      typeof account.app_token === "string") &&
+    (account.mode === undefined || account.mode === "socket") &&
+    (account.agent_id === undefined ||
+      account.agent_id === null ||
+      typeof account.agent_id === "string")
+  );
+}
+
+export function isChannelAccountUpdateCommand(
+  value: unknown,
+): value is ChannelAccountUpdateCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    channel_id?: unknown;
+    account_id?: unknown;
+    patch?: unknown;
+  };
+  if (
+    c.type !== "channel_account_update" ||
+    typeof c.request_id !== "string" ||
+    !isChannelId(c.channel_id) ||
+    typeof c.account_id !== "string" ||
+    !c.patch ||
+    typeof c.patch !== "object"
+  ) {
+    return false;
+  }
+
+  const patch = c.patch as Record<string, unknown>;
+  if (!hasValidChannelPolicyFields(patch)) {
+    return false;
+  }
+
+  if (c.channel_id === "telegram") {
+    return patch.token === undefined || typeof patch.token === "string";
+  }
+
+  return (
+    (patch.bot_token === undefined || typeof patch.bot_token === "string") &&
+    (patch.app_token === undefined || typeof patch.app_token === "string") &&
+    (patch.mode === undefined || patch.mode === "socket") &&
+    (patch.agent_id === undefined ||
+      patch.agent_id === null ||
+      typeof patch.agent_id === "string")
+  );
+}
+
+export function isChannelAccountBindCommand(
+  value: unknown,
+): value is ChannelAccountBindCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    channel_id?: unknown;
+    account_id?: unknown;
+    runtime?: unknown;
+  };
+  return (
+    c.type === "channel_account_bind" &&
+    typeof c.request_id === "string" &&
+    isChannelId(c.channel_id) &&
+    typeof c.account_id === "string" &&
+    isRuntimeScope(c.runtime)
+  );
+}
+
+export function isChannelAccountUnbindCommand(
+  value: unknown,
+): value is ChannelAccountUnbindCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    channel_id?: unknown;
+    account_id?: unknown;
+  };
+  return (
+    c.type === "channel_account_unbind" &&
+    typeof c.request_id === "string" &&
+    isChannelId(c.channel_id) &&
+    typeof c.account_id === "string"
+  );
+}
+
+export function isChannelAccountDeleteCommand(
+  value: unknown,
+): value is ChannelAccountDeleteCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    channel_id?: unknown;
+    account_id?: unknown;
+  };
+  return (
+    c.type === "channel_account_delete" &&
+    typeof c.request_id === "string" &&
+    isChannelId(c.channel_id) &&
+    typeof c.account_id === "string"
+  );
+}
+
+export function isChannelAccountStartCommand(
+  value: unknown,
+): value is ChannelAccountStartCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    channel_id?: unknown;
+    account_id?: unknown;
+  };
+  return (
+    c.type === "channel_account_start" &&
+    typeof c.request_id === "string" &&
+    isChannelId(c.channel_id) &&
+    typeof c.account_id === "string"
+  );
+}
+
+export function isChannelAccountStopCommand(
+  value: unknown,
+): value is ChannelAccountStopCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    channel_id?: unknown;
+    account_id?: unknown;
+  };
+  return (
+    c.type === "channel_account_stop" &&
+    typeof c.request_id === "string" &&
+    isChannelId(c.channel_id) &&
+    typeof c.account_id === "string"
+  );
 }
 
 export function isChannelGetConfigCommand(
@@ -714,11 +941,13 @@ export function isChannelGetConfigCommand(
     type?: unknown;
     request_id?: unknown;
     channel_id?: unknown;
+    account_id?: unknown;
   };
   return (
     c.type === "channel_get_config" &&
     typeof c.request_id === "string" &&
-    isChannelId(c.channel_id)
+    isChannelId(c.channel_id) &&
+    (c.account_id === undefined || typeof c.account_id === "string")
   );
 }
 
@@ -730,29 +959,21 @@ export function isChannelSetConfigCommand(
     type?: unknown;
     request_id?: unknown;
     channel_id?: unknown;
+    account_id?: unknown;
     config?: unknown;
   };
   if (
     c.type !== "channel_set_config" ||
     typeof c.request_id !== "string" ||
     !isChannelId(c.channel_id) ||
+    (c.account_id !== undefined && typeof c.account_id !== "string") ||
     !c.config ||
     typeof c.config !== "object"
   ) {
     return false;
   }
   const config = c.config as Record<string, unknown>;
-  const hasValidDmPolicy =
-    config.dm_policy === undefined ||
-    config.dm_policy === "pairing" ||
-    config.dm_policy === "allowlist" ||
-    config.dm_policy === "open";
-  const hasValidAllowedUsers =
-    config.allowed_users === undefined ||
-    (Array.isArray(config.allowed_users) &&
-      config.allowed_users.every((entry) => typeof entry === "string"));
-
-  if (!hasValidDmPolicy || !hasValidAllowedUsers) {
+  if (!hasValidChannelPolicyFields(config)) {
     return false;
   }
 
@@ -775,11 +996,13 @@ export function isChannelStartCommand(
     type?: unknown;
     request_id?: unknown;
     channel_id?: unknown;
+    account_id?: unknown;
   };
   return (
     c.type === "channel_start" &&
     typeof c.request_id === "string" &&
-    isChannelId(c.channel_id)
+    isChannelId(c.channel_id) &&
+    (c.account_id === undefined || typeof c.account_id === "string")
   );
 }
 
@@ -791,11 +1014,13 @@ export function isChannelStopCommand(
     type?: unknown;
     request_id?: unknown;
     channel_id?: unknown;
+    account_id?: unknown;
   };
   return (
     c.type === "channel_stop" &&
     typeof c.request_id === "string" &&
-    isChannelId(c.channel_id)
+    isChannelId(c.channel_id) &&
+    (c.account_id === undefined || typeof c.account_id === "string")
   );
 }
 
@@ -807,11 +1032,13 @@ export function isChannelPairingsListCommand(
     type?: unknown;
     request_id?: unknown;
     channel_id?: unknown;
+    account_id?: unknown;
   };
   return (
     c.type === "channel_pairings_list" &&
     typeof c.request_id === "string" &&
-    isChannelId(c.channel_id)
+    isChannelId(c.channel_id) &&
+    (c.account_id === undefined || typeof c.account_id === "string")
   );
 }
 
@@ -823,6 +1050,7 @@ export function isChannelPairingBindCommand(
     type?: unknown;
     request_id?: unknown;
     channel_id?: unknown;
+    account_id?: unknown;
     runtime?: unknown;
     code?: unknown;
   };
@@ -830,6 +1058,7 @@ export function isChannelPairingBindCommand(
     c.type === "channel_pairing_bind" &&
     typeof c.request_id === "string" &&
     isChannelId(c.channel_id) &&
+    (c.account_id === undefined || typeof c.account_id === "string") &&
     isRuntimeScope(c.runtime) &&
     typeof c.code === "string" &&
     c.code.length > 0
@@ -844,6 +1073,7 @@ export function isChannelRoutesListCommand(
     type?: unknown;
     request_id?: unknown;
     channel_id?: unknown;
+    account_id?: unknown;
     agent_id?: unknown;
     conversation_id?: unknown;
   };
@@ -851,6 +1081,7 @@ export function isChannelRoutesListCommand(
     c.type === "channel_routes_list" &&
     typeof c.request_id === "string" &&
     (c.channel_id === undefined || isChannelId(c.channel_id)) &&
+    (c.account_id === undefined || typeof c.account_id === "string") &&
     (c.agent_id === undefined || typeof c.agent_id === "string") &&
     (c.conversation_id === undefined || typeof c.conversation_id === "string")
   );
@@ -864,14 +1095,39 @@ export function isChannelRouteRemoveCommand(
     type?: unknown;
     request_id?: unknown;
     channel_id?: unknown;
+    account_id?: unknown;
     chat_id?: unknown;
   };
   return (
     c.type === "channel_route_remove" &&
     typeof c.request_id === "string" &&
     isChannelId(c.channel_id) &&
+    (c.account_id === undefined || typeof c.account_id === "string") &&
     typeof c.chat_id === "string" &&
     c.chat_id.length > 0
+  );
+}
+
+export function isChannelRouteUpdateCommand(
+  value: unknown,
+): value is ChannelRouteUpdateCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    channel_id?: unknown;
+    account_id?: unknown;
+    chat_id?: unknown;
+    runtime?: unknown;
+  };
+  return (
+    c.type === "channel_route_update" &&
+    typeof c.request_id === "string" &&
+    isChannelId(c.channel_id) &&
+    (c.account_id === undefined || typeof c.account_id === "string") &&
+    typeof c.chat_id === "string" &&
+    c.chat_id.length > 0 &&
+    isRuntimeScope(c.runtime)
   );
 }
 
@@ -883,11 +1139,13 @@ export function isChannelTargetsListCommand(
     type?: unknown;
     request_id?: unknown;
     channel_id?: unknown;
+    account_id?: unknown;
   };
   return (
     c.type === "channel_targets_list" &&
     typeof c.request_id === "string" &&
-    isChannelId(c.channel_id)
+    isChannelId(c.channel_id) &&
+    (c.account_id === undefined || typeof c.account_id === "string")
   );
 }
 
@@ -899,6 +1157,7 @@ export function isChannelTargetBindCommand(
     type?: unknown;
     request_id?: unknown;
     channel_id?: unknown;
+    account_id?: unknown;
     runtime?: unknown;
     target_id?: unknown;
   };
@@ -906,6 +1165,7 @@ export function isChannelTargetBindCommand(
     c.type === "channel_target_bind" &&
     typeof c.request_id === "string" &&
     isChannelId(c.channel_id) &&
+    (c.account_id === undefined || typeof c.account_id === "string") &&
     isRuntimeScope(c.runtime) &&
     typeof c.target_id === "string" &&
     c.target_id.length > 0
@@ -1004,6 +1264,14 @@ export function parseServerMessage(
       isGetReflectionSettingsCommand(parsed) ||
       isSetReflectionSettingsCommand(parsed) ||
       isChannelsListCommand(parsed) ||
+      isChannelAccountsListCommand(parsed) ||
+      isChannelAccountCreateCommand(parsed) ||
+      isChannelAccountUpdateCommand(parsed) ||
+      isChannelAccountBindCommand(parsed) ||
+      isChannelAccountUnbindCommand(parsed) ||
+      isChannelAccountDeleteCommand(parsed) ||
+      isChannelAccountStartCommand(parsed) ||
+      isChannelAccountStopCommand(parsed) ||
       isChannelGetConfigCommand(parsed) ||
       isChannelSetConfigCommand(parsed) ||
       isChannelStartCommand(parsed) ||
@@ -1013,6 +1281,7 @@ export function parseServerMessage(
       isChannelRoutesListCommand(parsed) ||
       isChannelTargetsListCommand(parsed) ||
       isChannelTargetBindCommand(parsed) ||
+      isChannelRouteUpdateCommand(parsed) ||
       isChannelRouteRemoveCommand(parsed) ||
       isExecuteCommandCommand(parsed) ||
       isSearchBranchesCommand(parsed) ||

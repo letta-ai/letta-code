@@ -1,16 +1,20 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
+  __testOverrideLoadPairingStore,
+  __testOverrideSavePairingStore,
   clearPairingStores,
   createPairingCode,
   getPendingPairings,
   isUserApproved,
 } from "../../channels/pairing";
 import {
+  buildSlackConversationSummary,
   ChannelRegistry,
   completePairing,
   getChannelRegistry,
 } from "../../channels/registry";
 import {
+  __testOverrideLoadRoutes,
   __testOverrideSaveRoutes,
   addRoute,
   clearAllRoutes,
@@ -18,6 +22,13 @@ import {
 } from "../../channels/routing";
 
 describe("ChannelRegistry", () => {
+  beforeEach(() => {
+    __testOverrideLoadRoutes(() => null);
+    __testOverrideSaveRoutes(() => {});
+    __testOverrideLoadPairingStore(() => null);
+    __testOverrideSavePairingStore(() => {});
+  });
+
   afterEach(async () => {
     const registry = getChannelRegistry();
     if (registry) {
@@ -25,7 +36,10 @@ describe("ChannelRegistry", () => {
     }
     clearAllRoutes();
     clearPairingStores();
+    __testOverrideLoadRoutes(null);
     __testOverrideSaveRoutes(null);
+    __testOverrideLoadPairingStore(null);
+    __testOverrideSavePairingStore(null);
   });
 
   test("pause() stops delivery but keeps singleton alive", () => {
@@ -56,7 +70,69 @@ describe("ChannelRegistry", () => {
   });
 });
 
+describe("buildSlackConversationSummary", () => {
+  test("labels direct messages with the sender name", () => {
+    expect(
+      buildSlackConversationSummary({
+        chatId: "D123",
+        chatType: "direct",
+        senderId: "U123",
+        senderName: "Charles",
+        text: "hey there",
+      }),
+    ).toBe("[Slack] DM with Charles");
+  });
+
+  test("labels channel threads with a clipped text preview", () => {
+    expect(
+      buildSlackConversationSummary({
+        chatId: "C123",
+        chatType: "channel",
+        senderId: "U123",
+        senderName: "Charles",
+        text: "  what messages do you see in this thread right now?  ",
+      }),
+    ).toBe(
+      "[Slack] Thread: what messages do you see in this thread right now?",
+    );
+  });
+
+  test("includes the channel label when available", () => {
+    expect(
+      buildSlackConversationSummary({
+        chatId: "C123",
+        chatLabel: "#random",
+        chatType: "channel",
+        senderId: "U123",
+        senderName: "Charles",
+        text: "Need help with the deploy preview environment after lunch",
+      }),
+    ).toBe(
+      "[Slack] Thread in #random: Need help with the deploy preview environment after lunch",
+    );
+  });
+
+  test("falls back when a thread has no text preview", () => {
+    expect(
+      buildSlackConversationSummary({
+        chatId: "C123",
+        chatType: "channel",
+        senderId: "U123",
+        senderName: "Charles",
+        text: "   ",
+      }),
+    ).toBe("[Slack] Thread C123");
+  });
+});
+
 describe("completePairing", () => {
+  beforeEach(() => {
+    __testOverrideLoadRoutes(() => null);
+    __testOverrideSaveRoutes(() => {});
+    __testOverrideLoadPairingStore(() => null);
+    __testOverrideSavePairingStore(() => {});
+  });
+
   afterEach(async () => {
     const registry = getChannelRegistry();
     if (registry) {
@@ -64,7 +140,10 @@ describe("completePairing", () => {
     }
     clearAllRoutes();
     clearPairingStores();
+    __testOverrideLoadRoutes(null);
     __testOverrideSaveRoutes(null);
+    __testOverrideLoadPairingStore(null);
+    __testOverrideSavePairingStore(null);
   });
 
   test("successful pairing creates route", () => {

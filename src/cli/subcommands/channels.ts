@@ -12,7 +12,10 @@
  */
 
 import { parseArgs } from "node:util";
-import { readChannelConfig } from "../../channels/config";
+import {
+  getChannelAccount,
+  listChannelAccounts,
+} from "../../channels/accounts";
 import {
   getApprovedUsers,
   getPendingPairings,
@@ -36,6 +39,7 @@ import {
   getChannelRuntimeDir,
   isChannelRuntimeInstalled,
 } from "../../channels/runtimeDeps";
+import { listChannelAccountSnapshots } from "../../channels/service";
 import type { ChannelRoute, SupportedChannelId } from "../../channels/types";
 
 // ── Usage ───────────────────────────────────────────────────────────
@@ -54,12 +58,14 @@ Usage:
 
 Route add options:
   --channel <name>       Channel name (e.g. "telegram")
+  --account-id <id>      Channel account ID (required when multiple accounts exist)
   --chat-id <id>         Chat/conversation ID on the platform
   --agent <id>           Agent ID (defaults to LETTA_AGENT_ID)
   --conversation <id>    Conversation ID (defaults to LETTA_CONVERSATION_ID)
 
 Pair options:
   --channel <name>       Channel name (e.g. "telegram")
+  --account-id <id>      Channel account ID (optional; inferred when only one account exists)
   --code <code>          Pairing code from the bot
   --agent <id>           Agent ID (defaults to LETTA_AGENT_ID)
   --conversation <id>    Conversation ID (defaults to LETTA_CONVERSATION_ID)
@@ -80,7 +86,7 @@ Headless deploy flow:
   letta server --channels telegram --install-channel-runtimes
 
 State files:
-  ~/.letta/channels/telegram/config.yaml
+  ~/.letta/channels/telegram/accounts.json
   ~/.letta/channels/telegram/pairing.yaml
   ~/.letta/channels/telegram/routing.yaml
 
@@ -94,6 +100,7 @@ Output is JSON.
 const CHANNELS_OPTIONS = {
   help: { type: "boolean", short: "h" },
   channel: { type: "string" },
+  "account-id": { type: "string" },
   "chat-id": { type: "string" },
   agent: { type: "string" },
   conversation: { type: "string" },
@@ -123,6 +130,42 @@ function assertKnownChannelId(channel: string): SupportedChannelId {
     throw new Error(`Unknown channel: "${channel}". Supported: ${supported}`);
   }
   return channel;
+}
+
+function resolveSelectedAccountId(
+  channelId: SupportedChannelId,
+  explicitAccountId?: string,
+): string {
+  const normalizedAccountId = explicitAccountId?.trim();
+  if (normalizedAccountId) {
+    const account = getChannelAccount(channelId, normalizedAccountId);
+    if (!account) {
+      throw new Error(
+        `Unknown account "${normalizedAccountId}" for channel "${channelId}".`,
+      );
+    }
+    return normalizedAccountId;
+  }
+
+  const accounts = listChannelAccounts(channelId);
+  if (accounts.length === 0) {
+    throw new Error(
+      `Channel "${channelId}" has no configured accounts. Run letta channels configure ${channelId}.`,
+    );
+  }
+  if (accounts.length === 1) {
+    const accountId = accounts[0]?.accountId;
+    if (!accountId) {
+      throw new Error(
+        `Channel "${channelId}" account is missing an account ID.`,
+      );
+    }
+    return accountId;
+  }
+
+  throw new Error(
+    `Channel "${channelId}" has multiple accounts. Pass --account-id.`,
+  );
 }
 
 // ── Handlers ────────────────────────────────────────────────────────
@@ -203,8 +246,8 @@ function handleStatus(): number {
   const result: Record<string, unknown> = {};
 
   for (const channelId of getSupportedChannelIds()) {
-    const config = readChannelConfig(channelId);
-    if (!config) {
+    const accounts = listChannelAccountSnapshots(channelId);
+    if (accounts.length === 0) {
       result[channelId] = {
         configured: false,
         runtimeInstalled: isChannelRuntimeInstalled(channelId),
@@ -220,9 +263,10 @@ function handleStatus(): number {
 
     result[channelId] = {
       configured: true,
-      enabled: config.enabled,
-      dmPolicy: config.dmPolicy,
+      enabled: accounts.some((account) => account.enabled),
+      dmPolicy: accounts[0]?.dmPolicy ?? null,
       runtimeInstalled: isChannelRuntimeInstalled(channelId),
+      accounts,
       routes: routes.length,
       pendingPairings: pending.length,
       approvedUsers: approved.length,
@@ -263,6 +307,7 @@ function handleRouteAdd(
   values: ReturnType<typeof parseChannelsArgs>["values"],
 ): number {
   const channelId = values.channel;
+  const accountId = values["account-id"];
   const chatId = values["chat-id"];
   const agentId = getAgentId(values.agent);
   const conversationId = getConversationId(values.conversation);
@@ -288,7 +333,16 @@ function handleRouteAdd(
     return 1;
   }
 
+  let resolvedAccountId: string;
+  try {
+    resolvedAccountId = resolveSelectedAccountId(channelId, accountId);
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    return 1;
+  }
+
   const route: ChannelRoute = {
+    accountId: resolvedAccountId,
     chatId,
     agentId,
     conversationId,
@@ -309,6 +363,7 @@ function handleRouteRemove(
   values: ReturnType<typeof parseChannelsArgs>["values"],
 ): number {
   const channelId = values.channel;
+  const accountId = values["account-id"];
   const chatId = values["chat-id"];
 
   if (!channelId) {
@@ -326,8 +381,16 @@ function handleRouteRemove(
     return 1;
   }
 
+  let resolvedAccountId: string;
+  try {
+    resolvedAccountId = resolveSelectedAccountId(channelId, accountId);
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    return 1;
+  }
+
   loadRoutes(channelId);
-  const removed = removeRoute(channelId, chatId);
+  const removed = removeRoute(channelId, chatId, resolvedAccountId);
   console.log(JSON.stringify({ success: removed }, null, 2));
   if (removed) {
     console.warn(
@@ -341,6 +404,7 @@ async function handlePair(
   values: ReturnType<typeof parseChannelsArgs>["values"],
 ): Promise<number> {
   const channelId = values.channel;
+  const accountId = values["account-id"];
   const code = values.code;
   const agentId = getAgentId(values.agent);
   const conversationId = getConversationId(values.conversation);
@@ -373,7 +437,13 @@ async function handlePair(
   );
   loadPairing(channelId);
 
-  const result = completePairing(channelId, code, agentId, conversationId);
+  const result = completePairing(
+    channelId,
+    code,
+    agentId,
+    conversationId,
+    accountId,
+  );
   console.log(JSON.stringify(result, null, 2));
   if (result.success) {
     console.warn(

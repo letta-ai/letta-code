@@ -6,6 +6,7 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { LEGACY_CHANNEL_ACCOUNT_ID } from "./accounts";
 import { getChannelDir, getChannelRoutingPath } from "./config";
 import type { ChannelRoute } from "./types";
 
@@ -14,8 +15,25 @@ import type { ChannelRoute } from "./types";
 /** Key: "channel:chatId" */
 const routesByKey = new Map<string, ChannelRoute>();
 
-function routeKey(channel: string, chatId: string): string {
-  return `${channel}:${chatId}`;
+let loadRoutesOverride: ((channelId: string) => ChannelRoute[] | null) | null =
+  null;
+
+function normalizeAccountId(accountId?: string): string {
+  return accountId ?? LEGACY_CHANNEL_ACCOUNT_ID;
+}
+
+function normalizeThreadId(threadId?: string | null): string {
+  const trimmed = threadId?.trim();
+  return trimmed && trimmed.length > 0 ? trimmed : "__root__";
+}
+
+function routeKey(
+  channel: string,
+  chatId: string,
+  accountId?: string,
+  threadId?: string | null,
+): string {
+  return `${channel}:${normalizeAccountId(accountId)}:${chatId}:${normalizeThreadId(threadId)}`;
 }
 
 // ── Load/save ─────────────────────────────────────────────────────
@@ -24,6 +42,41 @@ function routeKey(channel: string, chatId: string): string {
  * Load routing table from disk for a given channel.
  */
 export function loadRoutes(channelId: string): void {
+  if (loadRoutesOverride) {
+    const overriddenRoutes = loadRoutesOverride(channelId);
+    if (overriddenRoutes === null) {
+      return;
+    }
+
+    const prefix = `${channelId}:`;
+    for (const key of Array.from(routesByKey.keys())) {
+      if (key.startsWith(prefix)) {
+        routesByKey.delete(key);
+      }
+    }
+
+    for (const route of overriddenRoutes) {
+      if (route.chatId && route.agentId && route.conversationId) {
+        routesByKey.set(
+          routeKey(channelId, route.chatId, route.accountId, route.threadId),
+          {
+            accountId: normalizeAccountId(route.accountId),
+            chatId: route.chatId,
+            chatType: route.chatType,
+            threadId: route.threadId ?? null,
+            agentId: route.agentId,
+            conversationId: route.conversationId,
+            enabled: route.enabled !== false,
+            createdAt: route.createdAt ?? new Date().toISOString(),
+            updatedAt:
+              route.updatedAt ?? route.createdAt ?? new Date().toISOString(),
+          },
+        );
+      }
+    }
+    return;
+  }
+
   const path = getChannelRoutingPath(channelId);
   if (!existsSync(path)) return;
 
@@ -34,13 +87,21 @@ export function loadRoutes(channelId: string): void {
 
     for (const route of routes) {
       if (route.chatId && route.agentId && route.conversationId) {
-        routesByKey.set(routeKey(channelId, route.chatId), {
-          chatId: route.chatId,
-          agentId: route.agentId,
-          conversationId: route.conversationId,
-          enabled: route.enabled !== false,
-          createdAt: route.createdAt ?? new Date().toISOString(),
-        });
+        routesByKey.set(
+          routeKey(channelId, route.chatId, route.accountId, route.threadId),
+          {
+            accountId: normalizeAccountId(route.accountId),
+            chatId: route.chatId,
+            chatType: route.chatType,
+            threadId: route.threadId ?? null,
+            agentId: route.agentId,
+            conversationId: route.conversationId,
+            enabled: route.enabled !== false,
+            createdAt: route.createdAt ?? new Date().toISOString(),
+            updatedAt:
+              route.updatedAt ?? route.createdAt ?? new Date().toISOString(),
+          },
+        );
       }
     }
   } catch {
@@ -56,6 +117,13 @@ export function __testOverrideSaveRoutes(
   fn: ((channelId: string) => void) | null,
 ): void {
   saveRoutesOverride = fn;
+}
+
+/** @internal Test-only: override loadRoutes behavior. Pass null to restore. */
+export function __testOverrideLoadRoutes(
+  fn: ((channelId: string) => ChannelRoute[] | null) | null,
+): void {
+  loadRoutesOverride = fn;
 }
 
 /**
@@ -85,8 +153,13 @@ export function saveRoutes(channelId: string): void {
  * Get the route for a specific channel + chatId.
  * Returns null if no route exists or the route is disabled.
  */
-export function getRoute(channel: string, chatId: string): ChannelRoute | null {
-  const route = routesByKey.get(routeKey(channel, chatId));
+export function getRoute(
+  channel: string,
+  chatId: string,
+  accountId?: string,
+  threadId?: string | null,
+): ChannelRoute | null {
+  const route = routesByKey.get(routeKey(channel, chatId, accountId, threadId));
   if (!route || !route.enabled) return null;
   return route;
 }
@@ -98,15 +171,23 @@ export function getRoute(channel: string, chatId: string): ChannelRoute | null {
 export function getRouteRaw(
   channel: string,
   chatId: string,
+  accountId?: string,
+  threadId?: string | null,
 ): ChannelRoute | undefined {
-  return routesByKey.get(routeKey(channel, chatId));
+  return routesByKey.get(routeKey(channel, chatId, accountId, threadId));
 }
 
 /**
  * Get all routes for a channel.
  */
-export function getRoutesForChannel(channelId: string): ChannelRoute[] {
-  const prefix = `${channelId}:`;
+export function getRoutesForChannel(
+  channelId: string,
+  accountId?: string,
+): ChannelRoute[] {
+  const prefix =
+    accountId === undefined
+      ? `${channelId}:`
+      : `${channelId}:${normalizeAccountId(accountId)}:`;
   const routes: ChannelRoute[] = [];
   for (const [key, route] of routesByKey) {
     if (key.startsWith(prefix)) {
@@ -129,15 +210,27 @@ export function getAllRoutes(): ChannelRoute[] {
  * Add or update a route. Automatically saves to disk.
  */
 export function addRoute(channelId: string, route: ChannelRoute): void {
-  routesByKey.set(routeKey(channelId, route.chatId), route);
+  routesByKey.set(
+    routeKey(channelId, route.chatId, route.accountId, route.threadId),
+    {
+      ...route,
+      accountId: normalizeAccountId(route.accountId),
+      threadId: route.threadId ?? null,
+    },
+  );
   saveRoutes(channelId);
 }
 
 /**
  * Remove a route. Automatically saves to disk.
  */
-export function removeRoute(channelId: string, chatId: string): boolean {
-  const key = routeKey(channelId, chatId);
+export function removeRoute(
+  channelId: string,
+  chatId: string,
+  accountId?: string,
+  threadId?: string | null,
+): boolean {
+  const key = routeKey(channelId, chatId, accountId, threadId);
   const existed = routesByKey.delete(key);
   if (existed) {
     saveRoutes(channelId);
@@ -152,8 +245,10 @@ export function removeRoute(channelId: string, chatId: string): boolean {
 export function removeRouteInMemory(
   channelId: string,
   chatId: string,
+  accountId?: string,
+  threadId?: string | null,
 ): boolean {
-  return routesByKey.delete(routeKey(channelId, chatId));
+  return routesByKey.delete(routeKey(channelId, chatId, accountId, threadId));
 }
 
 /**
@@ -161,7 +256,14 @@ export function removeRouteInMemory(
  * Used to restore a snapshot on rollback.
  */
 export function setRouteInMemory(channelId: string, route: ChannelRoute): void {
-  routesByKey.set(routeKey(channelId, route.chatId), route);
+  routesByKey.set(
+    routeKey(channelId, route.chatId, route.accountId, route.threadId),
+    {
+      ...route,
+      accountId: normalizeAccountId(route.accountId),
+      threadId: route.threadId ?? null,
+    },
+  );
 }
 
 /**
@@ -172,15 +274,37 @@ export function removeRoutesForScope(
   channelId: string,
   agentId: string,
   conversationId: string,
+  accountId?: string,
 ): number {
   let removed = 0;
-  const prefix = `${channelId}:`;
+  const prefix =
+    accountId === undefined
+      ? `${channelId}:`
+      : `${channelId}:${normalizeAccountId(accountId)}:`;
   for (const [key, route] of routesByKey) {
     if (
       key.startsWith(prefix) &&
       route.agentId === agentId &&
       route.conversationId === conversationId
     ) {
+      routesByKey.delete(key);
+      removed++;
+    }
+  }
+  if (removed > 0) {
+    saveRoutes(channelId);
+  }
+  return removed;
+}
+
+export function removeRoutesForAccount(
+  channelId: string,
+  accountId: string,
+): number {
+  let removed = 0;
+  const prefix = `${channelId}:${normalizeAccountId(accountId)}:`;
+  for (const [key] of routesByKey) {
+    if (key.startsWith(prefix)) {
       routesByKey.delete(key);
       removed++;
     }

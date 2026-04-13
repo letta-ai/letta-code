@@ -61,7 +61,9 @@ describe("formatChannelNotification", () => {
 
     expect(reminder).toContain("<system-reminder>");
     expect(reminder).toContain("must call the MessageChannel tool");
-    expect(reminder).toContain('channel="telegram" and chat_id="12345"');
+    expect(reminder).toContain(
+      'Use action="send", channel="telegram", and chat_id="12345"',
+    );
     expect(reminder).toContain("Current local time on this device:");
   });
 
@@ -73,13 +75,14 @@ describe("formatChannelNotification", () => {
       text: "ping",
       timestamp: Date.now(),
       messageId: "1712800000.000100",
+      threadId: "1712790000.000050",
       chatType: "channel",
     };
 
     const reminder = buildChannelReminderText(msg);
 
-    expect(reminder).toContain('reply_to_message_id="1712800000.000100"');
-    expect(reminder).toContain("stay in the same Slack thread");
+    expect(reminder).toContain("stay in the same Slack thread automatically");
+    expect(reminder).not.toContain("reply_to_message_id");
   });
 
   test("escapes XML special characters in notification text", () => {
@@ -127,5 +130,81 @@ describe("formatChannelNotification", () => {
 
     expect(xml).not.toContain("sender_name=");
     expect(xml).not.toContain("message_id=");
+  });
+
+  test("includes Slack thread metadata in the notification xml", () => {
+    const msg: InboundChannelMessage = {
+      channel: "slack",
+      chatId: "C123",
+      senderId: "U123",
+      text: "threaded hello",
+      timestamp: Date.now(),
+      messageId: "1712800000.000100",
+      threadId: "1712790000.000050",
+      chatType: "channel",
+    };
+
+    const xml = buildChannelNotificationXml(msg);
+
+    expect(xml).toContain('thread_id="1712790000.000050"');
+  });
+
+  test("includes reaction metadata in the notification xml", () => {
+    const msg: InboundChannelMessage = {
+      channel: "slack",
+      chatId: "C123",
+      senderId: "U123",
+      text: "Slack reaction added: :eyes:",
+      timestamp: Date.now(),
+      messageId: "1712800001.000200",
+      threadId: "1712790000.000050",
+      chatType: "channel",
+      reaction: {
+        action: "added",
+        emoji: "eyes",
+        targetMessageId: "1712800000.000100",
+        targetSenderId: "U999",
+      },
+    };
+
+    const xml = buildChannelNotificationXml(msg);
+
+    expect(xml).toContain(
+      '<reaction action="added" emoji="eyes" target_message_id="1712800000.000100" target_sender_id="U999" />',
+    );
+  });
+
+  test("emits image content parts for inbound image attachments", () => {
+    const msg: InboundChannelMessage = {
+      channel: "slack",
+      chatId: "C123",
+      senderId: "U123",
+      text: "See screenshot",
+      timestamp: Date.now(),
+      messageId: "1712800000.000100",
+      chatType: "channel",
+      attachments: [
+        {
+          id: "F123",
+          name: "screenshot.png",
+          mimeType: "image/png",
+          kind: "image",
+          localPath: "/tmp/screenshot.png",
+          imageDataBase64: "YWJj",
+        },
+      ],
+    };
+
+    const content = formatChannelNotification(msg);
+
+    expect(content).toHaveLength(3);
+    expect(content[2]).toEqual({
+      type: "image",
+      source: {
+        type: "base64",
+        media_type: "image/png",
+        data: "YWJj",
+      },
+    });
   });
 });

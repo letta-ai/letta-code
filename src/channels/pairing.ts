@@ -11,6 +11,7 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { LEGACY_CHANNEL_ACCOUNT_ID } from "./accounts";
 import { getChannelDir, getChannelPairingPath } from "./config";
 import type { ApprovedUser, PairingStore, PendingPairing } from "./types";
 
@@ -29,6 +30,17 @@ const CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // No I, O, 0, 1
 
 const stores = new Map<string, PairingStore>();
 
+let loadPairingStoreOverride:
+  | ((channelId: string) => PairingStore | null)
+  | null = null;
+let savePairingStoreOverride:
+  | ((channelId: string, store: PairingStore) => void)
+  | null = null;
+
+function normalizeAccountId(accountId?: string): string {
+  return accountId ?? LEGACY_CHANNEL_ACCOUNT_ID;
+}
+
 function getStore(channelId: string): PairingStore {
   let store = stores.get(channelId);
   if (!store) {
@@ -41,6 +53,18 @@ function getStore(channelId: string): PairingStore {
 // ── Load/save ─────────────────────────────────────────────────────
 
 export function loadPairingStore(channelId: string): void {
+  if (loadPairingStoreOverride) {
+    const overridden = loadPairingStoreOverride(channelId);
+    if (overridden === null) {
+      return;
+    }
+    stores.set(channelId, {
+      pending: [...overridden.pending],
+      approved: [...overridden.approved],
+    });
+    return;
+  }
+
   const path = getChannelPairingPath(channelId);
   if (!existsSync(path)) return;
 
@@ -57,10 +81,18 @@ export function loadPairingStore(channelId: string): void {
 }
 
 function savePairingStore(channelId: string): void {
+  const store = getStore(channelId);
+  if (savePairingStoreOverride) {
+    savePairingStoreOverride(channelId, {
+      pending: [...store.pending],
+      approved: [...store.approved],
+    });
+    return;
+  }
+
   const dir = getChannelDir(channelId);
   mkdirSync(dir, { recursive: true });
 
-  const store = getStore(channelId);
   writeFileSync(
     getChannelPairingPath(channelId),
     `${JSON.stringify(store, null, 2)}\n`,
@@ -83,9 +115,18 @@ function generateCode(length = 6): string {
 /**
  * Check if a user is approved (has completed pairing).
  */
-export function isUserApproved(channelId: string, userId: string): boolean {
+export function isUserApproved(
+  channelId: string,
+  userId: string,
+  accountId?: string,
+): boolean {
   const store = getStore(channelId);
-  return store.approved.some((u) => u.senderId === userId);
+  const normalizedAccountId = normalizeAccountId(accountId);
+  return store.approved.some(
+    (u) =>
+      u.senderId === userId &&
+      normalizeAccountId(u.accountId) === normalizedAccountId,
+  );
 }
 
 /**
@@ -97,11 +138,19 @@ export function createPairingCode(
   userId: string,
   chatId: string,
   username?: string,
+  accountId?: string,
 ): string {
   const store = getStore(channelId);
+  const normalizedAccountId = normalizeAccountId(accountId);
 
   // Remove any existing pending code for this user
-  store.pending = store.pending.filter((p) => p.senderId !== userId);
+  store.pending = store.pending.filter(
+    (p) =>
+      !(
+        p.senderId === userId &&
+        normalizeAccountId(p.accountId) === normalizedAccountId
+      ),
+  );
 
   // Prune expired codes
   const now = Date.now();
@@ -116,6 +165,7 @@ export function createPairingCode(
 
   const code = generateCode();
   const pending: PendingPairing = {
+    accountId: normalizedAccountId,
     code,
     senderId: userId,
     senderName: username,
@@ -137,14 +187,31 @@ export function createPairingCode(
 export function consumePairingCode(
   channelId: string,
   code: string,
+  accountId?: string,
 ): PendingPairing | null {
   const store = getStore(channelId);
   const upperCode = code.toUpperCase();
+  const normalizedAccountId =
+    accountId === undefined ? undefined : normalizeAccountId(accountId);
 
-  const index = store.pending.findIndex((p) => p.code === upperCode);
+  const matches = store.pending
+    .map((pending, index) => ({ pending, index }))
+    .filter(
+      ({ pending }) =>
+        pending.code === upperCode &&
+        (normalizedAccountId === undefined ||
+          normalizeAccountId(pending.accountId) === normalizedAccountId),
+    );
+
+  if (matches.length > 1) {
+    return null;
+  }
+
+  const index = matches[0]?.index ?? -1;
   if (index === -1) return null;
 
   const pending = store.pending[index] as PendingPairing;
+  const pendingAccountId = normalizeAccountId(pending.accountId);
 
   // Check expiry
   if (new Date(pending.expiresAt).getTime() < Date.now()) {
@@ -158,8 +225,15 @@ export function consumePairingCode(
   store.pending.splice(index, 1);
 
   // Add to approved (if not already)
-  if (!store.approved.some((u) => u.senderId === pending.senderId)) {
+  if (
+    !store.approved.some(
+      (u) =>
+        u.senderId === pending.senderId &&
+        normalizeAccountId(u.accountId) === pendingAccountId,
+    )
+  ) {
     const approved: ApprovedUser = {
+      accountId: pendingAccountId,
       senderId: pending.senderId,
       senderName: pending.senderName,
       approvedAt: new Date().toISOString(),
@@ -175,17 +249,36 @@ export function consumePairingCode(
  * Get all pending pairing codes for a channel.
  * Filters out expired codes.
  */
-export function getPendingPairings(channelId: string): PendingPairing[] {
+export function getPendingPairings(
+  channelId: string,
+  accountId?: string,
+): PendingPairing[] {
   const store = getStore(channelId);
   const now = Date.now();
-  return store.pending.filter((p) => new Date(p.expiresAt).getTime() > now);
+  const normalizedAccountId =
+    accountId === undefined ? undefined : normalizeAccountId(accountId);
+  return store.pending.filter(
+    (p) =>
+      new Date(p.expiresAt).getTime() > now &&
+      (normalizedAccountId === undefined ||
+        normalizeAccountId(p.accountId) === normalizedAccountId),
+  );
 }
 
 /**
  * Get all approved users for a channel.
  */
-export function getApprovedUsers(channelId: string): ApprovedUser[] {
-  return getStore(channelId).approved;
+export function getApprovedUsers(
+  channelId: string,
+  accountId?: string,
+): ApprovedUser[] {
+  const normalizedAccountId =
+    accountId === undefined ? undefined : normalizeAccountId(accountId);
+  return getStore(channelId).approved.filter(
+    (user) =>
+      normalizedAccountId === undefined ||
+      normalizeAccountId(user.accountId) === normalizedAccountId,
+  );
 }
 
 /**
@@ -198,10 +291,15 @@ export function rollbackPairingApproval(
   pending: PendingPairing,
 ): void {
   const store = getStore(channelId);
+  const normalizedAccountId = normalizeAccountId(pending.accountId);
 
   // Remove from approved
   store.approved = store.approved.filter(
-    (u) => u.senderId !== pending.senderId,
+    (u) =>
+      !(
+        u.senderId === pending.senderId &&
+        normalizeAccountId(u.accountId) === normalizedAccountId
+      ),
   );
 
   // Re-add to pending
@@ -210,9 +308,48 @@ export function rollbackPairingApproval(
   savePairingStore(channelId);
 }
 
+export function removePairingStateForAccount(
+  channelId: string,
+  accountId: string,
+): { pendingRemoved: number; approvedRemoved: number } {
+  const store = getStore(channelId);
+  const normalizedAccountId = normalizeAccountId(accountId);
+  const nextPending = store.pending.filter(
+    (pending) => normalizeAccountId(pending.accountId) !== normalizedAccountId,
+  );
+  const nextApproved = store.approved.filter(
+    (approved) =>
+      normalizeAccountId(approved.accountId) !== normalizedAccountId,
+  );
+
+  const pendingRemoved = store.pending.length - nextPending.length;
+  const approvedRemoved = store.approved.length - nextApproved.length;
+
+  if (pendingRemoved === 0 && approvedRemoved === 0) {
+    return { pendingRemoved, approvedRemoved };
+  }
+
+  store.pending = nextPending;
+  store.approved = nextApproved;
+  savePairingStore(channelId);
+  return { pendingRemoved, approvedRemoved };
+}
+
 /**
  * Clear all pairing state (for testing).
  */
 export function clearPairingStores(): void {
   stores.clear();
+}
+
+export function __testOverrideLoadPairingStore(
+  fn: ((channelId: string) => PairingStore | null) | null,
+): void {
+  loadPairingStoreOverride = fn;
+}
+
+export function __testOverrideSavePairingStore(
+  fn: ((channelId: string, store: PairingStore) => void) | null,
+): void {
+  savePairingStoreOverride = fn;
 }
