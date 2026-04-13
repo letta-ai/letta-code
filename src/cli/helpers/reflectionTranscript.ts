@@ -389,8 +389,7 @@ type ReflectionMessage =
  * Serialize transcript entries (and optional filtered system prompt) into a
  * JSON message array for the reflection subagent.
  *
- * Format mirrors ~/Downloads/example_1.json — a flat array of
- * `{ role, content, tool_calls? }` objects.
+ * Output is a flat array of `{ role, content, tool_calls? }` objects.
  */
 function formatTaggedTranscript(
   entries: TranscriptEntry[],
