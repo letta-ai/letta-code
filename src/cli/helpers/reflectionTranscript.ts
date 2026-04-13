@@ -11,7 +11,7 @@ import { join } from "node:path";
 import { MEMORY_SYSTEM_DIR } from "../../agent/memoryFilesystem";
 import { getDirectoryLimits } from "../../utils/directoryLimits";
 import { parseFrontmatter } from "../../utils/frontmatter";
-import { type Line, linesToTranscript } from "./accumulator";
+import type { Line } from "./accumulator";
 
 const TRANSCRIPT_ROOT_ENV = "LETTA_TRANSCRIPT_ROOT";
 const DEFAULT_TRANSCRIPT_DIR = "transcripts";
@@ -369,51 +369,72 @@ function stripImagesFromText(text: string): string {
   );
 }
 
-function formatTaggedTranscript(entries: TranscriptEntry[]): string {
-  const lines: Line[] = [];
-  for (const [index, entry] of entries.entries()) {
-    const id = `transcript-${index}`;
+/**
+ * JSON message entry for the reflection payload.
+ * Follows the ChatML-style format from the reference transcript spec.
+ */
+type ReflectionMessage =
+  | { role: "system" | "user" | "reasoning" | "error"; content: string }
+  | {
+      role: "assistant";
+      content: string;
+    }
+  | {
+      role: "assistant";
+      content: null;
+      tool_calls: Array<{ name: string; args: string }>;
+    };
+
+/**
+ * Serialize transcript entries (and optional filtered system prompt) into a
+ * JSON message array for the reflection subagent.
+ *
+ * Format mirrors ~/Downloads/example_1.json — a flat array of
+ * `{ role, content, tool_calls? }` objects.
+ */
+function formatTaggedTranscript(
+  entries: TranscriptEntry[],
+  filteredSystemPrompt?: string,
+): string {
+  const messages: ReflectionMessage[] = [];
+
+  if (filteredSystemPrompt) {
+    messages.push({ role: "system", content: filteredSystemPrompt });
+  }
+
+  for (const entry of entries) {
     switch (entry.kind) {
       case "user":
-        lines.push({
-          kind: "user",
-          id,
-          text: stripImagesFromText(entry.text),
+        messages.push({
+          role: "user",
+          content: stripImagesFromText(entry.text),
         });
         break;
       case "assistant":
-        lines.push({
-          kind: "assistant",
-          id,
-          text: stripImagesFromText(entry.text),
-          phase: "finished",
+        messages.push({
+          role: "assistant",
+          content: stripImagesFromText(entry.text),
         });
         break;
       case "reasoning":
-        lines.push({
-          kind: "reasoning",
-          id,
-          text: entry.text,
-          phase: "finished",
-        });
+        messages.push({ role: "reasoning", content: entry.text });
         break;
       case "error":
-        lines.push({ kind: "error", id, text: entry.text });
+        messages.push({ role: "error", content: entry.text });
         break;
-      case "tool_call":
-        lines.push({
-          kind: "tool_call",
-          id,
-          name: entry.name,
-          argsText: truncateArgs(entry.argsText, TOOL_ARGS_TRUNCATE_LIMIT),
-          // resultText and resultOk intentionally omitted — tool outputs
-          // generally don't contribute to reflection and add significant noise.
-          phase: "finished",
+      case "tool_call": {
+        const args =
+          truncateArgs(entry.argsText, TOOL_ARGS_TRUNCATE_LIMIT) ?? "{}";
+        messages.push({
+          role: "assistant",
+          content: null,
+          tool_calls: [{ name: entry.name ?? "unknown", args }],
         });
         break;
+      }
     }
   }
-  return linesToTranscript(lines);
+  return JSON.stringify(messages, null, 2);
 }
 
 function lineToTranscriptEntry(
@@ -632,23 +653,16 @@ export async function buildAutoReflectionPayload(
     .filter((id): id is string => typeof id === "string" && id.length > 0);
   const startMessageId = messageIds[0];
   const endMessageId = messageIds[messageIds.length - 1];
-  const transcript = formatTaggedTranscript(entries);
-  if (!transcript) {
+  const filteredSystemPrompt = systemPrompt
+    ? filterSystemPromptForReflection(systemPrompt) || undefined
+    : undefined;
+  const transcript = formatTaggedTranscript(entries, filteredSystemPrompt);
+  if (!transcript || transcript === "[]") {
     return null;
   }
 
-  // Build the final payload: optional filtered system prompt + conversation transcript
-  const payloadParts: string[] = [];
-  if (systemPrompt) {
-    const filtered = filterSystemPromptForReflection(systemPrompt);
-    if (filtered) {
-      payloadParts.push(`<system_prompt>\n${filtered}\n</system_prompt>`);
-    }
-  }
-  payloadParts.push(transcript);
-
   const payloadPath = buildPayloadPath("auto");
-  await writeFile(payloadPath, payloadParts.join("\n\n"), "utf-8");
+  await writeFile(payloadPath, transcript, "utf-8");
 
   state.last_auto_reflection_started_at = new Date().toISOString();
   await writeState(paths, state);

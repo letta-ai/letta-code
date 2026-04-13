@@ -64,8 +64,10 @@ describe("reflectionTranscript helper", () => {
     expect(payload.endMessageId).toBe("a1");
 
     const payloadText = await readFile(payload.payloadPath, "utf-8");
-    expect(payloadText).toContain("<user>hello</user>");
-    expect(payloadText).toContain("<assistant>hi there</assistant>");
+    const messages = JSON.parse(payloadText);
+    expect(messages).toBeArray();
+    expect(messages).toContainEqual({ role: "user", content: "hello" });
+    expect(messages).toContainEqual({ role: "assistant", content: "hi there" });
 
     await finalizeAutoReflectionPayload(
       agentId,
@@ -153,7 +155,8 @@ describe("reflectionTranscript helper", () => {
     expect(secondAttempt.endMessageId).toBe("a2");
 
     const payloadText = await readFile(secondAttempt.payloadPath, "utf-8");
-    expect(payloadText).toContain("<assistant>second</assistant>");
+    const messages = JSON.parse(payloadText);
+    expect(messages).toContainEqual({ role: "assistant", content: "second" });
   });
 
   test("buildParentMemorySnapshot renders tree descriptions and system <memory> blocks", async () => {
@@ -285,18 +288,24 @@ describe("reflectionTranscript helper", () => {
     if (!payload) return;
 
     const payloadText = await readFile(payload.payloadPath, "utf-8");
+    const messages = JSON.parse(payloadText);
 
-    // Tool call name and truncated args should be present
-    expect(payloadText).toContain('<tool_call name="Grep">');
-    expect(payloadText).toContain("…[truncated]");
-    // Full 500-char args should NOT be present
-    expect(payloadText).not.toContain(longArgs);
-    // Tool result should NOT be present
+    // Tool call should be present with truncated args
+    const toolMsg = messages.find(
+      (m: { tool_calls?: unknown[] }) => m.tool_calls,
+    );
+    expect(toolMsg).toBeDefined();
+    expect(toolMsg.tool_calls[0].name).toBe("Grep");
+    expect(toolMsg.tool_calls[0].args).toContain("…[truncated]");
+    expect(toolMsg.tool_calls[0].args.length).toBeLessThan(longArgs.length);
+    // Tool result should NOT be present anywhere
     expect(payloadText).not.toContain("found 42 matches");
-    expect(payloadText).not.toContain("<tool_result>");
     // User and assistant messages should be present
-    expect(payloadText).toContain("<user>run a search</user>");
-    expect(payloadText).toContain("<assistant>Found results</assistant>");
+    expect(messages).toContainEqual({ role: "user", content: "run a search" });
+    expect(messages).toContainEqual({
+      role: "assistant",
+      content: "Found results",
+    });
   });
 
   test("reflection payload strips inline base64 images from text", async () => {
@@ -311,10 +320,12 @@ describe("reflectionTranscript helper", () => {
     if (!payload) return;
 
     const payloadText = await readFile(payload.payloadPath, "utf-8");
-    expect(payloadText).not.toContain("data:image/png;base64");
-    expect(payloadText).toContain("[image]");
-    expect(payloadText).toContain("Check this:");
-    expect(payloadText).toContain("and tell me what you see");
+    const messages = JSON.parse(payloadText);
+    const userMsg = messages.find((m: { role: string }) => m.role === "user");
+    expect(userMsg.content).not.toContain("data:image/png;base64");
+    expect(userMsg.content).toContain("[image]");
+    expect(userMsg.content).toContain("Check this:");
+    expect(userMsg.content).toContain("and tell me what you see");
   });
 
   test("reflection payload prepends filtered system prompt when provided", async () => {
@@ -346,17 +357,19 @@ describe("reflectionTranscript helper", () => {
     if (!payload) return;
 
     const payloadText = await readFile(payload.payloadPath, "utf-8");
-    // Filtered system prompt should be present
-    expect(payloadText).toContain("<system_prompt>");
-    expect(payloadText).toContain("You are a helpful coding assistant.");
-    expect(payloadText).toContain("Always be concise.");
+    const messages = JSON.parse(payloadText);
+    // Filtered system prompt should be the first message
+    const systemMsg = messages[0];
+    expect(systemMsg.role).toBe("system");
+    expect(systemMsg.content).toContain("You are a helpful coding assistant.");
+    expect(systemMsg.content).toContain("Always be concise.");
     // Dynamic sections should be stripped
-    expect(payloadText).not.toContain("I am a persona block");
-    expect(payloadText).not.toContain("User info here");
-    expect(payloadText).not.toContain("skill1, skill2");
-    expect(payloadText).not.toContain("<available_skills>");
-    // Transcript should still follow
-    expect(payloadText).toContain("<user>hello</user>");
+    expect(systemMsg.content).not.toContain("I am a persona block");
+    expect(systemMsg.content).not.toContain("User info here");
+    expect(systemMsg.content).not.toContain("skill1, skill2");
+    expect(systemMsg.content).not.toContain("<available_skills>");
+    // Transcript should follow
+    expect(messages).toContainEqual({ role: "user", content: "hello" });
   });
 
   test("filterSystemPromptForReflection strips all dynamic sections", () => {
