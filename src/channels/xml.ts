@@ -11,25 +11,30 @@ import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "../constants";
 import type { ChannelMessageAttachment, InboundChannelMessage } from "./types";
 
 /**
- * Escape special XML characters in text content.
- * Reference: src/cli/helpers/taskNotifications.ts uses similar escaping.
+ * Escape XML text-node content without over-escaping quotes that should remain
+ * readable inside the rendered message body.
  */
-function escapeXml(text: string): string {
+function escapeXmlText(text: string): string {
   return text
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&apos;");
+    .replace(/>/g, "&gt;");
+}
+
+/**
+ * Escape XML attribute values, including quotes.
+ */
+function escapeXmlAttribute(text: string): string {
+  return escapeXmlText(text).replace(/"/g, "&quot;").replace(/'/g, "&apos;");
 }
 
 /**
  * Format the reminder text that explains channel reply semantics to the agent.
  */
 export function buildChannelReminderText(msg: InboundChannelMessage): string {
-  const localTime = escapeXml(getLocalTime());
-  const escapedChannel = escapeXml(msg.channel);
-  const escapedChatId = escapeXml(msg.chatId);
+  const localTime = escapeXmlText(getLocalTime());
+  const escapedChannel = escapeXmlText(msg.channel);
+  const escapedChatId = escapeXmlText(msg.chatId);
   const threadLine =
     msg.channel === "slack" &&
     msg.chatType === "channel" &&
@@ -57,6 +62,13 @@ export function buildChannelReminderText(msg: InboundChannelMessage): string {
       'On Slack, MessageChannel also supports action="react" with emoji + messageId, and action="upload-file" with media.',
     );
   }
+  if (msg.channel === "telegram") {
+    lines.splice(
+      lines.length - 2,
+      0,
+      'On Telegram, MessageChannel also supports action="react" with emoji + messageId, and action="upload-file" with media.',
+    );
+  }
   if (msg.attachments?.length) {
     lines.splice(
       lines.length - 2,
@@ -70,18 +82,18 @@ export function buildChannelReminderText(msg: InboundChannelMessage): string {
 
 function buildAttachmentXml(attachment: ChannelMessageAttachment): string {
   const attrs = [
-    `kind="${escapeXml(attachment.kind)}"`,
-    `local_path="${escapeXml(attachment.localPath)}"`,
+    `kind="${escapeXmlAttribute(attachment.kind)}"`,
+    `local_path="${escapeXmlAttribute(attachment.localPath)}"`,
   ];
 
   if (attachment.id) {
-    attrs.push(`attachment_id="${escapeXml(attachment.id)}"`);
+    attrs.push(`attachment_id="${escapeXmlAttribute(attachment.id)}"`);
   }
   if (attachment.name) {
-    attrs.push(`name="${escapeXml(attachment.name)}"`);
+    attrs.push(`name="${escapeXmlAttribute(attachment.name)}"`);
   }
   if (attachment.mimeType) {
-    attrs.push(`mime_type="${escapeXml(attachment.mimeType)}"`);
+    attrs.push(`mime_type="${escapeXmlAttribute(attachment.mimeType)}"`);
   }
   if (typeof attachment.sizeBytes === "number") {
     attrs.push(`size_bytes="${attachment.sizeBytes}"`);
@@ -96,13 +108,15 @@ function buildReactionXml(msg: InboundChannelMessage): string | null {
   }
 
   const attrs = [
-    `action="${escapeXml(msg.reaction.action)}"`,
-    `emoji="${escapeXml(msg.reaction.emoji)}"`,
-    `target_message_id="${escapeXml(msg.reaction.targetMessageId)}"`,
+    `action="${escapeXmlAttribute(msg.reaction.action)}"`,
+    `emoji="${escapeXmlAttribute(msg.reaction.emoji)}"`,
+    `target_message_id="${escapeXmlAttribute(msg.reaction.targetMessageId)}"`,
   ];
 
   if (msg.reaction.targetSenderId) {
-    attrs.push(`target_sender_id="${escapeXml(msg.reaction.targetSenderId)}"`);
+    attrs.push(
+      `target_sender_id="${escapeXmlAttribute(msg.reaction.targetSenderId)}"`,
+    );
   }
 
   return `<reaction ${attrs.join(" ")} />`;
@@ -122,25 +136,25 @@ export function buildChannelNotificationXml(
   msg: InboundChannelMessage,
 ): string {
   const attrs: string[] = [
-    `source="${escapeXml(msg.channel)}"`,
-    `chat_id="${escapeXml(msg.chatId)}"`,
-    `sender_id="${escapeXml(msg.senderId)}"`,
+    `source="${escapeXmlAttribute(msg.channel)}"`,
+    `chat_id="${escapeXmlAttribute(msg.chatId)}"`,
+    `sender_id="${escapeXmlAttribute(msg.senderId)}"`,
   ];
 
   if (msg.senderName) {
-    attrs.push(`sender_name="${escapeXml(msg.senderName)}"`);
+    attrs.push(`sender_name="${escapeXmlAttribute(msg.senderName)}"`);
   }
 
   if (msg.messageId) {
-    attrs.push(`message_id="${escapeXml(msg.messageId)}"`);
+    attrs.push(`message_id="${escapeXmlAttribute(msg.messageId)}"`);
   }
 
   if (msg.threadId) {
-    attrs.push(`thread_id="${escapeXml(msg.threadId)}"`);
+    attrs.push(`thread_id="${escapeXmlAttribute(msg.threadId)}"`);
   }
 
   const attrString = attrs.join(" ");
-  const escapedText = msg.text ? escapeXml(msg.text) : "";
+  const escapedText = msg.text ? escapeXmlText(msg.text) : "";
   const reactionXml = buildReactionXml(msg);
   const attachmentXml = (msg.attachments ?? []).map(buildAttachmentXml);
   const body = [reactionXml, ...attachmentXml, escapedText]

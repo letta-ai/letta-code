@@ -292,7 +292,64 @@ describe("MessageChannel", () => {
     });
   });
 
-  test("rejects unsupported Telegram actions through the shared MessageChannel surface", async () => {
+  test("uploads Telegram media through the routed account adapter", async () => {
+    const registry = new ChannelRegistry();
+
+    const sendMessage = mock(async () => ({ messageId: "telegram-media-1" }));
+
+    const adapter: ChannelAdapter = {
+      id: "telegram:account-1",
+      channelId: "telegram",
+      accountId: "account-1",
+      name: "Telegram",
+      start: async () => {},
+      stop: async () => {},
+      isRunning: () => true,
+      sendMessage,
+      sendDirectReply: async () => {},
+    };
+
+    registry.registerAdapter(adapter);
+
+    setRouteInMemory("telegram", {
+      accountId: "account-1",
+      chatId: "7952253975",
+      agentId: "agent-1",
+      conversationId: "default",
+      enabled: true,
+      createdAt: "2026-04-11T00:00:00.000Z",
+      updatedAt: "2026-04-11T00:00:00.000Z",
+    });
+
+    const result = await message_channel({
+      action: "upload-file",
+      channel: "telegram",
+      chat_id: "7952253975",
+      message: "see attached",
+      media: "/tmp/screenshot.png",
+      filename: "screenshot.png",
+      title: "Screenshot",
+      parentScope: {
+        agentId: "agent-1",
+        conversationId: "default",
+      },
+    });
+
+    expect(result).toContain("Attachment sent to telegram");
+    expect(sendMessage).toHaveBeenCalledWith({
+      channel: "telegram",
+      accountId: "account-1",
+      chatId: "7952253975",
+      text: "see attached",
+      replyToMessageId: undefined,
+      mediaPath: "/tmp/screenshot.png",
+      fileName: "screenshot.png",
+      title: "Screenshot",
+      parseMode: "HTML",
+    });
+  });
+
+  test("passes Telegram reactions through MessageChannel with the routed account", async () => {
     const registry = new ChannelRegistry();
 
     const sendMessage = mock(async () => ({ messageId: "telegram-msg-2" }));
@@ -325,7 +382,7 @@ describe("MessageChannel", () => {
       action: "react",
       channel: "telegram",
       chat_id: "7952253975",
-      emoji: "thumbsup",
+      emoji: "👍",
       messageId: "99",
       parentScope: {
         agentId: "agent-1",
@@ -333,8 +390,16 @@ describe("MessageChannel", () => {
       },
     });
 
-    expect(result).toBe('Error: Action "react" is not supported on telegram.');
-    expect(sendMessage).not.toHaveBeenCalled();
+    expect(result).toContain("Reaction added on telegram");
+    expect(sendMessage).toHaveBeenCalledWith({
+      channel: "telegram",
+      accountId: "account-1",
+      chatId: "7952253975",
+      text: "",
+      targetMessageId: "99",
+      reaction: "👍",
+      removeReaction: undefined,
+    });
   });
 
   test("rejects legacy argument aliases so the tool contract stays canonical", async () => {

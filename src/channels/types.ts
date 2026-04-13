@@ -16,7 +16,7 @@ export interface ChannelMessageAttachment {
   name?: string;
   mimeType?: string;
   sizeBytes?: number;
-  kind: "image" | "file";
+  kind: "image" | "file" | "audio" | "video";
   localPath: string;
   imageDataBase64?: string;
 }
@@ -98,7 +98,7 @@ export interface InboundChannelMessage {
   isMention?: boolean;
   /** Downloaded attachments/media associated with the inbound message. */
   attachments?: ChannelMessageAttachment[];
-  /** Reaction metadata for non-text channel events (currently Slack). */
+  /** Reaction metadata for non-text channel events. */
   reaction?: ChannelReactionNotification;
 }
 
@@ -117,15 +117,15 @@ export interface OutboundChannelMessage {
   threadId?: string | null;
   /** Optional: parse mode hint for the adapter (e.g. "HTML", "MarkdownV2"). */
   parseMode?: string;
-  /** Optional: attach a local file/media path (currently Slack only). */
+  /** Optional: attach a local file/media path for channels that support uploads. */
   mediaPath?: string;
   /** Optional: override the uploaded filename for media attachments. */
   fileName?: string;
   /** Optional: override the uploaded title/caption metadata for media attachments. */
   title?: string;
-  /** Optional: Slack reaction emoji to add/remove (e.g. "white_check_mark"). */
+  /** Optional: reaction emoji to add/remove. Slack uses names; Telegram uses native emoji or custom_emoji:<id>. */
   reaction?: string;
-  /** Optional: remove the Slack reaction instead of adding it. */
+  /** Optional: remove the channel reaction instead of adding it. */
   removeReaction?: boolean;
   /** Optional: target message id for reactions. */
   targetMessageId?: string;

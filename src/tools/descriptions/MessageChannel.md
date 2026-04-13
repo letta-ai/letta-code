@@ -16,7 +16,7 @@ Parameters:
 - `message`: The text to send for `action="send"`
 - `replyTo`: (Optional) Reply to a specific message ID. Omit this unless you intentionally want the platform's quote/reply UI.
 - `messageId`: (Optional) Target message id for actions like `react`
-- `emoji`: (Optional) Emoji reaction name for `action="react"`, e.g. `white_check_mark`
+- `emoji`: (Optional) Emoji reaction for `action="react"`; Slack uses names like `white_check_mark`, Telegram uses native emoji like `👍`
 - `remove`: (Optional) Set to `true` to remove the reaction instead of adding it
 - `media`: (Optional) Absolute local file path for `action="upload-file"`
 - `filename`: (Optional, Slack) Override the uploaded filename.
