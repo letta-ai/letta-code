@@ -27,6 +27,7 @@ import {
   getChannelAccountSnapshot,
   getChannelConfigSnapshot,
   listChannelTargetSnapshots,
+  listEnabledChannelIds,
   refreshChannelAccountDisplayNameLive,
   removeChannelAccountLive,
   setChannelConfigLive,
@@ -199,6 +200,33 @@ describe("channel service", () => {
 
     expect(await removeChannelAccountLive("slack", "docsbot")).toBe(true);
     expect(getChannelAccountSnapshot("slack", "docsbot")).toBeNull();
+  });
+
+  test("listEnabledChannelIds returns only channels with enabled accounts", () => {
+    createChannelAccountLive(
+      "telegram",
+      {
+        displayName: "Telegram Bot",
+        enabled: true,
+        token: "telegram-token",
+        dmPolicy: "pairing",
+      },
+      { accountId: "telegram-1" },
+    );
+
+    createChannelAccountLive(
+      "slack",
+      {
+        displayName: "Slack App",
+        enabled: false,
+        botToken: "xoxb-test-token",
+        appToken: "xapp-test-token",
+        dmPolicy: "pairing",
+      },
+      { accountId: "slack-1" },
+    );
+
+    expect(listEnabledChannelIds()).toEqual(["telegram"]);
   });
 
   test("updateChannelRouteLive updates the Slack route without changing the app's default agent", () => {

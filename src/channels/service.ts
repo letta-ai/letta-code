@@ -530,6 +530,12 @@ export function listChannelSummaries(): ChannelSummary[] {
   });
 }
 
+export function listEnabledChannelIds(): SupportedChannelId[] {
+  return getSupportedChannelIds().filter((channelId) =>
+    listChannelAccounts(channelId).some((account) => account.enabled),
+  );
+}
+
 export function getChannelConfigSnapshot(
   channelId: string,
   accountId?: string,
