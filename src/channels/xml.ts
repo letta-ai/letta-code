@@ -11,30 +11,36 @@ import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "../constants";
 import type { InboundChannelMessage } from "./types";
 
 /**
- * Escape special XML characters in text content.
- * Reference: src/cli/helpers/taskNotifications.ts uses similar escaping.
+ * Escape special XML characters in text nodes.
+ * Quotes do not need escaping in text content, and preserving them avoids
+ * leaking XML entity sequences like &apos; back into downstream channel replies.
  */
-function escapeXml(text: string): string {
+function escapeXmlText(text: string): string {
   return text
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&apos;");
+    .replace(/>/g, "&gt;");
+}
+
+/**
+ * Escape special XML characters in attribute values.
+ */
+function escapeXmlAttribute(text: string): string {
+  return escapeXmlText(text).replace(/"/g, "&quot;").replace(/'/g, "&apos;");
 }
 
 /**
  * Format the reminder text that explains channel reply semantics to the agent.
  */
 export function buildChannelReminderText(msg: InboundChannelMessage): string {
-  const localTime = escapeXml(getLocalTime());
-  const escapedChannel = escapeXml(msg.channel);
-  const escapedChatId = escapeXml(msg.chatId);
+  const localTime = escapeXmlText(getLocalTime());
+  const escapedChannel = escapeXmlText(msg.channel);
+  const escapedChatId = escapeXmlText(msg.chatId);
   const threadLine =
     msg.channel === "slack" &&
     msg.chatType === "channel" &&
     msg.messageId?.trim()
-      ? `Use reply_to_message_id="${escapeXml(msg.messageId)}" if you want your reply to stay in the same Slack thread.`
+      ? `Use reply_to_message_id="${escapeXmlText(msg.messageId)}" if you want your reply to stay in the same Slack thread.`
       : null;
 
   const lines = [
@@ -68,21 +74,21 @@ export function buildChannelNotificationXml(
   msg: InboundChannelMessage,
 ): string {
   const attrs: string[] = [
-    `source="${escapeXml(msg.channel)}"`,
-    `chat_id="${escapeXml(msg.chatId)}"`,
-    `sender_id="${escapeXml(msg.senderId)}"`,
+    `source="${escapeXmlAttribute(msg.channel)}"`,
+    `chat_id="${escapeXmlAttribute(msg.chatId)}"`,
+    `sender_id="${escapeXmlAttribute(msg.senderId)}"`,
   ];
 
   if (msg.senderName) {
-    attrs.push(`sender_name="${escapeXml(msg.senderName)}"`);
+    attrs.push(`sender_name="${escapeXmlAttribute(msg.senderName)}"`);
   }
 
   if (msg.messageId) {
-    attrs.push(`message_id="${escapeXml(msg.messageId)}"`);
+    attrs.push(`message_id="${escapeXmlAttribute(msg.messageId)}"`);
   }
 
   const attrString = attrs.join(" ");
-  const escapedText = escapeXml(msg.text);
+  const escapedText = escapeXmlText(msg.text);
 
   return `<channel-notification ${attrString}>\n${escapedText}\n</channel-notification>`;
 }

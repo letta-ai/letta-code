@@ -82,7 +82,7 @@ describe("formatChannelNotification", () => {
     expect(reminder).toContain("stay in the same Slack thread");
   });
 
-  test("escapes XML special characters in notification text", () => {
+  test("escapes only structural XML characters in notification text", () => {
     const msg: InboundChannelMessage = {
       channel: "telegram",
       chatId: "123",
@@ -95,8 +95,8 @@ describe("formatChannelNotification", () => {
 
     expect(xml).toContain("&lt;world&gt;");
     expect(xml).toContain("&amp;");
-    expect(xml).toContain("&quot;friends&quot;");
-    expect(xml).toContain("&apos;here&apos;");
+    expect(xml).toContain('"friends"');
+    expect(xml).toContain("'here'");
   });
 
   test("escapes XML special characters in notification attributes", () => {

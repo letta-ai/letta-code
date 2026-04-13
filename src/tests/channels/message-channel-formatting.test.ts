@@ -18,6 +18,18 @@ test("formats Telegram markdown as HTML", () => {
   });
 });
 
+test("normalizes basic XML entities before Telegram formatting", () => {
+  const formatted = formatOutboundChannelMessage(
+    "telegram",
+    "I&apos;ll keep &lt;this&gt; &amp; that",
+  );
+
+  expect(formatted).toEqual({
+    text: "I'll keep &lt;this&gt; &amp; that",
+    parseMode: "HTML",
+  });
+});
+
 test("formats Slack markdown as mrkdwn", () => {
   expect(formatOutboundChannelMessage("slack", "**bold**")).toEqual({
     text: "*bold*",
