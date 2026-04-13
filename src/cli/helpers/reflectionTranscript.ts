@@ -593,10 +593,10 @@ export async function appendTranscriptDeltaJsonl(
  * Strip dynamic / noisy sections from a system prompt so the reflection agent
  * sees only the core behavioural instructions.
  *
- * Removes: memory blocks (`<memory>…</memory>`, `<self>…</self>`, `<human>…</human>`),
- * skill listings (`<available_skills>…</available_skills>`),
- * system reminders (`<system-reminder>…</system-reminder>`),
- * and memory metadata (`<memory_metadata>…</memory_metadata>`).
+ * Removes:
+ * - XML blocks: `<memory>`, `<self>`, `<human>`, `<available_skills>`,
+ *   `<system-reminder>`, `<memory_metadata>`
+ * - The `# Memory` markdown section (operational memory-filesystem docs)
  */
 export function filterSystemPromptForReflection(raw: string): string {
   // Remove XML-style blocks that carry dynamic/ephemeral content.
@@ -616,6 +616,10 @@ export function filterSystemPromptForReflection(raw: string): string {
       "",
     );
   }
+  // Strip the "# Memory" markdown section (and everything after it).
+  // This section contains operational memory-filesystem docs that the
+  // reflection agent doesn't need.
+  filtered = filtered.replace(/\n# Memory\n[\s\S]*$/, "");
   // Collapse runs of 3+ blank lines into 2
   filtered = filtered.replace(/\n{3,}/g, "\n\n");
   return filtered.trim();

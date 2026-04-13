@@ -404,13 +404,49 @@ describe("reflectionTranscript helper", () => {
       "The user likes TypeScript.",
       "</human>",
       "",
-      "# Memory section",
+      "Keep being helpful.",
     ].join("\n");
 
     const filtered = filterSystemPromptForReflection(raw);
     expect(filtered).toContain("You are Letta Code.");
-    expect(filtered).toContain("# Memory section");
+    expect(filtered).toContain("Keep being helpful.");
     expect(filtered).not.toContain("I'm a coding assistant.");
     expect(filtered).not.toContain("The user likes TypeScript.");
+  });
+
+  test("filterSystemPromptForReflection strips the # Memory markdown section", () => {
+    const raw = [
+      "You are a persistent coding agent.",
+      "",
+      "# How you work",
+      "",
+      "Never modify code you haven't read.",
+      "",
+      "# Memory",
+      "",
+      "Your memory is projected onto the local memory filesystem.",
+      "",
+      "## Memory structure",
+      "",
+      "Files in system/ are pinned into your prompt.",
+      "",
+      "## Syncing",
+      "",
+      "```bash",
+      "git push",
+      "```",
+    ].join("\n");
+
+    const filtered = filterSystemPromptForReflection(raw);
+    expect(filtered).toContain("You are a persistent coding agent.");
+    expect(filtered).toContain("# How you work");
+    expect(filtered).toContain("Never modify code you haven't read.");
+    // Everything from "# Memory" onward should be stripped
+    expect(filtered).not.toContain("# Memory");
+    expect(filtered).not.toContain("memory filesystem");
+    expect(filtered).not.toContain("Memory structure");
+    expect(filtered).not.toContain("pinned into your prompt");
+    expect(filtered).not.toContain("Syncing");
+    expect(filtered).not.toContain("git push");
   });
 });
