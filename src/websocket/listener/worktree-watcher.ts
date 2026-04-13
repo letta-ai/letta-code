@@ -1,12 +1,12 @@
-import { watch, stat, readdir } from "node:fs/promises";
+import { readdir, stat, watch } from "node:fs/promises";
 import path from "node:path";
-import type { ListenerRuntime } from "./types";
 import {
   getConversationWorkingDirectory,
   getWorkingDirectoryScopeKey,
   setConversationWorkingDirectory,
 } from "./cwd";
 import { emitDeviceStatusUpdate } from "./protocol-outbound";
+import type { ListenerRuntime } from "./types";
 
 const WORKTREES_DIR = ".letta/worktrees";
 

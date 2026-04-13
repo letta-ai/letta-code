@@ -126,10 +126,6 @@ import {
   setConversationWorkingDirectory,
 } from "./cwd";
 import {
-  restartWorktreeWatcher,
-  stopAllWorktreeWatchers,
-} from "./worktree-watcher";
-import {
   consumeInterruptQueue,
   emitInterruptToolReturnMessage,
   extractInterruptToolReturns,
@@ -250,6 +246,10 @@ import type {
   ModeChangePayload,
   StartListenerOptions,
 } from "./types";
+import {
+  restartWorktreeWatcher,
+  stopAllWorktreeWatchers,
+} from "./worktree-watcher";
 
 type ChannelsServiceModule = typeof import("../../channels/service");
 
