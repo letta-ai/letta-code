@@ -320,35 +320,39 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
   // Load local project settings to access saved environment name
   await settingsManager.loadLocalProjectSettings();
 
-  // Initialize channels if --channels flag provided
-  if (values.channels) {
-    const channelNames = values.channels
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
-    if (channelNames.length > 0) {
-      if (values["install-channel-runtimes"]) {
-        const { ensureChannelRuntimeInstalled } = await import(
-          "../../channels/runtimeDeps"
-        );
-        const { isSupportedChannelId } = await import(
-          "../../channels/pluginRegistry"
-        );
+  // Initialize channels if explicitly requested, or restore persisted enabled
+  // channels when a desktop wrapper opts into boot-time channel restore.
+  const channelNames = values.channels
+    ? values.channels
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean)
+    : process.env.LETTA_RESTORE_ENABLED_CHANNELS === "1"
+      ? (await import("../../channels/service")).listEnabledChannelIds()
+      : [];
 
-        for (const channelName of channelNames) {
-          if (!isSupportedChannelId(channelName)) {
-            console.error(
-              `Unknown channel "${channelName}" passed to --channels.`,
-            );
-            return 1;
-          }
-          await ensureChannelRuntimeInstalled(channelName);
+  if (channelNames.length > 0) {
+    if (values.channels && values["install-channel-runtimes"]) {
+      const { ensureChannelRuntimeInstalled } = await import(
+        "../../channels/runtimeDeps"
+      );
+      const { isSupportedChannelId } = await import(
+        "../../channels/pluginRegistry"
+      );
+
+      for (const channelName of channelNames) {
+        if (!isSupportedChannelId(channelName)) {
+          console.error(
+            `Unknown channel "${channelName}" passed to --channels.`,
+          );
+          return 1;
         }
+        await ensureChannelRuntimeInstalled(channelName);
       }
-
-      const { initializeChannels } = await import("../../channels/registry");
-      await initializeChannels(channelNames);
     }
+
+    const { initializeChannels } = await import("../../channels/registry");
+    await initializeChannels(channelNames);
   }
 
   // Determine connection name
