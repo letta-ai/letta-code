@@ -16,6 +16,8 @@ interface SkillArgs {
   args?: string;
   /** Injected by executeTool - the tool_call_id for this invocation */
   toolCallId?: string;
+  /** Injected by executeTool in listener mode for scoped agent resolution. */
+  parentScope?: { agentId: string; conversationId: string };
 }
 
 interface SkillResult {
@@ -153,8 +155,22 @@ async function getResolvedSkillsDir(): Promise<string> {
     return skillsDir;
   }
 
-  // Fall back to default .skills directory in cwd
-  return join(process.cwd(), SKILLS_DIR);
+  // Fall back to the execution working directory when available.
+  // executeTool() temporarily sets USER_CWD for the duration of the tool call,
+  // which keeps listener/desktop project skill lookup scoped correctly.
+  return join(process.env.USER_CWD || process.cwd(), SKILLS_DIR);
+}
+
+function getResolvedAgentId(args: SkillArgs): string | undefined {
+  if (args.parentScope?.agentId) {
+    return args.parentScope.agentId;
+  }
+
+  try {
+    return getCurrentAgentId();
+  } catch {
+    return undefined;
+  }
 }
 
 export async function skill(args: SkillArgs): Promise<SkillResult> {
@@ -168,7 +184,7 @@ export async function skill(args: SkillArgs): Promise<SkillResult> {
   }
 
   try {
-    const agentId = getCurrentAgentId();
+    const agentId = getResolvedAgentId(args);
     const skillsDir = await getResolvedSkillsDir();
 
     // Read the SKILL.md content

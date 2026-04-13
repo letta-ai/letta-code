@@ -1457,9 +1457,14 @@ export async function executeTool(
       }
     }
 
-    // Inject toolCallId for Skill tool (used for skill content registry)
+    // Inject scoped metadata for Skill tool.
+    // In listener/desktop mode, relying on global agent context is unsafe
+    // because multiple agent/conversation scopes can overlap in one process.
     if (internalName === "Skill" && options?.toolCallId) {
       enhancedArgs = { ...enhancedArgs, toolCallId: options.toolCallId };
+    }
+    if (internalName === "Skill" && options?.parentScope) {
+      enhancedArgs = { ...enhancedArgs, parentScope: options.parentScope };
     }
 
     // Inject parent scope for MessageChannel tool (per-execution, not global singleton)
