@@ -1,3 +1,5 @@
+import * as nodeFs from "node:fs/promises";
+import * as nodePath from "node:path";
 import { getDisplayableToolReturn } from "../agent/approval-execution";
 import { getModelInfo } from "../agent/model";
 import { getAllSubagentConfigs } from "../agent/subagents";
@@ -63,6 +65,9 @@ const STREAMING_SHELL_TOOLS = new Set([
   "run_shell_command",
   "RunShellCommand",
 ]);
+
+// Tools that write files — used to trigger onFileWrite broadcast after execution.
+const FILE_MUTATING_TOOLS = new Set(["Edit", "Write", "MultiEdit", "replace"]);
 
 // Maps internal tool names to server/model-facing tool names
 // This allows us to have multiple implementations (e.g., write_file_gemini, Write from Anthropic)
@@ -1364,6 +1369,9 @@ export async function executeTool(
     onOutput?: (chunk: string, stream: "stdout" | "stderr") => void;
     toolContextId?: string;
     parentScope?: { agentId: string; conversationId: string };
+    /** Called after a file-mutating tool (Edit, Write, MultiEdit) writes to disk.
+     *  The listener layer uses this to broadcast the new content via WebSocket. */
+    onFileWrite?: (filePath: string, content: string) => void;
   },
 ): Promise<ToolExecutionResult> {
   const context = options?.toolContextId
@@ -1494,6 +1502,25 @@ export async function executeTool(
     // The incremental rebuild is cheap (metadata-based skip for unchanged
     // subtrees), so running on every tool adds negligible overhead.
     void refreshFileIndex();
+
+    // Broadcast file content after file-mutating tools so web clients update
+    // in real time without waiting for fs.watch → file_changed → re-read.
+    if (options?.onFileWrite && FILE_MUTATING_TOOLS.has(internalName)) {
+      const filePath = (enhancedArgs as Record<string, unknown>).file_path as
+        | string
+        | undefined;
+      if (filePath) {
+        try {
+          const resolvedPath = nodePath.isAbsolute(filePath)
+            ? filePath
+            : nodePath.resolve(process.env.USER_CWD || process.cwd(), filePath);
+          const content = await nodeFs.readFile(resolvedPath, "utf-8");
+          options.onFileWrite(resolvedPath, content);
+        } catch {
+          // Best-effort — don't fail the tool call if the read fails.
+        }
+      }
+    }
 
     // Extract stdout/stderr if present (for bash tools)
     const recordResult = isRecord(result) ? result : undefined;

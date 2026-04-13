@@ -180,6 +180,7 @@ import {
   isEditFileCommand,
   isEnableMemfsCommand,
   isExecuteCommandCommand,
+  isFileOpsCommand,
   isGetReflectionSettingsCommand,
   isListInDirectoryCommand,
   isListMemoryCommand,
@@ -4273,7 +4274,9 @@ async function connectWithRetry(
         );
         runDetachedListenerTask("edit_file", async () => {
           try {
+            const { readFile } = await import("node:fs/promises");
             const { edit } = await import("../../tools/impl/Edit");
+
             console.log(
               `[Listen] Executing edit: old_string="${parsed.old_string.slice(0, 50)}${parsed.old_string.length > 50 ? "..." : ""}"`,
             );
@@ -4287,6 +4290,29 @@ async function connectWithRetry(
             console.log(
               `[Listen] edit_file success: ${result.replacements} replacement(s) at line ${result.startLine}`,
             );
+
+            // Notify web clients of the new content so they can update live.
+            if (result.replacements > 0) {
+              try {
+                const contentAfter = await readFile(parsed.file_path, "utf-8");
+                safeSocketSend(
+                  socket,
+                  {
+                    type: "file_ops",
+                    path: parsed.file_path,
+                    cg_entries: [],
+                    ops: [],
+                    source: "agent",
+                    document_content: contentAfter,
+                  },
+                  "listener_edit_file_ops_send_failed",
+                  "listener_edit_file",
+                );
+              } catch {
+                // Non-fatal: content broadcast is best-effort.
+              }
+            }
+
             safeSocketSend(
               socket,
               {
@@ -4327,6 +4353,29 @@ async function connectWithRetry(
             );
           }
         });
+        return;
+      }
+
+      // ── Egwalker CRDT ops (no runtime scope required) ─────────────────
+      if (isFileOpsCommand(parsed)) {
+        // Use document_content if provided (reliable, no race conditions).
+        // Falls back to applying ops character-by-character.
+        if (parsed.document_content !== undefined) {
+          runDetachedListenerTask("file_ops", async () => {
+            try {
+              const { writeFile } = await import("node:fs/promises");
+              const content = parsed.document_content as string;
+              await writeFile(parsed.path, content, "utf-8");
+              console.log(
+                `[Listen] file_ops: wrote ${content.length} bytes to ${parsed.path}`,
+              );
+            } catch (err) {
+              console.error(
+                `[Listen] file_ops error: ${err instanceof Error ? err.message : "Unknown error"}`,
+              );
+            }
+          });
+        }
         return;
       }
 

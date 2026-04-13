@@ -32,6 +32,7 @@ import type {
   EditFileCommand,
   EnableMemfsCommand,
   ExecuteCommandCommand,
+  FileOpsCommand,
   GetReflectionSettingsCommand,
   InputCommand,
   ListInDirectoryCommand,
@@ -376,6 +377,24 @@ export function isEditFileCommand(value: unknown): value is EditFileCommand {
       (typeof c.expected_replacements === "number" &&
         Number.isInteger(c.expected_replacements) &&
         c.expected_replacements > 0))
+  );
+}
+
+export function isFileOpsCommand(value: unknown): value is FileOpsCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    path?: unknown;
+    cg_entries?: unknown;
+    ops?: unknown;
+    source?: unknown;
+  };
+  return (
+    c.type === "file_ops" &&
+    typeof c.path === "string" &&
+    Array.isArray(c.cg_entries) &&
+    Array.isArray(c.ops) &&
+    typeof c.source === "string"
   );
 }
 
@@ -1247,6 +1266,7 @@ export function parseServerMessage(
       isWatchFileCommand(parsed) ||
       isUnwatchFileCommand(parsed) ||
       isEditFileCommand(parsed) ||
+      isFileOpsCommand(parsed) ||
       isListMemoryCommand(parsed) ||
       isMemoryHistoryCommand(parsed) ||
       isMemoryFileAtRefCommand(parsed) ||
