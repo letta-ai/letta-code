@@ -341,19 +341,51 @@ function defaultState(): ReflectionTranscriptState {
   return { auto_cursor_line: 0 };
 }
 
+/** Maximum characters to keep for tool-call arguments in the reflection payload. */
+const TOOL_ARGS_TRUNCATE_LIMIT = 300;
+
+/**
+ * Truncate text to a character limit, appending a marker when content is cut.
+ */
+function truncateArgs(
+  text: string | undefined,
+  limit: number,
+): string | undefined {
+  if (text === undefined) return undefined;
+  if (text.length <= limit) return text;
+  return `${text.slice(0, limit)}…[truncated]`;
+}
+
+/**
+ * Strip inline base64 image data and data-URI image references from text.
+ * This is a safety net — the accumulator's `extractTextPart` already drops
+ * multimodal image_url parts, but pasted/inline base64 could still appear.
+ */
+function stripImagesFromText(text: string): string {
+  // Strip data:image URIs (including surrounding markdown image syntax)
+  return text.replace(
+    /!\[[^\]]*\]\(data:image\/[^)]+\)|data:image\/[^\s"')]+/g,
+    "[image]",
+  );
+}
+
 function formatTaggedTranscript(entries: TranscriptEntry[]): string {
   const lines: Line[] = [];
   for (const [index, entry] of entries.entries()) {
     const id = `transcript-${index}`;
     switch (entry.kind) {
       case "user":
-        lines.push({ kind: "user", id, text: entry.text });
+        lines.push({
+          kind: "user",
+          id,
+          text: stripImagesFromText(entry.text),
+        });
         break;
       case "assistant":
         lines.push({
           kind: "assistant",
           id,
-          text: entry.text,
+          text: stripImagesFromText(entry.text),
           phase: "finished",
         });
         break;
@@ -373,9 +405,9 @@ function formatTaggedTranscript(entries: TranscriptEntry[]): string {
           kind: "tool_call",
           id,
           name: entry.name,
-          argsText: entry.argsText,
-          resultText: entry.resultText,
-          resultOk: entry.resultOk,
+          argsText: truncateArgs(entry.argsText, TOOL_ARGS_TRUNCATE_LIMIT),
+          // resultText and resultOk intentionally omitted — tool outputs
+          // generally don't contribute to reflection and add significant noise.
           phase: "finished",
         });
         break;
@@ -536,9 +568,42 @@ export async function appendTranscriptDeltaJsonl(
   return entries.length;
 }
 
+/**
+ * Strip dynamic / noisy sections from a system prompt so the reflection agent
+ * sees only the core behavioural instructions.
+ *
+ * Removes: memory blocks (`<memory>…</memory>`, `<self>…</self>`, `<human>…</human>`),
+ * skill listings (`<available_skills>…</available_skills>`),
+ * system reminders (`<system-reminder>…</system-reminder>`),
+ * and memory metadata (`<memory_metadata>…</memory_metadata>`).
+ */
+export function filterSystemPromptForReflection(raw: string): string {
+  // Remove XML-style blocks that carry dynamic/ephemeral content.
+  // Using [\s\S] instead of . so we cross newlines.
+  const tagsToStrip = [
+    "memory",
+    "self",
+    "human",
+    "available_skills",
+    "system-reminder",
+    "memory_metadata",
+  ];
+  let filtered = raw;
+  for (const tag of tagsToStrip) {
+    filtered = filtered.replace(
+      new RegExp(`<${tag}>[\\s\\S]*?</${tag}>`, "g"),
+      "",
+    );
+  }
+  // Collapse runs of 3+ blank lines into 2
+  filtered = filtered.replace(/\n{3,}/g, "\n\n");
+  return filtered.trim();
+}
+
 export async function buildAutoReflectionPayload(
   agentId: string,
   conversationId: string,
+  systemPrompt?: string,
 ): Promise<AutoReflectionPayload | null> {
   const paths = getReflectionTranscriptPaths(agentId, conversationId);
   await ensurePaths(paths);
@@ -572,8 +637,18 @@ export async function buildAutoReflectionPayload(
     return null;
   }
 
+  // Build the final payload: optional filtered system prompt + conversation transcript
+  const payloadParts: string[] = [];
+  if (systemPrompt) {
+    const filtered = filterSystemPromptForReflection(systemPrompt);
+    if (filtered) {
+      payloadParts.push(`<system_prompt>\n${filtered}\n</system_prompt>`);
+    }
+  }
+  payloadParts.push(transcript);
+
   const payloadPath = buildPayloadPath("auto");
-  await writeFile(payloadPath, transcript, "utf-8");
+  await writeFile(payloadPath, payloadParts.join("\n\n"), "utf-8");
 
   state.last_auto_reflection_started_at = new Date().toISOString();
   await writeState(paths, state);

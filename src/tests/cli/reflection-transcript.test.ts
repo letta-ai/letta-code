@@ -8,6 +8,7 @@ import {
   buildAutoReflectionPayload,
   buildParentMemorySnapshot,
   buildReflectionSubagentPrompt,
+  filterSystemPromptForReflection,
   finalizeAutoReflectionPayload,
   getReflectionTranscriptPaths,
 } from "../../cli/helpers/reflectionTranscript";
@@ -255,5 +256,148 @@ describe("reflectionTranscript helper", () => {
       "Additional memory files (such as skills and external memory) may also be read and modified.",
     );
     expect(prompt).toContain("<parent_memory>snapshot</parent_memory>");
+  });
+
+  test("reflection payload drops tool call results and truncates args", async () => {
+    const longArgs = "a".repeat(500);
+    await appendTranscriptDeltaJsonl(agentId, conversationId, [
+      { kind: "user", id: "u1", text: "run a search" },
+      {
+        kind: "tool_call",
+        id: "tc1",
+        toolCallId: "tc1",
+        name: "Grep",
+        argsText: longArgs,
+        resultText: "found 42 matches in 10 files",
+        resultOk: true,
+        phase: "finished",
+      },
+      {
+        kind: "assistant",
+        id: "a1",
+        text: "Found results",
+        phase: "finished",
+      },
+    ]);
+
+    const payload = await buildAutoReflectionPayload(agentId, conversationId);
+    expect(payload).not.toBeNull();
+    if (!payload) return;
+
+    const payloadText = await readFile(payload.payloadPath, "utf-8");
+
+    // Tool call name and truncated args should be present
+    expect(payloadText).toContain('<tool_call name="Grep">');
+    expect(payloadText).toContain("…[truncated]");
+    // Full 500-char args should NOT be present
+    expect(payloadText).not.toContain(longArgs);
+    // Tool result should NOT be present
+    expect(payloadText).not.toContain("found 42 matches");
+    expect(payloadText).not.toContain("<tool_result>");
+    // User and assistant messages should be present
+    expect(payloadText).toContain("<user>run a search</user>");
+    expect(payloadText).toContain("<assistant>Found results</assistant>");
+  });
+
+  test("reflection payload strips inline base64 images from text", async () => {
+    const userTextWithImage =
+      "Check this: ![screenshot](data:image/png;base64,iVBORw0KGgoAAAANS) and tell me what you see";
+    await appendTranscriptDeltaJsonl(agentId, conversationId, [
+      { kind: "user", id: "u1", text: userTextWithImage },
+    ]);
+
+    const payload = await buildAutoReflectionPayload(agentId, conversationId);
+    expect(payload).not.toBeNull();
+    if (!payload) return;
+
+    const payloadText = await readFile(payload.payloadPath, "utf-8");
+    expect(payloadText).not.toContain("data:image/png;base64");
+    expect(payloadText).toContain("[image]");
+    expect(payloadText).toContain("Check this:");
+    expect(payloadText).toContain("and tell me what you see");
+  });
+
+  test("reflection payload prepends filtered system prompt when provided", async () => {
+    await appendTranscriptDeltaJsonl(agentId, conversationId, [
+      { kind: "user", id: "u1", text: "hello" },
+    ]);
+
+    const systemPrompt = [
+      "You are a helpful coding assistant.",
+      "",
+      "<memory>",
+      "<self>I am a persona block</self>",
+      "<human>User info here</human>",
+      "</memory>",
+      "",
+      "<available_skills>",
+      "skill1, skill2",
+      "</available_skills>",
+      "",
+      "Always be concise.",
+    ].join("\n");
+
+    const payload = await buildAutoReflectionPayload(
+      agentId,
+      conversationId,
+      systemPrompt,
+    );
+    expect(payload).not.toBeNull();
+    if (!payload) return;
+
+    const payloadText = await readFile(payload.payloadPath, "utf-8");
+    // Filtered system prompt should be present
+    expect(payloadText).toContain("<system_prompt>");
+    expect(payloadText).toContain("You are a helpful coding assistant.");
+    expect(payloadText).toContain("Always be concise.");
+    // Dynamic sections should be stripped
+    expect(payloadText).not.toContain("I am a persona block");
+    expect(payloadText).not.toContain("User info here");
+    expect(payloadText).not.toContain("skill1, skill2");
+    expect(payloadText).not.toContain("<available_skills>");
+    // Transcript should still follow
+    expect(payloadText).toContain("<user>hello</user>");
+  });
+
+  test("filterSystemPromptForReflection strips all dynamic sections", () => {
+    const raw = [
+      "Core instructions here.",
+      "<memory><self>persona</self><human>user data</human></memory>",
+      "<system-reminder>This is a reminder</system-reminder>",
+      "<memory_metadata>agent-id: foo</memory_metadata>",
+      "<available_skills>skill list</available_skills>",
+      "Final instructions.",
+    ].join("\n");
+
+    const filtered = filterSystemPromptForReflection(raw);
+    expect(filtered).toContain("Core instructions here.");
+    expect(filtered).toContain("Final instructions.");
+    expect(filtered).not.toContain("persona");
+    expect(filtered).not.toContain("user data");
+    expect(filtered).not.toContain("This is a reminder");
+    expect(filtered).not.toContain("agent-id: foo");
+    expect(filtered).not.toContain("skill list");
+  });
+
+  test("filterSystemPromptForReflection strips standalone memory sub-tags", () => {
+    const raw = [
+      "You are Letta Code.",
+      "",
+      "<self>",
+      "I'm a coding assistant.",
+      "</self>",
+      "",
+      "<human>",
+      "The user likes TypeScript.",
+      "</human>",
+      "",
+      "# Memory section",
+    ].join("\n");
+
+    const filtered = filterSystemPromptForReflection(raw);
+    expect(filtered).toContain("You are Letta Code.");
+    expect(filtered).toContain("# Memory section");
+    expect(filtered).not.toContain("I'm a coding assistant.");
+    expect(filtered).not.toContain("The user likes TypeScript.");
   });
 });

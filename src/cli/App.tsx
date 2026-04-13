@@ -10556,9 +10556,22 @@ export default function App({
 
           try {
             const reflectionConversationId = conversationIdRef.current;
+
+            // Fetch the agent's system prompt so the reflection payload includes
+            // the core behavioural instructions (filtered to strip dynamic content).
+            let systemPrompt: string | undefined;
+            try {
+              const client = await getClient();
+              const agent = await client.agents.retrieve(agentId);
+              systemPrompt = agent.system ?? undefined;
+            } catch {
+              // Non-fatal — the reflection payload will just omit the system prompt.
+            }
+
             const autoPayload = await buildAutoReflectionPayload(
               agentId,
               reflectionConversationId,
+              systemPrompt,
             );
 
             if (!autoPayload) {
@@ -11027,9 +11040,22 @@ ${SYSTEM_REMINDER_CLOSE}
         }
         try {
           const reflectionConversationId = conversationIdRef.current;
+
+          // Fetch the agent's system prompt so the reflection payload includes
+          // the core behavioural instructions (filtered to strip dynamic content).
+          let systemPrompt: string | undefined;
+          try {
+            const client = await getClient();
+            const agent = await client.agents.retrieve(agentId);
+            systemPrompt = agent.system ?? undefined;
+          } catch {
+            // Non-fatal — the reflection payload will just omit the system prompt.
+          }
+
           const autoPayload = await buildAutoReflectionPayload(
             agentId,
             reflectionConversationId,
+            systemPrompt,
           );
           if (!autoPayload) {
             debugLog(
