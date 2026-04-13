@@ -5,6 +5,10 @@
  * Reference: lettabot src/channels/telegram.ts
  */
 
+import { randomUUID } from "node:crypto";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { Bot as GrammYBot, Context as GrammYContext } from "grammy";
 import type {
   ChannelAdapter,
@@ -14,6 +18,32 @@ import type {
   TelegramChannelConfig,
 } from "../types";
 import { loadGrammyModule } from "./runtime";
+
+const SAFE_CHARS_RE = /[^A-Za-z0-9._-]/g;
+
+/**
+ * Save an image buffer to a temp directory and return the absolute path.
+ * Structure: <tmpdir>/letta-attachments/telegram/<chatId>/<timestamp>-<uuid>-<name>
+ */
+function saveImageToTemp(
+  buffer: Buffer,
+  chatId: string,
+  fileName: string,
+): string {
+  const dir = join(
+    tmpdir(),
+    "letta-attachments",
+    "telegram",
+    chatId.replace(SAFE_CHARS_RE, "_"),
+  );
+  mkdirSync(dir, { recursive: true });
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const token = randomUUID().slice(0, 8);
+  const safeName = fileName.replace(SAFE_CHARS_RE, "_") || "image";
+  const filePath = join(dir, `${stamp}-${token}-${safeName}`);
+  writeFileSync(filePath, buffer);
+  return filePath;
+}
 
 type TelegramBot = GrammYBot<GrammYContext>;
 type GrammYModule = typeof import("grammy") & {
@@ -148,10 +178,25 @@ export function createTelegramAdapter(
               throw fetchErr;
             }
             if (response.ok) {
-              const buffer = await response.arrayBuffer();
+              const buffer = Buffer.from(await response.arrayBuffer());
               if (buffer.byteLength <= MAX_IMAGE_BYTES) {
-                const base64 = Buffer.from(buffer).toString("base64");
-                images.push({ data: base64, mediaType });
+                const base64 = buffer.toString("base64");
+                // Derive a reasonable filename for the temp file
+                const ext = mediaType.split("/")[1] ?? "jpg";
+                const baseName = isPhoto
+                  ? `photo.${ext}`
+                  : (doc?.file_name ?? `image.${ext}`);
+                let localPath: string | undefined;
+                try {
+                  localPath = saveImageToTemp(
+                    buffer,
+                    String(msg.chat.id),
+                    baseName,
+                  );
+                } catch {
+                  // Non-fatal: agent still gets the base64 image
+                }
+                images.push({ data: base64, mediaType, localPath });
               } else {
                 console.warn(
                   `[Telegram] Downloaded image too large (${(buffer.byteLength / 1024 / 1024).toFixed(1)}MB), discarding.`,

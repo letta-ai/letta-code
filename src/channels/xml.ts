@@ -37,6 +37,14 @@ export function buildChannelReminderText(msg: InboundChannelMessage): string {
       ? `Use reply_to_message_id="${escapeXml(msg.messageId)}" if you want your reply to stay in the same Slack thread.`
       : null;
 
+  // Build attachment path lines for images saved to disk
+  const attachmentLines = (msg.images ?? [])
+    .filter((img) => img.localPath)
+    .map(
+      (img) =>
+        `Attached image (${escapeXml(img.mediaType)}) saved to ${escapeXml(img.localPath!)}`,
+    );
+
   const lines = [
     SYSTEM_REMINDER_OPEN,
     `This message originated from an external ${escapedChannel} channel.`,
@@ -49,6 +57,11 @@ export function buildChannelReminderText(msg: InboundChannelMessage): string {
 
   if (threadLine) {
     lines.splice(lines.length - 2, 0, threadLine);
+  }
+
+  if (attachmentLines.length > 0) {
+    // Insert before the closing tag
+    lines.splice(lines.length - 1, 0, ...attachmentLines);
   }
 
   return lines.join("\n");

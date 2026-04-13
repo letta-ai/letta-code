@@ -164,9 +164,57 @@ describe("formatChannelNotification", () => {
     const content = formatChannelNotification(msg);
     const parts = content as Array<{ type: string }>;
 
-    expect(parts).toHaveLength(4); // 2 text + 2 images
+    expect(parts).toHaveLength(4); // 2 text + 2 images (no localPath = no path text part)
     expect(parts[2]!.type).toBe("image");
     expect(parts[3]!.type).toBe("image");
+  });
+
+  test("includes image path in system reminder when images have localPath", () => {
+    const msg: InboundChannelMessage = {
+      channel: "telegram",
+      chatId: "12345",
+      senderId: "67890",
+      text: "Here's a photo",
+      timestamp: Date.now(),
+      images: [
+        {
+          data: "aGVsbG8=",
+          mediaType: "image/jpeg",
+          localPath: "/tmp/letta-attachments/telegram/12345/photo.jpg",
+        },
+      ],
+    };
+
+    const content = formatChannelNotification(msg);
+    const parts = content as Array<{ type: string; text?: string }>;
+
+    // 2 text (reminder + notification) + 1 image = 3 parts
+    expect(parts).toHaveLength(3);
+    // Path info is inside the system reminder (part 0)
+    expect(parts[0]!.text).toContain(
+      "saved to /tmp/letta-attachments/telegram/12345/photo.jpg",
+    );
+    expect(parts[0]!.text).toContain("image/jpeg");
+    expect(parts[2]!.type).toBe("image");
+  });
+
+  test("omits image path in system reminder when images lack localPath", () => {
+    const msg: InboundChannelMessage = {
+      channel: "telegram",
+      chatId: "12345",
+      senderId: "67890",
+      text: "No path",
+      timestamp: Date.now(),
+      images: [{ data: "aGVsbG8=", mediaType: "image/jpeg" }],
+    };
+
+    const content = formatChannelNotification(msg);
+    const parts = content as Array<{ type: string; text?: string }>;
+
+    // 2 text (reminder + notification) + 1 image = 3 parts
+    expect(parts).toHaveLength(3);
+    expect(parts[0]!.text).not.toContain("saved to");
+    expect(parts[2]!.type).toBe("image");
   });
 
   test("omits optional notification attributes when not present", () => {

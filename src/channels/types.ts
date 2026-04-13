@@ -53,6 +53,8 @@ export interface InboundImageAttachment {
   data: string;
   /** MIME type, e.g. "image/jpeg". */
   mediaType: string;
+  /** Absolute path where the image was saved to disk (temp dir). */
+  localPath?: string;
 }
 
 // ── Message types ─────────────────────────────────────────────────
