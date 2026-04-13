@@ -37,6 +37,16 @@ type OutboundChannelFormatter = (
   text: string,
 ) => Pick<OutboundChannelMessage, "text" | "parseMode">;
 
+function decodeBasicXmlEntities(text: string): string {
+  return text
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&");
+}
+
 function escapeTelegramHtml(text: string): string {
   return text
     .replace(/&/g, "&amp;")
@@ -446,11 +456,12 @@ export function formatOutboundChannelMessage(
   channel: string,
   text: string,
 ): Pick<OutboundChannelMessage, "text" | "parseMode"> {
+  const normalizedText = decodeBasicXmlEntities(text);
   const formatter = CHANNEL_OUTBOUND_FORMATTERS[channel];
   if (!formatter) {
-    return { text };
+    return { text: normalizedText };
   }
-  return formatter(text);
+  return formatter(normalizedText);
 }
 
 interface MessageChannelArgs {

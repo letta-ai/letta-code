@@ -64,6 +64,7 @@ describe("formatChannelNotification", () => {
     expect(reminder).toContain(
       'Use action="send", channel="telegram", and chat_id="12345"',
     );
+    expect(reminder).toContain('action="react"');
     expect(reminder).toContain("Current local time on this device:");
   });
 
@@ -85,7 +86,7 @@ describe("formatChannelNotification", () => {
     expect(reminder).not.toContain("reply_to_message_id");
   });
 
-  test("escapes XML special characters in notification text", () => {
+  test("escapes XML special characters in notification text without over-escaping quotes", () => {
     const msg: InboundChannelMessage = {
       channel: "telegram",
       chatId: "123",
@@ -98,8 +99,8 @@ describe("formatChannelNotification", () => {
 
     expect(xml).toContain("&lt;world&gt;");
     expect(xml).toContain("&amp;");
-    expect(xml).toContain("&quot;friends&quot;");
-    expect(xml).toContain("&apos;here&apos;");
+    expect(xml).toContain('"friends"');
+    expect(xml).toContain("'here'");
   });
 
   test("escapes XML special characters in notification attributes", () => {

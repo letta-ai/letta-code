@@ -50,7 +50,7 @@ describe("buildDynamicMessageChannelSchema", () => {
     expect(properties.action?.enum).toEqual(["send", "react", "upload-file"]);
   });
 
-  test("keeps Telegram-only tool actions narrowed to send", async () => {
+  test("keeps Telegram-only tool actions narrowed to Telegram-supported actions", async () => {
     const registry = new ChannelRegistry();
     registry.registerAdapter(createRunningAdapter("telegram", "acct-telegram"));
 
@@ -67,6 +67,6 @@ describe("buildDynamicMessageChannelSchema", () => {
 
     const properties = schema.properties as Record<string, { enum?: string[] }>;
     expect(properties.channel?.enum).toEqual(["telegram"]);
-    expect(properties.action?.enum).toEqual(["send"]);
+    expect(properties.action?.enum).toEqual(["send", "react", "upload-file"]);
   });
 });
