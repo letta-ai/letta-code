@@ -368,6 +368,21 @@ function toAccountSnapshot(account: ChannelAccount): ChannelAccountSnapshot {
       ?.isRunning() ?? false;
 
   if (account.channel === "telegram") {
+    loadRoutes(account.channel);
+    const fallbackRoute = getRoutesForChannel(
+      account.channel,
+      account.accountId,
+    ).find((route) => route.enabled !== false);
+    const binding =
+      account.binding.agentId && account.binding.conversationId
+        ? { ...account.binding }
+        : fallbackRoute
+          ? {
+              agentId: fallbackRoute.agentId,
+              conversationId: fallbackRoute.conversationId,
+            }
+          : { ...account.binding };
+
     return {
       channelId: "telegram",
       accountId: account.accountId,
@@ -378,7 +393,7 @@ function toAccountSnapshot(account: ChannelAccount): ChannelAccountSnapshot {
       dmPolicy: account.dmPolicy,
       allowedUsers: [...account.allowedUsers],
       hasToken: account.token.trim().length > 0,
-      binding: { ...account.binding },
+      binding,
       createdAt: account.createdAt,
       updatedAt: account.updatedAt,
     };

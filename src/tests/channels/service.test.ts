@@ -382,6 +382,42 @@ describe("channel service", () => {
     expect(getChannelConfigSnapshot("telegram")).toEqual(snapshot);
   });
 
+  test("telegram account snapshots fall back to persisted routes when binding metadata is stale", () => {
+    createChannelAccountLive(
+      "telegram",
+      {
+        displayName: "@boty_mc_lcd_bot",
+        enabled: true,
+        token: "telegram-token",
+        dmPolicy: "pairing",
+      },
+      { accountId: "bot-one" },
+    );
+
+    bindChannelPairing(
+      "telegram",
+      createPairingCode("telegram", "sender-1", "chat-1", "C P", "bot-one"),
+      "agent-telegram",
+      "conv-telegram",
+    );
+
+    updateChannelAccountLive("telegram", "bot-one", {
+      token: "telegram-token",
+      enabled: true,
+      dmPolicy: "pairing",
+    });
+
+    expect(getChannelAccountSnapshot("telegram", "bot-one")).toEqual(
+      expect.objectContaining({
+        accountId: "bot-one",
+        binding: {
+          agentId: "agent-telegram",
+          conversationId: "conv-telegram",
+        },
+      }),
+    );
+  });
+
   test("config helpers reject ambiguous singleton lookups once multiple accounts exist", () => {
     createChannelAccountLive(
       "telegram",
