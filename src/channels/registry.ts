@@ -38,7 +38,10 @@ import { formatChannelNotification } from "./xml";
 function buildPairingInstructions(channelId: string, code: string): string {
   return (
     `To connect this chat to a Letta Code agent, run:\n\n` +
+    `From ADE/desktop:\n` +
     `/channels ${channelId} pair ${code}\n\n` +
+    `From CLI:\n` +
+    `letta channels pair --channel ${channelId} --code ${code} --agent <AGENT_ID>\n\n` +
     `This code expires in 15 minutes.`
   );
 }
