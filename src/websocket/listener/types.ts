@@ -182,6 +182,11 @@ export type ListenerRuntime = {
   connectionName: string | null;
   conversationRuntimes: Map<string, ConversationRuntime>;
   approvalRuntimeKeyByRequestId: Map<string, string>;
+  /** Per-conversation worktree directory watchers for CWD auto-detection fallback. */
+  worktreeWatcherByConversation: Map<
+    string,
+    import("./worktree-watcher").WorktreeWatcherState
+  >;
   /** Agent IDs whose memfs repo has been cloned/pulled this session. Concurrent callers coalesce on the same promise. */
   memfsSyncedAgents: Map<string, Promise<void>>;
   lastEmittedStatus: "idle" | "receiving" | "processing" | null;
