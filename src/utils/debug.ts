@@ -12,7 +12,6 @@ import {
   existsSync,
   mkdirSync,
   readdirSync,
-  readFileSync,
   unlinkSync,
 } from "node:fs";
 import { homedir } from "node:os";
@@ -68,11 +67,13 @@ function printDebugLine(line: string, level: "log" | "warn" = "log"): void {
 const DEBUG_LOG_DIR = join(homedir(), ".letta", "logs", "debug");
 const MAX_SESSION_FILES = 5;
 const DEFAULT_TAIL_LINES = 50;
+const MAX_BUFFERED_TAIL_LINES = 200;
 
 class DebugLogFile {
   private logPath: string | null = null;
   private agentDir: string | null = null;
   private dirCreated = false;
+  private recentLines: string[] = [];
 
   /**
    * Initialize for an agent + session. Call once at session start.
@@ -86,11 +87,21 @@ class DebugLogFile {
     this.agentDir = join(DEBUG_LOG_DIR, agentId);
     this.logPath = join(this.agentDir, `${sessionId}.log`);
     this.dirCreated = false;
+    this.recentLines = [];
     this.pruneOldSessions();
   }
 
   /** Append a single line to the log file (best-effort, sync). */
   appendLine(line: string): void {
+    const normalizedLine = line.endsWith("\n") ? line.slice(0, -1) : line;
+    this.recentLines.push(normalizedLine);
+    if (this.recentLines.length > MAX_BUFFERED_TAIL_LINES) {
+      this.recentLines.splice(
+        0,
+        this.recentLines.length - MAX_BUFFERED_TAIL_LINES,
+      );
+    }
+
     if (!this.logPath) return;
     this.ensureDir();
     try {
@@ -100,17 +111,12 @@ class DebugLogFile {
     }
   }
 
-  /** Read the last N lines from the current log file. */
+  /** Read the last N lines from the in-memory current-session tail. */
   getTail(maxLines = DEFAULT_TAIL_LINES): string | undefined {
-    if (!this.logPath) return undefined;
-    try {
-      if (!existsSync(this.logPath)) return undefined;
-      const content = readFileSync(this.logPath, "utf8");
-      const lines = content.trimEnd().split("\n");
-      return lines.slice(-maxLines).join("\n");
-    } catch {
+    if (this.recentLines.length === 0) {
       return undefined;
     }
+    return this.recentLines.slice(-maxLines).join("\n");
   }
 
   private ensureDir(): void {
