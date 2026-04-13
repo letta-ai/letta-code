@@ -10,7 +10,7 @@ import type {
   ChannelAdapter,
   InboundChannelMessage,
   OutboundChannelMessage,
-  TelegramChannelConfig,
+  TelegramChannelAccount,
 } from "../types";
 import { loadGrammyModule } from "./runtime";
 
@@ -31,7 +31,7 @@ function resolveTelegramBotConstructor(
 }
 
 export function createTelegramAdapter(
-  config: TelegramChannelConfig,
+  config: TelegramChannelAccount,
 ): ChannelAdapter {
   let bot: TelegramBot | null = null;
   let running = false;
@@ -66,6 +66,7 @@ export function createTelegramAdapter(
 
       const inbound: InboundChannelMessage = {
         channel: "telegram",
+        accountId: config.accountId,
         chatId: String(msg.chat.id),
         senderId: String(msg.from.id),
         senderName: displayName || undefined,
@@ -107,7 +108,9 @@ export function createTelegramAdapter(
   }
 
   const adapter: ChannelAdapter = {
-    id: "telegram",
+    id: `telegram:${config.accountId}`,
+    channelId: "telegram",
+    accountId: config.accountId,
     name: "Telegram",
 
     async start(): Promise<void> {

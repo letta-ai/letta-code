@@ -154,6 +154,8 @@ export interface ChannelSummary {
 export type ChannelConfigSnapshot =
   | {
       channel_id: "telegram";
+      account_id: string;
+      display_name?: string;
       enabled: boolean;
       dm_policy: DmPolicy;
       allowed_users: string[];
@@ -161,6 +163,8 @@ export type ChannelConfigSnapshot =
     }
   | {
       channel_id: "slack";
+      account_id: string;
+      display_name?: string;
       enabled: boolean;
       mode: SlackChannelMode;
       dm_policy: DmPolicy;
@@ -169,7 +173,43 @@ export type ChannelConfigSnapshot =
       has_app_token: boolean;
     };
 
+export type ChannelAccountSnapshot =
+  | {
+      channel_id: "telegram";
+      account_id: string;
+      display_name?: string;
+      enabled: boolean;
+      configured: boolean;
+      running: boolean;
+      dm_policy: DmPolicy;
+      allowed_users: string[];
+      has_token: boolean;
+      binding: {
+        agent_id: string | null;
+        conversation_id: string | null;
+      };
+      created_at: string;
+      updated_at: string;
+    }
+  | {
+      channel_id: "slack";
+      account_id: string;
+      display_name?: string;
+      enabled: boolean;
+      configured: boolean;
+      running: boolean;
+      mode: SlackChannelMode;
+      dm_policy: DmPolicy;
+      allowed_users: string[];
+      has_bot_token: boolean;
+      has_app_token: boolean;
+      agent_id: string | null;
+      created_at: string;
+      updated_at: string;
+    };
+
 export interface ChannelPendingPairing {
+  account_id: string;
   code: string;
   sender_id: string;
   sender_name?: string;
@@ -180,15 +220,20 @@ export interface ChannelPendingPairing {
 
 export interface ChannelRouteSnapshot {
   channel_id: ChannelId;
+  account_id: string;
   chat_id: string;
+  chat_type?: "direct" | "channel";
+  thread_id?: string | null;
   agent_id: string;
   conversation_id: string;
   enabled: boolean;
   created_at: string;
+  updated_at: string;
 }
 
 export interface ChannelTargetSnapshot {
   channel_id: ChannelId;
+  account_id: string;
   target_id: string;
   target_type: "channel";
   chat_id: string;
@@ -806,16 +851,113 @@ export interface ChannelsListCommand {
   request_id: string;
 }
 
+export interface ChannelAccountsListCommand {
+  type: "channel_accounts_list";
+  request_id: string;
+  channel_id: ChannelId;
+}
+
+export type ChannelAccountCreatePayload =
+  | {
+      account_id?: string;
+      display_name?: string;
+      enabled?: boolean;
+      token?: string;
+      dm_policy?: DmPolicy;
+      allowed_users?: string[];
+    }
+  | {
+      account_id?: string;
+      display_name?: string;
+      enabled?: boolean;
+      bot_token?: string;
+      app_token?: string;
+      mode?: SlackChannelMode;
+      agent_id?: string | null;
+      dm_policy?: DmPolicy;
+      allowed_users?: string[];
+    };
+
+export interface ChannelAccountCreateCommand {
+  type: "channel_account_create";
+  request_id: string;
+  channel_id: ChannelId;
+  account: ChannelAccountCreatePayload;
+}
+
+export interface ChannelAccountUpdateCommand {
+  type: "channel_account_update";
+  request_id: string;
+  channel_id: ChannelId;
+  account_id: string;
+  patch:
+    | {
+        display_name?: string;
+        enabled?: boolean;
+        token?: string;
+        dm_policy?: DmPolicy;
+        allowed_users?: string[];
+      }
+    | {
+        display_name?: string;
+        enabled?: boolean;
+        bot_token?: string;
+        app_token?: string;
+        mode?: SlackChannelMode;
+        agent_id?: string | null;
+        dm_policy?: DmPolicy;
+        allowed_users?: string[];
+      };
+}
+
+export interface ChannelAccountBindCommand {
+  type: "channel_account_bind";
+  request_id: string;
+  channel_id: ChannelId;
+  account_id: string;
+  runtime: RuntimeScope;
+}
+
+export interface ChannelAccountUnbindCommand {
+  type: "channel_account_unbind";
+  request_id: string;
+  channel_id: ChannelId;
+  account_id: string;
+}
+
+export interface ChannelAccountDeleteCommand {
+  type: "channel_account_delete";
+  request_id: string;
+  channel_id: ChannelId;
+  account_id: string;
+}
+
+export interface ChannelAccountStartCommand {
+  type: "channel_account_start";
+  request_id: string;
+  channel_id: ChannelId;
+  account_id: string;
+}
+
+export interface ChannelAccountStopCommand {
+  type: "channel_account_stop";
+  request_id: string;
+  channel_id: ChannelId;
+  account_id: string;
+}
+
 export interface ChannelGetConfigCommand {
   type: "channel_get_config";
   request_id: string;
   channel_id: ChannelId;
+  account_id?: string;
 }
 
 export interface ChannelSetConfigCommand {
   type: "channel_set_config";
   request_id: string;
   channel_id: ChannelId;
+  account_id?: string;
   config:
     | {
         token?: string;
@@ -835,24 +977,28 @@ export interface ChannelStartCommand {
   type: "channel_start";
   request_id: string;
   channel_id: ChannelId;
+  account_id?: string;
 }
 
 export interface ChannelStopCommand {
   type: "channel_stop";
   request_id: string;
   channel_id: ChannelId;
+  account_id?: string;
 }
 
 export interface ChannelPairingsListCommand {
   type: "channel_pairings_list";
   request_id: string;
   channel_id: ChannelId;
+  account_id?: string;
 }
 
 export interface ChannelPairingBindCommand {
   type: "channel_pairing_bind";
   request_id: string;
   channel_id: ChannelId;
+  account_id?: string;
   runtime: RuntimeScope;
   code: string;
 }
@@ -861,6 +1007,7 @@ export interface ChannelRoutesListCommand {
   type: "channel_routes_list";
   request_id: string;
   channel_id?: ChannelId;
+  account_id?: string;
   agent_id?: string;
   conversation_id?: string;
 }
@@ -869,12 +1016,14 @@ export interface ChannelTargetsListCommand {
   type: "channel_targets_list";
   request_id: string;
   channel_id: ChannelId;
+  account_id?: string;
 }
 
 export interface ChannelTargetBindCommand {
   type: "channel_target_bind";
   request_id: string;
   channel_id: ChannelId;
+  account_id?: string;
   runtime: RuntimeScope;
   target_id: string;
 }
@@ -883,7 +1032,17 @@ export interface ChannelRouteRemoveCommand {
   type: "channel_route_remove";
   request_id: string;
   channel_id: ChannelId;
+  account_id?: string;
   chat_id: string;
+}
+
+export interface ChannelRouteUpdateCommand {
+  type: "channel_route_update";
+  request_id: string;
+  channel_id: ChannelId;
+  account_id?: string;
+  chat_id: string;
+  runtime: RuntimeScope;
 }
 
 export interface CronListResponseMessage {
@@ -971,6 +1130,79 @@ export interface ChannelsListResponseMessage {
   error?: string;
 }
 
+export interface ChannelAccountsListResponseMessage {
+  type: "channel_accounts_list_response";
+  request_id: string;
+  success: boolean;
+  channel_id: ChannelId;
+  accounts: ChannelAccountSnapshot[];
+  error?: string;
+}
+
+export interface ChannelAccountCreateResponseMessage {
+  type: "channel_account_create_response";
+  request_id: string;
+  success: boolean;
+  channel_id: ChannelId;
+  account: ChannelAccountSnapshot | null;
+  error?: string;
+}
+
+export interface ChannelAccountUpdateResponseMessage {
+  type: "channel_account_update_response";
+  request_id: string;
+  success: boolean;
+  channel_id: ChannelId;
+  account: ChannelAccountSnapshot | null;
+  error?: string;
+}
+
+export interface ChannelAccountBindResponseMessage {
+  type: "channel_account_bind_response";
+  request_id: string;
+  success: boolean;
+  channel_id: ChannelId;
+  account: ChannelAccountSnapshot | null;
+  error?: string;
+}
+
+export interface ChannelAccountUnbindResponseMessage {
+  type: "channel_account_unbind_response";
+  request_id: string;
+  success: boolean;
+  channel_id: ChannelId;
+  account: ChannelAccountSnapshot | null;
+  error?: string;
+}
+
+export interface ChannelAccountDeleteResponseMessage {
+  type: "channel_account_delete_response";
+  request_id: string;
+  success: boolean;
+  channel_id: ChannelId;
+  account_id: string;
+  deleted: boolean;
+  error?: string;
+}
+
+export interface ChannelAccountStartResponseMessage {
+  type: "channel_account_start_response";
+  request_id: string;
+  success: boolean;
+  channel_id: ChannelId;
+  account: ChannelAccountSnapshot | null;
+  error?: string;
+}
+
+export interface ChannelAccountStopResponseMessage {
+  type: "channel_account_stop_response";
+  request_id: string;
+  success: boolean;
+  channel_id: ChannelId;
+  account: ChannelAccountSnapshot | null;
+  error?: string;
+}
+
 export interface ChannelGetConfigResponseMessage {
   type: "channel_get_config_response";
   request_id: string;
@@ -1041,6 +1273,16 @@ export interface ChannelRouteRemoveResponseMessage {
   error?: string;
 }
 
+export interface ChannelRouteUpdateResponseMessage {
+  type: "channel_route_update_response";
+  request_id: string;
+  success: boolean;
+  channel_id: ChannelId;
+  chat_id: string;
+  route?: ChannelRouteSnapshot | null;
+  error?: string;
+}
+
 export interface ChannelTargetsListResponseMessage {
   type: "channel_targets_list_response";
   request_id: string;
@@ -1065,6 +1307,13 @@ export interface ChannelsUpdatedMessage {
   type: "channels_updated";
   timestamp: number;
   channel_id?: ChannelId;
+}
+
+export interface ChannelAccountsUpdatedMessage {
+  type: "channel_accounts_updated";
+  timestamp: number;
+  channel_id: ChannelId;
+  account_id?: string;
 }
 
 export interface ChannelPairingsUpdatedMessage {
@@ -1188,6 +1437,14 @@ export type WsProtocolCommand =
   | GetReflectionSettingsCommand
   | SetReflectionSettingsCommand
   | ChannelsListCommand
+  | ChannelAccountsListCommand
+  | ChannelAccountCreateCommand
+  | ChannelAccountUpdateCommand
+  | ChannelAccountBindCommand
+  | ChannelAccountUnbindCommand
+  | ChannelAccountDeleteCommand
+  | ChannelAccountStartCommand
+  | ChannelAccountStopCommand
   | ChannelGetConfigCommand
   | ChannelSetConfigCommand
   | ChannelStartCommand
@@ -1198,6 +1455,7 @@ export type WsProtocolCommand =
   | ChannelTargetsListCommand
   | ChannelTargetBindCommand
   | ChannelRouteRemoveCommand
+  | ChannelRouteUpdateCommand
   | ExecuteCommandCommand
   | SearchBranchesCommand
   | CheckoutBranchCommand;
@@ -1211,6 +1469,14 @@ export type WsProtocolMessage =
   | ListModelsResponseMessage
   | UpdateModelResponseMessage
   | ChannelsListResponseMessage
+  | ChannelAccountsListResponseMessage
+  | ChannelAccountCreateResponseMessage
+  | ChannelAccountUpdateResponseMessage
+  | ChannelAccountBindResponseMessage
+  | ChannelAccountUnbindResponseMessage
+  | ChannelAccountDeleteResponseMessage
+  | ChannelAccountStartResponseMessage
+  | ChannelAccountStopResponseMessage
   | ChannelGetConfigResponseMessage
   | ChannelSetConfigResponseMessage
   | ChannelStartResponseMessage
@@ -1221,7 +1487,9 @@ export type WsProtocolMessage =
   | ChannelTargetsListResponseMessage
   | ChannelTargetBindResponseMessage
   | ChannelRouteRemoveResponseMessage
+  | ChannelRouteUpdateResponseMessage
   | ChannelsUpdatedMessage
+  | ChannelAccountsUpdatedMessage
   | ChannelPairingsUpdatedMessage
   | ChannelRoutesUpdatedMessage
   | ChannelTargetsUpdatedMessage;

@@ -1,6 +1,7 @@
 import type { ChannelPlugin } from "../pluginTypes";
-import type { ChannelConfig, SlackChannelConfig } from "../types";
+import type { ChannelAccount, SlackChannelAccount } from "../types";
 import { createSlackAdapter } from "./adapter";
+import { slackMessageActions } from "./messageActions";
 import { runSlackSetup } from "./setup";
 
 export const slackChannelPlugin: ChannelPlugin = {
@@ -10,9 +11,10 @@ export const slackChannelPlugin: ChannelPlugin = {
     runtimePackages: ["@slack/bolt@4.7.0"],
     runtimeModules: ["@slack/bolt"],
   },
-  createAdapter(config: ChannelConfig) {
-    return createSlackAdapter(config as SlackChannelConfig);
+  createAdapter(account: ChannelAccount) {
+    return createSlackAdapter(account as SlackChannelAccount);
   },
+  messageActions: slackMessageActions,
   runSetup() {
     return runSlackSetup();
   },

@@ -72,11 +72,20 @@ import type {
   AbortMessageCommand,
   ApprovalResponseBody,
   ChangeDeviceStateCommand,
+  ChannelAccountBindCommand,
+  ChannelAccountCreateCommand,
+  ChannelAccountDeleteCommand,
+  ChannelAccountStartCommand,
+  ChannelAccountStopCommand,
+  ChannelAccountsListCommand,
+  ChannelAccountUnbindCommand,
+  ChannelAccountUpdateCommand,
   ChannelGetConfigCommand,
   ChannelPairingBindCommand,
   ChannelPairingsListCommand,
   ChannelRouteRemoveCommand,
   ChannelRoutesListCommand,
+  ChannelRouteUpdateCommand,
   ChannelSetConfigCommand,
   ChannelStartCommand,
   ChannelStopCommand,
@@ -141,11 +150,20 @@ import {
   persistPermissionModeMapForRuntime,
 } from "./permissionMode";
 import {
+  isChannelAccountBindCommand,
+  isChannelAccountCreateCommand,
+  isChannelAccountDeleteCommand,
+  isChannelAccountStartCommand,
+  isChannelAccountStopCommand,
+  isChannelAccountsListCommand,
+  isChannelAccountUnbindCommand,
+  isChannelAccountUpdateCommand,
   isChannelGetConfigCommand,
   isChannelPairingBindCommand,
   isChannelPairingsListCommand,
   isChannelRouteRemoveCommand,
   isChannelRoutesListCommand,
+  isChannelRouteUpdateCommand,
   isChannelSetConfigCommand,
   isChannelStartCommand,
   isChannelStopCommand,
@@ -763,6 +781,14 @@ type ReflectionSettingsCommand =
 
 type ChannelsCommand =
   | ChannelsListCommand
+  | ChannelAccountsListCommand
+  | ChannelAccountCreateCommand
+  | ChannelAccountUpdateCommand
+  | ChannelAccountBindCommand
+  | ChannelAccountUnbindCommand
+  | ChannelAccountDeleteCommand
+  | ChannelAccountStartCommand
+  | ChannelAccountStopCommand
   | ChannelGetConfigCommand
   | ChannelSetConfigCommand
   | ChannelStartCommand
@@ -772,7 +798,33 @@ type ChannelsCommand =
   | ChannelRoutesListCommand
   | ChannelTargetsListCommand
   | ChannelTargetBindCommand
+  | ChannelRouteUpdateCommand
   | ChannelRouteRemoveCommand;
+
+function isDetachedChannelsCommand(parsed: unknown): parsed is ChannelsCommand {
+  return (
+    isChannelsListCommand(parsed) ||
+    isChannelAccountsListCommand(parsed) ||
+    isChannelAccountCreateCommand(parsed) ||
+    isChannelAccountUpdateCommand(parsed) ||
+    isChannelAccountBindCommand(parsed) ||
+    isChannelAccountUnbindCommand(parsed) ||
+    isChannelAccountDeleteCommand(parsed) ||
+    isChannelAccountStartCommand(parsed) ||
+    isChannelAccountStopCommand(parsed) ||
+    isChannelGetConfigCommand(parsed) ||
+    isChannelSetConfigCommand(parsed) ||
+    isChannelStartCommand(parsed) ||
+    isChannelStopCommand(parsed) ||
+    isChannelPairingsListCommand(parsed) ||
+    isChannelPairingBindCommand(parsed) ||
+    isChannelRoutesListCommand(parsed) ||
+    isChannelTargetsListCommand(parsed) ||
+    isChannelTargetBindCommand(parsed) ||
+    isChannelRouteUpdateCommand(parsed) ||
+    isChannelRouteRemoveCommand(parsed)
+  );
+}
 
 function emitCronsUpdated(
   socket: WebSocket,
@@ -803,6 +855,23 @@ function emitChannelsUpdated(
       type: "channels_updated",
       timestamp: Date.now(),
       ...(channelId ? { channel_id: channelId } : {}),
+    },
+    "listener_channels_send_failed",
+    "listener_channels_command",
+  );
+}
+
+function emitChannelAccountsUpdated(
+  socket: WebSocket,
+  params: { channelId: "telegram" | "slack"; accountId?: string },
+): void {
+  safeSocketSend(
+    socket,
+    {
+      type: "channel_accounts_updated",
+      timestamp: Date.now(),
+      channel_id: params.channelId,
+      ...(params.accountId ? { account_id: params.accountId } : {}),
     },
     "listener_channels_send_failed",
     "listener_channels_command",
@@ -1071,16 +1140,26 @@ async function handleChannelsProtocolCommand(
 ): Promise<boolean> {
   const {
     bindChannelPairing,
+    bindChannelAccountLive,
     bindChannelTarget,
+    createChannelAccountLive,
+    refreshChannelAccountDisplayNameLive,
     getChannelConfigSnapshot,
+    listChannelAccountSnapshots,
     listChannelRouteSnapshots,
     listChannelSummaries,
     listPendingPairingSnapshots,
     listChannelTargetSnapshots,
+    removeChannelAccountLive,
     removeChannelRouteLive,
     setChannelConfigLive,
+    startChannelAccountLive,
     startChannelLive,
+    stopChannelAccountLive,
     stopChannelLive,
+    unbindChannelAccountLive,
+    updateChannelAccountLive,
+    updateChannelRouteLive,
   } = await loadChannelsService();
 
   const mapChannelSummary = (
@@ -1106,6 +1185,8 @@ async function handleChannelsProtocolCommand(
     if (snapshot.channelId === "telegram") {
       return {
         channel_id: snapshot.channelId,
+        account_id: snapshot.accountId,
+        display_name: snapshot.displayName,
         enabled: snapshot.enabled,
         dm_policy: snapshot.dmPolicy,
         allowed_users: snapshot.allowedUsers,
@@ -1114,6 +1195,8 @@ async function handleChannelsProtocolCommand(
     }
     return {
       channel_id: snapshot.channelId,
+      account_id: snapshot.accountId,
+      display_name: snapshot.displayName,
       enabled: snapshot.enabled,
       mode: snapshot.mode,
       dm_policy: snapshot.dmPolicy,
@@ -1123,21 +1206,67 @@ async function handleChannelsProtocolCommand(
     };
   };
 
+  const mapChannelAccount = (
+    snapshot: ReturnType<typeof listChannelAccountSnapshots>[number],
+  ) => {
+    if (snapshot.channelId === "telegram") {
+      return {
+        channel_id: snapshot.channelId,
+        account_id: snapshot.accountId,
+        display_name: snapshot.displayName,
+        enabled: snapshot.enabled,
+        configured: snapshot.configured,
+        running: snapshot.running,
+        dm_policy: snapshot.dmPolicy,
+        allowed_users: snapshot.allowedUsers,
+        has_token: snapshot.hasToken,
+        binding: {
+          agent_id: snapshot.binding.agentId,
+          conversation_id: snapshot.binding.conversationId,
+        },
+        created_at: snapshot.createdAt,
+        updated_at: snapshot.updatedAt,
+      };
+    }
+
+    return {
+      channel_id: snapshot.channelId,
+      account_id: snapshot.accountId,
+      display_name: snapshot.displayName,
+      enabled: snapshot.enabled,
+      configured: snapshot.configured,
+      running: snapshot.running,
+      mode: snapshot.mode,
+      dm_policy: snapshot.dmPolicy,
+      allowed_users: snapshot.allowedUsers,
+      has_bot_token: snapshot.hasBotToken,
+      has_app_token: snapshot.hasAppToken,
+      agent_id: snapshot.agentId,
+      created_at: snapshot.createdAt,
+      updated_at: snapshot.updatedAt,
+    };
+  };
+
   const mapRouteSnapshot = (
     route: ReturnType<typeof listChannelRouteSnapshots>[number],
   ) => ({
     channel_id: route.channelId,
+    account_id: route.accountId,
     chat_id: route.chatId,
+    chat_type: route.chatType,
+    thread_id: route.threadId ?? null,
     agent_id: route.agentId,
     conversation_id: route.conversationId,
     enabled: route.enabled,
     created_at: route.createdAt,
+    updated_at: route.updatedAt,
   });
 
   const mapTargetSnapshot = (
     target: ReturnType<typeof listChannelTargetSnapshots>[number],
   ) => ({
     channel_id: target.channelId,
+    account_id: target.accountId,
     target_id: target.targetId,
     target_type: target.targetType,
     chat_id: target.chatId,
@@ -1177,6 +1306,451 @@ async function handleChannelsProtocolCommand(
     return true;
   }
 
+  if (parsed.type === "channel_accounts_list") {
+    try {
+      const accounts = await Promise.all(
+        listChannelAccountSnapshots(parsed.channel_id).map((account) =>
+          parsed.channel_id === "slack"
+            ? refreshChannelAccountDisplayNameLive(
+                parsed.channel_id,
+                account.accountId,
+                { force: true },
+              )
+            : account.displayName
+              ? Promise.resolve(account)
+              : refreshChannelAccountDisplayNameLive(
+                  parsed.channel_id,
+                  account.accountId,
+                ),
+        ),
+      );
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_accounts_list_response",
+          request_id: parsed.request_id,
+          success: true,
+          channel_id: parsed.channel_id,
+          accounts: accounts.map(mapChannelAccount),
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+    } catch (err) {
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_accounts_list_response",
+          request_id: parsed.request_id,
+          success: false,
+          channel_id: parsed.channel_id,
+          accounts: [],
+          error:
+            err instanceof Error
+              ? err.message
+              : "Failed to list channel accounts",
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+    }
+    return true;
+  }
+
+  if (parsed.type === "channel_account_create") {
+    try {
+      const created = createChannelAccountLive(
+        parsed.channel_id,
+        {
+          displayName:
+            "display_name" in parsed.account
+              ? parsed.account.display_name
+              : undefined,
+          enabled:
+            "enabled" in parsed.account ? parsed.account.enabled : undefined,
+          token: "token" in parsed.account ? parsed.account.token : undefined,
+          botToken:
+            "bot_token" in parsed.account
+              ? parsed.account.bot_token
+              : undefined,
+          appToken:
+            "app_token" in parsed.account
+              ? parsed.account.app_token
+              : undefined,
+          mode: "mode" in parsed.account ? parsed.account.mode : undefined,
+          agentId:
+            "agent_id" in parsed.account ? parsed.account.agent_id : undefined,
+          dmPolicy: parsed.account.dm_policy,
+          allowedUsers: parsed.account.allowed_users,
+        },
+        {
+          accountId:
+            "account_id" in parsed.account
+              ? parsed.account.account_id
+              : undefined,
+        },
+      );
+      const account =
+        "display_name" in parsed.account
+          ? created
+          : await refreshChannelAccountDisplayNameLive(
+              parsed.channel_id,
+              created.accountId,
+              { force: true },
+            );
+
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_account_create_response",
+          request_id: parsed.request_id,
+          success: true,
+          channel_id: parsed.channel_id,
+          account: mapChannelAccount(account),
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+      emitChannelAccountsUpdated(socket, {
+        channelId: parsed.channel_id,
+        accountId: account.accountId,
+      });
+      emitChannelsUpdated(socket, parsed.channel_id);
+    } catch (err) {
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_account_create_response",
+          request_id: parsed.request_id,
+          success: false,
+          channel_id: parsed.channel_id,
+          account: null,
+          error:
+            err instanceof Error
+              ? err.message
+              : "Failed to create channel account",
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+    }
+    return true;
+  }
+
+  if (parsed.type === "channel_account_update") {
+    try {
+      const updated = updateChannelAccountLive(
+        parsed.channel_id,
+        parsed.account_id,
+        {
+          displayName:
+            "display_name" in parsed.patch
+              ? parsed.patch.display_name
+              : undefined,
+          enabled: "enabled" in parsed.patch ? parsed.patch.enabled : undefined,
+          token: "token" in parsed.patch ? parsed.patch.token : undefined,
+          botToken:
+            "bot_token" in parsed.patch ? parsed.patch.bot_token : undefined,
+          appToken:
+            "app_token" in parsed.patch ? parsed.patch.app_token : undefined,
+          mode: "mode" in parsed.patch ? parsed.patch.mode : undefined,
+          agentId:
+            "agent_id" in parsed.patch ? parsed.patch.agent_id : undefined,
+          dmPolicy: parsed.patch.dm_policy,
+          allowedUsers: parsed.patch.allowed_users,
+        },
+      );
+      const shouldRefreshDisplayName =
+        !("display_name" in parsed.patch) &&
+        (parsed.channel_id === "telegram"
+          ? "token" in parsed.patch
+          : "bot_token" in parsed.patch || "app_token" in parsed.patch);
+      const account = shouldRefreshDisplayName
+        ? await refreshChannelAccountDisplayNameLive(
+            parsed.channel_id,
+            parsed.account_id,
+            { force: true },
+          )
+        : updated;
+
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_account_update_response",
+          request_id: parsed.request_id,
+          success: true,
+          channel_id: parsed.channel_id,
+          account: mapChannelAccount(account),
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+      emitChannelAccountsUpdated(socket, {
+        channelId: parsed.channel_id,
+        accountId: parsed.account_id,
+      });
+      emitChannelsUpdated(socket, parsed.channel_id);
+    } catch (err) {
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_account_update_response",
+          request_id: parsed.request_id,
+          success: false,
+          channel_id: parsed.channel_id,
+          account: null,
+          error:
+            err instanceof Error
+              ? err.message
+              : "Failed to update channel account",
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+    }
+    return true;
+  }
+
+  if (parsed.type === "channel_account_bind") {
+    try {
+      const account = bindChannelAccountLive(
+        parsed.channel_id,
+        parsed.account_id,
+        parsed.runtime.agent_id,
+        parsed.runtime.conversation_id,
+      );
+
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_account_bind_response",
+          request_id: parsed.request_id,
+          success: true,
+          channel_id: parsed.channel_id,
+          account: mapChannelAccount(account),
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+      emitChannelAccountsUpdated(socket, {
+        channelId: parsed.channel_id,
+        accountId: parsed.account_id,
+      });
+      emitChannelsUpdated(socket, parsed.channel_id);
+    } catch (err) {
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_account_bind_response",
+          request_id: parsed.request_id,
+          success: false,
+          channel_id: parsed.channel_id,
+          account: null,
+          error:
+            err instanceof Error
+              ? err.message
+              : "Failed to bind channel account",
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+    }
+    return true;
+  }
+
+  if (parsed.type === "channel_account_unbind") {
+    try {
+      const account = unbindChannelAccountLive(
+        parsed.channel_id,
+        parsed.account_id,
+      );
+
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_account_unbind_response",
+          request_id: parsed.request_id,
+          success: true,
+          channel_id: parsed.channel_id,
+          account: mapChannelAccount(account),
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+      emitChannelAccountsUpdated(socket, {
+        channelId: parsed.channel_id,
+        accountId: parsed.account_id,
+      });
+      emitChannelsUpdated(socket, parsed.channel_id);
+    } catch (err) {
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_account_unbind_response",
+          request_id: parsed.request_id,
+          success: false,
+          channel_id: parsed.channel_id,
+          account: null,
+          error:
+            err instanceof Error
+              ? err.message
+              : "Failed to unbind channel account",
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+    }
+    return true;
+  }
+
+  if (parsed.type === "channel_account_delete") {
+    try {
+      const deleted = await removeChannelAccountLive(
+        parsed.channel_id,
+        parsed.account_id,
+      );
+
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_account_delete_response",
+          request_id: parsed.request_id,
+          success: true,
+          channel_id: parsed.channel_id,
+          account_id: parsed.account_id,
+          deleted,
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+      if (deleted) {
+        emitChannelAccountsUpdated(socket, {
+          channelId: parsed.channel_id,
+          accountId: parsed.account_id,
+        });
+        emitChannelPairingsUpdated(socket, parsed.channel_id);
+        emitChannelRoutesUpdated(socket, {
+          channelId: parsed.channel_id,
+        });
+        emitChannelTargetsUpdated(socket, parsed.channel_id);
+        emitChannelsUpdated(socket, parsed.channel_id);
+      }
+    } catch (err) {
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_account_delete_response",
+          request_id: parsed.request_id,
+          success: false,
+          channel_id: parsed.channel_id,
+          account_id: parsed.account_id,
+          deleted: false,
+          error:
+            err instanceof Error
+              ? err.message
+              : "Failed to delete channel account",
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+    }
+    return true;
+  }
+
+  if (parsed.type === "channel_account_start") {
+    try {
+      const account = await startChannelAccountLive(
+        parsed.channel_id,
+        parsed.account_id,
+      );
+      wireChannelIngress(
+        runtime,
+        socket,
+        opts as StartListenerOptions,
+        processQueuedTurn,
+      );
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_account_start_response",
+          request_id: parsed.request_id,
+          success: true,
+          channel_id: parsed.channel_id,
+          account: mapChannelAccount(account),
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+      emitChannelAccountsUpdated(socket, {
+        channelId: parsed.channel_id,
+        accountId: parsed.account_id,
+      });
+      emitChannelsUpdated(socket, parsed.channel_id);
+    } catch (err) {
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_account_start_response",
+          request_id: parsed.request_id,
+          success: false,
+          channel_id: parsed.channel_id,
+          account: null,
+          error:
+            err instanceof Error
+              ? err.message
+              : "Failed to start channel account",
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+    }
+    return true;
+  }
+
+  if (parsed.type === "channel_account_stop") {
+    try {
+      const account = await stopChannelAccountLive(
+        parsed.channel_id,
+        parsed.account_id,
+      );
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_account_stop_response",
+          request_id: parsed.request_id,
+          success: true,
+          channel_id: parsed.channel_id,
+          account: mapChannelAccount(account),
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+      emitChannelAccountsUpdated(socket, {
+        channelId: parsed.channel_id,
+        accountId: parsed.account_id,
+      });
+      emitChannelsUpdated(socket, parsed.channel_id);
+    } catch (err) {
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_account_stop_response",
+          request_id: parsed.request_id,
+          success: false,
+          channel_id: parsed.channel_id,
+          account: null,
+          error:
+            err instanceof Error
+              ? err.message
+              : "Failed to stop channel account",
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+    }
+    return true;
+  }
+
   if (parsed.type === "channel_get_config") {
     try {
       safeSocketSend(
@@ -1185,7 +1759,9 @@ async function handleChannelsProtocolCommand(
           type: "channel_get_config_response",
           request_id: parsed.request_id,
           success: true,
-          config: mapChannelConfig(getChannelConfigSnapshot(parsed.channel_id)),
+          config: mapChannelConfig(
+            getChannelConfigSnapshot(parsed.channel_id, parsed.account_id),
+          ),
         },
         "listener_channels_send_failed",
         "listener_channels_command",
@@ -1212,16 +1788,20 @@ async function handleChannelsProtocolCommand(
 
   if (parsed.type === "channel_set_config") {
     try {
-      const snapshot = await setChannelConfigLive(parsed.channel_id, {
-        token: "token" in parsed.config ? parsed.config.token : undefined,
-        botToken:
-          "bot_token" in parsed.config ? parsed.config.bot_token : undefined,
-        appToken:
-          "app_token" in parsed.config ? parsed.config.app_token : undefined,
-        mode: "mode" in parsed.config ? parsed.config.mode : undefined,
-        dmPolicy: parsed.config.dm_policy,
-        allowedUsers: parsed.config.allowed_users,
-      });
+      const snapshot = await setChannelConfigLive(
+        parsed.channel_id,
+        {
+          token: "token" in parsed.config ? parsed.config.token : undefined,
+          botToken:
+            "bot_token" in parsed.config ? parsed.config.bot_token : undefined,
+          appToken:
+            "app_token" in parsed.config ? parsed.config.app_token : undefined,
+          mode: "mode" in parsed.config ? parsed.config.mode : undefined,
+          dmPolicy: parsed.config.dm_policy,
+          allowedUsers: parsed.config.allowed_users,
+        },
+        parsed.account_id,
+      );
 
       if (snapshot.enabled) {
         wireChannelIngress(
@@ -1243,6 +1823,10 @@ async function handleChannelsProtocolCommand(
         "listener_channels_send_failed",
         "listener_channels_command",
       );
+      emitChannelAccountsUpdated(socket, {
+        channelId: parsed.channel_id,
+        accountId: snapshot.accountId,
+      });
       emitChannelsUpdated(socket, parsed.channel_id);
     } catch (err) {
       safeSocketSend(
@@ -1266,7 +1850,10 @@ async function handleChannelsProtocolCommand(
 
   if (parsed.type === "channel_start") {
     try {
-      const summary = await startChannelLive(parsed.channel_id);
+      const summary = await startChannelLive(
+        parsed.channel_id,
+        parsed.account_id,
+      );
       wireChannelIngress(
         runtime,
         socket,
@@ -1304,7 +1891,10 @@ async function handleChannelsProtocolCommand(
 
   if (parsed.type === "channel_stop") {
     try {
-      const summary = await stopChannelLive(parsed.channel_id);
+      const summary = await stopChannelLive(
+        parsed.channel_id,
+        parsed.account_id,
+      );
       safeSocketSend(
         socket,
         {
@@ -1343,16 +1933,18 @@ async function handleChannelsProtocolCommand(
           request_id: parsed.request_id,
           success: true,
           channel_id: parsed.channel_id,
-          pending: listPendingPairingSnapshots(parsed.channel_id).map(
-            (pending) => ({
-              code: pending.code,
-              sender_id: pending.senderId,
-              sender_name: pending.senderName,
-              chat_id: pending.chatId,
-              created_at: pending.createdAt,
-              expires_at: pending.expiresAt,
-            }),
-          ),
+          pending: listPendingPairingSnapshots(
+            parsed.channel_id,
+            parsed.account_id,
+          ).map((pending) => ({
+            account_id: pending.accountId,
+            code: pending.code,
+            sender_id: pending.senderId,
+            sender_name: pending.senderName,
+            chat_id: pending.chatId,
+            created_at: pending.createdAt,
+            expires_at: pending.expiresAt,
+          })),
         },
         "listener_channels_send_failed",
         "listener_channels_command",
@@ -1385,6 +1977,7 @@ async function handleChannelsProtocolCommand(
         parsed.code,
         parsed.runtime.agent_id,
         parsed.runtime.conversation_id,
+        parsed.account_id,
       );
       safeSocketSend(
         socket,
@@ -1436,6 +2029,7 @@ async function handleChannelsProtocolCommand(
           channel_id: channelId,
           routes: listChannelRouteSnapshots({
             channelId,
+            accountId: parsed.account_id,
             agentId: parsed.agent_id,
             conversationId: parsed.conversation_id,
           }).map(mapRouteSnapshot),
@@ -1470,9 +2064,10 @@ async function handleChannelsProtocolCommand(
           request_id: parsed.request_id,
           success: true,
           channel_id: parsed.channel_id,
-          targets: listChannelTargetSnapshots(parsed.channel_id).map(
-            mapTargetSnapshot,
-          ),
+          targets: listChannelTargetSnapshots(
+            parsed.channel_id,
+            parsed.account_id,
+          ).map(mapTargetSnapshot),
         },
         "listener_channels_send_failed",
         "listener_channels_command",
@@ -1505,6 +2100,7 @@ async function handleChannelsProtocolCommand(
         parsed.target_id,
         parsed.runtime.agent_id,
         parsed.runtime.conversation_id,
+        parsed.account_id,
       );
       safeSocketSend(
         socket,
@@ -1549,8 +2145,63 @@ async function handleChannelsProtocolCommand(
     return true;
   }
 
+  if (parsed.type === "channel_route_update") {
+    try {
+      const route = updateChannelRouteLive(
+        parsed.channel_id,
+        parsed.chat_id,
+        parsed.runtime.agent_id,
+        parsed.runtime.conversation_id,
+        parsed.account_id,
+      );
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_route_update_response",
+          request_id: parsed.request_id,
+          success: true,
+          channel_id: parsed.channel_id,
+          chat_id: parsed.chat_id,
+          route: mapRouteSnapshot(route),
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+      emitChannelAccountsUpdated(socket, {
+        channelId: parsed.channel_id,
+        accountId: route.accountId,
+      });
+      emitChannelRoutesUpdated(socket, {
+        channelId: parsed.channel_id,
+        agentId: parsed.runtime.agent_id,
+        conversationId: parsed.runtime.conversation_id,
+      });
+      emitChannelsUpdated(socket, parsed.channel_id);
+    } catch (err) {
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_route_update_response",
+          request_id: parsed.request_id,
+          success: false,
+          channel_id: parsed.channel_id,
+          chat_id: parsed.chat_id,
+          route: null,
+          error: err instanceof Error ? err.message : "Failed to update route",
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+    }
+    return true;
+  }
+
   try {
-    const found = removeChannelRouteLive(parsed.channel_id, parsed.chat_id);
+    const found = removeChannelRouteLive(
+      parsed.channel_id,
+      parsed.chat_id,
+      parsed.account_id,
+    );
     safeSocketSend(
       socket,
       {
@@ -4208,19 +4859,7 @@ async function connectWithRetry(
       }
 
       // ── Channels management commands (device/live management) ─────────
-      if (
-        isChannelsListCommand(parsed) ||
-        isChannelGetConfigCommand(parsed) ||
-        isChannelSetConfigCommand(parsed) ||
-        isChannelStartCommand(parsed) ||
-        isChannelStopCommand(parsed) ||
-        isChannelPairingsListCommand(parsed) ||
-        isChannelPairingBindCommand(parsed) ||
-        isChannelRoutesListCommand(parsed) ||
-        isChannelTargetsListCommand(parsed) ||
-        isChannelTargetBindCommand(parsed) ||
-        isChannelRouteRemoveCommand(parsed)
-      ) {
+      if (isDetachedChannelsCommand(parsed)) {
         runDetachedListenerTask("channels_command", async () => {
           await handleChannelsProtocolCommand(
             parsed,
@@ -4907,6 +5546,7 @@ export const __listenClientTestUtils = {
   handleAbortMessageInput,
   handleChangeDeviceStateInput,
   handleCronCommand,
+  isDetachedChannelsCommand,
   handleChannelsProtocolCommand,
   handleSkillCommand,
   handleCreateAgentCommand,

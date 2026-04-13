@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { LEGACY_CHANNEL_ACCOUNT_ID } from "./accounts";
 import { getChannelDir, getChannelTargetsPath } from "./config";
 import type { ChannelBindableTarget } from "./types";
 
@@ -59,17 +60,30 @@ function saveTargetStore(channelId: string): void {
   );
 }
 
-export function listChannelTargets(channelId: string): ChannelBindableTarget[] {
-  return [...getStore(channelId).targets];
+export function listChannelTargets(
+  channelId: string,
+  accountId?: string,
+): ChannelBindableTarget[] {
+  const normalizedAccountId =
+    accountId === undefined ? undefined : normalizeAccountId(accountId);
+  return getStore(channelId).targets.filter(
+    (target) =>
+      normalizedAccountId === undefined ||
+      normalizeAccountId(target.accountId) === normalizedAccountId,
+  );
 }
 
 export function getChannelTarget(
   channelId: string,
   targetId: string,
+  accountId?: string,
 ): ChannelBindableTarget | null {
+  const normalizedAccountId = normalizeAccountId(accountId);
   return (
     getStore(channelId).targets.find(
-      (target) => target.targetId === targetId,
+      (target) =>
+        target.targetId === targetId &&
+        normalizeAccountId(target.accountId) === normalizedAccountId,
     ) ?? null
   );
 }
@@ -79,8 +93,11 @@ export function upsertChannelTarget(
   target: ChannelBindableTarget,
 ): ChannelBindableTarget {
   const store = getStore(channelId);
+  const normalizedAccountId = normalizeAccountId(target.accountId);
   const existingIndex = store.targets.findIndex(
-    (candidate) => candidate.targetId === target.targetId,
+    (candidate) =>
+      candidate.targetId === target.targetId &&
+      normalizeAccountId(candidate.accountId) === normalizedAccountId,
   );
 
   if (existingIndex >= 0) {
@@ -93,6 +110,7 @@ export function upsertChannelTarget(
     const merged: ChannelBindableTarget = {
       ...existing,
       ...target,
+      accountId: normalizedAccountId,
       discoveredAt: existing.discoveredAt,
       lastSeenAt: target.lastSeenAt,
     };
@@ -101,18 +119,30 @@ export function upsertChannelTarget(
     return merged;
   }
 
-  store.targets.push(target);
+  store.targets.push({
+    ...target,
+    accountId: normalizedAccountId,
+  });
   saveTargetStore(channelId);
-  return target;
+  return {
+    ...target,
+    accountId: normalizedAccountId,
+  };
 }
 
 export function removeChannelTarget(
   channelId: string,
   targetId: string,
+  accountId?: string,
 ): boolean {
   const store = getStore(channelId);
+  const normalizedAccountId = normalizeAccountId(accountId);
   const nextTargets = store.targets.filter(
-    (target) => target.targetId !== targetId,
+    (target) =>
+      !(
+        target.targetId === targetId &&
+        normalizeAccountId(target.accountId) === normalizedAccountId
+      ),
   );
   if (nextTargets.length === store.targets.length) {
     return false;
@@ -120,6 +150,24 @@ export function removeChannelTarget(
   store.targets = nextTargets;
   saveTargetStore(channelId);
   return true;
+}
+
+export function removeChannelTargetsForAccount(
+  channelId: string,
+  accountId: string,
+): number {
+  const store = getStore(channelId);
+  const normalizedAccountId = normalizeAccountId(accountId);
+  const nextTargets = store.targets.filter(
+    (target) => normalizeAccountId(target.accountId) !== normalizedAccountId,
+  );
+  const removed = store.targets.length - nextTargets.length;
+  if (removed === 0) {
+    return 0;
+  }
+  store.targets = nextTargets;
+  saveTargetStore(channelId);
+  return removed;
 }
 
 export function clearTargetStores(): void {
@@ -138,4 +186,7 @@ export function __testOverrideSaveTargetStore(
   fn: ((channelId: string, store: ChannelTargetStore) => void) | null,
 ): void {
   saveTargetStoreOverride = fn;
+}
+function normalizeAccountId(accountId?: string): string {
+  return accountId ?? LEGACY_CHANNEL_ACCOUNT_ID;
 }

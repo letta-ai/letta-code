@@ -5,7 +5,7 @@
  * This module handles reading, writing, and validating channel configs.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type {
@@ -31,6 +31,10 @@ export function getChannelConfigPath(channelId: string): string {
   return join(getChannelDir(channelId), "config.yaml");
 }
 
+export function getChannelAccountsPath(channelId: string): string {
+  return join(getChannelDir(channelId), "accounts.json");
+}
+
 export function getChannelRoutingPath(channelId: string): string {
   return join(getChannelDir(channelId), "routing.yaml");
 }
@@ -44,59 +48,6 @@ export function getChannelTargetsPath(channelId: string): string {
 }
 
 // ── YAML helpers ──────────────────────────────────────────────────
-
-/**
- * Minimal YAML serializer for flat/shallow objects.
- * Avoids pulling in a full YAML library for simple config files.
- */
-function toSimpleYaml(obj: Record<string, unknown>, indent = 0): string {
-  const prefix = " ".repeat(indent);
-  const lines: string[] = [];
-
-  for (const [key, value] of Object.entries(obj)) {
-    if (value === undefined || value === null) continue;
-
-    if (Array.isArray(value)) {
-      if (value.length === 0) {
-        lines.push(`${prefix}${key}: []`);
-      } else if (
-        typeof value[0] === "object" &&
-        value[0] !== null &&
-        !Array.isArray(value[0])
-      ) {
-        lines.push(`${prefix}${key}:`);
-        for (const item of value) {
-          const itemLines = toSimpleYaml(
-            item as Record<string, unknown>,
-            indent + 4,
-          ).split("\n");
-          if (itemLines.length > 0 && itemLines[0]) {
-            lines.push(`${prefix}  - ${itemLines[0].trimStart()}`);
-            for (let i = 1; i < itemLines.length; i++) {
-              if (itemLines[i]) {
-                lines.push(`${prefix}    ${itemLines[i]?.trimStart()}`);
-              }
-            }
-          }
-        }
-      } else {
-        lines.push(`${prefix}${key}:`);
-        for (const item of value) {
-          lines.push(`${prefix}  - ${JSON.stringify(item)}`);
-        }
-      }
-    } else if (typeof value === "object" && value !== null) {
-      lines.push(`${prefix}${key}:`);
-      lines.push(toSimpleYaml(value as Record<string, unknown>, indent + 2));
-    } else if (typeof value === "string") {
-      lines.push(`${prefix}${key}: ${JSON.stringify(value)}`);
-    } else {
-      lines.push(`${prefix}${key}: ${String(value)}`);
-    }
-  }
-
-  return lines.join("\n");
-}
 
 /**
  * Minimal YAML parser for simple key-value configs.
@@ -171,7 +122,6 @@ function parseYamlValue(raw: string): unknown {
 
 interface ChannelConfigCodec<TConfig extends ChannelConfig> {
   parse(parsed: Record<string, unknown>): TConfig;
-  serialize(config: TConfig): Record<string, unknown>;
 }
 
 const telegramConfigCodec: ChannelConfigCodec<TelegramChannelConfig> = {
@@ -182,15 +132,6 @@ const telegramConfigCodec: ChannelConfigCodec<TelegramChannelConfig> = {
       token: String(parsed.token ?? ""),
       dmPolicy: (parsed.dm_policy as DmPolicy) ?? "pairing",
       allowedUsers: (parsed.allowed_users as string[]) ?? [],
-    };
-  },
-  serialize(config) {
-    return {
-      channel: config.channel,
-      enabled: config.enabled,
-      token: config.token,
-      dm_policy: config.dmPolicy,
-      allowed_users: config.allowedUsers,
     };
   },
 };
@@ -205,17 +146,6 @@ const slackConfigCodec: ChannelConfigCodec<SlackChannelConfig> = {
       appToken: String(parsed.app_token ?? ""),
       dmPolicy: (parsed.dm_policy as DmPolicy) ?? "pairing",
       allowedUsers: (parsed.allowed_users as string[]) ?? [],
-    };
-  },
-  serialize(config) {
-    return {
-      channel: config.channel,
-      enabled: config.enabled,
-      mode: config.mode,
-      bot_token: config.botToken,
-      app_token: config.appToken,
-      dm_policy: config.dmPolicy,
-      allowed_users: config.allowedUsers,
     };
   },
 };
@@ -233,10 +163,6 @@ function getChannelConfigCodec(
   return CHANNEL_CONFIG_CODECS[channelId] ?? null;
 }
 
-export function channelConfigExists(channelId: string): boolean {
-  return existsSync(getChannelConfigPath(channelId));
-}
-
 export function readChannelConfig(channelId: string): ChannelConfig | null {
   const configPath = getChannelConfigPath(channelId);
   if (!existsSync(configPath)) return null;
@@ -250,19 +176,4 @@ export function readChannelConfig(channelId: string): ChannelConfig | null {
   } catch {
     return null;
   }
-}
-
-export function writeChannelConfig(
-  channelId: string,
-  config: ChannelConfig,
-): void {
-  const dir = getChannelDir(channelId);
-  mkdirSync(dir, { recursive: true });
-  const codec = getChannelConfigCodec(channelId);
-  if (!codec) {
-    throw new Error(`Unsupported channel config: ${channelId}`);
-  }
-
-  const text = toSimpleYaml(codec.serialize(config));
-  writeFileSync(getChannelConfigPath(channelId), `${text}\n`, "utf-8");
 }

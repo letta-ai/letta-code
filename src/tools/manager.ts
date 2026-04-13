@@ -1,6 +1,7 @@
 import { getDisplayableToolReturn } from "../agent/approval-execution";
 import { getModelInfo } from "../agent/model";
 import { getAllSubagentConfigs } from "../agent/subagents";
+import { buildDynamicMessageChannelSchema } from "../channels/messageTool";
 import { getActiveChannelIds } from "../channels/registry";
 import { refreshFileIndex } from "../cli/helpers/fileIndex";
 import { INTERRUPTED_BY_USER } from "../constants";
@@ -39,24 +40,17 @@ function maybeAppendChannelTools(toolNames: ToolName[]): ToolName[] {
 }
 
 /**
- * Inject channel enum into MessageChannel schema if channels are active.
+ * Inject dynamic channel-tool discovery into MessageChannel if channels are active.
  * Used by both buildRegistryForModel() and buildSpecificToolRegistry().
  */
-function maybeInjectChannelEnum(
+async function maybeInjectChannelSchema(
   name: string,
   schema: Record<string, unknown>,
-): Record<string, unknown> {
-  if (name !== "MessageChannel") return schema;
-  const activeChannels = getActiveChannelIds();
-  if (activeChannels.length === 0) return schema;
-  const injected = structuredClone(schema);
-  const props = injected.properties as
-    | Record<string, Record<string, unknown>>
-    | undefined;
-  if (props?.channel) {
-    props.channel.enum = activeChannels;
+): Promise<Record<string, unknown>> {
+  if (name !== "MessageChannel") {
+    return schema;
   }
-  return injected;
+  return await buildDynamicMessageChannelSchema(schema);
 }
 const STREAMING_SHELL_TOOLS = new Set([
   "Bash",
@@ -965,7 +959,10 @@ async function buildSpecificToolRegistry(
     const toolSchema: ToolSchema = {
       name: internalName,
       description: definition.description,
-      input_schema: maybeInjectChannelEnum(internalName, definition.schema),
+      input_schema: await maybeInjectChannelSchema(
+        internalName,
+        definition.schema,
+      ),
     };
 
     newRegistry.set(internalName, {
@@ -1058,7 +1055,7 @@ async function buildRegistryForModel(
       const toolSchema: ToolSchema = {
         name,
         description,
-        input_schema: maybeInjectChannelEnum(name, definition.schema),
+        input_schema: await maybeInjectChannelSchema(name, definition.schema),
       };
 
       newRegistry.set(name, {

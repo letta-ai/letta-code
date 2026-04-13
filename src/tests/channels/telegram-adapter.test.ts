@@ -74,6 +74,17 @@ const { createTelegramAdapter } = await import(
   "../../channels/telegram/adapter"
 );
 
+const telegramAccountDefaults = {
+  accountId: "telegram-test-account",
+  displayName: "@test_bot",
+  binding: {
+    agentId: null,
+    conversationId: null,
+  },
+  createdAt: "2026-04-11T00:00:00.000Z",
+  updatedAt: "2026-04-11T00:00:00.000Z",
+} as const;
+
 const consoleErrorSpy = mock(() => {});
 const originalConsoleError = console.error;
 
@@ -97,6 +108,7 @@ afterEach(() => {
 
 test("telegram adapter logs unhandled grammY errors with update context", async () => {
   const adapter = createTelegramAdapter({
+    ...telegramAccountDefaults,
     channel: "telegram",
     enabled: true,
     token: "test-token",
@@ -140,6 +152,7 @@ test("telegram adapter start waits until polling is live before resolving", asyn
   };
 
   const adapter = createTelegramAdapter({
+    ...telegramAccountDefaults,
     channel: "telegram",
     enabled: true,
     token: "test-token",
@@ -174,6 +187,7 @@ test("telegram adapter logs and clears running state when polling exits unexpect
   };
 
   const adapter = createTelegramAdapter({
+    ...telegramAccountDefaults,
     channel: "telegram",
     enabled: true,
     token: "test-token",
@@ -193,6 +207,7 @@ test("telegram adapter logs and clears running state when polling exits unexpect
 
 test("telegram adapter forwards parse mode and reply parameters", async () => {
   const adapter = createTelegramAdapter({
+    ...telegramAccountDefaults,
     channel: "telegram",
     enabled: true,
     token: "test-token",

@@ -1,6 +1,8 @@
+import { randomUUID } from "node:crypto";
 import { createInterface } from "node:readline/promises";
-import { writeChannelConfig } from "../config";
-import type { DmPolicy, SlackChannelConfig } from "../types";
+import { upsertChannelAccount } from "../accounts";
+import type { DmPolicy, SlackChannelAccount } from "../types";
+import { resolveSlackAccountDisplayName } from "./adapter";
 import { ensureSlackRuntimeInstalled } from "./runtime";
 
 function isValidBotToken(token: string): boolean {
@@ -27,8 +29,13 @@ export async function runSlackSetup(): Promise<boolean> {
       "  3. Install the app to the workspace to get a bot token (xoxb-...)",
     );
     console.log(
-      "  4. Enable App Home messages and subscribe to app_mention + message.im\n",
+      "  4. Enable App Home messages and subscribe to app_mention + message.channels + message.groups + message.im + reaction_added + reaction_removed\n",
     );
+    console.log("Recommended bot token scopes:");
+    console.log(
+      "  app_mentions:read, channels:history, chat:write, groups:history, im:history, users:read",
+    );
+    console.log("  reactions:read, reactions:write, files:read, files:write\n");
 
     await ensureSlackRuntimeInstalled();
 
@@ -49,12 +56,11 @@ export async function runSlackSetup(): Promise<boolean> {
     }
 
     console.log("\nDM Policy — who can message this app directly?\n");
-    console.log("  pairing   — Users must pair with a code (recommended)");
     console.log("  allowlist — Only pre-approved Slack user IDs");
-    console.log("  open      — Anyone in DMs can message\n");
+    console.log("  open      — Anyone in DMs can message (recommended)\n");
 
-    const policyInput = await rl.question("DM policy [pairing]: ");
-    const policy = (policyInput.trim() || "pairing") as DmPolicy;
+    const policyInput = await rl.question("DM policy [open]: ");
+    const policy = (policyInput.trim() || "open") as DmPolicy;
     if (!["pairing", "allowlist", "open"].includes(policy)) {
       console.error(`Invalid policy "${policy}". Setup cancelled.`);
       return false;
@@ -71,24 +77,37 @@ export async function runSlackSetup(): Promise<boolean> {
         .filter(Boolean);
     }
 
-    const config: SlackChannelConfig = {
+    const now = new Date().toISOString();
+    let displayName: string | undefined;
+    try {
+      displayName = await resolveSlackAccountDisplayName(botToken, appToken);
+    } catch {}
+
+    const account: SlackChannelAccount = {
       channel: "slack",
+      accountId: randomUUID(),
+      displayName,
       enabled: true,
       mode: "socket",
       botToken,
       appToken,
+      agentId: null,
       dmPolicy: policy,
       allowedUsers,
+      createdAt: now,
+      updatedAt: now,
     };
 
-    writeChannelConfig("slack", config);
+    upsertChannelAccount("slack", account);
     console.log("\n✓ Slack app configured!");
-    console.log("Config written to: ~/.letta/channels/slack/config.yaml\n");
+    console.log("Config written to: ~/.letta/channels/slack/accounts.json\n");
     console.log("Next steps:");
     console.log("  1. Start the listener: letta server --channels slack");
-    console.log("  2. DM the app once to generate a pairing code");
-    console.log("  3. Mention the app in a Slack channel once to discover it");
-    console.log("  4. Bind the DM or channel from Letta Code\n");
+    console.log("  2. Open Channels > Slack in Letta Code");
+    console.log(
+      "  3. Choose which Letta agent this Slack app should represent",
+    );
+    console.log("  4. DM the app or @mention it in Slack to start chatting\n");
 
     return true;
   } finally {

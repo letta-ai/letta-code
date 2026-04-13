@@ -3,14 +3,21 @@
  * pairing, and the ingress pipeline.
  *
  * Lifecycle:
- * 1. initializeChannels() creates adapters from configs
+ * 1. initializeChannels() creates adapters from channel accounts
  * 2. Adapters start long-polling (buffer inbound until ready)
  * 3. setReady() is called from inside startListenerClient() once closure state exists
  * 4. Buffered messages flush through the registered onMessage handler
  */
 
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
-import { readChannelConfig } from "./config";
+import { getClient } from "../agent/client";
+import { ISOLATED_BLOCK_LABELS } from "../agent/memory";
+import {
+  getChannelAccount,
+  LEGACY_CHANNEL_ACCOUNT_ID,
+  listChannelAccounts,
+  loadChannelAccounts,
+} from "./accounts";
 import {
   consumePairingCode,
   createPairingCode,
@@ -23,6 +30,7 @@ import {
   addRoute,
   getRoute as getRouteFromStore,
   getRouteRaw,
+  getRoutesForChannel,
   loadRoutes,
   removeRouteInMemory,
   setRouteInMemory,
@@ -32,13 +40,15 @@ import type {
   ChannelAdapter,
   ChannelRoute,
   InboundChannelMessage,
+  SlackChannelAccount,
 } from "./types";
 import { formatChannelNotification } from "./xml";
 
 function buildPairingInstructions(channelId: string, code: string): string {
+  const displayName = channelId === "slack" ? "Slack" : "Telegram";
   return (
-    `To connect this chat to a Letta Code agent, run:\n\n` +
-    `/channels ${channelId} pair ${code}\n\n` +
+    `To connect this chat to a Letta Code agent, open Channels > ${displayName} in Letta Code and finish connecting this chat there.\n\n` +
+    `Pairing code: ${code}\n\n` +
     `This code expires in 15 minutes.`
   );
 }
@@ -47,19 +57,54 @@ function buildUnboundRouteInstructions(
   channelId: string,
   chatId: string,
 ): string {
+  const displayName = channelId === "slack" ? "Slack" : "Telegram";
   return (
-    `This chat isn't bound to an agent. ` +
-    `Run \`/channels ${channelId} enable --chat-id ${chatId}\` ` +
-    `on your Letta Code agent to connect.`
+    `This chat isn't bound to a Letta Code agent yet.\n\n` +
+    `Open Channels > ${displayName} in Letta Code and connect this chat there.\n\n` +
+    `Chat ID: ${chatId}`
   );
 }
 
-function buildSlackTargetInstructions(): string {
+function buildSlackAppSetupInstructions(): string {
   return (
-    "This Slack channel isn't connected to an agent yet.\n\n" +
-    "Open Channels > Slack > Connections in Letta Code to bind this channel, " +
-    "then mention the bot again."
+    "This Slack app isn't connected to a Letta agent yet.\n\n" +
+    "Open Channels > Slack in Letta Code, choose which agent this app should represent, and try again."
   );
+}
+
+function truncateChannelSummaryPreview(
+  text: string,
+  maxLength = 72,
+): string | null {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  if (!normalized) {
+    return null;
+  }
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+  return `${normalized.slice(0, maxLength - 1).trimEnd()}…`;
+}
+
+export function buildSlackConversationSummary(
+  msg: Pick<
+    InboundChannelMessage,
+    "chatId" | "chatLabel" | "chatType" | "senderId" | "senderName" | "text"
+  >,
+): string {
+  if (msg.chatType === "direct") {
+    return `[Slack] DM with ${msg.senderName?.trim() || msg.senderId}`;
+  }
+
+  const preview = truncateChannelSummaryPreview(msg.text);
+  const channelLabel =
+    msg.chatLabel && msg.chatLabel !== msg.chatId ? ` in ${msg.chatLabel}` : "";
+
+  if (preview) {
+    return `[Slack] Thread${channelLabel}: ${preview}`;
+  }
+
+  return `[Slack] Thread${channelLabel || ` ${msg.chatId}`}`;
 }
 
 // ── Singleton ─────────────────────────────────────────────────────
@@ -119,8 +164,18 @@ export class ChannelRegistry {
 
   // ── Adapter management ────────────────────────────────────────
 
+  private getAdapterKey(
+    channelId: string,
+    accountId = LEGACY_CHANNEL_ACCOUNT_ID,
+  ): string {
+    return `${channelId}:${accountId}`;
+  }
+
   registerAdapter(adapter: ChannelAdapter): void {
-    this.adapters.set(adapter.id, adapter);
+    this.adapters.set(
+      this.getAdapterKey(adapter.channelId ?? adapter.id, adapter.accountId),
+      adapter,
+    );
 
     // Wire the adapter's onMessage to our ingress pipeline
     adapter.onMessage = async (msg: InboundChannelMessage) => {
@@ -128,14 +183,17 @@ export class ChannelRegistry {
     };
   }
 
-  getAdapter(channelId: string): ChannelAdapter | null {
-    return this.adapters.get(channelId) ?? null;
+  getAdapter(
+    channelId: string,
+    accountId = LEGACY_CHANNEL_ACCOUNT_ID,
+  ): ChannelAdapter | null {
+    return this.adapters.get(this.getAdapterKey(channelId, accountId)) ?? null;
   }
 
   getActiveChannelIds(): string[] {
-    return Array.from(this.adapters.entries())
-      .filter(([_, adapter]) => adapter.isRunning())
-      .map(([id]) => id);
+    return Array.from(this.adapters.values())
+      .filter((adapter) => adapter.isRunning())
+      .map((adapter) => adapter.channelId ?? adapter.id);
   }
 
   // ── Readiness / ingress handler ───────────────────────────────
@@ -171,13 +229,75 @@ export class ChannelRegistry {
 
   // ── Routing ───────────────────────────────────────────────────
 
-  getRoute(channel: string, chatId: string): ChannelRoute | null {
-    return getRouteFromStore(channel, chatId);
+  getRoute(
+    channel: string,
+    chatId: string,
+    accountId?: string,
+    threadId?: string | null,
+  ): ChannelRoute | null {
+    if (accountId) {
+      return getRouteFromStore(channel, chatId, accountId, threadId);
+    }
+
+    const matches = getRoutesForChannel(channel).filter(
+      (route) =>
+        route.chatId === chatId &&
+        (threadId === undefined
+          ? true
+          : (route.threadId ?? null) === (threadId ?? null)),
+    );
+    if (matches.length !== 1) {
+      return null;
+    }
+    return matches[0] ?? null;
+  }
+
+  getRouteForScope(
+    channel: string,
+    chatId: string,
+    agentId: string,
+    conversationId: string,
+  ): ChannelRoute | null {
+    const matches = getRoutesForChannel(channel).filter(
+      (route) =>
+        route.chatId === chatId &&
+        route.agentId === agentId &&
+        route.conversationId === conversationId &&
+        route.enabled,
+    );
+
+    if (matches.length !== 1) {
+      return null;
+    }
+
+    return matches[0] ?? null;
   }
 
   async startChannel(channelId: string): Promise<boolean> {
-    const config = readChannelConfig(channelId);
-    if (!config) {
+    loadChannelAccounts(channelId);
+    const accounts = listChannelAccounts(channelId).filter(
+      (account) => account.enabled,
+    );
+    if (accounts.length === 0) {
+      return false;
+    }
+
+    let started = false;
+    for (const account of accounts) {
+      started =
+        (await this.startChannelAccount(channelId, account.accountId)) ||
+        started;
+    }
+    return started;
+  }
+
+  async startChannelAccount(
+    channelId: string,
+    accountId: string,
+  ): Promise<boolean> {
+    loadChannelAccounts(channelId);
+    const account = getChannelAccount(channelId, accountId);
+    if (!account) {
       return false;
     }
 
@@ -185,28 +305,54 @@ export class ChannelRegistry {
     loadPairingStore(channelId);
     loadTargetStore(channelId);
 
-    const existing = this.adapters.get(channelId);
+    const existing = this.getAdapter(channelId, accountId);
     if (existing?.isRunning()) {
       await existing.stop();
     }
-    this.adapters.delete(channelId);
+    this.adapters.delete(this.getAdapterKey(channelId, accountId));
 
-    const plugin = await loadChannelPlugin(config.channel);
-    const adapter = await plugin.createAdapter(config);
+    const plugin = await loadChannelPlugin(account.channel);
+    const adapter = await plugin.createAdapter(account);
     this.registerAdapter(adapter);
     await adapter.start();
     return true;
   }
 
   async stopChannel(channelId: string): Promise<boolean> {
-    const adapter = this.adapters.get(channelId);
+    const adapters = Array.from(this.adapters.values()).filter(
+      (adapter) => adapter.channelId === channelId,
+    );
+    if (adapters.length === 0) {
+      return false;
+    }
+
+    for (const adapter of adapters) {
+      if (adapter.isRunning()) {
+        await adapter.stop();
+      }
+      this.adapters.delete(
+        this.getAdapterKey(
+          adapter.channelId ?? adapter.id,
+          adapter.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID,
+        ),
+      );
+    }
+
+    return true;
+  }
+
+  async stopChannelAccount(
+    channelId: string,
+    accountId: string,
+  ): Promise<boolean> {
+    const adapter = this.getAdapter(channelId, accountId);
     if (!adapter) {
       return false;
     }
     if (adapter.isRunning()) {
       await adapter.stop();
     }
-    this.adapters.delete(channelId);
+    this.adapters.delete(this.getAdapterKey(channelId, accountId));
     return true;
   }
 
@@ -252,14 +398,18 @@ export class ChannelRegistry {
   private async handleInboundMessage(
     msg: InboundChannelMessage,
   ): Promise<void> {
-    const adapter = this.getAdapter(msg.channel);
+    const accountId = msg.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID;
+    const adapter = this.getAdapter(msg.channel, accountId);
     if (!adapter) return;
-
-    const config = readChannelConfig(msg.channel);
+    const config = getChannelAccount(msg.channel, accountId);
     if (!config) return;
 
-    if (msg.channel === "slack" && msg.chatType === "channel") {
-      await this.handleSlackChannelMessage(adapter, msg);
+    if (msg.channel === "slack" && config.channel === "slack") {
+      const slackRoute = await this.ensureSlackRoute(adapter, msg, config);
+      if (!slackRoute) {
+        return;
+      }
+      this.deliverOrBuffer(slackRoute, formatChannelNotification(msg));
       return;
     }
 
@@ -274,16 +424,17 @@ export class ChannelRegistry {
       }
     } else if (config.dmPolicy === "pairing") {
       // Reload pairing store from disk on miss (allows standalone CLI pairing)
-      if (!isUserApproved(msg.channel, msg.senderId)) {
+      if (!isUserApproved(msg.channel, msg.senderId, accountId)) {
         loadPairingStore(msg.channel);
       }
-      if (!isUserApproved(msg.channel, msg.senderId)) {
+      if (!isUserApproved(msg.channel, msg.senderId, accountId)) {
         // Generate pairing code
         const code = createPairingCode(
           msg.channel,
           msg.senderId,
           msg.chatId,
           msg.senderName,
+          accountId,
         );
         this.eventHandler?.({
           type: "pairings_updated",
@@ -299,10 +450,20 @@ export class ChannelRegistry {
     // dm_policy === "open" → skip check
 
     // 2. Route lookup (reload from disk on miss — allows standalone CLI pairing)
-    let route = getRouteFromStore(msg.channel, msg.chatId);
+    let route = getRouteFromStore(
+      msg.channel,
+      msg.chatId,
+      accountId,
+      msg.threadId,
+    );
     if (!route) {
       loadRoutes(msg.channel);
-      route = getRouteFromStore(msg.channel, msg.chatId);
+      route = getRouteFromStore(
+        msg.channel,
+        msg.chatId,
+        accountId,
+        msg.threadId,
+      );
     }
     if (!route) {
       await adapter.sendDirectReply(
@@ -319,41 +480,127 @@ export class ChannelRegistry {
     this.deliverOrBuffer(route, content);
   }
 
-  private async handleSlackChannelMessage(
+  private async createConversationForAgent(
+    agentId: string,
+    summary?: string,
+  ): Promise<string> {
+    const client = await getClient();
+    const conversation = await client.conversations.create({
+      agent_id: agentId,
+      isolated_block_labels: [...ISOLATED_BLOCK_LABELS],
+      ...(summary ? { summary } : {}),
+    });
+    return conversation.id;
+  }
+
+  private async createSlackRoute(
+    config: SlackChannelAccount,
+    msg: InboundChannelMessage,
+  ): Promise<ChannelRoute> {
+    if (!config.agentId) {
+      throw new Error("Slack app is missing an agent binding.");
+    }
+
+    const conversationId = await this.createConversationForAgent(
+      config.agentId,
+      buildSlackConversationSummary(msg),
+    );
+    const now = new Date().toISOString();
+    const route: ChannelRoute = {
+      accountId: config.accountId,
+      chatId: msg.chatId,
+      chatType: msg.chatType,
+      threadId:
+        msg.chatType === "channel"
+          ? (msg.threadId ?? msg.messageId ?? null)
+          : null,
+      agentId: config.agentId,
+      conversationId,
+      enabled: true,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    addRoute(msg.channel, route);
+    return route;
+  }
+
+  private async ensureSlackRoute(
     adapter: ChannelAdapter,
     msg: InboundChannelMessage,
-  ): Promise<void> {
-    let route = getRouteFromStore(msg.channel, msg.chatId);
-    if (!route) {
-      loadRoutes(msg.channel);
-      route = getRouteFromStore(msg.channel, msg.chatId);
-    }
-
-    if (!route) {
-      const now = new Date().toISOString();
-      loadTargetStore(msg.channel);
-      upsertChannelTarget(msg.channel, {
-        targetId: msg.chatId,
-        targetType: "channel",
-        chatId: msg.chatId,
-        label: msg.chatLabel ?? `Slack channel ${msg.chatId}`,
-        discoveredAt: now,
-        lastSeenAt: now,
-        lastMessageId: msg.messageId,
-      });
-      this.eventHandler?.({
-        type: "targets_updated",
-        channelId: msg.channel,
-      });
+    config: SlackChannelAccount,
+  ): Promise<ChannelRoute | null> {
+    if (!config.agentId) {
       await adapter.sendDirectReply(
         msg.chatId,
-        buildSlackTargetInstructions(),
-        msg.messageId ? { replyToMessageId: msg.messageId } : undefined,
+        buildSlackAppSetupInstructions(),
+        msg.chatType === "channel" && msg.threadId
+          ? { replyToMessageId: msg.threadId }
+          : msg.messageId
+            ? { replyToMessageId: msg.messageId }
+            : undefined,
       );
-      return;
+      return null;
     }
 
-    this.deliverOrBuffer(route, formatChannelNotification(msg));
+    if (msg.chatType === "direct") {
+      if (
+        config.dmPolicy === "allowlist" &&
+        !config.allowedUsers.includes(msg.senderId)
+      ) {
+        await adapter.sendDirectReply(
+          msg.chatId,
+          "You are not on the allowed users list for this Slack app.",
+        );
+        return null;
+      }
+    }
+
+    const accountId = msg.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID;
+    const routeThreadId =
+      msg.chatType === "channel" ? (msg.threadId ?? null) : null;
+    let route = getRouteFromStore(
+      msg.channel,
+      msg.chatId,
+      accountId,
+      routeThreadId,
+    );
+    if (!route) {
+      loadRoutes(msg.channel);
+      route = getRouteFromStore(
+        msg.channel,
+        msg.chatId,
+        accountId,
+        routeThreadId,
+      );
+    }
+
+    if (route) {
+      return route;
+    }
+
+    if (msg.chatType === "channel" && !msg.isMention) {
+      return null;
+    }
+
+    const now = new Date().toISOString();
+    loadTargetStore(msg.channel);
+    upsertChannelTarget(msg.channel, {
+      accountId,
+      targetId: msg.chatId,
+      targetType: "channel",
+      chatId: msg.chatId,
+      label: msg.chatLabel ?? `Slack channel ${msg.chatId}`,
+      discoveredAt: now,
+      lastSeenAt: now,
+      lastMessageId: msg.messageId,
+    });
+    this.eventHandler?.({
+      type: "targets_updated",
+      channelId: msg.channel,
+    });
+
+    return this.createSlackRoute(config, msg);
   }
 
   private deliverOrBuffer(
@@ -399,26 +646,28 @@ export async function initializeChannels(
   const registry = ensureChannelRegistry();
 
   for (const channelId of channelNames) {
-    const config = readChannelConfig(channelId);
-    if (!config) {
+    loadChannelAccounts(channelId);
+    const accounts = listChannelAccounts(channelId);
+    if (accounts.length === 0) {
       console.error(
         `Channel "${channelId}" not configured. Run: letta channels configure ${channelId}`,
       );
       continue;
     }
 
-    if (!config.enabled) {
-      console.log(`Channel "${channelId}" is disabled in config, skipping.`);
-      continue;
-    }
+    for (const account of accounts) {
+      if (!account.enabled) {
+        continue;
+      }
 
-    try {
-      await registry.startChannel(channelId);
-    } catch (error) {
-      console.error(
-        `[Channels] Failed to start ${channelId}:`,
-        error instanceof Error ? error.message : error,
-      );
+      try {
+        await registry.startChannelAccount(channelId, account.accountId);
+      } catch (error) {
+        console.error(
+          `[Channels] Failed to start ${channelId}/${account.accountId}:`,
+          error instanceof Error ? error.message : error,
+        );
+      }
     }
   }
 
@@ -436,30 +685,42 @@ export function completePairing(
   code: string,
   agentId: string,
   conversationId: string,
-): { success: boolean; error?: string; chatId?: string } {
-  const pending = consumePairingCode(channelId, code);
+  accountId?: string,
+): { success: boolean; error?: string; chatId?: string; accountId?: string } {
+  const pending = consumePairingCode(channelId, code, accountId);
   if (!pending) {
     return { success: false, error: "Invalid or expired pairing code." };
   }
 
+  const resolvedAccountId = pending.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID;
+
   // Snapshot existing route so we can restore it on failure
-  const previousRoute = getRouteRaw(channelId, pending.chatId);
+  const previousRoute = getRouteRaw(
+    channelId,
+    pending.chatId,
+    resolvedAccountId,
+  );
 
   // Create route — roll back pairing approval AND in-memory route if this fails
   try {
+    const now = new Date().toISOString();
     addRoute(channelId, {
+      accountId: resolvedAccountId,
       chatId: pending.chatId,
+      chatType: "direct",
+      threadId: null,
       agentId,
       conversationId,
       enabled: true,
-      createdAt: new Date().toISOString(),
+      createdAt: now,
+      updatedAt: now,
     });
   } catch (err) {
     // Restore in-memory route to prior state (no disk write — disk is what failed)
     if (previousRoute) {
       setRouteInMemory(channelId, previousRoute);
     } else {
-      removeRouteInMemory(channelId, pending.chatId);
+      removeRouteInMemory(channelId, pending.chatId, resolvedAccountId, null);
     }
     // Roll back: re-add the pending code and remove the approved user
     rollbackPairingApproval(channelId, pending);
@@ -470,5 +731,9 @@ export function completePairing(
     };
   }
 
-  return { success: true, chatId: pending.chatId };
+  return {
+    success: true,
+    chatId: pending.chatId,
+    accountId: resolvedAccountId,
+  };
 }
