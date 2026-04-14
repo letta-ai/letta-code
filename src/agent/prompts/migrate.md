@@ -12,7 +12,7 @@ The point is not to produce a thin summary. The point is to extract enough durab
 
 ## Your Task
 
-### 1. Detect Data and Pre-split Files
+### 1. Detect Available History Sources
 
 ```bash
 ls ~/.claude/history.jsonl ~/.codex/history.jsonl 2>/dev/null
@@ -21,21 +21,51 @@ wc -l ~/.claude/history.jsonl ~/.codex/history.jsonl 2>/dev/null
 
 If no history files exist, inform the user and stop.
 
-Split the data across multiple workers for parallel processing — **the more workers, the faster it completes**. Use 2-4+ workers depending on data volume.
+### 2. Ask Which Sources to Include
+
+Use `AskUserQuestion` to ask the user which history sources to migrate. Only show sources that actually exist on disk.
+
+Build the options dynamically based on what was detected in step 1. For example, if both exist:
+
+```
+AskUserQuestion({
+  questions: [{
+    question: "Which history sources should I analyze for migration?",
+    header: "Sources",
+    multiSelect: true,
+    options: [
+      { label: "Claude Code", description: "~/.claude/history.jsonl (N lines)" },
+      { label: "Codex", description: "~/.codex/history.jsonl (N lines)" }
+    ]
+  }]
+})
+```
+
+If only one source exists, still ask — the user may want to skip it. Replace `N` with the actual line counts from step 1.
+
+Only proceed with the sources the user selects. If they select none (or choose "Other" to decline), inform them and stop.
+
+### 3. Pre-split Files and Launch Workers
+
+Split the selected sources across multiple workers for parallel processing — **the more workers, the faster it completes**. Use 2-4+ workers depending on data volume.
 
 **Pre-split the JSONL files by line count** so each worker reads only its chunk:
+
+Only split and process the sources the user selected in step 2.
 
 ```bash
 SPLIT_DIR=/tmp/history-splits
 mkdir -p "$SPLIT_DIR"
 NUM_WORKERS=5  # adjust based on data volume
 
-# Split Claude history into even chunks
-LINES=$(wc -l < ~/.claude/history.jsonl)
-CHUNK_SIZE=$(( LINES / NUM_WORKERS + 1 ))
-split -l $CHUNK_SIZE ~/.claude/history.jsonl "$SPLIT_DIR/claude-"
+# Split Claude history (if selected)
+if [ -f ~/.claude/history.jsonl ]; then
+  LINES=$(wc -l < ~/.claude/history.jsonl)
+  CHUNK_SIZE=$(( LINES / NUM_WORKERS + 1 ))
+  split -l $CHUNK_SIZE ~/.claude/history.jsonl "$SPLIT_DIR/claude-"
+fi
 
-# Split Codex history if it exists
+# Split Codex history (if selected)
 if [ -f ~/.codex/history.jsonl ]; then
   LINES=$(wc -l < ~/.codex/history.jsonl)
   CHUNK_SIZE=$(( LINES / NUM_WORKERS + 1 ))
@@ -49,7 +79,7 @@ for f in "$SPLIT_DIR"/*; do mv "$f" "$f.jsonl" 2>/dev/null; done
 wc -l "$SPLIT_DIR"/*.jsonl
 ```
 
-### 2. Launch Workers in Parallel
+### 4. Launch Workers in Parallel
 
 **Prerequisites**:
 - `letta.js` must be built (`bun run build`) — subagents spawn via this binary
@@ -125,7 +155,7 @@ Avoid generic repo facts unless they influence execution. "Uses TypeScript" is w
 })
 ```
 
-### 3. Merge Worker Branches Into Main
+### 5. Merge Worker Branches Into Main
 
 After all workers complete, merge their branches one at a time. Worker commits are preserved in git history.
 
@@ -184,7 +214,7 @@ git branch -d $(git for-each-ref --format='%(refname:short)' refs/heads | grep -
 git push
 ```
 
-### 4. Consider Creating Skills From Discovered Workflows
+### 6. Consider Creating Skills From Discovered Workflows
 
 Review the extracted history for repeatable multi-step workflows that would benefit from being codified as skills:
 - Multi-step debugging procedures
