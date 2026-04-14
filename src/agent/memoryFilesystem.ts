@@ -67,6 +67,43 @@ export function ensureMemoryFilesystemDirs(
   }
 }
 
+/**
+ * Returns whether memfs is enabled for the agent on the server.
+ *
+ * This is a read-only check used by desktop/listener surfaces that need to
+ * distinguish "memfs disabled" from "enabled but local checkout missing"
+ * without mutating agent configuration.
+ */
+export async function isMemfsEnabledOnServer(
+  agentId: string,
+): Promise<boolean> {
+  const { getClient } = await import("./client");
+  const client = await getClient();
+  const agent = await client.agents.retrieve(agentId);
+  const { GIT_MEMORY_ENABLED_TAG } = await import("./memoryGit");
+  const enabled = agent.tags?.includes(GIT_MEMORY_ENABLED_TAG) ?? false;
+
+  const { settingsManager } = await import("../settings-manager");
+  settingsManager.setMemfsEnabled(agentId, enabled);
+
+  return enabled;
+}
+
+/**
+ * Ensures the local memfs checkout exists for an already-enabled agent.
+ *
+ * Unlike applyMemfsFlags(), this helper does not update prompts, tags, tools,
+ * or other agent configuration. It only materializes the local git checkout
+ * when the repo is missing.
+ */
+export async function ensureLocalMemfsCheckout(agentId: string): Promise<void> {
+  const { isGitRepo, cloneMemoryRepo } = await import("./memoryGit");
+  if (isGitRepo(agentId)) {
+    return;
+  }
+  await cloneMemoryRepo(agentId);
+}
+
 // ----- Path helpers -----
 
 export function labelFromRelativePath(relativePath: string): string {
