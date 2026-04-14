@@ -15,6 +15,12 @@ import {
 } from "../../agent/personality";
 import { formatErrorDetails } from "../../cli/helpers/errorFormatter";
 import {
+  ensureFileIndex,
+  getIndexRoot,
+  searchFileIndex,
+  setIndexRoot,
+} from "../../cli/helpers/fileIndex";
+import {
   clearAllSubagents,
   registerSubagent,
 } from "../../cli/helpers/subagentState";
@@ -2958,6 +2964,67 @@ describe("listen-client cwd change handling", () => {
         normalizedClientDir,
       );
     } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("proactively warms the file index after cwd change so @ search is instant", async () => {
+    const runtime = __listenClientTestUtils.createRuntime();
+    const socket = new MockSocket(WebSocket.OPEN);
+    const tempRoot = await mkdtemp(join(os.tmpdir(), "letta-listen-cwd-idx-"));
+    const projectDir = join(tempRoot, "my-project");
+    await mkdir(join(projectDir, "src"), { recursive: true });
+    await writeFile(join(projectDir, "README.md"), "# Hello");
+    await writeFile(join(projectDir, "src/index.ts"), "export {}");
+
+    // Point the index root somewhere else first so the cwd change actually
+    // triggers a re-root + ensureFileIndex.
+    const originalRoot = getIndexRoot();
+
+    try {
+      const normalizedProjectDir = await realpath(projectDir);
+      setIndexRoot(tempRoot); // different root so cwd change triggers re-root
+
+      __listenClientTestUtils.setConversationWorkingDirectory(
+        runtime,
+        "agent-1",
+        "conv-1",
+        tempRoot,
+      );
+      runtime.activeAgentId = "agent-1";
+      runtime.activeConversationId = "conv-1";
+      runtime.activeWorkingDirectory = tempRoot;
+
+      await __listenClientTestUtils.handleCwdChange(
+        {
+          agentId: "agent-1",
+          conversationId: "conv-1",
+          cwd: normalizedProjectDir,
+        },
+        socket as unknown as WebSocket,
+        runtime,
+      );
+
+      // The index root should now point at the new cwd.
+      expect(getIndexRoot()).toBe(normalizedProjectDir);
+
+      // handleCwdChange fires `void ensureFileIndex()` — await it so the
+      // in-flight build completes before we query.
+      await ensureFileIndex();
+
+      // Verify the index is warm and contains files from the new cwd.
+      const results = searchFileIndex({
+        searchDir: "",
+        pattern: "",
+        deep: true,
+        maxResults: 50,
+      });
+
+      const paths = results.map((r) => r.path);
+      expect(paths).toContain("README.md");
+      expect(paths).toContain(join("src", "index.ts"));
+    } finally {
+      setIndexRoot(originalRoot);
       await rm(tempRoot, { recursive: true, force: true });
     }
   });
