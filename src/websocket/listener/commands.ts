@@ -38,6 +38,7 @@ export const SUPPORTED_REMOTE_COMMANDS: readonly string[] = [
   "init",
   "remember",
   "channels",
+  "toolset",
 ];
 
 /**

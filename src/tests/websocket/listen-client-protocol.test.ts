@@ -707,6 +707,22 @@ describe("listen-client parseServerMessage", () => {
     expect(parsed).toBeNull();
   });
 
+  test("parses update_toolset command", () => {
+    const parsed = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "update_toolset",
+          request_id: "update-toolset-1",
+          runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+          toolset_preference: "gemini",
+        }),
+      ),
+    );
+
+    expect(parsed).not.toBeNull();
+    expect(parsed?.type).toBe("update_toolset");
+  });
+
   test("parses skill enable/disable commands", () => {
     const skillEnable = parseServerMessage(
       Buffer.from(

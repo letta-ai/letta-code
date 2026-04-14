@@ -71,6 +71,7 @@ import {
   ensureCorrectMemoryTool,
   prepareToolExecutionContextForScope,
   type ToolsetName,
+  type ToolsetPreference,
 } from "../../tools/toolset";
 import { formatToolsetName } from "../../tools/toolset-labels";
 import type {
@@ -113,6 +114,7 @@ import type {
   SkillDisableCommand,
   SkillEnableCommand,
   UpdateModelResponseMessage,
+  UpdateToolsetResponseMessage,
 } from "../../types/protocol_v2";
 import { isDebugEnabled } from "../../utils/debug";
 import {
@@ -205,6 +207,7 @@ import {
   isSkillEnableCommand,
   isUnwatchFileCommand,
   isUpdateModelCommand,
+  isUpdateToolsetCommand,
   isWatchFileCommand,
   isWriteFileCommand,
   parseServerMessage,
@@ -841,6 +844,88 @@ async function applyModelUpdateForRuntime(params: {
     model_id: model.id,
     model_handle: model.handle,
     model_settings: modelSettings,
+  };
+}
+
+async function applyToolsetUpdateForRuntime(params: {
+  socket: WebSocket;
+  listener: ListenerRuntime;
+  scopedRuntime: ConversationRuntime;
+  requestId: string;
+  toolsetPreference: ToolsetPreference;
+}): Promise<UpdateToolsetResponseMessage> {
+  const { socket, listener, scopedRuntime, requestId, toolsetPreference } =
+    params;
+  const agentId = scopedRuntime.agentId;
+  const conversationId = scopedRuntime.conversationId;
+
+  if (!agentId) {
+    return {
+      type: "update_toolset_response",
+      request_id: requestId,
+      success: false,
+      error: "Missing agent_id in runtime scope",
+    };
+  }
+
+  const previousToolNames = scopedRuntime.currentLoadedTools;
+  let nextToolset: ToolsetName;
+  const previousToolsetPreference = (() => {
+    try {
+      return settingsManager.getToolsetPreference(agentId);
+    } catch {
+      return scopedRuntime.currentToolsetPreference;
+    }
+  })();
+
+  try {
+    settingsManager.setToolsetPreference(agentId, toolsetPreference);
+    const preparedToolContext = await prepareToolExecutionContextForScope({
+      agentId,
+      conversationId,
+    });
+    nextToolset = preparedToolContext.toolset;
+    scopedRuntime.currentToolset = preparedToolContext.toolset;
+    scopedRuntime.currentToolsetPreference =
+      preparedToolContext.toolsetPreference;
+    scopedRuntime.currentLoadedTools =
+      preparedToolContext.preparedToolContext.loadedToolNames;
+  } catch (error) {
+    settingsManager.setToolsetPreference(agentId, previousToolsetPreference);
+    throw error;
+  }
+
+  const toolsChanged =
+    JSON.stringify(previousToolNames) !==
+    JSON.stringify(scopedRuntime.currentLoadedTools);
+
+  const statusMessage =
+    toolsetPreference === "auto"
+      ? `Toolset mode set to auto (currently ${formatToolsetName(nextToolset)}).`
+      : `Switched toolset to ${formatToolsetName(nextToolset)} (manual override).`;
+
+  emitStatusDelta(socket, scopedRuntime, {
+    message: statusMessage,
+    level: toolsChanged ? "info" : "info",
+    agentId,
+    conversationId,
+  });
+
+  emitRuntimeStateUpdates(listener, {
+    agent_id: agentId,
+    conversation_id: conversationId,
+  });
+
+  return {
+    type: "update_toolset_response",
+    request_id: requestId,
+    success: true,
+    runtime: {
+      agent_id: agentId,
+      conversation_id: conversationId,
+    },
+    current_toolset: nextToolset,
+    current_toolset_preference: toolsetPreference,
   };
 }
 
@@ -5329,7 +5414,55 @@ async function connectWithRetry(
         return;
       }
 
-      // ── Memory history (git log, optionally scoped to a file) ─────────
+      // ── Toolset update command (runtime scoped) ──────────────────────
+      if (isUpdateToolsetCommand(parsed)) {
+        runDetachedListenerTask("update_toolset", async () => {
+          const scopedRuntime = getOrCreateScopedRuntime(
+            runtime,
+            parsed.runtime.agent_id,
+            parsed.runtime.conversation_id,
+          );
+
+          try {
+            const response = await applyToolsetUpdateForRuntime({
+              socket,
+              listener: runtime,
+              scopedRuntime,
+              requestId: parsed.request_id,
+              toolsetPreference: parsed.toolset_preference,
+            });
+            safeSocketSend(
+              socket,
+              response,
+              "listener_update_toolset_send_failed",
+              "listener_update_toolset",
+            );
+          } catch (error) {
+            const failure: UpdateToolsetResponseMessage = {
+              type: "update_toolset_response",
+              request_id: parsed.request_id,
+              success: false,
+              runtime: {
+                agent_id: parsed.runtime.agent_id,
+                conversation_id: parsed.runtime.conversation_id,
+              },
+              error:
+                error instanceof Error
+                  ? error.message
+                  : "Failed to update toolset",
+            };
+            safeSocketSend(
+              socket,
+              failure,
+              "listener_update_toolset_send_failed",
+              "listener_update_toolset",
+            );
+          }
+        });
+        return;
+      }
+
+      // ── Memory history (git log for a specific file) ─────────────────
       if (isMemoryHistoryCommand(parsed)) {
         runDetachedListenerTask("memory_history", async () => {
           const { getMemoryFilesystemRoot } = await import(

@@ -859,6 +859,26 @@ export interface UpdateModelResponseMessage {
   error?: string;
 }
 
+export interface UpdateToolsetCommand {
+  type: "update_toolset";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  /** Runtime scope — identifies which agent + conversation this targets */
+  runtime: RuntimeScope;
+  /** The toolset preference to apply (e.g. "auto", "default", "codex", "gemini") */
+  toolset_preference: ToolsetPreference;
+}
+
+export interface UpdateToolsetResponseMessage {
+  type: "update_toolset_response";
+  request_id: string;
+  success: boolean;
+  runtime?: RuntimeScope;
+  current_toolset?: ToolsetName;
+  current_toolset_preference?: ToolsetPreference;
+  error?: string;
+}
+
 export interface CronListCommand {
   type: "cron_list";
   /** Echoed back in the response for request correlation. */
@@ -1538,6 +1558,7 @@ export type WsProtocolCommand =
   | EnableMemfsCommand
   | ListModelsCommand
   | UpdateModelCommand
+  | UpdateToolsetCommand
   | CronListCommand
   | CronAddCommand
   | CronGetCommand
@@ -1580,6 +1601,7 @@ export type WsProtocolMessage =
   | SubagentStateUpdateMessage
   | ListModelsResponseMessage
   | UpdateModelResponseMessage
+  | UpdateToolsetResponseMessage
   | ChannelsListResponseMessage
   | ChannelAccountsListResponseMessage
   | ChannelAccountCreateResponseMessage
