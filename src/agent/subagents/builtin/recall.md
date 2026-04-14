@@ -2,7 +2,6 @@
 name: recall
 description: Search conversation history to recall past discussions, decisions, and context
 tools: Bash, Read, TaskOutput
-skills: searching-messages
 model: inherit
 memoryBlocks: all
 mode: stateful
