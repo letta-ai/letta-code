@@ -104,7 +104,10 @@ const resolveSlackInboundAttachmentsMock = mock(
 
 mock.module("../../channels/slack/runtime", () => ({
   loadSlackBoltModule: async () => ({
-    default: FakeSlackApp,
+    App: FakeSlackApp,
+    default: {
+      App: FakeSlackApp,
+    },
   }),
 }));
 

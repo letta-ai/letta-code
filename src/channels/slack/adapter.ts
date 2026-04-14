@@ -10,8 +10,10 @@ import type {
 import { resolveSlackInboundAttachments } from "./media";
 import { loadSlackBoltModule } from "./runtime";
 
-type SlackBoltModule = typeof import("@slack/bolt");
-type SlackAppConstructor = SlackBoltModule["default"];
+type SlackAppConstructor = typeof import("@slack/bolt").App;
+type SlackBoltModule = typeof import("@slack/bolt") & {
+  default?: Partial<typeof import("@slack/bolt")> | SlackAppConstructor;
+};
 type SlackReactionEvent = {
   item?: {
     type?: string;
@@ -25,11 +27,14 @@ type SlackReactionEvent = {
 };
 
 function resolveSlackAppConstructor(mod: SlackBoltModule): SlackAppConstructor {
-  const App = mod.default;
+  const defaultExport = mod.default;
+  const App =
+    mod.App ??
+    (typeof defaultExport === "function" ? defaultExport : defaultExport?.App);
   if (!App) {
-    throw new Error('Installed Slack runtime did not export default "App".');
+    throw new Error('Installed Slack runtime did not export "App".');
   }
-  return App;
+  return App as SlackAppConstructor;
 }
 
 function isNonEmptyString(value: unknown): value is string {
