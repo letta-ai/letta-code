@@ -1,6 +1,6 @@
 ---
 name: recall
-description: Search conversation history to recall past discussions, decisions, and context
+description: Recall past interactions and experience
 tools: Bash, Read, TaskOutput
 model: inherit
 memoryBlocks: all
