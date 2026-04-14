@@ -11,6 +11,7 @@ import { resolveSlackInboundAttachments } from "./media";
 import { loadSlackBoltModule } from "./runtime";
 
 type SlackAppConstructor = typeof import("@slack/bolt").App;
+type SlackBoltNamespace = Partial<typeof import("@slack/bolt")>;
 type SlackBoltModule = typeof import("@slack/bolt") & {
   default?: Partial<typeof import("@slack/bolt")> | SlackAppConstructor;
 };
@@ -28,9 +29,14 @@ type SlackReactionEvent = {
 
 function resolveSlackAppConstructor(mod: SlackBoltModule): SlackAppConstructor {
   const defaultExport = mod.default;
+  const defaultNamespace =
+    defaultExport && typeof defaultExport === "object"
+      ? (defaultExport as SlackBoltNamespace)
+      : undefined;
+  const defaultExportApp = defaultNamespace?.App;
   const App =
     mod.App ??
-    (typeof defaultExport === "function" ? defaultExport : defaultExport?.App);
+    (typeof defaultExport === "function" ? defaultExport : defaultExportApp);
   if (!App) {
     throw new Error('Installed Slack runtime did not export "App".');
   }
