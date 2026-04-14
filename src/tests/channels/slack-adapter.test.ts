@@ -352,6 +352,122 @@ test("slack adapter forwards threaded channel replies as channel input", async (
   );
 });
 
+test("slack adapter dedupes threaded mentions delivered through message and app_mention", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  const onMessage = mock(async () => {});
+  adapter.onMessage = onMessage;
+
+  await adapter.start();
+  const app = FakeSlackApp.instances[0];
+  const messageHandler = app?.messageHandler;
+  const mentionHandler = app?.eventHandlers.get("app_mention");
+  if (!messageHandler || !mentionHandler) {
+    throw new Error("Expected Slack message and mention handlers");
+  }
+
+  await messageHandler({
+    message: {
+      channel: "C123",
+      user: "U123",
+      text: "<@U0AS42PTEAX> following up in thread",
+      ts: "1712800000.000100",
+      thread_ts: "1712790000.000050",
+    },
+  });
+
+  await mentionHandler({
+    event: {
+      channel: "C123",
+      user: "U123",
+      text: "<@U0AS42PTEAX> following up in thread",
+      ts: "1712800000.000100",
+      thread_ts: "1712790000.000050",
+    },
+  });
+
+  expect(onMessage).toHaveBeenCalledTimes(1);
+  expect(onMessage).toHaveBeenCalledWith(
+    expect.objectContaining({
+      channel: "slack",
+      chatId: "C123",
+      senderId: "U123",
+      text: "following up in thread",
+      messageId: "1712800000.000100",
+      threadId: "1712790000.000050",
+      chatType: "channel",
+      isMention: true,
+    }),
+  );
+});
+
+test("slack adapter dedupes threaded mentions when app_mention arrives first", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  const onMessage = mock(async () => {});
+  adapter.onMessage = onMessage;
+
+  await adapter.start();
+  const app = FakeSlackApp.instances[0];
+  const messageHandler = app?.messageHandler;
+  const mentionHandler = app?.eventHandlers.get("app_mention");
+  if (!messageHandler || !mentionHandler) {
+    throw new Error("Expected Slack message and mention handlers");
+  }
+
+  await mentionHandler({
+    event: {
+      channel: "C123",
+      user: "U123",
+      text: "<@U0AS42PTEAX> still there?",
+      ts: "1712800000.000101",
+      thread_ts: "1712790000.000050",
+    },
+  });
+
+  await messageHandler({
+    message: {
+      channel: "C123",
+      user: "U123",
+      text: "<@U0AS42PTEAX> still there?",
+      ts: "1712800000.000101",
+      thread_ts: "1712790000.000050",
+    },
+  });
+
+  expect(onMessage).toHaveBeenCalledTimes(1);
+  expect(onMessage).toHaveBeenCalledWith(
+    expect.objectContaining({
+      channel: "slack",
+      chatId: "C123",
+      senderId: "U123",
+      text: "still there?",
+      messageId: "1712800000.000101",
+      threadId: "1712790000.000050",
+      chatType: "channel",
+      isMention: true,
+    }),
+  );
+});
+
 test("slack adapter allows file_share subtype messages through", async () => {
   const adapter = createSlackAdapter({
     ...slackAccountDefaults,

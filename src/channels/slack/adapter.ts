@@ -96,6 +96,9 @@ function normalizeSlackReactionName(value: string): string {
   return value.trim().replace(/^:+|:+$/g, "");
 }
 
+const SLACK_INGRESS_DEDUPE_TTL_MS = 60_000;
+const SLACK_INGRESS_DEDUPE_MAX = 2_000;
+
 function resolveUploadMimeType(filePath: string): string | undefined {
   switch (extname(filePath).toLowerCase()) {
     case ".png":
@@ -214,8 +217,72 @@ export function createSlackAdapter(
 ): ChannelAdapter {
   let app: SlackApp | null = null;
   let running = false;
+  let botUserId: string | null = null;
   const knownThreadIdsByMessageId = new Map<string, string | null>();
   const knownUserDisplayNames = new Map<string, string>();
+  const seenIngressMessageKeys = new Map<string, number>();
+
+  function buildIngressMessageKey(
+    channelId: string | undefined,
+    messageId: string | undefined,
+  ): string | null {
+    if (!isNonEmptyString(channelId) || !isNonEmptyString(messageId)) {
+      return null;
+    }
+    return `${channelId}:${messageId}`;
+  }
+
+  function pruneSeenIngressMessageKeys(now: number = Date.now()): void {
+    for (const [key, expiresAt] of seenIngressMessageKeys) {
+      if (expiresAt <= now) {
+        seenIngressMessageKeys.delete(key);
+      }
+    }
+
+    if (seenIngressMessageKeys.size <= SLACK_INGRESS_DEDUPE_MAX) {
+      return;
+    }
+
+    const oldestEntries = Array.from(seenIngressMessageKeys.entries()).sort(
+      (a, b) => a[1] - b[1],
+    );
+    const overflowCount =
+      seenIngressMessageKeys.size - SLACK_INGRESS_DEDUPE_MAX;
+    for (let index = 0; index < overflowCount; index += 1) {
+      const entry = oldestEntries[index];
+      if (entry) {
+        seenIngressMessageKeys.delete(entry[0]);
+      }
+    }
+  }
+
+  function markIngressMessageSeen(
+    channelId: string | undefined,
+    messageId: string | undefined,
+  ): boolean {
+    const key = buildIngressMessageKey(channelId, messageId);
+    if (!key) {
+      return false;
+    }
+
+    const now = Date.now();
+    pruneSeenIngressMessageKeys(now);
+
+    if (seenIngressMessageKeys.has(key)) {
+      return true;
+    }
+
+    seenIngressMessageKeys.set(key, now + SLACK_INGRESS_DEDUPE_TTL_MS);
+    return false;
+  }
+
+  function hasSlackMention(text: string, userId: string | null): boolean {
+    if (!isNonEmptyString(text) || !isNonEmptyString(userId)) {
+      return false;
+    }
+
+    return text.includes(`<@${userId}>`) || text.includes(`<@${userId}|`);
+  }
 
   function rememberMessageThread(
     messageId: string | undefined,
@@ -296,6 +363,7 @@ export function createSlackAdapter(
       }
 
       const text = isNonEmptyString(rawMessage.text) ? rawMessage.text : "";
+      const wasMentioned = hasSlackMention(text, botUserId);
       const attachments = await resolveSlackInboundAttachments({
         accountId: config.accountId,
         token: config.botToken,
@@ -310,6 +378,10 @@ export function createSlackAdapter(
       const senderName = await resolveUserName(instance, rawMessage.user);
 
       if (chatType === "direct") {
+        if (markIngressMessageSeen(channelId, rawMessage.ts)) {
+          return;
+        }
+
         const inbound: InboundChannelMessage = {
           channel: "slack",
           accountId: config.accountId,
@@ -321,7 +393,7 @@ export function createSlackAdapter(
           messageId: rawMessage.ts,
           threadId: null,
           chatType: "direct",
-          isMention: false,
+          isMention: wasMentioned,
           attachments,
           raw: message,
         };
@@ -338,6 +410,10 @@ export function createSlackAdapter(
         return;
       }
 
+      if (markIngressMessageSeen(channelId, rawMessage.ts)) {
+        return;
+      }
+
       const inbound: InboundChannelMessage = {
         channel: "slack",
         accountId: config.accountId,
@@ -345,12 +421,12 @@ export function createSlackAdapter(
         senderId: rawMessage.user,
         senderName,
         chatLabel: channelId,
-        text,
+        text: wasMentioned ? normalizeSlackText(text) : text,
         timestamp: slackTimestampToMillis(rawMessage.ts),
         messageId: rawMessage.ts,
         threadId,
         chatType: "channel",
-        isMention: false,
+        isMention: wasMentioned,
         attachments,
         raw: message,
       };
@@ -375,6 +451,10 @@ export function createSlackAdapter(
         !isNonEmptyString(event.user) ||
         !isNonEmptyString(event.ts)
       ) {
+        return;
+      }
+
+      if (markIngressMessageSeen(event.channel, event.ts)) {
         return;
       }
 
@@ -494,6 +574,7 @@ export function createSlackAdapter(
 
       const slackApp = await ensureApp();
       const auth = await slackApp.client.auth.test();
+      botUserId = isNonEmptyString(auth.user_id) ? auth.user_id : null;
       await slackApp.start();
       running = true;
 
@@ -509,6 +590,8 @@ export function createSlackAdapter(
       await app.stop();
       running = false;
       app = null;
+      botUserId = null;
+      seenIngressMessageKeys.clear();
       console.log("[Slack] App stopped");
     },
 
