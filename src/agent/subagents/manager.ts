@@ -31,6 +31,7 @@ import { getAvailableModelHandles } from "../available-models";
 import { getClient } from "../client";
 import { getCurrentAgentId } from "../context";
 import { getDefaultModelForTier, resolveModel } from "../model";
+import recallSubagentPrompt from "../prompts/recall_subagent.md";
 
 import { getAllSubagentConfigs, type SubagentConfig } from ".";
 
@@ -922,7 +923,19 @@ ${SYSTEM_REMINDER_CLOSE}
 `;
 }
 
-function buildForkSystemReminder(): string {
+function buildForkSystemReminder(subagentType?: string): string {
+  if (subagentType === "recall") {
+    return `${SYSTEM_REMINDER_OPEN}
+You have been forked from the primary conversational thread to run as an independent subagent.
+You CANNOT ask questions mid-execution - all instructions are provided upfront.
+Your final message will be returned to the caller.
+
+${recallSubagentPrompt}
+${SYSTEM_REMINDER_CLOSE}
+
+`;
+  }
+
   return `${SYSTEM_REMINDER_OPEN}
 You have been forked from the primary conversational thread to run as an independent subagent.
 You CANNOT ask questions mid-execution - all instructions are provided upfront.
@@ -992,7 +1005,7 @@ export async function spawnSubagent(
       const client = await getClient();
       const parentAgent = await client.agents.retrieve(parentAgentId);
       if (forkedContext) {
-        const systemReminder = buildForkSystemReminder();
+        const systemReminder = buildForkSystemReminder(type);
         finalPrompt = systemReminder + prompt;
       } else {
         const systemReminder = buildDeploySystemReminder(
