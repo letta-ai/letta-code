@@ -2,7 +2,7 @@ import type WebSocket from "ws";
 import { getClient } from "../../agent/client";
 import { ISOLATED_BLOCK_LABELS } from "../../agent/memory";
 import { getMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
-import { REMEMBER_PROMPT } from "../../agent/promptAssets";
+import { MIGRATE_PROMPT, REMEMBER_PROMPT } from "../../agent/promptAssets";
 import {
   buildDoctorMessage,
   buildInitMessage,
@@ -36,6 +36,7 @@ export const SUPPORTED_REMOTE_COMMANDS: readonly string[] = [
   "clear",
   "doctor",
   "init",
+  "migrate",
   "remember",
   "channels",
 ];
@@ -93,6 +94,10 @@ export async function handleExecuteCommand(
 
       case "init":
         output = await handleInitCommand(socket, conversationRuntime, opts);
+        break;
+
+      case "migrate":
+        output = await handleMigrateCommand(socket, conversationRuntime, opts);
         break;
 
       case "remember":
@@ -322,6 +327,50 @@ async function handleInitCommand(
   );
 
   return "Memory initialization completed";
+}
+
+/**
+ * /migrate — Migrate memory from Claude Code / Codex history.
+ *
+ * Sends the migrate prompt through the normal turn pipeline so the agent
+ * detects history files, splits them, and launches history-analyzer subagents.
+ */
+async function handleMigrateCommand(
+  socket: WebSocket,
+  conversationRuntime: ConversationRuntime,
+  opts: {
+    onStatusChange?: StartListenerOptions["onStatusChange"];
+    connectionId?: string;
+  },
+): Promise<string> {
+  const agentId = conversationRuntime.agentId;
+
+  if (!agentId) {
+    throw new Error("No agent ID available for /migrate command");
+  }
+
+  const migrateReminder = `${SYSTEM_REMINDER_OPEN}\n${MIGRATE_PROMPT}\n${SYSTEM_REMINDER_CLOSE}`;
+
+  await handleIncomingMessage(
+    {
+      type: "message",
+      agentId,
+      conversationId: conversationRuntime.conversationId,
+      messages: [
+        {
+          type: "message",
+          role: "user",
+          content: [{ type: "text", text: migrateReminder }],
+        },
+      ],
+    },
+    socket,
+    conversationRuntime,
+    opts.onStatusChange,
+    opts.connectionId,
+  );
+
+  return "Memory migration completed";
 }
 
 /**

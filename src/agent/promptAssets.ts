@@ -9,6 +9,7 @@ import interruptRecoveryAlert from "./prompts/interrupt_recovery_alert.txt";
 import lettaPrompt from "./prompts/letta.md";
 import memoryCheckReminder from "./prompts/memory_check_reminder.txt";
 import memoryFilesystemPrompt from "./prompts/memory_filesystem.mdx";
+import migratePrompt from "./prompts/migrate.md";
 import personaPrompt from "./prompts/persona.mdx";
 import personaKawaiiPrompt from "./prompts/persona_kawaii.mdx";
 import personaLinusPrompt from "./prompts/persona_linus.mdx";
@@ -32,6 +33,7 @@ export const SYSTEM_PROMPT_MEMFS_ADDON = systemPromptMemfsAddon;
 export const PLAN_MODE_REMINDER = planModeReminder;
 
 export const SKILL_CREATOR_PROMPT = skillCreatorModePrompt;
+export const MIGRATE_PROMPT = migratePrompt;
 export const REMEMBER_PROMPT = rememberPrompt;
 export const MEMORY_CHECK_REMINDER = memoryCheckReminder;
 export const APPROVAL_RECOVERY_PROMPT = approvalRecoveryAlert;

@@ -10536,6 +10536,48 @@ export default function App({
           return { submitted: true };
         }
 
+        // Special handling for /migrate command - migrate memory from Claude Code / Codex history
+        if (trimmed === "/migrate") {
+          const cmd = commandRunner.start(msg, "Detecting history files...");
+
+          const approvalCheck = await checkPendingApprovalsForSlashCommand();
+          if (approvalCheck.blocked) {
+            cmd.fail(
+              "Pending approval(s). Resolve approvals before running /migrate.",
+            );
+            return { submitted: false };
+          }
+
+          setCommandRunning(true);
+
+          try {
+            const { MIGRATE_PROMPT } = await import("../agent/promptAssets.js");
+
+            const migrateReminder = `${SYSTEM_REMINDER_OPEN}\n${MIGRATE_PROMPT}\n${SYSTEM_REMINDER_CLOSE}`;
+
+            cmd.finish(
+              "Migrating memory from history... This may take a while.",
+              true,
+            );
+
+            await processConversation([
+              {
+                type: "message",
+                role: "user",
+                content: buildTextParts(migrateReminder),
+                otid: randomUUID(),
+              },
+            ]);
+          } catch (error) {
+            const errorDetails = formatErrorDetails(error, agentId);
+            cmd.fail(`Failed: ${errorDetails}`);
+          } finally {
+            setCommandRunning(false);
+          }
+
+          return { submitted: true };
+        }
+
         // Special handling for /reflect command - manually launch reflection subagent
         if (trimmed === "/reflect") {
           const cmd = commandRunner.start(msg, "Launching reflection agent...");
