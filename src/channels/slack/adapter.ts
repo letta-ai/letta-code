@@ -10,8 +10,10 @@ import type {
 import { resolveSlackInboundAttachments } from "./media";
 import { loadSlackBoltModule } from "./runtime";
 
-type SlackBoltModule = typeof import("@slack/bolt");
-type SlackAppConstructor = SlackBoltModule["default"];
+type SlackAppConstructor = typeof import("@slack/bolt").App;
+type SlackBoltModule = typeof import("@slack/bolt") & {
+  default?: unknown;
+};
 type SlackReactionEvent = {
   item?: {
     type?: string;
@@ -24,10 +26,42 @@ type SlackReactionEvent = {
   event_ts?: string;
 };
 
+type Constructor = abstract new (...args: never[]) => unknown;
+
+function isConstructorFunction<T extends Constructor>(
+  value: unknown,
+): value is T {
+  return typeof value === "function";
+}
+
+function resolveSlackAppModule(value: unknown): SlackAppConstructor | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const app = Reflect.get(value, "App");
+  return isConstructorFunction<SlackAppConstructor>(app) ? app : null;
+}
+
 function resolveSlackAppConstructor(mod: SlackBoltModule): SlackAppConstructor {
-  const App = mod.default;
+  const defaultExport =
+    mod && typeof mod === "object" ? Reflect.get(mod, "default") : undefined;
+  const nestedDefault =
+    defaultExport && typeof defaultExport === "object"
+      ? Reflect.get(defaultExport, "default")
+      : undefined;
+
+  const App =
+    resolveSlackAppModule(mod) ??
+    resolveSlackAppModule(defaultExport) ??
+    resolveSlackAppModule(nestedDefault) ??
+    (isConstructorFunction<SlackAppConstructor>(defaultExport)
+      ? defaultExport
+      : null);
+
   if (!App) {
-    throw new Error('Installed Slack runtime did not export default "App".');
+    throw new Error(
+      'Installed Slack runtime did not export constructor "App".',
+    );
   }
   return App;
 }
