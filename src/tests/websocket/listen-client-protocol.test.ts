@@ -1085,6 +1085,67 @@ describe("listen-client cron command handling", () => {
   });
 });
 
+describe("listen-client memory command handling", () => {
+  test("bootstraps memfs during list_memory when the repo is missing", async () => {
+    const tempRoot = await mkdtemp(join(os.tmpdir(), "letta-list-memory-"));
+    const socket = new MockSocket(WebSocket.OPEN);
+    const applyMemfsFlagsMock = mock(async () => {
+      await mkdir(join(tempRoot, ".git"), { recursive: true });
+      await mkdir(join(tempRoot, "system"), { recursive: true });
+      await writeFile(
+        join(tempRoot, "system", "persona.md"),
+        "---\ndescription: Persona\n---\nHello from memory\n",
+      );
+      return {
+        action: "enabled" as const,
+        memoryDir: tempRoot,
+      };
+    });
+
+    mock.module("../../agent/memoryFilesystem", () => ({
+      getMemoryFilesystemRoot: () => tempRoot,
+      applyMemfsFlags: applyMemfsFlagsMock,
+    }));
+
+    try {
+      await __listenClientTestUtils.handleListMemoryCommand(
+        {
+          type: "list_memory",
+          request_id: "list-memory-1",
+          agent_id: "agent-1",
+          include_references: true,
+        },
+        socket as unknown as WebSocket,
+      );
+
+      expect(applyMemfsFlagsMock).toHaveBeenCalledTimes(1);
+      const messages = socket.sentPayloads.map((payload) =>
+        JSON.parse(payload as string),
+      );
+      expect(messages).toHaveLength(1);
+      expect(messages[0]).toMatchObject({
+        type: "list_memory_response",
+        request_id: "list-memory-1",
+        success: true,
+        done: true,
+        total: 1,
+        memfs_initialized: true,
+      });
+      expect(messages[0].entries).toEqual([
+        expect.objectContaining({
+          relative_path: "system/persona.md",
+          is_system: true,
+          description: "Persona",
+          references: [],
+        }),
+      ]);
+      expect(messages[0].entries[0]?.content).toContain("Hello from memory");
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("listen-client channels command handling", () => {
   test("returns typed channel summaries over WS", async () => {
     const socket = new MockSocket(WebSocket.OPEN);

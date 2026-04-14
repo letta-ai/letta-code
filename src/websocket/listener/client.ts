@@ -98,7 +98,9 @@ import type {
   CronDeleteCommand,
   CronGetCommand,
   CronListCommand,
+  EnableMemfsCommand,
   GetReflectionSettingsCommand,
+  ListMemoryCommand,
   ListModelsResponseMessage,
   ListModelsResponseModelEntry,
   ReflectionSettingsScope,
@@ -937,6 +939,294 @@ function emitChannelTargetsUpdated(
     "listener_channels_send_failed",
     "listener_channels_command",
   );
+}
+
+async function handleListMemoryCommand(
+  parsed: ListMemoryCommand,
+  socket: WebSocket,
+): Promise<boolean> {
+  try {
+    const { getMemoryFilesystemRoot, applyMemfsFlags } = await import(
+      "../../agent/memoryFilesystem"
+    );
+    const { scanMemoryFilesystem, getFileNodes, readFileContent } =
+      await import("../../agent/memoryScanner");
+    const { parseFrontmatter } = await import("../../utils/frontmatter");
+
+    const { existsSync } = await import("node:fs");
+    const { join, posix } = await import("node:path");
+
+    const memoryRoot = getMemoryFilesystemRoot(parsed.agent_id);
+
+    // Refresh should be able to bootstrap memfs on first access so the
+    // desktop memory panel can recover without requiring a separate enable step.
+    let memfsInitialized = existsSync(join(memoryRoot, ".git"));
+    if (!memfsInitialized) {
+      await applyMemfsFlags(parsed.agent_id, true, false);
+      memfsInitialized = existsSync(join(memoryRoot, ".git"));
+    }
+
+    if (!memfsInitialized) {
+      safeSocketSend(
+        socket,
+        {
+          type: "list_memory_response",
+          request_id: parsed.request_id,
+          entries: [],
+          done: true,
+          total: 0,
+          success: true,
+          memfs_initialized: false,
+        },
+        "listener_list_memory_send_failed",
+        "listener_list_memory",
+      );
+      return true;
+    }
+
+    const treeNodes = scanMemoryFilesystem(memoryRoot);
+    const fileNodes = getFileNodes(treeNodes).filter((n) =>
+      n.name.endsWith(".md"),
+    );
+    const includeReferences = parsed.include_references === true;
+
+    const allPaths = new Set(fileNodes.map((node) => node.relativePath));
+
+    const normalizeMemoryReference = (
+      rawReference: string,
+      sourcePath: string,
+    ): string | null => {
+      let target = rawReference.trim();
+      if (!target) {
+        return null;
+      }
+
+      if (
+        target.startsWith("http://") ||
+        target.startsWith("https://") ||
+        target.startsWith("mailto:")
+      ) {
+        return null;
+      }
+
+      target = target.replace(/^<|>$/g, "");
+      target = target.split("#")[0] ?? "";
+      target = target.split("?")[0] ?? "";
+      target = target.trim().replace(/\\/g, "/");
+
+      if (!target || target.startsWith("#")) {
+        return null;
+      }
+
+      if (target.includes("|")) {
+        target = target.split("|")[0] ?? "";
+      }
+
+      if (!target) {
+        return null;
+      }
+
+      const sourceDir = posix.dirname(sourcePath.replace(/\\/g, "/"));
+      const candidate =
+        target.startsWith("./") || target.startsWith("../")
+          ? posix.normalize(posix.join(sourceDir, target))
+          : posix.normalize(target.startsWith("/") ? target.slice(1) : target);
+
+      if (
+        !candidate ||
+        candidate.startsWith("../") ||
+        candidate === "." ||
+        candidate === ".."
+      ) {
+        return null;
+      }
+
+      const withExtension = candidate.endsWith(".md")
+        ? candidate
+        : `${candidate}.md`;
+
+      const candidates = new Set<string>([withExtension]);
+
+      const isExplicitRelative =
+        target.startsWith("./") || target.startsWith("../");
+      if (
+        !isExplicitRelative &&
+        !target.startsWith("/") &&
+        sourceDir &&
+        sourceDir !== "."
+      ) {
+        candidates.add(posix.normalize(posix.join(sourceDir, withExtension)));
+      }
+
+      if (!withExtension.startsWith("system/")) {
+        candidates.add(posix.normalize(`system/${withExtension}`));
+      }
+
+      for (const resolved of candidates) {
+        if (allPaths.has(resolved)) {
+          return resolved;
+        }
+      }
+
+      return null;
+    };
+
+    const extractMemoryReferences = (
+      body: string,
+      sourcePath: string,
+    ): string[] => {
+      if (!body.includes("[[")) {
+        return [];
+      }
+
+      const refs = new Set<string>();
+
+      for (const wikiMatch of body.matchAll(WIKI_LINK_REGEX)) {
+        const rawTarget = wikiMatch[1];
+        if (!rawTarget) continue;
+        const normalized = normalizeMemoryReference(rawTarget, sourcePath);
+        if (normalized && normalized !== sourcePath) {
+          refs.add(normalized);
+        }
+      }
+
+      return [...refs];
+    };
+
+    const CHUNK_SIZE = 5;
+    const total = fileNodes.length;
+
+    for (let i = 0; i < total; i += CHUNK_SIZE) {
+      const chunk = fileNodes.slice(i, i + CHUNK_SIZE);
+      const entries = chunk.map((node) => {
+        const raw = readFileContent(node.fullPath);
+        const { frontmatter, body } = parseFrontmatter(raw);
+        const desc = frontmatter.description;
+        return {
+          relative_path: node.relativePath,
+          is_system:
+            node.relativePath.startsWith("system/") ||
+            node.relativePath.startsWith("system\\"),
+          description: typeof desc === "string" ? desc : null,
+          content: body,
+          size: body.length,
+          ...(includeReferences
+            ? {
+                references: extractMemoryReferences(body, node.relativePath),
+              }
+            : {}),
+        };
+      });
+
+      const done = i + CHUNK_SIZE >= total;
+      const sent = safeSocketSend(
+        socket,
+        {
+          type: "list_memory_response",
+          request_id: parsed.request_id,
+          entries,
+          done,
+          total,
+          success: true,
+          memfs_initialized: true,
+        },
+        "listener_list_memory_send_failed",
+        "listener_list_memory",
+      );
+      if (!sent) {
+        return true;
+      }
+    }
+
+    if (total === 0) {
+      safeSocketSend(
+        socket,
+        {
+          type: "list_memory_response",
+          request_id: parsed.request_id,
+          entries: [],
+          done: true,
+          total: 0,
+          success: true,
+          memfs_initialized: true,
+        },
+        "listener_list_memory_send_failed",
+        "listener_list_memory",
+      );
+    }
+  } catch (err) {
+    trackListenerError(
+      "listener_list_memory_failed",
+      err,
+      "listener_memory_browser",
+    );
+    safeSocketSend(
+      socket,
+      {
+        type: "list_memory_response",
+        request_id: parsed.request_id,
+        entries: [],
+        done: true,
+        total: 0,
+        success: false,
+        error: err instanceof Error ? err.message : "Failed to list memory",
+      },
+      "listener_list_memory_send_failed",
+      "listener_list_memory",
+    );
+  }
+
+  return true;
+}
+
+async function handleEnableMemfsCommand(
+  parsed: EnableMemfsCommand,
+  socket: WebSocket,
+): Promise<boolean> {
+  try {
+    const { applyMemfsFlags } = await import("../../agent/memoryFilesystem");
+    const result = await applyMemfsFlags(parsed.agent_id, true, false);
+    safeSocketSend(
+      socket,
+      {
+        type: "enable_memfs_response",
+        request_id: parsed.request_id,
+        success: true,
+        memory_directory: result.memoryDir,
+      },
+      "listener_enable_memfs_send_failed",
+      "listener_enable_memfs",
+    );
+    safeSocketSend(
+      socket,
+      {
+        type: "memory_updated",
+        affected_paths: ["*"],
+        timestamp: Date.now(),
+      },
+      "listener_enable_memfs_send_failed",
+      "listener_enable_memfs",
+    );
+  } catch (err) {
+    trackListenerError(
+      "listener_enable_memfs_failed",
+      err,
+      "listener_memfs_enable",
+    );
+    safeSocketSend(
+      socket,
+      {
+        type: "enable_memfs_response",
+        request_id: parsed.request_id,
+        success: false,
+        error: err instanceof Error ? err.message : "Failed to enable memfs",
+      },
+      "listener_enable_memfs_send_failed",
+      "listener_enable_memfs",
+    );
+  }
+
+  return true;
 }
 
 async function handleCronCommand(
@@ -4458,249 +4748,7 @@ async function connectWithRetry(
       // ── Memory index (no runtime scope required) ─────────────────────
       if (isListMemoryCommand(parsed)) {
         runDetachedListenerTask("list_memory", async () => {
-          try {
-            const { getMemoryFilesystemRoot } = await import(
-              "../../agent/memoryFilesystem"
-            );
-            const { scanMemoryFilesystem, getFileNodes, readFileContent } =
-              await import("../../agent/memoryScanner");
-            const { parseFrontmatter } = await import(
-              "../../utils/frontmatter"
-            );
-
-            const { existsSync } = await import("node:fs");
-            const { join, posix } = await import("node:path");
-
-            const memoryRoot = getMemoryFilesystemRoot(parsed.agent_id);
-
-            // If the memory directory doesn't have a git repo, memfs
-            // hasn't been initialized — tell the UI so it can show the
-            // enable button instead of an empty file list.
-            const memfsInitialized = existsSync(join(memoryRoot, ".git"));
-
-            if (!memfsInitialized) {
-              safeSocketSend(
-                socket,
-                {
-                  type: "list_memory_response",
-                  request_id: parsed.request_id,
-                  entries: [],
-                  done: true,
-                  total: 0,
-                  success: true,
-                  memfs_initialized: false,
-                },
-                "listener_list_memory_send_failed",
-                "listener_list_memory",
-              );
-              return;
-            }
-
-            const treeNodes = scanMemoryFilesystem(memoryRoot);
-            const fileNodes = getFileNodes(treeNodes).filter((n) =>
-              n.name.endsWith(".md"),
-            );
-            const includeReferences = parsed.include_references === true;
-
-            const allPaths = new Set(
-              fileNodes.map((node) => node.relativePath),
-            );
-
-            const normalizeMemoryReference = (
-              rawReference: string,
-              sourcePath: string,
-            ): string | null => {
-              let target = rawReference.trim();
-              if (!target) {
-                return null;
-              }
-
-              if (
-                target.startsWith("http://") ||
-                target.startsWith("https://") ||
-                target.startsWith("mailto:")
-              ) {
-                return null;
-              }
-
-              target = target.replace(/^<|>$/g, "");
-              target = target.split("#")[0] ?? "";
-              target = target.split("?")[0] ?? "";
-              target = target.trim().replace(/\\/g, "/");
-
-              if (!target || target.startsWith("#")) {
-                return null;
-              }
-
-              if (target.includes("|")) {
-                target = target.split("|")[0] ?? "";
-              }
-
-              if (!target) {
-                return null;
-              }
-
-              const sourceDir = posix.dirname(sourcePath.replace(/\\/g, "/"));
-              const candidate =
-                target.startsWith("./") || target.startsWith("../")
-                  ? posix.normalize(posix.join(sourceDir, target))
-                  : posix.normalize(
-                      target.startsWith("/") ? target.slice(1) : target,
-                    );
-
-              if (
-                !candidate ||
-                candidate.startsWith("../") ||
-                candidate === "." ||
-                candidate === ".."
-              ) {
-                return null;
-              }
-
-              const withExtension = candidate.endsWith(".md")
-                ? candidate
-                : `${candidate}.md`;
-
-              const candidates = new Set<string>([withExtension]);
-
-              const isExplicitRelative =
-                target.startsWith("./") || target.startsWith("../");
-              if (
-                !isExplicitRelative &&
-                !target.startsWith("/") &&
-                sourceDir &&
-                sourceDir !== "."
-              ) {
-                candidates.add(
-                  posix.normalize(posix.join(sourceDir, withExtension)),
-                );
-              }
-
-              if (!withExtension.startsWith("system/")) {
-                candidates.add(posix.normalize(`system/${withExtension}`));
-              }
-
-              for (const resolved of candidates) {
-                if (allPaths.has(resolved)) {
-                  return resolved;
-                }
-              }
-
-              return null;
-            };
-
-            const extractMemoryReferences = (
-              body: string,
-              sourcePath: string,
-            ): string[] => {
-              if (!body.includes("[[")) {
-                return [];
-              }
-
-              const refs = new Set<string>();
-
-              for (const wikiMatch of body.matchAll(WIKI_LINK_REGEX)) {
-                const rawTarget = wikiMatch[1];
-                if (!rawTarget) continue;
-                const normalized = normalizeMemoryReference(
-                  rawTarget,
-                  sourcePath,
-                );
-                if (normalized && normalized !== sourcePath) {
-                  refs.add(normalized);
-                }
-              }
-
-              return [...refs];
-            };
-
-            const CHUNK_SIZE = 5;
-            const total = fileNodes.length;
-
-            for (let i = 0; i < total; i += CHUNK_SIZE) {
-              const chunk = fileNodes.slice(i, i + CHUNK_SIZE);
-              const entries = chunk.map((node) => {
-                const raw = readFileContent(node.fullPath);
-                const { frontmatter, body } = parseFrontmatter(raw);
-                const desc = frontmatter.description;
-                return {
-                  relative_path: node.relativePath,
-                  is_system:
-                    node.relativePath.startsWith("system/") ||
-                    node.relativePath.startsWith("system\\"),
-                  description: typeof desc === "string" ? desc : null,
-                  content: body,
-                  size: body.length,
-                  ...(includeReferences
-                    ? {
-                        references: extractMemoryReferences(
-                          body,
-                          node.relativePath,
-                        ),
-                      }
-                    : {}),
-                };
-              });
-
-              const done = i + CHUNK_SIZE >= total;
-              const sent = safeSocketSend(
-                socket,
-                {
-                  type: "list_memory_response",
-                  request_id: parsed.request_id,
-                  entries,
-                  done,
-                  total,
-                  success: true,
-                  memfs_initialized: true,
-                },
-                "listener_list_memory_send_failed",
-                "listener_list_memory",
-              );
-              if (!sent) {
-                return;
-              }
-            }
-
-            // Edge case: no files at all (repo exists but empty)
-            if (total === 0) {
-              safeSocketSend(
-                socket,
-                {
-                  type: "list_memory_response",
-                  request_id: parsed.request_id,
-                  entries: [],
-                  done: true,
-                  total: 0,
-                  success: true,
-                  memfs_initialized: true,
-                },
-                "listener_list_memory_send_failed",
-                "listener_list_memory",
-              );
-            }
-          } catch (err) {
-            trackListenerError(
-              "listener_list_memory_failed",
-              err,
-              "listener_memory_browser",
-            );
-            safeSocketSend(
-              socket,
-              {
-                type: "list_memory_response",
-                request_id: parsed.request_id,
-                entries: [],
-                done: true,
-                total: 0,
-                success: false,
-                error:
-                  err instanceof Error ? err.message : "Failed to list memory",
-              },
-              "listener_list_memory_send_failed",
-              "listener_list_memory",
-            );
-          }
+          await handleListMemoryCommand(parsed, socket);
         });
         return;
       }
@@ -4708,52 +4756,7 @@ async function connectWithRetry(
       // ── Enable memfs command ────────────────────────────────────────────
       if (isEnableMemfsCommand(parsed)) {
         runDetachedListenerTask("enable_memfs", async () => {
-          try {
-            const { applyMemfsFlags } = await import(
-              "../../agent/memoryFilesystem"
-            );
-            const result = await applyMemfsFlags(parsed.agent_id, true, false);
-            safeSocketSend(
-              socket,
-              {
-                type: "enable_memfs_response",
-                request_id: parsed.request_id,
-                success: true,
-                memory_directory: result.memoryDir,
-              },
-              "listener_enable_memfs_send_failed",
-              "listener_enable_memfs",
-            );
-            // Push memory_updated so the UI auto-refreshes its file list
-            safeSocketSend(
-              socket,
-              {
-                type: "memory_updated",
-                affected_paths: ["*"],
-                timestamp: Date.now(),
-              },
-              "listener_enable_memfs_send_failed",
-              "listener_enable_memfs",
-            );
-          } catch (err) {
-            trackListenerError(
-              "listener_enable_memfs_failed",
-              err,
-              "listener_memfs_enable",
-            );
-            safeSocketSend(
-              socket,
-              {
-                type: "enable_memfs_response",
-                request_id: parsed.request_id,
-                success: false,
-                error:
-                  err instanceof Error ? err.message : "Failed to enable memfs",
-              },
-              "listener_enable_memfs_send_failed",
-              "listener_enable_memfs",
-            );
-          }
+          await handleEnableMemfsCommand(parsed, socket);
         });
         return;
       }
@@ -5678,11 +5681,13 @@ export const __listenClientTestUtils = {
   handleApprovalResponseInput,
   handleAbortMessageInput,
   handleChangeDeviceStateInput,
+  handleEnableMemfsCommand,
   handleCronCommand,
   isDetachedChannelsCommand,
   handleChannelsProtocolCommand,
   handleSkillCommand,
   handleCreateAgentCommand,
+  handleListMemoryCommand,
   handleReflectionSettingsCommand,
   enqueueChannelTurn,
   scheduleQueuePump,
