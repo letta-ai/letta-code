@@ -109,6 +109,20 @@ export function resolveLettaInvocation(
 
   const scriptPath = argv[1] || "";
   if (scriptPath && isDevLettaEntryScript(scriptPath)) {
+    const runtimeName = path.basename(execPath).toLowerCase();
+    if (runtimeName.includes("bun")) {
+      return {
+        command: execPath,
+        args: [
+          "--loader:.md=text",
+          "--loader:.mdx=text",
+          "--loader:.txt=text",
+          "run",
+          scriptPath,
+        ],
+      };
+    }
+
     return { command: execPath, args: [scriptPath] };
   }
 
