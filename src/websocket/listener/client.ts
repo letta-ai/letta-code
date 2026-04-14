@@ -2716,6 +2716,36 @@ function wireChannelIngress(
   registry.setReady();
 }
 
+function stampInboundUserMessageOtids(
+  incoming: IncomingMessage,
+): IncomingMessage {
+  let didChange = false;
+  const messages = incoming.messages.map((payload) => {
+    if (!("content" in payload) || payload.otid) {
+      return payload;
+    }
+
+    didChange = true;
+    return {
+      ...payload,
+      otid:
+        "client_message_id" in payload &&
+        typeof payload.client_message_id === "string"
+          ? payload.client_message_id
+          : crypto.randomUUID(),
+    } satisfies MessageCreate & { client_message_id?: string };
+  });
+
+  if (!didChange) {
+    return incoming;
+  }
+
+  return {
+    ...incoming,
+    messages,
+  };
+}
+
 function enqueueChannelTurn(
   runtime: ConversationRuntime,
   route: {
@@ -2741,18 +2771,21 @@ function enqueueChannelTurn(
     return null;
   }
 
-  runtime.queuedMessagesByItemId.set(enqueuedItem.id, {
-    type: "message",
-    agentId: route.agentId,
-    conversationId: route.conversationId,
-    messages: [
-      {
-        role: "user",
-        content: messageContent,
-        client_message_id: clientMessageId,
-      } satisfies MessageCreate & { client_message_id?: string },
-    ],
-  });
+  runtime.queuedMessagesByItemId.set(
+    enqueuedItem.id,
+    stampInboundUserMessageOtids({
+      type: "message",
+      agentId: route.agentId,
+      conversationId: route.conversationId,
+      messages: [
+        {
+          role: "user",
+          content: messageContent,
+          client_message_id: clientMessageId,
+        } satisfies MessageCreate & { client_message_id?: string },
+      ],
+    }),
+  );
 
   return enqueuedItem;
 }
@@ -3814,7 +3847,8 @@ async function connectWithRetry(
         );
 
         if (shouldQueueInboundMessage(incoming)) {
-          const firstUserPayload = incoming.messages.find(
+          const queuedIncoming = stampInboundUserMessageOtids(incoming);
+          const firstUserPayload = queuedIncoming.messages.find(
             (
               payload,
             ): payload is MessageCreate & { client_message_id?: string } =>
@@ -3834,7 +3868,7 @@ async function connectWithRetry(
             if (enqueuedItem) {
               scopedRuntime.queuedMessagesByItemId.set(
                 enqueuedItem.id,
-                incoming,
+                queuedIncoming,
               );
             }
           }

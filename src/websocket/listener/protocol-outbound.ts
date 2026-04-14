@@ -552,7 +552,10 @@ export function emitDequeuedUserMessage(
       : Array.isArray(content) && content.length > 0;
   if (!hasContent) return;
 
-  const otid = firstUserPayload.client_message_id ?? batch.batchId;
+  const otid =
+    firstUserPayload.otid ??
+    firstUserPayload.client_message_id ??
+    batch.batchId;
 
   emitCanonicalMessageDelta(
     socket,
