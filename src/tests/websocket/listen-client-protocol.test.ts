@@ -2971,29 +2971,36 @@ describe("listen-client cwd change handling", () => {
   test("proactively warms the file index after cwd change so @ search is instant", async () => {
     const runtime = __listenClientTestUtils.createRuntime();
     const socket = new MockSocket(WebSocket.OPEN);
-    const tempRoot = await mkdtemp(join(os.tmpdir(), "letta-listen-cwd-idx-"));
-    const projectDir = join(tempRoot, "my-project");
+    const projectRoot = await mkdtemp(
+      join(os.tmpdir(), "letta-listen-cwd-idx-"),
+    );
+    const projectDir = join(projectRoot, "my-project");
     await mkdir(join(projectDir, "src"), { recursive: true });
     await writeFile(join(projectDir, "README.md"), "# Hello");
     await writeFile(join(projectDir, "src/index.ts"), "export {}");
 
-    // Point the index root somewhere else first so the cwd change actually
-    // triggers a re-root + ensureFileIndex.
+    // Create a separate unrelated temp dir as the initial index root so the
+    // project dir is definitely *outside* it, which triggers setIndexRoot().
+    // (If the new CWD is a child of the current root, handleCwdChange skips
+    // re-rooting — that's correct behavior but defeats the test.)
+    const unrelatedRoot = await mkdtemp(
+      join(os.tmpdir(), "letta-listen-old-root-"),
+    );
     const originalRoot = getIndexRoot();
 
     try {
       const normalizedProjectDir = await realpath(projectDir);
-      setIndexRoot(tempRoot); // different root so cwd change triggers re-root
+      setIndexRoot(unrelatedRoot);
 
       __listenClientTestUtils.setConversationWorkingDirectory(
         runtime,
         "agent-1",
         "conv-1",
-        tempRoot,
+        unrelatedRoot,
       );
       runtime.activeAgentId = "agent-1";
       runtime.activeConversationId = "conv-1";
-      runtime.activeWorkingDirectory = tempRoot;
+      runtime.activeWorkingDirectory = unrelatedRoot;
 
       await __listenClientTestUtils.handleCwdChange(
         {
@@ -3025,7 +3032,8 @@ describe("listen-client cwd change handling", () => {
       expect(paths).toContain(join("src", "index.ts"));
     } finally {
       setIndexRoot(originalRoot);
-      await rm(tempRoot, { recursive: true, force: true });
+      await rm(projectRoot, { recursive: true, force: true });
+      await rm(unrelatedRoot, { recursive: true, force: true });
     }
   });
 });
