@@ -1,4 +1,14 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  describe,
+  expect,
+  test,
+} from "bun:test";
+import { clearDynamicMessageChannelToolCache } from "../../channels/messageTool";
+import { ChannelRegistry, getChannelRegistry } from "../../channels/registry";
+import type { ChannelAdapter } from "../../channels/types";
 import {
   captureToolExecutionContext,
   clearCapturedToolExecutionContexts,
@@ -6,8 +16,11 @@ import {
   clearTools,
   executeTool,
   getToolNames,
+  getToolSchema,
   loadSpecificTools,
+  prepareCurrentToolExecutionContext,
   prepareToolExecutionContextForSpecificTools,
+  refreshDynamicChannelToolsInLoadedRegistry,
 } from "../../tools/manager";
 
 function asText(
@@ -21,12 +34,37 @@ function asText(
 describe("tool execution context snapshot", () => {
   let initialTools: string[] = [];
 
+  function createRunningAdapter(
+    channelId: "slack" | "telegram",
+    accountId: string,
+  ): ChannelAdapter {
+    return {
+      id: `${channelId}:${accountId}`,
+      channelId,
+      accountId,
+      name: channelId,
+      start: async () => {},
+      stop: async () => {},
+      isRunning: () => true,
+      sendMessage: async () => ({ messageId: "msg-1" }),
+      sendDirectReply: async () => {},
+    };
+  }
+
   beforeAll(() => {
     initialTools = getToolNames();
   });
 
-  afterAll(async () => {
+  afterEach(async () => {
+    const registry = getChannelRegistry();
+    if (registry) {
+      await registry.stopAll();
+    }
+    clearDynamicMessageChannelToolCache();
     clearCapturedToolExecutionContexts();
+  });
+
+  afterAll(async () => {
     clearExternalTools();
     if (initialTools.length > 0) {
       await loadSpecificTools(initialTools);
@@ -94,5 +132,57 @@ describe("tool execution context snapshot", () => {
     );
 
     expect(withPreparedContext.status).toBe("success");
+  });
+
+  test("prepares current tool snapshots with fresh MessageChannel discovery", async () => {
+    await loadSpecificTools(["Read"]);
+
+    const registry = new ChannelRegistry();
+    registry.registerAdapter(createRunningAdapter("slack", "acct-slack"));
+
+    const prepared = await prepareCurrentToolExecutionContext();
+    const messageChannel = prepared.clientTools.find(
+      (tool) => tool.name === "MessageChannel",
+    );
+
+    expect(prepared.loadedToolNames).toContain("MessageChannel");
+    expect(messageChannel).toBeDefined();
+    expect(messageChannel?.description).toContain(
+      "Currently active channels: Slack.",
+    );
+
+    if (!messageChannel) {
+      throw new Error("MessageChannel tool was not prepared");
+    }
+
+    if (!messageChannel.parameters) {
+      throw new Error("MessageChannel tool is missing parameters");
+    }
+
+    const actionParameter = (
+      messageChannel.parameters.properties as Record<
+        string,
+        { enum?: string[] }
+      >
+    ).action;
+
+    expect(actionParameter?.enum).toEqual(["send", "react", "upload-file"]);
+  });
+
+  test("refreshes the loaded MessageChannel schema for synchronous readers", async () => {
+    await loadSpecificTools(["Read"]);
+
+    const registry = new ChannelRegistry();
+    registry.registerAdapter(createRunningAdapter("telegram", "acct-telegram"));
+
+    await refreshDynamicChannelToolsInLoadedRegistry();
+
+    const schema = getToolSchema("MessageChannel");
+    expect(schema?.description).toContain(
+      "Currently active channels: Telegram.",
+    );
+    expect(
+      (schema?.input_schema.properties?.channel as { enum?: string[] }).enum,
+    ).toEqual(["telegram"]);
   });
 });

@@ -3,7 +3,10 @@ import * as nodePath from "node:path";
 import { getDisplayableToolReturn } from "../agent/approval-execution";
 import { getModelInfo } from "../agent/model";
 import { getAllSubagentConfigs } from "../agent/subagents";
-import { buildDynamicMessageChannelSchema } from "../channels/messageTool";
+import {
+  buildDynamicMessageChannelToolDefinition,
+  getCachedDynamicMessageChannelToolDefinition,
+} from "../channels/messageTool";
 import { getActiveChannelIds } from "../channels/registry";
 import { refreshFileIndex } from "../cli/helpers/fileIndex";
 import { INTERRUPTED_BY_USER } from "../constants";
@@ -45,14 +48,51 @@ function maybeAppendChannelTools(toolNames: ToolName[]): ToolName[] {
  * Inject dynamic channel-tool discovery into MessageChannel if channels are active.
  * Used by both buildRegistryForModel() and buildSpecificToolRegistry().
  */
-async function maybeInjectChannelSchema(
+async function maybeResolveDynamicChannelTool(
   name: string,
+  description: string,
   schema: Record<string, unknown>,
-): Promise<Record<string, unknown>> {
+): Promise<{ description: string; input_schema: Record<string, unknown> }> {
   if (name !== "MessageChannel") {
-    return schema;
+    return {
+      description,
+      input_schema: schema,
+    };
   }
-  return await buildDynamicMessageChannelSchema(schema);
+  const resolved = await buildDynamicMessageChannelToolDefinition(
+    description,
+    schema,
+  );
+  return {
+    description: resolved.description,
+    input_schema: resolved.schema,
+  };
+}
+
+function withDynamicMessageChannelCache(registry: ToolRegistry): ToolRegistry {
+  const nextRegistry = new Map(registry);
+  if (getActiveChannelIds().length === 0) {
+    nextRegistry.delete("MessageChannel");
+    return nextRegistry;
+  }
+
+  const cachedMessageChannel = getCachedDynamicMessageChannelToolDefinition();
+  if (!cachedMessageChannel) {
+    return nextRegistry;
+  }
+
+  const existing = nextRegistry.get("MessageChannel");
+  nextRegistry.set("MessageChannel", {
+    schema: {
+      name: "MessageChannel",
+      description: cachedMessageChannel.description,
+      input_schema: cachedMessageChannel.schema as JsonSchema,
+    },
+    fn:
+      existing?.fn ??
+      (TOOL_DEFINITIONS.MessageChannel.impl as ToolDefinition["fn"]),
+  });
+  return nextRegistry;
 }
 const STREAMING_SHELL_TOOLS = new Set([
   "Bash",
@@ -645,7 +685,10 @@ export async function executeExternalTool(
  * Includes both built-in tools and external tools.
  */
 export function getClientToolsFromRegistry(): ClientTool[] {
-  return buildClientToolsFromSnapshot(toolRegistry, getExternalToolsRegistry());
+  return buildClientToolsFromSnapshot(
+    withDynamicMessageChannelCache(toolRegistry),
+    getExternalToolsRegistry(),
+  );
 }
 
 function buildClientToolsFromSnapshot(
@@ -709,7 +752,7 @@ function capturePreparedToolExecutionContext(
   },
 ): PreparedToolExecutionContext {
   const executionSnapshot: ToolExecutionContextSnapshot = {
-    toolRegistry: new Map(snapshot.toolRegistry),
+    toolRegistry: withDynamicMessageChannelCache(snapshot.toolRegistry),
     externalTools: new Map(snapshot.externalTools),
     externalExecutor: snapshot.externalExecutor,
     workingDirectory:
@@ -749,6 +792,26 @@ export function captureToolExecutionContext(
       workingDirectory,
       permissionModeState,
     },
+  );
+}
+
+export async function prepareCurrentToolExecutionContext(options?: {
+  workingDirectory?: string;
+  permissionModeState?: PermissionModeState;
+}): Promise<PreparedToolExecutionContext> {
+  await waitForToolsetReady();
+  const currentToolNames = maybeAppendChannelTools(
+    Array.from(toolRegistry.keys()) as ToolName[],
+  );
+  const toolRegistrySnapshot =
+    await buildSpecificToolRegistry(currentToolNames);
+  return capturePreparedToolExecutionContext(
+    {
+      toolRegistry: toolRegistrySnapshot,
+      externalTools: new Map(getExternalToolsRegistry()),
+      externalExecutor: getExternalToolExecutor(),
+    },
+    options,
   );
 }
 
@@ -961,13 +1024,16 @@ async function buildSpecificToolRegistry(
       throw new Error(`Tool implementation not found for ${internalName}`);
     }
 
+    const resolvedTool = await maybeResolveDynamicChannelTool(
+      internalName,
+      definition.description,
+      definition.schema,
+    );
+
     const toolSchema: ToolSchema = {
       name: internalName,
-      description: definition.description,
-      input_schema: await maybeInjectChannelSchema(
-        internalName,
-        definition.schema,
-      ),
+      description: resolvedTool.description,
+      input_schema: resolvedTool.input_schema as JsonSchema,
     };
 
     newRegistry.set(internalName, {
@@ -1057,10 +1123,16 @@ async function buildRegistryForModel(
         );
       }
 
-      const toolSchema: ToolSchema = {
+      const resolvedTool = await maybeResolveDynamicChannelTool(
         name,
         description,
-        input_schema: await maybeInjectChannelSchema(name, definition.schema),
+        definition.schema,
+      );
+
+      const toolSchema: ToolSchema = {
+        name,
+        description: resolvedTool.description,
+        input_schema: resolvedTool.input_schema as JsonSchema,
       };
 
       newRegistry.set(name, {
@@ -1769,7 +1841,9 @@ export function getAllLettaToolNames(): string[] {
  * @returns Array of tool schemas
  */
 export function getToolSchemas(): ToolSchema[] {
-  return Array.from(toolRegistry.values()).map((tool) => tool.schema);
+  return Array.from(withDynamicMessageChannelCache(toolRegistry).values()).map(
+    (tool) => tool.schema,
+  );
 }
 
 /**
@@ -1781,7 +1855,34 @@ export function getToolSchemas(): ToolSchema[] {
 export function getToolSchema(name: string): ToolSchema | undefined {
   const internalName = resolveInternalToolName(name);
   if (!internalName) return undefined;
-  return toolRegistry.get(internalName)?.schema;
+  return withDynamicMessageChannelCache(toolRegistry).get(internalName)?.schema;
+}
+
+export async function refreshDynamicChannelToolsInLoadedRegistry(): Promise<void> {
+  const activeChannels = getActiveChannelIds();
+  if (activeChannels.length === 0) {
+    toolRegistry.delete("MessageChannel");
+    return;
+  }
+
+  const definition = TOOL_DEFINITIONS.MessageChannel;
+  if (!definition?.impl) {
+    throw new Error("Tool implementation not found for MessageChannel");
+  }
+
+  const resolvedTool = await maybeResolveDynamicChannelTool(
+    "MessageChannel",
+    definition.description,
+    definition.schema,
+  );
+  toolRegistry.set("MessageChannel", {
+    schema: {
+      name: "MessageChannel",
+      description: resolvedTool.description,
+      input_schema: resolvedTool.input_schema as JsonSchema,
+    },
+    fn: definition.impl,
+  });
 }
 
 /**
