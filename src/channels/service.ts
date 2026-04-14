@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { refreshDynamicChannelToolsInLoadedRegistry } from "../tools/manager";
 import {
   getChannelAccount,
   LEGACY_CHANNEL_ACCOUNT_ID,
@@ -118,6 +119,10 @@ export interface ChannelTargetSnapshot {
   discoveredAt: string;
   lastSeenAt: string;
   lastMessageId?: string;
+}
+
+async function refreshLoadedMessageChannelTool(): Promise<void> {
+  await refreshDynamicChannelToolsInLoadedRegistry();
 }
 
 export type ChannelAccountSnapshot =
@@ -639,6 +644,7 @@ export async function setChannelConfigLive(
   if (!snapshot) {
     throw new Error(`Failed to write ${channelId} channel config`);
   }
+  await refreshLoadedMessageChannelTool();
   return snapshot;
 }
 
@@ -687,6 +693,7 @@ export async function startChannelLive(
   if (!summary) {
     throw new Error(`Channel "${channelId}" summary not found after start`);
   }
+  await refreshLoadedMessageChannelTool();
   return summary;
 }
 
@@ -717,6 +724,7 @@ export async function stopChannelLive(
   if (!summary) {
     throw new Error(`Channel "${channelId}" summary not found after stop`);
   }
+  await refreshLoadedMessageChannelTool();
   return summary;
 }
 
@@ -909,9 +917,15 @@ export async function startChannelAccountLive(
   }
 
   await ensureChannelRegistry().startChannelAccount(channelId, accountId);
-  return refreshChannelAccountDisplayNameLive(channelId, accountId, {
-    force: channelId === "slack",
-  });
+  const snapshot = await refreshChannelAccountDisplayNameLive(
+    channelId,
+    accountId,
+    {
+      force: channelId === "slack",
+    },
+  );
+  await refreshLoadedMessageChannelTool();
+  return snapshot;
 }
 
 export async function stopChannelAccountLive(
@@ -935,6 +949,7 @@ export async function stopChannelAccountLive(
     : existing;
 
   await getChannelRegistry()?.stopChannelAccount(channelId, accountId);
+  await refreshLoadedMessageChannelTool();
   return toAccountSnapshot(next);
 }
 
@@ -955,7 +970,9 @@ export async function removeChannelAccountLive(
   removeRoutesForAccount(channelId, accountId);
   removeChannelTargetsForAccount(channelId, accountId);
   removePairingStateForAccount(channelId, accountId);
-  return removeChannelAccount(channelId, accountId);
+  const removed = removeChannelAccount(channelId, accountId);
+  await refreshLoadedMessageChannelTool();
+  return removed;
 }
 
 export function listPendingPairingSnapshots(

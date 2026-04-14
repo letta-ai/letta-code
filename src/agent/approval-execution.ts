@@ -10,8 +10,8 @@ import type { ToolReturnMessage } from "@letta-ai/letta-client/resources/tools";
 import type { ApprovalRequest } from "../cli/helpers/stream";
 import { INTERRUPTED_BY_USER } from "../constants";
 import {
-  captureToolExecutionContext,
   executeTool,
+  prepareCurrentToolExecutionContext,
   type ToolExecutionResult,
   type ToolReturnContent,
 } from "../tools/manager";
@@ -383,7 +383,11 @@ export async function executeApprovalBatch(
   const toolContextId =
     options?.toolContextId ??
     (options?.workingDirectory
-      ? captureToolExecutionContext(options.workingDirectory).contextId
+      ? (
+          await prepareCurrentToolExecutionContext({
+            workingDirectory: options.workingDirectory,
+          })
+        ).contextId
       : undefined);
 
   // Pre-allocate results array to maintain original order
