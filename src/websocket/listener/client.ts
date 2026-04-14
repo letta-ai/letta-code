@@ -64,7 +64,7 @@ import { trackBoundaryError } from "../../telemetry/errorReporting";
 import { loadTools } from "../../tools/manager";
 import {
   ensureCorrectMemoryTool,
-  prepareToolExecutionContextForResolvedTarget,
+  prepareToolExecutionContextForScope,
   type ToolsetName,
 } from "../../tools/toolset";
 import { formatToolsetName } from "../../tools/toolset-labels";
@@ -669,11 +669,11 @@ async function applyModelUpdateForRuntime(params: {
 
   try {
     await ensureCorrectMemoryTool(agentId, model.handle);
-    const preparedToolContext =
-      await prepareToolExecutionContextForResolvedTarget({
-        modelIdentifier: model.handle,
-        toolsetPreference,
-      });
+    const preparedToolContext = await prepareToolExecutionContextForScope({
+      agentId,
+      conversationId,
+      overrideModel: model.handle,
+    });
     nextToolset = preparedToolContext.toolset;
     nextLoadedTools = preparedToolContext.preparedToolContext.loadedToolNames;
     scopedRuntime.currentToolset = preparedToolContext.toolset;

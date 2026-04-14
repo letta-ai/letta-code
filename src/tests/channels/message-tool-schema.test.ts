@@ -107,4 +107,36 @@ describe("buildDynamicMessageChannelSchema", () => {
     expect(properties.channel?.enum).toEqual(["slack", "telegram"]);
     expect(properties.action?.enum).toEqual(["send", "react", "upload-file"]);
   });
+
+  test("can narrow discovery to the channels bound for the current conversation scope", async () => {
+    const registry = new ChannelRegistry();
+    registry.registerAdapter(createRunningAdapter("slack", "acct-slack"));
+    registry.registerAdapter(createRunningAdapter("telegram", "acct-telegram"));
+
+    const resolved = await buildDynamicMessageChannelToolDefinition(
+      "Base MessageChannel description.",
+      {
+        type: "object",
+        properties: {
+          action: { type: "string" },
+          channel: { type: "string" },
+          chat_id: { type: "string" },
+        },
+        required: ["action", "channel", "chat_id"],
+        additionalProperties: false,
+      },
+      {
+        channels: [{ channelId: "slack", accountId: "acct-slack" }],
+      },
+    );
+
+    const properties = resolved.schema.properties as Record<
+      string,
+      { enum?: string[] }
+    >;
+    expect(resolved.description).toContain("Currently active channels: Slack.");
+    expect(resolved.description).not.toContain("Telegram");
+    expect(properties.channel?.enum).toEqual(["slack"]);
+    expect(properties.action?.enum).toEqual(["send", "react", "upload-file"]);
+  });
 });

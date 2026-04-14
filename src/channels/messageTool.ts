@@ -6,6 +6,15 @@ import type {
 import { getActiveChannelIds } from "./registry";
 import type { SupportedChannelId } from "./types";
 
+export type MessageChannelToolScopeEntry = {
+  channelId: SupportedChannelId;
+  accountId?: string | null;
+};
+
+export type MessageChannelToolDiscoveryScope = {
+  channels: MessageChannelToolScopeEntry[];
+};
+
 type ResolvedMessageChannelToolDiscovery = {
   activeChannels: SupportedChannelId[];
   actions: string[];
@@ -118,16 +127,28 @@ function buildDynamicMessageChannelDescriptionFromDiscovery(
   return `${description}\n\nCurrently active channels: ${channelList}. Available actions across the active channels: ${actionList}. The JSON schema reflects the currently active channel plugins.`;
 }
 
-export async function resolveMessageChannelToolDiscovery(): Promise<ResolvedMessageChannelToolDiscovery> {
-  const activeChannels = getActiveChannelIds() as SupportedChannelId[];
+export async function resolveMessageChannelToolDiscovery(
+  scope?: MessageChannelToolDiscoveryScope | null,
+): Promise<ResolvedMessageChannelToolDiscovery> {
+  const scopedChannels = scope?.channels ?? [];
+  const discoveryTargets =
+    scopedChannels.length > 0
+      ? scopedChannels
+      : (getActiveChannelIds() as SupportedChannelId[]).map((channelId) => ({
+          channelId,
+          accountId: null,
+        }));
+  const activeChannels = Array.from(
+    new Set(discoveryTargets.map(({ channelId }) => channelId)),
+  );
   const actions = new Set<string>(["send"]);
   const schemaContributions: ChannelMessageToolSchemaContribution[] = [];
 
-  for (const channelId of activeChannels) {
+  for (const { channelId, accountId } of discoveryTargets) {
     try {
       const plugin = await loadChannelPlugin(channelId);
       const discovery = plugin.messageActions?.describeMessageTool({
-        accountId: null,
+        accountId: accountId ?? null,
       });
 
       for (const action of collectDiscoveryActions(discovery)) {
@@ -148,16 +169,18 @@ export async function resolveMessageChannelToolDiscovery(): Promise<ResolvedMess
 
 export async function buildDynamicMessageChannelSchema(
   baseSchema: Record<string, unknown>,
+  scope?: MessageChannelToolDiscoveryScope | null,
 ): Promise<Record<string, unknown>> {
-  const discovery = await resolveMessageChannelToolDiscovery();
+  const discovery = await resolveMessageChannelToolDiscovery(scope);
   return buildDynamicMessageChannelSchemaFromDiscovery(baseSchema, discovery);
 }
 
 export async function buildDynamicMessageChannelToolDefinition(
   baseDescription: string,
   baseSchema: Record<string, unknown>,
+  scope?: MessageChannelToolDiscoveryScope | null,
 ): Promise<CachedDynamicMessageChannelTool> {
-  const discovery = await resolveMessageChannelToolDiscovery();
+  const discovery = await resolveMessageChannelToolDiscovery(scope);
   const resolved = {
     description: buildDynamicMessageChannelDescriptionFromDiscovery(
       baseDescription,
@@ -168,10 +191,12 @@ export async function buildDynamicMessageChannelToolDefinition(
       discovery,
     ),
   };
-  cachedDynamicMessageChannelTool = {
-    description: resolved.description,
-    schema: structuredClone(resolved.schema),
-  };
+  if (!scope || scope.channels.length === 0) {
+    cachedDynamicMessageChannelTool = {
+      description: resolved.description,
+      schema: structuredClone(resolved.schema),
+    };
+  }
   return resolved;
 }
 
