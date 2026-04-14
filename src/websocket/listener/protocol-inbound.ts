@@ -54,6 +54,7 @@ import type {
   TerminalSpawnCommand,
   UnwatchFileCommand,
   UpdateModelCommand,
+  UpdateToolsetCommand,
   WatchFileCommand,
   WriteFileCommand,
   WsProtocolCommand,
@@ -517,6 +518,24 @@ export function isUpdateModelCommand(
     typeof payload.model_handle === "string";
 
   return hasModelId && hasModelHandle && hasAtLeastOne;
+}
+
+export function isUpdateToolsetCommand(
+  value: unknown,
+): value is UpdateToolsetCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    runtime?: unknown;
+    toolset_preference?: unknown;
+  };
+  return (
+    c.type === "update_toolset" &&
+    typeof c.request_id === "string" &&
+    isRuntimeScope(c.runtime) &&
+    typeof c.toolset_preference === "string"
+  );
 }
 
 export function isCronListCommand(value: unknown): value is CronListCommand {
@@ -1273,6 +1292,7 @@ export function parseServerMessage(
       isEnableMemfsCommand(parsed) ||
       isListModelsCommand(parsed) ||
       isUpdateModelCommand(parsed) ||
+      isUpdateToolsetCommand(parsed) ||
       isCronListCommand(parsed) ||
       isCronAddCommand(parsed) ||
       isCronGetCommand(parsed) ||
