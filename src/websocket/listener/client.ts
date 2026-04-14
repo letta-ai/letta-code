@@ -3245,6 +3245,7 @@ async function connectWithRetry(
               // best-effort
             }
           }
+          emitDeviceStatusUpdate(socket, runtime, parsed.runtime);
           return;
         }
 

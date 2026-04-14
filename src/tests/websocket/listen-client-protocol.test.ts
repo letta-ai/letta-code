@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { APIError } from "@letta-ai/letta-client/core/error";
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import WebSocket from "ws";
+import { getMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
 import { buildConversationMessagesCreateRequestBody } from "../../agent/message";
 import { models } from "../../agent/model";
 import {
@@ -1388,6 +1389,28 @@ describe("listen-client v2 status builders", () => {
     });
 
     expect(deviceStatus.should_doctor).toBe(true);
+  });
+
+  test("buildDeviceStatus refreshes should_doctor from memfs when cache is cold", async () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const agentId = `agent-doctor-refresh-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const memoryDir = getMemoryFilesystemRoot(agentId);
+    const systemDir = join(memoryDir, "system");
+
+    await mkdir(systemDir, { recursive: true });
+
+    try {
+      await writeFile(join(systemDir, "context.md"), "x".repeat(120_000));
+
+      const deviceStatus = __listenClientTestUtils.buildDeviceStatus(listener, {
+        agent_id: agentId,
+        conversation_id: "default",
+      });
+
+      expect(deviceStatus.should_doctor).toBe(true);
+    } finally {
+      await rm(memoryDir, { recursive: true, force: true });
+    }
   });
 
   test("buildDeviceStatus includes only active bash and task background processes", () => {

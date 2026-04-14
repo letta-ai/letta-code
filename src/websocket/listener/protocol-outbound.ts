@@ -5,7 +5,7 @@ import { getMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
 import { getGitContext } from "../../cli/helpers/gitContext";
 import { getReflectionSettings } from "../../cli/helpers/memoryReminder";
 import { getSubagents } from "../../cli/helpers/subagentState";
-import { getSystemPromptDoctorState } from "../../cli/helpers/systemPromptWarning";
+import { getOrRefreshSystemPromptDoctorState } from "../../cli/helpers/systemPromptWarning";
 import { permissionMode } from "../../permissions/mode";
 import type { DequeuedBatch } from "../../queue/queueRuntime";
 import { settingsManager } from "../../settings-manager";
@@ -236,7 +236,7 @@ export function buildDeviceStatus(
     }
   })();
   const systemPromptDoctorState = scopedAgentId
-    ? getSystemPromptDoctorState(scopedAgentId)
+    ? getOrRefreshSystemPromptDoctorState(scopedAgentId)
     : null;
   return {
     current_connection_id: listener.connectionId,
