@@ -242,6 +242,21 @@ export interface ApplyMemfsFlagsOptions {
   skipPromptUpdate?: boolean;
 }
 
+async function bestEffortRecompileAgent(agentId: string): Promise<void> {
+  const { getClient } = await import("./client");
+  const client = await getClient();
+
+  try {
+    await client.agents.recompile(agentId, { update_timestamp: false });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.includes("404") || message.includes("not_found")) {
+      return;
+    }
+    throw error;
+  }
+}
+
 /**
  * Apply --memfs / --no-memfs CLI flags (or /memfs enable) to an agent.
  *
@@ -264,12 +279,36 @@ export async function applyMemfsFlags(
   options?: ApplyMemfsFlagsOptions,
 ): Promise<ApplyMemfsFlagsResult> {
   const { settingsManager } = await import("../settings-manager");
+  const explicitDisable = noMemfsFlag === true && memfsFlag !== true;
 
   // Validate explicit enable on supported backend.
   if (memfsFlag && !(await isLettaCloud())) {
     throw new Error(
       "--memfs is only available on Letta Cloud (api.letta.com).",
     );
+  }
+
+  // An explicit disable should never try to clone/pull the git-backed repo,
+  // even if stale local/server state still says memfs is enabled.
+  if (explicitDisable) {
+    if (!options?.skipPromptUpdate) {
+      const { updateAgentSystemPromptMemfs } = await import("./modify");
+      const promptUpdate = await updateAgentSystemPromptMemfs(agentId, false);
+      if (!promptUpdate.success) {
+        throw new Error(promptUpdate.message);
+      }
+      await bestEffortRecompileAgent(agentId);
+    }
+
+    settingsManager.setMemfsEnabled(agentId, false);
+
+    const { removeGitMemoryTag } = await import("./memoryGit");
+    await removeGitMemoryTag(agentId);
+
+    return {
+      action: "disabled",
+      memoryDir: undefined,
+    };
   }
 
   const hasExplicitToggle = Boolean(memfsFlag || noMemfsFlag);
@@ -300,9 +339,7 @@ export async function applyMemfsFlags(
       }
       // Force recompile of the system message so the updated template
       // (with/without memfs addon) is reflected in the compiled prompt.
-      const { getClient } = await import("./client");
-      const client = await getClient();
-      await client.agents.recompile(agentId, { update_timestamp: false });
+      await bestEffortRecompileAgent(agentId);
     }
     settingsManager.setMemfsEnabled(agentId, targetEnabled);
   }
@@ -336,12 +373,6 @@ export async function applyMemfsFlags(
         // Block doesn't exist or already removed, skip
       }
     }
-  }
-
-  // Keep server-side state aligned with explicit disable.
-  if (noMemfsFlag) {
-    const { removeGitMemoryTag } = await import("./memoryGit");
-    await removeGitMemoryTag(agentId);
   }
 
   // 4. Add git tag + clone/pull repo.
