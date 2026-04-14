@@ -64,8 +64,11 @@ import { trackBoundaryError } from "../../telemetry/errorReporting";
 import { loadTools } from "../../tools/manager";
 import {
   ensureCorrectMemoryTool,
+  forceToolsetSwitch,
   prepareToolExecutionContextForResolvedTarget,
+  switchToolsetForModel,
   type ToolsetName,
+  type ToolsetPreference,
 } from "../../tools/toolset";
 import { formatToolsetName } from "../../tools/toolset-labels";
 import type {
@@ -106,6 +109,7 @@ import type {
   SkillDisableCommand,
   SkillEnableCommand,
   UpdateModelResponseMessage,
+  UpdateToolsetResponseMessage,
 } from "../../types/protocol_v2";
 import { isDebugEnabled } from "../../utils/debug";
 import {
@@ -195,6 +199,7 @@ import {
   isSkillEnableCommand,
   isUnwatchFileCommand,
   isUpdateModelCommand,
+  isUpdateToolsetCommand,
   isWatchFileCommand,
   isWriteFileCommand,
   parseServerMessage,
@@ -720,6 +725,93 @@ async function applyModelUpdateForRuntime(params: {
     model_id: model.id,
     model_handle: model.handle,
     model_settings: modelSettings,
+  };
+}
+
+async function applyToolsetUpdateForRuntime(params: {
+  socket: WebSocket;
+  listener: ListenerRuntime;
+  scopedRuntime: ConversationRuntime;
+  requestId: string;
+  toolsetPreference: ToolsetPreference;
+}): Promise<UpdateToolsetResponseMessage> {
+  const { socket, listener, scopedRuntime, requestId, toolsetPreference } =
+    params;
+  const agentId = scopedRuntime.agentId;
+  const conversationId = scopedRuntime.conversationId;
+
+  if (!agentId) {
+    return {
+      type: "update_toolset_response",
+      request_id: requestId,
+      success: false,
+      error: "Missing agent_id in runtime scope",
+    };
+  }
+
+  const previousToolNames = scopedRuntime.currentLoadedTools;
+  let nextToolset: ToolsetName;
+
+  if (toolsetPreference === "auto") {
+    // Fetch the agent's current model to derive the toolset
+    const client = await getClient();
+    const agent = await client.agents.retrieve(agentId);
+    const modelHandle =
+      (agent as { model_settings?: { model?: string } }).model_settings
+        ?.model ?? null;
+
+    if (!modelHandle) {
+      return {
+        type: "update_toolset_response",
+        request_id: requestId,
+        success: false,
+        error: "Could not determine current model for auto toolset",
+      };
+    }
+
+    nextToolset = await switchToolsetForModel(modelHandle, agentId);
+  } else {
+    await forceToolsetSwitch(toolsetPreference, agentId);
+    nextToolset = toolsetPreference;
+  }
+
+  settingsManager.setToolsetPreference(agentId, toolsetPreference);
+  scopedRuntime.currentToolset = nextToolset;
+  scopedRuntime.currentToolsetPreference = toolsetPreference;
+  scopedRuntime.currentLoadedTools =
+    (await import("../../tools/manager")).getToolNames();
+
+  const toolsChanged =
+    JSON.stringify(previousToolNames) !==
+    JSON.stringify(scopedRuntime.currentLoadedTools);
+
+  const statusMessage =
+    toolsetPreference === "auto"
+      ? `Toolset mode set to auto (currently ${formatToolsetName(nextToolset)}).`
+      : `Switched toolset to ${formatToolsetName(nextToolset)} (manual override).`;
+
+  emitStatusDelta(socket, scopedRuntime, {
+    message: statusMessage,
+    level: toolsChanged ? "info" : "info",
+    agentId,
+    conversationId,
+  });
+
+  emitRuntimeStateUpdates(listener, {
+    agent_id: agentId,
+    conversation_id: conversationId,
+  });
+
+  return {
+    type: "update_toolset_response",
+    request_id: requestId,
+    success: true,
+    runtime: {
+      agent_id: agentId,
+      conversation_id: conversationId,
+    },
+    current_toolset: nextToolset,
+    current_toolset_preference: toolsetPreference,
   };
 }
 
@@ -4777,6 +4869,54 @@ async function connectWithRetry(
               failure,
               "listener_update_model_send_failed",
               "listener_update_model",
+            );
+          }
+        });
+        return;
+      }
+
+      // ── Toolset update command (runtime scoped) ──────────────────────
+      if (isUpdateToolsetCommand(parsed)) {
+        runDetachedListenerTask("update_toolset", async () => {
+          const scopedRuntime = getOrCreateScopedRuntime(
+            runtime,
+            parsed.runtime.agent_id,
+            parsed.runtime.conversation_id,
+          );
+
+          try {
+            const response = await applyToolsetUpdateForRuntime({
+              socket,
+              listener: runtime,
+              scopedRuntime,
+              requestId: parsed.request_id,
+              toolsetPreference: parsed.toolset_preference,
+            });
+            safeSocketSend(
+              socket,
+              response,
+              "listener_update_toolset_send_failed",
+              "listener_update_toolset",
+            );
+          } catch (error) {
+            const failure: UpdateToolsetResponseMessage = {
+              type: "update_toolset_response",
+              request_id: parsed.request_id,
+              success: false,
+              runtime: {
+                agent_id: parsed.runtime.agent_id,
+                conversation_id: parsed.runtime.conversation_id,
+              },
+              error:
+                error instanceof Error
+                  ? error.message
+                  : "Failed to update toolset",
+            };
+            safeSocketSend(
+              socket,
+              failure,
+              "listener_update_toolset_send_failed",
+              "listener_update_toolset",
             );
           }
         });
