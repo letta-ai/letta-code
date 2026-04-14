@@ -3313,6 +3313,12 @@ async function handleCwdChange(
       setIndexRoot(normalizedPath);
     }
 
+    // Proactively warm the file index so @ file search is instant when
+    // the user first types "@".  ensureFileIndex() is idempotent — if the
+    // index was already built (or a rebuild is in-flight from setIndexRoot
+    // above), this returns immediately / joins the existing promise.
+    void ensureFileIndex();
+
     emitDeviceStatusUpdate(socket, runtime, {
       agent_id: agentId,
       conversation_id: conversationId,
