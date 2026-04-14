@@ -1313,22 +1313,7 @@ async function handleChannelsProtocolCommand(
 
   if (parsed.type === "channel_accounts_list") {
     try {
-      const accounts = await Promise.all(
-        listChannelAccountSnapshots(parsed.channel_id).map((account) =>
-          parsed.channel_id === "slack"
-            ? refreshChannelAccountDisplayNameLive(
-                parsed.channel_id,
-                account.accountId,
-                { force: true },
-              )
-            : account.displayName
-              ? Promise.resolve(account)
-              : refreshChannelAccountDisplayNameLive(
-                  parsed.channel_id,
-                  account.accountId,
-                ),
-        ),
-      );
+      const accounts = listChannelAccountSnapshots(parsed.channel_id);
       safeSocketSend(
         socket,
         {
@@ -1341,6 +1326,43 @@ async function handleChannelsProtocolCommand(
         "listener_channels_send_failed",
         "listener_channels_command",
       );
+
+      const accountsNeedingRefresh = accounts.filter((account) =>
+        parsed.channel_id === "slack" ? true : !account.displayName,
+      );
+
+      if (accountsNeedingRefresh.length > 0) {
+        runDetachedListenerTask("channel_accounts_refresh", async () => {
+          const refreshResults = await Promise.allSettled(
+            accountsNeedingRefresh.map(async (account) => {
+              const refreshed =
+                parsed.channel_id === "slack"
+                  ? await refreshChannelAccountDisplayNameLive(
+                      parsed.channel_id,
+                      account.accountId,
+                      { force: true },
+                    )
+                  : await refreshChannelAccountDisplayNameLive(
+                      parsed.channel_id,
+                      account.accountId,
+                    );
+
+              return refreshed.displayName !== account.displayName;
+            }),
+          );
+
+          if (
+            refreshResults.some(
+              (result) => result.status === "fulfilled" && result.value,
+            )
+          ) {
+            emitChannelAccountsUpdated(socket, {
+              channelId: parsed.channel_id,
+            });
+            emitChannelsUpdated(socket, parsed.channel_id);
+          }
+        });
+      }
     } catch (err) {
       safeSocketSend(
         socket,
