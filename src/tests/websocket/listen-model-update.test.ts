@@ -153,9 +153,8 @@ describe("listen-client applyModelUpdateForRuntime wiring", () => {
     expect(source).toContain(
       "await ensureCorrectMemoryTool(agentId, model.handle)",
     );
-    expect(source).toContain(
-      "await prepareToolExecutionContextForResolvedTarget({",
-    );
+    expect(source).toContain("await prepareToolExecutionContextForScope({");
+    expect(source).toContain("overrideModel: model.handle");
     expect(source).toContain(
       "scopedRuntime.currentLoadedTools = nextLoadedTools;",
     );

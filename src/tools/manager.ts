@@ -6,6 +6,7 @@ import { getAllSubagentConfigs } from "../agent/subagents";
 import {
   buildDynamicMessageChannelToolDefinition,
   getCachedDynamicMessageChannelToolDefinition,
+  type MessageChannelToolDiscoveryScope,
 } from "../channels/messageTool";
 import { getActiveChannelIds } from "../channels/registry";
 import { refreshFileIndex } from "../cli/helpers/fileIndex";
@@ -34,9 +35,16 @@ export const TOOL_NAMES = Object.keys(TOOL_DEFINITIONS) as ToolName[];
  * Append MessageChannel tool if any channels are active.
  * Used by both resolveBaseToolNamesForModel() and getToolNamesForToolset().
  */
-function maybeAppendChannelTools(toolNames: ToolName[]): ToolName[] {
+function maybeAppendChannelTools(
+  toolNames: ToolName[],
+  channelToolScope?: MessageChannelToolDiscoveryScope | null,
+): ToolName[] {
+  const hasActiveChannelTools =
+    channelToolScope !== undefined
+      ? (channelToolScope?.channels.length ?? 0) > 0
+      : getActiveChannelIds().length > 0;
   if (
-    getActiveChannelIds().length > 0 &&
+    hasActiveChannelTools &&
     !toolNames.includes("MessageChannel" as ToolName)
   ) {
     return [...toolNames, "MessageChannel" as ToolName];
@@ -52,6 +60,7 @@ async function maybeResolveDynamicChannelTool(
   name: string,
   description: string,
   schema: Record<string, unknown>,
+  channelToolScope?: MessageChannelToolDiscoveryScope | null,
 ): Promise<{ description: string; input_schema: Record<string, unknown> }> {
   if (name !== "MessageChannel") {
     return {
@@ -62,6 +71,7 @@ async function maybeResolveDynamicChannelTool(
   const resolved = await buildDynamicMessageChannelToolDefinition(
     description,
     schema,
+    channelToolScope,
   );
   return {
     description: resolved.description,
@@ -71,6 +81,14 @@ async function maybeResolveDynamicChannelTool(
 
 function withDynamicMessageChannelCache(registry: ToolRegistry): ToolRegistry {
   const nextRegistry = new Map(registry);
+  const existing = nextRegistry.get("MessageChannel");
+  if (
+    existing &&
+    existing.schema.description !== TOOL_DEFINITIONS.MessageChannel.description
+  ) {
+    return nextRegistry;
+  }
+
   if (getActiveChannelIds().length === 0) {
     nextRegistry.delete("MessageChannel");
     return nextRegistry;
@@ -81,7 +99,6 @@ function withDynamicMessageChannelCache(registry: ToolRegistry): ToolRegistry {
     return nextRegistry;
   }
 
-  const existing = nextRegistry.get("MessageChannel");
   nextRegistry.set("MessageChannel", {
     schema: {
       name: "MessageChannel",
@@ -820,9 +837,13 @@ export async function prepareToolExecutionContextForSpecificTools(
   options?: {
     workingDirectory?: string;
     permissionModeState?: PermissionModeState;
+    channelToolScope?: MessageChannelToolDiscoveryScope | null;
   },
 ): Promise<PreparedToolExecutionContext> {
-  const toolRegistrySnapshot = await buildSpecificToolRegistry(toolNames);
+  const toolRegistrySnapshot = await buildSpecificToolRegistry(
+    toolNames,
+    options?.channelToolScope,
+  );
   return capturePreparedToolExecutionContext(
     {
       toolRegistry: toolRegistrySnapshot,
@@ -839,6 +860,7 @@ export async function prepareToolExecutionContextForModel(
     exclude?: ToolName[];
     workingDirectory?: string;
     permissionModeState?: PermissionModeState;
+    channelToolScope?: MessageChannelToolDiscoveryScope | null;
   },
 ): Promise<PreparedToolExecutionContext> {
   const toolRegistrySnapshot = await buildRegistryForModel(
@@ -1002,6 +1024,7 @@ function maybeApplyLspReadOverride(registry: ToolRegistry): void {
 
 async function buildSpecificToolRegistry(
   toolNames: string[],
+  channelToolScope?: MessageChannelToolDiscoveryScope | null,
 ): Promise<ToolRegistry> {
   const { toolFilter } = await import("./filter");
   const newRegistry: ToolRegistry = new Map();
@@ -1028,6 +1051,7 @@ async function buildSpecificToolRegistry(
       internalName,
       definition.description,
       definition.schema,
+      channelToolScope,
     );
 
     const toolSchema: ToolSchema = {
@@ -1048,7 +1072,10 @@ async function buildSpecificToolRegistry(
 
 async function resolveBaseToolNamesForModel(
   modelIdentifier?: string,
-  options?: { exclude?: ToolName[] },
+  options?: {
+    exclude?: ToolName[];
+    channelToolScope?: MessageChannelToolDiscoveryScope | null;
+  },
 ): Promise<ToolName[]> {
   const { toolFilter } = await import("./filter");
   let baseToolNames: ToolName[];
@@ -1076,14 +1103,20 @@ async function resolveBaseToolNamesForModel(
   }
 
   // Append channel tool if channels are active
-  baseToolNames = maybeAppendChannelTools(baseToolNames);
+  baseToolNames = maybeAppendChannelTools(
+    baseToolNames,
+    options?.channelToolScope,
+  );
 
   return baseToolNames;
 }
 
 async function buildRegistryForModel(
   modelIdentifier?: string,
-  options?: { exclude?: ToolName[] },
+  options?: {
+    exclude?: ToolName[];
+    channelToolScope?: MessageChannelToolDiscoveryScope | null;
+  },
 ): Promise<ToolRegistry> {
   const { toolFilter } = await import("./filter");
   const allSubagentConfigs = await getAllSubagentConfigs();
@@ -1127,6 +1160,7 @@ async function buildRegistryForModel(
         name,
         description,
         definition.schema,
+        options?.channelToolScope,
       );
 
       const toolSchema: ToolSchema = {

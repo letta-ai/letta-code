@@ -19,6 +19,7 @@ import {
   getToolSchema,
   loadSpecificTools,
   prepareCurrentToolExecutionContext,
+  prepareToolExecutionContextForModel,
   prepareToolExecutionContextForSpecificTools,
   refreshDynamicChannelToolsInLoadedRegistry,
 } from "../../tools/manager";
@@ -184,5 +185,60 @@ describe("tool execution context snapshot", () => {
     expect(
       (schema?.input_schema.properties?.channel as { enum?: string[] }).enum,
     ).toEqual(["telegram"]);
+  });
+
+  test("omits MessageChannel from scoped snapshots when the conversation has no bound channel routes", async () => {
+    await loadSpecificTools(["Read"]);
+
+    const registry = new ChannelRegistry();
+    registry.registerAdapter(createRunningAdapter("slack", "acct-slack"));
+
+    const prepared = await prepareToolExecutionContextForModel(
+      "anthropic/claude-opus-4-1-20250805",
+      {
+        channelToolScope: { channels: [] },
+      },
+    );
+
+    expect(prepared.loadedToolNames).not.toContain("MessageChannel");
+    expect(
+      prepared.clientTools.some((tool) => tool.name === "MessageChannel"),
+    ).toBe(false);
+  });
+
+  test("preserves scoped MessageChannel discovery even when the global cache was seeded differently", async () => {
+    await loadSpecificTools(["Read"]);
+
+    const registry = new ChannelRegistry();
+    registry.registerAdapter(createRunningAdapter("slack", "acct-slack"));
+    registry.registerAdapter(createRunningAdapter("telegram", "acct-telegram"));
+
+    await refreshDynamicChannelToolsInLoadedRegistry();
+
+    const prepared = await prepareToolExecutionContextForModel(
+      "anthropic/claude-opus-4-1-20250805",
+      {
+        channelToolScope: {
+          channels: [{ channelId: "slack", accountId: "acct-slack" }],
+        },
+      },
+    );
+    const messageChannel = prepared.clientTools.find(
+      (tool) => tool.name === "MessageChannel",
+    );
+
+    expect(prepared.loadedToolNames).toContain("MessageChannel");
+    expect(messageChannel?.description).toContain(
+      "Currently active channels: Slack.",
+    );
+    expect(messageChannel?.description).not.toContain("Telegram");
+    expect(
+      (
+        messageChannel?.parameters?.properties as Record<
+          string,
+          { enum?: string[] }
+        >
+      ).channel?.enum,
+    ).toEqual(["slack"]);
   });
 });
