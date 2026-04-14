@@ -30,6 +30,7 @@ import {
   classifyApprovalsWithSuggestions,
 } from "./approval-suggestions";
 import {
+  createToolExecutionOutputEmitter,
   emitInterruptToolReturnMessage,
   emitToolExecutionFinishedEvents,
   emitToolExecutionStartedEvents,
@@ -383,6 +384,15 @@ export async function handleApprovalStop(params: {
     agentId,
     conversationId,
   });
+  const emitToolExecutionOutput = createToolExecutionOutputEmitter(
+    socket,
+    runtime,
+    {
+      runId: executionRunId,
+      agentId,
+      conversationId,
+    },
+  );
 
   if (shouldInterrupt()) {
     return interruptTermination();
@@ -408,6 +418,7 @@ export async function handleApprovalStop(params: {
   const executionResults = await executeApprovalBatch(decisions, undefined, {
     toolContextId: turnToolContextId ?? undefined,
     abortSignal: abortController.signal,
+    onStreamingOutput: emitToolExecutionOutput,
     workingDirectory: turnWorkingDirectory,
     parentScope:
       agentId && conversationId ? { agentId, conversationId } : undefined,
