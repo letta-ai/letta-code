@@ -843,6 +843,11 @@ describe("listen-client multi-worker concurrency", () => {
 
     await waitFor(() => processed.length === 1);
 
+    const queuedPayload = processed[0]?.messages[0];
+    if (!queuedPayload || !("content" in queuedPayload)) {
+      throw new Error("Expected queued user payload");
+    }
+
     expect(processed[0]).toEqual(
       expect.objectContaining({
         type: "message",
@@ -853,10 +858,22 @@ describe("listen-client multi-worker concurrency", () => {
             role: "user",
             content: channelContent,
             client_message_id: expect.stringMatching(/^cm-channel-/),
+            otid: expect.stringMatching(/^cm-channel-/),
           }),
         ],
       }),
     );
+    expect(queuedPayload.otid).toBe(queuedPayload.client_message_id);
+
+    const emittedMessages = socket.sentPayloads.map((payload) =>
+      JSON.parse(payload as string),
+    );
+    const dequeuedUserDelta = emittedMessages.find(
+      (message) =>
+        message.type === "stream_delta" &&
+        message.delta?.message_type === "user_message",
+    );
+    expect(dequeuedUserDelta?.delta?.otid).toBe(queuedPayload.otid);
     expect(runtime.queueRuntime.length).toBe(0);
     expect(runtime.queuedMessagesByItemId.size).toBe(0);
   });
@@ -2039,6 +2056,42 @@ describe("listen-client multi-worker concurrency", () => {
     });
 
     await turnPromise;
+  });
+
+  test("handleIncomingMessage reuses client_message_id as the message otid", async () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const runtime = __listenClientTestUtils.getOrCreateConversationRuntime(
+      listener,
+      "agent-client-message-id",
+      "conv-client-message-id",
+    );
+    const socket = new MockSocket();
+
+    await __listenClientTestUtils.handleIncomingMessage(
+      {
+        type: "message",
+        agentId: "agent-client-message-id",
+        conversationId: "conv-client-message-id",
+        messages: [
+          {
+            role: "user",
+            content: "hello",
+            client_message_id: "cm-user-otid",
+          } as IncomingMessage["messages"][number],
+        ],
+      },
+      socket as unknown as WebSocket,
+      runtime,
+    );
+
+    const [, sentMessages] = sendMessageStreamMock.mock.calls[0] ?? [];
+    expect(sentMessages).toEqual([
+      expect.objectContaining({
+        role: "user",
+        content: "hello",
+        otid: "cm-user-otid",
+      }),
+    ]);
   });
 
   test("pre-stream 409 resume on default conversation includes agent_id", async () => {

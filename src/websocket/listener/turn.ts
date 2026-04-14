@@ -452,7 +452,16 @@ export async function handleIncomingMessage(
 
     messagesToSend.push(
       ...normalizedMessages.map((m) =>
-        "content" in m && !m.otid ? { ...m, otid: crypto.randomUUID() } : m,
+        "content" in m && !m.otid
+          ? {
+              ...m,
+              otid:
+                "client_message_id" in m &&
+                typeof m.client_message_id === "string"
+                  ? m.client_message_id
+                  : crypto.randomUUID(),
+            }
+          : m,
       ),
     );
 
