@@ -405,11 +405,19 @@ export class ChannelRegistry {
     if (!config) return;
 
     if (msg.channel === "slack" && config.channel === "slack") {
-      const slackRoute = await this.ensureSlackRoute(adapter, msg, config);
-      if (!slackRoute) {
+      const slackResult = await this.ensureSlackRoute(adapter, msg, config);
+      if (!slackResult) {
         return;
       }
-      this.deliverOrBuffer(slackRoute, formatChannelNotification(msg));
+      const preparedMessage = adapter.prepareInboundMessage
+        ? await adapter.prepareInboundMessage(msg, {
+            isFirstRouteTurn: slackResult.isFirstRouteTurn,
+          })
+        : msg;
+      this.deliverOrBuffer(
+        slackResult.route,
+        formatChannelNotification(preparedMessage),
+      );
       return;
     }
 
@@ -529,7 +537,10 @@ export class ChannelRegistry {
     adapter: ChannelAdapter,
     msg: InboundChannelMessage,
     config: SlackChannelAccount,
-  ): Promise<ChannelRoute | null> {
+  ): Promise<{
+    route: ChannelRoute;
+    isFirstRouteTurn: boolean;
+  } | null> {
     if (!config.agentId) {
       await adapter.sendDirectReply(
         msg.chatId,
@@ -576,7 +587,10 @@ export class ChannelRegistry {
     }
 
     if (route) {
-      return route;
+      return {
+        route,
+        isFirstRouteTurn: false,
+      };
     }
 
     if (msg.chatType === "channel" && !msg.isMention) {
@@ -600,7 +614,10 @@ export class ChannelRegistry {
       channelId: msg.channel,
     });
 
-    return this.createSlackRoute(config, msg);
+    return {
+      route: await this.createSlackRoute(config, msg),
+      isFirstRouteTurn: true,
+    };
   }
 
   private deliverOrBuffer(

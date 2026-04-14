@@ -60,6 +60,9 @@ class FakeSlackApp {
     chat: {
       postMessage: mock(async () => ({ ts: "1712800000.000100" })),
     },
+    conversations: {
+      replies: mock(async () => ({ messages: [] })),
+    },
     reactions: {
       add: mock(async () => ({ ok: true })),
       remove: mock(async () => ({ ok: true })),
@@ -101,6 +104,24 @@ class FakeSlackApp {
 const resolveSlackInboundAttachmentsMock = mock(
   async (): Promise<ChannelMessageAttachment[]> => [],
 );
+const resolveSlackThreadStarterMock = mock(
+  async (): Promise<{
+    text: string;
+    userId?: string;
+    botId?: string;
+    ts?: string;
+  } | null> => null,
+);
+const resolveSlackThreadHistoryMock = mock(
+  async (): Promise<
+    Array<{
+      text: string;
+      userId?: string;
+      botId?: string;
+      ts?: string;
+    }>
+  > => [],
+);
 
 mock.module("../../channels/slack/runtime", () => ({
   loadSlackBoltModule: async () => ({
@@ -113,6 +134,8 @@ mock.module("../../channels/slack/runtime", () => ({
 
 mock.module("../../channels/slack/media", () => ({
   resolveSlackInboundAttachments: resolveSlackInboundAttachmentsMock,
+  resolveSlackThreadStarter: resolveSlackThreadStarterMock,
+  resolveSlackThreadHistory: resolveSlackThreadHistoryMock,
 }));
 
 const { createSlackAdapter, resolveSlackAccountDisplayName } = await import(
@@ -139,6 +162,10 @@ beforeEach(() => {
   FakeSlackApp.instances.length = 0;
   resolveSlackInboundAttachmentsMock.mockReset();
   resolveSlackInboundAttachmentsMock.mockImplementation(async () => []);
+  resolveSlackThreadStarterMock.mockReset();
+  resolveSlackThreadStarterMock.mockImplementation(async () => null);
+  resolveSlackThreadHistoryMock.mockReset();
+  resolveSlackThreadHistoryMock.mockImplementation(async () => []);
   fetchMock.mockClear();
   globalThis.fetch = fetchMock as unknown as typeof fetch;
 });
@@ -148,6 +175,7 @@ afterEach(() => {
     instance.client.auth.test.mockClear();
     instance.client.users.info.mockClear();
     instance.client.chat.postMessage.mockClear();
+    instance.client.conversations.replies.mockClear();
     instance.client.reactions.add.mockClear();
     instance.client.reactions.remove.mockClear();
     instance.client.files.getUploadURLExternal.mockClear();
@@ -350,6 +378,75 @@ test("slack adapter forwards threaded channel replies as channel input", async (
       isMention: false,
     }),
   );
+});
+
+test("slack adapter hydrates prior Slack thread context on the first routed turn", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  await adapter.start();
+  const app = FakeSlackApp.instances[0];
+  if (!app) {
+    throw new Error("Expected Slack app instance");
+  }
+
+  resolveSlackThreadStarterMock.mockResolvedValueOnce({
+    text: "Original question from the thread root",
+    userId: "U111",
+    ts: "1712790000.000050",
+  });
+  resolveSlackThreadHistoryMock.mockResolvedValueOnce([
+    {
+      text: "Some follow-up before the bot was tagged",
+      userId: "U222",
+      ts: "1712795000.000060",
+    },
+  ]);
+
+  const prepared = await adapter.prepareInboundMessage?.(
+    {
+      channel: "slack",
+      accountId: "slack-test-account",
+      chatId: "C123",
+      chatLabel: "#random",
+      senderId: "U123",
+      senderName: "Charles",
+      text: "please help",
+      timestamp: 1712800000100,
+      messageId: "1712800000.000100",
+      threadId: "1712790000.000050",
+      chatType: "channel",
+      isMention: true,
+    },
+    { isFirstRouteTurn: true },
+  );
+
+  expect(prepared).toBeDefined();
+  expect(prepared?.threadContext?.starter).toEqual(
+    expect.objectContaining({
+      messageId: "1712790000.000050",
+      senderId: "U111",
+      text: "Original question from the thread root",
+    }),
+  );
+  expect(prepared?.threadContext?.history).toEqual([
+    expect.objectContaining({
+      messageId: "1712795000.000060",
+      senderId: "U222",
+      text: "Some follow-up before the bot was tagged",
+    }),
+  ]);
+  expect(prepared?.threadContext?.label).toContain("Slack thread in #random");
+  expect(resolveSlackThreadStarterMock).toHaveBeenCalledTimes(1);
+  expect(resolveSlackThreadHistoryMock).toHaveBeenCalledTimes(1);
 });
 
 test("slack adapter dedupes threaded mentions delivered through message and app_mention", async () => {
