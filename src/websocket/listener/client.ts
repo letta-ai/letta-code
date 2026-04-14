@@ -940,16 +940,29 @@ function emitChannelTargetsUpdated(
   );
 }
 
+type ListMemoryCommandTestOverrides = {
+  ensureLocalMemfsCheckout?: (agentId: string) => Promise<void>;
+  getMemoryFilesystemRoot?: (agentId: string) => string;
+  isMemfsEnabledOnServer?: (agentId: string) => Promise<boolean>;
+};
+
 async function handleListMemoryCommand(
   parsed: ListMemoryCommand,
   socket: WebSocket,
+  overrides: ListMemoryCommandTestOverrides = {},
 ): Promise<boolean> {
   try {
     const {
-      ensureLocalMemfsCheckout,
-      getMemoryFilesystemRoot,
-      isMemfsEnabledOnServer,
+      ensureLocalMemfsCheckout: actualEnsureLocalMemfsCheckout,
+      getMemoryFilesystemRoot: actualGetMemoryFilesystemRoot,
+      isMemfsEnabledOnServer: actualIsMemfsEnabledOnServer,
     } = await import("../../agent/memoryFilesystem");
+    const ensureLocalMemfsCheckout =
+      overrides.ensureLocalMemfsCheckout ?? actualEnsureLocalMemfsCheckout;
+    const getMemoryFilesystemRoot =
+      overrides.getMemoryFilesystemRoot ?? actualGetMemoryFilesystemRoot;
+    const isMemfsEnabledOnServer =
+      overrides.isMemfsEnabledOnServer ?? actualIsMemfsEnabledOnServer;
     const { scanMemoryFilesystem, getFileNodes, readFileContent } =
       await import("../../agent/memoryScanner");
     const { parseFrontmatter } = await import("../../utils/frontmatter");

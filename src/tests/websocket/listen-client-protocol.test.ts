@@ -87,6 +87,7 @@ const actualChannelsService = await import("../../channels/service");
 
 afterEach(() => {
   __listenClientTestUtils.setChannelsServiceLoaderForTests(null);
+  mock.restore();
 });
 
 describe("listen-client channel command dispatch", () => {
@@ -1091,12 +1092,6 @@ describe("listen-client memory command handling", () => {
     const socket = new MockSocket(WebSocket.OPEN);
     const ensureLocalMemfsCheckoutMock = mock(async () => {});
 
-    mock.module("../../agent/memoryFilesystem", () => ({
-      getMemoryFilesystemRoot: () => tempRoot,
-      isMemfsEnabledOnServer: mock(async () => false),
-      ensureLocalMemfsCheckout: ensureLocalMemfsCheckoutMock,
-    }));
-
     try {
       await __listenClientTestUtils.handleListMemoryCommand(
         {
@@ -1106,6 +1101,11 @@ describe("listen-client memory command handling", () => {
           include_references: true,
         },
         socket as unknown as WebSocket,
+        {
+          getMemoryFilesystemRoot: () => tempRoot,
+          isMemfsEnabledOnServer: async () => false,
+          ensureLocalMemfsCheckout: ensureLocalMemfsCheckoutMock,
+        },
       );
 
       expect(ensureLocalMemfsCheckoutMock).not.toHaveBeenCalled();
@@ -1136,12 +1136,6 @@ describe("listen-client memory command handling", () => {
       );
     });
 
-    mock.module("../../agent/memoryFilesystem", () => ({
-      getMemoryFilesystemRoot: () => tempRoot,
-      isMemfsEnabledOnServer: mock(async () => true),
-      ensureLocalMemfsCheckout: ensureLocalMemfsCheckoutMock,
-    }));
-
     try {
       await __listenClientTestUtils.handleListMemoryCommand(
         {
@@ -1151,6 +1145,11 @@ describe("listen-client memory command handling", () => {
           include_references: true,
         },
         socket as unknown as WebSocket,
+        {
+          getMemoryFilesystemRoot: () => tempRoot,
+          isMemfsEnabledOnServer: async () => true,
+          ensureLocalMemfsCheckout: ensureLocalMemfsCheckoutMock,
+        },
       );
 
       expect(ensureLocalMemfsCheckoutMock).toHaveBeenCalledTimes(1);
