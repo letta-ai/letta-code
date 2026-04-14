@@ -27,16 +27,13 @@ import { sessionPermissions } from "../../permissions/session";
 import { settingsManager } from "../../settings-manager";
 import { resolveLettaInvocation } from "../../tools/impl/shellEnv";
 import { getErrorMessage } from "../../utils/error";
-import { parseFrontmatter } from "../../utils/frontmatter";
 import { getAvailableModelHandles } from "../available-models";
 import { getClient } from "../client";
 import { getCurrentAgentId } from "../context";
 import { getDefaultModelForTier, resolveModel } from "../model";
+import recallSubagentPrompt from "../prompts/recall_subagent.md";
 
 import { getAllSubagentConfigs, type SubagentConfig } from ".";
-
-// Bundled skill content for inline injection
-import searchingMessagesSkillMd from "../../skills/builtin/searching-messages/SKILL.md";
 
 // ============================================================================
 // Types
@@ -926,30 +923,14 @@ ${SYSTEM_REMINDER_CLOSE}
 `;
 }
 
-function getSearchingMessagesSkillBody(): string {
-  const { body } = parseFrontmatter(searchingMessagesSkillMd);
-  return body.trim();
-}
-
 function buildForkSystemReminder(subagentType?: string): string {
   if (subagentType === "recall") {
-    const skillContent = getSearchingMessagesSkillBody();
     return `${SYSTEM_REMINDER_OPEN}
 You have been forked from the primary conversational thread to run as an independent subagent.
 You CANNOT ask questions mid-execution - all instructions are provided upfront.
 Your final message will be returned to the caller.
 
-Your task is to recall past experience based on a query. Use the CLI commands and search strategies documented in <searching-messages> to search the parent agent's conversation history. Try to finish quickly with just 1-2 tool calls if possible (but use more if needed).
-
-Output Format:
-1. **Direct answer** - What the user asked about
-2. **Key findings** - Relevant quotes or summaries from past conversations
-3. **When discussed** - Timestamps of relevant discussions
-4. **Outcome/Decision** - What was decided or concluded (if applicable)
-
-<searching-messages>
-${skillContent}
-</searching-messages>
+${recallSubagentPrompt}
 ${SYSTEM_REMINDER_CLOSE}
 
 `;
