@@ -11,9 +11,8 @@ import { resolveSlackInboundAttachments } from "./media";
 import { loadSlackBoltModule } from "./runtime";
 
 type SlackAppConstructor = typeof import("@slack/bolt").App;
-type SlackBoltNamespace = Partial<typeof import("@slack/bolt")>;
 type SlackBoltModule = typeof import("@slack/bolt") & {
-  default?: Partial<typeof import("@slack/bolt")> | SlackAppConstructor;
+  default?: unknown;
 };
 type SlackReactionEvent = {
   item?: {
@@ -27,20 +26,44 @@ type SlackReactionEvent = {
   event_ts?: string;
 };
 
-function resolveSlackAppConstructor(mod: SlackBoltModule): SlackAppConstructor {
-  const defaultExport = mod.default;
-  const defaultNamespace =
-    defaultExport && typeof defaultExport === "object"
-      ? (defaultExport as SlackBoltNamespace)
-      : undefined;
-  const defaultExportApp = defaultNamespace?.App;
-  const App =
-    mod.App ??
-    (typeof defaultExport === "function" ? defaultExport : defaultExportApp);
-  if (!App) {
-    throw new Error('Installed Slack runtime did not export "App".');
+type Constructor = abstract new (...args: never[]) => unknown;
+
+function isConstructorFunction<T extends Constructor>(
+  value: unknown,
+): value is T {
+  return typeof value === "function";
+}
+
+function resolveSlackAppModule(value: unknown): SlackAppConstructor | null {
+  if (!value || typeof value !== "object") {
+    return null;
   }
-  return App as SlackAppConstructor;
+  const app = Reflect.get(value, "App");
+  return isConstructorFunction<SlackAppConstructor>(app) ? app : null;
+}
+
+function resolveSlackAppConstructor(mod: SlackBoltModule): SlackAppConstructor {
+  const defaultExport =
+    mod && typeof mod === "object" ? Reflect.get(mod, "default") : undefined;
+  const nestedDefault =
+    defaultExport && typeof defaultExport === "object"
+      ? Reflect.get(defaultExport, "default")
+      : undefined;
+
+  const App =
+    resolveSlackAppModule(mod) ??
+    resolveSlackAppModule(defaultExport) ??
+    resolveSlackAppModule(nestedDefault) ??
+    (isConstructorFunction<SlackAppConstructor>(defaultExport)
+      ? defaultExport
+      : null);
+
+  if (!App) {
+    throw new Error(
+      'Installed Slack runtime did not export constructor "App".',
+    );
+  }
+  return App;
 }
 
 function isNonEmptyString(value: unknown): value is string {
