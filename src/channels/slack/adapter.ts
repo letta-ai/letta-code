@@ -12,10 +12,56 @@ import {
   resolveSlackThreadHistory,
   resolveSlackThreadStarter,
 } from "./media";
-import { loadSlackBoltModule } from "./runtime";
+import { loadSlackBoltModule, loadSlackWebApiModule } from "./runtime";
 
 type SlackAppConstructor = typeof import("@slack/bolt").App;
 type SlackBoltModule = typeof import("@slack/bolt") & {
+  default?: unknown;
+};
+type SlackWriteClient = {
+  chat: {
+    postMessage: (args: {
+      channel: string;
+      text: string;
+      thread_ts?: string;
+    }) => Promise<{ ts?: string }>;
+  };
+  reactions: {
+    add: (args: {
+      channel: string;
+      timestamp: string;
+      name: string;
+    }) => Promise<unknown>;
+    remove: (args: {
+      channel: string;
+      timestamp: string;
+      name: string;
+    }) => Promise<unknown>;
+  };
+  files: {
+    getUploadURLExternal: (args: {
+      filename: string;
+      length: number;
+    }) => Promise<{
+      ok?: boolean;
+      upload_url?: string;
+      file_id?: string;
+      error?: string;
+    }>;
+    completeUploadExternal: (args: {
+      files: Array<{ id: string; title: string }>;
+      channel_id: string;
+      initial_comment?: string;
+      thread_ts?: string;
+    }) => Promise<{ ok?: boolean; error?: string }>;
+  };
+};
+type SlackWriteClientConstructor = new (
+  token: string,
+  options?: Record<string, unknown>,
+) => SlackWriteClient;
+type SlackWebApiModule = {
+  WebClient?: unknown;
   default?: unknown;
 };
 type SlackReactionEvent = {
@@ -69,6 +115,44 @@ function resolveSlackAppConstructor(mod: SlackBoltModule): SlackAppConstructor {
     );
   }
   return App;
+}
+
+function resolveSlackWebClientModule(
+  value: unknown,
+): SlackWriteClientConstructor | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const webClient = Reflect.get(value, "WebClient");
+  return isConstructorFunction<SlackWriteClientConstructor>(webClient)
+    ? webClient
+    : null;
+}
+
+function resolveSlackWebClientConstructor(
+  mod: SlackWebApiModule,
+): SlackWriteClientConstructor {
+  const defaultExport =
+    mod && typeof mod === "object" ? Reflect.get(mod, "default") : undefined;
+  const nestedDefault =
+    defaultExport && typeof defaultExport === "object"
+      ? Reflect.get(defaultExport, "default")
+      : undefined;
+
+  const WebClient =
+    resolveSlackWebClientModule(mod) ??
+    resolveSlackWebClientModule(defaultExport) ??
+    resolveSlackWebClientModule(nestedDefault) ??
+    (isConstructorFunction<SlackWriteClientConstructor>(defaultExport)
+      ? defaultExport
+      : null);
+
+  if (!WebClient) {
+    throw new Error(
+      'Installed Slack runtime did not export constructor "WebClient".',
+    );
+  }
+  return WebClient;
 }
 
 function isNonEmptyString(value: unknown): value is string {
@@ -127,7 +211,7 @@ function resolveUploadMimeType(filePath: string): string | undefined {
 }
 
 async function uploadSlackFile(
-  slackApp: SlackApp,
+  slackClient: SlackWriteClient,
   msg: OutboundChannelMessage,
 ): Promise<{ messageId: string }> {
   if (!msg.mediaPath) {
@@ -138,7 +222,7 @@ async function uploadSlackFile(
   const uploadFileName = msg.fileName ?? basename(msg.mediaPath);
   const uploadTitle = msg.title ?? uploadFileName;
   const uploadMimeType = resolveUploadMimeType(uploadFileName);
-  const uploadUrlResp = await slackApp.client.files.getUploadURLExternal({
+  const uploadUrlResp = await slackClient.files.getUploadURLExternal({
     filename: uploadFileName,
     length: buffer.length,
   });
@@ -162,7 +246,7 @@ async function uploadSlackFile(
     throw new Error(`Failed to upload Slack file: HTTP ${uploadResp.status}`);
   }
 
-  const completeResp = await slackApp.client.files.completeUploadExternal({
+  const completeResp = await slackClient.files.completeUploadExternal({
     files: [{ id: uploadUrlResp.file_id, title: uploadTitle }],
     channel_id: msg.chatId,
     ...(msg.text.trim() ? { initial_comment: msg.text } : {}),
@@ -251,6 +335,7 @@ export function createSlackAdapter(
   config: SlackChannelAccount,
 ): ChannelAdapter {
   let app: SlackApp | null = null;
+  let writeClient: SlackWriteClient | null = null;
   let running = false;
   let botUserId: string | null = null;
   const knownThreadIdsByMessageId = new Map<string, string | null>();
@@ -596,6 +681,21 @@ export function createSlackAdapter(
     return instance;
   }
 
+  async function ensureWriteClient(): Promise<SlackWriteClient> {
+    if (writeClient) {
+      return writeClient;
+    }
+
+    const webApi = await loadSlackWebApiModule();
+    const WebClient = resolveSlackWebClientConstructor(webApi);
+    writeClient = new WebClient(config.botToken, {
+      retryConfig: {
+        retries: 0,
+      },
+    });
+    return writeClient;
+  }
+
   const adapter: ChannelAdapter = {
     id: `slack:${config.accountId}`,
     channelId: "slack",
@@ -625,6 +725,7 @@ export function createSlackAdapter(
       await app.stop();
       running = false;
       app = null;
+      writeClient = null;
       botUserId = null;
       seenIngressMessageKeys.clear();
       console.log("[Slack] App stopped");
@@ -637,7 +738,8 @@ export function createSlackAdapter(
     async sendMessage(
       msg: OutboundChannelMessage,
     ): Promise<{ messageId: string }> {
-      const slackApp = await ensureApp();
+      await ensureApp();
+      const slackClient = await ensureWriteClient();
       if (msg.reaction) {
         const targetMessageId = msg.targetMessageId ?? msg.replyToMessageId;
         if (!targetMessageId) {
@@ -650,13 +752,13 @@ export function createSlackAdapter(
           throw new Error("Slack reaction emoji cannot be empty.");
         }
         if (msg.removeReaction) {
-          await slackApp.client.reactions.remove({
+          await slackClient.reactions.remove({
             channel: msg.chatId,
             timestamp: targetMessageId,
             name: emoji,
           });
         } else {
-          await slackApp.client.reactions.add({
+          await slackClient.reactions.add({
             channel: msg.chatId,
             timestamp: targetMessageId,
             name: emoji,
@@ -666,10 +768,10 @@ export function createSlackAdapter(
       }
 
       if (msg.mediaPath) {
-        return uploadSlackFile(slackApp, msg);
+        return uploadSlackFile(slackClient, msg);
       }
 
-      const response = await slackApp.client.chat.postMessage({
+      const response = await slackClient.chat.postMessage({
         channel: msg.chatId,
         text: msg.text,
         ...((msg.threadId ?? msg.replyToMessageId)
@@ -690,8 +792,9 @@ export function createSlackAdapter(
       text: string,
       options?: { replyToMessageId?: string },
     ): Promise<void> {
-      const slackApp = await ensureApp();
-      const response = await slackApp.client.chat.postMessage({
+      await ensureApp();
+      const slackClient = await ensureWriteClient();
+      const response = await slackClient.chat.postMessage({
         channel: chatId,
         text,
         ...(options?.replyToMessageId
