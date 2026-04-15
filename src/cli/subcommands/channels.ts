@@ -42,7 +42,11 @@ import {
   isChannelRuntimeInstalled,
 } from "../../channels/runtimeDeps";
 import { listChannelAccountSnapshots } from "../../channels/service";
-import type { ChannelRoute, SupportedChannelId } from "../../channels/types";
+import type {
+  ChannelRoute,
+  SlackChannelAccount,
+  SupportedChannelId,
+} from "../../channels/types";
 
 // ── Usage ───────────────────────────────────────────────────────────
 
@@ -56,11 +60,11 @@ Usage:
   letta channels route list [--channel <ch>]  Show routing table
   letta channels route add [options]          Add a route
   letta channels route remove [options]       Remove a route
-  letta channels bind [options]               Bind a channel account to an agent
+  letta channels bind [options]               Bind a Slack app to an agent
   letta channels pair [options]               Approve pairing + bind to agent
 
-Bind options:
-  --channel <name>       Channel name (e.g. "slack")
+Bind options (Slack only):
+  --channel slack        Required
   --account-id <id>      Channel account ID (optional; inferred when only one account exists)
   --agent <id>           Agent ID (defaults to LETTA_AGENT_ID)
 
@@ -472,9 +476,9 @@ function handleBind(
     console.error("Error: --channel is required.");
     return 1;
   }
-  if (!isSupportedChannelId(channelId)) {
+  if (channelId !== "slack") {
     console.error(
-      `Unknown channel: "${channelId}". Supported: ${getSupportedChannelIds().join(", ")}`,
+      `"bind" is only supported for Slack. Telegram binding is route-scoped — use "pair" or "route add" instead.`,
     );
     return 1;
   }
@@ -501,14 +505,7 @@ function handleBind(
     return 1;
   }
 
-  if (account.channel === "slack") {
-    account.agentId = agentId;
-  } else if (account.channel === "telegram") {
-    account.binding = {
-      agentId,
-      conversationId: account.binding?.conversationId ?? null,
-    };
-  }
+  (account as SlackChannelAccount).agentId = agentId;
   account.updatedAt = new Date().toISOString();
   upsertChannelAccount(channelId, account);
 
@@ -589,7 +586,7 @@ export async function runChannelsSubcommand(argv: string[]): Promise<number> {
         return 0;
       }
       console.error(
-        `Unknown channels action: "${action}". Use: install, configure, status, route, pair`,
+        `Unknown channels action: "${action}". Use: install, configure, status, route, bind, pair`,
       );
       return 1;
   }
