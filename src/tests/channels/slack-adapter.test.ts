@@ -101,6 +101,34 @@ class FakeSlackApp {
   }
 }
 
+class FakeSlackWriteClient {
+  static instances: FakeSlackWriteClient[] = [];
+
+  readonly token: string;
+  readonly options: Record<string, unknown> | undefined;
+  readonly chat = {
+    postMessage: mock(async () => ({ ts: "1712800000.000100" })),
+  };
+  readonly reactions = {
+    add: mock(async () => ({ ok: true })),
+    remove: mock(async () => ({ ok: true })),
+  };
+  readonly files = {
+    getUploadURLExternal: mock(async () => ({
+      ok: true,
+      upload_url: "https://files.slack.com/upload/F123",
+      file_id: "F123",
+    })),
+    completeUploadExternal: mock(async () => ({ ok: true })),
+  };
+
+  constructor(token: string, options?: Record<string, unknown>) {
+    this.token = token;
+    this.options = options;
+    FakeSlackWriteClient.instances.push(this);
+  }
+}
+
 const resolveSlackInboundAttachmentsMock = mock(
   async (): Promise<ChannelMessageAttachment[]> => [],
 );
@@ -128,6 +156,12 @@ mock.module("../../channels/slack/runtime", () => ({
     App: FakeSlackApp,
     default: {
       App: FakeSlackApp,
+    },
+  }),
+  loadSlackWebApiModule: async () => ({
+    WebClient: FakeSlackWriteClient,
+    default: {
+      WebClient: FakeSlackWriteClient,
     },
   }),
 }));
@@ -160,6 +194,7 @@ const fetchMock = mock(
 
 beforeEach(() => {
   FakeSlackApp.instances.length = 0;
+  FakeSlackWriteClient.instances.length = 0;
   resolveSlackInboundAttachmentsMock.mockReset();
   resolveSlackInboundAttachmentsMock.mockImplementation(async () => []);
   resolveSlackThreadStarterMock.mockReset();
@@ -183,6 +218,13 @@ afterEach(() => {
     instance.init.mockClear();
     instance.start.mockClear();
     instance.stop.mockClear();
+  }
+  for (const instance of FakeSlackWriteClient.instances) {
+    instance.chat.postMessage.mockClear();
+    instance.reactions.add.mockClear();
+    instance.reactions.remove.mockClear();
+    instance.files.getUploadURLExternal.mockClear();
+    instance.files.completeUploadExternal.mockClear();
   }
   globalThis.fetch = originalFetch;
 });
@@ -236,11 +278,41 @@ test("slack adapter maps thread metadata to thread_ts", async () => {
     threadId: "1712800000.000200",
   });
 
-  const app = FakeSlackApp.instances[0];
-  expect(app).toBeDefined();
-  expect(app?.client.chat.postMessage).toHaveBeenCalledWith({
+  const writeClient = FakeSlackWriteClient.instances[0];
+  expect(writeClient).toBeDefined();
+  expect(writeClient?.options).toEqual({
+    retryConfig: {
+      retries: 0,
+    },
+  });
+  expect(writeClient?.chat.postMessage).toHaveBeenCalledWith({
     channel: "C123",
     text: "hello",
+    thread_ts: "1712800000.000200",
+  });
+});
+
+test("slack adapter sendDirectReply uses the dedicated write client", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  await adapter.start();
+  await adapter.sendDirectReply("C123", "reply text", {
+    replyToMessageId: "1712800000.000200",
+  });
+
+  const writeClient = FakeSlackWriteClient.instances[0];
+  expect(writeClient?.chat.postMessage).toHaveBeenCalledWith({
+    channel: "C123",
+    text: "reply text",
     thread_ts: "1712800000.000200",
   });
 });
@@ -710,8 +782,8 @@ test("slack adapter can add reactions to messages", async () => {
     targetMessageId: "1712800000.000100",
   });
 
-  const app = FakeSlackApp.instances[0];
-  expect(app?.client.reactions.add).toHaveBeenCalledWith({
+  const writeClient = FakeSlackWriteClient.instances[0];
+  expect(writeClient?.reactions.add).toHaveBeenCalledWith({
     channel: "C123",
     timestamp: "1712800000.000100",
     name: "white_check_mark",
@@ -745,8 +817,8 @@ test("slack adapter uploads local files through Slack's external upload flow", a
     threadId: "1712790000.000050",
   });
 
-  const app = FakeSlackApp.instances[0];
-  expect(app?.client.files.getUploadURLExternal).toHaveBeenCalledWith({
+  const writeClient = FakeSlackWriteClient.instances[0];
+  expect(writeClient?.files.getUploadURLExternal).toHaveBeenCalledWith({
     filename: "chart.png",
     length: "fake-image-data".length,
   });
@@ -758,7 +830,7 @@ test("slack adapter uploads local files through Slack's external upload flow", a
       body: expect.any(Uint8Array),
     },
   );
-  expect(app?.client.files.completeUploadExternal).toHaveBeenCalledWith({
+  expect(writeClient?.files.completeUploadExternal).toHaveBeenCalledWith({
     files: [{ id: "F123", title: "Chart" }],
     channel_id: "C123",
     initial_comment: "latest chart",

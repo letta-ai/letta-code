@@ -14,6 +14,15 @@ export async function loadSlackBoltModule(): Promise<
   );
 }
 
+export async function loadSlackWebApiModule(): Promise<
+  typeof import("@slack/web-api")
+> {
+  return loadChannelRuntimeModule<typeof import("@slack/web-api")>(
+    "slack",
+    "@slack/web-api",
+  );
+}
+
 export function isSlackRuntimeInstalled(): boolean {
   return isChannelRuntimeInstalled("slack");
 }
