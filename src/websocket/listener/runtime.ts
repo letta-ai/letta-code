@@ -65,6 +65,7 @@ export function evictConversationRuntimeIfIdle(
     runtime.queuePumpScheduled ||
     runtime.pendingTurns > 0 ||
     runtime.pendingApprovalResolvers.size > 0 ||
+    runtime.pendingApprovalSourcesByRequestId.size > 0 ||
     runtime.pendingApprovalBatchByToolCallId.size > 0 ||
     runtime.recoveredApprovalState !== null ||
     runtime.pendingInterruptedResults !== null ||
@@ -161,6 +162,7 @@ export function createConversationRuntime(
     conversationId: normalizedConversationId,
     messageQueue: Promise.resolve(),
     pendingApprovalResolvers: new Map(),
+    pendingApprovalSourcesByRequestId: new Map(),
     recoveredApprovalState: null,
     lastStopReason: null,
     isProcessing: false,
@@ -185,6 +187,7 @@ export function createConversationRuntime(
     continuationEpoch: 0,
     activeExecutingToolCallIds: [],
     pendingInterruptedToolCallIds: null,
+    activeChannelTurnSources: null,
     reminderState:
       listener.reminderStateByConversation.get(runtimeKey) ??
       (() => {
@@ -255,9 +258,11 @@ export function clearConversationRuntimeState(
     runtime.activeAbortController.abort();
   }
   runtime.pendingApprovalBatchByToolCallId.clear();
+  runtime.pendingApprovalSourcesByRequestId.clear();
   runtime.pendingInterruptedResults = null;
   runtime.pendingInterruptedContext = null;
   runtime.pendingInterruptedToolCallIds = null;
+  runtime.activeChannelTurnSources = null;
   runtime.activeExecutingToolCallIds = [];
   runtime.loopStatus = "WAITING_ON_INPUT";
   runtime.continuationEpoch += 1;

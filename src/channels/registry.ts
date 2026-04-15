@@ -38,6 +38,8 @@ import {
 import { loadTargetStore, upsertChannelTarget } from "./targets";
 import type {
   ChannelAdapter,
+  ChannelApprovalEvent,
+  ChannelApprovalResponse,
   ChannelRoute,
   ChannelTurnLifecycleEvent,
   ChannelTurnSource,
@@ -114,7 +116,14 @@ function buildChannelTurnSource(
   route: ChannelRoute,
   msg: Pick<
     InboundChannelMessage,
-    "channel" | "accountId" | "chatId" | "chatType" | "messageId" | "threadId"
+    | "channel"
+    | "accountId"
+    | "chatId"
+    | "chatType"
+    | "messageId"
+    | "threadId"
+    | "senderId"
+    | "senderName"
   >,
 ): ChannelTurnSource {
   return {
@@ -124,6 +133,8 @@ function buildChannelTurnSource(
     chatType: msg.chatType,
     messageId: msg.messageId,
     threadId: msg.threadId,
+    senderId: msg.senderId,
+    senderName: msg.senderName,
     agentId: route.agentId,
     conversationId: route.conversationId,
   };
@@ -180,8 +191,15 @@ export class ChannelRegistry {
   private readonly adapters = new Map<string, ChannelAdapter>();
   private ready = false;
   private messageHandler: ChannelMessageHandler | null = null;
+  private approvalResponseHandler:
+    | ((response: ChannelApprovalResponse) => Promise<boolean>)
+    | null = null;
   private eventHandler: ((event: ChannelRegistryEvent) => void) | null = null;
   private readonly buffer: ChannelInboundDelivery[] = [];
+  private readonly pendingApprovalEvents = new Map<
+    string,
+    Extract<ChannelApprovalEvent, { type: "requested" }>
+  >();
 
   constructor() {
     if (instance) {
@@ -210,6 +228,12 @@ export class ChannelRegistry {
     // Wire the adapter's onMessage to our ingress pipeline
     adapter.onMessage = async (msg: InboundChannelMessage) => {
       await this.handleInboundMessage(msg);
+    };
+    adapter.onApprovalResponse = async (response: ChannelApprovalResponse) => {
+      if (!this.approvalResponseHandler) {
+        return false;
+      }
+      return this.approvalResponseHandler(response);
     };
   }
 
@@ -291,6 +315,63 @@ export class ChannelRegistry {
     }
   }
 
+  async dispatchApprovalEvent(event: ChannelApprovalEvent): Promise<void> {
+    if (event.type === "requested") {
+      this.pendingApprovalEvents.set(event.controlRequest.request_id, event);
+    } else {
+      this.pendingApprovalEvents.delete(event.controlRequest.request_id);
+    }
+
+    const groups = new Map<
+      string,
+      {
+        adapter: ChannelAdapter;
+        sources: ChannelTurnSource[];
+      }
+    >();
+
+    for (const source of event.sources) {
+      const adapter = this.getAdapter(
+        source.channel,
+        source.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID,
+      );
+      if (!adapter?.handleApprovalEvent) {
+        continue;
+      }
+      const groupKey = this.getAdapterKey(
+        source.channel,
+        source.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID,
+      );
+      const existing = groups.get(groupKey);
+      if (existing) {
+        existing.sources.push(source);
+        continue;
+      }
+      groups.set(groupKey, {
+        adapter,
+        sources: [source],
+      });
+    }
+
+    for (const { adapter, sources } of groups.values()) {
+      const handleApprovalEvent = adapter.handleApprovalEvent;
+      if (!handleApprovalEvent) {
+        continue;
+      }
+      try {
+        await handleApprovalEvent({
+          ...event,
+          sources,
+        });
+      } catch (error) {
+        console.error(
+          `[Channels] Failed to handle ${event.type} approval event for ${adapter.channelId ?? adapter.id}/${adapter.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID}:`,
+          error instanceof Error ? error.message : error,
+        );
+      }
+    }
+  }
+
   // ── Readiness / ingress handler ───────────────────────────────
 
   /**
@@ -305,6 +386,12 @@ export class ChannelRegistry {
     handler: ((event: ChannelRegistryEvent) => void) | null,
   ): void {
     this.eventHandler = handler;
+  }
+
+  setApprovalResponseHandler(
+    handler: ((response: ChannelApprovalResponse) => Promise<boolean>) | null,
+  ): void {
+    this.approvalResponseHandler = handler;
   }
 
   /**
@@ -410,6 +497,7 @@ export class ChannelRegistry {
     const adapter = await plugin.createAdapter(account);
     this.registerAdapter(adapter);
     await adapter.start();
+    await this.replayPendingApprovalsForAdapter(adapter);
     return true;
   }
 
@@ -458,6 +546,7 @@ export class ChannelRegistry {
       if (!adapter.isRunning()) {
         await adapter.start();
       }
+      await this.replayPendingApprovalsForAdapter(adapter);
     }
   }
 
@@ -469,6 +558,7 @@ export class ChannelRegistry {
   pause(): void {
     this.ready = false;
     this.messageHandler = null;
+    this.approvalResponseHandler = null;
     this.eventHandler = null;
   }
 
@@ -484,8 +574,43 @@ export class ChannelRegistry {
     }
     this.ready = false;
     this.messageHandler = null;
+    this.approvalResponseHandler = null;
     this.eventHandler = null;
     instance = null;
+  }
+
+  private async replayPendingApprovalsForAdapter(
+    adapter: ChannelAdapter,
+  ): Promise<void> {
+    const handleApprovalEvent = adapter.handleApprovalEvent;
+    if (!handleApprovalEvent || !adapter.isRunning()) {
+      return;
+    }
+
+    const channelId = adapter.channelId ?? adapter.id;
+    const accountId = adapter.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID;
+
+    for (const event of this.pendingApprovalEvents.values()) {
+      const sources = event.sources.filter(
+        (source) =>
+          source.channel === channelId &&
+          (source.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID) === accountId,
+      );
+      if (sources.length === 0) {
+        continue;
+      }
+      try {
+        await handleApprovalEvent({
+          ...event,
+          sources,
+        });
+      } catch (error) {
+        console.error(
+          `[Channels] Failed to replay pending approval for ${channelId}/${accountId}:`,
+          error instanceof Error ? error.message : error,
+        );
+      }
+    }
   }
 
   // ── Inbound message pipeline ──────────────────────────────────

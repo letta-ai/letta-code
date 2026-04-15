@@ -7,6 +7,12 @@
  * platform chat IDs to agent+conversation pairs.
  */
 
+import type {
+  ApprovalResponseBody,
+  ApprovalResponseDecision,
+  ControlRequest,
+} from "../types/protocol_v2";
+
 export const SUPPORTED_CHANNEL_IDS = ["telegram", "slack"] as const;
 export type SupportedChannelId = (typeof SUPPORTED_CHANNEL_IDS)[number];
 export type ChannelChatType = "direct" | "channel";
@@ -52,6 +58,8 @@ export interface ChannelTurnSource {
   chatType?: ChannelChatType;
   messageId?: string;
   threadId?: string | null;
+  senderId?: string;
+  senderName?: string;
   agentId: string;
   conversationId: string;
 }
@@ -75,6 +83,27 @@ export type ChannelTurnLifecycleEvent =
       outcome: ChannelTurnOutcome;
       error?: string;
     };
+
+export type ChannelApprovalEvent =
+  | {
+      type: "requested";
+      controlRequest: ControlRequest;
+      sources: ChannelTurnSource[];
+    }
+  | {
+      type: "resolved";
+      controlRequest: ControlRequest;
+      sources: ChannelTurnSource[];
+      response: ApprovalResponseBody;
+    };
+
+export interface ChannelApprovalResponse {
+  requestId: string;
+  decision?: ApprovalResponseDecision;
+  error?: string;
+  agentId?: string | null;
+  conversationId?: string | null;
+}
 
 // ── Adapter interface ─────────────────────────────────────────────
 
@@ -126,10 +155,24 @@ export interface ChannelAdapter {
   handleTurnLifecycleEvent?(event: ChannelTurnLifecycleEvent): Promise<void>;
 
   /**
+   * Optional lifecycle hook for permission/tool approval requests that
+   * originated from channel-delivered turns. Adapters can surface native
+   * approve/deny affordances in the external channel and feed the result back
+   * into the listener through onApprovalResponse.
+   */
+  handleApprovalEvent?(event: ChannelApprovalEvent): Promise<void>;
+
+  /**
    * Called by the registry when the adapter receives an inbound message.
    * Set by ChannelRegistry during initialization.
    */
   onMessage?: (msg: InboundChannelMessage) => Promise<void>;
+
+  /**
+   * Called by the adapter when a channel-native approval UI is resolved.
+   * Set by ChannelRegistry during initialization.
+   */
+  onApprovalResponse?: (response: ChannelApprovalResponse) => Promise<boolean>;
 }
 
 // ── Message types ─────────────────────────────────────────────────

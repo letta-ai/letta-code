@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import {
   __testOverrideLoadPairingStore,
   __testOverrideSavePairingStore,
@@ -20,6 +20,7 @@ import {
   clearAllRoutes,
   getRoute,
 } from "../../channels/routing";
+import type { ChannelAdapter } from "../../channels/types";
 
 describe("ChannelRegistry", () => {
   beforeEach(() => {
@@ -67,6 +68,92 @@ describe("ChannelRegistry", () => {
 
     await registry.stopAll();
     expect(getChannelRegistry()).toBeNull();
+  });
+
+  test("approval events are grouped per adapter and approval responses flow back through the registry handler", async () => {
+    const registry = new ChannelRegistry();
+    const handleApprovalEvent = mock(async () => {});
+    const adapter: ChannelAdapter = {
+      id: "slack:acct-1",
+      channelId: "slack",
+      accountId: "acct-1",
+      name: "Slack",
+      start: async () => {},
+      stop: async () => {},
+      isRunning: () => true,
+      sendMessage: async () => ({ messageId: "msg-1" }),
+      sendDirectReply: async () => {},
+      handleApprovalEvent,
+    };
+
+    registry.registerAdapter(adapter);
+
+    await registry.dispatchApprovalEvent({
+      type: "requested",
+      controlRequest: {
+        request_id: "req-1",
+        request: {
+          tool_name: "Bash",
+          input: {
+            command: "ls",
+          },
+        },
+      } as never,
+      sources: [
+        {
+          channel: "slack",
+          accountId: "acct-1",
+          chatId: "C123",
+          chatType: "channel",
+          messageId: "1712800000.000100",
+          senderId: "U123",
+          senderName: "Charles",
+          agentId: "agent-1",
+          conversationId: "conv-1",
+        },
+        {
+          channel: "slack",
+          accountId: "acct-1",
+          chatId: "C123",
+          chatType: "channel",
+          messageId: "1712800000.000100",
+          senderId: "U999",
+          senderName: "Teammate",
+          agentId: "agent-1",
+          conversationId: "conv-1",
+        },
+      ],
+    });
+
+    expect(handleApprovalEvent).toHaveBeenCalledTimes(1);
+    expect(handleApprovalEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "requested",
+        sources: [
+          expect.objectContaining({ senderId: "U123" }),
+          expect.objectContaining({ senderId: "U999" }),
+        ],
+      }),
+    );
+
+    const approvalResponseHandler = mock(async () => true);
+    registry.setApprovalResponseHandler(approvalResponseHandler);
+    const accepted = await adapter.onApprovalResponse?.({
+      requestId: "req-1",
+      decision: {
+        behavior: "allow",
+        message: "approved",
+      },
+    });
+
+    expect(accepted).toBe(true);
+    expect(approvalResponseHandler).toHaveBeenCalledWith({
+      requestId: "req-1",
+      decision: {
+        behavior: "allow",
+        message: "approved",
+      },
+    });
   });
 });
 

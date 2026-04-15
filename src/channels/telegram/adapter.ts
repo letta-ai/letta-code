@@ -8,6 +8,7 @@ import type { ReactionType, ReactionTypeEmoji } from "@grammyjs/types";
 import type { Bot as GrammYBot, Context as GrammYContext } from "grammy";
 import type {
   ChannelAdapter,
+  ChannelApprovalEvent,
   InboundChannelMessage,
   OutboundChannelMessage,
   TelegramChannelAccount,
@@ -66,6 +67,15 @@ type TelegramReactionUpdate = {
   date: number;
   old_reaction: TelegramReactionType[];
   new_reaction: TelegramReactionType[];
+};
+type TelegramApprovalCallbackPayload = {
+  requestId: string;
+  decision: "allow" | "deny";
+};
+type TelegramApprovalPromptState = {
+  chatId: string;
+  messageId: number;
+  allowedSenderIds: Set<string>;
 };
 
 function resolveTelegramBotConstructor(
@@ -189,6 +199,48 @@ function getTelegramChatType(chat: { type?: string }): "direct" | "channel" {
   return chat.type === "private" ? "direct" : "channel";
 }
 
+function truncateTelegramApprovalPreview(
+  text: string,
+  maxLength = 900,
+): string {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+  return `${normalized.slice(0, maxLength - 1).trimEnd()}…`;
+}
+
+function buildTelegramApprovalPromptText(
+  event: Extract<ChannelApprovalEvent, { type: "requested" }>,
+): string {
+  const request = event.controlRequest.request;
+  const toolName = request.tool_name || "tool";
+  const inputPreview = truncateTelegramApprovalPreview(
+    JSON.stringify(request.input, null, 2),
+  );
+  return [
+    `Permission request`,
+    "",
+    `Allow the agent to run ${toolName}?`,
+    "",
+    "Input:",
+    inputPreview,
+  ].join("\n");
+}
+
+function buildTelegramApprovalResolvedText(
+  event: Extract<ChannelApprovalEvent, { type: "resolved" }>,
+): string {
+  if ("decision" in event.response) {
+    return event.response.decision.behavior === "allow"
+      ? "Approved."
+      : `Denied: ${event.response.decision.message}`;
+  }
+  return event.response.error
+    ? `Approval is no longer available: ${event.response.error}`
+    : "Approval is no longer available.";
+}
+
 export function createTelegramAdapter(
   config: TelegramChannelAccount,
 ): ChannelAdapter {
@@ -196,6 +248,48 @@ export function createTelegramAdapter(
   let botModule: GrammYModule | null = null;
   let running = false;
   const bufferedMediaGroups = new Map<string, BufferedMediaGroup>();
+  const approvalPromptByRequestId = new Map<
+    string,
+    TelegramApprovalPromptState
+  >();
+  const approvalCallbackByToken = new Map<
+    string,
+    TelegramApprovalCallbackPayload
+  >();
+
+  function createApprovalCallbackToken(
+    requestId: string,
+    decision: "allow" | "deny",
+  ): string {
+    const token = crypto.randomUUID().replace(/-/g, "").slice(0, 24);
+    approvalCallbackByToken.set(token, {
+      requestId,
+      decision,
+    });
+    return `lcapp:${token}`;
+  }
+
+  function resolveApprovalCallbackPayload(
+    data: string,
+  ): TelegramApprovalCallbackPayload | null {
+    const prefix = "lcapp:";
+    if (!data.startsWith(prefix)) {
+      return null;
+    }
+    const token = data.slice(prefix.length).trim();
+    if (!token) {
+      return null;
+    }
+    return approvalCallbackByToken.get(token) ?? null;
+  }
+
+  function clearApprovalCallbackTokens(requestId: string): void {
+    for (const [token, payload] of approvalCallbackByToken) {
+      if (payload.requestId === requestId) {
+        approvalCallbackByToken.delete(token);
+      }
+    }
+  }
 
   async function ensureModule(): Promise<GrammYModule> {
     if (!botModule) {
@@ -380,6 +474,74 @@ export function createTelegramAdapter(
       }
     });
 
+    instance.on("callback_query:data", async (ctx) => {
+      const data =
+        typeof ctx.callbackQuery?.data === "string"
+          ? ctx.callbackQuery.data
+          : "";
+      const parsed = resolveApprovalCallbackPayload(data);
+      if (!parsed) {
+        return;
+      }
+
+      const promptState = approvalPromptByRequestId.get(parsed.requestId);
+      if (!promptState) {
+        await ctx.answerCallbackQuery({
+          text: "This approval request is no longer available.",
+          show_alert: true,
+        });
+        return;
+      }
+
+      const actorId =
+        ctx.from?.id !== undefined ? String(ctx.from.id) : undefined;
+      if (
+        promptState.allowedSenderIds.size > 0 &&
+        (!actorId || !promptState.allowedSenderIds.has(actorId))
+      ) {
+        await ctx.answerCallbackQuery({
+          text: "Only the person who triggered this request can approve or deny it.",
+          show_alert: true,
+        });
+        return;
+      }
+
+      if (!adapter.onApprovalResponse) {
+        await ctx.answerCallbackQuery({
+          text: "Approvals are unavailable right now. Try again in a moment.",
+          show_alert: true,
+        });
+        return;
+      }
+
+      const accepted = await adapter.onApprovalResponse({
+        requestId: parsed.requestId,
+        decision:
+          parsed.decision === "allow"
+            ? {
+                behavior: "allow",
+                message: actorId
+                  ? `Approved from Telegram by ${actorId}`
+                  : "Approved from Telegram",
+              }
+            : {
+                behavior: "deny",
+                message: actorId
+                  ? `Denied from Telegram by ${actorId}`
+                  : "Denied from Telegram",
+              },
+      });
+
+      await ctx.answerCallbackQuery({
+        text: accepted
+          ? parsed.decision === "allow"
+            ? "Approved"
+            : "Denied"
+          : "This approval request is no longer available.",
+        show_alert: !accepted,
+      });
+    });
+
     instance.command("start", async (ctx) => {
       await ctx.reply(
         "Welcome! This bot is connected to Letta Code.\n\n" +
@@ -422,7 +584,7 @@ export function createTelegramAdapter(
 
         void telegramBot
           .start({
-            allowed_updates: ["message", "message_reaction"],
+            allowed_updates: ["message", "message_reaction", "callback_query"],
             onStart: () => {
               running = true;
               started = true;
@@ -450,6 +612,8 @@ export function createTelegramAdapter(
         clearTimeout(entry.timer);
       }
       bufferedMediaGroups.clear();
+      approvalPromptByRequestId.clear();
+      approvalCallbackByToken.clear();
 
       if (!running || !bot) return;
       await bot.stop();
@@ -459,6 +623,89 @@ export function createTelegramAdapter(
 
     isRunning(): boolean {
       return running;
+    },
+
+    async handleApprovalEvent(event: ChannelApprovalEvent): Promise<void> {
+      const telegramBot = await ensureBot();
+      if (!running) {
+        return;
+      }
+
+      if (event.type === "requested") {
+        if (approvalPromptByRequestId.has(event.controlRequest.request_id)) {
+          return;
+        }
+
+        const source = event.sources[0];
+        if (!source) {
+          return;
+        }
+
+        const response = await telegramBot.api.sendMessage(
+          source.chatId,
+          buildTelegramApprovalPromptText(event),
+          {
+            ...(source.messageId
+              ? {
+                  reply_parameters: {
+                    message_id: Number(source.messageId),
+                  },
+                }
+              : {}),
+            reply_markup: {
+              inline_keyboard: [
+                [
+                  {
+                    text: "Approve",
+                    callback_data: createApprovalCallbackToken(
+                      event.controlRequest.request_id,
+                      "allow",
+                    ),
+                  },
+                  {
+                    text: "Deny",
+                    callback_data: createApprovalCallbackToken(
+                      event.controlRequest.request_id,
+                      "deny",
+                    ),
+                  },
+                ],
+              ],
+            },
+          },
+        );
+
+        approvalPromptByRequestId.set(event.controlRequest.request_id, {
+          chatId: source.chatId,
+          messageId: response.message_id,
+          allowedSenderIds: new Set(
+            event.sources
+              .map((entry) => entry.senderId)
+              .filter((value): value is string => typeof value === "string"),
+          ),
+        });
+        return;
+      }
+
+      const promptState = approvalPromptByRequestId.get(
+        event.controlRequest.request_id,
+      );
+      if (!promptState) {
+        return;
+      }
+
+      await telegramBot.api.editMessageText(
+        promptState.chatId,
+        promptState.messageId,
+        buildTelegramApprovalResolvedText(event),
+        {
+          reply_markup: {
+            inline_keyboard: [],
+          },
+        },
+      );
+      approvalPromptByRequestId.delete(event.controlRequest.request_id);
+      clearApprovalCallbackTokens(event.controlRequest.request_id);
     },
 
     async sendMessage(

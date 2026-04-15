@@ -50,6 +50,7 @@ class FakeBot {
   readonly handlers = new Map<string, FakeHandler[]>();
   readonly api = {
     sendMessage: mock(async () => ({ message_id: 999 })),
+    editMessageText: mock(async () => true),
     setMessageReaction: mock(async () => true),
     sendPhoto: mock(async () => ({ message_id: 1001 })),
     sendDocument: mock(async () => ({ message_id: 1002 })),
@@ -524,4 +525,185 @@ test("telegram adapter batches media groups and downloads inbound images", async
     rmSync(channelRoot, { recursive: true, force: true });
     channelRoot = mkdtempSync(join(tmpdir(), "letta-telegram-root-"));
   }
+});
+
+test("telegram adapter renders approval prompts and forwards callback decisions", async () => {
+  const adapter = createTelegramAdapter({
+    ...telegramAccountDefaults,
+    channel: "telegram",
+    enabled: true,
+    token: "test-token",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  const onApprovalResponse = mock(async () => true);
+  adapter.onApprovalResponse = onApprovalResponse;
+
+  await adapter.start();
+
+  await adapter.handleApprovalEvent?.({
+    type: "requested",
+    controlRequest: {
+      request_id: "req-1",
+      request: {
+        tool_name: "Bash",
+        input: {
+          command: "rm -rf /tmp/nope",
+        },
+      },
+    } as never,
+    sources: [
+      {
+        channel: "telegram",
+        accountId: "telegram-test-account",
+        chatId: "123",
+        senderId: "456",
+        senderName: "alice",
+        messageId: "77",
+        chatType: "direct",
+        agentId: "agent-1",
+        conversationId: "conv-1",
+      },
+    ],
+  });
+
+  const bot = FakeBot.instances[0];
+  expect(bot?.api.sendMessage).toHaveBeenCalledTimes(1);
+  expect(bot?.api.sendMessage).toHaveBeenCalledWith(
+    "123",
+    expect.stringContaining("Allow the agent to run Bash?"),
+    expect.objectContaining({
+      reply_parameters: { message_id: 77 },
+      reply_markup: {
+        inline_keyboard: [
+          [
+            expect.objectContaining({ text: "Approve" }),
+            expect.objectContaining({ text: "Deny" }),
+          ],
+        ],
+      },
+    }),
+  );
+
+  const sendMessageCall = bot?.api.sendMessage.mock.calls[0] as
+    | [string, string, Record<string, unknown>]
+    | undefined;
+  expect(sendMessageCall).toBeDefined();
+  if (!sendMessageCall) {
+    throw new Error("Expected Telegram approval prompt send call");
+  }
+
+  const keyboard = (
+    sendMessageCall[2].reply_markup as {
+      inline_keyboard: Array<Array<{ callback_data?: string; text?: string }>>;
+    }
+  ).inline_keyboard;
+  const approveToken = keyboard[0]?.[0]?.callback_data;
+  expect(typeof approveToken).toBe("string");
+
+  const answerCallbackQuery = mock(async () => true);
+  await bot?.emit("callback_query:data", {
+    callbackQuery: {
+      data: approveToken,
+    },
+    from: { id: 456 },
+    answerCallbackQuery,
+  });
+
+  expect(onApprovalResponse).toHaveBeenCalledWith({
+    requestId: "req-1",
+    decision: {
+      behavior: "allow",
+      message: "Approved from Telegram by 456",
+    },
+  });
+  expect(answerCallbackQuery).toHaveBeenCalledWith({
+    text: "Approved",
+    show_alert: false,
+  });
+});
+
+test("telegram adapter resolves approval prompts by editing the original message", async () => {
+  const adapter = createTelegramAdapter({
+    ...telegramAccountDefaults,
+    channel: "telegram",
+    enabled: true,
+    token: "test-token",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  await adapter.start();
+
+  await adapter.handleApprovalEvent?.({
+    type: "requested",
+    controlRequest: {
+      request_id: "req-2",
+      request: {
+        tool_name: "Bash",
+        input: {
+          command: "ls",
+        },
+      },
+    } as never,
+    sources: [
+      {
+        channel: "telegram",
+        accountId: "telegram-test-account",
+        chatId: "123",
+        senderId: "456",
+        senderName: "alice",
+        messageId: "77",
+        chatType: "direct",
+        agentId: "agent-1",
+        conversationId: "conv-1",
+      },
+    ],
+  });
+
+  await adapter.handleApprovalEvent?.({
+    type: "resolved",
+    controlRequest: {
+      request_id: "req-2",
+      request: {
+        tool_name: "Bash",
+        input: {
+          command: "ls",
+        },
+      },
+    } as never,
+    sources: [
+      {
+        channel: "telegram",
+        accountId: "telegram-test-account",
+        chatId: "123",
+        senderId: "456",
+        senderName: "alice",
+        messageId: "77",
+        chatType: "direct",
+        agentId: "agent-1",
+        conversationId: "conv-1",
+      },
+    ],
+    response: {
+      request_id: "req-2",
+      decision: {
+        behavior: "allow",
+        message: "Approved from Telegram by 456",
+      },
+    },
+  });
+
+  const bot = FakeBot.instances[0];
+  expect(bot?.api.editMessageText).toHaveBeenCalledWith(
+    "123",
+    999,
+    "Approved.",
+    {
+      reply_markup: {
+        inline_keyboard: [],
+      },
+    },
+  );
 });

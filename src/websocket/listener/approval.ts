@@ -1,5 +1,6 @@
 import WebSocket from "ws";
 import type { ApprovalResult } from "../../agent/approval-execution";
+import { getChannelRegistry } from "../../channels/registry";
 import type {
   ApprovalResponseBody,
   ControlRequest,
@@ -11,6 +12,48 @@ import {
 } from "./protocol-outbound";
 import { evictConversationRuntimeIfIdle } from "./runtime";
 import type { ConversationRuntime } from "./types";
+
+async function dispatchChannelApprovalEvent(
+  runtime: ConversationRuntime,
+  event: {
+    type: "requested" | "resolved";
+    controlRequest: ControlRequest;
+    response?: ApprovalResponseBody;
+  },
+): Promise<void> {
+  const sources =
+    runtime.pendingApprovalSourcesByRequestId.get(
+      event.controlRequest.request_id,
+    ) ?? [];
+  if (sources.length === 0) {
+    return;
+  }
+
+  const registry = getChannelRegistry();
+  if (!registry) {
+    return;
+  }
+
+  if (event.type === "requested") {
+    await registry.dispatchApprovalEvent({
+      type: "requested",
+      controlRequest: event.controlRequest,
+      sources,
+    });
+    return;
+  }
+
+  if (!event.response) {
+    return;
+  }
+
+  await registry.dispatchApprovalEvent({
+    type: "resolved",
+    controlRequest: event.controlRequest,
+    sources,
+    response: event.response,
+  });
+}
 
 export function rememberPendingApprovalBatchIds(
   runtime: ConversationRuntime,
@@ -194,7 +237,21 @@ export function resolvePendingApprovalResolver(
     return false;
   }
 
+  if (pending.controlRequest) {
+    void dispatchChannelApprovalEvent(runtime, {
+      type: "resolved",
+      controlRequest: pending.controlRequest,
+      response,
+    }).catch((error) => {
+      console.error(
+        "[Channels] Failed to dispatch resolved approval event:",
+        error instanceof Error ? error.message : error,
+      );
+    });
+  }
+
   runtime.pendingApprovalResolvers.delete(requestId);
+  runtime.pendingApprovalSourcesByRequestId.delete(requestId);
   runtime.listener.approvalRuntimeKeyByRequestId.delete(requestId);
   if (runtime.pendingApprovalResolvers.size === 0 && !runtime.isProcessing) {
     setLoopStatus(runtime, "WAITING_ON_INPUT");
@@ -216,10 +273,26 @@ export function rejectPendingApprovalResolvers(
   runtime: ConversationRuntime,
   reason: string,
 ): void {
-  for (const [, pending] of runtime.pendingApprovalResolvers) {
+  for (const [requestId, pending] of runtime.pendingApprovalResolvers) {
+    if (pending.controlRequest) {
+      void dispatchChannelApprovalEvent(runtime, {
+        type: "resolved",
+        controlRequest: pending.controlRequest,
+        response: {
+          request_id: requestId,
+          error: reason,
+        },
+      }).catch((error) => {
+        console.error(
+          "[Channels] Failed to dispatch rejected approval event:",
+          error instanceof Error ? error.message : error,
+        );
+      });
+    }
     pending.reject(new Error(reason));
   }
   runtime.pendingApprovalResolvers.clear();
+  runtime.pendingApprovalSourcesByRequestId.clear();
   for (const [requestId, runtimeKey] of runtime.listener
     .approvalRuntimeKeyByRequestId) {
     if (runtimeKey === runtime.key) {
@@ -278,7 +351,23 @@ export function requestApprovalOverWS(
       reject(error);
     };
     const handleAbort = () => {
+      if (controlRequest) {
+        void dispatchChannelApprovalEvent(runtime, {
+          type: "resolved",
+          controlRequest,
+          response: {
+            request_id: requestId,
+            error: "Cancelled by user",
+          },
+        }).catch((error) => {
+          console.error(
+            "[Channels] Failed to dispatch aborted approval event:",
+            error instanceof Error ? error.message : error,
+          );
+        });
+      }
       runtime.pendingApprovalResolvers.delete(requestId);
+      runtime.pendingApprovalSourcesByRequestId.delete(requestId);
       runtime.listener.approvalRuntimeKeyByRequestId.delete(requestId);
       wrappedReject(new Error("Cancelled by user"));
     };
@@ -294,6 +383,21 @@ export function requestApprovalOverWS(
       reject: wrappedReject,
       controlRequest,
     });
+    const channelTurnSources = runtime.activeChannelTurnSources ?? [];
+    if (channelTurnSources.length > 0) {
+      runtime.pendingApprovalSourcesByRequestId.set(requestId, [
+        ...channelTurnSources,
+      ]);
+      void dispatchChannelApprovalEvent(runtime, {
+        type: "requested",
+        controlRequest,
+      }).catch((error) => {
+        console.error(
+          "[Channels] Failed to dispatch requested approval event:",
+          error instanceof Error ? error.message : error,
+        );
+      });
+    }
     runtime.listener.approvalRuntimeKeyByRequestId.set(requestId, runtime.key);
     if (isInterrupted()) {
       handleAbort();

@@ -114,6 +114,7 @@ export type ConversationRuntime = {
   conversationId: string;
   messageQueue: Promise<void>;
   pendingApprovalResolvers: Map<string, PendingApprovalResolver>;
+  pendingApprovalSourcesByRequestId: Map<string, ChannelTurnSource[]>;
   recoveredApprovalState: RecoveredApprovalState | null;
   lastStopReason: string | null;
   isProcessing: boolean;
@@ -142,6 +143,7 @@ export type ConversationRuntime = {
   continuationEpoch: number;
   activeExecutingToolCallIds: string[];
   pendingInterruptedToolCallIds: string[] | null;
+  activeChannelTurnSources: ChannelTurnSource[] | null;
   /** Per-conversation reminder state (session-context, agent-info, etc.). */
   reminderState: SharedReminderState;
   /** Per-conversation tracker for compaction/reflection cadence. */

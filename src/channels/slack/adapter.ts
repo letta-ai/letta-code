@@ -3,6 +3,7 @@ import { basename, extname } from "node:path";
 import type SlackApp from "@slack/bolt";
 import type {
   ChannelAdapter,
+  ChannelApprovalEvent,
   ChannelTurnLifecycleEvent,
   ChannelTurnSource,
   InboundChannelMessage,
@@ -27,7 +28,20 @@ type SlackWriteClient = {
       channel: string;
       text: string;
       thread_ts?: string;
+      blocks?: unknown[];
     }) => Promise<{ ts?: string }>;
+    update: (args: {
+      channel: string;
+      ts: string;
+      text: string;
+      blocks?: unknown[];
+    }) => Promise<{ ts?: string }>;
+    postEphemeral: (args: {
+      channel: string;
+      user: string;
+      text: string;
+      thread_ts?: string;
+    }) => Promise<unknown>;
   };
   reactions: {
     add: (args: {
@@ -77,6 +91,16 @@ type SlackReactionEvent = {
   item_user?: string;
   reaction?: string;
   event_ts?: string;
+};
+type SlackBlockActionPayload = {
+  requestId?: string;
+  decision?: "allow" | "deny";
+};
+type SlackApprovalPromptState = {
+  chatId: string;
+  threadId: string | null;
+  messageTs: string;
+  allowedSenderIds: Set<string>;
 };
 
 type Constructor = abstract new (...args: never[]) => unknown;
@@ -188,10 +212,129 @@ function normalizeSlackReactionName(value: string): string {
   return value.trim().replace(/^:+|:+$/g, "");
 }
 
+function truncateSlackPreview(text: string, maxLength = 900): string {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+  return `${normalized.slice(0, maxLength - 1).trimEnd()}…`;
+}
+
+function buildSlackApprovalPromptText(
+  event: Extract<ChannelApprovalEvent, { type: "requested" }>,
+): string {
+  const request = event.controlRequest.request;
+  const source = event.sources[0];
+  const toolName = request.tool_name || "tool";
+  const inputPreview = truncateSlackPreview(
+    JSON.stringify(request.input, null, 2),
+  );
+  const chatLabel =
+    source?.chatType === "channel"
+      ? "this Slack thread"
+      : "this Slack conversation";
+  return [
+    `Permission request for ${chatLabel}`,
+    "",
+    `Allow the agent to run \`${toolName}\`?`,
+    "",
+    "```json",
+    inputPreview,
+    "```",
+    "",
+    "Choose *Approve* or *Deny* to continue.",
+  ].join("\n");
+}
+
+function buildSlackApprovalResolvedText(params: {
+  event: Extract<ChannelApprovalEvent, { type: "resolved" }>;
+  actorId?: string;
+}): string {
+  const decision =
+    "decision" in params.event.response ? params.event.response.decision : null;
+  const actorSuffix = params.actorId ? ` by <@${params.actorId}>` : "";
+  if (decision?.behavior === "allow") {
+    return `Approved${actorSuffix}.`;
+  }
+  if (decision?.behavior === "deny") {
+    return `Denied${actorSuffix}${decision.message ? `: ${decision.message}` : "."}`;
+  }
+  if ("error" in params.event.response) {
+    return params.event.response.error
+      ? `Approval is no longer available: ${params.event.response.error}`
+      : "Approval is no longer available.";
+  }
+  return "Approval is no longer available.";
+}
+
+function buildSlackApprovalBlocks(
+  requestId: string,
+): Array<Record<string, unknown>> {
+  return [
+    {
+      type: "actions",
+      elements: [
+        {
+          type: "button",
+          action_id: SLACK_APPROVAL_ACTION_ID,
+          text: {
+            type: "plain_text",
+            text: "Approve",
+            emoji: true,
+          },
+          style: "primary",
+          value: JSON.stringify({
+            requestId,
+            decision: "allow",
+          } satisfies SlackBlockActionPayload),
+        },
+        {
+          type: "button",
+          action_id: SLACK_APPROVAL_ACTION_ID,
+          text: {
+            type: "plain_text",
+            text: "Deny",
+            emoji: true,
+          },
+          style: "danger",
+          value: JSON.stringify({
+            requestId,
+            decision: "deny",
+          } satisfies SlackBlockActionPayload),
+        },
+      ],
+    },
+  ];
+}
+
+function parseSlackApprovalActionPayload(
+  value: unknown,
+): { requestId: string; decision: "allow" | "deny" } | null {
+  if (typeof value !== "string" || value.length === 0) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(value) as SlackBlockActionPayload;
+    if (
+      !isNonEmptyString(parsed.requestId) ||
+      (parsed.decision !== "allow" && parsed.decision !== "deny")
+    ) {
+      return null;
+    }
+    return {
+      requestId: parsed.requestId,
+      decision: parsed.decision,
+    };
+  } catch {
+    return null;
+  }
+}
+
 const SLACK_INGRESS_DEDUPE_TTL_MS = 60_000;
 const SLACK_INGRESS_DEDUPE_MAX = 2_000;
 const SLACK_LIFECYCLE_STATE_TTL_MS = 6 * 60 * 60 * 1000;
 const SLACK_LIFECYCLE_STATE_MAX = 2_000;
+const SLACK_APPROVAL_ACTION_ID = "letta_channel_approval";
 
 type SlackLifecycleState = "queued" | "completed" | "error" | "cancelled";
 
@@ -370,6 +513,7 @@ export function createSlackAdapter(
     { state: SlackLifecycleState; updatedAt: number }
   >();
   const lifecycleOperationByMessageKey = new Map<string, Promise<void>>();
+  const approvalPromptByRequestId = new Map<string, SlackApprovalPromptState>();
 
   function buildIngressMessageKey(
     channelId: string | undefined,
@@ -567,6 +711,12 @@ export function createSlackAdapter(
       return;
     }
     knownThreadIdsByMessageId.set(messageId, threadId);
+  }
+
+  function resolveApprovalTargetThreadId(
+    source: ChannelTurnSource,
+  ): string | null {
+    return source.threadId ?? source.messageId ?? null;
   }
 
   async function resolveUserName(
@@ -832,6 +982,77 @@ export function createSlackAdapter(
       await handleReactionEvent(event as SlackReactionEvent, "removed");
     });
 
+    instance.action(SLACK_APPROVAL_ACTION_ID, async ({ ack, body, action }) => {
+      await ack();
+
+      if (!adapter.onApprovalResponse) {
+        return;
+      }
+
+      const parsed = parseSlackApprovalActionPayload(asRecord(action)?.value);
+      if (!parsed) {
+        return;
+      }
+
+      const promptState = approvalPromptByRequestId.get(parsed.requestId);
+      if (!promptState) {
+        return;
+      }
+
+      const actorId = firstNonEmptyString(asRecord(asRecord(body)?.user)?.id);
+      if (
+        promptState.allowedSenderIds.size > 0 &&
+        (!actorId || !promptState.allowedSenderIds.has(actorId))
+      ) {
+        try {
+          const slackClient = await ensureWriteClient();
+          if (actorId) {
+            await slackClient.chat.postEphemeral({
+              channel: promptState.chatId,
+              user: actorId,
+              text: "Only the person who triggered this request can approve or deny it.",
+              ...(promptState.threadId
+                ? { thread_ts: promptState.threadId }
+                : {}),
+            });
+          }
+        } catch {}
+        return;
+      }
+
+      const accepted = await adapter.onApprovalResponse({
+        requestId: parsed.requestId,
+        decision:
+          parsed.decision === "allow"
+            ? {
+                behavior: "allow",
+                message: actorId
+                  ? `Approved from Slack by ${actorId}`
+                  : "Approved from Slack",
+              }
+            : {
+                behavior: "deny",
+                message: actorId
+                  ? `Denied from Slack by ${actorId}`
+                  : "Denied from Slack",
+              },
+      });
+
+      if (accepted || !actorId) {
+        return;
+      }
+
+      try {
+        const slackClient = await ensureWriteClient();
+        await slackClient.chat.postEphemeral({
+          channel: promptState.chatId,
+          user: actorId,
+          text: "That approval request is no longer available.",
+          ...(promptState.threadId ? { thread_ts: promptState.threadId } : {}),
+        });
+      } catch {}
+    });
+
     app = instance;
     return instance;
   }
@@ -885,6 +1106,7 @@ export function createSlackAdapter(
       seenIngressMessageKeys.clear();
       lifecycleStateByMessageKey.clear();
       lifecycleOperationByMessageKey.clear();
+      approvalPromptByRequestId.clear();
       console.log("[Slack] App stopped");
     },
 
@@ -920,6 +1142,73 @@ export function createSlackAdapter(
           scheduleLifecycleTransition(source, nextState),
         ),
       );
+    },
+
+    async handleApprovalEvent(event: ChannelApprovalEvent): Promise<void> {
+      if (!running) {
+        return;
+      }
+
+      await ensureApp();
+      const slackClient = await ensureWriteClient();
+
+      if (event.type === "requested") {
+        if (approvalPromptByRequestId.has(event.controlRequest.request_id)) {
+          return;
+        }
+
+        const source = event.sources[0];
+        if (!source) {
+          return;
+        }
+
+        const threadId = resolveApprovalTargetThreadId(source);
+        const response = await slackClient.chat.postMessage({
+          channel: source.chatId,
+          text: buildSlackApprovalPromptText(event),
+          ...(threadId ? { thread_ts: threadId } : {}),
+          blocks: buildSlackApprovalBlocks(event.controlRequest.request_id),
+        });
+
+        if (!isNonEmptyString(response.ts)) {
+          return;
+        }
+
+        approvalPromptByRequestId.set(event.controlRequest.request_id, {
+          chatId: source.chatId,
+          threadId,
+          messageTs: response.ts,
+          allowedSenderIds: new Set(
+            event.sources
+              .map((entry) => entry.senderId)
+              .filter((value): value is string => isNonEmptyString(value)),
+          ),
+        });
+        return;
+      }
+
+      const promptState = approvalPromptByRequestId.get(
+        event.controlRequest.request_id,
+      );
+      if (!promptState) {
+        return;
+      }
+
+      const actorId =
+        "decision" in event.response &&
+        typeof event.response.decision?.message === "string"
+          ? event.response.decision.message.match(
+              /(?:Approved|Denied) from Slack by ([A-Z0-9]+)/i,
+            )?.[1]
+          : undefined;
+
+      await slackClient.chat.update({
+        channel: promptState.chatId,
+        ts: promptState.messageTs,
+        text: buildSlackApprovalResolvedText({ event, actorId }),
+        blocks: [],
+      });
+      approvalPromptByRequestId.delete(event.controlRequest.request_id);
     },
 
     async sendMessage(

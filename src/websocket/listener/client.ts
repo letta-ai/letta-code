@@ -3021,6 +3021,31 @@ function wireChannelIngress(
     scheduleQueuePump(conversationRuntime, socket, opts, processQueuedTurn);
   });
 
+  registry.setApprovalResponseHandler(async (response) => {
+    const approvalResponse: ApprovalResponseBody = {
+      request_id: response.requestId,
+      ...(response.error
+        ? { error: response.error }
+        : response.decision
+          ? { decision: response.decision }
+          : { error: "Missing approval decision" }),
+    };
+
+    return handleApprovalResponseInput(listener, {
+      runtime: {
+        agent_id: response.agentId,
+        conversation_id: response.conversationId,
+      },
+      response: approvalResponse,
+      socket,
+      opts: {
+        onStatusChange: opts.onStatusChange,
+        connectionId: opts.connectionId,
+      },
+      processQueuedTurn,
+    });
+  });
+
   registry.setEventHandler((event) => {
     handleChannelRegistryEvent(event, socket, listener);
   });

@@ -59,6 +59,8 @@ class FakeSlackApp {
     },
     chat: {
       postMessage: mock(async () => ({ ts: "1712800000.000100" })),
+      postEphemeral: mock(async () => ({ ok: true })),
+      update: mock(async () => ({ ok: true })),
     },
     conversations: {
       history: mock(async () => ({ messages: [] })),
@@ -80,6 +82,14 @@ class FakeSlackApp {
 
   messageHandler: SlackMessageHandler | null = null;
   eventHandlers = new Map<string, SlackEventHandler>();
+  actionHandlers = new Map<
+    string,
+    (args: {
+      ack: () => Promise<void>;
+      body: Record<string, unknown>;
+      action: Record<string, unknown>;
+    }) => Promise<void>
+  >();
   errorHandler: ((error: Error) => Promise<void>) | null = null;
   readonly init = mock(async () => {});
   readonly start = mock(async () => {});
@@ -97,6 +107,17 @@ class FakeSlackApp {
     this.eventHandlers.set(name, handler);
   }
 
+  action(
+    name: string,
+    handler: (args: {
+      ack: () => Promise<void>;
+      body: Record<string, unknown>;
+      action: Record<string, unknown>;
+    }) => Promise<void>,
+  ): void {
+    this.actionHandlers.set(name, handler);
+  }
+
   error(handler: (error: Error) => Promise<void>): void {
     this.errorHandler = handler;
   }
@@ -109,6 +130,8 @@ class FakeSlackWriteClient {
   readonly options: Record<string, unknown> | undefined;
   readonly chat = {
     postMessage: mock(async () => ({ ts: "1712800000.000100" })),
+    postEphemeral: mock(async () => ({ ok: true })),
+    update: mock(async () => ({ ok: true })),
   };
   readonly reactions = {
     add: mock(async () => ({ ok: true })),
@@ -226,6 +249,8 @@ afterEach(() => {
     instance.client.users.info.mockClear();
     instance.client.chat.postMessage.mockClear();
     instance.client.conversations.history.mockClear();
+    instance.client.chat.postEphemeral.mockClear();
+    instance.client.chat.update.mockClear();
     instance.client.conversations.replies.mockClear();
     instance.client.reactions.add.mockClear();
     instance.client.reactions.remove.mockClear();
@@ -237,6 +262,8 @@ afterEach(() => {
   }
   for (const instance of FakeSlackWriteClient.instances) {
     instance.chat.postMessage.mockClear();
+    instance.chat.postEphemeral.mockClear();
+    instance.chat.update.mockClear();
     instance.reactions.add.mockClear();
     instance.reactions.remove.mockClear();
     instance.files.getUploadURLExternal.mockClear();
@@ -1081,4 +1108,186 @@ test("slack adapter preserves non-leading user mentions in app mention text", as
       text: "ask <@U555> for help",
     }),
   );
+});
+
+test("slack adapter renders approval prompts and forwards block actions", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  const onApprovalResponse = mock(async () => true);
+  adapter.onApprovalResponse = onApprovalResponse;
+
+  await adapter.start();
+
+  await adapter.handleApprovalEvent?.({
+    type: "requested",
+    controlRequest: {
+      request_id: "req-1",
+      request: {
+        tool_name: "Bash",
+        input: {
+          command: "rm -rf /tmp/nope",
+        },
+      },
+    } as never,
+    sources: [
+      {
+        channel: "slack",
+        accountId: "slack-test-account",
+        chatId: "C123",
+        chatType: "channel",
+        messageId: "1712800000.000100",
+        threadId: "1712790000.000050",
+        senderId: "U123",
+        senderName: "Charles",
+        agentId: "agent-1",
+        conversationId: "conv-1",
+      },
+    ],
+  });
+
+  const writeClient = FakeSlackWriteClient.instances[0];
+  expect(writeClient?.chat.postMessage).toHaveBeenCalledWith(
+    expect.objectContaining({
+      channel: "C123",
+      thread_ts: "1712790000.000050",
+      text: expect.stringContaining("Allow the agent to run `Bash`?"),
+      blocks: expect.any(Array),
+    }),
+  );
+
+  const postMessageCall = writeClient?.chat.postMessage.mock.calls[0] as
+    | [Record<string, unknown>]
+    | undefined;
+  expect(postMessageCall).toBeDefined();
+  if (!postMessageCall) {
+    throw new Error("Expected Slack approval prompt postMessage call");
+  }
+
+  const blocks = postMessageCall[0].blocks as Array<{
+    elements?: Array<{ value?: string }>;
+  }>;
+  const actionValue = blocks[0]?.elements?.[0]?.value;
+  expect(typeof actionValue).toBe("string");
+
+  const app = FakeSlackApp.instances[0];
+  const actionHandler = app?.actionHandlers.get("letta_channel_approval");
+  expect(actionHandler).toBeDefined();
+  if (!actionHandler) {
+    throw new Error("Expected Slack approval action handler");
+  }
+
+  const ack = mock(async () => {});
+  await actionHandler({
+    ack,
+    body: {
+      user: {
+        id: "U123",
+      },
+    },
+    action: {
+      value: actionValue,
+    },
+  });
+
+  expect(ack).toHaveBeenCalledTimes(1);
+  expect(onApprovalResponse).toHaveBeenCalledWith({
+    requestId: "req-1",
+    decision: {
+      behavior: "allow",
+      message: "Approved from Slack by U123",
+    },
+  });
+});
+
+test("slack adapter resolves approval prompts by updating the original message", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  await adapter.start();
+
+  await adapter.handleApprovalEvent?.({
+    type: "requested",
+    controlRequest: {
+      request_id: "req-2",
+      request: {
+        tool_name: "Bash",
+        input: {
+          command: "ls",
+        },
+      },
+    } as never,
+    sources: [
+      {
+        channel: "slack",
+        accountId: "slack-test-account",
+        chatId: "D123",
+        chatType: "direct",
+        messageId: "1712800000.000200",
+        threadId: null,
+        senderId: "U123",
+        senderName: "Charles",
+        agentId: "agent-1",
+        conversationId: "conv-1",
+      },
+    ],
+  });
+
+  await adapter.handleApprovalEvent?.({
+    type: "resolved",
+    controlRequest: {
+      request_id: "req-2",
+      request: {
+        tool_name: "Bash",
+        input: {
+          command: "ls",
+        },
+      },
+    } as never,
+    sources: [
+      {
+        channel: "slack",
+        accountId: "slack-test-account",
+        chatId: "D123",
+        chatType: "direct",
+        messageId: "1712800000.000200",
+        threadId: null,
+        senderId: "U123",
+        senderName: "Charles",
+        agentId: "agent-1",
+        conversationId: "conv-1",
+      },
+    ],
+    response: {
+      request_id: "req-2",
+      decision: {
+        behavior: "deny",
+        message: "Denied from Slack by U123",
+      },
+    },
+  });
+
+  const writeClient = FakeSlackWriteClient.instances[0];
+  expect(writeClient?.chat.update).toHaveBeenCalledWith({
+    channel: "D123",
+    ts: "1712800000.000100",
+    text: "Denied by <@U123>: Denied from Slack by U123",
+    blocks: [],
+  });
 });
