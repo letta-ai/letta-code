@@ -140,10 +140,23 @@ interface LockOwner {
 function isProcessAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
-    return true;
   } catch {
     return false;
   }
+
+  // In containers, PIDs recycle across restarts (e.g. PID 3 gets reused
+  // by a completely different process). Verify the process is actually a
+  // letta/node process by checking /proc/{pid}/cmdline on Linux.
+  try {
+    const cmdline = readFileSync(`/proc/${pid}/cmdline`, "utf8");
+    if (!cmdline.includes("letta") && !cmdline.includes("node")) {
+      return false;
+    }
+  } catch {
+    // /proc not available (macOS, etc.) — trust the kill(0) result
+  }
+
+  return true;
 }
 
 function readLockOwner(lockDir: string): LockOwner | null {
