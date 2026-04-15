@@ -28,6 +28,19 @@ export interface ChannelReactionNotification {
   targetSenderId?: string;
 }
 
+export interface ChannelThreadContextEntry {
+  messageId?: string;
+  senderId?: string;
+  senderName?: string;
+  text: string;
+}
+
+export interface ChannelThreadContext {
+  label?: string;
+  starter?: ChannelThreadContextEntry;
+  history?: ChannelThreadContextEntry[];
+}
+
 // ── Adapter interface ─────────────────────────────────────────────
 
 export interface ChannelAdapter {
@@ -59,6 +72,16 @@ export interface ChannelAdapter {
     text: string,
     options?: { replyToMessageId?: string },
   ): Promise<void>;
+
+  /**
+   * Optionally enrich an inbound message with additional context before it is
+   * formatted for the agent. Slack uses this to hydrate older thread context
+   * the first time a Letta conversation is created for an existing thread.
+   */
+  prepareInboundMessage?(
+    msg: InboundChannelMessage,
+    options?: { isFirstRouteTurn?: boolean },
+  ): Promise<InboundChannelMessage>;
 
   /**
    * Called by the registry when the adapter receives an inbound message.
@@ -100,6 +123,8 @@ export interface InboundChannelMessage {
   attachments?: ChannelMessageAttachment[];
   /** Reaction metadata for non-text channel events. */
   reaction?: ChannelReactionNotification;
+  /** Supplemental thread context captured before the triggering message. */
+  threadContext?: ChannelThreadContext;
 }
 
 export interface OutboundChannelMessage {

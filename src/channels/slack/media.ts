@@ -26,6 +26,38 @@ type SlackAttachmentLike = {
   files?: SlackFileLike[];
 };
 
+type SlackRepliesClient = {
+  conversations: {
+    replies(args: {
+      channel: string;
+      ts: string;
+      limit?: number;
+      inclusive?: boolean;
+      cursor?: string;
+    }): Promise<unknown>;
+  };
+};
+
+type SlackRepliesPageMessage = {
+  text?: string;
+  user?: string;
+  bot_id?: string;
+  ts?: string;
+  files?: unknown[];
+};
+
+type SlackRepliesPage = {
+  messages?: SlackRepliesPageMessage[];
+  response_metadata?: { next_cursor?: string };
+};
+
+export type SlackThreadMessage = {
+  text: string;
+  userId?: string;
+  botId?: string;
+  ts?: string;
+};
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object"
     ? (value as Record<string, unknown>)
@@ -76,6 +108,28 @@ function normalizeSlackAttachmentLike(
       : undefined,
     files,
   };
+}
+
+function resolveSlackThreadMessageText(
+  message: SlackRepliesPageMessage,
+): string {
+  const text = typeof message.text === "string" ? message.text.trim() : "";
+  if (text) {
+    return text;
+  }
+
+  const files = Array.isArray(message.files)
+    ? message.files
+        .map((entry) => normalizeSlackFileLike(entry))
+        .filter((entry): entry is SlackFileLike => Boolean(entry))
+    : [];
+
+  if (files.length === 0) {
+    return "";
+  }
+
+  const fileNames = files.map((file) => file.name ?? "file").join(", ");
+  return `[attached: ${fileNames}]`;
 }
 
 function isAllowedSlackHostname(hostname: string): boolean {
@@ -324,4 +378,100 @@ export async function readSlackAttachmentFile(
   localPath: string,
 ): Promise<Buffer> {
   return readFile(localPath);
+}
+
+export async function resolveSlackThreadStarter(params: {
+  channelId: string;
+  threadTs: string;
+  client: SlackRepliesClient;
+}): Promise<SlackThreadMessage | null> {
+  try {
+    const response = (await params.client.conversations.replies({
+      channel: params.channelId,
+      ts: params.threadTs,
+      limit: 1,
+      inclusive: true,
+    })) as SlackRepliesPage;
+
+    const message = response.messages?.[0];
+    if (!message) {
+      return null;
+    }
+
+    const text = resolveSlackThreadMessageText(message);
+    if (!text) {
+      return null;
+    }
+
+    return {
+      text,
+      userId: isNonEmptyString(message.user) ? message.user : undefined,
+      botId: isNonEmptyString(message.bot_id) ? message.bot_id : undefined,
+      ts: isNonEmptyString(message.ts) ? message.ts : undefined,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function resolveSlackThreadHistory(params: {
+  channelId: string;
+  threadTs: string;
+  client: SlackRepliesClient;
+  currentMessageTs?: string;
+  limit?: number;
+}): Promise<SlackThreadMessage[]> {
+  const maxMessages = params.limit ?? 20;
+  if (!Number.isFinite(maxMessages) || maxMessages <= 0) {
+    return [];
+  }
+
+  const fetchLimit = 200;
+  const retained: SlackRepliesPageMessage[] = [];
+  let cursor: string | undefined;
+
+  try {
+    do {
+      const response = (await params.client.conversations.replies({
+        channel: params.channelId,
+        ts: params.threadTs,
+        limit: fetchLimit,
+        inclusive: true,
+        ...(cursor ? { cursor } : {}),
+      })) as SlackRepliesPage;
+
+      for (const message of response.messages ?? []) {
+        const text = resolveSlackThreadMessageText(message);
+        if (!text) {
+          continue;
+        }
+        if (params.currentMessageTs && message.ts === params.currentMessageTs) {
+          continue;
+        }
+        if (message.ts === params.threadTs) {
+          continue;
+        }
+
+        retained.push(message);
+        if (retained.length > maxMessages) {
+          retained.shift();
+        }
+      }
+
+      const nextCursor = response.response_metadata?.next_cursor;
+      cursor =
+        typeof nextCursor === "string" && nextCursor.trim().length > 0
+          ? nextCursor.trim()
+          : undefined;
+    } while (cursor);
+
+    return retained.map((message) => ({
+      text: resolveSlackThreadMessageText(message),
+      userId: isNonEmptyString(message.user) ? message.user : undefined,
+      botId: isNonEmptyString(message.bot_id) ? message.bot_id : undefined,
+      ts: isNonEmptyString(message.ts) ? message.ts : undefined,
+    }));
+  } catch {
+    return [];
+  }
 }

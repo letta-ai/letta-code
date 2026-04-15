@@ -7,7 +7,11 @@ import type {
   OutboundChannelMessage,
   SlackChannelAccount,
 } from "../types";
-import { resolveSlackInboundAttachments } from "./media";
+import {
+  resolveSlackInboundAttachments,
+  resolveSlackThreadHistory,
+  resolveSlackThreadStarter,
+} from "./media";
 import { loadSlackBoltModule } from "./runtime";
 
 type SlackAppConstructor = typeof import("@slack/bolt").App;
@@ -41,6 +45,7 @@ function resolveSlackAppModule(value: unknown): SlackAppConstructor | null {
   const app = Reflect.get(value, "App");
   return isConstructorFunction<SlackAppConstructor>(app) ? app : null;
 }
+const INITIAL_SLACK_THREAD_HISTORY_LIMIT = 20;
 
 function resolveSlackAppConstructor(mod: SlackBoltModule): SlackAppConstructor {
   const defaultExport =
@@ -183,6 +188,36 @@ function resolveSlackUserDisplayName(userInfo: unknown): string | undefined {
     profile?.real_name,
     user?.name,
   );
+}
+
+function truncateSlackThreadLabel(text: string, maxLength = 80): string | null {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  if (!normalized) {
+    return null;
+  }
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+  return `${normalized.slice(0, maxLength - 1).trimEnd()}…`;
+}
+
+function buildSlackThreadLabel(
+  msg: InboundChannelMessage,
+  starterText?: string,
+): string | undefined {
+  if (msg.chatType !== "channel") {
+    return undefined;
+  }
+
+  const roomLabel =
+    isNonEmptyString(msg.chatLabel) && msg.chatLabel !== msg.chatId
+      ? ` in ${msg.chatLabel}`
+      : "";
+  const preview = truncateSlackThreadLabel(starterText ?? msg.text);
+  if (preview) {
+    return `Slack thread${roomLabel}: ${preview}`;
+  }
+  return roomLabel ? `Slack thread${roomLabel}` : `Slack thread ${msg.chatId}`;
 }
 
 export async function resolveSlackAccountDisplayName(
@@ -667,6 +702,102 @@ export function createSlackAdapter(
         response.ts,
         options?.replyToMessageId ?? response.ts ?? null,
       );
+    },
+
+    async prepareInboundMessage(
+      msg: InboundChannelMessage,
+      options?: { isFirstRouteTurn?: boolean },
+    ): Promise<InboundChannelMessage> {
+      if (
+        !options?.isFirstRouteTurn ||
+        msg.channel !== "slack" ||
+        msg.chatType !== "channel" ||
+        !isNonEmptyString(msg.threadId) ||
+        !isNonEmptyString(msg.messageId) ||
+        msg.threadId === msg.messageId
+      ) {
+        return msg;
+      }
+
+      const slackApp = await ensureApp();
+      const starter = await resolveSlackThreadStarter({
+        channelId: msg.chatId,
+        threadTs: msg.threadId,
+        client: slackApp.client,
+      });
+      const history = await resolveSlackThreadHistory({
+        channelId: msg.chatId,
+        threadTs: msg.threadId,
+        client: slackApp.client,
+        currentMessageTs: msg.messageId,
+        limit: INITIAL_SLACK_THREAD_HISTORY_LIMIT,
+      });
+
+      if (!starter && history.length === 0) {
+        return msg;
+      }
+
+      const uniqueUserIds = new Set<string>();
+      if (isNonEmptyString(starter?.userId)) {
+        uniqueUserIds.add(starter.userId);
+      }
+      for (const entry of history) {
+        if (isNonEmptyString(entry.userId)) {
+          uniqueUserIds.add(entry.userId);
+        }
+      }
+
+      await Promise.all(
+        Array.from(uniqueUserIds).map(async (userId) => {
+          await resolveUserName(slackApp, userId);
+        }),
+      );
+
+      const resolveThreadSenderName = (
+        userId?: string,
+        botId?: string,
+      ): string | undefined => {
+        if (isNonEmptyString(userId)) {
+          return knownUserDisplayNames.get(userId) ?? userId;
+        }
+        if (isNonEmptyString(botId)) {
+          return `Bot (${botId})`;
+        }
+        return undefined;
+      };
+
+      return {
+        ...msg,
+        threadContext: {
+          label: buildSlackThreadLabel(msg, starter?.text),
+          ...(starter
+            ? {
+                starter: {
+                  messageId: starter.ts,
+                  senderId: starter.userId ?? starter.botId,
+                  senderName: resolveThreadSenderName(
+                    starter.userId,
+                    starter.botId,
+                  ),
+                  text: starter.text,
+                },
+              }
+            : {}),
+          ...(history.length > 0
+            ? {
+                history: history.map((entry) => ({
+                  messageId: entry.ts,
+                  senderId: entry.userId ?? entry.botId,
+                  senderName: resolveThreadSenderName(
+                    entry.userId,
+                    entry.botId,
+                  ),
+                  text: entry.text,
+                })),
+              }
+            : {}),
+        },
+      };
     },
 
     onMessage: undefined,
