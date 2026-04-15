@@ -23,6 +23,7 @@ import { resetContextHistory } from "../../cli/helpers/contextTracker";
 import {
   ensureFileIndex,
   getIndexRoot,
+  refreshFileIndex,
   searchFileIndex,
   setIndexRoot,
 } from "../../cli/helpers/fileIndex";
@@ -4318,6 +4319,38 @@ async function connectWithRetry(
         );
         runDetachedListenerTask("list_in_directory", async () => {
           try {
+            // ── 1. Query file index first (instant, from memory) ──────────
+            let indexedNames: Set<string> | undefined;
+            const indexedFolders: string[] = [];
+            const indexedFiles: string[] = [];
+            try {
+              await ensureFileIndex();
+              const indexRoot = getIndexRoot();
+              const relPath = path.relative(indexRoot, parsed.path);
+              // Only query the index if the directory is within the index root
+              if (!relPath.startsWith("..")) {
+                const indexed = searchFileIndex({
+                  searchDir: relPath || ".",
+                  pattern: "",
+                  deep: false,
+                  maxResults: 10000,
+                });
+                indexedNames = new Set<string>();
+                for (const entry of indexed) {
+                  const name = entry.path.split(path.sep).pop() ?? entry.path;
+                  indexedNames.add(name);
+                  if (entry.type === "dir") {
+                    indexedFolders.push(name);
+                  } else {
+                    indexedFiles.push(name);
+                  }
+                }
+              }
+            } catch {
+              // Index not available — fall through to readdir only
+            }
+
+            // ── 2. readdir to fill gaps (entries not in the index) ────────
             const { readdir } = await import("node:fs/promises");
             console.log(`[Listen] Reading directory: ${parsed.path}`);
             const entries = await readdir(parsed.path, { withFileTypes: true });
@@ -4332,19 +4365,29 @@ async function connectWithRetry(
               ".gitignore",
               "Thumbs.db",
             ]);
-            const sortedEntries = entries
-              .filter((e) => !IGNORED_NAMES.has(e.name))
-              .sort((a, b) => a.name.localeCompare(b.name));
 
-            const allFolders: string[] = [];
-            const allFiles: string[] = [];
-            for (const e of sortedEntries) {
+            // Add entries that are NOT already in the index
+            const extraFolders: string[] = [];
+            const extraFiles: string[] = [];
+            for (const e of entries) {
+              if (IGNORED_NAMES.has(e.name)) continue;
+              if (indexedNames?.has(e.name)) continue; // already from index
               if (e.isDirectory()) {
-                allFolders.push(e.name);
+                extraFolders.push(e.name);
               } else if (parsed.include_files) {
-                allFiles.push(e.name);
+                extraFiles.push(e.name);
               }
             }
+
+            // ── 3. Merge: indexed entries + readdir extras ────────────────
+            const allFolders = [...indexedFolders, ...extraFolders].sort(
+              (a, b) => a.localeCompare(b),
+            );
+            const allFiles = parsed.include_files
+              ? [...indexedFiles, ...extraFiles].sort((a, b) =>
+                  a.localeCompare(b),
+                )
+              : [];
 
             const total = allFolders.length + allFiles.length;
             const offset = parsed.offset ?? 0;
@@ -4353,8 +4396,9 @@ async function connectWithRetry(
             // Paginate over the combined [folders, files] list
             const combined = [...allFolders, ...allFiles];
             const page = combined.slice(offset, offset + limit);
-            const folders = page.filter((name) => allFolders.includes(name));
-            const files = page.filter((name) => allFiles.includes(name));
+            const folderSet = new Set(allFolders);
+            const folders = page.filter((name) => folderSet.has(name));
+            const files = page.filter((name) => !folderSet.has(name));
 
             const response: Record<string, unknown> = {
               type: "list_in_directory_response",
@@ -4505,6 +4549,8 @@ async function connectWithRetry(
             console.log(
               `[Listen] write_file success: ${parsed.path} (${parsed.content.length} bytes)`,
             );
+            // Update the file index so the sidebar Merkle tree stays current
+            void refreshFileIndex();
             safeSocketSend(
               socket,
               {
@@ -4648,6 +4694,10 @@ async function connectWithRetry(
             console.log(
               `[Listen] edit_file success: ${result.replacements} replacement(s) at line ${result.startLine}`,
             );
+            // Update the file index so the sidebar Merkle tree stays current
+            if (result.replacements > 0) {
+              void refreshFileIndex();
+            }
 
             // Notify web clients of the new content so they can update live.
             if (result.replacements > 0) {
@@ -4724,6 +4774,8 @@ async function connectWithRetry(
               const { writeFile } = await import("node:fs/promises");
               const content = parsed.document_content as string;
               await writeFile(parsed.path, content, "utf-8");
+              // Update the file index so the sidebar Merkle tree stays current
+              void refreshFileIndex();
               console.log(
                 `[Listen] file_ops: wrote ${content.length} bytes to ${parsed.path}`,
               );
