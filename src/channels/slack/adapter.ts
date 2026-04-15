@@ -3,6 +3,8 @@ import { basename, extname } from "node:path";
 import type SlackApp from "@slack/bolt";
 import type {
   ChannelAdapter,
+  ChannelTurnLifecycleEvent,
+  ChannelTurnSource,
   InboundChannelMessage,
   OutboundChannelMessage,
   SlackChannelAccount,
@@ -187,6 +189,10 @@ function normalizeSlackReactionName(value: string): string {
 
 const SLACK_INGRESS_DEDUPE_TTL_MS = 60_000;
 const SLACK_INGRESS_DEDUPE_MAX = 2_000;
+const SLACK_LIFECYCLE_STATE_TTL_MS = 6 * 60 * 60 * 1000;
+const SLACK_LIFECYCLE_STATE_MAX = 2_000;
+
+type SlackLifecycleState = "queued" | "completed" | "error" | "cancelled";
 
 function resolveUploadMimeType(filePath: string): string | undefined {
   switch (extname(filePath).toLowerCase()) {
@@ -341,6 +347,11 @@ export function createSlackAdapter(
   const knownThreadIdsByMessageId = new Map<string, string | null>();
   const knownUserDisplayNames = new Map<string, string>();
   const seenIngressMessageKeys = new Map<string, number>();
+  const lifecycleStateByMessageKey = new Map<
+    string,
+    { state: SlackLifecycleState; updatedAt: number }
+  >();
+  const lifecycleOperationByMessageKey = new Map<string, Promise<void>>();
 
   function buildIngressMessageKey(
     channelId: string | undefined,
@@ -374,6 +385,132 @@ export function createSlackAdapter(
         seenIngressMessageKeys.delete(entry[0]);
       }
     }
+  }
+
+  function getLifecycleMessageKey(source: ChannelTurnSource): string | null {
+    if (
+      source.channel !== "slack" ||
+      !isNonEmptyString(source.chatId) ||
+      !isNonEmptyString(source.messageId)
+    ) {
+      return null;
+    }
+    return `${source.chatId}:${source.messageId}`;
+  }
+
+  function pruneLifecycleState(now: number = Date.now()): void {
+    for (const [key, entry] of lifecycleStateByMessageKey) {
+      if (entry.updatedAt + SLACK_LIFECYCLE_STATE_TTL_MS <= now) {
+        lifecycleStateByMessageKey.delete(key);
+      }
+    }
+
+    if (lifecycleStateByMessageKey.size <= SLACK_LIFECYCLE_STATE_MAX) {
+      return;
+    }
+
+    const oldestEntries = Array.from(lifecycleStateByMessageKey.entries()).sort(
+      (a, b) => a[1].updatedAt - b[1].updatedAt,
+    );
+    const overflowCount =
+      lifecycleStateByMessageKey.size - SLACK_LIFECYCLE_STATE_MAX;
+    for (let index = 0; index < overflowCount; index += 1) {
+      const entry = oldestEntries[index];
+      if (entry) {
+        lifecycleStateByMessageKey.delete(entry[0]);
+      }
+    }
+  }
+
+  async function sendLifecycleReaction(
+    source: ChannelTurnSource,
+    emoji: string,
+    removeReaction = false,
+  ): Promise<void> {
+    if (!isNonEmptyString(source.messageId)) {
+      return;
+    }
+    await ensureApp();
+    const slackClient = await ensureWriteClient();
+    if (removeReaction) {
+      await slackClient.reactions.remove({
+        channel: source.chatId,
+        timestamp: source.messageId,
+        name: emoji,
+      });
+      return;
+    }
+    await slackClient.reactions.add({
+      channel: source.chatId,
+      timestamp: source.messageId,
+      name: emoji,
+    });
+  }
+
+  function scheduleLifecycleTransition(
+    source: ChannelTurnSource,
+    nextState: SlackLifecycleState,
+  ): Promise<void> | null {
+    const key = getLifecycleMessageKey(source);
+    if (!key) {
+      return null;
+    }
+
+    const previous =
+      lifecycleOperationByMessageKey.get(key) ?? Promise.resolve();
+    const operation = previous
+      .catch(() => {})
+      .then(async () => {
+        pruneLifecycleState();
+        const currentState = lifecycleStateByMessageKey.get(key)?.state;
+        if (currentState === nextState) {
+          lifecycleStateByMessageKey.set(key, {
+            state: nextState,
+            updatedAt: Date.now(),
+          });
+          return;
+        }
+
+        if (nextState === "queued") {
+          if (!currentState) {
+            await sendLifecycleReaction(source, "eyes");
+            lifecycleStateByMessageKey.set(key, {
+              state: nextState,
+              updatedAt: Date.now(),
+            });
+          }
+          return;
+        }
+
+        if (currentState === "queued") {
+          try {
+            await sendLifecycleReaction(source, "eyes", true);
+          } catch {}
+        }
+
+        await sendLifecycleReaction(
+          source,
+          nextState === "completed" ? "white_check_mark" : "x",
+        );
+        lifecycleStateByMessageKey.set(key, {
+          state: nextState,
+          updatedAt: Date.now(),
+        });
+      })
+      .catch((error) => {
+        console.warn(
+          `[Slack] Failed to update lifecycle reaction for ${key}:`,
+          error instanceof Error ? error.message : error,
+        );
+      })
+      .finally(() => {
+        if (lifecycleOperationByMessageKey.get(key) === operation) {
+          lifecycleOperationByMessageKey.delete(key);
+        }
+      });
+
+    lifecycleOperationByMessageKey.set(key, operation);
+    return operation;
   }
 
   function markIngressMessageSeen(
@@ -728,11 +865,43 @@ export function createSlackAdapter(
       writeClient = null;
       botUserId = null;
       seenIngressMessageKeys.clear();
+      lifecycleStateByMessageKey.clear();
+      lifecycleOperationByMessageKey.clear();
       console.log("[Slack] App stopped");
     },
 
     isRunning(): boolean {
       return running;
+    },
+
+    async handleTurnLifecycleEvent(
+      event: ChannelTurnLifecycleEvent,
+    ): Promise<void> {
+      if (!running) {
+        return;
+      }
+
+      if (event.type === "queued") {
+        await scheduleLifecycleTransition(event.source, "queued");
+        return;
+      }
+
+      if (event.type === "processing") {
+        return;
+      }
+
+      const nextState: SlackLifecycleState =
+        event.outcome === "completed"
+          ? "completed"
+          : event.outcome === "cancelled"
+            ? "cancelled"
+            : "error";
+
+      await Promise.all(
+        event.sources.map((source) =>
+          scheduleLifecycleTransition(source, nextState),
+        ),
+      );
     },
 
     async sendMessage(

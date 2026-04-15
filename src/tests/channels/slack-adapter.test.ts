@@ -790,6 +790,129 @@ test("slack adapter can add reactions to messages", async () => {
   });
 });
 
+test("slack adapter adds eyes while a queued turn is processing, then swaps to checkmark on completion", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  await adapter.start();
+
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "queued",
+    source: {
+      channel: "slack",
+      accountId: "slack-test-account",
+      chatId: "C123",
+      chatType: "channel",
+      messageId: "1712800000.000100",
+      threadId: "1712790000.000050",
+      agentId: "agent-1",
+      conversationId: "conv-1",
+    },
+  });
+
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "finished",
+    batchId: "batch-1",
+    outcome: "completed",
+    sources: [
+      {
+        channel: "slack",
+        accountId: "slack-test-account",
+        chatId: "C123",
+        chatType: "channel",
+        messageId: "1712800000.000100",
+        threadId: "1712790000.000050",
+        agentId: "agent-1",
+        conversationId: "conv-1",
+      },
+    ],
+  });
+
+  const writeClient = FakeSlackWriteClient.instances[0];
+  expect(writeClient?.reactions.add).toHaveBeenNthCalledWith(1, {
+    channel: "C123",
+    timestamp: "1712800000.000100",
+    name: "eyes",
+  });
+  expect(writeClient?.reactions.remove).toHaveBeenCalledWith({
+    channel: "C123",
+    timestamp: "1712800000.000100",
+    name: "eyes",
+  });
+  expect(writeClient?.reactions.add).toHaveBeenNthCalledWith(2, {
+    channel: "C123",
+    timestamp: "1712800000.000100",
+    name: "white_check_mark",
+  });
+});
+
+test("slack adapter swaps queued turns to x when the turn fails", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  await adapter.start();
+
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "queued",
+    source: {
+      channel: "slack",
+      accountId: "slack-test-account",
+      chatId: "D123",
+      chatType: "direct",
+      messageId: "1712800000.000200",
+      threadId: null,
+      agentId: "agent-1",
+      conversationId: "conv-1",
+    },
+  });
+
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "finished",
+    batchId: "batch-2",
+    outcome: "error",
+    sources: [
+      {
+        channel: "slack",
+        accountId: "slack-test-account",
+        chatId: "D123",
+        chatType: "direct",
+        messageId: "1712800000.000200",
+        threadId: null,
+        agentId: "agent-1",
+        conversationId: "conv-1",
+      },
+    ],
+  });
+
+  const writeClient = FakeSlackWriteClient.instances[0];
+  expect(writeClient?.reactions.remove).toHaveBeenCalledWith({
+    channel: "D123",
+    timestamp: "1712800000.000200",
+    name: "eyes",
+  });
+  expect(writeClient?.reactions.add).toHaveBeenNthCalledWith(2, {
+    channel: "D123",
+    timestamp: "1712800000.000200",
+    name: "x",
+  });
+});
+
 test("slack adapter uploads local files through Slack's external upload flow", async () => {
   const tempDir = await mkdtemp(join(tmpdir(), "letta-slack-upload-"));
   const mediaPath = join(tempDir, "chart.png");

@@ -18,6 +18,7 @@ import {
   updateConversationLLMConfig,
 } from "../../agent/modify";
 import { getChannelRegistry } from "../../channels/registry";
+import type { ChannelTurnSource } from "../../channels/types";
 import { resetContextHistory } from "../../cli/helpers/contextTracker";
 import {
   ensureFileIndex,
@@ -2967,12 +2968,12 @@ function wireChannelIngress(
   const registry = getChannelRegistry();
   if (!registry) return;
 
-  registry.setMessageHandler((route, messageContent) => {
+  registry.setMessageHandler((delivery) => {
     // Follow the same pattern as cron/scheduler.ts:131-157
     const rawRuntime = getOrCreateConversationRuntime(
       listener,
-      route.agentId,
-      route.conversationId,
+      delivery.route.agentId,
+      delivery.route.conversationId,
     );
     if (!rawRuntime) return;
 
@@ -2981,7 +2982,22 @@ function wireChannelIngress(
       rawRuntime,
     );
 
-    enqueueChannelTurn(conversationRuntime, route, messageContent);
+    const enqueuedItem = enqueueChannelTurn(
+      conversationRuntime,
+      delivery.route,
+      delivery.content,
+      delivery.turnSources,
+    );
+    if (!enqueuedItem) {
+      return;
+    }
+
+    for (const turnSource of delivery.turnSources ?? []) {
+      void registry.dispatchTurnLifecycleEvent({
+        type: "queued",
+        source: turnSource,
+      });
+    }
 
     scheduleQueuePump(conversationRuntime, socket, opts, processQueuedTurn);
   });
@@ -3039,6 +3055,7 @@ function enqueueChannelTurn(
     conversationId: string;
   },
   messageContent: MessageCreate["content"],
+  turnSources?: ChannelTurnSource[],
 ): { id: string } | null {
   const clientMessageId = `cm-channel-${crypto.randomUUID()}`;
   const enqueuedItem = runtime.queueRuntime.enqueue({
@@ -3063,6 +3080,7 @@ function enqueueChannelTurn(
       type: "message",
       agentId: route.agentId,
       conversationId: route.conversationId,
+      ...(turnSources?.length ? { channelTurnSources: turnSources } : {}),
       messages: [
         {
           role: "user",

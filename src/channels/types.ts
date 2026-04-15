@@ -41,6 +41,37 @@ export interface ChannelThreadContext {
   history?: ChannelThreadContextEntry[];
 }
 
+export interface ChannelTurnSource {
+  channel: SupportedChannelId;
+  accountId?: string;
+  chatId: string;
+  chatType?: ChannelChatType;
+  messageId?: string;
+  threadId?: string | null;
+  agentId: string;
+  conversationId: string;
+}
+
+export type ChannelTurnOutcome = "completed" | "error" | "cancelled";
+
+export type ChannelTurnLifecycleEvent =
+  | {
+      type: "queued";
+      source: ChannelTurnSource;
+    }
+  | {
+      type: "processing";
+      batchId: string;
+      sources: ChannelTurnSource[];
+    }
+  | {
+      type: "finished";
+      batchId: string;
+      sources: ChannelTurnSource[];
+      outcome: ChannelTurnOutcome;
+      error?: string;
+    };
+
 // ── Adapter interface ─────────────────────────────────────────────
 
 export interface ChannelAdapter {
@@ -82,6 +113,13 @@ export interface ChannelAdapter {
     msg: InboundChannelMessage,
     options?: { isFirstRouteTurn?: boolean },
   ): Promise<InboundChannelMessage>;
+
+  /**
+   * Optional lifecycle hook for channel-originated turns. Adapters can use
+   * this to surface lightweight UX feedback (for example, Slack reactions)
+   * without coupling queue/lifecycle state to a specific channel.
+   */
+  handleTurnLifecycleEvent?(event: ChannelTurnLifecycleEvent): Promise<void>;
 
   /**
    * Called by the registry when the adapter receives an inbound message.

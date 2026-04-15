@@ -1,5 +1,10 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type WebSocket from "ws";
+import { getChannelRegistry } from "../../channels/registry";
+import type {
+  ChannelTurnOutcome,
+  ChannelTurnSource,
+} from "../../channels/types";
 import { resizeImageIfNeeded } from "../../cli/helpers/imageResize";
 import type {
   DequeuedBatch,
@@ -103,6 +108,94 @@ function mergeDequeuedBatchContent(
   return mergeQueuedTurnInput(queuedInputs, {
     normalizeUserContent: (content) => content,
   });
+}
+
+function getChannelTurnSourceKey(source: ChannelTurnSource): string {
+  return [
+    source.channel,
+    source.accountId ?? "",
+    source.chatId,
+    source.messageId ?? "",
+    source.threadId ?? "",
+    source.agentId,
+    source.conversationId,
+  ].join(":");
+}
+
+function collectBatchChannelTurnSources(
+  runtime: ConversationRuntime,
+  batch: DequeuedBatch,
+): ChannelTurnSource[] | undefined {
+  const seen = new Set<string>();
+  const sources: ChannelTurnSource[] = [];
+
+  for (const item of batch.items) {
+    const template = runtime.queuedMessagesByItemId.get(item.id);
+    for (const source of template?.channelTurnSources ?? []) {
+      const key = getChannelTurnSourceKey(source);
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      sources.push(source);
+    }
+  }
+
+  return sources.length > 0 ? sources : undefined;
+}
+
+async function dispatchChannelTurnLifecycleEvent(
+  event:
+    | {
+        type: "processing";
+        batchId: string;
+        sources: ChannelTurnSource[];
+      }
+    | {
+        type: "finished";
+        batchId: string;
+        sources: ChannelTurnSource[];
+        outcome: ChannelTurnOutcome;
+        error?: string;
+      },
+): Promise<void> {
+  if (event.sources.length === 0) {
+    return;
+  }
+
+  const registry = getChannelRegistry();
+  if (!registry) {
+    return;
+  }
+
+  if (event.type === "processing") {
+    await registry.dispatchTurnLifecycleEvent(event);
+    return;
+  }
+
+  await registry.dispatchTurnLifecycleEvent({
+    type: "finished",
+    batchId: event.batchId,
+    sources: event.sources,
+    outcome: event.outcome,
+    ...(event.error ? { error: event.error } : {}),
+  });
+}
+
+function mapTurnLifecycleOutcome(
+  lastStopReason: string | null,
+  didThrow: boolean,
+): ChannelTurnOutcome {
+  if (didThrow) {
+    return "error";
+  }
+  if (lastStopReason === "cancelled") {
+    return "cancelled";
+  }
+  if (lastStopReason && lastStopReason !== "end_turn") {
+    return "error";
+  }
+  return "completed";
 }
 
 function isBase64ImageContentPart(part: unknown): part is {
@@ -217,6 +310,7 @@ function buildQueuedTurnMessage(
   runtime: ConversationRuntime,
   batch: DequeuedBatch,
 ): IncomingMessage | null {
+  const channelTurnSources = collectBatchChannelTurnSources(runtime, batch);
   const primaryItem = getPrimaryQueueMessageItem(batch.items);
   if (!primaryItem) {
     // No user message in the batch — this is a notification-only batch.
@@ -236,6 +330,7 @@ function buildQueuedTurnMessage(
       type: "message",
       agentId: scopeItem?.agentId ?? runtime.agentId ?? undefined,
       conversationId: scopeItem?.conversationId ?? runtime.conversationId,
+      ...(channelTurnSources ? { channelTurnSources } : {}),
       messages: [
         {
           role: "user",
@@ -278,6 +373,7 @@ function buildQueuedTurnMessage(
 
   return {
     ...template,
+    ...(channelTurnSources ? { channelTurnSources } : {}),
     messages,
   };
 }
@@ -396,6 +492,7 @@ async function drainQueuedMessages(
       }
 
       const { dequeuedBatch, queuedTurn } = consumedQueuedTurn;
+      const channelTurnSources = queuedTurn.channelTurnSources ?? [];
 
       emitDequeuedUserMessage(socket, runtime, queuedTurn, dequeuedBatch);
 
@@ -410,7 +507,33 @@ async function drainQueuedMessages(
         runtime.listener.lastEmittedStatus = preTurnStatus;
         opts.onStatusChange?.(preTurnStatus, opts.connectionId);
       }
-      await processQueuedTurn(queuedTurn, dequeuedBatch);
+      if (channelTurnSources.length > 0) {
+        await dispatchChannelTurnLifecycleEvent({
+          type: "processing",
+          batchId: dequeuedBatch.batchId,
+          sources: channelTurnSources,
+        });
+      }
+
+      let turnError: string | undefined;
+      let didThrow = false;
+      try {
+        await processQueuedTurn(queuedTurn, dequeuedBatch);
+      } catch (error) {
+        didThrow = true;
+        turnError = error instanceof Error ? error.message : String(error);
+        throw error;
+      } finally {
+        if (channelTurnSources.length > 0) {
+          await dispatchChannelTurnLifecycleEvent({
+            type: "finished",
+            batchId: dequeuedBatch.batchId,
+            sources: channelTurnSources,
+            outcome: mapTurnLifecycleOutcome(runtime.lastStopReason, didThrow),
+            ...(turnError ? { error: turnError } : {}),
+          });
+        }
+      }
       emitListenerStatus(
         runtime.listener,
         opts.onStatusChange,
