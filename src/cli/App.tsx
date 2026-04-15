@@ -1179,6 +1179,10 @@ export default function App({
   useEffect(() => {
     conversationIdRef.current = conversationId;
   }, [conversationId]);
+  const setConversationIdAndRef = useCallback((nextConversationId: string) => {
+    conversationIdRef.current = nextConversationId;
+    setConversationId(nextConversationId);
+  }, []);
 
   // Tracks the transcript start index for the current user turn across
   // approval continuations (requires_approval -> approval result round-trip).
@@ -1219,10 +1223,9 @@ export default function App({
   useEffect(() => {
     if (initialConversationId !== prevInitialConversationIdRef.current) {
       prevInitialConversationIdRef.current = initialConversationId;
-      conversationIdRef.current = initialConversationId;
-      setConversationId(initialConversationId);
+      setConversationIdAndRef(initialConversationId);
     }
-  }, [initialConversationId]);
+  }, [initialConversationId, setConversationIdAndRef]);
 
   // Set agent context for tools (especially Task tool)
   useEffect(() => {
@@ -7152,7 +7155,7 @@ export default function App({
         );
 
         await maybeCarryOverActiveConversationModel(conversationId);
-        setConversationId(conversationId);
+        setConversationIdAndRef(conversationId);
 
         pendingConversationSwitchRef.current = {
           origin: "fork",
@@ -7239,6 +7242,7 @@ export default function App({
       runEndHooks,
       maybeCarryOverActiveConversationModel,
       resetBootstrapReminderState,
+      setConversationIdAndRef,
       setCommandRunning,
       setStreaming,
       recoverRestoredPendingApprovals,
@@ -7336,7 +7340,7 @@ export default function App({
         setLlmConfig(agent.llm_config);
         const agentModelHandle = getPreferredAgentModelHandle(agent);
         setCurrentModelHandle(agentModelHandle);
-        setConversationId(targetConversationId);
+        setConversationIdAndRef(targetConversationId);
 
         // Ensure bootstrap reminders are re-injected on the first user turn
         // after switching to a different conversation/agent context.
@@ -7408,6 +7412,7 @@ export default function App({
       resetTrajectoryBases,
       resetBootstrapReminderState,
       resetPendingReasoningCycle,
+      setConversationIdAndRef,
     ],
   );
 
@@ -7506,7 +7511,7 @@ export default function App({
         setLlmConfig(agent.llm_config);
         const agentModelHandle = getPreferredAgentModelHandle(agent);
         setCurrentModelHandle(agentModelHandle);
-        setConversationId(targetConversationId);
+        setConversationIdAndRef(targetConversationId);
 
         // Set conversation switch context for new agent switch
         pendingConversationSwitchRef.current = {
@@ -7555,6 +7560,7 @@ export default function App({
       resetDeferredToolCallCommits,
       resetTrajectoryBases,
       resetBootstrapReminderState,
+      setConversationIdAndRef,
     ],
   );
 
@@ -9149,8 +9155,9 @@ export default function App({
             }
             await maybeCarryOverActiveConversationModel(conversation.id);
 
-            // Update conversationId state
-            setConversationId(conversation.id);
+            // Update conversationId state and ref together so the next turn
+            // cannot observe a stale conversation handoff.
+            setConversationIdAndRef(conversation.id);
 
             pendingConversationSwitchRef.current = {
               origin: "new",
@@ -9235,7 +9242,7 @@ export default function App({
 
             await maybeCarryOverActiveConversationModel(forked.id);
 
-            setConversationId(forked.id);
+            setConversationIdAndRef(forked.id);
 
             pendingConversationSwitchRef.current = {
               origin: "fork",
@@ -9329,7 +9336,7 @@ export default function App({
             });
 
             await maybeCarryOverActiveConversationModel(conversation.id);
-            setConversationId(conversation.id);
+            setConversationIdAndRef(conversation.id);
 
             pendingConversationSwitchRef.current = {
               origin: "clear",
@@ -9726,7 +9733,7 @@ export default function App({
                 );
 
                 // Only update state after validation succeeds
-                setConversationId(targetConvId);
+                setConversationIdAndRef(targetConvId);
 
                 pendingConversationSwitchRef.current = {
                   origin: "resume-direct",
@@ -11149,7 +11156,7 @@ ${SYSTEM_REMINDER_CLOSE}
           name: agentName,
           description: agentDescription,
           lastRunAt: agentLastRunAt,
-          conversationId,
+          conversationId: conversationIdRef.current,
         },
         state: sharedReminderStateRef.current,
         sessionContextReminderEnabled,
@@ -11832,6 +11839,7 @@ ${SYSTEM_REMINDER_CLOSE}
       agentName,
       agentDescription,
       agentLastRunAt,
+      conversationId,
       commandRunner,
       handleExit,
       isExecutingTool,
@@ -11851,6 +11859,7 @@ ${SYSTEM_REMINDER_CLOSE}
       sessionContextReminderEnabled,
       appendTaskNotificationEvents,
       maybeCarryOverActiveConversationModel,
+      setConversationIdAndRef,
     ],
   );
 
@@ -13505,7 +13514,7 @@ ${SYSTEM_REMINDER_CLOSE}
                   action.conversationId,
                 );
 
-                setConversationId(action.conversationId);
+                setConversationIdAndRef(action.conversationId);
 
                 pendingConversationSwitchRef.current = {
                   origin: "resume-selector",
@@ -13572,6 +13581,7 @@ ${SYSTEM_REMINDER_CLOSE}
     commandRunner.start,
     recoverRestoredPendingApprovals,
     resetBootstrapReminderState,
+    setConversationIdAndRef,
   ]);
 
   // Handle escape when profile confirmation is pending
@@ -15409,7 +15419,7 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
                       );
 
                       // Only update state after validation succeeds
-                      setConversationId(convId);
+                      setConversationIdAndRef(convId);
 
                       pendingConversationSwitchRef.current = {
                         origin: "resume-selector",
@@ -15560,7 +15570,7 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
                     await maybeCarryOverActiveConversationModel(
                       conversation.id,
                     );
-                    setConversationId(conversation.id);
+                    setConversationIdAndRef(conversation.id);
                     settingsManager.persistSession(agentId, conversation.id);
 
                     // Build success command with agent + conversation info
@@ -15687,7 +15697,7 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
                         actualTargetConv,
                       );
 
-                      setConversationId(actualTargetConv);
+                      setConversationIdAndRef(actualTargetConv);
 
                       pendingConversationSwitchRef.current = {
                         origin: "search",
