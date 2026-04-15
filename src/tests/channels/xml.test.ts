@@ -175,6 +175,83 @@ describe("formatChannelNotification", () => {
     );
   });
 
+  test("renders attempted_transcription child node when transcription is present", () => {
+    const msg: InboundChannelMessage = {
+      channel: "telegram",
+      chatId: "123",
+      senderId: "456",
+      text: "",
+      timestamp: Date.now(),
+      attachments: [
+        {
+          kind: "audio",
+          localPath: "/tmp/voice.ogg",
+          name: "voice.ogg",
+          mimeType: "audio/ogg",
+          transcription: "Hello, this is a voice memo test.",
+        },
+      ],
+    };
+
+    const xml = buildChannelNotificationXml(msg);
+
+    expect(xml).toContain(
+      "<attempted_transcription>Hello, this is a voice memo test.</attempted_transcription>",
+    );
+    expect(xml).toContain("</attachment>");
+    // Verify it's not self-closing
+    expect(xml).not.toMatch(/<attachment[^>]*\/>/);
+    // Verify it has an opening tag (non-self-closing)
+    expect(xml).toMatch(/<attachment[^>]*>\n/);
+  });
+
+  test("renders self-closing attachment when transcription is absent", () => {
+    const msg: InboundChannelMessage = {
+      channel: "telegram",
+      chatId: "123",
+      senderId: "456",
+      text: "",
+      timestamp: Date.now(),
+      attachments: [
+        {
+          kind: "audio",
+          localPath: "/tmp/voice.ogg",
+          name: "voice.ogg",
+          mimeType: "audio/ogg",
+        },
+      ],
+    };
+
+    const xml = buildChannelNotificationXml(msg);
+
+    expect(xml).toMatch(/<attachment[^>]*\/>/);
+    expect(xml).not.toContain("<attempted_transcription>");
+    expect(xml).not.toContain("</attachment>");
+  });
+
+  test("escapes XML in transcription text", () => {
+    const msg: InboundChannelMessage = {
+      channel: "telegram",
+      chatId: "123",
+      senderId: "456",
+      text: "",
+      timestamp: Date.now(),
+      attachments: [
+        {
+          kind: "audio",
+          localPath: "/tmp/voice.ogg",
+          transcription: "He said <hello> & goodbye",
+        },
+      ],
+    };
+
+    const xml = buildChannelNotificationXml(msg);
+
+    expect(xml).toContain("&lt;hello&gt;");
+    expect(xml).toContain("&amp;");
+    expect(xml).not.toContain("<hello>");
+  });
+
   test("emits image content parts for inbound image attachments", () => {
     const msg: InboundChannelMessage = {
       channel: "slack",

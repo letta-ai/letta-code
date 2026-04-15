@@ -99,6 +99,11 @@ function buildAttachmentXml(attachment: ChannelMessageAttachment): string {
     attrs.push(`size_bytes="${attachment.sizeBytes}"`);
   }
 
+  if (attachment.transcription) {
+    const escapedTranscription = escapeXmlText(attachment.transcription);
+    return `<attachment ${attrs.join(" ")}>\n  <attempted_transcription>${escapedTranscription}</attempted_transcription>\n</attachment>`;
+  }
+
   return `<attachment ${attrs.join(" ")} />`;
 }
 
