@@ -19,6 +19,10 @@ type ModelSettings =
   | GoogleAIModelSettings
   | Record<string, unknown>;
 
+function supportsDistinctAnthropicXHighEffort(modelHandle: string): boolean {
+  return modelHandle.includes("claude-opus-4-7");
+}
+
 /**
  * Builds model_settings from updateArgs based on provider type.
  * Always ensures parallel_tool_calls is enabled.
@@ -77,11 +81,17 @@ function buildModelSettings(
     };
     // Map reasoning_effort to Anthropic's effort field (controls token spending via output_config)
     const effort = updateArgs?.reasoning_effort;
+    const hasDistinctXHigh = supportsDistinctAnthropicXHighEffort(modelHandle);
     if (effort === "low" || effort === "medium" || effort === "high") {
       anthropicSettings.effort = effort;
     } else if (effort === "xhigh") {
+      // "xhigh" is only distinct on Opus 4.7; older Anthropic models map it to backend "max".
+      (anthropicSettings as Record<string, unknown>).effort = hasDistinctXHigh
+        ? "xhigh"
+        : "max";
+    } else if (effort === "max") {
       // "max" is valid on the backend but the SDK type hasn't caught up yet
-      (anthropicSettings as Record<string, unknown>).effort = "max";
+      (anthropicSettings as Record<string, unknown>).effort = effort;
     }
     // Build thinking config if either enable_reasoner or max_reasoning_tokens is specified
     if (
@@ -144,10 +154,13 @@ function buildModelSettings(
     };
     // Map reasoning_effort to Anthropic's effort field (Bedrock runs Claude models)
     const effort = updateArgs?.reasoning_effort;
+    const hasDistinctXHigh = supportsDistinctAnthropicXHighEffort(modelHandle);
     if (effort === "low" || effort === "medium" || effort === "high") {
       bedrockSettings.effort = effort;
     } else if (effort === "xhigh") {
-      bedrockSettings.effort = "max";
+      bedrockSettings.effort = hasDistinctXHigh ? "xhigh" : "max";
+    } else if (effort === "max") {
+      bedrockSettings.effort = effort;
     }
     // Build thinking config if either enable_reasoner or max_reasoning_tokens is specified
     if (

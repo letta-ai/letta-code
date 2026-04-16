@@ -163,6 +163,26 @@ describe("getReasoningTierOptionsForHandle", () => {
     ]);
   });
 
+  test("returns reasoning options for anthropic opus 4.7", () => {
+    const options = getReasoningTierOptionsForHandle(
+      "anthropic/claude-opus-4-7",
+    );
+    expect(options.map((option) => option.effort)).toEqual([
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+    ]);
+    expect(options.map((option) => option.modelId)).toEqual([
+      "opus-4.7-low",
+      "opus-4.7", // featured entry uses medium; wins first-seen dedup
+      "opus-4.7-high",
+      "opus-4.7-xhigh",
+      "opus-4.7-max",
+    ]);
+  });
+
   test("returns reasoning options for anthropic opus 4.5", () => {
     const options = getReasoningTierOptionsForHandle(
       "anthropic/claude-opus-4-5-20251101",

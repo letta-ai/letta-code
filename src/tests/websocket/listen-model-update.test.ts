@@ -81,7 +81,7 @@ describe("listen-client model update status message", () => {
     expect(result.message).toBe("Model updated to Opus 4.6 (No Reasoning).");
   });
 
-  test("shows Max for reasoning_effort xhigh", () => {
+  test("shows Max for reasoning_effort xhigh on older Anthropic models", () => {
     const result = __listenClientTestUtils.buildModelUpdateStatusMessage({
       modelLabel: "Opus 4.6",
       toolsetChanged: false,
@@ -92,6 +92,19 @@ describe("listen-client model update status message", () => {
     });
 
     expect(result.message).toBe("Model updated to Opus 4.6 (Max).");
+  });
+
+  test("shows Extra-High for reasoning_effort xhigh on Opus 4.7", () => {
+    const result = __listenClientTestUtils.buildModelUpdateStatusMessage({
+      modelLabel: "Opus 4.7",
+      toolsetChanged: false,
+      toolsetError: null,
+      nextToolset: "default",
+      toolsetPreference: "auto",
+      updateArgs: { reasoning_effort: "xhigh" },
+    });
+
+    expect(result.message).toBe("Model updated to Opus 4.7 (Extra-High).");
   });
 
   test("omits effort when updateArgs has no reasoning_effort", () => {

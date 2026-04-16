@@ -40,7 +40,8 @@ function formatReasoningLabel(
   effort: ModelReasoningEffort | null | undefined,
 ): string | null {
   if (effort === "none") return null;
-  if (effort === "xhigh") return "max";
+  if (effort === "xhigh") return "xhigh";
+  if (effort === "max") return "max";
   if (effort === "minimal") return "minimal";
   if (effort === "low") return "low";
   if (effort === "medium") return "medium";

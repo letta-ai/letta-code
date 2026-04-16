@@ -457,20 +457,22 @@ function deriveReasoningEffort(
       const effort = (modelSettings as { effort?: string | null }).effort;
       if (effort === "low" || effort === "medium" || effort === "high")
         return effort;
-      if (effort === "max") return "xhigh";
+      if (effort === "xhigh" || effort === "max")
+        return effort as ModelReasoningEffort;
     }
   }
   // Fallback: deprecated llm_config fields
-  const re = llmConfig?.reasoning_effort;
+  const re = llmConfig?.reasoning_effort as string | null | undefined;
   if (
     re === "none" ||
     re === "minimal" ||
     re === "low" ||
     re === "medium" ||
     re === "high" ||
-    re === "xhigh"
+    re === "xhigh" ||
+    re === "max"
   )
-    return re;
+    return re as ModelReasoningEffort;
   if (
     (llmConfig as { enable_reasoner?: boolean | null })?.enable_reasoner ===
     false
@@ -496,7 +498,8 @@ function inferReasoningEffortFromModelPreset(
     presetEffort === "low" ||
     presetEffort === "medium" ||
     presetEffort === "high" ||
-    presetEffort === "xhigh"
+    presetEffort === "xhigh" ||
+    presetEffort === "max"
   ) {
     return presetEffort;
   }
@@ -3689,7 +3692,7 @@ export default function App({
           ...(typeof resolvedConversationContextWindowLimit === "number"
             ? { context_window: resolvedConversationContextWindowLimit }
             : {}),
-        });
+        } as LlmConfig);
       } catch (error) {
         if (cancelled) return;
         debugLog(
@@ -12693,7 +12696,9 @@ ${SYSTEM_REMINDER_CLOSE}
             ? rawReasoningEffort === "none"
               ? "no"
               : rawReasoningEffort === "xhigh"
-                ? "max"
+                ? model.label.includes("Opus 4.7")
+                  ? "extra-high"
+                  : "max"
                 : rawReasoningEffort
             : modelUpdateArgs?.enable_reasoner === false
               ? "no"
@@ -12863,7 +12868,7 @@ ${SYSTEM_REMINDER_CLOSE}
             ...(typeof resolvedContextWindow === "number"
               ? { context_window: resolvedContextWindow }
               : {}),
-          });
+          } as LlmConfig);
           setCurrentModelId(modelId);
           setTempModelOverride(null);
 
@@ -13857,7 +13862,7 @@ ${SYSTEM_REMINDER_CLOSE}
             ...(typeof resolvedConversationContextWindowLimit === "number"
               ? { context_window: resolvedConversationContextWindowLimit }
               : {}),
-          });
+          } as LlmConfig);
           setCurrentModelId(desired.modelId);
           setCurrentModelHandle(desired.modelHandle);
 
@@ -13963,7 +13968,19 @@ ${SYSTEM_REMINDER_CLOSE}
       // Only enable cycling when there are multiple tiers for the same handle.
       if (tiers.length < 2) return;
 
-      const order = ["none", "minimal", "low", "medium", "high", "xhigh"];
+      const anthropicXHighEffort = modelHandle.includes("claude-opus-4-7")
+        ? "xhigh"
+        : "max";
+
+      const order = [
+        "none",
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+      ];
       const rank = (effort: string): number => {
         const idx = order.indexOf(effort);
         return idx >= 0 ? idx : 999;
@@ -14017,15 +14034,14 @@ ${SYSTEM_REMINDER_CLOSE}
             ms.provider_type === "anthropic" ||
             ms.provider_type === "bedrock"
           ) {
-            // Map "xhigh" → "max": footer derivation only recognizes "max" for Anthropic effort.
-            // Cast needed: "max" is valid on the backend but not yet in the SDK type.
-            const anthropicEffort =
-              next.effort === "xhigh" ? "max" : next.effort;
+            // "xhigh" is only distinct on Opus 4.7; older Anthropic models map it to backend "max".
             return {
               ...prev,
               model_settings: {
                 ...ms,
-                effort: anthropicEffort as "low" | "medium" | "high" | "max",
+                effort: (next.effort === "xhigh"
+                  ? anthropicXHighEffort
+                  : next.effort) as "low" | "medium" | "high" | "xhigh" | "max",
               },
             } as AgentState;
           }

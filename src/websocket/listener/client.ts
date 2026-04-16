@@ -561,16 +561,21 @@ function formatToolsetStatusMessageForModelUpdate(params: {
   );
 }
 
-function formatEffortSuffix(updateArgs?: Record<string, unknown>): string {
+function formatEffortSuffix(
+  modelLabel: string,
+  updateArgs?: Record<string, unknown>,
+): string {
   if (!updateArgs) return "";
   const effort = updateArgs.reasoning_effort;
   if (typeof effort !== "string" || effort.length === 0) return "";
+  const xhighLabel = modelLabel.includes("Opus 4.7") ? "Extra-High" : "Max";
   const labels: Record<string, string> = {
     none: "No Reasoning",
     low: "Low",
     medium: "Medium",
     high: "High",
-    xhigh: "Max",
+    xhigh: xhighLabel,
+    max: "Max",
   };
   return ` (${labels[effort] ?? effort})`;
 }
@@ -591,7 +596,7 @@ function buildModelUpdateStatusMessage(params: {
     toolsetPreference,
     updateArgs,
   } = params;
-  let message = `Model updated to ${modelLabel}${formatEffortSuffix(updateArgs)}.`;
+  let message = `Model updated to ${modelLabel}${formatEffortSuffix(modelLabel, updateArgs)}.`;
   if (toolsetError) {
     message += ` Warning: toolset switch failed (${toolsetError}).`;
     return { message, level: "warning" };
