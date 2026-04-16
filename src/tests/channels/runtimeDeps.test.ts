@@ -256,7 +256,7 @@ test("installChannelRuntime uses cmd shims for npm on Windows", async () => {
   expect(spawnCalls).toEqual([
     {
       cmd: "npm.cmd",
-      args: ["install", "--no-save", "grammy@1.42.0"],
+      args: ["install", "--no-save", "--no-bin-links", "grammy@1.42.0"],
       cwd: getChannelRuntimeDir("telegram"),
     },
   ]);
@@ -292,7 +292,7 @@ test("installChannelRuntime uses cmd shims for pnpm on Windows", async () => {
   expect(spawnCalls).toEqual([
     {
       cmd: "pnpm.cmd",
-      args: ["add", "grammy@1.42.0"],
+      args: ["add", "--no-bin-links", "grammy@1.42.0"],
       cwd: getChannelRuntimeDir("telegram"),
     },
   ]);
