@@ -61,6 +61,7 @@ class FakeSlackApp {
       postMessage: mock(async () => ({ ts: "1712800000.000100" })),
     },
     conversations: {
+      history: mock(async () => ({ messages: [] })),
       replies: mock(async () => ({ messages: [] })),
     },
     reactions: {
@@ -150,6 +151,16 @@ const resolveSlackThreadHistoryMock = mock(
     }>
   > => [],
 );
+const resolveSlackChannelHistoryMock = mock(
+  async (): Promise<
+    Array<{
+      text: string;
+      userId?: string;
+      botId?: string;
+      ts?: string;
+    }>
+  > => [],
+);
 
 mock.module("../../channels/slack/runtime", () => ({
   loadSlackBoltModule: async () => ({
@@ -167,6 +178,7 @@ mock.module("../../channels/slack/runtime", () => ({
 }));
 
 mock.module("../../channels/slack/media", () => ({
+  resolveSlackChannelHistory: resolveSlackChannelHistoryMock,
   resolveSlackInboundAttachments: resolveSlackInboundAttachmentsMock,
   resolveSlackThreadStarter: resolveSlackThreadStarterMock,
   resolveSlackThreadHistory: resolveSlackThreadHistoryMock,
@@ -201,6 +213,8 @@ beforeEach(() => {
   resolveSlackThreadStarterMock.mockImplementation(async () => null);
   resolveSlackThreadHistoryMock.mockReset();
   resolveSlackThreadHistoryMock.mockImplementation(async () => []);
+  resolveSlackChannelHistoryMock.mockReset();
+  resolveSlackChannelHistoryMock.mockImplementation(async () => []);
   fetchMock.mockClear();
   globalThis.fetch = fetchMock as unknown as typeof fetch;
 });
@@ -210,6 +224,7 @@ afterEach(() => {
     instance.client.auth.test.mockClear();
     instance.client.users.info.mockClear();
     instance.client.chat.postMessage.mockClear();
+    instance.client.conversations.history.mockClear();
     instance.client.conversations.replies.mockClear();
     instance.client.reactions.add.mockClear();
     instance.client.reactions.remove.mockClear();
@@ -519,6 +534,73 @@ test("slack adapter hydrates prior Slack thread context on the first routed turn
   expect(prepared?.threadContext?.label).toContain("Slack thread in #random");
   expect(resolveSlackThreadStarterMock).toHaveBeenCalledTimes(1);
   expect(resolveSlackThreadHistoryMock).toHaveBeenCalledTimes(1);
+});
+
+test("slack adapter hydrates recent channel context when a mention creates a new thread", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  await adapter.start();
+
+  resolveSlackChannelHistoryMock.mockResolvedValueOnce([
+    {
+      text: "Earlier channel context before the mention",
+      userId: "U111",
+      ts: "1712799000.000040",
+    },
+    {
+      text: "More recent channel context before the mention",
+      userId: "U222",
+      ts: "1712799500.000045",
+    },
+  ]);
+
+  const prepared = await adapter.prepareInboundMessage?.(
+    {
+      channel: "slack",
+      accountId: "slack-test-account",
+      chatId: "C123",
+      chatLabel: "#random",
+      senderId: "U123",
+      senderName: "Charles",
+      text: "please help",
+      timestamp: 1712800000100,
+      messageId: "1712800000.000100",
+      threadId: "1712800000.000100",
+      chatType: "channel",
+      isMention: true,
+    },
+    { isFirstRouteTurn: true },
+  );
+
+  expect(prepared).toBeDefined();
+  expect(prepared?.threadContext?.starter).toBeUndefined();
+  expect(prepared?.threadContext?.history).toEqual([
+    expect.objectContaining({
+      messageId: "1712799000.000040",
+      senderId: "U111",
+      text: "Earlier channel context before the mention",
+    }),
+    expect.objectContaining({
+      messageId: "1712799500.000045",
+      senderId: "U222",
+      text: "More recent channel context before the mention",
+    }),
+  ]);
+  expect(prepared?.threadContext?.label).toContain(
+    "Slack channel context in #random before thread start",
+  );
+  expect(resolveSlackChannelHistoryMock).toHaveBeenCalledTimes(1);
+  expect(resolveSlackThreadStarterMock).not.toHaveBeenCalled();
+  expect(resolveSlackThreadHistoryMock).not.toHaveBeenCalled();
 });
 
 test("slack adapter dedupes threaded mentions delivered through message and app_mention", async () => {
