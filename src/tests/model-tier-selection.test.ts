@@ -158,7 +158,7 @@ describe("getReasoningTierOptionsForHandle", () => {
       "opus-4.6-no-reasoning",
       "opus-4.6-low",
       "opus-4.6-medium",
-      "opus",
+      "opus-4.6-high",
       "opus-4.6-xhigh",
     ]);
   });
@@ -176,7 +176,7 @@ describe("getReasoningTierOptionsForHandle", () => {
     ]);
     expect(options.map((option) => option.modelId)).toEqual([
       "opus-4.7-low",
-      "opus-4.7", // featured entry uses medium; wins first-seen dedup
+      "opus", // featured entry uses medium; wins first-seen dedup
       "opus-4.7-high",
       "opus-4.7-xhigh",
       "opus-4.7-max",

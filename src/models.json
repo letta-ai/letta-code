@@ -201,7 +201,7 @@
       }
     },
     {
-      "id": "opus",
+      "id": "opus-4.6-high",
       "handle": "anthropic/claude-opus-4-6",
       "label": "Opus 4.6",
       "description": "Anthropic's (legacy) best model (high reasoning)",
@@ -269,7 +269,7 @@
       }
     },
     {
-      "id": "opus-4.7",
+      "id": "opus",
       "handle": "anthropic/claude-opus-4-7",
       "label": "Opus 4.7",
       "description": "Anthropic's best model (med reasoning)",
@@ -294,20 +294,6 @@
         "reasoning_effort": "low",
         "enable_reasoner": true,
         "max_reasoning_tokens": 4000,
-        "parallel_tool_calls": true
-      }
-    },
-    {
-      "id": "opus-4.7-medium",
-      "handle": "anthropic/claude-opus-4-7",
-      "label": "Opus 4.7",
-      "description": "Opus 4.7 (med reasoning)",
-      "updateArgs": {
-        "context_window": 200000,
-        "max_output_tokens": 128000,
-        "reasoning_effort": "medium",
-        "enable_reasoner": true,
-        "max_reasoning_tokens": 12000,
         "parallel_tool_calls": true
       }
     },

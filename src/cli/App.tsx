@@ -564,8 +564,9 @@ function getErrorHintForStopReason(
       : undefined;
 
   // Build the /model swap suggestion — mention Bedrock Opus if applicable
+  const isOpus46 = currentModelId?.startsWith("opus-4.6") ?? false;
   const hasBedrockOpus =
-    currentModelId === "opus" &&
+    isOpus46 &&
     modelEndpointType === "anthropic" &&
     getModelInfo("bedrock-opus-4.6");
   const modelSwapSuffix = hasBedrockOpus
