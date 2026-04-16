@@ -3791,7 +3791,6 @@ export async function startListenerClient(
 const DIR_LISTING_IGNORED_NAMES = new Set([
   ".DS_Store",
   ".git",
-  ".gitignore",
   "Thumbs.db",
 ]);
 
