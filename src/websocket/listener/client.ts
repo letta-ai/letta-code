@@ -3788,11 +3788,7 @@ export async function startListenerClient(
 }
 
 /** File/directory names filtered from directory listings (OS/VCS noise). */
-const DIR_LISTING_IGNORED_NAMES = new Set([
-  ".DS_Store",
-  ".git",
-  "Thumbs.db",
-]);
+const DIR_LISTING_IGNORED_NAMES = new Set([".DS_Store", ".git", "Thumbs.db"]);
 
 /**
  * Connect to WebSocket with exponential backoff retry.
@@ -4483,7 +4479,9 @@ async function connectWithRetry(
             const queue: [string, string, number][] = [[parsed.path, "", 0]];
 
             while (queue.length > 0) {
-              const [absDir, relDir, depth] = queue.shift()!;
+              const next = queue.shift();
+              if (!next) break;
+              const [absDir, relDir, depth] = next;
 
               if (depth >= parsed.depth) {
                 // There are directories at the boundary — deeper content exists
