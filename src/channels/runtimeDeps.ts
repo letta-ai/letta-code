@@ -165,17 +165,35 @@ function getPackageManagerExecutable(
   return packageManager;
 }
 
+function resolveInstallPlatform(): NodeJS.Platform {
+  return platformOverride ?? process.platform;
+}
+
 function getInstallArgs(
   packageManager: RuntimePackageManager,
   installPackages: string[],
 ): string[] {
+  // On Windows, npm/pnpm create .bin symlinks (junctions) that break
+  // 7-Zip during Electron/NSIS packaging. --no-bin-links avoids this.
+  const noBinLinks =
+    resolveInstallPlatform() === "win32" && packageManager !== "bun";
+
   switch (packageManager) {
     case "bun":
       return ["add", "--no-save", ...installPackages];
     case "pnpm":
-      return ["add", ...installPackages];
+      return [
+        "add",
+        ...(noBinLinks ? ["--no-bin-links"] : []),
+        ...installPackages,
+      ];
     case "npm":
-      return ["install", "--no-save", ...installPackages];
+      return [
+        "install",
+        "--no-save",
+        ...(noBinLinks ? ["--no-bin-links"] : []),
+        ...installPackages,
+      ];
   }
 }
 
