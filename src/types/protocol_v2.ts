@@ -9,7 +9,11 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
-import type { DmPolicy, SlackChannelMode } from "../channels/types";
+import type {
+  DmPolicy,
+  SlackChannelMode,
+  SlackDefaultPermissionMode,
+} from "../channels/types";
 import type { CronTask } from "../cron";
 
 /**
@@ -204,6 +208,7 @@ export type ChannelAccountSnapshot =
       has_bot_token: boolean;
       has_app_token: boolean;
       agent_id: string | null;
+      default_permission_mode: SlackDefaultPermissionMode;
       created_at: string;
       updated_at: string;
     };
@@ -898,6 +903,7 @@ export type ChannelAccountCreatePayload =
       app_token?: string;
       mode?: SlackChannelMode;
       agent_id?: string | null;
+      default_permission_mode?: SlackDefaultPermissionMode;
       dm_policy?: DmPolicy;
       allowed_users?: string[];
     };
@@ -929,6 +935,7 @@ export interface ChannelAccountUpdateCommand {
         app_token?: string;
         mode?: SlackChannelMode;
         agent_id?: string | null;
+        default_permission_mode?: SlackDefaultPermissionMode;
         dm_policy?: DmPolicy;
         allowed_users?: string[];
       };

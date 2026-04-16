@@ -10,6 +10,10 @@
 export const SUPPORTED_CHANNEL_IDS = ["telegram", "slack"] as const;
 export type SupportedChannelId = (typeof SUPPORTED_CHANNEL_IDS)[number];
 export type ChannelChatType = "direct" | "channel";
+export type SlackDefaultPermissionMode =
+  | "default"
+  | "acceptEdits"
+  | "bypassPermissions";
 
 export interface ChannelMessageAttachment {
   id?: string;
@@ -269,6 +273,7 @@ export interface SlackChannelAccount extends ChannelAccountBase {
   botToken: string;
   appToken: string;
   agentId: string | null;
+  defaultPermissionMode: SlackDefaultPermissionMode;
 }
 
 export type ChannelAccount = TelegramChannelAccount | SlackChannelAccount;

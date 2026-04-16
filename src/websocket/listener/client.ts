@@ -17,7 +17,10 @@ import {
   updateAgentLLMConfig,
   updateConversationLLMConfig,
 } from "../../agent/modify";
-import { getChannelRegistry } from "../../channels/registry";
+import {
+  type ChannelRegistryEvent,
+  getChannelRegistry,
+} from "../../channels/registry";
 import type { ChannelTurnSource } from "../../channels/types";
 import { resetContextHistory } from "../../cli/helpers/contextTracker";
 import {
@@ -1512,6 +1515,7 @@ async function handleChannelsProtocolCommand(
       has_bot_token: snapshot.hasBotToken,
       has_app_token: snapshot.hasAppToken,
       agent_id: snapshot.agentId,
+      default_permission_mode: snapshot.defaultPermissionMode,
       created_at: snapshot.createdAt,
       updated_at: snapshot.updatedAt,
     };
@@ -1672,6 +1676,10 @@ async function handleChannelsProtocolCommand(
           mode: "mode" in parsed.account ? parsed.account.mode : undefined,
           agentId:
             "agent_id" in parsed.account ? parsed.account.agent_id : undefined,
+          defaultPermissionMode:
+            "default_permission_mode" in parsed.account
+              ? parsed.account.default_permission_mode
+              : undefined,
           dmPolicy: parsed.account.dm_policy,
           allowedUsers: parsed.account.allowed_users,
         },
@@ -1748,6 +1756,10 @@ async function handleChannelsProtocolCommand(
           mode: "mode" in parsed.patch ? parsed.patch.mode : undefined,
           agentId:
             "agent_id" in parsed.patch ? parsed.patch.agent_id : undefined,
+          defaultPermissionMode:
+            "default_permission_mode" in parsed.patch
+              ? parsed.patch.default_permission_mode
+              : undefined,
           dmPolicy: parsed.patch.dm_policy,
           allowedUsers: parsed.patch.allowed_users,
         },
@@ -3003,19 +3015,38 @@ function wireChannelIngress(
   });
 
   registry.setEventHandler((event) => {
-    if (event.type === "pairings_updated") {
-      emitChannelPairingsUpdated(
-        socket,
-        event.channelId as "telegram" | "slack",
-      );
-      emitChannelsUpdated(socket, event.channelId as "telegram" | "slack");
-      return;
-    }
-    emitChannelTargetsUpdated(socket, event.channelId as "telegram" | "slack");
-    emitChannelsUpdated(socket, event.channelId as "telegram" | "slack");
+    handleChannelRegistryEvent(event, socket, listener);
   });
 
   registry.setReady();
+}
+
+function handleChannelRegistryEvent(
+  event: ChannelRegistryEvent,
+  socket: WebSocket,
+  runtime: ListenerRuntime,
+): void {
+  if (event.type === "pairings_updated") {
+    emitChannelPairingsUpdated(socket, event.channelId as "telegram" | "slack");
+    emitChannelsUpdated(socket, event.channelId as "telegram" | "slack");
+    return;
+  }
+
+  if (event.type === "targets_updated") {
+    emitChannelTargetsUpdated(socket, event.channelId as "telegram" | "slack");
+    emitChannelsUpdated(socket, event.channelId as "telegram" | "slack");
+    return;
+  }
+
+  const permissionModeState = getOrCreateConversationPermissionModeStateRef(
+    runtime,
+    event.agentId,
+    event.conversationId,
+  );
+  permissionModeState.mode = event.defaultPermissionMode;
+  permissionModeState.planFilePath = null;
+  permissionModeState.modeBeforePlan = null;
+  persistPermissionModeMapForRuntime(runtime);
 }
 
 function stampInboundUserMessageOtids(
@@ -5722,6 +5753,7 @@ export const __listenClientTestUtils = {
   handleListMemoryCommand,
   isDetachedChannelsCommand,
   handleChannelsProtocolCommand,
+  handleChannelRegistryEvent,
   handleSkillCommand,
   handleCreateAgentCommand,
   handleReflectionSettingsCommand,
