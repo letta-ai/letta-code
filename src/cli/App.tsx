@@ -263,6 +263,7 @@ import {
   type ReflectionSettings,
 } from "./helpers/memoryReminder";
 import { handleMemorySubagentCompletion } from "./helpers/memorySubagentCompletion";
+import { buildLogoutSuccessMessage } from "./helpers/logoutMessage";
 import {
   type QueuedMessage,
   setMessageQueueAdder,
@@ -8926,7 +8927,7 @@ export default function App({
             await settingsManager.logout();
 
             cmd.finish(
-              "✓ Logged out successfully. Run 'letta' to re-authenticate.",
+              buildLogoutSuccessMessage(Boolean(process.env.LETTA_API_KEY)),
               true,
             );
 

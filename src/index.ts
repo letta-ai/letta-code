@@ -141,7 +141,7 @@ EXAMPLES
   /profiles                # Open profile selector
   /pin                     # Pin current profile to project
   /unpin                   # Unpin profile from project
-  /logout                  # Clear credentials and exit
+  /logout                  # Clear saved credentials and exit
 
   # headless with JSON output (includes stats)
   letta -p "hello" --output-format json
