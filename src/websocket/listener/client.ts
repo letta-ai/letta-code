@@ -185,6 +185,7 @@ import {
   isExecuteCommandCommand,
   isFileOpsCommand,
   isGetReflectionSettingsCommand,
+  isGetTreeCommand,
   isListInDirectoryCommand,
   isListMemoryCommand,
   isListModelsCommand,
@@ -3786,6 +3787,14 @@ export async function startListenerClient(
   await connectWithRetry(runtime, opts);
 }
 
+/** File/directory names filtered from directory listings (OS/VCS noise). */
+const DIR_LISTING_IGNORED_NAMES = new Set([
+  ".DS_Store",
+  ".git",
+  ".gitignore",
+  "Thumbs.db",
+]);
+
 /**
  * Connect to WebSocket with exponential backoff retry.
  */
@@ -4358,19 +4367,11 @@ async function connectWithRetry(
               `[Listen] Directory read success, ${entries.length} entries`,
             );
 
-            // Filter out OS/VCS noise before sorting
-            const IGNORED_NAMES = new Set([
-              ".DS_Store",
-              ".git",
-              ".gitignore",
-              "Thumbs.db",
-            ]);
-
             // Add entries that are NOT already in the index
             const extraFolders: string[] = [];
             const extraFiles: string[] = [];
             for (const e of entries) {
-              if (IGNORED_NAMES.has(e.name)) continue;
+              if (DIR_LISTING_IGNORED_NAMES.has(e.name)) continue;
               if (indexedNames?.has(e.name)) continue; // already from index
               if (e.isDirectory()) {
                 extraFolders.push(e.name);
@@ -4446,6 +4447,161 @@ async function connectWithRetry(
               },
               "listener_list_directory_send_failed",
               "listener_list_in_directory",
+            );
+          }
+        });
+        return;
+      }
+
+      // ── Depth-limited subtree fetch (no runtime scope required) ──────
+      if (isGetTreeCommand(parsed)) {
+        console.log(
+          `[Listen] Received get_tree command: path=${parsed.path}, depth=${parsed.depth}`,
+        );
+        runDetachedListenerTask("get_tree", async () => {
+          try {
+            const { readdir } = await import("node:fs/promises");
+
+            // Walk the directory tree up to the requested depth, combining
+            // file index results with readdir to include non-indexed entries.
+            interface TreeEntry {
+              path: string;
+              type: "file" | "dir";
+            }
+            const results: TreeEntry[] = [];
+            let hasMoreDepth = false;
+
+            // Warm the file index once before walking the tree.
+            let indexRoot: string | undefined;
+            try {
+              await ensureFileIndex();
+              indexRoot = getIndexRoot();
+            } catch {
+              // Index not available — readdir only for all directories
+            }
+
+            // BFS queue: [absolutePath, relativePath, currentDepth]
+            const queue: [string, string, number][] = [[parsed.path, "", 0]];
+
+            while (queue.length > 0) {
+              const [absDir, relDir, depth] = queue.shift()!;
+
+              if (depth >= parsed.depth) {
+                // There are directories at the boundary — deeper content exists
+                if (depth === parsed.depth && relDir !== "") {
+                  hasMoreDepth = true;
+                }
+                continue;
+              }
+
+              // 1. Query file index for this directory
+              let indexedNames: Set<string> | undefined;
+              const indexedFolders: string[] = [];
+              const indexedFiles: string[] = [];
+              if (indexRoot !== undefined) {
+                const relPath = path.relative(indexRoot, absDir);
+                if (!relPath.startsWith("..")) {
+                  const indexed = searchFileIndex({
+                    searchDir: relPath || ".",
+                    pattern: "",
+                    deep: false,
+                    maxResults: 10000,
+                  });
+                  indexedNames = new Set<string>();
+                  for (const entry of indexed) {
+                    const name = entry.path.split(path.sep).pop() ?? entry.path;
+                    indexedNames.add(name);
+                    if (entry.type === "dir") {
+                      indexedFolders.push(name);
+                    } else {
+                      indexedFiles.push(name);
+                    }
+                  }
+                }
+              }
+
+              // 2. readdir to fill gaps
+              let dirEntries: import("node:fs").Dirent[];
+              try {
+                dirEntries = (await readdir(absDir, {
+                  withFileTypes: true,
+                })) as import("node:fs").Dirent[];
+              } catch {
+                // Can't read directory — skip
+                continue;
+              }
+
+              const extraFolders: string[] = [];
+              const extraFiles: string[] = [];
+              for (const e of dirEntries) {
+                if (DIR_LISTING_IGNORED_NAMES.has(e.name)) continue;
+                if (indexedNames?.has(e.name)) continue;
+                if (e.isDirectory()) {
+                  extraFolders.push(e.name);
+                } else {
+                  extraFiles.push(e.name);
+                }
+              }
+
+              // 3. Merge and collect entries
+              const allFolders = [...indexedFolders, ...extraFolders].sort(
+                (a, b) => a.localeCompare(b),
+              );
+              const allFiles = [...indexedFiles, ...extraFiles].sort((a, b) =>
+                a.localeCompare(b),
+              );
+
+              for (const name of allFolders) {
+                const entryRel = relDir === "" ? name : `${relDir}/${name}`;
+                results.push({ path: entryRel, type: "dir" });
+                // Enqueue for next depth level
+                queue.push([path.join(absDir, name), entryRel, depth + 1]);
+              }
+              for (const name of allFiles) {
+                const entryRel = relDir === "" ? name : `${relDir}/${name}`;
+                results.push({ path: entryRel, type: "file" });
+              }
+            }
+
+            console.log(
+              `[Listen] Sending get_tree_response: ${results.length} entries, has_more_depth=${hasMoreDepth}`,
+            );
+            safeSocketSend(
+              socket,
+              {
+                type: "get_tree_response",
+                path: parsed.path,
+                request_id: parsed.request_id,
+                entries: results,
+                has_more_depth: hasMoreDepth,
+                success: true,
+              },
+              "listener_get_tree_send_failed",
+              "listener_get_tree",
+            );
+          } catch (err) {
+            trackListenerError(
+              "listener_get_tree_failed",
+              err,
+              "listener_file_browser",
+            );
+            console.error(
+              `[Listen] get_tree error: ${err instanceof Error ? err.message : "Unknown error"}`,
+            );
+            safeSocketSend(
+              socket,
+              {
+                type: "get_tree_response",
+                path: parsed.path,
+                request_id: parsed.request_id,
+                entries: [],
+                has_more_depth: false,
+                success: false,
+                error:
+                  err instanceof Error ? err.message : "Failed to get tree",
+              },
+              "listener_get_tree_send_failed",
+              "listener_get_tree",
             );
           }
         });
@@ -4774,8 +4930,6 @@ async function connectWithRetry(
               const { writeFile } = await import("node:fs/promises");
               const content = parsed.document_content as string;
               await writeFile(parsed.path, content, "utf-8");
-              // Update the file index so the sidebar Merkle tree stays current
-              void refreshFileIndex();
               console.log(
                 `[Listen] file_ops: wrote ${content.length} bytes to ${parsed.path}`,
               );
