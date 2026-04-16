@@ -290,7 +290,6 @@ import {
 } from "./helpers/reflectionTranscript";
 import { safeJsonParseOr } from "./helpers/safeJsonParse";
 import { getDeviceType, getLocalTime } from "./helpers/sessionContext";
-import { buildStartupSystemPromptWarning } from "./helpers/startupSystemPromptWarning";
 import {
   resolvePromptChar,
   resolveStatusLineConfig,
@@ -323,6 +322,11 @@ import {
   flushEligibleLinesBeforeReentry,
   shouldClearCompletedSubagentsOnTurnStart,
 } from "./helpers/subagentTurnStart";
+import {
+  buildStartupSystemPromptWarning,
+  estimateSystemTokens,
+  setSystemPromptDoctorState,
+} from "./helpers/systemPromptWarning.ts";
 import {
   appendTaskNotificationEventsToBuffer,
   extractTaskNotificationsForDisplay,
@@ -8878,9 +8882,13 @@ export default function App({
               currentConversationId === "default"
                 ? { agent_id: agentId }
                 : undefined;
-            await client.conversations.recompile(
+            const compiledSystemPrompt = await client.conversations.recompile(
               currentConversationId,
               conversationParams,
+            );
+            setSystemPromptDoctorState(
+              agentId,
+              estimateSystemTokens(compiledSystemPrompt),
             );
 
             cmd.finish(

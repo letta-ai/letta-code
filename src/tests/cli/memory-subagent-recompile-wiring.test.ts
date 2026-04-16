@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { handleMemorySubagentCompletion } from "../../cli/helpers/memorySubagentCompletion";
+import {
+  estimateSystemTokens,
+  getSystemPromptDoctorState,
+} from "../../cli/helpers/systemPromptWarning";
 
 const recompileAgentSystemPromptMock = mock(
   (_conversationId: string, _agentId: string, _dryRun?: boolean) =>
@@ -45,6 +49,12 @@ describe("memory subagent recompile handling", () => {
       "conv-init-1",
       "agent-init-1",
     );
+
+    expect(getSystemPromptDoctorState("agent-init-1")).toEqual({
+      estimated_tokens: estimateSystemTokens("compiled-system-prompt"),
+      should_doctor: false,
+      updated_at_ms: expect.any(Number),
+    });
   });
 
   test("passes agent id when recompiling the default conversation", async () => {

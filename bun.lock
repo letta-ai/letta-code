@@ -4,7 +4,7 @@
     "": {
       "name": "@letta-ai/letta-code",
       "dependencies": {
-        "@letta-ai/letta-client": "1.10.1",
+        "@letta-ai/letta-client": "^1.10.2",
         "glob": "^13.0.0",
         "highlight.js": "^11.11.1",
         "ink-link": "^5.0.0",
@@ -99,7 +99,7 @@
 
     "@isaacs/brace-expansion": ["@isaacs/brace-expansion@5.0.0", "", { "dependencies": { "@isaacs/balanced-match": "^4.0.1" } }, "sha512-ZT55BDLV0yv0RBm2czMiZ+SqCGO7AvmOM3G/w2xhVPH+te0aKgFjmBvGlL1dH+ql2tgGO3MVrbb3jCKyvpgnxA=="],
 
-    "@letta-ai/letta-client": ["@letta-ai/letta-client@1.10.1", "", {}, "sha512-cBVk+XbiECMNSxh54jVsDAYyTvzOMsbwOl82mEjI+Wzi741mE5EUiu8YpsVXa4KnhZ47hPJ1gIv5Wyhwh+MPGw=="],
+    "@letta-ai/letta-client": ["@letta-ai/letta-client@1.10.2", "", {}, "sha512-BYAPkIl6wHYORJ+zHmlWaPSrlsMbN5YkoSnHnEUvaIJBOpa5kLwldNjzHIALcSAV19Qc0ktRoIQy0i0Vqb21yQ=="],
 
     "@slack/bolt": ["@slack/bolt@4.7.0", "", { "dependencies": { "@slack/logger": "^4.0.1", "@slack/oauth": "^3.0.5", "@slack/socket-mode": "^2.0.6", "@slack/types": "^2.20.1", "@slack/web-api": "^7.15.0", "axios": "^1.12.0", "express": "^5.0.0", "path-to-regexp": "^8.1.0", "raw-body": "^3", "tsscmp": "^1.0.6" }, "peerDependencies": { "@types/express": "^5.0.0" } }, "sha512-Xpf+gKegNvkHpft1z4YiuqZdciJ3tUp1bIRQxylW30Ovf+hzjb0M1zTHVtJsRw9jsjPxHTPoyanEXVvG6qVE1g=="],
 

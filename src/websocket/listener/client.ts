@@ -38,6 +38,10 @@ import {
   subscribe as subscribeToSubagentState,
   subscribeToStreamEvents as subscribeToSubagentStreamEvents,
 } from "../../cli/helpers/subagentState";
+import {
+  estimateSystemPromptTokensFromMemoryDir,
+  setSystemPromptDoctorState,
+} from "../../cli/helpers/systemPromptWarning";
 import { INTERRUPTED_BY_USER } from "../../constants";
 import {
   addTask as addCronTask,
@@ -5070,6 +5074,25 @@ async function connectWithRetry(
 
       // ── Slash commands (execute_command) ────────────────────────────────
       if (isExecuteCommandCommand(parsed)) {
+        // Internal-only: refresh doctor state after recompile (no chat output)
+        if (parsed.command_id === "refresh_doctor_state") {
+          const agentId = parsed.runtime.agent_id;
+          if (agentId && settingsManager.isMemfsEnabled(agentId)) {
+            try {
+              const { getMemoryFilesystemRoot } = await import(
+                "../../agent/memoryFilesystem"
+              );
+              const memoryDir = getMemoryFilesystemRoot(agentId);
+              const tokens = estimateSystemPromptTokensFromMemoryDir(memoryDir);
+              setSystemPromptDoctorState(agentId, tokens);
+            } catch {
+              // best-effort
+            }
+          }
+          emitDeviceStatusUpdate(socket, runtime, parsed.runtime);
+          return;
+        }
+
         // Slash commands need a scoped runtime for the conversation context
         const scopedRuntime = getOrCreateScopedRuntime(
           runtime,
