@@ -605,6 +605,16 @@ export interface ListInDirectoryCommand {
   request_id?: string;
 }
 
+export interface GetTreeCommand {
+  type: "get_tree";
+  /** Absolute path to the root of the subtree to fetch. */
+  path: string;
+  /** Maximum depth of the subtree to return (e.g. 3). */
+  depth: number;
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+}
+
 export interface ReadFileCommand {
   type: "read_file";
   /** Absolute path to the file to read. */
@@ -1439,6 +1449,7 @@ export type WsProtocolCommand =
   | TerminalKillCommand
   | SearchFilesCommand
   | ListInDirectoryCommand
+  | GetTreeCommand
   | ReadFileCommand
   | WriteFileCommand
   | WatchFileCommand
