@@ -204,7 +204,7 @@
       "id": "opus",
       "handle": "anthropic/claude-opus-4-6",
       "label": "Opus 4.6",
-      "description": "Anthropic's best model (high reasoning)",
+      "description": "Anthropic's (legacy) best model (high reasoning)",
       "isFeatured": true,
       "updateArgs": {
         "context_window": 200000,
@@ -264,6 +264,88 @@
         "context_window": 200000,
         "max_output_tokens": 128000,
         "reasoning_effort": "xhigh",
+        "enable_reasoner": true,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "opus-4.7",
+      "handle": "anthropic/claude-opus-4-7",
+      "label": "Opus 4.7",
+      "description": "Anthropic's best model (med reasoning)",
+      "isFeatured": true,
+      "updateArgs": {
+        "context_window": 200000,
+        "max_output_tokens": 128000,
+        "reasoning_effort": "medium",
+        "enable_reasoner": true,
+        "max_reasoning_tokens": 12000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "opus-4.7-low",
+      "handle": "anthropic/claude-opus-4-7",
+      "label": "Opus 4.7",
+      "description": "Opus 4.7 (low reasoning)",
+      "updateArgs": {
+        "context_window": 200000,
+        "max_output_tokens": 128000,
+        "reasoning_effort": "low",
+        "enable_reasoner": true,
+        "max_reasoning_tokens": 4000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "opus-4.7-medium",
+      "handle": "anthropic/claude-opus-4-7",
+      "label": "Opus 4.7",
+      "description": "Opus 4.7 (med reasoning)",
+      "updateArgs": {
+        "context_window": 200000,
+        "max_output_tokens": 128000,
+        "reasoning_effort": "medium",
+        "enable_reasoner": true,
+        "max_reasoning_tokens": 12000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "opus-4.7-high",
+      "handle": "anthropic/claude-opus-4-7",
+      "label": "Opus 4.7",
+      "description": "Opus 4.7 (high reasoning)",
+      "updateArgs": {
+        "context_window": 200000,
+        "max_output_tokens": 128000,
+        "reasoning_effort": "high",
+        "enable_reasoner": true,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "opus-4.7-xhigh",
+      "handle": "anthropic/claude-opus-4-7",
+      "label": "Opus 4.7",
+      "description": "Opus 4.7 (extra-high reasoning)",
+      "updateArgs": {
+        "context_window": 200000,
+        "max_output_tokens": 128000,
+        "reasoning_effort": "xhigh",
+        "enable_reasoner": true,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "opus-4.7-max",
+      "handle": "anthropic/claude-opus-4-7",
+      "label": "Opus 4.7",
+      "description": "Opus 4.7 (max reasoning)",
+      "updateArgs": {
+        "context_window": 200000,
+        "max_output_tokens": 128000,
+        "reasoning_effort": "max",
         "enable_reasoner": true,
         "parallel_tool_calls": true
       }
