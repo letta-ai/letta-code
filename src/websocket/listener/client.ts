@@ -3790,6 +3790,79 @@ export async function startListenerClient(
 /** File/directory names filtered from directory listings (OS/VCS noise). */
 const DIR_LISTING_IGNORED_NAMES = new Set([".DS_Store", ".git", "Thumbs.db"]);
 
+interface DirListing {
+  folders: string[];
+  files: string[];
+}
+
+/**
+ * List a single directory by merging the file index (instant) with readdir
+ * (to pick up `.lettaignore`'d entries). Shared by `list_in_directory` and
+ * `get_tree` handlers.
+ *
+ * @param absDir      Absolute path to the directory.
+ * @param indexRoot   Root of the file index (undefined if unavailable).
+ * @param includeFiles  Whether to include files (not just folders).
+ */
+async function listDirectoryHybrid(
+  absDir: string,
+  indexRoot: string | undefined,
+  includeFiles: boolean,
+): Promise<DirListing> {
+  // 1. Query file index (instant, from memory)
+  let indexedNames: Set<string> | undefined;
+  const indexedFolders: string[] = [];
+  const indexedFiles: string[] = [];
+
+  if (indexRoot !== undefined) {
+    const relPath = path.relative(indexRoot, absDir);
+    if (!relPath.startsWith("..")) {
+      const indexed = searchFileIndex({
+        searchDir: relPath || ".",
+        pattern: "",
+        deep: false,
+        maxResults: 10000,
+      });
+      indexedNames = new Set<string>();
+      for (const entry of indexed) {
+        const name = entry.path.split(path.sep).pop() ?? entry.path;
+        indexedNames.add(name);
+        if (entry.type === "dir") {
+          indexedFolders.push(name);
+        } else {
+          indexedFiles.push(name);
+        }
+      }
+    }
+  }
+
+  // 2. readdir to fill gaps (entries not in the index)
+  const { readdir } = await import("node:fs/promises");
+  const entries = await readdir(absDir, { withFileTypes: true });
+
+  const extraFolders: string[] = [];
+  const extraFiles: string[] = [];
+  for (const e of entries) {
+    if (DIR_LISTING_IGNORED_NAMES.has(e.name)) continue;
+    if (indexedNames?.has(e.name)) continue;
+    if (e.isDirectory()) {
+      extraFolders.push(e.name);
+    } else if (includeFiles) {
+      extraFiles.push(e.name);
+    }
+  }
+
+  // 3. Merge and sort
+  return {
+    folders: [...indexedFolders, ...extraFolders].sort((a, b) =>
+      a.localeCompare(b),
+    ),
+    files: includeFiles
+      ? [...indexedFiles, ...extraFiles].sort((a, b) => a.localeCompare(b))
+      : [],
+  };
+}
+
 /**
  * Connect to WebSocket with exponential backoff retry.
  */
@@ -4323,67 +4396,21 @@ async function connectWithRetry(
         );
         runDetachedListenerTask("list_in_directory", async () => {
           try {
-            // ── 1. Query file index first (instant, from memory) ──────────
-            let indexedNames: Set<string> | undefined;
-            const indexedFolders: string[] = [];
-            const indexedFiles: string[] = [];
+            let indexRoot: string | undefined;
             try {
               await ensureFileIndex();
-              const indexRoot = getIndexRoot();
-              const relPath = path.relative(indexRoot, parsed.path);
-              // Only query the index if the directory is within the index root
-              if (!relPath.startsWith("..")) {
-                const indexed = searchFileIndex({
-                  searchDir: relPath || ".",
-                  pattern: "",
-                  deep: false,
-                  maxResults: 10000,
-                });
-                indexedNames = new Set<string>();
-                for (const entry of indexed) {
-                  const name = entry.path.split(path.sep).pop() ?? entry.path;
-                  indexedNames.add(name);
-                  if (entry.type === "dir") {
-                    indexedFolders.push(name);
-                  } else {
-                    indexedFiles.push(name);
-                  }
-                }
-              }
+              indexRoot = getIndexRoot();
             } catch {
-              // Index not available — fall through to readdir only
+              // Index not available — readdir only
             }
 
-            // ── 2. readdir to fill gaps (entries not in the index) ────────
-            const { readdir } = await import("node:fs/promises");
             console.log(`[Listen] Reading directory: ${parsed.path}`);
-            const entries = await readdir(parsed.path, { withFileTypes: true });
-            console.log(
-              `[Listen] Directory read success, ${entries.length} entries`,
-            );
-
-            // Add entries that are NOT already in the index
-            const extraFolders: string[] = [];
-            const extraFiles: string[] = [];
-            for (const e of entries) {
-              if (DIR_LISTING_IGNORED_NAMES.has(e.name)) continue;
-              if (indexedNames?.has(e.name)) continue; // already from index
-              if (e.isDirectory()) {
-                extraFolders.push(e.name);
-              } else if (parsed.include_files) {
-                extraFiles.push(e.name);
-              }
-            }
-
-            // ── 3. Merge: indexed entries + readdir extras ────────────────
-            const allFolders = [...indexedFolders, ...extraFolders].sort(
-              (a, b) => a.localeCompare(b),
-            );
-            const allFiles = parsed.include_files
-              ? [...indexedFiles, ...extraFiles].sort((a, b) =>
-                  a.localeCompare(b),
-                )
-              : [];
+            const { folders: allFolders, files: allFiles } =
+              await listDirectoryHybrid(
+                parsed.path,
+                indexRoot,
+                !!parsed.include_files,
+              );
 
             const total = allFolders.length + allFiles.length;
             const offset = parsed.offset ?? 0;
@@ -4455,8 +4482,6 @@ async function connectWithRetry(
         );
         runDetachedListenerTask("get_tree", async () => {
           try {
-            const { readdir } = await import("node:fs/promises");
-
             // Walk the directory tree up to the requested depth, combining
             // file index results with readdir to include non-indexed entries.
             interface TreeEntry {
@@ -4476,85 +4501,37 @@ async function connectWithRetry(
             }
 
             // BFS queue: [absolutePath, relativePath, currentDepth]
+            // Uses an index pointer for O(1) dequeue instead of shift().
             const queue: [string, string, number][] = [[parsed.path, "", 0]];
+            let qi = 0;
 
-            while (queue.length > 0) {
-              const next = queue.shift();
-              if (!next) break;
-              const [absDir, relDir, depth] = next;
+            while (qi < queue.length) {
+              const item = queue[qi++];
+              if (!item) break;
+              const [absDir, relDir, depth] = item;
 
               if (depth >= parsed.depth) {
-                // There are directories at the boundary — deeper content exists
                 if (depth === parsed.depth && relDir !== "") {
                   hasMoreDepth = true;
                 }
                 continue;
               }
 
-              // 1. Query file index for this directory
-              let indexedNames: Set<string> | undefined;
-              const indexedFolders: string[] = [];
-              const indexedFiles: string[] = [];
-              if (indexRoot !== undefined) {
-                const relPath = path.relative(indexRoot, absDir);
-                if (!relPath.startsWith("..")) {
-                  const indexed = searchFileIndex({
-                    searchDir: relPath || ".",
-                    pattern: "",
-                    deep: false,
-                    maxResults: 10000,
-                  });
-                  indexedNames = new Set<string>();
-                  for (const entry of indexed) {
-                    const name = entry.path.split(path.sep).pop() ?? entry.path;
-                    indexedNames.add(name);
-                    if (entry.type === "dir") {
-                      indexedFolders.push(name);
-                    } else {
-                      indexedFiles.push(name);
-                    }
-                  }
-                }
-              }
-
-              // 2. readdir to fill gaps
-              let dirEntries: import("node:fs").Dirent[];
+              let listing: DirListing;
               try {
-                dirEntries = (await readdir(absDir, {
-                  withFileTypes: true,
-                })) as import("node:fs").Dirent[];
+                listing = await listDirectoryHybrid(absDir, indexRoot, true);
               } catch {
                 // Can't read directory — skip
                 continue;
               }
 
-              const extraFolders: string[] = [];
-              const extraFiles: string[] = [];
-              for (const e of dirEntries) {
-                if (DIR_LISTING_IGNORED_NAMES.has(e.name)) continue;
-                if (indexedNames?.has(e.name)) continue;
-                if (e.isDirectory()) {
-                  extraFolders.push(e.name);
-                } else {
-                  extraFiles.push(e.name);
-                }
-              }
-
-              // 3. Merge and collect entries
-              const allFolders = [...indexedFolders, ...extraFolders].sort(
-                (a, b) => a.localeCompare(b),
-              );
-              const allFiles = [...indexedFiles, ...extraFiles].sort((a, b) =>
-                a.localeCompare(b),
-              );
-
-              for (const name of allFolders) {
+              // Relative paths always use '/' (converted to OS separator on the frontend)
+              for (const name of listing.folders) {
                 const entryRel = relDir === "" ? name : `${relDir}/${name}`;
                 results.push({ path: entryRel, type: "dir" });
-                // Enqueue for next depth level
                 queue.push([path.join(absDir, name), entryRel, depth + 1]);
               }
-              for (const name of allFiles) {
+              for (const name of listing.files) {
                 const entryRel = relDir === "" ? name : `${relDir}/${name}`;
                 results.push({ path: entryRel, type: "file" });
               }
