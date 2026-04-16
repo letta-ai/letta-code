@@ -739,8 +739,10 @@ export function isSetReflectionSettingsCommand(
   );
 }
 
-function isChannelId(value: unknown): value is "telegram" | "slack" {
-  return value === "telegram" || value === "slack";
+function isChannelId(
+  value: unknown,
+): value is "telegram" | "slack" | "discord" {
+  return value === "telegram" || value === "slack" || value === "discord";
 }
 
 function hasValidChannelPolicyFields(config: Record<string, unknown>): boolean {
@@ -824,6 +826,15 @@ export function isChannelAccountCreateCommand(
     return account.token === undefined || typeof account.token === "string";
   }
 
+  if (c.channel_id === "discord") {
+    return (
+      (account.token === undefined || typeof account.token === "string") &&
+      (account.agent_id === undefined ||
+        account.agent_id === null ||
+        typeof account.agent_id === "string")
+    );
+  }
+
   return (
     (account.bot_token === undefined ||
       typeof account.bot_token === "string") &&
@@ -865,6 +876,15 @@ export function isChannelAccountUpdateCommand(
 
   if (c.channel_id === "telegram") {
     return patch.token === undefined || typeof patch.token === "string";
+  }
+
+  if (c.channel_id === "discord") {
+    return (
+      (patch.token === undefined || typeof patch.token === "string") &&
+      (patch.agent_id === undefined ||
+        patch.agent_id === null ||
+        typeof patch.agent_id === "string")
+    );
   }
 
   return (
@@ -1014,6 +1034,10 @@ export function isChannelSetConfigCommand(
   }
 
   if (c.channel_id === "telegram") {
+    return config.token === undefined || typeof config.token === "string";
+  }
+
+  if (c.channel_id === "discord") {
     return config.token === undefined || typeof config.token === "string";
   }
 

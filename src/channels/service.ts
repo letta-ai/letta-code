@@ -7,6 +7,7 @@ import {
   removeChannelAccount,
   upsertChannelAccount,
 } from "./accounts";
+import { resolveDiscordAccountDisplayName } from "./discord/adapter";
 import {
   getApprovedUsers,
   getPendingPairings,
@@ -85,6 +86,15 @@ export type ChannelConfigSnapshot =
       allowedUsers: string[];
       hasBotToken: boolean;
       hasAppToken: boolean;
+    }
+  | {
+      channelId: "discord";
+      accountId: string;
+      displayName?: string;
+      enabled: boolean;
+      dmPolicy: DmPolicy;
+      allowedUsers: string[];
+      hasToken: boolean;
     };
 
 export interface PendingPairingSnapshot {
@@ -160,6 +170,20 @@ export type ChannelAccountSnapshot =
       defaultPermissionMode: SlackDefaultPermissionMode;
       createdAt: string;
       updatedAt: string;
+    }
+  | {
+      channelId: "discord";
+      accountId: string;
+      displayName?: string;
+      enabled: boolean;
+      configured: boolean;
+      running: boolean;
+      dmPolicy: DmPolicy;
+      allowedUsers: string[];
+      hasToken: boolean;
+      agentId: string | null;
+      createdAt: string;
+      updatedAt: string;
     };
 
 export interface ChannelConfigPatch {
@@ -224,6 +248,15 @@ async function resolveChannelAccountDisplayName(
       const info = await validateTelegramToken(account.token);
       return normalizeDisplayName(
         info.username ? `@${info.username}` : undefined,
+      );
+    }
+
+    if (account.channel === "discord") {
+      if (!account.token.trim()) {
+        return undefined;
+      }
+      return normalizeDisplayName(
+        await resolveDiscordAccountDisplayName(account.token),
       );
     }
 
@@ -364,6 +397,10 @@ function isAccountConfigured(account: ChannelAccount): boolean {
     return account.token.trim().length > 0;
   }
 
+  if (account.channel === "discord") {
+    return account.token.trim().length > 0;
+  }
+
   return (
     account.botToken.trim().length > 0 && account.appToken.trim().length > 0
   );
@@ -402,6 +439,23 @@ function toAccountSnapshot(account: ChannelAccount): ChannelAccountSnapshot {
       allowedUsers: [...account.allowedUsers],
       hasToken: account.token.trim().length > 0,
       binding,
+      createdAt: account.createdAt,
+      updatedAt: account.updatedAt,
+    };
+  }
+
+  if (account.channel === "discord") {
+    return {
+      channelId: "discord",
+      accountId: account.accountId,
+      displayName: account.displayName,
+      enabled: account.enabled,
+      configured: isAccountConfigured(account),
+      running,
+      dmPolicy: account.dmPolicy,
+      allowedUsers: [...account.allowedUsers],
+      hasToken: account.token.trim().length > 0,
+      agentId: account.agentId,
       createdAt: account.createdAt,
       updatedAt: account.updatedAt,
     };
@@ -450,6 +504,21 @@ function createAccountFromPatch(
     };
   }
 
+  if (channelId === "discord") {
+    return {
+      channel: "discord",
+      accountId,
+      displayName: normalizeDisplayName(patch.displayName),
+      enabled: patch.enabled ?? false,
+      token: patch.token ?? "",
+      agentId: patch.agentId ?? null,
+      dmPolicy: patch.dmPolicy ?? "pairing",
+      allowedUsers: patch.allowedUsers ?? [],
+      createdAt: now,
+      updatedAt: now,
+    };
+  }
+
   return {
     channel: "slack",
     accountId,
@@ -481,6 +550,22 @@ function mergeAccountPatch(
           : existing.displayName,
       enabled: patch.enabled ?? existing.enabled,
       token: patch.token ?? existing.token,
+      dmPolicy: patch.dmPolicy ?? existing.dmPolicy,
+      allowedUsers: patch.allowedUsers ?? existing.allowedUsers,
+      updatedAt: nextUpdatedAt,
+    };
+  }
+
+  if (existing.channel === "discord") {
+    return {
+      ...existing,
+      displayName:
+        patch.displayName !== undefined
+          ? normalizeDisplayName(patch.displayName)
+          : existing.displayName,
+      enabled: patch.enabled ?? existing.enabled,
+      token: patch.token ?? existing.token,
+      agentId: patch.agentId ?? existing.agentId,
       dmPolicy: patch.dmPolicy ?? existing.dmPolicy,
       allowedUsers: patch.allowedUsers ?? existing.allowedUsers,
       updatedAt: nextUpdatedAt,
@@ -571,6 +656,18 @@ export function getChannelConfigSnapshot(
     };
   }
 
+  if (account.channel === "discord") {
+    return {
+      channelId: "discord",
+      accountId: account.accountId,
+      displayName: account.displayName,
+      enabled: account.enabled,
+      dmPolicy: account.dmPolicy,
+      allowedUsers: [...account.allowedUsers],
+      hasToken: account.token.trim().length > 0,
+    };
+  }
+
   return {
     channelId: "slack",
     accountId: account.accountId,
@@ -605,7 +702,7 @@ export async function setChannelConfigLive(
       displayName: existing.displayName,
     });
     shouldRefreshDisplayName =
-      channelId === "telegram"
+      channelId === "telegram" || channelId === "discord"
         ? patch.token !== undefined
         : patch.botToken !== undefined || patch.appToken !== undefined;
   } else {
@@ -675,6 +772,11 @@ export async function startChannelLive(
         'Channel "telegram" is missing a token. Configure it first.',
       );
     }
+    if (existing.channel === "discord") {
+      throw new Error(
+        'Channel "discord" is missing a token. Configure it first.',
+      );
+    }
     throw new Error(
       'Channel "slack" is missing a bot token or app token. Configure it first.',
     );
@@ -693,7 +795,7 @@ export async function startChannelLive(
     existing.accountId,
   );
   await refreshChannelAccountDisplayNameLive(channelId, existing.accountId, {
-    force: channelId === "slack",
+    force: channelId === "slack" || channelId === "discord",
   });
 
   const summary = listChannelSummaries().find(
@@ -845,21 +947,21 @@ export function bindChannelAccountLive(
     );
   }
 
-  const updated =
-    existing.channel === "telegram"
-      ? upsertChannelAccount(channelId, {
-          ...existing,
-          binding: {
-            agentId,
-            conversationId,
-          },
-          updatedAt: new Date().toISOString(),
-        })
-      : upsertChannelAccount(channelId, {
-          ...existing,
-          agentId,
-          updatedAt: new Date().toISOString(),
-        });
+  let updated: ChannelAccount;
+  if (existing.channel === "telegram") {
+    updated = upsertChannelAccount(channelId, {
+      ...existing,
+      binding: { agentId, conversationId },
+      updatedAt: new Date().toISOString(),
+    });
+  } else {
+    // Slack and Discord both use a top-level agentId
+    updated = upsertChannelAccount(channelId, {
+      ...existing,
+      agentId,
+      updatedAt: new Date().toISOString(),
+    });
+  }
 
   return toAccountSnapshot(updated);
 }
@@ -876,21 +978,21 @@ export function unbindChannelAccountLive(
     );
   }
 
-  const updated =
-    existing.channel === "telegram"
-      ? upsertChannelAccount(channelId, {
-          ...existing,
-          binding: {
-            agentId: null,
-            conversationId: null,
-          },
-          updatedAt: new Date().toISOString(),
-        })
-      : upsertChannelAccount(channelId, {
-          ...existing,
-          agentId: null,
-          updatedAt: new Date().toISOString(),
-        });
+  let updated: ChannelAccount;
+  if (existing.channel === "telegram") {
+    updated = upsertChannelAccount(channelId, {
+      ...existing,
+      binding: { agentId: null, conversationId: null },
+      updatedAt: new Date().toISOString(),
+    });
+  } else {
+    // Slack and Discord both use a top-level agentId
+    updated = upsertChannelAccount(channelId, {
+      ...existing,
+      agentId: null,
+      updatedAt: new Date().toISOString(),
+    });
+  }
 
   return toAccountSnapshot(updated);
 }
@@ -912,6 +1014,11 @@ export async function startChannelAccountLive(
         'Channel "telegram" account is missing a token. Configure it first.',
       );
     }
+    if (existing.channel === "discord") {
+      throw new Error(
+        'Channel "discord" account is missing a token. Configure it first.',
+      );
+    }
     throw new Error(
       'Channel "slack" account is missing a bot token or app token. Configure it first.',
     );
@@ -930,7 +1037,7 @@ export async function startChannelAccountLive(
     channelId,
     accountId,
     {
-      force: channelId === "slack",
+      force: channelId === "slack" || channelId === "discord",
     },
   );
   await refreshLoadedMessageChannelTool();

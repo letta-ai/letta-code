@@ -6,6 +6,7 @@ import {
 } from "./config";
 import type {
   ChannelAccount,
+  DiscordChannelAccount,
   SlackChannelAccount,
   SlackDefaultPermissionMode,
   SupportedChannelId,
@@ -48,7 +49,10 @@ function normalizeLoadedAccount<T extends ChannelAccount>(account: T): T {
         next.displayName === "Migrated Telegram bot")) ||
     (next.channel === "slack" &&
       (next.displayName === "Slack app" ||
-        next.displayName === "Migrated Slack app"))
+        next.displayName === "Migrated Slack app")) ||
+    (next.channel === "discord" &&
+      (next.displayName === "Discord bot" ||
+        next.displayName === "Migrated Discord bot"))
   ) {
     next.displayName = undefined;
   }
@@ -62,7 +66,7 @@ function normalizeLoadedAccount<T extends ChannelAccount>(account: T): T {
 
 function makeDefaultLegacyAccount(
   channelId: SupportedChannelId,
-): TelegramChannelAccount | SlackChannelAccount {
+): ChannelAccount {
   const config = readChannelConfig(channelId);
   const now = new Date().toISOString();
 
@@ -82,6 +86,20 @@ function makeDefaultLegacyAccount(
         agentId: null,
         conversationId: null,
       },
+      createdAt: now,
+      updatedAt: now,
+    };
+  }
+
+  if (config.channel === "discord") {
+    return {
+      channel: "discord",
+      accountId: LEGACY_CHANNEL_ACCOUNT_ID,
+      enabled: config.enabled,
+      token: config.token,
+      dmPolicy: config.dmPolicy,
+      allowedUsers: [...config.allowedUsers],
+      agentId: null,
       createdAt: now,
       updatedAt: now,
     };
