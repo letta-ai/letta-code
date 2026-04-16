@@ -130,6 +130,7 @@ test("installChannelRuntime writes a manifest and invokes npm in the runtime dir
     runtimeRoot,
     spawnImpl: spawnImpl as never,
     packageManager: "npm",
+    platform: "linux",
   });
 
   await installChannelRuntime("telegram");
@@ -149,7 +150,7 @@ test("installChannelRuntime writes a manifest and invokes npm in the runtime dir
   );
   expect(spawnCalls).toEqual([
     {
-      cmd: expectedPackageManagerCommand("npm"),
+      cmd: "npm",
       args: ["install", "--no-save", "grammy@1.42.0"],
       cwd: getChannelRuntimeDir("telegram"),
     },
@@ -213,13 +214,14 @@ test("installChannelRuntime uses pnpm add for pnpm installs", async () => {
     runtimeRoot,
     spawnImpl: spawnImpl as never,
     packageManager: "pnpm",
+    platform: "linux",
   });
 
   await installChannelRuntime("telegram");
 
   expect(spawnCalls).toEqual([
     {
-      cmd: expectedPackageManagerCommand("pnpm"),
+      cmd: "pnpm",
       args: ["add", "grammy@1.42.0"],
       cwd: getChannelRuntimeDir("telegram"),
     },
