@@ -7,12 +7,32 @@ const INTERACTIVE_APPROVAL_TOOLS = new Set([
   "ExitPlanMode",
 ]);
 
+export type InteractiveApprovalKind =
+  | "ask_user_question"
+  | "enter_plan_mode"
+  | "exit_plan_mode";
+
 const RUNTIME_USER_INPUT_TOOLS = new Set(["AskUserQuestion", "ExitPlanMode"]);
 
 const HEADLESS_AUTO_ALLOW_TOOLS = new Set(["EnterPlanMode", "ExitPlanMode"]);
 
 export function isInteractiveApprovalTool(toolName: string): boolean {
   return INTERACTIVE_APPROVAL_TOOLS.has(toolName);
+}
+
+export function getInteractiveApprovalKind(
+  toolName: string,
+): InteractiveApprovalKind | null {
+  switch (toolName) {
+    case "AskUserQuestion":
+      return "ask_user_question";
+    case "EnterPlanMode":
+      return "enter_plan_mode";
+    case "ExitPlanMode":
+      return "exit_plan_mode";
+    default:
+      return null;
+  }
 }
 
 export function requiresRuntimeUserInput(toolName: string): boolean {

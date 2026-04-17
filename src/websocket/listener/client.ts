@@ -3021,6 +3021,16 @@ function wireChannelIngress(
     scheduleQueuePump(conversationRuntime, socket, opts, processQueuedTurn);
   });
 
+  registry.setApprovalResponseHandler(async ({ runtime, response }) =>
+    handleApprovalResponseInput(listener, {
+      runtime,
+      response,
+      socket,
+      opts,
+      processQueuedTurn,
+    }),
+  );
+
   registry.setEventHandler((event) => {
     handleChannelRegistryEvent(event, socket, listener);
   });

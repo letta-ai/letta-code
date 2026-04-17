@@ -1,8 +1,10 @@
 import { readFile } from "node:fs/promises";
 import { basename, extname } from "node:path";
 import type SlackApp from "@slack/bolt";
+import { formatChannelControlRequestPrompt } from "../interactive";
 import type {
   ChannelAdapter,
+  ChannelControlRequestEvent,
   ChannelTurnLifecycleEvent,
   ChannelTurnSource,
   InboundChannelMessage,
@@ -991,6 +993,24 @@ export function createSlackAdapter(
       rememberMessageThread(
         response.ts,
         options?.replyToMessageId ?? response.ts ?? null,
+      );
+    },
+
+    async handleControlRequestEvent(
+      event: ChannelControlRequestEvent,
+    ): Promise<void> {
+      await ensureApp();
+      const slackClient = await ensureWriteClient();
+      const response = await slackClient.chat.postMessage({
+        channel: event.source.chatId,
+        text: formatChannelControlRequestPrompt(event),
+        ...((event.source.threadId ?? event.source.messageId)
+          ? { thread_ts: event.source.threadId ?? event.source.messageId }
+          : {}),
+      });
+      rememberMessageThread(
+        response.ts,
+        event.source.threadId ?? event.source.messageId ?? response.ts ?? null,
       );
     },
 
