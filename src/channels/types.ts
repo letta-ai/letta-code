@@ -23,6 +23,8 @@ export interface ChannelMessageAttachment {
   kind: "image" | "file" | "audio" | "video";
   localPath: string;
   imageDataBase64?: string;
+  /** Best-effort speech-to-text transcription (voice memos only). */
+  transcription?: string;
 }
 
 export interface ChannelReactionNotification {
@@ -247,6 +249,8 @@ export interface TelegramChannelConfig {
   token: string;
   dmPolicy: DmPolicy;
   allowedUsers: string[];
+  /** When true and OPENAI_API_KEY is set, voice memos are auto-transcribed. */
+  transcribeVoice?: boolean;
 }
 
 export interface SlackChannelConfig {
@@ -265,6 +269,8 @@ export interface TelegramChannelAccount extends ChannelAccountBase {
   channel: "telegram";
   token: string;
   binding: ChannelAccountBinding;
+  /** When true and OPENAI_API_KEY is set, voice memos are auto-transcribed. */
+  transcribeVoice?: boolean;
 }
 
 export interface SlackChannelAccount extends ChannelAccountBase {

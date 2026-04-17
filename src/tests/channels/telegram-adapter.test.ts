@@ -136,6 +136,7 @@ const telegramAccountDefaults = {
 const consoleErrorSpy = mock(() => {});
 const originalConsoleError = console.error;
 const originalFetch = globalThis.fetch;
+const originalOpenAiApiKey = process.env.OPENAI_API_KEY;
 
 beforeEach(() => {
   channelRoot = mkdtempSync(join(tmpdir(), "letta-telegram-root-"));
@@ -154,11 +155,17 @@ beforeEach(() => {
   consoleErrorSpy.mockClear();
   console.error = consoleErrorSpy as typeof console.error;
   globalThis.fetch = originalFetch;
+  delete process.env.OPENAI_API_KEY;
 });
 
 afterEach(() => {
   console.error = originalConsoleError;
   globalThis.fetch = originalFetch;
+  if (originalOpenAiApiKey === undefined) {
+    delete process.env.OPENAI_API_KEY;
+  } else {
+    process.env.OPENAI_API_KEY = originalOpenAiApiKey;
+  }
   rmSync(channelRoot, { recursive: true, force: true });
 });
 
@@ -387,6 +394,148 @@ test("telegram adapter forwards plain text messages through onMessage", async ()
     attachments: undefined,
     raw: expect.objectContaining({ message_id: 77 }),
   });
+});
+
+test("telegram adapter transcribes inbound voice memos when opt-in is enabled", async () => {
+  process.env.OPENAI_API_KEY = "sk-test";
+
+  globalThis.fetch = mock(async (url: string | URL | Request) => {
+    const href = typeof url === "string" ? url : url.toString();
+
+    if (href.includes("/file/bottest-token/voice/voice1.ogg")) {
+      return new Response(Buffer.from("voice-bytes"), {
+        status: 200,
+        headers: { "content-type": "audio/ogg" },
+      });
+    }
+
+    if (href === "https://api.openai.com/v1/audio/transcriptions") {
+      return new Response(JSON.stringify({ text: "Transcribed voice memo" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+
+    throw new Error(`Unexpected fetch URL: ${href}`);
+  }) as unknown as typeof fetch;
+
+  FakeBot.nextGetFileImpl = async () => ({
+    file_path: "voice/voice1.ogg",
+  });
+
+  const adapter = createTelegramAdapter({
+    ...telegramAccountDefaults,
+    channel: "telegram",
+    enabled: true,
+    token: "test-token",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+    transcribeVoice: true,
+  });
+
+  const onMessage = mock(async () => {});
+  adapter.onMessage = onMessage;
+
+  await adapter.start();
+
+  const bot = FakeBot.instances[0];
+  await bot?.emit("message", {
+    message: {
+      chat: { id: 123 },
+      from: { id: 456, username: "alice", first_name: "Alice" },
+      text: "",
+      date: 1_736_380_800,
+      message_id: 77,
+      voice: {
+        file_id: "voice1",
+        file_unique_id: "voice-unique-1",
+        mime_type: "audio/ogg",
+        file_size: 12,
+      },
+    },
+  });
+
+  expect(onMessage).toHaveBeenCalledTimes(1);
+  expect(onMessage).toHaveBeenCalledWith(
+    expect.objectContaining({
+      attachments: [
+        expect.objectContaining({
+          kind: "audio",
+          mimeType: "audio/ogg",
+          transcription: "Transcribed voice memo",
+        }),
+      ],
+    }),
+  );
+});
+
+test("telegram adapter skips voice transcription unless opt-in is enabled", async () => {
+  process.env.OPENAI_API_KEY = "sk-test";
+
+  globalThis.fetch = mock(async (url: string | URL | Request) => {
+    const href = typeof url === "string" ? url : url.toString();
+
+    if (href.includes("/file/bottest-token/voice/voice1.ogg")) {
+      return new Response(Buffer.from("voice-bytes"), {
+        status: 200,
+        headers: { "content-type": "audio/ogg" },
+      });
+    }
+
+    if (href === "https://api.openai.com/v1/audio/transcriptions") {
+      throw new Error(
+        "Whisper should not be called when transcription is disabled",
+      );
+    }
+
+    throw new Error(`Unexpected fetch URL: ${href}`);
+  }) as unknown as typeof fetch;
+
+  FakeBot.nextGetFileImpl = async () => ({
+    file_path: "voice/voice1.ogg",
+  });
+
+  const adapter = createTelegramAdapter({
+    ...telegramAccountDefaults,
+    channel: "telegram",
+    enabled: true,
+    token: "test-token",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  const onMessage = mock(async () => {});
+  adapter.onMessage = onMessage;
+
+  await adapter.start();
+
+  const bot = FakeBot.instances[0];
+  await bot?.emit("message", {
+    message: {
+      chat: { id: 123 },
+      from: { id: 456, username: "alice", first_name: "Alice" },
+      text: "",
+      date: 1_736_380_800,
+      message_id: 77,
+      voice: {
+        file_id: "voice1",
+        file_unique_id: "voice-unique-1",
+        mime_type: "audio/ogg",
+        file_size: 12,
+      },
+    },
+  });
+
+  expect(onMessage).toHaveBeenCalledTimes(1);
+  expect(onMessage).toHaveBeenCalledWith(
+    expect.objectContaining({
+      attachments: [
+        expect.not.objectContaining({
+          transcription: expect.any(String),
+        }),
+      ],
+    }),
+  );
 });
 
 test("telegram adapter forwards reaction updates through onMessage", async () => {
