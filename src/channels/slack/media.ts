@@ -28,6 +28,12 @@ type SlackAttachmentLike = {
 
 type SlackRepliesClient = {
   conversations: {
+    history(args: {
+      channel: string;
+      latest?: string;
+      limit?: number;
+      inclusive?: boolean;
+    }): Promise<unknown>;
     replies(args: {
       channel: string;
       ts: string;
@@ -57,6 +63,17 @@ export type SlackThreadMessage = {
   botId?: string;
   ts?: string;
 };
+
+function mapSlackThreadMessage(
+  message: SlackRepliesPageMessage,
+): SlackThreadMessage {
+  return {
+    text: resolveSlackThreadMessageText(message),
+    userId: isNonEmptyString(message.user) ? message.user : undefined,
+    botId: isNonEmptyString(message.bot_id) ? message.bot_id : undefined,
+    ts: isNonEmptyString(message.ts) ? message.ts : undefined,
+  };
+}
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object"
@@ -465,12 +482,45 @@ export async function resolveSlackThreadHistory(params: {
           : undefined;
     } while (cursor);
 
-    return retained.map((message) => ({
-      text: resolveSlackThreadMessageText(message),
-      userId: isNonEmptyString(message.user) ? message.user : undefined,
-      botId: isNonEmptyString(message.bot_id) ? message.bot_id : undefined,
-      ts: isNonEmptyString(message.ts) ? message.ts : undefined,
-    }));
+    return retained.map(mapSlackThreadMessage);
+  } catch {
+    return [];
+  }
+}
+
+export async function resolveSlackChannelHistory(params: {
+  channelId: string;
+  beforeTs: string;
+  client: SlackRepliesClient;
+  limit?: number;
+}): Promise<SlackThreadMessage[]> {
+  const maxMessages = params.limit ?? 20;
+  if (!Number.isFinite(maxMessages) || maxMessages <= 0) {
+    return [];
+  }
+
+  const fetchLimit = Math.min(Math.max(maxMessages * 3, maxMessages), 100);
+
+  try {
+    const response = (await params.client.conversations.history({
+      channel: params.channelId,
+      latest: params.beforeTs,
+      inclusive: false,
+      limit: fetchLimit,
+    })) as SlackRepliesPage;
+
+    const retained = (response.messages ?? [])
+      .filter((message) => {
+        if (message.ts === params.beforeTs) {
+          return false;
+        }
+
+        return Boolean(resolveSlackThreadMessageText(message));
+      })
+      .slice(0, fetchLimit)
+      .reverse();
+
+    return retained.slice(-maxMessages).map(mapSlackThreadMessage);
   } catch {
     return [];
   }
