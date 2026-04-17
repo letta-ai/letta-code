@@ -490,7 +490,7 @@ export const commands: Record<string, Command> = {
     },
   },
   "/logout": {
-    desc: "Clear credentials and exit",
+    desc: "Clear saved credentials and exit",
     order: 44,
     noArgs: true,
     handler: () => {
