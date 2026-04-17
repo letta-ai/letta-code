@@ -43,6 +43,7 @@ import type {
   ChannelTurnSource,
   InboundChannelMessage,
   SlackChannelAccount,
+  SlackDefaultPermissionMode,
 } from "./types";
 import { formatChannelNotification } from "./xml";
 
@@ -163,6 +164,14 @@ export type ChannelRegistryEvent =
   | {
       type: "targets_updated";
       channelId: string;
+    }
+  | {
+      type: "slack_conversation_created";
+      channelId: "slack";
+      accountId: string;
+      agentId: string;
+      conversationId: string;
+      defaultPermissionMode: SlackDefaultPermissionMode;
     };
 
 // ── Registry ──────────────────────────────────────────────────────
@@ -623,6 +632,16 @@ export class ChannelRegistry {
     };
 
     addRoute(msg.channel, route);
+    if (config.defaultPermissionMode !== "default") {
+      this.eventHandler?.({
+        type: "slack_conversation_created",
+        channelId: "slack",
+        accountId: config.accountId,
+        agentId: config.agentId,
+        conversationId,
+        defaultPermissionMode: config.defaultPermissionMode,
+      });
+    }
     return route;
   }
 

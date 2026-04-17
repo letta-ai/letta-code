@@ -168,15 +168,22 @@ describe("channel service", () => {
         configured: true,
         hasBotToken: true,
         hasAppToken: true,
+        defaultPermissionMode: "default",
       }),
     );
 
     const updated = updateChannelAccountLive("slack", "docsbot", {
       displayName: "DocsBot Support",
       enabled: true,
+      defaultPermissionMode: "bypassPermissions",
     });
     expect(updated.displayName).toBe("DocsBot Support");
     expect(updated.enabled).toBe(true);
+    expect(updated.channelId).toBe("slack");
+    if (updated.channelId !== "slack") {
+      throw new Error("Expected Slack account snapshot");
+    }
+    expect(updated.defaultPermissionMode).toBe("bypassPermissions");
 
     const bound = bindChannelAccountLive(
       "slack",
@@ -195,6 +202,7 @@ describe("channel service", () => {
         accountId: "docsbot",
         displayName: "DocsBot Support",
         agentId: "agent-docs",
+        defaultPermissionMode: "bypassPermissions",
       }),
     );
 
@@ -345,6 +353,7 @@ describe("channel service", () => {
         dmPolicy: "pairing",
         allowedUsers: [],
         agentId: null,
+        defaultPermissionMode: "default",
         createdAt: "2026-04-11T00:00:00.000Z",
         updatedAt: "2026-04-11T00:00:00.000Z",
       },
@@ -353,6 +362,10 @@ describe("channel service", () => {
     const snapshot = getChannelAccountSnapshot("slack", "legacy-slack");
     expect(snapshot).not.toBeNull();
     expect(snapshot?.displayName).toBeUndefined();
+    expect(snapshot?.channelId).toBe("slack");
+    if (snapshot?.channelId === "slack") {
+      expect(snapshot.defaultPermissionMode).toBe("default");
+    }
   });
 
   test("refreshChannelAccountDisplayNameLive hydrates a real platform name", async () => {
