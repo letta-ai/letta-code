@@ -30,6 +30,8 @@ export interface SchedulerOwner {
   pid: number;
   token: string;
   started_at: string; // ISO
+  process_start_ticks?: string | null;
+  boot_id?: string | null;
 }
 
 export interface CronTask {
@@ -135,25 +137,104 @@ interface LockOwner {
   pid: number;
   token: string;
   acquired_at: number;
+  process_start_ticks?: string | null;
+  boot_id?: string | null;
 }
 
-function isProcessAlive(pid: number): boolean {
+interface ProcessIdentity {
+  startTicks: string | null;
+  bootId: string | null;
+}
+
+let readProcessIdentityOverride:
+  | ((pid: number) => ProcessIdentity | null)
+  | null = null;
+
+function readLinuxProcessIdentity(pid: number): ProcessIdentity | null {
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+    const endCommand = stat.lastIndexOf(")");
+    if (endCommand === -1) {
+      return null;
+    }
+
+    // /proc/<pid>/stat wraps the command name in parentheses as field #2.
+    // Everything after that begins at field #3 ("state"), so starttime
+    // (field #22) is offset 19 in the remaining array.
+    const fields = stat
+      .slice(endCommand + 2)
+      .trim()
+      .split(/\s+/);
+    const startTicks = fields[19] ?? null;
+    if (!startTicks) {
+      return null;
+    }
+
+    let bootId: string | null = null;
+    try {
+      bootId =
+        readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim() || null;
+    } catch {
+      // Best effort: boot_id is helpful but not required.
+    }
+
+    return { startTicks, bootId };
+  } catch {
+    return null;
+  }
+}
+
+function readProcessIdentity(pid: number): ProcessIdentity | null {
+  if (readProcessIdentityOverride) {
+    return readProcessIdentityOverride(pid);
+  }
+  return readLinuxProcessIdentity(pid);
+}
+
+function captureProcessIdentity(pid: number): {
+  process_start_ticks: string | null;
+  boot_id: string | null;
+} {
+  const identity = readProcessIdentity(pid);
+  return {
+    process_start_ticks: identity?.startTicks ?? null,
+    boot_id: identity?.bootId ?? null,
+  };
+}
+
+function isProcessAlive(
+  pid: number,
+  owner?: {
+    process_start_ticks?: string | null;
+    boot_id?: string | null;
+  } | null,
+): boolean {
   try {
     process.kill(pid, 0);
   } catch {
     return false;
   }
 
-  // In containers, PIDs recycle across restarts (e.g. PID 3 gets reused
-  // by a completely different process). Verify the process is actually a
-  // letta/node process by checking /proc/{pid}/cmdline on Linux.
-  try {
-    const cmdline = readFileSync(`/proc/${pid}/cmdline`, "utf8");
-    if (!cmdline.includes("letta") && !cmdline.includes("node")) {
-      return false;
+  // On Linux, compare the persisted process identity as well. This lets us
+  // distinguish "same PID, different process" across container restarts.
+  if (owner) {
+    const identity = readProcessIdentity(pid);
+    if (identity) {
+      if (
+        owner.boot_id &&
+        identity.bootId &&
+        owner.boot_id !== identity.bootId
+      ) {
+        return false;
+      }
+      if (
+        owner.process_start_ticks &&
+        identity.startTicks &&
+        owner.process_start_ticks !== identity.startTicks
+      ) {
+        return false;
+      }
     }
-  } catch {
-    // /proc not available (macOS, etc.) — trust the kill(0) result
   }
 
   return true;
@@ -185,7 +266,7 @@ function isLockStale(lockDir: string): boolean {
   }
 
   // Steal only if PID is dead AND lock is older than threshold
-  const pidDead = !isProcessAlive(owner.pid);
+  const pidDead = !isProcessAlive(owner.pid, owner);
   const isOld = Date.now() - owner.acquired_at > LOCK_STALE_AGE_MS;
   return pidDead && isOld;
 }
@@ -219,6 +300,7 @@ export function acquireLock(): LockHandle {
         pid: process.pid,
         token,
         acquired_at: Date.now(),
+        ...captureProcessIdentity(process.pid),
       };
       writeLockOwner(lockDir, owner);
       return {
@@ -403,7 +485,10 @@ export function addTask(input: AddTaskInput): AddTaskResult {
 
     // Check if a scheduler is running
     let warning: string | undefined;
-    if (!data.scheduler_owner || !isProcessAlive(data.scheduler_owner.pid)) {
+    if (
+      !data.scheduler_owner ||
+      !isProcessAlive(data.scheduler_owner.pid, data.scheduler_owner)
+    ) {
       warning =
         "No letta server is currently running. This task will only execute when a WS listener is active.";
     }
@@ -482,8 +567,9 @@ export function claimSchedulerLease(): string {
     const token = randomBytes(4).toString("hex");
 
     if (data.scheduler_owner) {
-      const { pid, token: existingToken } = data.scheduler_owner;
-      if (isProcessAlive(pid)) {
+      const existingOwner = data.scheduler_owner;
+      const { pid, token: existingToken } = existingOwner;
+      if (isProcessAlive(pid, existingOwner)) {
         throw new Error(
           `Scheduler lease held by PID ${pid} (token ${existingToken}). Cannot claim.`,
         );
@@ -495,6 +581,7 @@ export function claimSchedulerLease(): string {
       pid: process.pid,
       token,
       started_at: new Date().toISOString(),
+      ...captureProcessIdentity(process.pid),
     };
     writeCronFile(data);
     return token;
@@ -528,6 +615,12 @@ export function releaseSchedulerLease(token: string): void {
       writeCronFile(data);
     }
   });
+}
+
+export function __testOverrideReadProcessIdentity(
+  fn: ((pid: number) => ProcessIdentity | null) | null,
+): void {
+  readProcessIdentityOverride = fn;
 }
 
 // ── Task state updates (used by scheduler) ──────────────────────────
