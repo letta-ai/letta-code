@@ -379,6 +379,108 @@ async function replaySyncStateForRuntime(
   emitStateSync(socket, listenerRuntime, scope);
 }
 
+async function recoverPendingChannelControlRequests(
+  listener: ListenerRuntime,
+  opts?: {
+    recoverApprovalStateForSync?: (
+      runtime: ConversationRuntime,
+      scope: { agent_id: string; conversation_id: string },
+    ) => Promise<void>;
+  },
+): Promise<void> {
+  const registry = getChannelRegistry();
+  if (!registry) {
+    return;
+  }
+
+  const pendingEntries = registry.getPendingControlRequests();
+  if (pendingEntries.length === 0) {
+    return;
+  }
+
+  const recoverFn =
+    opts?.recoverApprovalStateForSync ?? recoverApprovalStateForSync;
+  const entriesByScope = new Map<
+    string,
+    {
+      scope: { agent_id: string; conversation_id: string };
+      entries: typeof pendingEntries;
+    }
+  >();
+
+  for (const entry of pendingEntries) {
+    const scope = {
+      agent_id: entry.event.source.agentId,
+      conversation_id: entry.event.source.conversationId,
+    };
+    const scopeKey = `${scope.agent_id}:${scope.conversation_id}`;
+    const existing = entriesByScope.get(scopeKey);
+    if (existing) {
+      existing.entries.push(entry);
+      continue;
+    }
+    entriesByScope.set(scopeKey, {
+      scope,
+      entries: [entry],
+    });
+  }
+
+  for (const { scope, entries } of entriesByScope.values()) {
+    const runtime = getOrCreateScopedRuntime(
+      listener,
+      scope.agent_id,
+      scope.conversation_id,
+    );
+    const livePendingRequestIds = new Set(
+      runtime.pendingApprovalResolvers.keys(),
+    );
+    const shouldRecoverFromBackend = entries.some(
+      (entry) => !livePendingRequestIds.has(entry.event.requestId),
+    );
+
+    if (shouldRecoverFromBackend) {
+      try {
+        await recoverFn(runtime, scope);
+      } catch (error) {
+        trackListenerError(
+          "listener_channel_control_request_recovery_failed",
+          error,
+          "listener_channel_control_request_recovery",
+        );
+        if (isDebugEnabled()) {
+          console.warn(
+            "[Listen] Channel control request recovery failed:",
+            error,
+          );
+        }
+        continue;
+      }
+    }
+
+    const recoveredPendingRequestIds =
+      getRecoveredApprovalStateForScope(listener, scope)?.pendingRequestIds ??
+      new Set<string>();
+
+    for (const entry of entries) {
+      const requestId = entry.event.requestId;
+      const stillPending =
+        livePendingRequestIds.has(requestId) ||
+        recoveredPendingRequestIds.has(requestId);
+
+      if (!stillPending) {
+        registry.clearPendingControlRequest(requestId);
+        continue;
+      }
+
+      if (entry.deliveredThisProcess) {
+        continue;
+      }
+
+      await registry.redeliverPendingControlRequest(requestId);
+    }
+  }
+}
+
 function getParsedRuntimeScope(
   parsed: unknown,
 ): { agent_id: string; conversation_id: string } | null {
@@ -1974,7 +2076,7 @@ async function handleChannelsProtocolCommand(
         parsed.channel_id,
         parsed.account_id,
       );
-      wireChannelIngress(
+      await wireChannelIngress(
         runtime,
         socket,
         opts as StartListenerOptions,
@@ -2115,7 +2217,7 @@ async function handleChannelsProtocolCommand(
       );
 
       if (snapshot.enabled) {
-        wireChannelIngress(
+        await wireChannelIngress(
           runtime,
           socket,
           opts as StartListenerOptions,
@@ -2165,7 +2267,7 @@ async function handleChannelsProtocolCommand(
         parsed.channel_id,
         parsed.account_id,
       );
-      wireChannelIngress(
+      await wireChannelIngress(
         runtime,
         socket,
         opts as StartListenerOptions,
@@ -2978,12 +3080,12 @@ async function handleReflectionSettingsCommand(
  * Called from the socket "open" handler — same pattern as startCronScheduler.
  * Uses closure-scoped socket/opts/processQueuedTurn.
  */
-function wireChannelIngress(
+async function wireChannelIngress(
   listener: ListenerRuntime,
   socket: WebSocket,
   opts: StartListenerOptions,
   processQueuedTurn: ProcessQueuedTurn,
-): void {
+): Promise<void> {
   const registry = getChannelRegistry();
   if (!registry) return;
 
@@ -3021,6 +3123,12 @@ function wireChannelIngress(
     scheduleQueuePump(conversationRuntime, socket, opts, processQueuedTurn);
   });
 
+  registry.setEventHandler((event) => {
+    handleChannelRegistryEvent(event, socket, listener);
+  });
+
+  await recoverPendingChannelControlRequests(listener);
+
   registry.setApprovalResponseHandler(async ({ runtime, response }) =>
     handleApprovalResponseInput(listener, {
       runtime,
@@ -3030,10 +3138,6 @@ function wireChannelIngress(
       processQueuedTurn,
     }),
   );
-
-  registry.setEventHandler((event) => {
-    handleChannelRegistryEvent(event, socket, listener);
-  });
 
   registry.setReady();
 }
@@ -4016,7 +4120,7 @@ async function connectWithRetry(
     );
   };
 
-  socket.on("open", () => {
+  socket.on("open", async () => {
     if (runtime !== getActiveRuntime() || runtime.intentionallyClosed) {
       return;
     }
@@ -4155,7 +4259,7 @@ async function connectWithRetry(
     startCronScheduler(socket, opts, processQueuedTurn);
 
     // Wire channel ingress (if channels are active)
-    wireChannelIngress(runtime, socket, opts, processQueuedTurn);
+    await wireChannelIngress(runtime, socket, opts, processQueuedTurn);
   });
 
   socket.on("message", async (data: WebSocket.RawData) => {
@@ -5955,6 +6059,7 @@ export const __listenClientTestUtils = {
   enqueueChannelTurn,
   scheduleQueuePump,
   replaySyncStateForRuntime,
+  recoverPendingChannelControlRequests,
   recoverApprovalStateForSync,
   clearRecoveredApprovalStateForScope: (
     runtime: ListenerRuntime | ConversationRuntime,

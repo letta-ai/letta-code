@@ -30,6 +30,11 @@ import {
   loadPairingStore,
   rollbackPairingApproval,
 } from "./pairing";
+import {
+  listPendingControlRequests as listPersistedPendingControlRequests,
+  removePendingControlRequest as removePersistedPendingControlRequest,
+  upsertPendingControlRequest as upsertPersistedPendingControlRequest,
+} from "./pendingControlRequests";
 import { loadChannelPlugin } from "./pluginRegistry";
 import {
   addRoute,
@@ -183,7 +188,10 @@ export type ChannelApprovalResponseHandler = (params: {
   response: ApprovalResponseBody;
 }) => Promise<boolean>;
 
-type PendingChannelControlRequest = ChannelControlRequestEvent;
+type PendingChannelControlRequest = {
+  event: ChannelControlRequestEvent;
+  deliveredThisProcess: boolean;
+};
 
 export type ChannelRegistryEvent =
   | {
@@ -225,6 +233,7 @@ export class ChannelRegistry {
       );
     }
     instance = this;
+    this.primePersistedPendingControlRequests();
   }
 
   // ── Adapter management ────────────────────────────────────────
@@ -348,8 +357,79 @@ export class ChannelRegistry {
     this.eventHandler = handler;
   }
 
+  hasPendingControlRequest(requestId: string): boolean {
+    return this.pendingControlRequestsById.has(requestId);
+  }
+
+  getPendingControlRequests(): Array<PendingChannelControlRequest> {
+    return Array.from(this.pendingControlRequestsById.values()).map(
+      (pending) => ({
+        event: structuredClone(pending.event),
+        deliveredThisProcess: pending.deliveredThisProcess,
+      }),
+    );
+  }
+
+  private primePersistedPendingControlRequests(): void {
+    for (const event of listPersistedPendingControlRequests()) {
+      this.pendingControlRequestsById.set(event.requestId, {
+        event,
+        deliveredThisProcess: false,
+      });
+      this.pendingControlRequestIdByScope.set(
+        getChannelApprovalScopeKey({
+          channel: event.source.channel,
+          accountId: event.source.accountId,
+          chatId: event.source.chatId,
+          threadId: event.source.threadId,
+        }),
+        event.requestId,
+      );
+    }
+  }
+
+  private async deliverPendingControlRequest(
+    requestId: string,
+  ): Promise<boolean> {
+    const pending = this.pendingControlRequestsById.get(requestId);
+    if (!pending) {
+      return false;
+    }
+
+    const event = pending.event;
+    const adapter = this.getAdapter(
+      event.source.channel,
+      event.source.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID,
+    );
+    if (!adapter) {
+      return false;
+    }
+
+    try {
+      if (adapter.handleControlRequestEvent) {
+        await adapter.handleControlRequestEvent(event);
+      } else {
+        await adapter.sendDirectReply(
+          event.source.chatId,
+          formatChannelControlRequestPrompt(event),
+          {
+            replyToMessageId: event.source.threadId ?? event.source.messageId,
+          },
+        );
+      }
+      pending.deliveredThisProcess = true;
+      return true;
+    } catch (error) {
+      console.error(
+        `[Channels] Failed to deliver control request prompt for ${event.source.channel}/${event.source.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID}:`,
+        error instanceof Error ? error.message : error,
+      );
+      return false;
+    }
+  }
+
   async registerPendingControlRequest(
-    event: PendingChannelControlRequest,
+    event: ChannelControlRequestEvent,
   ): Promise<void> {
     const scopeKey = getChannelApprovalScopeKey({
       channel: event.source.channel,
@@ -361,49 +441,31 @@ export class ChannelRegistry {
     if (existingRequestId) {
       this.clearPendingControlRequest(existingRequestId);
     }
-    this.pendingControlRequestsById.set(event.requestId, event);
+    this.pendingControlRequestsById.set(event.requestId, {
+      event,
+      deliveredThisProcess: false,
+    });
     this.pendingControlRequestIdByScope.set(scopeKey, event.requestId);
+    upsertPersistedPendingControlRequest(event);
+    await this.deliverPendingControlRequest(event.requestId);
+  }
 
-    const adapter = this.getAdapter(
-      event.source.channel,
-      event.source.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID,
-    );
-    if (!adapter) {
-      return;
-    }
-
-    try {
-      if (adapter.handleControlRequestEvent) {
-        await adapter.handleControlRequestEvent(event);
-        return;
-      }
-
-      await adapter.sendDirectReply(
-        event.source.chatId,
-        formatChannelControlRequestPrompt(event),
-        {
-          replyToMessageId: event.source.threadId ?? event.source.messageId,
-        },
-      );
-    } catch (error) {
-      console.error(
-        `[Channels] Failed to deliver control request prompt for ${event.source.channel}/${event.source.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID}:`,
-        error instanceof Error ? error.message : error,
-      );
-    }
+  async redeliverPendingControlRequest(requestId: string): Promise<boolean> {
+    return this.deliverPendingControlRequest(requestId);
   }
 
   clearPendingControlRequest(requestId: string): void {
+    removePersistedPendingControlRequest(requestId);
     const pending = this.pendingControlRequestsById.get(requestId);
     if (!pending) {
       return;
     }
     this.pendingControlRequestsById.delete(requestId);
     const scopeKey = getChannelApprovalScopeKey({
-      channel: pending.source.channel,
-      accountId: pending.source.accountId,
-      chatId: pending.source.chatId,
-      threadId: pending.source.threadId,
+      channel: pending.event.source.channel,
+      accountId: pending.event.source.accountId,
+      chatId: pending.event.source.chatId,
+      threadId: pending.event.source.threadId,
     });
     if (this.pendingControlRequestIdByScope.get(scopeKey) === requestId) {
       this.pendingControlRequestIdByScope.delete(scopeKey);
@@ -618,7 +680,7 @@ export class ChannelRegistry {
       return false;
     }
 
-    const parsed = parseChannelControlRequestResponse(pending, msg.text);
+    const parsed = parseChannelControlRequestResponse(pending.event, msg.text);
     if (parsed.type === "reprompt") {
       await adapter.sendDirectReply(msg.chatId, parsed.message, {
         replyToMessageId: msg.threadId ?? msg.messageId,
@@ -639,8 +701,8 @@ export class ChannelRegistry {
 
     const handled = await this.approvalResponseHandler({
       runtime: {
-        agent_id: pending.source.agentId,
-        conversation_id: pending.source.conversationId,
+        agent_id: pending.event.source.agentId,
+        conversation_id: pending.event.source.conversationId,
       },
       response: parsed.response,
     });
