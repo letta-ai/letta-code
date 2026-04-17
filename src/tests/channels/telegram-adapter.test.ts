@@ -396,7 +396,7 @@ test("telegram adapter forwards plain text messages through onMessage", async ()
   });
 });
 
-test("telegram adapter auto-transcribes inbound voice memos when OPENAI_API_KEY is set", async () => {
+test("telegram adapter transcribes inbound voice memos when opt-in is enabled", async () => {
   process.env.OPENAI_API_KEY = "sk-test";
 
   globalThis.fetch = mock(async (url: string | URL | Request) => {
@@ -414,6 +414,78 @@ test("telegram adapter auto-transcribes inbound voice memos when OPENAI_API_KEY 
         status: 200,
         headers: { "content-type": "application/json" },
       });
+    }
+
+    throw new Error(`Unexpected fetch URL: ${href}`);
+  }) as unknown as typeof fetch;
+
+  FakeBot.nextGetFileImpl = async () => ({
+    file_path: "voice/voice1.ogg",
+  });
+
+  const adapter = createTelegramAdapter({
+    ...telegramAccountDefaults,
+    channel: "telegram",
+    enabled: true,
+    token: "test-token",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+    transcribeVoice: true,
+  });
+
+  const onMessage = mock(async () => {});
+  adapter.onMessage = onMessage;
+
+  await adapter.start();
+
+  const bot = FakeBot.instances[0];
+  await bot?.emit("message", {
+    message: {
+      chat: { id: 123 },
+      from: { id: 456, username: "alice", first_name: "Alice" },
+      text: "",
+      date: 1_736_380_800,
+      message_id: 77,
+      voice: {
+        file_id: "voice1",
+        file_unique_id: "voice-unique-1",
+        mime_type: "audio/ogg",
+        file_size: 12,
+      },
+    },
+  });
+
+  expect(onMessage).toHaveBeenCalledTimes(1);
+  expect(onMessage).toHaveBeenCalledWith(
+    expect.objectContaining({
+      attachments: [
+        expect.objectContaining({
+          kind: "audio",
+          mimeType: "audio/ogg",
+          transcription: "Transcribed voice memo",
+        }),
+      ],
+    }),
+  );
+});
+
+test("telegram adapter skips voice transcription unless opt-in is enabled", async () => {
+  process.env.OPENAI_API_KEY = "sk-test";
+
+  globalThis.fetch = mock(async (url: string | URL | Request) => {
+    const href = typeof url === "string" ? url : url.toString();
+
+    if (href.includes("/file/bottest-token/voice/voice1.ogg")) {
+      return new Response(Buffer.from("voice-bytes"), {
+        status: 200,
+        headers: { "content-type": "audio/ogg" },
+      });
+    }
+
+    if (href === "https://api.openai.com/v1/audio/transcriptions") {
+      throw new Error(
+        "Whisper should not be called when transcription is disabled",
+      );
     }
 
     throw new Error(`Unexpected fetch URL: ${href}`);
@@ -458,10 +530,8 @@ test("telegram adapter auto-transcribes inbound voice memos when OPENAI_API_KEY 
   expect(onMessage).toHaveBeenCalledWith(
     expect.objectContaining({
       attachments: [
-        expect.objectContaining({
-          kind: "audio",
-          mimeType: "audio/ogg",
-          transcription: "Transcribed voice memo",
+        expect.not.objectContaining({
+          transcription: expect.any(String),
         }),
       ],
     }),

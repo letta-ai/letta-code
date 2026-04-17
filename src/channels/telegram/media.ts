@@ -500,6 +500,7 @@ async function downloadTelegramAttachment(params: {
   token: string;
   bot: TelegramFileLookup;
   candidate: TelegramAttachmentCandidate;
+  transcribeVoice?: boolean;
 }): Promise<ChannelMessageAttachment | null> {
   const { candidate } = params;
 
@@ -575,8 +576,8 @@ async function downloadTelegramAttachment(params: {
       : {}),
   };
 
-  // Auto-transcribe voice memos when an API key is available.
-  if (candidate.isVoice) {
+  // Auto-transcribe voice memos when enabled and an API key is available.
+  if (candidate.isVoice && params.transcribeVoice) {
     const { isTranscriptionConfigured, transcribeAudioFile } = await import(
       "../transcription/index"
     );
@@ -596,6 +597,7 @@ export async function resolveTelegramInboundAttachments(params: {
   token: string;
   bot: TelegramFileLookup;
   messages: TelegramLikeMessage[];
+  transcribeVoice?: boolean;
 }): Promise<ChannelMessageAttachment[]> {
   const deduped = new Map<string, TelegramAttachmentCandidate>();
 
@@ -616,6 +618,7 @@ export async function resolveTelegramInboundAttachments(params: {
         token: params.token,
         bot: params.bot,
         candidate,
+        transcribeVoice: params.transcribeVoice,
       }).catch(() => null),
     ),
   );

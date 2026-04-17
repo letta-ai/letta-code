@@ -132,6 +132,7 @@ const telegramConfigCodec: ChannelConfigCodec<TelegramChannelConfig> = {
       token: String(parsed.token ?? ""),
       dmPolicy: (parsed.dm_policy as DmPolicy) ?? "pairing",
       allowedUsers: (parsed.allowed_users as string[]) ?? [],
+      transcribeVoice: parsed.transcribe_voice === true,
     };
   },
 };
