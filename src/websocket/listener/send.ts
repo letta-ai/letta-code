@@ -43,6 +43,7 @@ import {
 } from "./constants";
 import { getConversationWorkingDirectory } from "./cwd";
 import {
+  createToolExecutionOutputEmitter,
   emitInterruptToolReturnMessage,
   emitToolExecutionFinishedEvents,
   emitToolExecutionStartedEvents,
@@ -324,10 +325,20 @@ export async function resolveStaleApprovals(
       agentId: runtime.agentId ?? undefined,
       conversationId: recoveryConversationId,
     });
+    const emitToolExecutionOutput = createToolExecutionOutputEmitter(
+      socket,
+      runtime,
+      {
+        runId: runtime.activeRunId ?? undefined,
+        agentId: runtime.agentId ?? undefined,
+        conversationId: recoveryConversationId,
+      },
+    );
 
     try {
       const approvalResults = await executeApprovalBatch(decisions, undefined, {
         abortSignal,
+        onStreamingOutput: emitToolExecutionOutput,
         toolContextId: preparedToolContext.preparedToolContext.contextId,
         workingDirectory: recoveryWorkingDirectory,
         parentScope:
