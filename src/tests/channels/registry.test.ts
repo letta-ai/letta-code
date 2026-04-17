@@ -8,6 +8,11 @@ import {
   isUserApproved,
 } from "../../channels/pairing";
 import {
+  __testOverrideLoadPendingControlRequestStore,
+  __testOverrideSavePendingControlRequestStore,
+  clearPendingControlRequestStore,
+} from "../../channels/pendingControlRequests";
+import {
   buildSlackConversationSummary,
   ChannelRegistry,
   completePairing,
@@ -22,8 +27,21 @@ import {
 } from "../../channels/routing";
 import type {
   ChannelAdapter,
+  ChannelControlRequestEvent,
   InboundChannelMessage,
 } from "../../channels/types";
+
+beforeEach(() => {
+  __testOverrideLoadPendingControlRequestStore(null);
+  __testOverrideSavePendingControlRequestStore(null);
+  clearPendingControlRequestStore();
+});
+
+afterEach(() => {
+  __testOverrideLoadPendingControlRequestStore(null);
+  __testOverrideSavePendingControlRequestStore(null);
+  clearPendingControlRequestStore();
+});
 
 describe("ChannelRegistry", () => {
   beforeEach(() => {
@@ -290,31 +308,10 @@ describe("pending channel control requests", () => {
     };
   }
 
-  test("channel replies resolve pending AskUserQuestion prompts instead of normal ingress", async () => {
-    const replies: Array<{
-      chatId: string;
-      text: string;
-      replyToMessageId?: string;
-    }> = [];
-    const registry = new ChannelRegistry();
-    const adapter = createAdapter(replies);
-    registry.registerAdapter(adapter);
-
-    const deliveries: unknown[] = [];
-    registry.setMessageHandler((delivery) => {
-      deliveries.push(delivery);
-    });
-
-    const approvalResponses: Array<{
-      runtime: { agent_id?: string | null; conversation_id?: string | null };
-      response: unknown;
-    }> = [];
-    registry.setApprovalResponseHandler(async (params) => {
-      approvalResponses.push(params);
-      return true;
-    });
-
-    await registry.registerPendingControlRequest({
+  function createPendingControlRequestEvent(
+    overrides: Partial<ChannelControlRequestEvent> = {},
+  ): ChannelControlRequestEvent {
+    return {
       requestId: "req-ask-1",
       kind: "ask_user_question",
       source: {
@@ -347,7 +344,37 @@ describe("pending channel control requests", () => {
           },
         ],
       },
+      ...overrides,
+    };
+  }
+
+  test("channel replies resolve pending AskUserQuestion prompts instead of normal ingress", async () => {
+    const replies: Array<{
+      chatId: string;
+      text: string;
+      replyToMessageId?: string;
+    }> = [];
+    const registry = new ChannelRegistry();
+    const adapter = createAdapter(replies);
+    registry.registerAdapter(adapter);
+
+    const deliveries: unknown[] = [];
+    registry.setMessageHandler((delivery) => {
+      deliveries.push(delivery);
     });
+
+    const approvalResponses: Array<{
+      runtime: { agent_id?: string | null; conversation_id?: string | null };
+      response: unknown;
+    }> = [];
+    registry.setApprovalResponseHandler(async (params) => {
+      approvalResponses.push(params);
+      return true;
+    });
+
+    await registry.registerPendingControlRequest(
+      createPendingControlRequestEvent(),
+    );
 
     await adapter.onMessage?.(createInboundMessage("2"));
 
@@ -453,6 +480,48 @@ describe("pending channel control requests", () => {
       text: "Please answer with numbered lines so I can map each reply to the right question.\nExample:\n1: your answer\n2: your answer",
       replyToMessageId: "1712790000.000050",
     });
+  });
+
+  test("bootstrapped persisted control requests intercept replies before the listener finishes reconnecting", async () => {
+    const replies: Array<{
+      chatId: string;
+      text: string;
+      replyToMessageId?: string;
+    }> = [];
+    __testOverrideLoadPendingControlRequestStore(() => ({
+      requests: [createPendingControlRequestEvent()],
+    }));
+
+    const registry = new ChannelRegistry();
+    const adapter = createAdapter(replies);
+    registry.registerAdapter(adapter);
+
+    await adapter.onMessage?.(createInboundMessage("approve"));
+
+    expect(replies).toEqual([
+      {
+        chatId: "C123",
+        text: "I’m reconnecting to Letta Code right now, so I couldn’t use that reply yet. Please send it again in a moment.",
+        replyToMessageId: "1712790000.000050",
+      },
+    ]);
+  });
+
+  test("clearing a bootstrapped control request also removes it from the persisted store", () => {
+    const saveSnapshots: Array<{ requests: ChannelControlRequestEvent[] }> = [];
+    __testOverrideLoadPendingControlRequestStore(() => ({
+      requests: [createPendingControlRequestEvent()],
+    }));
+    __testOverrideSavePendingControlRequestStore((store) => {
+      saveSnapshots.push({
+        requests: store.requests,
+      });
+    });
+
+    const registry = new ChannelRegistry();
+    registry.clearPendingControlRequest("req-ask-1");
+
+    expect(saveSnapshots.at(-1)).toEqual({ requests: [] });
   });
 
   test("a newer pending request on the same channel scope replaces the older one", async () => {

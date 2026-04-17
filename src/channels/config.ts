@@ -47,6 +47,10 @@ export function getChannelTargetsPath(channelId: string): string {
   return join(getChannelDir(channelId), "targets.json");
 }
 
+export function getPendingChannelControlRequestsPath(): string {
+  return join(getChannelsRoot(), "pending-control-requests.json");
+}
+
 // ── YAML helpers ──────────────────────────────────────────────────
 
 /**
