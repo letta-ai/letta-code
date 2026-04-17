@@ -142,6 +142,12 @@ import {
 } from "../utils/debug";
 import { getVersion } from "../version";
 import {
+  buildCavemanCommandPrompt,
+  CAVEMAN_MODE_HINT,
+  isCavemanCommandInput,
+  normalizeCavemanMode,
+} from "./commands/caveman";
+import {
   handleMcpAdd,
   type McpCommandContext,
   setActiveCommandId as setActiveMcpCommandId,
@@ -10470,6 +10476,60 @@ export default function App({
                 type: "message",
                 role: "user",
                 content: buildTextParts(skillMessage),
+                otid: randomUUID(),
+              },
+            ]);
+          } catch (error) {
+            const errorDetails = formatErrorDetails(error, agentId);
+            cmd.fail(`Failed: ${errorDetails}`);
+          } finally {
+            setCommandRunning(false);
+          }
+
+          return { submitted: true };
+        }
+
+        // /caveman - switch cave-code response/thinking mode
+        if (isCavemanCommandInput(trimmed)) {
+          const modeInput = trimmed.slice("/caveman".length).trim();
+          const mode = normalizeCavemanMode(modeInput);
+
+          if (!mode) {
+            addCommandResult(
+              buffersRef,
+              refreshDerived,
+              msg,
+              `Usage: /caveman ${CAVEMAN_MODE_HINT}`,
+              false,
+            );
+            return { submitted: true };
+          }
+
+          const cmd = commandRunner.start(
+            msg,
+            `Switching cave-code to ${mode} mode...`,
+          );
+
+          const approvalCheck = await checkPendingApprovalsForSlashCommand();
+          if (approvalCheck.blocked) {
+            cmd.fail(
+              "Pending approval(s). Resolve approvals before running /caveman.",
+            );
+            return { submitted: false };
+          }
+
+          setCommandRunning(true);
+
+          try {
+            const prompt = buildCavemanCommandPrompt(mode);
+            cmd.finish(`Switching cave-code to ${mode} mode...`, true);
+            await processConversation([
+              {
+                type: "message",
+                role: "user",
+                content: buildTextParts(
+                  `${SYSTEM_REMINDER_OPEN}\n${prompt}\n${SYSTEM_REMINDER_CLOSE}`,
+                ),
                 otid: randomUUID(),
               },
             ]);

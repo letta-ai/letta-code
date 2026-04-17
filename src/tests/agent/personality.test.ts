@@ -49,6 +49,11 @@ describe("personality helpers", () => {
     expect(resolvePersonalityId("memo")).toBe("memo");
   });
 
+  test("resolvePersonalityId accepts caveman aliases", () => {
+    expect(resolvePersonalityId("caveman")).toBe("caveman");
+    expect(resolvePersonalityId("cave-code")).toBe("caveman");
+  });
+
   test("personality block values always include both persona and human", () => {
     for (const option of PERSONALITY_OPTIONS) {
       const values = getPersonalityBlockValues(option.id);
@@ -57,10 +62,11 @@ describe("personality helpers", () => {
     }
   });
 
-  test("claude and codex use the default human block", () => {
+  test("claude, codex, and caveman use the default human block", () => {
     const defaultHuman = getDefaultHumanContent();
     expect(getPersonalityHumanContent("claude")).toBe(defaultHuman);
     expect(getPersonalityHumanContent("codex")).toBe(defaultHuman);
+    expect(getPersonalityHumanContent("caveman")).toBe(defaultHuman);
   });
 
   test("default create-agent personalities are exactly memo, linus, and kawaii", () => {
@@ -112,5 +118,21 @@ describe("personality helpers", () => {
     const definitions = getPersonalityBlockDefinitions("kawaii");
     expect(definitions.persona.description).toContain("sparkly memory");
     expect(definitions.human.description).toContain("senpai");
+  });
+
+  test("caveman block definitions use the caveman persona template", () => {
+    const definitions = getPersonalityBlockDefinitions("caveman");
+    expect(definitions.persona.templatePromptAssetName).toBe(
+      "persona_caveman.mdx",
+    );
+    expect(
+      PERSONALITY_OPTIONS.find((option) => option.id === "caveman"),
+    ).toMatchObject({ defaultModel: "auto-chat", label: "cave-code" });
+    expect(definitions.persona.value).toContain(
+      "Think and speak like smart caveman",
+    );
+    expect(definitions.persona.value).toContain(
+      "Every `reasoning_message` must show a cave-grunt",
+    );
   });
 });
