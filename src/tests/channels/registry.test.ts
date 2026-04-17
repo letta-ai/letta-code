@@ -20,6 +20,10 @@ import {
   clearAllRoutes,
   getRoute,
 } from "../../channels/routing";
+import type {
+  ChannelAdapter,
+  InboundChannelMessage,
+} from "../../channels/types";
 
 describe("ChannelRegistry", () => {
   beforeEach(() => {
@@ -232,5 +236,345 @@ describe("completePairing", () => {
     expect(after).not.toBeNull();
     expect(after?.agentId).toBe("agent-old");
     expect(after?.conversationId).toBe("conv-old");
+  });
+});
+
+describe("pending channel control requests", () => {
+  afterEach(async () => {
+    const registry = getChannelRegistry();
+    if (registry) {
+      await registry.stopAll();
+    }
+  });
+
+  function createAdapter(
+    replies: Array<{ chatId: string; text: string; replyToMessageId?: string }>,
+  ): ChannelAdapter {
+    return {
+      id: "slack:acct-slack",
+      channelId: "slack",
+      accountId: "acct-slack",
+      name: "Slack",
+      start: async () => {},
+      stop: async () => {},
+      isRunning: () => true,
+      sendMessage: async () => ({ messageId: "msg-1" }),
+      sendDirectReply: async (chatId, text, options) => {
+        replies.push({
+          chatId,
+          text,
+          replyToMessageId: options?.replyToMessageId,
+        });
+      },
+      handleControlRequestEvent: async () => {},
+      onMessage: undefined,
+    };
+  }
+
+  function createInboundMessage(
+    text: string,
+    overrides: Partial<InboundChannelMessage> = {},
+  ): InboundChannelMessage {
+    return {
+      channel: "slack",
+      accountId: "acct-slack",
+      chatId: "C123",
+      senderId: "U123",
+      senderName: "Charles",
+      text,
+      timestamp: Date.now(),
+      messageId: "1712800000.000200",
+      threadId: "1712790000.000050",
+      chatType: "channel",
+      ...overrides,
+    };
+  }
+
+  test("channel replies resolve pending AskUserQuestion prompts instead of normal ingress", async () => {
+    const replies: Array<{
+      chatId: string;
+      text: string;
+      replyToMessageId?: string;
+    }> = [];
+    const registry = new ChannelRegistry();
+    const adapter = createAdapter(replies);
+    registry.registerAdapter(adapter);
+
+    const deliveries: unknown[] = [];
+    registry.setMessageHandler((delivery) => {
+      deliveries.push(delivery);
+    });
+
+    const approvalResponses: Array<{
+      runtime: { agent_id?: string | null; conversation_id?: string | null };
+      response: unknown;
+    }> = [];
+    registry.setApprovalResponseHandler(async (params) => {
+      approvalResponses.push(params);
+      return true;
+    });
+
+    await registry.registerPendingControlRequest({
+      requestId: "req-ask-1",
+      kind: "ask_user_question",
+      source: {
+        channel: "slack",
+        accountId: "acct-slack",
+        chatId: "C123",
+        chatType: "channel",
+        messageId: "1712800000.000100",
+        threadId: "1712790000.000050",
+        agentId: "agent-1",
+        conversationId: "conv-1",
+      },
+      toolName: "AskUserQuestion",
+      input: {
+        questions: [
+          {
+            question: "Which approach should we use?",
+            header: "Approach",
+            options: [
+              {
+                label: "Fast path",
+                description: "Ship the smallest safe patch",
+              },
+              {
+                label: "Deep refactor",
+                description: "Restructure the code more thoroughly",
+              },
+            ],
+            multiSelect: false,
+          },
+        ],
+      },
+    });
+
+    await adapter.onMessage?.(createInboundMessage("2"));
+
+    expect(deliveries).toHaveLength(0);
+    expect(replies).toHaveLength(0);
+    expect(approvalResponses).toHaveLength(1);
+    expect(approvalResponses[0]).toEqual({
+      runtime: {
+        agent_id: "agent-1",
+        conversation_id: "conv-1",
+      },
+      response: {
+        request_id: "req-ask-1",
+        decision: {
+          behavior: "allow",
+          updated_input: {
+            questions: [
+              {
+                question: "Which approach should we use?",
+                header: "Approach",
+                options: [
+                  {
+                    label: "Fast path",
+                    description: "Ship the smallest safe patch",
+                  },
+                  {
+                    label: "Deep refactor",
+                    description: "Restructure the code more thoroughly",
+                  },
+                ],
+                multiSelect: false,
+              },
+            ],
+            answers: {
+              "Which approach should we use?": "Deep refactor",
+            },
+          },
+        },
+      },
+    });
+  });
+
+  test("invalid multi-question channel replies reprompt instead of approving", async () => {
+    const replies: Array<{
+      chatId: string;
+      text: string;
+      replyToMessageId?: string;
+    }> = [];
+    const registry = new ChannelRegistry();
+    const adapter = createAdapter(replies);
+    registry.registerAdapter(adapter);
+
+    let approvalCalls = 0;
+    registry.setApprovalResponseHandler(async () => {
+      approvalCalls += 1;
+      return true;
+    });
+
+    await registry.registerPendingControlRequest({
+      requestId: "req-ask-2",
+      kind: "ask_user_question",
+      source: {
+        channel: "slack",
+        accountId: "acct-slack",
+        chatId: "C123",
+        chatType: "channel",
+        messageId: "1712800000.000100",
+        threadId: "1712790000.000050",
+        agentId: "agent-1",
+        conversationId: "conv-1",
+      },
+      toolName: "AskUserQuestion",
+      input: {
+        questions: [
+          {
+            question: "Which approach should we use?",
+            header: "Approach",
+            options: [
+              { label: "Fast path", description: "Ship quickly" },
+              { label: "Deep refactor", description: "Refactor more" },
+            ],
+            multiSelect: false,
+          },
+          {
+            question: "Which environment should we test in?",
+            header: "Env",
+            options: [
+              { label: "Staging", description: "Safer rollout path" },
+              { label: "Production", description: "Use the live environment" },
+            ],
+            multiSelect: false,
+          },
+        ],
+      },
+    });
+
+    await adapter.onMessage?.(createInboundMessage("deep refactor please"));
+
+    expect(approvalCalls).toBe(0);
+    expect(replies).toHaveLength(1);
+    expect(replies[0]).toEqual({
+      chatId: "C123",
+      text: "Please answer with numbered lines so I can map each reply to the right question.\nExample:\n1: your answer\n2: your answer",
+      replyToMessageId: "1712790000.000050",
+    });
+  });
+
+  test("a newer pending request on the same channel scope replaces the older one", async () => {
+    const replies: Array<{
+      chatId: string;
+      text: string;
+      replyToMessageId?: string;
+    }> = [];
+    const registry = new ChannelRegistry();
+    const adapter = createAdapter(replies);
+    registry.registerAdapter(adapter);
+
+    const requestIds: string[] = [];
+    registry.setApprovalResponseHandler(async ({ response }) => {
+      const requestId =
+        typeof response === "object" &&
+        response &&
+        "request_id" in response &&
+        typeof response.request_id === "string"
+          ? response.request_id
+          : null;
+      if (requestId) {
+        requestIds.push(requestId);
+      }
+      return true;
+    });
+
+    const sharedSource = {
+      channel: "slack" as const,
+      accountId: "acct-slack",
+      chatId: "C123",
+      chatType: "channel" as const,
+      messageId: "1712800000.000100",
+      threadId: "1712790000.000050",
+      agentId: "agent-1",
+      conversationId: "conv-1",
+    };
+
+    await registry.registerPendingControlRequest({
+      requestId: "req-old",
+      kind: "enter_plan_mode",
+      source: sharedSource,
+      toolName: "EnterPlanMode",
+      input: {},
+    });
+
+    await registry.registerPendingControlRequest({
+      requestId: "req-new",
+      kind: "exit_plan_mode",
+      source: sharedSource,
+      toolName: "ExitPlanMode",
+      input: {},
+    });
+
+    await adapter.onMessage?.(createInboundMessage("approve"));
+
+    expect(replies).toHaveLength(0);
+    expect(requestIds).toEqual(["req-new"]);
+  });
+
+  test("control prompt delivery failures do not block pending approval replies", async () => {
+    const replies: Array<{
+      chatId: string;
+      text: string;
+      replyToMessageId?: string;
+    }> = [];
+    const registry = new ChannelRegistry();
+    const adapter: ChannelAdapter = {
+      ...createAdapter(replies),
+      handleControlRequestEvent: async () => {
+        throw new Error("slack write failed");
+      },
+    };
+    registry.registerAdapter(adapter);
+
+    const approvalResponses: Array<{
+      runtime: { agent_id?: string | null; conversation_id?: string | null };
+      response: unknown;
+    }> = [];
+    registry.setApprovalResponseHandler(async (params) => {
+      approvalResponses.push(params);
+      return true;
+    });
+
+    const originalConsoleError = console.error;
+    console.error = () => {};
+    try {
+      await registry.registerPendingControlRequest({
+        requestId: "req-best-effort",
+        kind: "enter_plan_mode",
+        source: {
+          channel: "slack",
+          accountId: "acct-slack",
+          chatId: "C123",
+          chatType: "channel",
+          messageId: "1712800000.000100",
+          threadId: "1712790000.000050",
+          agentId: "agent-1",
+          conversationId: "conv-1",
+        },
+        toolName: "EnterPlanMode",
+        input: {},
+      });
+    } finally {
+      console.error = originalConsoleError;
+    }
+
+    await adapter.onMessage?.(createInboundMessage("approve"));
+
+    expect(replies).toHaveLength(0);
+    expect(approvalResponses).toHaveLength(1);
+    expect(approvalResponses[0]).toEqual({
+      runtime: {
+        agent_id: "agent-1",
+        conversation_id: "conv-1",
+      },
+      response: {
+        request_id: "req-best-effort",
+        decision: {
+          behavior: "allow",
+        },
+      },
+    });
   });
 });

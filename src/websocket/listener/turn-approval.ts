@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import type { Stream } from "@letta-ai/letta-client/core/streaming";
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type {
@@ -9,8 +10,13 @@ import {
   type ApprovalResult,
   executeApprovalBatch,
 } from "../../agent/approval-execution";
+import { getChannelRegistry } from "../../channels/registry";
+import type { ChannelTurnSource } from "../../channels/types";
 import { computeDiffPreviews } from "../../helpers/diffPreview";
-import { isInteractiveApprovalTool } from "../../tools/interactivePolicy";
+import {
+  getInteractiveApprovalKind,
+  isInteractiveApprovalTool,
+} from "../../tools/interactivePolicy";
 import type {
   ApprovalResponseBody,
   ApprovalResponseDecision,
@@ -84,6 +90,59 @@ export type ApprovalBranchResult = {
   lastNeedsUserInputToolCallIds: string[];
   lastApprovalContinuationAccepted: boolean;
 };
+
+function getChannelApprovalSourceScopeKey(source: ChannelTurnSource): string {
+  return [
+    source.channel,
+    source.accountId ?? "",
+    source.chatId,
+    source.threadId ?? "",
+  ].join(":");
+}
+
+export function resolveChannelApprovalSource(
+  runtime: ConversationRuntime,
+): ChannelTurnSource | null {
+  const sources = runtime.activeChannelTurnSources ?? [];
+  if (sources.length === 0) {
+    return null;
+  }
+
+  const sourcesByScope = new Map<string, ChannelTurnSource>();
+  for (const source of sources) {
+    sourcesByScope.set(getChannelApprovalSourceScopeKey(source), source);
+  }
+
+  if (sourcesByScope.size !== 1) {
+    return null;
+  }
+
+  return [...sourcesByScope.values()].at(-1) ?? null;
+}
+
+async function maybeReadPlanPreview(
+  toolName: string,
+  turnPermissionModeState: import("../../tools/manager").PermissionModeState,
+): Promise<{ planFilePath?: string; planContent?: string }> {
+  if (toolName !== "ExitPlanMode" || !turnPermissionModeState.planFilePath) {
+    return {};
+  }
+
+  try {
+    const planContent = await readFile(
+      turnPermissionModeState.planFilePath,
+      "utf8",
+    );
+    return {
+      planFilePath: turnPermissionModeState.planFilePath,
+      planContent,
+    };
+  } catch {
+    return {
+      planFilePath: turnPermissionModeState.planFilePath,
+    };
+  }
+}
 
 export async function handleApprovalStop(params: {
   approvals: Array<{
@@ -269,6 +328,24 @@ export async function handleApprovalStop(params: {
         conversation_id: conversationId,
       };
 
+      const registry = getChannelRegistry();
+      const channelSource = resolveChannelApprovalSource(runtime);
+      if (registry && channelSource) {
+        await registry.registerPendingControlRequest({
+          requestId,
+          kind:
+            getInteractiveApprovalKind(ac.approval.toolName) ??
+            "generic_tool_approval",
+          source: channelSource,
+          toolName: ac.approval.toolName,
+          input: ac.parsedArgs,
+          ...(await maybeReadPlanPreview(
+            ac.approval.toolName,
+            turnPermissionModeState,
+          )),
+        });
+      }
+
       let responseBody: ApprovalResponseBody;
       try {
         responseBody = await requestApprovalOverWS(
@@ -282,6 +359,8 @@ export async function handleApprovalStop(params: {
           return interruptTermination();
         }
         throw error;
+      } finally {
+        registry?.clearPendingControlRequest(requestId);
       }
 
       if (shouldInterrupt()) {
