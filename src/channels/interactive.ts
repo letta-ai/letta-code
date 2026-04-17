@@ -87,6 +87,20 @@ function summarizeControlRequestInput(
   return `${serialized.slice(0, 1197).trimEnd()}...`;
 }
 
+function summarizePlanPreview(planContent: string): string {
+  const normalized = planContent.trim();
+  if (!normalized) {
+    return "";
+  }
+
+  const maxLength = 1800;
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+
+  return `${normalized.slice(0, maxLength).trimEnd()}\n\n[Plan preview truncated for channel delivery.]`;
+}
+
 function buildQuestionPrompt(
   question: NonNullable<AskUserQuestionInput["questions"]>[number],
   index: number,
@@ -104,6 +118,11 @@ function buildQuestionPrompt(
         : `   ${optionIndex + 1}) ${label}`,
     );
   });
+  if (question.multiSelect) {
+    lines.push(
+      "   Choose one or more options. Separate multiple answers with commas.",
+    );
+  }
   return lines;
 }
 
@@ -137,6 +156,42 @@ function matchQuestionOption(
   return trimmed;
 }
 
+function matchQuestionAnswer(
+  question: NonNullable<AskUserQuestionInput["questions"]>[number],
+  text: string,
+): string {
+  if (!question.multiSelect) {
+    return matchQuestionOption(question, text);
+  }
+
+  const normalized = normalizeWhitespace(text);
+  if (!normalized) {
+    return normalized;
+  }
+
+  const selections = normalized
+    .replace(/\band\b/gi, ",")
+    .split(/\s*(?:,|\/|;)\s*/)
+    .map((entry) => normalizeWhitespace(entry))
+    .filter(Boolean);
+
+  if (selections.length <= 1) {
+    return matchQuestionOption(question, normalized);
+  }
+
+  const matchedSelections = Array.from(
+    new Set(
+      selections
+        .map((selection) => matchQuestionOption(question, selection))
+        .filter(Boolean),
+    ),
+  );
+
+  return matchedSelections.length > 0
+    ? matchedSelections.join(", ")
+    : normalized;
+}
+
 function parseNumberedAnswers(
   rawText: string,
   questions: NonNullable<AskUserQuestionInput["questions"]>,
@@ -158,7 +213,7 @@ function parseNumberedAnswers(
     if (!question?.question || !answerText) {
       continue;
     }
-    answers[question.question] = matchQuestionOption(question, answerText);
+    answers[question.question] = matchQuestionAnswer(question, answerText);
   }
 
   return Object.keys(answers).length > 0 ? answers : null;
@@ -211,8 +266,11 @@ function formatAskUserQuestionPrompt(
   ];
 
   if (questions.length <= 1) {
+    const singleQuestion = questions[0];
     lines.push(
-      "Reply with an option number/label, or just send a freeform answer in your next message.",
+      singleQuestion?.multiSelect
+        ? "Reply with one or more option numbers/labels separated by commas, or just send a freeform answer in your next message."
+        : "Reply with an option number/label, or just send a freeform answer in your next message.",
     );
   } else {
     lines.push(
@@ -220,7 +278,7 @@ function formatAskUserQuestionPrompt(
       "1: your answer",
       "2: your answer",
       "",
-      "You can also use option numbers or option labels.",
+      "You can also use option numbers or option labels. For multi-select questions, separate multiple answers with commas.",
     );
   }
 
@@ -241,7 +299,7 @@ function formatExitPlanModePrompt(event: ChannelControlRequestEvent): string {
   ];
 
   if (event.planContent?.trim()) {
-    lines.push("", "Proposed plan:", event.planContent.trim());
+    lines.push("", "Proposed plan:", summarizePlanPreview(event.planContent));
     if (event.planFilePath?.trim()) {
       lines.push("", `Plan file: ${event.planFilePath.trim()}`);
     }
@@ -317,7 +375,7 @@ function parseAskUserQuestionResponse(
           "I couldn't find the original question text. Please ask the agent to try again.",
       };
     }
-    const answer = matchQuestionOption(question, rawText);
+    const answer = matchQuestionAnswer(question, rawText);
     return {
       type: "response",
       response: buildAllowResponse(event.requestId, {

@@ -58,6 +58,39 @@ describe("channel interactive prompts", () => {
     expect(prompt).toContain("Reply with an option number/label");
   });
 
+  test("formats multi-select questions with comma-separated reply guidance", () => {
+    const prompt = formatChannelControlRequestPrompt(
+      createEvent({
+        input: {
+          questions: [
+            {
+              question: "Which features should we enable?",
+              header: "Features",
+              options: [
+                {
+                  label: "Search",
+                  description: "Enable full-text search",
+                },
+                {
+                  label: "Sync",
+                  description: "Enable background syncing",
+                },
+              ],
+              multiSelect: true,
+            },
+          ],
+        },
+      }),
+    );
+
+    expect(prompt).toContain(
+      "Choose one or more options. Separate multiple answers with commas.",
+    );
+    expect(prompt).toContain(
+      "Reply with one or more option numbers/labels separated by commas",
+    );
+  });
+
   test("maps single-question numeric replies onto the selected label", () => {
     const parsed = parseChannelControlRequestResponse(createEvent(), "2");
 
@@ -87,6 +120,73 @@ describe("channel interactive prompts", () => {
             ],
             answers: {
               "Which approach should we use?": "Deep refactor",
+            },
+          },
+        },
+      },
+    });
+  });
+
+  test("maps single-question multi-select replies onto normalized labels", () => {
+    const parsed = parseChannelControlRequestResponse(
+      createEvent({
+        input: {
+          questions: [
+            {
+              question: "Which features should we enable?",
+              header: "Features",
+              options: [
+                {
+                  label: "Search",
+                  description: "Enable full-text search",
+                },
+                {
+                  label: "Sync",
+                  description: "Enable background syncing",
+                },
+                {
+                  label: "Alerts",
+                  description: "Enable alert notifications",
+                },
+              ],
+              multiSelect: true,
+            },
+          ],
+        },
+      }),
+      "1, 3",
+    );
+
+    expect(parsed).toEqual({
+      type: "response",
+      response: {
+        request_id: "req-1",
+        decision: {
+          behavior: "allow",
+          updated_input: {
+            questions: [
+              {
+                question: "Which features should we enable?",
+                header: "Features",
+                options: [
+                  {
+                    label: "Search",
+                    description: "Enable full-text search",
+                  },
+                  {
+                    label: "Sync",
+                    description: "Enable background syncing",
+                  },
+                  {
+                    label: "Alerts",
+                    description: "Enable alert notifications",
+                  },
+                ],
+                multiSelect: true,
+              },
+            ],
+            answers: {
+              "Which features should we enable?": "Search, Alerts",
             },
           },
         },
@@ -230,6 +330,120 @@ describe("channel interactive prompts", () => {
         },
       },
     });
+  });
+
+  test("parses numbered multi-question replies with multi-select answers", () => {
+    const parsed = parseChannelControlRequestResponse(
+      createEvent({
+        input: {
+          questions: [
+            {
+              question: "Which features should we enable?",
+              header: "Features",
+              options: [
+                {
+                  label: "Search",
+                  description: "Enable full-text search",
+                },
+                {
+                  label: "Sync",
+                  description: "Enable background syncing",
+                },
+                {
+                  label: "Alerts",
+                  description: "Enable alert notifications",
+                },
+              ],
+              multiSelect: true,
+            },
+            {
+              question: "Which environment should we test in?",
+              header: "Env",
+              options: [
+                {
+                  label: "Staging",
+                  description: "Safer rollout path",
+                },
+                {
+                  label: "Production",
+                  description: "Use the live environment directly",
+                },
+              ],
+              multiSelect: false,
+            },
+          ],
+        },
+      }),
+      "1: 1, 2\n2: staging",
+    );
+
+    expect(parsed).toEqual({
+      type: "response",
+      response: {
+        request_id: "req-1",
+        decision: {
+          behavior: "allow",
+          updated_input: {
+            questions: [
+              {
+                question: "Which features should we enable?",
+                header: "Features",
+                options: [
+                  {
+                    label: "Search",
+                    description: "Enable full-text search",
+                  },
+                  {
+                    label: "Sync",
+                    description: "Enable background syncing",
+                  },
+                  {
+                    label: "Alerts",
+                    description: "Enable alert notifications",
+                  },
+                ],
+                multiSelect: true,
+              },
+              {
+                question: "Which environment should we test in?",
+                header: "Env",
+                options: [
+                  {
+                    label: "Staging",
+                    description: "Safer rollout path",
+                  },
+                  {
+                    label: "Production",
+                    description: "Use the live environment directly",
+                  },
+                ],
+                multiSelect: false,
+              },
+            ],
+            answers: {
+              "Which features should we enable?": "Search, Sync",
+              "Which environment should we test in?": "Staging",
+            },
+          },
+        },
+      },
+    });
+  });
+
+  test("truncates long ExitPlanMode plan previews for channel delivery", () => {
+    const prompt = formatChannelControlRequestPrompt(
+      createEvent({
+        kind: "exit_plan_mode",
+        toolName: "ExitPlanMode",
+        input: {},
+        planFilePath: "/tmp/plan.md",
+        planContent: `${"Plan line\n".repeat(300)}Conclusion`,
+      }),
+    );
+
+    expect(prompt).toContain("Proposed plan:");
+    expect(prompt).toContain("[Plan preview truncated for channel delivery.]");
+    expect(prompt).toContain("Plan file: /tmp/plan.md");
   });
 
   test("turns ExitPlanMode feedback into a deny response", () => {

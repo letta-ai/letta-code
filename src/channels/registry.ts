@@ -372,18 +372,25 @@ export class ChannelRegistry {
       return;
     }
 
-    if (adapter.handleControlRequestEvent) {
-      await adapter.handleControlRequestEvent(event);
-      return;
-    }
+    try {
+      if (adapter.handleControlRequestEvent) {
+        await adapter.handleControlRequestEvent(event);
+        return;
+      }
 
-    await adapter.sendDirectReply(
-      event.source.chatId,
-      formatChannelControlRequestPrompt(event),
-      {
-        replyToMessageId: event.source.threadId ?? event.source.messageId,
-      },
-    );
+      await adapter.sendDirectReply(
+        event.source.chatId,
+        formatChannelControlRequestPrompt(event),
+        {
+          replyToMessageId: event.source.threadId ?? event.source.messageId,
+        },
+      );
+    } catch (error) {
+      console.error(
+        `[Channels] Failed to deliver control request prompt for ${event.source.channel}/${event.source.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID}:`,
+        error instanceof Error ? error.message : error,
+      );
+    }
   }
 
   clearPendingControlRequest(requestId: string): void {

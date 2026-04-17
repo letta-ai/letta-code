@@ -11,6 +11,7 @@ import {
   executeApprovalBatch,
 } from "../../agent/approval-execution";
 import { getChannelRegistry } from "../../channels/registry";
+import type { ChannelTurnSource } from "../../channels/types";
 import { computeDiffPreviews } from "../../helpers/diffPreview";
 import {
   getInteractiveApprovalKind,
@@ -90,9 +91,33 @@ export type ApprovalBranchResult = {
   lastApprovalContinuationAccepted: boolean;
 };
 
-function resolveChannelApprovalSource(runtime: ConversationRuntime) {
+function getChannelApprovalSourceScopeKey(source: ChannelTurnSource): string {
+  return [
+    source.channel,
+    source.accountId ?? "",
+    source.chatId,
+    source.threadId ?? "",
+  ].join(":");
+}
+
+export function resolveChannelApprovalSource(
+  runtime: ConversationRuntime,
+): ChannelTurnSource | null {
   const sources = runtime.activeChannelTurnSources ?? [];
-  return sources[sources.length - 1] ?? null;
+  if (sources.length === 0) {
+    return null;
+  }
+
+  const sourcesByScope = new Map<string, ChannelTurnSource>();
+  for (const source of sources) {
+    sourcesByScope.set(getChannelApprovalSourceScopeKey(source), source);
+  }
+
+  if (sourcesByScope.size !== 1) {
+    return null;
+  }
+
+  return [...sourcesByScope.values()].at(-1) ?? null;
 }
 
 async function maybeReadPlanPreview(

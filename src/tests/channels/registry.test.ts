@@ -512,4 +512,69 @@ describe("pending channel control requests", () => {
     expect(replies).toHaveLength(0);
     expect(requestIds).toEqual(["req-new"]);
   });
+
+  test("control prompt delivery failures do not block pending approval replies", async () => {
+    const replies: Array<{
+      chatId: string;
+      text: string;
+      replyToMessageId?: string;
+    }> = [];
+    const registry = new ChannelRegistry();
+    const adapter: ChannelAdapter = {
+      ...createAdapter(replies),
+      handleControlRequestEvent: async () => {
+        throw new Error("slack write failed");
+      },
+    };
+    registry.registerAdapter(adapter);
+
+    const approvalResponses: Array<{
+      runtime: { agent_id?: string | null; conversation_id?: string | null };
+      response: unknown;
+    }> = [];
+    registry.setApprovalResponseHandler(async (params) => {
+      approvalResponses.push(params);
+      return true;
+    });
+
+    const originalConsoleError = console.error;
+    console.error = () => {};
+    try {
+      await registry.registerPendingControlRequest({
+        requestId: "req-best-effort",
+        kind: "enter_plan_mode",
+        source: {
+          channel: "slack",
+          accountId: "acct-slack",
+          chatId: "C123",
+          chatType: "channel",
+          messageId: "1712800000.000100",
+          threadId: "1712790000.000050",
+          agentId: "agent-1",
+          conversationId: "conv-1",
+        },
+        toolName: "EnterPlanMode",
+        input: {},
+      });
+    } finally {
+      console.error = originalConsoleError;
+    }
+
+    await adapter.onMessage?.(createInboundMessage("approve"));
+
+    expect(replies).toHaveLength(0);
+    expect(approvalResponses).toHaveLength(1);
+    expect(approvalResponses[0]).toEqual({
+      runtime: {
+        agent_id: "agent-1",
+        conversation_id: "conv-1",
+      },
+      response: {
+        request_id: "req-best-effort",
+        decision: {
+          behavior: "allow",
+        },
+      },
+    });
+  });
 });
