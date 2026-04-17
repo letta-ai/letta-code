@@ -207,6 +207,9 @@ export async function getClient() {
     defaultHeaders: {
       "X-Letta-Source": "letta-code",
       "User-Agent": `letta-code/${packageJson.version}`,
+      ...(process.env.LETTA_NODE === "1" && {
+        "x-letta-node": "1",
+      }),
     },
     // Use instrumented fetch for timing logs when LETTA_DEBUG_TIMINGS is enabled
     ...(isTimingsEnabled() && { fetch: createTimingFetch(fetch) }),
