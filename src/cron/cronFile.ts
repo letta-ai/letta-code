@@ -53,7 +53,7 @@ export interface CronTask {
   // Lifecycle
   status: CronTaskStatus;
   created_at: string; // ISO
-  expires_at: string | null; // 3-day TTL for recurring; null for one-shot
+  expires_at: string | null; // null for all tasks now (no auto-expiry)
   last_fired_at: string | null;
   fire_count: number;
   cancel_reason: CancelReason | null;
@@ -81,7 +81,9 @@ const LOCK_RETRY_MS = 50;
 const LOCK_STALE_AGE_MS = 30_000;
 const MAX_ACTIVE_TASKS_PER_AGENT = 50;
 const TASK_ID_BYTES = 4; // 8 hex chars
-const DEFAULT_TTL_MS = 3 * 24 * 60 * 60 * 1000; // 3 days
+// Recurring tasks no longer auto-expire. They remain active until explicitly
+// cancelled. GC still removes terminal tasks (fired, missed, cancelled) after 24h.
+// One-shot tasks already use null for expires_at and are handled separately.
 const GC_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 // ── Paths ───────────────────────────────────────────────────────────
@@ -367,9 +369,9 @@ export function addTask(input: AddTaskInput): AddTaskResult {
       prompt: input.prompt,
       status: "active",
       created_at: now.toISOString(),
-      expires_at: input.recurring
-        ? new Date(now.getTime() + DEFAULT_TTL_MS).toISOString()
-        : null,
+      // Recurring tasks do not auto-expire (expires_at: null)
+      // One-shot tasks also use null (handled by scheduled_for)
+      expires_at: null,
       last_fired_at: null,
       fire_count: 0,
       cancel_reason: null,
