@@ -9,12 +9,14 @@
  *   letta channels route add --channel telegram --chat-id <id> --agent <id> --conversation <id>
  *   letta channels route remove --channel telegram --chat-id <id>
  *   letta channels pair --channel telegram --code <code> --agent <id> --conversation <id>
+ *   letta channels bind --channel slack --agent <id>
  */
 
 import { parseArgs } from "node:util";
 import {
   getChannelAccount,
   listChannelAccounts,
+  upsertChannelAccount,
 } from "../../channels/accounts";
 import {
   getApprovedUsers,
@@ -40,7 +42,11 @@ import {
   isChannelRuntimeInstalled,
 } from "../../channels/runtimeDeps";
 import { listChannelAccountSnapshots } from "../../channels/service";
-import type { ChannelRoute, SupportedChannelId } from "../../channels/types";
+import type {
+  ChannelRoute,
+  SlackChannelAccount,
+  SupportedChannelId,
+} from "../../channels/types";
 
 // ── Usage ───────────────────────────────────────────────────────────
 
@@ -54,7 +60,13 @@ Usage:
   letta channels route list [--channel <ch>]  Show routing table
   letta channels route add [options]          Add a route
   letta channels route remove [options]       Remove a route
+  letta channels bind [options]               Bind a Slack app to an agent
   letta channels pair [options]               Approve pairing + bind to agent
+
+Bind options (Slack only):
+  --channel slack        Required
+  --account-id <id>      Channel account ID (optional; inferred when only one account exists)
+  --agent <id>           Agent ID (defaults to LETTA_AGENT_ID)
 
 Route add options:
   --channel <name>       Channel name (e.g. "telegram")
@@ -453,6 +465,68 @@ async function handlePair(
   return result.success ? 0 : 1;
 }
 
+function handleBind(
+  values: ReturnType<typeof parseChannelsArgs>["values"],
+): number {
+  const channelId = values.channel;
+  const accountId = values["account-id"];
+  const agentId = getAgentId(values.agent);
+
+  if (!channelId) {
+    console.error("Error: --channel is required.");
+    return 1;
+  }
+  if (channelId !== "slack") {
+    console.error(
+      `"bind" is only supported for Slack. Telegram binding is route-scoped — use "pair" or "route add" instead.`,
+    );
+    return 1;
+  }
+  if (!agentId) {
+    console.error(
+      "Error: --agent is required (or set LETTA_AGENT_ID env var).",
+    );
+    return 1;
+  }
+
+  let resolvedAccountId: string;
+  try {
+    resolvedAccountId = resolveSelectedAccountId(channelId, accountId);
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    return 1;
+  }
+
+  const account = getChannelAccount(channelId, resolvedAccountId);
+  if (!account) {
+    console.error(
+      `Account "${resolvedAccountId}" not found for channel "${channelId}".`,
+    );
+    return 1;
+  }
+
+  (account as SlackChannelAccount).agentId = agentId;
+  account.updatedAt = new Date().toISOString();
+  upsertChannelAccount(channelId, account);
+
+  console.log(
+    JSON.stringify(
+      {
+        success: true,
+        channel: channelId,
+        accountId: resolvedAccountId,
+        agentId,
+      },
+      null,
+      2,
+    ),
+  );
+  console.warn(
+    "Note: If a listener is running, restart it for the binding to take effect.",
+  );
+  return 0;
+}
+
 // ── Router ──────────────────────────────────────────────────────────
 
 export async function runChannelsSubcommand(argv: string[]): Promise<number> {
@@ -502,6 +576,8 @@ export async function runChannelsSubcommand(argv: string[]): Promise<number> {
           return 1;
       }
     }
+    case "bind":
+      return handleBind(values);
     case "pair":
       return await handlePair(values);
     default:
@@ -510,7 +586,7 @@ export async function runChannelsSubcommand(argv: string[]): Promise<number> {
         return 0;
       }
       console.error(
-        `Unknown channels action: "${action}". Use: install, configure, status, route, pair`,
+        `Unknown channels action: "${action}". Use: install, configure, status, route, bind, pair`,
       );
       return 1;
   }
