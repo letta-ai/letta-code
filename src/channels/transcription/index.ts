@@ -15,6 +15,7 @@ export interface TranscriptionResult {
 }
 
 const WHISPER_API_URL = "https://api.openai.com/v1/audio/transcriptions";
+const TRANSCRIPTION_TIMEOUT_MS = 10_000;
 
 /** Check whether an API key is available for transcription. */
 export function isTranscriptionConfigured(): boolean {
@@ -49,7 +50,10 @@ export async function transcribeAudioFile(
     formData.append("model", "whisper-1");
 
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 30_000);
+    const timeout = setTimeout(
+      () => controller.abort(),
+      TRANSCRIPTION_TIMEOUT_MS,
+    );
 
     try {
       const response = await fetch(WHISPER_API_URL, {
