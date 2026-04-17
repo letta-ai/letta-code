@@ -60,6 +60,10 @@ class FakeSlackApp {
     chat: {
       postMessage: mock(async () => ({ ts: "1712800000.000100" })),
     },
+    conversations: {
+      history: mock(async () => ({ messages: [] })),
+      replies: mock(async () => ({ messages: [] })),
+    },
     reactions: {
       add: mock(async () => ({ ok: true })),
       remove: mock(async () => ({ ok: true })),
@@ -98,8 +102,64 @@ class FakeSlackApp {
   }
 }
 
+class FakeSlackWriteClient {
+  static instances: FakeSlackWriteClient[] = [];
+
+  readonly token: string;
+  readonly options: Record<string, unknown> | undefined;
+  readonly chat = {
+    postMessage: mock(async () => ({ ts: "1712800000.000100" })),
+  };
+  readonly reactions = {
+    add: mock(async () => ({ ok: true })),
+    remove: mock(async () => ({ ok: true })),
+  };
+  readonly files = {
+    getUploadURLExternal: mock(async () => ({
+      ok: true,
+      upload_url: "https://files.slack.com/upload/F123",
+      file_id: "F123",
+    })),
+    completeUploadExternal: mock(async () => ({ ok: true })),
+  };
+
+  constructor(token: string, options?: Record<string, unknown>) {
+    this.token = token;
+    this.options = options;
+    FakeSlackWriteClient.instances.push(this);
+  }
+}
+
 const resolveSlackInboundAttachmentsMock = mock(
   async (): Promise<ChannelMessageAttachment[]> => [],
+);
+const resolveSlackThreadStarterMock = mock(
+  async (): Promise<{
+    text: string;
+    userId?: string;
+    botId?: string;
+    ts?: string;
+  } | null> => null,
+);
+const resolveSlackThreadHistoryMock = mock(
+  async (): Promise<
+    Array<{
+      text: string;
+      userId?: string;
+      botId?: string;
+      ts?: string;
+    }>
+  > => [],
+);
+const resolveSlackChannelHistoryMock = mock(
+  async (): Promise<
+    Array<{
+      text: string;
+      userId?: string;
+      botId?: string;
+      ts?: string;
+    }>
+  > => [],
 );
 
 mock.module("../../channels/slack/runtime", () => ({
@@ -109,10 +169,19 @@ mock.module("../../channels/slack/runtime", () => ({
       App: FakeSlackApp,
     },
   }),
+  loadSlackWebApiModule: async () => ({
+    WebClient: FakeSlackWriteClient,
+    default: {
+      WebClient: FakeSlackWriteClient,
+    },
+  }),
 }));
 
 mock.module("../../channels/slack/media", () => ({
+  resolveSlackChannelHistory: resolveSlackChannelHistoryMock,
   resolveSlackInboundAttachments: resolveSlackInboundAttachmentsMock,
+  resolveSlackThreadStarter: resolveSlackThreadStarterMock,
+  resolveSlackThreadHistory: resolveSlackThreadHistoryMock,
 }));
 
 const { createSlackAdapter, resolveSlackAccountDisplayName } = await import(
@@ -123,6 +192,7 @@ const slackAccountDefaults = {
   accountId: "slack-test-account",
   displayName: "Test Workspace",
   agentId: null,
+  defaultPermissionMode: "default",
   createdAt: "2026-04-11T00:00:00.000Z",
   updatedAt: "2026-04-11T00:00:00.000Z",
 } as const;
@@ -137,8 +207,15 @@ const fetchMock = mock(
 
 beforeEach(() => {
   FakeSlackApp.instances.length = 0;
+  FakeSlackWriteClient.instances.length = 0;
   resolveSlackInboundAttachmentsMock.mockReset();
   resolveSlackInboundAttachmentsMock.mockImplementation(async () => []);
+  resolveSlackThreadStarterMock.mockReset();
+  resolveSlackThreadStarterMock.mockImplementation(async () => null);
+  resolveSlackThreadHistoryMock.mockReset();
+  resolveSlackThreadHistoryMock.mockImplementation(async () => []);
+  resolveSlackChannelHistoryMock.mockReset();
+  resolveSlackChannelHistoryMock.mockImplementation(async () => []);
   fetchMock.mockClear();
   globalThis.fetch = fetchMock as unknown as typeof fetch;
 });
@@ -148,6 +225,8 @@ afterEach(() => {
     instance.client.auth.test.mockClear();
     instance.client.users.info.mockClear();
     instance.client.chat.postMessage.mockClear();
+    instance.client.conversations.history.mockClear();
+    instance.client.conversations.replies.mockClear();
     instance.client.reactions.add.mockClear();
     instance.client.reactions.remove.mockClear();
     instance.client.files.getUploadURLExternal.mockClear();
@@ -155,6 +234,13 @@ afterEach(() => {
     instance.init.mockClear();
     instance.start.mockClear();
     instance.stop.mockClear();
+  }
+  for (const instance of FakeSlackWriteClient.instances) {
+    instance.chat.postMessage.mockClear();
+    instance.reactions.add.mockClear();
+    instance.reactions.remove.mockClear();
+    instance.files.getUploadURLExternal.mockClear();
+    instance.files.completeUploadExternal.mockClear();
   }
   globalThis.fetch = originalFetch;
 });
@@ -208,11 +294,41 @@ test("slack adapter maps thread metadata to thread_ts", async () => {
     threadId: "1712800000.000200",
   });
 
-  const app = FakeSlackApp.instances[0];
-  expect(app).toBeDefined();
-  expect(app?.client.chat.postMessage).toHaveBeenCalledWith({
+  const writeClient = FakeSlackWriteClient.instances[0];
+  expect(writeClient).toBeDefined();
+  expect(writeClient?.options).toEqual({
+    retryConfig: {
+      retries: 0,
+    },
+  });
+  expect(writeClient?.chat.postMessage).toHaveBeenCalledWith({
     channel: "C123",
     text: "hello",
+    thread_ts: "1712800000.000200",
+  });
+});
+
+test("slack adapter sendDirectReply uses the dedicated write client", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  await adapter.start();
+  await adapter.sendDirectReply("C123", "reply text", {
+    replyToMessageId: "1712800000.000200",
+  });
+
+  const writeClient = FakeSlackWriteClient.instances[0];
+  expect(writeClient?.chat.postMessage).toHaveBeenCalledWith({
+    channel: "C123",
+    text: "reply text",
     thread_ts: "1712800000.000200",
   });
 });
@@ -350,6 +466,142 @@ test("slack adapter forwards threaded channel replies as channel input", async (
       isMention: false,
     }),
   );
+});
+
+test("slack adapter hydrates prior Slack thread context on the first routed turn", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  await adapter.start();
+  const app = FakeSlackApp.instances[0];
+  if (!app) {
+    throw new Error("Expected Slack app instance");
+  }
+
+  resolveSlackThreadStarterMock.mockResolvedValueOnce({
+    text: "Original question from the thread root",
+    userId: "U111",
+    ts: "1712790000.000050",
+  });
+  resolveSlackThreadHistoryMock.mockResolvedValueOnce([
+    {
+      text: "Some follow-up before the bot was tagged",
+      userId: "U222",
+      ts: "1712795000.000060",
+    },
+  ]);
+
+  const prepared = await adapter.prepareInboundMessage?.(
+    {
+      channel: "slack",
+      accountId: "slack-test-account",
+      chatId: "C123",
+      chatLabel: "#random",
+      senderId: "U123",
+      senderName: "Charles",
+      text: "please help",
+      timestamp: 1712800000100,
+      messageId: "1712800000.000100",
+      threadId: "1712790000.000050",
+      chatType: "channel",
+      isMention: true,
+    },
+    { isFirstRouteTurn: true },
+  );
+
+  expect(prepared).toBeDefined();
+  expect(prepared?.threadContext?.starter).toEqual(
+    expect.objectContaining({
+      messageId: "1712790000.000050",
+      senderId: "U111",
+      text: "Original question from the thread root",
+    }),
+  );
+  expect(prepared?.threadContext?.history).toEqual([
+    expect.objectContaining({
+      messageId: "1712795000.000060",
+      senderId: "U222",
+      text: "Some follow-up before the bot was tagged",
+    }),
+  ]);
+  expect(prepared?.threadContext?.label).toContain("Slack thread in #random");
+  expect(resolveSlackThreadStarterMock).toHaveBeenCalledTimes(1);
+  expect(resolveSlackThreadHistoryMock).toHaveBeenCalledTimes(1);
+});
+
+test("slack adapter hydrates recent channel context when a mention creates a new thread", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  await adapter.start();
+
+  resolveSlackChannelHistoryMock.mockResolvedValueOnce([
+    {
+      text: "Earlier channel context before the mention",
+      userId: "U111",
+      ts: "1712799000.000040",
+    },
+    {
+      text: "More recent channel context before the mention",
+      userId: "U222",
+      ts: "1712799500.000045",
+    },
+  ]);
+
+  const prepared = await adapter.prepareInboundMessage?.(
+    {
+      channel: "slack",
+      accountId: "slack-test-account",
+      chatId: "C123",
+      chatLabel: "#random",
+      senderId: "U123",
+      senderName: "Charles",
+      text: "please help",
+      timestamp: 1712800000100,
+      messageId: "1712800000.000100",
+      threadId: "1712800000.000100",
+      chatType: "channel",
+      isMention: true,
+    },
+    { isFirstRouteTurn: true },
+  );
+
+  expect(prepared).toBeDefined();
+  expect(prepared?.threadContext?.starter).toBeUndefined();
+  expect(prepared?.threadContext?.history).toEqual([
+    expect.objectContaining({
+      messageId: "1712799000.000040",
+      senderId: "U111",
+      text: "Earlier channel context before the mention",
+    }),
+    expect.objectContaining({
+      messageId: "1712799500.000045",
+      senderId: "U222",
+      text: "More recent channel context before the mention",
+    }),
+  ]);
+  expect(prepared?.threadContext?.label).toContain(
+    "Slack channel context in #random before thread start",
+  );
+  expect(resolveSlackChannelHistoryMock).toHaveBeenCalledTimes(1);
+  expect(resolveSlackThreadStarterMock).not.toHaveBeenCalled();
+  expect(resolveSlackThreadHistoryMock).not.toHaveBeenCalled();
 });
 
 test("slack adapter dedupes threaded mentions delivered through message and app_mention", async () => {
@@ -613,11 +865,134 @@ test("slack adapter can add reactions to messages", async () => {
     targetMessageId: "1712800000.000100",
   });
 
-  const app = FakeSlackApp.instances[0];
-  expect(app?.client.reactions.add).toHaveBeenCalledWith({
+  const writeClient = FakeSlackWriteClient.instances[0];
+  expect(writeClient?.reactions.add).toHaveBeenCalledWith({
     channel: "C123",
     timestamp: "1712800000.000100",
     name: "white_check_mark",
+  });
+});
+
+test("slack adapter adds eyes while a queued turn is processing, then swaps to checkmark on completion", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  await adapter.start();
+
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "queued",
+    source: {
+      channel: "slack",
+      accountId: "slack-test-account",
+      chatId: "C123",
+      chatType: "channel",
+      messageId: "1712800000.000100",
+      threadId: "1712790000.000050",
+      agentId: "agent-1",
+      conversationId: "conv-1",
+    },
+  });
+
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "finished",
+    batchId: "batch-1",
+    outcome: "completed",
+    sources: [
+      {
+        channel: "slack",
+        accountId: "slack-test-account",
+        chatId: "C123",
+        chatType: "channel",
+        messageId: "1712800000.000100",
+        threadId: "1712790000.000050",
+        agentId: "agent-1",
+        conversationId: "conv-1",
+      },
+    ],
+  });
+
+  const writeClient = FakeSlackWriteClient.instances[0];
+  expect(writeClient?.reactions.add).toHaveBeenNthCalledWith(1, {
+    channel: "C123",
+    timestamp: "1712800000.000100",
+    name: "eyes",
+  });
+  expect(writeClient?.reactions.remove).toHaveBeenCalledWith({
+    channel: "C123",
+    timestamp: "1712800000.000100",
+    name: "eyes",
+  });
+  expect(writeClient?.reactions.add).toHaveBeenNthCalledWith(2, {
+    channel: "C123",
+    timestamp: "1712800000.000100",
+    name: "white_check_mark",
+  });
+});
+
+test("slack adapter swaps queued turns to x when the turn fails", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  await adapter.start();
+
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "queued",
+    source: {
+      channel: "slack",
+      accountId: "slack-test-account",
+      chatId: "D123",
+      chatType: "direct",
+      messageId: "1712800000.000200",
+      threadId: null,
+      agentId: "agent-1",
+      conversationId: "conv-1",
+    },
+  });
+
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "finished",
+    batchId: "batch-2",
+    outcome: "error",
+    sources: [
+      {
+        channel: "slack",
+        accountId: "slack-test-account",
+        chatId: "D123",
+        chatType: "direct",
+        messageId: "1712800000.000200",
+        threadId: null,
+        agentId: "agent-1",
+        conversationId: "conv-1",
+      },
+    ],
+  });
+
+  const writeClient = FakeSlackWriteClient.instances[0];
+  expect(writeClient?.reactions.remove).toHaveBeenCalledWith({
+    channel: "D123",
+    timestamp: "1712800000.000200",
+    name: "eyes",
+  });
+  expect(writeClient?.reactions.add).toHaveBeenNthCalledWith(2, {
+    channel: "D123",
+    timestamp: "1712800000.000200",
+    name: "x",
   });
 });
 
@@ -648,8 +1023,8 @@ test("slack adapter uploads local files through Slack's external upload flow", a
     threadId: "1712790000.000050",
   });
 
-  const app = FakeSlackApp.instances[0];
-  expect(app?.client.files.getUploadURLExternal).toHaveBeenCalledWith({
+  const writeClient = FakeSlackWriteClient.instances[0];
+  expect(writeClient?.files.getUploadURLExternal).toHaveBeenCalledWith({
     filename: "chart.png",
     length: "fake-image-data".length,
   });
@@ -661,7 +1036,7 @@ test("slack adapter uploads local files through Slack's external upload flow", a
       body: expect.any(Uint8Array),
     },
   );
-  expect(app?.client.files.completeUploadExternal).toHaveBeenCalledWith({
+  expect(writeClient?.files.completeUploadExternal).toHaveBeenCalledWith({
     files: [{ id: "F123", title: "Chart" }],
     channel_id: "C123",
     initial_comment: "latest chart",

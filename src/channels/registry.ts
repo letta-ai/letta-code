@@ -39,8 +39,11 @@ import { loadTargetStore, upsertChannelTarget } from "./targets";
 import type {
   ChannelAdapter,
   ChannelRoute,
+  ChannelTurnLifecycleEvent,
+  ChannelTurnSource,
   InboundChannelMessage,
   SlackChannelAccount,
+  SlackDefaultPermissionMode,
 } from "./types";
 import { formatChannelNotification } from "./xml";
 
@@ -107,6 +110,25 @@ export function buildSlackConversationSummary(
   return `[Slack] Thread${channelLabel || ` ${msg.chatId}`}`;
 }
 
+function buildChannelTurnSource(
+  route: ChannelRoute,
+  msg: Pick<
+    InboundChannelMessage,
+    "channel" | "accountId" | "chatId" | "chatType" | "messageId" | "threadId"
+  >,
+): ChannelTurnSource {
+  return {
+    channel: msg.channel as ChannelTurnSource["channel"],
+    accountId: msg.accountId,
+    chatId: msg.chatId,
+    chatType: msg.chatType,
+    messageId: msg.messageId,
+    threadId: msg.threadId,
+    agentId: route.agentId,
+    conversationId: route.conversationId,
+  };
+}
+
 // ── Singleton ─────────────────────────────────────────────────────
 
 let instance: ChannelRegistry | null = null;
@@ -126,10 +148,13 @@ export function getActiveChannelIds(): string[] {
 
 // ── Types ─────────────────────────────────────────────────────────
 
-export type ChannelMessageHandler = (
-  route: ChannelRoute,
-  content: MessageCreate["content"],
-) => void;
+export interface ChannelInboundDelivery {
+  route: ChannelRoute;
+  content: MessageCreate["content"];
+  turnSources?: ChannelTurnSource[];
+}
+
+export type ChannelMessageHandler = (delivery: ChannelInboundDelivery) => void;
 
 export type ChannelRegistryEvent =
   | {
@@ -139,6 +164,14 @@ export type ChannelRegistryEvent =
   | {
       type: "targets_updated";
       channelId: string;
+    }
+  | {
+      type: "slack_conversation_created";
+      channelId: "slack";
+      accountId: string;
+      agentId: string;
+      conversationId: string;
+      defaultPermissionMode: SlackDefaultPermissionMode;
     };
 
 // ── Registry ──────────────────────────────────────────────────────
@@ -148,10 +181,7 @@ export class ChannelRegistry {
   private ready = false;
   private messageHandler: ChannelMessageHandler | null = null;
   private eventHandler: ((event: ChannelRegistryEvent) => void) | null = null;
-  private readonly buffer: Array<{
-    route: ChannelRoute;
-    content: MessageCreate["content"];
-  }> = [];
+  private readonly buffer: ChannelInboundDelivery[] = [];
 
   constructor() {
     if (instance) {
@@ -194,6 +224,71 @@ export class ChannelRegistry {
     return Array.from(this.adapters.values())
       .filter((adapter) => adapter.isRunning())
       .map((adapter) => adapter.channelId ?? adapter.id);
+  }
+
+  async dispatchTurnLifecycleEvent(
+    event: ChannelTurnLifecycleEvent,
+  ): Promise<void> {
+    const groups = new Map<
+      string,
+      {
+        adapter: ChannelAdapter;
+        sources: ChannelTurnSource[];
+      }
+    >();
+
+    const sources = event.type === "queued" ? [event.source] : event.sources;
+    for (const source of sources) {
+      const adapter = this.getAdapter(
+        source.channel,
+        source.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID,
+      );
+      if (!adapter?.handleTurnLifecycleEvent) {
+        continue;
+      }
+      const groupKey = this.getAdapterKey(
+        source.channel,
+        source.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID,
+      );
+      const existing = groups.get(groupKey);
+      if (existing) {
+        existing.sources.push(source);
+        continue;
+      }
+      groups.set(groupKey, {
+        adapter,
+        sources: [source],
+      });
+    }
+
+    for (const { adapter, sources: groupedSources } of groups.values()) {
+      const handleTurnLifecycleEvent = adapter.handleTurnLifecycleEvent;
+      if (!handleTurnLifecycleEvent) {
+        continue;
+      }
+      try {
+        if (event.type === "queued") {
+          const [firstSource] = groupedSources;
+          if (!firstSource) {
+            continue;
+          }
+          await handleTurnLifecycleEvent({
+            type: "queued",
+            source: firstSource,
+          });
+          continue;
+        }
+        await handleTurnLifecycleEvent({
+          ...event,
+          sources: groupedSources,
+        });
+      } catch (error) {
+        console.error(
+          `[Channels] Failed to handle ${event.type} lifecycle event for ${adapter.channelId ?? adapter.id}/${adapter.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID}:`,
+          error instanceof Error ? error.message : error,
+        );
+      }
+    }
   }
 
   // ── Readiness / ingress handler ───────────────────────────────
@@ -405,11 +500,22 @@ export class ChannelRegistry {
     if (!config) return;
 
     if (msg.channel === "slack" && config.channel === "slack") {
-      const slackRoute = await this.ensureSlackRoute(adapter, msg, config);
-      if (!slackRoute) {
+      const slackResult = await this.ensureSlackRoute(adapter, msg, config);
+      if (!slackResult) {
         return;
       }
-      this.deliverOrBuffer(slackRoute, formatChannelNotification(msg));
+      const preparedMessage = adapter.prepareInboundMessage
+        ? await adapter.prepareInboundMessage(msg, {
+            isFirstRouteTurn: slackResult.isFirstRouteTurn,
+          })
+        : msg;
+      this.deliverOrBuffer({
+        route: slackResult.route,
+        content: formatChannelNotification(preparedMessage),
+        turnSources: [
+          buildChannelTurnSource(slackResult.route, preparedMessage),
+        ],
+      });
       return;
     }
 
@@ -477,7 +583,11 @@ export class ChannelRegistry {
     const content = formatChannelNotification(msg);
 
     // 4. Deliver or buffer
-    this.deliverOrBuffer(route, content);
+    this.deliverOrBuffer({
+      route,
+      content,
+      turnSources: [buildChannelTurnSource(route, msg)],
+    });
   }
 
   private async createConversationForAgent(
@@ -522,6 +632,16 @@ export class ChannelRegistry {
     };
 
     addRoute(msg.channel, route);
+    if (config.defaultPermissionMode !== "default") {
+      this.eventHandler?.({
+        type: "slack_conversation_created",
+        channelId: "slack",
+        accountId: config.accountId,
+        agentId: config.agentId,
+        conversationId,
+        defaultPermissionMode: config.defaultPermissionMode,
+      });
+    }
     return route;
   }
 
@@ -529,7 +649,10 @@ export class ChannelRegistry {
     adapter: ChannelAdapter,
     msg: InboundChannelMessage,
     config: SlackChannelAccount,
-  ): Promise<ChannelRoute | null> {
+  ): Promise<{
+    route: ChannelRoute;
+    isFirstRouteTurn: boolean;
+  } | null> {
     if (!config.agentId) {
       await adapter.sendDirectReply(
         msg.chatId,
@@ -576,7 +699,10 @@ export class ChannelRegistry {
     }
 
     if (route) {
-      return route;
+      return {
+        route,
+        isFirstRouteTurn: false,
+      };
     }
 
     if (msg.chatType === "channel" && !msg.isMention) {
@@ -600,19 +726,19 @@ export class ChannelRegistry {
       channelId: msg.channel,
     });
 
-    return this.createSlackRoute(config, msg);
+    return {
+      route: await this.createSlackRoute(config, msg),
+      isFirstRouteTurn: true,
+    };
   }
 
-  private deliverOrBuffer(
-    route: ChannelRoute,
-    content: MessageCreate["content"],
-  ): void {
+  private deliverOrBuffer(delivery: ChannelInboundDelivery): void {
     if (this.isReady()) {
-      this.messageHandler?.(route, content);
+      this.messageHandler?.(delivery);
       return;
     }
 
-    this.buffer.push({ route, content });
+    this.buffer.push(delivery);
   }
 
   private flushBuffer(): void {
@@ -621,7 +747,7 @@ export class ChannelRegistry {
     while (this.buffer.length > 0) {
       const item = this.buffer.shift();
       if (item) {
-        this.messageHandler(item.route, item.content);
+        this.messageHandler(item);
       }
     }
   }

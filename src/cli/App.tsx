@@ -457,20 +457,22 @@ function deriveReasoningEffort(
       const effort = (modelSettings as { effort?: string | null }).effort;
       if (effort === "low" || effort === "medium" || effort === "high")
         return effort;
-      if (effort === "max") return "xhigh";
+      if (effort === "xhigh" || effort === "max")
+        return effort as ModelReasoningEffort;
     }
   }
   // Fallback: deprecated llm_config fields
-  const re = llmConfig?.reasoning_effort;
+  const re = llmConfig?.reasoning_effort as string | null | undefined;
   if (
     re === "none" ||
     re === "minimal" ||
     re === "low" ||
     re === "medium" ||
     re === "high" ||
-    re === "xhigh"
+    re === "xhigh" ||
+    re === "max"
   )
-    return re;
+    return re as ModelReasoningEffort;
   if (
     (llmConfig as { enable_reasoner?: boolean | null })?.enable_reasoner ===
     false
@@ -496,7 +498,8 @@ function inferReasoningEffortFromModelPreset(
     presetEffort === "low" ||
     presetEffort === "medium" ||
     presetEffort === "high" ||
-    presetEffort === "xhigh"
+    presetEffort === "xhigh" ||
+    presetEffort === "max"
   ) {
     return presetEffort;
   }
@@ -561,8 +564,9 @@ function getErrorHintForStopReason(
       : undefined;
 
   // Build the /model swap suggestion — mention Bedrock Opus if applicable
+  const isOpus46 = currentModelId?.startsWith("opus-4.6") ?? false;
   const hasBedrockOpus =
-    currentModelId === "opus" &&
+    isOpus46 &&
     modelEndpointType === "anthropic" &&
     getModelInfo("bedrock-opus-4.6");
   const modelSwapSuffix = hasBedrockOpus
@@ -1179,6 +1183,10 @@ export default function App({
   useEffect(() => {
     conversationIdRef.current = conversationId;
   }, [conversationId]);
+  const setConversationIdAndRef = useCallback((nextConversationId: string) => {
+    conversationIdRef.current = nextConversationId;
+    setConversationId(nextConversationId);
+  }, []);
 
   // Tracks the transcript start index for the current user turn across
   // approval continuations (requires_approval -> approval result round-trip).
@@ -1219,10 +1227,9 @@ export default function App({
   useEffect(() => {
     if (initialConversationId !== prevInitialConversationIdRef.current) {
       prevInitialConversationIdRef.current = initialConversationId;
-      conversationIdRef.current = initialConversationId;
-      setConversationId(initialConversationId);
+      setConversationIdAndRef(initialConversationId);
     }
-  }, [initialConversationId]);
+  }, [initialConversationId, setConversationIdAndRef]);
 
   // Set agent context for tools (especially Task tool)
   useEffect(() => {
@@ -3686,7 +3693,7 @@ export default function App({
           ...(typeof resolvedConversationContextWindowLimit === "number"
             ? { context_window: resolvedConversationContextWindowLimit }
             : {}),
-        });
+        } as LlmConfig);
       } catch (error) {
         if (cancelled) return;
         debugLog(
@@ -7152,7 +7159,7 @@ export default function App({
         );
 
         await maybeCarryOverActiveConversationModel(conversationId);
-        setConversationId(conversationId);
+        setConversationIdAndRef(conversationId);
 
         pendingConversationSwitchRef.current = {
           origin: "fork",
@@ -7239,6 +7246,7 @@ export default function App({
       runEndHooks,
       maybeCarryOverActiveConversationModel,
       resetBootstrapReminderState,
+      setConversationIdAndRef,
       setCommandRunning,
       setStreaming,
       recoverRestoredPendingApprovals,
@@ -7336,7 +7344,7 @@ export default function App({
         setLlmConfig(agent.llm_config);
         const agentModelHandle = getPreferredAgentModelHandle(agent);
         setCurrentModelHandle(agentModelHandle);
-        setConversationId(targetConversationId);
+        setConversationIdAndRef(targetConversationId);
 
         // Ensure bootstrap reminders are re-injected on the first user turn
         // after switching to a different conversation/agent context.
@@ -7408,6 +7416,7 @@ export default function App({
       resetTrajectoryBases,
       resetBootstrapReminderState,
       resetPendingReasoningCycle,
+      setConversationIdAndRef,
     ],
   );
 
@@ -7506,7 +7515,7 @@ export default function App({
         setLlmConfig(agent.llm_config);
         const agentModelHandle = getPreferredAgentModelHandle(agent);
         setCurrentModelHandle(agentModelHandle);
-        setConversationId(targetConversationId);
+        setConversationIdAndRef(targetConversationId);
 
         // Set conversation switch context for new agent switch
         pendingConversationSwitchRef.current = {
@@ -7555,6 +7564,7 @@ export default function App({
       resetDeferredToolCallCommits,
       resetTrajectoryBases,
       resetBootstrapReminderState,
+      setConversationIdAndRef,
     ],
   );
 
@@ -9149,8 +9159,9 @@ export default function App({
             }
             await maybeCarryOverActiveConversationModel(conversation.id);
 
-            // Update conversationId state
-            setConversationId(conversation.id);
+            // Update conversationId state and ref together so the next turn
+            // cannot observe a stale conversation handoff.
+            setConversationIdAndRef(conversation.id);
 
             pendingConversationSwitchRef.current = {
               origin: "new",
@@ -9235,7 +9246,7 @@ export default function App({
 
             await maybeCarryOverActiveConversationModel(forked.id);
 
-            setConversationId(forked.id);
+            setConversationIdAndRef(forked.id);
 
             pendingConversationSwitchRef.current = {
               origin: "fork",
@@ -9329,7 +9340,7 @@ export default function App({
             });
 
             await maybeCarryOverActiveConversationModel(conversation.id);
-            setConversationId(conversation.id);
+            setConversationIdAndRef(conversation.id);
 
             pendingConversationSwitchRef.current = {
               origin: "clear",
@@ -9726,7 +9737,7 @@ export default function App({
                 );
 
                 // Only update state after validation succeeds
-                setConversationId(targetConvId);
+                setConversationIdAndRef(targetConvId);
 
                 pendingConversationSwitchRef.current = {
                   origin: "resume-direct",
@@ -11149,7 +11160,7 @@ ${SYSTEM_REMINDER_CLOSE}
           name: agentName,
           description: agentDescription,
           lastRunAt: agentLastRunAt,
-          conversationId,
+          conversationId: conversationIdRef.current,
         },
         state: sharedReminderStateRef.current,
         sessionContextReminderEnabled,
@@ -11832,6 +11843,7 @@ ${SYSTEM_REMINDER_CLOSE}
       agentName,
       agentDescription,
       agentLastRunAt,
+      conversationId,
       commandRunner,
       handleExit,
       isExecutingTool,
@@ -11851,6 +11863,7 @@ ${SYSTEM_REMINDER_CLOSE}
       sessionContextReminderEnabled,
       appendTaskNotificationEvents,
       maybeCarryOverActiveConversationModel,
+      setConversationIdAndRef,
     ],
   );
 
@@ -12684,7 +12697,9 @@ ${SYSTEM_REMINDER_CLOSE}
             ? rawReasoningEffort === "none"
               ? "no"
               : rawReasoningEffort === "xhigh"
-                ? "max"
+                ? model.label.includes("Opus 4.7")
+                  ? "extra-high"
+                  : "max"
                 : rawReasoningEffort
             : modelUpdateArgs?.enable_reasoner === false
               ? "no"
@@ -12854,7 +12869,7 @@ ${SYSTEM_REMINDER_CLOSE}
             ...(typeof resolvedContextWindow === "number"
               ? { context_window: resolvedContextWindow }
               : {}),
-          });
+          } as LlmConfig);
           setCurrentModelId(modelId);
           setTempModelOverride(null);
 
@@ -13505,7 +13520,7 @@ ${SYSTEM_REMINDER_CLOSE}
                   action.conversationId,
                 );
 
-                setConversationId(action.conversationId);
+                setConversationIdAndRef(action.conversationId);
 
                 pendingConversationSwitchRef.current = {
                   origin: "resume-selector",
@@ -13572,6 +13587,7 @@ ${SYSTEM_REMINDER_CLOSE}
     commandRunner.start,
     recoverRestoredPendingApprovals,
     resetBootstrapReminderState,
+    setConversationIdAndRef,
   ]);
 
   // Handle escape when profile confirmation is pending
@@ -13847,7 +13863,7 @@ ${SYSTEM_REMINDER_CLOSE}
             ...(typeof resolvedConversationContextWindowLimit === "number"
               ? { context_window: resolvedConversationContextWindowLimit }
               : {}),
-          });
+          } as LlmConfig);
           setCurrentModelId(desired.modelId);
           setCurrentModelHandle(desired.modelHandle);
 
@@ -13953,7 +13969,19 @@ ${SYSTEM_REMINDER_CLOSE}
       // Only enable cycling when there are multiple tiers for the same handle.
       if (tiers.length < 2) return;
 
-      const order = ["none", "minimal", "low", "medium", "high", "xhigh"];
+      const anthropicXHighEffort = modelHandle.includes("claude-opus-4-7")
+        ? "xhigh"
+        : "max";
+
+      const order = [
+        "none",
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+      ];
       const rank = (effort: string): number => {
         const idx = order.indexOf(effort);
         return idx >= 0 ? idx : 999;
@@ -14007,15 +14035,14 @@ ${SYSTEM_REMINDER_CLOSE}
             ms.provider_type === "anthropic" ||
             ms.provider_type === "bedrock"
           ) {
-            // Map "xhigh" → "max": footer derivation only recognizes "max" for Anthropic effort.
-            // Cast needed: "max" is valid on the backend but not yet in the SDK type.
-            const anthropicEffort =
-              next.effort === "xhigh" ? "max" : next.effort;
+            // "xhigh" is only distinct on Opus 4.7; older Anthropic models map it to backend "max".
             return {
               ...prev,
               model_settings: {
                 ...ms,
-                effort: anthropicEffort as "low" | "medium" | "high" | "max",
+                effort: (next.effort === "xhigh"
+                  ? anthropicXHighEffort
+                  : next.effort) as "low" | "medium" | "high" | "xhigh" | "max",
               },
             } as AgentState;
           }
@@ -15409,7 +15436,7 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
                       );
 
                       // Only update state after validation succeeds
-                      setConversationId(convId);
+                      setConversationIdAndRef(convId);
 
                       pendingConversationSwitchRef.current = {
                         origin: "resume-selector",
@@ -15560,7 +15587,7 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
                     await maybeCarryOverActiveConversationModel(
                       conversation.id,
                     );
-                    setConversationId(conversation.id);
+                    setConversationIdAndRef(conversation.id);
                     settingsManager.persistSession(agentId, conversation.id);
 
                     // Build success command with agent + conversation info
@@ -15687,7 +15714,7 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
                         actualTargetConv,
                       );
 
-                      setConversationId(actualTargetConv);
+                      setConversationIdAndRef(actualTargetConv);
 
                       pendingConversationSwitchRef.current = {
                         origin: "search",

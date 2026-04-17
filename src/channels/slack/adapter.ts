@@ -3,15 +3,68 @@ import { basename, extname } from "node:path";
 import type SlackApp from "@slack/bolt";
 import type {
   ChannelAdapter,
+  ChannelTurnLifecycleEvent,
+  ChannelTurnSource,
   InboundChannelMessage,
   OutboundChannelMessage,
   SlackChannelAccount,
 } from "../types";
-import { resolveSlackInboundAttachments } from "./media";
-import { loadSlackBoltModule } from "./runtime";
+import {
+  resolveSlackChannelHistory,
+  resolveSlackInboundAttachments,
+  resolveSlackThreadHistory,
+  resolveSlackThreadStarter,
+} from "./media";
+import { loadSlackBoltModule, loadSlackWebApiModule } from "./runtime";
 
 type SlackAppConstructor = typeof import("@slack/bolt").App;
 type SlackBoltModule = typeof import("@slack/bolt") & {
+  default?: unknown;
+};
+type SlackWriteClient = {
+  chat: {
+    postMessage: (args: {
+      channel: string;
+      text: string;
+      thread_ts?: string;
+    }) => Promise<{ ts?: string }>;
+  };
+  reactions: {
+    add: (args: {
+      channel: string;
+      timestamp: string;
+      name: string;
+    }) => Promise<unknown>;
+    remove: (args: {
+      channel: string;
+      timestamp: string;
+      name: string;
+    }) => Promise<unknown>;
+  };
+  files: {
+    getUploadURLExternal: (args: {
+      filename: string;
+      length: number;
+    }) => Promise<{
+      ok?: boolean;
+      upload_url?: string;
+      file_id?: string;
+      error?: string;
+    }>;
+    completeUploadExternal: (args: {
+      files: Array<{ id: string; title: string }>;
+      channel_id: string;
+      initial_comment?: string;
+      thread_ts?: string;
+    }) => Promise<{ ok?: boolean; error?: string }>;
+  };
+};
+type SlackWriteClientConstructor = new (
+  token: string,
+  options?: Record<string, unknown>,
+) => SlackWriteClient;
+type SlackWebApiModule = {
+  WebClient?: unknown;
   default?: unknown;
 };
 type SlackReactionEvent = {
@@ -41,6 +94,7 @@ function resolveSlackAppModule(value: unknown): SlackAppConstructor | null {
   const app = Reflect.get(value, "App");
   return isConstructorFunction<SlackAppConstructor>(app) ? app : null;
 }
+const INITIAL_SLACK_THREAD_HISTORY_LIMIT = 20;
 
 function resolveSlackAppConstructor(mod: SlackBoltModule): SlackAppConstructor {
   const defaultExport =
@@ -64,6 +118,44 @@ function resolveSlackAppConstructor(mod: SlackBoltModule): SlackAppConstructor {
     );
   }
   return App;
+}
+
+function resolveSlackWebClientModule(
+  value: unknown,
+): SlackWriteClientConstructor | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const webClient = Reflect.get(value, "WebClient");
+  return isConstructorFunction<SlackWriteClientConstructor>(webClient)
+    ? webClient
+    : null;
+}
+
+function resolveSlackWebClientConstructor(
+  mod: SlackWebApiModule,
+): SlackWriteClientConstructor {
+  const defaultExport =
+    mod && typeof mod === "object" ? Reflect.get(mod, "default") : undefined;
+  const nestedDefault =
+    defaultExport && typeof defaultExport === "object"
+      ? Reflect.get(defaultExport, "default")
+      : undefined;
+
+  const WebClient =
+    resolveSlackWebClientModule(mod) ??
+    resolveSlackWebClientModule(defaultExport) ??
+    resolveSlackWebClientModule(nestedDefault) ??
+    (isConstructorFunction<SlackWriteClientConstructor>(defaultExport)
+      ? defaultExport
+      : null);
+
+  if (!WebClient) {
+    throw new Error(
+      'Installed Slack runtime did not export constructor "WebClient".',
+    );
+  }
+  return WebClient;
 }
 
 function isNonEmptyString(value: unknown): value is string {
@@ -98,6 +190,10 @@ function normalizeSlackReactionName(value: string): string {
 
 const SLACK_INGRESS_DEDUPE_TTL_MS = 60_000;
 const SLACK_INGRESS_DEDUPE_MAX = 2_000;
+const SLACK_LIFECYCLE_STATE_TTL_MS = 6 * 60 * 60 * 1000;
+const SLACK_LIFECYCLE_STATE_MAX = 2_000;
+
+type SlackLifecycleState = "queued" | "completed" | "error" | "cancelled";
 
 function resolveUploadMimeType(filePath: string): string | undefined {
   switch (extname(filePath).toLowerCase()) {
@@ -122,7 +218,7 @@ function resolveUploadMimeType(filePath: string): string | undefined {
 }
 
 async function uploadSlackFile(
-  slackApp: SlackApp,
+  slackClient: SlackWriteClient,
   msg: OutboundChannelMessage,
 ): Promise<{ messageId: string }> {
   if (!msg.mediaPath) {
@@ -133,7 +229,7 @@ async function uploadSlackFile(
   const uploadFileName = msg.fileName ?? basename(msg.mediaPath);
   const uploadTitle = msg.title ?? uploadFileName;
   const uploadMimeType = resolveUploadMimeType(uploadFileName);
-  const uploadUrlResp = await slackApp.client.files.getUploadURLExternal({
+  const uploadUrlResp = await slackClient.files.getUploadURLExternal({
     filename: uploadFileName,
     length: buffer.length,
   });
@@ -157,7 +253,7 @@ async function uploadSlackFile(
     throw new Error(`Failed to upload Slack file: HTTP ${uploadResp.status}`);
   }
 
-  const completeResp = await slackApp.client.files.completeUploadExternal({
+  const completeResp = await slackClient.files.completeUploadExternal({
     files: [{ id: uploadUrlResp.file_id, title: uploadTitle }],
     channel_id: msg.chatId,
     ...(msg.text.trim() ? { initial_comment: msg.text } : {}),
@@ -183,6 +279,53 @@ function resolveSlackUserDisplayName(userInfo: unknown): string | undefined {
     profile?.real_name,
     user?.name,
   );
+}
+
+function truncateSlackThreadLabel(text: string, maxLength = 80): string | null {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  if (!normalized) {
+    return null;
+  }
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+  return `${normalized.slice(0, maxLength - 1).trimEnd()}…`;
+}
+
+function buildSlackThreadLabel(
+  msg: InboundChannelMessage,
+  starterText?: string,
+): string | undefined {
+  if (msg.chatType !== "channel") {
+    return undefined;
+  }
+
+  const roomLabel =
+    isNonEmptyString(msg.chatLabel) && msg.chatLabel !== msg.chatId
+      ? ` in ${msg.chatLabel}`
+      : "";
+  const preview = truncateSlackThreadLabel(starterText ?? msg.text);
+  if (preview) {
+    return `Slack thread${roomLabel}: ${preview}`;
+  }
+  return roomLabel ? `Slack thread${roomLabel}` : `Slack thread ${msg.chatId}`;
+}
+
+function buildSlackChannelContextLabel(
+  msg: InboundChannelMessage,
+): string | undefined {
+  if (msg.chatType !== "channel") {
+    return undefined;
+  }
+
+  const roomLabel =
+    isNonEmptyString(msg.chatLabel) && msg.chatLabel !== msg.chatId
+      ? ` in ${msg.chatLabel}`
+      : "";
+
+  return roomLabel
+    ? `Slack channel context${roomLabel} before thread start`
+    : `Slack channel context before thread start`;
 }
 
 export async function resolveSlackAccountDisplayName(
@@ -216,11 +359,17 @@ export function createSlackAdapter(
   config: SlackChannelAccount,
 ): ChannelAdapter {
   let app: SlackApp | null = null;
+  let writeClient: SlackWriteClient | null = null;
   let running = false;
   let botUserId: string | null = null;
   const knownThreadIdsByMessageId = new Map<string, string | null>();
   const knownUserDisplayNames = new Map<string, string>();
   const seenIngressMessageKeys = new Map<string, number>();
+  const lifecycleStateByMessageKey = new Map<
+    string,
+    { state: SlackLifecycleState; updatedAt: number }
+  >();
+  const lifecycleOperationByMessageKey = new Map<string, Promise<void>>();
 
   function buildIngressMessageKey(
     channelId: string | undefined,
@@ -254,6 +403,132 @@ export function createSlackAdapter(
         seenIngressMessageKeys.delete(entry[0]);
       }
     }
+  }
+
+  function getLifecycleMessageKey(source: ChannelTurnSource): string | null {
+    if (
+      source.channel !== "slack" ||
+      !isNonEmptyString(source.chatId) ||
+      !isNonEmptyString(source.messageId)
+    ) {
+      return null;
+    }
+    return `${source.chatId}:${source.messageId}`;
+  }
+
+  function pruneLifecycleState(now: number = Date.now()): void {
+    for (const [key, entry] of lifecycleStateByMessageKey) {
+      if (entry.updatedAt + SLACK_LIFECYCLE_STATE_TTL_MS <= now) {
+        lifecycleStateByMessageKey.delete(key);
+      }
+    }
+
+    if (lifecycleStateByMessageKey.size <= SLACK_LIFECYCLE_STATE_MAX) {
+      return;
+    }
+
+    const oldestEntries = Array.from(lifecycleStateByMessageKey.entries()).sort(
+      (a, b) => a[1].updatedAt - b[1].updatedAt,
+    );
+    const overflowCount =
+      lifecycleStateByMessageKey.size - SLACK_LIFECYCLE_STATE_MAX;
+    for (let index = 0; index < overflowCount; index += 1) {
+      const entry = oldestEntries[index];
+      if (entry) {
+        lifecycleStateByMessageKey.delete(entry[0]);
+      }
+    }
+  }
+
+  async function sendLifecycleReaction(
+    source: ChannelTurnSource,
+    emoji: string,
+    removeReaction = false,
+  ): Promise<void> {
+    if (!isNonEmptyString(source.messageId)) {
+      return;
+    }
+    await ensureApp();
+    const slackClient = await ensureWriteClient();
+    if (removeReaction) {
+      await slackClient.reactions.remove({
+        channel: source.chatId,
+        timestamp: source.messageId,
+        name: emoji,
+      });
+      return;
+    }
+    await slackClient.reactions.add({
+      channel: source.chatId,
+      timestamp: source.messageId,
+      name: emoji,
+    });
+  }
+
+  function scheduleLifecycleTransition(
+    source: ChannelTurnSource,
+    nextState: SlackLifecycleState,
+  ): Promise<void> | null {
+    const key = getLifecycleMessageKey(source);
+    if (!key) {
+      return null;
+    }
+
+    const previous =
+      lifecycleOperationByMessageKey.get(key) ?? Promise.resolve();
+    const operation = previous
+      .catch(() => {})
+      .then(async () => {
+        pruneLifecycleState();
+        const currentState = lifecycleStateByMessageKey.get(key)?.state;
+        if (currentState === nextState) {
+          lifecycleStateByMessageKey.set(key, {
+            state: nextState,
+            updatedAt: Date.now(),
+          });
+          return;
+        }
+
+        if (nextState === "queued") {
+          if (!currentState) {
+            await sendLifecycleReaction(source, "eyes");
+            lifecycleStateByMessageKey.set(key, {
+              state: nextState,
+              updatedAt: Date.now(),
+            });
+          }
+          return;
+        }
+
+        if (currentState === "queued") {
+          try {
+            await sendLifecycleReaction(source, "eyes", true);
+          } catch {}
+        }
+
+        await sendLifecycleReaction(
+          source,
+          nextState === "completed" ? "white_check_mark" : "x",
+        );
+        lifecycleStateByMessageKey.set(key, {
+          state: nextState,
+          updatedAt: Date.now(),
+        });
+      })
+      .catch((error) => {
+        console.warn(
+          `[Slack] Failed to update lifecycle reaction for ${key}:`,
+          error instanceof Error ? error.message : error,
+        );
+      })
+      .finally(() => {
+        if (lifecycleOperationByMessageKey.get(key) === operation) {
+          lifecycleOperationByMessageKey.delete(key);
+        }
+      });
+
+    lifecycleOperationByMessageKey.set(key, operation);
+    return operation;
   }
 
   function markIngressMessageSeen(
@@ -561,6 +836,21 @@ export function createSlackAdapter(
     return instance;
   }
 
+  async function ensureWriteClient(): Promise<SlackWriteClient> {
+    if (writeClient) {
+      return writeClient;
+    }
+
+    const webApi = await loadSlackWebApiModule();
+    const WebClient = resolveSlackWebClientConstructor(webApi);
+    writeClient = new WebClient(config.botToken, {
+      retryConfig: {
+        retries: 0,
+      },
+    });
+    return writeClient;
+  }
+
   const adapter: ChannelAdapter = {
     id: `slack:${config.accountId}`,
     channelId: "slack",
@@ -590,8 +880,11 @@ export function createSlackAdapter(
       await app.stop();
       running = false;
       app = null;
+      writeClient = null;
       botUserId = null;
       seenIngressMessageKeys.clear();
+      lifecycleStateByMessageKey.clear();
+      lifecycleOperationByMessageKey.clear();
       console.log("[Slack] App stopped");
     },
 
@@ -599,10 +892,41 @@ export function createSlackAdapter(
       return running;
     },
 
+    async handleTurnLifecycleEvent(
+      event: ChannelTurnLifecycleEvent,
+    ): Promise<void> {
+      if (!running) {
+        return;
+      }
+
+      if (event.type === "queued") {
+        await scheduleLifecycleTransition(event.source, "queued");
+        return;
+      }
+
+      if (event.type === "processing") {
+        return;
+      }
+
+      const nextState: SlackLifecycleState =
+        event.outcome === "completed"
+          ? "completed"
+          : event.outcome === "cancelled"
+            ? "cancelled"
+            : "error";
+
+      await Promise.all(
+        event.sources.map((source) =>
+          scheduleLifecycleTransition(source, nextState),
+        ),
+      );
+    },
+
     async sendMessage(
       msg: OutboundChannelMessage,
     ): Promise<{ messageId: string }> {
-      const slackApp = await ensureApp();
+      await ensureApp();
+      const slackClient = await ensureWriteClient();
       if (msg.reaction) {
         const targetMessageId = msg.targetMessageId ?? msg.replyToMessageId;
         if (!targetMessageId) {
@@ -615,13 +939,13 @@ export function createSlackAdapter(
           throw new Error("Slack reaction emoji cannot be empty.");
         }
         if (msg.removeReaction) {
-          await slackApp.client.reactions.remove({
+          await slackClient.reactions.remove({
             channel: msg.chatId,
             timestamp: targetMessageId,
             name: emoji,
           });
         } else {
-          await slackApp.client.reactions.add({
+          await slackClient.reactions.add({
             channel: msg.chatId,
             timestamp: targetMessageId,
             name: emoji,
@@ -631,10 +955,10 @@ export function createSlackAdapter(
       }
 
       if (msg.mediaPath) {
-        return uploadSlackFile(slackApp, msg);
+        return uploadSlackFile(slackClient, msg);
       }
 
-      const response = await slackApp.client.chat.postMessage({
+      const response = await slackClient.chat.postMessage({
         channel: msg.chatId,
         text: msg.text,
         ...((msg.threadId ?? msg.replyToMessageId)
@@ -655,8 +979,9 @@ export function createSlackAdapter(
       text: string,
       options?: { replyToMessageId?: string },
     ): Promise<void> {
-      const slackApp = await ensureApp();
-      const response = await slackApp.client.chat.postMessage({
+      await ensureApp();
+      const slackClient = await ensureWriteClient();
+      const response = await slackClient.chat.postMessage({
         channel: chatId,
         text,
         ...(options?.replyToMessageId
@@ -667,6 +992,123 @@ export function createSlackAdapter(
         response.ts,
         options?.replyToMessageId ?? response.ts ?? null,
       );
+    },
+
+    async prepareInboundMessage(
+      msg: InboundChannelMessage,
+      options?: { isFirstRouteTurn?: boolean },
+    ): Promise<InboundChannelMessage> {
+      if (
+        !options?.isFirstRouteTurn ||
+        msg.channel !== "slack" ||
+        msg.chatType !== "channel" ||
+        !isNonEmptyString(msg.threadId) ||
+        !isNonEmptyString(msg.messageId)
+      ) {
+        return msg;
+      }
+
+      const shouldHydrateExistingThreadContext = msg.threadId !== msg.messageId;
+      const shouldHydrateChannelBootstrapContext =
+        msg.isMention === true && msg.threadId === msg.messageId;
+
+      if (
+        !shouldHydrateExistingThreadContext &&
+        !shouldHydrateChannelBootstrapContext
+      ) {
+        return msg;
+      }
+
+      const slackApp = await ensureApp();
+      const starter = shouldHydrateExistingThreadContext
+        ? await resolveSlackThreadStarter({
+            channelId: msg.chatId,
+            threadTs: msg.threadId,
+            client: slackApp.client,
+          })
+        : null;
+      const history = shouldHydrateExistingThreadContext
+        ? await resolveSlackThreadHistory({
+            channelId: msg.chatId,
+            threadTs: msg.threadId,
+            client: slackApp.client,
+            currentMessageTs: msg.messageId,
+            limit: INITIAL_SLACK_THREAD_HISTORY_LIMIT,
+          })
+        : await resolveSlackChannelHistory({
+            channelId: msg.chatId,
+            beforeTs: msg.messageId,
+            client: slackApp.client,
+            limit: INITIAL_SLACK_THREAD_HISTORY_LIMIT,
+          });
+
+      if (!starter && history.length === 0) {
+        return msg;
+      }
+
+      const uniqueUserIds = new Set<string>();
+      if (isNonEmptyString(starter?.userId)) {
+        uniqueUserIds.add(starter.userId);
+      }
+      for (const entry of history) {
+        if (isNonEmptyString(entry.userId)) {
+          uniqueUserIds.add(entry.userId);
+        }
+      }
+
+      await Promise.all(
+        Array.from(uniqueUserIds).map(async (userId) => {
+          await resolveUserName(slackApp, userId);
+        }),
+      );
+
+      const resolveThreadSenderName = (
+        userId?: string,
+        botId?: string,
+      ): string | undefined => {
+        if (isNonEmptyString(userId)) {
+          return knownUserDisplayNames.get(userId) ?? userId;
+        }
+        if (isNonEmptyString(botId)) {
+          return `Bot (${botId})`;
+        }
+        return undefined;
+      };
+
+      return {
+        ...msg,
+        threadContext: {
+          label: shouldHydrateExistingThreadContext
+            ? buildSlackThreadLabel(msg, starter?.text)
+            : buildSlackChannelContextLabel(msg),
+          ...(starter
+            ? {
+                starter: {
+                  messageId: starter.ts,
+                  senderId: starter.userId ?? starter.botId,
+                  senderName: resolveThreadSenderName(
+                    starter.userId,
+                    starter.botId,
+                  ),
+                  text: starter.text,
+                },
+              }
+            : {}),
+          ...(history.length > 0
+            ? {
+                history: history.map((entry) => ({
+                  messageId: entry.ts,
+                  senderId: entry.userId ?? entry.botId,
+                  senderName: resolveThreadSenderName(
+                    entry.userId,
+                    entry.botId,
+                  ),
+                  text: entry.text,
+                })),
+              }
+            : {}),
+        },
+      };
     },
 
     onMessage: undefined,

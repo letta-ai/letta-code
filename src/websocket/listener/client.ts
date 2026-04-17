@@ -17,11 +17,16 @@ import {
   updateAgentLLMConfig,
   updateConversationLLMConfig,
 } from "../../agent/modify";
-import { getChannelRegistry } from "../../channels/registry";
+import {
+  type ChannelRegistryEvent,
+  getChannelRegistry,
+} from "../../channels/registry";
+import type { ChannelTurnSource } from "../../channels/types";
 import { resetContextHistory } from "../../cli/helpers/contextTracker";
 import {
   ensureFileIndex,
   getIndexRoot,
+  refreshFileIndex,
   searchFileIndex,
   setIndexRoot,
 } from "../../cli/helpers/fileIndex";
@@ -183,6 +188,7 @@ import {
   isExecuteCommandCommand,
   isFileOpsCommand,
   isGetReflectionSettingsCommand,
+  isGetTreeCommand,
   isListInDirectoryCommand,
   isListMemoryCommand,
   isListModelsCommand,
@@ -560,16 +566,21 @@ function formatToolsetStatusMessageForModelUpdate(params: {
   );
 }
 
-function formatEffortSuffix(updateArgs?: Record<string, unknown>): string {
+function formatEffortSuffix(
+  modelLabel: string,
+  updateArgs?: Record<string, unknown>,
+): string {
   if (!updateArgs) return "";
   const effort = updateArgs.reasoning_effort;
   if (typeof effort !== "string" || effort.length === 0) return "";
+  const xhighLabel = modelLabel.includes("Opus 4.7") ? "Extra-High" : "Max";
   const labels: Record<string, string> = {
     none: "No Reasoning",
     low: "Low",
     medium: "Medium",
     high: "High",
-    xhigh: "Max",
+    xhigh: xhighLabel,
+    max: "Max",
   };
   return ` (${labels[effort] ?? effort})`;
 }
@@ -590,7 +601,7 @@ function buildModelUpdateStatusMessage(params: {
     toolsetPreference,
     updateArgs,
   } = params;
-  let message = `Model updated to ${modelLabel}${formatEffortSuffix(updateArgs)}.`;
+  let message = `Model updated to ${modelLabel}${formatEffortSuffix(modelLabel, updateArgs)}.`;
   if (toolsetError) {
     message += ` Warning: toolset switch failed (${toolsetError}).`;
     return { message, level: "warning" };
@@ -1511,6 +1522,7 @@ async function handleChannelsProtocolCommand(
       has_bot_token: snapshot.hasBotToken,
       has_app_token: snapshot.hasAppToken,
       agent_id: snapshot.agentId,
+      default_permission_mode: snapshot.defaultPermissionMode,
       created_at: snapshot.createdAt,
       updated_at: snapshot.updatedAt,
     };
@@ -1671,6 +1683,10 @@ async function handleChannelsProtocolCommand(
           mode: "mode" in parsed.account ? parsed.account.mode : undefined,
           agentId:
             "agent_id" in parsed.account ? parsed.account.agent_id : undefined,
+          defaultPermissionMode:
+            "default_permission_mode" in parsed.account
+              ? parsed.account.default_permission_mode
+              : undefined,
           dmPolicy: parsed.account.dm_policy,
           allowedUsers: parsed.account.allowed_users,
         },
@@ -1747,6 +1763,10 @@ async function handleChannelsProtocolCommand(
           mode: "mode" in parsed.patch ? parsed.patch.mode : undefined,
           agentId:
             "agent_id" in parsed.patch ? parsed.patch.agent_id : undefined,
+          defaultPermissionMode:
+            "default_permission_mode" in parsed.patch
+              ? parsed.patch.default_permission_mode
+              : undefined,
           dmPolicy: parsed.patch.dm_policy,
           allowedUsers: parsed.patch.allowed_users,
         },
@@ -2967,12 +2987,12 @@ function wireChannelIngress(
   const registry = getChannelRegistry();
   if (!registry) return;
 
-  registry.setMessageHandler((route, messageContent) => {
+  registry.setMessageHandler((delivery) => {
     // Follow the same pattern as cron/scheduler.ts:131-157
     const rawRuntime = getOrCreateConversationRuntime(
       listener,
-      route.agentId,
-      route.conversationId,
+      delivery.route.agentId,
+      delivery.route.conversationId,
     );
     if (!rawRuntime) return;
 
@@ -2981,25 +3001,59 @@ function wireChannelIngress(
       rawRuntime,
     );
 
-    enqueueChannelTurn(conversationRuntime, route, messageContent);
+    const enqueuedItem = enqueueChannelTurn(
+      conversationRuntime,
+      delivery.route,
+      delivery.content,
+      delivery.turnSources,
+    );
+    if (!enqueuedItem) {
+      return;
+    }
+
+    for (const turnSource of delivery.turnSources ?? []) {
+      void registry.dispatchTurnLifecycleEvent({
+        type: "queued",
+        source: turnSource,
+      });
+    }
 
     scheduleQueuePump(conversationRuntime, socket, opts, processQueuedTurn);
   });
 
   registry.setEventHandler((event) => {
-    if (event.type === "pairings_updated") {
-      emitChannelPairingsUpdated(
-        socket,
-        event.channelId as "telegram" | "slack",
-      );
-      emitChannelsUpdated(socket, event.channelId as "telegram" | "slack");
-      return;
-    }
-    emitChannelTargetsUpdated(socket, event.channelId as "telegram" | "slack");
-    emitChannelsUpdated(socket, event.channelId as "telegram" | "slack");
+    handleChannelRegistryEvent(event, socket, listener);
   });
 
   registry.setReady();
+}
+
+function handleChannelRegistryEvent(
+  event: ChannelRegistryEvent,
+  socket: WebSocket,
+  runtime: ListenerRuntime,
+): void {
+  if (event.type === "pairings_updated") {
+    emitChannelPairingsUpdated(socket, event.channelId as "telegram" | "slack");
+    emitChannelsUpdated(socket, event.channelId as "telegram" | "slack");
+    return;
+  }
+
+  if (event.type === "targets_updated") {
+    emitChannelTargetsUpdated(socket, event.channelId as "telegram" | "slack");
+    emitChannelsUpdated(socket, event.channelId as "telegram" | "slack");
+    return;
+  }
+
+  const permissionModeState = getOrCreateConversationPermissionModeStateRef(
+    runtime,
+    event.agentId,
+    event.conversationId,
+  );
+  permissionModeState.mode = event.defaultPermissionMode;
+  permissionModeState.planFilePath = null;
+  permissionModeState.modeBeforePlan = null;
+  persistPermissionModeMapForRuntime(runtime);
 }
 
 function stampInboundUserMessageOtids(
@@ -3039,6 +3093,7 @@ function enqueueChannelTurn(
     conversationId: string;
   },
   messageContent: MessageCreate["content"],
+  turnSources?: ChannelTurnSource[],
 ): { id: string } | null {
   const clientMessageId = `cm-channel-${crypto.randomUUID()}`;
   const enqueuedItem = runtime.queueRuntime.enqueue({
@@ -3063,6 +3118,7 @@ function enqueueChannelTurn(
       type: "message",
       agentId: route.agentId,
       conversationId: route.conversationId,
+      ...(turnSources?.length ? { channelTurnSources: turnSources } : {}),
       messages: [
         {
           role: "user",
@@ -3767,6 +3823,82 @@ export async function startListenerClient(
   await connectWithRetry(runtime, opts);
 }
 
+/** File/directory names filtered from directory listings (OS/VCS noise). */
+const DIR_LISTING_IGNORED_NAMES = new Set([".DS_Store", ".git", "Thumbs.db"]);
+
+interface DirListing {
+  folders: string[];
+  files: string[];
+}
+
+/**
+ * List a single directory by merging the file index (instant) with readdir
+ * (to pick up `.lettaignore`'d entries). Shared by `list_in_directory` and
+ * `get_tree` handlers.
+ *
+ * @param absDir      Absolute path to the directory.
+ * @param indexRoot   Root of the file index (undefined if unavailable).
+ * @param includeFiles  Whether to include files (not just folders).
+ */
+async function listDirectoryHybrid(
+  absDir: string,
+  indexRoot: string | undefined,
+  includeFiles: boolean,
+): Promise<DirListing> {
+  // 1. Query file index (instant, from memory)
+  let indexedNames: Set<string> | undefined;
+  const indexedFolders: string[] = [];
+  const indexedFiles: string[] = [];
+
+  if (indexRoot !== undefined) {
+    const relPath = path.relative(indexRoot, absDir);
+    if (!relPath.startsWith("..")) {
+      const indexed = searchFileIndex({
+        searchDir: relPath || ".",
+        pattern: "",
+        deep: false,
+        maxResults: 10000,
+      });
+      indexedNames = new Set<string>();
+      for (const entry of indexed) {
+        const name = entry.path.split(path.sep).pop() ?? entry.path;
+        indexedNames.add(name);
+        if (entry.type === "dir") {
+          indexedFolders.push(name);
+        } else {
+          indexedFiles.push(name);
+        }
+      }
+    }
+  }
+
+  // 2. readdir to fill gaps (entries not in the index)
+  const { readdir } = await import("node:fs/promises");
+  const entries = await readdir(absDir, { withFileTypes: true });
+
+  const extraFolders: string[] = [];
+  const extraFiles: string[] = [];
+  for (const e of entries) {
+    if (DIR_LISTING_IGNORED_NAMES.has(e.name)) continue;
+    if (indexedNames?.has(e.name)) continue;
+    if (e.isDirectory()) {
+      extraFolders.push(e.name);
+    } else if (includeFiles) {
+      extraFiles.push(e.name);
+    }
+  }
+
+  // 3. Merge and sort
+  return {
+    folders: [...indexedFolders, ...extraFolders].sort((a, b) =>
+      a.localeCompare(b),
+    ),
+    files: includeFiles
+      ? [...indexedFiles, ...extraFiles].sort((a, b) => a.localeCompare(b))
+      : [],
+  };
+}
+
 /**
  * Connect to WebSocket with exponential backoff retry.
  */
@@ -4300,33 +4432,21 @@ async function connectWithRetry(
         );
         runDetachedListenerTask("list_in_directory", async () => {
           try {
-            const { readdir } = await import("node:fs/promises");
-            console.log(`[Listen] Reading directory: ${parsed.path}`);
-            const entries = await readdir(parsed.path, { withFileTypes: true });
-            console.log(
-              `[Listen] Directory read success, ${entries.length} entries`,
-            );
-
-            // Filter out OS/VCS noise before sorting
-            const IGNORED_NAMES = new Set([
-              ".DS_Store",
-              ".git",
-              ".gitignore",
-              "Thumbs.db",
-            ]);
-            const sortedEntries = entries
-              .filter((e) => !IGNORED_NAMES.has(e.name))
-              .sort((a, b) => a.name.localeCompare(b.name));
-
-            const allFolders: string[] = [];
-            const allFiles: string[] = [];
-            for (const e of sortedEntries) {
-              if (e.isDirectory()) {
-                allFolders.push(e.name);
-              } else if (parsed.include_files) {
-                allFiles.push(e.name);
-              }
+            let indexRoot: string | undefined;
+            try {
+              await ensureFileIndex();
+              indexRoot = getIndexRoot();
+            } catch {
+              // Index not available — readdir only
             }
+
+            console.log(`[Listen] Reading directory: ${parsed.path}`);
+            const { folders: allFolders, files: allFiles } =
+              await listDirectoryHybrid(
+                parsed.path,
+                indexRoot,
+                !!parsed.include_files,
+              );
 
             const total = allFolders.length + allFiles.length;
             const offset = parsed.offset ?? 0;
@@ -4335,8 +4455,9 @@ async function connectWithRetry(
             // Paginate over the combined [folders, files] list
             const combined = [...allFolders, ...allFiles];
             const page = combined.slice(offset, offset + limit);
-            const folders = page.filter((name) => allFolders.includes(name));
-            const files = page.filter((name) => allFiles.includes(name));
+            const folderSet = new Set(allFolders);
+            const folders = page.filter((name) => folderSet.has(name));
+            const files = page.filter((name) => !folderSet.has(name));
 
             const response: Record<string, unknown> = {
               type: "list_in_directory_response",
@@ -4384,6 +4505,113 @@ async function connectWithRetry(
               },
               "listener_list_directory_send_failed",
               "listener_list_in_directory",
+            );
+          }
+        });
+        return;
+      }
+
+      // ── Depth-limited subtree fetch (no runtime scope required) ──────
+      if (isGetTreeCommand(parsed)) {
+        console.log(
+          `[Listen] Received get_tree command: path=${parsed.path}, depth=${parsed.depth}`,
+        );
+        runDetachedListenerTask("get_tree", async () => {
+          try {
+            // Walk the directory tree up to the requested depth, combining
+            // file index results with readdir to include non-indexed entries.
+            interface TreeEntry {
+              path: string;
+              type: "file" | "dir";
+            }
+            const results: TreeEntry[] = [];
+            let hasMoreDepth = false;
+
+            // Warm the file index once before walking the tree.
+            let indexRoot: string | undefined;
+            try {
+              await ensureFileIndex();
+              indexRoot = getIndexRoot();
+            } catch {
+              // Index not available — readdir only for all directories
+            }
+
+            // BFS queue: [absolutePath, relativePath, currentDepth]
+            // Uses an index pointer for O(1) dequeue instead of shift().
+            const queue: [string, string, number][] = [[parsed.path, "", 0]];
+            let qi = 0;
+
+            while (qi < queue.length) {
+              const item = queue[qi++];
+              if (!item) break;
+              const [absDir, relDir, depth] = item;
+
+              if (depth >= parsed.depth) {
+                if (depth === parsed.depth && relDir !== "") {
+                  hasMoreDepth = true;
+                }
+                continue;
+              }
+
+              let listing: DirListing;
+              try {
+                listing = await listDirectoryHybrid(absDir, indexRoot, true);
+              } catch {
+                // Can't read directory — skip
+                continue;
+              }
+
+              // Relative paths always use '/' (converted to OS separator on the frontend)
+              for (const name of listing.folders) {
+                const entryRel = relDir === "" ? name : `${relDir}/${name}`;
+                results.push({ path: entryRel, type: "dir" });
+                queue.push([path.join(absDir, name), entryRel, depth + 1]);
+              }
+              for (const name of listing.files) {
+                const entryRel = relDir === "" ? name : `${relDir}/${name}`;
+                results.push({ path: entryRel, type: "file" });
+              }
+            }
+
+            console.log(
+              `[Listen] Sending get_tree_response: ${results.length} entries, has_more_depth=${hasMoreDepth}`,
+            );
+            safeSocketSend(
+              socket,
+              {
+                type: "get_tree_response",
+                path: parsed.path,
+                request_id: parsed.request_id,
+                entries: results,
+                has_more_depth: hasMoreDepth,
+                success: true,
+              },
+              "listener_get_tree_send_failed",
+              "listener_get_tree",
+            );
+          } catch (err) {
+            trackListenerError(
+              "listener_get_tree_failed",
+              err,
+              "listener_file_browser",
+            );
+            console.error(
+              `[Listen] get_tree error: ${err instanceof Error ? err.message : "Unknown error"}`,
+            );
+            safeSocketSend(
+              socket,
+              {
+                type: "get_tree_response",
+                path: parsed.path,
+                request_id: parsed.request_id,
+                entries: [],
+                has_more_depth: false,
+                success: false,
+                error:
+                  err instanceof Error ? err.message : "Failed to get tree",
+              },
+              "listener_get_tree_send_failed",
+              "listener_get_tree",
             );
           }
         });
@@ -4487,6 +4715,8 @@ async function connectWithRetry(
             console.log(
               `[Listen] write_file success: ${parsed.path} (${parsed.content.length} bytes)`,
             );
+            // Update the file index so the sidebar Merkle tree stays current
+            void refreshFileIndex();
             safeSocketSend(
               socket,
               {
@@ -4630,6 +4860,10 @@ async function connectWithRetry(
             console.log(
               `[Listen] edit_file success: ${result.replacements} replacement(s) at line ${result.startLine}`,
             );
+            // Update the file index so the sidebar Merkle tree stays current
+            if (result.replacements > 0) {
+              void refreshFileIndex();
+            }
 
             // Notify web clients of the new content so they can update live.
             if (result.replacements > 0) {
@@ -5704,6 +5938,7 @@ export const __listenClientTestUtils = {
   handleListMemoryCommand,
   isDetachedChannelsCommand,
   handleChannelsProtocolCommand,
+  handleChannelRegistryEvent,
   handleSkillCommand,
   handleCreateAgentCommand,
   handleReflectionSettingsCommand,

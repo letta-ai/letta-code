@@ -199,9 +199,7 @@ describe("formatChannelNotification", () => {
       "<attempted_transcription>Hello, this is a voice memo test.</attempted_transcription>",
     );
     expect(xml).toContain("</attachment>");
-    // Verify it's not self-closing
     expect(xml).not.toMatch(/<attachment[^>]*\/>/);
-    // Verify it has an opening tag (non-self-closing)
     expect(xml).toMatch(/<attachment[^>]*>\n/);
   });
 
@@ -250,6 +248,55 @@ describe("formatChannelNotification", () => {
     expect(xml).toContain("&lt;hello&gt;");
     expect(xml).toContain("&amp;");
     expect(xml).not.toContain("<hello>");
+  });
+
+  test("includes Slack thread starter and history context in the notification xml", () => {
+    const msg: InboundChannelMessage = {
+      channel: "slack",
+      chatId: "C123",
+      senderId: "U123",
+      senderName: "Charles",
+      text: "please help",
+      timestamp: Date.now(),
+      messageId: "1712800000.000100",
+      threadId: "1712790000.000050",
+      chatType: "channel",
+      threadContext: {
+        label:
+          "Slack thread in #random: Original question from the thread root",
+        starter: {
+          messageId: "1712790000.000050",
+          senderId: "U111",
+          senderName: "Alice",
+          text: "Original question from the thread root",
+        },
+        history: [
+          {
+            messageId: "1712795000.000060",
+            senderId: "U222",
+            senderName: "Bob",
+            text: "Some follow-up before the bot was tagged",
+          },
+        ],
+      },
+    };
+
+    const xml = buildChannelNotificationXml(msg);
+
+    expect(xml).toContain("<thread-context");
+    expect(xml).toContain(
+      'label="Slack thread in #random: Original question from the thread root"',
+    );
+    expect(xml).toContain(
+      '<thread-starter sender_id="U111" sender_name="Alice" message_id="1712790000.000050">',
+    );
+    expect(xml).toContain("Original question from the thread root");
+    expect(xml).toContain("<thread-history>");
+    expect(xml).toContain(
+      '<thread-message sender_id="U222" sender_name="Bob" message_id="1712795000.000060">',
+    );
+    expect(xml).toContain("Some follow-up before the bot was tagged");
+    expect(xml).toContain("please help");
   });
 
   test("emits image content parts for inbound image attachments", () => {

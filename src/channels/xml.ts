@@ -8,7 +8,11 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import { getLocalTime } from "../cli/helpers/sessionContext";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "../constants";
-import type { ChannelMessageAttachment, InboundChannelMessage } from "./types";
+import type {
+  ChannelMessageAttachment,
+  ChannelThreadContextEntry,
+  InboundChannelMessage,
+} from "./types";
 
 /**
  * Escape XML text-node content without over-escaping quotes that should remain
@@ -127,6 +131,60 @@ function buildReactionXml(msg: InboundChannelMessage): string | null {
   return `<reaction ${attrs.join(" ")} />`;
 }
 
+function buildThreadContextEntryXml(
+  tagName: string,
+  entry: ChannelThreadContextEntry,
+): string {
+  const attrs: string[] = [];
+  if (entry.senderId) {
+    attrs.push(`sender_id="${escapeXmlAttribute(entry.senderId)}"`);
+  }
+  if (entry.senderName) {
+    attrs.push(`sender_name="${escapeXmlAttribute(entry.senderName)}"`);
+  }
+  if (entry.messageId) {
+    attrs.push(`message_id="${escapeXmlAttribute(entry.messageId)}"`);
+  }
+
+  const attrString = attrs.length > 0 ? ` ${attrs.join(" ")}` : "";
+  return `<${tagName}${attrString}>\n${escapeXmlText(entry.text)}\n</${tagName}>`;
+}
+
+function buildThreadContextXml(msg: InboundChannelMessage): string | null {
+  const threadContext = msg.threadContext;
+  if (!threadContext) {
+    return null;
+  }
+
+  const parts: string[] = [];
+  if (threadContext.starter) {
+    parts.push(
+      buildThreadContextEntryXml("thread-starter", threadContext.starter),
+    );
+  }
+  const historyEntries = threadContext.history ?? [];
+  if (historyEntries.length > 0) {
+    parts.push(
+      [
+        "<thread-history>",
+        ...historyEntries.map((entry) =>
+          buildThreadContextEntryXml("thread-message", entry),
+        ),
+        "</thread-history>",
+      ].join("\n"),
+    );
+  }
+
+  if (parts.length === 0) {
+    return null;
+  }
+
+  const attrs = threadContext.label
+    ? ` label="${escapeXmlAttribute(threadContext.label)}"`
+    : "";
+  return [`<thread-context${attrs}>`, ...parts, "</thread-context>"].join("\n");
+}
+
 /**
  * Format an inbound channel message as XML for the agent.
  *
@@ -161,8 +219,9 @@ export function buildChannelNotificationXml(
   const attrString = attrs.join(" ");
   const escapedText = msg.text ? escapeXmlText(msg.text) : "";
   const reactionXml = buildReactionXml(msg);
+  const threadContextXml = buildThreadContextXml(msg);
   const attachmentXml = (msg.attachments ?? []).map(buildAttachmentXml);
-  const body = [reactionXml, ...attachmentXml, escapedText]
+  const body = [threadContextXml, reactionXml, ...attachmentXml, escapedText]
     .filter(Boolean)
     .join("\n");
 

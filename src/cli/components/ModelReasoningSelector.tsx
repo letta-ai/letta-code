@@ -21,9 +21,13 @@ interface ModelReasoningSelectorProps {
   onCancel: () => void;
 }
 
-function formatEffortLabel(effort: ModelReasoningEffort): string {
+function formatEffortLabel(
+  effort: ModelReasoningEffort,
+  hasDistinctMaxTier: boolean,
+): string {
   if (effort === "none") return "Off";
-  if (effort === "xhigh") return "Max";
+  if (effort === "xhigh") return hasDistinctMaxTier ? "Extra-High" : "Max";
+  if (effort === "max") return "Max";
   if (effort === "minimal") return "Minimal";
   return effort.charAt(0).toUpperCase() + effort.slice(1);
 }
@@ -56,6 +60,10 @@ export function ModelReasoningSelector({
   const selectedOption = options[selectedIndex] ?? options[0];
   const effortOptions = useMemo(
     () => options.filter((option) => option.effort !== "none"),
+    [options],
+  );
+  const hasDistinctMaxTier = useMemo(
+    () => options.some((option) => option.effort === "max"),
     [options],
   );
   const totalBars = Math.max(effortOptions.length, 1);
@@ -106,7 +114,7 @@ export function ModelReasoningSelector({
   });
 
   const effortLabel = selectedOption
-    ? formatEffortLabel(selectedOption.effort)
+    ? formatEffortLabel(selectedOption.effort, hasDistinctMaxTier)
     : "Medium";
   const selectedText =
     selectedBars > 0 ? EFFORT_BLOCK.repeat(selectedBars) : "";

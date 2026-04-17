@@ -6,18 +6,25 @@ import type {
   StreamEvent,
   SystemInitMessage,
 } from "../types/protocol";
-import { formatCapturedOutput } from "./processDiagnostics";
+import {
+  formatAttemptDiagnostics,
+  formatCapturedOutput,
+} from "./processDiagnostics";
 
 /**
  * Tests for stream-json output format.
  * These verify the message structure matches the wire format types.
  */
 
-async function runHeadlessCommand(
+async function runHeadlessCommandOnce(
   prompt: string,
   extraArgs: string[] = [],
   timeoutMs = 180000, // 180s timeout - CI can be very slow
-): Promise<string[]> {
+): Promise<{
+  lines: string[];
+  stdout: string;
+  stderr: string;
+}> {
   return new Promise((resolve, reject) => {
     const proc = spawn(
       "bun",
@@ -97,10 +104,59 @@ async function runHeadlessCommand(
               return false;
             }
           });
-        resolve(lines);
+        resolve({ lines, stdout, stderr });
       }
     });
   });
+}
+
+async function runHeadlessCommand(
+  prompt: string,
+  extraArgs: string[] = [],
+  timeoutMs = 180000,
+): Promise<string[]> {
+  const maxRetries = 1;
+  const failedAttempts: Array<{ attempt: number; message: string }> = [];
+
+  for (let attempt = 0; ; attempt += 1) {
+    const result = await runHeadlessCommandOnce(prompt, extraArgs, timeoutMs);
+    const hasResultLine = result.lines.some((line) => {
+      try {
+        const obj = JSON.parse(line);
+        return obj.type === "result";
+      } catch {
+        return false;
+      }
+    });
+
+    if (hasResultLine) {
+      return result.lines;
+    }
+
+    failedAttempts.push({
+      attempt: attempt + 1,
+      message: formatCapturedOutput({
+        stdout: result.stdout,
+        stderr: result.stderr,
+        extra: {
+          args: extraArgs.join(" ") || "(none)",
+          saw_result_event: result.stdout.includes('"type":"result"'),
+        },
+      }),
+    });
+
+    if (attempt >= maxRetries) {
+      throw new Error(
+        `Headless command completed without a result envelope after ${attempt + 1} attempt(s).\n${formatAttemptDiagnostics(
+          failedAttempts,
+        )}`,
+      );
+    }
+
+    console.warn(
+      `[headless-stream-json] retrying after missing result envelope (${attempt + 1}/${maxRetries})`,
+    );
+  }
 }
 
 // Prescriptive prompt to ensure single-step response without tool use

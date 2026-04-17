@@ -10,6 +10,10 @@
 export const SUPPORTED_CHANNEL_IDS = ["telegram", "slack"] as const;
 export type SupportedChannelId = (typeof SUPPORTED_CHANNEL_IDS)[number];
 export type ChannelChatType = "direct" | "channel";
+export type SlackDefaultPermissionMode =
+  | "default"
+  | "acceptEdits"
+  | "bypassPermissions";
 
 export interface ChannelMessageAttachment {
   id?: string;
@@ -29,6 +33,50 @@ export interface ChannelReactionNotification {
   targetMessageId: string;
   targetSenderId?: string;
 }
+
+export interface ChannelThreadContextEntry {
+  messageId?: string;
+  senderId?: string;
+  senderName?: string;
+  text: string;
+}
+
+export interface ChannelThreadContext {
+  label?: string;
+  starter?: ChannelThreadContextEntry;
+  history?: ChannelThreadContextEntry[];
+}
+
+export interface ChannelTurnSource {
+  channel: SupportedChannelId;
+  accountId?: string;
+  chatId: string;
+  chatType?: ChannelChatType;
+  messageId?: string;
+  threadId?: string | null;
+  agentId: string;
+  conversationId: string;
+}
+
+export type ChannelTurnOutcome = "completed" | "error" | "cancelled";
+
+export type ChannelTurnLifecycleEvent =
+  | {
+      type: "queued";
+      source: ChannelTurnSource;
+    }
+  | {
+      type: "processing";
+      batchId: string;
+      sources: ChannelTurnSource[];
+    }
+  | {
+      type: "finished";
+      batchId: string;
+      sources: ChannelTurnSource[];
+      outcome: ChannelTurnOutcome;
+      error?: string;
+    };
 
 // ── Adapter interface ─────────────────────────────────────────────
 
@@ -61,6 +109,23 @@ export interface ChannelAdapter {
     text: string,
     options?: { replyToMessageId?: string },
   ): Promise<void>;
+
+  /**
+   * Optionally enrich an inbound message with additional context before it is
+   * formatted for the agent. Slack uses this to hydrate older thread context
+   * the first time a Letta conversation is created for an existing thread.
+   */
+  prepareInboundMessage?(
+    msg: InboundChannelMessage,
+    options?: { isFirstRouteTurn?: boolean },
+  ): Promise<InboundChannelMessage>;
+
+  /**
+   * Optional lifecycle hook for channel-originated turns. Adapters can use
+   * this to surface lightweight UX feedback (for example, Slack reactions)
+   * without coupling queue/lifecycle state to a specific channel.
+   */
+  handleTurnLifecycleEvent?(event: ChannelTurnLifecycleEvent): Promise<void>;
 
   /**
    * Called by the registry when the adapter receives an inbound message.
@@ -102,6 +167,8 @@ export interface InboundChannelMessage {
   attachments?: ChannelMessageAttachment[];
   /** Reaction metadata for non-text channel events. */
   reaction?: ChannelReactionNotification;
+  /** Supplemental thread context captured before the triggering message. */
+  threadContext?: ChannelThreadContext;
 }
 
 export interface OutboundChannelMessage {
@@ -208,6 +275,7 @@ export interface SlackChannelAccount extends ChannelAccountBase {
   botToken: string;
   appToken: string;
   agentId: string | null;
+  defaultPermissionMode: SlackDefaultPermissionMode;
 }
 
 export type ChannelAccount = TelegramChannelAccount | SlackChannelAccount;

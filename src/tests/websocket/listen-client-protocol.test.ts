@@ -1575,6 +1575,7 @@ describe("listen-client channels command handling", () => {
         hasBotToken: true,
         hasAppToken: true,
         agentId: "agent-1",
+        defaultPermissionMode: "acceptEdits" as const,
         createdAt: "2026-04-11T00:00:00.000Z",
         updatedAt: "2026-04-11T01:00:00.000Z",
       }),
@@ -1591,6 +1592,7 @@ describe("listen-client channels command handling", () => {
         hasBotToken: true,
         hasAppToken: true,
         agentId: null,
+        defaultPermissionMode: "acceptEdits" as const,
         createdAt: "2026-04-11T00:00:00.000Z",
         updatedAt: "2026-04-11T02:00:00.000Z",
       }),
@@ -1628,6 +1630,7 @@ describe("listen-client channels command handling", () => {
         account: {
           account_id: "acct-1",
           agent_id: "agent-1",
+          default_permission_mode: "acceptEdits",
         },
       });
       expect(messages[1]).toMatchObject({
@@ -1669,6 +1672,7 @@ describe("listen-client channels command handling", () => {
         account: {
           account_id: "acct-1",
           agent_id: null,
+          default_permission_mode: "acceptEdits",
         },
       });
       expect(messages[1]).toMatchObject({
@@ -2050,6 +2054,38 @@ describe("listen-client permission mode scope keys", () => {
         "agent:__unknown__::conversation:default",
       ),
     ).toBe(false);
+  });
+
+  test("slack conversation created event seeds the new conversation permission mode", () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const socket = new MockSocket(WebSocket.OPEN);
+
+    __listenClientTestUtils.handleChannelRegistryEvent(
+      {
+        type: "slack_conversation_created",
+        channelId: "slack",
+        accountId: "acct-1",
+        agentId: "agent-123",
+        conversationId: "conv-slack-1",
+        defaultPermissionMode: "bypassPermissions",
+      },
+      socket as unknown as WebSocket,
+      listener,
+    );
+
+    const status = __listenClientTestUtils.buildDeviceStatus(listener, {
+      agent_id: "agent-123",
+      conversation_id: "conv-slack-1",
+    });
+
+    expect(status.current_permission_mode).toBe("bypassPermissions");
+    expect(
+      listener.permissionModeByConversation.get("conversation:conv-slack-1"),
+    ).toEqual({
+      mode: "bypassPermissions",
+      planFilePath: null,
+      modeBeforePlan: null,
+    });
   });
 });
 

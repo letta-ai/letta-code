@@ -29,9 +29,9 @@ jobs:
           set -euo pipefail
 
           if [ "${{ github.event_name }}" = "pull_request" ]; then
-            TITLE="${{ github.event.pull_request.title }}"
-            BASE_SHA="${{ github.event.pull_request.base.sha }}"
-            HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+            TITLE=$(jq -er '.pull_request.title' "$GITHUB_EVENT_PATH")
+            BASE_SHA=$(jq -er '.pull_request.base.sha' "$GITHUB_EVENT_PATH")
+            HEAD_SHA=$(jq -er '.pull_request.head.sha' "$GITHUB_EVENT_PATH")
           else
             TITLE=$(git log --format=%s "${{ github.event.before }}..${{ github.sha }}" | tail -n 1)
             BASE_SHA="${{ github.event.before }}"
@@ -291,8 +291,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Note: gemini-3-flash / glm-4.7 temporarily disabled due to instability
-        model: [gpt-5-minimal, gpt-4.1, sonnet-4.6-low, gemini-3.1, haiku]
+        # Note: gpt-4.1 / gemini-3.1 / gemini-3-flash / glm-4.7 are temporarily
+        # excluded here due to intermittent provider-side scenario instability.
+        model: [gpt-5-minimal, sonnet-4.6-low, haiku]
     steps:
       - name: Checkout
         uses: actions/checkout@v6

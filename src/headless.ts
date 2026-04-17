@@ -149,10 +149,10 @@ const EMPTY_RESPONSE_MAX_RETRIES = 2;
 // After 1 failed retry against Anthropic, automatically retry via Bedrock.
 const PROVIDER_FALLBACK_MAP: Record<string, string> = {
   // Opus 4.6 variants → Bedrock Opus 4.6
-  opus: "bedrock-opus-4.6",
   "opus-4.6-no-reasoning": "bedrock-opus-4.6",
   "opus-4.6-low": "bedrock-opus-4.6",
   "opus-4.6-medium": "bedrock-opus-4.6",
+  "opus-4.6-high": "bedrock-opus-4.6",
   "opus-4.6-xhigh": "bedrock-opus-4.6",
   // Sonnet 4.6 variants → Bedrock Sonnet 4.6
   sonnet: "bedrock-sonnet-4.6",
