@@ -10,6 +10,10 @@
  */
 
 import { spawn } from "node:child_process";
+import {
+  formatAttemptDiagnostics,
+  formatCapturedOutput,
+} from "../integration-tests/processDiagnostics";
 import { createIsolatedCliTestEnv } from "./testProcessEnv";
 
 type Args = {
@@ -66,7 +70,7 @@ function scenarioPrompt(): string {
 async function runCLI(
   model: string,
   output: Args["output"],
-): Promise<{ stdout: string; code: number }> {
+): Promise<{ stdout: string; stderr: string; code: number }> {
   return new Promise((resolve, reject) => {
     const proc = spawn(
       "bun",
@@ -103,9 +107,14 @@ async function runCLI(
 
     proc.on("close", (code) => {
       if (code !== 0) {
-        console.error("CLI failed:", stderr || stdout);
+        console.error(
+          `CLI failed (${model} / ${output}).\n${formatCapturedOutput({
+            stdout,
+            stderr,
+          })}`,
+        );
       }
-      resolve({ stdout, code: code ?? 1 });
+      resolve({ stdout, stderr, code: code ?? 1 });
     });
 
     proc.on("error", reject);
@@ -179,22 +188,41 @@ async function main() {
   if (prereq === "skip") return;
 
   let stdout = "";
+  let stderr = "";
   let code = 0;
   let lastError: Error | null = null;
+  const failedAttempts: Array<{ attempt: number; message: string }> = [];
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
-    ({ stdout, code } = await runCLI(model, output));
+    ({ stdout, stderr, code } = await runCLI(model, output));
     if (code !== 0) {
-      lastError = new Error(`CLI exited with code ${code}`);
+      lastError = new Error(
+        `CLI exited with code ${code}.\n${formatCapturedOutput({
+          stdout,
+          stderr,
+        })}`,
+      );
     } else {
       try {
         validateOutput(stdout, output);
         console.log(`OK: ${model} / ${output}`);
         return;
       } catch (error) {
-        lastError = error as Error;
+        const validationError =
+          error instanceof Error ? error : new Error(String(error));
+        lastError = new Error(
+          `${validationError.message}\n${formatCapturedOutput({
+            stdout,
+            stderr,
+          })}`,
+        );
       }
     }
+
+    failedAttempts.push({
+      attempt,
+      message: lastError?.message ?? "unknown error",
+    });
 
     if (attempt < MAX_ATTEMPTS) {
       console.error(
@@ -209,13 +237,17 @@ async function main() {
       process.exit(code);
     }
     if (lastError) {
-      throw lastError;
+      throw new Error(formatAttemptDiagnostics(failedAttempts));
     }
   } catch (e) {
     // Dump full stdout to aid debugging
     console.error(`\n===== BEGIN STDOUT (${model} / ${output}) =====`);
     console.error(stdout);
     console.error(`===== END STDOUT (${model} / ${output}) =====\n`);
+
+    console.error(`\n===== BEGIN STDERR (${model} / ${output}) =====`);
+    console.error(stderr);
+    console.error(`===== END STDERR (${model} / ${output}) =====\n`);
 
     if (output === "stream-json") {
       const lines = stdout.split(/\r?\n/).filter(Boolean);

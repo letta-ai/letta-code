@@ -13,6 +13,7 @@ import type {
   WireMessage,
 } from "../types/protocol";
 import {
+  formatAttemptDiagnostics,
   formatCapturedOutput,
   summarizeRecentMessages,
 } from "./processDiagnostics";
@@ -266,10 +267,16 @@ async function runBidirectionalWithRetry(
   extraEnv: NodeJS.ProcessEnv = {},
 ): Promise<object[]> {
   let attempt = 0;
+  const failedAttempts: Array<{ attempt: number; message: string }> = [];
   while (true) {
     try {
       return await runBidirectionalOnce(inputs, extraArgs, timeoutMs, extraEnv);
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      failedAttempts.push({
+        attempt: attempt + 1,
+        message,
+      });
       const isRetriableError =
         error instanceof Error &&
         (error.message.includes("Timeout after") ||
@@ -277,7 +284,13 @@ async function runBidirectionalWithRetry(
             "before all expected responses were received",
           ));
       if (!isRetriableError || attempt >= retryOnTimeouts) {
-        throw error;
+        throw new Error(
+          failedAttempts.length === 1
+            ? message
+            : `${message}\n${formatAttemptDiagnostics(
+                failedAttempts.slice(0, -1),
+              )}`,
+        );
       }
       attempt += 1;
       // CI API runs can occasionally exit after emitting most, but not all,

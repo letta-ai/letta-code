@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { spawn } from "node:child_process";
 import { createIsolatedCliTestEnv } from "../tests/testProcessEnv";
-import { formatCapturedOutput } from "./processDiagnostics";
+import {
+  formatAttemptDiagnostics,
+  formatCapturedOutput,
+} from "./processDiagnostics";
 
 /**
  * Startup flow integration tests.
@@ -21,6 +24,7 @@ async function runCli(
   } = {},
 ): Promise<{ stdout: string; stderr: string; exitCode: number | null }> {
   const { timeoutMs = 30000, expectExit, retryOnTimeouts = 1 } = options;
+  const failedAttempts: Array<{ attempt: number; message: string }> = [];
 
   const runOnce = () =>
     new Promise<{ stdout: string; stderr: string; exitCode: number | null }>(
@@ -95,10 +99,21 @@ async function runCli(
     try {
       return await runOnce();
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      failedAttempts.push({
+        attempt: attempt + 1,
+        message,
+      });
       const isTimeoutError =
         error instanceof Error && error.message.includes("Timeout after");
       if (!isTimeoutError || attempt >= retryOnTimeouts) {
-        throw error;
+        throw new Error(
+          failedAttempts.length === 1
+            ? message
+            : `${message}\n${formatAttemptDiagnostics(
+                failedAttempts.slice(0, -1),
+              )}`,
+        );
       }
       attempt += 1;
       // CI API calls can be transiently slow; retry once to reduce flakiness.
@@ -132,6 +147,7 @@ async function runCliJson(
 }> {
   const { retryOnParseErrors = 1, ...runCliOptions } = options;
   let attempt = 0;
+  const parseFailures: Array<{ attempt: number; message: string }> = [];
 
   while (true) {
     const result = await runCli(args, runCliOptions);
@@ -141,18 +157,20 @@ async function runCliJson(
         output: parseJsonFromStdout(result.stdout),
       };
     } catch (error) {
+      const message = `Failed to parse JSON stdout.\n${formatCapturedOutput({
+        stdout: result.stdout,
+        stderr: result.stderr,
+        extra: {
+          args: args.join(" "),
+          parse_error: error instanceof Error ? error.message : String(error),
+        },
+      })}`;
+      parseFailures.push({
+        attempt: attempt + 1,
+        message,
+      });
       if (attempt >= retryOnParseErrors) {
-        throw new Error(
-          `Failed to parse JSON stdout.\n${formatCapturedOutput({
-            stdout: result.stdout,
-            stderr: result.stderr,
-            extra: {
-              args: args.join(" "),
-              parse_error:
-                error instanceof Error ? error.message : String(error),
-            },
-          })}`,
-        );
+        throw new Error(formatAttemptDiagnostics(parseFailures));
       }
 
       attempt += 1;
