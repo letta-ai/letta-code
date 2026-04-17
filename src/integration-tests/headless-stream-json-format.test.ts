@@ -13,7 +13,7 @@ import { formatCapturedOutput } from "./processDiagnostics";
  * These verify the message structure matches the wire format types.
  */
 
-async function runHeadlessCommand(
+async function runHeadlessCommandOnce(
   prompt: string,
   extraArgs: string[] = [],
   timeoutMs = 180000, // 180s timeout - CI can be very slow
@@ -101,6 +101,40 @@ async function runHeadlessCommand(
       }
     });
   });
+}
+
+async function runHeadlessCommand(
+  prompt: string,
+  extraArgs: string[] = [],
+  timeoutMs = 180000,
+): Promise<string[]> {
+  const maxRetries = 1;
+
+  for (let attempt = 0; ; attempt += 1) {
+    const lines = await runHeadlessCommandOnce(prompt, extraArgs, timeoutMs);
+    const hasResultLine = lines.some((line) => {
+      try {
+        const obj = JSON.parse(line);
+        return obj.type === "result";
+      } catch {
+        return false;
+      }
+    });
+
+    if (hasResultLine) {
+      return lines;
+    }
+
+    if (attempt >= maxRetries) {
+      throw new Error(
+        `Headless command completed without a result envelope after ${attempt + 1} attempt(s). args=${extraArgs.join(" ") || "(none)"}`,
+      );
+    }
+
+    console.warn(
+      `[headless-stream-json] retrying after missing result envelope (${attempt + 1}/${maxRetries})`,
+    );
+  }
 }
 
 // Prescriptive prompt to ensure single-step response without tool use

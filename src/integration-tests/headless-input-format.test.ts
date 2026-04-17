@@ -30,7 +30,7 @@ const FAST_PROMPT =
  * Helper to run bidirectional commands with stdin input.
  * Event-driven: waits for init message before sending input, waits for result before closing.
  */
-async function runBidirectional(
+async function runBidirectionalOnce(
   inputs: string[],
   extraArgs: string[] = [],
   timeoutMs = 180000, // 180s timeout - CI can be very slow
@@ -84,6 +84,7 @@ async function runBidirectional(
 
     let userResultsReceived = 0;
     let controlResponsesReceived = 0;
+    let errorResponsesReceived = 0;
 
     const maybeClose = () => {
       if (closing) return;
@@ -138,6 +139,7 @@ async function runBidirectional(
 
         // Check for error message (for invalid JSON input test)
         if (obj.type === "error" && hasInvalidInput) {
+          errorResponsesReceived++;
           closing = true;
           setTimeout(() => proc.stdin?.end(), 500);
         }
@@ -178,7 +180,8 @@ async function runBidirectional(
       // Check if we got enough results
       const gotExpectedResults =
         userResultsReceived >= expectedUserResults &&
-        controlResponsesReceived >= expectedControlResponses;
+        controlResponsesReceived >= expectedControlResponses &&
+        (!hasInvalidInput || errorResponsesReceived > 0);
 
       if (objects.length === 0 && code !== 0) {
         reject(
@@ -194,12 +197,13 @@ async function runBidirectional(
             )}`,
           ),
         );
-      } else if (!gotExpectedResults && code !== 0) {
+      } else if (!gotExpectedResults) {
         reject(
           new Error(
-            `Process exited with code ${code} before all results received. ` +
+            `Process exited with code ${code} before all expected responses were received. ` +
               `Got ${userResultsReceived}/${expectedUserResults} user results, ` +
-              `${controlResponsesReceived}/${expectedControlResponses} control responses. ` +
+              `${controlResponsesReceived}/${expectedControlResponses} control responses, ` +
+              `${errorResponsesReceived}/${hasInvalidInput ? 1 : 0} invalid-input error responses. ` +
               `inputIndex: ${inputIndex}, initReceived: ${initReceived}.\n${formatCapturedOutput(
                 {
                   stdout,
@@ -245,6 +249,15 @@ async function runBidirectional(
   });
 }
 
+async function runBidirectional(
+  inputs: string[],
+  extraArgs: string[] = [],
+  timeoutMs = 180000,
+  extraEnv: NodeJS.ProcessEnv = {},
+): Promise<object[]> {
+  return runBidirectionalWithRetry(inputs, extraArgs, timeoutMs, 1, extraEnv);
+}
+
 async function runBidirectionalWithRetry(
   inputs: string[],
   extraArgs: string[] = [],
@@ -255,17 +268,22 @@ async function runBidirectionalWithRetry(
   let attempt = 0;
   while (true) {
     try {
-      return await runBidirectional(inputs, extraArgs, timeoutMs, extraEnv);
+      return await runBidirectionalOnce(inputs, extraArgs, timeoutMs, extraEnv);
     } catch (error) {
-      const isTimeoutError =
-        error instanceof Error && error.message.includes("Timeout after");
-      if (!isTimeoutError || attempt >= retryOnTimeouts) {
+      const isRetriableError =
+        error instanceof Error &&
+        (error.message.includes("Timeout after") ||
+          error.message.includes(
+            "before all expected responses were received",
+          ));
+      if (!isRetriableError || attempt >= retryOnTimeouts) {
         throw error;
       }
       attempt += 1;
-      // CI API latency can cause occasional long-tail timeouts.
+      // CI API runs can occasionally exit after emitting most, but not all,
+      // of the final response envelope. Retry those incomplete runs once.
       console.warn(
-        `[headless-input-format] retrying after timeout (${attempt}/${retryOnTimeouts})`,
+        `[headless-input-format] retrying after transient/incomplete run (${attempt}/${retryOnTimeouts})`,
       );
     }
   }

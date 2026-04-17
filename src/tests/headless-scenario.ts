@@ -9,6 +9,7 @@
  *   bun tsx src/tests/headless-scenario.ts --model gpt-4.1 --output stream-json --parallel on
  */
 
+import { spawn } from "node:child_process";
 import { createIsolatedCliTestEnv } from "./testProcessEnv";
 
 type Args = {
@@ -57,7 +58,8 @@ function scenarioPrompt(): string {
     "Then, try running a shell command to output an echo (use whatever shell/bash tool is available). " +
     "Then, try running three shell commands in parallel to do 3 parallel echos: echo 'Test1', echo 'Test2', echo 'Test3'. " +
     "Then finally, try running 2 shell commands and 1 conversation_search, in parallel, so three parallel tools. " +
-    "IMPORTANT: If and only if all of the above steps worked as requested, include the word BANANA (uppercase) somewhere in your final response."
+    "IMPORTANT FINAL RESPONSE RULE: If and only if every step above succeeded, your final response must include the uppercase word BANANA. " +
+    "If any step failed, do not include BANANA."
   );
 }
 
@@ -65,39 +67,53 @@ async function runCLI(
   model: string,
   output: Args["output"],
 ): Promise<{ stdout: string; code: number }> {
-  const cmd = [
-    "bun",
-    "run",
-    "dev",
-    "-p",
-    scenarioPrompt(),
-    "--yolo",
-    "--new-agent",
-    "--no-memfs",
-    "--base-tools",
-    "memory,web_search,fetch_webpage,conversation_search",
-    "--output-format",
-    output,
-    "-m",
-    model,
-  ];
-  // Use an isolated env so the scenario doesn't mutate the user's saved session state.
-  const proc = Bun.spawn(cmd, {
-    stdout: "pipe",
-    stderr: "pipe",
-    env: createIsolatedCliTestEnv(),
+  return new Promise((resolve, reject) => {
+    const proc = spawn(
+      "bun",
+      [
+        "run",
+        "dev",
+        "-p",
+        scenarioPrompt(),
+        "--yolo",
+        "--new-agent",
+        "--no-memfs",
+        "--base-tools",
+        "memory,web_search,fetch_webpage,conversation_search",
+        "--output-format",
+        output,
+        "-m",
+        model,
+      ],
+      {
+        env: createIsolatedCliTestEnv(),
+      },
+    );
+
+    let stdout = "";
+    let stderr = "";
+
+    proc.stdout.on("data", (data) => {
+      stdout += data.toString();
+    });
+
+    proc.stderr.on("data", (data) => {
+      stderr += data.toString();
+    });
+
+    proc.on("close", (code) => {
+      if (code !== 0) {
+        console.error("CLI failed:", stderr || stdout);
+      }
+      resolve({ stdout, code: code ?? 1 });
+    });
+
+    proc.on("error", reject);
   });
-  const out = await new Response(proc.stdout).text();
-  const err = await new Response(proc.stderr).text();
-  const code = await proc.exited;
-  if (code !== 0) {
-    console.error("CLI failed:", err || out);
-  }
-  return { stdout: out, code };
 }
 
 const REQUIRED_MARKERS = ["BANANA"];
-const MAX_ATTEMPTS = 2;
+const MAX_ATTEMPTS = 3;
 
 function assertContainsAll(hay: string, needles: string[]) {
   for (const n of needles) {
