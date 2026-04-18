@@ -64,13 +64,46 @@ export async function runDiscordSetup(): Promise<boolean> {
         .filter(Boolean);
     }
 
+    // Agent binding — required for guild @mention routing to work.
+    // Without this, the bot won't know which agent to create threads for.
+    const envAgentId = process.env.LETTA_AGENT_ID || "";
+    let agentId: string | null = null;
+
+    if (envAgentId) {
+      const useEnv = await rl.question(
+        `\nBind to agent ${envAgentId}? [Y/n]: `,
+      );
+      if (!useEnv.trim() || useEnv.trim().toLowerCase() === "y") {
+        agentId = envAgentId;
+      }
+    }
+
+    if (!agentId) {
+      const agentInput = await rl.question(
+        "\nAgent ID to bind this bot to (required for @mention routing): ",
+      );
+      agentId = agentInput.trim() || null;
+    }
+
+    if (!agentId) {
+      console.log(
+        "\nWarning: No agent bound. DM pairing will still work, but guild @mentions won't route until you bind an agent.",
+      );
+      console.log(
+        "  You can bind later: letta channels pair --channel discord --agent <id>",
+      );
+      console.log(
+        "  Or set agentId in ~/.letta/channels/discord/accounts.json\n",
+      );
+    }
+
     const now = new Date().toISOString();
     const account: DiscordChannelAccount = {
       channel: "discord",
       accountId: randomUUID(),
       enabled: true,
       token,
-      agentId: null,
+      agentId,
       dmPolicy: policy,
       allowedUsers,
       createdAt: now,
@@ -82,12 +115,8 @@ export async function runDiscordSetup(): Promise<boolean> {
     console.log("Config written to: ~/.letta/channels/discord/accounts.json\n");
     console.log("Next steps:");
     console.log("  1. Start the listener: letta server --channels discord");
-    console.log("  2. Open Channels > Discord in Letta Code");
     console.log(
-      "  3. Choose which Letta agent this Discord bot should represent",
-    );
-    console.log(
-      "  4. DM the bot or @mention it in a Discord server to start chatting\n",
+      "  2. DM the bot or @mention it in a Discord server to start chatting\n",
     );
 
     return true;
