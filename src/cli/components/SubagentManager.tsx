@@ -10,6 +10,7 @@ import {
   GLOBAL_AGENTS_DIR,
   getAllSubagentConfigs,
   getBuiltinSubagentNames,
+  LEGACY_AGENTS_DIR,
   type SubagentConfig,
 } from "../../agent/subagents";
 import { colors } from "./colors";
@@ -137,7 +138,8 @@ export function SubagentManager({ onClose }: SubagentManagerProps) {
       )}
 
       <Text dimColor>
-        To add custom subagents, create .md files in {AGENTS_DIR}/ (project) or{" "}
+        To add custom subagents, create .md files in {AGENTS_DIR}/ (project,
+        preferred), {LEGACY_AGENTS_DIR}/ (project, legacy), or{" "}
         {GLOBAL_AGENTS_DIR}/ (global)
       </Text>
       <Text dimColor>Press ESC or Enter to close</Text>
