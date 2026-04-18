@@ -12,7 +12,7 @@ cd letta-code
 ## Installing from source
 
 Requirements:
-* [Bun](https://bun.com/docs/installation)
+* [Bun](https://bun.com/docs/installation) v1.2.20+ (run `bun upgrade` if needed; older versions have TUI input issues)
 
 ### Run directly from source (dev workflow)
 ```bash
