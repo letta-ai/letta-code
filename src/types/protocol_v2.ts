@@ -141,7 +141,7 @@ export interface ReflectionSettingsSnapshot {
   step_count: number;
 }
 
-export type ChannelId = "telegram" | "slack";
+export type ChannelId = "telegram" | "slack" | "discord";
 
 export interface ChannelSummary {
   channel_id: ChannelId;
@@ -175,6 +175,15 @@ export type ChannelConfigSnapshot =
       allowed_users: string[];
       has_bot_token: boolean;
       has_app_token: boolean;
+    }
+  | {
+      channel_id: "discord";
+      account_id: string;
+      display_name?: string;
+      enabled: boolean;
+      dm_policy: DmPolicy;
+      allowed_users: string[];
+      has_token: boolean;
     };
 
 export type ChannelAccountSnapshot =
@@ -209,6 +218,20 @@ export type ChannelAccountSnapshot =
       has_app_token: boolean;
       agent_id: string | null;
       default_permission_mode: SlackDefaultPermissionMode;
+      created_at: string;
+      updated_at: string;
+    }
+  | {
+      channel_id: "discord";
+      account_id: string;
+      display_name?: string;
+      enabled: boolean;
+      configured: boolean;
+      running: boolean;
+      dm_policy: DmPolicy;
+      allowed_users: string[];
+      has_token: boolean;
+      agent_id: string | null;
       created_at: string;
       updated_at: string;
     };

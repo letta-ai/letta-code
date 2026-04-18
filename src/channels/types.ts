@@ -7,7 +7,7 @@
  * platform chat IDs to agent+conversation pairs.
  */
 
-export const SUPPORTED_CHANNEL_IDS = ["telegram", "slack"] as const;
+export const SUPPORTED_CHANNEL_IDS = ["telegram", "slack", "discord"] as const;
 export type SupportedChannelId = (typeof SUPPORTED_CHANNEL_IDS)[number];
 export type ChannelChatType = "direct" | "channel";
 export type SlackDefaultPermissionMode =
@@ -282,7 +282,18 @@ export interface SlackChannelConfig {
   allowedUsers: string[];
 }
 
-export type ChannelConfig = TelegramChannelConfig | SlackChannelConfig;
+export interface DiscordChannelConfig {
+  channel: "discord";
+  enabled: boolean;
+  token: string;
+  dmPolicy: DmPolicy;
+  allowedUsers: string[];
+}
+
+export type ChannelConfig =
+  | TelegramChannelConfig
+  | SlackChannelConfig
+  | DiscordChannelConfig;
 
 export interface TelegramChannelAccount extends ChannelAccountBase {
   channel: "telegram";
@@ -299,7 +310,17 @@ export interface SlackChannelAccount extends ChannelAccountBase {
   defaultPermissionMode: SlackDefaultPermissionMode;
 }
 
-export type ChannelAccount = TelegramChannelAccount | SlackChannelAccount;
+export interface DiscordChannelAccount extends ChannelAccountBase {
+  channel: "discord";
+  token: string;
+  /** Agent ID used for guild auto-routing (like Slack's agentId). */
+  agentId: string | null;
+}
+
+export type ChannelAccount =
+  | TelegramChannelAccount
+  | SlackChannelAccount
+  | DiscordChannelAccount;
 
 // ── Pairing ───────────────────────────────────────────────────────
 

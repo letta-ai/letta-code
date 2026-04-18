@@ -86,6 +86,7 @@ import type {
   ChannelAccountUnbindCommand,
   ChannelAccountUpdateCommand,
   ChannelGetConfigCommand,
+  ChannelId,
   ChannelPairingBindCommand,
   ChannelPairingsListCommand,
   ChannelRouteRemoveCommand,
@@ -964,10 +965,7 @@ function emitCronsUpdated(
   );
 }
 
-function emitChannelsUpdated(
-  socket: WebSocket,
-  channelId?: "telegram" | "slack",
-): void {
+function emitChannelsUpdated(socket: WebSocket, channelId?: ChannelId): void {
   safeSocketSend(
     socket,
     {
@@ -982,7 +980,7 @@ function emitChannelsUpdated(
 
 function emitChannelAccountsUpdated(
   socket: WebSocket,
-  params: { channelId: "telegram" | "slack"; accountId?: string },
+  params: { channelId: ChannelId; accountId?: string },
 ): void {
   safeSocketSend(
     socket,
@@ -999,7 +997,7 @@ function emitChannelAccountsUpdated(
 
 function emitChannelPairingsUpdated(
   socket: WebSocket,
-  channelId: "telegram" | "slack",
+  channelId: ChannelId,
 ): void {
   safeSocketSend(
     socket,
@@ -1016,7 +1014,7 @@ function emitChannelPairingsUpdated(
 function emitChannelRoutesUpdated(
   socket: WebSocket,
   params: {
-    channelId: "telegram" | "slack";
+    channelId: ChannelId;
     agentId?: string;
     conversationId?: string | null;
   },
@@ -1039,7 +1037,7 @@ function emitChannelRoutesUpdated(
 
 function emitChannelTargetsUpdated(
   socket: WebSocket,
-  channelId: "telegram" | "slack",
+  channelId: ChannelId,
 ): void {
   safeSocketSend(
     socket,
@@ -1575,6 +1573,17 @@ async function handleChannelsProtocolCommand(
         has_token: snapshot.hasToken,
       };
     }
+    if (snapshot.channelId === "discord") {
+      return {
+        channel_id: snapshot.channelId,
+        account_id: snapshot.accountId,
+        display_name: snapshot.displayName,
+        enabled: snapshot.enabled,
+        dm_policy: snapshot.dmPolicy,
+        allowed_users: snapshot.allowedUsers,
+        has_token: snapshot.hasToken,
+      };
+    }
     return {
       channel_id: snapshot.channelId,
       account_id: snapshot.accountId,
@@ -1606,6 +1615,23 @@ async function handleChannelsProtocolCommand(
           agent_id: snapshot.binding.agentId,
           conversation_id: snapshot.binding.conversationId,
         },
+        created_at: snapshot.createdAt,
+        updated_at: snapshot.updatedAt,
+      };
+    }
+
+    if (snapshot.channelId === "discord") {
+      return {
+        channel_id: snapshot.channelId,
+        account_id: snapshot.accountId,
+        display_name: snapshot.displayName,
+        enabled: snapshot.enabled,
+        configured: snapshot.configured,
+        running: snapshot.running,
+        dm_policy: snapshot.dmPolicy,
+        allowed_users: snapshot.allowedUsers,
+        has_token: snapshot.hasToken,
+        agent_id: snapshot.agentId,
         created_at: snapshot.createdAt,
         updated_at: snapshot.updatedAt,
       };

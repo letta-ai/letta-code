@@ -35,6 +35,18 @@ const CHANNEL_PLUGIN_REGISTRATIONS: Record<
       return slackChannelPlugin;
     },
   },
+  discord: {
+    metadata: {
+      id: "discord",
+      displayName: "Discord",
+      runtimePackages: ["discord.js@14.18.0"],
+      runtimeModules: ["discord.js"],
+    },
+    load: async () => {
+      const { discordChannelPlugin } = await import("./discord/plugin");
+      return discordChannelPlugin;
+    },
+  },
 };
 
 export function isSupportedChannelId(

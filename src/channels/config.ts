@@ -10,6 +10,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type {
   ChannelConfig,
+  DiscordChannelConfig,
   DmPolicy,
   SlackChannelConfig,
   TelegramChannelConfig,
@@ -154,11 +155,24 @@ const slackConfigCodec: ChannelConfigCodec<SlackChannelConfig> = {
   },
 };
 
+const discordConfigCodec: ChannelConfigCodec<DiscordChannelConfig> = {
+  parse(parsed) {
+    return {
+      channel: "discord",
+      enabled: parsed.enabled !== false,
+      token: String(parsed.token ?? ""),
+      dmPolicy: (parsed.dm_policy as DmPolicy) ?? "pairing",
+      allowedUsers: (parsed.allowed_users as string[]) ?? [],
+    };
+  },
+};
+
 const CHANNEL_CONFIG_CODECS: Partial<
   Record<string, ChannelConfigCodec<ChannelConfig>>
 > = {
   telegram: telegramConfigCodec as ChannelConfigCodec<ChannelConfig>,
   slack: slackConfigCodec as ChannelConfigCodec<ChannelConfig>,
+  discord: discordConfigCodec as ChannelConfigCodec<ChannelConfig>,
 };
 
 function getChannelConfigCodec(

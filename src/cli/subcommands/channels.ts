@@ -476,9 +476,9 @@ function handleBind(
     console.error("Error: --channel is required.");
     return 1;
   }
-  if (channelId !== "slack") {
+  if (channelId !== "slack" && channelId !== "discord") {
     console.error(
-      `"bind" is only supported for Slack. Telegram binding is route-scoped — use "pair" or "route add" instead.`,
+      `"bind" is only supported for Slack and Discord. Telegram binding is route-scoped — use "pair" or "route add" instead.`,
     );
     return 1;
   }
