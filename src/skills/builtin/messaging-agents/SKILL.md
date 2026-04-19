@@ -129,6 +129,17 @@ If you need to share detailed information, include it in your response text.
 
 This helps the target agent understand the context and format their response appropriately.
 
+## Hidden Conversations
+
+Agent-to-agent conversations (started via `--from-agent`) are created **hidden** on the target agent. They don't appear in the target's default conversation list in the ADE, so automated inter-agent chatter doesn't clutter the UI.
+
+To inspect them:
+- List hidden conversations via the API with `archive_status=archived` (or `all`)
+- Pull the transcript directly with `letta messages transcript --conversation <id>`
+- The `conversation_id` returned when you sent the message is the handle you need
+
+Continuing a hidden conversation with `--conversation <id>` keeps it hidden — only archive status is affected, messaging still works normally.
+
 ## Related Skills
 
 - **finding-agents**: Find agents by name, tags, or fuzzy search

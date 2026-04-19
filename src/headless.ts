@@ -1304,11 +1304,21 @@ export async function handleHeadlessCommand(
       }
     }
   } else if (forceNewConversation) {
-    // --new flag: create a new conversation (for concurrent sessions)
-    const conversation = await client.conversations.create({
+    // --new flag: create a new conversation (for concurrent sessions).
+    // When --from-agent is set (agent-to-agent messaging), mark the new
+    // conversation as hidden so it doesn't clutter the target agent's
+    // default conversation list in the ADE. The `hidden` field is still
+    // missing from @letta-ai/letta-client@1.10.1 types, but the core
+    // endpoint accepts it and the SDK's create impl forwards unknown
+    // body fields unchanged — remove the cast once the SDK is bumped.
+    const createParams: Parameters<typeof client.conversations.create>[0] = {
       agent_id: agent.id,
       isolated_block_labels: isolatedBlockLabels,
-    });
+    };
+    if (fromAgentId) {
+      (createParams as { hidden?: boolean }).hidden = true;
+    }
+    const conversation = await client.conversations.create(createParams);
     conversationId = conversation.id;
   } else if (isSubagent) {
     // Freshly created subagents have no concurrency risk — use the default
