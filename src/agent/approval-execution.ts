@@ -10,8 +10,8 @@ import type { ToolReturnMessage } from "@letta-ai/letta-client/resources/tools";
 import type { ApprovalRequest } from "../cli/helpers/stream";
 import { INTERRUPTED_BY_USER } from "../constants";
 import {
-  captureToolExecutionContext,
   executeTool,
+  prepareCurrentToolExecutionContext,
   type ToolExecutionResult,
   type ToolReturnContent,
 } from "../tools/manager";
@@ -199,6 +199,7 @@ async function executeSingleDecision(
     ) => void;
     toolContextId?: string;
     parentScope?: { agentId: string; conversationId: string };
+    onFileWrite?: (filePath: string, content: string) => void;
   },
 ): Promise<ApprovalResult> {
   // If aborted, record an interrupted result
@@ -266,6 +267,7 @@ async function executeSingleDecision(
                   stream === "stderr",
                 )
             : undefined,
+          onFileWrite: options?.onFileWrite,
         },
       );
 
@@ -375,12 +377,17 @@ export async function executeApprovalBatch(
     toolContextId?: string;
     workingDirectory?: string;
     parentScope?: { agentId: string; conversationId: string };
+    onFileWrite?: (filePath: string, content: string) => void;
   },
 ): Promise<ApprovalResult[]> {
   const toolContextId =
     options?.toolContextId ??
     (options?.workingDirectory
-      ? captureToolExecutionContext(options.workingDirectory).contextId
+      ? (
+          await prepareCurrentToolExecutionContext({
+            workingDirectory: options.workingDirectory,
+          })
+        ).contextId
       : undefined);
 
   // Pre-allocate results array to maintain original order
@@ -485,6 +492,7 @@ export async function executeAutoAllowedTools(
     ) => void;
     toolContextId?: string;
     workingDirectory?: string;
+    onFileWrite?: (filePath: string, content: string) => void;
   },
 ): Promise<AutoAllowedResult[]> {
   const decisions: ApprovalDecision[] = autoAllowed.map((ac) => ({

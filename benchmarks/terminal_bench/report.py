@@ -367,7 +367,7 @@ def main() -> None:
     if gh_token:
         update_github_issue(
             repo=args.repo,
-            title="Terminal-Bench Regression Tracker",
+            title="Terminal-Bench tracker",
             body=body,
         )
     else:

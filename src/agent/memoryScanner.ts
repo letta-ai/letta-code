@@ -66,7 +66,7 @@ export function scanMemoryFilesystem(memoryRoot: string): TreeNode[] {
         return; // Skip if we can't stat
       }
 
-      const relativePath = relative(memoryRoot, fullPath);
+      const relativePath = relative(memoryRoot, fullPath).replace(/\\/g, "/");
       const isLast = index === sorted.length - 1;
 
       nodes.push({

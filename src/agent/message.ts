@@ -11,9 +11,9 @@ import type {
 import type { MessageCreateParams as ConversationMessageCreateParams } from "@letta-ai/letta-client/resources/conversations/messages";
 import {
   type ClientTool,
-  captureToolExecutionContext,
   type PermissionModeState,
   type PreparedToolExecutionContext,
+  prepareCurrentToolExecutionContext,
   waitForToolsetReady,
 } from "../tools/manager";
 import { debugLog, debugWarn, isDebugEnabled } from "../utils/debug";
@@ -140,10 +140,10 @@ export async function sendMessageStream(
         // Wait for any in-progress toolset switch to complete before reading tools
         // This prevents sending messages with stale tools during a switch
         await waitForToolsetReady();
-        return captureToolExecutionContext(
-          opts.workingDirectory,
-          opts.permissionModeState,
-        );
+        return await prepareCurrentToolExecutionContext({
+          workingDirectory: opts.workingDirectory,
+          permissionModeState: opts.permissionModeState,
+        });
       })();
   const { clientTools, contextId } = preparedToolContext;
   const { clientSkills, errors: clientSkillDiscoveryErrors } =

@@ -1,5 +1,7 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
+  __testOverrideLoadRoutes,
+  __testOverrideSaveRoutes,
   addRoute,
   clearAllRoutes,
   getAllRoutes,
@@ -10,8 +12,15 @@ import {
 } from "../../channels/routing";
 
 describe("routing", () => {
+  beforeEach(() => {
+    __testOverrideLoadRoutes(() => null);
+    __testOverrideSaveRoutes(() => {});
+  });
+
   afterEach(() => {
     clearAllRoutes();
+    __testOverrideLoadRoutes(null);
+    __testOverrideSaveRoutes(null);
   });
 
   test("adds and retrieves a route", () => {

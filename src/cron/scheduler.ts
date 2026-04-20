@@ -99,13 +99,6 @@ function refreshTaskCache(state: SchedulerState): void {
 }
 
 function shouldFireTask(task: CronTask, now: Date): boolean {
-  // Check expiry for recurring tasks
-  if (task.recurring && task.expires_at) {
-    if (new Date(task.expires_at).getTime() <= now.getTime()) {
-      return false; // Will be handled by expiry check
-    }
-  }
-
   // One-shot: check if scheduled_for is now or past (jitter applied to scheduled time)
   if (!task.recurring && task.scheduled_for) {
     const scheduledMs =
@@ -174,16 +167,6 @@ function fireCronTask(
   }
 }
 
-function handleExpiredRecurring(task: CronTask, now: Date): void {
-  if (!task.recurring || !task.expires_at) return;
-  if (new Date(task.expires_at).getTime() <= now.getTime()) {
-    updateTask(task.id, (t) => {
-      t.status = "cancelled";
-      t.cancel_reason = "expired";
-    });
-  }
-}
-
 /** Returns true if the task was marked as missed (caller should skip firing). */
 function handleMissedOneShot(task: CronTask, now: Date): boolean {
   if (task.recurring || !task.scheduled_for) return false;
@@ -225,10 +208,6 @@ function tick(
   refreshTaskCache(state);
 
   for (const task of state.cachedTasks) {
-    if (task.status !== "active") continue;
-
-    // Handle expiry
-    handleExpiredRecurring(task, now);
     if (task.status !== "active") continue;
 
     // Handle missed one-shots (skip firing if marked missed)

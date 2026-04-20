@@ -1,5 +1,7 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
+  __testOverrideLoadPairingStore,
+  __testOverrideSavePairingStore,
   clearPairingStores,
   consumePairingCode,
   createPairingCode,
@@ -10,8 +12,15 @@ import {
 } from "../../channels/pairing";
 
 describe("pairing", () => {
+  beforeEach(() => {
+    __testOverrideLoadPairingStore(() => null);
+    __testOverrideSavePairingStore(() => {});
+  });
+
   afterEach(() => {
     clearPairingStores();
+    __testOverrideLoadPairingStore(null);
+    __testOverrideSavePairingStore(null);
   });
 
   test("creates a pairing code for a user", () => {

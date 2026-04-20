@@ -1,6 +1,7 @@
 import type { ChannelPlugin } from "../pluginTypes";
-import type { ChannelConfig, TelegramChannelConfig } from "../types";
+import type { ChannelAccount, TelegramChannelAccount } from "../types";
 import { createTelegramAdapter } from "./adapter";
+import { telegramMessageActions } from "./messageActions";
 import { runTelegramSetup } from "./setup";
 
 export const telegramChannelPlugin: ChannelPlugin = {
@@ -10,9 +11,10 @@ export const telegramChannelPlugin: ChannelPlugin = {
     runtimePackages: ["grammy@1.42.0"],
     runtimeModules: ["grammy"],
   },
-  createAdapter(config: ChannelConfig) {
-    return createTelegramAdapter(config as TelegramChannelConfig);
+  createAdapter(account: ChannelAccount) {
+    return createTelegramAdapter(account as TelegramChannelAccount);
   },
+  messageActions: telegramMessageActions,
   runSetup() {
     return runTelegramSetup();
   },

@@ -31,6 +31,7 @@ import { getAvailableModelHandles } from "../available-models";
 import { getClient } from "../client";
 import { getCurrentAgentId } from "../context";
 import { getDefaultModelForTier, resolveModel } from "../model";
+import recallSubagentPrompt from "../prompts/recall_subagent.md";
 
 import { getAllSubagentConfigs, type SubagentConfig } from ".";
 
@@ -150,18 +151,32 @@ function swapProviderPrefix(
   return `${parentProvider}/${modelPortion}`;
 }
 
+function isEnvFlagEnabled(name: string): boolean {
+  const value = process.env[name]?.trim();
+  if (!value) return false;
+  return value === "1" || value.toLowerCase() === "true";
+}
+
 export async function resolveSubagentModel(options: {
   userModel?: string;
   recommendedModel?: string;
   parentModelHandle?: string | null;
   billingTier?: string | null;
   availableHandles?: Set<string>;
+  subagentType?: string;
 }): Promise<string | null> {
   const { userModel, recommendedModel, parentModelHandle, billingTier } =
     options;
   const isFreeTier = billingTier?.toLowerCase() === "free";
 
   if (userModel) return userModel;
+
+  if (
+    options.subagentType === "reflection" &&
+    isEnvFlagEnabled("AUTO_MEMORY")
+  ) {
+    return "letta/auto-memory";
+  }
 
   let recommendedHandle: string | null = null;
   if (recommendedModel && recommendedModel !== "inherit") {
@@ -922,7 +937,19 @@ ${SYSTEM_REMINDER_CLOSE}
 `;
 }
 
-function buildForkSystemReminder(): string {
+function buildForkSystemReminder(subagentType?: string): string {
+  if (subagentType === "recall") {
+    return `${SYSTEM_REMINDER_OPEN}
+You have been forked from the primary conversational thread to run as an independent subagent.
+You CANNOT ask questions mid-execution - all instructions are provided upfront.
+Your final message will be returned to the caller.
+
+${recallSubagentPrompt}
+${SYSTEM_REMINDER_CLOSE}
+
+`;
+  }
+
   return `${SYSTEM_REMINDER_OPEN}
 You have been forked from the primary conversational thread to run as an independent subagent.
 You CANNOT ask questions mid-execution - all instructions are provided upfront.
@@ -981,6 +1008,7 @@ export async function spawnSubagent(
         recommendedModel: config.recommendedModel,
         parentModelHandle,
         billingTier,
+        subagentType: type,
       });
   const baseURL = getBaseURL();
 
@@ -992,7 +1020,7 @@ export async function spawnSubagent(
       const client = await getClient();
       const parentAgent = await client.agents.retrieve(parentAgentId);
       if (forkedContext) {
-        const systemReminder = buildForkSystemReminder();
+        const systemReminder = buildForkSystemReminder(type);
         finalPrompt = systemReminder + prompt;
       } else {
         const systemReminder = buildDeploySystemReminder(

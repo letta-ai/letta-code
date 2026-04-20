@@ -182,9 +182,25 @@ function buildMaybeLaunchReflectionSubagent(params: {
     }
 
     try {
+      // Fetch the agent's system prompt so the reflection payload includes
+      // the core behavioural instructions (filtered to strip dynamic content).
+      let systemPrompt: string | undefined;
+      try {
+        const client = await getClient();
+        const agent = await client.agents.retrieve(agentId);
+        systemPrompt = agent.system ?? undefined;
+      } catch {
+        // Non-fatal — the reflection payload will just omit the system prompt.
+        debugLog(
+          "memory",
+          "Failed to fetch agent system prompt for reflection payload",
+        );
+      }
+
       const autoPayload = await buildAutoReflectionPayload(
         agentId,
         conversationId,
+        systemPrompt,
       );
       if (!autoPayload) {
         debugLog(
@@ -436,7 +452,16 @@ export async function handleIncomingMessage(
 
     messagesToSend.push(
       ...normalizedMessages.map((m) =>
-        "content" in m && !m.otid ? { ...m, otid: crypto.randomUUID() } : m,
+        "content" in m && !m.otid
+          ? {
+              ...m,
+              otid:
+                "client_message_id" in m &&
+                typeof m.client_message_id === "string"
+                  ? m.client_message_id
+                  : crypto.randomUUID(),
+            }
+          : m,
       ),
     );
 

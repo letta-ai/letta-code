@@ -15,6 +15,12 @@ import {
 } from "../../agent/personality";
 import { formatErrorDetails } from "../../cli/helpers/errorFormatter";
 import {
+  ensureFileIndex,
+  getIndexRoot,
+  searchFileIndex,
+  setIndexRoot,
+} from "../../cli/helpers/fileIndex";
+import {
   clearAllSubagents,
   registerSubagent,
 } from "../../cli/helpers/subagentState";
@@ -81,6 +87,43 @@ const actualChannelsService = await import("../../channels/service");
 
 afterEach(() => {
   __listenClientTestUtils.setChannelsServiceLoaderForTests(null);
+  mock.restore();
+});
+
+describe("listen-client channel command dispatch", () => {
+  test("recognizes account-scoped channel commands as detached channels commands", () => {
+    expect(
+      __listenClientTestUtils.isDetachedChannelsCommand({
+        type: "channel_accounts_list",
+        request_id: "channel-accounts-list-1",
+        channel_id: "telegram",
+      }),
+    ).toBe(true);
+
+    expect(
+      __listenClientTestUtils.isDetachedChannelsCommand({
+        type: "channel_account_create",
+        request_id: "channel-account-create-1",
+        channel_id: "slack",
+        account: {
+          display_name: "DocsBot Slack",
+          bot_token: "xoxb-test",
+          app_token: "xapp-test",
+          mode: "socket",
+          dm_policy: "pairing",
+        },
+      }),
+    ).toBe(true);
+
+    expect(
+      __listenClientTestUtils.isDetachedChannelsCommand({
+        type: "channel_account_start",
+        request_id: "channel-account-start-1",
+        channel_id: "telegram",
+        account_id: "bot-1",
+      }),
+    ).toBe(true);
+  });
 });
 
 function makeControlRequest(requestId: string): ControlRequest {
@@ -410,6 +453,98 @@ describe("listen-client parseServerMessage", () => {
         }),
       ),
     );
+    const channelAccountsList = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "channel_accounts_list",
+          request_id: "channel-accounts-list-1",
+          channel_id: "telegram",
+        }),
+      ),
+    );
+    const channelAccountCreate = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "channel_account_create",
+          request_id: "channel-account-create-1",
+          channel_id: "slack",
+          account: {
+            display_name: "DocsBot Slack",
+            bot_token: "xoxb-test",
+            app_token: "xapp-test",
+            mode: "socket",
+            dm_policy: "pairing",
+            allowed_users: ["user-1"],
+          },
+        }),
+      ),
+    );
+    const channelAccountUpdate = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "channel_account_update",
+          request_id: "channel-account-update-1",
+          channel_id: "telegram",
+          account_id: "bot-1",
+          patch: {
+            display_name: "@docsbot",
+            token: "telegram-token",
+            dm_policy: "open",
+          },
+        }),
+      ),
+    );
+    const channelAccountBind = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "channel_account_bind",
+          request_id: "channel-account-bind-1",
+          channel_id: "slack",
+          account_id: "acct-1",
+          runtime: { agent_id: "agent-1", conversation_id: "default" },
+        }),
+      ),
+    );
+    const channelAccountUnbind = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "channel_account_unbind",
+          request_id: "channel-account-unbind-1",
+          channel_id: "slack",
+          account_id: "acct-1",
+        }),
+      ),
+    );
+    const channelAccountDelete = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "channel_account_delete",
+          request_id: "channel-account-delete-1",
+          channel_id: "slack",
+          account_id: "acct-1",
+        }),
+      ),
+    );
+    const channelAccountStart = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "channel_account_start",
+          request_id: "channel-account-start-1",
+          channel_id: "telegram",
+          account_id: "bot-1",
+        }),
+      ),
+    );
+    const channelAccountStop = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "channel_account_stop",
+          request_id: "channel-account-stop-1",
+          channel_id: "telegram",
+          account_id: "bot-1",
+        }),
+      ),
+    );
     const channelSetConfig = parseServerMessage(
       Buffer.from(
         JSON.stringify({
@@ -508,6 +643,14 @@ describe("listen-client parseServerMessage", () => {
 
     expect(channelsList?.type).toBe("channels_list");
     expect(channelGetConfig?.type).toBe("channel_get_config");
+    expect(channelAccountsList?.type).toBe("channel_accounts_list");
+    expect(channelAccountCreate?.type).toBe("channel_account_create");
+    expect(channelAccountUpdate?.type).toBe("channel_account_update");
+    expect(channelAccountBind?.type).toBe("channel_account_bind");
+    expect(channelAccountUnbind?.type).toBe("channel_account_unbind");
+    expect(channelAccountDelete?.type).toBe("channel_account_delete");
+    expect(channelAccountStart?.type).toBe("channel_account_start");
+    expect(channelAccountStop?.type).toBe("channel_account_stop");
     expect(channelSetConfig?.type).toBe("channel_set_config");
     expect(channelStart?.type).toBe("channel_start");
     expect(channelStop?.type).toBe("channel_stop");
@@ -943,6 +1086,101 @@ describe("listen-client cron command handling", () => {
   });
 });
 
+describe("listen-client memory command handling", () => {
+  test("returns explicit disabled state when memfs is not enabled for the agent", async () => {
+    const tempRoot = await mkdtemp(join(os.tmpdir(), "letta-list-memory-"));
+    const socket = new MockSocket(WebSocket.OPEN);
+    const ensureLocalMemfsCheckoutMock = mock(async () => {});
+
+    try {
+      await __listenClientTestUtils.handleListMemoryCommand(
+        {
+          type: "list_memory",
+          request_id: "list-memory-disabled-1",
+          agent_id: "agent-1",
+          include_references: true,
+        },
+        socket as unknown as WebSocket,
+        {
+          getMemoryFilesystemRoot: () => tempRoot,
+          isMemfsEnabledOnServer: async () => false,
+          ensureLocalMemfsCheckout: ensureLocalMemfsCheckoutMock,
+        },
+      );
+
+      expect(ensureLocalMemfsCheckoutMock).not.toHaveBeenCalled();
+      expect(JSON.parse(socket.sentPayloads[0] as string)).toMatchObject({
+        type: "list_memory_response",
+        request_id: "list-memory-disabled-1",
+        success: true,
+        done: true,
+        total: 0,
+        memfs_enabled: false,
+        memfs_initialized: false,
+        entries: [],
+      });
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("bootstraps only the local memfs checkout when memfs is already enabled", async () => {
+    const tempRoot = await mkdtemp(join(os.tmpdir(), "letta-list-memory-"));
+    const socket = new MockSocket(WebSocket.OPEN);
+    const ensureLocalMemfsCheckoutMock = mock(async () => {
+      await mkdir(join(tempRoot, ".git"), { recursive: true });
+      await mkdir(join(tempRoot, "system"), { recursive: true });
+      await writeFile(
+        join(tempRoot, "system", "persona.md"),
+        "---\ndescription: Persona\n---\nHello from memory\n",
+      );
+    });
+
+    try {
+      await __listenClientTestUtils.handleListMemoryCommand(
+        {
+          type: "list_memory",
+          request_id: "list-memory-enabled-1",
+          agent_id: "agent-1",
+          include_references: true,
+        },
+        socket as unknown as WebSocket,
+        {
+          getMemoryFilesystemRoot: () => tempRoot,
+          isMemfsEnabledOnServer: async () => true,
+          ensureLocalMemfsCheckout: ensureLocalMemfsCheckoutMock,
+        },
+      );
+
+      expect(ensureLocalMemfsCheckoutMock).toHaveBeenCalledTimes(1);
+      const messages = socket.sentPayloads.map((payload) =>
+        JSON.parse(payload as string),
+      );
+      expect(messages).toHaveLength(1);
+      expect(messages[0]).toMatchObject({
+        type: "list_memory_response",
+        request_id: "list-memory-enabled-1",
+        success: true,
+        done: true,
+        total: 1,
+        memfs_enabled: true,
+        memfs_initialized: true,
+      });
+      expect(messages[0].entries).toEqual([
+        expect.objectContaining({
+          relative_path: "system/persona.md",
+          is_system: true,
+          description: "Persona",
+          references: [],
+        }),
+      ]);
+      expect(messages[0].entries[0]?.content).toContain("Hello from memory");
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("listen-client channels command handling", () => {
   test("returns typed channel summaries over WS", async () => {
     const socket = new MockSocket(WebSocket.OPEN);
@@ -1004,6 +1242,78 @@ describe("listen-client channels command handling", () => {
     }
   });
 
+  test("returns typed channel account snapshots over WS", async () => {
+    const socket = new MockSocket(WebSocket.OPEN);
+    const runtime = __listenClientTestUtils.createListenerRuntime();
+
+    __listenClientTestUtils.setChannelsServiceLoaderForTests(async () => ({
+      ...actualChannelsService,
+      listChannelAccountSnapshots: () => [
+        {
+          channelId: "telegram" as const,
+          accountId: "bot-1",
+          displayName: "@docsbot",
+          enabled: true,
+          configured: true,
+          running: true,
+          dmPolicy: "pairing" as const,
+          allowedUsers: [],
+          hasToken: true,
+          binding: {
+            agentId: "agent-1",
+            conversationId: "default",
+          },
+          createdAt: "2026-04-11T00:00:00.000Z",
+          updatedAt: "2026-04-11T01:00:00.000Z",
+        },
+      ],
+    }));
+
+    try {
+      await __listenClientTestUtils.handleChannelsProtocolCommand(
+        {
+          type: "channel_accounts_list",
+          request_id: "channel-accounts-list-1",
+          channel_id: "telegram",
+        },
+        socket as unknown as WebSocket,
+        runtime,
+        {
+          onStatusChange: undefined,
+          connectionId: "conn-test",
+        },
+        async () => {},
+      );
+
+      expect(JSON.parse(socket.sentPayloads[0] as string)).toMatchObject({
+        type: "channel_accounts_list_response",
+        request_id: "channel-accounts-list-1",
+        success: true,
+        channel_id: "telegram",
+        accounts: [
+          {
+            channel_id: "telegram",
+            account_id: "bot-1",
+            display_name: "@docsbot",
+            enabled: true,
+            configured: true,
+            running: true,
+            dm_policy: "pairing",
+            has_token: true,
+            binding: {
+              agent_id: "agent-1",
+              conversation_id: "default",
+            },
+            created_at: "2026-04-11T00:00:00.000Z",
+            updated_at: "2026-04-11T01:00:00.000Z",
+          },
+        ],
+      });
+    } finally {
+      __listenClientTestUtils.stopRuntime(runtime, true);
+    }
+  });
+
   test("bind emits pairing, route, and channel update events", async () => {
     const socket = new MockSocket(WebSocket.OPEN);
     const runtime = __listenClientTestUtils.createListenerRuntime();
@@ -1014,11 +1324,13 @@ describe("listen-client channels command handling", () => {
         chatId: "chat-42",
         route: {
           channelId: "telegram" as const,
+          accountId: "bot-1",
           chatId: "chat-42",
           agentId: "agent-1",
           conversationId: "conv-1",
           enabled: true,
           createdAt: "2026-04-09T00:00:00.000Z",
+          updatedAt: "2026-04-09T00:00:00.000Z",
         },
       }),
     }));
@@ -1092,11 +1404,13 @@ describe("listen-client channels command handling", () => {
         chatId: "C123",
         route: {
           channelId: "slack" as const,
+          accountId: "workspace-1",
           chatId: "C123",
           agentId: "agent-1",
           conversationId: "conv-1",
           enabled: true,
           createdAt: "2026-04-10T00:00:00.000Z",
+          updatedAt: "2026-04-10T00:00:00.000Z",
         },
       }),
       listChannelTargetSnapshots: () => [],
@@ -1156,6 +1470,404 @@ describe("listen-client channels command handling", () => {
       expect(messages[3]).toMatchObject({
         type: "channels_updated",
         channel_id: "slack",
+      });
+    } finally {
+      __listenClientTestUtils.stopRuntime(runtime, true);
+    }
+  });
+
+  test("route update emits account, route, and channel update events", async () => {
+    const socket = new MockSocket(WebSocket.OPEN);
+    const runtime = __listenClientTestUtils.createListenerRuntime();
+
+    __listenClientTestUtils.setChannelsServiceLoaderForTests(async () => ({
+      ...actualChannelsService,
+      updateChannelRouteLive: () => ({
+        channelId: "slack" as const,
+        accountId: "acct-1",
+        chatId: "C123",
+        agentId: "agent-2",
+        conversationId: "conv-2",
+        enabled: true,
+        createdAt: "2026-04-11T03:00:00.000Z",
+        updatedAt: "2026-04-11T03:00:00.000Z",
+      }),
+    }));
+
+    try {
+      await __listenClientTestUtils.handleChannelsProtocolCommand(
+        {
+          type: "channel_route_update",
+          request_id: "channel-route-update-1",
+          channel_id: "slack",
+          account_id: "acct-1",
+          chat_id: "C123",
+          runtime: {
+            agent_id: "agent-2",
+            conversation_id: "conv-2",
+          },
+        },
+        socket as unknown as WebSocket,
+        runtime,
+        {
+          onStatusChange: undefined,
+          connectionId: "conn-test",
+        },
+        async () => {},
+      );
+
+      const messages = socket.sentPayloads.map((payload) =>
+        JSON.parse(payload as string),
+      );
+
+      expect(messages[0]).toMatchObject({
+        type: "channel_route_update_response",
+        request_id: "channel-route-update-1",
+        success: true,
+        channel_id: "slack",
+        chat_id: "C123",
+        route: {
+          channel_id: "slack",
+          account_id: "acct-1",
+          chat_id: "C123",
+          agent_id: "agent-2",
+          conversation_id: "conv-2",
+          enabled: true,
+          created_at: "2026-04-11T03:00:00.000Z",
+        },
+      });
+      expect(messages[1]).toMatchObject({
+        type: "channel_accounts_updated",
+        channel_id: "slack",
+        account_id: "acct-1",
+      });
+      expect(messages[2]).toMatchObject({
+        type: "channel_routes_updated",
+        channel_id: "slack",
+        agent_id: "agent-2",
+        conversation_id: "conv-2",
+      });
+      expect(messages[3]).toMatchObject({
+        type: "channels_updated",
+        channel_id: "slack",
+      });
+    } finally {
+      __listenClientTestUtils.stopRuntime(runtime, true);
+    }
+  });
+
+  test("account bind and unbind emit account update events", async () => {
+    const socket = new MockSocket(WebSocket.OPEN);
+    const runtime = __listenClientTestUtils.createListenerRuntime();
+
+    __listenClientTestUtils.setChannelsServiceLoaderForTests(async () => ({
+      ...actualChannelsService,
+      bindChannelAccountLive: () => ({
+        channelId: "slack" as const,
+        accountId: "acct-1",
+        displayName: "DocsBot Slack",
+        enabled: true,
+        configured: true,
+        running: false,
+        mode: "socket" as const,
+        dmPolicy: "pairing" as const,
+        allowedUsers: [],
+        hasBotToken: true,
+        hasAppToken: true,
+        agentId: "agent-1",
+        defaultPermissionMode: "acceptEdits" as const,
+        createdAt: "2026-04-11T00:00:00.000Z",
+        updatedAt: "2026-04-11T01:00:00.000Z",
+      }),
+      unbindChannelAccountLive: () => ({
+        channelId: "slack" as const,
+        accountId: "acct-1",
+        displayName: "DocsBot Slack",
+        enabled: true,
+        configured: true,
+        running: false,
+        mode: "socket" as const,
+        dmPolicy: "pairing" as const,
+        allowedUsers: [],
+        hasBotToken: true,
+        hasAppToken: true,
+        agentId: null,
+        defaultPermissionMode: "acceptEdits" as const,
+        createdAt: "2026-04-11T00:00:00.000Z",
+        updatedAt: "2026-04-11T02:00:00.000Z",
+      }),
+    }));
+
+    try {
+      await __listenClientTestUtils.handleChannelsProtocolCommand(
+        {
+          type: "channel_account_bind",
+          request_id: "channel-account-bind-1",
+          channel_id: "slack",
+          account_id: "acct-1",
+          runtime: {
+            agent_id: "agent-1",
+            conversation_id: "conv-1",
+          },
+        },
+        socket as unknown as WebSocket,
+        runtime,
+        {
+          onStatusChange: undefined,
+          connectionId: "conn-test",
+        },
+        async () => {},
+      );
+
+      let messages = socket.sentPayloads.map((payload) =>
+        JSON.parse(payload as string),
+      );
+      expect(messages[0]).toMatchObject({
+        type: "channel_account_bind_response",
+        request_id: "channel-account-bind-1",
+        success: true,
+        channel_id: "slack",
+        account: {
+          account_id: "acct-1",
+          agent_id: "agent-1",
+          default_permission_mode: "acceptEdits",
+        },
+      });
+      expect(messages[1]).toMatchObject({
+        type: "channel_accounts_updated",
+        channel_id: "slack",
+        account_id: "acct-1",
+      });
+      expect(messages[2]).toMatchObject({
+        type: "channels_updated",
+        channel_id: "slack",
+      });
+
+      socket.sentPayloads.length = 0;
+
+      await __listenClientTestUtils.handleChannelsProtocolCommand(
+        {
+          type: "channel_account_unbind",
+          request_id: "channel-account-unbind-1",
+          channel_id: "slack",
+          account_id: "acct-1",
+        },
+        socket as unknown as WebSocket,
+        runtime,
+        {
+          onStatusChange: undefined,
+          connectionId: "conn-test",
+        },
+        async () => {},
+      );
+
+      messages = socket.sentPayloads.map((payload) =>
+        JSON.parse(payload as string),
+      );
+      expect(messages[0]).toMatchObject({
+        type: "channel_account_unbind_response",
+        request_id: "channel-account-unbind-1",
+        success: true,
+        channel_id: "slack",
+        account: {
+          account_id: "acct-1",
+          agent_id: null,
+          default_permission_mode: "acceptEdits",
+        },
+      });
+      expect(messages[1]).toMatchObject({
+        type: "channel_accounts_updated",
+        channel_id: "slack",
+        account_id: "acct-1",
+      });
+      expect(messages[2]).toMatchObject({
+        type: "channels_updated",
+        channel_id: "slack",
+      });
+    } finally {
+      __listenClientTestUtils.stopRuntime(runtime, true);
+    }
+  });
+
+  test("account create, start, and delete emit typed responses and updates", async () => {
+    const socket = new MockSocket(WebSocket.OPEN);
+    const runtime = __listenClientTestUtils.createListenerRuntime();
+
+    __listenClientTestUtils.setChannelsServiceLoaderForTests(async () => ({
+      ...actualChannelsService,
+      createChannelAccountLive: () => ({
+        channelId: "telegram" as const,
+        accountId: "bot-1",
+        displayName: "@docsbot",
+        enabled: false,
+        configured: true,
+        running: false,
+        dmPolicy: "pairing" as const,
+        allowedUsers: [],
+        hasToken: true,
+        binding: {
+          agentId: null,
+          conversationId: null,
+        },
+        createdAt: "2026-04-11T00:00:00.000Z",
+        updatedAt: "2026-04-11T00:00:00.000Z",
+      }),
+      startChannelAccountLive: async () => ({
+        channelId: "telegram" as const,
+        accountId: "bot-1",
+        displayName: "@docsbot",
+        enabled: true,
+        configured: true,
+        running: true,
+        dmPolicy: "pairing" as const,
+        allowedUsers: [],
+        hasToken: true,
+        binding: {
+          agentId: null,
+          conversationId: null,
+        },
+        createdAt: "2026-04-11T00:00:00.000Z",
+        updatedAt: "2026-04-11T00:05:00.000Z",
+      }),
+      removeChannelAccountLive: async () => true,
+    }));
+
+    try {
+      await __listenClientTestUtils.handleChannelsProtocolCommand(
+        {
+          type: "channel_account_create",
+          request_id: "channel-account-create-1",
+          channel_id: "telegram",
+          account: {
+            display_name: "@docsbot",
+            token: "telegram-token",
+            dm_policy: "pairing",
+          },
+        },
+        socket as unknown as WebSocket,
+        runtime,
+        {
+          onStatusChange: undefined,
+          connectionId: "conn-test",
+        },
+        async () => {},
+      );
+
+      let messages = socket.sentPayloads.map((payload) =>
+        JSON.parse(payload as string),
+      );
+      expect(messages[0]).toMatchObject({
+        type: "channel_account_create_response",
+        request_id: "channel-account-create-1",
+        success: true,
+        channel_id: "telegram",
+        account: {
+          account_id: "bot-1",
+          display_name: "@docsbot",
+          has_token: true,
+        },
+      });
+      expect(messages[1]).toMatchObject({
+        type: "channel_accounts_updated",
+        channel_id: "telegram",
+        account_id: "bot-1",
+      });
+      expect(messages[2]).toMatchObject({
+        type: "channels_updated",
+        channel_id: "telegram",
+      });
+
+      socket.sentPayloads.length = 0;
+
+      await __listenClientTestUtils.handleChannelsProtocolCommand(
+        {
+          type: "channel_account_start",
+          request_id: "channel-account-start-1",
+          channel_id: "telegram",
+          account_id: "bot-1",
+        },
+        socket as unknown as WebSocket,
+        runtime,
+        {
+          onStatusChange: undefined,
+          connectionId: "conn-test",
+        },
+        async () => {},
+      );
+
+      messages = socket.sentPayloads.map((payload) =>
+        JSON.parse(payload as string),
+      );
+      expect(messages[0]).toMatchObject({
+        type: "channel_account_start_response",
+        request_id: "channel-account-start-1",
+        success: true,
+        channel_id: "telegram",
+        account: {
+          account_id: "bot-1",
+          enabled: true,
+          running: true,
+        },
+      });
+      expect(messages[1]).toMatchObject({
+        type: "channel_accounts_updated",
+        channel_id: "telegram",
+        account_id: "bot-1",
+      });
+      expect(messages[2]).toMatchObject({
+        type: "channels_updated",
+        channel_id: "telegram",
+      });
+
+      socket.sentPayloads.length = 0;
+
+      await __listenClientTestUtils.handleChannelsProtocolCommand(
+        {
+          type: "channel_account_delete",
+          request_id: "channel-account-delete-1",
+          channel_id: "telegram",
+          account_id: "bot-1",
+        },
+        socket as unknown as WebSocket,
+        runtime,
+        {
+          onStatusChange: undefined,
+          connectionId: "conn-test",
+        },
+        async () => {},
+      );
+
+      messages = socket.sentPayloads.map((payload) =>
+        JSON.parse(payload as string),
+      );
+      expect(messages[0]).toMatchObject({
+        type: "channel_account_delete_response",
+        request_id: "channel-account-delete-1",
+        success: true,
+        channel_id: "telegram",
+        account_id: "bot-1",
+        deleted: true,
+      });
+      expect(messages[1]).toMatchObject({
+        type: "channel_accounts_updated",
+        channel_id: "telegram",
+        account_id: "bot-1",
+      });
+      expect(messages[2]).toMatchObject({
+        type: "channel_pairings_updated",
+        channel_id: "telegram",
+      });
+      expect(messages[3]).toMatchObject({
+        type: "channel_routes_updated",
+        channel_id: "telegram",
+      });
+      expect(messages[4]).toMatchObject({
+        type: "channel_targets_updated",
+        channel_id: "telegram",
+      });
+      expect(messages[5]).toMatchObject({
+        type: "channels_updated",
+        channel_id: "telegram",
       });
     } finally {
       __listenClientTestUtils.stopRuntime(runtime, true);
@@ -1342,6 +2054,38 @@ describe("listen-client permission mode scope keys", () => {
         "agent:__unknown__::conversation:default",
       ),
     ).toBe(false);
+  });
+
+  test("slack conversation created event seeds the new conversation permission mode", () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const socket = new MockSocket(WebSocket.OPEN);
+
+    __listenClientTestUtils.handleChannelRegistryEvent(
+      {
+        type: "slack_conversation_created",
+        channelId: "slack",
+        accountId: "acct-1",
+        agentId: "agent-123",
+        conversationId: "conv-slack-1",
+        defaultPermissionMode: "bypassPermissions",
+      },
+      socket as unknown as WebSocket,
+      listener,
+    );
+
+    const status = __listenClientTestUtils.buildDeviceStatus(listener, {
+      agent_id: "agent-123",
+      conversation_id: "conv-slack-1",
+    });
+
+    expect(status.current_permission_mode).toBe("bypassPermissions");
+    expect(
+      listener.permissionModeByConversation.get("conversation:conv-slack-1"),
+    ).toEqual({
+      mode: "bypassPermissions",
+      planFilePath: null,
+      modeBeforePlan: null,
+    });
   });
 });
 
@@ -2353,6 +3097,75 @@ describe("listen-client cwd change handling", () => {
       );
     } finally {
       await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("proactively warms the file index after cwd change so @ search is instant", async () => {
+    const runtime = __listenClientTestUtils.createRuntime();
+    const socket = new MockSocket(WebSocket.OPEN);
+    const projectRoot = await mkdtemp(
+      join(os.tmpdir(), "letta-listen-cwd-idx-"),
+    );
+    const projectDir = join(projectRoot, "my-project");
+    await mkdir(join(projectDir, "src"), { recursive: true });
+    await writeFile(join(projectDir, "README.md"), "# Hello");
+    await writeFile(join(projectDir, "src/index.ts"), "export {}");
+
+    // Create a separate unrelated temp dir as the initial index root so the
+    // project dir is definitely *outside* it, which triggers setIndexRoot().
+    // (If the new CWD is a child of the current root, handleCwdChange skips
+    // re-rooting — that's correct behavior but defeats the test.)
+    const unrelatedRoot = await mkdtemp(
+      join(os.tmpdir(), "letta-listen-old-root-"),
+    );
+    const originalRoot = getIndexRoot();
+
+    try {
+      const normalizedProjectDir = await realpath(projectDir);
+      setIndexRoot(unrelatedRoot);
+
+      __listenClientTestUtils.setConversationWorkingDirectory(
+        runtime,
+        "agent-1",
+        "conv-1",
+        unrelatedRoot,
+      );
+      runtime.activeAgentId = "agent-1";
+      runtime.activeConversationId = "conv-1";
+      runtime.activeWorkingDirectory = unrelatedRoot;
+
+      await __listenClientTestUtils.handleCwdChange(
+        {
+          agentId: "agent-1",
+          conversationId: "conv-1",
+          cwd: normalizedProjectDir,
+        },
+        socket as unknown as WebSocket,
+        runtime,
+      );
+
+      // The index root should now point at the new cwd.
+      expect(getIndexRoot()).toBe(normalizedProjectDir);
+
+      // handleCwdChange fires `void ensureFileIndex()` — await it so the
+      // in-flight build completes before we query.
+      await ensureFileIndex();
+
+      // Verify the index is warm and contains files from the new cwd.
+      const results = searchFileIndex({
+        searchDir: "",
+        pattern: "",
+        deep: true,
+        maxResults: 50,
+      });
+
+      const paths = results.map((r) => r.path);
+      expect(paths).toContain("README.md");
+      expect(paths).toContain(join("src", "index.ts"));
+    } finally {
+      setIndexRoot(originalRoot);
+      await rm(projectRoot, { recursive: true, force: true });
+      await rm(unrelatedRoot, { recursive: true, force: true });
     }
   });
 });

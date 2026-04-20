@@ -1,23 +1,56 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
+  __testOverrideLoadPairingStore,
+  __testOverrideSavePairingStore,
   clearPairingStores,
   createPairingCode,
   getPendingPairings,
   isUserApproved,
 } from "../../channels/pairing";
 import {
+  __testOverrideLoadPendingControlRequestStore,
+  __testOverrideSavePendingControlRequestStore,
+  clearPendingControlRequestStore,
+} from "../../channels/pendingControlRequests";
+import {
+  buildSlackConversationSummary,
   ChannelRegistry,
   completePairing,
   getChannelRegistry,
 } from "../../channels/registry";
 import {
+  __testOverrideLoadRoutes,
   __testOverrideSaveRoutes,
   addRoute,
   clearAllRoutes,
   getRoute,
 } from "../../channels/routing";
+import type {
+  ChannelAdapter,
+  ChannelControlRequestEvent,
+  InboundChannelMessage,
+} from "../../channels/types";
+
+beforeEach(() => {
+  __testOverrideLoadPendingControlRequestStore(null);
+  __testOverrideSavePendingControlRequestStore(null);
+  clearPendingControlRequestStore();
+});
+
+afterEach(() => {
+  __testOverrideLoadPendingControlRequestStore(null);
+  __testOverrideSavePendingControlRequestStore(null);
+  clearPendingControlRequestStore();
+});
 
 describe("ChannelRegistry", () => {
+  beforeEach(() => {
+    __testOverrideLoadRoutes(() => null);
+    __testOverrideSaveRoutes(() => {});
+    __testOverrideLoadPairingStore(() => null);
+    __testOverrideSavePairingStore(() => {});
+  });
+
   afterEach(async () => {
     const registry = getChannelRegistry();
     if (registry) {
@@ -25,7 +58,10 @@ describe("ChannelRegistry", () => {
     }
     clearAllRoutes();
     clearPairingStores();
+    __testOverrideLoadRoutes(null);
     __testOverrideSaveRoutes(null);
+    __testOverrideLoadPairingStore(null);
+    __testOverrideSavePairingStore(null);
   });
 
   test("pause() stops delivery but keeps singleton alive", () => {
@@ -56,7 +92,69 @@ describe("ChannelRegistry", () => {
   });
 });
 
+describe("buildSlackConversationSummary", () => {
+  test("labels direct messages with the sender name", () => {
+    expect(
+      buildSlackConversationSummary({
+        chatId: "D123",
+        chatType: "direct",
+        senderId: "U123",
+        senderName: "Charles",
+        text: "hey there",
+      }),
+    ).toBe("[Slack] DM with Charles");
+  });
+
+  test("labels channel threads with a clipped text preview", () => {
+    expect(
+      buildSlackConversationSummary({
+        chatId: "C123",
+        chatType: "channel",
+        senderId: "U123",
+        senderName: "Charles",
+        text: "  what messages do you see in this thread right now?  ",
+      }),
+    ).toBe(
+      "[Slack] Thread: what messages do you see in this thread right now?",
+    );
+  });
+
+  test("includes the channel label when available", () => {
+    expect(
+      buildSlackConversationSummary({
+        chatId: "C123",
+        chatLabel: "#random",
+        chatType: "channel",
+        senderId: "U123",
+        senderName: "Charles",
+        text: "Need help with the deploy preview environment after lunch",
+      }),
+    ).toBe(
+      "[Slack] Thread in #random: Need help with the deploy preview environment after lunch",
+    );
+  });
+
+  test("falls back when a thread has no text preview", () => {
+    expect(
+      buildSlackConversationSummary({
+        chatId: "C123",
+        chatType: "channel",
+        senderId: "U123",
+        senderName: "Charles",
+        text: "   ",
+      }),
+    ).toBe("[Slack] Thread C123");
+  });
+});
+
 describe("completePairing", () => {
+  beforeEach(() => {
+    __testOverrideLoadRoutes(() => null);
+    __testOverrideSaveRoutes(() => {});
+    __testOverrideLoadPairingStore(() => null);
+    __testOverrideSavePairingStore(() => {});
+  });
+
   afterEach(async () => {
     const registry = getChannelRegistry();
     if (registry) {
@@ -64,7 +162,10 @@ describe("completePairing", () => {
     }
     clearAllRoutes();
     clearPairingStores();
+    __testOverrideLoadRoutes(null);
     __testOverrideSaveRoutes(null);
+    __testOverrideLoadPairingStore(null);
+    __testOverrideSavePairingStore(null);
   });
 
   test("successful pairing creates route", () => {
@@ -153,5 +254,396 @@ describe("completePairing", () => {
     expect(after).not.toBeNull();
     expect(after?.agentId).toBe("agent-old");
     expect(after?.conversationId).toBe("conv-old");
+  });
+});
+
+describe("pending channel control requests", () => {
+  afterEach(async () => {
+    const registry = getChannelRegistry();
+    if (registry) {
+      await registry.stopAll();
+    }
+  });
+
+  function createAdapter(
+    replies: Array<{ chatId: string; text: string; replyToMessageId?: string }>,
+  ): ChannelAdapter {
+    return {
+      id: "slack:acct-slack",
+      channelId: "slack",
+      accountId: "acct-slack",
+      name: "Slack",
+      start: async () => {},
+      stop: async () => {},
+      isRunning: () => true,
+      sendMessage: async () => ({ messageId: "msg-1" }),
+      sendDirectReply: async (chatId, text, options) => {
+        replies.push({
+          chatId,
+          text,
+          replyToMessageId: options?.replyToMessageId,
+        });
+      },
+      handleControlRequestEvent: async () => {},
+      onMessage: undefined,
+    };
+  }
+
+  function createInboundMessage(
+    text: string,
+    overrides: Partial<InboundChannelMessage> = {},
+  ): InboundChannelMessage {
+    return {
+      channel: "slack",
+      accountId: "acct-slack",
+      chatId: "C123",
+      senderId: "U123",
+      senderName: "Charles",
+      text,
+      timestamp: Date.now(),
+      messageId: "1712800000.000200",
+      threadId: "1712790000.000050",
+      chatType: "channel",
+      ...overrides,
+    };
+  }
+
+  function createPendingControlRequestEvent(
+    overrides: Partial<ChannelControlRequestEvent> = {},
+  ): ChannelControlRequestEvent {
+    return {
+      requestId: "req-ask-1",
+      kind: "ask_user_question",
+      source: {
+        channel: "slack",
+        accountId: "acct-slack",
+        chatId: "C123",
+        chatType: "channel",
+        messageId: "1712800000.000100",
+        threadId: "1712790000.000050",
+        agentId: "agent-1",
+        conversationId: "conv-1",
+      },
+      toolName: "AskUserQuestion",
+      input: {
+        questions: [
+          {
+            question: "Which approach should we use?",
+            header: "Approach",
+            options: [
+              {
+                label: "Fast path",
+                description: "Ship the smallest safe patch",
+              },
+              {
+                label: "Deep refactor",
+                description: "Restructure the code more thoroughly",
+              },
+            ],
+            multiSelect: false,
+          },
+        ],
+      },
+      ...overrides,
+    };
+  }
+
+  test("channel replies resolve pending AskUserQuestion prompts instead of normal ingress", async () => {
+    const replies: Array<{
+      chatId: string;
+      text: string;
+      replyToMessageId?: string;
+    }> = [];
+    const registry = new ChannelRegistry();
+    const adapter = createAdapter(replies);
+    registry.registerAdapter(adapter);
+
+    const deliveries: unknown[] = [];
+    registry.setMessageHandler((delivery) => {
+      deliveries.push(delivery);
+    });
+
+    const approvalResponses: Array<{
+      runtime: { agent_id?: string | null; conversation_id?: string | null };
+      response: unknown;
+    }> = [];
+    registry.setApprovalResponseHandler(async (params) => {
+      approvalResponses.push(params);
+      return true;
+    });
+
+    await registry.registerPendingControlRequest(
+      createPendingControlRequestEvent(),
+    );
+
+    await adapter.onMessage?.(createInboundMessage("2"));
+
+    expect(deliveries).toHaveLength(0);
+    expect(replies).toHaveLength(0);
+    expect(approvalResponses).toHaveLength(1);
+    expect(approvalResponses[0]).toEqual({
+      runtime: {
+        agent_id: "agent-1",
+        conversation_id: "conv-1",
+      },
+      response: {
+        request_id: "req-ask-1",
+        decision: {
+          behavior: "allow",
+          updated_input: {
+            questions: [
+              {
+                question: "Which approach should we use?",
+                header: "Approach",
+                options: [
+                  {
+                    label: "Fast path",
+                    description: "Ship the smallest safe patch",
+                  },
+                  {
+                    label: "Deep refactor",
+                    description: "Restructure the code more thoroughly",
+                  },
+                ],
+                multiSelect: false,
+              },
+            ],
+            answers: {
+              "Which approach should we use?": "Deep refactor",
+            },
+          },
+        },
+      },
+    });
+  });
+
+  test("invalid multi-question channel replies reprompt instead of approving", async () => {
+    const replies: Array<{
+      chatId: string;
+      text: string;
+      replyToMessageId?: string;
+    }> = [];
+    const registry = new ChannelRegistry();
+    const adapter = createAdapter(replies);
+    registry.registerAdapter(adapter);
+
+    let approvalCalls = 0;
+    registry.setApprovalResponseHandler(async () => {
+      approvalCalls += 1;
+      return true;
+    });
+
+    await registry.registerPendingControlRequest({
+      requestId: "req-ask-2",
+      kind: "ask_user_question",
+      source: {
+        channel: "slack",
+        accountId: "acct-slack",
+        chatId: "C123",
+        chatType: "channel",
+        messageId: "1712800000.000100",
+        threadId: "1712790000.000050",
+        agentId: "agent-1",
+        conversationId: "conv-1",
+      },
+      toolName: "AskUserQuestion",
+      input: {
+        questions: [
+          {
+            question: "Which approach should we use?",
+            header: "Approach",
+            options: [
+              { label: "Fast path", description: "Ship quickly" },
+              { label: "Deep refactor", description: "Refactor more" },
+            ],
+            multiSelect: false,
+          },
+          {
+            question: "Which environment should we test in?",
+            header: "Env",
+            options: [
+              { label: "Staging", description: "Safer rollout path" },
+              { label: "Production", description: "Use the live environment" },
+            ],
+            multiSelect: false,
+          },
+        ],
+      },
+    });
+
+    await adapter.onMessage?.(createInboundMessage("deep refactor please"));
+
+    expect(approvalCalls).toBe(0);
+    expect(replies).toHaveLength(1);
+    expect(replies[0]).toEqual({
+      chatId: "C123",
+      text: "Please answer with numbered lines so I can map each reply to the right question.\nExample:\n1: your answer\n2: your answer",
+      replyToMessageId: "1712790000.000050",
+    });
+  });
+
+  test("bootstrapped persisted control requests intercept replies before the listener finishes reconnecting", async () => {
+    const replies: Array<{
+      chatId: string;
+      text: string;
+      replyToMessageId?: string;
+    }> = [];
+    __testOverrideLoadPendingControlRequestStore(() => ({
+      requests: [createPendingControlRequestEvent()],
+    }));
+
+    const registry = new ChannelRegistry();
+    const adapter = createAdapter(replies);
+    registry.registerAdapter(adapter);
+
+    await adapter.onMessage?.(createInboundMessage("approve"));
+
+    expect(replies).toEqual([
+      {
+        chatId: "C123",
+        text: "I’m reconnecting to Letta Code right now, so I couldn’t use that reply yet. Please send it again in a moment.",
+        replyToMessageId: "1712790000.000050",
+      },
+    ]);
+  });
+
+  test("clearing a bootstrapped control request also removes it from the persisted store", () => {
+    const saveSnapshots: Array<{ requests: ChannelControlRequestEvent[] }> = [];
+    __testOverrideLoadPendingControlRequestStore(() => ({
+      requests: [createPendingControlRequestEvent()],
+    }));
+    __testOverrideSavePendingControlRequestStore((store) => {
+      saveSnapshots.push({
+        requests: store.requests,
+      });
+    });
+
+    const registry = new ChannelRegistry();
+    registry.clearPendingControlRequest("req-ask-1");
+
+    expect(saveSnapshots.at(-1)).toEqual({ requests: [] });
+  });
+
+  test("a newer pending request on the same channel scope replaces the older one", async () => {
+    const replies: Array<{
+      chatId: string;
+      text: string;
+      replyToMessageId?: string;
+    }> = [];
+    const registry = new ChannelRegistry();
+    const adapter = createAdapter(replies);
+    registry.registerAdapter(adapter);
+
+    const requestIds: string[] = [];
+    registry.setApprovalResponseHandler(async ({ response }) => {
+      const requestId =
+        typeof response === "object" &&
+        response &&
+        "request_id" in response &&
+        typeof response.request_id === "string"
+          ? response.request_id
+          : null;
+      if (requestId) {
+        requestIds.push(requestId);
+      }
+      return true;
+    });
+
+    const sharedSource = {
+      channel: "slack" as const,
+      accountId: "acct-slack",
+      chatId: "C123",
+      chatType: "channel" as const,
+      messageId: "1712800000.000100",
+      threadId: "1712790000.000050",
+      agentId: "agent-1",
+      conversationId: "conv-1",
+    };
+
+    await registry.registerPendingControlRequest({
+      requestId: "req-old",
+      kind: "enter_plan_mode",
+      source: sharedSource,
+      toolName: "EnterPlanMode",
+      input: {},
+    });
+
+    await registry.registerPendingControlRequest({
+      requestId: "req-new",
+      kind: "exit_plan_mode",
+      source: sharedSource,
+      toolName: "ExitPlanMode",
+      input: {},
+    });
+
+    await adapter.onMessage?.(createInboundMessage("approve"));
+
+    expect(replies).toHaveLength(0);
+    expect(requestIds).toEqual(["req-new"]);
+  });
+
+  test("control prompt delivery failures do not block pending approval replies", async () => {
+    const replies: Array<{
+      chatId: string;
+      text: string;
+      replyToMessageId?: string;
+    }> = [];
+    const registry = new ChannelRegistry();
+    const adapter: ChannelAdapter = {
+      ...createAdapter(replies),
+      handleControlRequestEvent: async () => {
+        throw new Error("slack write failed");
+      },
+    };
+    registry.registerAdapter(adapter);
+
+    const approvalResponses: Array<{
+      runtime: { agent_id?: string | null; conversation_id?: string | null };
+      response: unknown;
+    }> = [];
+    registry.setApprovalResponseHandler(async (params) => {
+      approvalResponses.push(params);
+      return true;
+    });
+
+    const originalConsoleError = console.error;
+    console.error = () => {};
+    try {
+      await registry.registerPendingControlRequest({
+        requestId: "req-best-effort",
+        kind: "enter_plan_mode",
+        source: {
+          channel: "slack",
+          accountId: "acct-slack",
+          chatId: "C123",
+          chatType: "channel",
+          messageId: "1712800000.000100",
+          threadId: "1712790000.000050",
+          agentId: "agent-1",
+          conversationId: "conv-1",
+        },
+        toolName: "EnterPlanMode",
+        input: {},
+      });
+    } finally {
+      console.error = originalConsoleError;
+    }
+
+    await adapter.onMessage?.(createInboundMessage("approve"));
+
+    expect(replies).toHaveLength(0);
+    expect(approvalResponses).toHaveLength(1);
+    expect(approvalResponses[0]).toEqual({
+      runtime: {
+        agent_id: "agent-1",
+        conversation_id: "conv-1",
+      },
+      response: {
+        request_id: "req-best-effort",
+        decision: {
+          behavior: "allow",
+        },
+      },
+    });
   });
 });

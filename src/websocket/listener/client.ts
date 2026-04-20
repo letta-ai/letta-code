@@ -17,11 +17,16 @@ import {
   updateAgentLLMConfig,
   updateConversationLLMConfig,
 } from "../../agent/modify";
-import { getChannelRegistry } from "../../channels/registry";
+import {
+  type ChannelRegistryEvent,
+  getChannelRegistry,
+} from "../../channels/registry";
+import type { ChannelTurnSource } from "../../channels/types";
 import { resetContextHistory } from "../../cli/helpers/contextTracker";
 import {
   ensureFileIndex,
   getIndexRoot,
+  refreshFileIndex,
   searchFileIndex,
   setIndexRoot,
 } from "../../cli/helpers/fileIndex";
@@ -64,7 +69,7 @@ import { trackBoundaryError } from "../../telemetry/errorReporting";
 import { loadTools } from "../../tools/manager";
 import {
   ensureCorrectMemoryTool,
-  prepareToolExecutionContextForResolvedTarget,
+  prepareToolExecutionContextForScope,
   type ToolsetName,
 } from "../../tools/toolset";
 import { formatToolsetName } from "../../tools/toolset-labels";
@@ -72,11 +77,20 @@ import type {
   AbortMessageCommand,
   ApprovalResponseBody,
   ChangeDeviceStateCommand,
+  ChannelAccountBindCommand,
+  ChannelAccountCreateCommand,
+  ChannelAccountDeleteCommand,
+  ChannelAccountStartCommand,
+  ChannelAccountStopCommand,
+  ChannelAccountsListCommand,
+  ChannelAccountUnbindCommand,
+  ChannelAccountUpdateCommand,
   ChannelGetConfigCommand,
   ChannelPairingBindCommand,
   ChannelPairingsListCommand,
   ChannelRouteRemoveCommand,
   ChannelRoutesListCommand,
+  ChannelRouteUpdateCommand,
   ChannelSetConfigCommand,
   ChannelStartCommand,
   ChannelStopCommand,
@@ -90,6 +104,7 @@ import type {
   CronGetCommand,
   CronListCommand,
   GetReflectionSettingsCommand,
+  ListMemoryCommand,
   ListModelsResponseMessage,
   ListModelsResponseModelEntry,
   ReflectionSettingsScope,
@@ -141,11 +156,20 @@ import {
   persistPermissionModeMapForRuntime,
 } from "./permissionMode";
 import {
+  isChannelAccountBindCommand,
+  isChannelAccountCreateCommand,
+  isChannelAccountDeleteCommand,
+  isChannelAccountStartCommand,
+  isChannelAccountStopCommand,
+  isChannelAccountsListCommand,
+  isChannelAccountUnbindCommand,
+  isChannelAccountUpdateCommand,
   isChannelGetConfigCommand,
   isChannelPairingBindCommand,
   isChannelPairingsListCommand,
   isChannelRouteRemoveCommand,
   isChannelRoutesListCommand,
+  isChannelRouteUpdateCommand,
   isChannelSetConfigCommand,
   isChannelStartCommand,
   isChannelStopCommand,
@@ -162,7 +186,9 @@ import {
   isEditFileCommand,
   isEnableMemfsCommand,
   isExecuteCommandCommand,
+  isFileOpsCommand,
   isGetReflectionSettingsCommand,
+  isGetTreeCommand,
   isListInDirectoryCommand,
   isListMemoryCommand,
   isListModelsCommand,
@@ -353,6 +379,108 @@ async function replaySyncStateForRuntime(
   emitStateSync(socket, listenerRuntime, scope);
 }
 
+async function recoverPendingChannelControlRequests(
+  listener: ListenerRuntime,
+  opts?: {
+    recoverApprovalStateForSync?: (
+      runtime: ConversationRuntime,
+      scope: { agent_id: string; conversation_id: string },
+    ) => Promise<void>;
+  },
+): Promise<void> {
+  const registry = getChannelRegistry();
+  if (!registry) {
+    return;
+  }
+
+  const pendingEntries = registry.getPendingControlRequests();
+  if (pendingEntries.length === 0) {
+    return;
+  }
+
+  const recoverFn =
+    opts?.recoverApprovalStateForSync ?? recoverApprovalStateForSync;
+  const entriesByScope = new Map<
+    string,
+    {
+      scope: { agent_id: string; conversation_id: string };
+      entries: typeof pendingEntries;
+    }
+  >();
+
+  for (const entry of pendingEntries) {
+    const scope = {
+      agent_id: entry.event.source.agentId,
+      conversation_id: entry.event.source.conversationId,
+    };
+    const scopeKey = `${scope.agent_id}:${scope.conversation_id}`;
+    const existing = entriesByScope.get(scopeKey);
+    if (existing) {
+      existing.entries.push(entry);
+      continue;
+    }
+    entriesByScope.set(scopeKey, {
+      scope,
+      entries: [entry],
+    });
+  }
+
+  for (const { scope, entries } of entriesByScope.values()) {
+    const runtime = getOrCreateScopedRuntime(
+      listener,
+      scope.agent_id,
+      scope.conversation_id,
+    );
+    const livePendingRequestIds = new Set(
+      runtime.pendingApprovalResolvers.keys(),
+    );
+    const shouldRecoverFromBackend = entries.some(
+      (entry) => !livePendingRequestIds.has(entry.event.requestId),
+    );
+
+    if (shouldRecoverFromBackend) {
+      try {
+        await recoverFn(runtime, scope);
+      } catch (error) {
+        trackListenerError(
+          "listener_channel_control_request_recovery_failed",
+          error,
+          "listener_channel_control_request_recovery",
+        );
+        if (isDebugEnabled()) {
+          console.warn(
+            "[Listen] Channel control request recovery failed:",
+            error,
+          );
+        }
+        continue;
+      }
+    }
+
+    const recoveredPendingRequestIds =
+      getRecoveredApprovalStateForScope(listener, scope)?.pendingRequestIds ??
+      new Set<string>();
+
+    for (const entry of entries) {
+      const requestId = entry.event.requestId;
+      const stillPending =
+        livePendingRequestIds.has(requestId) ||
+        recoveredPendingRequestIds.has(requestId);
+
+      if (!stillPending) {
+        registry.clearPendingControlRequest(requestId);
+        continue;
+      }
+
+      if (entry.deliveredThisProcess) {
+        continue;
+      }
+
+      await registry.redeliverPendingControlRequest(requestId);
+    }
+  }
+}
+
 function getParsedRuntimeScope(
   parsed: unknown,
 ): { agent_id: string; conversation_id: string } | null {
@@ -540,16 +668,21 @@ function formatToolsetStatusMessageForModelUpdate(params: {
   );
 }
 
-function formatEffortSuffix(updateArgs?: Record<string, unknown>): string {
+function formatEffortSuffix(
+  modelLabel: string,
+  updateArgs?: Record<string, unknown>,
+): string {
   if (!updateArgs) return "";
   const effort = updateArgs.reasoning_effort;
   if (typeof effort !== "string" || effort.length === 0) return "";
+  const xhighLabel = modelLabel.includes("Opus 4.7") ? "Extra-High" : "Max";
   const labels: Record<string, string> = {
     none: "No Reasoning",
     low: "Low",
     medium: "Medium",
     high: "High",
-    xhigh: "Max",
+    xhigh: xhighLabel,
+    max: "Max",
   };
   return ` (${labels[effort] ?? effort})`;
 }
@@ -570,7 +703,7 @@ function buildModelUpdateStatusMessage(params: {
     toolsetPreference,
     updateArgs,
   } = params;
-  let message = `Model updated to ${modelLabel}${formatEffortSuffix(updateArgs)}.`;
+  let message = `Model updated to ${modelLabel}${formatEffortSuffix(modelLabel, updateArgs)}.`;
   if (toolsetError) {
     message += ` Warning: toolset switch failed (${toolsetError}).`;
     return { message, level: "warning" };
@@ -650,11 +783,11 @@ async function applyModelUpdateForRuntime(params: {
 
   try {
     await ensureCorrectMemoryTool(agentId, model.handle);
-    const preparedToolContext =
-      await prepareToolExecutionContextForResolvedTarget({
-        modelIdentifier: model.handle,
-        toolsetPreference,
-      });
+    const preparedToolContext = await prepareToolExecutionContextForScope({
+      agentId,
+      conversationId,
+      overrideModel: model.handle,
+    });
     nextToolset = preparedToolContext.toolset;
     nextLoadedTools = preparedToolContext.preparedToolContext.loadedToolNames;
     scopedRuntime.currentToolset = preparedToolContext.toolset;
@@ -767,6 +900,14 @@ type ReflectionSettingsCommand =
 
 type ChannelsCommand =
   | ChannelsListCommand
+  | ChannelAccountsListCommand
+  | ChannelAccountCreateCommand
+  | ChannelAccountUpdateCommand
+  | ChannelAccountBindCommand
+  | ChannelAccountUnbindCommand
+  | ChannelAccountDeleteCommand
+  | ChannelAccountStartCommand
+  | ChannelAccountStopCommand
   | ChannelGetConfigCommand
   | ChannelSetConfigCommand
   | ChannelStartCommand
@@ -776,7 +917,33 @@ type ChannelsCommand =
   | ChannelRoutesListCommand
   | ChannelTargetsListCommand
   | ChannelTargetBindCommand
+  | ChannelRouteUpdateCommand
   | ChannelRouteRemoveCommand;
+
+function isDetachedChannelsCommand(parsed: unknown): parsed is ChannelsCommand {
+  return (
+    isChannelsListCommand(parsed) ||
+    isChannelAccountsListCommand(parsed) ||
+    isChannelAccountCreateCommand(parsed) ||
+    isChannelAccountUpdateCommand(parsed) ||
+    isChannelAccountBindCommand(parsed) ||
+    isChannelAccountUnbindCommand(parsed) ||
+    isChannelAccountDeleteCommand(parsed) ||
+    isChannelAccountStartCommand(parsed) ||
+    isChannelAccountStopCommand(parsed) ||
+    isChannelGetConfigCommand(parsed) ||
+    isChannelSetConfigCommand(parsed) ||
+    isChannelStartCommand(parsed) ||
+    isChannelStopCommand(parsed) ||
+    isChannelPairingsListCommand(parsed) ||
+    isChannelPairingBindCommand(parsed) ||
+    isChannelRoutesListCommand(parsed) ||
+    isChannelTargetsListCommand(parsed) ||
+    isChannelTargetBindCommand(parsed) ||
+    isChannelRouteUpdateCommand(parsed) ||
+    isChannelRouteRemoveCommand(parsed)
+  );
+}
 
 function emitCronsUpdated(
   socket: WebSocket,
@@ -807,6 +974,23 @@ function emitChannelsUpdated(
       type: "channels_updated",
       timestamp: Date.now(),
       ...(channelId ? { channel_id: channelId } : {}),
+    },
+    "listener_channels_send_failed",
+    "listener_channels_command",
+  );
+}
+
+function emitChannelAccountsUpdated(
+  socket: WebSocket,
+  params: { channelId: "telegram" | "slack"; accountId?: string },
+): void {
+  safeSocketSend(
+    socket,
+    {
+      type: "channel_accounts_updated",
+      timestamp: Date.now(),
+      channel_id: params.channelId,
+      ...(params.accountId ? { account_id: params.accountId } : {}),
     },
     "listener_channels_send_failed",
     "listener_channels_command",
@@ -867,6 +1051,269 @@ function emitChannelTargetsUpdated(
     "listener_channels_send_failed",
     "listener_channels_command",
   );
+}
+
+type ListMemoryCommandTestOverrides = {
+  ensureLocalMemfsCheckout?: (agentId: string) => Promise<void>;
+  getMemoryFilesystemRoot?: (agentId: string) => string;
+  isMemfsEnabledOnServer?: (agentId: string) => Promise<boolean>;
+};
+
+async function handleListMemoryCommand(
+  parsed: ListMemoryCommand,
+  socket: WebSocket,
+  overrides: ListMemoryCommandTestOverrides = {},
+): Promise<boolean> {
+  try {
+    const {
+      ensureLocalMemfsCheckout: actualEnsureLocalMemfsCheckout,
+      getMemoryFilesystemRoot: actualGetMemoryFilesystemRoot,
+      isMemfsEnabledOnServer: actualIsMemfsEnabledOnServer,
+    } = await import("../../agent/memoryFilesystem");
+    const ensureLocalMemfsCheckout =
+      overrides.ensureLocalMemfsCheckout ?? actualEnsureLocalMemfsCheckout;
+    const getMemoryFilesystemRoot =
+      overrides.getMemoryFilesystemRoot ?? actualGetMemoryFilesystemRoot;
+    const isMemfsEnabledOnServer =
+      overrides.isMemfsEnabledOnServer ?? actualIsMemfsEnabledOnServer;
+    const { scanMemoryFilesystem, getFileNodes, readFileContent } =
+      await import("../../agent/memoryScanner");
+    const { parseFrontmatter } = await import("../../utils/frontmatter");
+
+    const { existsSync } = await import("node:fs");
+    const { join, posix } = await import("node:path");
+
+    const memoryRoot = getMemoryFilesystemRoot(parsed.agent_id);
+    let memfsInitialized = existsSync(join(memoryRoot, ".git"));
+    const memfsEnabled = memfsInitialized
+      ? true
+      : await isMemfsEnabledOnServer(parsed.agent_id);
+
+    if (!memfsEnabled) {
+      safeSocketSend(
+        socket,
+        {
+          type: "list_memory_response",
+          request_id: parsed.request_id,
+          entries: [],
+          done: true,
+          total: 0,
+          success: true,
+          memfs_enabled: false,
+          memfs_initialized: false,
+        },
+        "listener_list_memory_send_failed",
+        "listener_list_memory",
+      );
+      return true;
+    }
+
+    if (!memfsInitialized) {
+      await ensureLocalMemfsCheckout(parsed.agent_id);
+      memfsInitialized = existsSync(join(memoryRoot, ".git"));
+    }
+
+    if (!memfsInitialized) {
+      throw new Error(
+        "MemFS is enabled, but the local memory checkout could not be initialized.",
+      );
+    }
+
+    const treeNodes = scanMemoryFilesystem(memoryRoot);
+    const fileNodes = getFileNodes(treeNodes).filter((n) =>
+      n.name.endsWith(".md"),
+    );
+    const includeReferences = parsed.include_references === true;
+
+    const allPaths = new Set(fileNodes.map((node) => node.relativePath));
+
+    const normalizeMemoryReference = (
+      rawReference: string,
+      sourcePath: string,
+    ): string | null => {
+      let target = rawReference.trim();
+      if (!target) {
+        return null;
+      }
+
+      if (
+        target.startsWith("http://") ||
+        target.startsWith("https://") ||
+        target.startsWith("mailto:")
+      ) {
+        return null;
+      }
+
+      target = target.replace(/^<|>$/g, "");
+      target = target.split("#")[0] ?? "";
+      target = target.split("?")[0] ?? "";
+      target = target.trim().replace(/\\/g, "/");
+
+      if (!target || target.startsWith("#")) {
+        return null;
+      }
+
+      if (target.includes("|")) {
+        target = target.split("|")[0] ?? "";
+      }
+
+      if (!target) {
+        return null;
+      }
+
+      const sourceDir = posix.dirname(sourcePath.replace(/\\/g, "/"));
+      const candidate =
+        target.startsWith("./") || target.startsWith("../")
+          ? posix.normalize(posix.join(sourceDir, target))
+          : posix.normalize(target.startsWith("/") ? target.slice(1) : target);
+
+      if (
+        !candidate ||
+        candidate.startsWith("../") ||
+        candidate === "." ||
+        candidate === ".."
+      ) {
+        return null;
+      }
+
+      const withExtension = candidate.endsWith(".md")
+        ? candidate
+        : `${candidate}.md`;
+
+      const candidates = new Set<string>([withExtension]);
+
+      const isExplicitRelative =
+        target.startsWith("./") || target.startsWith("../");
+      if (
+        !isExplicitRelative &&
+        !target.startsWith("/") &&
+        sourceDir &&
+        sourceDir !== "."
+      ) {
+        candidates.add(posix.normalize(posix.join(sourceDir, withExtension)));
+      }
+
+      if (!withExtension.startsWith("system/")) {
+        candidates.add(posix.normalize(`system/${withExtension}`));
+      }
+
+      for (const resolved of candidates) {
+        if (allPaths.has(resolved)) {
+          return resolved;
+        }
+      }
+
+      return null;
+    };
+
+    const extractMemoryReferences = (
+      body: string,
+      sourcePath: string,
+    ): string[] => {
+      if (!body.includes("[[")) {
+        return [];
+      }
+
+      const refs = new Set<string>();
+
+      for (const wikiMatch of body.matchAll(WIKI_LINK_REGEX)) {
+        const rawTarget = wikiMatch[1];
+        if (!rawTarget) continue;
+        const normalized = normalizeMemoryReference(rawTarget, sourcePath);
+        if (normalized && normalized !== sourcePath) {
+          refs.add(normalized);
+        }
+      }
+
+      return [...refs];
+    };
+
+    const CHUNK_SIZE = 5;
+    const total = fileNodes.length;
+
+    for (let i = 0; i < total; i += CHUNK_SIZE) {
+      const chunk = fileNodes.slice(i, i + CHUNK_SIZE);
+      const entries = chunk.map((node) => {
+        const raw = readFileContent(node.fullPath);
+        const { frontmatter, body } = parseFrontmatter(raw);
+        const desc = frontmatter.description;
+        return {
+          relative_path: node.relativePath,
+          is_system:
+            node.relativePath.startsWith("system/") ||
+            node.relativePath.startsWith("system\\"),
+          description: typeof desc === "string" ? desc : null,
+          content: body,
+          size: body.length,
+          ...(includeReferences
+            ? {
+                references: extractMemoryReferences(body, node.relativePath),
+              }
+            : {}),
+        };
+      });
+
+      const done = i + CHUNK_SIZE >= total;
+      const sent = safeSocketSend(
+        socket,
+        {
+          type: "list_memory_response",
+          request_id: parsed.request_id,
+          entries,
+          done,
+          total,
+          success: true,
+          memfs_enabled: true,
+          memfs_initialized: true,
+        },
+        "listener_list_memory_send_failed",
+        "listener_list_memory",
+      );
+      if (!sent) {
+        return true;
+      }
+    }
+
+    if (total === 0) {
+      safeSocketSend(
+        socket,
+        {
+          type: "list_memory_response",
+          request_id: parsed.request_id,
+          entries: [],
+          done: true,
+          total: 0,
+          success: true,
+          memfs_enabled: true,
+          memfs_initialized: true,
+        },
+        "listener_list_memory_send_failed",
+        "listener_list_memory",
+      );
+    }
+  } catch (err) {
+    trackListenerError(
+      "listener_list_memory_failed",
+      err,
+      "listener_memory_browser",
+    );
+    safeSocketSend(
+      socket,
+      {
+        type: "list_memory_response",
+        request_id: parsed.request_id,
+        entries: [],
+        done: true,
+        total: 0,
+        success: false,
+        error: err instanceof Error ? err.message : "Failed to list memory",
+      },
+      "listener_list_memory_send_failed",
+      "listener_list_memory",
+    );
+  }
+
+  return true;
 }
 
 async function handleCronCommand(
@@ -1075,16 +1522,26 @@ async function handleChannelsProtocolCommand(
 ): Promise<boolean> {
   const {
     bindChannelPairing,
+    bindChannelAccountLive,
     bindChannelTarget,
+    createChannelAccountLive,
+    refreshChannelAccountDisplayNameLive,
     getChannelConfigSnapshot,
+    listChannelAccountSnapshots,
     listChannelRouteSnapshots,
     listChannelSummaries,
     listPendingPairingSnapshots,
     listChannelTargetSnapshots,
+    removeChannelAccountLive,
     removeChannelRouteLive,
     setChannelConfigLive,
+    startChannelAccountLive,
     startChannelLive,
+    stopChannelAccountLive,
     stopChannelLive,
+    unbindChannelAccountLive,
+    updateChannelAccountLive,
+    updateChannelRouteLive,
   } = await loadChannelsService();
 
   const mapChannelSummary = (
@@ -1110,6 +1567,8 @@ async function handleChannelsProtocolCommand(
     if (snapshot.channelId === "telegram") {
       return {
         channel_id: snapshot.channelId,
+        account_id: snapshot.accountId,
+        display_name: snapshot.displayName,
         enabled: snapshot.enabled,
         dm_policy: snapshot.dmPolicy,
         allowed_users: snapshot.allowedUsers,
@@ -1118,6 +1577,8 @@ async function handleChannelsProtocolCommand(
     }
     return {
       channel_id: snapshot.channelId,
+      account_id: snapshot.accountId,
+      display_name: snapshot.displayName,
       enabled: snapshot.enabled,
       mode: snapshot.mode,
       dm_policy: snapshot.dmPolicy,
@@ -1127,21 +1588,68 @@ async function handleChannelsProtocolCommand(
     };
   };
 
+  const mapChannelAccount = (
+    snapshot: ReturnType<typeof listChannelAccountSnapshots>[number],
+  ) => {
+    if (snapshot.channelId === "telegram") {
+      return {
+        channel_id: snapshot.channelId,
+        account_id: snapshot.accountId,
+        display_name: snapshot.displayName,
+        enabled: snapshot.enabled,
+        configured: snapshot.configured,
+        running: snapshot.running,
+        dm_policy: snapshot.dmPolicy,
+        allowed_users: snapshot.allowedUsers,
+        has_token: snapshot.hasToken,
+        binding: {
+          agent_id: snapshot.binding.agentId,
+          conversation_id: snapshot.binding.conversationId,
+        },
+        created_at: snapshot.createdAt,
+        updated_at: snapshot.updatedAt,
+      };
+    }
+
+    return {
+      channel_id: snapshot.channelId,
+      account_id: snapshot.accountId,
+      display_name: snapshot.displayName,
+      enabled: snapshot.enabled,
+      configured: snapshot.configured,
+      running: snapshot.running,
+      mode: snapshot.mode,
+      dm_policy: snapshot.dmPolicy,
+      allowed_users: snapshot.allowedUsers,
+      has_bot_token: snapshot.hasBotToken,
+      has_app_token: snapshot.hasAppToken,
+      agent_id: snapshot.agentId,
+      default_permission_mode: snapshot.defaultPermissionMode,
+      created_at: snapshot.createdAt,
+      updated_at: snapshot.updatedAt,
+    };
+  };
+
   const mapRouteSnapshot = (
     route: ReturnType<typeof listChannelRouteSnapshots>[number],
   ) => ({
     channel_id: route.channelId,
+    account_id: route.accountId,
     chat_id: route.chatId,
+    chat_type: route.chatType,
+    thread_id: route.threadId ?? null,
     agent_id: route.agentId,
     conversation_id: route.conversationId,
     enabled: route.enabled,
     created_at: route.createdAt,
+    updated_at: route.updatedAt,
   });
 
   const mapTargetSnapshot = (
     target: ReturnType<typeof listChannelTargetSnapshots>[number],
   ) => ({
     channel_id: target.channelId,
+    account_id: target.accountId,
     target_id: target.targetId,
     target_type: target.targetType,
     chat_id: target.chatId,
@@ -1181,6 +1689,481 @@ async function handleChannelsProtocolCommand(
     return true;
   }
 
+  if (parsed.type === "channel_accounts_list") {
+    try {
+      const accounts = listChannelAccountSnapshots(parsed.channel_id);
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_accounts_list_response",
+          request_id: parsed.request_id,
+          success: true,
+          channel_id: parsed.channel_id,
+          accounts: accounts.map(mapChannelAccount),
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+
+      const accountsNeedingRefresh = accounts.filter((account) =>
+        parsed.channel_id === "slack" ? true : !account.displayName,
+      );
+
+      if (accountsNeedingRefresh.length > 0) {
+        runDetachedListenerTask("channel_accounts_refresh", async () => {
+          const refreshResults = await Promise.allSettled(
+            accountsNeedingRefresh.map(async (account) => {
+              const refreshed =
+                parsed.channel_id === "slack"
+                  ? await refreshChannelAccountDisplayNameLive(
+                      parsed.channel_id,
+                      account.accountId,
+                      { force: true },
+                    )
+                  : await refreshChannelAccountDisplayNameLive(
+                      parsed.channel_id,
+                      account.accountId,
+                    );
+
+              return refreshed.displayName !== account.displayName;
+            }),
+          );
+
+          if (
+            refreshResults.some(
+              (result) => result.status === "fulfilled" && result.value,
+            )
+          ) {
+            emitChannelAccountsUpdated(socket, {
+              channelId: parsed.channel_id,
+            });
+            emitChannelsUpdated(socket, parsed.channel_id);
+          }
+        });
+      }
+    } catch (err) {
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_accounts_list_response",
+          request_id: parsed.request_id,
+          success: false,
+          channel_id: parsed.channel_id,
+          accounts: [],
+          error:
+            err instanceof Error
+              ? err.message
+              : "Failed to list channel accounts",
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+    }
+    return true;
+  }
+
+  if (parsed.type === "channel_account_create") {
+    try {
+      const created = createChannelAccountLive(
+        parsed.channel_id,
+        {
+          displayName:
+            "display_name" in parsed.account
+              ? parsed.account.display_name
+              : undefined,
+          enabled:
+            "enabled" in parsed.account ? parsed.account.enabled : undefined,
+          token: "token" in parsed.account ? parsed.account.token : undefined,
+          botToken:
+            "bot_token" in parsed.account
+              ? parsed.account.bot_token
+              : undefined,
+          appToken:
+            "app_token" in parsed.account
+              ? parsed.account.app_token
+              : undefined,
+          mode: "mode" in parsed.account ? parsed.account.mode : undefined,
+          agentId:
+            "agent_id" in parsed.account ? parsed.account.agent_id : undefined,
+          defaultPermissionMode:
+            "default_permission_mode" in parsed.account
+              ? parsed.account.default_permission_mode
+              : undefined,
+          dmPolicy: parsed.account.dm_policy,
+          allowedUsers: parsed.account.allowed_users,
+        },
+        {
+          accountId:
+            "account_id" in parsed.account
+              ? parsed.account.account_id
+              : undefined,
+        },
+      );
+      const account =
+        "display_name" in parsed.account
+          ? created
+          : await refreshChannelAccountDisplayNameLive(
+              parsed.channel_id,
+              created.accountId,
+              { force: true },
+            );
+
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_account_create_response",
+          request_id: parsed.request_id,
+          success: true,
+          channel_id: parsed.channel_id,
+          account: mapChannelAccount(account),
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+      emitChannelAccountsUpdated(socket, {
+        channelId: parsed.channel_id,
+        accountId: account.accountId,
+      });
+      emitChannelsUpdated(socket, parsed.channel_id);
+    } catch (err) {
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_account_create_response",
+          request_id: parsed.request_id,
+          success: false,
+          channel_id: parsed.channel_id,
+          account: null,
+          error:
+            err instanceof Error
+              ? err.message
+              : "Failed to create channel account",
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+    }
+    return true;
+  }
+
+  if (parsed.type === "channel_account_update") {
+    try {
+      const updated = updateChannelAccountLive(
+        parsed.channel_id,
+        parsed.account_id,
+        {
+          displayName:
+            "display_name" in parsed.patch
+              ? parsed.patch.display_name
+              : undefined,
+          enabled: "enabled" in parsed.patch ? parsed.patch.enabled : undefined,
+          token: "token" in parsed.patch ? parsed.patch.token : undefined,
+          botToken:
+            "bot_token" in parsed.patch ? parsed.patch.bot_token : undefined,
+          appToken:
+            "app_token" in parsed.patch ? parsed.patch.app_token : undefined,
+          mode: "mode" in parsed.patch ? parsed.patch.mode : undefined,
+          agentId:
+            "agent_id" in parsed.patch ? parsed.patch.agent_id : undefined,
+          defaultPermissionMode:
+            "default_permission_mode" in parsed.patch
+              ? parsed.patch.default_permission_mode
+              : undefined,
+          dmPolicy: parsed.patch.dm_policy,
+          allowedUsers: parsed.patch.allowed_users,
+        },
+      );
+      const shouldRefreshDisplayName =
+        !("display_name" in parsed.patch) &&
+        (parsed.channel_id === "telegram"
+          ? "token" in parsed.patch
+          : "bot_token" in parsed.patch || "app_token" in parsed.patch);
+      const account = shouldRefreshDisplayName
+        ? await refreshChannelAccountDisplayNameLive(
+            parsed.channel_id,
+            parsed.account_id,
+            { force: true },
+          )
+        : updated;
+
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_account_update_response",
+          request_id: parsed.request_id,
+          success: true,
+          channel_id: parsed.channel_id,
+          account: mapChannelAccount(account),
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+      emitChannelAccountsUpdated(socket, {
+        channelId: parsed.channel_id,
+        accountId: parsed.account_id,
+      });
+      emitChannelsUpdated(socket, parsed.channel_id);
+    } catch (err) {
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_account_update_response",
+          request_id: parsed.request_id,
+          success: false,
+          channel_id: parsed.channel_id,
+          account: null,
+          error:
+            err instanceof Error
+              ? err.message
+              : "Failed to update channel account",
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+    }
+    return true;
+  }
+
+  if (parsed.type === "channel_account_bind") {
+    try {
+      const account = bindChannelAccountLive(
+        parsed.channel_id,
+        parsed.account_id,
+        parsed.runtime.agent_id,
+        parsed.runtime.conversation_id,
+      );
+
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_account_bind_response",
+          request_id: parsed.request_id,
+          success: true,
+          channel_id: parsed.channel_id,
+          account: mapChannelAccount(account),
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+      emitChannelAccountsUpdated(socket, {
+        channelId: parsed.channel_id,
+        accountId: parsed.account_id,
+      });
+      emitChannelsUpdated(socket, parsed.channel_id);
+    } catch (err) {
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_account_bind_response",
+          request_id: parsed.request_id,
+          success: false,
+          channel_id: parsed.channel_id,
+          account: null,
+          error:
+            err instanceof Error
+              ? err.message
+              : "Failed to bind channel account",
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+    }
+    return true;
+  }
+
+  if (parsed.type === "channel_account_unbind") {
+    try {
+      const account = unbindChannelAccountLive(
+        parsed.channel_id,
+        parsed.account_id,
+      );
+
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_account_unbind_response",
+          request_id: parsed.request_id,
+          success: true,
+          channel_id: parsed.channel_id,
+          account: mapChannelAccount(account),
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+      emitChannelAccountsUpdated(socket, {
+        channelId: parsed.channel_id,
+        accountId: parsed.account_id,
+      });
+      emitChannelsUpdated(socket, parsed.channel_id);
+    } catch (err) {
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_account_unbind_response",
+          request_id: parsed.request_id,
+          success: false,
+          channel_id: parsed.channel_id,
+          account: null,
+          error:
+            err instanceof Error
+              ? err.message
+              : "Failed to unbind channel account",
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+    }
+    return true;
+  }
+
+  if (parsed.type === "channel_account_delete") {
+    try {
+      const deleted = await removeChannelAccountLive(
+        parsed.channel_id,
+        parsed.account_id,
+      );
+
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_account_delete_response",
+          request_id: parsed.request_id,
+          success: true,
+          channel_id: parsed.channel_id,
+          account_id: parsed.account_id,
+          deleted,
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+      if (deleted) {
+        emitChannelAccountsUpdated(socket, {
+          channelId: parsed.channel_id,
+          accountId: parsed.account_id,
+        });
+        emitChannelPairingsUpdated(socket, parsed.channel_id);
+        emitChannelRoutesUpdated(socket, {
+          channelId: parsed.channel_id,
+        });
+        emitChannelTargetsUpdated(socket, parsed.channel_id);
+        emitChannelsUpdated(socket, parsed.channel_id);
+      }
+    } catch (err) {
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_account_delete_response",
+          request_id: parsed.request_id,
+          success: false,
+          channel_id: parsed.channel_id,
+          account_id: parsed.account_id,
+          deleted: false,
+          error:
+            err instanceof Error
+              ? err.message
+              : "Failed to delete channel account",
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+    }
+    return true;
+  }
+
+  if (parsed.type === "channel_account_start") {
+    try {
+      const account = await startChannelAccountLive(
+        parsed.channel_id,
+        parsed.account_id,
+      );
+      await wireChannelIngress(
+        runtime,
+        socket,
+        opts as StartListenerOptions,
+        processQueuedTurn,
+      );
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_account_start_response",
+          request_id: parsed.request_id,
+          success: true,
+          channel_id: parsed.channel_id,
+          account: mapChannelAccount(account),
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+      emitChannelAccountsUpdated(socket, {
+        channelId: parsed.channel_id,
+        accountId: parsed.account_id,
+      });
+      emitChannelsUpdated(socket, parsed.channel_id);
+    } catch (err) {
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_account_start_response",
+          request_id: parsed.request_id,
+          success: false,
+          channel_id: parsed.channel_id,
+          account: null,
+          error:
+            err instanceof Error
+              ? err.message
+              : "Failed to start channel account",
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+    }
+    return true;
+  }
+
+  if (parsed.type === "channel_account_stop") {
+    try {
+      const account = await stopChannelAccountLive(
+        parsed.channel_id,
+        parsed.account_id,
+      );
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_account_stop_response",
+          request_id: parsed.request_id,
+          success: true,
+          channel_id: parsed.channel_id,
+          account: mapChannelAccount(account),
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+      emitChannelAccountsUpdated(socket, {
+        channelId: parsed.channel_id,
+        accountId: parsed.account_id,
+      });
+      emitChannelsUpdated(socket, parsed.channel_id);
+    } catch (err) {
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_account_stop_response",
+          request_id: parsed.request_id,
+          success: false,
+          channel_id: parsed.channel_id,
+          account: null,
+          error:
+            err instanceof Error
+              ? err.message
+              : "Failed to stop channel account",
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+    }
+    return true;
+  }
+
   if (parsed.type === "channel_get_config") {
     try {
       safeSocketSend(
@@ -1189,7 +2172,9 @@ async function handleChannelsProtocolCommand(
           type: "channel_get_config_response",
           request_id: parsed.request_id,
           success: true,
-          config: mapChannelConfig(getChannelConfigSnapshot(parsed.channel_id)),
+          config: mapChannelConfig(
+            getChannelConfigSnapshot(parsed.channel_id, parsed.account_id),
+          ),
         },
         "listener_channels_send_failed",
         "listener_channels_command",
@@ -1216,19 +2201,23 @@ async function handleChannelsProtocolCommand(
 
   if (parsed.type === "channel_set_config") {
     try {
-      const snapshot = await setChannelConfigLive(parsed.channel_id, {
-        token: "token" in parsed.config ? parsed.config.token : undefined,
-        botToken:
-          "bot_token" in parsed.config ? parsed.config.bot_token : undefined,
-        appToken:
-          "app_token" in parsed.config ? parsed.config.app_token : undefined,
-        mode: "mode" in parsed.config ? parsed.config.mode : undefined,
-        dmPolicy: parsed.config.dm_policy,
-        allowedUsers: parsed.config.allowed_users,
-      });
+      const snapshot = await setChannelConfigLive(
+        parsed.channel_id,
+        {
+          token: "token" in parsed.config ? parsed.config.token : undefined,
+          botToken:
+            "bot_token" in parsed.config ? parsed.config.bot_token : undefined,
+          appToken:
+            "app_token" in parsed.config ? parsed.config.app_token : undefined,
+          mode: "mode" in parsed.config ? parsed.config.mode : undefined,
+          dmPolicy: parsed.config.dm_policy,
+          allowedUsers: parsed.config.allowed_users,
+        },
+        parsed.account_id,
+      );
 
       if (snapshot.enabled) {
-        wireChannelIngress(
+        await wireChannelIngress(
           runtime,
           socket,
           opts as StartListenerOptions,
@@ -1247,6 +2236,10 @@ async function handleChannelsProtocolCommand(
         "listener_channels_send_failed",
         "listener_channels_command",
       );
+      emitChannelAccountsUpdated(socket, {
+        channelId: parsed.channel_id,
+        accountId: snapshot.accountId,
+      });
       emitChannelsUpdated(socket, parsed.channel_id);
     } catch (err) {
       safeSocketSend(
@@ -1270,8 +2263,11 @@ async function handleChannelsProtocolCommand(
 
   if (parsed.type === "channel_start") {
     try {
-      const summary = await startChannelLive(parsed.channel_id);
-      wireChannelIngress(
+      const summary = await startChannelLive(
+        parsed.channel_id,
+        parsed.account_id,
+      );
+      await wireChannelIngress(
         runtime,
         socket,
         opts as StartListenerOptions,
@@ -1308,7 +2304,10 @@ async function handleChannelsProtocolCommand(
 
   if (parsed.type === "channel_stop") {
     try {
-      const summary = await stopChannelLive(parsed.channel_id);
+      const summary = await stopChannelLive(
+        parsed.channel_id,
+        parsed.account_id,
+      );
       safeSocketSend(
         socket,
         {
@@ -1347,16 +2346,18 @@ async function handleChannelsProtocolCommand(
           request_id: parsed.request_id,
           success: true,
           channel_id: parsed.channel_id,
-          pending: listPendingPairingSnapshots(parsed.channel_id).map(
-            (pending) => ({
-              code: pending.code,
-              sender_id: pending.senderId,
-              sender_name: pending.senderName,
-              chat_id: pending.chatId,
-              created_at: pending.createdAt,
-              expires_at: pending.expiresAt,
-            }),
-          ),
+          pending: listPendingPairingSnapshots(
+            parsed.channel_id,
+            parsed.account_id,
+          ).map((pending) => ({
+            account_id: pending.accountId,
+            code: pending.code,
+            sender_id: pending.senderId,
+            sender_name: pending.senderName,
+            chat_id: pending.chatId,
+            created_at: pending.createdAt,
+            expires_at: pending.expiresAt,
+          })),
         },
         "listener_channels_send_failed",
         "listener_channels_command",
@@ -1389,6 +2390,7 @@ async function handleChannelsProtocolCommand(
         parsed.code,
         parsed.runtime.agent_id,
         parsed.runtime.conversation_id,
+        parsed.account_id,
       );
       safeSocketSend(
         socket,
@@ -1440,6 +2442,7 @@ async function handleChannelsProtocolCommand(
           channel_id: channelId,
           routes: listChannelRouteSnapshots({
             channelId,
+            accountId: parsed.account_id,
             agentId: parsed.agent_id,
             conversationId: parsed.conversation_id,
           }).map(mapRouteSnapshot),
@@ -1474,9 +2477,10 @@ async function handleChannelsProtocolCommand(
           request_id: parsed.request_id,
           success: true,
           channel_id: parsed.channel_id,
-          targets: listChannelTargetSnapshots(parsed.channel_id).map(
-            mapTargetSnapshot,
-          ),
+          targets: listChannelTargetSnapshots(
+            parsed.channel_id,
+            parsed.account_id,
+          ).map(mapTargetSnapshot),
         },
         "listener_channels_send_failed",
         "listener_channels_command",
@@ -1509,6 +2513,7 @@ async function handleChannelsProtocolCommand(
         parsed.target_id,
         parsed.runtime.agent_id,
         parsed.runtime.conversation_id,
+        parsed.account_id,
       );
       safeSocketSend(
         socket,
@@ -1553,8 +2558,63 @@ async function handleChannelsProtocolCommand(
     return true;
   }
 
+  if (parsed.type === "channel_route_update") {
+    try {
+      const route = updateChannelRouteLive(
+        parsed.channel_id,
+        parsed.chat_id,
+        parsed.runtime.agent_id,
+        parsed.runtime.conversation_id,
+        parsed.account_id,
+      );
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_route_update_response",
+          request_id: parsed.request_id,
+          success: true,
+          channel_id: parsed.channel_id,
+          chat_id: parsed.chat_id,
+          route: mapRouteSnapshot(route),
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+      emitChannelAccountsUpdated(socket, {
+        channelId: parsed.channel_id,
+        accountId: route.accountId,
+      });
+      emitChannelRoutesUpdated(socket, {
+        channelId: parsed.channel_id,
+        agentId: parsed.runtime.agent_id,
+        conversationId: parsed.runtime.conversation_id,
+      });
+      emitChannelsUpdated(socket, parsed.channel_id);
+    } catch (err) {
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_route_update_response",
+          request_id: parsed.request_id,
+          success: false,
+          channel_id: parsed.channel_id,
+          chat_id: parsed.chat_id,
+          route: null,
+          error: err instanceof Error ? err.message : "Failed to update route",
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+    }
+    return true;
+  }
+
   try {
-    const found = removeChannelRouteLive(parsed.channel_id, parsed.chat_id);
+    const found = removeChannelRouteLive(
+      parsed.channel_id,
+      parsed.chat_id,
+      parsed.account_id,
+    );
     safeSocketSend(
       socket,
       {
@@ -2020,21 +3080,21 @@ async function handleReflectionSettingsCommand(
  * Called from the socket "open" handler — same pattern as startCronScheduler.
  * Uses closure-scoped socket/opts/processQueuedTurn.
  */
-function wireChannelIngress(
+async function wireChannelIngress(
   listener: ListenerRuntime,
   socket: WebSocket,
   opts: StartListenerOptions,
   processQueuedTurn: ProcessQueuedTurn,
-): void {
+): Promise<void> {
   const registry = getChannelRegistry();
   if (!registry) return;
 
-  registry.setMessageHandler((route, messageContent) => {
+  registry.setMessageHandler((delivery) => {
     // Follow the same pattern as cron/scheduler.ts:131-157
     const rawRuntime = getOrCreateConversationRuntime(
       listener,
-      route.agentId,
-      route.conversationId,
+      delivery.route.agentId,
+      delivery.route.conversationId,
     );
     if (!rawRuntime) return;
 
@@ -2043,25 +3103,101 @@ function wireChannelIngress(
       rawRuntime,
     );
 
-    enqueueChannelTurn(conversationRuntime, route, messageContent);
+    const enqueuedItem = enqueueChannelTurn(
+      conversationRuntime,
+      delivery.route,
+      delivery.content,
+      delivery.turnSources,
+    );
+    if (!enqueuedItem) {
+      return;
+    }
+
+    for (const turnSource of delivery.turnSources ?? []) {
+      void registry.dispatchTurnLifecycleEvent({
+        type: "queued",
+        source: turnSource,
+      });
+    }
 
     scheduleQueuePump(conversationRuntime, socket, opts, processQueuedTurn);
   });
 
   registry.setEventHandler((event) => {
-    if (event.type === "pairings_updated") {
-      emitChannelPairingsUpdated(
-        socket,
-        event.channelId as "telegram" | "slack",
-      );
-      emitChannelsUpdated(socket, event.channelId as "telegram" | "slack");
-      return;
-    }
-    emitChannelTargetsUpdated(socket, event.channelId as "telegram" | "slack");
-    emitChannelsUpdated(socket, event.channelId as "telegram" | "slack");
+    handleChannelRegistryEvent(event, socket, listener);
   });
 
+  await recoverPendingChannelControlRequests(listener);
+
+  registry.setApprovalResponseHandler(async ({ runtime, response }) =>
+    handleApprovalResponseInput(listener, {
+      runtime,
+      response,
+      socket,
+      opts,
+      processQueuedTurn,
+    }),
+  );
+
   registry.setReady();
+}
+
+function handleChannelRegistryEvent(
+  event: ChannelRegistryEvent,
+  socket: WebSocket,
+  runtime: ListenerRuntime,
+): void {
+  if (event.type === "pairings_updated") {
+    emitChannelPairingsUpdated(socket, event.channelId as "telegram" | "slack");
+    emitChannelsUpdated(socket, event.channelId as "telegram" | "slack");
+    return;
+  }
+
+  if (event.type === "targets_updated") {
+    emitChannelTargetsUpdated(socket, event.channelId as "telegram" | "slack");
+    emitChannelsUpdated(socket, event.channelId as "telegram" | "slack");
+    return;
+  }
+
+  const permissionModeState = getOrCreateConversationPermissionModeStateRef(
+    runtime,
+    event.agentId,
+    event.conversationId,
+  );
+  permissionModeState.mode = event.defaultPermissionMode;
+  permissionModeState.planFilePath = null;
+  permissionModeState.modeBeforePlan = null;
+  persistPermissionModeMapForRuntime(runtime);
+}
+
+function stampInboundUserMessageOtids(
+  incoming: IncomingMessage,
+): IncomingMessage {
+  let didChange = false;
+  const messages = incoming.messages.map((payload) => {
+    if (!("content" in payload) || payload.otid) {
+      return payload;
+    }
+
+    didChange = true;
+    return {
+      ...payload,
+      otid:
+        "client_message_id" in payload &&
+        typeof payload.client_message_id === "string"
+          ? payload.client_message_id
+          : crypto.randomUUID(),
+    } satisfies MessageCreate & { client_message_id?: string };
+  });
+
+  if (!didChange) {
+    return incoming;
+  }
+
+  return {
+    ...incoming,
+    messages,
+  };
 }
 
 function enqueueChannelTurn(
@@ -2071,6 +3207,7 @@ function enqueueChannelTurn(
     conversationId: string;
   },
   messageContent: MessageCreate["content"],
+  turnSources?: ChannelTurnSource[],
 ): { id: string } | null {
   const clientMessageId = `cm-channel-${crypto.randomUUID()}`;
   const enqueuedItem = runtime.queueRuntime.enqueue({
@@ -2089,18 +3226,22 @@ function enqueueChannelTurn(
     return null;
   }
 
-  runtime.queuedMessagesByItemId.set(enqueuedItem.id, {
-    type: "message",
-    agentId: route.agentId,
-    conversationId: route.conversationId,
-    messages: [
-      {
-        role: "user",
-        content: messageContent,
-        client_message_id: clientMessageId,
-      } satisfies MessageCreate & { client_message_id?: string },
-    ],
-  });
+  runtime.queuedMessagesByItemId.set(
+    enqueuedItem.id,
+    stampInboundUserMessageOtids({
+      type: "message",
+      agentId: route.agentId,
+      conversationId: route.conversationId,
+      ...(turnSources?.length ? { channelTurnSources: turnSources } : {}),
+      messages: [
+        {
+          role: "user",
+          content: messageContent,
+          client_message_id: clientMessageId,
+        } satisfies MessageCreate & { client_message_id?: string },
+      ],
+    }),
+  );
 
   return enqueuedItem;
 }
@@ -2661,6 +3802,12 @@ async function handleCwdChange(
       setIndexRoot(normalizedPath);
     }
 
+    // Proactively warm the file index so @ file search is instant when
+    // the user first types "@".  ensureFileIndex() is idempotent — if the
+    // index was already built (or a rebuild is in-flight from setIndexRoot
+    // above), this returns immediately / joins the existing promise.
+    void ensureFileIndex();
+
     emitDeviceStatusUpdate(socket, runtime, {
       agent_id: agentId,
       conversation_id: conversationId,
@@ -2790,6 +3937,82 @@ export async function startListenerClient(
   await connectWithRetry(runtime, opts);
 }
 
+/** File/directory names filtered from directory listings (OS/VCS noise). */
+const DIR_LISTING_IGNORED_NAMES = new Set([".DS_Store", ".git", "Thumbs.db"]);
+
+interface DirListing {
+  folders: string[];
+  files: string[];
+}
+
+/**
+ * List a single directory by merging the file index (instant) with readdir
+ * (to pick up `.lettaignore`'d entries). Shared by `list_in_directory` and
+ * `get_tree` handlers.
+ *
+ * @param absDir      Absolute path to the directory.
+ * @param indexRoot   Root of the file index (undefined if unavailable).
+ * @param includeFiles  Whether to include files (not just folders).
+ */
+async function listDirectoryHybrid(
+  absDir: string,
+  indexRoot: string | undefined,
+  includeFiles: boolean,
+): Promise<DirListing> {
+  // 1. Query file index (instant, from memory)
+  let indexedNames: Set<string> | undefined;
+  const indexedFolders: string[] = [];
+  const indexedFiles: string[] = [];
+
+  if (indexRoot !== undefined) {
+    const relPath = path.relative(indexRoot, absDir);
+    if (!relPath.startsWith("..")) {
+      const indexed = searchFileIndex({
+        searchDir: relPath || ".",
+        pattern: "",
+        deep: false,
+        maxResults: 10000,
+      });
+      indexedNames = new Set<string>();
+      for (const entry of indexed) {
+        const name = entry.path.split(path.sep).pop() ?? entry.path;
+        indexedNames.add(name);
+        if (entry.type === "dir") {
+          indexedFolders.push(name);
+        } else {
+          indexedFiles.push(name);
+        }
+      }
+    }
+  }
+
+  // 2. readdir to fill gaps (entries not in the index)
+  const { readdir } = await import("node:fs/promises");
+  const entries = await readdir(absDir, { withFileTypes: true });
+
+  const extraFolders: string[] = [];
+  const extraFiles: string[] = [];
+  for (const e of entries) {
+    if (DIR_LISTING_IGNORED_NAMES.has(e.name)) continue;
+    if (indexedNames?.has(e.name)) continue;
+    if (e.isDirectory()) {
+      extraFolders.push(e.name);
+    } else if (includeFiles) {
+      extraFiles.push(e.name);
+    }
+  }
+
+  // 3. Merge and sort
+  return {
+    folders: [...indexedFolders, ...extraFolders].sort((a, b) =>
+      a.localeCompare(b),
+    ),
+    files: includeFiles
+      ? [...indexedFiles, ...extraFiles].sort((a, b) => a.localeCompare(b))
+      : [],
+  };
+}
+
 /**
  * Connect to WebSocket with exponential backoff retry.
  */
@@ -2897,7 +4120,7 @@ async function connectWithRetry(
     );
   };
 
-  socket.on("open", () => {
+  socket.on("open", async () => {
     if (runtime !== getActiveRuntime() || runtime.intentionallyClosed) {
       return;
     }
@@ -3036,7 +4259,7 @@ async function connectWithRetry(
     startCronScheduler(socket, opts, processQueuedTurn);
 
     // Wire channel ingress (if channels are active)
-    wireChannelIngress(runtime, socket, opts, processQueuedTurn);
+    await wireChannelIngress(runtime, socket, opts, processQueuedTurn);
   });
 
   socket.on("message", async (data: WebSocket.RawData) => {
@@ -3156,7 +4379,8 @@ async function connectWithRetry(
         );
 
         if (shouldQueueInboundMessage(incoming)) {
-          const firstUserPayload = incoming.messages.find(
+          const queuedIncoming = stampInboundUserMessageOtids(incoming);
+          const firstUserPayload = queuedIncoming.messages.find(
             (
               payload,
             ): payload is MessageCreate & { client_message_id?: string } =>
@@ -3176,7 +4400,7 @@ async function connectWithRetry(
             if (enqueuedItem) {
               scopedRuntime.queuedMessagesByItemId.set(
                 enqueuedItem.id,
-                incoming,
+                queuedIncoming,
               );
             }
           }
@@ -3322,33 +4546,21 @@ async function connectWithRetry(
         );
         runDetachedListenerTask("list_in_directory", async () => {
           try {
-            const { readdir } = await import("node:fs/promises");
-            console.log(`[Listen] Reading directory: ${parsed.path}`);
-            const entries = await readdir(parsed.path, { withFileTypes: true });
-            console.log(
-              `[Listen] Directory read success, ${entries.length} entries`,
-            );
-
-            // Filter out OS/VCS noise before sorting
-            const IGNORED_NAMES = new Set([
-              ".DS_Store",
-              ".git",
-              ".gitignore",
-              "Thumbs.db",
-            ]);
-            const sortedEntries = entries
-              .filter((e) => !IGNORED_NAMES.has(e.name))
-              .sort((a, b) => a.name.localeCompare(b.name));
-
-            const allFolders: string[] = [];
-            const allFiles: string[] = [];
-            for (const e of sortedEntries) {
-              if (e.isDirectory()) {
-                allFolders.push(e.name);
-              } else if (parsed.include_files) {
-                allFiles.push(e.name);
-              }
+            let indexRoot: string | undefined;
+            try {
+              await ensureFileIndex();
+              indexRoot = getIndexRoot();
+            } catch {
+              // Index not available — readdir only
             }
+
+            console.log(`[Listen] Reading directory: ${parsed.path}`);
+            const { folders: allFolders, files: allFiles } =
+              await listDirectoryHybrid(
+                parsed.path,
+                indexRoot,
+                !!parsed.include_files,
+              );
 
             const total = allFolders.length + allFiles.length;
             const offset = parsed.offset ?? 0;
@@ -3357,8 +4569,9 @@ async function connectWithRetry(
             // Paginate over the combined [folders, files] list
             const combined = [...allFolders, ...allFiles];
             const page = combined.slice(offset, offset + limit);
-            const folders = page.filter((name) => allFolders.includes(name));
-            const files = page.filter((name) => allFiles.includes(name));
+            const folderSet = new Set(allFolders);
+            const folders = page.filter((name) => folderSet.has(name));
+            const files = page.filter((name) => !folderSet.has(name));
 
             const response: Record<string, unknown> = {
               type: "list_in_directory_response",
@@ -3406,6 +4619,113 @@ async function connectWithRetry(
               },
               "listener_list_directory_send_failed",
               "listener_list_in_directory",
+            );
+          }
+        });
+        return;
+      }
+
+      // ── Depth-limited subtree fetch (no runtime scope required) ──────
+      if (isGetTreeCommand(parsed)) {
+        console.log(
+          `[Listen] Received get_tree command: path=${parsed.path}, depth=${parsed.depth}`,
+        );
+        runDetachedListenerTask("get_tree", async () => {
+          try {
+            // Walk the directory tree up to the requested depth, combining
+            // file index results with readdir to include non-indexed entries.
+            interface TreeEntry {
+              path: string;
+              type: "file" | "dir";
+            }
+            const results: TreeEntry[] = [];
+            let hasMoreDepth = false;
+
+            // Warm the file index once before walking the tree.
+            let indexRoot: string | undefined;
+            try {
+              await ensureFileIndex();
+              indexRoot = getIndexRoot();
+            } catch {
+              // Index not available — readdir only for all directories
+            }
+
+            // BFS queue: [absolutePath, relativePath, currentDepth]
+            // Uses an index pointer for O(1) dequeue instead of shift().
+            const queue: [string, string, number][] = [[parsed.path, "", 0]];
+            let qi = 0;
+
+            while (qi < queue.length) {
+              const item = queue[qi++];
+              if (!item) break;
+              const [absDir, relDir, depth] = item;
+
+              if (depth >= parsed.depth) {
+                if (depth === parsed.depth && relDir !== "") {
+                  hasMoreDepth = true;
+                }
+                continue;
+              }
+
+              let listing: DirListing;
+              try {
+                listing = await listDirectoryHybrid(absDir, indexRoot, true);
+              } catch {
+                // Can't read directory — skip
+                continue;
+              }
+
+              // Relative paths always use '/' (converted to OS separator on the frontend)
+              for (const name of listing.folders) {
+                const entryRel = relDir === "" ? name : `${relDir}/${name}`;
+                results.push({ path: entryRel, type: "dir" });
+                queue.push([path.join(absDir, name), entryRel, depth + 1]);
+              }
+              for (const name of listing.files) {
+                const entryRel = relDir === "" ? name : `${relDir}/${name}`;
+                results.push({ path: entryRel, type: "file" });
+              }
+            }
+
+            console.log(
+              `[Listen] Sending get_tree_response: ${results.length} entries, has_more_depth=${hasMoreDepth}`,
+            );
+            safeSocketSend(
+              socket,
+              {
+                type: "get_tree_response",
+                path: parsed.path,
+                request_id: parsed.request_id,
+                entries: results,
+                has_more_depth: hasMoreDepth,
+                success: true,
+              },
+              "listener_get_tree_send_failed",
+              "listener_get_tree",
+            );
+          } catch (err) {
+            trackListenerError(
+              "listener_get_tree_failed",
+              err,
+              "listener_file_browser",
+            );
+            console.error(
+              `[Listen] get_tree error: ${err instanceof Error ? err.message : "Unknown error"}`,
+            );
+            safeSocketSend(
+              socket,
+              {
+                type: "get_tree_response",
+                path: parsed.path,
+                request_id: parsed.request_id,
+                entries: [],
+                has_more_depth: false,
+                success: false,
+                error:
+                  err instanceof Error ? err.message : "Failed to get tree",
+              },
+              "listener_get_tree_send_failed",
+              "listener_get_tree",
             );
           }
         });
@@ -3509,6 +4829,8 @@ async function connectWithRetry(
             console.log(
               `[Listen] write_file success: ${parsed.path} (${parsed.content.length} bytes)`,
             );
+            // Update the file index so the sidebar Merkle tree stays current
+            void refreshFileIndex();
             safeSocketSend(
               socket,
               {
@@ -3636,7 +4958,9 @@ async function connectWithRetry(
         );
         runDetachedListenerTask("edit_file", async () => {
           try {
+            const { readFile } = await import("node:fs/promises");
             const { edit } = await import("../../tools/impl/Edit");
+
             console.log(
               `[Listen] Executing edit: old_string="${parsed.old_string.slice(0, 50)}${parsed.old_string.length > 50 ? "..." : ""}"`,
             );
@@ -3650,6 +4974,33 @@ async function connectWithRetry(
             console.log(
               `[Listen] edit_file success: ${result.replacements} replacement(s) at line ${result.startLine}`,
             );
+            // Update the file index so the sidebar Merkle tree stays current
+            if (result.replacements > 0) {
+              void refreshFileIndex();
+            }
+
+            // Notify web clients of the new content so they can update live.
+            if (result.replacements > 0) {
+              try {
+                const contentAfter = await readFile(parsed.file_path, "utf-8");
+                safeSocketSend(
+                  socket,
+                  {
+                    type: "file_ops",
+                    path: parsed.file_path,
+                    cg_entries: [],
+                    ops: [],
+                    source: "agent",
+                    document_content: contentAfter,
+                  },
+                  "listener_edit_file_ops_send_failed",
+                  "listener_edit_file",
+                );
+              } catch {
+                // Non-fatal: content broadcast is best-effort.
+              }
+            }
+
             safeSocketSend(
               socket,
               {
@@ -3693,252 +5044,33 @@ async function connectWithRetry(
         return;
       }
 
+      // ── Egwalker CRDT ops (no runtime scope required) ─────────────────
+      if (isFileOpsCommand(parsed)) {
+        // Use document_content if provided (reliable, no race conditions).
+        // Falls back to applying ops character-by-character.
+        if (parsed.document_content !== undefined) {
+          runDetachedListenerTask("file_ops", async () => {
+            try {
+              const { writeFile } = await import("node:fs/promises");
+              const content = parsed.document_content as string;
+              await writeFile(parsed.path, content, "utf-8");
+              console.log(
+                `[Listen] file_ops: wrote ${content.length} bytes to ${parsed.path}`,
+              );
+            } catch (err) {
+              console.error(
+                `[Listen] file_ops error: ${err instanceof Error ? err.message : "Unknown error"}`,
+              );
+            }
+          });
+        }
+        return;
+      }
+
       // ── Memory index (no runtime scope required) ─────────────────────
       if (isListMemoryCommand(parsed)) {
         runDetachedListenerTask("list_memory", async () => {
-          try {
-            const { getMemoryFilesystemRoot } = await import(
-              "../../agent/memoryFilesystem"
-            );
-            const { scanMemoryFilesystem, getFileNodes, readFileContent } =
-              await import("../../agent/memoryScanner");
-            const { parseFrontmatter } = await import(
-              "../../utils/frontmatter"
-            );
-
-            const { existsSync } = await import("node:fs");
-            const { join, posix } = await import("node:path");
-
-            const memoryRoot = getMemoryFilesystemRoot(parsed.agent_id);
-
-            // If the memory directory doesn't have a git repo, memfs
-            // hasn't been initialized — tell the UI so it can show the
-            // enable button instead of an empty file list.
-            const memfsInitialized = existsSync(join(memoryRoot, ".git"));
-
-            if (!memfsInitialized) {
-              safeSocketSend(
-                socket,
-                {
-                  type: "list_memory_response",
-                  request_id: parsed.request_id,
-                  entries: [],
-                  done: true,
-                  total: 0,
-                  success: true,
-                  memfs_initialized: false,
-                },
-                "listener_list_memory_send_failed",
-                "listener_list_memory",
-              );
-              return;
-            }
-
-            const treeNodes = scanMemoryFilesystem(memoryRoot);
-            const fileNodes = getFileNodes(treeNodes).filter((n) =>
-              n.name.endsWith(".md"),
-            );
-            const includeReferences = parsed.include_references === true;
-
-            const allPaths = new Set(
-              fileNodes.map((node) => node.relativePath),
-            );
-
-            const normalizeMemoryReference = (
-              rawReference: string,
-              sourcePath: string,
-            ): string | null => {
-              let target = rawReference.trim();
-              if (!target) {
-                return null;
-              }
-
-              if (
-                target.startsWith("http://") ||
-                target.startsWith("https://") ||
-                target.startsWith("mailto:")
-              ) {
-                return null;
-              }
-
-              target = target.replace(/^<|>$/g, "");
-              target = target.split("#")[0] ?? "";
-              target = target.split("?")[0] ?? "";
-              target = target.trim().replace(/\\/g, "/");
-
-              if (!target || target.startsWith("#")) {
-                return null;
-              }
-
-              if (target.includes("|")) {
-                target = target.split("|")[0] ?? "";
-              }
-
-              if (!target) {
-                return null;
-              }
-
-              const sourceDir = posix.dirname(sourcePath.replace(/\\/g, "/"));
-              const candidate =
-                target.startsWith("./") || target.startsWith("../")
-                  ? posix.normalize(posix.join(sourceDir, target))
-                  : posix.normalize(
-                      target.startsWith("/") ? target.slice(1) : target,
-                    );
-
-              if (
-                !candidate ||
-                candidate.startsWith("../") ||
-                candidate === "." ||
-                candidate === ".."
-              ) {
-                return null;
-              }
-
-              const withExtension = candidate.endsWith(".md")
-                ? candidate
-                : `${candidate}.md`;
-
-              const candidates = new Set<string>([withExtension]);
-
-              const isExplicitRelative =
-                target.startsWith("./") || target.startsWith("../");
-              if (
-                !isExplicitRelative &&
-                !target.startsWith("/") &&
-                sourceDir &&
-                sourceDir !== "."
-              ) {
-                candidates.add(
-                  posix.normalize(posix.join(sourceDir, withExtension)),
-                );
-              }
-
-              if (!withExtension.startsWith("system/")) {
-                candidates.add(posix.normalize(`system/${withExtension}`));
-              }
-
-              for (const resolved of candidates) {
-                if (allPaths.has(resolved)) {
-                  return resolved;
-                }
-              }
-
-              return null;
-            };
-
-            const extractMemoryReferences = (
-              body: string,
-              sourcePath: string,
-            ): string[] => {
-              if (!body.includes("[[")) {
-                return [];
-              }
-
-              const refs = new Set<string>();
-
-              for (const wikiMatch of body.matchAll(WIKI_LINK_REGEX)) {
-                const rawTarget = wikiMatch[1];
-                if (!rawTarget) continue;
-                const normalized = normalizeMemoryReference(
-                  rawTarget,
-                  sourcePath,
-                );
-                if (normalized && normalized !== sourcePath) {
-                  refs.add(normalized);
-                }
-              }
-
-              return [...refs];
-            };
-
-            const CHUNK_SIZE = 5;
-            const total = fileNodes.length;
-
-            for (let i = 0; i < total; i += CHUNK_SIZE) {
-              const chunk = fileNodes.slice(i, i + CHUNK_SIZE);
-              const entries = chunk.map((node) => {
-                const raw = readFileContent(node.fullPath);
-                const { frontmatter, body } = parseFrontmatter(raw);
-                const desc = frontmatter.description;
-                return {
-                  relative_path: node.relativePath,
-                  is_system:
-                    node.relativePath.startsWith("system/") ||
-                    node.relativePath.startsWith("system\\"),
-                  description: typeof desc === "string" ? desc : null,
-                  content: body,
-                  size: body.length,
-                  ...(includeReferences
-                    ? {
-                        references: extractMemoryReferences(
-                          body,
-                          node.relativePath,
-                        ),
-                      }
-                    : {}),
-                };
-              });
-
-              const done = i + CHUNK_SIZE >= total;
-              const sent = safeSocketSend(
-                socket,
-                {
-                  type: "list_memory_response",
-                  request_id: parsed.request_id,
-                  entries,
-                  done,
-                  total,
-                  success: true,
-                  memfs_initialized: true,
-                },
-                "listener_list_memory_send_failed",
-                "listener_list_memory",
-              );
-              if (!sent) {
-                return;
-              }
-            }
-
-            // Edge case: no files at all (repo exists but empty)
-            if (total === 0) {
-              safeSocketSend(
-                socket,
-                {
-                  type: "list_memory_response",
-                  request_id: parsed.request_id,
-                  entries: [],
-                  done: true,
-                  total: 0,
-                  success: true,
-                  memfs_initialized: true,
-                },
-                "listener_list_memory_send_failed",
-                "listener_list_memory",
-              );
-            }
-          } catch (err) {
-            trackListenerError(
-              "listener_list_memory_failed",
-              err,
-              "listener_memory_browser",
-            );
-            safeSocketSend(
-              socket,
-              {
-                type: "list_memory_response",
-                request_id: parsed.request_id,
-                entries: [],
-                done: true,
-                total: 0,
-                success: false,
-                error:
-                  err instanceof Error ? err.message : "Failed to list memory",
-              },
-              "listener_list_memory_send_failed",
-              "listener_list_memory",
-            );
-          }
+          await handleListMemoryCommand(parsed, socket);
         });
         return;
       }
@@ -4222,19 +5354,7 @@ async function connectWithRetry(
       }
 
       // ── Channels management commands (device/live management) ─────────
-      if (
-        isChannelsListCommand(parsed) ||
-        isChannelGetConfigCommand(parsed) ||
-        isChannelSetConfigCommand(parsed) ||
-        isChannelStartCommand(parsed) ||
-        isChannelStopCommand(parsed) ||
-        isChannelPairingsListCommand(parsed) ||
-        isChannelPairingBindCommand(parsed) ||
-        isChannelRoutesListCommand(parsed) ||
-        isChannelTargetsListCommand(parsed) ||
-        isChannelTargetBindCommand(parsed) ||
-        isChannelRouteRemoveCommand(parsed)
-      ) {
+      if (isDetachedChannelsCommand(parsed)) {
         runDetachedListenerTask("channels_command", async () => {
           await handleChannelsProtocolCommand(
             parsed,
@@ -4929,13 +6049,17 @@ export const __listenClientTestUtils = {
   handleAbortMessageInput,
   handleChangeDeviceStateInput,
   handleCronCommand,
+  handleListMemoryCommand,
+  isDetachedChannelsCommand,
   handleChannelsProtocolCommand,
+  handleChannelRegistryEvent,
   handleSkillCommand,
   handleCreateAgentCommand,
   handleReflectionSettingsCommand,
   enqueueChannelTurn,
   scheduleQueuePump,
   replaySyncStateForRuntime,
+  recoverPendingChannelControlRequests,
   recoverApprovalStateForSync,
   clearRecoveredApprovalStateForScope: (
     runtime: ListenerRuntime | ConversationRuntime,

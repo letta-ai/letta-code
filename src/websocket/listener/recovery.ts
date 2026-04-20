@@ -39,6 +39,7 @@ import {
 } from "./constants";
 import { getConversationWorkingDirectory } from "./cwd";
 import {
+  createToolExecutionOutputEmitter,
   emitInterruptToolReturnMessage,
   emitToolExecutionFinishedEvents,
   emitToolExecutionStartedEvents,
@@ -669,6 +670,15 @@ export async function resolveRecoveredApprovalResponse(
     agentId: recovered.agentId,
     conversationId: recovered.conversationId,
   });
+  const emitToolExecutionOutput = createToolExecutionOutputEmitter(
+    socket,
+    runtime,
+    {
+      runId: runtime.activeRunId ?? undefined,
+      agentId: recovered.agentId,
+      conversationId: recovered.conversationId,
+    },
+  );
   const recoveryAbortController = new AbortController();
   runtime.activeAbortController = recoveryAbortController;
   const preparedToolContext = await prepareToolExecutionContextForScope({
@@ -688,6 +698,7 @@ export async function resolveRecoveredApprovalResponse(
   try {
     const approvalResults = await executeApprovalBatch(decisions, undefined, {
       abortSignal: recoveryAbortController.signal,
+      onStreamingOutput: emitToolExecutionOutput,
       toolContextId: preparedToolContext.preparedToolContext.contextId,
       workingDirectory,
       parentScope:

@@ -1,7 +1,13 @@
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import { getClient } from "../agent/client";
 import { resolveModel } from "../agent/model";
-import { getActiveChannelIds } from "../channels/registry";
+import type { MessageChannelToolDiscoveryScope } from "../channels/messageTool";
+import { getChannelRegistry } from "../channels/registry";
+import { getRoutesForChannel, loadRoutes } from "../channels/routing";
+import {
+  SUPPORTED_CHANNEL_IDS,
+  type SupportedChannelId,
+} from "../channels/types";
 import { settingsManager } from "../settings-manager";
 import { toolFilter } from "./filter";
 import {
@@ -93,7 +99,10 @@ function getPreferredAgentModelHandle(
   return buildModelHandleFromLlmConfig(agent.llm_config);
 }
 
-function getToolNamesForToolset(toolsetName: ToolsetName): ToolName[] {
+function getToolNamesForToolset(
+  toolsetName: ToolsetName,
+  channelToolScope?: MessageChannelToolDiscoveryScope | null,
+): ToolName[] {
   let tools: ToolName[];
   switch (toolsetName) {
     case "codex":
@@ -115,11 +124,13 @@ function getToolNamesForToolset(toolsetName: ToolsetName): ToolName[] {
       break;
   }
 
+  const hasScopedChannelTool =
+    channelToolScope !== undefined
+      ? (channelToolScope?.channels.length ?? 0) > 0
+      : (getChannelRegistry()?.getActiveChannelIds().length ?? 0) > 0;
+
   // Append channel tool if channels are active (covers ALL pinned toolsets)
-  if (
-    getActiveChannelIds().length > 0 &&
-    !tools.includes("MessageChannel" as ToolName)
-  ) {
+  if (hasScopedChannelTool && !tools.includes("MessageChannel" as ToolName)) {
     tools.push("MessageChannel" as ToolName);
   }
 
@@ -132,6 +143,7 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
   exclude?: ToolName[];
   workingDirectory?: string;
   permissionModeState?: PermissionModeState;
+  channelToolScope?: MessageChannelToolDiscoveryScope | null;
 }): Promise<PreparedScopeToolContext> {
   const {
     modelIdentifier,
@@ -139,6 +151,7 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
     exclude,
     workingDirectory,
     permissionModeState,
+    channelToolScope,
   } = params;
   const effectiveModel =
     modelIdentifier && modelIdentifier.length > 0
@@ -152,6 +165,7 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
         exclude,
         workingDirectory,
         permissionModeState,
+        channelToolScope,
       },
     );
 
@@ -166,12 +180,13 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
   }
 
   const preparedToolContext = await prepareToolExecutionContextForSpecificTools(
-    getToolNamesForToolset(toolsetPreference).filter((toolName) =>
-      exclude ? !exclude.includes(toolName) : true,
+    getToolNamesForToolset(toolsetPreference, channelToolScope).filter(
+      (toolName) => (exclude ? !exclude.includes(toolName) : true),
     ),
     {
       workingDirectory,
       permissionModeState,
+      channelToolScope,
     },
   );
 
@@ -181,6 +196,52 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
     toolsetPreference,
     effectiveModel,
   };
+}
+
+function resolveConversationChannelToolScope(
+  agentId: string,
+  conversationId: string,
+): MessageChannelToolDiscoveryScope {
+  const registry = getChannelRegistry();
+  if (!registry) {
+    return { channels: [] };
+  }
+
+  const channels: Array<{
+    channelId: SupportedChannelId;
+    accountId?: string | null;
+  }> = [];
+  const seen = new Set<string>();
+
+  for (const channelId of SUPPORTED_CHANNEL_IDS) {
+    loadRoutes(channelId);
+    for (const route of getRoutesForChannel(channelId)) {
+      if (
+        route.agentId !== agentId ||
+        route.conversationId !== conversationId ||
+        !route.enabled
+      ) {
+        continue;
+      }
+
+      const adapter = registry.getAdapter(channelId, route.accountId);
+      if (!adapter?.isRunning()) {
+        continue;
+      }
+
+      const key = `${channelId}:${route.accountId ?? ""}`;
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      channels.push({
+        channelId,
+        accountId: route.accountId ?? null,
+      });
+    }
+  }
+
+  return { channels };
 }
 
 export async function prepareToolExecutionContextForScope(params: {
@@ -233,6 +294,10 @@ export async function prepareToolExecutionContextForScope(params: {
     exclude,
     workingDirectory,
     permissionModeState,
+    channelToolScope: resolveConversationChannelToolScope(
+      agentId,
+      conversationId ?? "default",
+    ),
   });
 }
 

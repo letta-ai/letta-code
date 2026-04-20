@@ -196,6 +196,24 @@ describe("buildSubagentArgs", () => {
 });
 
 describe("resolveSubagentModel", () => {
+  async function withAutoMemory<T>(
+    value: string,
+    fn: () => Promise<T>,
+  ): Promise<T> {
+    const original = process.env.AUTO_MEMORY;
+    process.env.AUTO_MEMORY = value;
+
+    try {
+      return await fn();
+    } finally {
+      if (original === undefined) {
+        delete process.env.AUTO_MEMORY;
+      } else {
+        process.env.AUTO_MEMORY = original;
+      }
+    }
+  }
+
   test("prefers BYOK-swapped handle when available", async () => {
     const cases = [
       { parentProvider: "lc-anthropic", baseProvider: "anthropic" },
@@ -338,5 +356,55 @@ describe("resolveSubagentModel", () => {
     });
 
     expect(result).toBe("openai/gpt-5");
+  });
+
+  test("uses letta/auto-memory for reflection subagents when AUTO_MEMORY=1", async () => {
+    const result = await withAutoMemory("1", () =>
+      resolveSubagentModel({
+        subagentType: "reflection",
+        recommendedModel: "anthropic/test-model",
+        parentModelHandle: "lc-anthropic/parent-model",
+        availableHandles: new Set(),
+      }),
+    );
+
+    expect(result).toBe("letta/auto-memory");
+  });
+
+  test("accepts AUTO_MEMORY=true for reflection subagents", async () => {
+    const result = await withAutoMemory("true", () =>
+      resolveSubagentModel({
+        subagentType: "reflection",
+        recommendedModel: "anthropic/test-model",
+        availableHandles: new Set(["anthropic/test-model"]),
+      }),
+    );
+
+    expect(result).toBe("letta/auto-memory");
+  });
+
+  test("does not override an explicit user model when AUTO_MEMORY is enabled", async () => {
+    const result = await withAutoMemory("1", () =>
+      resolveSubagentModel({
+        subagentType: "reflection",
+        userModel: "openai/gpt-5",
+        recommendedModel: "anthropic/test-model",
+        availableHandles: new Set(["openai/gpt-5", "letta/auto-memory"]),
+      }),
+    );
+
+    expect(result).toBe("openai/gpt-5");
+  });
+
+  test("does not affect non-reflection subagents", async () => {
+    const result = await withAutoMemory("1", () =>
+      resolveSubagentModel({
+        subagentType: "general-purpose",
+        recommendedModel: "anthropic/test-model",
+        availableHandles: new Set(["letta/auto", "anthropic/test-model"]),
+      }),
+    );
+
+    expect(result).toBe("anthropic/test-model");
   });
 });

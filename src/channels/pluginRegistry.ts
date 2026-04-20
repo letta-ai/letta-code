@@ -27,8 +27,8 @@ const CHANNEL_PLUGIN_REGISTRATIONS: Record<
     metadata: {
       id: "slack",
       displayName: "Slack",
-      runtimePackages: ["@slack/bolt@4.7.0"],
-      runtimeModules: ["@slack/bolt"],
+      runtimePackages: ["@slack/bolt@4.7.0", "@slack/web-api@7.15.0"],
+      runtimeModules: ["@slack/bolt", "@slack/web-api"],
     },
     load: async () => {
       const { slackChannelPlugin } = await import("./slack/plugin");

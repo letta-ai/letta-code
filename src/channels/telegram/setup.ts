@@ -5,15 +5,16 @@
  * 1. Prompt for bot token from @BotFather
  * 2. Validate via getMe()
  * 3. Choose DM policy
- * 4. Write config to ~/.letta/channels/telegram/config.yaml
+ * 4. Write config to ~/.letta/channels/telegram/accounts.json
  * 5. Start `letta server --channels telegram`
  * 6. Message the bot from Telegram to get a pairing code
  * 7. Run `/channels telegram pair <code>` in the target ADE/Desktop conversation
  */
 
+import { randomUUID } from "node:crypto";
 import { createInterface } from "node:readline/promises";
-import { writeChannelConfig } from "../config";
-import type { DmPolicy, TelegramChannelConfig } from "../types";
+import { upsertChannelAccount } from "../accounts";
+import type { DmPolicy, TelegramChannelAccount } from "../types";
 import { validateTelegramToken } from "./adapter";
 import { ensureTelegramRuntimeInstalled } from "./runtime";
 
@@ -39,8 +40,10 @@ export async function runTelegramSetup(): Promise<boolean> {
 
     // Step 2: Validate token
     console.log("\nValidating token...");
+    let validatedUsername: string | undefined;
     try {
       const info = await validateTelegramToken(token.trim());
+      validatedUsername = info.username;
       console.log(`✓ Connected to @${info.username} (ID: ${info.id})\n`);
     } catch (err) {
       console.error(
@@ -75,18 +78,29 @@ export async function runTelegramSetup(): Promise<boolean> {
         .filter(Boolean);
     }
 
-    // Step 5: Write config
-    const config: TelegramChannelConfig = {
+    // Step 5: Write account
+    const now = new Date().toISOString();
+    const account: TelegramChannelAccount = {
       channel: "telegram",
+      accountId: randomUUID(),
+      displayName: validatedUsername ? `@${validatedUsername}` : undefined,
       enabled: true,
       token: token.trim(),
       dmPolicy: policy,
       allowedUsers,
+      binding: {
+        agentId: null,
+        conversationId: null,
+      },
+      createdAt: now,
+      updatedAt: now,
     };
 
-    writeChannelConfig("telegram", config);
+    upsertChannelAccount("telegram", account);
     console.log("\n✓ Telegram bot configured!");
-    console.log("Config written to: ~/.letta/channels/telegram/config.yaml\n");
+    console.log(
+      "Config written to: ~/.letta/channels/telegram/accounts.json\n",
+    );
     console.log("Next steps:");
     console.log("  1. Start the listener: letta server --channels telegram");
     console.log("  2. Message the bot from Telegram to get a pairing code");

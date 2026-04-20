@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { APIError } from "@letta-ai/letta-client/error";
 import WebSocket from "ws";
 import type { ResumeData } from "../../agent/check-approval";
+import { ChannelRegistry, getChannelRegistry } from "../../channels/registry";
+import type { ChannelAdapter } from "../../channels/types";
 import { permissionMode } from "../../permissions/mode";
 import type {
   MessageQueueItem,
@@ -318,6 +320,13 @@ describe("listen-client multi-worker concurrency", () => {
   afterEach(() => {
     permissionMode.reset();
     __listenClientTestUtils.setActiveRuntime(null);
+  });
+
+  afterEach(async () => {
+    const registry = getChannelRegistry();
+    if (registry) {
+      await registry.stopAll();
+    }
   });
 
   test("processes simultaneous turns for two named conversations under one agent", async () => {
@@ -843,6 +852,11 @@ describe("listen-client multi-worker concurrency", () => {
 
     await waitFor(() => processed.length === 1);
 
+    const queuedPayload = processed[0]?.messages[0];
+    if (!queuedPayload || !("content" in queuedPayload)) {
+      throw new Error("Expected queued user payload");
+    }
+
     expect(processed[0]).toEqual(
       expect.objectContaining({
         type: "message",
@@ -853,12 +867,110 @@ describe("listen-client multi-worker concurrency", () => {
             role: "user",
             content: channelContent,
             client_message_id: expect.stringMatching(/^cm-channel-/),
+            otid: expect.stringMatching(/^cm-channel-/),
           }),
         ],
       }),
     );
+    expect(queuedPayload.otid).toBe(queuedPayload.client_message_id);
+
+    const emittedMessages = socket.sentPayloads.map((payload) =>
+      JSON.parse(payload as string),
+    );
+    const dequeuedUserDelta = emittedMessages.find(
+      (message) =>
+        message.type === "stream_delta" &&
+        message.delta?.message_type === "user_message",
+    );
+    expect(dequeuedUserDelta?.delta?.otid).toBe(queuedPayload.otid);
     expect(runtime.queueRuntime.length).toBe(0);
     expect(runtime.queuedMessagesByItemId.size).toBe(0);
+  });
+
+  test("channel queue batches emit lifecycle events for the originating channel sources", async () => {
+    const lifecycleEvents: Array<Record<string, unknown>> = [];
+    const registry = new ChannelRegistry();
+    registry.registerAdapter({
+      id: "slack:acct-slack",
+      channelId: "slack",
+      accountId: "acct-slack",
+      name: "Slack",
+      start: async () => {},
+      stop: async () => {},
+      isRunning: () => true,
+      sendMessage: async () => ({ messageId: "msg-1" }),
+      sendDirectReply: async () => {},
+      handleTurnLifecycleEvent: async (event) => {
+        lifecycleEvents.push(event as unknown as Record<string, unknown>);
+      },
+    } satisfies ChannelAdapter);
+
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    __listenClientTestUtils.setActiveRuntime(listener);
+    const runtime = __listenClientTestUtils.getOrCreateScopedRuntime(
+      listener,
+      "agent-1",
+      "conv-channel",
+    );
+    const socket = new MockSocket();
+    const processed: IncomingMessage[] = [];
+    const channelContent = [
+      {
+        type: "text" as const,
+        text: '<channel-notification source="slack" chat_id="C123">hello from slack</channel-notification>',
+      },
+    ];
+    const channelTurnSources = [
+      {
+        channel: "slack" as const,
+        accountId: "acct-slack",
+        chatId: "C123",
+        chatType: "channel" as const,
+        messageId: "1712800000.000100",
+        threadId: "1712790000.000050",
+        agentId: "agent-1",
+        conversationId: "conv-channel",
+      },
+    ];
+
+    const enqueuedItem = __listenClientTestUtils.enqueueChannelTurn(
+      runtime,
+      {
+        agentId: "agent-1",
+        conversationId: "conv-channel",
+      },
+      channelContent,
+      channelTurnSources,
+    );
+
+    expect(enqueuedItem).not.toBeNull();
+
+    __listenClientTestUtils.scheduleQueuePump(
+      runtime,
+      socket as unknown as WebSocket,
+      {
+        connectionId: "conn-1",
+        onStatusChange: undefined,
+      } as never,
+      async (queuedTurn: IncomingMessage) => {
+        processed.push(queuedTurn);
+      },
+    );
+
+    await waitFor(() => processed.length === 1 && lifecycleEvents.length === 2);
+
+    expect(processed[0]?.channelTurnSources).toEqual(channelTurnSources);
+    expect(lifecycleEvents[0]).toEqual({
+      type: "processing",
+      batchId: "batch-1",
+      sources: channelTurnSources,
+    });
+    expect(lifecycleEvents[1]).toEqual({
+      type: "finished",
+      batchId: "batch-1",
+      sources: channelTurnSources,
+      outcome: "completed",
+    });
   });
 
   test("task_notification-only queue items re-enter the listener loop as standalone turns", async () => {
@@ -2039,6 +2151,42 @@ describe("listen-client multi-worker concurrency", () => {
     });
 
     await turnPromise;
+  });
+
+  test("handleIncomingMessage reuses client_message_id as the message otid", async () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const runtime = __listenClientTestUtils.getOrCreateConversationRuntime(
+      listener,
+      "agent-client-message-id",
+      "conv-client-message-id",
+    );
+    const socket = new MockSocket();
+
+    await __listenClientTestUtils.handleIncomingMessage(
+      {
+        type: "message",
+        agentId: "agent-client-message-id",
+        conversationId: "conv-client-message-id",
+        messages: [
+          {
+            role: "user",
+            content: "hello",
+            client_message_id: "cm-user-otid",
+          } as IncomingMessage["messages"][number],
+        ],
+      },
+      socket as unknown as WebSocket,
+      runtime,
+    );
+
+    const [, sentMessages] = sendMessageStreamMock.mock.calls[0] ?? [];
+    expect(sentMessages).toEqual([
+      expect.objectContaining({
+        role: "user",
+        content: "hello",
+        otid: "cm-user-otid",
+      }),
+    ]);
   });
 
   test("pre-stream 409 resume on default conversation includes agent_id", async () => {

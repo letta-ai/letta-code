@@ -75,6 +75,25 @@ describe("shellEnv letta shim", () => {
 
     expect(invocation).toEqual({
       command: "/opt/homebrew/bin/bun",
+      args: [
+        "--loader:.md=text",
+        "--loader:.mdx=text",
+        "--loader:.txt=text",
+        "run",
+        "/Users/example/dev/letta-code-prod/src/index.ts",
+      ],
+    });
+  });
+
+  test("resolveLettaInvocation keeps non-bun dev launcher behavior", () => {
+    const invocation = resolveLettaInvocation(
+      {},
+      ["node", "/Users/example/dev/letta-code-prod/src/index.ts"],
+      "/usr/local/bin/node",
+    );
+
+    expect(invocation).toEqual({
+      command: "/usr/local/bin/node",
       args: ["/Users/example/dev/letta-code-prod/src/index.ts"],
     });
   });

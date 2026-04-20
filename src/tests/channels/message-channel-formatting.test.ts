@@ -83,3 +83,15 @@ test("renders markdown links with balanced parentheses and escaped attributes", 
 test("does not treat spaced arithmetic operators as italic markup", () => {
   expect(markdownToTelegramHtml("2 * 3 * 4")).toBe("2 * 3 * 4");
 });
+
+test("decodes basic xml entities before channel formatting", () => {
+  expect(
+    formatOutboundChannelMessage(
+      "telegram",
+      "Fish &amp; chips &lt;3 &quot;yes&quot;",
+    ),
+  ).toEqual({
+    text: 'Fish &amp; chips &lt;3 "yes"',
+    parseMode: "HTML",
+  });
+});

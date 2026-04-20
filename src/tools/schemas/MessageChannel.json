@@ -1,23 +1,55 @@
 {
   "type": "object",
   "properties": {
+    "action": {
+      "type": "string",
+      "description": "Action to perform. Prefer explicit values like 'send', 'react', or 'upload-file'."
+    },
     "channel": {
       "type": "string",
       "description": "The channel to send the message to (e.g., 'telegram')"
     },
     "chat_id": {
       "type": "string",
-      "description": "The chat/conversation ID to send to (from the channel-notification attributes)"
+      "description": "The chat/conversation ID to send to (from the channel-notification attributes)."
     },
-    "text": {
+    "message": {
       "type": "string",
-      "description": "The message text to send"
+      "description": "Text body for action='send'."
     },
-    "reply_to_message_id": {
+    "replyTo": {
       "type": "string",
-      "description": "Optional message ID to reply to"
+      "description": "Optional message ID to reply to. Omit unless you intentionally want the platform's quote/reply UI."
+    },
+    "threadId": {
+      "type": "string",
+      "description": "Optional thread identifier override for threaded channels."
+    },
+    "messageId": {
+      "type": "string",
+      "description": "Target message ID for actions like react."
+    },
+    "emoji": {
+      "type": "string",
+      "description": "Emoji name for action='react'."
+    },
+    "remove": {
+      "type": "boolean",
+      "description": "Set to true to remove the reaction instead of adding it."
+    },
+    "media": {
+      "type": "string",
+      "description": "Absolute local file path for action='upload-file'."
+    },
+    "filename": {
+      "type": "string",
+      "description": "Optional uploaded filename override for media attachments"
+    },
+    "title": {
+      "type": "string",
+      "description": "Optional uploaded title override for media attachments"
     }
   },
-  "required": ["channel", "chat_id", "text"],
+  "required": ["action", "channel", "chat_id"],
   "additionalProperties": false
 }

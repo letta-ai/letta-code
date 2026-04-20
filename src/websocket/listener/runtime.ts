@@ -159,6 +159,7 @@ export function createConversationRuntime(
     key: runtimeKey,
     agentId: normalizedAgentId,
     conversationId: normalizedConversationId,
+    activeChannelTurnSources: null,
     messageQueue: Promise.resolve(),
     pendingApprovalResolvers: new Map(),
     recoveredApprovalState: null,
