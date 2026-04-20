@@ -82,9 +82,12 @@ describe("transcribeAudioFile", () => {
     });
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-    // Write a temp file so readFileSync succeeds
-    const { writeFileSync, unlinkSync } = await import("node:fs");
-    const path = "/tmp/letta-test-voice.ogg";
+    // Write a temp file so readFileSync succeeds.
+    const { mkdtempSync, rmSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const dir = mkdtempSync(join(tmpdir(), "letta-test-voice-"));
+    const path = join(dir, "voice.ogg");
     writeFileSync(path, "fake audio data");
 
     try {
@@ -107,7 +110,7 @@ describe("transcribeAudioFile", () => {
         expect.objectContaining({ Authorization: "Bearer sk-test" }),
       );
     } finally {
-      unlinkSync(path);
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 
@@ -118,8 +121,11 @@ describe("transcribeAudioFile", () => {
       return new Response("Rate limited", { status: 429 });
     }) as unknown as typeof fetch;
 
-    const { writeFileSync, unlinkSync } = await import("node:fs");
-    const path = "/tmp/letta-test-voice-fail.ogg";
+    const { mkdtempSync, rmSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const dir = mkdtempSync(join(tmpdir(), "letta-test-voice-fail-"));
+    const path = join(dir, "voice.ogg");
     writeFileSync(path, "fake audio data");
 
     try {
@@ -131,7 +137,7 @@ describe("transcribeAudioFile", () => {
       expect(result.success).toBe(false);
       expect(result.error).toContain("429");
     } finally {
-      unlinkSync(path);
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 });
