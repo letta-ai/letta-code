@@ -1,4 +1,3 @@
-import { execFile as execFileCb } from "node:child_process";
 import { existsSync } from "node:fs";
 import {
   access,
@@ -11,13 +10,13 @@ import {
 } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
-import { promisify } from "node:util";
 import { getClient } from "../../agent/client";
 import { getCurrentAgentId } from "../../agent/context";
-import { maybeUpdateMemoryRemoteOrigin } from "../../agent/memoryGit";
+import {
+  assertMemoryRepoReadyForWrite,
+  commitAndSyncMemoryWrite,
+} from "../../agent/memoryGit";
 import { validateRequiredParams } from "./validation";
-
-const execFile = promisify(execFileCb);
 
 type ParsedPatchOp =
   | {
@@ -119,6 +118,54 @@ export async function memory_apply_patch(
   const memoryDir = resolveMemoryDir();
   ensureMemoryRepo(memoryDir);
 
+  await assertMemoryRepoReadyForWrite(memoryDir);
+
+  const pathspecs = await applyMemoryPatch(memoryDir, input);
+  if (pathspecs.length === 0) {
+    return { message: "memory_apply_patch completed with no changed paths." };
+  }
+
+  const { agentId, agentName } = await getAgentIdentity();
+  const commitResult = await commitAndSyncMemoryWrite({
+    memoryDir,
+    pathspecs,
+    reason,
+    author: {
+      agentId,
+      authorName: agentName.trim() || agentId,
+      authorEmail: `${agentId}@letta.com`,
+    },
+    replay: async () => applyMemoryPatch(memoryDir, input),
+  });
+  if (!commitResult.committed) {
+    return {
+      message:
+        "memory_apply_patch made no effective changes; skipped commit and push.",
+    };
+  }
+
+  if (commitResult.replayed && commitResult.replayNoop) {
+    return {
+      message:
+        "memory_apply_patch matched newer remote memory; skipped an extra commit.",
+    };
+  }
+
+  if (commitResult.replayed) {
+    return {
+      message: `memory_apply_patch reapplied on top of newer remote memory and pushed (${commitResult.sha?.slice(0, 7) ?? "unknown"}).`,
+    };
+  }
+
+  return {
+    message: `memory_apply_patch applied and pushed (${commitResult.sha?.slice(0, 7) ?? "unknown"}).`,
+  };
+}
+
+async function applyMemoryPatch(
+  memoryDir: string,
+  input: string,
+): Promise<string[]> {
   const ops = parsePatchOperations(memoryDir, input);
   if (ops.length === 0) {
     throw new Error("memory_apply_patch: no file operations found in patch");
@@ -242,21 +289,7 @@ export async function memory_apply_patch(
   }
 
   const pathspecs = Array.from(affectedPaths).filter((p) => p.length > 0);
-  if (pathspecs.length === 0) {
-    return { message: "memory_apply_patch completed with no changed paths." };
-  }
-
-  const commitResult = await commitAndPush(memoryDir, pathspecs, reason);
-  if (!commitResult.committed) {
-    return {
-      message:
-        "memory_apply_patch made no effective changes; skipped commit and push.",
-    };
-  }
-
-  return {
-    message: `memory_apply_patch applied and pushed (${commitResult.sha?.slice(0, 7) ?? "unknown"}).`,
-  };
+  return pathspecs;
 }
 
 function parsePatchOperations(
@@ -697,93 +730,6 @@ function renderMemoryFile(
 
 function sanitizeFrontmatterValue(value: string): string {
   return value.replace(/\r?\n/g, " ").trim();
-}
-
-async function runGit(
-  memoryDir: string,
-  args: string[],
-): Promise<{ stdout: string; stderr: string }> {
-  try {
-    const result = await execFile("git", args, {
-      cwd: memoryDir,
-      maxBuffer: 10 * 1024 * 1024,
-      env: {
-        ...process.env,
-        PAGER: "cat",
-        GIT_PAGER: "cat",
-      },
-    });
-
-    return {
-      stdout: result.stdout?.toString() ?? "",
-      stderr: result.stderr?.toString() ?? "",
-    };
-  } catch (error) {
-    const stderr =
-      typeof error === "object" && error !== null && "stderr" in error
-        ? String((error as { stderr?: string }).stderr ?? "")
-        : "";
-    const stdout =
-      typeof error === "object" && error !== null && "stdout" in error
-        ? String((error as { stdout?: string }).stdout ?? "")
-        : "";
-    const message = error instanceof Error ? error.message : String(error);
-
-    throw new Error(
-      `git ${args.join(" ")} failed: ${stderr || stdout || message}`.trim(),
-    );
-  }
-}
-
-async function commitAndPush(
-  memoryDir: string,
-  pathspecs: string[],
-  reason: string,
-): Promise<{ committed: boolean; sha?: string }> {
-  await runGit(memoryDir, ["add", "-A", "--", ...pathspecs]);
-
-  const status = await runGit(memoryDir, [
-    "status",
-    "--porcelain",
-    "--",
-    ...pathspecs,
-  ]);
-  if (!status.stdout.trim()) {
-    return { committed: false };
-  }
-
-  const { agentId, agentName } = await getAgentIdentity();
-  const authorName = agentName.trim() || agentId;
-  const authorEmail = `${agentId}@letta.com`;
-
-  await runGit(memoryDir, [
-    "-c",
-    `user.name=${authorName}`,
-    "-c",
-    `user.email=${authorEmail}`,
-    "commit",
-    "-m",
-    reason,
-  ]);
-
-  const head = await runGit(memoryDir, ["rev-parse", "HEAD"]);
-  const sha = head.stdout.trim();
-
-  await maybeUpdateMemoryRemoteOrigin(memoryDir, agentId);
-
-  try {
-    await runGit(memoryDir, ["push"]);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    throw new Error(
-      `Memory changes were committed (${sha.slice(0, 7)}) but push failed: ${message}`,
-    );
-  }
-
-  return {
-    committed: true,
-    sha,
-  };
 }
 
 async function isMissing(filePath: string): Promise<boolean> {

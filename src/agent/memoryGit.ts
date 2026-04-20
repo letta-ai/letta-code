@@ -36,6 +36,31 @@ const RETRYABLE_GIT_NETWORK_ERROR_RE =
 const MISSING_CWD_GIT_ERROR_RE =
   /(Unable to read current working directory: No such file or directory|\buv_cwd\b|\bcwd\b.*\bENOENT\b)/i;
 
+const NON_FAST_FORWARD_PUSH_ERROR_RE =
+  /(non-fast-forward|fetch first|failed to push some refs|updates were rejected|remote contains work that you do not have locally|tip of your current branch is behind)/i;
+
+export interface MemoryCommitAuthor {
+  agentId: string;
+  authorName: string;
+  authorEmail: string;
+}
+
+export interface CommitAndSyncMemoryWriteParams {
+  memoryDir: string;
+  pathspecs: string[];
+  reason: string;
+  author: MemoryCommitAuthor;
+  replay?: () => Promise<string[]>;
+}
+
+export interface CommitAndSyncMemoryWriteResult {
+  committed: boolean;
+  sha?: string;
+  replayed?: boolean;
+  replayNoop?: boolean;
+  rescueRef?: string;
+}
+
 /** Get the agent root directory (~/.letta/agents/{id}/) */
 export function getAgentRootDir(agentId: string): string {
   return join(homedir(), ".letta", "agents", agentId);
@@ -498,6 +523,304 @@ function installPreCommitHook(dir: string): void {
   debugLog("memfs-git", "Installed pre-commit hook");
 }
 
+function normalizePathspecs(pathspecs: string[]): string[] {
+  return Array.from(new Set(pathspecs)).filter(
+    (path) => path.trim().length > 0,
+  );
+}
+
+function isNonFastForwardPushError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return NON_FAST_FORWARD_PUSH_ERROR_RE.test(message);
+}
+
+async function prepareMemoryRepoForGitOps(
+  memoryDir: string,
+  agentId: string,
+  token: string,
+): Promise<void> {
+  await maybeUpdateMemoryRemoteOrigin(memoryDir, agentId);
+  await configureLocalCredentialHelper(memoryDir, token);
+  installPreCommitHook(memoryDir);
+}
+
+async function stageMemoryPaths(
+  memoryDir: string,
+  pathspecs: string[],
+): Promise<void> {
+  if (pathspecs.length === 0) {
+    return;
+  }
+  await runGit(memoryDir, ["add", "-A", "--", ...pathspecs]);
+}
+
+async function hasStagedMemoryChanges(
+  memoryDir: string,
+  pathspecs: string[],
+): Promise<boolean> {
+  if (pathspecs.length === 0) {
+    return false;
+  }
+
+  const status = await runGit(memoryDir, [
+    "status",
+    "--porcelain",
+    "--",
+    ...pathspecs,
+  ]);
+  return status.stdout.trim().length > 0;
+}
+
+async function commitMemoryPaths(
+  memoryDir: string,
+  pathspecs: string[],
+  reason: string,
+  author: MemoryCommitAuthor,
+): Promise<{ committed: boolean; sha?: string }> {
+  const normalizedPathspecs = normalizePathspecs(pathspecs);
+  await stageMemoryPaths(memoryDir, normalizedPathspecs);
+
+  if (!(await hasStagedMemoryChanges(memoryDir, normalizedPathspecs))) {
+    return { committed: false };
+  }
+
+  try {
+    await runGit(memoryDir, [
+      "-c",
+      `user.name=${author.authorName.trim() || author.agentId}`,
+      "-c",
+      `user.email=${author.authorEmail}`,
+      "commit",
+      "-m",
+      reason,
+    ]);
+  } catch (error) {
+    await unstageMemoryPaths(memoryDir, normalizedPathspecs);
+    throw error;
+  }
+
+  const head = await runGit(memoryDir, ["rev-parse", "HEAD"]);
+  return {
+    committed: true,
+    sha: head.stdout.trim(),
+  };
+}
+
+async function unstageMemoryPaths(
+  memoryDir: string,
+  pathspecs: string[],
+): Promise<void> {
+  if (pathspecs.length === 0) {
+    return;
+  }
+
+  try {
+    await runGit(memoryDir, ["reset", "HEAD", "--", ...pathspecs]);
+  } catch {
+    // Best-effort cleanup only.
+  }
+}
+
+async function fetchMemoryRemote(
+  memoryDir: string,
+  token: string,
+): Promise<void> {
+  await runGitWithRetry(memoryDir, ["fetch", "origin"], token, {
+    operation: "fetch origin",
+  });
+}
+
+async function resetMemoryToUpstream(
+  memoryDir: string,
+  token: string,
+): Promise<void> {
+  await runGit(memoryDir, ["reset", "--hard", "@{u}"], token);
+}
+
+function buildMemoryConflictRef(sha: string): string {
+  const timestamp = new Date()
+    .toISOString()
+    .replace(/[-:TZ.]/g, "")
+    .slice(0, 14);
+  return `refs/letta-conflicts/${timestamp}-${sha.slice(0, 7)}`;
+}
+
+async function preserveMemoryCommit(
+  memoryDir: string,
+  sha: string,
+): Promise<string> {
+  const ref = buildMemoryConflictRef(sha);
+  await runGit(memoryDir, ["update-ref", ref, sha]);
+  return ref;
+}
+
+function formatCommittedButPushFailed(sha: string, error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return `Memory changes were committed (${sha.slice(0, 7)}) but push failed: ${message}`;
+}
+
+function formatReplayConflict(
+  sha: string,
+  rescueRef: string,
+  error: unknown,
+): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return `Memory changes conflicted with newer remote memory and could not be replayed safely. Preserved local commit ${sha.slice(0, 7)} at ${rescueRef}; local branch was reset to upstream. Replay error: ${message}`;
+}
+
+function formatReplayPushFailure(
+  originalSha: string,
+  originalRef: string,
+  replaySha: string | undefined,
+  replayRef: string | undefined,
+  error: unknown,
+): string {
+  const message = error instanceof Error ? error.message : String(error);
+  const replaySummary =
+    replaySha && replayRef
+      ? ` Replayed commit ${replaySha.slice(0, 7)} was preserved at ${replayRef}.`
+      : "";
+  return `Memory changes conflicted with newer remote memory and the replayed update could not be pushed safely. Original commit ${originalSha.slice(0, 7)} was preserved at ${originalRef}.${replaySummary} Local branch was reset to upstream. Push error: ${message}`;
+}
+
+async function recoverMemoryPushConflict(
+  params: CommitAndSyncMemoryWriteParams,
+  token: string,
+  initialSha: string,
+): Promise<CommitAndSyncMemoryWriteResult> {
+  const rescueRef = await preserveMemoryCommit(params.memoryDir, initialSha);
+
+  await fetchMemoryRemote(params.memoryDir, token);
+  await resetMemoryToUpstream(params.memoryDir, token);
+
+  let replayedPathspecs: string[] = [];
+  try {
+    replayedPathspecs = normalizePathspecs((await params.replay?.()) ?? []);
+  } catch (error) {
+    await resetMemoryToUpstream(params.memoryDir, token);
+    throw new Error(formatReplayConflict(initialSha, rescueRef, error));
+  }
+
+  let replayCommit: { committed: boolean; sha?: string };
+  try {
+    replayCommit = await commitMemoryPaths(
+      params.memoryDir,
+      replayedPathspecs,
+      params.reason,
+      params.author,
+    );
+  } catch (error) {
+    await resetMemoryToUpstream(params.memoryDir, token);
+    throw new Error(formatReplayConflict(initialSha, rescueRef, error));
+  }
+
+  if (!replayCommit.committed) {
+    return {
+      committed: true,
+      replayed: true,
+      replayNoop: true,
+      rescueRef,
+    };
+  }
+
+  try {
+    await runGit(params.memoryDir, ["push"], token);
+  } catch (error) {
+    const replayRef = replayCommit.sha
+      ? await preserveMemoryCommit(params.memoryDir, replayCommit.sha)
+      : undefined;
+    await resetMemoryToUpstream(params.memoryDir, token);
+    throw new Error(
+      formatReplayPushFailure(
+        initialSha,
+        rescueRef,
+        replayCommit.sha,
+        replayRef,
+        error,
+      ),
+    );
+  }
+
+  return {
+    committed: true,
+    sha: replayCommit.sha,
+    replayed: true,
+    rescueRef,
+  };
+}
+
+export async function assertMemoryRepoReadyForWrite(
+  memoryDir: string,
+): Promise<void> {
+  const status = await runGit(memoryDir, ["status", "--porcelain"]);
+  if (status.stdout.trim().length > 0) {
+    throw new Error(
+      "Memory repo has uncommitted changes. Commit, discard, or sync them before using memory tools.",
+    );
+  }
+
+  try {
+    const { stdout } = await runGit(memoryDir, [
+      "rev-list",
+      "--count",
+      "@{u}..HEAD",
+    ]);
+    const aheadCount = parseInt(stdout.trim(), 10);
+    if (aheadCount > 0) {
+      throw new Error(
+        "Memory repo has local commits that are not pushed to remote. Sync the repo before using memory tools.",
+      );
+    }
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      error.message.includes("not pushed to remote")
+    ) {
+      throw error;
+    }
+  }
+}
+
+export async function commitAndSyncMemoryWrite(
+  params: CommitAndSyncMemoryWriteParams,
+): Promise<CommitAndSyncMemoryWriteResult> {
+  const normalizedPathspecs = normalizePathspecs(params.pathspecs);
+  if (normalizedPathspecs.length === 0) {
+    return { committed: false };
+  }
+
+  const token = await getAuthToken();
+  await prepareMemoryRepoForGitOps(
+    params.memoryDir,
+    params.author.agentId,
+    token,
+  );
+
+  const commitResult = await commitMemoryPaths(
+    params.memoryDir,
+    normalizedPathspecs,
+    params.reason,
+    params.author,
+  );
+  if (!commitResult.committed || !commitResult.sha) {
+    return { committed: false };
+  }
+
+  try {
+    await runGit(params.memoryDir, ["push"], token);
+  } catch (error) {
+    if (!params.replay || !isNonFastForwardPushError(error)) {
+      throw new Error(formatCommittedButPushFailed(commitResult.sha, error));
+    }
+    return recoverMemoryPushConflict(params, token, commitResult.sha);
+  }
+
+  return {
+    committed: true,
+    sha: commitResult.sha,
+  };
+}
+
 /** Check if the memory directory is a git repo */
 export function isGitRepo(agentId: string): boolean {
   return existsSync(join(getMemoryRepoDir(agentId), ".git"));
@@ -610,49 +933,14 @@ export async function pullMemory(
 
 /**
  * Push local memory commits to the server.
- * Handles auth, retries with rebase on conflict, and gracefully
- * handles empty remotes (no branch on server yet).
+ * Keeps remote writes explicit: no automatic pull --rebase.
  */
 export async function pushMemory(agentId: string): Promise<void> {
   const token = await getAuthToken();
   const dir = getMemoryRepoDir(agentId);
 
-  await maybeUpdateMemoryRemoteOrigin(dir, agentId);
-
-  await configureLocalCredentialHelper(dir, token);
-
-  try {
-    await runGit(dir, ["push"], token);
-    return;
-  } catch (pushError) {
-    debugWarn(
-      "memfs-git",
-      `Push failed, attempting pull --rebase: ${pushError instanceof Error ? pushError.message : String(pushError)}`,
-    );
-  }
-
-  // Push failed — try pull --rebase then retry push.
-  // The pull itself may fail (e.g. empty remote with no branch), so catch that.
-  try {
-    await runGit(dir, ["pull", "--rebase"], token);
-  } catch (pullError) {
-    debugWarn(
-      "memfs-git",
-      `Pull --rebase also failed (remote may be empty): ${pullError instanceof Error ? pullError.message : String(pullError)}`,
-    );
-    // If pull fails, the push won't succeed either — surface original push error
-    // but don't crash; the commit is saved locally and can be pushed later.
-    return;
-  }
-
-  try {
-    await runGit(dir, ["push"], token);
-  } catch (retryError) {
-    debugWarn(
-      "memfs-git",
-      `Push failed after rebase: ${retryError instanceof Error ? retryError.message : String(retryError)}`,
-    );
-  }
+  await prepareMemoryRepoForGitOps(dir, agentId, token);
+  await runGit(dir, ["push"], token);
 }
 
 export interface MemoryGitStatus {

@@ -33,6 +33,24 @@ async function runGit(cwd: string, args: string[]): Promise<string> {
   return String(stdout ?? "").trim();
 }
 
+async function cloneRemoteRepo(
+  remoteDir: string,
+  cloneDir: string,
+): Promise<void> {
+  await execFile("git", ["clone", remoteDir, cloneDir]);
+  await runGit(cloneDir, ["config", "user.name", "remote-user"]);
+  await runGit(cloneDir, ["config", "user.email", "remote-user@example.com"]);
+}
+
+async function listRescueRefs(cwd: string): Promise<string[]> {
+  const output = await runGit(cwd, [
+    "for-each-ref",
+    "--format=%(refname)",
+    "refs/letta-conflicts",
+  ]);
+  return output ? output.split("\n").filter(Boolean) : [];
+}
+
 describe("memory tool", () => {
   let tempRoot: string;
   let memoryDir: string;
@@ -155,6 +173,116 @@ describe("memory tool", () => {
       "--pretty=format:%s",
     ]);
     expect(subject).toBe(reason);
+  });
+
+  test("replays str_replace on top of newer remote memory", async () => {
+    await memory({
+      command: "create",
+      reason: "Seed replay notes",
+      file_path: "reference/history/notes.md",
+      description: "Notes block",
+      file_text: "old value\nlocal line",
+    });
+
+    const remoteCloneDir = join(tempRoot, "remote-clone");
+    await cloneRemoteRepo(remoteDir, remoteCloneDir);
+    writeFileSync(
+      join(remoteCloneDir, "reference", "history", "notes.md"),
+      [
+        "---",
+        "description: Notes block",
+        "---",
+        "old value",
+        "local line",
+        "remote line",
+      ].join("\n"),
+      "utf8",
+    );
+    await runGit(remoteCloneDir, ["add", "reference/history/notes.md"]);
+    await runGit(remoteCloneDir, ["commit", "-m", "Remote update notes"]);
+    await runGit(remoteCloneDir, ["push", "origin", "main"]);
+
+    const result = await memory({
+      command: "str_replace",
+      reason: "Replay local replacement",
+      file_path: "reference/history/notes.md",
+      old_string: "old value",
+      new_string: "new value",
+    });
+
+    expect(result.message).toContain(
+      "reapplied on top of newer remote memory and pushed",
+    );
+
+    const content = await runGit(memoryDir, [
+      "show",
+      "HEAD:reference/history/notes.md",
+    ]);
+    expect(content).toContain("new value");
+    expect(content).toContain("remote line");
+
+    const divergence = await runGit(memoryDir, [
+      "rev-list",
+      "--left-right",
+      "--count",
+      "@{u}...HEAD",
+    ]);
+    expect(divergence).toBe("0\t0");
+  });
+
+  test("fails closed when replay cannot be applied safely", async () => {
+    await memory({
+      command: "create",
+      reason: "Seed conflicting notes",
+      file_path: "reference/history/notes.md",
+      description: "Notes block",
+      file_text: "old value",
+    });
+
+    const remoteCloneDir = join(tempRoot, "remote-conflict-clone");
+    await cloneRemoteRepo(remoteDir, remoteCloneDir);
+    writeFileSync(
+      join(remoteCloneDir, "reference", "history", "notes.md"),
+      ["---", "description: Notes block", "---", "remote value"].join("\n"),
+      "utf8",
+    );
+    await runGit(remoteCloneDir, ["add", "reference/history/notes.md"]);
+    await runGit(remoteCloneDir, ["commit", "-m", "Remote conflicting update"]);
+    await runGit(remoteCloneDir, ["push", "origin", "main"]);
+
+    await expect(
+      memory({
+        command: "str_replace",
+        reason: "Attempt conflicting replacement",
+        file_path: "reference/history/notes.md",
+        old_string: "old value",
+        new_string: "new value",
+      }),
+    ).rejects.toThrow(/could not be replayed safely/i);
+
+    const divergence = await runGit(memoryDir, [
+      "rev-list",
+      "--left-right",
+      "--count",
+      "@{u}...HEAD",
+    ]);
+    expect(divergence).toBe("0\t0");
+
+    const content = await runGit(memoryDir, [
+      "show",
+      "HEAD:reference/history/notes.md",
+    ]);
+    expect(content).toContain("remote value");
+    expect(content).not.toContain("new value");
+
+    const rescueRefs = await listRescueRefs(memoryDir);
+    expect(rescueRefs.length).toBeGreaterThan(0);
+
+    const rescuedContent = await runGit(memoryDir, [
+      "show",
+      `${rescueRefs[0]}:reference/history/notes.md`,
+    ]);
+    expect(rescuedContent).toContain("new value");
   });
 
   test("falls back to context agent id when AGENT_ID env is missing", async () => {

@@ -1,4 +1,3 @@
-import { execFile as execFileCb } from "node:child_process";
 import { existsSync } from "node:fs";
 import {
   mkdir,
@@ -11,13 +10,13 @@ import {
 } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
-import { promisify } from "node:util";
 import { getClient } from "../../agent/client";
 import { getCurrentAgentId } from "../../agent/context";
-import { maybeUpdateMemoryRemoteOrigin } from "../../agent/memoryGit";
+import {
+  assertMemoryRepoReadyForWrite,
+  commitAndSyncMemoryWrite,
+} from "../../agent/memoryGit";
 import { validateRequiredParams } from "./validation";
-
-const execFile = promisify(execFileCb);
 
 type MemoryCommand =
   | "str_replace"
@@ -91,6 +90,10 @@ interface ParsedMemoryFile {
   body: string;
 }
 
+function normalizeComparableContent(content: string): string {
+  return content.replace(/\r\n/g, "\n").trim();
+}
+
 export async function memory(args: MemoryArgs): Promise<MemoryResult> {
   validateRequiredParams(args, ["command", "reason"], "memory");
 
@@ -102,7 +105,59 @@ export async function memory(args: MemoryArgs): Promise<MemoryResult> {
   const memoryDir = resolveMemoryDir();
   ensureMemoryRepo(memoryDir);
 
-  let affectedPaths: string[] = [];
+  await assertMemoryRepoReadyForWrite(memoryDir);
+
+  const affectedPaths = await applyMemoryCommand(memoryDir, args);
+  if (affectedPaths.length === 0) {
+    return {
+      message: `Memory ${args.command} completed with no changed paths.`,
+    };
+  }
+
+  const { agentId, agentName } = await getAgentIdentity();
+  const commitResult = await commitAndSyncMemoryWrite({
+    memoryDir,
+    pathspecs: affectedPaths,
+    reason,
+    author: {
+      agentId,
+      authorName: agentName.trim() || agentId,
+      authorEmail: `${agentId}@letta.com`,
+    },
+    replay: async () =>
+      applyMemoryCommand(memoryDir, args, { replaying: true }),
+  });
+  if (!commitResult.committed) {
+    return {
+      message: `Memory ${args.command} made no effective changes; skipped commit and push.`,
+    };
+  }
+
+  // Emit memory_updated push event so web UI auto-refreshes
+  emitMemoryUpdated(affectedPaths);
+
+  if (commitResult.replayed && commitResult.replayNoop) {
+    return {
+      message: `Memory ${args.command} matched newer remote memory; skipped an extra commit.`,
+    };
+  }
+
+  if (commitResult.replayed) {
+    return {
+      message: `Memory ${args.command} reapplied on top of newer remote memory and pushed (${commitResult.sha?.slice(0, 7) ?? "unknown"}).`,
+    };
+  }
+
+  return {
+    message: `Memory ${args.command} applied and pushed (${commitResult.sha?.slice(0, 7) ?? "unknown"}).`,
+  };
+}
+
+async function applyMemoryCommand(
+  memoryDir: string,
+  args: MemoryArgs,
+  options?: { replaying?: boolean },
+): Promise<string[]> {
   const command = args.command;
 
   if (command === "create") {
@@ -115,11 +170,6 @@ export async function memory(args: MemoryArgs): Promise<MemoryResult> {
     const label = normalizeMemoryLabel(memoryDir, pathArg, "file_path");
     const filePath = resolveMemoryFilePath(memoryDir, label);
     const relPath = toRepoRelative(memoryDir, filePath);
-
-    if (existsSync(filePath)) {
-      throw new Error(`memory create: block already exists at ${pathArg}`);
-    }
-
     const body = args.file_text ?? "";
     const rendered = renderMemoryFile(
       {
@@ -128,10 +178,28 @@ export async function memory(args: MemoryArgs): Promise<MemoryResult> {
       body,
     );
 
+    if (existsSync(filePath)) {
+      if (!options?.replaying) {
+        throw new Error(`memory create: block already exists at ${pathArg}`);
+      }
+
+      const existingContent = await readFile(filePath, "utf8");
+      if (
+        normalizeComparableContent(existingContent) ===
+        normalizeComparableContent(rendered)
+      ) {
+        return [relPath];
+      }
+
+      throw new Error(`memory create: block already exists at ${pathArg}`);
+    }
+
     await mkdir(dirname(filePath), { recursive: true });
     await writeFile(filePath, rendered, "utf8");
-    affectedPaths = [relPath];
-  } else if (command === "str_replace") {
+    return [relPath];
+  }
+
+  if (command === "str_replace") {
     const pathArg = requireString(args.file_path, "file_path", "str_replace");
     const oldString = requireString(
       args.old_string,
@@ -159,8 +227,10 @@ export async function memory(args: MemoryArgs): Promise<MemoryResult> {
     const nextBody = `${file.body.slice(0, idx)}${newString}${file.body.slice(idx + oldString.length)}`;
     const rendered = renderMemoryFile(file.frontmatter, nextBody);
     await writeFile(filePath, rendered, "utf8");
-    affectedPaths = [relPath];
-  } else if (command === "insert") {
+    return [relPath];
+  }
+
+  if (command === "insert") {
     const pathArg = requireString(args.file_path, "file_path", "insert");
     const insertText = requireString(args.insert_text, "insert_text", "insert");
 
@@ -189,8 +259,16 @@ export async function memory(args: MemoryArgs): Promise<MemoryResult> {
 
     const rendered = renderMemoryFile(file.frontmatter, nextBody);
     await writeFile(filePath, rendered, "utf8");
-    affectedPaths = [relPath];
-  } else if (command === "delete") {
+    return [relPath];
+  }
+
+  if (command === "delete") {
+    if (options?.replaying) {
+      throw new Error(
+        "memory delete could not be replayed safely after remote changes",
+      );
+    }
+
     const pathArg = requireString(args.file_path, "file_path", "delete");
     const label = normalizeMemoryLabel(memoryDir, pathArg, "file_path");
     const targetPath = resolveMemoryPath(memoryDir, label);
@@ -198,16 +276,18 @@ export async function memory(args: MemoryArgs): Promise<MemoryResult> {
     if (existsSync(targetPath) && (await stat(targetPath)).isDirectory()) {
       const relPath = toRepoRelative(memoryDir, targetPath);
       await rm(targetPath, { recursive: true, force: false });
-      affectedPaths = [relPath];
-    } else {
-      const filePath = resolveMemoryFilePath(memoryDir, label);
-      const relPath = toRepoRelative(memoryDir, filePath);
-
-      await loadEditableMemoryFile(filePath, pathArg);
-      await unlink(filePath);
-      affectedPaths = [relPath];
+      return [relPath];
     }
-  } else if (command === "rename") {
+
+    const filePath = resolveMemoryFilePath(memoryDir, label);
+    const relPath = toRepoRelative(memoryDir, filePath);
+
+    await loadEditableMemoryFile(filePath, pathArg);
+    await unlink(filePath);
+    return [relPath];
+  }
+
+  if (command === "rename") {
     const oldPathArg = requireString(args.old_path, "old_path", "rename");
     const newPathArg = requireString(args.new_path, "new_path", "rename");
 
@@ -229,8 +309,10 @@ export async function memory(args: MemoryArgs): Promise<MemoryResult> {
     await loadEditableMemoryFile(oldFilePath, oldPathArg);
     await mkdir(dirname(newFilePath), { recursive: true });
     await rename(oldFilePath, newFilePath);
-    affectedPaths = [oldRelPath, newRelPath];
-  } else if (command === "update_description") {
+    return [oldRelPath, newRelPath];
+  }
+
+  if (command === "update_description") {
     const pathArg = requireString(
       args.file_path,
       "file_path",
@@ -255,31 +337,10 @@ export async function memory(args: MemoryArgs): Promise<MemoryResult> {
       file.body,
     );
     await writeFile(filePath, rendered, "utf8");
-    affectedPaths = [relPath];
-  } else {
-    throw new Error(`Unsupported memory command: ${command}`);
+    return [relPath];
   }
 
-  affectedPaths = Array.from(new Set(affectedPaths)).filter(
-    (p) => p.length > 0,
-  );
-  if (affectedPaths.length === 0) {
-    return { message: `Memory ${command} completed with no changed paths.` };
-  }
-
-  const commitResult = await commitAndPush(memoryDir, affectedPaths, reason);
-  if (!commitResult.committed) {
-    return {
-      message: `Memory ${command} made no effective changes; skipped commit and push.`,
-    };
-  }
-
-  // Emit memory_updated push event so web UI auto-refreshes
-  emitMemoryUpdated(affectedPaths);
-
-  return {
-    message: `Memory ${command} applied and pushed (${commitResult.sha?.slice(0, 7) ?? "unknown"}).`,
-  };
+  throw new Error(`Unsupported memory command: ${command}`);
 }
 
 function resolveMemoryDir(): string {
@@ -511,117 +572,6 @@ function renderMemoryFile(
 function sanitizeFrontmatterValue(value: string): string {
   return value.replace(/\r?\n/g, " ").trim();
 }
-
-async function runGit(
-  memoryDir: string,
-  args: string[],
-): Promise<{ stdout: string; stderr: string }> {
-  try {
-    const result = await execFile("git", args, {
-      cwd: memoryDir,
-      maxBuffer: 10 * 1024 * 1024,
-      env: {
-        ...process.env,
-        PAGER: "cat",
-        GIT_PAGER: "cat",
-      },
-    });
-
-    return {
-      stdout: result.stdout?.toString() ?? "",
-      stderr: result.stderr?.toString() ?? "",
-    };
-  } catch (error) {
-    const stderr =
-      typeof error === "object" && error !== null && "stderr" in error
-        ? String((error as { stderr?: string }).stderr ?? "")
-        : "";
-    const stdout =
-      typeof error === "object" && error !== null && "stdout" in error
-        ? String((error as { stdout?: string }).stdout ?? "")
-        : "";
-    const message = error instanceof Error ? error.message : String(error);
-
-    throw new Error(
-      `git ${args.join(" ")} failed: ${stderr || stdout || message}`.trim(),
-    );
-  }
-}
-
-async function commitAndPush(
-  memoryDir: string,
-  pathspecs: string[],
-  reason: string,
-): Promise<{ committed: boolean; sha?: string }> {
-  await runGit(memoryDir, ["add", "-A", "--", ...pathspecs]);
-
-  const status = await runGit(memoryDir, [
-    "status",
-    "--porcelain",
-    "--",
-    ...pathspecs,
-  ]);
-  if (!status.stdout.trim()) {
-    return { committed: false };
-  }
-
-  const { agentId, agentName } = await getAgentIdentity();
-  const authorName = agentName.trim() || agentId;
-  const authorEmail = `${agentId}@letta.com`;
-
-  try {
-    await runGit(memoryDir, [
-      "-c",
-      `user.name=${authorName}`,
-      "-c",
-      `user.email=${authorEmail}`,
-      "commit",
-      "-m",
-      reason,
-    ]);
-  } catch (error) {
-    // If commit fails (e.g. pre-commit hook rejects staged changes),
-    // unstage just the paths this memory operation added so future memory
-    // commands do not inherit stale staged entries.
-    await unstagePaths(memoryDir, pathspecs);
-    throw error;
-  }
-
-  const head = await runGit(memoryDir, ["rev-parse", "HEAD"]);
-  const sha = head.stdout.trim();
-
-  await maybeUpdateMemoryRemoteOrigin(memoryDir, agentId);
-
-  try {
-    await runGit(memoryDir, ["push"]);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    throw new Error(
-      `Memory changes were committed (${sha.slice(0, 7)}) but push failed: ${message}`,
-    );
-  }
-
-  return {
-    committed: true,
-    sha,
-  };
-}
-
-async function unstagePaths(
-  memoryDir: string,
-  pathspecs: string[],
-): Promise<void> {
-  if (pathspecs.length === 0) {
-    return;
-  }
-
-  try {
-    await runGit(memoryDir, ["reset", "HEAD", "--", ...pathspecs]);
-  } catch {
-    // Best-effort cleanup only — keep original error from commit path.
-  }
-}
-
 function requireString(
   value: string | undefined,
   field: string,

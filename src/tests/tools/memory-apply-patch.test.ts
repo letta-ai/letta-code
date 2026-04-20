@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { execFile as execFileCb } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -33,6 +33,24 @@ const { memory_apply_patch } = await import(
 async function runGit(cwd: string, args: string[]): Promise<string> {
   const { stdout } = await execFile("git", args, { cwd });
   return String(stdout ?? "").trim();
+}
+
+async function cloneRemoteRepo(
+  remoteDir: string,
+  cloneDir: string,
+): Promise<void> {
+  await execFile("git", ["clone", remoteDir, cloneDir]);
+  await runGit(cloneDir, ["config", "user.name", "remote-user"]);
+  await runGit(cloneDir, ["config", "user.email", "remote-user@example.com"]);
+}
+
+async function listRescueRefs(cwd: string): Promise<string[]> {
+  const output = await runGit(cwd, [
+    "for-each-ref",
+    "--format=%(refname)",
+    "refs/letta-conflicts",
+  ]);
+  return output ? output.split("\n").filter(Boolean) : [];
 }
 
 describe("memory_apply_patch tool", () => {
@@ -176,19 +194,17 @@ describe("memory_apply_patch tool", () => {
   });
 
   test("rejects editing read_only memory files", async () => {
-    await memory_apply_patch({
-      reason: "seed read only",
-      input: [
-        "*** Begin Patch",
-        "*** Add File: system/ro.md",
-        "+---",
-        "+description: Read only",
-        "+read_only: true",
-        "+---",
-        "+keep",
-        "*** End Patch",
-      ].join("\n"),
-    });
+    mkdirSync(join(memoryDir, "system"), { recursive: true });
+    writeFileSync(
+      join(memoryDir, "system", "ro.md"),
+      ["---", "description: Read only", "read_only: true", "---", "keep"].join(
+        "\n",
+      ),
+      "utf8",
+    );
+    await runGit(memoryDir, ["add", "system/ro.md"]);
+    await runGit(memoryDir, ["commit", "-m", "seed read only"]);
+    await runGit(memoryDir, ["push", "origin", "main"]);
 
     await expect(
       memory_apply_patch({
@@ -244,6 +260,129 @@ describe("memory_apply_patch tool", () => {
       "--pretty=format:%s",
     ]);
     expect(subject).toBe(reason);
+  });
+
+  test("replays patches on top of newer remote memory", async () => {
+    await memory_apply_patch({
+      reason: "seed replay patch notes",
+      input: [
+        "*** Begin Patch",
+        "*** Add File: reference/history/notes.md",
+        "+---",
+        "+description: Notes block",
+        "+---",
+        "+old",
+        "*** End Patch",
+      ].join("\n"),
+    });
+
+    const remoteCloneDir = join(tempRoot, "remote-patch-clone");
+    await cloneRemoteRepo(remoteDir, remoteCloneDir);
+    writeFileSync(
+      join(remoteCloneDir, "reference", "history", "notes.md"),
+      ["---", "description: Notes block", "---", "old", "remote line"].join(
+        "\n",
+      ),
+      "utf8",
+    );
+    await runGit(remoteCloneDir, ["add", "reference/history/notes.md"]);
+    await runGit(remoteCloneDir, ["commit", "-m", "Remote patch update"]);
+    await runGit(remoteCloneDir, ["push", "origin", "main"]);
+
+    const result = await memory_apply_patch({
+      reason: "Replay patch update",
+      input: [
+        "*** Begin Patch",
+        "*** Update File: reference/history/notes.md",
+        "@@",
+        "-old",
+        "+new",
+        "*** End Patch",
+      ].join("\n"),
+    });
+
+    expect(result.message).toContain(
+      "reapplied on top of newer remote memory and pushed",
+    );
+
+    const content = await runGit(memoryDir, [
+      "show",
+      "HEAD:reference/history/notes.md",
+    ]);
+    expect(content).toContain("new");
+    expect(content).toContain("remote line");
+
+    const divergence = await runGit(memoryDir, [
+      "rev-list",
+      "--left-right",
+      "--count",
+      "@{u}...HEAD",
+    ]);
+    expect(divergence).toBe("0\t0");
+  });
+
+  test("fails closed when replayed patch no longer matches remote", async () => {
+    await memory_apply_patch({
+      reason: "seed conflicting patch notes",
+      input: [
+        "*** Begin Patch",
+        "*** Add File: reference/history/notes.md",
+        "+---",
+        "+description: Notes block",
+        "+---",
+        "+old",
+        "*** End Patch",
+      ].join("\n"),
+    });
+
+    const remoteCloneDir = join(tempRoot, "remote-patch-conflict-clone");
+    await cloneRemoteRepo(remoteDir, remoteCloneDir);
+    writeFileSync(
+      join(remoteCloneDir, "reference", "history", "notes.md"),
+      ["---", "description: Notes block", "---", "remote"].join("\n"),
+      "utf8",
+    );
+    await runGit(remoteCloneDir, ["add", "reference/history/notes.md"]);
+    await runGit(remoteCloneDir, ["commit", "-m", "Remote conflicting patch"]);
+    await runGit(remoteCloneDir, ["push", "origin", "main"]);
+
+    await expect(
+      memory_apply_patch({
+        reason: "Attempt conflicting patch replay",
+        input: [
+          "*** Begin Patch",
+          "*** Update File: reference/history/notes.md",
+          "@@",
+          "-old",
+          "+new",
+          "*** End Patch",
+        ].join("\n"),
+      }),
+    ).rejects.toThrow(/could not be replayed safely/i);
+
+    const divergence = await runGit(memoryDir, [
+      "rev-list",
+      "--left-right",
+      "--count",
+      "@{u}...HEAD",
+    ]);
+    expect(divergence).toBe("0\t0");
+
+    const content = await runGit(memoryDir, [
+      "show",
+      "HEAD:reference/history/notes.md",
+    ]);
+    expect(content).toContain("remote");
+    expect(content).not.toContain("new");
+
+    const rescueRefs = await listRescueRefs(memoryDir);
+    expect(rescueRefs.length).toBeGreaterThan(0);
+
+    const rescuedContent = await runGit(memoryDir, [
+      "show",
+      `${rescueRefs[0]}:reference/history/notes.md`,
+    ]);
+    expect(rescuedContent).toContain("new");
   });
 
   test("updates files that omit frontmatter limit", async () => {
