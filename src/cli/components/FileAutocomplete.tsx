@@ -62,6 +62,15 @@ export function FileAutocomplete({
   const [isLoading, setIsLoading] = useState(false);
   const [lastValidQuery, setLastValidQuery] = useState<string>("");
   const debounceTimeout = useRef<NodeJS.Timeout | null>(null);
+  // Incremented every time a new search is initiated. Async callbacks capture
+  // the generation at the time they were started and bail out if it has since
+  // changed, so stale in-flight results never clobber a newer search.
+  const searchGenRef = useRef(0);
+
+  const lastValidQueryRef = useRef(lastValidQuery);
+  lastValidQueryRef.current = lastValidQuery;
+  const matchesRef = useRef(matches);
+  matchesRef.current = matches;
 
   // Use shared navigation hook (with manual active state management due to async loading)
   const { selectedIndex } = useAutocompleteNavigation({
@@ -111,10 +120,13 @@ export function FileAutocomplete({
       }
 
       // Just a trailing space - check if this query had valid matches when selected
-      // Use lastValidQuery to remember what was successfully selected
-      if (query === lastValidQuery && lastValidQuery.length > 0) {
+      // Use lastValidQueryRef to remember what was successfully selected
+      if (
+        query === lastValidQueryRef.current &&
+        lastValidQueryRef.current.length > 0
+      ) {
         // Show the selected file (non-interactive)
-        if (matches[0]?.path !== query) {
+        if (matchesRef.current[0]?.path !== query) {
           setMatches([{ path: query, type: "file" }]);
         }
         setIsLoading(false);
@@ -129,17 +141,23 @@ export function FileAutocomplete({
       return;
     }
 
+    // Stamp a generation for every new search so stale async callbacks can
+    // detect they've been superseded and discard their results.
+    const gen = ++searchGenRef.current;
+
     // If query is empty (just typed "@"), show current directory contents (no debounce)
     if (query.length === 0) {
       setIsLoading(true);
       onActiveChange?.(true);
       searchFiles("", false) // Don't do deep search for empty query
         .then((results) => {
+          if (searchGenRef.current !== gen) return; // superseded by a newer search
           setMatches(results);
           setIsLoading(false);
           onActiveChange?.(results.length > 0);
         })
         .catch(() => {
+          if (searchGenRef.current !== gen) return;
           setMatches([]);
           setIsLoading(false);
           onActiveChange?.(false);
@@ -164,6 +182,7 @@ export function FileAutocomplete({
       // Search for matching files (deep search through subdirectories)
       searchFiles(query, true) // Enable deep search
         .then((results) => {
+          if (searchGenRef.current !== gen) return; // superseded by a newer search
           setMatches(results);
           setIsLoading(false);
           onActiveChange?.(results.length > 0);
@@ -173,6 +192,7 @@ export function FileAutocomplete({
           }
         })
         .catch(() => {
+          if (searchGenRef.current !== gen) return;
           setMatches([]);
           setIsLoading(false);
           onActiveChange?.(false);
@@ -185,13 +205,7 @@ export function FileAutocomplete({
         clearTimeout(debounceTimeout.current);
       }
     };
-  }, [
-    currentInput,
-    cursorPosition,
-    onActiveChange,
-    lastValidQuery,
-    matches[0]?.path,
-  ]);
+  }, [currentInput, cursorPosition, onActiveChange]);
 
   // Don't show if no "@" in input
   if (!currentInput.includes("@")) {
