@@ -81,14 +81,33 @@ function resolveDiscordChatType(
  * Strip colons for common named patterns.
  */
 function resolveDiscordReactionEmoji(value: string): string {
-  const trimmed = value.trim().replace(/^:+|:+$/g, "");
+  const trimmed = value.trim();
+  if (trimmed.startsWith("<:") || trimmed.startsWith("<a:")) {
+    return trimmed;
+  }
+  const normalized = trimmed.replace(/^:+|:+$/g, "");
   // Common name-to-emoji mappings for parity with Slack lifecycle reactions
   const nameMap: Record<string, string> = {
     eyes: "👀",
     white_check_mark: "✅",
     x: "❌",
   };
-  return nameMap[trimmed] ?? trimmed;
+  return nameMap[normalized] ?? normalized;
+}
+
+function buildDiscordReplyOptions(
+  replyToMessageId: string | undefined,
+  channelId: string,
+): { reply: { messageReference: string } } | undefined {
+  const trimmed = replyToMessageId?.trim();
+  if (!trimmed || trimmed === channelId) {
+    return undefined;
+  }
+  return {
+    reply: {
+      messageReference: trimmed,
+    },
+  };
 }
 
 export async function resolveDiscordAccountDisplayName(
@@ -650,10 +669,11 @@ export function createDiscordAdapter(
           throw new Error("Discord reactions require a target message ID.");
         }
         const emoji = resolveDiscordReactionEmoji(msg.reaction);
-        const channel = await client.channels.fetch(msg.chatId);
+        const targetChannelId = msg.threadId ?? msg.chatId;
+        const channel = await client.channels.fetch(targetChannelId);
         if (!channel?.isTextBased()) {
           throw new Error(
-            `Discord channel not found or not text-based: ${msg.chatId}`,
+            `Discord channel not found or not text-based: ${targetChannelId}`,
           );
         }
         const textChannel = channel as {
@@ -689,11 +709,16 @@ export function createDiscordAdapter(
             `Discord channel not found or not text-based: ${targetChannelId}`,
           );
         }
+        const reply = buildDiscordReplyOptions(
+          msg.replyToMessageId,
+          targetChannelId,
+        );
         const sendable = channel as {
           send: (options: Record<string, unknown>) => Promise<{ id: string }>;
         };
         const result = await sendable.send({
           content: msg.text?.trim() || undefined,
+          ...(reply ?? {}),
           files: [
             {
               attachment: msg.mediaPath,
@@ -712,13 +737,22 @@ export function createDiscordAdapter(
           `Discord channel not found or not text-based: ${targetChannelId}`,
         );
       }
+      const reply = buildDiscordReplyOptions(
+        msg.replyToMessageId,
+        targetChannelId,
+      );
       const sendable = channel as {
-        send: (content: string) => Promise<{ id: string }>;
+        send: (
+          options: string | Record<string, unknown>,
+        ) => Promise<{ id: string }>;
       };
       const chunks = splitMessageText(msg.text, DISCORD_SPLIT_THRESHOLD);
       let lastMessageId = "";
       for (const chunk of chunks) {
-        const result = await sendable.send(chunk);
+        const result = await sendable.send({
+          content: chunk,
+          ...(reply ?? {}),
+        });
         lastMessageId = result.id;
       }
       return { messageId: lastMessageId };
@@ -734,10 +768,14 @@ export function createDiscordAdapter(
       if (!channel || !channel.isTextBased() || !("send" in channel)) {
         return;
       }
+      const reply = buildDiscordReplyOptions(options?.replyToMessageId, chatId);
       const sendable = channel as {
-        send: (content: string) => Promise<unknown>;
+        send: (content: string | Record<string, unknown>) => Promise<unknown>;
       };
-      await sendable.send(text);
+      await sendable.send({
+        content: text,
+        ...(reply ?? {}),
+      });
     },
 
     async prepareInboundMessage(

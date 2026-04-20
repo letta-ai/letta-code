@@ -20,9 +20,7 @@ async function sendDiscordMessage(
     chatId: request.chatId,
     text: formatted.text,
     replyToMessageId: request.replyToMessageId,
-    threadId: request.replyToMessageId
-      ? null
-      : (request.threadId ?? route.threadId ?? null),
+    threadId: request.threadId ?? route.threadId ?? null,
     mediaPath: request.mediaPath,
     fileName: request.filename,
     title: request.title,

@@ -790,6 +790,9 @@ export class ChannelRegistry {
     // 1. Check pairing/allowlist policy
     if (config.dmPolicy === "allowlist") {
       if (!config.allowedUsers.includes(msg.senderId)) {
+        if (msg.reaction) {
+          return;
+        }
         await adapter.sendDirectReply(
           msg.chatId,
           "You are not on the allowed users list for this bot.",
@@ -802,6 +805,9 @@ export class ChannelRegistry {
         loadPairingStore(msg.channel);
       }
       if (!isUserApproved(msg.channel, msg.senderId, accountId)) {
+        if (msg.reaction) {
+          return;
+        }
         // Generate pairing code
         const code = createPairingCode(
           msg.channel,

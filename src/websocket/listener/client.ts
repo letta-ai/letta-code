@@ -3174,14 +3174,14 @@ function handleChannelRegistryEvent(
   runtime: ListenerRuntime,
 ): void {
   if (event.type === "pairings_updated") {
-    emitChannelPairingsUpdated(socket, event.channelId as "telegram" | "slack");
-    emitChannelsUpdated(socket, event.channelId as "telegram" | "slack");
+    emitChannelPairingsUpdated(socket, event.channelId as ChannelId);
+    emitChannelsUpdated(socket, event.channelId as ChannelId);
     return;
   }
 
   if (event.type === "targets_updated") {
-    emitChannelTargetsUpdated(socket, event.channelId as "telegram" | "slack");
-    emitChannelsUpdated(socket, event.channelId as "telegram" | "slack");
+    emitChannelTargetsUpdated(socket, event.channelId as ChannelId);
+    emitChannelsUpdated(socket, event.channelId as ChannelId);
     return;
   }
 

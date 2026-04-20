@@ -206,4 +206,56 @@ describe("message_channel (discord)", () => {
     >;
     expect(call.threadId).toBe("thread-abc");
   });
+
+  test("replyTo keeps the routed thread on discord sends", async () => {
+    const registry = new ChannelRegistry();
+
+    const sendMessage = mock(async () => ({ messageId: "discord-msg-1" }));
+    const adapter: ChannelAdapter = {
+      id: "discord:discord-1",
+      channelId: "discord",
+      accountId: "discord-1",
+      name: "Discord",
+      start: async () => {},
+      stop: async () => {},
+      isRunning: () => true,
+      sendMessage,
+      sendDirectReply: async () => {},
+    };
+
+    registry.registerAdapter(adapter);
+
+    setRouteInMemory("discord", {
+      accountId: "discord-1",
+      chatId: "channel-123",
+      threadId: "thread-abc",
+      agentId: "agent-1",
+      conversationId: "default",
+      enabled: true,
+      createdAt: "2026-04-11T00:00:00.000Z",
+    });
+
+    await message_channel({
+      action: "send",
+      channel: "discord",
+      chat_id: "channel-123",
+      message: "hello",
+      replyTo: "msg-42",
+      parentScope: {
+        agentId: "agent-1",
+        conversationId: "default",
+      },
+    });
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage).toHaveBeenCalledWith({
+      channel: "discord",
+      accountId: "discord-1",
+      chatId: "channel-123",
+      text: "hello",
+      replyToMessageId: "msg-42",
+      threadId: "thread-abc",
+      parseMode: undefined,
+    });
+  });
 });
