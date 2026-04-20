@@ -256,6 +256,7 @@ import {
   buildInitMessage,
   gatherInitGitContext,
 } from "./helpers/initCommand";
+import { buildLogoutSuccessMessage } from "./helpers/logoutMessage";
 import {
   getReflectionSettings,
   parseMemoryPreference,
@@ -263,7 +264,6 @@ import {
   type ReflectionSettings,
 } from "./helpers/memoryReminder";
 import { handleMemorySubagentCompletion } from "./helpers/memorySubagentCompletion";
-import { buildLogoutSuccessMessage } from "./helpers/logoutMessage";
 import {
   type QueuedMessage,
   setMessageQueueAdder,
