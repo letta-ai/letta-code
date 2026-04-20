@@ -7,6 +7,7 @@ import { runPermissionRequestHooks } from "../hooks";
 import type { PermissionModeState } from "../tools/manager";
 import { canonicalToolName, isShellToolName } from "./canonical";
 import { cliPermissions } from "./cli";
+import { evaluateCrossAgentGuard } from "./crossAgentGuard";
 import {
   type MatcherOptions,
   matchesBashPattern,
@@ -114,6 +115,9 @@ function shouldAttachTrace(result: PermissionCheckResult): boolean {
  * Check permission for a tool execution.
  *
  * Decision logic:
+ * 0. Cross-agent guard (unbypassable) → DENY any tool call targeting
+ *    another agent's memory dir unless that agent is in allowed_agents
+ *    (self ∪ LETTA_MEMORY_SCOPE ∪ --memory-scope)
  * 1. Check deny rules from settings (first match wins) → DENY
  * 2. Check CLI disallowedTools (--disallowedTools flag) → DENY
  * 3. Check permission mode (--permission-mode flag) → ALLOW or DENY
@@ -257,6 +261,26 @@ function checkPermissionForEngine(
   const sessionRules = sessionPermissions.getRules();
   const workingDirectoryTools =
     engine === "v2" ? WORKING_DIRECTORY_TOOLS_V2 : WORKING_DIRECTORY_TOOLS_V1;
+
+  // Step 0: Cross-agent guard — unbypassable. If this tool call targets
+  // another agent's memory and that agent isn't in the allowed set, deny
+  // before any other rule/mode/flag can override it.
+  const guardResult = evaluateCrossAgentGuard(
+    toolName,
+    toolArgs,
+    workingDirectory,
+  );
+  if (guardResult) {
+    traceEvent(trace, "cross-agent-guard", guardResult.reason);
+    return {
+      result: {
+        decision: "deny",
+        matchedRule: guardResult.matchedRule,
+        reason: guardResult.reason,
+      },
+      trace,
+    };
+  }
 
   if (permissions.deny) {
     for (const pattern of permissions.deny) {

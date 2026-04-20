@@ -16,6 +16,7 @@ import { normalizePermissionRule } from "./rule-normalization";
 class CliPermissions {
   private allowedTools: string[] = [];
   private disallowedTools: string[] = [];
+  private memoryScope: string[] = [];
 
   /**
    * Parse and set allowed tools from CLI flag
@@ -31,6 +32,24 @@ class CliPermissions {
    */
   setDisallowedTools(toolsString: string): void {
     this.disallowedTools = this.parseToolList(toolsString);
+  }
+
+  /**
+   * Parse and set the memory-scope flag — a list of agent IDs whose memory
+   * this session is allowed to access (in addition to the current agent).
+   * Format: comma- or whitespace-separated agent IDs, e.g.
+   *   --memory-scope "agent-abc, agent-def"
+   *   --memory-scope "agent-abc agent-def"
+   */
+  setMemoryScope(scopeString: string): void {
+    if (!scopeString) {
+      this.memoryScope = [];
+      return;
+    }
+    this.memoryScope = scopeString
+      .split(/[\s,]+/)
+      .map((id) => id.trim())
+      .filter((id) => id.length > 0);
   }
 
   /**
@@ -122,10 +141,28 @@ class CliPermissions {
   }
 
   /**
+   * Get the CLI-supplied memory-scope list (agent IDs).
+   */
+  getMemoryScope(): string[] {
+    return [...this.memoryScope];
+  }
+
+  /**
+   * Whether --memory-scope was set on the CLI.
+   */
+  hasMemoryScope(): boolean {
+    return this.memoryScope.length > 0;
+  }
+
+  /**
    * Check if any CLI overrides are set
    */
   hasOverrides(): boolean {
-    return this.allowedTools.length > 0 || this.disallowedTools.length > 0;
+    return (
+      this.allowedTools.length > 0 ||
+      this.disallowedTools.length > 0 ||
+      this.memoryScope.length > 0
+    );
   }
 
   /**
@@ -134,6 +171,7 @@ class CliPermissions {
   clear(): void {
     this.allowedTools = [];
     this.disallowedTools = [];
+    this.memoryScope = [];
   }
 }
 

@@ -611,35 +611,49 @@ test("memory mode - denies Write outside memory roots", () => {
   }
 });
 
-test("memory mode - allows Write inside PARENT_MEMORY_DIR", () => {
+test("memory mode - allows Write inside parent memory when LETTA_MEMORY_SCOPE grants it", () => {
   permissionMode.setMode("memory");
-  const originalParentMemoryDir = process.env.PARENT_MEMORY_DIR;
+  const originalMemoryDir = process.env.MEMORY_DIR;
+  const originalMemoryScope = process.env.LETTA_MEMORY_SCOPE;
+  const originalAgentId = process.env.AGENT_ID;
+  const home = homedir();
+  const parentMemoryPath = join(
+    home,
+    ".letta",
+    "agents",
+    "agent-parent",
+    "memory",
+  );
   delete process.env.MEMORY_DIR;
-  process.env.PARENT_MEMORY_DIR =
-    "/Users/test/.letta/agents/agent-parent/memory";
+  process.env.LETTA_MEMORY_SCOPE = "agent-parent";
+  process.env.AGENT_ID = "agent-self";
 
   try {
     const result = checkPermission(
       "Write",
       { file_path: "system/parent.md" },
       { allow: [], deny: [], ask: [] },
-      "/Users/test/.letta/agents/agent-parent/memory",
+      parentMemoryPath,
     );
 
     expect(result.decision).toBe("allow");
   } finally {
-    if (originalParentMemoryDir === undefined)
-      delete process.env.PARENT_MEMORY_DIR;
-    else process.env.PARENT_MEMORY_DIR = originalParentMemoryDir;
+    if (originalMemoryDir === undefined) delete process.env.MEMORY_DIR;
+    else process.env.MEMORY_DIR = originalMemoryDir;
+    if (originalMemoryScope === undefined)
+      delete process.env.LETTA_MEMORY_SCOPE;
+    else process.env.LETTA_MEMORY_SCOPE = originalMemoryScope;
+    if (originalAgentId === undefined) delete process.env.AGENT_ID;
+    else process.env.AGENT_ID = originalAgentId;
   }
 });
 
 test("memory mode - no roots allows reads but denies mutations", () => {
   permissionMode.setMode("memory");
   const originalMemoryDir = process.env.MEMORY_DIR;
-  const originalParentMemoryDir = process.env.PARENT_MEMORY_DIR;
+  const originalMemoryScope = process.env.LETTA_MEMORY_SCOPE;
   delete process.env.MEMORY_DIR;
-  delete process.env.PARENT_MEMORY_DIR;
+  delete process.env.LETTA_MEMORY_SCOPE;
 
   try {
     const readResult = checkPermission(
@@ -660,9 +674,9 @@ test("memory mode - no roots allows reads but denies mutations", () => {
   } finally {
     if (originalMemoryDir === undefined) delete process.env.MEMORY_DIR;
     else process.env.MEMORY_DIR = originalMemoryDir;
-    if (originalParentMemoryDir === undefined)
-      delete process.env.PARENT_MEMORY_DIR;
-    else process.env.PARENT_MEMORY_DIR = originalParentMemoryDir;
+    if (originalMemoryScope === undefined)
+      delete process.env.LETTA_MEMORY_SCOPE;
+    else process.env.LETTA_MEMORY_SCOPE = originalMemoryScope;
   }
 });
 

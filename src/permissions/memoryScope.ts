@@ -3,6 +3,7 @@ import { basename, dirname, isAbsolute, resolve } from "node:path";
 
 import { getCurrentAgentId } from "../agent/context";
 import { getMemoryFilesystemRoot } from "../agent/memoryFilesystem";
+import { cliPermissions } from "./cli";
 
 export interface ResolveAllowedMemoryRootsOptions {
   env?: NodeJS.ProcessEnv;
@@ -84,20 +85,39 @@ function addRootAndSiblingWorktree(root: string, acc: Set<string>): void {
   }
 }
 
+function parseScopeIds(value: string | undefined | null): string[] {
+  if (!value) return [];
+  return value
+    .split(/[\s,]+/)
+    .map((id) => id.trim())
+    .filter((id) => id.length > 0);
+}
+
 function getExplicitEnvRoots(
   env: NodeJS.ProcessEnv,
+  homeDir: string,
 ): Pick<ResolvedMemoryScope, "explicitRoots" | "primaryRoot"> {
-  const orderedRoots = [
-    env.MEMORY_DIR,
-    env.LETTA_MEMORY_DIR,
-    env.PARENT_MEMORY_DIR,
-  ]
+  const orderedRoots = [env.MEMORY_DIR, env.LETTA_MEMORY_DIR]
     .map((value) => value?.trim() ?? "")
     .filter((value) => value.length > 0);
 
   const explicitRootSet = new Set<string>();
   for (const root of orderedRoots) {
     addRootAndSiblingWorktree(root, explicitRootSet);
+  }
+
+  // Include memory roots for every agent ID in the cross-agent scope
+  // (env LETTA_MEMORY_SCOPE + CLI --memory-scope). This keeps memory-mode
+  // write permissions aligned with the cross-agent guard.
+  const scopeIds = new Set<string>([
+    ...parseScopeIds(env.LETTA_MEMORY_SCOPE),
+    ...cliPermissions.getMemoryScope(),
+  ]);
+  for (const id of scopeIds) {
+    addRootAndSiblingWorktree(
+      getMemoryFilesystemRoot(id, homeDir),
+      explicitRootSet,
+    );
   }
 
   return {
@@ -176,7 +196,7 @@ export function resolveAllowedMemoryRoots(
   const env = options.env ?? process.env;
   const homeDir = options.homeDir ?? homedir();
 
-  const explicit = getExplicitEnvRoots(env);
+  const explicit = getExplicitEnvRoots(env, homeDir);
   if (explicit.explicitRoots.length > 0) {
     return {
       roots: explicit.explicitRoots,

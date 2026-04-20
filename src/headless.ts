@@ -448,13 +448,16 @@ export async function handleHeadlessCommand(
   }
 
   // Set CLI permission overrides if provided (inherited from parent agent)
-  if (values.allowedTools || values.disallowedTools) {
+  if (values.allowedTools || values.disallowedTools || values["memory-scope"]) {
     const { cliPermissions } = await import("./permissions/cli");
     if (values.allowedTools) {
       cliPermissions.setAllowedTools(values.allowedTools);
     }
     if (values.disallowedTools) {
       cliPermissions.setDisallowedTools(values.disallowedTools);
+    }
+    if (values["memory-scope"]) {
+      cliPermissions.setMemoryScope(values["memory-scope"]);
     }
   }
 

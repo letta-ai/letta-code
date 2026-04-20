@@ -716,13 +716,26 @@ async function executeSubagent(
         delete childEnv.LETTA_MEMORY_DIR;
       }
 
-      const parentMemoryDir =
-        process.env.MEMORY_DIR || process.env.LETTA_MEMORY_DIR;
-      if (parentMemoryDir && parentMemoryDir.trim().length > 0) {
-        childEnv.PARENT_MEMORY_DIR = parentMemoryDir;
-      } else {
-        delete childEnv.PARENT_MEMORY_DIR;
+      // Authorize the child to write the parent's memory via the
+      // cross-agent guard. Compose the scope transitively so that
+      // grandchildren also see the full ancestor chain.
+      const inheritedScope = (process.env.LETTA_MEMORY_SCOPE ?? "")
+        .split(/[\s,]+/)
+        .filter(Boolean);
+      const nextScope = new Set(inheritedScope);
+      if (parentAgentId) {
+        nextScope.add(parentAgentId);
       }
+      if (nextScope.size > 0) {
+        childEnv.LETTA_MEMORY_SCOPE = [...nextScope].join(",");
+      } else {
+        delete childEnv.LETTA_MEMORY_SCOPE;
+      }
+
+      // PARENT_MEMORY_DIR is no longer authoritative for permissions;
+      // the guard uses LETTA_MEMORY_SCOPE instead. Ensure we do not
+      // propagate a stale parent-memory path from the outer env.
+      delete childEnv.PARENT_MEMORY_DIR;
     }
 
     const proc = spawn(launcher.command, launcher.args, {
