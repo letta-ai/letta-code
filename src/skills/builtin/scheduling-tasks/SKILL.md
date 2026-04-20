@@ -44,8 +44,8 @@ letta cron add --name <short-name> --description <text> --prompt <text> <schedul
 
 | Flag | Description |
 |------|-------------|
-| `--agent <id>` | Agent ID (defaults to `LETTA_AGENT_ID` env var — usually already set) |
-| `--conversation <id>` | Conversation ID (defaults to `LETTA_CONVERSATION_ID` or `"default"`) |
+| `--agent <id>` | Agent ID (defaults to `LETTA_AGENT_ID` from the current shell/session) |
+| `--conversation <id>` | Conversation ID (defaults to `LETTA_CONVERSATION_ID` from the current shell/session, otherwise `"default"`) |
 
 ### Listing Tasks
 
@@ -59,6 +59,30 @@ Optional filters: `--agent <id>`, `--conversation <id>`
 
 ```bash
 letta cron get <task-id>
+```
+
+### Binding a Task to the Right Conversation
+
+If exact routing matters, pass both `--agent` and `--conversation` explicitly.
+
+`letta cron add` will otherwise fall back to `LETTA_AGENT_ID` and `LETTA_CONVERSATION_ID` from the current shell/session. Those values may be correct for the current chat, but they can also be inherited from surrounding tooling, another conversation, or an older shell.
+
+Safest pattern:
+
+```bash
+letta cron add \
+  --name "email-check" \
+  --description "Daily email summary in this conversation" \
+  --prompt "Check the user's email and post a summary here." \
+  --cron "0 10 * * *" \
+  --agent "$AGENT_ID" \
+  --conversation "$CONVERSATION_ID"
+```
+
+Then verify the binding explicitly:
+
+```bash
+letta cron list --agent "$AGENT_ID" --conversation "$CONVERSATION_ID"
 ```
 
 ### Deleting Tasks
@@ -119,6 +143,12 @@ letta cron add \
 letta cron list
 ```
 
+If you need to confirm the exact conversation a task is bound to, list with explicit filters instead:
+
+```bash
+letta cron list --agent "$AGENT_ID" --conversation "$CONVERSATION_ID"
+```
+
 ### "Cancel the dog walk reminder"
 
 First list to find the task ID, then delete:
@@ -144,6 +174,7 @@ Include context about what the user originally asked for, so you can give a help
 - **Recurring tasks**: No longer auto-expire. They remain active until explicitly cancelled.
 - **One-shot cleanup**: One-shot tasks are garbage-collected 24 hours after firing.
 - **Timezone**: Tasks use the user's local timezone by default.
+- **Default binding precedence**: `letta cron add` uses `--agent` / `--conversation` first, then falls back to `LETTA_AGENT_ID` / `LETTA_CONVERSATION_ID`, then finally uses `"default"` for the conversation if no env var is present.
 - **Scheduler requirement**: Tasks only fire while a Letta session is running (a WS listener must be active). If no session is running, tasks will be marked as missed.
 - **`--at` for specific times**: `--at "3:00pm"` schedules a one-shot. If the time has already passed today, it schedules for tomorrow.
 - **`--every` for daily**: `--every 1d` fires daily at midnight. For a specific time of day, use `--cron` instead (e.g. `--cron "0 9 * * *"` for 9am daily).
