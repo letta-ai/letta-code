@@ -141,7 +141,7 @@ Include context about what the user originally asked for, so you can give a help
 ## Important Notes
 
 - **Minimum granularity**: 1 minute. Intervals under 60 seconds are rounded up.
-- **Recurring TTL**: Recurring tasks auto-expire after 3 days. The user would need to re-create them or you can note this limitation.
+- **Recurring tasks**: No longer auto-expire. They remain active until explicitly cancelled.
 - **One-shot cleanup**: One-shot tasks are garbage-collected 24 hours after firing.
 - **Timezone**: Tasks use the user's local timezone by default.
 - **Scheduler requirement**: Tasks only fire while a Letta session is running (a WS listener must be active). If no session is running, tasks will be marked as missed.

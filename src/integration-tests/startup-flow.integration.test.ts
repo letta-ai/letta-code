@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { spawn } from "node:child_process";
 import { createIsolatedCliTestEnv } from "../tests/testProcessEnv";
-import { formatCapturedOutput } from "./processDiagnostics";
+import {
+  formatAttemptDiagnostics,
+  formatCapturedOutput,
+} from "./processDiagnostics";
 
 /**
  * Startup flow integration tests.
@@ -21,6 +24,7 @@ async function runCli(
   } = {},
 ): Promise<{ stdout: string; stderr: string; exitCode: number | null }> {
   const { timeoutMs = 30000, expectExit, retryOnTimeouts = 1 } = options;
+  const failedAttempts: Array<{ attempt: number; message: string }> = [];
 
   const runOnce = () =>
     new Promise<{ stdout: string; stderr: string; exitCode: number | null }>(
@@ -95,15 +99,83 @@ async function runCli(
     try {
       return await runOnce();
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      failedAttempts.push({
+        attempt: attempt + 1,
+        message,
+      });
       const isTimeoutError =
         error instanceof Error && error.message.includes("Timeout after");
       if (!isTimeoutError || attempt >= retryOnTimeouts) {
-        throw error;
+        throw new Error(
+          failedAttempts.length === 1
+            ? message
+            : `${message}\n${formatAttemptDiagnostics(
+                failedAttempts.slice(0, -1),
+              )}`,
+        );
       }
       attempt += 1;
       // CI API calls can be transiently slow; retry once to reduce flakiness.
       console.warn(
         `[startup-flow] retrying after timeout (${attempt}/${retryOnTimeouts}) args=${args.join(" ")}`,
+      );
+    }
+  }
+}
+
+function parseJsonFromStdout(stdout: string) {
+  const jsonStart = stdout.indexOf("{");
+  if (jsonStart === -1) {
+    throw new Error("No JSON object found in stdout");
+  }
+  return JSON.parse(stdout.slice(jsonStart)) as Record<string, unknown>;
+}
+
+async function runCliJson(
+  args: string[],
+  options: {
+    timeoutMs?: number;
+    retryOnTimeouts?: number;
+    retryOnParseErrors?: number;
+  } = {},
+): Promise<{
+  stdout: string;
+  stderr: string;
+  exitCode: number | null;
+  output: Record<string, unknown>;
+}> {
+  const { retryOnParseErrors = 1, ...runCliOptions } = options;
+  let attempt = 0;
+  const parseFailures: Array<{ attempt: number; message: string }> = [];
+
+  while (true) {
+    const result = await runCli(args, runCliOptions);
+    try {
+      return {
+        ...result,
+        output: parseJsonFromStdout(result.stdout),
+      };
+    } catch (error) {
+      const message = `Failed to parse JSON stdout.\n${formatCapturedOutput({
+        stdout: result.stdout,
+        stderr: result.stderr,
+        extra: {
+          args: args.join(" "),
+          parse_error: error instanceof Error ? error.message : String(error),
+        },
+      })}`;
+      parseFailures.push({
+        attempt: attempt + 1,
+        message,
+      });
+      if (attempt >= retryOnParseErrors) {
+        throw new Error(formatAttemptDiagnostics(parseFailures));
+      }
+
+      attempt += 1;
+      console.warn(
+        `[startup-flow] retrying after parse failure (${attempt}/${retryOnParseErrors}) args=${args.join(" ")}`,
       );
     }
   }
@@ -162,7 +234,7 @@ describe("Startup Flow - Integration", () => {
   test(
     "--new-agent creates agent and responds",
     async () => {
-      const result = await runCli(
+      const result = await runCliJson(
         [
           "--new-agent",
           "-m",
@@ -176,13 +248,11 @@ describe("Startup Flow - Integration", () => {
       );
 
       expect(result.exitCode).toBe(0);
-      // stdout includes the bun invocation line, extract just the JSON
-      const jsonStart = result.stdout.indexOf("{");
-      const output = JSON.parse(result.stdout.slice(jsonStart));
+      const output = result.output;
       expect(output.agent_id).toBeDefined();
       expect(output.result).toBeDefined();
 
-      testAgentId = output.agent_id;
+      testAgentId = String(output.agent_id);
     },
     { timeout: 190000 },
   );
@@ -195,7 +265,7 @@ describe("Startup Flow - Integration", () => {
         return;
       }
 
-      const result = await runCli(
+      const result = await runCliJson(
         [
           "--agent",
           testAgentId,
@@ -210,8 +280,7 @@ describe("Startup Flow - Integration", () => {
       );
 
       expect(result.exitCode).toBe(0);
-      const jsonStart = result.stdout.indexOf("{");
-      const output = JSON.parse(result.stdout.slice(jsonStart));
+      const output = result.output;
       expect(output.agent_id).toBe(testAgentId);
     },
     { timeout: 190000 },
@@ -226,7 +295,7 @@ describe("Startup Flow - Integration", () => {
       }
 
       // First, create a real conversation with --new (since --new-agent uses "default")
-      const createResult = await runCli(
+      const createResult = await runCliJson(
         [
           "--agent",
           testAgentId,
@@ -241,15 +310,15 @@ describe("Startup Flow - Integration", () => {
         { timeoutMs: 180000 },
       );
       expect(createResult.exitCode).toBe(0);
-      const createJsonStart = createResult.stdout.indexOf("{");
-      const createOutput = JSON.parse(
-        createResult.stdout.slice(createJsonStart),
-      );
-      const realConversationId = createOutput.conversation_id;
+      const realConversationId = createResult.output.conversation_id;
+      expect(typeof realConversationId).toBe("string");
+      if (typeof realConversationId !== "string") {
+        throw new Error("Expected a string conversation_id in JSON output");
+      }
       expect(realConversationId).toBeDefined();
       expect(realConversationId).not.toBe("default");
 
-      const result = await runCli(
+      const result = await runCliJson(
         [
           "--conversation",
           realConversationId,
@@ -264,8 +333,7 @@ describe("Startup Flow - Integration", () => {
       );
 
       expect(result.exitCode).toBe(0);
-      const jsonStart = result.stdout.indexOf("{");
-      const output = JSON.parse(result.stdout.slice(jsonStart));
+      const output = result.output;
       expect(output.agent_id).toBe(testAgentId);
       expect(output.conversation_id).toBe(realConversationId);
     },
@@ -277,7 +345,7 @@ describe("Startup Flow - Integration", () => {
     async () => {
       let agentIdForTest = testAgentId;
       if (!agentIdForTest) {
-        const bootstrapResult = await runCli(
+        const bootstrapResult = await runCliJson(
           [
             "--new-agent",
             "-m",
@@ -290,15 +358,11 @@ describe("Startup Flow - Integration", () => {
           { timeoutMs: 180000 },
         );
         expect(bootstrapResult.exitCode).toBe(0);
-        const bootstrapJsonStart = bootstrapResult.stdout.indexOf("{");
-        const bootstrapOutput = JSON.parse(
-          bootstrapResult.stdout.slice(bootstrapJsonStart),
-        );
-        agentIdForTest = bootstrapOutput.agent_id as string;
+        agentIdForTest = String(bootstrapResult.output.agent_id);
         testAgentId = agentIdForTest;
       }
 
-      const result = await runCli(
+      const result = await runCliJson(
         [
           "--agent",
           agentIdForTest,
@@ -315,8 +379,7 @@ describe("Startup Flow - Integration", () => {
       );
 
       expect(result.exitCode).toBe(0);
-      const jsonStart = result.stdout.indexOf("{");
-      const output = JSON.parse(result.stdout.slice(jsonStart));
+      const output = result.output;
       expect(output.agent_id).toBe(agentIdForTest);
       expect(output.conversation_id).toBe("default");
     },
@@ -326,7 +389,7 @@ describe("Startup Flow - Integration", () => {
   test(
     "--new-agent with --init-blocks none creates minimal agent",
     async () => {
-      const result = await runCli(
+      const result = await runCliJson(
         [
           "--new-agent",
           "--init-blocks",
@@ -342,8 +405,7 @@ describe("Startup Flow - Integration", () => {
       );
 
       expect(result.exitCode).toBe(0);
-      const jsonStart = result.stdout.indexOf("{");
-      const output = JSON.parse(result.stdout.slice(jsonStart));
+      const output = result.output;
       expect(output.agent_id).toBeDefined();
     },
     { timeout: 190000 },

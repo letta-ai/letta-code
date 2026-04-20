@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import {
+  __testOverrideReadProcessIdentity,
   type AddTaskInput,
   addTask,
   claimSchedulerLease,
@@ -12,6 +13,7 @@ import {
   getActiveTasks,
   getTask,
   listTasks,
+  readCronFile,
   releaseSchedulerLease,
   updateTask,
   verifySchedulerLease,
@@ -44,6 +46,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  __testOverrideReadProcessIdentity(null);
   if (existsSync(TEST_DIR)) {
     rmSync(TEST_DIR, { recursive: true });
   }
@@ -213,6 +216,44 @@ describe("scheduler lease", () => {
     claimSchedulerLease();
     expect(verifySchedulerLease("wrong-token")).toBe(false);
   });
+
+  test("takes over a stale lease when the same PID belongs to a different process incarnation", () => {
+    __testOverrideReadProcessIdentity((pid) =>
+      pid === process.pid ? { startTicks: "200", bootId: "boot-a" } : null,
+    );
+
+    writeFileSync(
+      _CRON_PATH,
+      JSON.stringify(
+        {
+          version: 1,
+          scheduler_owner: {
+            pid: process.pid,
+            token: "stale-token",
+            started_at: "2026-04-15T00:00:00.000Z",
+            process_start_ticks: "100",
+            boot_id: "boot-a",
+          },
+          tasks: [],
+        },
+        null,
+        2,
+      ),
+    );
+
+    const token = claimSchedulerLease();
+    const owner = readCronFile().scheduler_owner;
+
+    expect(token).not.toBe("stale-token");
+    expect(owner).toEqual(
+      expect.objectContaining({
+        pid: process.pid,
+        token,
+        process_start_ticks: "200",
+        boot_id: "boot-a",
+      }),
+    );
+  });
 });
 
 describe("garbageCollect", () => {
@@ -266,6 +307,59 @@ describe("withLock", () => {
   test("returns function result", () => {
     const result = withLock(() => 42);
     expect(result).toBe(42);
+  });
+
+  test("steals a stale lock when the PID was recycled to a different process", () => {
+    __testOverrideReadProcessIdentity((pid) =>
+      pid === process.pid ? { startTicks: "200", bootId: "boot-a" } : null,
+    );
+
+    mkdirSync(_LOCK_PATH, { recursive: true });
+    writeFileSync(
+      path.join(_LOCK_PATH, "owner.json"),
+      JSON.stringify({
+        pid: process.pid,
+        token: "stale-lock",
+        acquired_at: Date.now() - 31_000,
+        process_start_ticks: "100",
+        boot_id: "boot-a",
+      }),
+    );
+
+    let executed = false;
+    withLock(() => {
+      executed = true;
+    });
+
+    expect(executed).toBe(true);
+  });
+
+  test("matching process identity keeps the scheduler warning suppressed", () => {
+    __testOverrideReadProcessIdentity((pid) =>
+      pid === process.pid ? { startTicks: "200", bootId: "boot-a" } : null,
+    );
+
+    writeFileSync(
+      _CRON_PATH,
+      JSON.stringify(
+        {
+          version: 1,
+          scheduler_owner: {
+            pid: process.pid,
+            token: "live-token",
+            started_at: "2026-04-15T00:00:00.000Z",
+            process_start_ticks: "200",
+            boot_id: "boot-a",
+          },
+          tasks: [],
+        },
+        null,
+        2,
+      ),
+    );
+
+    const result = addTask(makeInput({ prompt: "echo live scheduler" }));
+    expect(result.warning).toBeUndefined();
   });
 });
 

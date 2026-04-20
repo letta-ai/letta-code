@@ -40,6 +40,7 @@ describe("channel account list responses", () => {
           hasBotToken: true,
           hasAppToken: true,
           agentId: "agent-1",
+          defaultPermissionMode: "acceptEdits" as const,
           createdAt: "2026-04-13T00:00:00.000Z",
           updatedAt: "2026-04-13T00:00:00.000Z",
         },
@@ -60,6 +61,7 @@ describe("channel account list responses", () => {
               hasBotToken: true,
               hasAppToken: true,
               agentId: "agent-1",
+              defaultPermissionMode: "acceptEdits" as const,
               createdAt: "2026-04-13T00:00:00.000Z",
               updatedAt: "2026-04-13T00:00:00.000Z",
             });
@@ -100,6 +102,7 @@ describe("channel account list responses", () => {
             has_bot_token: true,
             has_app_token: true,
             agent_id: "agent-1",
+            default_permission_mode: "acceptEdits",
             created_at: "2026-04-13T00:00:00.000Z",
             updated_at: "2026-04-13T00:00:00.000Z",
           },

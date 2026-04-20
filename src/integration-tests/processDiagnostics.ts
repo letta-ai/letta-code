@@ -39,6 +39,24 @@ export function formatCapturedOutput(params: {
   return lines.join("\n");
 }
 
+export function formatAttemptDiagnostics(
+  attempts: Array<{
+    attempt: number;
+    message: string;
+  }>,
+): string {
+  if (attempts.length === 0) {
+    return "";
+  }
+
+  return attempts
+    .map(
+      ({ attempt, message }) =>
+        `attempt ${attempt} diagnostics:\n${message.trim()}`,
+    )
+    .join("\n\n");
+}
+
 export function summarizeRecentMessages(
   messages: Array<Record<string, unknown>>,
   maxCount = 5,

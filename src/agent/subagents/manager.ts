@@ -151,18 +151,32 @@ function swapProviderPrefix(
   return `${parentProvider}/${modelPortion}`;
 }
 
+function isEnvFlagEnabled(name: string): boolean {
+  const value = process.env[name]?.trim();
+  if (!value) return false;
+  return value === "1" || value.toLowerCase() === "true";
+}
+
 export async function resolveSubagentModel(options: {
   userModel?: string;
   recommendedModel?: string;
   parentModelHandle?: string | null;
   billingTier?: string | null;
   availableHandles?: Set<string>;
+  subagentType?: string;
 }): Promise<string | null> {
   const { userModel, recommendedModel, parentModelHandle, billingTier } =
     options;
   const isFreeTier = billingTier?.toLowerCase() === "free";
 
   if (userModel) return userModel;
+
+  if (
+    options.subagentType === "reflection" &&
+    isEnvFlagEnabled("AUTO_MEMORY")
+  ) {
+    return "letta/auto-memory";
+  }
 
   let recommendedHandle: string | null = null;
   if (recommendedModel && recommendedModel !== "inherit") {
@@ -994,6 +1008,7 @@ export async function spawnSubagent(
         recommendedModel: config.recommendedModel,
         parentModelHandle,
         billingTier,
+        subagentType: type,
       });
   const baseURL = getBaseURL();
 

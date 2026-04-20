@@ -12,6 +12,7 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import { getClient } from "../agent/client";
 import { ISOLATED_BLOCK_LABELS } from "../agent/memory";
+import type { ApprovalResponseBody } from "../types/protocol_v2";
 import {
   getChannelAccount,
   LEGACY_CHANNEL_ACCOUNT_ID,
@@ -19,12 +20,21 @@ import {
   loadChannelAccounts,
 } from "./accounts";
 import {
+  formatChannelControlRequestPrompt,
+  parseChannelControlRequestResponse,
+} from "./interactive";
+import {
   consumePairingCode,
   createPairingCode,
   isUserApproved,
   loadPairingStore,
   rollbackPairingApproval,
 } from "./pairing";
+import {
+  listPendingControlRequests as listPersistedPendingControlRequests,
+  removePendingControlRequest as removePersistedPendingControlRequest,
+  upsertPendingControlRequest as upsertPersistedPendingControlRequest,
+} from "./pendingControlRequests";
 import { loadChannelPlugin } from "./pluginRegistry";
 import {
   addRoute,
@@ -38,11 +48,13 @@ import {
 import { loadTargetStore, upsertChannelTarget } from "./targets";
 import type {
   ChannelAdapter,
+  ChannelControlRequestEvent,
   ChannelRoute,
   ChannelTurnLifecycleEvent,
   ChannelTurnSource,
   InboundChannelMessage,
   SlackChannelAccount,
+  SlackDefaultPermissionMode,
 } from "./types";
 import { formatChannelNotification } from "./xml";
 
@@ -128,6 +140,20 @@ function buildChannelTurnSource(
   };
 }
 
+function getChannelApprovalScopeKey(params: {
+  channel: string;
+  accountId?: string;
+  chatId: string;
+  threadId?: string | null;
+}): string {
+  return [
+    params.channel,
+    params.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID,
+    params.chatId,
+    params.threadId ?? "",
+  ].join(":");
+}
+
 // ── Singleton ─────────────────────────────────────────────────────
 
 let instance: ChannelRegistry | null = null;
@@ -154,6 +180,18 @@ export interface ChannelInboundDelivery {
 }
 
 export type ChannelMessageHandler = (delivery: ChannelInboundDelivery) => void;
+export type ChannelApprovalResponseHandler = (params: {
+  runtime: {
+    agent_id?: string | null;
+    conversation_id?: string | null;
+  };
+  response: ApprovalResponseBody;
+}) => Promise<boolean>;
+
+type PendingChannelControlRequest = {
+  event: ChannelControlRequestEvent;
+  deliveredThisProcess: boolean;
+};
 
 export type ChannelRegistryEvent =
   | {
@@ -163,6 +201,14 @@ export type ChannelRegistryEvent =
   | {
       type: "targets_updated";
       channelId: string;
+    }
+  | {
+      type: "slack_conversation_created";
+      channelId: "slack";
+      accountId: string;
+      agentId: string;
+      conversationId: string;
+      defaultPermissionMode: SlackDefaultPermissionMode;
     };
 
 // ── Registry ──────────────────────────────────────────────────────
@@ -172,7 +218,13 @@ export class ChannelRegistry {
   private ready = false;
   private messageHandler: ChannelMessageHandler | null = null;
   private eventHandler: ((event: ChannelRegistryEvent) => void) | null = null;
+  private approvalResponseHandler: ChannelApprovalResponseHandler | null = null;
   private readonly buffer: ChannelInboundDelivery[] = [];
+  private readonly pendingControlRequestsById = new Map<
+    string,
+    PendingChannelControlRequest
+  >();
+  private readonly pendingControlRequestIdByScope = new Map<string, string>();
 
   constructor() {
     if (instance) {
@@ -181,6 +233,7 @@ export class ChannelRegistry {
       );
     }
     instance = this;
+    this.primePersistedPendingControlRequests();
   }
 
   // ── Adapter management ────────────────────────────────────────
@@ -292,10 +345,131 @@ export class ChannelRegistry {
     this.messageHandler = handler;
   }
 
+  setApprovalResponseHandler(
+    handler: ChannelApprovalResponseHandler | null,
+  ): void {
+    this.approvalResponseHandler = handler;
+  }
+
   setEventHandler(
     handler: ((event: ChannelRegistryEvent) => void) | null,
   ): void {
     this.eventHandler = handler;
+  }
+
+  hasPendingControlRequest(requestId: string): boolean {
+    return this.pendingControlRequestsById.has(requestId);
+  }
+
+  getPendingControlRequests(): Array<PendingChannelControlRequest> {
+    return Array.from(this.pendingControlRequestsById.values()).map(
+      (pending) => ({
+        event: structuredClone(pending.event),
+        deliveredThisProcess: pending.deliveredThisProcess,
+      }),
+    );
+  }
+
+  private primePersistedPendingControlRequests(): void {
+    for (const event of listPersistedPendingControlRequests()) {
+      this.pendingControlRequestsById.set(event.requestId, {
+        event,
+        deliveredThisProcess: false,
+      });
+      this.pendingControlRequestIdByScope.set(
+        getChannelApprovalScopeKey({
+          channel: event.source.channel,
+          accountId: event.source.accountId,
+          chatId: event.source.chatId,
+          threadId: event.source.threadId,
+        }),
+        event.requestId,
+      );
+    }
+  }
+
+  private async deliverPendingControlRequest(
+    requestId: string,
+  ): Promise<boolean> {
+    const pending = this.pendingControlRequestsById.get(requestId);
+    if (!pending) {
+      return false;
+    }
+
+    const event = pending.event;
+    const adapter = this.getAdapter(
+      event.source.channel,
+      event.source.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID,
+    );
+    if (!adapter) {
+      return false;
+    }
+
+    try {
+      if (adapter.handleControlRequestEvent) {
+        await adapter.handleControlRequestEvent(event);
+      } else {
+        await adapter.sendDirectReply(
+          event.source.chatId,
+          formatChannelControlRequestPrompt(event),
+          {
+            replyToMessageId: event.source.threadId ?? event.source.messageId,
+          },
+        );
+      }
+      pending.deliveredThisProcess = true;
+      return true;
+    } catch (error) {
+      console.error(
+        `[Channels] Failed to deliver control request prompt for ${event.source.channel}/${event.source.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID}:`,
+        error instanceof Error ? error.message : error,
+      );
+      return false;
+    }
+  }
+
+  async registerPendingControlRequest(
+    event: ChannelControlRequestEvent,
+  ): Promise<void> {
+    const scopeKey = getChannelApprovalScopeKey({
+      channel: event.source.channel,
+      accountId: event.source.accountId,
+      chatId: event.source.chatId,
+      threadId: event.source.threadId,
+    });
+    const existingRequestId = this.pendingControlRequestIdByScope.get(scopeKey);
+    if (existingRequestId) {
+      this.clearPendingControlRequest(existingRequestId);
+    }
+    this.pendingControlRequestsById.set(event.requestId, {
+      event,
+      deliveredThisProcess: false,
+    });
+    this.pendingControlRequestIdByScope.set(scopeKey, event.requestId);
+    upsertPersistedPendingControlRequest(event);
+    await this.deliverPendingControlRequest(event.requestId);
+  }
+
+  async redeliverPendingControlRequest(requestId: string): Promise<boolean> {
+    return this.deliverPendingControlRequest(requestId);
+  }
+
+  clearPendingControlRequest(requestId: string): void {
+    removePersistedPendingControlRequest(requestId);
+    const pending = this.pendingControlRequestsById.get(requestId);
+    if (!pending) {
+      return;
+    }
+    this.pendingControlRequestsById.delete(requestId);
+    const scopeKey = getChannelApprovalScopeKey({
+      channel: pending.event.source.channel,
+      accountId: pending.event.source.accountId,
+      chatId: pending.event.source.chatId,
+      threadId: pending.event.source.threadId,
+    });
+    if (this.pendingControlRequestIdByScope.get(scopeKey) === requestId) {
+      this.pendingControlRequestIdByScope.delete(scopeKey);
+    }
   }
 
   /**
@@ -461,6 +635,7 @@ export class ChannelRegistry {
     this.ready = false;
     this.messageHandler = null;
     this.eventHandler = null;
+    this.approvalResponseHandler = null;
   }
 
   /**
@@ -476,10 +651,76 @@ export class ChannelRegistry {
     this.ready = false;
     this.messageHandler = null;
     this.eventHandler = null;
+    this.approvalResponseHandler = null;
+    this.pendingControlRequestsById.clear();
+    this.pendingControlRequestIdByScope.clear();
     instance = null;
   }
 
   // ── Inbound message pipeline ──────────────────────────────────
+
+  private async tryHandlePendingControlRequest(
+    adapter: ChannelAdapter,
+    msg: InboundChannelMessage,
+  ): Promise<boolean> {
+    const scopeKey = getChannelApprovalScopeKey({
+      channel: msg.channel,
+      accountId: msg.accountId,
+      chatId: msg.chatId,
+      threadId: msg.threadId,
+    });
+    const requestId = this.pendingControlRequestIdByScope.get(scopeKey);
+    if (!requestId) {
+      return false;
+    }
+
+    const pending = this.pendingControlRequestsById.get(requestId);
+    if (!pending) {
+      this.pendingControlRequestIdByScope.delete(scopeKey);
+      return false;
+    }
+
+    const parsed = parseChannelControlRequestResponse(pending.event, msg.text);
+    if (parsed.type === "reprompt") {
+      await adapter.sendDirectReply(msg.chatId, parsed.message, {
+        replyToMessageId: msg.threadId ?? msg.messageId,
+      });
+      return true;
+    }
+
+    if (!this.approvalResponseHandler) {
+      await adapter.sendDirectReply(
+        msg.chatId,
+        "I’m reconnecting to Letta Code right now, so I couldn’t use that reply yet. Please send it again in a moment.",
+        {
+          replyToMessageId: msg.threadId ?? msg.messageId,
+        },
+      );
+      return true;
+    }
+
+    const handled = await this.approvalResponseHandler({
+      runtime: {
+        agent_id: pending.event.source.agentId,
+        conversation_id: pending.event.source.conversationId,
+      },
+      response: parsed.response,
+    });
+
+    this.clearPendingControlRequest(requestId);
+
+    if (!handled) {
+      await adapter.sendDirectReply(
+        msg.chatId,
+        "That approval prompt expired before I could use your reply. Please ask the agent to try again.",
+        {
+          replyToMessageId: msg.threadId ?? msg.messageId,
+        },
+      );
+    }
+
+    return true;
+  }
 
   private async handleInboundMessage(
     msg: InboundChannelMessage,
@@ -487,6 +728,9 @@ export class ChannelRegistry {
     const accountId = msg.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID;
     const adapter = this.getAdapter(msg.channel, accountId);
     if (!adapter) return;
+    if (await this.tryHandlePendingControlRequest(adapter, msg)) {
+      return;
+    }
     const config = getChannelAccount(msg.channel, accountId);
     if (!config) return;
 
@@ -623,6 +867,16 @@ export class ChannelRegistry {
     };
 
     addRoute(msg.channel, route);
+    if (config.defaultPermissionMode !== "default") {
+      this.eventHandler?.({
+        type: "slack_conversation_created",
+        channelId: "slack",
+        accountId: config.accountId,
+        agentId: config.agentId,
+        conversationId,
+        defaultPermissionMode: config.defaultPermissionMode,
+      });
+    }
     return route;
   }
 

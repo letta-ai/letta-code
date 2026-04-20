@@ -1,8 +1,10 @@
 import { readFile } from "node:fs/promises";
 import { basename, extname } from "node:path";
 import type SlackApp from "@slack/bolt";
+import { formatChannelControlRequestPrompt } from "../interactive";
 import type {
   ChannelAdapter,
+  ChannelControlRequestEvent,
   ChannelTurnLifecycleEvent,
   ChannelTurnSource,
   InboundChannelMessage,
@@ -10,6 +12,7 @@ import type {
   SlackChannelAccount,
 } from "../types";
 import {
+  resolveSlackChannelHistory,
   resolveSlackInboundAttachments,
   resolveSlackThreadHistory,
   resolveSlackThreadStarter,
@@ -308,6 +311,23 @@ function buildSlackThreadLabel(
     return `Slack thread${roomLabel}: ${preview}`;
   }
   return roomLabel ? `Slack thread${roomLabel}` : `Slack thread ${msg.chatId}`;
+}
+
+function buildSlackChannelContextLabel(
+  msg: InboundChannelMessage,
+): string | undefined {
+  if (msg.chatType !== "channel") {
+    return undefined;
+  }
+
+  const roomLabel =
+    isNonEmptyString(msg.chatLabel) && msg.chatLabel !== msg.chatId
+      ? ` in ${msg.chatLabel}`
+      : "";
+
+  return roomLabel
+    ? `Slack channel context${roomLabel} before thread start`
+    : `Slack channel context before thread start`;
 }
 
 export async function resolveSlackAccountDisplayName(
@@ -976,6 +996,24 @@ export function createSlackAdapter(
       );
     },
 
+    async handleControlRequestEvent(
+      event: ChannelControlRequestEvent,
+    ): Promise<void> {
+      await ensureApp();
+      const slackClient = await ensureWriteClient();
+      const response = await slackClient.chat.postMessage({
+        channel: event.source.chatId,
+        text: formatChannelControlRequestPrompt(event),
+        ...((event.source.threadId ?? event.source.messageId)
+          ? { thread_ts: event.source.threadId ?? event.source.messageId }
+          : {}),
+      });
+      rememberMessageThread(
+        response.ts,
+        event.source.threadId ?? event.source.messageId ?? response.ts ?? null,
+      );
+    },
+
     async prepareInboundMessage(
       msg: InboundChannelMessage,
       options?: { isFirstRouteTurn?: boolean },
@@ -985,25 +1023,44 @@ export function createSlackAdapter(
         msg.channel !== "slack" ||
         msg.chatType !== "channel" ||
         !isNonEmptyString(msg.threadId) ||
-        !isNonEmptyString(msg.messageId) ||
-        msg.threadId === msg.messageId
+        !isNonEmptyString(msg.messageId)
+      ) {
+        return msg;
+      }
+
+      const shouldHydrateExistingThreadContext = msg.threadId !== msg.messageId;
+      const shouldHydrateChannelBootstrapContext =
+        msg.isMention === true && msg.threadId === msg.messageId;
+
+      if (
+        !shouldHydrateExistingThreadContext &&
+        !shouldHydrateChannelBootstrapContext
       ) {
         return msg;
       }
 
       const slackApp = await ensureApp();
-      const starter = await resolveSlackThreadStarter({
-        channelId: msg.chatId,
-        threadTs: msg.threadId,
-        client: slackApp.client,
-      });
-      const history = await resolveSlackThreadHistory({
-        channelId: msg.chatId,
-        threadTs: msg.threadId,
-        client: slackApp.client,
-        currentMessageTs: msg.messageId,
-        limit: INITIAL_SLACK_THREAD_HISTORY_LIMIT,
-      });
+      const starter = shouldHydrateExistingThreadContext
+        ? await resolveSlackThreadStarter({
+            channelId: msg.chatId,
+            threadTs: msg.threadId,
+            client: slackApp.client,
+          })
+        : null;
+      const history = shouldHydrateExistingThreadContext
+        ? await resolveSlackThreadHistory({
+            channelId: msg.chatId,
+            threadTs: msg.threadId,
+            client: slackApp.client,
+            currentMessageTs: msg.messageId,
+            limit: INITIAL_SLACK_THREAD_HISTORY_LIMIT,
+          })
+        : await resolveSlackChannelHistory({
+            channelId: msg.chatId,
+            beforeTs: msg.messageId,
+            client: slackApp.client,
+            limit: INITIAL_SLACK_THREAD_HISTORY_LIMIT,
+          });
 
       if (!starter && history.length === 0) {
         return msg;
@@ -1041,7 +1098,9 @@ export function createSlackAdapter(
       return {
         ...msg,
         threadContext: {
-          label: buildSlackThreadLabel(msg, starter?.text),
+          label: shouldHydrateExistingThreadContext
+            ? buildSlackThreadLabel(msg, starter?.text)
+            : buildSlackChannelContextLabel(msg),
           ...(starter
             ? {
                 starter: {

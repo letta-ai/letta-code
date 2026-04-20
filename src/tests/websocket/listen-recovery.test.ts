@@ -8,15 +8,100 @@
  * 4. Idempotency: repeated resolve calls with same state → same behavior.
  * 5. isRecoveringApprovals guard prevents concurrent recovery.
  */
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
+import {
+  __testOverrideLoadPendingControlRequestStore,
+  __testOverrideSavePendingControlRequestStore,
+  clearPendingControlRequestStore,
+} from "../../channels/pendingControlRequests";
+import { ChannelRegistry, getChannelRegistry } from "../../channels/registry";
+import type {
+  ChannelAdapter,
+  ChannelControlRequestEvent,
+} from "../../channels/types";
 import { __listenClientTestUtils } from "../../websocket/listen-client";
 
 const {
   createRuntime,
+  createListenerRuntime,
+  recoverPendingChannelControlRequests,
   resolveRecoveryBatchId,
   resolvePendingApprovalBatchId,
   rememberPendingApprovalBatchIds,
 } = __listenClientTestUtils;
+
+afterEach(async () => {
+  const registry = getChannelRegistry();
+  if (registry) {
+    await registry.stopAll();
+  }
+  __testOverrideLoadPendingControlRequestStore(null);
+  __testOverrideSavePendingControlRequestStore(null);
+  clearPendingControlRequestStore();
+});
+
+function createPendingControlRequestEvent(
+  overrides: Partial<ChannelControlRequestEvent> = {},
+): ChannelControlRequestEvent {
+  return {
+    requestId: "perm-tool-call-1",
+    kind: "ask_user_question",
+    source: {
+      channel: "slack",
+      accountId: "acct-slack",
+      chatId: "C123",
+      chatType: "channel",
+      messageId: "1712800000.000100",
+      threadId: "1712790000.000050",
+      agentId: "agent-1",
+      conversationId: "conv-1",
+    },
+    toolName: "AskUserQuestion",
+    input: {
+      questions: [
+        {
+          question: "Which approach should we use?",
+          header: "Approach",
+          options: [
+            {
+              label: "Fast path",
+              description: "Ship the smallest safe patch",
+            },
+            {
+              label: "Deep refactor",
+              description: "Restructure the code more thoroughly",
+            },
+          ],
+          multiSelect: false,
+        },
+      ],
+    },
+    ...overrides,
+  };
+}
+
+function createAdapter(
+  replies: Array<{ chatId: string; text: string; replyToMessageId?: string }>,
+): ChannelAdapter {
+  return {
+    id: "slack:acct-slack",
+    channelId: "slack",
+    accountId: "acct-slack",
+    name: "Slack",
+    start: async () => {},
+    stop: async () => {},
+    isRunning: () => true,
+    sendMessage: async () => ({ messageId: "msg-1" }),
+    sendDirectReply: async (chatId, text, options) => {
+      replies.push({
+        chatId,
+        text,
+        replyToMessageId: options?.replyToMessageId,
+      });
+    },
+    onMessage: undefined,
+  };
+}
 
 describe("resolveRecoveryBatchId cold-start", () => {
   test("empty batch map returns synthetic recovery-* batch ID", () => {
@@ -167,5 +252,94 @@ describe("resolvePendingApprovalBatchId original behavior preserved", () => {
       { toolCallId: "call-2" },
     ]);
     expect(batchId).toBeNull();
+  });
+});
+
+describe("channel control request recovery", () => {
+  test("redelivers persisted channel prompts that are still pending after boot", async () => {
+    const replies: Array<{
+      chatId: string;
+      text: string;
+      replyToMessageId?: string;
+    }> = [];
+    const event = createPendingControlRequestEvent();
+    __testOverrideLoadPendingControlRequestStore(() => ({
+      requests: [event],
+    }));
+
+    const registry = new ChannelRegistry();
+    registry.registerAdapter(createAdapter(replies));
+    const listener = createListenerRuntime();
+
+    await recoverPendingChannelControlRequests(listener, {
+      recoverApprovalStateForSync: async (runtime) => {
+        runtime.recoveredApprovalState = {
+          agentId: "agent-1",
+          conversationId: "conv-1",
+          approvalsByRequestId: new Map([
+            [
+              event.requestId,
+              {
+                approval: {} as never,
+                approvalContext: null,
+                controlRequest: {
+                  type: "control_request",
+                  request_id: event.requestId,
+                  request: {
+                    subtype: "can_use_tool",
+                    tool_name: event.toolName,
+                    input: event.input,
+                    tool_call_id: "tool-call-1",
+                    permission_suggestions: [],
+                    blocked_path: null,
+                  },
+                  agent_id: "agent-1",
+                  conversation_id: "conv-1",
+                },
+              },
+            ],
+          ]),
+          pendingRequestIds: new Set([event.requestId]),
+          responsesByRequestId: new Map(),
+        };
+      },
+    });
+
+    expect(replies).toEqual([
+      {
+        chatId: "C123",
+        text: expect.stringContaining(
+          "The agent needs an answer before it can continue.",
+        ),
+        replyToMessageId: "1712790000.000050",
+      },
+    ]);
+    expect(registry.hasPendingControlRequest(event.requestId)).toBe(true);
+  });
+
+  test("clears persisted channel prompts that are no longer pending", async () => {
+    const saveSnapshots: Array<{ requests: ChannelControlRequestEvent[] }> = [];
+    const event = createPendingControlRequestEvent();
+    __testOverrideLoadPendingControlRequestStore(() => ({
+      requests: [event],
+    }));
+    __testOverrideSavePendingControlRequestStore((store) => {
+      saveSnapshots.push({
+        requests: store.requests,
+      });
+    });
+
+    const registry = new ChannelRegistry();
+    registry.registerAdapter(createAdapter([]));
+    const listener = createListenerRuntime();
+
+    await recoverPendingChannelControlRequests(listener, {
+      recoverApprovalStateForSync: async (runtime) => {
+        runtime.recoveredApprovalState = null;
+      },
+    });
+
+    expect(registry.hasPendingControlRequest(event.requestId)).toBe(false);
+    expect(saveSnapshots.at(-1)).toEqual({ requests: [] });
   });
 });

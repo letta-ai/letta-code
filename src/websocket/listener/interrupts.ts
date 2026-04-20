@@ -23,6 +23,8 @@ import type {
 
 const INTERRUPT_TOOL_RETURN_MAX_CHARS = LIMITS.BASH_OUTPUT_CHARS;
 
+const STREAMING_TOOL_OUTPUT_MAX_CHARS = LIMITS.BASH_OUTPUT_CHARS;
+
 function truncateInterruptToolReturn(text: string): string {
   const { content } = truncateByChars(
     text,
@@ -48,6 +50,32 @@ function normalizeInterruptOutputLines(value: unknown): string[] | undefined {
   return combinedLength <= INTERRUPT_TOOL_RETURN_MAX_CHARS
     ? filtered
     : undefined;
+}
+
+function appendStreamingOutputWithCap(current: string, chunk: string): string {
+  if (chunk.length === 0) {
+    return current;
+  }
+
+  const next = `${current}${chunk}`;
+  if (next.length <= STREAMING_TOOL_OUTPUT_MAX_CHARS) {
+    return next;
+  }
+
+  return next.slice(next.length - STREAMING_TOOL_OUTPUT_MAX_CHARS);
+}
+
+function normalizeStreamingOutputLines(text: string): string[] | undefined {
+  if (text.length === 0) {
+    return undefined;
+  }
+
+  const lines = text
+    .replace(/\r\n/g, "\n")
+    .split("\n")
+    .filter((line) => line.length > 0);
+
+  return lines.length > 0 ? lines : undefined;
 }
 
 export function asToolReturnStatus(value: unknown): "success" | "error" | null {
@@ -369,6 +397,88 @@ export function emitToolExecutionFinishedEvents(
       conversation_id: params.conversationId,
     });
   }
+}
+
+export function createToolExecutionOutputEmitter(
+  socket: WebSocket,
+  runtime: ConversationRuntime,
+  params: {
+    runId?: string | null;
+    agentId?: string;
+    conversationId?: string;
+  },
+): (toolCallId: string, chunk: string, isStderr?: boolean) => void {
+  const outputByToolCallId = new Map<
+    string,
+    {
+      messageId: string;
+      stdout: string;
+      stderr: string;
+    }
+  >();
+
+  return (toolCallId: string, chunk: string, isStderr: boolean = false) => {
+    if (!toolCallId || chunk.length === 0) {
+      return;
+    }
+
+    const existing = outputByToolCallId.get(toolCallId);
+    const outputState = existing ?? {
+      messageId: `message-tool-return-stream-${toolCallId}`,
+      stdout: "",
+      stderr: "",
+    };
+
+    if (isStderr) {
+      outputState.stderr = appendStreamingOutputWithCap(
+        outputState.stderr,
+        chunk,
+      );
+    } else {
+      outputState.stdout = appendStreamingOutputWithCap(
+        outputState.stdout,
+        chunk,
+      );
+    }
+
+    outputByToolCallId.set(toolCallId, outputState);
+
+    const stdout = normalizeStreamingOutputLines(outputState.stdout);
+    const stderr = normalizeStreamingOutputLines(outputState.stderr);
+    const toolReturn = [stdout?.join("\n"), stderr?.join("\n")]
+      .filter(
+        (part): part is string => typeof part === "string" && part.length > 0,
+      )
+      .join("\n");
+
+    emitCanonicalMessageDelta(
+      socket,
+      runtime,
+      {
+        type: "message",
+        message_type: "tool_return_message",
+        id: outputState.messageId,
+        date: new Date().toISOString(),
+        run_id: params.runId ?? runtime.activeRunId ?? undefined,
+        status: "success",
+        tool_call_id: toolCallId,
+        tool_return: toolReturn,
+        tool_returns: [
+          {
+            tool_call_id: toolCallId,
+            status: "success",
+            tool_return: toolReturn,
+            ...(stdout ? { stdout } : {}),
+            ...(stderr ? { stderr } : {}),
+          },
+        ],
+      },
+      {
+        agent_id: params.agentId,
+        conversation_id: params.conversationId,
+      },
+    );
+  };
 }
 
 export function getInterruptApprovalsForEmission(

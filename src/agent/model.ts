@@ -12,7 +12,8 @@ export type ModelReasoningEffort =
   | "low"
   | "medium"
   | "high"
-  | "xhigh";
+  | "xhigh"
+  | "max";
 
 const REASONING_EFFORT_ORDER: ModelReasoningEffort[] = [
   "none",
@@ -21,6 +22,7 @@ const REASONING_EFFORT_ORDER: ModelReasoningEffort[] = [
   "medium",
   "high",
   "xhigh",
+  "max",
 ];
 
 function isModelReasoningEffort(value: unknown): value is ModelReasoningEffort {
@@ -182,6 +184,15 @@ export function getModelInfoForLlmConfig(
           ?.reasoning_effort === effort,
     );
     if (match) return match;
+
+    if (effort === "max") {
+      const legacyXHighMatch = candidates.find(
+        (m) =>
+          (m.updateArgs as { reasoning_effort?: unknown } | undefined)
+            ?.reasoning_effort === "xhigh",
+      );
+      if (legacyXHighMatch) return legacyXHighMatch;
+    }
   }
 
   // Anthropic-style toggle (best-effort; llm_config may not always include it)

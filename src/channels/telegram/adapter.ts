@@ -6,8 +6,10 @@
 
 import type { ReactionType, ReactionTypeEmoji } from "@grammyjs/types";
 import type { Bot as GrammYBot, Context as GrammYContext } from "grammy";
+import { formatChannelControlRequestPrompt } from "../interactive";
 import type {
   ChannelAdapter,
+  ChannelControlRequestEvent,
   InboundChannelMessage,
   OutboundChannelMessage,
   TelegramChannelAccount,
@@ -581,6 +583,25 @@ export function createTelegramAdapter(
       await telegramBot.api.sendMessage(
         chatId,
         text,
+        reply_parameters ? { reply_parameters } : {},
+      );
+    },
+
+    async handleControlRequestEvent(
+      event: ChannelControlRequestEvent,
+    ): Promise<void> {
+      const telegramBot = await ensureBot();
+      const reply_parameters =
+        event.source.messageId || event.source.threadId
+          ? {
+              message_id: Number(
+                event.source.threadId ?? event.source.messageId,
+              ),
+            }
+          : undefined;
+      await telegramBot.api.sendMessage(
+        event.source.chatId,
+        formatChannelControlRequestPrompt(event),
         reply_parameters ? { reply_parameters } : {},
       );
     },

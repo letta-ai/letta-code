@@ -34,6 +34,7 @@ import type {
   ExecuteCommandCommand,
   FileOpsCommand,
   GetReflectionSettingsCommand,
+  GetTreeCommand,
   InputCommand,
   ListInDirectoryCommand,
   ListMemoryCommand,
@@ -305,6 +306,22 @@ export function isListInDirectoryCommand(
   if (!value || typeof value !== "object") return false;
   const c = value as { type?: unknown; path?: unknown };
   return c.type === "list_in_directory" && typeof c.path === "string";
+}
+
+export function isGetTreeCommand(value: unknown): value is GetTreeCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    path?: unknown;
+    depth?: unknown;
+    request_id?: unknown;
+  };
+  return (
+    c.type === "get_tree" &&
+    typeof c.path === "string" &&
+    typeof c.depth === "number" &&
+    typeof c.request_id === "string"
+  );
 }
 
 export function isReadFileCommand(value: unknown): value is ReadFileCommand {
@@ -1261,6 +1278,7 @@ export function parseServerMessage(
       isTerminalKillCommand(parsed) ||
       isSearchFilesCommand(parsed) ||
       isListInDirectoryCommand(parsed) ||
+      isGetTreeCommand(parsed) ||
       isReadFileCommand(parsed) ||
       isWriteFileCommand(parsed) ||
       isWatchFileCommand(parsed) ||

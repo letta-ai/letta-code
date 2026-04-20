@@ -49,6 +49,7 @@ import type {
   DmPolicy,
   PendingPairing,
   SlackChannelMode,
+  SlackDefaultPermissionMode,
   SupportedChannelId,
 } from "./types";
 
@@ -156,6 +157,7 @@ export type ChannelAccountSnapshot =
       hasBotToken: boolean;
       hasAppToken: boolean;
       agentId: string | null;
+      defaultPermissionMode: SlackDefaultPermissionMode;
       createdAt: string;
       updatedAt: string;
     };
@@ -177,6 +179,7 @@ export interface ChannelAccountPatch {
   appToken?: string;
   mode?: SlackChannelMode;
   agentId?: string | null;
+  defaultPermissionMode?: SlackDefaultPermissionMode;
   dmPolicy?: DmPolicy;
   allowedUsers?: string[];
 }
@@ -417,6 +420,7 @@ function toAccountSnapshot(account: ChannelAccount): ChannelAccountSnapshot {
     hasBotToken: account.botToken.trim().length > 0,
     hasAppToken: account.appToken.trim().length > 0,
     agentId: account.agentId,
+    defaultPermissionMode: account.defaultPermissionMode ?? "default",
     createdAt: account.createdAt,
     updatedAt: account.updatedAt,
   };
@@ -455,6 +459,7 @@ function createAccountFromPatch(
     botToken: patch.botToken ?? "",
     appToken: patch.appToken ?? "",
     agentId: patch.agentId ?? null,
+    defaultPermissionMode: patch.defaultPermissionMode ?? "default",
     dmPolicy: patch.dmPolicy ?? "open",
     allowedUsers: patch.allowedUsers ?? [],
     createdAt: now,
@@ -493,6 +498,10 @@ function mergeAccountPatch(
     botToken: patch.botToken ?? existing.botToken,
     appToken: patch.appToken ?? existing.appToken,
     agentId: patch.agentId ?? existing.agentId,
+    defaultPermissionMode:
+      patch.defaultPermissionMode ??
+      existing.defaultPermissionMode ??
+      "default",
     dmPolicy: patch.dmPolicy ?? existing.dmPolicy,
     allowedUsers: patch.allowedUsers ?? existing.allowedUsers,
     updatedAt: nextUpdatedAt,

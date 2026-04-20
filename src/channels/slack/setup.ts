@@ -92,6 +92,7 @@ export async function runSlackSetup(): Promise<boolean> {
       botToken,
       appToken,
       agentId: null,
+      defaultPermissionMode: "default",
       dmPolicy: policy,
       allowedUsers,
       createdAt: now,

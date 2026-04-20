@@ -1548,7 +1548,12 @@ export async function executeTool(
         enhancedArgs = { ...enhancedArgs, signal: options.signal };
       }
       if (options?.onOutput) {
-        enhancedArgs = { ...enhancedArgs, onOutput: options.onOutput };
+        enhancedArgs = {
+          ...enhancedArgs,
+          onOutput: (chunk: string, stream: "stdout" | "stderr") => {
+            options.onOutput?.(scrubSecretsFromString(chunk), stream);
+          },
+        };
       }
 
       // Substitute $SECRET_NAME patterns with actual secret values

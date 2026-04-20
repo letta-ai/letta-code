@@ -517,6 +517,7 @@ async function drainQueuedMessages(
 
       let turnError: string | undefined;
       let didThrow = false;
+      runtime.activeChannelTurnSources = channelTurnSources;
       try {
         await processQueuedTurn(queuedTurn, dequeuedBatch);
       } catch (error) {
@@ -524,6 +525,7 @@ async function drainQueuedMessages(
         turnError = error instanceof Error ? error.message : String(error);
         throw error;
       } finally {
+        runtime.activeChannelTurnSources = null;
         if (channelTurnSources.length > 0) {
           await dispatchChannelTurnLifecycleEvent({
             type: "finished",
