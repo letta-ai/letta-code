@@ -1753,7 +1753,7 @@
       "description": "Moonshot AI's next-gen multimodal coding and agent model",
       "isFeatured": true,
       "updateArgs": {
-        "context_window": 262144,
+        "context_window": 200000,
         "parallel_tool_calls": true
       }
     },
