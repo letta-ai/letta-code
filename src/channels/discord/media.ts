@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -6,10 +7,18 @@ import type { ChannelMessageAttachment } from "../types";
 
 const DISCORD_ATTACHMENT_DOWNLOAD_TIMEOUT_MS = 15_000;
 const DISCORD_ATTACHMENTS_DIR = join(tmpdir(), "letta-discord-attachments");
+const MAX_DISCORD_ATTACHMENT_BYTES = 20 * 1024 * 1024;
 
 function ensureAttachmentsDir(): string {
   mkdirSync(DISCORD_ATTACHMENTS_DIR, { recursive: true });
   return DISCORD_ATTACHMENTS_DIR;
+}
+
+function sanitizeDiscordPathSegment(input: string): string {
+  const cleaned = input
+    .replace(/[^A-Za-z0-9._-]/g, "_")
+    .replace(/^_+|_+$/g, "");
+  return cleaned || "attachment";
 }
 
 function resolveAttachmentKind(
@@ -45,7 +54,14 @@ export async function resolveDiscordInboundAttachments(params: {
   for (const attachment of params.rawAttachments) {
     const name = attachment.name ?? `attachment-${attachment.id}`;
     const kind = resolveAttachmentKind(attachment.contentType);
-    const localFileName = `${params.accountId}-${params.chatId}-${attachment.id}-${name}`;
+    const localFileName = [
+      Date.now(),
+      randomUUID(),
+      sanitizeDiscordPathSegment(params.accountId),
+      sanitizeDiscordPathSegment(params.chatId),
+      sanitizeDiscordPathSegment(attachment.id),
+      sanitizeDiscordPathSegment(name),
+    ].join("-");
     const localPath = join(dir, localFileName);
 
     try {
@@ -66,7 +82,27 @@ export async function resolveDiscordInboundAttachments(params: {
         continue;
       }
 
+      const contentLength = response.headers.get("content-length");
+      if (contentLength) {
+        const parsedLength = Number(contentLength);
+        if (
+          Number.isFinite(parsedLength) &&
+          parsedLength > MAX_DISCORD_ATTACHMENT_BYTES
+        ) {
+          console.warn(
+            `[Discord] Skipping oversized attachment ${name}: ${parsedLength} bytes`,
+          );
+          continue;
+        }
+      }
+
       const buffer = Buffer.from(await response.arrayBuffer());
+      if (buffer.byteLength > MAX_DISCORD_ATTACHMENT_BYTES) {
+        console.warn(
+          `[Discord] Skipping oversized attachment ${name}: ${buffer.byteLength} bytes`,
+        );
+        continue;
+      }
       await writeFile(localPath, buffer);
 
       const entry: ChannelMessageAttachment = {

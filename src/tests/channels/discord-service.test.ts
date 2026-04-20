@@ -12,7 +12,9 @@ import {
 import {
   __testOverrideLoadRoutes,
   __testOverrideSaveRoutes,
+  addRoute,
   clearAllRoutes,
+  getRoute,
 } from "../../channels/routing";
 import {
   __testOverrideResolveChannelAccountDisplayName,
@@ -21,6 +23,7 @@ import {
   getChannelAccountSnapshot,
   getChannelConfigSnapshot,
   listEnabledChannelIds,
+  removeChannelRouteLive,
   setChannelConfigLive,
   unbindChannelAccountLive,
   updateChannelAccountLive,
@@ -213,5 +216,27 @@ describe("discord channel service", () => {
       throw new Error("wrong channel");
     expect(snapshot.agentId).toBe("agent-456");
     expect((snapshot as Record<string, unknown>).binding).toBeUndefined();
+  });
+
+  test("removeChannelRouteLive removes threaded Discord routes", () => {
+    addRoute("discord", {
+      accountId: "discord-bot",
+      chatId: "thread-1",
+      threadId: "thread-1",
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      enabled: true,
+      createdAt: "2026-04-11T00:00:00.000Z",
+    });
+
+    expect(getRoute("discord", "thread-1", "discord-bot", "thread-1")).not.toBe(
+      null,
+    );
+    expect(removeChannelRouteLive("discord", "thread-1", "discord-bot")).toBe(
+      true,
+    );
+    expect(getRoute("discord", "thread-1", "discord-bot", "thread-1")).toBe(
+      null,
+    );
   });
 });

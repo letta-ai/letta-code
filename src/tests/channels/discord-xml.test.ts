@@ -35,8 +35,8 @@ describe("discord xml", () => {
     expect(reminder).toContain("discord");
     expect(reminder.toLowerCase()).toContain("react");
     expect(reminder).toContain("upload-file");
-    // Mentions native Unicode emoji in the capability hint text
     expect(reminder).toContain("native Unicode emoji");
+    expect(reminder).toContain("<:name:id>");
   });
 
   test("thread metadata appears in XML as thread_id", () => {

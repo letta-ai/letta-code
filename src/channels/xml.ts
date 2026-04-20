@@ -77,7 +77,7 @@ export function buildChannelReminderText(msg: InboundChannelMessage): string {
     lines.splice(
       lines.length - 2,
       0,
-      'On Discord, MessageChannel also supports action="react" with emoji + messageId, and action="upload-file" with media. Discord uses native Unicode emoji for reactions.',
+      'On Discord, MessageChannel also supports action="react" with emoji + messageId, and action="upload-file" with media. Discord reactions accept native Unicode emoji and custom emoji syntax like <:name:id>.',
     );
   }
   if (msg.attachments?.length) {

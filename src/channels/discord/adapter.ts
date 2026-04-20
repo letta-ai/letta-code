@@ -245,11 +245,13 @@ export function createDiscordAdapter(
       const message = await textChannel.messages.fetch(source.messageId);
       const resolvedEmoji = resolveDiscordReactionEmoji(emoji);
       if (remove) {
-        // Find our own reaction and remove it
-        for (const [, reaction] of message.reactions.cache) {
-          if (reaction.me) {
-            await reaction.remove();
-          }
+        const resolved =
+          "resolve" in message.reactions &&
+          typeof message.reactions.resolve === "function"
+            ? message.reactions.resolve(resolvedEmoji)
+            : null;
+        if (resolved && botUserId) {
+          await resolved.users.remove(botUserId);
         }
         return;
       }
@@ -474,9 +476,10 @@ export function createDiscordAdapter(
           return;
         }
 
-        // ── Guild handling (mention-gated) ───────────────────────
-        // In a thread: always process (agent is already engaged).
+        // ── Guild handling ────────────────────────────────────────
         // Outside a thread: only process @mentions (auto-create thread).
+        // Inside a thread: surface messages and let the registry decide whether
+        // the thread is already routed, or whether a new mention is required.
         if (!isThread && !wasMentioned) return;
 
         if (markIngressMessageSeen(message.channelId, message.id)) return;

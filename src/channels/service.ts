@@ -1342,7 +1342,7 @@ export function removeChannelRouteLive(
   if (!route) {
     return false;
   }
-  return removeRoute(channelId, chatId, route.accountId);
+  return removeRoute(channelId, chatId, route.accountId, route.threadId);
 }
 
 export function __testOverrideResolveChannelAccountDisplayName(

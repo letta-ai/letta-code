@@ -90,7 +90,7 @@ export async function runDiscordSetup(): Promise<boolean> {
         "\nWarning: No agent bound. DM pairing will still work, but guild @mentions won't route until you bind an agent.",
       );
       console.log(
-        "  You can bind later: letta channels pair --channel discord --agent <id>",
+        "  You can bind later: letta channels bind --channel discord --agent <id>",
       );
       console.log(
         "  Or set agentId in ~/.letta/channels/discord/accounts.json\n",

@@ -1074,9 +1074,9 @@ export class ChannelRegistry {
       return { route, isFirstRouteTurn: false };
     }
 
-    // Only create routes for mentions (the adapter already filters this,
-    // but double-check) or for messages in threads we should be tracking.
-    if (!msg.isMention && !msg.threadId) {
+    // Only create routes from explicit mentions.
+    // Existing routed threads continue above via the route lookup path.
+    if (!msg.isMention) {
       return null;
     }
 
