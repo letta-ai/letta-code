@@ -606,10 +606,17 @@ export async function task(args: TaskArgs): Promise<string> {
       const client = await getClient();
       const parentAgentId = getCurrentAgentId();
       const parentConvId = getConversationId() ?? "default";
+      // Mark the forked conversation as hidden so it doesn't clutter the
+      // parent agent's conversation list in the ADE. The subagent still
+      // reads/writes this conversation normally — only archive status is
+      // affected.
       const forkedConv = (await client.post(
         `/v1/conversations/${encodeURIComponent(parentConvId)}/fork`,
         {
-          query: parentConvId === "default" ? { agent_id: parentAgentId } : {},
+          query: {
+            ...(parentConvId === "default" ? { agent_id: parentAgentId } : {}),
+            hidden: true,
+          },
         },
       )) as { id: string };
       effectiveAgentId = parentAgentId;
