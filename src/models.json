@@ -1747,6 +1747,17 @@
       }
     },
     {
+      "id": "kimi-k2.6",
+      "handle": "openrouter/moonshotai/kimi-k2.6",
+      "label": "Kimi K2.6",
+      "description": "Moonshot AI's next-gen multimodal coding and agent model",
+      "isFeatured": true,
+      "updateArgs": {
+        "context_window": 262144,
+        "parallel_tool_calls": true
+      }
+    },
+    {
       "id": "deepseek-chat-v3.1",
       "handle": "openrouter/deepseek/deepseek-chat-v3.1",
       "label": "DeepSeek Chat V3.1",
