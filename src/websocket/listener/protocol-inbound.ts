@@ -43,6 +43,7 @@ import type {
   MemoryHistoryCommand,
   ReadFileCommand,
   RuntimeScope,
+  GrepInFilesCommand,
   SearchBranchesCommand,
   SearchFilesCommand,
   SetReflectionSettingsCommand,
@@ -295,6 +296,18 @@ export function isSearchFilesCommand(
   const c = value as { type?: unknown; query?: unknown; request_id?: unknown };
   return (
     c.type === "search_files" &&
+    typeof c.query === "string" &&
+    typeof c.request_id === "string"
+  );
+}
+
+export function isGrepInFilesCommand(
+  value: unknown,
+): value is GrepInFilesCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as { type?: unknown; query?: unknown; request_id?: unknown };
+  return (
+    c.type === "grep_in_files" &&
     typeof c.query === "string" &&
     typeof c.request_id === "string"
   );
@@ -1277,6 +1290,7 @@ export function parseServerMessage(
       isTerminalResizeCommand(parsed) ||
       isTerminalKillCommand(parsed) ||
       isSearchFilesCommand(parsed) ||
+      isGrepInFilesCommand(parsed) ||
       isListInDirectoryCommand(parsed) ||
       isGetTreeCommand(parsed) ||
       isReadFileCommand(parsed) ||

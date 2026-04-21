@@ -596,6 +596,51 @@ export interface SearchFilesCommand {
   cwd?: string;
 }
 
+/**
+ * Listener command — IntelliJ-style "find in files" content search.
+ * Returns line-level matches (text + line/column range) instead of
+ * just the file list so the client can render an IDE-grade results
+ * pane with snippet previews.
+ */
+export interface GrepInFilesCommand {
+  type: "grep_in_files";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  /** Literal or regex pattern depending on `is_regex`. */
+  query: string;
+  /** When true, `query` is treated as a regex. Defaults to false. */
+  is_regex?: boolean;
+  /** Case-sensitive match. Defaults to false. */
+  case_sensitive?: boolean;
+  /** Whole-word match. Defaults to false. */
+  whole_word?: boolean;
+  /** Glob filter (e.g. "*.tsx" or "src/** /*.ts"). Empty = no filter. */
+  glob?: string;
+  /** Scope search to this absolute dir. Falls back to the index root. */
+  cwd?: string;
+  /** Max match lines returned (not files). Defaults to 500. */
+  max_results?: number;
+  /** Lines of context before/after each match. Defaults to 2. */
+  context_lines?: number;
+}
+
+export interface GrepInFilesMatch {
+  /** Path relative to the search root. */
+  path: string;
+  /** 1-based line number of the matched line. */
+  line: number;
+  /** 1-based column (character offset of match start, inclusive). */
+  column: number;
+  /** 1-based column of match end (exclusive). */
+  column_end: number;
+  /** The full matched line's text (no trailing newline). */
+  text: string;
+  /** Lines immediately before the match (up to context_lines). */
+  before?: string[];
+  /** Lines immediately after the match (up to context_lines). */
+  after?: string[];
+}
+
 export interface ListInDirectoryCommand {
   type: "list_in_directory";
   /** Absolute path to list entries in. */
@@ -1455,6 +1500,7 @@ export type WsProtocolCommand =
   | TerminalResizeCommand
   | TerminalKillCommand
   | SearchFilesCommand
+  | GrepInFilesCommand
   | ListInDirectoryCommand
   | GetTreeCommand
   | ReadFileCommand

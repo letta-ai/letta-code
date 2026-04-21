@@ -30,6 +30,7 @@ import {
   searchFileIndex,
   setIndexRoot,
 } from "../../cli/helpers/fileIndex";
+import { runGrepInFiles } from "./grepInFiles";
 import { getGitContext } from "../../cli/helpers/gitContext";
 import {
   getReflectionSettings,
@@ -189,6 +190,7 @@ import {
   isFileOpsCommand,
   isGetReflectionSettingsCommand,
   isGetTreeCommand,
+  isGrepInFilesCommand,
   isListInDirectoryCommand,
   isListMemoryCommand,
   isListModelsCommand,
@@ -4533,6 +4535,78 @@ async function connectWithRetry(
               },
               "listener_search_files_send_failed",
               "listener_search_files",
+            );
+          }
+        });
+        return;
+      }
+
+      // ── Find-in-files content search (no runtime scope required) ──────
+      if (isGrepInFilesCommand(parsed)) {
+        runDetachedListenerTask("grep_in_files", async () => {
+          try {
+            // Re-root the index if the requested cwd lives outside it, so
+            // "search root" matches what the user expects in the UI.
+            if (parsed.cwd) {
+              const currentRoot = getIndexRoot();
+              if (
+                !parsed.cwd.startsWith(currentRoot + path.sep) &&
+                parsed.cwd !== currentRoot
+              ) {
+                setIndexRoot(parsed.cwd);
+              }
+            }
+
+            const searchRoot = parsed.cwd ?? getIndexRoot();
+            const { matches, totalMatches, totalFiles, truncated } =
+              await runGrepInFiles({
+                searchRoot,
+                query: parsed.query,
+                isRegex: parsed.is_regex ?? false,
+                caseSensitive: parsed.case_sensitive ?? false,
+                wholeWord: parsed.whole_word ?? false,
+                glob: parsed.glob,
+                maxResults: parsed.max_results ?? 500,
+                contextLines: parsed.context_lines ?? 2,
+              });
+
+            safeSocketSend(
+              socket,
+              {
+                type: "grep_in_files_response",
+                request_id: parsed.request_id,
+                success: true,
+                matches,
+                total_matches: totalMatches,
+                total_files: totalFiles,
+                truncated,
+              },
+              "listener_grep_in_files_send_failed",
+              "listener_grep_in_files",
+            );
+          } catch (error) {
+            trackListenerError(
+              "listener_grep_in_files_failed",
+              error,
+              "listener_grep_in_files",
+            );
+            safeSocketSend(
+              socket,
+              {
+                type: "grep_in_files_response",
+                request_id: parsed.request_id,
+                success: false,
+                matches: [],
+                total_matches: 0,
+                total_files: 0,
+                truncated: false,
+                error:
+                  error instanceof Error
+                    ? error.message
+                    : "Failed to search file contents",
+              },
+              "listener_grep_in_files_send_failed",
+              "listener_grep_in_files",
             );
           }
         });
