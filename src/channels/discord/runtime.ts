@@ -5,9 +5,36 @@ import {
   loadChannelRuntimeModule,
 } from "../runtimeDeps";
 
-// biome-ignore lint/suspicious/noExplicitAny: discord.js is a runtime dependency
-export async function loadDiscordModule(): Promise<any> {
-  return loadChannelRuntimeModule("discord", "discord.js");
+export interface DiscordGatewayIntentBitsLike {
+  Guilds: unknown;
+  GuildMessages: unknown;
+  GuildMessageReactions: unknown;
+  MessageContent: unknown;
+  DirectMessages: unknown;
+  DirectMessageReactions: unknown;
+}
+
+export interface DiscordPartialsLike {
+  Channel: unknown;
+  Message: unknown;
+  Reaction: unknown;
+  User: unknown;
+}
+
+export interface DiscordRuntimeModuleLike {
+  Client: new (options: {
+    intents: unknown[];
+    partials?: unknown[];
+  }) => unknown;
+  GatewayIntentBits: DiscordGatewayIntentBitsLike;
+  Partials: DiscordPartialsLike;
+}
+
+export async function loadDiscordModule(): Promise<DiscordRuntimeModuleLike> {
+  return loadChannelRuntimeModule<DiscordRuntimeModuleLike>(
+    "discord",
+    "discord.js",
+  );
 }
 
 export function isDiscordRuntimeInstalled(): boolean {

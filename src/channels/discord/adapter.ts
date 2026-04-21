@@ -1,5 +1,4 @@
-import { readFile } from "node:fs/promises";
-import { basename, extname } from "node:path";
+import { basename } from "node:path";
 import type {
   ChannelAdapter,
   ChannelTurnLifecycleEvent,
@@ -13,14 +12,131 @@ import {
   resolveDiscordThreadHistory,
   resolveDiscordThreadStarter,
 } from "./media";
-import { loadDiscordModule } from "./runtime";
+import { type DiscordRuntimeModuleLike, loadDiscordModule } from "./runtime";
 
-// discord.js is a runtime dependency, not installed at build time.
-// Use structural types instead of direct module imports.
-// biome-ignore lint/suspicious/noExplicitAny: runtime-loaded discord.js types
-type DiscordClient = any;
-// biome-ignore lint/suspicious/noExplicitAny: runtime-loaded discord.js types
-type DiscordMessage = any;
+type DiscordEventHandlerResult = void | Promise<void>;
+
+interface DiscordUserLike {
+  id: string;
+  username?: string | null;
+  globalName?: string | null;
+  tag?: string | null;
+  bot?: boolean;
+}
+
+interface DiscordGuildMemberLike {
+  displayName?: string | null;
+}
+
+interface DiscordAttachmentLike {
+  id: string;
+  name?: string | null;
+  contentType?: string | null;
+  size?: number;
+  url: string;
+}
+
+interface DiscordMentionsLike {
+  has: (user: DiscordUserLike | null | undefined) => boolean;
+}
+
+interface DiscordReactionResolutionLike {
+  me?: boolean;
+  remove?: () => Promise<unknown>;
+  users: {
+    remove: (userId: string) => Promise<unknown>;
+  };
+}
+
+interface DiscordReactionStoreLike {
+  cache: Map<string, DiscordReactionResolutionLike>;
+  resolve?: (emoji: string) => DiscordReactionResolutionLike | null;
+}
+
+interface DiscordFetchedMessageLike {
+  id: string;
+  content?: string | null;
+  author?: DiscordUserLike;
+  partial?: boolean;
+  fetch?: () => Promise<DiscordFetchedMessageLike>;
+  react: (emoji: string) => Promise<unknown>;
+  reactions: DiscordReactionStoreLike;
+}
+
+interface DiscordThreadLike {
+  id: string;
+  name?: string | null;
+}
+
+interface DiscordChannelLike {
+  name?: string | null;
+  parentId?: string | null;
+  isTextBased?: () => boolean;
+  isThread?: () => boolean;
+  send?: (options: string | Record<string, unknown>) => Promise<{ id: string }>;
+  messages?: {
+    fetch: (id: string) => Promise<DiscordFetchedMessageLike>;
+  };
+}
+
+interface DiscordMessageLike extends DiscordFetchedMessageLike {
+  channelId: string;
+  guildId?: string | null;
+  author: DiscordUserLike;
+  member?: DiscordGuildMemberLike | null;
+  channel: DiscordChannelLike;
+  mentions: DiscordMentionsLike;
+  attachments: Map<string, DiscordAttachmentLike>;
+  createdTimestamp: number;
+  startThread: (options: {
+    name: string;
+    reason?: string;
+  }) => Promise<DiscordThreadLike>;
+}
+
+interface DiscordReactionLike {
+  partial?: boolean;
+  fetch: () => Promise<unknown>;
+  message: DiscordMessageLike;
+  emoji: {
+    id?: string | null;
+    name?: string | null;
+    toString: () => string;
+  };
+}
+
+interface DiscordEventHandlerMap {
+  ready: () => DiscordEventHandlerResult;
+  messageCreate: (message: DiscordMessageLike) => DiscordEventHandlerResult;
+  messageReactionAdd: (
+    reaction: DiscordReactionLike,
+    user: DiscordUserLike,
+  ) => DiscordEventHandlerResult;
+  messageReactionRemove: (
+    reaction: DiscordReactionLike,
+    user: DiscordUserLike,
+  ) => DiscordEventHandlerResult;
+  error: (error: unknown) => DiscordEventHandlerResult;
+}
+
+interface DiscordClient {
+  user?: DiscordUserLike | null;
+  channels: {
+    fetch: (id: string) => Promise<DiscordChannelLike | null>;
+  };
+  once<K extends keyof DiscordEventHandlerMap>(
+    event: K,
+    handler: DiscordEventHandlerMap[K],
+  ): DiscordClient;
+  on<K extends keyof DiscordEventHandlerMap>(
+    event: K,
+    handler: DiscordEventHandlerMap[K],
+  ): DiscordClient;
+  login: (token: string) => Promise<unknown>;
+  destroy: () => void;
+}
+
+type DiscordMessage = DiscordMessageLike;
 
 const DISCORD_MAX_LENGTH = 2000;
 const DISCORD_SPLIT_THRESHOLD = 1900;
@@ -34,6 +150,38 @@ type LifecycleState = "queued" | "completed" | "error" | "cancelled";
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.length > 0;
+}
+
+function isDiscordTextChannel(
+  channel: DiscordChannelLike | null,
+): channel is DiscordChannelLike & {
+  isTextBased: () => boolean;
+} {
+  return typeof channel?.isTextBased === "function" && channel.isTextBased();
+}
+
+function hasDiscordMessageFetcher(
+  channel: DiscordChannelLike | null,
+): channel is DiscordChannelLike & {
+  isTextBased: () => boolean;
+  messages: {
+    fetch: (id: string) => Promise<DiscordFetchedMessageLike>;
+  };
+} {
+  return (
+    isDiscordTextChannel(channel) &&
+    !!channel.messages &&
+    typeof channel.messages.fetch === "function"
+  );
+}
+
+function isDiscordSendableChannel(
+  channel: DiscordChannelLike | null,
+): channel is DiscordChannelLike & {
+  isTextBased: () => boolean;
+  send: (options: string | Record<string, unknown>) => Promise<{ id: string }>;
+} {
+  return isDiscordTextChannel(channel) && typeof channel.send === "function";
 }
 
 function splitMessageText(text: string, maxLength: number): string[] {
@@ -116,12 +264,12 @@ export async function resolveDiscordAccountDisplayName(
   const discord = await loadDiscordModule();
   const client = new discord.Client({
     intents: [discord.GatewayIntentBits.Guilds],
-  });
+  }) as DiscordClient;
   try {
     await client.login(token);
     const tag = client.user?.tag ?? client.user?.username;
     client.destroy();
-    return tag;
+    return tag ?? undefined;
   } catch {
     try {
       client.destroy();
@@ -228,21 +376,8 @@ export function createDiscordAdapter(
     if (!client || !isNonEmptyString(source.messageId)) return;
     try {
       const channel = await client.channels.fetch(source.chatId);
-      if (!channel?.isTextBased()) return;
-      const textChannel = channel as {
-        messages: {
-          fetch: (id: string) => Promise<{
-            react: (emoji: string) => Promise<unknown>;
-            reactions: {
-              cache: Map<
-                string,
-                { me: boolean; remove: () => Promise<unknown> }
-              >;
-            };
-          }>;
-        };
-      };
-      const message = await textChannel.messages.fetch(source.messageId);
+      if (!hasDiscordMessageFetcher(channel)) return;
+      const message = await channel.messages.fetch(source.messageId);
       const resolvedEmoji = resolveDiscordReactionEmoji(emoji);
       if (remove) {
         const resolved =
@@ -327,7 +462,8 @@ export function createDiscordAdapter(
     return (
       (message.member?.displayName as string | undefined) ??
       message.author.globalName ??
-      message.author.username
+      message.author.username ??
+      message.author.id
     );
   }
 
@@ -360,7 +496,7 @@ export function createDiscordAdapter(
         name: threadName,
         reason: "letta-code discord mention trigger",
       });
-      return { id: thread.id, name: thread.name };
+      return { id: thread.id, name: thread.name ?? undefined };
     } catch (error) {
       console.warn(
         "[Discord] Failed to create thread for mention:",
@@ -371,19 +507,19 @@ export function createDiscordAdapter(
   }
 
   async function collectAttachments(
-    rawAttachments: Map<string, Record<string, unknown>>,
+    rawAttachments: Map<string, DiscordAttachmentLike>,
     chatId: string,
   ): Promise<InboundChannelMessage["attachments"]> {
     const list = Array.from(rawAttachments.values());
     if (list.length === 0) return [];
     return resolveDiscordInboundAttachments({
       accountId: config.accountId,
-      rawAttachments: list.map((a: Record<string, unknown>) => ({
-        id: a.id as string,
-        name: (a.name as string) ?? null,
-        contentType: (a.contentType as string) ?? null,
-        size: (a.size as number) ?? 0,
-        url: a.url as string,
+      rawAttachments: list.map((a) => ({
+        id: a.id,
+        name: a.name ?? null,
+        contentType: a.contentType ?? null,
+        size: a.size ?? 0,
+        url: a.url,
       })),
       chatId,
     });
@@ -398,7 +534,7 @@ export function createDiscordAdapter(
     async start(): Promise<void> {
       if (running) return;
 
-      const discord = await loadDiscordModule();
+      const discord: DiscordRuntimeModuleLike = await loadDiscordModule();
       const GatewayIntentBits = discord.GatewayIntentBits;
       const Partials = discord.Partials;
 
@@ -417,7 +553,7 @@ export function createDiscordAdapter(
           Partials.Reaction,
           Partials.User,
         ],
-      });
+      }) as DiscordClient;
 
       client.once("ready", () => {
         botUserId = client?.user?.id ?? null;
@@ -535,20 +671,19 @@ export function createDiscordAdapter(
       });
 
       // ── Reaction events ──────────────────────────────────────
-      // biome-ignore lint/suspicious/noExplicitAny: runtime-loaded discord.js types
       const handleReactionEvent = async (
-        reaction: any,
-        user: any,
+        reaction: DiscordReactionLike,
+        user: DiscordUserLike,
         action: "added" | "removed",
       ) => {
         if (!adapter.onMessage) return;
         // Ignore bot reactions
-        if ("bot" in user && user.bot) return;
+        if (user.bot) return;
         if (user.id === botUserId) return;
 
         try {
           if (reaction.partial) await reaction.fetch();
-          if (reaction.message.partial) await reaction.message.fetch();
+          if (reaction.message.partial) await reaction.message.fetch?.();
         } catch {
           return;
         }
@@ -577,8 +712,7 @@ export function createDiscordAdapter(
           accountId: config.accountId,
           chatId: channelId,
           senderId: user.id,
-          senderName:
-            "username" in user ? (user.username ?? undefined) : undefined,
+          senderName: user.username ?? undefined,
           text: "",
           timestamp: Date.now(),
           messageId: msg.id,
@@ -603,14 +737,14 @@ export function createDiscordAdapter(
 
       client.on(
         "messageReactionAdd",
-        async (reaction: unknown, user: unknown) => {
+        async (reaction: DiscordReactionLike, user: DiscordUserLike) => {
           await handleReactionEvent(reaction, user, "added");
         },
       );
 
       client.on(
         "messageReactionRemove",
-        async (reaction: unknown, user: unknown) => {
+        async (reaction: DiscordReactionLike, user: DiscordUserLike) => {
           await handleReactionEvent(reaction, user, "removed");
         },
       );
@@ -674,26 +808,14 @@ export function createDiscordAdapter(
         const emoji = resolveDiscordReactionEmoji(msg.reaction);
         const targetChannelId = msg.threadId ?? msg.chatId;
         const channel = await client.channels.fetch(targetChannelId);
-        if (!channel?.isTextBased()) {
+        if (!hasDiscordMessageFetcher(channel)) {
           throw new Error(
             `Discord channel not found or not text-based: ${targetChannelId}`,
           );
         }
-        const textChannel = channel as {
-          messages: {
-            fetch: (id: string) => Promise<{
-              react: (emoji: string) => Promise<unknown>;
-              reactions: {
-                resolve: (emoji: string) => {
-                  users: { remove: (id: string) => Promise<unknown> };
-                } | null;
-              };
-            }>;
-          };
-        };
-        const message = await textChannel.messages.fetch(targetMessageId);
+        const message = await channel.messages.fetch(targetMessageId);
         if (msg.removeReaction) {
-          const resolved = message.reactions.resolve(emoji);
+          const resolved = message.reactions.resolve?.(emoji) ?? null;
           if (resolved && botUserId) {
             await resolved.users.remove(botUserId);
           }
@@ -707,7 +829,7 @@ export function createDiscordAdapter(
       if (msg.mediaPath) {
         const targetChannelId = msg.threadId ?? msg.chatId;
         const channel = await client.channels.fetch(targetChannelId);
-        if (!channel || !channel.isTextBased() || !("send" in channel)) {
+        if (!isDiscordSendableChannel(channel)) {
           throw new Error(
             `Discord channel not found or not text-based: ${targetChannelId}`,
           );
@@ -716,10 +838,7 @@ export function createDiscordAdapter(
           msg.replyToMessageId,
           targetChannelId,
         );
-        const sendable = channel as {
-          send: (options: Record<string, unknown>) => Promise<{ id: string }>;
-        };
-        const result = await sendable.send({
+        const result = await channel.send({
           content: msg.text?.trim() || undefined,
           ...(reply ?? {}),
           files: [
@@ -735,7 +854,7 @@ export function createDiscordAdapter(
       // Handle text messages
       const targetChannelId = msg.threadId ?? msg.chatId;
       const channel = await client.channels.fetch(targetChannelId);
-      if (!channel || !channel.isTextBased() || !("send" in channel)) {
+      if (!isDiscordSendableChannel(channel)) {
         throw new Error(
           `Discord channel not found or not text-based: ${targetChannelId}`,
         );
@@ -744,15 +863,10 @@ export function createDiscordAdapter(
         msg.replyToMessageId,
         targetChannelId,
       );
-      const sendable = channel as {
-        send: (
-          options: string | Record<string, unknown>,
-        ) => Promise<{ id: string }>;
-      };
       const chunks = splitMessageText(msg.text, DISCORD_SPLIT_THRESHOLD);
       let lastMessageId = "";
       for (const chunk of chunks) {
-        const result = await sendable.send({
+        const result = await channel.send({
           content: chunk,
           ...(reply ?? {}),
         });
@@ -768,14 +882,11 @@ export function createDiscordAdapter(
     ): Promise<void> {
       if (!client) throw new Error("Discord not started");
       const channel = await client.channels.fetch(chatId);
-      if (!channel || !channel.isTextBased() || !("send" in channel)) {
+      if (!isDiscordSendableChannel(channel)) {
         return;
       }
       const reply = buildDiscordReplyOptions(options?.replyToMessageId, chatId);
-      const sendable = channel as {
-        send: (content: string | Record<string, unknown>) => Promise<unknown>;
-      };
-      await sendable.send({
+      await channel.send({
         content: text,
         ...(reply ?? {}),
       });

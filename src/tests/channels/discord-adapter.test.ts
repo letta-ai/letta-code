@@ -132,13 +132,17 @@ describe("normalizeDiscordMentionText", () => {
 // ── resolveDiscordReactionEmoji ──────────────────────────────────────────
 
 function resolveDiscordReactionEmoji(value: string): string {
-  const trimmed = value.trim().replace(/^:+|:+$/g, "");
+  const trimmed = value.trim();
+  if (trimmed.startsWith("<:") || trimmed.startsWith("<a:")) {
+    return trimmed;
+  }
+  const normalized = trimmed.replace(/^:+|:+$/g, "");
   const nameMap: Record<string, string> = {
     eyes: "👀",
     white_check_mark: "✅",
     x: "❌",
   };
-  return nameMap[trimmed] ?? trimmed;
+  return nameMap[normalized] ?? normalized;
 }
 
 describe("resolveDiscordReactionEmoji", () => {
@@ -168,6 +172,15 @@ describe("resolveDiscordReactionEmoji", () => {
 
   test("passes through unknown names as-is", () => {
     expect(resolveDiscordReactionEmoji("custom_emoji")).toBe("custom_emoji");
+  });
+
+  test("passes through Discord custom emoji syntax unchanged", () => {
+    expect(resolveDiscordReactionEmoji("<:custom:123456>")).toBe(
+      "<:custom:123456>",
+    );
+    expect(resolveDiscordReactionEmoji("<a:animated:654321>")).toBe(
+      "<a:animated:654321>",
+    );
   });
 });
 
