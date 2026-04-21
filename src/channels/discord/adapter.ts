@@ -284,7 +284,6 @@ export function createDiscordAdapter(
   let client: DiscordClient | null = null;
   let running = false;
   let botUserId: string | null = null;
-  const knownUserDisplayNames = new Map<string, string>();
   const seenIngressMessageKeys = new Map<string, number>();
   const lifecycleStateByMessageKey = new Map<
     string,
@@ -475,11 +474,6 @@ export function createDiscordAdapter(
   function isThreadMessage(message: DiscordMessage): boolean {
     const ch = message.channel as { isThread?: () => boolean };
     return typeof ch.isThread === "function" && ch.isThread();
-  }
-
-  function getParentChannelId(message: DiscordMessage): string | undefined {
-    const ch = message.channel as { parentId?: string | null };
-    return ch.parentId ?? undefined;
   }
 
   async function createThreadForMention(

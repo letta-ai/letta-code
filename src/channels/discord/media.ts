@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
-import { readFile, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, extname, join } from "node:path";
+import { join } from "node:path";
 import type { ChannelMessageAttachment } from "../types";
 
 const DISCORD_ATTACHMENT_DOWNLOAD_TIMEOUT_MS = 15_000;
