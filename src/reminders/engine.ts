@@ -65,7 +65,10 @@ type SharedReminderProvider = (
 async function buildAgentInfoReminder(
   context: SharedReminderContext,
 ): Promise<string | null> {
-  if (context.state.hasSentAgentInfo) {
+  if (
+    !context.sessionContextReminderEnabled ||
+    context.state.hasSentAgentInfo
+  ) {
     return null;
   }
 
