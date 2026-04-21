@@ -6372,6 +6372,7 @@ export default function App({
       closeTrajectorySegment,
       resetTrajectoryBases,
       setUiPermissionMode,
+      prepareScopedToolExecutionContext,
     ],
   );
 
