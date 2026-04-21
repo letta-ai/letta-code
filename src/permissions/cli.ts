@@ -7,6 +7,7 @@ import {
   isFileToolName,
   isShellToolName,
 } from "./canonical";
+import { parseScopeList } from "./memoryScope";
 import { normalizePermissionRule } from "./rule-normalization";
 
 /**
@@ -42,14 +43,7 @@ class CliPermissions {
    *   --memory-scope "agent-abc agent-def"
    */
   setMemoryScope(scopeString: string): void {
-    if (!scopeString) {
-      this.memoryScope = [];
-      return;
-    }
-    this.memoryScope = scopeString
-      .split(/[\s,]+/)
-      .map((id) => id.trim())
-      .filter((id) => id.length > 0);
+    this.memoryScope = parseScopeList(scopeString);
   }
 
   /**

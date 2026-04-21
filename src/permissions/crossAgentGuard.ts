@@ -100,21 +100,27 @@ function buildAgentScopedRegex(homeDir: string): RegExp {
   );
 }
 
+let _cachedHomeDir: string | null = null;
+let _cachedRegex: RegExp | null = null;
+
+function getAgentScopedRegex(homeDir: string): RegExp {
+  if (_cachedHomeDir === homeDir && _cachedRegex) return _cachedRegex;
+  _cachedRegex = buildAgentScopedRegex(homeDir);
+  _cachedHomeDir = homeDir;
+  return _cachedRegex;
+}
+
 /**
  * If the given path is agent-scoped on this machine, return the agent ID.
  */
 function matchAgentScopedPath(path: string, homeDir: string): string | null {
   const normalized = path.replace(/\\/g, "/");
-  const regex = buildAgentScopedRegex(homeDir);
-  const match = normalized.match(regex);
+  const match = normalized.match(getAgentScopedRegex(homeDir));
   return match?.[1] ?? null;
 }
 
 /**
  * Extract file directives from an apply_patch / memory_apply_patch input.
- *
- * Exported so `mode.ts` can also share this helper (single source of truth
- * for the directive syntax).
  */
 export function extractApplyPatchPaths(input: string): string[] {
   const paths: string[] = [];
@@ -133,7 +139,7 @@ export function extractApplyPatchPaths(input: string): string[] {
   return paths;
 }
 
-function extractFilePath(toolArgs: ToolArgs): string | null {
+export function extractFilePath(toolArgs: ToolArgs): string | null {
   if (typeof toolArgs.file_path === "string" && toolArgs.file_path.length > 0) {
     return toolArgs.file_path;
   }
@@ -417,6 +423,8 @@ export function extractTargetAgentPaths(
     if (!rawPath || typeof rawPath !== "string") return;
     const resolvedPath = resolveScopedTargetPath(rawPath, workingDirectory);
     if (!resolvedPath) return;
+    // Fast exit: skip regex if the path can't possibly be agent-scoped.
+    if (!resolvedPath.includes("/.letta/agents/")) return;
     const id = matchAgentScopedPath(resolvedPath, homeDir);
     if (id) {
       anyAgentScoped = true;
@@ -475,7 +483,6 @@ export function extractTargetAgentPaths(
 export interface CrossAgentGuardResult {
   matchedRule: "cross-agent guard";
   reason: string;
-  offendingAgentId: string;
   offendingAgentIds: string[];
 }
 
@@ -557,7 +564,6 @@ export function evaluateCrossAgentGuard(
   return {
     matchedRule: "cross-agent guard",
     reason: buildReason(offendingList, allowed),
-    offendingAgentId: offendingList[0] ?? "",
     offendingAgentIds: offendingList,
   };
 }

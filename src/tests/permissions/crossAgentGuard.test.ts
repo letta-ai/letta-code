@@ -318,7 +318,6 @@ describe("evaluateCrossAgentGuard", () => {
     );
     expect(result).not.toBeNull();
     expect(result?.matchedRule).toBe("cross-agent guard");
-    expect(result?.offendingAgentId).toBe(OTHER);
     expect(result?.offendingAgentIds).toEqual([OTHER]);
     expect(result?.reason).toMatch(/Cross-agent guard/);
   });

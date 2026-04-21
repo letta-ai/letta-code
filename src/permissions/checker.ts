@@ -7,7 +7,7 @@ import { runPermissionRequestHooks } from "../hooks";
 import type { PermissionModeState } from "../tools/manager";
 import { canonicalToolName, isShellToolName } from "./canonical";
 import { cliPermissions } from "./cli";
-import { evaluateCrossAgentGuard } from "./crossAgentGuard";
+import { evaluateCrossAgentGuard, extractFilePath } from "./crossAgentGuard";
 import {
   type MatcherOptions,
   matchesBashPattern,
@@ -262,9 +262,9 @@ function checkPermissionForEngine(
   const workingDirectoryTools =
     engine === "v2" ? WORKING_DIRECTORY_TOOLS_V2 : WORKING_DIRECTORY_TOOLS_V1;
 
-  // Step 0: Cross-agent guard — unbypassable. If this tool call targets
-  // another agent's memory and that agent isn't in the allowed set, deny
-  // before any other rule/mode/flag can override it.
+  // Cross-agent guard — denies any tool call targeting another agent's
+  // memory unless that agent is in the allowed set. Unbypassable by any
+  // mode, rule, or flag.
   const guardResult = evaluateCrossAgentGuard(
     toolName,
     toolArgs,
@@ -539,26 +539,6 @@ function checkPermissionForEngine(
     },
     trace,
   };
-}
-
-/**
- * Extract file path from tool arguments
- */
-function extractFilePath(toolArgs: ToolArgs): string | null {
-  // Different tools use different parameter names
-  if (typeof toolArgs.file_path === "string" && toolArgs.file_path.length > 0) {
-    return toolArgs.file_path;
-  }
-  if (typeof toolArgs.path === "string" && toolArgs.path.length > 0) {
-    return toolArgs.path;
-  }
-  if (
-    typeof toolArgs.notebook_path === "string" &&
-    toolArgs.notebook_path.length > 0
-  ) {
-    return toolArgs.notebook_path;
-  }
-  return null;
 }
 
 /**
