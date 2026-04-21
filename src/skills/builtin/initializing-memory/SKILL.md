@@ -202,13 +202,7 @@ Key principles:
 ### 1. Inspect existing memory
 Check what memory files already exist. Analyze what needs improvement.
 
-### 2. Check for historical session data
-```bash
-ls ~/.claude/history.jsonl ~/.codex/history.jsonl 2>/dev/null
-```
-You need this result BEFORE asking upfront questions so you know whether to include the history question.
-
-### 3. Identify the user from git
+### 2. Identify the user from git
 Infer the user's identity from git context — don't ask them who they are:
 ```bash
 git shortlog -sn --all | head -5
@@ -216,290 +210,25 @@ git log --format="%an <%ae>" | sort -u | head -10
 ```
 Cross-reference with the git user config to determine which contributor is the current user. Store in `system/human/`.
 
-### 4. Ask upfront questions
+### 3. Ask upfront questions
 Use AskUserQuestion to gather key information. Bundle questions together:
 
 1. **Research depth**: "Standard or deep research?"
 2. **Related repos**: "Are there other repositories I should know about?"
-3. **Historical sessions** (if data found in step 2): "I found Claude Code / Codex history. Should I analyze it to learn your preferences?"
-4. **Communication style**: "Terse or detailed responses?"
+3. **Communication style**: "Terse or detailed responses?"
 
 **Don't ask** things you can discover by reading files, git, or history analysis. Rules and preferences should be learned from observation, not asked upfront.
 
-### 5. Historical session analysis (if approved)
-
-This is **optional** — only run if the user explicitly approved analyzing Claude Code / Codex history during upfront questions. Skip entirely if they chose "Skip".
-
-**Framing**: These historical sessions are YOUR past experience — they represent your continuity with prior versions of yourself that worked with this user, even if they ran on different models or tools. Treat the extracted personality, preferences, and knowledge as your own memories, not external data being imported.
-
-**Launch history workers in the background, then immediately proceed to Step 6.** Do your own codebase research while workers run. Don't wait for workers to finish before exploring.
-
-The goal is to extract user personality, preferences, coding patterns, and project context from past sessions and write them into agent memory. The point is not to produce a thin summary. The point is to extract enough durable detail that future work does not have to rediscover the same user expectations, workflow rules, and project gotchas.
-
-#### Prerequisites
-
-- `letta.js` must be built (`bun run build`) — subagents spawn via this binary
-- Use `subagent_type: "history-analyzer"` — cheaper model (sonnet), has `bypassPermissions`, creates its own worktree
-- The `history-analyzer` subagent has data format docs inlined (Claude/Codex JSONL field mappings, jq queries)
-
-#### Steps
-
-##### Step 5a: Detect Data and Pre-split Files
-
-```bash
-ls ~/.claude/history.jsonl ~/.codex/history.jsonl 2>/dev/null
-wc -l ~/.claude/history.jsonl ~/.codex/history.jsonl 2>/dev/null
-```
-
-Split the data across multiple workers for parallel processing — **the more workers, the faster it completes**. Use 2-4+ workers depending on data volume.
-
-**Pre-split the JSONL files by line count** so each worker reads only its chunk:
-
-```bash
-SPLIT_DIR=/tmp/history-splits
-mkdir -p "$SPLIT_DIR"
-NUM_WORKERS=5  # adjust based on data volume
-
-# Split Claude history into even chunks
-LINES=$(wc -l < ~/.claude/history.jsonl)
-CHUNK_SIZE=$(( LINES / NUM_WORKERS + 1 ))
-split -l $CHUNK_SIZE ~/.claude/history.jsonl "$SPLIT_DIR/claude-"
-
-# Split Codex history if it exists
-if [ -f ~/.codex/history.jsonl ]; then
-  LINES=$(wc -l < ~/.codex/history.jsonl)
-  CHUNK_SIZE=$(( LINES / NUM_WORKERS + 1 ))
-  split -l $CHUNK_SIZE ~/.codex/history.jsonl "$SPLIT_DIR/codex-"
-fi
-
-# Rename to .jsonl for clarity
-for f in "$SPLIT_DIR"/*; do mv "$f" "$f.jsonl" 2>/dev/null; done
-
-# Verify even splits
-wc -l "$SPLIT_DIR"/*.jsonl
-```
-
-This is critical for performance — workers read a small pre-filtered file instead of scanning the full history on every query.
-
-##### Step 5b: Launch Workers in Parallel
-
-Send all Task calls in **a single message**. Each worker creates its own worktree, reads its pre-split chunk, directly updates memory files, and commits. Workers do NOT merge.
-
-**IMPORTANT:** The parent agent should preserve those worker commits by merging the worker branches into memory `main`. Do **not** skip straight to a manual rewrite / `memory_apply_patch` synthesis that recreates the end state but discards the worker commits from ancestry.
-
-If the worker output is generic, the worker failed. "User is direct" or "project uses TypeScript" is not useful memory unless tied to concrete operational detail.
-
-**IMPORTANT**: Use this prompt template to ensure workers extract all required categories:
-
-```
-Task({
-  subagent_type: "history-analyzer",
-  description: "Process chunk [N] of [SOURCE] history",
-  prompt: `## Assignment
-- **Memory dir**: [MEMORY_DIR]
-- **History chunk**: /tmp/history-splits/[claude-aa.jsonl | codex-aa.jsonl]
-- **Source format**: [Claude (.timestamp ms, .display) | Codex (.ts seconds, .text)]
-- **Session files**: [~/.claude/projects/ | ~/.codex/sessions/]
-
-## Required Output Categories
-
-You MUST extract findings for ALL THREE categories:
-
-1. **User Personality & Identity**
-   - How would you describe them as a person?
-   - What drives them? What are their goals?
-   - Communication style (beyond "direct" — humor, sarcasm, catchphrases?)
-   - Quirks, linguistic patterns, unique attributes
-
-2. **Hard Rules & Preferences**
-   - Coding preferences — especially chronic failures (things the agent kept getting wrong)
-   - Workflow patterns (testing, commits, tools)
-   - What frustrates them and why
-   - Explicit "always/never" statements
-
-3. **Project Context**
-   - Codebase structures, conventions, patterns
-   - Gotchas discovered through debugging
-   - Which files are safe to edit vs deprecated
-
-If any category lacks data, explicitly state why.
-
-## Required Extraction Dimensions
-
-For each finding, prefer evidence that is:
-- repeated across sessions
-- tied to a concrete command, file path, or workflow
-- useful for future execution without rereading history
-
-You should specifically look for:
-1. What the user is building and why it matters to them
-2. Correction loops the agent repeatedly got wrong
-3. Preferred commands and tooling patterns that were actually used successfully
-4. Specific files or directories the user works in or treats as special
-5. Project gotchas discovered through debugging or rollback requests
-
-## Canonical Memory Promotion
-
-Promote durable findings into focused files instead of leaving them trapped in generic ingestion notes. Prefer paths like:
-- `system/human/identity.md`
-- `system/human/prefs/communication.md`
-- `system/human/prefs/workflow.md`
-- `system/human/prefs/coding.md`
-- `system/<project>/conventions.md`
-- `system/<project>/gotchas.md`
-
-Avoid generic repo facts unless they influence execution. "Uses TypeScript" is weak. "Uses bun:test, so vitest is wrong for this test suite" is useful.`
-})
-```
-
-##### Step 5c: Merge Worker Branches Into Main
-
-After all workers complete, merge their branches one at a time. Worker commits are preserved in git history.
-
-**CRITICAL:** Merge the worker branches **before** doing any final cleanup synthesis. The correct pattern is:
-1. inspect worker branches
-2. merge worker branches into `main` one by one
-3. resolve conflicts additively
-4. optionally make **one final cleanup/curation commit on top**
-
-Do **not** bypass this by manually reapplying the final memory state onto `main`, because that loses the worker commits from the final history.
-
-**3a. Pre-read worker output before merging**
-
-Before merging, read each worker's files from their branch to understand what they found. This prevents information loss during conflict resolution:
-
-```bash
-cd [MEMORY_DIR]
-for branch in $(git for-each-ref --format='%(refname:short)' refs/heads | grep -v '^main$'); do
-  echo "=== $branch ==="
-  git diff main..$branch --stat
-  # Read key files from the branch
-  git show $branch:system/human/identity.md  # or equivalent user-identity file
-  git show $branch:system/<project>/conventions.md  # or whatever focused files they created
-done
-```
-
-**3b. Merge branches one at a time**
-
-```bash
-cd [MEMORY_DIR]
-git merge [worker-branch] --no-edit -m "merge: worker N description"
-```
-
-Repeat for each worker branch. After all worker branches are merged, make a separate cleanup commit only if needed for final curation.
-
-**3c. Resolve conflicts by COMBINING, never compressing**
-
-**CRITICAL**: When resolving merge conflicts, be **additive**. Combine unique details from both sides. Never rewrite a file from scratch — you WILL lose information.
-
-Rules for conflict resolution:
-- **Read both sides fully** before editing. Identify what's unique to each version.
-- **Append new details** from the incoming branch into the existing file. Don't drop specific quotes, file paths, or gotchas just because the existing version already covers the "topic" at a high level.
-- **Preserve specificity**: "Use factory methods, such as `create_token_counter()`, not direct instantiation" is more valuable than "prefers factory methods". Keep both.
-- **When in doubt, keep it**. Redundancy across files is better than information loss. Less important details can be placed in external memory.
-
-Example — BAD conflict resolution (compresses):
-```
-<<<<<<< HEAD
-- Uses `uv` for Python
-=======
-- **CRITICAL: Always use `uv run`** — chronic failure; never bare pytest or python
-- `uv run pytest -sv tests/...` for specific tests
-- Never use bare `pytest` or `python` commands
->>>>>>> migration-xxx
-
-# BAD: Picks one side or rewrites
-- **Python**: `uv` exclusively — `uv run pytest`, never bare `pip`
-```
-
-Example — GOOD conflict resolution (combines):
-```
-# GOOD: Keeps emphasis and specificity from incoming side
-**CRITICAL: Use `uv` exclusively for Python** — chronic failure.
-- `uv run pytest -sv tests/...` for tests
-- `uv run python` for scripts
-- Never bare `pip`, `python`, or `pytest`
-```
-
-**3d. Verify no information was lost**
-
-After all merges, compare the final files against what workers produced. Ask yourself: for each worker's output, can I find every specific detail (quotes, file paths, chronic failures, gotchas) somewhere in the final memory? If not, add it back.
-
-**3e. Clean up worktrees and branches**
-
-```bash
-for w in $(dirname [MEMORY_DIR])/memory-worktrees/*; do
-  git worktree remove "$w" 2>/dev/null
-done
-git branch -d $(git for-each-ref --format='%(refname:short)' refs/heads | grep -v '^main$')
-git push
-```
-
-##### Example Output
-
-Good output includes all three categories:
-
-```markdown
-### User Personality & Identity
-Pragmatic builder who values shipping over perfection. Gets frustrated when agents over-engineer or add "bonus" features. Uses dry humor and sarcasm when annoyed. Pattern: "scrappy startup engineer" — wants things to work, not to be architecturally pure.
-
-### Hard Rules & Preferences
-- **CRITICAL: Use `uv` for Python** — chronic failure ("you need to use uv", "make sure you use uv"); `uv run pytest -sv`, never bare `pytest`
-- **Minimal changes only** — "just make a minor change stop adding all this stuff"
-- **Only edit specified files** — when told to focus, stay focused
-- Tests constantly: `uv run pytest -sv` (Python), `bun test` (TS)
-
-### Project Context
-- letta-cloud: Only edit `letta_agent_v3.py` — v1, v2, and base are deprecated
-- Uses Biome for linting, not ESLint
-- Conventional commits with scope in parens
-```
-
-##### Step 5d: Consider Creating Skills From Discovered Workflows
-
-After merging and curating, review the extracted history for repeatable multi-step workflows that would benefit from being codified as skills. History analysis often surfaces procedures the user runs frequently that the agent would otherwise have to rediscover each session.
-
-**Good candidates for skills:**
-- Multi-step debugging procedures (e.g. "how to debug agent message desync", "how to trace TTFT regressions")
-- Common workflows repeated across sessions (e.g. "how to run integration tests across LLM providers")
-- Deployment or release procedures
-- Project-specific setup or migration steps
-
-If you identify candidates, either create them now (load the [[skills/creating-skills]] skill for guidance) or note them in memory for future creation:
-```markdown
-# system/letta-code/overview.md
-...
-Potential skills to create:
-- Debug workflow for HITL approval desync
-- Integration test runner across providers
-```
-
-Don't force skill creation — only create them when you've found genuinely repeatable, multi-step procedures in the history.
-
-##### Troubleshooting
-
-| Problem | Cause | Fix |
-|---------|-------|-----|
-| Subagent exits with code `null`, 0 tool uses | `letta.js` not built | Run `bun run build` |
-| Subagent hangs on "Tool requires approval" | Wrong subagent type | Use `subagent_type: "history-analyzer"` (workers) or `"memory"` (synthesis) |
-| Merge conflict during synthesis | Workers touched overlapping files | Read both sides fully, combine unique details — never rewrite from scratch. See Step 5c. |
-| Information lost after merge | Conflict resolution compressed worker output | Compare final files against each worker's branch output. Re-add missing specifics. See Step 5c. |
-| Personality analysis missing or thin | Prompt didn't request it | Use the template above with explicit category requirements |
-| Auth fails on push ("repository not found") | Credential helper broken or global helper conflict | Reconfigure **repo-local** helper and check/clear conflicting global `credential.<host>.helper` entries (see syncing-memory-filesystem skill) |
-
-### 6. Research the project
-
-**Do this in parallel with history analysis** (Step 5). While workers process history, you should be actively exploring the codebase. This is your onboarding — invest real effort here.
+### 4. Research the project
 
 **IMPORTANT**: The goal is to understand how the codebase actually works — not just its shape, but its substance. Directory listings and `head -N` snippets tell you what files exist; reading the actual implementation tells you how they work. By the end of this step, you should be able to describe how a key feature flows from entry point to implementation. If you can't, you haven't read enough.
 
-### 6a. Decide whether to parallelize exploration
+### 4a. Decide whether to parallelize exploration
 
 After your initial scan (README, package manifest, top-level directories, and entry points), decide whether to fan out exploration.
 
 **Default rule**:
 - If the repo has **3 or more clear subsystems**, launch **2-4 parallel subagents** to explore them.
-- If background history-analysis workers are already running, **bias toward parallel exploration** instead of doing all research serially yourself.
 - Only skip subagent exploration if the codebase is genuinely small or the subsystem boundaries are unclear.
 
 This is the preferred path for medium-to-large repos, **even in standard mode**.
@@ -628,7 +357,7 @@ When you are ready to integrate findings, retrieve the background subagent outpu
 - `git log --format="%an <%ae>" | sort -u` — contributors with emails
 
 
-### 7. Build memory with discovery paths
+### 5. Build memory with discovery paths
 As you create/update memory files, add `[[path]]` references so your future self can find related context. These go *inside the content* of memory files:
 
 Do NOT put everything in `system/`. Detailed reference material belongs in progressive memory — files outside `system/` that can be loaded on demand through references.
@@ -677,7 +406,7 @@ Additional guidelines:
 - Keep `system/` files focused and scannable
 - Put detailed reference material outside `system/`
 
-### 8. Verify context quality
+### 6. Verify context quality
 Before finishing, review your work:
 
 - **Structural requirements**: Run this check before finishing:
@@ -696,11 +425,15 @@ Before finishing, review your work:
 - **Persona quality**: Does it express genuine personality and values, not just "agent role + project rules"? Read your persona file right now — if it's just "I'm a coding assistant who follows the user's preferences," that's not identity. What do YOU value? What's distinctive about how you think? Would you be recognizably the same agent on a different model tomorrow? If your persona disappeared but the model stayed, would something meaningful be lost? If not, your identity isn't strong enough yet.
 - **No semantic drift**: If reorganizing an existing agent, verify you haven't altered the meaning of persona, identity, or behavioral instructions — only improved structure.
 - **No over-pruning**: Compare your final memory against all source material (worker output, codebase research). Did you lose specific file paths, chronic failures, or gotchas during curation? If so, add them back. Compression that loses specificity degrades your identity.
-- **Progressive memory**: Did you create reference files outside `system/` for detailed content? Did you review what history workers produced and keep their project context files? Are these files linked from `system/` with `[[path]]` references?
+- **Progressive memory**: Did you create reference files outside `system/` for detailed content? Are these files linked from `system/` with `[[path]]` references?
 
 
-### 9. Ask user if done
-Check if they're satisfied or want further refinement. Then commit and push memory:
+### 7. Ask user if done
+Check if they're satisfied or want further refinement.
+
+Mention that the user can run `/migrate` to import preferences and knowledge from Claude Code or Codex history into memory.
+
+Then commit and push memory:
 
 ```bash
 cd $MEMORY_DIR

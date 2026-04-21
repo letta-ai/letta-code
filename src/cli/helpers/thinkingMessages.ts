@@ -52,6 +52,7 @@ export const THINKING_TIPS = Object.freeze([
   "Use /reflect to launch a background reflection agent to update memory.",
   "Use /search [query] to search messages across all agents.",
   "Use /init to initialize (or re-init) your agent's memory.",
+  "Use /migrate to import preferences from Claude Code or Codex history.",
 ] as const);
 
 const THINKING_TIPS_WITH_SYSTEM_UPGRADE = Object.freeze([

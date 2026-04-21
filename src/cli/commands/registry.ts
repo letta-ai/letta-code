@@ -59,6 +59,15 @@ export const commands: Record<string, Command> = {
       return "Processing memory request...";
     },
   },
+  "/migrate": {
+    desc: "Migrate memory from Claude Code / Codex history",
+    order: 13.5,
+    noArgs: true,
+    handler: () => {
+      // Handled specially in App.tsx to trigger history migration
+      return "Processing migration...";
+    },
+  },
   "/reflect": {
     desc: "Launch reflection (/reflect [transcript_file])",
     args: "[transcript_file]",
