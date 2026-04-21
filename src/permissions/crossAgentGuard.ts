@@ -586,14 +586,13 @@ function buildReason(
   offending: string[],
   allowed: ResolvedAllowedAgents,
 ): string {
+  const offendingDesc = offending.join(", ");
   const allowedList = [...allowed.ids];
   const allowedDesc =
     allowedList.length > 0 ? allowedList.join(", ") : "(none)";
-  const offendingDesc = offending.join(", ");
-  const plural = offending.length > 1 ? "agents" : "agent";
   return (
-    `Cross-agent guard: refusing to touch memory belonging to ${plural} ` +
-    `${offendingDesc}. Allowed agents: ${allowedDesc}. ` +
+    `Permission denied by cross-agent memory guard (${offendingDesc}). ` +
+    `Allowed: ${allowedDesc}. ` +
     `Set LETTA_MEMORY_SCOPE or pass --memory-scope to opt in.`
   );
 }

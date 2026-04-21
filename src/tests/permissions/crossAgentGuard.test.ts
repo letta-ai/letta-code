@@ -319,7 +319,7 @@ describe("evaluateCrossAgentGuard", () => {
     expect(result).not.toBeNull();
     expect(result?.matchedRule).toBe("cross-agent guard");
     expect(result?.offendingAgentIds).toEqual([OTHER]);
-    expect(result?.reason).toMatch(/Cross-agent guard/);
+    expect(result?.reason).toMatch(/cross-agent memory guard/);
   });
 
   test("passes through when other agent is in LETTA_MEMORY_SCOPE", () => {
