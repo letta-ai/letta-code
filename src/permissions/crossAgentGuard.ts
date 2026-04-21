@@ -87,6 +87,22 @@ export interface CrossAgentTargets {
 }
 
 /**
+ * Sentinel ID used when a path touches the agents tree but we can't
+ * resolve it to a single agent — e.g. the bare agents-tree root (an
+ * enumeration attempt) or a recursive-search root that would walk into
+ * the tree. The guard treats this as never-allowed, so any such path
+ * is denied unless upstream knew what agent to filter to.
+ */
+const UNRESOLVED_AGENT_ID = "<unresolved>";
+
+/**
+ * Escape a string for use inside a regex.
+ */
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
  * The agents-tree root on this machine, e.g. `/home/user/.letta/agents`,
  * normalized (forward slashes, no trailing slash).
  */
@@ -274,6 +290,11 @@ function expandShellToken(
  * Walk a shell command and collect every token that expands to an
  * agent-scoped memory path on this machine. Returns the map of
  * token → agent ID.
+ *
+ * If `splitShellSegments` refuses the command (dangerous operator,
+ * command substitution, non-/dev/null redirect, etc.), we still scan
+ * the raw tokens of the whole command as a best-effort safety net —
+ * any agent-scoped path in there is still a hit.
  */
 function collectShellAgentTargets(
   command: string,
@@ -281,22 +302,9 @@ function collectShellAgentTargets(
   homeDir: string,
 ): Map<string, string> {
   const targets = new Map<string, string>();
-  const segments = splitShellSegments(command);
-  if (!segments) {
-    // Split was refused due to dangerous operator (command substitution,
-    // redirect to non-/dev/null, etc.). Still scan the raw tokens of the
-    // whole command as best-effort — if any agent-scoped path shows up,
-    // we want to catch it.
-    const tokens = tokenizeShellWords(command);
-    for (const token of tokens) {
-      scanToken(token, env, homeDir, targets);
-    }
-    return targets;
-  }
-
+  const segments = splitShellSegments(command) ?? [command];
   for (const segment of segments) {
-    const tokens = tokenizeShellWords(segment);
-    for (const token of tokens) {
+    for (const token of tokenizeShellWords(segment)) {
       scanToken(token, env, homeDir, targets);
     }
   }
@@ -392,15 +400,14 @@ function scanRawCommandForUnresolvedAgentRefs(
   const expanded = expandCommandVariables(rawCommand, env, homeDir);
 
   // Home-anchored pattern: match only references rooted at the current
-  // user's home. Group 1 is the agent-ID candidate (optional).
+  // user's agents tree. Group 1 is the agent-ID candidate (optional).
   //
   // The terminator class includes `/`, whitespace, quotes, common shell
   // syntax (`$`, `(`, `)`, `{`, `}`, `[`, `]`, `;`, `|`, `&`, `,`, `\``,
   // and `#`) so we stop at a word boundary.
-  const normalizedHome = homeDir.replace(/\\/g, "/").replace(/\/+$/, "");
-  const escapedHome = normalizedHome.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const escapedRoot = escapeRegex(getAgentsTreeRoot(homeDir));
   const pattern = new RegExp(
-    `${escapedHome}/\\.letta/agents(?:/([^/\\s"'\`$(){}\\[\\]|&;,#]*))?`,
+    `${escapedRoot}(?:/([^/\\s"'\`$(){}\\[\\]|&;,#]*))?`,
     "g",
   );
 
@@ -410,7 +417,7 @@ function scanRawCommandForUnresolvedAgentRefs(
     if (candidate.length === 0) {
       // Bare `<home>/.letta/agents` or `.../agents/` — enumeration of
       // the whole agents tree. Always suspicious.
-      unresolved.push("<unresolved>");
+      unresolved.push(UNRESOLVED_AGENT_ID);
       continue;
     }
     if (!allowedAgentIds.has(candidate)) {
@@ -446,15 +453,6 @@ function expandCommandVariables(
   );
   return result;
 }
-
-/**
- * Sentinel ID used when a path touches the agents tree but we can't
- * resolve it to a single agent — e.g. the bare agents-tree root (an
- * enumeration attempt) or a recursive-search root that would walk into
- * the tree. The guard treats `<unresolved>` as never-allowed, so any
- * such path is denied unless upstream knew what agent to filter to.
- */
-const UNRESOLVED_AGENT_ID = "<unresolved>";
 
 /**
  * Tools whose semantics imply a recursive walk from the given path
