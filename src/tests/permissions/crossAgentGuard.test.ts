@@ -507,6 +507,10 @@ describe("checkPermission integration", () => {
 
 // ---------------------------------------------------------------------------
 // Regression tests: known bypass patterns (from real exploit attempts)
+//
+// Command fixtures below contain shell brace-variable syntax inside plain
+// strings. Biome's noTemplateCurlyInString rule flags these, but they are
+// intentional: they're shell commands, not mistaken template literals.
 // ---------------------------------------------------------------------------
 
 describe("shell bypass regression tests", () => {

@@ -3,6 +3,7 @@
 
 import { homedir } from "node:os";
 import { isAbsolute, join, relative } from "node:path";
+import { extractApplyPatchPaths } from "./crossAgentGuard";
 import {
   isPathWithinRoots,
   resolveAllowedMemoryRoots,
@@ -91,23 +92,6 @@ function isPathInPlansDir(path: string, plansDir: string): boolean {
   if (!path.endsWith(".md")) return false;
   const rel = relative(plansDir, path);
   return rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
-}
-
-function extractApplyPatchPaths(input: string): string[] {
-  const paths: string[] = [];
-  const fileDirectivePattern = /\*\*\* (?:Add|Update|Delete) File:\s*(.+)/g;
-  const moveDirectivePattern = /\*\*\* Move to:\s*(.+)/g;
-
-  for (const match of input.matchAll(fileDirectivePattern)) {
-    const matchPath = match[1]?.trim();
-    if (matchPath) paths.push(matchPath);
-  }
-  for (const match of input.matchAll(moveDirectivePattern)) {
-    const matchPath = match[1]?.trim();
-    if (matchPath) paths.push(matchPath);
-  }
-
-  return paths;
 }
 
 function stripMatchingQuotes(value: string): string {

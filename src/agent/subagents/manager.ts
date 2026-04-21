@@ -21,7 +21,10 @@ import {
   SYSTEM_REMINDER_OPEN,
 } from "../../constants";
 import { cliPermissions } from "../../permissions/cli";
-import { resolveAllowedMemoryRoots } from "../../permissions/memoryScope";
+import {
+  parseScopeList,
+  resolveAllowedMemoryRoots,
+} from "../../permissions/memoryScope";
 import { permissionMode } from "../../permissions/mode";
 import { sessionPermissions } from "../../permissions/session";
 import { settingsManager } from "../../settings-manager";
@@ -719,10 +722,7 @@ async function executeSubagent(
       // Authorize the child to write the parent's memory via the
       // cross-agent guard. Compose the scope transitively so that
       // grandchildren also see the full ancestor chain.
-      const inheritedScope = (process.env.LETTA_MEMORY_SCOPE ?? "")
-        .split(/[\s,]+/)
-        .filter(Boolean);
-      const nextScope = new Set(inheritedScope);
+      const nextScope = new Set(parseScopeList(process.env.LETTA_MEMORY_SCOPE));
       if (parentAgentId) {
         nextScope.add(parentAgentId);
       }

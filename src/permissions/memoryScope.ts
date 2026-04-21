@@ -14,7 +14,6 @@ export interface ResolveAllowedMemoryRootsOptions {
 
 export interface ResolvedMemoryScope {
   roots: string[];
-  explicitRoots: string[];
   primaryRoot: string | null;
   usedFallback: boolean;
 }
@@ -85,7 +84,11 @@ function addRootAndSiblingWorktree(root: string, acc: Set<string>): void {
   }
 }
 
-function parseScopeIds(value: string | undefined | null): string[] {
+/**
+ * Parse a comma- or whitespace-separated list of agent IDs.
+ * Used for both `LETTA_MEMORY_SCOPE` env var and `--memory-scope` CLI flag.
+ */
+export function parseScopeList(value: string | undefined | null): string[] {
   if (!value) return [];
   return value
     .split(/[\s,]+/)
@@ -93,35 +96,37 @@ function parseScopeIds(value: string | undefined | null): string[] {
     .filter((id) => id.length > 0);
 }
 
+interface ExplicitEnvRoots {
+  roots: string[];
+  primaryRoot: string | null;
+}
+
 function getExplicitEnvRoots(
   env: NodeJS.ProcessEnv,
   homeDir: string,
-): Pick<ResolvedMemoryScope, "explicitRoots" | "primaryRoot"> {
+): ExplicitEnvRoots {
   const orderedRoots = [env.MEMORY_DIR, env.LETTA_MEMORY_DIR]
     .map((value) => value?.trim() ?? "")
     .filter((value) => value.length > 0);
 
-  const explicitRootSet = new Set<string>();
+  const rootSet = new Set<string>();
   for (const root of orderedRoots) {
-    addRootAndSiblingWorktree(root, explicitRootSet);
+    addRootAndSiblingWorktree(root, rootSet);
   }
 
   // Include memory roots for every agent ID in the cross-agent scope
   // (env LETTA_MEMORY_SCOPE + CLI --memory-scope). This keeps memory-mode
   // write permissions aligned with the cross-agent guard.
   const scopeIds = new Set<string>([
-    ...parseScopeIds(env.LETTA_MEMORY_SCOPE),
+    ...parseScopeList(env.LETTA_MEMORY_SCOPE),
     ...cliPermissions.getMemoryScope(),
   ]);
   for (const id of scopeIds) {
-    addRootAndSiblingWorktree(
-      getMemoryFilesystemRoot(id, homeDir),
-      explicitRootSet,
-    );
+    addRootAndSiblingWorktree(getMemoryFilesystemRoot(id, homeDir), rootSet);
   }
 
   return {
-    explicitRoots: [...explicitRootSet],
+    roots: [...rootSet],
     primaryRoot:
       orderedRoots.length > 0
         ? normalizeScopedPath(orderedRoots[0] as string)
@@ -129,25 +134,32 @@ function getExplicitEnvRoots(
   };
 }
 
-function deriveAgentId(
+/**
+ * Resolve the current agent ID from: (1) the explicit argument, (2) the
+ * `AGENT_ID` / `LETTA_AGENT_ID` env vars, or (3) the in-process agent
+ * context. Returns null when none of those sources yields a non-empty ID.
+ */
+export function deriveAgentId(
   env: NodeJS.ProcessEnv,
   explicitAgentId?: string | null,
 ): string | null {
   const explicit = explicitAgentId?.trim();
-  if (explicit) {
-    return explicit;
-  }
+  if (explicit) return explicit;
 
   const envAgentId = (env.AGENT_ID || env.LETTA_AGENT_ID || "").trim();
-  if (envAgentId) {
-    return envAgentId;
-  }
+  if (envAgentId) return envAgentId;
 
   try {
-    return getCurrentAgentId().trim();
+    const fromContext = getCurrentAgentId().trim();
+    return fromContext || null;
   } catch {
     return null;
   }
+}
+
+interface FallbackRoots {
+  roots: string[];
+  primaryRoot: string | null;
 }
 
 function getFallbackRoots(
@@ -155,7 +167,7 @@ function getFallbackRoots(
   homeDir: string,
   currentAgentId?: string | null,
   parentAgentId?: string | null,
-): Pick<ResolvedMemoryScope, "roots" | "primaryRoot"> {
+): FallbackRoots {
   const fallbackRoots = new Set<string>();
 
   const resolvedCurrentAgentId = deriveAgentId(env, currentAgentId);
@@ -197,10 +209,9 @@ export function resolveAllowedMemoryRoots(
   const homeDir = options.homeDir ?? homedir();
 
   const explicit = getExplicitEnvRoots(env, homeDir);
-  if (explicit.explicitRoots.length > 0) {
+  if (explicit.roots.length > 0) {
     return {
-      roots: explicit.explicitRoots,
-      explicitRoots: explicit.explicitRoots,
+      roots: explicit.roots,
       primaryRoot: explicit.primaryRoot,
       usedFallback: false,
     };
@@ -215,7 +226,6 @@ export function resolveAllowedMemoryRoots(
 
   return {
     roots: fallback.roots,
-    explicitRoots: [],
     primaryRoot: fallback.primaryRoot,
     usedFallback: fallback.roots.length > 0,
   };

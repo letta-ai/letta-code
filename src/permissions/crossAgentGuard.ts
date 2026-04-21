@@ -12,10 +12,14 @@
 //   - cli:   --memory-scope flag (via cliPermissions.getMemoryScope())
 
 import { homedir } from "node:os";
-import { getCurrentAgentId } from "../agent/context";
 import { canonicalToolName, isShellToolName } from "./canonical";
 import { cliPermissions } from "./cli";
-import { normalizeScopedPath, resolveScopedTargetPath } from "./memoryScope";
+import {
+  deriveAgentId,
+  normalizeScopedPath,
+  parseScopeList,
+  resolveScopedTargetPath,
+} from "./memoryScope";
 import { splitShellSegments, tokenizeShellWords } from "./shellAnalysis";
 
 // --------------------------------------------------------------------------
@@ -37,32 +41,6 @@ export interface ResolvedAllowedAgents {
   };
 }
 
-function parseScopeList(value: string | undefined | null): string[] {
-  if (!value) return [];
-  return value
-    .split(/[\s,]+/)
-    .map((id) => id.trim())
-    .filter((id) => id.length > 0);
-}
-
-function deriveSelfAgentId(
-  env: NodeJS.ProcessEnv,
-  explicit?: string | null,
-): string | null {
-  const fromArg = explicit?.trim();
-  if (fromArg) return fromArg;
-
-  const fromEnv = (env.AGENT_ID || env.LETTA_AGENT_ID || "").trim();
-  if (fromEnv) return fromEnv;
-
-  try {
-    const fromContext = getCurrentAgentId().trim();
-    return fromContext || null;
-  } catch {
-    return null;
-  }
-}
-
 /**
  * Resolve the set of agent IDs the current process is allowed to operate
  * against. Additive union of three sources.
@@ -72,7 +50,7 @@ export function resolveAllowedAgents(
 ): ResolvedAllowedAgents {
   const env = options.env ?? process.env;
 
-  const self = deriveSelfAgentId(env, options.currentAgentId);
+  const self = deriveAgentId(env, options.currentAgentId);
   const envScope = parseScopeList(env.LETTA_MEMORY_SCOPE);
   const cliScope = options.cliMemoryScope ?? cliPermissions.getMemoryScope();
 
@@ -188,8 +166,30 @@ function extractShellCommand(toolArgs: ToolArgs): string | null {
 }
 
 /**
+ * Regex that matches `$NAME` or `${NAME}` shell variable references.
+ * Capture group 1 is the braced name, group 2 is the bare name.
+ */
+const SHELL_VAR_REGEX =
+  /\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))/g;
+
+/**
+ * Look up a shell variable name. Returns the env value, or `homeDir` for
+ * the `HOME` special-case, or undefined if unresolved.
+ */
+function lookupShellVar(
+  name: string,
+  env: NodeJS.ProcessEnv,
+  homeDir: string,
+): string | undefined {
+  if (name === "HOME") return homeDir;
+  const value = env[name];
+  return typeof value === "string" ? value : undefined;
+}
+
+/**
  * Expand env variables ($VAR, ${VAR}, $HOME, ~/) in a shell token.
- * Returns null when an unresolved variable is encountered.
+ * Returns null when an unresolved variable is encountered (so the caller
+ * skips the token rather than scanning a partially-resolved string).
  *
  * Mirrors the expansion used by `readOnlyShell.ts#expandScopedVariables`
  * but is self-contained here to keep the dependency graph simple.
@@ -209,22 +209,19 @@ function expandShellToken(
 
   let unresolved = false;
   result = result.replace(
-    /\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))/g,
+    SHELL_VAR_REGEX,
     (_match, bracedName: string | undefined, bareName: string | undefined) => {
       const name = bracedName || bareName;
       if (!name) {
         unresolved = true;
         return "";
       }
-      if (name === "HOME") {
-        return homeDir;
+      const value = lookupShellVar(name, env, homeDir);
+      if (value === undefined) {
+        unresolved = true;
+        return "";
       }
-      const envValue = env[name];
-      if (typeof envValue === "string") {
-        return envValue;
-      }
-      unresolved = true;
-      return "";
+      return value;
     },
   );
 
@@ -375,30 +372,27 @@ function scanRawCommandForUnresolvedAgentRefs(
 }
 
 /**
- * Expand env vars on the raw command string (best effort). Leaves
- * unresolved variables intact so they still register as "unresolved"
- * during the raw scan.
+ * Expand env vars on the raw command string (best effort). Unlike
+ * `expandShellToken`, this leaves unresolved `$VAR` references intact
+ * so they still register as "unresolved" during the raw scan.
  */
 function expandCommandVariables(
   command: string,
   env: NodeJS.ProcessEnv,
   homeDir: string,
 ): string {
-  let result = command;
-  // Replace ~/ only when it follows whitespace, a quote, `=`, or start.
-  result = result.replace(
+  // Replace ~/ only when it follows whitespace, a quote, `=`, `:`, or start.
+  let result = command.replace(
     /(^|[\s="'`:])~\//g,
     (_match, prefix: string) => `${prefix}${homeDir}/`,
   );
-  // Replace $VAR and ${VAR} with env values when known.
+  // Replace $VAR / ${VAR} with env values when known; keep literal otherwise.
   result = result.replace(
-    /\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))/g,
+    SHELL_VAR_REGEX,
     (match, bracedName: string | undefined, bareName: string | undefined) => {
       const name = bracedName || bareName;
       if (!name) return match;
-      if (name === "HOME") return homeDir;
-      const value = env[name];
-      return typeof value === "string" ? value : match;
+      return lookupShellVar(name, env, homeDir) ?? match;
     },
   );
   return result;
