@@ -11,7 +11,6 @@ afterEach(() => {
   delete process.env.MEMORY_DIR;
   delete process.env.LETTA_MEMORY_DIR;
   delete process.env.LETTA_MEMORY_SCOPE;
-  delete process.env.PARENT_MEMORY_DIR;
   delete process.env.AGENT_ID;
   delete process.env.LETTA_AGENT_ID;
   delete process.env.LETTA_PARENT_AGENT_ID;
@@ -32,8 +31,7 @@ test("explicit env roots are authoritative over fallback inference", () => {
   expect(scope.usedFallback).toBe(false);
   expect(scope.primaryRoot).toBe(normalizeScopedPath("/tmp/explicit-memory"));
   expect(scope.roots).toContain(normalizeScopedPath("/tmp/explicit-memory"));
-  // Parent's memory root is now derived from LETTA_MEMORY_SCOPE agent IDs,
-  // not from a path-based PARENT_MEMORY_DIR.
+  // Parent's memory root is derived from LETTA_MEMORY_SCOPE agent IDs.
   expect(scope.roots).toContain(scopedParentRoot);
   expect(scope.roots).not.toContain(
     normalizeScopedPath(

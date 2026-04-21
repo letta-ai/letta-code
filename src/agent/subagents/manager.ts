@@ -731,11 +731,6 @@ async function executeSubagent(
       } else {
         delete childEnv.LETTA_MEMORY_SCOPE;
       }
-
-      // PARENT_MEMORY_DIR is no longer authoritative for permissions;
-      // the guard uses LETTA_MEMORY_SCOPE instead. Ensure we do not
-      // propagate a stale parent-memory path from the outer env.
-      delete childEnv.PARENT_MEMORY_DIR;
     }
 
     const proc = spawn(launcher.command, launcher.args, {

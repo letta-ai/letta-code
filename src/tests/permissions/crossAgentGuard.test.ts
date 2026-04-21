@@ -39,7 +39,6 @@ const ENV_KEYS_TO_RESET = [
   "LETTA_MEMORY_SCOPE",
   "MEMORY_DIR",
   "LETTA_MEMORY_DIR",
-  "PARENT_MEMORY_DIR",
 ] as const;
 
 function snapshotEnv(): Partial<
