@@ -36,7 +36,7 @@ export interface SharedReminderContext {
   mode: SharedReminderMode;
   agent: AgentReminderContext;
   state: SharedReminderState;
-  sessionContextReminderEnabled: boolean;
+  systemInfoReminderEnabled: boolean;
   reflectionSettings: ReflectionSettings;
   skillSources: SkillSource[];
   resolvePlanModeReminder: () => string | Promise<string>;
@@ -65,10 +65,7 @@ type SharedReminderProvider = (
 async function buildAgentInfoReminder(
   context: SharedReminderContext,
 ): Promise<string | null> {
-  if (
-    !context.sessionContextReminderEnabled ||
-    context.state.hasSentAgentInfo
-  ) {
+  if (!context.systemInfoReminderEnabled || context.state.hasSentAgentInfo) {
     return null;
   }
 
@@ -117,7 +114,7 @@ async function buildSessionContextReminder(
   context: SharedReminderContext,
 ): Promise<string | null> {
   if (
-    !context.sessionContextReminderEnabled ||
+    !context.systemInfoReminderEnabled ||
     context.state.hasSentSessionContext
   ) {
     return null;

@@ -1118,7 +1118,7 @@ export default function App({
   agentProvenance = null,
   releaseNotes = null,
   updateNotification = null,
-  sessionContextReminderEnabled = true,
+  systemInfoReminderEnabled = true,
 }: {
   agentId: string;
   agentState?: AgentState | null;
@@ -1140,7 +1140,7 @@ export default function App({
   agentProvenance?: AgentProvenance | null;
   releaseNotes?: string | null; // Markdown release notes to display above header
   updateNotification?: string | null; // Latest version when a significant auto-update was applied
-  sessionContextReminderEnabled?: boolean;
+  systemInfoReminderEnabled?: boolean;
 }) {
   // Warm the model-access cache in the background so /model is fast on first open.
   useEffect(() => {
@@ -11163,7 +11163,7 @@ ${SYSTEM_REMINDER_CLOSE}
           conversationId: conversationIdRef.current,
         },
         state: sharedReminderStateRef.current,
-        sessionContextReminderEnabled,
+        systemInfoReminderEnabled,
         reflectionSettings,
         skillSources: getSkillSources(),
         resolvePlanModeReminder: getPlanModeReminder,
@@ -11860,7 +11860,7 @@ ${SYSTEM_REMINDER_CLOSE}
       pendingRalphConfig,
       openTrajectorySegment,
       resetTrajectoryBases,
-      sessionContextReminderEnabled,
+      systemInfoReminderEnabled,
       appendTaskNotificationEvents,
       maybeCarryOverActiveConversationModel,
       setConversationIdAndRef,

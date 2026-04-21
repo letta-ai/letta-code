@@ -2126,7 +2126,7 @@ async function main(): Promise<void> {
         showCompactions: settings.showCompactions,
         agentProvenance,
         releaseNotes,
-        sessionContextReminderEnabled: !noSystemInfoReminderFlag,
+        systemInfoReminderEnabled: !noSystemInfoReminderFlag,
       });
     }
 
@@ -2146,7 +2146,7 @@ async function main(): Promise<void> {
       agentProvenance,
       releaseNotes,
       updateNotification,
-      sessionContextReminderEnabled: !noSystemInfoReminderFlag,
+      systemInfoReminderEnabled: !noSystemInfoReminderFlag,
     });
   }
 

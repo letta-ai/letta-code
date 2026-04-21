@@ -10,7 +10,7 @@ import { createSharedReminderState } from "../../reminders/state";
  * Regression test for #1848:
  *
  *   `--no-system-info-reminder` (which maps to
- *   `sessionContextReminderEnabled: false`) must suppress the `agent-info`
+ *   `systemInfoReminderEnabled: false`) must suppress the `agent-info`
  *   reminder too, not just `session-context`. Otherwise embedders that spawn
  *   a fresh subprocess per turn will see the agent-info harness block
  *   prepended on every turn (because `hasSentAgentInfo` resets per process).
@@ -23,10 +23,7 @@ function withStubbedReflection(fn: () => Promise<void>): () => Promise<void> {
     sharedReminderProviders["reflection-step-count"] = async () => null;
     sharedReminderProviders["reflection-compaction"] = async () => null;
     sharedReminderProviders["session-context"] = async (ctx) => {
-      if (
-        !ctx.sessionContextReminderEnabled ||
-        ctx.state.hasSentSessionContext
-      ) {
+      if (!ctx.systemInfoReminderEnabled || ctx.state.hasSentSessionContext) {
         return null;
       }
       ctx.state.hasSentSessionContext = true;
@@ -53,7 +50,7 @@ function makeCtx(overrides: Partial<SharedReminderContext> = {}) {
       conversationId: "conv-test",
     },
     state: createSharedReminderState(),
-    sessionContextReminderEnabled: true,
+    systemInfoReminderEnabled: true,
     reflectionSettings: { trigger: "off", stepCount: 25 },
     skillSources: [],
     resolvePlanModeReminder: () => "",
@@ -62,11 +59,11 @@ function makeCtx(overrides: Partial<SharedReminderContext> = {}) {
   } as SharedReminderContext;
 }
 
-describe("agent-info respects sessionContextReminderEnabled flag (#1848)", () => {
+describe("agent-info respects systemInfoReminderEnabled flag (#1848)", () => {
   test(
     "agent-info fires when the flag is enabled",
     withStubbedReflection(async () => {
-      const ctx = makeCtx({ sessionContextReminderEnabled: true });
+      const ctx = makeCtx({ systemInfoReminderEnabled: true });
       const result = await buildSharedReminderParts(ctx);
       expect(result.appliedReminderIds).toContain("agent-info");
       expect(ctx.state.hasSentAgentInfo).toBe(true);
@@ -76,7 +73,7 @@ describe("agent-info respects sessionContextReminderEnabled flag (#1848)", () =>
   test(
     "agent-info is suppressed when the flag is disabled",
     withStubbedReflection(async () => {
-      const ctx = makeCtx({ sessionContextReminderEnabled: false });
+      const ctx = makeCtx({ systemInfoReminderEnabled: false });
       const result = await buildSharedReminderParts(ctx);
       expect(result.appliedReminderIds).not.toContain("agent-info");
       // State is not flipped, so if the flag is later re-enabled the reminder
@@ -88,7 +85,7 @@ describe("agent-info respects sessionContextReminderEnabled flag (#1848)", () =>
   test(
     "session-context is also suppressed when the flag is disabled",
     withStubbedReflection(async () => {
-      const ctx = makeCtx({ sessionContextReminderEnabled: false });
+      const ctx = makeCtx({ systemInfoReminderEnabled: false });
       const result = await buildSharedReminderParts(ctx);
       expect(result.appliedReminderIds).not.toContain("session-context");
     }),

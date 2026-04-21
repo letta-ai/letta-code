@@ -31,7 +31,7 @@ export function buildListenReminderContext(
       conversationId: params.conversationId,
     },
     state: params.state,
-    sessionContextReminderEnabled: true,
+    systemInfoReminderEnabled: true,
     reflectionSettings: params.reflectionSettings,
     skillSources: [],
     maybeLaunchReflectionSubagent: params.maybeLaunchReflectionSubagent,
