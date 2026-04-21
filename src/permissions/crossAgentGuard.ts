@@ -264,6 +264,26 @@ function collectShellAgentTargets(
   return targets;
 }
 
+/**
+ * Strip every matched pair of surrounding quotes from a value.
+ *
+ * Shell tokens may come through as `"$TARGET"`, `'$TARGET'`, or nested
+ * `""$TARGET""` depending on how the command was written. The upstream
+ * `stripShellQuotes` only strips a single outer pair; we loop to handle
+ * repeated wrappings so the anchored path regex can still match.
+ */
+function stripAllOuterQuotes(value: string): string {
+  let result = value;
+  while (
+    result.length >= 2 &&
+    ((result.startsWith('"') && result.endsWith('"')) ||
+      (result.startsWith("'") && result.endsWith("'")))
+  ) {
+    result = result.slice(1, -1);
+  }
+  return result;
+}
+
 function scanToken(
   rawToken: string,
   env: NodeJS.ProcessEnv,
@@ -278,7 +298,10 @@ function scanToken(
   const candidateValue = assignmentMatch
     ? (assignmentMatch[2] ?? "")
     : rawToken;
-  const candidates = [rawToken, candidateValue].filter((v) => v.length > 0);
+  const candidates = [rawToken, candidateValue]
+    .filter((v) => v.length > 0)
+    // Remove matched outer quotes so the anchored path regex matches.
+    .map((v) => stripAllOuterQuotes(v));
 
   for (const value of candidates) {
     const expanded = expandShellToken(value, env, homeDir);
@@ -289,6 +312,96 @@ function scanToken(
       out.set(value, agentId);
     }
   }
+}
+
+/**
+ * Conservative scan of the raw shell command for any reference to the
+ * agents tree. Complements the tokenizer by catching patterns that
+ * static analysis can't resolve:
+ *   - `ls ~/.letta/agents` (enumeration)
+ *   - `find $HOME/.letta/agents -type d` (globbing)
+ *   - `TARGET="$(find ~/.letta/agents ...)"; cat "$TARGET/..."` (command
+ *     substitution — tokenizer can't follow)
+ *   - assignment-then-use where the literal agent ID appears in the raw
+ *     string even if our static expander can't trace the variable.
+ *
+ * The scan is home-anchored: only references to agent paths under the
+ * current user's home dir trigger it. References to other homes (e.g.
+ * test fixtures under `/Users/test/.letta/agents/...`) are ignored —
+ * they can't possibly touch real data on this machine.
+ *
+ * Any occurrence of `<home>/.letta/agents/<id>` where `<id>` is not in
+ * `allowedAgentIds` (or is empty / a shell variable / a glob) produces
+ * an entry in the returned list. The guard then hard-denies.
+ */
+function scanRawCommandForUnresolvedAgentRefs(
+  rawCommand: string,
+  allowedAgentIds: Set<string>,
+  env: NodeJS.ProcessEnv,
+  homeDir: string,
+): string[] {
+  // Pre-expand $VAR / ${VAR} / $HOME / ~ on the whole command so that
+  // self-targeting references like `~/.letta/agents/${AGENT_ID}/memory`
+  // don't falsely trip the scan.
+  const expanded = expandCommandVariables(rawCommand, env, homeDir);
+
+  // Home-anchored pattern: match only references rooted at the current
+  // user's home. Group 1 is the agent-ID candidate (optional).
+  //
+  // The terminator class includes `/`, whitespace, quotes, common shell
+  // syntax (`$`, `(`, `)`, `{`, `}`, `[`, `]`, `;`, `|`, `&`, `,`, `\``,
+  // and `#`) so we stop at a word boundary.
+  const normalizedHome = homeDir.replace(/\\/g, "/").replace(/\/+$/, "");
+  const escapedHome = normalizedHome.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pattern = new RegExp(
+    `${escapedHome}/\\.letta/agents(?:/([^/\\s"'\`$(){}\\[\\]|&;,#]*))?`,
+    "g",
+  );
+
+  const unresolved: string[] = [];
+  for (const match of expanded.matchAll(pattern)) {
+    const candidate = (match[1] ?? "").trim();
+    if (candidate.length === 0) {
+      // Bare `<home>/.letta/agents` or `.../agents/` — enumeration of
+      // the whole agents tree. Always suspicious.
+      unresolved.push("<unresolved>");
+      continue;
+    }
+    if (!allowedAgentIds.has(candidate)) {
+      unresolved.push(candidate);
+    }
+  }
+  return unresolved;
+}
+
+/**
+ * Expand env vars on the raw command string (best effort). Leaves
+ * unresolved variables intact so they still register as "unresolved"
+ * during the raw scan.
+ */
+function expandCommandVariables(
+  command: string,
+  env: NodeJS.ProcessEnv,
+  homeDir: string,
+): string {
+  let result = command;
+  // Replace ~/ only when it follows whitespace, a quote, `=`, or start.
+  result = result.replace(
+    /(^|[\s="'`:])~\//g,
+    (_match, prefix: string) => `${prefix}${homeDir}/`,
+  );
+  // Replace $VAR and ${VAR} with env values when known.
+  result = result.replace(
+    /\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))/g,
+    (match, bracedName: string | undefined, bareName: string | undefined) => {
+      const name = bracedName || bareName;
+      if (!name) return match;
+      if (name === "HOME") return homeDir;
+      const value = env[name];
+      return typeof value === "string" ? value : match;
+    },
+  );
+  return result;
 }
 
 /**
@@ -391,6 +504,13 @@ function buildReason(
 /**
  * Evaluate whether a tool call should be hard-denied because it targets
  * another agent's memory. Returns null when the guard is not concerned.
+ *
+ * Shell tools are checked twice:
+ *   1. Token-level extraction of statically-resolvable paths.
+ *   2. Raw-command regex scan that denies any unresolved / not-allowed
+ *      `.letta/agents/<id>` reference, catching command substitution,
+ *      globbing, and enumeration patterns that static analysis can't
+ *      reliably trace.
  */
 export function evaluateCrossAgentGuard(
   toolName: string,
@@ -399,33 +519,51 @@ export function evaluateCrossAgentGuard(
   options: AllowedAgentsOptions = {},
 ): CrossAgentGuardResult | null {
   const env = options.env ?? process.env;
+  const homeDir = env.HOME ?? homedir();
+
   const targets = extractTargetAgentPaths(
     toolName,
     toolArgs,
     workingDirectory,
     env,
+    homeDir,
   );
 
-  if (!targets.anyAgentScoped) {
-    return null;
-  }
-
   const allowed = resolveAllowedAgents(options);
-  const offending: string[] = [];
+  const offending = new Set<string>();
+
   for (const id of targets.agentIds) {
     if (!allowed.ids.has(id)) {
-      offending.push(id);
+      offending.add(id);
     }
   }
 
-  if (offending.length === 0) {
+  // Shell tools additionally get a conservative raw-command scan.
+  const canonical = canonicalToolName(toolName);
+  if (isShellToolName(toolName) || canonical === "Bash") {
+    const command = extractShellCommand(toolArgs);
+    if (command) {
+      const unresolved = scanRawCommandForUnresolvedAgentRefs(
+        command,
+        allowed.ids,
+        env,
+        homeDir,
+      );
+      for (const id of unresolved) {
+        offending.add(id);
+      }
+    }
+  }
+
+  if (offending.size === 0) {
     return null;
   }
 
+  const offendingList = [...offending];
   return {
     matchedRule: "cross-agent guard",
-    reason: buildReason(offending, allowed),
-    offendingAgentId: offending[0] ?? "",
-    offendingAgentIds: offending,
+    reason: buildReason(offendingList, allowed),
+    offendingAgentId: offendingList[0] ?? "",
+    offendingAgentIds: offendingList,
   };
 }

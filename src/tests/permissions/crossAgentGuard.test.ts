@@ -504,3 +504,109 @@ describe("checkPermission integration", () => {
     expect(result.decision).toBe("allow");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Regression tests: known bypass patterns (from real exploit attempts)
+// ---------------------------------------------------------------------------
+
+describe("shell bypass regression tests", () => {
+  test("enumeration: ls ~/.letta/agents is denied", () => {
+    const result = evaluateCrossAgentGuard(
+      "Bash",
+      { command: "ls ~/.letta/agents" },
+      "/tmp",
+    );
+    expect(result).not.toBeNull();
+    expect(result?.matchedRule).toBe("cross-agent guard");
+  });
+
+  test("enumeration: find over the whole agents tree is denied", () => {
+    const result = evaluateCrossAgentGuard(
+      "Bash",
+      {
+        command: 'find "${HOME}/.letta/agents" -mindepth 1 -maxdepth 1 -type d',
+      },
+      "/tmp",
+    );
+    expect(result).not.toBeNull();
+  });
+
+  test("command substitution: assigning a computed target path is denied", () => {
+    // Exploit variant 1 (finds another agent via dynamic path resolution).
+    const command = [
+      'CURRENT="$AGENT_ID"',
+      'BASE="${HOME}/.letta/agents"',
+      'TARGET="$(find "$BASE" -mindepth 1 -maxdepth 1 -type d ! -name "$CURRENT" | sort | head -n 1)"',
+      'cat "$TARGET/memory/system/persona.md"',
+    ].join("\n");
+    const result = evaluateCrossAgentGuard("Bash", { command }, "/tmp");
+    expect(result).not.toBeNull();
+  });
+
+  test("command substitution variant 2 (find -name memory) is denied", () => {
+    const command = [
+      'CURRENT="$AGENT_ID"',
+      'BASE="${HOME}/.letta/agents"',
+      'TARGET="$(find "$BASE" -mindepth 2 -maxdepth 2 -type d -name memory | grep -v "/$CURRENT/" | sort | head -n 1)"',
+      'cat "$TARGET/system/persona.md"',
+    ].join("\n");
+    const result = evaluateCrossAgentGuard("Bash", { command }, "/tmp");
+    expect(result).not.toBeNull();
+  });
+
+  test("literal-but-unknown agent ID in quoted assignment is denied", () => {
+    // Exploit variant 3 — the one that actually succeeded previously
+    // because the quote-wrapping on the assignment value broke the
+    // anchored path regex.
+    const command = [
+      'TARGET="${HOME}/.letta/agents/agent-0037d3d9-389b-4c02-82ae-d77aa29d1ada/memory"',
+      'sed -n "1,80p" "$TARGET/system/persona.md"',
+    ].join("\n");
+    const result = evaluateCrossAgentGuard("Bash", { command }, "/tmp");
+    expect(result).not.toBeNull();
+    expect(result?.offendingAgentIds).toContain(
+      "agent-0037d3d9-389b-4c02-82ae-d77aa29d1ada",
+    );
+  });
+
+  test("tilde-expansion with unknown agent ID is denied", () => {
+    const result = evaluateCrossAgentGuard(
+      "Bash",
+      { command: "cat ~/.letta/agents/agent-victim/memory/system/persona.md" },
+      "/tmp",
+    );
+    expect(result).not.toBeNull();
+  });
+
+  test("self-targeting references using ${AGENT_ID} pass through", () => {
+    process.env.AGENT_ID = SELF;
+    const result = evaluateCrossAgentGuard(
+      "Bash",
+      {
+        command:
+          'cat "${HOME}/.letta/agents/${AGENT_ID}/memory/system/persona.md"',
+      },
+      "/tmp",
+    );
+    expect(result).toBeNull();
+  });
+
+  test("scoped access via LETTA_MEMORY_SCOPE passes through", () => {
+    process.env.LETTA_MEMORY_SCOPE =
+      "agent-0037d3d9-389b-4c02-82ae-d77aa29d1ada";
+    const command =
+      'TARGET="${HOME}/.letta/agents/agent-0037d3d9-389b-4c02-82ae-d77aa29d1ada/memory"\n' +
+      'cat "$TARGET/system/persona.md"';
+    const result = evaluateCrossAgentGuard("Bash", { command }, "/tmp");
+    expect(result).toBeNull();
+  });
+
+  test("legitimate bash touching nothing under .letta/agents is not denied", () => {
+    const result = evaluateCrossAgentGuard(
+      "Bash",
+      { command: "ls /tmp && echo ok" },
+      "/tmp",
+    );
+    expect(result).toBeNull();
+  });
+});
