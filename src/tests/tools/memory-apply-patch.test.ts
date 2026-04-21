@@ -39,7 +39,7 @@ async function cloneRemoteRepo(
   remoteDir: string,
   cloneDir: string,
 ): Promise<void> {
-  await execFile("git", ["clone", remoteDir, cloneDir]);
+  await execFile("git", ["clone", "--branch", "main", remoteDir, cloneDir]);
   await runGit(cloneDir, ["config", "user.name", "remote-user"]);
   await runGit(cloneDir, ["config", "user.email", "remote-user@example.com"]);
 }
