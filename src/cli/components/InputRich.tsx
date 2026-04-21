@@ -305,9 +305,10 @@ const InputFooter = memo(function InputFooter({
     const elapsedS = Math.round((Date.now() - a.startTime) / 1000);
     const agentId =
       a.agentURL?.match(/\/(?:agents|chat)\/([^/?#]+)/)?.[1] ?? null;
+    const rawType = a.type.toLowerCase();
     return {
       id: a.id,
-      typeLabel: a.type.toLowerCase(),
+      typeLabel: rawType === "reflection" ? "dreaming" : rawType,
       chatUrl: agentId ? buildChatUrl(agentId) : null,
       elapsed: `${elapsedS}s`,
     };
