@@ -30,7 +30,6 @@ import {
   searchFileIndex,
   setIndexRoot,
 } from "../../cli/helpers/fileIndex";
-import { runGrepInFiles } from "./grepInFiles";
 import { getGitContext } from "../../cli/helpers/gitContext";
 import {
   getReflectionSettings,
@@ -141,6 +140,7 @@ import {
   loadPersistedCwdMap,
   setConversationWorkingDirectory,
 } from "./cwd";
+import { runGrepInFiles } from "./grepInFiles";
 import {
   consumeInterruptQueue,
   emitInterruptToolReturnMessage,

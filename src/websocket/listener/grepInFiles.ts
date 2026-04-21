@@ -309,7 +309,10 @@ function parseRipgrepJson(
 
       // Always also feed the ring for future matches' `before`.
       if (contextLines > 0) {
-        ringBefore.push({ lineNumber: c.data.line_number, text: c.data.lines.text });
+        ringBefore.push({
+          lineNumber: c.data.line_number,
+          text: c.data.lines.text,
+        });
         if (ringBefore.length > contextLines) {
           ringBefore.shift();
         }
