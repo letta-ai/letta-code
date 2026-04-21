@@ -195,6 +195,7 @@ import {
   isListInDirectoryCommand,
   isListMemoryCommand,
   isListModelsCommand,
+  isMemoryCommitDiffCommand,
   isMemoryFileAtRefCommand,
   isMemoryHistoryCommand,
   isReadFileCommand,
@@ -5436,6 +5437,59 @@ async function connectWithRetry(
               },
               "listener_memory_file_at_ref_send_failed",
               "listener_memory_file_at_ref",
+            );
+          }
+        });
+        return;
+      }
+
+      // ── Memory commit diff (git show for full commit patch) ────────────
+      if (isMemoryCommitDiffCommand(parsed)) {
+        runDetachedListenerTask("memory_commit_diff", async () => {
+          const { getMemoryFilesystemRoot } = await import(
+            "../../agent/memoryFilesystem"
+          );
+          const { execFile: execFileCb } = await import("node:child_process");
+          const { promisify } = await import("node:util");
+          const execFileAsync = promisify(execFileCb);
+
+          const memoryRoot = getMemoryFilesystemRoot(parsed.agent_id);
+
+          try {
+            const { stdout } = await execFileAsync(
+              "git",
+              ["show", parsed.sha, "--format=", "--no-color"],
+              { cwd: memoryRoot, timeout: 10000 },
+            );
+
+            safeSocketSend(
+              socket,
+              {
+                type: "memory_commit_diff_response",
+                request_id: parsed.request_id,
+                sha: parsed.sha,
+                diff: stdout,
+                success: true,
+              },
+              "listener_memory_commit_diff_send_failed",
+              "listener_memory_commit_diff",
+            );
+          } catch (err) {
+            safeSocketSend(
+              socket,
+              {
+                type: "memory_commit_diff_response",
+                request_id: parsed.request_id,
+                sha: parsed.sha,
+                diff: null,
+                success: false,
+                error:
+                  err instanceof Error
+                    ? err.message
+                    : "Failed to get commit diff",
+              },
+              "listener_memory_commit_diff_send_failed",
+              "listener_memory_commit_diff",
             );
           }
         });

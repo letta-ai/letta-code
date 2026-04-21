@@ -794,6 +794,16 @@ export interface MemoryFileAtRefCommand {
   ref: string;
 }
 
+export interface MemoryCommitDiffCommand {
+  type: "memory_commit_diff";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  /** The agent whose memory to read. */
+  agent_id: string;
+  /** Git SHA of the commit to show. */
+  sha: string;
+}
+
 export interface EnableMemfsCommand {
   type: "enable_memfs";
   /** Echoed back in the response for request correlation. */
@@ -1535,6 +1545,7 @@ export type WsProtocolCommand =
   | ListMemoryCommand
   | MemoryHistoryCommand
   | MemoryFileAtRefCommand
+  | MemoryCommitDiffCommand
   | EnableMemfsCommand
   | ListModelsCommand
   | UpdateModelCommand
