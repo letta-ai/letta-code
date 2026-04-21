@@ -212,15 +212,20 @@ const WRAPPER_SLACK_MESSAGE_SUBTYPES = new Set([
   "message_replied",
 ]);
 
-function shouldIgnoreSlackInboundMessage(
+type SlackProcessableInboundMessage = Record<string, unknown> & {
+  user: string;
+  ts: string;
+};
+
+function isProcessableSlackInboundMessage(
   rawMessage: Record<string, unknown>,
-): boolean {
+): rawMessage is SlackProcessableInboundMessage {
   if (isNonEmptyString(rawMessage.bot_id)) {
-    return true;
+    return false;
   }
 
   if (!isNonEmptyString(rawMessage.user) || !isNonEmptyString(rawMessage.ts)) {
-    return true;
+    return false;
   }
 
   // Slack uses subtypes for both real user-authored messages (for example
@@ -228,21 +233,21 @@ function shouldIgnoreSlackInboundMessage(
   // blanket-drop all subtype messages; instead ignore the known non-user
   // variants and let genuine user messages keep flowing into the routed thread.
   if (rawMessage.hidden === true) {
-    return true;
+    return false;
   }
 
   const subtype = isNonEmptyString(rawMessage.subtype)
     ? rawMessage.subtype
     : null;
   if (!subtype) {
-    return false;
-  }
-
-  if (IGNORED_SLACK_MESSAGE_SUBTYPES.has(subtype)) {
     return true;
   }
 
-  return (
+  if (IGNORED_SLACK_MESSAGE_SUBTYPES.has(subtype)) {
+    return false;
+  }
+
+  return !(
     WRAPPER_SLACK_MESSAGE_SUBTYPES.has(subtype) &&
     asRecord(rawMessage.message) !== null
   );
@@ -699,7 +704,7 @@ export function createSlackAdapter(
         return;
       }
 
-      if (shouldIgnoreSlackInboundMessage(rawMessage)) {
+      if (!isProcessableSlackInboundMessage(rawMessage)) {
         return;
       }
 
