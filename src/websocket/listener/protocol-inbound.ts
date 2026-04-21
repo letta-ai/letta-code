@@ -461,7 +461,7 @@ export function isMemoryHistoryCommand(
     c.type === "memory_history" &&
     typeof c.request_id === "string" &&
     typeof c.agent_id === "string" &&
-    typeof c.file_path === "string"
+    (c.file_path === undefined || typeof c.file_path === "string")
   );
 }
 

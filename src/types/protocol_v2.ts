@@ -776,8 +776,8 @@ export interface MemoryHistoryCommand {
   request_id: string;
   /** The agent whose memory history to fetch. */
   agent_id: string;
-  /** Relative path within the memory directory (e.g. "system/persona.md"). */
-  file_path: string;
+  /** Relative path within the memory directory (e.g. "system/persona.md"). Omit for global history across all files. */
+  file_path?: string;
   /** Max commits to return (default 50). */
   limit?: number;
 }
