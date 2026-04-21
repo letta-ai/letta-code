@@ -87,36 +87,72 @@ export interface CrossAgentTargets {
 }
 
 /**
- * Build the regex that matches an agent-scoped memory path prefix on the
- * current machine. Capture group 1 is the agent ID.
- *
- * Uses the canonical home dir so we only need to compile once per call.
+ * The agents-tree root on this machine, e.g. `/home/user/.letta/agents`,
+ * normalized (forward slashes, no trailing slash).
  */
-function buildAgentScopedRegex(homeDir: string): RegExp {
+function getAgentsTreeRoot(homeDir: string): string {
   const normalizedHome = homeDir.replace(/\\/g, "/").replace(/\/+$/, "");
-  const escaped = normalizedHome.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(
-    `^${escaped}/\\.letta/agents/([^/]+)/memory(?:-worktrees)?(?:/.*)?$`,
-  );
-}
-
-let _cachedHomeDir: string | null = null;
-let _cachedRegex: RegExp | null = null;
-
-function getAgentScopedRegex(homeDir: string): RegExp {
-  if (_cachedHomeDir === homeDir && _cachedRegex) return _cachedRegex;
-  _cachedRegex = buildAgentScopedRegex(homeDir);
-  _cachedHomeDir = homeDir;
-  return _cachedRegex;
+  return `${normalizedHome}/.letta/agents`;
 }
 
 /**
- * If the given path is agent-scoped on this machine, return the agent ID.
+ * Normalize a path for structural comparison: forward slashes, no
+ * trailing slash, preserving a bare `/` as root.
  */
-function matchAgentScopedPath(path: string, homeDir: string): string | null {
-  const normalized = path.replace(/\\/g, "/");
-  const match = normalized.match(getAgentScopedRegex(homeDir));
-  return match?.[1] ?? null;
+function normalizePathForCompare(path: string): string {
+  const normalized = path.replace(/\\/g, "/").replace(/\/+$/, "");
+  return normalized.length === 0 ? "/" : normalized;
+}
+
+/**
+ * Classification of a path relative to the agents tree:
+ *  - `outside`     — path is unrelated to the agents tree.
+ *  - `agents-root` — path is exactly `<home>/.letta/agents` (enumeration of
+ *                    every agent on the machine).
+ *  - `ancestor`    — path is an ancestor of the agents tree (e.g. `$HOME`,
+ *                    `/`). Recursive tools (Grep/Glob) entering this path
+ *                    would walk into other agents' directories.
+ *  - `agent`       — path is inside a specific agent's directory (any
+ *                    depth, including the bare agent dir, not just
+ *                    `/memory`). The `id` is the agent ID component.
+ */
+export type AgentsTreeClassification =
+  | { kind: "outside" }
+  | { kind: "agents-root" }
+  | { kind: "ancestor" }
+  | { kind: "agent"; id: string };
+
+/**
+ * Classify a path relative to the agents tree. See
+ * {@link AgentsTreeClassification} for the kinds.
+ */
+export function classifyAgentsTreePath(
+  path: string,
+  homeDir: string,
+): AgentsTreeClassification {
+  const root = getAgentsTreeRoot(homeDir);
+  const normalized = normalizePathForCompare(path);
+
+  if (normalized === root) {
+    return { kind: "agents-root" };
+  }
+
+  if (normalized.startsWith(`${root}/`)) {
+    const rest = normalized.slice(root.length + 1);
+    const slash = rest.indexOf("/");
+    const id = slash === -1 ? rest : rest.slice(0, slash);
+    return { kind: "agent", id };
+  }
+
+  // Is `normalized` an ancestor of the agents-tree root?
+  // A recursive walk starting at `normalized` would eventually enter
+  // `<root>/`, exposing every agent on the machine.
+  const prefix = normalized === "/" ? "/" : `${normalized}/`;
+  if (root.startsWith(prefix)) {
+    return { kind: "ancestor" };
+  }
+
+  return { kind: "outside" };
 }
 
 /**
@@ -310,10 +346,17 @@ function scanToken(
     const expanded = expandShellToken(value, env, homeDir);
     if (expanded === null) continue;
     const normalized = normalizeScopedPath(expanded);
-    const agentId = matchAgentScopedPath(normalized, homeDir);
-    if (agentId) {
-      out.set(value, agentId);
+    const classification = classifyAgentsTreePath(normalized, homeDir);
+    if (classification.kind === "agent") {
+      out.set(value, classification.id);
+    } else if (classification.kind === "agents-root") {
+      // Bare agents-tree root in a shell token — enumeration.
+      out.set(value, UNRESOLVED_AGENT_ID);
     }
+    // "ancestor" is intentionally ignored for shell tokens: the Bash
+    // raw-command scan handles those cases, and most legitimate shell
+    // commands have tokens that are ancestors of the agents tree
+    // (e.g. `$HOME`, `/`) without being a threat by themselves.
   }
 }
 
@@ -405,6 +448,37 @@ function expandCommandVariables(
 }
 
 /**
+ * Sentinel ID used when a path touches the agents tree but we can't
+ * resolve it to a single agent — e.g. the bare agents-tree root (an
+ * enumeration attempt) or a recursive-search root that would walk into
+ * the tree. The guard treats `<unresolved>` as never-allowed, so any
+ * such path is denied unless upstream knew what agent to filter to.
+ */
+const UNRESOLVED_AGENT_ID = "<unresolved>";
+
+/**
+ * Tools whose semantics imply a recursive walk from the given path
+ * (as opposed to touching a single file). When one of these is pointed
+ * at an *ancestor* of the agents tree, the walk would expose every
+ * agent on disk — so we treat ancestor paths as hits for these tools.
+ */
+const RECURSIVE_PATH_TOOLS = new Set<string>([
+  "Grep",
+  "Glob",
+  "ListDir",
+  "LS",
+  "list_dir",
+  "grep",
+  "glob",
+]);
+
+function isRecursivePathTool(toolName: string): boolean {
+  if (RECURSIVE_PATH_TOOLS.has(toolName)) return true;
+  const canonical = canonicalToolName(toolName);
+  return RECURSIVE_PATH_TOOLS.has(canonical);
+}
+
+/**
  * Extract the agent IDs referenced by the targets of a tool call.
  * Returns `anyAgentScoped: false` for tool calls that don't touch
  * agent memory at all (the guard's fast path).
@@ -418,17 +492,34 @@ export function extractTargetAgentPaths(
 ): CrossAgentTargets {
   const agentIds = new Set<string>();
   let anyAgentScoped = false;
+  const recursive = isRecursivePathTool(toolName);
 
   const addFromPath = (rawPath: string | null | undefined) => {
     if (!rawPath || typeof rawPath !== "string") return;
     const resolvedPath = resolveScopedTargetPath(rawPath, workingDirectory);
     if (!resolvedPath) return;
-    // Fast exit: skip regex if the path can't possibly be agent-scoped.
-    if (!resolvedPath.includes("/.letta/agents/")) return;
-    const id = matchAgentScopedPath(resolvedPath, homeDir);
-    if (id) {
-      anyAgentScoped = true;
-      agentIds.add(id);
+    const classification = classifyAgentsTreePath(resolvedPath, homeDir);
+    switch (classification.kind) {
+      case "outside":
+        return;
+      case "agents-root":
+        // Targeting the agents tree root itself — enumeration.
+        anyAgentScoped = true;
+        agentIds.add(UNRESOLVED_AGENT_ID);
+        return;
+      case "ancestor":
+        // Only dangerous for tools that recursively walk from the
+        // given path (Grep/Glob/ListDir). Single-file tools like Read
+        // can't escape their target.
+        if (recursive) {
+          anyAgentScoped = true;
+          agentIds.add(UNRESOLVED_AGENT_ID);
+        }
+        return;
+      case "agent":
+        anyAgentScoped = true;
+        agentIds.add(classification.id);
+        return;
     }
   };
 
@@ -472,6 +563,13 @@ export function extractTargetAgentPaths(
   // All other file-oriented tools: Read/Write/Edit/NotebookEdit/Glob/
   // Grep/ListDir/LS + Gemini + Codex aliases.
   addFromPath(extractFilePath(toolArgs));
+
+  // Grep / Glob also accept a `pattern` arg. An absolute pattern like
+  // `/home/user/.letta/agents/**/*.md` would bypass the `path` check
+  // entirely. Run the pattern through the same resolver.
+  if (recursive && typeof toolArgs.pattern === "string") {
+    addFromPath(toolArgs.pattern);
+  }
 
   return { agentIds, anyAgentScoped };
 }
