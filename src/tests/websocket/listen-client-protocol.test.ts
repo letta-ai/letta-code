@@ -1259,6 +1259,7 @@ describe("listen-client channels command handling", () => {
           dmPolicy: "pairing" as const,
           allowedUsers: [],
           hasToken: true,
+          transcribeVoice: false,
           binding: {
             agentId: "agent-1",
             conversationId: "default",
@@ -1705,6 +1706,7 @@ describe("listen-client channels command handling", () => {
         dmPolicy: "pairing" as const,
         allowedUsers: [],
         hasToken: true,
+        transcribeVoice: false,
         binding: {
           agentId: null,
           conversationId: null,
@@ -1722,6 +1724,7 @@ describe("listen-client channels command handling", () => {
         dmPolicy: "pairing" as const,
         allowedUsers: [],
         hasToken: true,
+        transcribeVoice: false,
         binding: {
           agentId: null,
           conversationId: null,

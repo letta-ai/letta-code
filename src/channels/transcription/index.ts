@@ -41,12 +41,9 @@ export async function transcribeAudioFile(
     const buffer = readFileSync(localPath);
     const filename = basename(localPath);
 
-    const file = new File([new Uint8Array(buffer)], filename, {
-      type: "audio/ogg",
-    });
-
     const formData = new FormData();
-    formData.append("file", file);
+    const blob = new Blob([buffer], { type: "audio/ogg" });
+    formData.append("file", blob, filename);
     formData.append("model", "whisper-1");
 
     const controller = new AbortController();

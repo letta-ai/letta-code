@@ -137,6 +137,7 @@ export type ChannelAccountSnapshot =
       dmPolicy: DmPolicy;
       allowedUsers: string[];
       hasToken: boolean;
+      transcribeVoice: boolean;
       binding: {
         agentId: string | null;
         conversationId: string | null;
@@ -182,6 +183,7 @@ export interface ChannelAccountPatch {
   defaultPermissionMode?: SlackDefaultPermissionMode;
   dmPolicy?: DmPolicy;
   allowedUsers?: string[];
+  transcribeVoice?: boolean;
 }
 
 let resolveChannelAccountDisplayNameOverride:
@@ -401,6 +403,7 @@ function toAccountSnapshot(account: ChannelAccount): ChannelAccountSnapshot {
       dmPolicy: account.dmPolicy,
       allowedUsers: [...account.allowedUsers],
       hasToken: account.token.trim().length > 0,
+      transcribeVoice: account.transcribeVoice === true,
       binding,
       createdAt: account.createdAt,
       updatedAt: account.updatedAt,
@@ -441,6 +444,7 @@ function createAccountFromPatch(
       token: patch.token ?? "",
       dmPolicy: patch.dmPolicy ?? "pairing",
       allowedUsers: patch.allowedUsers ?? [],
+      transcribeVoice: patch.transcribeVoice === true,
       binding: {
         agentId: null,
         conversationId: null,
@@ -483,6 +487,8 @@ function mergeAccountPatch(
       token: patch.token ?? existing.token,
       dmPolicy: patch.dmPolicy ?? existing.dmPolicy,
       allowedUsers: patch.allowedUsers ?? existing.allowedUsers,
+      transcribeVoice:
+        patch.transcribeVoice ?? existing.transcribeVoice ?? false,
       updatedAt: nextUpdatedAt,
     };
   }

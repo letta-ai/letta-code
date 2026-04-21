@@ -431,6 +431,7 @@ describe("channel service", () => {
         enabled: true,
         token: "telegram-token",
         dmPolicy: "pairing",
+        transcribeVoice: true,
       },
       { accountId: "bot-one" },
     );
@@ -446,15 +447,56 @@ describe("channel service", () => {
       token: "telegram-token",
       enabled: true,
       dmPolicy: "pairing",
+      transcribeVoice: true,
     });
 
     expect(getChannelAccountSnapshot("telegram", "bot-one")).toEqual(
       expect.objectContaining({
         accountId: "bot-one",
+        transcribeVoice: true,
         binding: {
           agentId: "agent-telegram",
           conversationId: "conv-telegram",
         },
+      }),
+    );
+  });
+
+  test("telegram live account helpers preserve the transcribeVoice opt-in", () => {
+    const created = createChannelAccountLive(
+      "telegram",
+      {
+        displayName: "@voice-bot",
+        enabled: true,
+        token: "telegram-token",
+        dmPolicy: "pairing",
+        transcribeVoice: true,
+      },
+      { accountId: "voice-bot" },
+    );
+
+    expect(created).toEqual(
+      expect.objectContaining({
+        accountId: "voice-bot",
+        transcribeVoice: true,
+      }),
+    );
+
+    const updated = updateChannelAccountLive("telegram", "voice-bot", {
+      transcribeVoice: false,
+    });
+
+    expect(updated).toEqual(
+      expect.objectContaining({
+        accountId: "voice-bot",
+        transcribeVoice: false,
+      }),
+    );
+
+    expect(getChannelAccountSnapshot("telegram", "voice-bot")).toEqual(
+      expect.objectContaining({
+        accountId: "voice-bot",
+        transcribeVoice: false,
       }),
     );
   });
