@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, parse } from "node:path";
 
 import { checkPermission } from "../../permissions/checker";
 import { cliPermissions } from "../../permissions/cli";
@@ -685,10 +685,14 @@ describe("Grep/Glob ancestor-path regression tests", () => {
     expect(result).not.toBeNull();
   });
 
-  test("Grep with path='/' is denied for the same reason", () => {
+  test("Grep on the filesystem root is denied for the same reason", () => {
+    // Use the home drive's root so the test works on Windows (where `/`
+    // resolves to the current drive and may not be an ancestor of the
+    // home drive in CI).
+    const fsRoot = parse(HOME).root;
     const result = evaluateCrossAgentGuard(
       "Grep",
-      { pattern: "secret", path: "/" },
+      { pattern: "secret", path: fsRoot },
       "/tmp",
     );
     expect(result).not.toBeNull();
