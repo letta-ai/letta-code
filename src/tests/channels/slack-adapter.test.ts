@@ -12,8 +12,10 @@ type SlackMessageHandler = (args: {
     ts?: string;
     thread_ts?: string;
     subtype?: string;
+    hidden?: boolean;
     bot_id?: string;
     files?: Array<{ id?: string; name?: string }>;
+    message?: Record<string, unknown>;
   };
 }) => Promise<void>;
 
@@ -777,6 +779,94 @@ test("slack adapter allows file_share subtype messages through", async () => {
       ],
     }),
   );
+});
+
+test("slack adapter allows thread_broadcast subtype replies through", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  const onMessage = mock(async () => {});
+  adapter.onMessage = onMessage;
+
+  await adapter.start();
+  const app = FakeSlackApp.instances[0];
+  const handler = app?.messageHandler;
+  if (!handler) {
+    throw new Error("Expected Slack message handler");
+  }
+
+  await handler({
+    message: {
+      channel: "C123",
+      user: "U123",
+      text: "broadcasting this reply",
+      ts: "1712800000.000101",
+      thread_ts: "1712790000.000050",
+      subtype: "thread_broadcast",
+    },
+  });
+
+  expect(onMessage).toHaveBeenCalledWith(
+    expect.objectContaining({
+      channel: "slack",
+      chatId: "C123",
+      senderId: "U123",
+      text: "broadcasting this reply",
+      messageId: "1712800000.000101",
+      threadId: "1712790000.000050",
+      chatType: "channel",
+      isMention: false,
+    }),
+  );
+});
+
+test("slack adapter ignores hidden bookkeeping thread wrapper events", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  const onMessage = mock(async () => {});
+  adapter.onMessage = onMessage;
+
+  await adapter.start();
+  const app = FakeSlackApp.instances[0];
+  const handler = app?.messageHandler;
+  if (!handler) {
+    throw new Error("Expected Slack message handler");
+  }
+
+  await handler({
+    message: {
+      channel: "C123",
+      ts: "1712800000.000102",
+      hidden: true,
+      subtype: "message_replied",
+      message: {
+        type: "message",
+        user: "U123",
+        text: "Original thread root",
+        thread_ts: "1712790000.000050",
+        ts: "1712790000.000050",
+      },
+    },
+  });
+
+  expect(onMessage).not.toHaveBeenCalled();
 });
 
 test("slack adapter forwards reaction events into the routed Slack thread", async () => {
