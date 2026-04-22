@@ -344,9 +344,6 @@ describe("stream-json format", () => {
 
       for (const line of lines) {
         const obj = JSON.parse(line) as { type: string; timestamp?: string };
-        // control_request is the one wire type that intentionally does
-        // not carry a timestamp (see protocol.ts). Everything else must.
-        if (obj.type === "control_request") continue;
         expect(
           obj.timestamp,
           `message of type "${obj.type}" is missing a timestamp: ${line}`,

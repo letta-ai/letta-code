@@ -522,6 +522,12 @@ export interface ControlRequest {
   type: "control_request";
   request_id: string;
   request: ControlRequestBody;
+  /**
+   * ISO 8601 UTC timestamp (ms precision) when the CLI emitted this request
+   * onto the stream-json wire. Optional because SDK-originated inbound
+   * control requests are not stamped by the CLI.
+   */
+  timestamp?: string;
   /** Agent that triggered this control request. */
   agent_id?: string;
   /** Conversation that triggered this control request. */

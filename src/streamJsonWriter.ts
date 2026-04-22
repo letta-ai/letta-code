@@ -16,18 +16,13 @@
  * the writer fills it in. If a caller does pre-stamp `timestamp` (e.g. to
  * preserve a time captured earlier), that value is respected.
  *
- * `ControlRequest` does not extend `MessageEnvelope` and has no timestamp
- * field; it is still routed through this writer and passed through
- * verbatim for consistency with other emit sites.
+ * `ControlRequest` does not extend `MessageEnvelope`, but when the CLI emits
+ * one onto stdout it should still be timestamped like every other stream-json
+ * wire event.
  */
 import type { WireMessage } from "./types/protocol";
 
 export function writeWireMessage(msg: WireMessage): void {
-  if (msg.type === "control_request") {
-    // ControlRequest does not carry a timestamp (see protocol.ts).
-    console.log(JSON.stringify(msg));
-    return;
-  }
   const stamped =
     msg.timestamp === undefined
       ? { ...msg, timestamp: new Date().toISOString() }
