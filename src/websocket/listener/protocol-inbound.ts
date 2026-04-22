@@ -1345,6 +1345,7 @@ export function parseServerMessage(
       isListMemoryCommand(parsed) ||
       isMemoryHistoryCommand(parsed) ||
       isMemoryFileAtRefCommand(parsed) ||
+      isMemoryCommitDiffCommand(parsed) ||
       isEnableMemfsCommand(parsed) ||
       isListModelsCommand(parsed) ||
       isUpdateModelCommand(parsed) ||
