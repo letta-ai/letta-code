@@ -72,31 +72,13 @@ export interface MessageEnvelope {
   session_id: string;
   uuid: string;
   /**
-   * ISO 8601 UTC timestamp with millisecond precision
-   * (e.g. "2026-04-21T23:40:15.123Z"), stamped at the moment the JSON
-   * line is serialized to stdout. This is CLI-emit time, NOT
-   * server-creation time.
+   * ISO 8601 UTC timestamp (ms precision) stamped at the moment the JSON
+   * line is serialized to stdout. CLI-emit time, not server-creation time.
    *
-   * Field name and format match Claude Code and Codex stream-json output
-   * so downstream normalizers (e.g. Harbor) can treat all three CLIs
-   * uniformly.
-   *
-   * Wire contract: this field is ALWAYS present on emitted stream-json
-   * lines. It is typed as optional only because the writer layer
-   * (`writeWireMessage`) is the single source of truth for stamping —
-   * call sites construct literals without it and the writer fills it in
-   * at emit time. Do not emit wire messages via raw `console.log`;
-   * always go through the writer.
-   *
-   * For ordering within a session use `event_seq` when populated;
-   * `timestamp` is for absolute wall-clock and cross-CLI alignment, and
-   * is non-monotonic because the system clock can shift.
-   *
-   * Note: `ControlRequest` does not extend `MessageEnvelope` because
-   * control requests can originate from the SDK side (inbound), where
-   * CLI-emit time is meaningless. `ControlResponse` extends
-   * `MessageEnvelope` and is always CLI-emitted, so it carries
-   * `timestamp` on the wire.
+   * Always present on the wire; typed optional because `writeWireMessage`
+   * is the single source of truth for stamping — don't emit via raw
+   * `console.log`. Use `event_seq` for ordering; `timestamp` is
+   * non-monotonic (system clock can shift).
    */
   timestamp?: string;
   /** Monotonic per-session event sequence. Optional for backward compatibility. */
