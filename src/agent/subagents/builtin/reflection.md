@@ -95,6 +95,8 @@ echo "PARENT_AGENT_ID=$LETTA_PARENT_AGENT_ID"
 
 Use the printed values (e.g., `agent-abc123...`) in the trailers. If a variable is empty or unset, omit that trailer. Never write a literal variable name like `$LETTA_AGENT_ID` or `$AGENT_ID` in the commit message.
 
+**Shell syntax constraint:** You run in memory mode, which statically validates every Bash command. Command substitution (`$(...)`) and backticks are **always denied** because they can execute arbitrary code at runtime. Use plain `-m "..."` with an embedded multi-line string exactly as shown below — do NOT wrap the message in `$(cat <<'EOF' ... EOF)` or any other subshell form.
+
 ```bash
 cd $MEMORY_DIR
 git add -A
