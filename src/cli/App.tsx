@@ -1388,6 +1388,7 @@ export default function App({
   const [queuedApprovalResults, setQueuedApprovalResults] = useState<
     ApprovalResult[] | null
   >(null);
+  const queuedApprovalResultsRef = useRef<ApprovalResult[] | null>(null);
   const toolAbortControllerRef = useRef<AbortController | null>(null);
 
   // Bash mode state - track running commands for input locking and ESC cancellation
@@ -1442,6 +1443,7 @@ export default function App({
       results: ApprovalResult[] | null,
       metadata?: { conversationId: string; generation: number },
     ) => {
+      queuedApprovalResultsRef.current = results;
       setQueuedApprovalResults(results);
       if (results) {
         queuedApprovalMetadataRef.current = metadata ?? {
@@ -6469,8 +6471,8 @@ export default function App({
 
       const queuedMetadata = queuedApprovalMetadataRef.current;
       const hasQueuedRealResults =
-        queuedApprovalResults !== null &&
-        queuedApprovalResults.length > 0 &&
+        queuedApprovalResultsRef.current !== null &&
+        queuedApprovalResultsRef.current.length > 0 &&
         queuedMetadata?.conversationId === conversationIdRef.current &&
         queuedMetadata.generation === generationAtStart;
 
@@ -6534,7 +6536,7 @@ export default function App({
         };
       }
     },
-    [queueApprovalResults, queuedApprovalResults, restorePendingApprovalUi],
+    [queueApprovalResults, restorePendingApprovalUi],
   );
 
   useEffect(() => {
@@ -7615,8 +7617,8 @@ export default function App({
 
     const queuedMetadata = queuedApprovalMetadataRef.current;
     const hasQueuedRealResults =
-      queuedApprovalResults !== null &&
-      queuedApprovalResults.length > 0 &&
+      queuedApprovalResultsRef.current !== null &&
+      queuedApprovalResultsRef.current.length > 0 &&
       queuedMetadata?.conversationId === conversationIdRef.current &&
       queuedMetadata.generation === conversationGenerationRef.current;
     if (hasQueuedRealResults) {
@@ -7655,12 +7657,55 @@ export default function App({
       // If check fails, proceed anyway (don't block user)
       return { blocked: false };
     }
-  }, [
-    agentId,
-    needsEagerApprovalCheck,
-    queuedApprovalResults,
-    queueApprovalResults,
-  ]);
+  }, [agentId, needsEagerApprovalCheck, queueApprovalResults]);
+
+  const consumeQueuedApprovalInputForCurrentConversation = useCallback(
+    (otid: string = createClientOtid()): ApprovalCreate | null => {
+      const queuedResults = queuedApprovalResultsRef.current;
+      if (!queuedResults || queuedResults.length === 0) {
+        return null;
+      }
+
+      const queuedMetadata = queuedApprovalMetadataRef.current;
+      const isQueuedValid =
+        queuedMetadata &&
+        queuedMetadata.conversationId === conversationIdRef.current &&
+        queuedMetadata.generation === conversationGenerationRef.current;
+
+      queueApprovalResults(null);
+      interruptQueuedRef.current = false;
+
+      if (!isQueuedValid) {
+        debugWarn(
+          "queue",
+          "Dropping stale queued approval results for mismatched conversation or generation",
+        );
+        return null;
+      }
+
+      return {
+        type: "approval",
+        approvals: queuedResults,
+        otid,
+      };
+    },
+    [queueApprovalResults],
+  );
+
+  const processConversationWithQueuedApprovals = useCallback(
+    async (
+      input: Array<MessageCreate | ApprovalCreate>,
+      options?: Parameters<typeof processConversation>[1],
+    ): Promise<void> => {
+      const queuedApprovalInput =
+        consumeQueuedApprovalInputForCurrentConversation();
+      const nextInput = queuedApprovalInput
+        ? [queuedApprovalInput, ...input]
+        : input;
+      await processConversation(nextInput, options);
+    },
+    [consumeQueuedApprovalInputForCurrentConversation, processConversation],
+  );
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: blanket suppression — same caveat as processConversation above. Omitted deps are mostly refs and stable callbacks, but this hides any genuinely missing reactive deps too.
   const onSubmit = useCallback(
@@ -8772,7 +8817,7 @@ export default function App({
 
             // Send the prompt with ralph reminder prepended
             const systemMsg = buildRalphFirstTurnReminder(ralphState);
-            processConversation([
+            processConversationWithQueuedApprovals([
               {
                 type: "message",
                 role: "user",
@@ -10220,7 +10265,7 @@ export default function App({
             );
 
             // Process conversation with the skill-creation prompt
-            await processConversation([
+            await processConversationWithQueuedApprovals([
               {
                 type: "message",
                 role: "user",
@@ -10284,7 +10329,7 @@ export default function App({
             );
 
             // Process conversation with the remember prompt
-            await processConversation([
+            await processConversationWithQueuedApprovals([
               {
                 type: "message",
                 role: "user",
@@ -10473,7 +10518,7 @@ export default function App({
               memoryDir,
             });
 
-            await processConversation([
+            await processConversationWithQueuedApprovals([
               {
                 type: "message",
                 role: "user",
@@ -10519,7 +10564,7 @@ export default function App({
               memoryDir,
             });
 
-            await processConversation([
+            await processConversationWithQueuedApprovals([
               {
                 type: "message",
                 role: "user",
@@ -10619,7 +10664,7 @@ export default function App({
               "Direct, a little playful. Don't overthink it.",
             ].join("\n");
 
-            await processConversation([
+            await processConversationWithQueuedApprovals([
               {
                 type: "message",
                 role: "user",
@@ -10675,7 +10720,7 @@ export default function App({
             // Send prompt to agent
             // NOTE: Unlike /remember, we DON'T append args separately because
             // they're already substituted into the prompt via $ARGUMENTS
-            await processConversation([
+            await processConversationWithQueuedApprovals([
               {
                 type: "message",
                 role: "user",
@@ -11079,27 +11124,10 @@ ${SYSTEM_REMINDER_CLOSE}
         });
       }
 
-      if (queuedApprovalResults) {
-        const queuedMetadata = queuedApprovalMetadataRef.current;
-        const isQueuedValid =
-          queuedMetadata &&
-          queuedMetadata.conversationId === conversationIdRef.current &&
-          queuedMetadata.generation === conversationGenerationRef.current;
-
-        if (isQueuedValid) {
-          initialInput.push({
-            type: "approval",
-            approvals: queuedApprovalResults,
-            otid: createClientOtid(),
-          });
-        } else {
-          debugWarn(
-            "queue",
-            "Dropping stale queued approval results for mismatched conversation or generation",
-          );
-        }
-        queueApprovalResults(null);
-        interruptQueuedRef.current = false;
+      const queuedApprovalInput =
+        consumeQueuedApprovalInputForCurrentConversation();
+      if (queuedApprovalInput) {
+        initialInput.push(queuedApprovalInput);
       }
 
       initialInput.push({
@@ -11133,7 +11161,7 @@ ${SYSTEM_REMINDER_CLOSE}
       handleExit,
       isExecutingTool,
       queuedApprovalResults,
-      queueApprovalResults,
+      consumeQueuedApprovalInputForCurrentConversation,
       pendingApprovals,
       profileConfirmPending,
       handleAgentSelect,

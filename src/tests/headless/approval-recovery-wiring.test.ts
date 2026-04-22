@@ -85,6 +85,7 @@ describe("headless approval recovery wiring", () => {
     expect(segment).toContain(
       "queuedRecoveredApprovalResults = denialResults;",
     );
+    expect(segment).toContain("sendScopedApprovalMessages(");
     expect(segment).not.toContain("executeApprovalBatch(");
   });
 
@@ -100,6 +101,27 @@ describe("headless approval recovery wiring", () => {
     const segment = source.slice(start, end);
     expect(segment).toContain("buildFreshDenialApprovals(");
     expect(segment).toContain("approvalsProcessed += denialResults.length;");
+    expect(segment).toContain("sendScopedApprovalMessages(");
     expect(segment).not.toContain("executeApprovalBatch(");
+  });
+
+  test("approval-only recovery sends use scoped prepared tool context", () => {
+    expect(source).toContain("const sendScopedApprovalMessages = async (");
+
+    const helperStart = source.indexOf(
+      "const sendScopedApprovalMessages = async (",
+    );
+    const helperEnd = source.indexOf(
+      "// Helper to resolve any pending approvals before sending user input",
+      helperStart,
+    );
+
+    expect(helperStart).toBeGreaterThan(-1);
+    expect(helperEnd).toBeGreaterThan(helperStart);
+
+    const helperSegment = source.slice(helperStart, helperEnd);
+    expect(helperSegment).toContain("prepareHeadlessToolExecutionContext({");
+    expect(helperSegment).toContain("conversationId: targetConversationId,");
+    expect(helperSegment).toContain("preparedToolContext:");
   });
 });

@@ -1445,6 +1445,22 @@ export async function handleHeadlessCommand(
   const sharedReminderState = createSharedReminderState();
   let queuedRecoveredApprovalResults: ApprovalResult[] | null = null;
 
+  const sendScopedApprovalMessages = async (
+    targetConversationId: string,
+    approvalMessages: Array<MessageCreate | ApprovalCreate>,
+  ) => {
+    const approvalToolContext = await prepareHeadlessToolExecutionContext({
+      agentId: agent.id,
+      conversationId: targetConversationId,
+    });
+
+    return await sendMessageStream(targetConversationId, approvalMessages, {
+      agentId: agent.id,
+      preparedToolContext:
+        approvalToolContext.preparedToolContext.preparedToolContext,
+    });
+  };
+
   // Helper to resolve any pending approvals before sending user input
   const resolveAllPendingApprovals = async (
     mode: "queue_for_next_turn" | "send_immediately" = "send_immediately",
@@ -1515,12 +1531,9 @@ export async function handleHeadlessCommand(
       }
 
       // Send the approval to clear the pending state; drain the stream without output
-      const approvalStream = await sendMessageStream(
+      const approvalStream = await sendScopedApprovalMessages(
         conversationId,
         approvalMessages,
-        {
-          agentId: agent.id,
-        },
       );
       const drainResult = await drainStreamWithResume(
         approvalStream,
@@ -2857,12 +2870,9 @@ async function runBidirectionalMode(
         }
       }
 
-      const approvalStream = await sendMessageStream(
+      const approvalStream = await sendScopedApprovalMessages(
         conversationId,
         approvalMessages,
-        {
-          agentId: agent.id,
-        },
       );
       const drainResult = await drainStreamWithResume(
         approvalStream,
@@ -3234,12 +3244,9 @@ async function runBidirectionalMode(
         approvals: denialResults,
         otid: randomUUID(),
       };
-      const approvalStream = await sendMessageStream(
+      const approvalStream = await sendScopedApprovalMessages(
         targetConversationId,
         [approvalInput],
-        {
-          agentId: agent.id,
-        },
       );
 
       const drainResult = await drainStreamWithResume(

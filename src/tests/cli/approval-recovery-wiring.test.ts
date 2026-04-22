@@ -113,4 +113,37 @@ describe("approval recovery wiring", () => {
       "await recoverRestoredPendingApprovals(",
     );
   });
+
+  test("slash command recovery consumes queued stale denials on the slash send", () => {
+    const appPath = fileURLToPath(
+      new URL("../../cli/App.tsx", import.meta.url),
+    );
+    const source = readFileSync(appPath, "utf-8");
+
+    expect(source).toContain(
+      "const processConversationWithQueuedApprovals = useCallback(",
+    );
+    expect(source).toContain(
+      "consumeQueuedApprovalInputForCurrentConversation();",
+    );
+
+    const slashHandlers = [
+      'if (\n          trimmed === "/skill-creator"',
+      'if (trimmed.startsWith("/remember")) {',
+      'if (trimmed === "/init") {',
+      'if (trimmed === "/doctor") {',
+      'if (trimmed.startsWith("/empanada")) {',
+      "if (matchedCustom) {",
+    ];
+
+    for (const startNeedle of slashHandlers) {
+      const start = source.indexOf(startNeedle);
+      expect(start).toBeGreaterThan(-1);
+
+      const segment = source.slice(start, start + 7000);
+      expect(segment).toContain("checkPendingApprovalsForSlashCommand()");
+      expect(segment).toContain("processConversationWithQueuedApprovals([");
+      expect(segment).not.toContain("await processConversation([");
+    }
+  });
 });
