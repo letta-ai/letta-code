@@ -96,6 +96,7 @@ import {
   runUserPromptSubmitHooks,
 } from "../hooks";
 import type { ApprovalContext } from "../permissions/analyzer";
+import { formatPermissionDenial } from "../permissions/formatDenial";
 import { type PermissionMode, permissionMode } from "../permissions/mode";
 import { OPENAI_CODEX_PROVIDER_NAME } from "../providers/openai-codex-provider";
 import {
@@ -5495,13 +5496,7 @@ export default function App({
 
               // Create denial results for auto-denied tools and update buffers
               autoDeniedResults = autoDenied.map((ac) => {
-                // Prefer the detailed reason over the short matchedRule name
-                // (e.g., reason contains plan file path info, matchedRule is just "plan mode")
-                const reason = ac.permission.reason
-                  ? `Permission denied: ${ac.permission.reason}`
-                  : "matchedRule" in ac.permission && ac.permission.matchedRule
-                    ? `Permission denied by rule: ${ac.permission.matchedRule}`
-                    : "Permission denied: Unknown reason";
+                const reason = formatPermissionDenial(ac.permission);
 
                 // Update buffers with tool rejection for UI
                 onChunk(buffersRef.current, {

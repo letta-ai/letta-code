@@ -34,7 +34,7 @@ describe("formatPermissionDenial", () => {
     expect(result).toBe("Permission denied: detailed explanation");
   });
 
-  test("reason is preferred over matchedRule (the key behavior)", () => {
+  test("already-prefixed reasons are preserved verbatim", () => {
     const result = formatPermissionDenial({
       reason:
         "Permission denied by cross-agent memory guard: targeted agent-abc123. " +
@@ -42,9 +42,8 @@ describe("formatPermissionDenial", () => {
       matchedRule: "cross-agent guard",
     });
     expect(result).toBe(
-      "Permission denied: Permission denied by cross-agent memory guard: " +
-        "targeted agent-abc123. Set LETTA_MEMORY_SCOPE or pass " +
-        "--memory-scope to authorize.",
+      "Permission denied by cross-agent memory guard: targeted agent-abc123. " +
+        "Set LETTA_MEMORY_SCOPE or pass --memory-scope to authorize.",
     );
   });
 
@@ -80,6 +79,22 @@ describe("formatPermissionDenial", () => {
       decision: "deny",
     });
     expect(result).toBe("Permission denied: detailed");
+  });
+
+  test("generic checker reasons prefer matchedRule over internal labels", () => {
+    const result = formatPermissionDenial({
+      reason: "Matched deny rule",
+      matchedRule: "Bash(git push)",
+    });
+    expect(result).toBe("Permission denied by rule: Bash(git push)");
+  });
+
+  test("disallowed-tools generic reason also prefers matchedRule", () => {
+    const result = formatPermissionDenial({
+      reason: "Matched --disallowedTools flag",
+      matchedRule: "Edit(secret.txt) (CLI)",
+    });
+    expect(result).toBe("Permission denied by rule: Edit(secret.txt) (CLI)");
   });
 
   test("plan-mode denial — reason contains plan file path context", () => {

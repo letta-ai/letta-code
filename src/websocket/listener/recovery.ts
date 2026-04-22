@@ -22,6 +22,7 @@ import {
 } from "../../agent/turn-recovery-policy";
 import { createBuffers } from "../../cli/helpers/accumulator";
 import { drainStreamWithResume } from "../../cli/helpers/stream";
+import { formatPermissionDenial } from "../../permissions/formatDenial";
 import { isInteractiveApprovalTool } from "../../tools/interactivePolicy";
 import { prepareToolExecutionContextForScope } from "../../tools/toolset";
 import type {
@@ -355,7 +356,7 @@ function buildRecoveredAutoDecisions(
     ...autoDenied.map((ac) => ({
       type: "deny" as const,
       approval: ac.approval,
-      reason: ac.denyReason || ac.permission.reason || "Permission denied",
+      reason: formatPermissionDenial(ac.permission, ac.denyReason),
     })),
   ];
 }
