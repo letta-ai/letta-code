@@ -71,9 +71,6 @@ describe("approval recovery wiring", () => {
     expect(source).toContain(
       "const recoverRestoredPendingApprovals = useCallback(",
     );
-    expect(source).toContain("await classifyApprovals(approvals, {");
-    expect(source).toContain("await executeAutoAllowedTools(");
-    expect(source).toContain("await processConversation(");
     expect(source).toContain(
       "void recoverRestoredPendingApprovals(approvals);",
     );
@@ -81,6 +78,23 @@ describe("approval recovery wiring", () => {
     expect(source).not.toContain(
       "setPendingApprovals(resumeData.pendingApprovals);",
     );
+
+    const recoverStart = source.indexOf(
+      "const recoverRestoredPendingApprovals = useCallback(",
+    );
+    const recoverEnd = source.indexOf("useEffect(() => {", recoverStart);
+    expect(recoverStart).toBeGreaterThan(-1);
+    expect(recoverEnd).toBeGreaterThan(recoverStart);
+
+    const recoverSegment = source.slice(recoverStart, recoverEnd);
+    expect(recoverSegment).toContain("const hasQueuedRealResults =");
+    expect(recoverSegment).toContain("buildFreshDenialApprovals(");
+    expect(recoverSegment).toContain("queueApprovalResults(staleDenials");
+    expect(recoverSegment).not.toContain("queueApprovalResults(null)");
+    expect(recoverSegment).not.toContain(
+      "await classifyApprovals(approvals, {",
+    );
+    expect(recoverSegment).not.toContain("await executeAutoAllowedTools(");
 
     const queuedSwitchStart = source.indexOf(
       'if (action.type === "switch_conversation")',

@@ -6,53 +6,34 @@ import type {
   LettaStreamingResponse,
 } from "@letta-ai/letta-client/resources/agents/messages";
 import type WebSocket from "ws";
-import {
-  type ApprovalDecision,
-  executeApprovalBatch,
-} from "../../agent/approval-execution";
 import { fetchRunErrorInfo } from "../../agent/approval-recovery";
 import { getResumeData } from "../../agent/check-approval";
 import { getClient } from "../../agent/client";
 import { sendMessageStream } from "../../agent/message";
 import {
+  buildFreshDenialApprovals,
   extractConflictDetail,
   getPreStreamErrorAction,
   getRetryDelayMs,
   parseRetryAfterHeaderMs,
+  STALE_APPROVAL_RECOVERY_DENIAL_REASON,
 } from "../../agent/turn-recovery-policy";
 import { getRetryStatusMessage } from "../../cli/helpers/errorFormatter";
-
-import { computeDiffPreviews } from "../../helpers/diffPreview";
-import { isInteractiveApprovalTool } from "../../tools/interactivePolicy";
 import { prepareToolExecutionContextForScope } from "../../tools/toolset";
-import type { ControlRequest } from "../../types/protocol_v2";
 import { createStreamAbortRelay } from "../../utils/streamAbortRelay";
 import {
   rememberPendingApprovalBatchIds,
-  requestApprovalOverWS,
   resolveRecoveryBatchId,
 } from "./approval";
-import {
-  applySuggestedPermissionsForApproval,
-  buildApprovalSuggestionPayload,
-  classifyApprovalsWithSuggestions,
-} from "./approval-suggestions";
 import {
   LLM_API_ERROR_MAX_RETRIES,
   MAX_PRE_STREAM_RECOVERY,
 } from "./constants";
 import { getConversationWorkingDirectory } from "./cwd";
-import {
-  createToolExecutionOutputEmitter,
-  emitInterruptToolReturnMessage,
-  emitToolExecutionFinishedEvents,
-  emitToolExecutionStartedEvents,
-} from "./interrupts";
 import { getOrCreateConversationPermissionModeStateRef } from "./permissionMode";
 import {
   emitDequeuedUserMessage,
   emitRetryDelta,
-  emitRuntimeStateUpdates,
   setLoopStatus,
 } from "./protocol-outbound";
 import { consumeQueuedTurn } from "./queue";
@@ -172,199 +153,15 @@ export async function resolveStaleApprovals(
     }
     rememberPendingApprovalBatchIds(runtime, pendingApprovals, recoveryBatchId);
 
-    const permissionModeState = getOrCreateConversationPermissionModeStateRef(
-      runtime.listener,
-      runtime.agentId,
-      runtime.conversationId,
+    const approvalResults = buildFreshDenialApprovals(
+      pendingApprovals,
+      STALE_APPROVAL_RECOVERY_DENIAL_REASON,
     );
-    const { autoAllowed, autoDenied, needsUserInput } =
-      await classifyApprovalsWithSuggestions(pendingApprovals, {
-        alwaysRequiresUserInput: isInteractiveApprovalTool,
-        requireArgsForAutoApprove: true,
-        missingNameReason: "Tool call incomplete - missing name",
-        workingDirectory: recoveryWorkingDirectory,
-        permissionModeState,
-        agentId: runtime.agentId,
-      });
-
-    const decisions: ApprovalDecision[] = [
-      ...autoAllowed.map((ac) => ({
-        type: "approve" as const,
-        approval: ac.approval,
-      })),
-      ...autoDenied.map((ac) => ({
-        type: "deny" as const,
-        approval: ac.approval,
-        reason: ac.denyReason || ac.permission.reason || "Permission denied",
-      })),
-    ];
-
-    let pendingNeedsUserInput = [...needsUserInput];
-    if (pendingNeedsUserInput.length > 0) {
-      while (pendingNeedsUserInput.length > 0) {
-        const ac = pendingNeedsUserInput.shift();
-        if (!ac) {
-          break;
-        }
-
-        if (abortSignal.aborted) throw new Error("Cancelled");
-
-        const requestId = `perm-${ac.approval.toolCallId}`;
-        const diffs = await computeDiffPreviews(
-          ac.approval.toolName,
-          ac.parsedArgs,
-          recoveryWorkingDirectory,
-        );
-        const controlRequest: ControlRequest = {
-          type: "control_request",
-          request_id: requestId,
-          request: {
-            subtype: "can_use_tool",
-            tool_name: ac.approval.toolName,
-            input: ac.parsedArgs,
-            tool_call_id: ac.approval.toolCallId,
-            ...buildApprovalSuggestionPayload(ac.context),
-            blocked_path: null,
-            ...(diffs.length > 0 ? { diffs } : {}),
-          },
-          agent_id: runtime.agentId,
-          conversation_id: recoveryConversationId,
-        };
-
-        const responseBody = await requestApprovalOverWS(
-          runtime,
-          socket,
-          requestId,
-          controlRequest,
-        );
-
-        if ("decision" in responseBody) {
-          const response = responseBody.decision;
-          if (response.behavior === "allow") {
-            const savedSuggestions = await applySuggestedPermissionsForApproval(
-              {
-                decision: response,
-                context: ac.context,
-                workingDirectory: recoveryWorkingDirectory,
-              },
-            );
-            decisions.push({
-              type: "approve",
-              approval: response.updated_input
-                ? {
-                    ...ac.approval,
-                    toolArgs: JSON.stringify(response.updated_input),
-                  }
-                : ac.approval,
-              reason: response.message,
-            });
-
-            if (savedSuggestions && pendingNeedsUserInput.length > 0) {
-              const reclassified = await classifyApprovalsWithSuggestions(
-                pendingNeedsUserInput.map((entry) => entry.approval),
-                {
-                  alwaysRequiresUserInput: isInteractiveApprovalTool,
-                  requireArgsForAutoApprove: true,
-                  missingNameReason: "Tool call incomplete - missing name",
-                  workingDirectory: recoveryWorkingDirectory,
-                  permissionModeState,
-                  agentId: runtime.agentId,
-                },
-              );
-
-              decisions.push(
-                ...reclassified.autoAllowed.map((entry) => ({
-                  type: "approve" as const,
-                  approval: entry.approval,
-                })),
-                ...reclassified.autoDenied.map((entry) => ({
-                  type: "deny" as const,
-                  approval: entry.approval,
-                  reason:
-                    entry.denyReason ||
-                    entry.permission.reason ||
-                    "Permission denied",
-                })),
-              );
-              pendingNeedsUserInput = [...reclassified.needsUserInput];
-            }
-          } else {
-            decisions.push({
-              type: "deny",
-              approval: ac.approval,
-              reason: response.message || "Denied via WebSocket",
-            });
-          }
-        } else {
-          decisions.push({
-            type: "deny",
-            approval: ac.approval,
-            reason: responseBody.error,
-          });
-        }
-      }
-    }
-
-    if (decisions.length === 0) {
+    if (approvalResults.length === 0) {
       return null;
     }
 
-    const approvedToolCallIds = decisions
-      .filter(
-        (
-          decision,
-        ): decision is Extract<ApprovalDecision, { type: "approve" }> =>
-          decision.type === "approve",
-      )
-      .map((decision) => decision.approval.toolCallId);
-
-    runtime.activeExecutingToolCallIds = [...approvedToolCallIds];
-    setLoopStatus(runtime, "EXECUTING_CLIENT_SIDE_TOOL", scope);
-    emitRuntimeStateUpdates(runtime, scope);
-    emitToolExecutionStartedEvents(socket, runtime, {
-      toolCallIds: approvedToolCallIds,
-      runId: runtime.activeRunId ?? undefined,
-      agentId: runtime.agentId ?? undefined,
-      conversationId: recoveryConversationId,
-    });
-    const emitToolExecutionOutput = createToolExecutionOutputEmitter(
-      socket,
-      runtime,
-      {
-        runId: runtime.activeRunId ?? undefined,
-        agentId: runtime.agentId ?? undefined,
-        conversationId: recoveryConversationId,
-      },
-    );
-
     try {
-      const approvalResults = await executeApprovalBatch(decisions, undefined, {
-        abortSignal,
-        onStreamingOutput: emitToolExecutionOutput,
-        toolContextId: preparedToolContext.preparedToolContext.contextId,
-        workingDirectory: recoveryWorkingDirectory,
-        parentScope:
-          runtime.agentId && runtime.conversationId
-            ? {
-                agentId: runtime.agentId,
-                conversationId: runtime.conversationId,
-              }
-            : undefined,
-      });
-      emitToolExecutionFinishedEvents(socket, runtime, {
-        approvals: approvalResults,
-        runId: runtime.activeRunId ?? undefined,
-        agentId: runtime.agentId ?? undefined,
-        conversationId: recoveryConversationId,
-      });
-      emitInterruptToolReturnMessage(
-        socket,
-        runtime,
-        approvalResults,
-        runtime.activeRunId ?? undefined,
-        "tool-return",
-      );
-
       const continuationMessages: Array<MessageCreate | ApprovalCreate> = [
         {
           type: "approval",

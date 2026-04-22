@@ -1126,7 +1126,7 @@ describe("listen-client multi-worker concurrency", () => {
     ]);
   });
 
-  test("resolveStaleApprovals injects queued turns and marks recovery drain as processing", async () => {
+  test("resolveStaleApprovals injects stale denials and queued turns without replaying tools", async () => {
     const runtime = __listenClientTestUtils.createRuntime();
     runtime.agentId = "agent-1";
     runtime.conversationId = "conv-1";
@@ -1141,30 +1141,11 @@ describe("listen-client multi-worker concurrency", () => {
       toolName: "Write",
       toolArgs: '{"file_path":"foo.ts"}',
     };
-    const approvalResult = {
-      type: "tool",
-      tool_call_id: "tool-call-1",
-      tool_return: "ok",
-      status: "success",
-    };
-
     getResumeDataMock.mockResolvedValueOnce({
       pendingApproval: approval,
       pendingApprovals: [approval],
       messageHistory: [],
     });
-    // biome-ignore lint/suspicious/noExplicitAny: mock method access
-    (classifyApprovalsMock as any).mockResolvedValueOnce({
-      autoAllowed: [
-        {
-          approval,
-          parsedArgs: { file_path: "foo.ts" },
-        },
-      ],
-      autoDenied: [],
-      needsUserInput: [],
-    } as never);
-    executeApprovalBatchMock.mockResolvedValueOnce([approvalResult] as never);
 
     const queuedMessageInput = {
       kind: "message",
@@ -1218,7 +1199,14 @@ describe("listen-client multi-worker concurrency", () => {
     expect(continuationMessages?.[0]).toEqual(
       expect.objectContaining({
         type: "approval",
-        approvals: [approvalResult],
+        approvals: [
+          {
+            type: "approval",
+            tool_call_id: "tool-call-1",
+            approve: false,
+            reason: "Auto-denied: stale approval from interrupted session",
+          },
+        ],
         otid: expect.any(String),
       }),
     );
@@ -1254,6 +1242,8 @@ describe("listen-client multi-worker concurrency", () => {
         payload.includes("<task-notification>done</task-notification>"),
       ),
     ).toBe(true);
+    expect(classifyApprovalsMock).not.toHaveBeenCalled();
+    expect(executeApprovalBatchMock).not.toHaveBeenCalled();
 
     drain.resolve({
       stopReason: "end_turn",
@@ -1385,6 +1375,7 @@ describe("listen-client multi-worker concurrency", () => {
       "tool-call-recovered-1",
       "<searching-messages>recovered skill content</searching-messages>",
     );
+    executeApprovalBatchMock.mockResolvedValueOnce([] as never);
 
     await resolveRecoveredApprovalResponse(
       runtime,
@@ -1419,7 +1410,7 @@ describe("listen-client multi-worker concurrency", () => {
     });
   });
 
-  test("sync replay preserves hidden auto decisions while only surfacing manual recovered approvals", async () => {
+  test("sync replay queues stale denials instead of restoring approval UI", async () => {
     const listener = __listenClientTestUtils.createListenerRuntime();
     __listenClientTestUtils.setActiveRuntime(listener);
     const runtime = __listenClientTestUtils.getOrCreateScopedRuntime(
@@ -1472,86 +1463,43 @@ describe("listen-client multi-worker concurrency", () => {
         ],
       },
     ]);
-    // biome-ignore lint/suspicious/noExplicitAny: mock method access
-    (classifyApprovalsMock as any).mockResolvedValueOnce({
-      autoAllowed: [
-        {
-          approval: autoAllowedApproval,
-          parsedArgs: { file_path: "foo.ts" },
-          permission: { decision: "allow", reason: "auto" },
-        },
-      ],
-      autoDenied: [
-        {
-          approval: autoDeniedApproval,
-          parsedArgs: { file_path: "denied.ts", content: "nope" },
-          permission: { decision: "deny", reason: "blocked" },
-          denyReason: "blocked by policy",
-        },
-      ],
-      needsUserInput: [
-        {
-          approval: manualApproval,
-          parsedArgs: { command: "rm -rf tmp" },
-          permission: { decision: "ask", reason: "needs approval" },
-          context: {
-            recommendedRule: "Bash(rm:*)",
-            ruleDescription: "rm commands",
-            approveAlwaysText:
-              "Yes, and don't ask again for 'rm' commands in this project",
-            defaultScope: "project",
-            allowPersistence: true,
-            safetyLevel: "moderate",
-          },
-        },
-      ],
-    } as never);
-
     await __listenClientTestUtils.recoverApprovalStateForSync(runtime, {
       agent_id: "agent-1",
       conversation_id: "conv-mixed-sync",
     });
 
-    expect(runtime.recoveredApprovalState?.pendingRequestIds).toEqual(
-      new Set(["perm-tool-manual"]),
-    );
-    expect(runtime.recoveredApprovalState?.autoDecisions).toEqual([
+    expect(runtime.recoveredApprovalState).toBeNull();
+    expect(runtime.pendingInterruptedResults).toEqual([
       {
-        type: "approve",
-        approval: autoAllowedApproval,
+        type: "approval",
+        tool_call_id: autoAllowedApproval.toolCallId,
+        approve: false,
+        reason: "Auto-denied: stale approval from interrupted session",
       },
       {
-        type: "deny",
-        approval: autoDeniedApproval,
-        reason: "blocked by policy",
+        type: "approval",
+        tool_call_id: manualApproval.toolCallId,
+        approve: false,
+        reason: "Auto-denied: stale approval from interrupted session",
+      },
+      {
+        type: "approval",
+        tool_call_id: autoDeniedApproval.toolCallId,
+        approve: false,
+        reason: "Auto-denied: stale approval from interrupted session",
       },
     ]);
-    expect(runtime.recoveredApprovalState?.allApprovals).toEqual([
-      autoAllowedApproval,
-      manualApproval,
-      autoDeniedApproval,
-    ]);
+    expect(runtime.pendingInterruptedContext).toEqual({
+      agentId: "agent-1",
+      conversationId: "conv-mixed-sync",
+      continuationEpoch: runtime.continuationEpoch,
+    });
 
     const deviceStatus = __listenClientTestUtils.buildDeviceStatus(listener, {
       agent_id: "agent-1",
       conversation_id: "conv-mixed-sync",
     });
-    expect(deviceStatus.pending_control_requests).toEqual([
-      {
-        request_id: "perm-tool-manual",
-        request: expect.objectContaining({
-          subtype: "can_use_tool",
-          tool_name: "Bash",
-          tool_call_id: "tool-manual",
-          permission_suggestions: [
-            {
-              id: "save-default",
-              text: "Yes, and don't ask again for 'rm' commands in this project",
-            },
-          ],
-        }),
-      },
-    ]);
+    expect(deviceStatus.pending_control_requests).toEqual([]);
   });
 
   test("recovered approval continuation executes hidden auto decisions together with manual responses", async () => {

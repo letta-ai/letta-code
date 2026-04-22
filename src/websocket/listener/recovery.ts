@@ -13,14 +13,15 @@ import {
 import { getResumeData } from "../../agent/check-approval";
 import { getClient } from "../../agent/client";
 import {
+  buildFreshDenialApprovals,
   isApprovalPendingError,
   isInvalidToolCallIdsError,
+  STALE_APPROVAL_RECOVERY_DENIAL_REASON,
   shouldAttemptApprovalRecovery,
   shouldRetryRunMetadataError,
 } from "../../agent/turn-recovery-policy";
 import { createBuffers } from "../../cli/helpers/accumulator";
 import { drainStreamWithResume } from "../../cli/helpers/stream";
-import { computeDiffPreviews } from "../../helpers/diffPreview";
 import { isInteractiveApprovalTool } from "../../tools/interactivePolicy";
 import { prepareToolExecutionContextForScope } from "../../tools/toolset";
 import type {
@@ -30,7 +31,6 @@ import type {
 } from "../../types/protocol_v2";
 import {
   applySuggestedPermissionsForApproval,
-  buildApprovalSuggestionPayload,
   classifyApprovalsWithSuggestions,
 } from "./approval-suggestions";
 import {
@@ -423,75 +423,17 @@ export async function recoverApprovalStateForSync(
     return;
   }
 
-  const workingDirectory = getConversationWorkingDirectory(
-    runtime.listener,
-    scope.agent_id,
-    scope.conversation_id,
+  runtime.pendingInterruptedResults = buildFreshDenialApprovals(
+    pendingApprovals,
+    STALE_APPROVAL_RECOVERY_DENIAL_REASON,
   );
-  const permissionModeState = getOrCreateConversationPermissionModeStateRef(
-    runtime.listener,
-    scope.agent_id,
-    scope.conversation_id,
-  );
-  const { needsUserInput, autoAllowed, autoDenied } =
-    await classifyApprovalsWithSuggestions(pendingApprovals, {
-      alwaysRequiresUserInput: isInteractiveApprovalTool,
-      requireArgsForAutoApprove: true,
-      missingNameReason: "Tool call incomplete - missing name",
-      workingDirectory,
-      permissionModeState,
-      agentId: scope.agent_id,
-    });
-  const autoDecisions = buildRecoveredAutoDecisions(autoAllowed, autoDenied);
-
-  if (needsUserInput.length === 0) {
-    clearRecoveredApprovalState(runtime);
-    return;
-  }
-
-  const approvalsByRequestId = new Map<string, RecoveredPendingApproval>();
-  await Promise.all(
-    needsUserInput.map(async (approvalEntry) => {
-      const approval = approvalEntry.approval;
-      const requestId = `perm-${approval.toolCallId}`;
-      const input = approvalEntry.parsedArgs;
-      const diffs = await computeDiffPreviews(
-        approval.toolName,
-        input,
-        workingDirectory,
-      );
-
-      approvalsByRequestId.set(requestId, {
-        approval,
-        approvalContext: approvalEntry.context,
-        controlRequest: {
-          type: "control_request",
-          request_id: requestId,
-          request: {
-            subtype: "can_use_tool",
-            tool_name: approval.toolName,
-            input,
-            tool_call_id: approval.toolCallId,
-            ...buildApprovalSuggestionPayload(approvalEntry.context),
-            blocked_path: null,
-            ...(diffs.length > 0 ? { diffs } : {}),
-          },
-          agent_id: scope.agent_id,
-          conversation_id: scope.conversation_id,
-        },
-      });
-    }),
-  );
-
-  runtime.recoveredApprovalState = {
+  runtime.pendingInterruptedContext = {
     agentId: scope.agent_id,
     conversationId: scope.conversation_id,
-    approvalsByRequestId,
-    pendingRequestIds: new Set(approvalsByRequestId.keys()),
-    responsesByRequestId: new Map(),
-    autoDecisions,
-    allApprovals: pendingApprovals,
+    continuationEpoch: runtime.continuationEpoch,
   };
+  runtime.pendingInterruptedToolCallIds = null;
+  clearRecoveredApprovalState(runtime);
 }
 
 export async function resolveRecoveredApprovalResponse(
@@ -523,7 +465,7 @@ export async function resolveRecoveredApprovalResponse(
   }
 
   const recovered = runtime.recoveredApprovalState;
-  if (!recovered || !recovered.approvalsByRequestId.has(requestId)) {
+  if (!recovered?.approvalsByRequestId.has(requestId)) {
     return false;
   }
 

@@ -30,6 +30,7 @@ import {
   getDisplayableToolReturn,
 } from "../agent/approval-execution";
 import {
+  buildFreshDenialApprovals,
   extractConflictDetail,
   fetchRunErrorDetail,
   getPreStreamErrorAction,
@@ -40,6 +41,7 @@ import {
   isQuotaLimitErrorDetail,
   parseRetryAfterHeaderMs,
   rebuildInputWithFreshDenials,
+  STALE_APPROVAL_RECOVERY_DENIAL_REASON,
   shouldAttemptApprovalRecovery,
   shouldRetryRunMetadataError,
 } from "../agent/approval-recovery";
@@ -754,7 +756,7 @@ function buildApprovalBatchKey(approvals: ApprovalRequest[]): string {
     .join("|");
 }
 
-function precomputeDiffsForApprovalBatch(
+function _precomputeDiffsForApprovalBatch(
   approvals: Array<Pick<ClassifiedApproval, "approval" | "parsedArgs">>,
   precomputedDiffs: Map<string, AdvancedDiffSuccess>,
 ): void {
@@ -6442,7 +6444,7 @@ export default function App({
   const recoverRestoredPendingApprovals = useCallback(
     async (
       approvals: ApprovalRequest[],
-      options: { notifyOnManualApproval?: boolean } = {},
+      _options: { notifyOnManualApproval?: boolean } = {},
     ): Promise<void> => {
       if (approvals.length === 0) {
         return;
@@ -6465,27 +6467,20 @@ export default function App({
         status: "running",
       };
 
+      const queuedMetadata = queuedApprovalMetadataRef.current;
+      const hasQueuedRealResults =
+        queuedApprovalResults !== null &&
+        queuedApprovalResults.length > 0 &&
+        queuedMetadata?.conversationId === conversationIdRef.current &&
+        queuedMetadata.generation === generationAtStart;
+
       setApprovalResults([]);
       setAutoHandledResults([]);
       setAutoDeniedApprovals([]);
       setApprovalContexts([]);
       setPendingApprovals([]);
-      queueApprovalResults(null);
 
       try {
-        const desiredMode = uiPermissionModeRef.current;
-        if (permissionMode.getMode() !== desiredMode) {
-          permissionMode.setMode(desiredMode);
-        }
-
-        const { needsUserInput, autoAllowed, autoDenied } =
-          await classifyApprovals(approvals, {
-            getContext: analyzeToolApproval,
-            alwaysRequiresUserInput,
-            missingNameReason:
-              "Tool call incomplete - missing name or arguments",
-          });
-
         if (conversationGenerationRef.current !== generationAtStart) {
           restoredApprovalRecoveryRef.current = {
             batchKey,
@@ -6495,158 +6490,26 @@ export default function App({
           return;
         }
 
-        precomputeDiffsForApprovalBatch(
-          [...autoAllowed, ...needsUserInput],
-          precomputedDiffsRef.current,
-        );
+        if (hasQueuedRealResults) {
+          setNeedsEagerApprovalCheck(false);
+          restoredApprovalRecoveryRef.current = {
+            batchKey,
+            generation: generationAtStart,
+            status: "completed",
+          };
+          return;
+        }
 
-        const autoAllowedToolCallIds = autoAllowed.map(
-          (ac) => ac.approval.toolCallId,
-        );
-        const autoAllowedAbortController =
-          abortControllerRef.current ?? new AbortController();
-        const shouldTrackAutoAllowed = autoAllowedToolCallIds.length > 0;
-        let autoAllowedResults: Array<{
-          toolCallId: string;
-          result: ToolExecutionResult;
-        }> = [];
-        let autoDeniedResults: Array<{
-          approval: ApprovalRequest;
-          reason: string;
-        }> = [];
-
-        if (shouldTrackAutoAllowed) {
-          setIsExecutingTool(true);
-          executingToolCallIdsRef.current = autoAllowedToolCallIds;
-          toolAbortControllerRef.current = autoAllowedAbortController;
-          autoAllowedExecutionRef.current = {
-            toolCallIds: autoAllowedToolCallIds,
-            results: null,
+        const staleDenials = buildFreshDenialApprovals(
+          approvals,
+          STALE_APPROVAL_RECOVERY_DENIAL_REASON,
+        ) as ApprovalResult[];
+        if (staleDenials.length > 0) {
+          queueApprovalResults(staleDenials, {
             conversationId: conversationIdRef.current,
             generation: generationAtStart,
-          };
-        }
-
-        try {
-          if (autoAllowedToolCallIds.length > 0) {
-            setToolCallsRunning(buffersRef.current, autoAllowedToolCallIds);
-            refreshDerived();
-          }
-
-          const approvalToolContextId =
-            approvalToolContextIdRef.current ??
-            (
-              await prepareScopedToolExecutionContext(
-                tempModelOverrideRef.current ?? undefined,
-              )
-            ).preparedToolContext.contextId;
-          autoAllowedResults =
-            autoAllowed.length > 0
-              ? await executeAutoAllowedTools(
-                  autoAllowed,
-                  (chunk) => onChunk(buffersRef.current, chunk),
-                  {
-                    abortSignal: autoAllowedAbortController.signal,
-                    onStreamingOutput: updateStreamingOutput,
-                    toolContextId: approvalToolContextId,
-                  },
-                )
-              : [];
-
-          autoDeniedResults = autoDenied.map((ac) => {
-            const reason = ac.permission.reason
-              ? `Permission denied: ${ac.permission.reason}`
-              : "matchedRule" in ac.permission && ac.permission.matchedRule
-                ? `Permission denied by rule: ${ac.permission.matchedRule}`
-                : "Permission denied: Unknown reason";
-
-            onChunk(buffersRef.current, {
-              message_type: "tool_return_message",
-              id: "dummy",
-              date: new Date().toISOString(),
-              tool_call_id: ac.approval.toolCallId,
-              tool_return: `Error: request to call tool denied. User reason: ${reason}`,
-              status: "error",
-              stdout: null,
-              stderr: null,
-            });
-
-            return {
-              approval: ac.approval,
-              reason,
-            };
           });
-        } finally {
-          if (shouldTrackAutoAllowed) {
-            setIsExecutingTool(false);
-            toolAbortControllerRef.current = null;
-            executingToolCallIdsRef.current = [];
-            autoAllowedExecutionRef.current = null;
-            toolResultsInFlightRef.current = false;
-          }
-        }
-
-        if (conversationGenerationRef.current !== generationAtStart) {
-          restoredApprovalRecoveryRef.current = {
-            batchKey,
-            generation: generationAtStart,
-            status: "completed",
-          };
-          return;
-        }
-
-        if (needsUserInput.length > 0) {
-          await restorePendingApprovalUi(
-            needsUserInput.map((ac) => ac.approval),
-            needsUserInput
-              .map((ac) => ac.context)
-              .filter((ctx): ctx is ApprovalContext => ctx !== null),
-          );
-          setAutoHandledResults(autoAllowedResults);
-          setAutoDeniedApprovals(autoDeniedResults);
-          if (options.notifyOnManualApproval !== false) {
-            sendDesktopNotification("Approval needed");
-          }
-          restoredApprovalRecoveryRef.current = {
-            batchKey,
-            generation: generationAtStart,
-            status: "completed",
-          };
-          return;
-        }
-
-        const allResults = [
-          ...autoAllowedResults.map((ar) => ({
-            type: "tool" as const,
-            tool_call_id: ar.toolCallId,
-            tool_return: ar.result.toolReturn,
-            status: ar.result.status,
-            stdout: ar.result.stdout,
-            stderr: ar.result.stderr,
-          })),
-          ...autoDeniedResults.map((ad) => ({
-            type: "approval" as const,
-            tool_call_id: ad.approval.toolCallId,
-            approve: false,
-            reason: ad.reason,
-          })),
-        ];
-
-        if (allResults.length > 0) {
-          setThinkingMessage(getRandomThinkingVerb());
-          refreshDerived();
-          toolResultsInFlightRef.current = true;
-          await processConversation(
-            [
-              {
-                type: "approval",
-                approvals: allResults,
-                otid: randomUUID(),
-              },
-            ],
-            { allowReentry: true },
-          );
-          toolResultsInFlightRef.current = false;
+          setNeedsEagerApprovalCheck(false);
         }
 
         restoredApprovalRecoveryRef.current = {
@@ -6671,14 +6534,7 @@ export default function App({
         };
       }
     },
-    [
-      processConversation,
-      queueApprovalResults,
-      refreshDerived,
-      restorePendingApprovalUi,
-      prepareScopedToolExecutionContext,
-      updateStreamingOutput,
-    ],
+    [queueApprovalResults, queuedApprovalResults, restorePendingApprovalUi],
   );
 
   useEffect(() => {
@@ -7757,6 +7613,17 @@ export default function App({
       return { blocked: false };
     }
 
+    const queuedMetadata = queuedApprovalMetadataRef.current;
+    const hasQueuedRealResults =
+      queuedApprovalResults !== null &&
+      queuedApprovalResults.length > 0 &&
+      queuedMetadata?.conversationId === conversationIdRef.current &&
+      queuedMetadata.generation === conversationGenerationRef.current;
+    if (hasQueuedRealResults) {
+      setNeedsEagerApprovalCheck(false);
+      return { blocked: false };
+    }
+
     try {
       const client = await getClient();
       const agent = await client.agents.retrieve(agentId);
@@ -7767,158 +7634,20 @@ export default function App({
       );
 
       if (!existingApprovals || existingApprovals.length === 0) {
+        setNeedsEagerApprovalCheck(false);
         return { blocked: false };
       }
 
-      // There are pending approvals - check permissions (respects yolo mode)
-      const desiredMode = uiPermissionModeRef.current;
-      if (permissionMode.getMode() !== desiredMode) {
-        permissionMode.setMode(desiredMode);
-      }
-
-      const { needsUserInput, autoAllowed, autoDenied } =
-        await classifyApprovals(existingApprovals, {
-          getContext: analyzeToolApproval,
-          alwaysRequiresUserInput,
-          missingNameReason: "Tool call incomplete - missing name",
-        });
-
-      // If any approvals need user input, show dialog
-      if (needsUserInput.length > 0) {
-        setPendingApprovals(needsUserInput.map((ac) => ac.approval));
-        setApprovalContexts(
-          needsUserInput
-            .map((ac) => ac.context)
-            .filter((ctx): ctx is ApprovalContext => ctx !== null),
-        );
-        return { blocked: true };
-      }
-
-      // All approvals can be auto-handled - execute them before proceeding
-      const allResults: ApprovalResult[] = [];
-
-      const autoAllowedToolCallIds = autoAllowed.map(
-        (ac) => ac.approval.toolCallId,
-      );
-      const autoAllowedAbortController =
-        abortControllerRef.current ?? new AbortController();
-      const shouldTrackAutoAllowed = autoAllowedToolCallIds.length > 0;
-      let autoAllowedResults: Array<{
-        toolCallId: string;
-        result: ToolExecutionResult;
-      }> = [];
-
-      if (shouldTrackAutoAllowed) {
-        setIsExecutingTool(true);
-        executingToolCallIdsRef.current = autoAllowedToolCallIds;
-        toolAbortControllerRef.current = autoAllowedAbortController;
-        autoAllowedExecutionRef.current = {
-          toolCallIds: autoAllowedToolCallIds,
-          results: null,
+      const staleDenials = buildFreshDenialApprovals(
+        existingApprovals,
+        STALE_APPROVAL_RECOVERY_DENIAL_REASON,
+      ) as ApprovalResult[];
+      if (staleDenials.length > 0) {
+        queueApprovalResults(staleDenials, {
           conversationId: conversationIdRef.current,
           generation: conversationGenerationRef.current,
-        };
-      }
-
-      try {
-        // Execute auto-allowed tools
-        if (autoAllowed.length > 0) {
-          // Set phase to "running" for auto-allowed tools
-          setToolCallsRunning(buffersRef.current, autoAllowedToolCallIds);
-          refreshDerived();
-
-          const approvalToolContextId =
-            approvalToolContextIdRef.current ??
-            (
-              await prepareScopedToolExecutionContext(
-                tempModelOverrideRef.current ?? undefined,
-              )
-            ).preparedToolContext.contextId;
-          autoAllowedResults = await executeAutoAllowedTools(
-            autoAllowed,
-            (chunk) => onChunk(buffersRef.current, chunk),
-            {
-              abortSignal: autoAllowedAbortController.signal,
-              onStreamingOutput: updateStreamingOutput,
-              toolContextId: approvalToolContextId,
-            },
-          );
-          // Map to ApprovalResult format (ToolReturn)
-          allResults.push(
-            ...autoAllowedResults.map((ar) => ({
-              type: "tool" as const,
-              tool_call_id: ar.toolCallId,
-              tool_return: ar.result.toolReturn,
-              status: ar.result.status,
-              stdout: ar.result.stdout,
-              stderr: ar.result.stderr,
-            })),
-          );
-        }
-
-        // Create denial results for auto-denied
-        for (const ac of autoDenied) {
-          const reason = ac.permission.reason || "Permission denied";
-          // Update UI with denial
-          onChunk(buffersRef.current, {
-            message_type: "tool_return_message",
-            id: "dummy",
-            date: new Date().toISOString(),
-            tool_call_id: ac.approval.toolCallId,
-            tool_return: `Error: request to call tool denied. User reason: ${reason}`,
-            status: "error",
-            stdout: null,
-            stderr: null,
-          });
-          // Map to ApprovalResult format (ApprovalReturn)
-          allResults.push({
-            type: "approval" as const,
-            tool_call_id: ac.approval.toolCallId,
-            approve: false,
-            reason,
-          });
-        }
-
-        if (autoAllowedExecutionRef.current) {
-          autoAllowedExecutionRef.current.results = allResults;
-        }
-        const autoAllowedMetadata = autoAllowedExecutionRef.current
-          ? {
-              conversationId: autoAllowedExecutionRef.current.conversationId,
-              generation: conversationGenerationRef.current,
-            }
-          : undefined;
-
-        if (
-          userCancelledRef.current ||
-          autoAllowedAbortController.signal.aborted ||
-          interruptQueuedRef.current
-        ) {
-          if (allResults.length > 0) {
-            queueApprovalResults(allResults, autoAllowedMetadata);
-          }
-          return { blocked: false };
-        }
-
-        // Send all results to server if any
-        if (allResults.length > 0) {
-          toolResultsInFlightRef.current = true;
-          await processConversation([
-            { type: "approval", approvals: allResults, otid: randomUUID() },
-          ]);
-          toolResultsInFlightRef.current = false;
-
-          // Clear any stale queued results from previous interrupts.
-          queueApprovalResults(null);
-        }
-      } finally {
-        if (shouldTrackAutoAllowed) {
-          setIsExecutingTool(false);
-          toolAbortControllerRef.current = null;
-          executingToolCallIdsRef.current = [];
-          autoAllowedExecutionRef.current = null;
-          toolResultsInFlightRef.current = false;
-        }
+        });
+        setNeedsEagerApprovalCheck(false);
       }
 
       return { blocked: false };
@@ -7928,11 +7657,8 @@ export default function App({
     }
   }, [
     agentId,
-    processConversation,
-    refreshDerived,
-    updateStreamingOutput,
     needsEagerApprovalCheck,
-    prepareScopedToolExecutionContext,
+    queuedApprovalResults,
     queueApprovalResults,
   ]);
 
@@ -11280,6 +11006,7 @@ ${SYSTEM_REMINDER_CLOSE}
       // Check for pending approvals before sending message (skip if we already have
       // a queued approval response to send first).
       // Only do eager check when resuming a session (LET-7101) - otherwise lazy recovery handles it
+      let eagerRecoveryDenials: ApprovalResult[] | null = null;
       if (needsEagerApprovalCheck && !queuedApprovalResults) {
         // Log for debugging
         const eagerStatusId = uid("status");
@@ -11329,516 +11056,12 @@ ${SYSTEM_REMINDER_CLOSE}
           }
 
           if (existingApprovals && existingApprovals.length > 0) {
-            // There are pending approvals - check permissions first (respects yolo mode)
-            const desiredMode = uiPermissionModeRef.current;
-            if (permissionMode.getMode() !== desiredMode) {
-              permissionMode.setMode(desiredMode);
-            }
-
-            const { needsUserInput, autoAllowed, autoDenied } =
-              await classifyApprovals(existingApprovals, {
-                getContext: analyzeToolApproval,
-                alwaysRequiresUserInput,
-                missingNameReason: "Tool call incomplete - missing name",
-              });
-
-            // Check if user cancelled during permission check
-            if (
-              userCancelledRef.current ||
-              abortControllerRef.current?.signal.aborted
-            ) {
-              if (optimisticUserLineId) {
-                buffersRef.current.byId.delete(optimisticUserLineId);
-                const orderIndex =
-                  buffersRef.current.order.indexOf(optimisticUserLineId);
-                if (orderIndex !== -1) {
-                  buffersRef.current.order.splice(orderIndex, 1);
-                }
-              }
-              setStreaming(false);
-              refreshDerived();
-              return { submitted: false };
-            }
-
-            // If all approvals can be auto-handled (yolo mode), process them immediately
-            if (needsUserInput.length === 0) {
-              // Precompute diffs for file edit tools before execution (both auto-allowed and needs-user-input)
-              for (const ac of [...autoAllowed, ...needsUserInput]) {
-                const toolName = ac.approval.toolName;
-                const toolCallId = ac.approval.toolCallId;
-                try {
-                  const args = JSON.parse(ac.approval.toolArgs || "{}");
-
-                  if (isFileWriteTool(toolName)) {
-                    const filePath = args.file_path as string | undefined;
-                    if (filePath) {
-                      const result = computeAdvancedDiff({
-                        kind: "write",
-                        filePath,
-                        content: (args.content as string) || "",
-                      });
-                      if (result.mode === "advanced") {
-                        precomputedDiffsRef.current.set(toolCallId, result);
-                      }
-                    }
-                  } else if (isFileEditTool(toolName)) {
-                    const filePath = args.file_path as string | undefined;
-                    if (filePath) {
-                      // Check if it's a multi-edit (has edits array) or single edit
-                      if (args.edits && Array.isArray(args.edits)) {
-                        const result = computeAdvancedDiff({
-                          kind: "multi_edit",
-                          filePath,
-                          edits: args.edits as Array<{
-                            old_string: string;
-                            new_string: string;
-                            replace_all?: boolean;
-                          }>,
-                        });
-                        if (result.mode === "advanced") {
-                          precomputedDiffsRef.current.set(toolCallId, result);
-                        }
-                      } else {
-                        const result = computeAdvancedDiff({
-                          kind: "edit",
-                          filePath,
-                          oldString: (args.old_string as string) || "",
-                          newString: (args.new_string as string) || "",
-                          replaceAll: args.replace_all as boolean | undefined,
-                        });
-                        if (result.mode === "advanced") {
-                          precomputedDiffsRef.current.set(toolCallId, result);
-                        }
-                      }
-                    }
-                  } else if (isPatchTool(toolName) && args.input) {
-                    // Patch tools - parse hunks directly (patches ARE diffs)
-                    const operations = parsePatchOperations(
-                      args.input as string,
-                    );
-                    for (const op of operations) {
-                      const key = `${toolCallId}:${op.path}`;
-                      if (op.kind === "add" || op.kind === "update") {
-                        const result = parsePatchToAdvancedDiff(
-                          op.patchLines,
-                          op.path,
-                        );
-                        if (result) {
-                          precomputedDiffsRef.current.set(key, result);
-                        }
-                      }
-                      // Delete operations don't need diffs
-                    }
-                  }
-                } catch {
-                  // Ignore errors in diff computation for auto-allowed tools
-                }
-              }
-
-              const autoAllowedToolCallIds = autoAllowed.map(
-                (ac) => ac.approval.toolCallId,
-              );
-              const autoAllowedAbortController =
-                abortControllerRef.current ?? new AbortController();
-              const shouldTrackAutoAllowed = autoAllowedToolCallIds.length > 0;
-              let autoAllowedResults: Array<{
-                toolCallId: string;
-                result: ToolExecutionResult;
-              }> = [];
-              let autoDeniedResults: ApprovalResult[] = [];
-
-              if (shouldTrackAutoAllowed) {
-                setIsExecutingTool(true);
-                executingToolCallIdsRef.current = autoAllowedToolCallIds;
-                toolAbortControllerRef.current = autoAllowedAbortController;
-                autoAllowedExecutionRef.current = {
-                  toolCallIds: autoAllowedToolCallIds,
-                  results: null,
-                  conversationId: conversationIdRef.current,
-                  generation: conversationGenerationRef.current,
-                };
-              }
-
-              try {
-                if (autoAllowedToolCallIds.length > 0) {
-                  // Set phase to "running" for auto-allowed tools
-                  setToolCallsRunning(
-                    buffersRef.current,
-                    autoAllowedToolCallIds,
-                  );
-                  refreshDerived();
-                }
-
-                // Execute auto-allowed tools (sequential for writes, parallel for reads)
-                const approvalToolContextId =
-                  approvalToolContextIdRef.current ??
-                  (
-                    await prepareScopedToolExecutionContext(
-                      tempModelOverrideRef.current ?? undefined,
-                    )
-                  ).preparedToolContext.contextId;
-                autoAllowedResults =
-                  autoAllowed.length > 0
-                    ? await executeAutoAllowedTools(
-                        autoAllowed,
-                        (chunk) => onChunk(buffersRef.current, chunk),
-                        {
-                          abortSignal: autoAllowedAbortController.signal,
-                          onStreamingOutput: updateStreamingOutput,
-                          toolContextId: approvalToolContextId,
-                        },
-                      )
-                    : [];
-
-                // Create denial results for auto-denied and update UI
-                autoDeniedResults = autoDenied.map((ac) => {
-                  // Prefer the detailed reason over the short matchedRule name
-                  const reason = ac.permission.reason
-                    ? `Permission denied: ${ac.permission.reason}`
-                    : "matchedRule" in ac.permission &&
-                        ac.permission.matchedRule
-                      ? `Permission denied by rule: ${ac.permission.matchedRule}`
-                      : "Permission denied: Unknown";
-
-                  // Update buffers with denial for UI
-                  onChunk(buffersRef.current, {
-                    message_type: "tool_return_message",
-                    id: "dummy",
-                    date: new Date().toISOString(),
-                    tool_call_id: ac.approval.toolCallId,
-                    tool_return: `Error: request to call tool denied. User reason: ${reason}`,
-                    status: "error",
-                    stdout: null,
-                    stderr: null,
-                  });
-
-                  return {
-                    type: "approval" as const,
-                    tool_call_id: ac.approval.toolCallId,
-                    approve: false,
-                    reason,
-                  };
-                });
-
-                const queuedResults: ApprovalResult[] = [
-                  ...autoAllowedResults.map((ar) => ({
-                    type: "tool" as const,
-                    tool_call_id: ar.toolCallId,
-                    tool_return: ar.result.toolReturn,
-                    status: ar.result.status,
-                    stdout: ar.result.stdout,
-                    stderr: ar.result.stderr,
-                  })),
-                  ...autoDeniedResults,
-                ];
-
-                if (autoAllowedExecutionRef.current) {
-                  autoAllowedExecutionRef.current.results = queuedResults;
-                }
-                const autoAllowedMetadata = autoAllowedExecutionRef.current
-                  ? {
-                      conversationId:
-                        autoAllowedExecutionRef.current.conversationId,
-                      generation: conversationGenerationRef.current,
-                    }
-                  : undefined;
-
-                if (
-                  userCancelledRef.current ||
-                  autoAllowedAbortController.signal.aborted ||
-                  interruptQueuedRef.current
-                ) {
-                  if (queuedResults.length > 0) {
-                    queueApprovalResults(queuedResults, autoAllowedMetadata);
-                  }
-                  setStreaming(false);
-                  markIncompleteToolsAsCancelled(
-                    buffersRef.current,
-                    true,
-                    "user_interrupt",
-                  );
-                  refreshDerived();
-                  return { submitted: false };
-                }
-
-                refreshDerived();
-
-                // Combine results and send directly with the user's message
-                // (can't use state here as it won't be available until next render)
-                const recoveryApprovalResults = [
-                  ...autoAllowedResults.map((ar) => ({
-                    type: "tool" as const,
-                    tool_call_id: ar.toolCallId,
-                    tool_return: ar.result.toolReturn,
-                    status: ar.result.status,
-                    stdout: ar.result.stdout,
-                    stderr: ar.result.stderr,
-                  })),
-                  ...autoDeniedResults,
-                ];
-
-                // Build and send initialInput directly
-                const initialInput: Array<MessageCreate | ApprovalCreate> = [
-                  {
-                    type: "approval",
-                    approvals: recoveryApprovalResults,
-                    otid: randomUUID(),
-                  },
-                  {
-                    type: "message",
-                    role: "user",
-                    content:
-                      messageContent as unknown as MessageCreate["content"],
-                    otid: randomUUID(),
-                  },
-                ];
-
-                toolResultsInFlightRef.current = true;
-                await processConversation(initialInput);
-                toolResultsInFlightRef.current = false;
-                clearPlaceholdersInText(msg);
-                return { submitted: true };
-              } finally {
-                if (shouldTrackAutoAllowed) {
-                  setIsExecutingTool(false);
-                  toolAbortControllerRef.current = null;
-                  executingToolCallIdsRef.current = [];
-                  autoAllowedExecutionRef.current = null;
-                  toolResultsInFlightRef.current = false;
-                }
-              }
-            } else {
-              // Some approvals need user input - show dialog
-              // Remove the optimistic user message from transcript
-              if (optimisticUserLineId) {
-                buffersRef.current.byId.delete(optimisticUserLineId);
-                const orderIndex =
-                  buffersRef.current.order.indexOf(optimisticUserLineId);
-                if (orderIndex !== -1) {
-                  buffersRef.current.order.splice(orderIndex, 1);
-                }
-              }
-
-              setStreaming(false);
-              setPendingApprovals(needsUserInput.map((ac) => ac.approval));
-              setApprovalContexts(
-                needsUserInput
-                  .map((ac) => ac.context)
-                  .filter(Boolean) as ApprovalContext[],
-              );
-
-              // Precompute diffs for file edit tools before execution (both auto-allowed and needs-user-input)
-              for (const ac of [...autoAllowed, ...needsUserInput]) {
-                const toolName = ac.approval.toolName;
-                const toolCallId = ac.approval.toolCallId;
-                try {
-                  const args = JSON.parse(ac.approval.toolArgs || "{}");
-
-                  if (isFileWriteTool(toolName)) {
-                    const filePath = args.file_path as string | undefined;
-                    if (filePath) {
-                      const result = computeAdvancedDiff({
-                        kind: "write",
-                        filePath,
-                        content: (args.content as string) || "",
-                      });
-                      if (result.mode === "advanced") {
-                        precomputedDiffsRef.current.set(toolCallId, result);
-                      }
-                    }
-                  } else if (isFileEditTool(toolName)) {
-                    const filePath = args.file_path as string | undefined;
-                    if (filePath) {
-                      // Check if it's a multi-edit (has edits array) or single edit
-                      if (args.edits && Array.isArray(args.edits)) {
-                        const result = computeAdvancedDiff({
-                          kind: "multi_edit",
-                          filePath,
-                          edits: args.edits as Array<{
-                            old_string: string;
-                            new_string: string;
-                            replace_all?: boolean;
-                          }>,
-                        });
-                        if (result.mode === "advanced") {
-                          precomputedDiffsRef.current.set(toolCallId, result);
-                        }
-                      } else {
-                        const result = computeAdvancedDiff({
-                          kind: "edit",
-                          filePath,
-                          oldString: (args.old_string as string) || "",
-                          newString: (args.new_string as string) || "",
-                          replaceAll: args.replace_all as boolean | undefined,
-                        });
-                        if (result.mode === "advanced") {
-                          precomputedDiffsRef.current.set(toolCallId, result);
-                        }
-                      }
-                    }
-                  } else if (isPatchTool(toolName) && args.input) {
-                    // Patch tools - parse hunks directly (patches ARE diffs)
-                    const operations = parsePatchOperations(
-                      args.input as string,
-                    );
-                    for (const op of operations) {
-                      const key = `${toolCallId}:${op.path}`;
-                      if (op.kind === "add" || op.kind === "update") {
-                        const result = parsePatchToAdvancedDiff(
-                          op.patchLines,
-                          op.path,
-                        );
-                        if (result) {
-                          precomputedDiffsRef.current.set(key, result);
-                        }
-                      }
-                      // Delete operations don't need diffs
-                    }
-                  }
-                } catch {
-                  // Ignore errors in diff computation for auto-allowed tools
-                }
-              }
-
-              const autoAllowedToolCallIds = autoAllowed.map(
-                (ac) => ac.approval.toolCallId,
-              );
-              const autoAllowedAbortController =
-                abortControllerRef.current ?? new AbortController();
-              const shouldTrackAutoAllowed = autoAllowedToolCallIds.length > 0;
-              let autoAllowedWithResults: Array<{
-                toolCallId: string;
-                result: ToolExecutionResult;
-              }> = [];
-              let autoDeniedWithReasons: Array<{
-                approval: ApprovalRequest;
-                reason: string;
-              }> = [];
-
-              if (shouldTrackAutoAllowed) {
-                setIsExecutingTool(true);
-                executingToolCallIdsRef.current = autoAllowedToolCallIds;
-                toolAbortControllerRef.current = autoAllowedAbortController;
-                autoAllowedExecutionRef.current = {
-                  toolCallIds: autoAllowedToolCallIds,
-                  results: null,
-                  conversationId: conversationIdRef.current,
-                  generation: conversationGenerationRef.current,
-                };
-              }
-
-              try {
-                // Execute auto-allowed tools (sequential for writes, parallel for reads)
-                const approvalToolContextId =
-                  approvalToolContextIdRef.current ??
-                  (
-                    await prepareScopedToolExecutionContext(
-                      tempModelOverrideRef.current ?? undefined,
-                    )
-                  ).preparedToolContext.contextId;
-                autoAllowedWithResults =
-                  autoAllowed.length > 0
-                    ? await executeAutoAllowedTools(
-                        autoAllowed,
-                        (chunk) => onChunk(buffersRef.current, chunk),
-                        {
-                          abortSignal: autoAllowedAbortController.signal,
-                          onStreamingOutput: updateStreamingOutput,
-                          toolContextId: approvalToolContextId,
-                        },
-                      )
-                    : [];
-
-                // Create denial reasons for auto-denied and update UI
-                autoDeniedWithReasons = autoDenied.map((ac) => {
-                  // Prefer the detailed reason over the short matchedRule name
-                  const reason = ac.permission.reason
-                    ? `Permission denied: ${ac.permission.reason}`
-                    : "matchedRule" in ac.permission &&
-                        ac.permission.matchedRule
-                      ? `Permission denied by rule: ${ac.permission.matchedRule}`
-                      : "Permission denied: Unknown";
-
-                  // Update buffers with denial for UI
-                  onChunk(buffersRef.current, {
-                    message_type: "tool_return_message",
-                    id: "dummy",
-                    date: new Date().toISOString(),
-                    tool_call_id: ac.approval.toolCallId,
-                    tool_return: `Error: request to call tool denied. User reason: ${reason}`,
-                    status: "error",
-                    stdout: null,
-                    stderr: null,
-                  });
-
-                  return {
-                    approval: ac.approval,
-                    reason,
-                  };
-                });
-
-                const queuedResults: ApprovalResult[] = [
-                  ...autoAllowedWithResults.map((ar) => ({
-                    type: "tool" as const,
-                    tool_call_id: ar.toolCallId,
-                    tool_return: ar.result.toolReturn,
-                    status: ar.result.status,
-                    stdout: ar.result.stdout,
-                    stderr: ar.result.stderr,
-                  })),
-                  ...autoDeniedWithReasons.map((ad) => ({
-                    type: "approval" as const,
-                    tool_call_id: ad.approval.toolCallId,
-                    approve: false,
-                    reason: ad.reason,
-                  })),
-                ];
-
-                if (autoAllowedExecutionRef.current) {
-                  autoAllowedExecutionRef.current.results = queuedResults;
-                }
-                const autoAllowedMetadata = autoAllowedExecutionRef.current
-                  ? {
-                      conversationId:
-                        autoAllowedExecutionRef.current.conversationId,
-                      generation: conversationGenerationRef.current,
-                    }
-                  : undefined;
-
-                if (
-                  userCancelledRef.current ||
-                  autoAllowedAbortController.signal.aborted ||
-                  interruptQueuedRef.current
-                ) {
-                  if (queuedResults.length > 0) {
-                    queueApprovalResults(queuedResults, autoAllowedMetadata);
-                  }
-                  setStreaming(false);
-                  markIncompleteToolsAsCancelled(
-                    buffersRef.current,
-                    true,
-                    "user_interrupt",
-                  );
-                  refreshDerived();
-                  return { submitted: false };
-                }
-
-                // Store auto-handled results to send along with user decisions
-                setAutoHandledResults(autoAllowedWithResults);
-                setAutoDeniedApprovals(autoDeniedWithReasons);
-
-                refreshDerived();
-                return { submitted: false };
-              } finally {
-                if (shouldTrackAutoAllowed) {
-                  setIsExecutingTool(false);
-                  toolAbortControllerRef.current = null;
-                  executingToolCallIdsRef.current = [];
-                  autoAllowedExecutionRef.current = null;
-                }
-              }
-            }
+            eagerRecoveryDenials = buildFreshDenialApprovals(
+              existingApprovals,
+              STALE_APPROVAL_RECOVERY_DENIAL_REASON,
+            ) as ApprovalResult[];
           }
+          setNeedsEagerApprovalCheck(false);
         } catch (_error) {
           // If check fails, proceed anyway (don't block user)
         }
@@ -11847,6 +11070,14 @@ ${SYSTEM_REMINDER_CLOSE}
       // Start the conversation loop. If we have queued approval results from an interrupted
       // client-side execution, send them first before the new user message.
       const initialInput: Array<MessageCreate | ApprovalCreate> = [];
+
+      if (eagerRecoveryDenials && eagerRecoveryDenials.length > 0) {
+        initialInput.push({
+          type: "approval",
+          approvals: eagerRecoveryDenials,
+          otid: randomUUID(),
+        });
+      }
 
       if (queuedApprovalResults) {
         const queuedMetadata = queuedApprovalMetadataRef.current;

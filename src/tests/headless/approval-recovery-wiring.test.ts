@@ -66,4 +66,40 @@ describe("headless approval recovery wiring", () => {
     const importBlock = source.slice(0, source.indexOf("export "));
     expect(importBlock).toContain("extractConflictDetail");
   });
+
+  test("resume approval recovery queues stale denials instead of replaying tools", () => {
+    const start = source.indexOf("let queuedRecoveredApprovalResults");
+    const end = source.indexOf(
+      "// Clear any pending approvals before starting a new turn",
+      start,
+    );
+
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+
+    const segment = source.slice(start, end);
+    expect(segment).toContain(
+      'mode: "queue_for_next_turn" | "send_immediately" = "send_immediately"',
+    );
+    expect(segment).toContain("buildFreshDenialApprovals(");
+    expect(segment).toContain(
+      "queuedRecoveredApprovalResults = denialResults;",
+    );
+    expect(segment).not.toContain("executeApprovalBatch(");
+  });
+
+  test("recover_pending_approvals sends synthetic denials instead of rerunning approvals", () => {
+    const start = source.indexOf(
+      "async function recoverPendingApprovalsFromControlRequest(",
+    );
+    const end = source.indexOf("// Main processing loop", start);
+
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+
+    const segment = source.slice(start, end);
+    expect(segment).toContain("buildFreshDenialApprovals(");
+    expect(segment).toContain("approvalsProcessed += denialResults.length;");
+    expect(segment).not.toContain("executeApprovalBatch(");
+  });
 });

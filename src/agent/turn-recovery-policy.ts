@@ -368,6 +368,21 @@ export interface PendingApprovalInfo {
   toolArgs: string;
 }
 
+export const STALE_APPROVAL_RECOVERY_DENIAL_REASON =
+  "Auto-denied: stale approval from interrupted session";
+
+export function buildFreshDenialApprovals(
+  serverApprovals: PendingApprovalInfo[],
+  denialReason: string,
+): NonNullable<ApprovalCreate["approvals"]> {
+  return serverApprovals.map((approval) => ({
+    type: "approval" as const,
+    tool_call_id: approval.toolCallId,
+    approve: false,
+    reason: denialReason,
+  }));
+}
+
 /**
  * Strip stale approval payloads from the message input array and optionally
  * prepend fresh denial results for the actual pending approvals from the server.
@@ -385,12 +400,7 @@ export function rebuildInputWithFreshDenials(
   if (serverApprovals.length > 0) {
     const denials: ApprovalCreate = {
       type: "approval",
-      approvals: serverApprovals.map((a) => ({
-        type: "approval" as const,
-        tool_call_id: a.toolCallId,
-        approve: false,
-        reason: denialReason,
-      })),
+      approvals: buildFreshDenialApprovals(serverApprovals, denialReason),
       otid: randomUUID(),
     };
     return [denials, ...stripped];

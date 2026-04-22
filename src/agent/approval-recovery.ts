@@ -24,6 +24,7 @@ export type {
 } from "./turn-recovery-policy";
 // ── Re-export pure policy helpers (single source of truth) ──────────
 export {
+  buildFreshDenialApprovals,
   classifyPreStreamConflict,
   extractConflictDetail,
   getPreStreamErrorAction,
@@ -39,6 +40,7 @@ export {
   isRetryableProviderErrorDetail,
   parseRetryAfterHeaderMs,
   rebuildInputWithFreshDenials,
+  STALE_APPROVAL_RECOVERY_DENIAL_REASON,
   shouldAttemptApprovalRecovery,
   shouldRetryPreStreamTransientError,
   shouldRetryRunMetadataError,
