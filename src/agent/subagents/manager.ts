@@ -26,8 +26,8 @@ import {
   resolveAllowedMemoryRoots,
 } from "../../permissions/memoryScope";
 import { permissionMode } from "../../permissions/mode";
-import { getCurrentWorkingDirectory } from "../../runtime-context";
 import { sessionPermissions } from "../../permissions/session";
+import { getCurrentWorkingDirectory } from "../../runtime-context";
 import { settingsManager } from "../../settings-manager";
 import { resolveLettaInvocation } from "../../tools/impl/shellEnv";
 import { getErrorMessage } from "../../utils/error";

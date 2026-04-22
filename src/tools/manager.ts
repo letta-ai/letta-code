@@ -30,8 +30,8 @@ import { OPENAI_CODEX_PROVIDER_NAME } from "../providers/openai-codex-provider";
 import {
   getCurrentWorkingDirectory,
   getRuntimeContext,
-  runWithRuntimeContext,
   type RuntimeContextSnapshot,
+  runWithRuntimeContext,
 } from "../runtime-context";
 import { telemetry } from "../telemetry";
 import { debugLog } from "../utils/debug";
@@ -1608,188 +1608,293 @@ export async function executeTool(
     }
 
     try {
-    // Inject options for tools that support them without altering schemas
-    let enhancedArgs = args;
+      // Inject options for tools that support them without altering schemas
+      let enhancedArgs = args;
 
-    if (STREAMING_SHELL_TOOLS.has(internalName)) {
-      if (options?.signal) {
-        enhancedArgs = { ...enhancedArgs, signal: options.signal };
+      if (STREAMING_SHELL_TOOLS.has(internalName)) {
+        if (options?.signal) {
+          enhancedArgs = { ...enhancedArgs, signal: options.signal };
+        }
+        if (options?.onOutput) {
+          enhancedArgs = {
+            ...enhancedArgs,
+            onOutput: (chunk: string, stream: "stdout" | "stderr") => {
+              options.onOutput?.(scrubSecretsFromString(chunk), stream);
+            },
+          };
+        }
+
+        // Substitute $SECRET_NAME patterns with actual secret values
+        enhancedArgs = substituteSecretsInArgs(enhancedArgs);
       }
-      if (options?.onOutput) {
+
+      // Inject toolCallId, abort signal, and parent scope for Task tool
+      if (internalName === "Task") {
+        if (options?.toolCallId) {
+          enhancedArgs = { ...enhancedArgs, toolCallId: options.toolCallId };
+        }
+        if (options?.signal) {
+          enhancedArgs = { ...enhancedArgs, signal: options.signal };
+        }
+        if (options?.parentScope) {
+          enhancedArgs = { ...enhancedArgs, parentScope: options.parentScope };
+        }
+      }
+
+      // Inject scoped metadata for Skill tool.
+      // In listener/desktop mode, relying on global agent context is unsafe
+      // because multiple agent/conversation scopes can overlap in one process.
+      if (internalName === "Skill" && options?.toolCallId) {
+        enhancedArgs = { ...enhancedArgs, toolCallId: options.toolCallId };
+      }
+      if (internalName === "Skill" && options?.parentScope) {
+        enhancedArgs = { ...enhancedArgs, parentScope: options.parentScope };
+      }
+
+      // Inject parent scope for MessageChannel tool (per-execution, not global singleton)
+      if (internalName === "MessageChannel" && options?.parentScope) {
+        enhancedArgs = { ...enhancedArgs, parentScope: options.parentScope };
+      }
+
+      // Inject the execution context id for plan-mode tools so they can update
+      // the per-conversation PermissionModeState without touching the global singleton.
+      const PLAN_MODE_TOOL_NAMES = new Set([
+        "EnterPlanMode",
+        "enter_plan_mode",
+        "ExitPlanMode",
+        "exit_plan_mode",
+      ]);
+      if (PLAN_MODE_TOOL_NAMES.has(internalName) && options?.toolContextId) {
         enhancedArgs = {
           ...enhancedArgs,
-          onOutput: (chunk: string, stream: "stdout" | "stderr") => {
-            options.onOutput?.(scrubSecretsFromString(chunk), stream);
-          },
+          _executionContextId: options.toolContextId,
         };
       }
 
-      // Substitute $SECRET_NAME patterns with actual secret values
-      enhancedArgs = substituteSecretsInArgs(enhancedArgs);
-    }
+      const result = await tool.fn(enhancedArgs);
+      const duration = Date.now() - startTime;
 
-    // Inject toolCallId, abort signal, and parent scope for Task tool
-    if (internalName === "Task") {
-      if (options?.toolCallId) {
-        enhancedArgs = { ...enhancedArgs, toolCallId: options.toolCallId };
-      }
-      if (options?.signal) {
-        enhancedArgs = { ...enhancedArgs, signal: options.signal };
-      }
-      if (options?.parentScope) {
-        enhancedArgs = { ...enhancedArgs, parentScope: options.parentScope };
-      }
-    }
+      // Refresh the file index in the background after every tool execution
+      // so subsequent @ searches reflect externally created or deleted files.
+      // The incremental rebuild is cheap (metadata-based skip for unchanged
+      // subtrees), so running on every tool adds negligible overhead.
+      void refreshFileIndex();
 
-    // Inject scoped metadata for Skill tool.
-    // In listener/desktop mode, relying on global agent context is unsafe
-    // because multiple agent/conversation scopes can overlap in one process.
-    if (internalName === "Skill" && options?.toolCallId) {
-      enhancedArgs = { ...enhancedArgs, toolCallId: options.toolCallId };
-    }
-    if (internalName === "Skill" && options?.parentScope) {
-      enhancedArgs = { ...enhancedArgs, parentScope: options.parentScope };
-    }
-
-    // Inject parent scope for MessageChannel tool (per-execution, not global singleton)
-    if (internalName === "MessageChannel" && options?.parentScope) {
-      enhancedArgs = { ...enhancedArgs, parentScope: options.parentScope };
-    }
-
-    // Inject the execution context id for plan-mode tools so they can update
-    // the per-conversation PermissionModeState without touching the global singleton.
-    const PLAN_MODE_TOOL_NAMES = new Set([
-      "EnterPlanMode",
-      "enter_plan_mode",
-      "ExitPlanMode",
-      "exit_plan_mode",
-    ]);
-    if (PLAN_MODE_TOOL_NAMES.has(internalName) && options?.toolContextId) {
-      enhancedArgs = {
-        ...enhancedArgs,
-        _executionContextId: options.toolContextId,
-      };
-    }
-
-    const result = await tool.fn(enhancedArgs);
-    const duration = Date.now() - startTime;
-
-    // Refresh the file index in the background after every tool execution
-    // so subsequent @ searches reflect externally created or deleted files.
-    // The incremental rebuild is cheap (metadata-based skip for unchanged
-    // subtrees), so running on every tool adds negligible overhead.
-    void refreshFileIndex();
-
-    // Broadcast file content after file-mutating tools so web clients update
-    // in real time without waiting for fs.watch → file_changed → re-read.
-    if (options?.onFileWrite && FILE_MUTATING_TOOLS.has(internalName)) {
-      const filePath = (enhancedArgs as Record<string, unknown>).file_path as
-        | string
-        | undefined;
-      if (filePath) {
-        try {
-          const resolvedPath = nodePath.isAbsolute(filePath)
-            ? filePath
-            : nodePath.resolve(workingDirectory, filePath);
-          const content = await nodeFs.readFile(resolvedPath, "utf-8");
-          options.onFileWrite(resolvedPath, content);
-        } catch {
-          // Best-effort — don't fail the tool call if the read fails.
-        }
-      }
-    }
-
-    // Extract stdout/stderr if present (for bash tools)
-    const recordResult = isRecord(result) ? result : undefined;
-    const stdoutValue = recordResult?.stdout;
-    const stderrValue = recordResult?.stderr;
-    const stdout = isStringArray(stdoutValue) ? stdoutValue : undefined;
-    const stderr = isStringArray(stderrValue) ? stderrValue : undefined;
-
-    // Check if tool returned a status (e.g., Bash returns status: "error" on abort)
-    const toolStatus = recordResult?.status === "error" ? "error" : "success";
-
-    // Flatten the response to plain text
-    let flattenedResponse = flattenToolResponse(result);
-
-    // Scrub secret values from tool output so they don't leak into agent context
-    if (STREAMING_SHELL_TOOLS.has(internalName)) {
-      if (typeof flattenedResponse === "string") {
-        flattenedResponse = scrubSecretsFromString(flattenedResponse);
-      } else if (Array.isArray(flattenedResponse)) {
-        flattenedResponse = flattenedResponse.map((block) =>
-          block.type === "text"
-            ? { ...block, text: scrubSecretsFromString(block.text) }
-            : block,
-        );
-      }
-      if (stdout) {
-        for (let i = 0; i < stdout.length; i++) {
-          const line = stdout[i];
-          if (line !== undefined) {
-            stdout[i] = scrubSecretsFromString(line);
+      // Broadcast file content after file-mutating tools so web clients update
+      // in real time without waiting for fs.watch → file_changed → re-read.
+      if (options?.onFileWrite && FILE_MUTATING_TOOLS.has(internalName)) {
+        const filePath = (enhancedArgs as Record<string, unknown>).file_path as
+          | string
+          | undefined;
+        if (filePath) {
+          try {
+            const resolvedPath = nodePath.isAbsolute(filePath)
+              ? filePath
+              : nodePath.resolve(workingDirectory, filePath);
+            const content = await nodeFs.readFile(resolvedPath, "utf-8");
+            options.onFileWrite(resolvedPath, content);
+          } catch {
+            // Best-effort — don't fail the tool call if the read fails.
           }
         }
       }
-      if (stderr) {
-        for (let i = 0; i < stderr.length; i++) {
-          const line = stderr[i];
-          if (line !== undefined) {
-            stderr[i] = scrubSecretsFromString(line);
+
+      // Extract stdout/stderr if present (for bash tools)
+      const recordResult = isRecord(result) ? result : undefined;
+      const stdoutValue = recordResult?.stdout;
+      const stderrValue = recordResult?.stderr;
+      const stdout = isStringArray(stdoutValue) ? stdoutValue : undefined;
+      const stderr = isStringArray(stderrValue) ? stderrValue : undefined;
+
+      // Check if tool returned a status (e.g., Bash returns status: "error" on abort)
+      const toolStatus = recordResult?.status === "error" ? "error" : "success";
+
+      // Flatten the response to plain text
+      let flattenedResponse = flattenToolResponse(result);
+
+      // Scrub secret values from tool output so they don't leak into agent context
+      if (STREAMING_SHELL_TOOLS.has(internalName)) {
+        if (typeof flattenedResponse === "string") {
+          flattenedResponse = scrubSecretsFromString(flattenedResponse);
+        } else if (Array.isArray(flattenedResponse)) {
+          flattenedResponse = flattenedResponse.map((block) =>
+            block.type === "text"
+              ? { ...block, text: scrubSecretsFromString(block.text) }
+              : block,
+          );
+        }
+        if (stdout) {
+          for (let i = 0; i < stdout.length; i++) {
+            const line = stdout[i];
+            if (line !== undefined) {
+              stdout[i] = scrubSecretsFromString(line);
+            }
+          }
+        }
+        if (stderr) {
+          for (let i = 0; i < stderr.length; i++) {
+            const line = stderr[i];
+            if (line !== undefined) {
+              stderr[i] = scrubSecretsFromString(line);
+            }
           }
         }
       }
-    }
 
-    // Track tool usage (calculate size for multimodal content)
-    const responseSize =
-      typeof flattenedResponse === "string"
-        ? flattenedResponse.length
-        : JSON.stringify(flattenedResponse).length;
-    telemetry.trackToolUsage(
-      internalName,
-      toolStatus === "success",
-      duration,
-      responseSize,
-      toolStatus === "error" ? "tool_error" : undefined,
-      stderr ? stderr.join("\n") : undefined,
-    );
-
-    // Run PostToolUse hooks - exit 2 injects stderr into agent context
-    // Note: preceding_reasoning/assistant_message not available here - tracked in accumulator for server tools
-    let postToolUseFeedback: string[] = [];
-    try {
-      const postHookResult = await runPostToolUseHooks(
-        internalName,
-        args as Record<string, unknown>,
-        {
-          status: toolStatus,
-          output: getDisplayableToolReturn(flattenedResponse),
-        },
-        options?.toolCallId,
-        workingDirectory,
-        scopedAgentId,
-        undefined, // precedingReasoning - not available in tool manager context
-        undefined, // precedingAssistantMessage - not available in tool manager context
-      );
-      postToolUseFeedback = postHookResult.feedback;
-    } catch (error) {
-      debugLog("hooks", "PostToolUse hook error (success path)", error);
-    }
-
-    // Run PostToolUseFailure hooks when tool returns error status
-    let postToolUseFailureFeedback: string[] = [];
-    if (toolStatus === "error") {
-      const errorOutput =
+      // Track tool usage (calculate size for multimodal content)
+      const responseSize =
         typeof flattenedResponse === "string"
-          ? flattenedResponse
-          : JSON.stringify(flattenedResponse);
+          ? flattenedResponse.length
+          : JSON.stringify(flattenedResponse).length;
+      telemetry.trackToolUsage(
+        internalName,
+        toolStatus === "success",
+        duration,
+        responseSize,
+        toolStatus === "error" ? "tool_error" : undefined,
+        stderr ? stderr.join("\n") : undefined,
+      );
+
+      // Run PostToolUse hooks - exit 2 injects stderr into agent context
+      // Note: preceding_reasoning/assistant_message not available here - tracked in accumulator for server tools
+      let postToolUseFeedback: string[] = [];
+      try {
+        const postHookResult = await runPostToolUseHooks(
+          internalName,
+          args as Record<string, unknown>,
+          {
+            status: toolStatus,
+            output: getDisplayableToolReturn(flattenedResponse),
+          },
+          options?.toolCallId,
+          workingDirectory,
+          scopedAgentId,
+          undefined, // precedingReasoning - not available in tool manager context
+          undefined, // precedingAssistantMessage - not available in tool manager context
+        );
+        postToolUseFeedback = postHookResult.feedback;
+      } catch (error) {
+        debugLog("hooks", "PostToolUse hook error (success path)", error);
+      }
+
+      // Run PostToolUseFailure hooks when tool returns error status
+      let postToolUseFailureFeedback: string[] = [];
+      if (toolStatus === "error") {
+        const errorOutput =
+          typeof flattenedResponse === "string"
+            ? flattenedResponse
+            : JSON.stringify(flattenedResponse);
+        try {
+          const failureHookResult = await runPostToolUseFailureHooks(
+            internalName,
+            args as Record<string, unknown>,
+            errorOutput,
+            "tool_error", // error type for returned errors
+            options?.toolCallId,
+            workingDirectory,
+            scopedAgentId,
+            undefined, // precedingReasoning - not available in tool manager context
+            undefined, // precedingAssistantMessage - not available in tool manager context
+          );
+          postToolUseFailureFeedback = failureHookResult.feedback;
+        } catch (error) {
+          debugLog(
+            "hooks",
+            "PostToolUseFailure hook error (tool returned error)",
+            error,
+          );
+        }
+      }
+
+      // Combine feedback from both hook types and inject into tool return
+      const allFeedback = [
+        ...postToolUseFeedback,
+        ...postToolUseFailureFeedback,
+      ];
+      if (allFeedback.length > 0) {
+        const feedbackMessage = `\n\n[Hook feedback]:\n${allFeedback.join("\n")}`;
+        let finalToolReturn: ToolReturnContent;
+        if (typeof flattenedResponse === "string") {
+          finalToolReturn = flattenedResponse + feedbackMessage;
+        } else if (Array.isArray(flattenedResponse)) {
+          // Append feedback as a new text content block
+          finalToolReturn = [
+            ...flattenedResponse,
+            { type: "text" as const, text: feedbackMessage },
+          ];
+        } else {
+          finalToolReturn = flattenedResponse;
+        }
+        return {
+          toolReturn: finalToolReturn,
+          status: toolStatus,
+          ...(stdout && { stdout }),
+          ...(stderr && { stderr }),
+        };
+      }
+
+      // Return the full response (truncation happens in UI layer only)
+      return {
+        toolReturn: flattenedResponse,
+        status: toolStatus,
+        ...(stdout && { stdout }),
+        ...(stderr && { stderr }),
+      };
+    } catch (error) {
+      const duration = Date.now() - startTime;
+      const isAbort =
+        error instanceof Error &&
+        (error.name === "AbortError" ||
+          error.message === "The operation was aborted" ||
+          // node:child_process AbortError may include code/message variants
+          ("code" in error && error.code === "ABORT_ERR"));
+      const errorType = isAbort
+        ? "abort"
+        : error instanceof Error
+          ? error.name
+          : "unknown";
+      const errorMessage = isAbort
+        ? INTERRUPTED_BY_USER
+        : error instanceof Error
+          ? error.message
+          : String(error);
+
+      // Track tool usage error
+      telemetry.trackToolUsage(
+        internalName,
+        false,
+        duration,
+        errorMessage.length,
+        errorType,
+        errorMessage,
+      );
+
+      // Run PostToolUse hooks for error case - exit 2 injects stderr
+      let postToolUseFeedback: string[] = [];
+      try {
+        const postHookResult = await runPostToolUseHooks(
+          internalName,
+          args as Record<string, unknown>,
+          { status: "error", output: errorMessage },
+          options?.toolCallId,
+          workingDirectory,
+          scopedAgentId,
+          undefined, // precedingReasoning - not available in tool manager context
+          undefined, // precedingAssistantMessage - not available in tool manager context
+        );
+        postToolUseFeedback = postHookResult.feedback;
+      } catch (error) {
+        debugLog("hooks", "PostToolUse hook error (error path)", error);
+      }
+
+      // Run PostToolUseFailure hooks - exit 2 injects stderr
+      let postToolUseFailureFeedback: string[] = [];
       try {
         const failureHookResult = await runPostToolUseFailureHooks(
           internalName,
           args as Record<string, unknown>,
-          errorOutput,
-          "tool_error", // error type for returned errors
+          errorMessage,
+          errorType,
           options?.toolCallId,
           workingDirectory,
           scopedAgentId,
@@ -1800,126 +1905,27 @@ export async function executeTool(
       } catch (error) {
         debugLog(
           "hooks",
-          "PostToolUseFailure hook error (tool returned error)",
+          "PostToolUseFailure hook error (exception path)",
           error,
         );
       }
-    }
 
-    // Combine feedback from both hook types and inject into tool return
-    const allFeedback = [...postToolUseFeedback, ...postToolUseFailureFeedback];
-    if (allFeedback.length > 0) {
-      const feedbackMessage = `\n\n[Hook feedback]:\n${allFeedback.join("\n")}`;
-      let finalToolReturn: ToolReturnContent;
-      if (typeof flattenedResponse === "string") {
-        finalToolReturn = flattenedResponse + feedbackMessage;
-      } else if (Array.isArray(flattenedResponse)) {
-        // Append feedback as a new text content block
-        finalToolReturn = [
-          ...flattenedResponse,
-          { type: "text" as const, text: feedbackMessage },
-        ];
-      } else {
-        finalToolReturn = flattenedResponse;
-      }
+      // Combine feedback from both hook types
+      const allFeedback = [
+        ...postToolUseFeedback,
+        ...postToolUseFailureFeedback,
+      ];
+      const finalErrorMessage =
+        allFeedback.length > 0
+          ? `${errorMessage}\n\n[Hook feedback]:\n${allFeedback.join("\n")}`
+          : errorMessage;
+
+      // Don't console.error here - it pollutes the TUI
+      // The error message is already returned in toolReturn
       return {
-        toolReturn: finalToolReturn,
-        status: toolStatus,
-        ...(stdout && { stdout }),
-        ...(stderr && { stderr }),
+        toolReturn: finalErrorMessage,
+        status: "error",
       };
-    }
-
-    // Return the full response (truncation happens in UI layer only)
-    return {
-      toolReturn: flattenedResponse,
-      status: toolStatus,
-      ...(stdout && { stdout }),
-      ...(stderr && { stderr }),
-    };
-  } catch (error) {
-    const duration = Date.now() - startTime;
-    const isAbort =
-      error instanceof Error &&
-      (error.name === "AbortError" ||
-        error.message === "The operation was aborted" ||
-        // node:child_process AbortError may include code/message variants
-        ("code" in error && error.code === "ABORT_ERR"));
-    const errorType = isAbort
-      ? "abort"
-      : error instanceof Error
-        ? error.name
-        : "unknown";
-    const errorMessage = isAbort
-      ? INTERRUPTED_BY_USER
-      : error instanceof Error
-        ? error.message
-        : String(error);
-
-    // Track tool usage error
-    telemetry.trackToolUsage(
-      internalName,
-      false,
-      duration,
-      errorMessage.length,
-      errorType,
-      errorMessage,
-    );
-
-    // Run PostToolUse hooks for error case - exit 2 injects stderr
-    let postToolUseFeedback: string[] = [];
-    try {
-      const postHookResult = await runPostToolUseHooks(
-        internalName,
-        args as Record<string, unknown>,
-        { status: "error", output: errorMessage },
-        options?.toolCallId,
-        workingDirectory,
-        scopedAgentId,
-        undefined, // precedingReasoning - not available in tool manager context
-        undefined, // precedingAssistantMessage - not available in tool manager context
-      );
-      postToolUseFeedback = postHookResult.feedback;
-    } catch (error) {
-      debugLog("hooks", "PostToolUse hook error (error path)", error);
-    }
-
-    // Run PostToolUseFailure hooks - exit 2 injects stderr
-    let postToolUseFailureFeedback: string[] = [];
-    try {
-      const failureHookResult = await runPostToolUseFailureHooks(
-        internalName,
-        args as Record<string, unknown>,
-        errorMessage,
-        errorType,
-        options?.toolCallId,
-        workingDirectory,
-        scopedAgentId,
-        undefined, // precedingReasoning - not available in tool manager context
-        undefined, // precedingAssistantMessage - not available in tool manager context
-      );
-      postToolUseFailureFeedback = failureHookResult.feedback;
-    } catch (error) {
-      debugLog(
-        "hooks",
-        "PostToolUseFailure hook error (exception path)",
-        error,
-      );
-    }
-
-    // Combine feedback from both hook types
-    const allFeedback = [...postToolUseFeedback, ...postToolUseFailureFeedback];
-    const finalErrorMessage =
-      allFeedback.length > 0
-        ? `${errorMessage}\n\n[Hook feedback]:\n${allFeedback.join("\n")}`
-        : errorMessage;
-
-    // Don't console.error here - it pollutes the TUI
-    // The error message is already returned in toolReturn
-    return {
-      toolReturn: finalErrorMessage,
-      status: "error",
-    };
     }
   };
 

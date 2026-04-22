@@ -514,7 +514,9 @@ describe.skipIf(isWindows)("Hooks Integration Tests", () => {
         PermissionRequest: [
           {
             matcher: "Bash",
-            hooks: [{ type: "command", command: "cat > permission-request.json" }],
+            hooks: [
+              { type: "command", command: "cat > permission-request.json" },
+            ],
           },
         ],
       });

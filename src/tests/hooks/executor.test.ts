@@ -179,7 +179,9 @@ describe.skipIf(isWindows)("Hooks Executor", () => {
       const result = await executeHookCommand(hook, input, tempDir);
 
       expect(result.exitCode).toBe(HookExitCode.ALLOW);
-      expect(result.stdout).toBe(`agent-test-12345:agent-test-12345:${tempDir}`);
+      expect(result.stdout).toBe(
+        `agent-test-12345:agent-test-12345:${tempDir}`,
+      );
     });
 
     test("LETTA_AGENT_ID is not set when agent_id is not provided", async () => {
