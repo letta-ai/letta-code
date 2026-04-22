@@ -386,6 +386,83 @@ describe("buildClientSkillsPayload", () => {
     }
   });
 
+  test("does not advertise env-only memfs skills when scoped agent memory is present", async () => {
+    const { buildClientSkillsPayload } = await import(
+      "../../agent/clientSkills"
+    );
+
+    const originalMemoryDir = process.env.MEMORY_DIR;
+    const originalLettaMemoryDir = process.env.LETTA_MEMORY_DIR;
+    const originalHome = process.env.HOME;
+    const tempRoot = await mkdtemp(join(os.tmpdir(), "letta-client-skills-"));
+
+    try {
+      const staleMemoryDir = join(tempRoot, "stale-memory");
+      const staleSkillDir = join(
+        staleMemoryDir,
+        "skills",
+        "env-only-stale-skill",
+      );
+      const scopedMemorySkillsDir = join(
+        tempRoot,
+        ".letta",
+        "agents",
+        "agent-1",
+        "memory",
+        "skills",
+      );
+
+      await mkdir(staleSkillDir, { recursive: true });
+      await mkdir(scopedMemorySkillsDir, { recursive: true });
+      await writeFile(
+        join(staleSkillDir, "SKILL.md"),
+        [
+          "---",
+          "id: env-only-stale-skill",
+          "name: env-only-stale-skill",
+          "description: from stale env",
+          "---",
+          "",
+          "Stale body",
+        ].join("\n"),
+      );
+
+      process.env.MEMORY_DIR = staleMemoryDir;
+      delete process.env.LETTA_MEMORY_DIR;
+      process.env.HOME = tempRoot;
+
+      const result = await buildClientSkillsPayload({
+        agentId: "agent-1",
+        skillsDirectory: "/tmp/.skills",
+        skillSources: ["global"],
+        discoverSkillsFn: async (): Promise<SkillDiscoveryResult> => ({
+          skills: [],
+          errors: [],
+        }),
+      });
+
+      expect(result.clientSkills).toEqual([]);
+      expect(result.skillPathById).toEqual({});
+    } finally {
+      if (originalMemoryDir === undefined) {
+        delete process.env.MEMORY_DIR;
+      } else {
+        process.env.MEMORY_DIR = originalMemoryDir;
+      }
+      if (originalLettaMemoryDir === undefined) {
+        delete process.env.LETTA_MEMORY_DIR;
+      } else {
+        process.env.LETTA_MEMORY_DIR = originalLettaMemoryDir;
+      }
+      if (originalHome === undefined) {
+        delete process.env.HOME;
+      } else {
+        process.env.HOME = originalHome;
+      }
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   test("does not let memfs skills override agent or project sources", async () => {
     const { buildClientSkillsPayload } = await import(
       "../../agent/clientSkills"

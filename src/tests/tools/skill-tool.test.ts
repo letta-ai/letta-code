@@ -147,6 +147,41 @@ describe("Skill tool memory filesystem lookup", () => {
     expect(queued[0]?.content).not.toContain("Loaded from stale MEMORY_DIR.");
   });
 
+  test("does not load env-only memory skill when scoped agent memory is present", async () => {
+    const skillName = "env-only-stale-skill";
+    const staleMemoryDir = join(tempRoot, "stale-memory");
+    const staleSkillDir = join(staleMemoryDir, "skills", skillName);
+    const scopedMemorySkillsDir = join(
+      tempRoot,
+      ".letta",
+      "agents",
+      TEST_AGENT_ID,
+      "memory",
+      "skills",
+    );
+
+    mkdirSync(staleSkillDir, { recursive: true });
+    mkdirSync(scopedMemorySkillsDir, { recursive: true });
+    writeFileSync(
+      join(staleSkillDir, "SKILL.md"),
+      "---\nname: env-only-stale-skill\ndescription: stale\n---\n\nLoaded from stale MEMORY_DIR only.",
+      "utf8",
+    );
+
+    process.env.MEMORY_DIR = staleMemoryDir;
+    delete process.env.LETTA_MEMORY_DIR;
+    process.env.HOME = tempRoot;
+
+    await expect(
+      skill({
+        skill: skillName,
+        toolCallId: "tc-env-only-stale",
+      }),
+    ).rejects.toThrow(skillName);
+
+    expect(consumeQueuedSkillContent()).toHaveLength(0);
+  });
+
   test("falls back to ~/.letta/agents/<id>/memory/skills when MEMORY_DIR is unset", async () => {
     const skillName = "agent-memory-fallback-skill";
     const skillDir = join(

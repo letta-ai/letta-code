@@ -1,4 +1,4 @@
-import { readdirSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { getCurrentAgentId, getSkillsDirectory } from "../../agent/context";
@@ -30,17 +30,21 @@ function getMemorySkillsDirs(agentId?: string): string[] {
   const dirs = new Set<string>();
 
   const scopedMemoryDir = resolveScopedMemoryDir({ agentId });
-  if (scopedMemoryDir && scopedMemoryDir.trim().length > 0) {
+  if (
+    scopedMemoryDir &&
+    scopedMemoryDir.trim().length > 0 &&
+    existsSync(scopedMemoryDir)
+  ) {
     dirs.add(join(scopedMemoryDir.trim(), "skills"));
-  }
-
-  const fallbackMemoryDir = (
-    process.env.LETTA_MEMORY_DIR ||
-    process.env.MEMORY_DIR ||
-    ""
-  ).trim();
-  if (fallbackMemoryDir) {
-    dirs.add(join(fallbackMemoryDir, "skills"));
+  } else {
+    const fallbackMemoryDir = (
+      process.env.LETTA_MEMORY_DIR ||
+      process.env.MEMORY_DIR ||
+      ""
+    ).trim();
+    if (fallbackMemoryDir) {
+      dirs.add(join(fallbackMemoryDir, "skills"));
+    }
   }
 
   return Array.from(dirs);
