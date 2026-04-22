@@ -10,7 +10,7 @@ afterEach(() => {
 
 describe("writeWireMessage", () => {
   test("stamps control_request lines with an ISO timestamp", () => {
-    const consoleLog = mock(() => {});
+    const consoleLog = mock((..._args: unknown[]) => {});
     console.log = consoleLog as typeof console.log;
 
     const msg: ControlRequest = {
@@ -22,7 +22,8 @@ describe("writeWireMessage", () => {
     writeWireMessage(msg);
 
     expect(consoleLog).toHaveBeenCalledTimes(1);
-    const payload = JSON.parse(String(consoleLog.mock.calls[0]?.[0])) as {
+    const firstCall = consoleLog.mock.calls[0];
+    const payload = JSON.parse(String(firstCall?.[0])) as {
       type: string;
       timestamp?: string;
       request_id: string;
@@ -36,7 +37,7 @@ describe("writeWireMessage", () => {
   });
 
   test("preserves caller-provided timestamps", () => {
-    const consoleLog = mock(() => {});
+    const consoleLog = mock((..._args: unknown[]) => {});
     console.log = consoleLog as typeof console.log;
 
     const msg: MessageWire = {
@@ -52,7 +53,8 @@ describe("writeWireMessage", () => {
 
     writeWireMessage(msg);
 
-    const payload = JSON.parse(String(consoleLog.mock.calls[0]?.[0])) as {
+    const firstCall = consoleLog.mock.calls[0];
+    const payload = JSON.parse(String(firstCall?.[0])) as {
       timestamp?: string;
     };
     expect(payload.timestamp).toBe("2026-04-21T23:59:59.000Z");
