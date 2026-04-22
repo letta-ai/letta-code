@@ -7,12 +7,12 @@ import {
   mock,
   test,
 } from "bun:test";
-import { executePromptHook } from "../../hooks/prompt-executor";
 import {
   HookExitCode,
   type PreToolUseHookInput,
   type StopHookInput,
 } from "../../hooks/types";
+import { runWithRuntimeContext } from "../../runtime-context";
 
 interface GenerateOpts {
   body: {
@@ -39,16 +39,11 @@ const mockPost = mock(
 );
 const mockGetClient = mock(() => Promise.resolve({ post: mockPost }));
 
-// Mock getCurrentAgentId
-const mockGetCurrentAgentId = mock(() => "agent-test-123");
-
 mock.module("../../agent/client", () => ({
   getClient: mockGetClient,
 }));
 
-mock.module("../../agent/context", () => ({
-  getCurrentAgentId: mockGetCurrentAgentId,
-}));
+const { executePromptHook } = await import("../../hooks/prompt-executor");
 
 /** Helper to get the first call's [path, opts] from mockPost */
 function firstPostCall(): [string, GenerateOpts] {
@@ -62,7 +57,6 @@ describe("Prompt Hook Executor", () => {
   beforeEach(() => {
     mockPost.mockClear();
     mockGetClient.mockClear();
-    mockGetCurrentAgentId.mockClear();
 
     // Default: allow
     mockPost.mockResolvedValue({
@@ -232,8 +226,6 @@ describe("Prompt Hook Executor", () => {
     });
 
     test("falls back to getCurrentAgentId when input has no agent_id", async () => {
-      mockGetCurrentAgentId.mockReturnValue("agent-from-context");
-
       const hook = {
         type: "prompt" as const,
         prompt: "Check this",
@@ -244,16 +236,15 @@ describe("Prompt Hook Executor", () => {
         stop_reason: "end_turn",
       };
 
-      await executePromptHook(hook, input);
+      await runWithRuntimeContext({ agentId: "agent-from-context" }, () =>
+        executePromptHook(hook, input),
+      );
 
       const [path] = firstPostCall();
       expect(path).toBe("/v1/agents/agent-from-context/generate");
     });
 
     test("falls back to LETTA_AGENT_ID env var when context unavailable", async () => {
-      mockGetCurrentAgentId.mockImplementation(() => {
-        throw new Error("No agent context set");
-      });
       process.env.LETTA_AGENT_ID = "agent-from-env";
 
       const hook = {
@@ -266,16 +257,15 @@ describe("Prompt Hook Executor", () => {
         stop_reason: "end_turn",
       };
 
-      await executePromptHook(hook, input);
+      await runWithRuntimeContext({ agentId: null }, () =>
+        executePromptHook(hook, input),
+      );
 
       const [path] = firstPostCall();
       expect(path).toBe("/v1/agents/agent-from-env/generate");
     });
 
     test("returns ERROR when no agent_id available", async () => {
-      mockGetCurrentAgentId.mockImplementation(() => {
-        throw new Error("No agent context set");
-      });
       delete process.env.LETTA_AGENT_ID;
 
       const hook = {
@@ -288,7 +278,9 @@ describe("Prompt Hook Executor", () => {
         stop_reason: "end_turn",
       };
 
-      const result = await executePromptHook(hook, input);
+      const result = await runWithRuntimeContext({ agentId: null }, () =>
+        executePromptHook(hook, input),
+      );
 
       expect(result.exitCode).toBe(HookExitCode.ERROR);
       expect(result.error).toContain("agent_id");
