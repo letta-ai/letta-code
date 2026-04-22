@@ -10413,6 +10413,10 @@ export default function App({
                 error,
                 agentId: reflectionAgentId,
               }) => {
+              parentScope: {
+                agentId,
+                conversationId: reflectionConversationId,
+              },
                 telemetry.trackReflectionEnd("manual", success, {
                   subagentId: reflectionAgentId ?? undefined,
                   conversationId: reflectionConversationId,
@@ -10908,6 +10912,10 @@ ${SYSTEM_REMINDER_CLOSE}
               error,
               agentId: reflectionAgentId,
             }) => {
+            parentScope: {
+              agentId,
+              conversationId: reflectionConversationId,
+            },
               telemetry.trackReflectionEnd(triggerSource, success, {
                 subagentId: reflectionAgentId ?? undefined,
                 conversationId: reflectionConversationId,
