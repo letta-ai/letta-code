@@ -939,6 +939,7 @@ async function executeSubagent(
             undefined, // existingAgentId
             undefined, // existingConversationId
             maxTurns,
+            parentAgentIdOverride,
           );
         }
       }
