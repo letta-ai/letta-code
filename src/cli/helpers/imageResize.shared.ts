@@ -1,5 +1,10 @@
+// Anthropic limits: 8000x8000 for single images, but 2000x2000 for many-image requests.
+// We use 2000 to stay safe when conversation history accumulates multiple images.
 export const MAX_IMAGE_WIDTH = 2000;
 export const MAX_IMAGE_HEIGHT = 2000;
+
+// Anthropic's API enforces a 5MB limit on image bytes (not the base64 string).
+// We enforce this in the client to avoid provider-side API errors.
 export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 
 export interface ResizeResult {
