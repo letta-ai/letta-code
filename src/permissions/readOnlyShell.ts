@@ -408,6 +408,16 @@ function isReadOnlyGitBranchArgs(args: string[]): boolean {
     "--verbose",
   ]);
 
+  // Filter flags that narrow which branches are listed — purely read-only.
+  // Each optionally accepts a commit/object as the next positional argument.
+  const readOnlyFilterFlags = new Set([
+    "--contains",
+    "--no-contains",
+    "--merged",
+    "--no-merged",
+    "--points-at",
+  ]);
+
   let sawReadOnlyFlag = false;
   let sawListFlag = false;
 
@@ -436,6 +446,16 @@ function isReadOnlyGitBranchArgs(args: string[]): boolean {
 
     if (arg.startsWith("--format=")) {
       sawReadOnlyFlag = true;
+      continue;
+    }
+
+    // Filter flags like --contains, --merged, etc. take an optional commit arg.
+    if (readOnlyFilterFlags.has(arg)) {
+      sawReadOnlyFlag = true;
+      // Consume the optional commit/branch argument if present.
+      if (typeof args[i + 1] === "string" && !args[i + 1]!.startsWith("-")) {
+        i += 1;
+      }
       continue;
     }
 

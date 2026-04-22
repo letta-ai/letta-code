@@ -248,6 +248,20 @@ describe("isReadOnlyShellCommand", () => {
       expect(isReadOnlyShellCommand("git branch --list 'feature/*'")).toBe(
         true,
       );
+      // Filter flags combined with listing flags
+      expect(
+        isReadOnlyShellCommand("git branch -a --contains 63dd7483"),
+      ).toBe(true);
+      expect(
+        isReadOnlyShellCommand("git branch -r --contains abc123"),
+      ).toBe(true);
+      expect(isReadOnlyShellCommand("git branch --contains HEAD")).toBe(true);
+      expect(isReadOnlyShellCommand("git branch --merged main")).toBe(true);
+      expect(isReadOnlyShellCommand("git branch --no-merged")).toBe(true);
+      expect(isReadOnlyShellCommand("git branch --points-at HEAD")).toBe(true);
+      expect(isReadOnlyShellCommand("git branch -a --no-contains abc")).toBe(
+        true,
+      );
     });
 
     test("blocks unsafe git flags on read-only subcommands", () => {
