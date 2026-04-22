@@ -1,4 +1,12 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import {
+  afterAll,
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  mock,
+  test,
+} from "bun:test";
 import { executePromptHook } from "../../hooks/prompt-executor";
 import {
   HookExitCode,
@@ -71,6 +79,10 @@ describe("Prompt Hook Executor", () => {
   afterEach(() => {
     // Clean up env vars
     delete process.env.LETTA_AGENT_ID;
+  });
+
+  afterAll(() => {
+    mock.restore();
   });
 
   describe("executePromptHook", () => {

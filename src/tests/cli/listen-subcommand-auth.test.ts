@@ -1,4 +1,12 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import {
+  afterAll,
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  mock,
+  test,
+} from "bun:test";
 import type { DeviceCodeResponse, TokenResponse } from "../../auth/oauth";
 import { settingsManager } from "../../settings-manager";
 
@@ -75,6 +83,10 @@ describe("listen subcommand auth resolution", () => {
     } else {
       process.env.LETTA_BASE_URL = originalBaseUrl;
     }
+  });
+
+  afterAll(() => {
+    mock.restore();
   });
 
   test("prefers explicit LETTA_API_KEY over saved OAuth credentials", async () => {

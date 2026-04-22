@@ -1,4 +1,12 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import {
+  afterAll,
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  mock,
+  test,
+} from "bun:test";
 import { execFile as execFileCb } from "node:child_process";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
@@ -97,6 +105,10 @@ describe("memory tool", () => {
     if (tempRoot) {
       await rm(tempRoot, { recursive: true, force: true });
     }
+  });
+
+  afterAll(() => {
+    mock.restore();
   });
 
   test("requires reason", async () => {

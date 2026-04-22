@@ -1,4 +1,12 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import {
+  afterAll,
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  mock,
+  test,
+} from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -62,6 +70,10 @@ describe("Skill tool memory filesystem lookup", () => {
     }
 
     rmSync(tempRoot, { recursive: true, force: true });
+  });
+
+  afterAll(() => {
+    mock.restore();
   });
 
   test("loads skills from MEMORY_DIR/skills", async () => {

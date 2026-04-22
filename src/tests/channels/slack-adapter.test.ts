@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, mock, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, expect, mock, test } from "bun:test";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -245,6 +245,10 @@ afterEach(() => {
     instance.files.completeUploadExternal.mockClear();
   }
   globalThis.fetch = originalFetch;
+});
+
+afterAll(() => {
+  mock.restore();
 });
 
 test("slack adapter start does not re-run bolt init", async () => {

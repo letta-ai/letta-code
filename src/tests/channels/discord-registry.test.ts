@@ -1,4 +1,12 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import {
+  afterAll,
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  mock,
+  test,
+} from "bun:test";
 import {
   __testOverrideLoadChannelAccounts,
   __testOverrideSaveChannelAccounts,
@@ -107,6 +115,10 @@ describe("discord channel registry", () => {
       await registry.stopAll();
     }
     resetState();
+  });
+
+  afterAll(() => {
+    mock.restore();
   });
 
   test("does not auto-create a route for non-mentioned traffic in an untracked thread", async () => {

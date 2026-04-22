@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, mock, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, expect, mock, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -167,6 +167,10 @@ afterEach(() => {
     process.env.OPENAI_API_KEY = originalOpenAiApiKey;
   }
   rmSync(channelRoot, { recursive: true, force: true });
+});
+
+afterAll(() => {
+  mock.restore();
 });
 
 test("telegram adapter logs unhandled grammY errors with update context", async () => {

@@ -81,6 +81,9 @@ describe("channel service", () => {
     __testOverrideSaveRoutes(() => {});
     __testOverrideLoadPairingStore(() => null);
     __testOverrideSavePairingStore(() => {});
+    __testOverrideLoadTargetStore(() => {});
+    __testOverrideSaveTargetStore(() => {});
+    __testOverrideResolveChannelAccountDisplayName(async () => undefined);
   });
 
   afterEach(() => {

@@ -1,4 +1,12 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import {
+  afterAll,
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  mock,
+  test,
+} from "bun:test";
 import { APIError } from "@letta-ai/letta-client/error";
 import WebSocket from "ws";
 import type { ResumeData } from "../../agent/check-approval";
@@ -327,6 +335,10 @@ describe("listen-client multi-worker concurrency", () => {
     if (registry) {
       await registry.stopAll();
     }
+  });
+
+  afterAll(() => {
+    mock.restore();
   });
 
   test("processes simultaneous turns for two named conversations under one agent", async () => {

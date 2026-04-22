@@ -1,6 +1,6 @@
 // Tests for detaching server-side memory tools when enabling memfs
 
-import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 
 // Mock getClient before importing the module under test
 
@@ -45,6 +45,10 @@ describe("detachMemoryTools", () => {
     detachMock.mockClear();
     retrieveMock.mockClear();
     mockGetClient.mockClear();
+  });
+
+  afterAll(() => {
+    mock.restore();
   });
 
   test("detaches all known memory tool variants", async () => {
