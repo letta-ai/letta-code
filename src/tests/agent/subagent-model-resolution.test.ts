@@ -58,6 +58,32 @@ describe("resolveSubagentLauncher", () => {
     });
   });
 
+  test("resolves relative dev entrypoint against launcher cwd", () => {
+    const launcher = resolveSubagentLauncher(
+      ["--output-format", "stream-json"],
+      {
+        env: {} as NodeJS.ProcessEnv,
+        argv: ["bun", "src/index.ts"],
+        execPath: "/opt/homebrew/bin/bun",
+        platform: "darwin",
+        cwd: "/Users/example/dev/letta-code-prod",
+      },
+    );
+
+    expect(launcher).toEqual({
+      command: "/opt/homebrew/bin/bun",
+      args: [
+        "--loader:.md=text",
+        "--loader:.mdx=text",
+        "--loader:.txt=text",
+        "run",
+        "/Users/example/dev/letta-code-prod/src/index.ts",
+        "--output-format",
+        "stream-json",
+      ],
+    });
+  });
+
   test("uses node runtime for bundled js on win32", () => {
     const launcher = resolveSubagentLauncher(["-p", "prompt"], {
       env: {} as NodeJS.ProcessEnv,

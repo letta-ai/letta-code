@@ -28,7 +28,10 @@ import { permissionMode } from "../../permissions/mode";
 import { sessionPermissions } from "../../permissions/session";
 import { getCurrentWorkingDirectory } from "../../runtime-context";
 import { settingsManager } from "../../settings-manager";
-import { resolveLettaInvocation } from "../../tools/impl/shellEnv";
+import {
+  resolveEntryScriptPath,
+  resolveLettaInvocation,
+} from "../../tools/impl/shellEnv";
 import { getErrorMessage } from "../../utils/error";
 import { getAvailableModelHandles } from "../available-models";
 import { getClient } from "../client";
@@ -483,6 +486,7 @@ interface ResolveSubagentLauncherOptions {
   argv?: string[];
   execPath?: string;
   platform?: NodeJS.Platform;
+  cwd?: string;
 }
 
 interface SubagentLauncher {
@@ -505,8 +509,9 @@ export function resolveSubagentLauncher(
   const argv = options.argv ?? process.argv;
   const execPath = options.execPath ?? process.execPath;
   const platform = options.platform ?? process.platform;
+  const cwd = options.cwd ?? process.cwd();
 
-  const invocation = resolveLettaInvocation(env, argv, execPath);
+  const invocation = resolveLettaInvocation(env, argv, execPath, cwd);
   if (invocation) {
     return {
       command: invocation.command,
@@ -515,12 +520,13 @@ export function resolveSubagentLauncher(
   }
 
   const currentScript = argv[1] || "";
+  const resolvedCurrentScript = resolveEntryScriptPath(currentScript, cwd);
 
   // Preserve historical subagent behavior: any .ts entrypoint uses runtime binary.
   if (currentScript.endsWith(".ts")) {
     return {
       command: execPath,
-      args: [currentScript, ...cliArgs],
+      args: [resolvedCurrentScript, ...cliArgs],
     };
   }
 
@@ -528,13 +534,13 @@ export function resolveSubagentLauncher(
   if (currentScript.endsWith(".js") && platform === "win32") {
     return {
       command: execPath,
-      args: [currentScript, ...cliArgs],
+      args: [resolvedCurrentScript, ...cliArgs],
     };
   }
 
   if (currentScript.endsWith(".js")) {
     return {
-      command: currentScript,
+      command: resolvedCurrentScript,
       args: cliArgs,
     };
   }

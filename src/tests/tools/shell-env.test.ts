@@ -86,6 +86,26 @@ describe("shellEnv letta shim", () => {
     });
   });
 
+  test("resolveLettaInvocation resolves relative dev entrypoint against cwd", () => {
+    const invocation = resolveLettaInvocation(
+      {},
+      ["bun", "src/index.ts"],
+      "/opt/homebrew/bin/bun",
+      "/Users/example/dev/letta-code-prod",
+    );
+
+    expect(invocation).toEqual({
+      command: "/opt/homebrew/bin/bun",
+      args: [
+        "--loader:.md=text",
+        "--loader:.mdx=text",
+        "--loader:.txt=text",
+        "run",
+        "/Users/example/dev/letta-code-prod/src/index.ts",
+      ],
+    });
+  });
+
   test("resolveLettaInvocation keeps non-bun dev launcher behavior", () => {
     const invocation = resolveLettaInvocation(
       {},

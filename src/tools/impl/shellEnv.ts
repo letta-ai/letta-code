@@ -90,8 +90,25 @@ function parseInvocationArgs(raw: string | undefined): string[] {
   return [];
 }
 
-function isDevLettaEntryScript(scriptPath: string): boolean {
-  const normalized = scriptPath.replaceAll("\\", "/");
+export function resolveEntryScriptPath(
+  scriptPath: string,
+  cwd: string = process.cwd(),
+): string {
+  if (!scriptPath) return scriptPath;
+  if (path.posix.isAbsolute(scriptPath) || path.win32.isAbsolute(scriptPath)) {
+    return scriptPath;
+  }
+  return path.resolve(cwd, scriptPath);
+}
+
+function isDevLettaEntryScript(
+  scriptPath: string,
+  cwd: string = process.cwd(),
+): boolean {
+  const normalized = resolveEntryScriptPath(scriptPath, cwd).replaceAll(
+    "\\",
+    "/",
+  );
   return normalized.endsWith("/src/index.ts");
 }
 
@@ -99,6 +116,7 @@ export function resolveLettaInvocation(
   env: NodeJS.ProcessEnv = process.env,
   argv: string[] = process.argv,
   execPath: string = process.execPath,
+  cwd: string = process.cwd(),
 ): LettaInvocation | null {
   const explicitBin = normalizeInvocationCommand(env.LETTA_CODE_BIN);
   if (explicitBin) {
@@ -109,7 +127,8 @@ export function resolveLettaInvocation(
   }
 
   const scriptPath = argv[1] || "";
-  if (scriptPath && isDevLettaEntryScript(scriptPath)) {
+  if (scriptPath && isDevLettaEntryScript(scriptPath, cwd)) {
+    const resolvedScriptPath = resolveEntryScriptPath(scriptPath, cwd);
     const runtimeName = path.basename(execPath).toLowerCase();
     if (runtimeName.includes("bun")) {
       return {
@@ -119,12 +138,12 @@ export function resolveLettaInvocation(
           "--loader:.mdx=text",
           "--loader:.txt=text",
           "run",
-          scriptPath,
+          resolvedScriptPath,
         ],
       };
     }
 
-    return { command: execPath, args: [scriptPath] };
+    return { command: execPath, args: [resolvedScriptPath] };
   }
 
   return null;
