@@ -453,7 +453,7 @@ function isReadOnlyGitBranchArgs(args: string[]): boolean {
     if (readOnlyFilterFlags.has(arg)) {
       sawReadOnlyFlag = true;
       // Consume the optional commit/branch argument if present.
-      if (typeof args[i + 1] === "string" && !args[i + 1]!.startsWith("-")) {
+      if (typeof args[i + 1] === "string" && !args[i + 1]?.startsWith("-")) {
         i += 1;
       }
       continue;
