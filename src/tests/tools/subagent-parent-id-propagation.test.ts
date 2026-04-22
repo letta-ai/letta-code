@@ -8,6 +8,20 @@ import {
 } from "../../tools/impl/process_manager";
 import { spawnBackgroundSubagentTask } from "../../tools/impl/Task";
 
+// Reset the global agent context (stored on globalThis under a Symbol)
+// between tests. Without this, an agent ID set by an earlier test in the
+// suite leaks into resolveParentScope's fallback branch and our
+// "parentScope omitted" assertion becomes order-dependent. See CI failure
+// on PR #1870 where this test passed locally but failed with a leaked
+// `agent-*` ID.
+const AGENT_CONTEXT_KEY = Symbol.for("@letta/agentContext");
+function resetGlobalAgentContext(): void {
+  const g = globalThis as unknown as Record<symbol, { agentId: string | null }>;
+  if (g[AGENT_CONTEXT_KEY]) {
+    g[AGENT_CONTEXT_KEY].agentId = null;
+  }
+}
+
 /**
  * Covers the fix for the async-drift race where `executeSubagent` inside
  * `spawnSubagent` re-derives parentAgentId from getCurrentAgentId() after
@@ -67,12 +81,14 @@ describe("parentScope.agentId propagation to spawnSubagent", () => {
     __resetBackgroundRetentionConfigForTests();
     backgroundTasks.clear();
     clearAllSubagents();
+    resetGlobalAgentContext();
   });
 
   afterEach(() => {
     __resetBackgroundRetentionConfigForTests();
     backgroundTasks.clear();
     clearAllSubagents();
+    resetGlobalAgentContext();
   });
 
   // Positional args of spawnSubagent:
