@@ -2887,22 +2887,24 @@ describe("listen-client v2 status builders", () => {
     });
   });
 
-  test("sync wiring only surfaces recovered approvals that still need user input", () => {
+  test("sync wiring converts recovered stale approvals into queued denials", () => {
     const recoveryPath = fileURLToPath(
       new URL("../../websocket/listener/recovery.ts", import.meta.url),
     );
     const source = readFileSync(recoveryPath, "utf-8");
+    const recoverySection =
+      source
+        .split("export async function recoverApprovalStateForSync")[1]
+        ?.split("export async function resolveRecoveredApprovalResponse")[0] ??
+      "";
 
-    expect(source).toContain(
-      "const { needsUserInput, autoAllowed, autoDenied } =",
+    expect(recoverySection).toContain(
+      "runtime.pendingInterruptedResults = buildFreshDenialApprovals(",
     );
-    expect(source).toContain("classifyApprovalsWithSuggestions(");
-    expect(source).toContain(
-      "const autoDecisions = buildRecoveredAutoDecisions(autoAllowed, autoDenied);",
-    );
-    expect(source).toContain("if (needsUserInput.length === 0) {");
-    expect(source).toContain("needsUserInput.map(async (approvalEntry) => {");
-    expect(source).not.toContain("pendingApprovals.map(async (approval) => {");
+    expect(recoverySection).toContain("STALE_APPROVAL_RECOVERY_DENIAL_REASON");
+    expect(recoverySection).toContain("clearRecoveredApprovalState(runtime);");
+    expect(recoverySection).not.toContain("classifyApprovalsWithSuggestions(");
+    expect(recoverySection).not.toContain("buildRecoveredAutoDecisions(");
   });
 
   test("sync ignores backend recovered approvals while a live turn is already processing", async () => {
