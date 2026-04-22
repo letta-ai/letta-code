@@ -27,8 +27,8 @@ type TranscriptEntry =
       kind: "user" | "assistant" | "reasoning" | "error";
       text: string;
       captured_at: string;
-      source_line_id?: string;
-      source_message_id?: string;
+      source_line_id?: string; // local transcript row id; may be synthetic
+      source_message_id?: string; // canonical backend message.id when known
     }
   | {
       kind: "tool_call";
@@ -37,8 +37,8 @@ type TranscriptEntry =
       resultText?: string;
       resultOk?: boolean;
       captured_at: string;
-      source_line_id?: string;
-      source_message_id?: string;
+      source_line_id?: string; // local transcript row id; may be synthetic
+      source_message_id?: string; // canonical backend message.id when known
     };
 
 export interface ReflectionTranscriptPaths {
@@ -656,6 +656,10 @@ export async function buildAutoReflectionPayload(
   const entries = snapshotLines
     .map((line) => parseJsonLine<TranscriptEntry>(line))
     .filter((entry): entry is TranscriptEntry => entry !== null);
+  // Reflection telemetry boundaries must use canonical backend message ids from
+  // user/assistant entries only. Tool rows use local transcript ids, and
+  // reasoning rows can share an assistant message id while still being a
+  // separate transcript row.
   const messageIds = entries
     .filter((entry) => entry.kind === "user" || entry.kind === "assistant")
     .map((entry) => entry.source_message_id)

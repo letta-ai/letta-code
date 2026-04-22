@@ -716,6 +716,35 @@ function uid(prefix: string) {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+// OTIDs are client-generated correlation ids, not canonical backend message ids.
+// We use them to stitch together an optimistic local transcript row, the outbound
+// request payload, and the echoed user_message chunk that later arrives from the
+// server with the real message.id.
+function createClientOtid(): string {
+  return randomUUID();
+}
+
+function appendOptimisticUserLine(
+  buffers: Buffers,
+  text: string,
+  otid: string,
+): string | null {
+  if (!text) {
+    return null;
+  }
+
+  const userId = uid("user");
+  buffers.byId.set(userId, {
+    kind: "user",
+    id: userId,
+    text,
+    otid,
+  });
+  buffers.userLineIdByOtid.set(otid, userId);
+  buffers.order.push(userId);
+  return userId;
+}
+
 function buildApprovalBatchKey(approvals: ApprovalRequest[]): string {
   return approvals
     .map((approval) => approval.toolCallId)
@@ -5548,21 +5577,12 @@ export default function App({
                   ? buildQueuedUserText(queuedItemsToAppend)
                   : "";
 
-                const queuedUserOtid = randomUUID();
-                if (queuedUserText) {
-                  const userId = uid("user");
-                  buffersRef.current.byId.set(userId, {
-                    kind: "user",
-                    id: userId,
-                    text: queuedUserText,
-                    otid: queuedUserOtid,
-                  });
-                  buffersRef.current.userLineIdByOtid.set(
-                    queuedUserOtid,
-                    userId,
-                  );
-                  buffersRef.current.order.push(userId);
-                }
+                const queuedUserOtid = createClientOtid();
+                appendOptimisticUserLine(
+                  buffersRef.current,
+                  queuedUserText,
+                  queuedUserOtid,
+                );
 
                 if (queuedItemsToAppend && queuedItemsToAppend.length > 0) {
                   const queuedContentParts =
@@ -5575,7 +5595,7 @@ export default function App({
                       {
                         type: "approval",
                         approvals: allResults,
-                        otid: randomUUID(),
+                        otid: createClientOtid(),
                       },
                       {
                         type: "message",
@@ -11225,19 +11245,14 @@ ${SYSTEM_REMINDER_CLOSE}
       // Append task notifications (if any) as event lines before the user message
       appendTaskNotificationEvents(taskNotifications);
 
-      // Append the user message to transcript IMMEDIATELY (optimistic update)
-      const userId = uid("user");
-      const userOtid = randomUUID();
-      if (userTextForInput) {
-        buffersRef.current.byId.set(userId, {
-          kind: "user",
-          id: userId,
-          text: userTextForInput,
-          otid: userOtid,
-        });
-        buffersRef.current.userLineIdByOtid.set(userOtid, userId);
-        buffersRef.current.order.push(userId);
-      }
+      // Append an optimistic user row now, then reconcile it with the echoed
+      // user_message chunk once the server returns the canonical message.id.
+      const userOtid = createClientOtid();
+      const optimisticUserLineId = appendOptimisticUserLine(
+        buffersRef.current,
+        userTextForInput,
+        userOtid,
+      );
       const transcriptStartLineIndex = userTextForInput
         ? Math.max(0, toLines(buffersRef.current).length - 1)
         : null;
@@ -11297,10 +11312,13 @@ ${SYSTEM_REMINDER_CLOSE}
             abortControllerRef.current?.signal.aborted
           ) {
             // User hit ESC during the check - abort and clean up
-            buffersRef.current.byId.delete(userId);
-            const orderIndex = buffersRef.current.order.indexOf(userId);
-            if (orderIndex !== -1) {
-              buffersRef.current.order.splice(orderIndex, 1);
+            if (optimisticUserLineId) {
+              buffersRef.current.byId.delete(optimisticUserLineId);
+              const orderIndex =
+                buffersRef.current.order.indexOf(optimisticUserLineId);
+              if (orderIndex !== -1) {
+                buffersRef.current.order.splice(orderIndex, 1);
+              }
             }
             setStreaming(false);
             refreshDerived();
@@ -11326,10 +11344,13 @@ ${SYSTEM_REMINDER_CLOSE}
               userCancelledRef.current ||
               abortControllerRef.current?.signal.aborted
             ) {
-              buffersRef.current.byId.delete(userId);
-              const orderIndex = buffersRef.current.order.indexOf(userId);
-              if (orderIndex !== -1) {
-                buffersRef.current.order.splice(orderIndex, 1);
+              if (optimisticUserLineId) {
+                buffersRef.current.byId.delete(optimisticUserLineId);
+                const orderIndex =
+                  buffersRef.current.order.indexOf(optimisticUserLineId);
+                if (orderIndex !== -1) {
+                  buffersRef.current.order.splice(orderIndex, 1);
+                }
               }
               setStreaming(false);
               refreshDerived();
@@ -11586,10 +11607,13 @@ ${SYSTEM_REMINDER_CLOSE}
             } else {
               // Some approvals need user input - show dialog
               // Remove the optimistic user message from transcript
-              buffersRef.current.byId.delete(userId);
-              const orderIndex = buffersRef.current.order.indexOf(userId);
-              if (orderIndex !== -1) {
-                buffersRef.current.order.splice(orderIndex, 1);
+              if (optimisticUserLineId) {
+                buffersRef.current.byId.delete(optimisticUserLineId);
+                const orderIndex =
+                  buffersRef.current.order.indexOf(optimisticUserLineId);
+                if (orderIndex !== -1) {
+                  buffersRef.current.order.splice(orderIndex, 1);
+                }
               }
 
               setStreaming(false);
@@ -11832,7 +11856,7 @@ ${SYSTEM_REMINDER_CLOSE}
           initialInput.push({
             type: "approval",
             approvals: queuedApprovalResults,
-            otid: randomUUID(),
+            otid: createClientOtid(),
           });
         } else {
           debugWarn(
@@ -12202,23 +12226,17 @@ ${SYSTEM_REMINDER_CLOSE}
             {
               type: "approval",
               approvals: allResults as ApprovalResult[],
-              otid: randomUUID(),
+              otid: createClientOtid(),
             },
           ];
           if (queuedItemsToAppend && queuedItemsToAppend.length > 0) {
             const queuedUserText = buildQueuedUserText(queuedItemsToAppend);
-            const queuedUserOtid = randomUUID();
-            if (queuedUserText) {
-              const userId = uid("user");
-              buffersRef.current.byId.set(userId, {
-                kind: "user",
-                id: userId,
-                text: queuedUserText,
-                otid: queuedUserOtid,
-              });
-              buffersRef.current.userLineIdByOtid.set(queuedUserOtid, userId);
-              buffersRef.current.order.push(userId);
-            }
+            const queuedUserOtid = createClientOtid();
+            appendOptimisticUserLine(
+              buffersRef.current,
+              queuedUserText,
+              queuedUserOtid,
+            );
             input.push({
               type: "message",
               role: "user",

@@ -458,6 +458,9 @@ export async function handleIncomingMessage(
         "content" in m && !m.otid
           ? {
               ...m,
+              // Ensure every client-originated message carries an OTID so the
+              // echoed user_message can reconcile optimistic local transcript
+              // rows with the later canonical backend message.id.
               otid:
                 "client_message_id" in m &&
                 typeof m.client_message_id === "string"

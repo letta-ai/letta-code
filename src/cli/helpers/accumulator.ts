@@ -140,8 +140,8 @@ export type Line =
       kind: "user";
       id: string;
       text: string;
-      messageId?: string;
-      otid?: string;
+      messageId?: string; // canonical backend message.id when known
+      otid?: string; // client-generated correlation id echoed back by the server
     }
   | {
       kind: "reasoning";
@@ -149,7 +149,7 @@ export type Line =
       text: string;
       phase: "streaming" | "finished";
       isContinuation?: boolean; // true for split continuation lines (no header)
-      messageId?: string;
+      messageId?: string; // canonical backend message.id when known
     }
   | {
       kind: "assistant";
@@ -157,7 +157,7 @@ export type Line =
       text: string;
       phase: "streaming" | "finished";
       isContinuation?: boolean; // true for split continuation lines (no bullet)
-      messageId?: string;
+      messageId?: string; // canonical backend message.id when known
     }
   | {
       kind: "tool_call";
@@ -245,6 +245,8 @@ export type Buffers = {
   byId: Map<string, Line>;
   pendingToolByRun: Map<string, string>; // temporary id per run until real id
   toolCallIdToLineId: Map<string, string>;
+  // Maps a client-generated user OTID to the optimistic local transcript line id
+  // so the later echoed user_message chunk can backfill the canonical message.id.
   userLineIdByOtid: Map<string, string>;
   lastOtid: string | null; // Track the last otid to detect transitions
   // Alias maps to keep assistant deltas on one line when streams mix id/otid.
@@ -821,11 +823,14 @@ export function onChunk(
       const otid =
         typeof chunkWithIds.otid === "string" ? chunkWithIds.otid : undefined;
       const mappedLineId = otid ? b.userLineIdByOtid.get(otid) : undefined;
-      const id = mappedLineId || otid || messageId;
-      if (!id) break;
+      // Prefer the optimistic local line id when we can resolve it from the echoed
+      // OTID. That lets us preserve the already-rendered row and attach the real
+      // backend message.id once the server sends it back.
+      const lineId = mappedLineId || otid || messageId;
+      if (!lineId) break;
 
       // Handle otid transition (mark previous line as finished)
-      handleOtidTransition(b, id);
+      handleOtidTransition(b, lineId);
 
       // Extract text content from the user message
       const rawText = extractTextPart(chunk.content);
@@ -835,9 +840,9 @@ export function onChunk(
       const compactionSummary = extractCompactionSummary(rawText);
       if (compactionSummary) {
         // Render as a finished compaction event
-        ensure(b, id, () => ({
+        ensure(b, lineId, () => ({
           kind: "event",
-          id,
+          id: lineId,
           eventType: "compaction",
           eventData: {},
           phase: "finished",
@@ -849,15 +854,15 @@ export function onChunk(
         break;
       }
 
-      const line = ensure(b, id, () => ({
+      const line = ensure(b, lineId, () => ({
         kind: "user",
-        id,
+        id: lineId,
         text: rawText,
         messageId,
         otid,
       }));
       if (line.kind === "user") {
-        b.byId.set(id, {
+        b.byId.set(lineId, {
           ...line,
           text: line.text || rawText,
           messageId: messageId ?? line.messageId,
@@ -865,7 +870,7 @@ export function onChunk(
         });
       }
       if (otid) {
-        b.userLineIdByOtid.set(otid, id);
+        b.userLineIdByOtid.set(otid, lineId);
       }
       break;
     }
