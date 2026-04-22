@@ -9,7 +9,12 @@ import type { ApprovalResult } from "../../agent/approval-execution";
 import { fetchRunErrorInfo } from "../../agent/approval-recovery";
 import { getResumeData } from "../../agent/check-approval";
 import { getClient } from "../../agent/client";
-import { setConversationId, setCurrentAgentId } from "../../agent/context";
+import {
+  getConversationId,
+  getCurrentAgentId,
+  setConversationId,
+  setCurrentAgentId,
+} from "../../agent/context";
 import { getMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
 import {
   getStreamToolContextId,
@@ -1159,6 +1164,26 @@ export async function handleIncomingMessage(
       agent_id: agentId || null,
       conversation_id: conversationId,
     });
+
+    try {
+      const currentConversationId = getConversationId();
+      let currentAgentId: string | null = null;
+      try {
+        currentAgentId = getCurrentAgentId();
+      } catch {
+        currentAgentId = null;
+      }
+
+      if (
+        currentAgentId === (agentId ?? null) &&
+        currentConversationId === conversationId
+      ) {
+        setCurrentAgentId(null);
+        setConversationId(null);
+      }
+    } catch {
+      // Best-effort cleanup only. Never let teardown obscure the turn result.
+    }
 
     runtime.activeAbortController = null;
     runtime.cancelRequested = false;

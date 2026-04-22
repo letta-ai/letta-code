@@ -8,7 +8,6 @@
  */
 
 import { spawn } from "node:child_process";
-import { createInterface } from "node:readline";
 import { buildChatUrl } from "../../cli/helpers/appUrls";
 import {
   addToolCall,
@@ -782,23 +781,21 @@ async function executeSubagent(
       pendingToolCalls: new Map(),
     };
 
-    // Create readline interface to parse JSON events line by line
-    const rl = createInterface({
-      input: proc.stdout,
-      crlfDelay: Number.POSITIVE_INFINITY,
-    });
+    // Parse child stdout manually instead of using readline. This keeps the
+    // stream handling simple and avoids Bun/runtime-specific instability in
+    // nested child-process line readers.
+    let stdoutBuffer = "";
+    proc.stdout.on("data", (data: Buffer | string) => {
+      const chunk = Buffer.isBuffer(data) ? data : Buffer.from(data);
+      stdoutChunks.push(chunk);
+      stdoutBuffer += chunk.toString("utf-8");
 
-    let rlClosed = false;
-    const rlClosedPromise = new Promise<void>((resolve) => {
-      rl.once("close", () => {
-        rlClosed = true;
-        resolve();
-      });
-    });
+      const lines = stdoutBuffer.split(/\r?\n/);
+      stdoutBuffer = lines.pop() ?? "";
 
-    rl.on("line", (line: string) => {
-      stdoutChunks.push(Buffer.from(`${line}\n`));
-      processStreamEvent(line, state, subagentId);
+      for (const line of lines) {
+        processStreamEvent(line, state, subagentId);
+      }
     });
 
     proc.stderr.on("data", (data: Buffer) => {
@@ -811,12 +808,11 @@ async function executeSubagent(
       proc.on("error", () => resolve(null));
     });
 
-    // Ensure all stdout lines have been processed before completing.
+    // Ensure the trailing partial line is processed before completing.
     // Without this, late tool events can be dropped before Task marks completion.
-    if (!rlClosed) {
-      rl.close();
+    if (stdoutBuffer.length > 0) {
+      processStreamEvent(stdoutBuffer, state, subagentId);
     }
-    await rlClosedPromise;
 
     // Clean up abort listener
     signal?.removeEventListener("abort", abortHandler);

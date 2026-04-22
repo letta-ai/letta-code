@@ -65,7 +65,7 @@ export function setAgentContext(
 /**
  * Set the current agent ID in context (simplified version for compatibility)
  */
-export function setCurrentAgentId(agentId: string): void {
+export function setCurrentAgentId(agentId: string | null): void {
   context.agentId = agentId;
   if (getRuntimeContext()) {
     updateRuntimeContext({ agentId });
