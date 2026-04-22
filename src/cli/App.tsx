@@ -10408,15 +10408,15 @@ export default function App({
               prompt: reflectionPrompt,
               description: "Reflecting on conversation",
               silentCompletion: true,
+              parentScope: {
+                agentId,
+                conversationId: reflectionConversationId,
+              },
               onComplete: async ({
                 success,
                 error,
                 agentId: reflectionAgentId,
               }) => {
-              parentScope: {
-                agentId,
-                conversationId: reflectionConversationId,
-              },
                 telemetry.trackReflectionEnd("manual", success, {
                   subagentId: reflectionAgentId ?? undefined,
                   conversationId: reflectionConversationId,
@@ -10907,15 +10907,15 @@ ${SYSTEM_REMINDER_CLOSE}
             prompt: reflectionPrompt,
             description: AUTO_REFLECTION_DESCRIPTION,
             silentCompletion: true,
+            parentScope: {
+              agentId,
+              conversationId: reflectionConversationId,
+            },
             onComplete: async ({
               success,
               error,
               agentId: reflectionAgentId,
             }) => {
-            parentScope: {
-              agentId,
-              conversationId: reflectionConversationId,
-            },
               telemetry.trackReflectionEnd(triggerSource, success, {
                 subagentId: reflectionAgentId ?? undefined,
                 conversationId: reflectionConversationId,
