@@ -106,13 +106,13 @@ describe("headless approval recovery wiring", () => {
   });
 
   test("approval-only recovery sends use scoped prepared tool context", () => {
-    expect(source).toContain("const sendScopedApprovalMessages = async (");
+    expect(source).toContain("async function sendScopedApprovalMessages(");
 
     const helperStart = source.indexOf(
-      "const sendScopedApprovalMessages = async (",
+      "async function sendScopedApprovalMessages(",
     );
     const helperEnd = source.indexOf(
-      "// Helper to resolve any pending approvals before sending user input",
+      "async function flushAndExit(",
       helperStart,
     );
 
@@ -121,7 +121,7 @@ describe("headless approval recovery wiring", () => {
 
     const helperSegment = source.slice(helperStart, helperEnd);
     expect(helperSegment).toContain("prepareHeadlessToolExecutionContext({");
-    expect(helperSegment).toContain("conversationId: targetConversationId,");
+    expect(helperSegment).toContain("conversationId: params.conversationId,");
     expect(helperSegment).toContain("preparedToolContext:");
   });
 });

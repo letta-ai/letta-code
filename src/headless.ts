@@ -386,6 +386,27 @@ async function prepareHeadlessToolExecutionContext(params: {
   };
 }
 
+async function sendScopedApprovalMessages(params: {
+  agentId: string;
+  conversationId: string;
+  approvalMessages: Array<MessageCreate | ApprovalCreate>;
+}): Promise<Awaited<ReturnType<typeof sendMessageStream>>> {
+  const approvalToolContext = await prepareHeadlessToolExecutionContext({
+    agentId: params.agentId,
+    conversationId: params.conversationId,
+  });
+
+  return await sendMessageStream(
+    params.conversationId,
+    params.approvalMessages,
+    {
+      agentId: params.agentId,
+      preparedToolContext:
+        approvalToolContext.preparedToolContext.preparedToolContext,
+    },
+  );
+}
+
 async function flushAndExit(code: number): Promise<never> {
   const flushWritable = (stream: NodeJS.WriteStream): Promise<void> =>
     new Promise((resolve) => {
@@ -1445,22 +1466,6 @@ export async function handleHeadlessCommand(
   const sharedReminderState = createSharedReminderState();
   let queuedRecoveredApprovalResults: ApprovalResult[] | null = null;
 
-  const sendScopedApprovalMessages = async (
-    targetConversationId: string,
-    approvalMessages: Array<MessageCreate | ApprovalCreate>,
-  ) => {
-    const approvalToolContext = await prepareHeadlessToolExecutionContext({
-      agentId: agent.id,
-      conversationId: targetConversationId,
-    });
-
-    return await sendMessageStream(targetConversationId, approvalMessages, {
-      agentId: agent.id,
-      preparedToolContext:
-        approvalToolContext.preparedToolContext.preparedToolContext,
-    });
-  };
-
   // Helper to resolve any pending approvals before sending user input
   const resolveAllPendingApprovals = async (
     mode: "queue_for_next_turn" | "send_immediately" = "send_immediately",
@@ -1531,10 +1536,11 @@ export async function handleHeadlessCommand(
       }
 
       // Send the approval to clear the pending state; drain the stream without output
-      const approvalStream = await sendScopedApprovalMessages(
+      const approvalStream = await sendScopedApprovalMessages({
+        agentId: agent.id,
         conversationId,
         approvalMessages,
-      );
+      });
       const drainResult = await drainStreamWithResume(
         approvalStream,
         createBuffers(agent.id),
@@ -2870,10 +2876,11 @@ async function runBidirectionalMode(
         }
       }
 
-      const approvalStream = await sendScopedApprovalMessages(
+      const approvalStream = await sendScopedApprovalMessages({
+        agentId: agent.id,
         conversationId,
         approvalMessages,
-      );
+      });
       const drainResult = await drainStreamWithResume(
         approvalStream,
         createBuffers(agent.id),
@@ -3244,10 +3251,11 @@ async function runBidirectionalMode(
         approvals: denialResults,
         otid: randomUUID(),
       };
-      const approvalStream = await sendScopedApprovalMessages(
-        targetConversationId,
-        [approvalInput],
-      );
+      const approvalStream = await sendScopedApprovalMessages({
+        agentId: agent.id,
+        conversationId: targetConversationId,
+        approvalMessages: [approvalInput],
+      });
 
       const drainResult = await drainStreamWithResume(
         approvalStream,
