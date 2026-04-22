@@ -4,23 +4,15 @@ import { execSync } from "node:child_process";
 import { readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-
-// Anthropic limits: 8000x8000 for single images, but 2000x2000 for many-image requests
-// We use 2000 to stay safe when conversation history accumulates multiple images
-export const MAX_IMAGE_WIDTH = 2000;
-export const MAX_IMAGE_HEIGHT = 2000;
-
-// Anthropic's API enforces a 5MB limit on image bytes (not base64 string)
-// We enforce this in the client to avoid API errors
-export const MAX_IMAGE_BYTES = 5 * 1024 * 1024; // 5MB = 5,242,880 bytes
-
-export interface ResizeResult {
-  data: string; // base64 encoded
-  mediaType: string;
-  width: number;
-  height: number;
-  resized: boolean;
-}
+import {
+  assertImageHasDimensions,
+  assertImageWithinBounds,
+  buildResizeResult,
+  MAX_IMAGE_BYTES,
+  MAX_IMAGE_HEIGHT,
+  MAX_IMAGE_WIDTH,
+  type ResizeResult,
+} from "./imageResize.shared";
 
 /**
  * Get image dimensions using ImageMagick identify
@@ -45,14 +37,28 @@ async function getImageDimensions(
     if (!width || !height || !format) {
       throw new Error("Failed to get image dimensions");
     }
+    const parsedWidth = parseInt(width, 10);
+    const parsedHeight = parseInt(height, 10);
+    assertImageHasDimensions(parsedWidth, parsedHeight, "decoded image");
     return {
-      width: parseInt(width, 10),
-      height: parseInt(height, 10),
+      width: parsedWidth,
+      height: parsedHeight,
       format: format.toLowerCase(),
     };
   } finally {
     unlinkSync(tempInput);
   }
+}
+
+async function buildVerifiedResizeResult(
+  buffer: Buffer,
+  mediaType: string,
+  resized: boolean,
+  context: string,
+): Promise<ResizeResult> {
+  const { width, height } = await getImageDimensions(buffer);
+  assertImageWithinBounds(width, height, context);
+  return buildResizeResult(buffer, mediaType, width, height, resized);
 }
 
 /**
@@ -90,14 +96,12 @@ async function compressToFitByteLimit(
         });
         const compressed = readFileSync(tempOutput);
         if (compressed.length <= MAX_IMAGE_BYTES) {
-          const { width, height } = await getImageDimensions(compressed);
-          return {
-            data: compressed.toString("base64"),
-            mediaType: "image/jpeg",
-            width,
-            height,
-            resized: true,
-          };
+          return buildVerifiedResizeResult(
+            compressed,
+            "image/jpeg",
+            true,
+            "compressed image output",
+          );
         }
       } finally {
         try {
@@ -124,14 +128,12 @@ async function compressToFitByteLimit(
         );
         const reduced = readFileSync(tempOutput);
         if (reduced.length <= MAX_IMAGE_BYTES) {
-          const { width, height } = await getImageDimensions(reduced);
-          return {
-            data: reduced.toString("base64"),
-            mediaType: "image/jpeg",
-            width,
-            height,
-            resized: true,
-          };
+          return buildVerifiedResizeResult(
+            reduced,
+            "image/jpeg",
+            true,
+            "dimension-reduced image output",
+          );
         }
       } finally {
         try {
@@ -172,13 +174,12 @@ export async function resizeImageIfNeeded(
     if (compressed) {
       return compressed;
     }
-    return {
-      data: buffer.toString("base64"),
-      mediaType: inputMediaType,
-      width,
-      height,
-      resized: false,
-    };
+    return buildVerifiedResizeResult(
+      buffer,
+      inputMediaType,
+      false,
+      "passthrough image output",
+    );
   }
 
   const tempInput = join(
@@ -237,13 +238,12 @@ export async function resizeImageIfNeeded(
         return compressed;
       }
 
-      return {
-        data: outputBuffer.toString("base64"),
-        mediaType: outputMediaType,
-        width: resizedWidth,
-        height: resizedHeight,
-        resized: true,
-      };
+      return buildVerifiedResizeResult(
+        outputBuffer,
+        outputMediaType,
+        true,
+        "resized image output",
+      );
     }
 
     // No resize needed but format needs conversion (e.g., HEIC, TIFF, etc.)
@@ -267,13 +267,12 @@ export async function resizeImageIfNeeded(
       return compressed;
     }
 
-    return {
-      data: outputBuffer.toString("base64"),
-      mediaType: "image/png",
-      width,
-      height,
-      resized: false,
-    };
+    return buildVerifiedResizeResult(
+      outputBuffer,
+      "image/png",
+      false,
+      "converted image output",
+    );
   } finally {
     unlinkSync(tempInput);
   }

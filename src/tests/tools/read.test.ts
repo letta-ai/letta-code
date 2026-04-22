@@ -1,4 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import sharp from "sharp";
+import {
+  MAX_IMAGE_HEIGHT,
+  MAX_IMAGE_WIDTH,
+} from "../../cli/helpers/imageResize";
 import { SYSTEM_REMINDER_OPEN } from "../../constants";
 import { read } from "../../tools/impl/Read";
 import { TestDirectory } from "../helpers/testFs";
@@ -159,6 +164,55 @@ export default box;
         throw new Error("Expected image content source to be base64");
       }
       expect(imagePart.source.media_type).toBe("image/png");
+    } finally {
+      if (originalBaseUrl === undefined) {
+        delete process.env.LETTA_BASE_URL;
+      } else {
+        process.env.LETTA_BASE_URL = originalBaseUrl;
+      }
+    }
+  });
+
+  test("clamps oversized image reads to Anthropic many-image limits", async () => {
+    testDir = new TestDirectory();
+    const originalBaseUrl = process.env.LETTA_BASE_URL;
+    process.env.LETTA_BASE_URL = "http://localhost:58064";
+
+    try {
+      const oversizedBuffer = await sharp({
+        create: {
+          width: 3600,
+          height: 2400,
+          channels: 3,
+          background: { r: 40, g: 130, b: 220 },
+        },
+      })
+        .png()
+        .toBuffer();
+      const imagePath = testDir.createBinaryFile("large.png", oversizedBuffer);
+
+      const result = await read({ file_path: imagePath });
+
+      expect(Array.isArray(result.content)).toBe(true);
+      if (!Array.isArray(result.content)) {
+        throw new Error("Expected image read to return multimodal content");
+      }
+
+      const imagePart = result.content[1];
+      if (!imagePart || imagePart.type !== "image") {
+        throw new Error("Expected second content part to be an image");
+      }
+      if (imagePart.source.type !== "base64") {
+        throw new Error("Expected image content source to be base64");
+      }
+
+      const resizedBuffer = Buffer.from(imagePart.source.data, "base64");
+      const metadata = await sharp(resizedBuffer).metadata();
+
+      expect(metadata.width).toBeDefined();
+      expect(metadata.height).toBeDefined();
+      expect(metadata.width).toBeLessThanOrEqual(MAX_IMAGE_WIDTH);
+      expect(metadata.height).toBeLessThanOrEqual(MAX_IMAGE_HEIGHT);
     } finally {
       if (originalBaseUrl === undefined) {
         delete process.env.LETTA_BASE_URL;
