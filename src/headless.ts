@@ -94,6 +94,7 @@ import {
 } from "./reminders/state";
 import { getCurrentWorkingDirectory } from "./runtime-context";
 import { settingsManager, shouldPersistSessionState } from "./settings-manager";
+import { writeWireMessage } from "./streamJsonWriter";
 import { telemetry } from "./telemetry";
 import { trackBoundaryError } from "./telemetry/errorReporting";
 import { extractTelemetryInputText } from "./telemetry/input";
@@ -1438,7 +1439,7 @@ export async function handleHeadlessCommand(
       reflection_step_count: effectiveReflectionSettings.stepCount,
       uuid: `init-${agent.id}`,
     };
-    console.log(JSON.stringify(initEvent));
+    writeWireMessage(initEvent);
   }
 
   const reminderContextTracker = createContextTracker();
@@ -1548,7 +1549,7 @@ export async function handleHeadlessCommand(
               session_id: sessionId,
               uuid: `auto-approval-${decision.approval.toolCallId}`,
             };
-            console.log(JSON.stringify(autoApprovalMsg));
+            writeWireMessage(autoApprovalMsg);
           }
         }
       }
@@ -1641,7 +1642,7 @@ export async function handleHeadlessCommand(
           session_id: sessionId,
           uuid: `error-pre-loop-approval-${randomUUID()}`,
         };
-        console.log(JSON.stringify(errorMsg));
+        writeWireMessage(errorMsg);
       } else {
         console.error(
           `Warning: Failed to resolve pending approvals on resume: ${approvalError instanceof Error ? approvalError.message : String(approvalError)}`,
@@ -1780,7 +1781,7 @@ ${SYSTEM_REMINDER_CLOSE}
           session_id: sessionId,
           uuid: `error-max-turns-${randomUUID()}`,
         };
-        console.log(JSON.stringify(errorMsg));
+        writeWireMessage(errorMsg);
       } else {
         console.error(
           `Maximum turns limit reached (${buffers.usage.stepCount}/${maxTurns} steps)`,
@@ -1873,7 +1874,7 @@ ${SYSTEM_REMINDER_CLOSE}
               session_id: sessionId,
               uuid: `recovery-pre-stream-${randomUUID()}`,
             };
-            console.log(JSON.stringify(recoveryMsg));
+            writeWireMessage(recoveryMsg);
           } else {
             console.error(
               "Pending approval detected, resolving before retry...",
@@ -1929,7 +1930,7 @@ ${SYSTEM_REMINDER_CLOSE}
                 session_id: sessionId,
                 uuid: `retry-conversation-busy-${randomUUID()}`,
               };
-              console.log(JSON.stringify(retryMsg));
+              writeWireMessage(retryMsg);
             } else {
               console.error(
                 `Conversation is busy, waiting ${Math.round(retryDelayMs / 1000)}s and retrying...`,
@@ -1996,7 +1997,7 @@ ${SYSTEM_REMINDER_CLOSE}
               session_id: sessionId,
               uuid: `retry-pre-stream-${randomUUID()}`,
             };
-            console.log(JSON.stringify(retryMsg));
+            writeWireMessage(retryMsg);
           } else {
             const delaySeconds = Math.round(delayMs / 1000);
             console.error(
@@ -2058,7 +2059,7 @@ ${SYSTEM_REMINDER_CLOSE}
                   },
                 }),
             };
-            console.log(JSON.stringify(errorEvent));
+            writeWireMessage(errorEvent);
             shouldOutputChunk = false;
           }
 
@@ -2078,7 +2079,7 @@ ${SYSTEM_REMINDER_CLOSE}
               session_id: sessionId,
               uuid: `recovery-${recoveryRunId || randomUUID()}`,
             };
-            console.log(JSON.stringify(recoveryMsg));
+            writeWireMessage(recoveryMsg);
             approvalPendingRecovery = true;
             return { stopReason: "error", shouldAccumulate: true };
           }
@@ -2113,7 +2114,7 @@ ${SYSTEM_REMINDER_CLOSE}
                 session_id: sessionId,
                 uuid: `auto-approval-${approval.approval.toolCallId}`,
               };
-              console.log(JSON.stringify(autoApprovalMsg));
+              writeWireMessage(autoApprovalMsg);
               autoApprovalEmitted.add(approval.approval.toolCallId);
             }
           }
@@ -2132,7 +2133,7 @@ ${SYSTEM_REMINDER_CLOSE}
                 session_id: sessionId,
                 uuid: uuid || randomUUID(),
               };
-              console.log(JSON.stringify(streamEvent));
+              writeWireMessage(streamEvent);
             } else {
               const msg: MessageWire = {
                 type: "message",
@@ -2140,7 +2141,7 @@ ${SYSTEM_REMINDER_CLOSE}
                 session_id: sessionId,
                 uuid: uuid || randomUUID(),
               };
-              console.log(JSON.stringify(msg));
+              writeWireMessage(msg);
             }
           }
 
@@ -2365,7 +2366,7 @@ ${SYSTEM_REMINDER_CLOSE}
               session_id: sessionId,
               uuid: `retry-${lastRunId || randomUUID()}`,
             };
-            console.log(JSON.stringify(retryMsg));
+            writeWireMessage(retryMsg);
           } else {
             const delaySeconds = Math.round(delayMs / 1000);
             console.error(
@@ -2399,7 +2400,7 @@ ${SYSTEM_REMINDER_CLOSE}
             session_id: sessionId,
             uuid: `recovery-${lastRunId || randomUUID()}`,
           };
-          console.log(JSON.stringify(recoveryMsg));
+          writeWireMessage(recoveryMsg);
         } else {
           console.error(
             "Tool call ID mismatch; fetching actual pending approvals...",
@@ -2422,7 +2423,7 @@ ${SYSTEM_REMINDER_CLOSE}
               session_id: sessionId,
               uuid: `error-${lastRunId || randomUUID()}`,
             };
-            console.log(JSON.stringify(errorMsg));
+            writeWireMessage(errorMsg);
           } else {
             console.error("Failed to fetch pending approvals for resync");
           }
@@ -2510,7 +2511,7 @@ ${SYSTEM_REMINDER_CLOSE}
                 session_id: sessionId,
                 uuid: `retry-empty-${lastRunId || randomUUID()}`,
               };
-              console.log(JSON.stringify(retryMsg));
+              writeWireMessage(retryMsg);
             } else {
               console.error(
                 `Empty LLM response, retrying (attempt ${attempt} of ${EMPTY_RESPONSE_MAX_RETRIES})...`,
@@ -2544,7 +2545,7 @@ ${SYSTEM_REMINDER_CLOSE}
                 session_id: sessionId,
                 uuid: `retry-${lastRunId || randomUUID()}`,
               };
-              console.log(JSON.stringify(retryMsg));
+              writeWireMessage(retryMsg);
             } else {
               const delaySeconds = Math.round(delayMs / 1000);
               console.error(
@@ -2585,7 +2586,7 @@ ${SYSTEM_REMINDER_CLOSE}
                 session_id: sessionId,
                 uuid: `retry-${lastRunId || randomUUID()}`,
               };
-              console.log(JSON.stringify(retryMsg));
+              writeWireMessage(retryMsg);
             } else {
               const delaySeconds = Math.round(delayMs / 1000);
               console.error(
@@ -2659,7 +2660,7 @@ ${SYSTEM_REMINDER_CLOSE}
           session_id: sessionId,
           uuid: `error-${lastRunId || randomUUID()}`,
         };
-        console.log(JSON.stringify(errorMsg));
+        writeWireMessage(errorMsg);
       } else {
         console.error(`Error: ${errorMessage}`);
       }
@@ -2686,7 +2687,7 @@ ${SYSTEM_REMINDER_CLOSE}
         session_id: sessionId,
         uuid: `error-${lastKnownRunId || randomUUID()}`,
       };
-      console.log(JSON.stringify(errorMsg));
+      writeWireMessage(errorMsg);
     } else {
       console.error(`Error: ${errorDetails}`);
     }
@@ -2792,7 +2793,7 @@ ${SYSTEM_REMINDER_CLOSE}
       usage,
       uuid: resultUuid,
     };
-    console.log(JSON.stringify(resultEvent));
+    writeWireMessage(resultEvent);
   } else {
     // text format (default)
     if (!resultText || resultText === "No assistant response found") {
@@ -2837,15 +2838,18 @@ async function runBidirectionalMode(
   };
 
   // Emit init event
-  const initEvent = {
+  const initEvent: SystemInitMessage = {
     type: "system",
     subtype: "init",
     session_id: sessionId,
     agent_id: agent.id,
     conversation_id: conversationId,
-    model: agent.llm_config?.model,
+    model: agent.llm_config?.model ?? "",
     tools: availableTools,
     cwd: getCurrentWorkingDirectory(),
+    mcp_servers: [],
+    permission_mode: "",
+    slash_commands: [],
     memfs_enabled: settingsManager.isMemfsEnabled(agent.id),
     skill_sources: skillSources,
     system_info_reminder_enabled: systemInfoReminderEnabled,
@@ -2853,7 +2857,7 @@ async function runBidirectionalMode(
     reflection_step_count: reflectionSettings.stepCount,
     uuid: `init-${agent.id}`,
   };
-  console.log(JSON.stringify(initEvent));
+  writeWireMessage(initEvent);
 
   // Track current operation for interrupt support
   let currentAbortController: AbortController | null = null;
@@ -3026,7 +3030,7 @@ async function runBidirectionalMode(
   // events are always emitted here. emitQueueEvent is a no-op guard retained
   // for clarity and future-proofing against non-stream-json callers.
   const emitQueueEvent = (e: QueueLifecycleEvent): void => {
-    console.log(JSON.stringify(e));
+    writeWireMessage(e);
   };
 
   let turnInProgress = false;
@@ -3227,7 +3231,7 @@ async function runBidirectionalMode(
       request: canUseToolRequest,
     };
 
-    console.log(JSON.stringify(controlRequest));
+    writeWireMessage(controlRequest);
 
     const deferredLines: string[] = [];
 
@@ -3460,7 +3464,7 @@ async function runBidirectionalMode(
         session_id: sessionId,
         uuid: randomUUID(),
       };
-      console.log(JSON.stringify(errorMsg));
+      writeWireMessage(errorMsg);
       continue;
     }
 
@@ -3490,7 +3494,7 @@ async function runBidirectionalMode(
           session_id: sessionId,
           uuid: randomUUID(),
         };
-        console.log(JSON.stringify(initResponse));
+        writeWireMessage(initResponse);
       } else if (subtype === "interrupt") {
         // Abort current operation if any
         if (currentAbortController !== null) {
@@ -3506,7 +3510,7 @@ async function runBidirectionalMode(
           session_id: sessionId,
           uuid: randomUUID(),
         };
-        console.log(JSON.stringify(interruptResponse));
+        writeWireMessage(interruptResponse);
       } else if (subtype === "register_external_tools") {
         // Register external tools from SDK
         const toolsRequest = message.request as {
@@ -3529,7 +3533,7 @@ async function runBidirectionalMode(
               input,
             } as unknown as CanUseToolControlRequest, // Type cast for compatibility
           };
-          console.log(JSON.stringify(execRequest));
+          writeWireMessage(execRequest);
 
           // Wait for external_tool_result response
           while (true) {
@@ -3570,7 +3574,7 @@ async function runBidirectionalMode(
           session_id: sessionId,
           uuid: randomUUID(),
         };
-        console.log(JSON.stringify(registerResponse));
+        writeWireMessage(registerResponse);
       } else if (subtype === "bootstrap_session_state") {
         const bootstrapReq = message.request as BootstrapSessionStateRequest;
         const { getResumeData } = await import("./agent/check-approval");
@@ -3614,7 +3618,7 @@ async function runBidirectionalMode(
           client,
           hasPendingApproval,
         });
-        console.log(JSON.stringify(bootstrapResp));
+        writeWireMessage(bootstrapResp);
       } else if (subtype === "list_messages") {
         const listReq = message.request as ListMessagesControlRequest;
         const listResp = await handleListMessages({
@@ -3625,7 +3629,7 @@ async function runBidirectionalMode(
           requestId: requestId ?? "",
           client,
         });
-        console.log(JSON.stringify(listResp));
+        writeWireMessage(listResp);
       } else if (subtype === "recover_pending_approvals") {
         const recoverReq =
           message.request as RecoverPendingApprovalsControlRequest;
@@ -3642,7 +3646,7 @@ async function runBidirectionalMode(
             session_id: sessionId,
             uuid: randomUUID(),
           };
-          console.log(JSON.stringify(recoveryResponse));
+          writeWireMessage(recoveryResponse);
         } catch (error) {
           const recoveryError: ControlResponse = {
             type: "control_response",
@@ -3654,7 +3658,7 @@ async function runBidirectionalMode(
             session_id: sessionId,
             uuid: randomUUID(),
           };
-          console.log(JSON.stringify(recoveryError));
+          writeWireMessage(recoveryError);
         }
       } else {
         const errorResponse: ControlResponse = {
@@ -3667,7 +3671,7 @@ async function runBidirectionalMode(
           session_id: sessionId,
           uuid: randomUUID(),
         };
-        console.log(JSON.stringify(errorResponse));
+        writeWireMessage(errorResponse);
       }
       continue;
     }
@@ -3871,7 +3875,7 @@ async function runBidirectionalMode(
                 session_id: sessionId,
                 uuid: `recovery-bidir-${randomUUID()}`,
               };
-              console.log(JSON.stringify(recoveryMsg));
+              writeWireMessage(recoveryMsg);
               await resolveAllPendingApprovals();
               continue;
             }
@@ -3901,7 +3905,7 @@ async function runBidirectionalMode(
                 session_id: sessionId,
                 uuid: `retry-bidir-${randomUUID()}`,
               };
-              console.log(JSON.stringify(retryMsg));
+              writeWireMessage(retryMsg);
 
               await new Promise((resolve) => setTimeout(resolve, delayMs));
               continue;
@@ -3936,7 +3940,7 @@ async function runBidirectionalMode(
                     },
                   }),
               };
-              console.log(JSON.stringify(errorEvent));
+              writeWireMessage(errorEvent);
               return { shouldAccumulate: true };
             }
 
@@ -3957,7 +3961,7 @@ async function runBidirectionalMode(
                 session_id: sessionId,
                 uuid: uuid || randomUUID(),
               };
-              console.log(JSON.stringify(streamEvent));
+              writeWireMessage(streamEvent);
             } else {
               const msg: MessageWire = {
                 type: "message",
@@ -3965,7 +3969,7 @@ async function runBidirectionalMode(
                 session_id: sessionId,
                 uuid: uuid || randomUUID(),
               };
-              console.log(JSON.stringify(msg));
+              writeWireMessage(msg);
             }
 
             return { shouldAccumulate: true };
@@ -4075,7 +4079,7 @@ async function runBidirectionalMode(
                 session_id: sessionId,
                 uuid: `auto-approval-${approvalItem.approval.toolCallId}`,
               };
-              console.log(JSON.stringify(autoApprovalMsg));
+              writeWireMessage(autoApprovalMsg);
             }
 
             for (const ac of needsUserInput) {
@@ -4115,7 +4119,7 @@ async function runBidirectionalMode(
                   session_id: sessionId,
                   uuid: `auto-approval-${ac.approval.toolCallId}`,
                 };
-                console.log(JSON.stringify(autoApprovalMsg));
+                writeWireMessage(autoApprovalMsg);
               } else {
                 decisions.push({
                   type: "deny",
@@ -4220,7 +4224,7 @@ async function runBidirectionalMode(
                 : "error", // Use "error" if sawStreamError but lastStopReason was end_turn
           }),
         };
-        console.log(JSON.stringify(resultMsg));
+        writeWireMessage(resultMsg);
       } catch (error) {
         // Use formatErrorDetails for comprehensive error formatting (same as one-shot mode)
         const errorDetails = formatErrorDetails(error, agent.id);
@@ -4236,7 +4240,7 @@ async function runBidirectionalMode(
           session_id: sessionId,
           uuid: randomUUID(),
         };
-        console.log(JSON.stringify(errorMsg));
+        writeWireMessage(errorMsg);
 
         // Also emit a result message with subtype: "error" so SDK knows the turn failed
         const errorResultMsg: ResultMessage = {
@@ -4254,7 +4258,7 @@ async function runBidirectionalMode(
           uuid: `result-error-${agent.id}-${Date.now()}`,
           stop_reason: "error",
         };
-        console.log(JSON.stringify(errorResultMsg));
+        writeWireMessage(errorResultMsg);
       } finally {
         turnInProgress = false;
         blockedEmittedThisTurn = false;
@@ -4271,7 +4275,7 @@ async function runBidirectionalMode(
       session_id: sessionId,
       uuid: randomUUID(),
     };
-    console.log(JSON.stringify(errorMsg));
+    writeWireMessage(errorMsg);
   }
 
   // Stdin closed, exit gracefully
