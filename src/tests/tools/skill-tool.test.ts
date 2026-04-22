@@ -22,6 +22,8 @@ let currentSkillsDirectory: string | null = null;
 
 mock.module("../../agent/context", () => ({
   getCurrentAgentId: () => TEST_AGENT_ID,
+  getConversationId: () => null,
+  getSkillSources: () => [],
   getSkillsDirectory: () => currentSkillsDirectory,
 }));
 
@@ -100,6 +102,49 @@ describe("Skill tool memory filesystem lookup", () => {
     const queued = consumeQueuedSkillContent();
     expect(queued).toHaveLength(1);
     expect(queued[0]?.content).toContain("Loaded from MEMORY_DIR.");
+  });
+
+  test("prefers scoped agent memory skills over stale MEMORY_DIR env", async () => {
+    const skillName = "scoped-over-stale-memory-skill";
+    const staleMemoryDir = join(tempRoot, "stale-memory");
+    const staleSkillDir = join(staleMemoryDir, "skills", skillName);
+    const scopedSkillDir = join(
+      tempRoot,
+      ".letta",
+      "agents",
+      TEST_AGENT_ID,
+      "memory",
+      "skills",
+      skillName,
+    );
+
+    mkdirSync(staleSkillDir, { recursive: true });
+    mkdirSync(scopedSkillDir, { recursive: true });
+    writeFileSync(
+      join(staleSkillDir, "SKILL.md"),
+      "---\nname: scoped-over-stale-memory-skill\ndescription: stale\n---\n\nLoaded from stale MEMORY_DIR.",
+      "utf8",
+    );
+    writeFileSync(
+      join(scopedSkillDir, "SKILL.md"),
+      "---\nname: scoped-over-stale-memory-skill\ndescription: scoped\n---\n\nLoaded from scoped agent memory.",
+      "utf8",
+    );
+
+    process.env.MEMORY_DIR = staleMemoryDir;
+    delete process.env.LETTA_MEMORY_DIR;
+    process.env.HOME = tempRoot;
+
+    const result = await skill({
+      skill: skillName,
+      toolCallId: "tc-scoped-over-stale",
+    });
+    expect(result.message).toBe(`Launching skill: ${skillName}`);
+
+    const queued = consumeQueuedSkillContent();
+    expect(queued).toHaveLength(1);
+    expect(queued[0]?.content).toContain("Loaded from scoped agent memory.");
+    expect(queued[0]?.content).not.toContain("Loaded from stale MEMORY_DIR.");
   });
 
   test("falls back to ~/.letta/agents/<id>/memory/skills when MEMORY_DIR is unset", async () => {

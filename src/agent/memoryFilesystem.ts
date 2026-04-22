@@ -9,11 +9,12 @@
 
 import { existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import {
   DIRECTORY_LIMIT_DEFAULTS,
   getDirectoryLimits,
 } from "../utils/directoryLimits";
+import { getCurrentAgentId } from "./context";
 
 export const MEMORY_FS_ROOT = ".letta";
 export const MEMORY_FS_AGENTS_DIR = "agents";
@@ -50,6 +51,54 @@ export function getMemorySystemDir(
   homeDir: string = homedir(),
 ): string {
   return join(getMemoryFilesystemRoot(agentId, homeDir), MEMORY_SYSTEM_DIR);
+}
+
+export interface ResolveScopedMemoryDirOptions {
+  agentId?: string | null;
+  env?: NodeJS.ProcessEnv;
+  homeDir?: string;
+}
+
+/**
+ * Resolve the active memory directory for the current execution scope.
+ *
+ * Precedence is intentionally runtime-first:
+ * 1. Explicit agent ID (caller-provided scope)
+ * 2. In-process runtime/agent context
+ * 3. Explicit MEMORY_DIR env fallback
+ * 4. AGENT_ID env fallback
+ */
+export function resolveScopedMemoryDir(
+  options: ResolveScopedMemoryDirOptions = {},
+): string | null {
+  const env = options.env ?? process.env;
+  const homeDir = options.homeDir ?? env.HOME ?? env.USERPROFILE ?? homedir();
+
+  const explicitAgentId = options.agentId?.trim();
+  if (explicitAgentId) {
+    return getMemoryFilesystemRoot(explicitAgentId, homeDir);
+  }
+
+  try {
+    const scopedAgentId = getCurrentAgentId().trim();
+    if (scopedAgentId) {
+      return getMemoryFilesystemRoot(scopedAgentId, homeDir);
+    }
+  } catch {
+    // No runtime-scoped agent context; fall back below.
+  }
+
+  const directMemoryDir = (env.LETTA_MEMORY_DIR || env.MEMORY_DIR || "").trim();
+  if (directMemoryDir) {
+    return resolve(directMemoryDir);
+  }
+
+  const envAgentId = (env.LETTA_AGENT_ID || env.AGENT_ID || "").trim();
+  if (envAgentId) {
+    return getMemoryFilesystemRoot(envAgentId, homeDir);
+  }
+
+  return null;
 }
 
 export function ensureMemoryFilesystemDirs(

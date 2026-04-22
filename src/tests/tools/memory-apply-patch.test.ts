@@ -52,6 +52,22 @@ async function cloneRemoteRepo(
   await runGit(cloneDir, ["config", "user.email", "remote-user@example.com"]);
 }
 
+async function initTrackedMemoryRepo(
+  repoDir: string,
+  remoteDir: string,
+): Promise<void> {
+  await execFile("git", ["init", "--bare", remoteDir]);
+  await execFile("git", ["init", "-b", "main", repoDir]);
+  await runGit(repoDir, ["config", "user.name", "setup"]);
+  await runGit(repoDir, ["config", "user.email", "setup@example.com"]);
+  await runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+
+  writeFileSync(join(repoDir, ".gitkeep"), "", "utf8");
+  await runGit(repoDir, ["add", ".gitkeep"]);
+  await runGit(repoDir, ["commit", "-m", "initial"]);
+  await runGit(repoDir, ["push", "-u", "origin", "main"]);
+}
+
 async function listRescueRefs(cwd: string): Promise<string[]> {
   const output = await runGit(cwd, [
     "for-each-ref",
@@ -69,23 +85,16 @@ describe("memory_apply_patch tool", () => {
   const originalMemoryDir = process.env.MEMORY_DIR;
   const originalAgentId = process.env.AGENT_ID;
   const originalAgentName = process.env.AGENT_NAME;
+  const originalHome = process.env.HOME;
 
   beforeEach(async () => {
     tempRoot = mkdtempSync(join(tmpdir(), "letta-memory-apply-patch-"));
-    memoryDir = join(tempRoot, "memory");
+    memoryDir = join(tempRoot, ".letta", "agents", TEST_AGENT_ID, "memory");
     remoteDir = join(tempRoot, "remote.git");
 
-    await execFile("git", ["init", "--bare", remoteDir]);
-    await execFile("git", ["init", "-b", "main", memoryDir]);
-    await runGit(memoryDir, ["config", "user.name", "setup"]);
-    await runGit(memoryDir, ["config", "user.email", "setup@example.com"]);
-    await runGit(memoryDir, ["remote", "add", "origin", remoteDir]);
+    await initTrackedMemoryRepo(memoryDir, remoteDir);
 
-    writeFileSync(join(memoryDir, ".gitkeep"), "", "utf8");
-    await runGit(memoryDir, ["add", ".gitkeep"]);
-    await runGit(memoryDir, ["commit", "-m", "initial"]);
-    await runGit(memoryDir, ["push", "-u", "origin", "main"]);
-
+    process.env.HOME = tempRoot;
     process.env.MEMORY_DIR = memoryDir;
     process.env.AGENT_ID = TEST_AGENT_ID;
     process.env.AGENT_NAME = TEST_AGENT_NAME;
@@ -100,6 +109,9 @@ describe("memory_apply_patch tool", () => {
 
     if (originalAgentName === undefined) delete process.env.AGENT_NAME;
     else process.env.AGENT_NAME = originalAgentName;
+
+    if (originalHome === undefined) delete process.env.HOME;
+    else process.env.HOME = originalHome;
 
     if (tempRoot) {
       await rm(tempRoot, { recursive: true, force: true });
@@ -163,6 +175,37 @@ describe("memory_apply_patch tool", () => {
     expect(subject).toBe("Refine contacts memory via patch");
     expect(authorName).toBe(TEST_AGENT_NAME);
     expect(authorEmail).toBe(`${TEST_AGENT_ID}@letta.com`);
+  });
+
+  test("prefers scoped agent memory over stale MEMORY_DIR env", async () => {
+    const scopedMemoryDir = memoryDir;
+    const staleMemoryDir = join(tempRoot, "stale-memory");
+    const scopedRemoteDir = join(tempRoot, "scoped-remote.git");
+
+    await initTrackedMemoryRepo(staleMemoryDir, scopedRemoteDir);
+    process.env.MEMORY_DIR = staleMemoryDir;
+
+    await memory_apply_patch({
+      reason: "Create scoped memory file via patch",
+      input: [
+        "*** Begin Patch",
+        "*** Add File: system/scoped.md",
+        "+---",
+        "+description: Scoped file",
+        "+---",
+        "+scoped body",
+        "*** End Patch",
+      ].join("\n"),
+    });
+
+    const scopedContent = await runGit(scopedMemoryDir, [
+      "show",
+      "HEAD:system/scoped.md",
+    ]);
+    expect(scopedContent).toContain("scoped body");
+
+    const staleStatus = await runGit(staleMemoryDir, ["status", "--short"]);
+    expect(staleStatus).not.toContain("scoped.md");
   });
 
   test("rejects absolute paths outside MEMORY_DIR", async () => {

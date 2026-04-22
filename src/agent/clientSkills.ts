@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import type { MessageCreateParams as ConversationMessageCreateParams } from "@letta-ai/letta-client/resources/conversations/messages";
 import { getSkillSources, getSkillsDirectory } from "./context";
+import { resolveScopedMemoryDir } from "./memoryFilesystem";
 import {
   compareSkills,
   discoverSkills,
@@ -14,21 +15,18 @@ import {
 function getMemorySkillsDirs(agentId?: string): string[] {
   const dirs = new Set<string>();
 
-  const memoryDir = process.env.MEMORY_DIR || process.env.LETTA_MEMORY_DIR;
-  if (memoryDir && memoryDir.trim().length > 0) {
-    dirs.add(join(memoryDir.trim(), "skills"));
+  const scopedMemoryDir = resolveScopedMemoryDir({ agentId });
+  if (scopedMemoryDir && scopedMemoryDir.trim().length > 0) {
+    dirs.add(join(scopedMemoryDir.trim(), "skills"));
   }
 
-  if (agentId) {
-    dirs.add(
-      join(
-        process.env.HOME || process.env.USERPROFILE || "~",
-        ".letta/agents",
-        agentId,
-        "memory",
-        "skills",
-      ),
-    );
+  const fallbackMemoryDir = (
+    process.env.LETTA_MEMORY_DIR ||
+    process.env.MEMORY_DIR ||
+    ""
+  ).trim();
+  if (fallbackMemoryDir) {
+    dirs.add(join(fallbackMemoryDir, "skills"));
   }
 
   return Array.from(dirs);

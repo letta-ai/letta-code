@@ -8,10 +8,10 @@ import {
   unlink,
   writeFile,
 } from "node:fs/promises";
-import { homedir } from "node:os";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { getClient } from "../../agent/client";
 import { getCurrentAgentId } from "../../agent/context";
+import { resolveScopedMemoryDir } from "../../agent/memoryFilesystem";
 import {
   assertMemoryRepoReadyForWrite,
   commitAndSyncMemoryWrite,
@@ -344,24 +344,9 @@ async function applyMemoryCommand(
 }
 
 function resolveMemoryDir(): string {
-  const direct = process.env.MEMORY_DIR || process.env.LETTA_MEMORY_DIR;
-  if (direct && direct.trim().length > 0) {
-    return resolve(direct);
-  }
-
-  const contextAgentId = (() => {
-    try {
-      return getCurrentAgentId().trim();
-    } catch {
-      return "";
-    }
-  })();
-
-  const agentId =
-    contextAgentId ||
-    (process.env.AGENT_ID || process.env.LETTA_AGENT_ID || "").trim();
-  if (agentId && agentId.trim().length > 0) {
-    return resolve(homedir(), ".letta", "agents", agentId, "memory");
+  const scopedMemoryDir = resolveScopedMemoryDir();
+  if (scopedMemoryDir) {
+    return scopedMemoryDir;
   }
 
   throw new Error(
