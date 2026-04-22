@@ -13,15 +13,12 @@ import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import { runWithRuntimeContext } from "../../runtime-context";
 
 const execFile = promisify(execFileCb);
 
 const TEST_AGENT_ID = "agent-test-memory-tool";
 const TEST_AGENT_NAME = "Bob";
-
-mock.module("../../agent/context", () => ({
-  getCurrentAgentId: () => TEST_AGENT_ID,
-}));
 
 mock.module("../../agent/client", () => ({
   getClient: mock(() =>
@@ -35,6 +32,10 @@ mock.module("../../agent/client", () => ({
 }));
 
 const { memory } = await import("../../tools/impl/Memory");
+
+function runScopedMemory(args: Parameters<typeof memory>[0]) {
+  return runWithRuntimeContext({ agentId: TEST_AGENT_ID }, () => memory(args));
+}
 
 async function runGit(cwd: string, args: string[]): Promise<string> {
   const { stdout } = await execFile("git", args, { cwd });
@@ -80,6 +81,10 @@ describe("memory tool", () => {
   let memoryDir: string;
   let remoteDir: string;
 
+  // Deliberately avoid mock.module("../../agent/context") here so this suite
+  // doesn't leak agent identity into unrelated tests through Bun's shared
+  // module graph.
+
   const originalMemoryDir = process.env.MEMORY_DIR;
   const originalAgentId = process.env.AGENT_ID;
   const originalAgentName = process.env.AGENT_NAME;
@@ -122,7 +127,7 @@ describe("memory tool", () => {
 
   test("requires reason", async () => {
     await expect(
-      memory({
+      runScopedMemory({
         command: "create",
         file_path: "system/test.md",
         description: "test desc",
@@ -133,7 +138,7 @@ describe("memory tool", () => {
   test("uses reason as commit message and agent identity as commit author", async () => {
     const reason = "Create coding preferences block";
 
-    await memory({
+    await runScopedMemory({
       command: "create",
       reason,
       file_path: "system/human/prefs/coding.md",
@@ -168,7 +173,7 @@ describe("memory tool", () => {
     await initTrackedMemoryRepo(staleMemoryDir, scopedRemoteDir);
     process.env.MEMORY_DIR = staleMemoryDir;
 
-    await memory({
+    await runScopedMemory({
       command: "create",
       reason: "Create scoped memory file",
       file_path: "system/scoped.md",
@@ -187,7 +192,7 @@ describe("memory tool", () => {
   });
 
   test("returns error when push fails but keeps local commit", async () => {
-    await memory({
+    await runScopedMemory({
       command: "create",
       reason: "Seed notes",
       file_path: "reference/history/notes.md",
@@ -205,7 +210,7 @@ describe("memory tool", () => {
     const reason = "Update notes after remote failure";
 
     await expect(
-      memory({
+      runScopedMemory({
         command: "str_replace",
         reason,
         file_path: "reference/history/notes.md",
@@ -223,7 +228,7 @@ describe("memory tool", () => {
   });
 
   test("replays str_replace on top of newer remote memory", async () => {
-    await memory({
+    await runScopedMemory({
       command: "create",
       reason: "Seed replay notes",
       file_path: "reference/history/notes.md",
@@ -249,7 +254,7 @@ describe("memory tool", () => {
     await runGit(remoteCloneDir, ["commit", "-m", "Remote update notes"]);
     await runGit(remoteCloneDir, ["push", "origin", "main"]);
 
-    const result = await memory({
+    const result = await runScopedMemory({
       command: "str_replace",
       reason: "Replay local replacement",
       file_path: "reference/history/notes.md",
@@ -278,7 +283,7 @@ describe("memory tool", () => {
   });
 
   test("fails closed when replay cannot be applied safely", async () => {
-    await memory({
+    await runScopedMemory({
       command: "create",
       reason: "Seed conflicting notes",
       file_path: "reference/history/notes.md",
@@ -298,7 +303,7 @@ describe("memory tool", () => {
     await runGit(remoteCloneDir, ["push", "origin", "main"]);
 
     await expect(
-      memory({
+      runScopedMemory({
         command: "str_replace",
         reason: "Attempt conflicting replacement",
         file_path: "reference/history/notes.md",
@@ -337,7 +342,7 @@ describe("memory tool", () => {
     delete process.env.LETTA_AGENT_ID;
 
     const reason = "Create identity via context fallback";
-    await memory({
+    await runScopedMemory({
       command: "create",
       reason,
       file_path: "system/human/identity.md",
@@ -356,7 +361,7 @@ describe("memory tool", () => {
   test("accepts relative file paths like system/contacts.md", async () => {
     const reason = "Create contacts via relative path";
 
-    await memory({
+    await runScopedMemory({
       command: "create",
       reason,
       file_path: "system/contacts.md",
@@ -375,7 +380,7 @@ describe("memory tool", () => {
   test("accepts absolute file paths under MEMORY_DIR", async () => {
     const absolutePath = join(memoryDir, "system", "contacts.md");
 
-    await memory({
+    await runScopedMemory({
       command: "create",
       reason: "Create contacts via absolute path",
       file_path: absolutePath,
@@ -392,7 +397,7 @@ describe("memory tool", () => {
   });
 
   test("updates frontmatter description via update_description command", async () => {
-    await memory({
+    await runScopedMemory({
       command: "create",
       reason: "Create coding prefs",
       file_path: "system/human/prefs/coding.md",
@@ -400,7 +405,7 @@ describe("memory tool", () => {
       file_text: "keep body unchanged",
     });
 
-    await memory({
+    await runScopedMemory({
       command: "update_description",
       reason: "Update coding prefs description",
       file_path: "system/human/prefs/coding.md",
@@ -417,7 +422,7 @@ describe("memory tool", () => {
 
   test("rename requires old_path and new_path", async () => {
     await expect(
-      memory({
+      runScopedMemory({
         command: "rename",
         reason: "should fail",
         file_path: "system/contacts.md",
@@ -427,7 +432,7 @@ describe("memory tool", () => {
   });
 
   test("delete supports recursive directory removal", async () => {
-    await memory({
+    await runScopedMemory({
       command: "create",
       reason: "Create draft note one",
       file_path: "reference/history/draft-one.md",
@@ -435,7 +440,7 @@ describe("memory tool", () => {
       file_text: "one",
     });
 
-    await memory({
+    await runScopedMemory({
       command: "create",
       reason: "Create draft note two",
       file_path: "reference/history/draft-two.md",
@@ -443,7 +448,7 @@ describe("memory tool", () => {
       file_text: "two",
     });
 
-    await memory({
+    await runScopedMemory({
       command: "delete",
       reason: "Delete history directory",
       file_path: "reference/history",
@@ -461,7 +466,7 @@ describe("memory tool", () => {
 
   test("rejects absolute paths outside MEMORY_DIR", async () => {
     await expect(
-      memory({
+      runScopedMemory({
         command: "create",
         reason: "should fail",
         file_path: "/memories/contacts",
