@@ -27,6 +27,26 @@ import { ListenerStatusUI } from "../components/ListenerStatusUI";
 
 const LISTENER_TOKEN_REFRESH_WINDOW_MS = 5 * 60 * 1000;
 
+type ListenerOAuthDeps = {
+  LETTA_CLOUD_API_URL: string;
+  pollForToken: typeof pollForToken;
+  refreshAccessToken: typeof refreshAccessToken;
+  requestDeviceCode: typeof requestDeviceCode;
+};
+
+const defaultListenerOAuthDeps: ListenerOAuthDeps = {
+  LETTA_CLOUD_API_URL,
+  pollForToken,
+  refreshAccessToken,
+  requestDeviceCode,
+};
+
+let listenerOAuthDepsOverride: ListenerOAuthDeps | null = null;
+
+function getListenerOAuthDeps(): ListenerOAuthDeps {
+  return listenerOAuthDepsOverride ?? defaultListenerOAuthDeps;
+}
+
 class MissingListenerApiKeyError extends Error {
   constructor() {
     super("LETTA_API_KEY not found");
@@ -78,10 +98,11 @@ async function flushListenerTelemetryEnd(exitReason: string): Promise<void> {
 function getListenerServerUrl(settings: {
   env?: Record<string, string>;
 }): string {
+  const oauthDeps = getListenerOAuthDeps();
   return (
     process.env.LETTA_BASE_URL ||
     settings.env?.LETTA_BASE_URL ||
-    LETTA_CLOUD_API_URL
+    oauthDeps.LETTA_CLOUD_API_URL
   );
 }
 
@@ -92,11 +113,12 @@ async function refreshListenerAccessToken(
   deviceId: string,
   connectionName: string,
 ): Promise<string> {
+  const oauthDeps = getListenerOAuthDeps();
   const now = Date.now();
 
   console.log("Access token expired, refreshing...");
 
-  const tokens = await refreshAccessToken(
+  const tokens = await oauthDeps.refreshAccessToken(
     settings.refreshToken as string,
     deviceId,
     connectionName,
@@ -122,9 +144,10 @@ async function runListenerOAuthLogin(
   deviceId: string,
   connectionName: string,
 ): Promise<string> {
+  const oauthDeps = getListenerOAuthDeps();
   console.log("No API key found. Starting OAuth login...\n");
 
-  const deviceData = await requestDeviceCode();
+  const deviceData = await oauthDeps.requestDeviceCode();
 
   console.log(
     `To authenticate, visit: ${deviceData.verification_uri_complete}`,
@@ -132,7 +155,7 @@ async function runListenerOAuthLogin(
   console.log(`Your code: ${deviceData.user_code}\n`);
   console.log("Waiting for authorization...\n");
 
-  const tokens = await pollForToken(
+  const tokens = await oauthDeps.pollForToken(
     deviceData.device_code,
     deviceData.interval,
     deviceData.expires_in,
@@ -223,6 +246,14 @@ export const __listenSubcommandTestUtils = {
   flushListenerTelemetryEnd,
   getListenerServerUrl,
   resolveListenerRegistrationOptions,
+  setOAuthDepsForTests(overrides: Partial<ListenerOAuthDeps> | null) {
+    listenerOAuthDepsOverride = overrides
+      ? {
+          ...defaultListenerOAuthDeps,
+          ...overrides,
+        }
+      : null;
+  },
 };
 
 export async function runListenSubcommand(argv: string[]): Promise<number> {
