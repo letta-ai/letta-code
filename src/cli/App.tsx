@@ -5548,13 +5548,19 @@ export default function App({
                   ? buildQueuedUserText(queuedItemsToAppend)
                   : "";
 
+                const queuedUserOtid = randomUUID();
                 if (queuedUserText) {
                   const userId = uid("user");
                   buffersRef.current.byId.set(userId, {
                     kind: "user",
                     id: userId,
                     text: queuedUserText,
+                    otid: queuedUserOtid,
                   });
+                  buffersRef.current.userLineIdByOtid.set(
+                    queuedUserOtid,
+                    userId,
+                  );
                   buffersRef.current.order.push(userId);
                 }
 
@@ -5575,7 +5581,7 @@ export default function App({
                         type: "message",
                         role: "user",
                         content: queuedContentParts,
-                        otid: randomUUID(),
+                        otid: queuedUserOtid,
                       },
                     ],
                     { allowReentry: true },
@@ -10599,17 +10605,22 @@ export default function App({
               parentMemory,
             });
 
-            const { spawnBackgroundSubagentTask } = await import(
-              "../tools/impl/Task"
-            );
+            const {
+              spawnBackgroundSubagentTask,
+              waitForBackgroundSubagentAgentId,
+            } = await import("../tools/impl/Task");
             const { subagentId } = spawnBackgroundSubagentTask({
               subagentType: "reflection",
               prompt: reflectionPrompt,
               description: "Reflecting on conversation",
               silentCompletion: true,
-              onComplete: async ({ success, error }) => {
+              onComplete: async ({
+                success,
+                error,
+                agentId: reflectionAgentId,
+              }) => {
                 telemetry.trackReflectionEnd("manual", success, {
-                  subagentId,
+                  subagentId: reflectionAgentId ?? undefined,
                   conversationId: reflectionConversationId,
                   error,
                 });
@@ -10641,8 +10652,12 @@ export default function App({
                 appendTaskNotificationEvents([msg]);
               },
             });
-            telemetry.trackReflectionStart("manual", {
+            const reflectionAgentId = await waitForBackgroundSubagentAgentId(
               subagentId,
+              1000,
+            );
+            telemetry.trackReflectionStart("manual", {
+              subagentId: reflectionAgentId ?? undefined,
               conversationId: reflectionConversationId,
               startMessageId: autoPayload.startMessageId,
               endMessageId: autoPayload.endMessageId,
@@ -11085,17 +11100,22 @@ ${SYSTEM_REMINDER_CLOSE}
             parentMemory,
           });
 
-          const { spawnBackgroundSubagentTask } = await import(
-            "../tools/impl/Task"
-          );
+          const {
+            spawnBackgroundSubagentTask,
+            waitForBackgroundSubagentAgentId,
+          } = await import("../tools/impl/Task");
           const { subagentId } = spawnBackgroundSubagentTask({
             subagentType: "reflection",
             prompt: reflectionPrompt,
             description: AUTO_REFLECTION_DESCRIPTION,
             silentCompletion: true,
-            onComplete: async ({ success, error }) => {
+            onComplete: async ({
+              success,
+              error,
+              agentId: reflectionAgentId,
+            }) => {
               telemetry.trackReflectionEnd(triggerSource, success, {
-                subagentId,
+                subagentId: reflectionAgentId ?? undefined,
                 conversationId: reflectionConversationId,
                 error,
               });
@@ -11127,8 +11147,12 @@ ${SYSTEM_REMINDER_CLOSE}
               appendTaskNotificationEvents([msg]);
             },
           });
-          telemetry.trackReflectionStart(triggerSource, {
+          const reflectionAgentId = await waitForBackgroundSubagentAgentId(
             subagentId,
+            1000,
+          );
+          telemetry.trackReflectionStart(triggerSource, {
+            subagentId: reflectionAgentId ?? undefined,
             conversationId: reflectionConversationId,
             startMessageId: autoPayload.startMessageId,
             endMessageId: autoPayload.endMessageId,
@@ -11203,12 +11227,15 @@ ${SYSTEM_REMINDER_CLOSE}
 
       // Append the user message to transcript IMMEDIATELY (optimistic update)
       const userId = uid("user");
+      const userOtid = randomUUID();
       if (userTextForInput) {
         buffersRef.current.byId.set(userId, {
           kind: "user",
           id: userId,
           text: userTextForInput,
+          otid: userOtid,
         });
+        buffersRef.current.userLineIdByOtid.set(userOtid, userId);
         buffersRef.current.order.push(userId);
       }
       const transcriptStartLineIndex = userTextForInput
@@ -11821,7 +11848,7 @@ ${SYSTEM_REMINDER_CLOSE}
         type: "message",
         role: "user",
         content: messageContent as unknown as MessageCreate["content"],
-        otid: randomUUID(),
+        otid: userOtid,
       });
 
       await processConversation(initialInput, {
@@ -12180,20 +12207,23 @@ ${SYSTEM_REMINDER_CLOSE}
           ];
           if (queuedItemsToAppend && queuedItemsToAppend.length > 0) {
             const queuedUserText = buildQueuedUserText(queuedItemsToAppend);
+            const queuedUserOtid = randomUUID();
             if (queuedUserText) {
               const userId = uid("user");
               buffersRef.current.byId.set(userId, {
                 kind: "user",
                 id: userId,
                 text: queuedUserText,
+                otid: queuedUserOtid,
               });
+              buffersRef.current.userLineIdByOtid.set(queuedUserOtid, userId);
               buffersRef.current.order.push(userId);
             }
             input.push({
               type: "message",
               role: "user",
               content: buildQueuedContentParts(queuedItemsToAppend),
-              otid: randomUUID(),
+              otid: queuedUserOtid,
             });
             refreshDerived();
           } else if (hadNotifications) {

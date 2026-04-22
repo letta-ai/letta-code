@@ -137,6 +137,7 @@ export function backfillBuffers(buffers: Buffers, history: Message[]): void {
   buffers.byId.clear();
   buffers.toolCallIdToLineId.clear();
   buffers.pendingToolByRun.clear();
+  buffers.userLineIdByOtid.clear();
   buffers.lastOtid = null;
   buffers.assistantCanonicalByMessageId.clear();
   buffers.assistantCanonicalByOtid.clear();
@@ -193,11 +194,17 @@ export function backfillBuffers(buffers: Buffers, history: Message[]): void {
 
         if (cleanedText) {
           const exists = buffers.byId.has(lineId);
+          const otid = "otid" in msg ? msg.otid || undefined : undefined;
           buffers.byId.set(lineId, {
             kind: "user",
             id: lineId,
             text: cleanedText,
+            messageId: msg.id,
+            otid,
           });
+          if (otid) {
+            buffers.userLineIdByOtid.set(otid, lineId);
+          }
           if (!exists) buffers.order.push(lineId);
         }
         break;
@@ -211,6 +218,7 @@ export function backfillBuffers(buffers: Buffers, history: Message[]): void {
           id: lineId,
           text: msg.reasoning,
           phase: "finished",
+          messageId: msg.id,
         });
         if (!exists) buffers.order.push(lineId);
         break;
@@ -224,6 +232,7 @@ export function backfillBuffers(buffers: Buffers, history: Message[]): void {
           id: lineId,
           text: renderAssistantContentParts(msg.content),
           phase: "finished",
+          messageId: msg.id,
         });
         if (!exists) buffers.order.push(lineId);
         break;

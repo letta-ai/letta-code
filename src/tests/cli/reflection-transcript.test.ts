@@ -48,12 +48,13 @@ describe("reflectionTranscript helper", () => {
 
   test("auto payload advances cursor on success", async () => {
     await appendTranscriptDeltaJsonl(agentId, conversationId, [
-      { kind: "user", id: "u1", text: "hello" },
+      { kind: "user", id: "u1", text: "hello", messageId: "u1" },
       {
         kind: "assistant",
         id: "a1",
         text: "hi there",
         phase: "finished",
+        messageId: "a1",
       },
     ]);
 
@@ -93,7 +94,7 @@ describe("reflectionTranscript helper", () => {
 
   test("auto payload keeps cursor on failure", async () => {
     await appendTranscriptDeltaJsonl(agentId, conversationId, [
-      { kind: "user", id: "u1", text: "remember this" },
+      { kind: "user", id: "u1", text: "remember this", messageId: "u1" },
     ]);
 
     const payload = await buildAutoReflectionPayload(agentId, conversationId);
@@ -121,7 +122,7 @@ describe("reflectionTranscript helper", () => {
 
   test("auto payload clamps out-of-range cursor and resumes on new transcript lines", async () => {
     await appendTranscriptDeltaJsonl(agentId, conversationId, [
-      { kind: "user", id: "u1", text: "first" },
+      { kind: "user", id: "u1", text: "first", messageId: "u1" },
     ]);
 
     const paths = getReflectionTranscriptPaths(agentId, conversationId);
@@ -142,7 +143,13 @@ describe("reflectionTranscript helper", () => {
     expect(clamped.auto_cursor_line).toBe(1);
 
     await appendTranscriptDeltaJsonl(agentId, conversationId, [
-      { kind: "assistant", id: "a2", text: "second", phase: "finished" },
+      {
+        kind: "assistant",
+        id: "a2",
+        text: "second",
+        phase: "finished",
+        messageId: "a2",
+      },
     ]);
 
     const secondAttempt = await buildAutoReflectionPayload(
@@ -157,6 +164,49 @@ describe("reflectionTranscript helper", () => {
     const payloadText = await readFile(secondAttempt.payloadPath, "utf-8");
     const messages = JSON.parse(payloadText);
     expect(messages).toContainEqual({ role: "assistant", content: "second" });
+  });
+
+  test("auto payload uses actual message ids instead of transcript line ids", async () => {
+    await appendTranscriptDeltaJsonl(agentId, conversationId, [
+      {
+        kind: "user",
+        id: "user-local-1",
+        text: "hello",
+        messageId: "message-user-1",
+        otid: "otid-user-1",
+      },
+      {
+        kind: "reasoning",
+        id: "reasoning:message-assistant-1",
+        text: "thinking",
+        phase: "finished",
+        messageId: "message-assistant-1",
+      },
+      {
+        kind: "tool_call",
+        id: "tool-call-1",
+        toolCallId: "tool-call-1",
+        name: "Read",
+        argsText: "{}",
+        resultText: "done",
+        resultOk: true,
+        phase: "finished",
+      },
+      {
+        kind: "assistant",
+        id: "assistant:message-assistant-1",
+        text: "answer",
+        phase: "finished",
+        messageId: "message-assistant-1",
+      },
+    ]);
+
+    const payload = await buildAutoReflectionPayload(agentId, conversationId);
+    expect(payload).not.toBeNull();
+    if (!payload) return;
+
+    expect(payload.startMessageId).toBe("message-user-1");
+    expect(payload.endMessageId).toBe("message-assistant-1");
   });
 
   test("buildParentMemorySnapshot renders tree descriptions and system <memory> blocks", async () => {
@@ -264,7 +314,7 @@ describe("reflectionTranscript helper", () => {
   test("reflection payload drops tool call results and truncates args", async () => {
     const longArgs = "a".repeat(500);
     await appendTranscriptDeltaJsonl(agentId, conversationId, [
-      { kind: "user", id: "u1", text: "run a search" },
+      { kind: "user", id: "u1", text: "run a search", messageId: "u1" },
       {
         kind: "tool_call",
         id: "tc1",
@@ -280,6 +330,7 @@ describe("reflectionTranscript helper", () => {
         id: "a1",
         text: "Found results",
         phase: "finished",
+        messageId: "a1",
       },
     ]);
 
@@ -312,7 +363,7 @@ describe("reflectionTranscript helper", () => {
     const userTextWithImage =
       "Check this: ![screenshot](data:image/png;base64,iVBORw0KGgoAAAANS) and tell me what you see";
     await appendTranscriptDeltaJsonl(agentId, conversationId, [
-      { kind: "user", id: "u1", text: userTextWithImage },
+      { kind: "user", id: "u1", text: userTextWithImage, messageId: "u1" },
     ]);
 
     const payload = await buildAutoReflectionPayload(agentId, conversationId);
@@ -330,7 +381,7 @@ describe("reflectionTranscript helper", () => {
 
   test("reflection payload prepends filtered system prompt when provided", async () => {
     await appendTranscriptDeltaJsonl(agentId, conversationId, [
-      { kind: "user", id: "u1", text: "hello" },
+      { kind: "user", id: "u1", text: "hello", messageId: "u1" },
     ]);
 
     const systemPrompt = [

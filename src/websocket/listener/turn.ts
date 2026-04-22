@@ -219,18 +219,17 @@ function buildMaybeLaunchReflectionSubagent(params: {
         parentMemory,
       });
 
-      const { spawnBackgroundSubagentTask } = await import(
-        "../../tools/impl/Task"
-      );
+      const { spawnBackgroundSubagentTask, waitForBackgroundSubagentAgentId } =
+        await import("../../tools/impl/Task");
       const { subagentId } = spawnBackgroundSubagentTask({
         subagentType: "reflection",
         prompt: reflectionPrompt,
         description: AUTO_REFLECTION_DESCRIPTION,
         silentCompletion: true,
         parentScope: { agentId, conversationId },
-        onComplete: async ({ success, error }) => {
+        onComplete: async ({ success, error, agentId: reflectionAgentId }) => {
           telemetry.trackReflectionEnd(triggerSource, success, {
-            subagentId,
+            subagentId: reflectionAgentId ?? undefined,
             conversationId,
             error,
           });
@@ -278,8 +277,12 @@ function buildMaybeLaunchReflectionSubagent(params: {
           );
         },
       });
-      telemetry.trackReflectionStart(triggerSource, {
+      const reflectionAgentId = await waitForBackgroundSubagentAgentId(
         subagentId,
+        1000,
+      );
+      telemetry.trackReflectionStart(triggerSource, {
+        subagentId: reflectionAgentId ?? undefined,
         conversationId,
         startMessageId: autoPayload.startMessageId,
         endMessageId: autoPayload.endMessageId,

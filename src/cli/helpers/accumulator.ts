@@ -136,13 +136,20 @@ export function appendStreamingOutput(
 // One line per transcript row. Tool calls evolve in-place.
 // For tool call returns, merge into the tool call matching the toolCallId
 export type Line =
-  | { kind: "user"; id: string; text: string }
+  | {
+      kind: "user";
+      id: string;
+      text: string;
+      messageId?: string;
+      otid?: string;
+    }
   | {
       kind: "reasoning";
       id: string;
       text: string;
       phase: "streaming" | "finished";
       isContinuation?: boolean; // true for split continuation lines (no header)
+      messageId?: string;
     }
   | {
       kind: "assistant";
@@ -150,6 +157,7 @@ export type Line =
       text: string;
       phase: "streaming" | "finished";
       isContinuation?: boolean; // true for split continuation lines (no bullet)
+      messageId?: string;
     }
   | {
       kind: "tool_call";
@@ -237,6 +245,7 @@ export type Buffers = {
   byId: Map<string, Line>;
   pendingToolByRun: Map<string, string>; // temporary id per run until real id
   toolCallIdToLineId: Map<string, string>;
+  userLineIdByOtid: Map<string, string>;
   lastOtid: string | null; // Track the last otid to detect transitions
   // Alias maps to keep assistant deltas on one line when streams mix id/otid.
   assistantCanonicalByMessageId: Map<string, string>;
@@ -278,6 +287,7 @@ export function createBuffers(agentId?: string): Buffers {
     byId: new Map(),
     pendingToolByRun: new Map(),
     toolCallIdToLineId: new Map(),
+    userLineIdByOtid: new Map(),
     lastOtid: null,
     assistantCanonicalByMessageId: new Map(),
     assistantCanonicalByOtid: new Map(),
@@ -659,12 +669,18 @@ function trySplitContent(
   // Create committed line for "before" content
   // Only the first split (counter=0) shows the bullet/header; subsequent splits are continuations
   const commitId = `${id}-split-${counter}`;
+  const originalLine = b.byId.get(id);
   const committedLine = {
     kind,
     id: commitId,
     text: beforeText,
     phase: "finished" as const,
     isContinuation: counter > 0, // First split shows bullet, subsequent don't
+    messageId:
+      originalLine &&
+      (originalLine.kind === "assistant" || originalLine.kind === "reasoning")
+        ? originalLine.messageId
+        : undefined,
   };
   b.byId.set(commitId, committedLine);
 
@@ -679,7 +695,6 @@ function trySplitContent(
 
   // Update original line with just the "after" content (keep streaming)
   // Mark it as a continuation so it doesn't show bullet/header
-  const originalLine = b.byId.get(id);
   if (
     originalLine &&
     (originalLine.kind === "assistant" || originalLine.kind === "reasoning")
@@ -725,11 +740,14 @@ export function onChunk(
       handleOtidTransition(b, id);
 
       const delta = chunk.reasoning;
+      const messageId =
+        typeof chunkWithIds.id === "string" ? chunkWithIds.id : undefined;
       const line = ensure(b, id, () => ({
         kind: "reasoning",
         id,
         text: "",
         phase: "streaming",
+        messageId,
       }));
       if (delta) {
         const newText = line.text + delta;
@@ -738,10 +756,16 @@ export function onChunk(
         // Try to split at paragraph boundary (only if streaming enabled)
         if (!trySplitContent(b, id, "reasoning", newText)) {
           // No split - normal accumulation
-          b.byId.set(id, { ...line, text: newText });
+          b.byId.set(id, {
+            ...line,
+            text: newText,
+            messageId: messageId ?? line.messageId,
+          });
         }
-        // console.log(`[REASONING] Updated ${id}, textLen=${newText.length}`);
+      } else if (messageId && line.messageId !== messageId) {
+        b.byId.set(id, { ...line, messageId });
       }
+      // console.log(`[REASONING] Updated ${id}, textLen=${newText.length}`);
       break;
     }
 
@@ -759,11 +783,14 @@ export function onChunk(
       handleOtidTransition(b, id);
 
       const delta = extractTextPart(chunk.content); // NOTE: may be list of parts
+      const messageId =
+        typeof chunkWithIds.id === "string" ? chunkWithIds.id : undefined;
       const line = ensure(b, id, () => ({
         kind: "assistant",
         id,
         text: "",
         phase: "streaming",
+        messageId,
       }));
       if (delta) {
         const newText = line.text + delta;
@@ -772,16 +799,29 @@ export function onChunk(
         // Try to split at paragraph boundary (only if streaming enabled)
         if (!trySplitContent(b, id, "assistant", newText)) {
           // No split - normal accumulation
-          b.byId.set(id, { ...line, text: newText });
+          b.byId.set(id, {
+            ...line,
+            text: newText,
+            messageId: messageId ?? line.messageId,
+          });
         }
+      } else if (messageId && line.messageId !== messageId) {
+        b.byId.set(id, { ...line, messageId });
       }
       break;
     }
 
     case "user_message": {
-      // Use otid if available, fall back to id (server sends otid: null for summary messages)
-      const chunkWithId = chunk as LettaStreamingResponse & { id?: string };
-      const id = chunk.otid || chunkWithId.id;
+      const chunkWithIds = chunk as LettaStreamingResponse & {
+        id?: string;
+        otid?: string;
+      };
+      const messageId =
+        typeof chunkWithIds.id === "string" ? chunkWithIds.id : undefined;
+      const otid =
+        typeof chunkWithIds.otid === "string" ? chunkWithIds.otid : undefined;
+      const mappedLineId = otid ? b.userLineIdByOtid.get(otid) : undefined;
+      const id = mappedLineId || otid || messageId;
       if (!id) break;
 
       // Handle otid transition (mark previous line as finished)
@@ -806,8 +846,27 @@ export function onChunk(
         // Legacy servers may emit compaction completion as a user_message
         // system alert instead of summary_message.
         markCompactionCompleted(ctx);
+        break;
       }
-      // If not a summary, ignore it (user messages aren't rendered during streaming)
+
+      const line = ensure(b, id, () => ({
+        kind: "user",
+        id,
+        text: rawText,
+        messageId,
+        otid,
+      }));
+      if (line.kind === "user") {
+        b.byId.set(id, {
+          ...line,
+          text: line.text || rawText,
+          messageId: messageId ?? line.messageId,
+          otid: otid ?? line.otid,
+        });
+      }
+      if (otid) {
+        b.userLineIdByOtid.set(otid, id);
+      }
       break;
     }
 

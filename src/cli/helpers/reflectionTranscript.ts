@@ -28,6 +28,7 @@ type TranscriptEntry =
       text: string;
       captured_at: string;
       source_line_id?: string;
+      source_message_id?: string;
     }
   | {
       kind: "tool_call";
@@ -37,6 +38,7 @@ type TranscriptEntry =
       resultOk?: boolean;
       captured_at: string;
       source_line_id?: string;
+      source_message_id?: string;
     };
 
 export interface ReflectionTranscriptPaths {
@@ -447,6 +449,7 @@ function lineToTranscriptEntry(
         text: line.text,
         captured_at: capturedAt,
         source_line_id: line.id,
+        source_message_id: line.messageId,
       };
     case "assistant":
       return {
@@ -454,6 +457,7 @@ function lineToTranscriptEntry(
         text: line.text,
         captured_at: capturedAt,
         source_line_id: line.id,
+        source_message_id: line.messageId,
       };
     case "reasoning":
       return {
@@ -461,6 +465,7 @@ function lineToTranscriptEntry(
         text: line.text,
         captured_at: capturedAt,
         source_line_id: line.id,
+        source_message_id: line.messageId,
       };
     case "error":
       return {
@@ -652,7 +657,8 @@ export async function buildAutoReflectionPayload(
     .map((line) => parseJsonLine<TranscriptEntry>(line))
     .filter((entry): entry is TranscriptEntry => entry !== null);
   const messageIds = entries
-    .map((entry) => entry.source_line_id)
+    .filter((entry) => entry.kind === "user" || entry.kind === "assistant")
+    .map((entry) => entry.source_message_id)
     .filter((id): id is string => typeof id === "string" && id.length > 0);
   const startMessageId = messageIds[0];
   const endMessageId = messageIds[messageIds.length - 1];

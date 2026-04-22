@@ -106,6 +106,8 @@ export interface SpawnBackgroundSubagentTaskArgs {
   onComplete?: (result: {
     success: boolean;
     error?: string;
+    agentId?: string;
+    conversationId?: string;
   }) => void | Promise<void>;
   /**
    * Optional dependency overrides for tests.
@@ -261,6 +263,37 @@ export async function waitForBackgroundSubagentLink(
   }
 }
 
+export async function waitForBackgroundSubagentAgentId(
+  subagentId: string,
+  timeoutMs: number | null = null,
+  signal?: AbortSignal,
+): Promise<string | null> {
+  const deadline =
+    timeoutMs !== null && timeoutMs > 0 ? Date.now() + timeoutMs : null;
+
+  while (true) {
+    if (signal?.aborted) {
+      return null;
+    }
+
+    const agent = getSubagentSnapshot().agents.find((a) => a.id === subagentId);
+    if (!agent) {
+      return null;
+    }
+    if (agent.agentId) {
+      return agent.agentId;
+    }
+    if (agent.status === "error" || agent.status === "completed") {
+      return agent.agentId ?? null;
+    }
+    if (deadline !== null && Date.now() >= deadline) {
+      return agent.agentId ?? null;
+    }
+
+    await sleep(BACKGROUND_STARTUP_POLL_MS);
+  }
+}
+
 /**
  * Spawn a background subagent task and return task metadata immediately.
  * Notification/hook behavior is identical to Task's background path.
@@ -372,7 +405,12 @@ export function spawnBackgroundSubagentTask(
       });
 
       try {
-        await onComplete?.({ success: result.success, error: result.error });
+        await onComplete?.({
+          success: result.success,
+          error: result.error,
+          agentId: result.agentId,
+          conversationId: result.conversationId,
+        });
       } catch (error) {
         const errorMessage =
           error instanceof Error ? error.message : String(error);
@@ -448,7 +486,12 @@ export function spawnBackgroundSubagentTask(
       completeSubagentFn(subagentId, { success: false, error: errorMessage });
 
       try {
-        await onComplete?.({ success: false, error: errorMessage });
+        await onComplete?.({
+          success: false,
+          error: errorMessage,
+          agentId: existingAgentId,
+          conversationId: existingConversationId,
+        });
       } catch (onCompleteError) {
         const callbackMessage =
           onCompleteError instanceof Error
@@ -654,7 +697,7 @@ export async function task(args: TaskArgs): Promise<string> {
     const linkedAgent = getSubagentSnapshot().agents.find(
       (a) => a.id === subagentId,
     );
-    const agentId = linkedAgent?.agentURL?.split("/agents/")[1] ?? null;
+    const agentId = linkedAgent?.agentId ?? null;
     const agentIdLine = agentId ? `\nAgent ID: ${agentId}` : "";
 
     return `Task running in background with task ID: ${taskId}${agentIdLine}\nOutput file: ${outputFile}\n\nYou will be notified automatically when this task completes — a <task-notification> message will be delivered with the result. No need to poll, sleep-wait, or check the output file. Just continue with your current work.`;

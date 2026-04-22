@@ -290,7 +290,7 @@ function handleInitEvent(
     const agentURL = buildChatUrl(event.agent_id, {
       conversationId: event.conversation_id,
     });
-    updateSubagent(subagentId, { agentURL });
+    updateSubagent(subagentId, { agentId: event.agent_id, agentURL });
   }
   if (event.conversation_id) {
     state.conversationId = event.conversation_id;

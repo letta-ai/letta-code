@@ -21,6 +21,7 @@ export interface SubagentState {
   type: string; // "Explore", "Plan", "code-reviewer", etc.
   description: string;
   status: "pending" | "running" | "completed" | "error";
+  agentId?: string | null;
   agentURL: string | null;
   toolCalls: ToolCall[];
   // Monotonic counter to avoid transient regressions in rendered tool usage.
@@ -179,6 +180,7 @@ export function registerSubagent(
     type: displayType,
     description,
     status: "pending",
+    agentId: null,
     agentURL: null,
     toolCalls: [],
     maxToolCallsSeen: 0,
