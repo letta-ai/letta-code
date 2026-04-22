@@ -6,6 +6,7 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import type { HooksConfig } from "./hooks/types";
 import type { PermissionRules } from "./permissions/types";
+import { getRuntimeContext } from "./runtime-context";
 import { trackBoundaryError } from "./telemetry/errorReporting";
 import { debugWarn } from "./utils/debug.js";
 import { exists, mkdir, readFile, writeFile } from "./utils/fs.js";
@@ -217,6 +218,7 @@ class SettingsManager {
   // Keys explicitly changed by this process. Only these keys are written back,
   // preventing stale in-memory values from clobbering external updates.
   private dirtyKeys = new Set<string>();
+  private secureTokensCache: SecureTokens = {};
 
   // Mark keys as managed AND dirty (i.e. this process owns the value and it
   // should be written back on persist). The only call-site that should add to
@@ -227,6 +229,19 @@ class SettingsManager {
       this.managedKeys.add(key);
       this.dirtyKeys.add(key);
     }
+  }
+
+  private updateSecureTokensCache(tokens: SecureTokens): void {
+    if (tokens.apiKey) {
+      this.secureTokensCache.apiKey = tokens.apiKey;
+    }
+    if (tokens.refreshToken) {
+      this.secureTokensCache.refreshToken = tokens.refreshToken;
+    }
+  }
+
+  private clearSecureTokensCache(): void {
+    this.secureTokensCache = {};
   }
 
   /**
@@ -360,6 +375,7 @@ class SettingsManager {
         if (available) {
           try {
             await setSecureTokens(tokensToMigrate);
+            this.updateSecureTokensCache(tokensToMigrate);
 
             // Remove tokens from settings file
             const updatedSettings = { ...this.settings };
@@ -464,12 +480,19 @@ class SettingsManager {
    */
   async getSettingsWithSecureTokens(): Promise<Settings> {
     const baseSettings = this.getSettings();
-    let secureTokens: SecureTokens = {};
+    let secureTokens: SecureTokens = { ...this.secureTokensCache };
 
-    // Try to get tokens from secrets first
-    const secretsAvailable = await this.isKeychainAvailable();
-    if (secretsAvailable) {
-      secureTokens = await this.getSecureTokens();
+    // Bun 1.3.0 can crash when keychain reads happen while AsyncLocalStorage
+    // runtime scope is active. Reuse cached tokens in that case and let callers
+    // fall back to env/file-backed settings if no cache is available yet.
+    if (!getRuntimeContext()) {
+      const secretsAvailable = await this.isKeychainAvailable();
+      if (secretsAvailable) {
+        secureTokens = {
+          ...secureTokens,
+          ...(await this.getSecureTokens()),
+        };
+      }
     }
 
     // Fallback to tokens in settings file if secrets are not available
@@ -498,6 +521,10 @@ class SettingsManager {
    */
   getSetting<K extends keyof Settings>(key: K): Settings[K] {
     return this.getSettings()[key];
+  }
+
+  getCachedSecureTokens(): SecureTokens {
+    return { ...this.secureTokensCache };
   }
 
   /**
@@ -1749,7 +1776,9 @@ class SettingsManager {
     }
 
     try {
-      return await getSecureTokens();
+      const tokens = await getSecureTokens();
+      this.updateSecureTokensCache(tokens);
+      return tokens;
     } catch (error) {
       trackBoundaryError({
         errorType: "secrets_retrieve_tokens_failed",
@@ -1765,6 +1794,7 @@ class SettingsManager {
    * Store secure tokens in secrets
    */
   async setSecureTokens(tokens: SecureTokens): Promise<void> {
+    this.updateSecureTokensCache(tokens);
     const available = await this.isKeychainAvailable();
     if (!available) {
       debugWarn(
@@ -1794,6 +1824,7 @@ class SettingsManager {
    * Delete secure tokens from secrets
    */
   async deleteSecureTokens(): Promise<void> {
+    this.clearSecureTokensCache();
     const available = await this.isKeychainAvailable();
     if (!available) {
       return;
@@ -1877,6 +1908,7 @@ class SettingsManager {
     this.secretsAvailable = null;
     this.managedKeys.clear();
     this.dirtyKeys.clear();
+    this.clearSecureTokensCache();
   }
 }
 

@@ -3,6 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CommandHookConfig, HookCommand } from "../hooks/types";
+import { runWithRuntimeContext } from "../runtime-context";
 import { settingsManager } from "../settings-manager";
 
 // Type-safe helper to extract command from a hook (tests only use command hooks)
@@ -16,6 +17,7 @@ function asCommand(
 }
 
 import {
+  __setSecretGetOverrideForTests,
   deleteSecureTokens,
   isKeychainAvailable,
   setServiceName,
@@ -264,6 +266,44 @@ describe("Settings Manager - Global Settings", () => {
       expect(typeof settingsWithTokens.tokenExpiresAt).toBe("number");
     },
   );
+
+  test("runtime-scoped lookups reuse cached secure tokens without re-reading secrets", async () => {
+    const originalIsKeychainAvailable =
+      settingsManager.isKeychainAvailable.bind(settingsManager);
+
+    try {
+      settingsManager.isKeychainAvailable = async () => true;
+      __setSecretGetOverrideForTests(async ({ name }) => {
+        if (name === "letta-api-key") {
+          return "sk-runtime-cache";
+        }
+        if (name === "letta-refresh-token") {
+          return "rt-runtime-cache";
+        }
+        return null;
+      });
+
+      const initialSettings =
+        await settingsManager.getSettingsWithSecureTokens();
+      expect(initialSettings.env?.LETTA_API_KEY).toBe("sk-runtime-cache");
+      expect(initialSettings.refreshToken).toBe("rt-runtime-cache");
+
+      __setSecretGetOverrideForTests(async () => {
+        throw new Error("runtime-scoped lookup should reuse cached tokens");
+      });
+
+      const runtimeSettings = await runWithRuntimeContext(
+        { agentId: "agent-runtime-test" },
+        () => settingsManager.getSettingsWithSecureTokens(),
+      );
+
+      expect(runtimeSettings.env?.LETTA_API_KEY).toBe("sk-runtime-cache");
+      expect(runtimeSettings.refreshToken).toBe("rt-runtime-cache");
+    } finally {
+      settingsManager.isKeychainAvailable = originalIsKeychainAvailable;
+      __setSecretGetOverrideForTests(null);
+    }
+  });
 
   test("LETTA_BASE_URL should not be cached in settings", () => {
     // This test verifies that LETTA_BASE_URL is NOT persisted to settings

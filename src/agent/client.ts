@@ -2,7 +2,7 @@ import { hostname } from "node:os";
 import Letta from "@letta-ai/letta-client";
 import packageJson from "../../package.json";
 import { LETTA_CLOUD_API_URL, refreshAccessToken } from "../auth/oauth";
-import { settingsManager } from "../settings-manager";
+import { type Settings, settingsManager } from "../settings-manager";
 import { trackBoundaryError } from "../telemetry/errorReporting";
 import { isDebugEnabled } from "../utils/debug";
 import { createTimingFetch, isTimingsEnabled } from "../utils/timing";
@@ -111,7 +111,22 @@ export function getServerUrl(): string {
 }
 
 export async function getClient() {
-  const settings = await settingsManager.getSettingsWithSecureTokens();
+  const baseSettings = settingsManager.getSettings();
+  const cachedTokens = settingsManager.getCachedSecureTokens();
+  const cachedSettings: Settings = {
+    ...baseSettings,
+    env: {
+      ...baseSettings.env,
+      ...(cachedTokens.apiKey && { LETTA_API_KEY: cachedTokens.apiKey }),
+    },
+    refreshToken: cachedTokens.refreshToken ?? baseSettings.refreshToken,
+  };
+  const settings =
+    process.env.LETTA_API_KEY ||
+    cachedSettings.env?.LETTA_API_KEY ||
+    cachedSettings.refreshToken
+      ? cachedSettings
+      : await settingsManager.getSettingsWithSecureTokens();
 
   let apiKey = process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
 
