@@ -1,5 +1,6 @@
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
+import { getCurrentWorkingDirectory } from "../../runtime-context";
 import { validateRequiredParams } from "./validation.js";
 
 interface ApplyPatchArgs {
@@ -64,7 +65,7 @@ export async function apply_patch(
     throw new Error("No files were modified.");
   }
 
-  const cwd = process.env.USER_CWD || process.cwd();
+  const cwd = getCurrentWorkingDirectory();
   const affected: AffectedPaths = { added: [], modified: [], deleted: [] };
 
   for (const op of operations) {

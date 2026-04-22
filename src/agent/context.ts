@@ -3,6 +3,10 @@
  * This allows tools to access the current agent ID without threading it through params.
  */
 
+import {
+  getRuntimeContext,
+  updateRuntimeContext,
+} from "../runtime-context";
 import { ALL_SKILL_SOURCES } from "./skillSources";
 import type { SkillSource } from "./skills";
 
@@ -51,6 +55,14 @@ export function setAgentContext(
   context.skillsDirectory = skillsDirectory || null;
   context.skillSources =
     skillSources !== undefined ? [...skillSources] : [...ALL_SKILL_SOURCES];
+  if (getRuntimeContext()) {
+    updateRuntimeContext({
+      agentId,
+      skillsDirectory: skillsDirectory || null,
+      skillSources:
+        skillSources !== undefined ? [...skillSources] : [...ALL_SKILL_SOURCES],
+    });
+  }
 }
 
 /**
@@ -58,6 +70,9 @@ export function setAgentContext(
  */
 export function setCurrentAgentId(agentId: string): void {
   context.agentId = agentId;
+  if (getRuntimeContext()) {
+    updateRuntimeContext({ agentId });
+  }
 }
 
 /**
@@ -65,6 +80,13 @@ export function setCurrentAgentId(agentId: string): void {
  * @throws Error if no agent context is set
  */
 export function getCurrentAgentId(): string {
+  const runtimeContext = getRuntimeContext();
+  if (runtimeContext && "agentId" in runtimeContext) {
+    if (runtimeContext.agentId) {
+      return runtimeContext.agentId;
+    }
+    throw new Error("No agent context set. Agent ID is required.");
+  }
   if (!context.agentId) {
     throw new Error("No agent context set. Agent ID is required.");
   }
@@ -76,6 +98,10 @@ export function getCurrentAgentId(): string {
  * @returns The skills directory path or null if not set
  */
 export function getSkillsDirectory(): string | null {
+  const runtimeContext = getRuntimeContext();
+  if (runtimeContext && "skillsDirectory" in runtimeContext) {
+    return runtimeContext.skillsDirectory ?? null;
+  }
   return context.skillsDirectory;
 }
 
@@ -83,6 +109,10 @@ export function getSkillsDirectory(): string | null {
  * Get enabled skill sources for discovery/injection.
  */
 export function getSkillSources(): SkillSource[] {
+  const runtimeContext = getRuntimeContext();
+  if (runtimeContext?.skillSources) {
+    return [...runtimeContext.skillSources];
+  }
   return [...context.skillSources];
 }
 
@@ -99,6 +129,9 @@ export function getNoSkills(): boolean {
  */
 export function setConversationId(conversationId: string | null): void {
   context.conversationId = conversationId;
+  if (getRuntimeContext()) {
+    updateRuntimeContext({ conversationId });
+  }
 }
 
 /**
@@ -106,5 +139,9 @@ export function setConversationId(conversationId: string | null): void {
  * @returns The conversation ID or null if not set
  */
 export function getConversationId(): string | null {
+  const runtimeContext = getRuntimeContext();
+  if (runtimeContext && "conversationId" in runtimeContext) {
+    return runtimeContext.conversationId ?? null;
+  }
   return context.conversationId;
 }

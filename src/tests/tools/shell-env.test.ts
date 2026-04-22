@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import * as path from "node:path";
 import { getMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
+import { runWithRuntimeContext } from "../../runtime-context";
 import { settingsManager } from "../../settings-manager";
 import {
   ensureLettaShimDir,
@@ -190,6 +191,63 @@ test("getShellEnv injects AGENT_ID aliases", () => {
     expect(env.AGENT_ID).toBeTruthy();
     expect(env.LETTA_AGENT_ID).toBe(env.AGENT_ID);
   });
+});
+
+test("getShellEnv prefers runtime-scoped agent, conversation, and cwd", () => {
+  const env = runWithRuntimeContext(
+    {
+      agentId: "agent-runtime-scope",
+      conversationId: "conv-runtime-scope",
+      workingDirectory: "/tmp/runtime-scope-cwd",
+    },
+    () => getShellEnv(),
+  );
+
+  expect(env.AGENT_ID).toBe("agent-runtime-scope");
+  expect(env.LETTA_AGENT_ID).toBe("agent-runtime-scope");
+  expect(env.CONVERSATION_ID).toBe("conv-runtime-scope");
+  expect(env.LETTA_CONVERSATION_ID).toBe("conv-runtime-scope");
+  expect(env.USER_CWD).toBe("/tmp/runtime-scope-cwd");
+});
+
+test("getShellEnv isolates overlapping runtime scopes", async () => {
+  let releaseAgentA!: () => void;
+  const waitForAgentA = new Promise<void>((resolve) => {
+    releaseAgentA = resolve;
+  });
+
+  const taskA = runWithRuntimeContext(
+    {
+      agentId: "agent-a",
+      conversationId: "conv-a",
+      workingDirectory: "/tmp/agent-a",
+    },
+    async () => {
+      await waitForAgentA;
+      return getShellEnv();
+    },
+  );
+
+  const taskB = runWithRuntimeContext(
+    {
+      agentId: "agent-b",
+      conversationId: "conv-b",
+      workingDirectory: "/tmp/agent-b",
+    },
+    async () => {
+      releaseAgentA();
+      return getShellEnv();
+    },
+  );
+
+  const [envA, envB] = await Promise.all([taskA, taskB]);
+
+  expect(envA.AGENT_ID).toBe("agent-a");
+  expect(envA.CONVERSATION_ID).toBe("conv-a");
+  expect(envA.USER_CWD).toBe("/tmp/agent-a");
+  expect(envB.AGENT_ID).toBe("agent-b");
+  expect(envB.CONVERSATION_ID).toBe("conv-b");
+  expect(envB.USER_CWD).toBe("/tmp/agent-b");
 });
 
 test("getShellEnv does not inject MEMORY_DIR aliases when memfs is disabled", () => {

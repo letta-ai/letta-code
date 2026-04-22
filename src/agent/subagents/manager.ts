@@ -26,6 +26,7 @@ import {
   resolveAllowedMemoryRoots,
 } from "../../permissions/memoryScope";
 import { permissionMode } from "../../permissions/mode";
+import { getCurrentWorkingDirectory } from "../../runtime-context";
 import { sessionPermissions } from "../../permissions/session";
 import { settingsManager } from "../../settings-manager";
 import { resolveLettaInvocation } from "../../tools/impl/shellEnv";
@@ -492,7 +493,7 @@ interface SubagentLauncher {
 
 export function resolveSubagentWorkingDirectory(
   env: NodeJS.ProcessEnv = process.env,
-  fallbackCwd: string = process.cwd(),
+  fallbackCwd: string = getCurrentWorkingDirectory(),
 ): string {
   return env.USER_CWD || fallbackCwd;
 }
@@ -721,6 +722,7 @@ async function executeSubagent(
       ...(inheritedApiKey && { LETTA_API_KEY: inheritedApiKey }),
       ...(inheritedBaseUrl && { LETTA_BASE_URL: inheritedBaseUrl }),
       LETTA_CODE_AGENT_ROLE: "subagent",
+      USER_CWD: subagentWorkingDirectory,
       ...(parentAgentId && { LETTA_PARENT_AGENT_ID: parentAgentId }),
     };
 

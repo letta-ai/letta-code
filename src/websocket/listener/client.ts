@@ -63,6 +63,7 @@ import {
   createSharedReminderState,
   resetSharedReminderState,
 } from "../../reminders/state";
+import { getCurrentWorkingDirectory } from "../../runtime-context";
 import { settingsManager } from "../../settings-manager";
 import { telemetry } from "../../telemetry";
 import { trackBoundaryError } from "../../telemetry/errorReporting";
@@ -3950,7 +3951,7 @@ async function handleCwdChange(
 }
 
 function createRuntime(): ListenerRuntime {
-  const bootWorkingDirectory = process.env.USER_CWD || process.cwd();
+  const bootWorkingDirectory = getCurrentWorkingDirectory();
   return {
     socket: null,
     heartbeatInterval: null,

@@ -146,14 +146,12 @@ export function deriveAgentId(
   const explicit = explicitAgentId?.trim();
   if (explicit) return explicit;
 
-  const envAgentId = (env.AGENT_ID || env.LETTA_AGENT_ID || "").trim();
-  if (envAgentId) return envAgentId;
-
   try {
     const fromContext = getCurrentAgentId().trim();
     return fromContext || null;
   } catch {
-    return null;
+    const envAgentId = (env.AGENT_ID || env.LETTA_AGENT_ID || "").trim();
+    return envAgentId || null;
   }
 }
 

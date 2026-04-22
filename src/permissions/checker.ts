@@ -139,6 +139,7 @@ export function checkPermission(
   permissions: PermissionRules,
   workingDirectory: string = process.cwd(),
   modeState?: PermissionModeState,
+  agentId?: string,
 ): PermissionCheckResult {
   const engine: PermissionEngine = isPermissionsV2Enabled() ? "v2" : "v1";
   const primary = checkPermissionForEngine(
@@ -148,6 +149,7 @@ export function checkPermission(
     permissions,
     workingDirectory,
     modeState,
+    agentId,
   );
 
   let result: PermissionCheckResult = primary.result;
@@ -178,6 +180,7 @@ export function checkPermission(
       permissions,
       workingDirectory,
       modeState,
+      agentId,
     );
 
     const mismatch =
@@ -253,6 +256,7 @@ function checkPermissionForEngine(
   permissions: PermissionRules,
   workingDirectory: string,
   modeState?: PermissionModeState,
+  agentId?: string,
 ): { result: PermissionCheckResult; trace: PermissionCheckTrace } {
   const canonicalTool = canonicalToolName(toolName);
   const queryTool = engine === "v2" ? canonicalTool : toolName;
@@ -269,6 +273,7 @@ function checkPermissionForEngine(
     toolName,
     toolArgs,
     workingDirectory,
+    { currentAgentId: agentId },
   );
   if (guardResult) {
     traceEvent(trace, "cross-agent-guard", guardResult.reason);
@@ -419,8 +424,8 @@ function checkPermissionForEngine(
     }
     if (shellCommand) {
       try {
-        const agentId = getCurrentAgentId();
-        if (isMemoryDirCommand(shellCommand, agentId)) {
+        const resolvedAgentId = agentId ?? getCurrentAgentId();
+        if (isMemoryDirCommand(shellCommand, resolvedAgentId)) {
           traceEvent(
             trace,
             "memory-dir-auto-allow",
@@ -807,6 +812,7 @@ export async function checkPermissionWithHooks(
   permissions: PermissionRules,
   workingDirectory: string = process.cwd(),
   modeState?: PermissionModeState,
+  agentId?: string,
 ): Promise<PermissionCheckResult> {
   // First, check permission using normal rules
   const result = checkPermission(
@@ -815,6 +821,7 @@ export async function checkPermissionWithHooks(
     permissions,
     workingDirectory,
     modeState,
+    agentId,
   );
 
   // If decision is "ask", run PermissionRequest hooks to see if they auto-allow/deny
@@ -825,6 +832,7 @@ export async function checkPermissionWithHooks(
       "ask",
       undefined,
       workingDirectory,
+      agentId,
     );
 
     // If hook blocked (exit code 2), deny the permission

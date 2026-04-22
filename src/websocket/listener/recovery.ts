@@ -440,6 +440,7 @@ export async function recoverApprovalStateForSync(
       missingNameReason: "Tool call incomplete - missing name",
       workingDirectory,
       permissionModeState,
+      agentId: scope.agent_id,
     });
   const autoDecisions = buildRecoveredAutoDecisions(autoAllowed, autoDenied);
 
@@ -561,6 +562,7 @@ export async function resolveRecoveredApprovalResponse(
             recovered.agentId,
             recovered.conversationId,
           ),
+          agentId: recovered.agentId,
         },
       );
 

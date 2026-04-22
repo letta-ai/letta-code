@@ -12,6 +12,7 @@ import { fileURLToPath } from "node:url";
 import { getServerUrl } from "../../agent/client";
 import { getConversationId, getCurrentAgentId } from "../../agent/context";
 import { getMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
+import { getCurrentWorkingDirectory } from "../../runtime-context";
 import { settingsManager } from "../../settings-manager";
 
 /**
@@ -194,6 +195,8 @@ export function getShellEnv(): NodeJS.ProcessEnv {
       ? `${pathPrefixes.join(path.delimiter)}${path.delimiter}${existingPath}`
       : pathPrefixes.join(path.delimiter);
   }
+
+  env.USER_CWD = getCurrentWorkingDirectory();
 
   // Add Letta context for skill scripts.
   // Prefer explicit agent context, but fall back to inherited env values.

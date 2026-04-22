@@ -8,6 +8,7 @@ import {
   SUPPORTED_CHANNEL_IDS,
   type SupportedChannelId,
 } from "../channels/types";
+import type { RuntimeContextSnapshot } from "../runtime-context";
 import { settingsManager } from "../settings-manager";
 import { toolFilter } from "./filter";
 import {
@@ -144,6 +145,7 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
   workingDirectory?: string;
   permissionModeState?: PermissionModeState;
   channelToolScope?: MessageChannelToolDiscoveryScope | null;
+  runtimeContext?: Partial<RuntimeContextSnapshot>;
 }): Promise<PreparedScopeToolContext> {
   const {
     modelIdentifier,
@@ -152,6 +154,7 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
     workingDirectory,
     permissionModeState,
     channelToolScope,
+    runtimeContext,
   } = params;
   const effectiveModel =
     modelIdentifier && modelIdentifier.length > 0
@@ -166,6 +169,7 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
         workingDirectory,
         permissionModeState,
         channelToolScope,
+        runtimeContext,
       },
     );
 
@@ -187,6 +191,7 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
       workingDirectory,
       permissionModeState,
       channelToolScope,
+      runtimeContext,
     },
   );
 
@@ -294,6 +299,11 @@ export async function prepareToolExecutionContextForScope(params: {
     exclude,
     workingDirectory,
     permissionModeState,
+    runtimeContext: {
+      agentId,
+      conversationId: conversationId ?? "default",
+      workingDirectory,
+    },
     channelToolScope: resolveConversationChannelToolScope(
       agentId,
       conversationId ?? "default",

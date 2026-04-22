@@ -1,4 +1,5 @@
 import * as path from "node:path";
+import { getCurrentWorkingDirectory } from "../../runtime-context";
 import { read, type ToolReturnContent } from "./Read";
 import { validateRequiredParams } from "./validation.js";
 
@@ -25,7 +26,7 @@ export async function view_image(
 ): Promise<{ content: ToolReturnContent }> {
   validateRequiredParams(args, ["path"], "view_image");
 
-  const userCwd = process.env.USER_CWD || process.cwd();
+  const userCwd = getCurrentWorkingDirectory();
   const resolvedPath = path.isAbsolute(args.path)
     ? args.path
     : path.resolve(userCwd, args.path);

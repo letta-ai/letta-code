@@ -184,6 +184,7 @@ export async function resolveStaleApprovals(
         missingNameReason: "Tool call incomplete - missing name",
         workingDirectory: recoveryWorkingDirectory,
         permissionModeState,
+        agentId: runtime.agentId,
       });
 
     const decisions: ApprovalDecision[] = [
@@ -267,6 +268,7 @@ export async function resolveStaleApprovals(
                   missingNameReason: "Tool call incomplete - missing name",
                   workingDirectory: recoveryWorkingDirectory,
                   permissionModeState,
+                  agentId: runtime.agentId,
                 },
               );
 

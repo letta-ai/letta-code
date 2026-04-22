@@ -1,6 +1,12 @@
 import * as nodeFs from "node:fs/promises";
 import * as nodePath from "node:path";
 import { getDisplayableToolReturn } from "../agent/approval-execution";
+import {
+  getConversationId,
+  getCurrentAgentId,
+  getSkillSources,
+  getSkillsDirectory,
+} from "../agent/context";
 import { getModelInfo } from "../agent/model";
 import { getAllSubagentConfigs } from "../agent/subagents";
 import {
@@ -21,6 +27,12 @@ import {
   type PermissionMode,
 } from "../permissions/mode";
 import { OPENAI_CODEX_PROVIDER_NAME } from "../providers/openai-codex-provider";
+import {
+  getCurrentWorkingDirectory,
+  getRuntimeContext,
+  runWithRuntimeContext,
+  type RuntimeContextSnapshot,
+} from "../runtime-context";
 import { telemetry } from "../telemetry";
 import { debugLog } from "../utils/debug";
 import {
@@ -401,6 +413,7 @@ type ToolExecutionContextSnapshot = {
   externalTools: Map<string, ExternalToolDefinition>;
   externalExecutor?: ExternalToolExecutor;
   workingDirectory: string;
+  runtimeContext: RuntimeContextSnapshot;
   permissionModeState: PermissionModeState;
 };
 
@@ -436,6 +449,50 @@ function saveExecutionContext(snapshot: ToolExecutionContextSnapshot): string {
   }
 
   return contextId;
+}
+
+function buildExecutionRuntimeContextSnapshot(options?: {
+  workingDirectory?: string;
+  permissionModeState?: PermissionModeState;
+  runtimeContext?: Partial<RuntimeContextSnapshot>;
+}): RuntimeContextSnapshot {
+  const mergedScope: RuntimeContextSnapshot = {
+    ...(getRuntimeContext() ?? {}),
+    ...(options?.runtimeContext ?? {}),
+  };
+
+  if (mergedScope.agentId === undefined) {
+    try {
+      mergedScope.agentId = getCurrentAgentId();
+    } catch {
+      // Leave unset when no scoped or global agent context exists.
+    }
+  }
+
+  if (mergedScope.conversationId === undefined) {
+    mergedScope.conversationId = getConversationId();
+  }
+
+  if (mergedScope.skillsDirectory === undefined) {
+    mergedScope.skillsDirectory = getSkillsDirectory();
+  }
+
+  if (mergedScope.skillSources === undefined) {
+    mergedScope.skillSources = getSkillSources();
+  }
+
+  mergedScope.workingDirectory =
+    options?.workingDirectory ??
+    mergedScope.workingDirectory ??
+    getCurrentWorkingDirectory();
+  mergedScope.permissionMode =
+    options?.permissionModeState?.mode ?? mergedScope.permissionMode;
+  mergedScope.planFilePath =
+    options?.permissionModeState?.planFilePath ?? mergedScope.planFilePath;
+  mergedScope.modeBeforePlan =
+    options?.permissionModeState?.modeBeforePlan ?? mergedScope.modeBeforePlan;
+
+  return mergedScope;
 }
 
 function getExecutionContextById(
@@ -766,14 +823,17 @@ function capturePreparedToolExecutionContext(
   options?: {
     workingDirectory?: string;
     permissionModeState?: PermissionModeState;
+    runtimeContext?: Partial<RuntimeContextSnapshot>;
   },
 ): PreparedToolExecutionContext {
+  const runtimeContext = buildExecutionRuntimeContextSnapshot(options);
   const executionSnapshot: ToolExecutionContextSnapshot = {
     toolRegistry: withDynamicMessageChannelCache(snapshot.toolRegistry),
     externalTools: new Map(snapshot.externalTools),
     externalExecutor: snapshot.externalExecutor,
     workingDirectory:
-      options?.workingDirectory ?? process.env.USER_CWD ?? process.cwd(),
+      runtimeContext.workingDirectory ?? getCurrentWorkingDirectory(),
+    runtimeContext,
     permissionModeState: getEffectivePermissionModeState(
       options?.permissionModeState,
     ),
@@ -796,7 +856,7 @@ function capturePreparedToolExecutionContext(
  * exact snapshot even if the global registry changes between dispatch and execute.
  */
 export function captureToolExecutionContext(
-  workingDirectory: string = process.env.USER_CWD || process.cwd(),
+  workingDirectory: string = getCurrentWorkingDirectory(),
   permissionModeState?: PermissionModeState,
 ): CapturedToolExecutionContext {
   return capturePreparedToolExecutionContext(
@@ -815,6 +875,7 @@ export function captureToolExecutionContext(
 export async function prepareCurrentToolExecutionContext(options?: {
   workingDirectory?: string;
   permissionModeState?: PermissionModeState;
+  runtimeContext?: Partial<RuntimeContextSnapshot>;
 }): Promise<PreparedToolExecutionContext> {
   await waitForToolsetReady();
   const currentToolNames = maybeAppendChannelTools(
@@ -838,6 +899,7 @@ export async function prepareToolExecutionContextForSpecificTools(
     workingDirectory?: string;
     permissionModeState?: PermissionModeState;
     channelToolScope?: MessageChannelToolDiscoveryScope | null;
+    runtimeContext?: Partial<RuntimeContextSnapshot>;
   },
 ): Promise<PreparedToolExecutionContext> {
   const toolRegistrySnapshot = await buildSpecificToolRegistry(
@@ -861,6 +923,7 @@ export async function prepareToolExecutionContextForModel(
     workingDirectory?: string;
     permissionModeState?: PermissionModeState;
     channelToolScope?: MessageChannelToolDiscoveryScope | null;
+    runtimeContext?: Partial<RuntimeContextSnapshot>;
   },
 ): Promise<PreparedToolExecutionContext> {
   const toolRegistrySnapshot = await buildRegistryForModel(
@@ -875,27 +938,6 @@ export async function prepareToolExecutionContextForModel(
     },
     options,
   );
-}
-
-async function withExecutionWorkingDirectory<T>(
-  workingDirectory: string | undefined,
-  fn: () => Promise<T>,
-): Promise<T> {
-  if (!workingDirectory) {
-    return fn();
-  }
-
-  const previousUserCwd = process.env.USER_CWD;
-  process.env.USER_CWD = workingDirectory;
-  try {
-    return await fn();
-  } finally {
-    if (previousUserCwd === undefined) {
-      delete process.env.USER_CWD;
-    } else {
-      process.env.USER_CWD = previousUserCwd;
-    }
-  }
 }
 
 /**
@@ -929,6 +971,7 @@ export async function checkToolPermission(
   toolArgs: ToolArgs,
   workingDirectory: string = process.cwd(),
   permissionModeStateArg?: PermissionModeState,
+  agentIdArg?: string,
 ): Promise<{
   decision: "allow" | "deny" | "ask";
   matchedRule?: string;
@@ -938,12 +981,23 @@ export async function checkToolPermission(
   const { loadPermissions } = await import("../permissions/loader");
 
   const permissions = await loadPermissions(workingDirectory);
-  return checkPermissionWithHooks(
-    toolName,
-    toolArgs,
-    permissions,
-    workingDirectory,
-    permissionModeStateArg,
+  return runWithRuntimeContext(
+    {
+      ...(agentIdArg ? { agentId: agentIdArg } : {}),
+      workingDirectory,
+      permissionMode: permissionModeStateArg?.mode,
+      planFilePath: permissionModeStateArg?.planFilePath ?? null,
+      modeBeforePlan: permissionModeStateArg?.modeBeforePlan ?? null,
+    },
+    () =>
+      checkPermissionWithHooks(
+        toolName,
+        toolArgs,
+        permissions,
+        workingDirectory,
+        permissionModeStateArg,
+        agentIdArg,
+      ),
   );
 }
 
@@ -1494,7 +1548,19 @@ export async function executeTool(
     context?.externalTools ?? getExternalToolsRegistry();
   const activeExternalExecutor =
     context?.externalExecutor ?? getExternalToolExecutor();
-  const workingDirectory = context?.workingDirectory;
+  const executionScope = context?.runtimeContext
+    ? buildExecutionRuntimeContextSnapshot({
+        workingDirectory: context.runtimeContext.workingDirectory ?? undefined,
+        permissionModeState: context.permissionModeState,
+        runtimeContext: context.runtimeContext,
+      })
+    : buildExecutionRuntimeContextSnapshot({
+        workingDirectory: context?.workingDirectory,
+        permissionModeState: context?.permissionModeState,
+      });
+  const workingDirectory =
+    executionScope.workingDirectory ?? getCurrentWorkingDirectory();
+  const scopedAgentId = executionScope.agentId ?? undefined;
 
   // Check if this is an external tool (SDK-executed)
   if (activeExternalTools.has(name)) {
@@ -1524,22 +1590,24 @@ export async function executeTool(
 
   const startTime = Date.now();
 
-  // Run PreToolUse hooks - can block tool execution
-  const preHookResult = await runPreToolUseHooks(
-    internalName,
-    args as Record<string, unknown>,
-    options?.toolCallId,
-    workingDirectory,
-  );
-  if (preHookResult.blocked) {
-    const feedback = preHookResult.feedback.join("\n") || "Blocked by hook";
-    return {
-      toolReturn: `Error: Tool execution blocked by hook. ${feedback}`,
-      status: "error",
-    };
-  }
+  const run = async (): Promise<ToolExecutionResult> => {
+    // Run PreToolUse hooks - can block tool execution
+    const preHookResult = await runPreToolUseHooks(
+      internalName,
+      args as Record<string, unknown>,
+      options?.toolCallId,
+      workingDirectory,
+      scopedAgentId,
+    );
+    if (preHookResult.blocked) {
+      const feedback = preHookResult.feedback.join("\n") || "Blocked by hook";
+      return {
+        toolReturn: `Error: Tool execution blocked by hook. ${feedback}`,
+        status: "error",
+      };
+    }
 
-  try {
+    try {
     // Inject options for tools that support them without altering schemas
     let enhancedArgs = args;
 
@@ -1603,9 +1671,7 @@ export async function executeTool(
       };
     }
 
-    const result = await withExecutionWorkingDirectory(workingDirectory, () =>
-      tool.fn(enhancedArgs),
-    );
+    const result = await tool.fn(enhancedArgs);
     const duration = Date.now() - startTime;
 
     // Refresh the file index in the background after every tool execution
@@ -1624,7 +1690,7 @@ export async function executeTool(
         try {
           const resolvedPath = nodePath.isAbsolute(filePath)
             ? filePath
-            : nodePath.resolve(process.env.USER_CWD || process.cwd(), filePath);
+            : nodePath.resolve(workingDirectory, filePath);
           const content = await nodeFs.readFile(resolvedPath, "utf-8");
           options.onFileWrite(resolvedPath, content);
         } catch {
@@ -1702,7 +1768,7 @@ export async function executeTool(
         },
         options?.toolCallId,
         workingDirectory,
-        undefined, // agentId
+        scopedAgentId,
         undefined, // precedingReasoning - not available in tool manager context
         undefined, // precedingAssistantMessage - not available in tool manager context
       );
@@ -1726,7 +1792,7 @@ export async function executeTool(
           "tool_error", // error type for returned errors
           options?.toolCallId,
           workingDirectory,
-          undefined, // agentId
+          scopedAgentId,
           undefined, // precedingReasoning - not available in tool manager context
           undefined, // precedingAssistantMessage - not available in tool manager context
         );
@@ -1809,7 +1875,7 @@ export async function executeTool(
         { status: "error", output: errorMessage },
         options?.toolCallId,
         workingDirectory,
-        undefined, // agentId
+        scopedAgentId,
         undefined, // precedingReasoning - not available in tool manager context
         undefined, // precedingAssistantMessage - not available in tool manager context
       );
@@ -1828,7 +1894,7 @@ export async function executeTool(
         errorType,
         options?.toolCallId,
         workingDirectory,
-        undefined, // agentId
+        scopedAgentId,
         undefined, // precedingReasoning - not available in tool manager context
         undefined, // precedingAssistantMessage - not available in tool manager context
       );
@@ -1854,7 +1920,10 @@ export async function executeTool(
       toolReturn: finalErrorMessage,
       status: "error",
     };
-  }
+    }
+  };
+
+  return runWithRuntimeContext(executionScope, run);
 }
 
 /**

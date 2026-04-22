@@ -235,6 +235,7 @@ export async function handleApprovalStop(params: {
       missingNameReason: "Tool call incomplete - missing name",
       workingDirectory: turnWorkingDirectory,
       permissionModeState: turnPermissionModeState,
+      agentId,
     });
 
   let pendingNeedsUserInput = [...needsUserInput];
@@ -397,6 +398,7 @@ export async function handleApprovalStop(params: {
                 missingNameReason: "Tool call incomplete - missing name",
                 workingDirectory: turnWorkingDirectory,
                 permissionModeState: turnPermissionModeState,
+                agentId,
               },
             );
 

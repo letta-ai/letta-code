@@ -302,6 +302,8 @@ export interface PermissionRequestHookInput extends HookInputBase {
   tool_name: string;
   /** Tool input arguments */
   tool_input: Record<string, unknown>;
+  /** Agent ID if available */
+  agent_id?: string;
   /** Permission being requested */
   permission: {
     type: "allow" | "deny" | "ask";

@@ -6,9 +6,13 @@ import {
   expect,
   test,
 } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { clearDynamicMessageChannelToolCache } from "../../channels/messageTool";
 import { ChannelRegistry, getChannelRegistry } from "../../channels/registry";
 import type { ChannelAdapter } from "../../channels/types";
+import { runWithRuntimeContext } from "../../runtime-context";
 import {
   captureToolExecutionContext,
   clearCapturedToolExecutionContexts,
@@ -168,6 +172,55 @@ describe("tool execution context snapshot", () => {
     ).action;
 
     expect(actionParameter?.enum).toEqual(["send", "react", "upload-file"]);
+  });
+
+  test("captures scoped working directories per execution context", async () => {
+    await loadSpecificTools(["Read"]);
+
+    const tempRoot = mkdtempSync(join(tmpdir(), "tool-context-scope-"));
+    const dirA = join(tempRoot, "agent-a");
+    const dirB = join(tempRoot, "agent-b");
+    const fileName = "scope.txt";
+
+    try {
+      mkdirSync(dirA, { recursive: true });
+      mkdirSync(dirB, { recursive: true });
+      writeFileSync(join(dirA, fileName), "from-agent-a", "utf8");
+      writeFileSync(join(dirB, fileName), "from-agent-b", "utf8");
+
+      const contextA = runWithRuntimeContext(
+        {
+          agentId: "agent-a",
+          conversationId: "conv-a",
+          workingDirectory: dirA,
+        },
+        () => captureToolExecutionContext(),
+      );
+      const contextB = runWithRuntimeContext(
+        {
+          agentId: "agent-b",
+          conversationId: "conv-b",
+          workingDirectory: dirB,
+        },
+        () => captureToolExecutionContext(),
+      );
+
+      const resultA = await executeTool(
+        "Read",
+        { file_path: fileName },
+        { toolContextId: contextA.contextId },
+      );
+      const resultB = await executeTool(
+        "Read",
+        { file_path: fileName },
+        { toolContextId: contextB.contextId },
+      );
+
+      expect(asText(resultA.toolReturn)).toContain("from-agent-a");
+      expect(asText(resultB.toolReturn)).toContain("from-agent-b");
+    } finally {
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
   });
 
   test("refreshes the loaded MessageChannel schema for synchronous readers", async () => {

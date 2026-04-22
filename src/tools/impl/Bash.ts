@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { resolve } from "node:path";
 import { INTERRUPTED_BY_USER } from "../../constants";
+import { getCurrentWorkingDirectory } from "../../runtime-context";
 import {
   appendBackgroundProcessOutput,
   appendToOutputFile,
@@ -176,7 +177,7 @@ export async function bash(args: BashArgs): Promise<BashResult> {
     signal,
     onOutput,
   } = args;
-  const userCwd = process.env.USER_CWD || process.cwd();
+  const userCwd = getCurrentWorkingDirectory();
 
   // Block worktree creation outside .letta/worktrees/
   const worktreeError = validateWorktreePath(command, userCwd);

@@ -8,6 +8,7 @@ import {
   getBundledSkills,
   SKILLS_DIR,
 } from "../../agent/skills";
+import { getCurrentWorkingDirectory } from "../../runtime-context";
 import { queueSkillContent } from "./skillContentRegistry";
 import { validateRequiredParams } from "./validation.js";
 
@@ -156,9 +157,7 @@ async function getResolvedSkillsDir(): Promise<string> {
   }
 
   // Fall back to the execution working directory when available.
-  // executeTool() temporarily sets USER_CWD for the duration of the tool call,
-  // which keeps listener/desktop project skill lookup scoped correctly.
-  return join(process.env.USER_CWD || process.cwd(), SKILLS_DIR);
+  return join(getCurrentWorkingDirectory(), SKILLS_DIR);
 }
 
 function getResolvedAgentId(args: SkillArgs): string | undefined {

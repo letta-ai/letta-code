@@ -1,5 +1,6 @@
 import { existsSync, statSync } from "node:fs";
 import * as path from "node:path";
+import { getCurrentWorkingDirectory } from "../../runtime-context";
 import { getShellEnv } from "./shellEnv.js";
 import { buildShellLaunchers } from "./shellLaunchers.js";
 import { ShellExecutionError, spawnWithLauncher } from "./shellRunner.js";
@@ -17,7 +18,7 @@ interface ShellArgs {
 }
 
 export function resolveShellWorkdir(workdir?: string): string {
-  const defaultCwd = process.env.USER_CWD || process.cwd();
+  const defaultCwd = getCurrentWorkingDirectory();
   const requestedCwd = workdir
     ? path.isAbsolute(workdir)
       ? workdir
