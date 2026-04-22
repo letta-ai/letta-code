@@ -87,21 +87,34 @@ describe("shellEnv letta shim", () => {
   });
 
   test("resolveLettaInvocation resolves relative dev entrypoint against cwd", () => {
+    const cwd =
+      process.platform === "win32"
+        ? path.win32.join("C:\\", "Users", "example", "dev", "letta-code-prod")
+        : path.posix.join("/", "Users", "example", "dev", "letta-code-prod");
+    const expectedScriptPath =
+      process.platform === "win32"
+        ? path.win32.join(cwd, "src", "index.ts")
+        : path.posix.join(cwd, "src", "index.ts");
+    const execPath =
+      process.platform === "win32"
+        ? "C:\\bun\\bun.exe"
+        : "/opt/homebrew/bin/bun";
+
     const invocation = resolveLettaInvocation(
       {},
       ["bun", "src/index.ts"],
-      "/opt/homebrew/bin/bun",
-      "/Users/example/dev/letta-code-prod",
+      execPath,
+      cwd,
     );
 
     expect(invocation).toEqual({
-      command: "/opt/homebrew/bin/bun",
+      command: execPath,
       args: [
         "--loader:.md=text",
         "--loader:.mdx=text",
         "--loader:.txt=text",
         "run",
-        "/Users/example/dev/letta-code-prod/src/index.ts",
+        expectedScriptPath,
       ],
     });
   });
