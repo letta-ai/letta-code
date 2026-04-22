@@ -1520,8 +1520,6 @@ export async function handleHeadlessCommand(
         approvalMessages,
         {
           agentId: agent.id,
-          preparedToolContext:
-            recoveryToolContext.preparedToolContext.preparedToolContext,
         },
       );
       const drainResult = await drainStreamWithResume(
@@ -1673,14 +1671,13 @@ ${SYSTEM_REMINDER_CLOSE}
       otid: randomUUID(),
     },
   ];
-  if (
-    queuedRecoveredApprovalResults &&
-    queuedRecoveredApprovalResults.length > 0
-  ) {
+  const recoveredApprovalResults: ApprovalResult[] =
+    queuedRecoveredApprovalResults ?? [];
+  if (recoveredApprovalResults.length > 0) {
     currentInput = [
       {
         type: "approval",
-        approvals: queuedRecoveredApprovalResults,
+        approvals: recoveredApprovalResults,
         otid: randomUUID(),
       },
       ...currentInput,
@@ -2865,8 +2862,6 @@ async function runBidirectionalMode(
         approvalMessages,
         {
           agentId: agent.id,
-          preparedToolContext:
-            recoveryToolContext.preparedToolContext.preparedToolContext,
         },
       );
       const drainResult = await drainStreamWithResume(
