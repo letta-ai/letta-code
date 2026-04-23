@@ -1088,6 +1088,184 @@ test("slack adapter swaps queued turns to x when the turn fails", async () => {
     timestamp: "1712800000.000200",
     name: "x",
   });
+  expect(writeClient?.chat.postMessage).not.toHaveBeenCalled();
+});
+
+test("slack adapter posts the lifecycle error back into the same thread as a code block", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  await adapter.start();
+
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "queued",
+    source: {
+      channel: "slack",
+      accountId: "slack-test-account",
+      chatId: "C123",
+      chatType: "channel",
+      messageId: "1712800000.000300",
+      threadId: "1712790000.000050",
+      agentId: "agent-1",
+      conversationId: "conv-1",
+    },
+  });
+
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "finished",
+    batchId: "batch-3",
+    outcome: "error",
+    error: "Boom: something went wrong\nsecond line",
+    sources: [
+      {
+        channel: "slack",
+        accountId: "slack-test-account",
+        chatId: "C123",
+        chatType: "channel",
+        messageId: "1712800000.000300",
+        threadId: "1712790000.000050",
+        agentId: "agent-1",
+        conversationId: "conv-1",
+      },
+    ],
+  });
+
+  const writeClient = FakeSlackWriteClient.instances[0];
+  expect(writeClient?.reactions.add).toHaveBeenNthCalledWith(2, {
+    channel: "C123",
+    timestamp: "1712800000.000300",
+    name: "x",
+  });
+  expect(writeClient?.chat.postMessage).toHaveBeenCalledWith({
+    channel: "C123",
+    text: "Turn failed:\n```\nBoom: something went wrong\nsecond line\n```",
+    thread_ts: "1712790000.000050",
+  });
+});
+
+test("slack adapter dedupes lifecycle error posts by reply destination", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  await adapter.start();
+
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "queued",
+    source: {
+      channel: "slack",
+      accountId: "slack-test-account",
+      chatId: "C123",
+      chatType: "channel",
+      messageId: "1712800000.000401",
+      threadId: "1712790000.000050",
+      agentId: "agent-1",
+      conversationId: "conv-1",
+    },
+  });
+
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "queued",
+    source: {
+      channel: "slack",
+      accountId: "slack-test-account",
+      chatId: "C123",
+      chatType: "channel",
+      messageId: "1712800000.000402",
+      threadId: "1712790000.000050",
+      agentId: "agent-1",
+      conversationId: "conv-1",
+    },
+  });
+
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "finished",
+    batchId: "batch-4",
+    outcome: "error",
+    error: "Debounced batch failure",
+    sources: [
+      {
+        channel: "slack",
+        accountId: "slack-test-account",
+        chatId: "C123",
+        chatType: "channel",
+        messageId: "1712800000.000401",
+        threadId: "1712790000.000050",
+        agentId: "agent-1",
+        conversationId: "conv-1",
+      },
+      {
+        channel: "slack",
+        accountId: "slack-test-account",
+        chatId: "C123",
+        chatType: "channel",
+        messageId: "1712800000.000402",
+        threadId: "1712790000.000050",
+        agentId: "agent-1",
+        conversationId: "conv-1",
+      },
+    ],
+  });
+
+  const writeClient = FakeSlackWriteClient.instances[0];
+  expect(writeClient?.chat.postMessage).toHaveBeenCalledTimes(1);
+  expect(writeClient?.chat.postMessage).toHaveBeenCalledWith({
+    channel: "C123",
+    text: "Turn failed:\n```\nDebounced batch failure\n```",
+    thread_ts: "1712790000.000050",
+  });
+});
+
+test("slack adapter does not post an extra lifecycle message for cancelled turns", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  await adapter.start();
+
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "finished",
+    batchId: "batch-5",
+    outcome: "cancelled",
+    error: "Should not be posted",
+    sources: [
+      {
+        channel: "slack",
+        accountId: "slack-test-account",
+        chatId: "C123",
+        chatType: "channel",
+        messageId: "1712800000.000500",
+        threadId: "1712790000.000050",
+        agentId: "agent-1",
+        conversationId: "conv-1",
+      },
+    ],
+  });
+
+  const writeClient = FakeSlackWriteClient.instances[0];
+  expect(writeClient?.chat.postMessage).not.toHaveBeenCalled();
 });
 
 test("slack adapter uploads local files through Slack's external upload flow", async () => {

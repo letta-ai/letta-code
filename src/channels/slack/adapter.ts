@@ -269,6 +269,7 @@ const SLACK_INGRESS_DEDUPE_TTL_MS = 60_000;
 const SLACK_INGRESS_DEDUPE_MAX = 2_000;
 const SLACK_LIFECYCLE_STATE_TTL_MS = 6 * 60 * 60 * 1000;
 const SLACK_LIFECYCLE_STATE_MAX = 2_000;
+const SLACK_LIFECYCLE_ERROR_TEXT_MAX = 3_000;
 
 type SlackLifecycleState = "queued" | "completed" | "error" | "cancelled";
 
@@ -493,6 +494,27 @@ export function createSlackAdapter(
     return `${source.chatId}:${source.messageId}`;
   }
 
+  function getLifecycleReplyKey(source: ChannelTurnSource): string | null {
+    if (source.channel !== "slack" || !isNonEmptyString(source.chatId)) {
+      return null;
+    }
+    const replyToMessageId = source.threadId ?? source.messageId;
+    if (!isNonEmptyString(replyToMessageId)) {
+      return null;
+    }
+    return `${source.chatId}:${replyToMessageId}`;
+  }
+
+  function formatSlackLifecycleErrorMessage(errorText: string): string {
+    const normalized = errorText.trim();
+    const truncated =
+      normalized.length > SLACK_LIFECYCLE_ERROR_TEXT_MAX
+        ? `${normalized.slice(0, SLACK_LIFECYCLE_ERROR_TEXT_MAX - 1).trimEnd()}…`
+        : normalized;
+    const escaped = truncated.replace(/```/g, "``\u200b`");
+    return `Turn failed:\n\`\`\`\n${escaped}\n\`\`\``;
+  }
+
   function pruneLifecycleState(now: number = Date.now()): void {
     for (const [key, entry] of lifecycleStateByMessageKey) {
       if (entry.updatedAt + SLACK_LIFECYCLE_STATE_TTL_MS <= now) {
@@ -540,6 +562,25 @@ export function createSlackAdapter(
       timestamp: source.messageId,
       name: emoji,
     });
+  }
+
+  async function sendLifecycleErrorReply(
+    source: ChannelTurnSource,
+    errorText: string,
+  ): Promise<void> {
+    const replyToMessageId = source.threadId ?? source.messageId;
+    if (!isNonEmptyString(replyToMessageId)) {
+      return;
+    }
+
+    await ensureApp();
+    const slackClient = await ensureWriteClient();
+    const response = await slackClient.chat.postMessage({
+      channel: source.chatId,
+      text: formatSlackLifecycleErrorMessage(errorText),
+      thread_ts: replyToMessageId,
+    });
+    rememberMessageThread(response.ts, replyToMessageId);
   }
 
   function scheduleLifecycleTransition(
@@ -990,6 +1031,33 @@ export function createSlackAdapter(
         event.sources.map((source) =>
           scheduleLifecycleTransition(source, nextState),
         ),
+      );
+
+      const errorText = event.outcome === "error" ? event.error?.trim() : null;
+      if (!errorText) {
+        return;
+      }
+
+      const uniqueReplySources = new Map<string, ChannelTurnSource>();
+      for (const source of event.sources) {
+        const key = getLifecycleReplyKey(source);
+        if (!key || uniqueReplySources.has(key)) {
+          continue;
+        }
+        uniqueReplySources.set(key, source);
+      }
+
+      await Promise.all(
+        Array.from(uniqueReplySources.values()).map(async (source) => {
+          try {
+            await sendLifecycleErrorReply(source, errorText);
+          } catch (error) {
+            console.warn(
+              `[Slack] Failed to post lifecycle error for ${source.chatId}:`,
+              error instanceof Error ? error.message : error,
+            );
+          }
+        }),
       );
     },
 
