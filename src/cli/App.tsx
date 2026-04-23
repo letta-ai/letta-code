@@ -81,7 +81,6 @@ import { SessionStats } from "../agent/stats";
 import {
   DEFAULT_SUMMARIZATION_MODEL,
   INTERRUPTED_BY_USER,
-  MEMFS_CONFLICT_CHECK_INTERVAL,
   SYSTEM_ALERT_CLOSE,
   SYSTEM_ALERT_OPEN,
   SYSTEM_REMINDER_CLOSE,
@@ -1611,7 +1610,6 @@ export default function App({
   const memfsWatcherRef = useRef<ReturnType<
     typeof import("node:fs").watch
   > | null>(null);
-  const memfsGitCheckInFlightRef = useRef(false);
   const pendingGitReminderRef = useRef<{
     dirty: boolean;
     aheadOfRemote: boolean;
@@ -3904,35 +3902,6 @@ export default function App({
     [refreshDerived],
   );
 
-  const maybeCheckMemoryGitStatus = useCallback(async () => {
-    // Only check if memfs is enabled for this agent
-    if (!agentId || agentId === "loading") return;
-    if (!settingsManager.isMemfsEnabled(agentId)) return;
-
-    // Git-backed memory: check status periodically (fire-and-forget).
-    // Runs every N turns to detect uncommitted changes or unpushed commits.
-    const isIntervalTurn =
-      sharedReminderStateRef.current.turnCount > 0 &&
-      sharedReminderStateRef.current.turnCount %
-        MEMFS_CONFLICT_CHECK_INTERVAL ===
-        0;
-
-    if (isIntervalTurn && !memfsGitCheckInFlightRef.current) {
-      memfsGitCheckInFlightRef.current = true;
-
-      import("../agent/memoryGit")
-        .then(({ getMemoryGitStatus }) => getMemoryGitStatus(agentId))
-        .then((status) => {
-          pendingGitReminderRef.current =
-            status.dirty || status.aheadOfRemote ? status : null;
-        })
-        .catch(() => {})
-        .finally(() => {
-          memfsGitCheckInFlightRef.current = false;
-        });
-    }
-  }, [agentId]);
-
   useEffect(() => {
     if (loadingState !== "ready") {
       return;
@@ -5189,8 +5158,6 @@ export default function App({
               queueSnapshotRef.current = [];
             }
 
-            await maybeCheckMemoryGitStatus();
-
             // === RALPH WIGGUM CONTINUATION CHECK ===
             // Check if ralph mode is active and should auto-continue
             // This happens at the very end, right before we'd release input
@@ -6388,7 +6355,6 @@ export default function App({
       queueApprovalResults,
       consumeQueuedMessages,
       appendTaskNotificationEvents,
-      maybeCheckMemoryGitStatus,
       clearApprovalToolContext,
       openTrajectorySegment,
       syncTrajectoryTokenBase,
