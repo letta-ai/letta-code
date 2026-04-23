@@ -1,184 +1,131 @@
 ---
 name: "modifying-letta-code"
-description: "Modify the Letta Code harness: permission rules, hooks, and agent configuration (model, context window, name, toolset). Use when you want to change deterministic agent behavior that isn't part of the agent's memory."
+description: "Modify your own Letta Code harness: permission rules, hooks, and agent configuration (model, context window, name, toolset, system prompt). Use when you want to change your own deterministic configuration, not your memory."
 ---
 
-# Modifying Letta Code
+# Modifying Letta Code (Self-Configuration)
 
-This skill explains how to modify the **Letta Code harness** — the deterministic configuration layer around your agent. Harness changes are predictable and reproducible: the same configuration always produces the same behavior.
+This skill tells you — the agent — how to modify your own **harness**: the deterministic configuration layer around you. Load this skill when you want to change how you run (model, permissions, hooks, toolset, system prompt, name, etc.).
 
 ## Memory vs Harness
 
-Understanding this distinction is critical:
+Before you change anything, know which layer you're in:
 
-| Layer | What it is | Who controls it | Where it lives |
-|-------|-----------|-----------------|----------------|
-| **Memory** | Dynamic, learned knowledge | The agent (autonomously reads/writes) | `$MEMORY_DIR` (memory blocks), memfs, conversation history |
-| **Harness** | Deterministic configuration | The user (via settings files or slash commands) | `settings.json`, agent LLM config, hooks, permissions |
+| Layer | What it is | How you change it |
+|-------|-----------|-------------------|
+| **Memory** | Dynamic state you learn and reorganize (`$MEMORY_DIR`, memfs, conversation history) | Memory tool, file edits in `$MEMORY_DIR`, skill operations |
+| **Harness** | Deterministic config (model, permissions, hooks, toolset, system prompt) | This skill — edit `settings.json` or call the Letta API |
 
-**Memory** changes as the agent learns, summarizes, and reorganizes. It's non-deterministic — the same prompt can produce different memory updates over time.
+Memory is probabilistic: your notes evolve, your history compacts, your skills get loaded and unloaded. The harness is deterministic: given the same settings, you behave the same way. Don't conflate them — edit memory when you're learning, edit the harness when you're reconfiguring.
 
-**Harness** is deterministic. It defines *how* the agent runs: which model, which tools are allowed, what happens before/after tool calls, what system prompt preset is used. The same harness config always produces the same agent behavior.
+## Where to make changes
 
-Use this skill when you want to modify the **harness**. Use the memory tool or skills for memory changes.
+You have two places to modify harness config:
 
-## Settings Files
+### 1. Settings JSON files (you can edit these directly with Write/Edit)
 
-Harness config lives in three JSON files, merged in this precedence (highest wins):
+| File | Scope | Contents |
+|------|-------|----------|
+| `~/.letta/settings.json` | User (global) | Permissions, hooks, per-agent settings (`agents[]`), pinning, env vars |
+| `./.letta/settings.json` | Project | Permissions, hooks, shared with team via git |
+| `./.letta/settings.local.json` | Local | Permissions, hooks, personal overrides (gitignored) |
 
-1. **Local** (`./.letta/settings.local.json`) — gitignored, personal overrides
-2. **Project** (`./.letta/settings.json`) — shared with team via git
-3. **User** (`~/.letta/settings.json`) — global defaults
+Precedence (highest wins): **local > project > user**.
 
-Session-level changes (e.g., `/allow` during a session) are in-memory only and don't persist.
+### 2. The Letta API (for server-side agent state)
 
-## What You Can Modify
+Your **name**, **description**, **model**, **context window**, and **system prompt** live on the Letta server. To change them, call the Letta API.
 
-This skill covers three main harness modifications:
+**Base URL:** `https://api.letta.com`
+**Docs:** https://docs.letta.com/api-overview/introduction
+**Auth:** `Authorization: Bearer $LETTA_API_KEY`
 
-1. [Permission rules](#1-permissions) — which tools run without approval
-2. [Hooks](#2-hooks) — commands or prompts that fire on events
-3. [Agent configuration](#3-agent-configuration) — model, context window, name, toolset
+Your own agent ID is `$LETTA_AGENT_ID` (always available in your environment).
+
+You can use the Python or TypeScript SDK, or just `curl`:
+
+```bash
+# Rename yourself
+curl -X PATCH "https://api.letta.com/v1/agents/$LETTA_AGENT_ID" \
+  -H "Authorization: Bearer $LETTA_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "new-name"}'
+```
+
+If you need rich SDK examples, load the `letta-api-client` skill.
 
 ---
 
-## 1. Permissions
+## 1. Changing your permissions
 
-Permission rules control which tool calls require user approval.
+Permissions control which tool calls need user approval. Edit `settings.json` directly, or use the helper script.
 
-### Rule Format
+### Rule syntax
 
-`ToolName(argument-pattern)` — three types: `allow`, `deny`, `ask`
+- **Bash** (prefix match with `:*`): `Bash(npm install:*)`, `Bash(git:*)`, `Bash(curl:*)`
+- **Files** (glob): `Read(src/**)`, `Edit(**/*.ts)`, `Write(*.md)`
+- **All** (dangerous): `*`, `Bash`, `Read`
 
-**Bash commands** use prefix matching with `:*`:
+### Helper: add a rule
 
-| Rule | Matches |
-|------|---------|
-| `Bash(npm install:*)` | `npm install`, `npm install lodash`, etc. |
-| `Bash(git status)` | Exact match only |
-| `Bash(curl:*)` | Any curl command |
-| `Bash(:*)` | All bash commands |
+```bash
+python3 <skill-dir>/scripts/add_permission.py \
+  --rule "Bash(curl:*)" \
+  --type allow \
+  --scope user
+```
 
-**File operations** use glob patterns:
-
-| Rule | Matches |
-|------|---------|
-| `Read(src/**)` | Any file under `src/` recursively |
-| `Write(*.md)` | Markdown files in cwd |
-| `Edit(**/*.ts)` | TypeScript files anywhere |
-| `Read(//etc/hosts)` | Absolute path (`//` prefix) |
-
-### Settings File Format
+### Direct edit (in `settings.json`)
 
 ```json
 {
   "permissions": {
     "allow": ["Bash(npm:*)", "Read(src/**)"],
-    "deny": ["Bash(rm -rf:*)"],
-    "ask": []
+    "deny":  ["Bash(rm -rf:*)"],
+    "ask":   []
   }
 }
 ```
 
-### Helper Scripts
-
-```bash
-# Add a rule
-python3 <skill-dir>/scripts/add_permission.py --rule "Bash(curl:*)" --type allow --scope user
-
-# View all rules
-python3 <skill-dir>/scripts/list_permissions.py
-```
+After editing, your new rules apply on your next restart. In-session additions via the approval UI go into session-only memory and are cleared on exit.
 
 ---
 
-## 2. Hooks
+## 2. Adding hooks
 
-Hooks run commands or LLM prompts in response to events. Use them to enforce policy, log activity, auto-format, or gate actions.
+Hooks let you run a shell command or LLM prompt in response to events. Use them to log activity, enforce policy, auto-format, or gate actions.
 
-### Event Types
+### Events
 
-**Tool events** (require a `matcher` to select tools):
-- `PreToolUse` — before tool call, can block
-- `PostToolUse` — after tool call succeeds, cannot block
-- `PostToolUseFailure` — after tool call fails, feeds stderr back to agent
-- `PermissionRequest` — when permission dialog appears, can allow/deny
+**Tool events** (need a `matcher`):
+- `PreToolUse` — before a tool runs (can block)
+- `PostToolUse` — after a tool succeeds
+- `PostToolUseFailure` — after a tool fails (stderr fed back to you)
+- `PermissionRequest` — when a permission dialog shows (can allow/deny)
 
 **Simple events** (no matcher):
-- `UserPromptSubmit` — user sends a prompt, can block
-- `Notification` — a notification is shown
-- `Stop` — agent finishes responding, can block
-- `SubagentStop` — subagent task completes, can block
+- `UserPromptSubmit` — user sends a prompt (can block)
+- `Stop` — you finish responding (can block)
+- `SubagentStop` — a subagent finishes
 - `PreCompact` — before context compaction
-- `SessionStart` / `SessionEnd`
+- `SessionStart`, `SessionEnd`, `Notification`
 
-### Hook Types
+### Hook types
 
-**Command hooks** run shell commands:
+**Command** — runs a shell command:
 ```json
-{
-  "type": "command",
-  "command": "prettier --write $CLAUDE_FILE_PATHS",
-  "timeout": 60000
-}
+{"type": "command", "command": "echo $TOOL_INPUT >> ~/audit.log", "timeout": 60000}
 ```
 
-**Prompt hooks** send the event JSON to an LLM for evaluation:
+**Prompt** — sends event JSON to an LLM for evaluation:
 ```json
-{
-  "type": "prompt",
-  "prompt": "Block if $ARGUMENTS contains secrets. Respond with {\"ok\": bool, \"reason\": str}.",
-  "model": "gpt-5.2",
-  "timeout": 30000
-}
+{"type": "prompt", "prompt": "Is this safe? Input: $ARGUMENTS", "model": "gpt-5.2"}
 ```
-Supported on: `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `PermissionRequest`, `UserPromptSubmit`, `Stop`, `SubagentStop`.
+Supported events: `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `PermissionRequest`, `UserPromptSubmit`, `Stop`, `SubagentStop`.
 
-### Settings File Format
-
-```json
-{
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "echo \"Running: $TOOL_INPUT\" >> ~/.letta/audit.log"
-          }
-        ]
-      },
-      {
-        "matcher": "Edit|Write",
-        "hooks": [
-          {
-            "type": "prompt",
-            "prompt": "Is this change safe? Input: $ARGUMENTS"
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "hooks": [
-          {"type": "command", "command": "say 'done'"}
-        ]
-      }
-    ]
-  }
-}
-```
-
-Matcher patterns:
-- Exact: `"Bash"`, `"Edit"`
-- Multiple: `"Edit|Write|MultiEdit"`
-- All: `"*"` or `""`
-
-### Helper Script
+### Helper: add a hook
 
 ```bash
-# Add a command hook on PreToolUse for Bash
 python3 <skill-dir>/scripts/add_hook.py \
   --event PreToolUse \
   --matcher Bash \
@@ -187,35 +134,80 @@ python3 <skill-dir>/scripts/add_hook.py \
   --scope user
 ```
 
+### Direct edit (in `settings.json`)
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [{"type": "command", "command": "echo $TOOL_INPUT >> audit.log"}]
+      }
+    ],
+    "Stop": [
+      {"hooks": [{"type": "command", "command": "say done"}]}
+    ]
+  }
+}
+```
+
+Matchers: exact (`"Bash"`), multiple (`"Edit|Write"`), all (`"*"`).
+
 ---
 
-## 3. Agent Configuration
+## 3. Changing your agent configuration
 
-Agent-level config splits into two storage locations:
-- **Harness-side settings** (in `settings.json`) — agents CAN modify via Write/Edit tools
-- **Server-side config** (model, name, description, system prompt) — agents modify via the Letta API client, NOT via slash commands
+Agent config splits between the Letta server and local settings.
 
-### ⚠️ Slash commands are TUI-only
+### Server-side fields (use the Letta API)
 
-Slash commands like `/model`, `/rename`, `/system`, `/toolset`, `/memfs`, `/pin` are user-facing CLI commands — they only run in the interactive TUI and **cannot be invoked by the agent**. The agent has no slash-command execution tool.
+Use `PATCH /v1/agents/{agent_id}` with `$LETTA_AGENT_ID`.
 
-The table below shows what each command does and how an agent can achieve the same effect programmatically.
+**Change your model and context window:**
+```bash
+curl -X PATCH "https://api.letta.com/v1/agents/$LETTA_AGENT_ID" \
+  -H "Authorization: Bearer $LETTA_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "llm_config": {
+      "model": "claude-sonnet-4.5",
+      "model_endpoint_type": "anthropic",
+      "context_window": 200000
+    }
+  }'
+```
 
-| User command | What it changes | How the agent can do it |
-|--------------|----------------|------------------------|
-| `/model` | LLM model, context window, reasoning effort | Letta API client: `client.agents.modify(agent_id, llm_config=...)` |
-| `/rename agent <name>` | Agent display name | Letta API client: `client.agents.modify(agent_id, name="new-name")` |
-| `/description <text>` | Agent description | Letta API client: `client.agents.modify(agent_id, description="...")` |
-| `/system` | System prompt preset | Letta API client: `client.agents.modify(agent_id, system="...")` + edit `settings.json` `agents[].systemPromptPreset` |
-| `/toolset` | Tool preference | Edit `settings.json` `agents[].toolset` directly |
-| `/memfs enable\|disable` | Memory filesystem addon | Edit `settings.json` `agents[].memfs` + update system prompt via API |
-| `/pin` / `/unpin` | Quick-switch pinning | Edit `settings.json` `pinnedAgents` array directly |
+**Rename yourself:**
+```bash
+curl -X PATCH "https://api.letta.com/v1/agents/$LETTA_AGENT_ID" \
+  -H "Authorization: Bearer $LETTA_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "draft-v2"}'
+```
 
-### What the agent CAN modify directly
+**Update your description:**
+```bash
+curl -X PATCH "https://api.letta.com/v1/agents/$LETTA_AGENT_ID" \
+  -H "Authorization: Bearer $LETTA_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"description": "..."}'
+```
 
-These are pure JSON edits in `settings.json` — the agent can do them with Write/Edit:
+**Update your system prompt (use with care — system prompt is structural):**
+```bash
+curl -X PATCH "https://api.letta.com/v1/agents/$LETTA_AGENT_ID" \
+  -H "Authorization: Bearer $LETTA_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"system": "You are..."}'
+```
 
-**Per-agent harness settings** (in `~/.letta/settings.json`):
+For Python / TypeScript SDK usage, see `docs.letta.com/api-overview/introduction` or load the `letta-api-client` skill.
+
+### Local per-agent harness (edit `~/.letta/settings.json`)
+
+The `agents[]` array stores per-agent harness preferences you can edit directly:
+
 ```json
 {
   "agents": [
@@ -231,95 +223,48 @@ These are pure JSON edits in `settings.json` — the agent can do them with Writ
 }
 ```
 
-**Pinning**:
-```json
-{
-  "pinnedAgents": ["agent-abc123", "agent-def456"]
-}
-```
+- **`toolset`** — which tool set to load for this agent
+- **`memfs.enabled`** — whether the memory filesystem is active
+- **`systemPromptPreset`** — which preset was last applied (informational; the actual system prompt is server-side)
+- **`pinned`** — show in the quick-switch list
 
-### Server-side changes (require the Letta API)
-
-Model, name, description, and system prompt live on the Letta server. To change them, the agent needs to call the Letta API client:
-
-```python
-from letta_client import Letta
-client = Letta(token=os.environ["LETTA_API_KEY"])
-
-# Change the model
-client.agents.modify(
-    agent_id="agent-abc123",
-    llm_config={"model": "claude-sonnet-4.5", "context_window": 200000}
-)
-
-# Rename
-client.agents.modify(agent_id="agent-abc123", name="new-name")
-
-# Update description
-client.agents.modify(agent_id="agent-abc123", description="refactoring helper")
-```
-
-**Load the `letta-api-client` skill** for full SDK docs, auth setup, and more patterns.
-
-### CLI subcommands
-
-The `letta` CLI only supports `list` and `create` for agents — no update/rename. Use the API client for modifications.
-
-```bash
-# List all agents
-letta agents list
-
-# Create a new agent
-letta agents create \
-  --name "my-agent" \
-  --model "claude-sonnet-4.5" \
-  --description "helper for refactoring" \
-  --pinned
-```
+Find your own entry by matching `agentId === $LETTA_AGENT_ID`, then edit the fields you need.
 
 ---
 
-## Quick Reference: "I want to..."
+## Quick reference: what you want to change
 
-Legend: **[Agent]** = agent can do this, **[User]** = TUI-only
-
-| Goal | Agent path | User path |
-|------|-----------|-----------|
-| Auto-approve a bash command | `add_permission.py --rule "Bash(cmd:*)" --type allow --scope user` | `/allow` in TUI |
-| Block dangerous commands | Add to `deny` list in `settings.json` | Edit settings |
-| Log all tool calls | `add_hook.py --event PreToolUse --matcher "*" --type command --command ...` | Edit settings |
-| Auto-format after edits | `add_hook.py --event PostToolUse --matcher "Edit\|Write" ...` | Edit settings |
-| Change the model | Letta API: `client.agents.modify(agent_id, llm_config=...)` | `/model` |
-| Rename the agent | Letta API: `client.agents.modify(agent_id, name=...)` | `/rename agent` |
-| Change description | Letta API: `client.agents.modify(agent_id, description=...)` | `/description` |
-| Change system prompt | Letta API: `client.agents.modify(agent_id, system=...)` | `/system` |
-| Switch toolset | Edit `agents[].toolset` in `~/.letta/settings.json` | `/toolset` |
-| Disable memfs | Edit `agents[].memfs` in `~/.letta/settings.json` + update system prompt via API | `/memfs disable` |
-| Pin agent to quick-switch | Edit `pinnedAgents` in `~/.letta/settings.json` | `/pin` |
-| View current harness | `python3 <skill-dir>/scripts/show_config.py` | Same |
-
-> **Agent rule of thumb**: Harness changes (permissions, hooks, `settings.json` per-agent fields, pinning) are pure JSON edits — the agent can do them with Write/Edit. Server-side agent fields (model, name, description, system prompt) require the **Letta API client** — load the `letta-api-client` skill.
+| Change | What to do |
+|--------|-----------|
+| Auto-approve `curl` commands | `add_permission.py --rule "Bash(curl:*)" --type allow --scope user` |
+| Block all `rm -rf` | Add `"Bash(rm -rf:*)"` to `permissions.deny` in `settings.json` |
+| Log every Bash command | `add_hook.py --event PreToolUse --matcher Bash --type command --command '...' --scope user` |
+| Auto-format after edits | `add_hook.py --event PostToolUse --matcher "Edit\|Write" --type command --command 'prettier ...' --scope project` |
+| Gate edits with an LLM check | `add_hook.py --event PreToolUse --matcher Edit --type prompt --prompt '...' --scope user` |
+| Change your model | `PATCH /v1/agents/$LETTA_AGENT_ID` with `llm_config.model` |
+| Change your context window | `PATCH /v1/agents/$LETTA_AGENT_ID` with `llm_config.context_window` |
+| Rename yourself | `PATCH /v1/agents/$LETTA_AGENT_ID` with `name` |
+| Update your description | `PATCH /v1/agents/$LETTA_AGENT_ID` with `description` |
+| Modify your system prompt | `PATCH /v1/agents/$LETTA_AGENT_ID` with `system` |
+| Pin yourself for quick-switch | Add `agentId` to `pinnedAgents` in `~/.letta/settings.json` |
+| Change toolset | Edit `agents[].toolset` in `~/.letta/settings.json` |
+| Disable memfs | Edit `agents[].memfs.enabled = false` in `~/.letta/settings.json` (and update system prompt via API if needed) |
+| See what's currently set | `python3 <skill-dir>/scripts/show_config.py` |
 
 ---
 
-## Troubleshooting
+## After making changes
 
-### Changes not taking effect
+- **`settings.json` changes** — take effect on next session restart. Your current session keeps the old values.
+- **Letta API changes** — apply immediately at the server level, but the in-memory agent config held by your current session may not reflect them until next restart.
+- **System prompt / model changes** — always start a fresh conversation after to get a clean context with the new config.
 
-- **Settings files**: Restart Letta Code — most settings load at startup.
-- **Agent config** (`/model`, `/system`): changes apply immediately but may need a new conversation to fully reset context.
-- **Hooks**: reload by restarting the session. Check the hooks event matches what you expect.
+## Helper scripts in this skill
 
-### Finding the right permission pattern
+| Script | Purpose |
+|--------|---------|
+| `scripts/add_permission.py` | Add an allow/deny/ask rule to any scope |
+| `scripts/add_hook.py` | Add a command or prompt hook to any event |
+| `scripts/show_config.py` | Show merged permissions, hooks, and per-agent settings across all scopes |
 
-When a tool execution is prompted for approval, note the exact call shown. Use that to craft a rule:
-- Prompt shows `Bash(npm run build)` → rule `Bash(npm run:*)`
-- Prompt shows `Read(/Users/me/project/src/index.ts)` → rule `Read(src/**)`
-
-### Viewing merged config
-
-```bash
-python3 <skill-dir>/scripts/show_config.py
-```
-
-Shows permissions, hooks, and per-agent settings merged across all scopes.
+All three accept `--scope user|project|local`. Run `--help` for full usage.
