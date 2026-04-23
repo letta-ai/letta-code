@@ -496,6 +496,18 @@ describe("MessageChannel", () => {
       throw new Error("explicit target path should not consult routes");
     });
 
+    setRouteInMemory("slack", {
+      accountId: "account-1",
+      chatId: "C123",
+      chatType: "channel",
+      threadId: "1712790000.000050",
+      agentId: "agent-1",
+      conversationId: "default",
+      enabled: true,
+      createdAt: "2026-04-11T00:00:00.000Z",
+      updatedAt: "2026-04-11T00:00:00.000Z",
+    });
+
     upsertChannelAccount("slack", {
       channel: "slack",
       accountId: "account-1",
@@ -578,6 +590,29 @@ describe("MessageChannel", () => {
     registry.registerAdapter(adapter1);
     registry.registerAdapter(adapter2);
 
+    setRouteInMemory("slack", {
+      accountId: "account-1",
+      chatId: "C123",
+      chatType: "channel",
+      threadId: "1712790000.000050",
+      agentId: "agent-1",
+      conversationId: "default",
+      enabled: true,
+      createdAt: "2026-04-11T00:00:00.000Z",
+      updatedAt: "2026-04-11T00:00:00.000Z",
+    });
+    setRouteInMemory("slack", {
+      accountId: "account-2",
+      chatId: "C124",
+      chatType: "channel",
+      threadId: "1712790000.000051",
+      agentId: "agent-1",
+      conversationId: "default",
+      enabled: true,
+      createdAt: "2026-04-11T00:00:00.000Z",
+      updatedAt: "2026-04-11T00:00:00.000Z",
+    });
+
     upsertChannelAccount("slack", {
       channel: "slack",
       accountId: "account-1",
@@ -647,6 +682,18 @@ describe("MessageChannel", () => {
     };
 
     registry.registerAdapter(adapter);
+
+    setRouteInMemory("slack", {
+      accountId: "account-1",
+      chatId: "C123",
+      chatType: "channel",
+      threadId: "1712790000.000050",
+      agentId: "agent-1",
+      conversationId: "default",
+      enabled: true,
+      createdAt: "2026-04-11T00:00:00.000Z",
+      updatedAt: "2026-04-11T00:00:00.000Z",
+    });
 
     upsertChannelAccount("slack", {
       channel: "slack",

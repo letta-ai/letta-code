@@ -667,6 +667,7 @@ async function resolveExplicitMessageChannelContext(params: {
 
   const eligibleAccount = resolveEligibleProactiveSlackAccount({
     agentId: params.scope.agentId,
+    conversationId: params.scope.conversationId,
     accountId: params.input.accountId,
   });
   if (typeof eligibleAccount === "string") {

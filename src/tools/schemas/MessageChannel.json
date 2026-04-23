@@ -59,7 +59,5 @@
     }
   },
   "required": ["action", "channel"],
-  "anyOf": [{ "required": ["chat_id"] }, { "required": ["target"] }],
-  "not": { "required": ["chat_id", "target"] },
   "additionalProperties": false
 }

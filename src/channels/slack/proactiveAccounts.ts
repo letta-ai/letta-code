@@ -1,5 +1,6 @@
-import { listChannelAccounts } from "../accounts";
+import { getChannelAccount, LEGACY_CHANNEL_ACCOUNT_ID } from "../accounts";
 import { getChannelRegistry } from "../registry";
+import { getRoutesForChannel, loadRoutes } from "../routing";
 import type { ChannelAdapter, SlackChannelAccount } from "../types";
 
 export interface EligibleProactiveSlackAccount {
@@ -7,21 +8,43 @@ export interface EligibleProactiveSlackAccount {
   adapter: ChannelAdapter;
 }
 
-export function listEligibleProactiveSlackAccounts(
-  agentId: string,
-): EligibleProactiveSlackAccount[] {
+export function listEligibleProactiveSlackAccounts(params: {
+  agentId: string;
+  conversationId: string;
+}): EligibleProactiveSlackAccount[] {
   const registry = getChannelRegistry();
   if (!registry) {
     return [];
   }
 
-  const accounts = listChannelAccounts("slack");
+  loadRoutes("slack");
+  const seen = new Set<string>();
 
   const eligible: EligibleProactiveSlackAccount[] = [];
-  for (const account of accounts) {
-    if (account.channel !== "slack" || account.agentId !== agentId) {
+  for (const route of getRoutesForChannel("slack")) {
+    if (
+      route.agentId !== params.agentId ||
+      route.conversationId !== params.conversationId ||
+      !route.enabled
+    ) {
       continue;
     }
+
+    const accountId = route.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID;
+    if (seen.has(accountId)) {
+      continue;
+    }
+    seen.add(accountId);
+
+    const account = getChannelAccount("slack", accountId);
+    if (
+      !account ||
+      account.channel !== "slack" ||
+      account.agentId !== params.agentId
+    ) {
+      continue;
+    }
+
     const adapter = registry.getAdapter("slack", account.accountId);
     if (!adapter?.isRunning()) {
       continue;
@@ -37,9 +60,13 @@ export function listEligibleProactiveSlackAccounts(
 
 export function resolveEligibleProactiveSlackAccount(params: {
   agentId: string;
+  conversationId: string;
   accountId?: string | null;
 }): EligibleProactiveSlackAccount | string {
-  const eligible = listEligibleProactiveSlackAccounts(params.agentId);
+  const eligible = listEligibleProactiveSlackAccounts({
+    agentId: params.agentId,
+    conversationId: params.conversationId,
+  });
 
   if (params.accountId) {
     const matched = eligible.find(
