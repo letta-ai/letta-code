@@ -314,6 +314,14 @@ export interface SlackChannelAccount extends ChannelAccountBase {
   appToken: string;
   agentId: string | null;
   defaultPermissionMode: SlackDefaultPermissionMode;
+  /**
+   * Optional debounce window (ms) for inbound messages. When greater than
+   * `0`, short back-to-back messages from the same sender in the same
+   * chat/thread stack into a single combined dispatch (trailing edge).
+   * Default `0` (disabled). Messages with attachments bypass the debounce.
+   * The env var `LETTA_SLACK_INBOUND_DEBOUNCE_MS` takes precedence if set.
+   */
+  inboundDebounceMs?: number;
 }
 
 export interface DiscordChannelAccount extends ChannelAccountBase {

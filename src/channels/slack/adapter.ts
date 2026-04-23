@@ -1,6 +1,10 @@
 import { readFile } from "node:fs/promises";
 import { basename, extname } from "node:path";
 import type SlackApp from "@slack/bolt";
+import {
+  createInboundDebouncer,
+  type InboundDebouncer,
+} from "../inboundDebounce";
 import { formatChannelControlRequestPrompt } from "../interactive";
 import type {
   ChannelAdapter,
@@ -432,6 +436,93 @@ export async function resolveSlackAccountDisplayName(
   return isNonEmptyString(auth.user) ? auth.user : undefined;
 }
 
+const APP_MENTION_RETRY_TTL_MS = 60_000;
+
+type SlackDebounceSource = "message" | "app_mention";
+
+type SlackDebounceRawInput = {
+  channel: string;
+  ts?: string;
+  event_ts?: string;
+  thread_ts?: string;
+  parent_user_id?: string;
+  user?: string;
+  bot_id?: string;
+};
+
+/**
+ * Build the key used to group inbound Slack messages for debounced stacking.
+ *
+ * Keying mirrors openclaw (four cases):
+ *  - DM → channel-scoped (short DMs from same user stack together)
+ *  - Thread reply (`thread_ts` set) → thread-scoped
+ *  - Probable thread reply (`parent_user_id` set, no `thread_ts` yet — Slack
+ *    sometimes emits these before thread resolution completes) → "maybe-thread"
+ *  - Top-level channel message → message-ts-scoped (each top-level post is
+ *    its own potential thread-starter; don't merge across posts)
+ *
+ * Returns `null` when there is no identifiable sender, which forces the
+ * debouncer to dispatch the item immediately.
+ */
+export function buildSlackDebounceKey(
+  rawMessage: SlackDebounceRawInput,
+  accountId: string,
+): string | null {
+  const senderId = rawMessage.user ?? rawMessage.bot_id ?? null;
+  if (!senderId) return null;
+  const messageTs = rawMessage.ts ?? rawMessage.event_ts;
+  const isDm = rawMessage.channel.startsWith("D");
+  const scope = rawMessage.thread_ts
+    ? `${rawMessage.channel}:${rawMessage.thread_ts}`
+    : rawMessage.parent_user_id && messageTs
+      ? `${rawMessage.channel}:maybe-thread:${messageTs}`
+      : messageTs && !isDm
+        ? `${rawMessage.channel}:${messageTs}`
+        : rawMessage.channel;
+  return `slack:${accountId}:${scope}:${senderId}`;
+}
+
+/**
+ * Build the key that groups top-level (non-thread) channel messages from the
+ * same sender. Used to pre-flush pending debounced buffers when a
+ * non-debounceable message (e.g. one with an attachment) arrives for the
+ * same conversation, so ordering is preserved.
+ *
+ * DMs and thread replies intentionally return `null` — their debounce keys
+ * already naturally align without this pre-flush step.
+ */
+export function buildTopLevelSlackConversationKey(
+  rawMessage: SlackDebounceRawInput,
+  accountId: string,
+): string | null {
+  if (rawMessage.thread_ts || rawMessage.parent_user_id) return null;
+  if (rawMessage.channel.startsWith("D")) return null;
+  const senderId = rawMessage.user ?? rawMessage.bot_id;
+  if (!senderId) return null;
+  return `slack:${accountId}:${rawMessage.channel}:${senderId}`;
+}
+
+export function resolveSlackInboundDebounceMs(
+  config: Pick<SlackChannelAccount, "inboundDebounceMs">,
+): number {
+  const raw = process.env.LETTA_SLACK_INBOUND_DEBOUNCE_MS;
+  if (typeof raw === "string" && raw.trim() !== "") {
+    const envOverride = Number(raw);
+    if (Number.isFinite(envOverride) && envOverride >= 0) {
+      return Math.trunc(envOverride);
+    }
+  }
+  const fromConfig = config.inboundDebounceMs;
+  if (
+    typeof fromConfig === "number" &&
+    Number.isFinite(fromConfig) &&
+    fromConfig >= 0
+  ) {
+    return Math.trunc(fromConfig);
+  }
+  return 0;
+}
+
 export function createSlackAdapter(
   config: SlackChannelAccount,
 ): ChannelAdapter {
@@ -447,6 +538,164 @@ export function createSlackAdapter(
     { state: SlackLifecycleState; updatedAt: number }
   >();
   const lifecycleOperationByMessageKey = new Map<string, Promise<void>>();
+
+  // ── Inbound debounce (optional) ───────────────────────────────
+  // When `inboundDebounceMs > 0`, short back-to-back messages from the same
+  // sender in the same chat/thread stack into a single combined dispatch.
+  const debounceMs = resolveSlackInboundDebounceMs(config);
+  const pendingTopLevelDebounceKeys = new Map<string, Set<string>>();
+  const appMentionRetryKeys = new Map<string, number>();
+  const appMentionDispatchedKeys = new Map<string, number>();
+
+  function pruneAppMentionMaps(now: number): void {
+    for (const [k, exp] of appMentionRetryKeys) {
+      if (exp <= now) appMentionRetryKeys.delete(k);
+    }
+    for (const [k, exp] of appMentionDispatchedKeys) {
+      if (exp <= now) appMentionDispatchedKeys.delete(k);
+    }
+  }
+
+  function rememberAppMentionRetry(seenKey: string): void {
+    const now = Date.now();
+    pruneAppMentionMaps(now);
+    appMentionRetryKeys.set(seenKey, now + APP_MENTION_RETRY_TTL_MS);
+  }
+
+  function consumeAppMentionRetry(seenKey: string): boolean {
+    const now = Date.now();
+    pruneAppMentionMaps(now);
+    if (!appMentionRetryKeys.has(seenKey)) return false;
+    appMentionRetryKeys.delete(seenKey);
+    return true;
+  }
+
+  type SlackDebounceEntry = {
+    inbound: InboundChannelMessage;
+    raw: SlackDebounceRawInput;
+    opts: { source: SlackDebounceSource; wasMentioned: boolean };
+  };
+
+  const debouncer: InboundDebouncer<SlackDebounceEntry> =
+    createInboundDebouncer<SlackDebounceEntry>({
+      debounceMs,
+      buildKey: ({ raw }) => buildSlackDebounceKey(raw, config.accountId),
+      shouldDebounce: ({ inbound }) =>
+        !inbound.attachments?.length && !inbound.reaction,
+      onFlush: async (entries) => {
+        const last = entries[entries.length - 1];
+        if (!last) return;
+
+        // Prune the flushed debounce key from the top-level conversation map.
+        const flushedKey = buildSlackDebounceKey(last.raw, config.accountId);
+        const conversationKey = buildTopLevelSlackConversationKey(
+          last.raw,
+          config.accountId,
+        );
+        if (flushedKey && conversationKey) {
+          const pending = pendingTopLevelDebounceKeys.get(conversationKey);
+          if (pending) {
+            pending.delete(flushedKey);
+            if (pending.size === 0) {
+              pendingTopLevelDebounceKeys.delete(conversationKey);
+            }
+          }
+        }
+
+        // Resolve the message-vs-app_mention race for the last entry's ts.
+        if (isNonEmptyString(last.inbound.messageId)) {
+          const seenKey = `${last.inbound.chatId}:${last.inbound.messageId}`;
+          pruneAppMentionMaps(Date.now());
+          if (last.opts.source === "app_mention") {
+            appMentionDispatchedKeys.set(
+              seenKey,
+              Date.now() + APP_MENTION_RETRY_TTL_MS,
+            );
+          } else if (
+            last.opts.source === "message" &&
+            appMentionDispatchedKeys.has(seenKey)
+          ) {
+            // An app_mention already dispatched for this ts; drop the
+            // redundant message event to avoid double dispatch.
+            appMentionDispatchedKeys.delete(seenKey);
+            appMentionRetryKeys.delete(seenKey);
+            return;
+          }
+          appMentionRetryKeys.delete(seenKey);
+        }
+
+        // Merge buffered entries into a single dispatch.
+        const combinedText =
+          entries.length === 1
+            ? last.inbound.text
+            : entries
+                .map((entry) => entry.inbound.text)
+                .filter((text) => text && text.length > 0)
+                .join("\n");
+        const combinedMentioned = entries.some(
+          (entry) =>
+            entry.opts.wasMentioned === true ||
+            entry.inbound.isMention === true,
+        );
+        const merged: InboundChannelMessage = {
+          ...last.inbound,
+          text: combinedText,
+          isMention: combinedMentioned,
+        };
+
+        if (!adapter.onMessage) return;
+        try {
+          await adapter.onMessage(merged);
+        } catch (error) {
+          console.error(
+            "[Slack] Error handling debounced inbound message:",
+            error,
+          );
+        }
+      },
+      onError: (err) => {
+        console.error(
+          "[Slack] Inbound debounce flush failed:",
+          err instanceof Error ? err.message : err,
+        );
+      },
+    });
+
+  async function dispatchInboundThroughDebouncer(
+    entry: SlackDebounceEntry,
+  ): Promise<void> {
+    const { raw, inbound } = entry;
+    const debounceKey = buildSlackDebounceKey(raw, config.accountId);
+    const conversationKey = buildTopLevelSlackConversationKey(
+      raw,
+      config.accountId,
+    );
+    const canDebounce =
+      debounceMs > 0 &&
+      !inbound.attachments?.length &&
+      !inbound.reaction &&
+      Boolean(debounceKey);
+
+    // Non-debounceable message: first flush any pending debounced buffers for
+    // the same (channel, sender) so ordering is preserved.
+    if (!canDebounce && conversationKey) {
+      const pending = pendingTopLevelDebounceKeys.get(conversationKey);
+      if (pending && pending.size > 0) {
+        for (const pendingKey of Array.from(pending)) {
+          try {
+            await debouncer.flushKey(pendingKey);
+          } catch {}
+        }
+      }
+    }
+    if (canDebounce && debounceKey && conversationKey) {
+      const pending =
+        pendingTopLevelDebounceKeys.get(conversationKey) ?? new Set<string>();
+      pending.add(debounceKey);
+      pendingTopLevelDebounceKeys.set(conversationKey, pending);
+    }
+    await debouncer.enqueue(entry);
+  }
 
   function buildIngressMessageKey(
     channelId: string | undefined,
@@ -724,7 +973,16 @@ export function createSlackAdapter(
       const senderName = await resolveUserName(instance, rawMessage.user);
 
       if (chatType === "direct") {
-        if (markIngressMessageSeen(channelId, rawMessage.ts)) {
+        const seenKey = `${channelId}:${rawMessage.ts}`;
+        const wasSeen = markIngressMessageSeen(channelId, rawMessage.ts);
+        if (!wasSeen) {
+          // Prime an app_mention retry allowance so a near-simultaneous
+          // app_mention for the same ts is not dropped while this message
+          // is in-flight through the debouncer.
+          rememberAppMentionRetry(seenKey);
+        } else {
+          // Already dispatched — drop the duplicate. DMs can't fire an
+          // app_mention event, so there's no retry-key case to honor here.
           return;
         }
 
@@ -745,7 +1003,11 @@ export function createSlackAdapter(
         };
 
         try {
-          await adapter.onMessage(inbound);
+          await dispatchInboundThroughDebouncer({
+            inbound,
+            raw: rawMessage as SlackDebounceRawInput,
+            opts: { source: "message", wasMentioned },
+          });
         } catch (error) {
           console.error("[Slack] Error handling DM message:", error);
         }
@@ -756,7 +1018,14 @@ export function createSlackAdapter(
         return;
       }
 
-      if (markIngressMessageSeen(channelId, rawMessage.ts)) {
+      const seenKey = `${channelId}:${rawMessage.ts}`;
+      const wasSeen = markIngressMessageSeen(channelId, rawMessage.ts);
+      if (!wasSeen) {
+        rememberAppMentionRetry(seenKey);
+      } else {
+        // Already seen. If an app_mention for the same ts arrives later it
+        // will consume the retry key in its own handler; a duplicate
+        // `message` event has nothing to redeem.
         return;
       }
 
@@ -778,7 +1047,11 @@ export function createSlackAdapter(
       };
 
       try {
-        await adapter.onMessage(inbound);
+        await dispatchInboundThroughDebouncer({
+          inbound,
+          raw: rawMessage as SlackDebounceRawInput,
+          opts: { source: "message", wasMentioned },
+        });
       } catch (error) {
         console.error(
           "[Slack] Error handling threaded channel message:",
@@ -800,8 +1073,15 @@ export function createSlackAdapter(
         return;
       }
 
-      if (markIngressMessageSeen(event.channel, event.ts)) {
-        return;
+      const seenKey = `${event.channel}:${event.ts}`;
+      const wasSeen = markIngressMessageSeen(event.channel, event.ts);
+      if (wasSeen) {
+        // A prior `message` event already claimed this ts. Allow the
+        // app_mention through exactly once if a retry key was primed;
+        // otherwise drop.
+        if (!consumeAppMentionRetry(seenKey)) {
+          return;
+        }
       }
 
       rememberMessageThread(event.ts, event.thread_ts ?? event.ts);
@@ -828,7 +1108,11 @@ export function createSlackAdapter(
       };
 
       try {
-        await adapter.onMessage(inbound);
+        await dispatchInboundThroughDebouncer({
+          inbound,
+          raw: event as SlackDebounceRawInput,
+          opts: { source: "app_mention", wasMentioned: true },
+        });
       } catch (error) {
         console.error("[Slack] Error handling channel mention:", error);
       }
@@ -956,6 +1240,9 @@ export function createSlackAdapter(
       seenIngressMessageKeys.clear();
       lifecycleStateByMessageKey.clear();
       lifecycleOperationByMessageKey.clear();
+      pendingTopLevelDebounceKeys.clear();
+      appMentionRetryKeys.clear();
+      appMentionDispatchedKeys.clear();
       console.log("[Slack] App stopped");
     },
 
