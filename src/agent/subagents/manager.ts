@@ -157,12 +157,6 @@ function swapProviderPrefix(
   return `${parentProvider}/${modelPortion}`;
 }
 
-function isEnvFlagEnabled(name: string): boolean {
-  const value = process.env[name]?.trim();
-  if (!value) return false;
-  return value === "1" || value.toLowerCase() === "true";
-}
-
 export async function resolveSubagentModel(options: {
   userModel?: string;
   recommendedModel?: string;
@@ -177,10 +171,7 @@ export async function resolveSubagentModel(options: {
 
   if (userModel) return userModel;
 
-  if (
-    options.subagentType === "reflection" &&
-    isEnvFlagEnabled("AUTO_MEMORY")
-  ) {
+  if (options.subagentType === "reflection") {
     return "letta/auto-memory";
   }
 
