@@ -6,7 +6,7 @@ import {
   readFile,
   writeFile,
 } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { MEMORY_SYSTEM_DIR } from "../../agent/memoryFilesystem";
 import { getDirectoryLimits } from "../../utils/directoryLimits";
@@ -551,9 +551,9 @@ async function readTranscriptLines(
   }
 }
 
-function buildPayloadPath(kind: "auto" | "remember"): string {
+function buildPayloadPath(rootDir: string, kind: "auto" | "remember"): string {
   const nonce = Math.random().toString(36).slice(2, 8);
-  return join(tmpdir(), `letta-${kind}-${nonce}.json`);
+  return join(rootDir, `payload-${kind}-${nonce}.json`);
 }
 
 export function getReflectionTranscriptPaths(
@@ -674,7 +674,7 @@ export async function buildAutoReflectionPayload(
     return null;
   }
 
-  const payloadPath = buildPayloadPath("auto");
+  const payloadPath = buildPayloadPath(paths.rootDir, "auto");
   await writeFile(payloadPath, transcript, "utf-8");
 
   state.last_auto_reflection_started_at = new Date().toISOString();

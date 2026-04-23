@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
   appendTranscriptDeltaJsonl,
   buildAutoReflectionPayload,
@@ -65,6 +65,9 @@ describe("reflectionTranscript helper", () => {
     expect(payload.endMessageId).toBe("a1");
 
     expect(payload.payloadPath.endsWith(".json")).toBe(true);
+    const paths = getReflectionTranscriptPaths(agentId, conversationId);
+    expect(payload.payloadPath.startsWith(paths.rootDir)).toBe(true);
+    expect(dirname(payload.payloadPath)).toBe(paths.rootDir);
 
     const payloadText = await readFile(payload.payloadPath, "utf-8");
     const messages = JSON.parse(payloadText);
@@ -82,7 +85,6 @@ describe("reflectionTranscript helper", () => {
 
     expect(existsSync(payload.payloadPath)).toBe(true);
 
-    const paths = getReflectionTranscriptPaths(agentId, conversationId);
     const stateRaw = await readFile(paths.statePath, "utf-8");
     const state = JSON.parse(stateRaw) as { auto_cursor_line: number };
     expect(state.auto_cursor_line).toBe(payload.endSnapshotLine);
