@@ -191,39 +191,31 @@ python3 <skill-dir>/scripts/add_hook.py \
 
 ## 3. Agent Configuration
 
-Agent-level config (model, name, toolset, etc.) is modified through slash commands or CLI subcommands, not by editing settings.json directly. Most changes persist to the Letta server via the agent API.
+Agent-level config splits into two storage locations:
+- **Harness-side settings** (in `settings.json`) — agents CAN modify via Write/Edit tools
+- **Server-side config** (model, name, description, system prompt) — agents modify via the Letta API client, NOT via slash commands
 
-### Slash Commands
+### ⚠️ Slash commands are TUI-only
 
-| Command | What it changes | Where it persists |
-|---------|----------------|-------------------|
-| `/model` | LLM model + context window + reasoning effort | Agent LLM config (server) |
-| `/rename agent <name>` | Agent display name | Agent record (server) |
-| `/description <text>` | Agent description | Agent record (server) |
-| `/system` | System prompt preset | Agent + `settings.json` `agents[].systemPromptPreset` |
-| `/toolset` | Which tools are enabled | `settings.json` `agents[].toolset` |
-| `/memfs enable\|disable\|sync\|reset` | Memory filesystem addon | Agent system prompt + `settings.json` `agents[].memfs` |
-| `/pin` / `/unpin` | Pin agent to quick-switch list | `settings.json` `pinnedAgents` |
+Slash commands like `/model`, `/rename`, `/system`, `/toolset`, `/memfs`, `/pin` are user-facing CLI commands — they only run in the interactive TUI and **cannot be invoked by the agent**. The agent has no slash-command execution tool.
 
-### CLI Subcommands
+The table below shows what each command does and how an agent can achieve the same effect programmatically.
 
-```bash
-# List all agents
-letta agents list
+| User command | What it changes | How the agent can do it |
+|--------------|----------------|------------------------|
+| `/model` | LLM model, context window, reasoning effort | Letta API client: `client.agents.modify(agent_id, llm_config=...)` |
+| `/rename agent <name>` | Agent display name | Letta API client: `client.agents.modify(agent_id, name="new-name")` |
+| `/description <text>` | Agent description | Letta API client: `client.agents.modify(agent_id, description="...")` |
+| `/system` | System prompt preset | Letta API client: `client.agents.modify(agent_id, system="...")` + edit `settings.json` `agents[].systemPromptPreset` |
+| `/toolset` | Tool preference | Edit `settings.json` `agents[].toolset` directly |
+| `/memfs enable\|disable` | Memory filesystem addon | Edit `settings.json` `agents[].memfs` + update system prompt via API |
+| `/pin` / `/unpin` | Quick-switch pinning | Edit `settings.json` `pinnedAgents` array directly |
 
-# Create a new agent
-letta agents create \
-  --name "my-agent" \
-  --model "claude-sonnet-4.5" \
-  --description "helper for refactoring" \
-  --tags "work,coding" \
-  --pinned
-```
+### What the agent CAN modify directly
 
-### Per-Agent Settings
+These are pure JSON edits in `settings.json` — the agent can do them with Write/Edit:
 
-When the harness stores per-agent preferences (toolset, memfs, preset), it does so in `~/.letta/settings.json` under the `agents` array:
-
+**Per-agent harness settings** (in `~/.letta/settings.json`):
 ```json
 {
   "agents": [
@@ -239,28 +231,74 @@ When the harness stores per-agent preferences (toolset, memfs, preset), it does 
 }
 ```
 
-These settings complement (don't replace) the agent's server-side config.
+**Pinning**:
+```json
+{
+  "pinnedAgents": ["agent-abc123", "agent-def456"]
+}
+```
 
-### Server-Side Config
+### Server-side changes (require the Letta API)
 
-Model, context window, and system prompt are stored on the Letta server. Modify them with `/model`, `/system`, etc. — these call the agent update API. If you want to change them programmatically, use the Letta API client directly (see `letta-api-client` skill if available).
+Model, name, description, and system prompt live on the Letta server. To change them, the agent needs to call the Letta API client:
+
+```python
+from letta_client import Letta
+client = Letta(token=os.environ["LETTA_API_KEY"])
+
+# Change the model
+client.agents.modify(
+    agent_id="agent-abc123",
+    llm_config={"model": "claude-sonnet-4.5", "context_window": 200000}
+)
+
+# Rename
+client.agents.modify(agent_id="agent-abc123", name="new-name")
+
+# Update description
+client.agents.modify(agent_id="agent-abc123", description="refactoring helper")
+```
+
+**Load the `letta-api-client` skill** for full SDK docs, auth setup, and more patterns.
+
+### CLI subcommands
+
+The `letta` CLI only supports `list` and `create` for agents — no update/rename. Use the API client for modifications.
+
+```bash
+# List all agents
+letta agents list
+
+# Create a new agent
+letta agents create \
+  --name "my-agent" \
+  --model "claude-sonnet-4.5" \
+  --description "helper for refactoring" \
+  --pinned
+```
 
 ---
 
 ## Quick Reference: "I want to..."
 
-| Goal | Do |
-|------|-----|
-| Auto-approve a bash command | `add_permission.py --rule "Bash(cmd:*)" --type allow --scope user` |
-| Block dangerous commands | Add to `deny` list in settings.json |
-| Log all tool calls | Add `PreToolUse` command hook with `*` matcher |
-| Auto-format after edits | Add `PostToolUse` command hook matching `Edit|Write` |
-| Change the model | `/model` |
-| Rename the agent | `/rename agent <name>` |
-| Switch toolset | `/toolset` |
-| Disable memfs | `/memfs disable` |
-| Pin agent to quick-switch | `/pin` |
-| View current harness | `python3 <skill-dir>/scripts/show_config.py` |
+Legend: **[Agent]** = agent can do this, **[User]** = TUI-only
+
+| Goal | Agent path | User path |
+|------|-----------|-----------|
+| Auto-approve a bash command | `add_permission.py --rule "Bash(cmd:*)" --type allow --scope user` | `/allow` in TUI |
+| Block dangerous commands | Add to `deny` list in `settings.json` | Edit settings |
+| Log all tool calls | `add_hook.py --event PreToolUse --matcher "*" --type command --command ...` | Edit settings |
+| Auto-format after edits | `add_hook.py --event PostToolUse --matcher "Edit\|Write" ...` | Edit settings |
+| Change the model | Letta API: `client.agents.modify(agent_id, llm_config=...)` | `/model` |
+| Rename the agent | Letta API: `client.agents.modify(agent_id, name=...)` | `/rename agent` |
+| Change description | Letta API: `client.agents.modify(agent_id, description=...)` | `/description` |
+| Change system prompt | Letta API: `client.agents.modify(agent_id, system=...)` | `/system` |
+| Switch toolset | Edit `agents[].toolset` in `~/.letta/settings.json` | `/toolset` |
+| Disable memfs | Edit `agents[].memfs` in `~/.letta/settings.json` + update system prompt via API | `/memfs disable` |
+| Pin agent to quick-switch | Edit `pinnedAgents` in `~/.letta/settings.json` | `/pin` |
+| View current harness | `python3 <skill-dir>/scripts/show_config.py` | Same |
+
+> **Agent rule of thumb**: Harness changes (permissions, hooks, `settings.json` per-agent fields, pinning) are pure JSON edits — the agent can do them with Write/Edit. Server-side agent fields (model, name, description, system prompt) require the **Letta API client** — load the `letta-api-client` skill.
 
 ---
 
