@@ -19,9 +19,12 @@ import type {
   ChannelMessageActionRequest,
 } from "../../channels/pluginTypes";
 import { getChannelRegistry } from "../../channels/registry";
+import { resolveEligibleProactiveSlackAccount } from "../../channels/slack/proactiveAccounts";
 import type {
+  ChannelAdapter,
   ChannelRoute,
   OutboundChannelMessage,
+  SupportedChannelId,
 } from "../../channels/types";
 
 const TELEGRAM_CHANNEL_ID = "telegram";
@@ -467,7 +470,9 @@ export function formatOutboundChannelMessage(
 interface MessageChannelArgs {
   channel: string;
   action: string;
-  chat_id: string;
+  chat_id?: string;
+  target?: string;
+  accountId?: string;
   message?: string;
   replyTo?: string;
   threadId?: string;
@@ -479,6 +484,30 @@ interface MessageChannelArgs {
   title?: string;
   /** Injected by executeTool() — NOT read from global context. */
   parentScope?: { agentId: string; conversationId: string };
+}
+
+interface NormalizedMessageChannelInput {
+  channel: SupportedChannelId;
+  action: ChannelMessageActionName;
+  chatId?: string;
+  target?: string;
+  accountId?: string;
+  message?: string;
+  replyToMessageId?: string;
+  threadId?: string | null;
+  messageId?: string;
+  emoji?: string;
+  remove?: boolean;
+  mediaPath?: string;
+  filename?: string;
+  title?: string;
+}
+
+interface ResolvedMessageChannelExecutionContext {
+  request: ChannelMessageActionRequest;
+  route: ChannelRoute;
+  adapter: ChannelAdapter;
+  plugin: Awaited<ReturnType<typeof loadChannelPlugin>>;
 }
 
 function firstNonEmptyString(...values: unknown[]): string | undefined {
@@ -538,9 +567,9 @@ function normalizeMessageAction(
   }
 }
 
-function normalizeMessageChannelRequest(
+function normalizeMessageChannelInput(
   args: MessageChannelArgs,
-): ChannelMessageActionRequest | string {
+): NormalizedMessageChannelInput | string {
   const channel = firstNonEmptyString(args.channel)?.toLowerCase();
   if (!channel) {
     return "Error: MessageChannel requires channel.";
@@ -560,14 +589,20 @@ function normalizeMessageChannelRequest(
   }
 
   const rawChatId = firstNonEmptyString(args.chat_id);
-  if (!rawChatId) {
-    return "Error: MessageChannel requires chat_id.";
+  const rawTarget = firstNonEmptyString(args.target);
+  if (!rawChatId && !rawTarget) {
+    return "Error: MessageChannel requires exactly one of chat_id or target.";
+  }
+  if (rawChatId && rawTarget) {
+    return "Error: MessageChannel requires exactly one of chat_id or target.";
   }
 
   return {
     action,
     channel,
-    chatId: normalizeChatTarget(rawChatId),
+    ...(rawChatId ? { chatId: normalizeChatTarget(rawChatId) } : {}),
+    ...(rawTarget ? { target: rawTarget } : {}),
+    accountId: firstNonEmptyString(args.accountId),
     message: firstNonEmptyString(args.message),
     replyToMessageId: firstNonEmptyString(args.replyTo),
     threadId: firstNonEmptyString(args.threadId) ?? null,
@@ -577,6 +612,93 @@ function normalizeMessageChannelRequest(
     mediaPath: firstNonEmptyString(args.media),
     filename: firstNonEmptyString(args.filename),
     title: firstNonEmptyString(args.title),
+  };
+}
+
+function buildMessageChannelRequest(
+  input: NormalizedMessageChannelInput,
+  chatId: string,
+  threadId?: string | null,
+): ChannelMessageActionRequest {
+  return {
+    action: input.action,
+    channel: input.channel,
+    chatId,
+    message: input.message,
+    replyToMessageId: input.replyToMessageId,
+    threadId: threadId ?? input.threadId ?? null,
+    messageId: input.messageId,
+    emoji: input.emoji,
+    remove: input.remove,
+    mediaPath: input.mediaPath,
+    filename: input.filename,
+    title: input.title,
+  };
+}
+
+function buildSyntheticChannelRoute(params: {
+  scope: { agentId: string; conversationId: string };
+  accountId: string;
+  chatId: string;
+  chatType?: ChannelRoute["chatType"];
+  threadId?: string | null;
+}): ChannelRoute {
+  const now = new Date().toISOString();
+  return {
+    accountId: params.accountId,
+    chatId: params.chatId,
+    chatType: params.chatType,
+    threadId: params.threadId ?? null,
+    agentId: params.scope.agentId,
+    conversationId: params.scope.conversationId,
+    enabled: true,
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+async function resolveExplicitMessageChannelContext(params: {
+  input: NormalizedMessageChannelInput;
+  scope: { agentId: string; conversationId: string };
+}): Promise<ResolvedMessageChannelExecutionContext | string> {
+  if (params.input.channel !== "slack") {
+    return `Error: Explicit MessageChannel targets are not supported on ${params.input.channel}.`;
+  }
+
+  const eligibleAccount = resolveEligibleProactiveSlackAccount({
+    agentId: params.scope.agentId,
+    accountId: params.input.accountId,
+  });
+  if (typeof eligibleAccount === "string") {
+    return eligibleAccount;
+  }
+
+  const plugin = await loadChannelPlugin("slack");
+  const resolver = plugin.messageActions?.resolveMessageTarget;
+  if (!resolver) {
+    return "Error: Explicit MessageChannel targets are not supported on slack.";
+  }
+
+  const resolvedTarget = await resolver({
+    account: eligibleAccount.account,
+    target: params.input.target ?? "",
+  });
+
+  return {
+    request: buildMessageChannelRequest(
+      params.input,
+      resolvedTarget.chatId,
+      resolvedTarget.threadId,
+    ),
+    route: buildSyntheticChannelRoute({
+      scope: params.scope,
+      accountId: eligibleAccount.account.accountId,
+      chatId: resolvedTarget.chatId,
+      chatType: resolvedTarget.chatType,
+      threadId: resolvedTarget.threadId,
+    }),
+    adapter: eligibleAccount.adapter,
+    plugin,
   };
 }
 
@@ -596,32 +718,56 @@ export async function message_channel(
     return "Error: MessageChannel requires execution scope (agentId + conversationId).";
   }
 
-  const request = normalizeMessageChannelRequest(args);
-  if (typeof request === "string") {
-    return request;
-  }
-
-  const route: ChannelRoute | null = registry.getRouteForScope(
-    request.channel,
-    request.chatId,
-    scope.agentId,
-    scope.conversationId,
-  );
-  if (!route) {
-    return `Error: No route for chat_id "${request.chatId}" on "${request.channel}" for this agent/conversation.`;
-  }
-
-  const adapter = registry.getAdapter(request.channel, route.accountId);
-  if (!adapter) {
-    return `Error: Channel "${request.channel}" is not configured or not running.`;
-  }
-
-  if (!adapter.isRunning()) {
-    return `Error: Channel "${request.channel}" is not currently running.`;
+  const input = normalizeMessageChannelInput(args);
+  if (typeof input === "string") {
+    return input;
   }
 
   try {
-    const plugin = await loadChannelPlugin(request.channel);
+    let executionContext: ResolvedMessageChannelExecutionContext | string;
+    if (input.chatId) {
+      const route: ChannelRoute | null = registry.getRouteForScope(
+        input.channel,
+        input.chatId,
+        scope.agentId,
+        scope.conversationId,
+      );
+      if (!route) {
+        return `Error: No route for chat_id "${input.chatId}" on "${input.channel}" for this agent/conversation.`;
+      }
+
+      const adapter = registry.getAdapter(input.channel, route.accountId);
+      if (!adapter) {
+        return `Error: Channel "${input.channel}" is not configured or not running.`;
+      }
+
+      if (!adapter.isRunning()) {
+        return `Error: Channel "${input.channel}" is not currently running.`;
+      }
+
+      const plugin = await loadChannelPlugin(input.channel);
+      executionContext = {
+        request: buildMessageChannelRequest(
+          input,
+          input.chatId,
+          input.threadId,
+        ),
+        route,
+        adapter,
+        plugin,
+      };
+    } else {
+      executionContext = await resolveExplicitMessageChannelContext({
+        input,
+        scope,
+      });
+    }
+
+    if (typeof executionContext === "string") {
+      return executionContext;
+    }
+
+    const { request, route, adapter, plugin } = executionContext;
     if (!plugin.messageActions) {
       return `Error: Channel "${request.channel}" does not expose MessageChannel actions.`;
     }
@@ -645,6 +791,6 @@ export async function message_channel(
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "unknown error";
-    return `Error sending message to ${request.channel}: ${msg}`;
+    return `Error sending message to ${input.channel}: ${msg}`;
   }
 }

@@ -11,7 +11,15 @@
     },
     "chat_id": {
       "type": "string",
-      "description": "The chat/conversation ID to send to (from the channel-notification attributes)."
+      "description": "The chat/conversation ID to reply to (usually from the channel-notification attributes). Use this for replies in the current routed chat."
+    },
+    "target": {
+      "type": "string",
+      "description": "Explicit outbound target for proactive sends on supported channels (for example, a Slack channel like '#general' or 'channel:C12345678')."
+    },
+    "accountId": {
+      "type": "string",
+      "description": "Optional channel account identifier when multiple eligible channel accounts are available for proactive sends."
     },
     "message": {
       "type": "string",
@@ -50,6 +58,8 @@
       "description": "Optional uploaded title override for media attachments"
     }
   },
-  "required": ["action", "channel", "chat_id"],
+  "required": ["action", "channel"],
+  "anyOf": [{ "required": ["chat_id"] }, { "required": ["target"] }],
+  "not": { "required": ["chat_id", "target"] },
   "additionalProperties": false
 }

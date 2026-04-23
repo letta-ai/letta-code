@@ -2,6 +2,8 @@ import type {
   ChannelMessageActionAdapter,
   ChannelMessageActionContext,
 } from "../pluginTypes";
+import type { SlackChannelAccount } from "../types";
+import { resolveSlackMessageTarget } from "./targetResolution";
 
 async function sendSlackMessage(
   ctx: ChannelMessageActionContext,
@@ -65,6 +67,13 @@ export const slackMessageActions: ChannelMessageActionAdapter = {
     return {
       actions: ["send", "react", "upload-file"],
     };
+  },
+
+  async resolveMessageTarget(params) {
+    return await resolveSlackMessageTarget({
+      account: params.account as SlackChannelAccount,
+      target: params.target,
+    });
   },
 
   async handleAction(ctx) {

@@ -17,6 +17,7 @@ export type MessageChannelToolDiscoveryScope = {
 
 type ResolvedMessageChannelToolDiscovery = {
   activeChannels: SupportedChannelId[];
+  accountIds: string[];
   actions: string[];
   schemaContributions: ChannelMessageToolSchemaContribution[];
 };
@@ -103,6 +104,10 @@ function buildDynamicMessageChannelSchemaFromDiscovery(
     properties.channel.enum = [...discovery.activeChannels];
   }
 
+  if (properties.accountId && discovery.accountIds.length > 0) {
+    properties.accountId.enum = [...discovery.accountIds];
+  }
+
   if (properties.action) {
     properties.action.enum = [...discovery.actions];
   }
@@ -141,6 +146,13 @@ export async function resolveMessageChannelToolDiscovery(
   const activeChannels = Array.from(
     new Set(discoveryTargets.map(({ channelId }) => channelId)),
   );
+  const accountIds = Array.from(
+    new Set(
+      discoveryTargets
+        .map(({ accountId }) => accountId?.trim())
+        .filter((accountId): accountId is string => Boolean(accountId)),
+    ),
+  );
   const actions = new Set<string>(["send"]);
   const schemaContributions: ChannelMessageToolSchemaContribution[] = [];
 
@@ -162,6 +174,7 @@ export async function resolveMessageChannelToolDiscovery(
 
   return {
     activeChannels,
+    accountIds,
     actions: Array.from(actions),
     schemaContributions,
   };

@@ -2181,19 +2181,19 @@ export default function App({
       const workingDirectory = getCurrentWorkingDirectory();
       const desiredModel = overrideModel ?? currentModelHandle;
 
-      if (desiredModel) {
-        return prepareToolExecutionContextForResolvedTarget({
-          modelIdentifier: desiredModel,
-          toolsetPreference: currentToolsetPreference,
-          workingDirectory,
-        });
-      }
-
       if (agentIdRef.current) {
         return prepareToolExecutionContextForScope({
           agentId: agentIdRef.current,
           conversationId: conversationIdRef.current,
-          overrideModel,
+          overrideModel: desiredModel,
+          workingDirectory,
+        });
+      }
+
+      if (desiredModel) {
+        return prepareToolExecutionContextForResolvedTarget({
+          modelIdentifier: desiredModel,
+          toolsetPreference: currentToolsetPreference,
           workingDirectory,
         });
       }

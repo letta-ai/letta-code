@@ -9,6 +9,12 @@ import {
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import {
+  __testOverrideLoadChannelAccounts,
+  __testOverrideSaveChannelAccounts,
+  clearChannelAccountStores,
+  upsertChannelAccount,
+} from "../../channels/accounts";
 import { clearDynamicMessageChannelToolCache } from "../../channels/messageTool";
 import { ChannelRegistry, getChannelRegistry } from "../../channels/registry";
 import type { ChannelAdapter } from "../../channels/types";
@@ -27,6 +33,7 @@ import {
   prepareToolExecutionContextForSpecificTools,
   refreshDynamicChannelToolsInLoadedRegistry,
 } from "../../tools/manager";
+import { resolveConversationChannelToolScope } from "../../tools/toolset";
 
 function asText(
   toolReturn: Awaited<ReturnType<typeof executeTool>>["toolReturn"],
@@ -67,7 +74,15 @@ describe("tool execution context snapshot", () => {
     }
     clearDynamicMessageChannelToolCache();
     clearCapturedToolExecutionContexts();
+    clearChannelAccountStores();
+    __testOverrideLoadChannelAccounts(null);
+    __testOverrideSaveChannelAccounts(null);
   });
+
+  function installChannelAccountTestOverrides(): void {
+    __testOverrideLoadChannelAccounts(() => []);
+    __testOverrideSaveChannelAccounts(() => {});
+  }
 
   afterAll(async () => {
     clearExternalTools();
@@ -293,5 +308,79 @@ describe("tool execution context snapshot", () => {
         >
       ).channel?.enum,
     ).toEqual(["slack"]);
+  });
+
+  test("includes MessageChannel in scoped snapshots when the agent has an eligible proactive Slack account even without routes", async () => {
+    installChannelAccountTestOverrides();
+    await loadSpecificTools(["Read"]);
+
+    const registry = new ChannelRegistry();
+    registry.registerAdapter(createRunningAdapter("slack", "acct-slack"));
+
+    upsertChannelAccount("slack", {
+      channel: "slack",
+      accountId: "acct-slack",
+      displayName: "DocsBot Slack",
+      enabled: true,
+      dmPolicy: "pairing",
+      allowedUsers: [],
+      createdAt: "2026-04-11T00:00:00.000Z",
+      updatedAt: "2026-04-11T00:00:00.000Z",
+      mode: "socket",
+      botToken: "xoxb-test-token",
+      appToken: "xapp-test-token",
+      agentId: "agent-1",
+      defaultPermissionMode: "default",
+    });
+
+    const scope = resolveConversationChannelToolScope("agent-1", "default");
+    expect(scope).toEqual({
+      channels: [{ channelId: "slack", accountId: "acct-slack" }],
+    });
+
+    const prepared = await prepareToolExecutionContextForModel(
+      "anthropic/claude-opus-4-1-20250805",
+      {
+        channelToolScope: scope,
+      },
+    );
+
+    expect(prepared.loadedToolNames).toContain("MessageChannel");
+  });
+
+  test("does not grant proactive MessageChannel scope for Telegram-only accounts", async () => {
+    installChannelAccountTestOverrides();
+    await loadSpecificTools(["Read"]);
+
+    const registry = new ChannelRegistry();
+    registry.registerAdapter(createRunningAdapter("telegram", "acct-telegram"));
+
+    upsertChannelAccount("telegram", {
+      channel: "telegram",
+      accountId: "acct-telegram",
+      displayName: "Telegram Bot",
+      enabled: true,
+      dmPolicy: "pairing",
+      allowedUsers: [],
+      createdAt: "2026-04-11T00:00:00.000Z",
+      updatedAt: "2026-04-11T00:00:00.000Z",
+      token: "telegram-token",
+      binding: {
+        agentId: "agent-1",
+        conversationId: "default",
+      },
+    });
+
+    const scope = resolveConversationChannelToolScope("agent-1", "default");
+    expect(scope).toEqual({ channels: [] });
+
+    const prepared = await prepareToolExecutionContextForModel(
+      "anthropic/claude-opus-4-1-20250805",
+      {
+        channelToolScope: scope,
+      },
+    );
+
+    expect(prepared.loadedToolNames).not.toContain("MessageChannel");
   });
 });

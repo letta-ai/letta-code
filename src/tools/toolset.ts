@@ -4,6 +4,7 @@ import { resolveModel } from "../agent/model";
 import type { MessageChannelToolDiscoveryScope } from "../channels/messageTool";
 import { getChannelRegistry } from "../channels/registry";
 import { getRoutesForChannel, loadRoutes } from "../channels/routing";
+import { listEligibleProactiveSlackAccounts } from "../channels/slack/proactiveAccounts";
 import {
   SUPPORTED_CHANNEL_IDS,
   type SupportedChannelId,
@@ -203,7 +204,7 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
   };
 }
 
-function resolveConversationChannelToolScope(
+export function resolveConversationChannelToolScope(
   agentId: string,
   conversationId: string,
 ): MessageChannelToolDiscoveryScope {
@@ -244,6 +245,18 @@ function resolveConversationChannelToolScope(
         accountId: route.accountId ?? null,
       });
     }
+  }
+
+  for (const { account } of listEligibleProactiveSlackAccounts(agentId)) {
+    const key = `slack:${account.accountId}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    channels.push({
+      channelId: "slack",
+      accountId: account.accountId,
+    });
   }
 
   return { channels };

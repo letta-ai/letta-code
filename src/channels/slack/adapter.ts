@@ -17,7 +17,8 @@ import {
   resolveSlackThreadHistory,
   resolveSlackThreadStarter,
 } from "./media";
-import { loadSlackBoltModule, loadSlackWebApiModule } from "./runtime";
+import { loadSlackBoltModule } from "./runtime";
+import { createSlackWebApiClient } from "./webApiClient";
 
 type SlackAppConstructor = typeof import("@slack/bolt").App;
 type SlackBoltModule = typeof import("@slack/bolt") & {
@@ -60,14 +61,6 @@ type SlackWriteClient = {
       thread_ts?: string;
     }) => Promise<{ ok?: boolean; error?: string }>;
   };
-};
-type SlackWriteClientConstructor = new (
-  token: string,
-  options?: Record<string, unknown>,
-) => SlackWriteClient;
-type SlackWebApiModule = {
-  WebClient?: unknown;
-  default?: unknown;
 };
 type SlackReactionEvent = {
   item?: {
@@ -120,44 +113,6 @@ function resolveSlackAppConstructor(mod: SlackBoltModule): SlackAppConstructor {
     );
   }
   return App;
-}
-
-function resolveSlackWebClientModule(
-  value: unknown,
-): SlackWriteClientConstructor | null {
-  if (!value || typeof value !== "object") {
-    return null;
-  }
-  const webClient = Reflect.get(value, "WebClient");
-  return isConstructorFunction<SlackWriteClientConstructor>(webClient)
-    ? webClient
-    : null;
-}
-
-function resolveSlackWebClientConstructor(
-  mod: SlackWebApiModule,
-): SlackWriteClientConstructor {
-  const defaultExport =
-    mod && typeof mod === "object" ? Reflect.get(mod, "default") : undefined;
-  const nestedDefault =
-    defaultExport && typeof defaultExport === "object"
-      ? Reflect.get(defaultExport, "default")
-      : undefined;
-
-  const WebClient =
-    resolveSlackWebClientModule(mod) ??
-    resolveSlackWebClientModule(defaultExport) ??
-    resolveSlackWebClientModule(nestedDefault) ??
-    (isConstructorFunction<SlackWriteClientConstructor>(defaultExport)
-      ? defaultExport
-      : null);
-
-  if (!WebClient) {
-    throw new Error(
-      'Installed Slack runtime did not export constructor "WebClient".',
-    );
-  }
-  return WebClient;
 }
 
 function isNonEmptyString(value: unknown): value is string {
@@ -912,13 +867,14 @@ export function createSlackAdapter(
       return writeClient;
     }
 
-    const webApi = await loadSlackWebApiModule();
-    const WebClient = resolveSlackWebClientConstructor(webApi);
-    writeClient = new WebClient(config.botToken, {
-      retryConfig: {
-        retries: 0,
+    writeClient = await createSlackWebApiClient<SlackWriteClient>(
+      config.botToken,
+      {
+        retryConfig: {
+          retries: 0,
+        },
       },
-    });
+    );
     return writeClient;
   }
 
