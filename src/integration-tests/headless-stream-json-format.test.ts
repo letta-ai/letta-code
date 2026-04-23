@@ -352,4 +352,75 @@ describe("stream-json format", () => {
     },
     { timeout: 200000 },
   );
+
+  // Prompt that forces a local tool call. The model must Read the file,
+  // which auto-approves and executes locally — giving us a tool_return_message
+  // that would otherwise never reach the wire.
+  const TOOL_PROMPT =
+    "Read the file README.md using the Read tool, then tell me how many lines it has. Do not use any other tools.";
+
+  test(
+    "tool_return_message is emitted on the wire after local tool execution",
+    async () => {
+      const lines = await runHeadlessCommand(TOOL_PROMPT);
+
+      const toolReturns = lines
+        .map((l) => JSON.parse(l) as Record<string, unknown>)
+        .filter(
+          (o) =>
+            o.type === "message" && o.message_type === "tool_return_message",
+        );
+
+      expect(toolReturns.length).toBeGreaterThan(0);
+
+      const first = toolReturns[0] as {
+        tool_call_id: string;
+        tool_return: unknown;
+        status: string;
+        timestamp: string;
+        uuid: string;
+        session_id: string;
+        agent_id: string;
+        conversation_id: string;
+      };
+
+      expect(typeof first.tool_call_id).toBe("string");
+      expect(first.tool_call_id.length).toBeGreaterThan(0);
+      expect(typeof first.tool_return).toBe("string");
+      expect(["success", "error"]).toContain(first.status);
+      expect(first.timestamp).toMatch(ISO_TIMESTAMP_REGEX);
+      expect(first.uuid).toBe(`tool-return-${first.tool_call_id}`);
+      expect(first.session_id).toBe(first.agent_id);
+      expect(first.conversation_id).toBeTruthy();
+    },
+    { timeout: 200000 },
+  );
+
+  test(
+    "tool_return_message arrives between approval and next assistant_message",
+    async () => {
+      const lines = await runHeadlessCommand(TOOL_PROMPT);
+
+      // Extract the sequence of message_type (or top-level type when no message_type).
+      const kinds = lines.map((l) => {
+        const o = JSON.parse(l) as {
+          type: string;
+          message_type?: string;
+        };
+        return o.message_type ?? o.type;
+      });
+
+      const approvalIdx = kinds.findIndex(
+        (k) => k === "approval_request_message" || k === "tool_call_message",
+      );
+      const toolReturnIdx = kinds.indexOf("tool_return_message");
+      // Find the last assistant_message (the model's final summary after the tool).
+      const lastAssistantIdx = kinds.lastIndexOf("assistant_message");
+
+      expect(approvalIdx).toBeGreaterThan(-1);
+      expect(toolReturnIdx).toBeGreaterThan(approvalIdx);
+      expect(lastAssistantIdx).toBeGreaterThan(toolReturnIdx);
+    },
+    { timeout: 200000 },
+  );
 });

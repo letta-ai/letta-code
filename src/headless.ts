@@ -7,6 +7,7 @@ import type {
 } from "@letta-ai/letta-client/resources/agents/agents";
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
+import type { ToolReturnMessage } from "@letta-ai/letta-client/resources/tools";
 import type { ApprovalResult } from "./agent/approval-execution";
 import {
   buildFreshDenialApprovals,
@@ -128,6 +129,7 @@ import type {
   RetryMessage,
   StreamEvent,
   SystemInitMessage,
+  ToolReturnMessageWire,
 } from "./types/protocol";
 import { debugLog, debugWarn, isDebugEnabled } from "./utils/debug";
 import {
@@ -1439,6 +1441,28 @@ export async function handleHeadlessCommand(
     return await flushAndExit(code);
   };
 
+  // Callback that emits a ToolReturnMessageWire for each locally-executed tool.
+  // The server doesn't echo local tool results back on the post-approval stream,
+  // so without this stream-json consumers have no visibility into what the tool
+  // returned, its status, stdout/stderr, etc. Undefined when not in stream-json
+  // mode so executeApprovalBatch is a no-op on emit.
+  const emitToolReturnWire:
+    | ((toolReturn: ToolReturnMessage) => void)
+    | undefined =
+    outputFormat === "stream-json"
+      ? (toolReturn) => {
+          const wire: ToolReturnMessageWire = {
+            ...toolReturn,
+            type: "message",
+            session_id: sessionId,
+            agent_id: agent.id,
+            conversation_id: conversationId,
+            uuid: `tool-return-${toolReturn.tool_call_id}`,
+          };
+          writeWireMessage(wire);
+        }
+      : undefined;
+
   // Output init event for stream-json format
   if (outputFormat === "stream-json") {
     const initEvent: SystemInitMessage = {
@@ -2225,7 +2249,7 @@ ${SYSTEM_REMINDER_CLOSE}
         );
         const executedResults = await executeApprovalBatch(
           decisions,
-          undefined,
+          emitToolReturnWire,
           {
             toolContextId: turnToolContextId ?? undefined,
           },
@@ -2779,6 +2803,20 @@ async function runBidirectionalMode(
     telemetry.trackSessionEnd(undefined, exitReason);
     await telemetry.flush();
     return await flushAndExit(code);
+  };
+
+  // Bidirectional mode is always stream-json; emit tool returns for each
+  // locally-executed tool so SDK consumers can see the result payloads.
+  const emitToolReturnWire = (toolReturn: ToolReturnMessage): void => {
+    const wire: ToolReturnMessageWire = {
+      ...toolReturn,
+      type: "message",
+      session_id: sessionId,
+      agent_id: agent.id,
+      conversation_id: conversationId,
+      uuid: `tool-return-${toolReturn.tool_call_id}`,
+    };
+    writeWireMessage(wire);
   };
 
   // Emit init event
@@ -3963,7 +4001,7 @@ async function runBidirectionalMode(
             );
             const executedResults = await executeApprovalBatch(
               decisions,
-              undefined,
+              emitToolReturnWire,
               { toolContextId: turnToolContextId ?? undefined },
             );
 
