@@ -9,6 +9,9 @@
  *     bare repo.
  *   - Commit to source, wait briefly for the async push, verify the bare repo
  *     receives the same HEAD SHA.
+ *
+ * The TS-side pushToMemoryRepository helper resolves agent memory under the
+ * real OS home directory, so detached handling there is covered by code review.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -42,6 +45,15 @@ function git(cwd: string, args: string): string {
     cwd,
     encoding: "utf-8",
     env: GIT_ENV,
+  });
+}
+
+function gitQuiet(cwd: string, args: string): string {
+  return execSync(`git ${args}`, {
+    cwd,
+    encoding: "utf-8",
+    env: GIT_ENV,
+    stdio: ["ignore", "pipe", "ignore"],
   });
 }
 
@@ -116,7 +128,7 @@ describe("post-commit memory-repository hook", () => {
     // Hook pushes async — poll until the remote has the same HEAD.
     const pushed = await waitUntil(() => {
       try {
-        const remoteSha = git(remoteDir, "rev-parse main").trim();
+        const remoteSha = gitQuiet(remoteDir, "rev-parse main").trim();
         return remoteSha === sourceSha;
       } catch {
         return false;
@@ -142,11 +154,13 @@ describe("post-commit memory-repository hook", () => {
     git(sourceDir, 'commit -m "fail push"');
 
     const logPath = join(sourceDir, ".git", LOG_FILE);
-    const appeared = await waitUntil(() => existsSync(logPath));
-    expect(appeared).toBe(true);
+    const completed = await waitUntil(() => {
+      if (!existsSync(logPath)) return false;
+      const log = readFileSync(logPath, "utf-8");
+      return /^exit=\d+/m.test(log);
+    });
+    expect(completed).toBe(true);
 
-    // Give the hook a moment to write its exit line after the push attempt.
-    await sleep(200);
     const log = readFileSync(logPath, "utf-8");
     // Failure is a non-zero exit code.
     expect(log).toMatch(/exit=(?!0$)\d+/m);
@@ -166,5 +180,25 @@ describe("post-commit memory-repository hook", () => {
 
     const sha = git(sourceDir, "rev-parse HEAD").trim();
     expect(sha.length).toBe(40);
+  });
+
+  test("no-ops when HEAD is detached", async () => {
+    git(
+      sourceDir,
+      `config --local letta.memoryRepository.url ${remoteDir}`,
+    );
+    gitQuiet(sourceDir, "checkout --detach HEAD");
+    git(sourceDir, 'commit --allow-empty -m "detached noop"');
+
+    const logPath = join(sourceDir, ".git", LOG_FILE);
+    expect(existsSync(logPath)).toBe(false);
+
+    let remoteHasMain = true;
+    try {
+      gitQuiet(remoteDir, "rev-parse main");
+    } catch {
+      remoteHasMain = false;
+    }
+    expect(remoteHasMain).toBe(false);
   });
 });

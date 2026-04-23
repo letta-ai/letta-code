@@ -40,6 +40,8 @@ const MISSING_CWD_GIT_ERROR_RE =
 const NON_FAST_FORWARD_PUSH_ERROR_RE =
   /(non-fast-forward|fetch first|failed to push some refs|updates were rejected|remote contains work that you do not have locally|tip of your current branch is behind)/i;
 
+const AGENT_DISPLAY_NAME_TIMEOUT_MS = 3_000;
+
 export interface MemoryCommitAuthor {
   agentId: string;
   authorName: string;
@@ -107,6 +109,12 @@ function normalizeRemoteUrl(url: string): string {
 
 function escapeRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function redactCredentialedHttpsUrl(value: string): string {
+  return value.replace(/https?:\/\/([^:\s/@]+):([^@\s]+)@/gi, (match) =>
+    match.replace(/:([^:@]+)@$/, ":***@"),
+  );
 }
 
 /**
@@ -209,13 +217,17 @@ async function runGit(
   const allArgs = [...authArgs, ...args];
 
   // Redact credential helper values to avoid leaking tokens in debug logs.
-  const loggableArgs =
+  let loggableArgs = args;
+  if (
     args[0] === "config" &&
     typeof args[1] === "string" &&
     args[1].includes("credential") &&
     args[1].includes(".helper")
-      ? [args[0], args[1], "<redacted>"]
-      : args;
+  ) {
+    loggableArgs = [args[0], args[1], "<redacted>"];
+  } else if (args[0] === "push") {
+    loggableArgs = args.map(redactCredentialedHttpsUrl);
+  }
   debugLog("memfs-git", `git ${loggableArgs.join(" ")} (in ${cwd})`);
 
   const result = await execFile("git", allArgs, {
@@ -541,7 +553,7 @@ export const POST_COMMIT_HOOK_SCRIPT = `#!/usr/bin/env bash
 # Installed by Letta Code CLI. Do not edit by hand — regenerated on startup.
 url=$(git config --local --get letta.memoryRepository.url 2>/dev/null)
 [ -z "$url" ] && exit 0
-branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
+branch=$(git symbolic-ref --quiet --short HEAD 2>/dev/null) || exit 0
 [ -z "$branch" ] && exit 0
 log="$(git rev-parse --git-dir)/memory-repository-push.log"
 (
@@ -613,9 +625,25 @@ async function unsetLocalGitConfig(dir: string, key: string): Promise<void> {
  * to block memfs startup.
  */
 async function fetchAgentDisplayName(agentId: string): Promise<string | null> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
   try {
     const client = await getClient();
-    const agent = await client.agents.retrieve(agentId);
+    const agent = await Promise.race([
+      client.agents.retrieve(agentId),
+      new Promise<null>((resolve) => {
+        timeout = setTimeout(
+          () => resolve(null),
+          AGENT_DISPLAY_NAME_TIMEOUT_MS,
+        );
+      }),
+    ]);
+    if (!agent) {
+      debugWarn(
+        "memfs-git",
+        `Timed out fetching agent display name after ${AGENT_DISPLAY_NAME_TIMEOUT_MS}ms`,
+      );
+      return null;
+    }
     const name = (agent.name ?? "").trim();
     return name.length > 0 ? name : null;
   } catch (err) {
@@ -624,6 +652,10 @@ async function fetchAgentDisplayName(agentId: string): Promise<string | null> {
       `Failed to fetch agent display name: ${err instanceof Error ? err.message : String(err)}`,
     );
     return null;
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
   }
 }
 
@@ -752,10 +784,8 @@ export async function pushToMemoryRepository(
     };
   }
 
-  let branch = "main";
   try {
-    const { stdout } = await runGit(dir, ["rev-parse", "--abbrev-ref", "HEAD"]);
-    branch = stdout.trim() || "main";
+    await runGit(dir, ["rev-parse", "--verify", "HEAD"]);
   } catch {
     // Fresh repo with no commits — nothing to push.
     return {
@@ -764,6 +794,28 @@ export async function pushToMemoryRepository(
       branch: null,
       output:
         "Memory repo has no commits yet — nothing to push. Make a change and commit first.",
+    };
+  }
+
+  let branch: string;
+  try {
+    const { stdout } = await runGit(dir, [
+      "symbolic-ref",
+      "--quiet",
+      "--short",
+      "HEAD",
+    ]);
+    branch = stdout.trim();
+    if (!branch) {
+      throw new Error("empty branch name");
+    }
+  } catch {
+    return {
+      ok: false,
+      url,
+      branch: null,
+      output:
+        "Memory repo is in a detached HEAD state — check out a branch before pushing.",
     };
   }
 

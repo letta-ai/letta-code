@@ -15,6 +15,7 @@
 
 import { getCurrentAgentId } from "../../agent/context";
 import {
+  type MemoryRepositoryPushResult,
   getMemoryRepositoryUrl,
   pushToMemoryRepository,
   readMemoryRepositoryPushLog,
@@ -25,6 +26,8 @@ import {
 export interface MemoryRepositoryCommandResult {
   output: string;
 }
+
+const INITIAL_PUSH_TIMEOUT_MS = 10_000;
 
 function resolveAgentId(): string | null {
   try {
@@ -75,15 +78,28 @@ function normalizeRepositoryUrl(raw: string): string {
   return raw.trim().replace(/\/+$/, "");
 }
 
-function isPlausibleGitUrl(url: string): boolean {
-  if (url.length === 0) return false;
-  // Cheap sanity check — full validation happens at push time.
-  if (url.startsWith("git@")) return true;
-  if (url.startsWith("ssh://")) return true;
-  if (url.startsWith("http://") || url.startsWith("https://")) return true;
-  if (url.startsWith("git://")) return true;
-  // Local paths are valid for git but probably not what a user wants here.
-  return false;
+export function redactUrl(value: string): string {
+  return value.replace(/https:\/\/([^:\s/@]+):([^@\s]+)@/gi, (match) =>
+    match.replace(/:([^:@]+)@$/, ":***@"),
+  );
+}
+
+async function pushToMemoryRepositoryWithTimeout(
+  agentId: string,
+): Promise<MemoryRepositoryPushResult | "timeout"> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      pushToMemoryRepository(agentId),
+      new Promise<"timeout">((resolve) => {
+        timeout = setTimeout(() => resolve("timeout"), INITIAL_PUSH_TIMEOUT_MS);
+      }),
+    ]);
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+  }
 }
 
 export async function handleMemoryRepositoryCommand(
@@ -105,11 +121,10 @@ export async function handleMemoryRepositoryCommand(
         return { output: "Usage: /memory-repository set <url>" };
       }
       const url = normalizeRepositoryUrl(rawUrl);
-      if (!isPlausibleGitUrl(url)) {
-        return {
-          output: `'${rawUrl}' doesn't look like a git URL. Examples:\n  git@github.com:owner/repo.git\n  https://github.com/owner/repo.git`,
-        };
+      if (!url) {
+        return { output: "Usage: /memory-repository set <url>" };
       }
+      const displayUrl = redactUrl(url);
 
       try {
         await setMemoryRepositoryUrl(agentId, url);
@@ -120,15 +135,20 @@ export async function handleMemoryRepositoryCommand(
       }
 
       // Best-effort initial push so the user gets immediate feedback about
-      // auth/connectivity issues rather than waiting for the next commit.
-      const push = await pushToMemoryRepository(agentId);
+      // auth/connectivity issues, bounded so the slash command stays responsive.
+      const push = await pushToMemoryRepositoryWithTimeout(agentId);
+      if (push === "timeout") {
+        return {
+          output: `Memory-repository URL set to ${displayUrl}.\nInitial push still running — check /memory-repository status for result.`,
+        };
+      }
       if (push.ok) {
         return {
-          output: `Memory-repository URL set to ${url}.\nInitial push succeeded.`,
+          output: `Memory-repository URL set to ${displayUrl}.\nInitial push succeeded.`,
         };
       }
       return {
-        output: `Memory-repository URL set to ${url}.\nInitial push failed:\n${push.output}\n\nFix the issue and run /memory-repository push to retry, or just wait for the next commit.`,
+        output: `Memory-repository URL set to ${displayUrl}.\nInitial push failed:\n${redactUrl(push.output)}\n\nFix the issue and run /memory-repository push to retry, or just wait for the next commit.`,
       };
     }
 
@@ -141,7 +161,9 @@ export async function handleMemoryRepositoryCommand(
         return { output: "No memory-repository URL was configured." };
       }
       await unsetMemoryRepositoryUrl(agentId);
-      return { output: `Memory-repository URL removed (was ${existing}).` };
+      return {
+        output: `Memory-repository URL removed (was ${redactUrl(existing)}).`,
+      };
     }
 
     case "status": {
@@ -152,12 +174,12 @@ export async function handleMemoryRepositoryCommand(
             "No memory-repository URL configured.\nUse /memory-repository set <url> to configure one.",
         };
       }
-      const log = readMemoryRepositoryPushLog(agentId, 20);
+      const log = redactUrl(readMemoryRepositoryPushLog(agentId, 20));
       const logSection = log
         ? `\n\nRecent push log:\n${log}`
         : "\n\n(no commits have triggered the hook yet)";
       return {
-        output: `Memory-repository URL: ${url}${logSection}`,
+        output: `Memory-repository URL: ${redactUrl(url)}${logSection}`,
       };
     }
 
@@ -165,10 +187,10 @@ export async function handleMemoryRepositoryCommand(
       const result = await pushToMemoryRepository(agentId);
       if (result.ok) {
         return {
-          output: `Pushed ${result.branch} to ${result.url}.\n${result.output}`,
+          output: `Pushed ${result.branch} to ${redactUrl(result.url ?? "")}.\n${redactUrl(result.output)}`,
         };
       }
-      return { output: `Push failed:\n${result.output}` };
+      return { output: `Push failed:\n${redactUrl(result.output)}` };
     }
 
     case "":
