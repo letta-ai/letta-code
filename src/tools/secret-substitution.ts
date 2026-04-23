@@ -45,7 +45,8 @@ export function substituteSecretsInArgs(
 }
 
 /**
- * Scrub secret values from a string, replacing them with $SECRET_NAME.
+ * Scrub secret values from a string, replacing them with an explicit
+ * placeholder that makes it unambiguous to the LLM that the value is hidden.
  * Used to prevent secret values from leaking into agent context via tool output.
  */
 export function scrubSecretsFromString(input: string): string {
@@ -57,7 +58,7 @@ export function scrubSecretsFromString(input: string): string {
   );
   for (const [name, value] of entries) {
     if (value.length > 0) {
-      result = result.replaceAll(value, `$${name}`);
+      result = result.replaceAll(value, `${name}=<REDACTED>`);
     }
   }
   return result;
