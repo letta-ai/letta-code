@@ -107,7 +107,13 @@ describe("subagent turn-start reentry safeguards", () => {
   });
 
   test("deferred first pass + explicit pre-reentry flush preserves Task grouping", () => {
-    registerSubagent("sub-1", "explore", "Find symbols", "tc-task", false);
+    registerSubagent(
+      "sub-1",
+      "general-purpose",
+      "Find symbols",
+      "tc-task",
+      false,
+    );
     completeSubagent("sub-1", { success: true, totalTokens: 42 });
 
     const order = ["line-read", "line-task"];
@@ -182,7 +188,13 @@ describe("subagent turn-start reentry safeguards", () => {
   });
 
   test("clearing completed agents before second pass reproduces Task fallback", () => {
-    registerSubagent("sub-1", "explore", "Find symbols", "tc-task", false);
+    registerSubagent(
+      "sub-1",
+      "general-purpose",
+      "Find symbols",
+      "tc-task",
+      false,
+    );
     completeSubagent("sub-1", { success: true });
 
     const order = ["line-read", "line-task"];

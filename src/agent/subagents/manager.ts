@@ -572,7 +572,7 @@ export interface ComposeSubagentChildEnvOptions {
  *     (env LETTA_MEMORY_SCOPE plus CLI --memory-scope) and also includes the
  *     immediate parent agent ID when one is known. Subagents should never
  *     lose explicit cross-agent access that the parent process already had.
- *     This applies to explore/general-purpose/recall etc. — not just
+ *     This applies to general-purpose/recall etc. — not just
  *     memory-writing subagents.
  *
  *   - MEMORY_DIR / LETTA_MEMORY_DIR are only overridden when the subagent
@@ -1009,16 +1009,10 @@ function getBaseURL(): string {
 function buildDeploySystemReminder(
   senderAgentName: string,
   senderAgentId: string,
-  subagentType: string,
 ): string {
-  const toolDescription =
-    subagentType === "explore"
-      ? "read-only tools (Read, Glob, Grep)"
-      : "local tools (Bash, Read, Write, Edit, etc.)";
-
   return `${SYSTEM_REMINDER_OPEN}
 This task is from "${senderAgentName}" (agent ID: ${senderAgentId}), which deployed you as a subagent inside the Letta Code CLI (docs.letta.com/letta-code).
-You have access to ${toolDescription} in their codebase.
+You have access to local tools (Bash, Read, Write, Edit, etc.) in their codebase.
 Your final message will be returned to the caller.
 ${SYSTEM_REMINDER_CLOSE}
 
@@ -1060,7 +1054,7 @@ ${SYSTEM_REMINDER_CLOSE}
 /**
  * Spawn a subagent and execute it autonomously
  *
- * @param type - Subagent type (e.g., "code-reviewer", "explore")
+ * @param type - Subagent type (e.g., "code-reviewer", "general-purpose")
  * @param prompt - The task prompt for the subagent
  * @param userModel - Optional model override from the parent agent
  * @param subagentId - ID for tracking in the state store (registered by Task tool)
@@ -1140,7 +1134,6 @@ export async function spawnSubagent(
         const systemReminder = buildDeploySystemReminder(
           parentAgent.name,
           resolvedParentAgentId,
-          type,
         );
         finalPrompt = systemReminder + prompt;
       }

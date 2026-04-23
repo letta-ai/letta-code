@@ -302,7 +302,7 @@ export async function resolveAndBuildSystemPrompt(
  * 3. Subagent name → subagent's system prompt
  * 4. Unknown → throws (callers should validate first via validateSystemPromptPreset)
  *
- * @param systemPromptPreset - The system prompt preset (e.g., "letta", "source-claude") or subagent name (e.g., "explore")
+ * @param systemPromptPreset - The system prompt preset (e.g., "letta", "source-claude") or subagent name (e.g., "recall")
  * @returns The resolved system prompt content
  * @throws Error if the ID doesn't match any preset or subagent
  */

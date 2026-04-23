@@ -53,7 +53,7 @@ interface TaskArgs {
 }
 
 // Valid subagent_types when deploying an existing agent
-const VALID_DEPLOY_TYPES = new Set(["explore", "general-purpose"]);
+const VALID_DEPLOY_TYPES = new Set(["general-purpose"]);
 const BACKGROUND_STARTUP_POLL_MS = 50;
 
 type TaskRunResult = {
@@ -637,9 +637,9 @@ export async function task(args: TaskArgs): Promise<string> {
     return `Error: Invalid subagent type "${subagent_type}". Available types: ${available}`;
   }
 
-  // For existing agents, only allow explore or general-purpose
+  // For existing agents, only allow general-purpose
   if (isDeployingExisting && !VALID_DEPLOY_TYPES.has(subagent_type)) {
-    return `Error: When deploying an existing agent, subagent_type must be "explore" (read-only) or "general-purpose" (read-write). Got: "${subagent_type}"`;
+    return `Error: When deploying an existing agent, subagent_type must be "general-purpose". Got: "${subagent_type}"`;
   }
 
   // If subagent config requires forked context, fork the parent conversation

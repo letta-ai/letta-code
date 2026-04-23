@@ -387,7 +387,7 @@ export interface UpdateSystemPromptResult {
  * Resolves the ID to content, updates the agent, and returns the refreshed agent state.
  *
  * @param agentId - The agent ID to update
- * @param systemPromptId - System prompt ID (e.g., "codex") or subagent name (e.g., "explore")
+ * @param systemPromptId - System prompt ID (e.g., "codex") or subagent name (e.g., "recall")
  * @returns Result with success status, message, and updated agent state
  */
 export async function updateAgentSystemPrompt(

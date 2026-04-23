@@ -33,8 +33,8 @@ This skill enables you to send messages to other agents on the same Letta server
 **Need local access?** If you need the target agent to access your local environment (read/write files, run commands), use the Task tool instead to deploy them as a subagent:
 ```typescript
 Task({
-  agent_id: "agent-xxx",           // Deploy this existing agent
-  subagent_type: "explore",        // "explore" = read-only, "general-purpose" = read-write
+  agent_id: "agent-xxx",            // Deploy this existing agent
+  subagent_type: "general-purpose", // read-write access to your local tools
   prompt: "Look at the code in src/ and tell me about the architecture"
 })
 ```

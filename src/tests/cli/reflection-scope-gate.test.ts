@@ -98,7 +98,7 @@ describe("isReflectionSubagentActive", () => {
   test("ignores non-reflection subagent types", () => {
     const rows: Row[] = [
       {
-        type: "explore",
+        type: "general-purpose",
         status: "running",
         parentAgentId: "agent-me",
         parentConversationId: "conv-me",
@@ -140,7 +140,7 @@ describe("isReflectionSubagentActive", () => {
         parentConversationId: "conv-me",
       },
       {
-        type: "explore",
+        type: "general-purpose",
         status: "running",
         parentAgentId: "agent-me",
         parentConversationId: "conv-me",

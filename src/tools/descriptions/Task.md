@@ -34,11 +34,7 @@ Instead of spawning a fresh subagent from a template, you can deploy an existing
 
 ### Access Levels (subagent_type)
 
-Use subagent_type to control what tools the deployed agent can access:
-- **explore**: Read-only access (Read, Glob, Grep) - safer for exploration tasks
-- **general-purpose**: Full read-write access (Bash, Edit, Write, etc.) - for implementation tasks
-
-If subagent_type is not specified when deploying an existing agent, it defaults to "general-purpose".
+When deploying an existing agent, only `general-purpose` is supported: full read-write access (Bash, Edit, Write, etc.) for implementation and research tasks. If `subagent_type` is not specified, it defaults to `"general-purpose"`.
 
 ### Parameters
 
@@ -57,15 +53,7 @@ If subagent_type is not specified when deploying an existing agent, it defaults 
 ### Examples
 
 ```typescript
-// Deploy agent with read-only access
-Task({
-  agent_id: "agent-abc123",
-  subagent_type: "explore",
-  description: "Find auth code",
-  prompt: "Find all auth-related code in this codebase"
-})
-
-// Deploy agent with full access (default)
+// Deploy an existing agent
 Task({
   agent_id: "agent-abc123",
   subagent_type: "general-purpose",
@@ -86,7 +74,7 @@ Task({
 ```typescript
 // Good - specific and actionable
 Task({
-  subagent_type: "explore",
+  subagent_type: "general-purpose",
   description: "Find authentication code",
   prompt: "Search for all authentication-related code in src/. List file paths and the main auth approach used."
 })
@@ -99,12 +87,12 @@ Task({
 })
 
 // Parallel execution - launch both at once in a single message
-Task({ subagent_type: "explore", description: "Find frontend components", prompt: "..." })
-Task({ subagent_type: "explore", description: "Find backend APIs", prompt: "..." })
+Task({ subagent_type: "general-purpose", description: "Find frontend components", prompt: "..." })
+Task({ subagent_type: "general-purpose", description: "Find backend APIs", prompt: "..." })
 
 // Bad - too simple, use Read tool instead
 Task({
-  subagent_type: "explore",
+  subagent_type: "general-purpose",
   prompt: "Read src/index.ts"
 })
 ```
@@ -135,7 +123,7 @@ Note: `fork` cannot be combined with `agent_id` or `conversation_id`.
 
 ## Concurrency and Safety:
 
-- **Safe**: Multiple read-only agents (explore, plan) running in parallel
+- **Safe**: Multiple read-only agents (plan, recall) running in parallel
 - **Safe**: Multiple agents editing different files in parallel
 - **Risky**: Multiple agents editing the same file (conflict detection will handle it, but may lose changes)
 - **Best practice**: Partition work by file or directory boundaries for parallel execution

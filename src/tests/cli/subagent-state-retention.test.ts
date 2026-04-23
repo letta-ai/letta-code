@@ -17,7 +17,13 @@ describe("subagentState retention", () => {
   test("completed subagents age out automatically", async () => {
     __setCompletedSubagentRetentionMsForTests(20);
 
-    registerSubagent("sub-1", "explore", "Find symbols", "tc-task", false);
+    registerSubagent(
+      "sub-1",
+      "general-purpose",
+      "Find symbols",
+      "tc-task",
+      false,
+    );
     completeSubagent("sub-1", { success: true });
 
     expect(getSubagentByToolCallId("tc-task")).toBeDefined();

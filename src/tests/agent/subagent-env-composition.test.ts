@@ -16,7 +16,7 @@ describe("composeSubagentChildEnv", () => {
   });
 
   test("non-memory subagent still gets parent in LETTA_MEMORY_SCOPE", () => {
-    // An explore/general-purpose subagent asked to Read parent memory
+    // A general-purpose subagent asked to Read parent memory
     // would previously be denied because scope wasn't propagated for
     // non-memory modes. It must get parent in scope regardless.
     const env = composeSubagentChildEnv({

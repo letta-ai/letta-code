@@ -718,8 +718,6 @@ function matchesPattern(
  * mutations are constrained by dedicated permission-mode enforcement.
  */
 const SAFE_AUTO_APPROVE_SUBAGENT_TYPES = new Set([
-  "explore", // Codebase exploration - Glob, Grep, Read, LS, TaskOutput
-  "Explore",
   "recall", // Conversation history search - Skill, Bash, Read, TaskOutput
   "Recall",
   "reflection", // Memory reflection - writes constrained by memory mode

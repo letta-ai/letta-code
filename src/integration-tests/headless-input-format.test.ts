@@ -643,7 +643,7 @@ describe("input-format stream-json", () => {
   );
 
   test(
-    "Task tool with explore subagent works",
+    "Task tool with general-purpose subagent works",
     async () => {
       const fixture = await createTaskExploreFixture();
 
@@ -655,7 +655,7 @@ describe("input-format stream-json", () => {
               message: {
                 role: "user",
                 content:
-                  "You MUST use the Task tool with subagent_type='explore' to recursively find all TypeScript files (*.ts) in the current working directory. " +
+                  "You MUST use the Task tool with subagent_type='general-purpose' to recursively find all TypeScript files (*.ts) in the current working directory. " +
                   "Return only the matching relative file paths, one per line, and do not mention any non-TypeScript files.",
               },
             }),
