@@ -92,7 +92,7 @@ export interface ReflectionEndData {
  * Returns true for error messages that are non-actionable noise:
  * - Billing/plan limit responses (premium-unavailable, usage-exceeded, not-enough-credits)
  * - User-initiated actions (cancelled, Ctrl+Z)
- * - Transient connection errors (DNS, Cloudflare 521/520, SSL, socket hang up)
+ * - Transient connection errors (DNS, SSL, socket hang up) — NOT Cloudflare 521/520 (filtered in PostHog)
  * - Environment issues (git/npm not installed)
  * - Expected concurrency (409 CONFLICT)
  * - Placeholder agent names (@author/agent)
@@ -101,7 +101,6 @@ function isNonActionableError(message: string): boolean {
   return (
     /premium-unavailable|not-enough-credits|usage-exceeded/i.test(message) ||
     /Cancelled by user|SIGTSTP/i.test(message) ||
-    /\b(521|520)\b/.test(message) ||
     /ENOTFOUND|EAI_AGAIN|ECONNRESET|socket hang up|EPROTO/i.test(message) ||
     /Connection error\./i.test(message) ||
     /\{"isTrusted":\s*true\}/.test(message) ||
