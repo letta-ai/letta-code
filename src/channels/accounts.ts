@@ -137,20 +137,28 @@ function makeDefaultLegacyAccount(
     };
   }
 
-  return {
-    channel: "slack",
-    accountId: LEGACY_CHANNEL_ACCOUNT_ID,
-    enabled: config.enabled,
-    mode: config.mode,
-    botToken: config.botToken,
-    appToken: config.appToken,
-    dmPolicy: config.dmPolicy,
-    allowedUsers: [...config.allowedUsers],
-    agentId: null,
-    defaultPermissionMode: "default",
-    createdAt: now,
-    updatedAt: now,
-  };
+  if (config.channel === "slack") {
+    return {
+      channel: "slack",
+      accountId: LEGACY_CHANNEL_ACCOUNT_ID,
+      enabled: config.enabled,
+      mode: config.mode,
+      botToken: config.botToken,
+      appToken: config.appToken,
+      dmPolicy: config.dmPolicy,
+      allowedUsers: [...config.allowedUsers],
+      agentId: null,
+      defaultPermissionMode: "default",
+      createdAt: now,
+      updatedAt: now,
+    };
+  }
+
+  // Bluesky has no legacy YAML config path; accounts are created only via
+  // the setup wizard.
+  throw new Error(
+    `No legacy account mapping exists for channel "${config.channel}".`,
+  );
 }
 
 function getStore(channelId: string): ChannelAccountStore {

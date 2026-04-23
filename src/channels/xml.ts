@@ -81,6 +81,13 @@ export function buildChannelReminderText(msg: InboundChannelMessage): string {
       'On Discord, MessageChannel also supports action="react" with emoji + messageId, and action="upload-file" with media. Discord reactions accept native Unicode emoji and custom emoji syntax like <:name:id>.',
     );
   }
+  if (msg.channel === "bluesky") {
+    lines.splice(
+      lines.length - 2,
+      0,
+      'On Bluesky, MessageChannel only supports action="send" in v1 — your reply is posted as a plain-text reply to the thread. Replies are capped at 300 graphemes; anything longer will be rejected. For likes, quotes, follows, blocks, image uploads, or multi-post threads, use the social-cli tool instead.',
+    );
+  }
   if (msg.attachments?.length) {
     lines.splice(
       lines.length - 2,

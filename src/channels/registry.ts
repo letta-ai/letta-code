@@ -51,6 +51,7 @@ import {
 } from "./routing";
 import { loadTargetStore, upsertChannelTarget } from "./targets";
 import type {
+  BlueskyChannelAccount,
   ChannelAdapter,
   ChannelControlRequestEvent,
   ChannelRoute,
@@ -61,7 +62,11 @@ import type {
   SlackChannelAccount,
   SlackDefaultPermissionMode,
 } from "./types";
-import { isDiscordChannelAccount, isSlackChannelAccount } from "./types";
+import {
+  isBlueskyChannelAccount,
+  isDiscordChannelAccount,
+  isSlackChannelAccount,
+} from "./types";
 import { formatChannelNotification } from "./xml";
 
 function channelDisplayName(channelId: string): string {
@@ -839,6 +844,21 @@ export class ChannelRegistry {
       return;
     }
 
+    // Bluesky always auto-routes: notifications are always "channel"
+    // surface and the DM policy is enforced in the adapter.
+    if (msg.channel === "bluesky" && isBlueskyChannelAccount(config)) {
+      const blueskyResult = await this.ensureBlueskyRoute(adapter, msg, config);
+      if (!blueskyResult) {
+        return;
+      }
+      this.deliverOrBuffer({
+        route: blueskyResult.route,
+        content: formatChannelNotification(msg),
+        turnSources: [buildChannelTurnSource(blueskyResult.route, msg)],
+      });
+      return;
+    }
+
     // 1. Check pairing/allowlist policy
     if (config.dmPolicy === "allowlist") {
       if (!config.allowedUsers.includes(msg.senderId)) {
@@ -1148,6 +1168,82 @@ export class ChannelRegistry {
       route: await this.createDiscordRoute(config, msg),
       isFirstRouteTurn: true,
     };
+  }
+
+  private async ensureBlueskyRoute(
+    adapter: ChannelAdapter,
+    msg: InboundChannelMessage,
+    config: BlueskyChannelAccount,
+  ): Promise<{
+    route: ChannelRoute;
+    isFirstRouteTurn: boolean;
+  } | null> {
+    if (!config.agentId) {
+      console.warn(
+        `[Bluesky] Notification arrived but account "${config.accountId}" has no bound agent; dropping.`,
+      );
+      return null;
+    }
+
+    const accountId = msg.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID;
+    const routeThreadId = msg.threadId ?? null;
+    let route = getRouteFromStore(
+      msg.channel,
+      msg.chatId,
+      accountId,
+      routeThreadId,
+    );
+    if (!route) {
+      loadRoutes(msg.channel);
+      route = getRouteFromStore(
+        msg.channel,
+        msg.chatId,
+        accountId,
+        routeThreadId,
+      );
+    }
+
+    if (route) {
+      return { route, isFirstRouteTurn: false };
+    }
+
+    // Every fresh Bluesky notification opens a new conversation on the
+    // bound agent. The adapter has already filtered by reasons + dm policy.
+    void adapter; // placeholder: keep adapter signature symmetrical with other routes
+    return {
+      route: await this.createBlueskyRoute(config, msg),
+      isFirstRouteTurn: true,
+    };
+  }
+
+  private async createBlueskyRoute(
+    config: BlueskyChannelAccount,
+    msg: InboundChannelMessage,
+  ): Promise<ChannelRoute> {
+    if (!config.agentId) {
+      throw new Error("Bluesky account is missing an agent binding.");
+    }
+
+    const threadLabel = msg.senderName ?? msg.senderId;
+    const conversationId = await this.createConversationForAgent(
+      config.agentId,
+      `[Bluesky] Thread from ${threadLabel}`,
+    );
+    const now = new Date().toISOString();
+    const route: ChannelRoute = {
+      accountId: config.accountId,
+      chatId: msg.chatId,
+      chatType: msg.chatType,
+      threadId: msg.threadId ?? null,
+      agentId: config.agentId,
+      conversationId,
+      enabled: true,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    addRoute(msg.channel, route);
+    return route;
   }
 
   private deliverOrBuffer(delivery: ChannelInboundDelivery): void {

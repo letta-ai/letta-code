@@ -67,6 +67,7 @@ import type {
   SupportedChannelId,
 } from "./types";
 import {
+  isBlueskyChannelAccount,
   isDiscordChannelAccount,
   isSlackChannelAccount,
   isTelegramChannelAccount,
@@ -100,6 +101,12 @@ export interface ChannelConfigSnapshot {
   agentId?: string | null;
   defaultPermissionMode?: SlackDefaultPermissionMode;
   allowedChannels?: string[];
+  // Bluesky-specific:
+  handle?: string;
+  hasAppPassword?: boolean;
+  serviceUrl?: string;
+  appViewUrl?: string;
+  intervalSec?: number;
 }
 
 export interface PendingPairingSnapshot {
@@ -164,6 +171,12 @@ export interface ChannelAccountSnapshot {
   agentId?: string | null;
   defaultPermissionMode?: SlackDefaultPermissionMode;
   allowedChannels?: string[];
+  // Bluesky-specific:
+  handle?: string;
+  hasAppPassword?: boolean;
+  serviceUrl?: string;
+  appViewUrl?: string;
+  intervalSec?: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -220,6 +233,11 @@ async function resolveChannelAccountDisplayName(
       return normalizeDisplayName(
         await resolveDiscordAccountDisplayName(account.token),
       );
+    }
+
+    if (isBlueskyChannelAccount(account)) {
+      const handle = account.handle.trim();
+      return handle ? normalizeDisplayName(`@${handle}`) : undefined;
     }
 
     if (!isSlackChannelAccount(account)) {
@@ -367,6 +385,12 @@ function isAccountConfigured(account: ChannelAccount): boolean {
     return account.token.trim().length > 0;
   }
 
+  if (isBlueskyChannelAccount(account)) {
+    return (
+      account.handle.trim().length > 0 && account.appPassword.trim().length > 0
+    );
+  }
+
   if (!isSlackChannelAccount(account)) {
     return Object.keys(account.config).length > 0;
   }
@@ -436,6 +460,28 @@ function toAccountSnapshot(account: ChannelAccount): ChannelAccountSnapshot {
       config: toChannelAccountProtocolConfig(account),
       allowedChannels: [...(account.allowedChannels ?? [])],
       hasToken: account.token.trim().length > 0,
+      agentId: account.agentId,
+      createdAt: account.createdAt,
+      updatedAt: account.updatedAt,
+    };
+  }
+
+  if (isBlueskyChannelAccount(account)) {
+    return {
+      channelId: "bluesky",
+      accountId: account.accountId,
+      displayName: account.displayName,
+      enabled: account.enabled,
+      configured: isAccountConfigured(account),
+      running,
+      dmPolicy: account.dmPolicy,
+      allowedUsers: [...account.allowedUsers],
+      config: toChannelAccountProtocolConfig(account),
+      handle: account.handle,
+      hasAppPassword: account.appPassword.trim().length > 0,
+      serviceUrl: account.serviceUrl,
+      appViewUrl: account.appViewUrl,
+      intervalSec: account.intervalSec,
       agentId: account.agentId,
       createdAt: account.createdAt,
       updatedAt: account.updatedAt,
@@ -592,6 +638,21 @@ function mergeAccountPatch(
     };
   }
 
+  if (isBlueskyChannelAccount(existing)) {
+    return {
+      ...existing,
+      displayName:
+        normalizedPatch.displayName !== undefined
+          ? normalizeDisplayName(normalizedPatch.displayName)
+          : existing.displayName,
+      enabled: normalizedPatch.enabled ?? existing.enabled,
+      agentId: normalizedPatch.agentId ?? existing.agentId,
+      dmPolicy: normalizedPatch.dmPolicy ?? existing.dmPolicy,
+      allowedUsers: normalizedPatch.allowedUsers ?? existing.allowedUsers,
+      updatedAt: nextUpdatedAt,
+    };
+  }
+
   if (!isSlackChannelAccount(existing)) {
     return {
       ...existing,
@@ -707,6 +768,23 @@ export function getChannelConfigSnapshot(
       allowedChannels: [...(account.allowedChannels ?? [])],
       hasToken: account.token.trim().length > 0,
       agentId: account.agentId,
+    };
+  }
+
+  if (isBlueskyChannelAccount(account)) {
+    return {
+      channelId: "bluesky",
+      accountId: account.accountId,
+      displayName: account.displayName,
+      enabled: account.enabled,
+      dmPolicy: account.dmPolicy,
+      allowedUsers: [...account.allowedUsers],
+      config: toChannelConfigSnapshotProtocolConfig(account),
+      handle: account.handle,
+      hasAppPassword: account.appPassword.trim().length > 0,
+      serviceUrl: account.serviceUrl,
+      appViewUrl: account.appViewUrl,
+      intervalSec: account.intervalSec,
     };
   }
 
