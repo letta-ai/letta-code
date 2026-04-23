@@ -133,9 +133,16 @@ describe("post-commit memory-repository hook", () => {
     });
     expect(pushed).toBe(true);
 
-    // Log file should have exit=0 for the successful push.
+    // On Windows the remote ref can update before the background hook finishes
+    // appending its trailing exit marker, so wait for the log to show completion.
     const logPath = join(sourceDir, ".git", LOG_FILE);
-    expect(existsSync(logPath)).toBe(true);
+    const loggedSuccess = await waitUntil(() => {
+      if (!existsSync(logPath)) return false;
+      const log = readFileSync(logPath, "utf-8");
+      return log.includes("exit=0");
+    });
+    expect(loggedSuccess).toBe(true);
+
     const log = readFileSync(logPath, "utf-8");
     expect(log).toContain("exit=0");
   });
