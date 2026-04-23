@@ -70,6 +70,7 @@
     "lint": "bunx --bun @biomejs/biome@2.2.5 check src",
     "fix": "bunx --bun @biomejs/biome@2.2.5 check --write src",
     "typecheck": "tsc --noEmit",
+    "check:test-mock-isolation": "bun run scripts/check-test-mock-isolation.js",
     "check": "bun run scripts/check.js",
     "dev": "LETTA_DEBUG=${LETTA_DEBUG:-1} LETTA_RESPONSES_WS=${LETTA_RESPONSES_WS:-1} bun --loader:.md=text --loader:.mdx=text --loader:.txt=text run src/index.ts",
     "build": "node scripts/postinstall-patches.js && bun run build.js",
