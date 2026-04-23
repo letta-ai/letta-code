@@ -1,6 +1,7 @@
 // src/cli/commands/registry.ts
 // Registry of available CLI commands
 
+import { handleMemoryRepositoryCommand } from "./memory-repository";
 import { handleSecretCommand } from "./secret";
 
 type CommandHandler = (args: string[]) => Promise<string> | string;
@@ -303,6 +304,15 @@ export const commands: Record<string, Command> = {
     args: "<set|list|unset> [key] [value]",
     handler: async (args: string[]) => {
       const result = await handleSecretCommand(args);
+      return result.output;
+    },
+  },
+  "/memory-repository": {
+    desc: "Push this agent's memory repo to an additional git remote",
+    order: 33.1,
+    args: "<set|unset|status|push> [url]",
+    handler: async (args: string[]) => {
+      const result = await handleMemoryRepositoryCommand(args);
       return result.output;
     },
   },
