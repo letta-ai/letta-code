@@ -200,6 +200,29 @@ test("Command with --hard flag blocks persistence", () => {
   expect(context.safetyLevel).toBe("dangerous");
 });
 
+test("Standalone -f force flag still blocks persistence", () => {
+  const context = analyzeApprovalContext(
+    "Bash",
+    { command: "git push -f origin main" },
+    "/Users/test/project",
+  );
+
+  expect(context.allowPersistence).toBe(false);
+  expect(context.safetyLevel).toBe("dangerous");
+});
+
+test("cut -f2 does not trigger dangerous flag classification", () => {
+  const context = analyzeApprovalContext(
+    "Bash",
+    { command: "cut -d= -f2 .env" },
+    "/Users/test/project",
+  );
+
+  expect(context.allowPersistence).toBe(true);
+  expect(context.safetyLevel).toBe("moderate");
+  expect(context.recommendedRule).toBe("Bash(cut -d= -f2 .env)");
+});
+
 test("npm run commands suggest safe rule", () => {
   const context = analyzeApprovalContext(
     "Bash",
@@ -305,6 +328,22 @@ test("Read-only rg command suggests wildcard rule", () => {
 
   expect(context.recommendedRule).toBe("Bash(rg:*)");
   expect(context.safetyLevel).toBe("safe");
+});
+
+test("Export setup plus curl lookup suggests reusable curl rule", () => {
+  const context = analyzeApprovalContext(
+    "Bash",
+    {
+      command:
+        'export EXAMPLE_API_KEY=$(grep -E "^EXAMPLE_API_KEY=" .env | cut -d= -f2) && curl -s -u "$EXAMPLE_API_KEY:" "https://api.stripe.com/v1/customers/cus_examplecustomer0001" | jq -r "{id, email, name, description}"',
+    },
+    "/Users/test/project",
+  );
+
+  expect(context.allowPersistence).toBe(true);
+  expect(context.safetyLevel).toBe("safe");
+  expect(context.recommendedRule).toBe("Bash(curl:*)");
+  expect(context.approveAlwaysText).toContain("curl");
 });
 
 test("Skill script in bundled skill suggests bundled-scope message", () => {
