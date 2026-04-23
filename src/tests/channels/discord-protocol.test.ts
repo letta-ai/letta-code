@@ -70,14 +70,14 @@ describe("discord protocol-inbound validators", () => {
     expect(isChannelAccountCreateCommand(msg)).toBe(false);
   });
 
-  test("discord account create rejects legacy top-level plugin fields", () => {
+  test("discord account create accepts top-level token field", () => {
     const msg = {
       type: "channel_account_create",
       channel_id: "discord",
       request_id: "r1",
       account: { token: "test-token" },
     };
-    expect(isChannelAccountCreateCommand(msg)).toBe(false);
+    expect(isChannelAccountCreateCommand(msg)).toBe(true);
   });
 
   test("valid discord account update passes", () => {

@@ -1769,6 +1769,12 @@ async function handleChannelsProtocolCommand(
         dm_policy: snapshot.dmPolicy,
         allowed_users: snapshot.allowedUsers,
         config: snapshot.config ?? {},
+        has_token: snapshot.hasToken ?? false,
+        transcribe_voice: snapshot.transcribeVoice ?? false,
+        binding: {
+          agent_id: snapshot.binding?.agentId ?? null,
+          conversation_id: snapshot.binding?.conversationId ?? null,
+        },
         created_at: snapshot.createdAt,
         updated_at: snapshot.updatedAt,
       };
@@ -1785,21 +1791,28 @@ async function handleChannelsProtocolCommand(
         dm_policy: snapshot.dmPolicy,
         allowed_users: snapshot.allowedUsers,
         config: snapshot.config ?? {},
+        has_token: snapshot.hasToken ?? false,
+        agent_id: snapshot.agentId ?? null,
         created_at: snapshot.createdAt,
         updated_at: snapshot.updatedAt,
       };
     }
 
     return {
-      channel_id: snapshot.channelId,
+      channel_id: snapshot.channelId as "slack",
       account_id: snapshot.accountId,
       display_name: snapshot.displayName,
       enabled: snapshot.enabled,
       configured: snapshot.configured,
       running: snapshot.running,
+      mode: snapshot.mode ?? "socket",
       dm_policy: snapshot.dmPolicy,
       allowed_users: snapshot.allowedUsers,
       config: snapshot.config ?? {},
+      has_bot_token: snapshot.hasBotToken ?? false,
+      has_app_token: snapshot.hasAppToken ?? false,
+      agent_id: snapshot.agentId ?? null,
+      default_permission_mode: snapshot.defaultPermissionMode ?? "default",
       created_at: snapshot.createdAt,
       updated_at: snapshot.updatedAt,
     };
@@ -1950,6 +1963,26 @@ async function handleChannelsProtocolCommand(
               : undefined,
           enabled:
             "enabled" in parsed.account ? parsed.account.enabled : undefined,
+          token: "token" in parsed.account ? parsed.account.token : undefined,
+          botToken:
+            "bot_token" in parsed.account
+              ? parsed.account.bot_token
+              : undefined,
+          appToken:
+            "app_token" in parsed.account
+              ? parsed.account.app_token
+              : undefined,
+          mode: "mode" in parsed.account ? parsed.account.mode : undefined,
+          agentId:
+            "agent_id" in parsed.account ? parsed.account.agent_id : undefined,
+          defaultPermissionMode:
+            "default_permission_mode" in parsed.account
+              ? parsed.account.default_permission_mode
+              : undefined,
+          transcribeVoice:
+            "transcribe_voice" in parsed.account
+              ? parsed.account.transcribe_voice
+              : undefined,
           dmPolicy: parsed.account.dm_policy,
           allowedUsers: parsed.account.allowed_users,
           config: pluginConfig,
@@ -2021,6 +2054,22 @@ async function handleChannelsProtocolCommand(
               ? parsed.patch.display_name
               : undefined,
           enabled: "enabled" in parsed.patch ? parsed.patch.enabled : undefined,
+          token: "token" in parsed.patch ? parsed.patch.token : undefined,
+          botToken:
+            "bot_token" in parsed.patch ? parsed.patch.bot_token : undefined,
+          appToken:
+            "app_token" in parsed.patch ? parsed.patch.app_token : undefined,
+          mode: "mode" in parsed.patch ? parsed.patch.mode : undefined,
+          agentId:
+            "agent_id" in parsed.patch ? parsed.patch.agent_id : undefined,
+          defaultPermissionMode:
+            "default_permission_mode" in parsed.patch
+              ? parsed.patch.default_permission_mode
+              : undefined,
+          transcribeVoice:
+            "transcribe_voice" in parsed.patch
+              ? parsed.patch.transcribe_voice
+              : undefined,
           dmPolicy: parsed.patch.dm_policy,
           allowedUsers: parsed.patch.allowed_users,
           config: pluginConfig,

@@ -9,7 +9,11 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
-import type { DmPolicy } from "../channels/types";
+import type {
+  DmPolicy,
+  SlackChannelMode,
+  SlackDefaultPermissionMode,
+} from "../channels/types";
 import type { CronTask } from "../cron";
 import type { ExperimentId, ExperimentSnapshot } from "../experiments/types";
 
@@ -165,20 +169,62 @@ export interface ChannelConfigSnapshot {
   config: ChannelPluginConfig;
 }
 
-export interface ChannelAccountSnapshot {
-  channel_id: ChannelId;
-  account_id: string;
-  display_name?: string;
-  enabled: boolean;
-  configured: boolean;
-  running: boolean;
-  dm_policy: DmPolicy;
-  allowed_users: string[];
-  /** Plugin-owned redacted config/settings payload. */
-  config: ChannelPluginConfig;
-  created_at: string;
-  updated_at: string;
-}
+export type ChannelAccountSnapshot =
+  | {
+      channel_id: "telegram";
+      account_id: string;
+      display_name?: string;
+      enabled: boolean;
+      configured: boolean;
+      running: boolean;
+      dm_policy: DmPolicy;
+      allowed_users: string[];
+      /** Plugin-owned redacted config/settings payload. */
+      config: ChannelPluginConfig;
+      has_token: boolean;
+      transcribe_voice: boolean;
+      binding: {
+        agent_id: string | null;
+        conversation_id: string | null;
+      };
+      created_at: string;
+      updated_at: string;
+    }
+  | {
+      channel_id: "slack";
+      account_id: string;
+      display_name?: string;
+      enabled: boolean;
+      configured: boolean;
+      running: boolean;
+      mode: SlackChannelMode;
+      dm_policy: DmPolicy;
+      allowed_users: string[];
+      /** Plugin-owned redacted config/settings payload. */
+      config: ChannelPluginConfig;
+      has_bot_token: boolean;
+      has_app_token: boolean;
+      agent_id: string | null;
+      default_permission_mode: SlackDefaultPermissionMode;
+      created_at: string;
+      updated_at: string;
+    }
+  | {
+      channel_id: "discord";
+      account_id: string;
+      display_name?: string;
+      enabled: boolean;
+      configured: boolean;
+      running: boolean;
+      dm_policy: DmPolicy;
+      allowed_users: string[];
+      /** Plugin-owned redacted config/settings payload. */
+      config: ChannelPluginConfig;
+      has_token: boolean;
+      agent_id: string | null;
+      created_at: string;
+      updated_at: string;
+    };
 
 export interface ChannelPendingPairing {
   account_id: string;
@@ -999,15 +1045,32 @@ export interface ChannelAccountsListCommand {
   channel_id: ChannelId;
 }
 
-export interface ChannelAccountCreatePayload {
-  account_id?: string;
-  display_name?: string;
-  enabled?: boolean;
-  dm_policy?: DmPolicy;
-  allowed_users?: string[];
-  /** Plugin-owned account config. New fields should be added here, not centrally. */
-  config?: ChannelPluginConfig;
-}
+export type ChannelAccountCreatePayload =
+  | {
+      account_id?: string;
+      display_name?: string;
+      enabled?: boolean;
+      token?: string;
+      dm_policy?: DmPolicy;
+      allowed_users?: string[];
+      /** Plugin-owned account config. New fields should be added here, not centrally. */
+      config?: ChannelPluginConfig;
+      transcribe_voice?: boolean;
+    }
+  | {
+      account_id?: string;
+      display_name?: string;
+      enabled?: boolean;
+      bot_token?: string;
+      app_token?: string;
+      mode?: SlackChannelMode;
+      agent_id?: string | null;
+      default_permission_mode?: SlackDefaultPermissionMode;
+      dm_policy?: DmPolicy;
+      allowed_users?: string[];
+      /** Plugin-owned account config. New fields should be added here, not centrally. */
+      config?: ChannelPluginConfig;
+    };
 
 export interface ChannelAccountCreateCommand {
   type: "channel_account_create";
@@ -1021,7 +1084,30 @@ export interface ChannelAccountUpdateCommand {
   request_id: string;
   channel_id: ChannelId;
   account_id: string;
-  patch: Omit<ChannelAccountCreatePayload, "account_id">;
+  patch:
+    | {
+        display_name?: string;
+        enabled?: boolean;
+        token?: string;
+        dm_policy?: DmPolicy;
+        allowed_users?: string[];
+        /** Plugin-owned account config. */
+        config?: ChannelPluginConfig;
+        transcribe_voice?: boolean;
+      }
+    | {
+        display_name?: string;
+        enabled?: boolean;
+        bot_token?: string;
+        app_token?: string;
+        mode?: SlackChannelMode;
+        agent_id?: string | null;
+        default_permission_mode?: SlackDefaultPermissionMode;
+        dm_policy?: DmPolicy;
+        allowed_users?: string[];
+        /** Plugin-owned account config. */
+        config?: ChannelPluginConfig;
+      };
 }
 
 export interface ChannelAccountBindCommand {

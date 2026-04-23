@@ -942,17 +942,31 @@ const CHANNEL_ACCOUNT_CREATE_FIELDS = new Set([
   "account_id",
   "display_name",
   "enabled",
+  "token",
+  "bot_token",
+  "app_token",
+  "mode",
+  "agent_id",
+  "default_permission_mode",
   "dm_policy",
   "allowed_users",
   "config",
+  "transcribe_voice",
 ]);
 
 const CHANNEL_ACCOUNT_UPDATE_FIELDS = new Set([
   "display_name",
   "enabled",
+  "token",
+  "bot_token",
+  "app_token",
+  "mode",
+  "agent_id",
+  "default_permission_mode",
   "dm_policy",
   "allowed_users",
   "config",
+  "transcribe_voice",
 ]);
 
 const CHANNEL_SET_CONFIG_FIELDS = new Set([
@@ -1015,7 +1029,37 @@ export function isChannelAccountCreateCommand(
     return false;
   }
 
-  return isValidChannelPluginConfigPayload(c.channel_id, account);
+  if (!isValidChannelPluginConfigPayload(c.channel_id, account)) {
+    return false;
+  }
+
+  if (c.channel_id === "telegram") {
+    return (
+      (account.token === undefined || typeof account.token === "string") &&
+      (account.transcribe_voice === undefined ||
+        typeof account.transcribe_voice === "boolean")
+    );
+  }
+
+  if (c.channel_id === "discord") {
+    return (
+      (account.token === undefined || typeof account.token === "string") &&
+      (account.agent_id === undefined ||
+        account.agent_id === null ||
+        typeof account.agent_id === "string")
+    );
+  }
+
+  return (
+    (account.bot_token === undefined ||
+      typeof account.bot_token === "string") &&
+    (account.app_token === undefined ||
+      typeof account.app_token === "string") &&
+    (account.mode === undefined || account.mode === "socket") &&
+    (account.agent_id === undefined ||
+      account.agent_id === null ||
+      typeof account.agent_id === "string")
+  );
 }
 
 export function isChannelAccountUpdateCommand(
@@ -1048,7 +1092,35 @@ export function isChannelAccountUpdateCommand(
     return false;
   }
 
-  return isValidChannelPluginConfigPayload(c.channel_id, patch);
+  if (!isValidChannelPluginConfigPayload(c.channel_id, patch)) {
+    return false;
+  }
+
+  if (c.channel_id === "telegram") {
+    return (
+      (patch.token === undefined || typeof patch.token === "string") &&
+      (patch.transcribe_voice === undefined ||
+        typeof patch.transcribe_voice === "boolean")
+    );
+  }
+
+  if (c.channel_id === "discord") {
+    return (
+      (patch.token === undefined || typeof patch.token === "string") &&
+      (patch.agent_id === undefined ||
+        patch.agent_id === null ||
+        typeof patch.agent_id === "string")
+    );
+  }
+
+  return (
+    (patch.bot_token === undefined || typeof patch.bot_token === "string") &&
+    (patch.app_token === undefined || typeof patch.app_token === "string") &&
+    (patch.mode === undefined || patch.mode === "socket") &&
+    (patch.agent_id === undefined ||
+      patch.agent_id === null ||
+      typeof patch.agent_id === "string")
+  );
 }
 
 export function isChannelAccountBindCommand(
