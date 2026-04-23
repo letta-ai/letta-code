@@ -15,8 +15,8 @@
 
 import { getCurrentAgentId } from "../../agent/context";
 import {
-  type MemoryRepositoryPushResult,
   getMemoryRepositoryUrl,
+  type MemoryRepositoryPushResult,
   pushToMemoryRepository,
   readMemoryRepositoryPushLog,
   setMemoryRepositoryUrl,

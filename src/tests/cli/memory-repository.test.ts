@@ -9,9 +9,7 @@ describe("redactUrl", () => {
   });
 
   test("leaves HTTPS URLs without passwords unchanged", () => {
-    expect(redactUrl("https://user@host/path")).toBe(
-      "https://user@host/path",
-    );
+    expect(redactUrl("https://user@host/path")).toBe("https://user@host/path");
   });
 
   test("leaves SSH URLs unchanged", () => {

@@ -115,10 +115,7 @@ describe("post-commit memory-repository hook", () => {
   });
 
   test("pushes to configured memory-repository URL after commit", async () => {
-    git(
-      sourceDir,
-      `config --local letta.memoryRepository.url ${remoteDir}`,
-    );
+    git(sourceDir, `config --local letta.memoryRepository.url ${remoteDir}`);
 
     writeFileSync(join(sourceDir, "note.txt"), "hello remote");
     git(sourceDir, "add note.txt");
@@ -183,10 +180,7 @@ describe("post-commit memory-repository hook", () => {
   });
 
   test("no-ops when HEAD is detached", async () => {
-    git(
-      sourceDir,
-      `config --local letta.memoryRepository.url ${remoteDir}`,
-    );
+    git(sourceDir, `config --local letta.memoryRepository.url ${remoteDir}`);
     gitQuiet(sourceDir, "checkout --detach HEAD");
     git(sourceDir, 'commit --allow-empty -m "detached noop"');
 
