@@ -184,6 +184,16 @@ describe("post-commit memory-repository hook", () => {
 
     const sha = git(sourceDir, "rev-parse HEAD").trim();
     expect(sha.length).toBe(40);
+
+    // The hook runs in the background. Wait for it to finish logging so
+    // Windows teardown doesn't race a still-open git process and hit EBUSY.
+    const logPath = join(sourceDir, ".git", LOG_FILE);
+    const completed = await waitUntil(() => {
+      if (!existsSync(logPath)) return false;
+      const log = readFileSync(logPath, "utf-8");
+      return /^exit=\d+/m.test(log);
+    });
+    expect(completed).toBe(true);
   });
 
   test("no-ops when HEAD is detached", async () => {
