@@ -249,12 +249,12 @@ describe("isReadOnlyShellCommand", () => {
         true,
       );
       // Filter flags combined with listing flags
-      expect(
-        isReadOnlyShellCommand("git branch -a --contains 63dd7483"),
-      ).toBe(true);
-      expect(
-        isReadOnlyShellCommand("git branch -r --contains abc123"),
-      ).toBe(true);
+      expect(isReadOnlyShellCommand("git branch -a --contains 63dd7483")).toBe(
+        true,
+      );
+      expect(isReadOnlyShellCommand("git branch -r --contains abc123")).toBe(
+        true,
+      );
       expect(isReadOnlyShellCommand("git branch --contains HEAD")).toBe(true);
       expect(isReadOnlyShellCommand("git branch --merged main")).toBe(true);
       expect(isReadOnlyShellCommand("git branch --no-merged")).toBe(true);
