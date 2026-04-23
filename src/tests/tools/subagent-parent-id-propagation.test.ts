@@ -1,36 +1,12 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 
-// Stub the agent-context module BEFORE importing anything that transitively
-// uses it, so that Task.ts's resolveParentScope fallback calls our stub.
-//
-// Motivation: in the same Bun test worker, a prior test file
-// (memory-apply-patch.test.ts) does `mock.module("../../agent/context", ...)`
-// with a constant agent ID. Bun's mock.module is process-wide and persists
-// across files, so without our own stub Task.ts would read that leaked
-// agent ID in the "parentScope omitted" case and fail the assertion.
-// Re-stubbing here gives this file deterministic behavior regardless of
-// run order.
-//
-// Note the dynamic imports below: static `import` statements are hoisted
-// above this `mock.module()` call by the ES module loader, which would
-// resolve Task.ts against the *previous* mock (or the real module) before
-// our stub takes effect. Using top-level `await import()` forces the
-// module graph to be resolved after the mock is registered.
-const mockGetCurrentAgentId = mock((): string => {
-  throw new Error("No agent context set. Agent ID is required.");
-});
-const mockGetConversationId = mock((): string | null => null);
-mock.module("../../agent/context", () => ({
-  getCurrentAgentId: mockGetCurrentAgentId,
-  getConversationId: mockGetConversationId,
-}));
-
 import type { SubagentState } from "../../cli/helpers/subagentState";
-
-const { clearAllSubagents } = await import("../../cli/helpers/subagentState");
-const { __resetBackgroundRetentionConfigForTests, backgroundTasks } =
-  await import("../../tools/impl/process_manager");
-const { spawnBackgroundSubagentTask } = await import("../../tools/impl/Task");
+import { clearAllSubagents } from "../../cli/helpers/subagentState";
+import {
+  __resetBackgroundRetentionConfigForTests,
+  backgroundTasks,
+} from "../../tools/impl/process_manager";
+import { spawnBackgroundSubagentTask } from "../../tools/impl/Task";
 
 /**
  * Covers the fix for the async-drift race where `executeSubagent` inside
@@ -88,8 +64,6 @@ describe("parentScope.agentId propagation to spawnSubagent", () => {
     completeSubagentImpl.mockClear();
     formatTaskNotificationImpl.mockClear();
     runSubagentStopHooksImpl.mockClear();
-    mockGetCurrentAgentId.mockClear();
-    mockGetConversationId.mockClear();
     __resetBackgroundRetentionConfigForTests();
     backgroundTasks.clear();
     clearAllSubagents();
