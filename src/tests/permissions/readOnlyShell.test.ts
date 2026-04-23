@@ -225,6 +225,17 @@ describe("isReadOnlyShellCommand", () => {
       expect(isReadOnlyShellCommand("git count-objects -v")).toBe(true);
       expect(isReadOnlyShellCommand("git verify-commit HEAD")).toBe(true);
       expect(isReadOnlyShellCommand("git verify-tag v1.0")).toBe(true);
+      expect(
+        isReadOnlyShellCommand("git grep -n StreamMode HEAD~1 -- src"),
+      ).toBe(true);
+      expect(
+        isReadOnlyShellCommand(
+          'git grep -n "stream mode\\|StreamMode\\|conversationMode\\|continuousMode\\|AutoReadIcon\\|ChatInfoIcon" HEAD~1 -- libs/ui-ade-components/src/lib/ade/panels/AgentSimulator/AgentMessenger libs/ui-ade-components/src/translations/en.json | sed -n "1,220p"',
+        ),
+      ).toBe(true);
+      expect(isReadOnlyShellCommand("git grep -f patterns.txt -- src")).toBe(
+        true,
+      );
     });
 
     test("allows compound commands with read-only git subcommands", () => {
@@ -276,6 +287,15 @@ describe("isReadOnlyShellCommand", () => {
       expect(
         isReadOnlyShellCommand("git --config-env=core.pager=GIT_PAGER status"),
       ).toBe(false);
+      expect(isReadOnlyShellCommand("git grep --open-files-in-pager foo")).toBe(
+        false,
+      );
+      expect(isReadOnlyShellCommand("git grep -Oless foo")).toBe(false);
+      expect(isReadOnlyShellCommand("git grep --ext-grep foo")).toBe(false);
+      expect(isReadOnlyShellCommand("git grep --no-index foo .")).toBe(false);
+      expect(isReadOnlyShellCommand("git grep -f /tmp/patterns foo")).toBe(
+        false,
+      );
     });
 
     test("blocks bare git", () => {

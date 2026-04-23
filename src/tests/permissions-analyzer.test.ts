@@ -64,6 +64,20 @@ test("Git branch --list suggests safe subcommand rule", () => {
   expect(context.safetyLevel).toBe("safe");
 });
 
+test("Git grep pipeline suggests safe subcommand rule", () => {
+  const context = analyzeApprovalContext(
+    "Bash",
+    {
+      command:
+        'git grep -n "stream mode\\|StreamMode\\|conversationMode\\|continuousMode\\|AutoReadIcon\\|ChatInfoIcon" HEAD~1 -- libs/ui-ade-components/src/lib/ade/panels/AgentSimulator/AgentMessenger libs/ui-ade-components/src/translations/en.json | sed -n "1,220p"',
+    },
+    "/Users/test/project",
+  );
+
+  expect(context.recommendedRule).toBe("Bash(git grep:*)");
+  expect(context.safetyLevel).toBe("safe");
+});
+
 test("Git branch mutation suggests moderate safety rule", () => {
   const context = analyzeApprovalContext(
     "Bash",

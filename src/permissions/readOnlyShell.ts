@@ -84,6 +84,7 @@ export const SAFE_GIT_SUBCOMMAND_LIST = [
   "diff",
   "log",
   "show",
+  "grep",
   "branch",
   "tag",
   "remote",
@@ -471,6 +472,64 @@ function isReadOnlyGitBranchArgs(args: string[]): boolean {
   return sawReadOnlyFlag;
 }
 
+function isReadOnlyGitGrepArgs(
+  args: string[],
+  options: ReadOnlyShellOptions,
+): boolean {
+  let inPathspecs = false;
+
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i];
+    if (!arg) {
+      continue;
+    }
+
+    if (arg === "--") {
+      inPathspecs = true;
+      continue;
+    }
+
+    if (arg === "--no-index") {
+      return false;
+    }
+
+    if (
+      arg === "-O" ||
+      arg.startsWith("-O") ||
+      arg === "--open-files-in-pager" ||
+      arg.startsWith("--open-files-in-pager=") ||
+      arg === "--ext-grep"
+    ) {
+      return false;
+    }
+
+    if (arg === "-f") {
+      const patternFile = args[i + 1];
+      if (!patternFile) {
+        return false;
+      }
+      if (hasDisallowedPathArg(patternFile, options)) {
+        return false;
+      }
+      i += 1;
+      continue;
+    }
+
+    if (arg.startsWith("-f") && arg.length > 2) {
+      if (hasDisallowedPathArg(arg.slice(2), options)) {
+        return false;
+      }
+      continue;
+    }
+
+    if (inPathspecs && hasDisallowedPathArg(arg, options)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 function isSafeEnvInvocation(
   tokens: string[],
   options: ReadOnlyShellOptions,
@@ -696,6 +755,9 @@ function isSafeSegment(
     }
     if (!SAFE_GIT_SUBCOMMANDS.has(subcommand)) {
       return false;
+    }
+    if (subcommand === "grep") {
+      return isReadOnlyGitGrepArgs(tokens.slice(subcommandIndex + 1), options);
     }
     if (subcommand === "branch") {
       return isReadOnlyGitBranchArgs(tokens.slice(subcommandIndex + 1));
