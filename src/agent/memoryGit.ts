@@ -167,18 +167,66 @@ export async function maybeUpdateMemoryRemoteOrigin(
     return;
   }
 
-  const expectedOrigin = normalizeRemoteUrl(getGitRemoteUrl(agentId));
+  const expectedOrigin = normalizeRemoteUrl(
+    getGitRemoteUrl(agentId, process.env.LETTA_BASE_URL?.trim() || undefined),
+  );
   const normalizedCurrent = normalizeRemoteUrl(currentOrigin);
 
-  if (normalizedCurrent === expectedOrigin) {
+  if (normalizedCurrent !== expectedOrigin) {
+    await runGit(repoDir, ["remote", "set-url", "origin", expectedOrigin]);
+
+    debugLog(
+      "memfs-git",
+      `Updated origin remote for ${agentId}: ${normalizedCurrent} -> ${expectedOrigin}`,
+    );
+  }
+
+  await clearOriginPushUrl(repoDir, agentId);
+}
+
+/**
+ * Git prefers `remote.origin.pushurl` over `remote.origin.url` for pushes.
+ * Desktop/local proxy sessions can leave an ephemeral localhost pushurl behind,
+ * causing later `git push` calls to fail even after origin.url is repaired.
+ *
+ * For memfs repos, origin should always push to origin.url; mirrors are managed
+ * separately through `letta.memoryRepository.url` and the post-commit hook.
+ */
+async function clearOriginPushUrl(
+  repoDir: string,
+  agentId: string,
+): Promise<void> {
+  let pushUrls: string[] = [];
+  try {
+    const { stdout } = await runGit(repoDir, [
+      "config",
+      "--local",
+      "--get-all",
+      "remote.origin.pushurl",
+    ]);
+    pushUrls = stdout
+      .split("\n")
+      .map((url) => url.trim())
+      .filter(Boolean);
+  } catch {
+    // No pushurl configured — origin.url will be used for pushes.
     return;
   }
 
-  await runGit(repoDir, ["remote", "set-url", "origin", expectedOrigin]);
+  if (pushUrls.length === 0) {
+    return;
+  }
+
+  await runGit(repoDir, [
+    "config",
+    "--local",
+    "--unset-all",
+    "remote.origin.pushurl",
+  ]);
 
   debugLog(
     "memfs-git",
-    `Updated origin remote for ${agentId}: ${normalizedCurrent} -> ${expectedOrigin}`,
+    `Cleared origin pushurl for ${agentId}: ${pushUrls.join(", ")}`,
   );
 }
 
