@@ -181,6 +181,7 @@
       "handle": "anthropic/claude-sonnet-4-5-20250929",
       "label": "Sonnet 4.5",
       "description": "Previous default Sonnet model",
+      "legacy": true,
       "updateArgs": {
         "context_window": 180000,
         "max_output_tokens": 64000,
@@ -193,6 +194,7 @@
       "handle": "anthropic/claude-sonnet-4-5-20250929",
       "label": "Sonnet 4.5",
       "description": "Sonnet 4.5 with no reasoning (faster)",
+      "legacy": true,
       "updateArgs": {
         "enable_reasoner": false,
         "context_window": 180000,
@@ -204,7 +206,7 @@
       "id": "opus-4.6-high",
       "handle": "anthropic/claude-opus-4-6",
       "label": "Opus 4.6",
-      "description": "Anthropic's (legacy) best model (high reasoning)",
+      "description": "Anthropic's best model (high reasoning)",
       "isFeatured": true,
       "updateArgs": {
         "context_window": 200000,
@@ -905,6 +907,7 @@
       "handle": "chatgpt-plus-pro/gpt-5.2-codex",
       "label": "GPT-5.2 Codex",
       "description": "GPT-5.2 Codex (med reasoning) via ChatGPT Plus/Pro",
+      "legacy": true,
       "updateArgs": {
         "reasoning_effort": "medium",
         "verbosity": "medium",
@@ -918,6 +921,7 @@
       "handle": "chatgpt-plus-pro/gpt-5.2-codex",
       "label": "GPT-5.2 Codex",
       "description": "GPT-5.2 Codex (high reasoning) via ChatGPT Plus/Pro",
+      "legacy": true,
       "updateArgs": {
         "reasoning_effort": "high",
         "verbosity": "medium",
@@ -957,6 +961,7 @@
       "handle": "chatgpt-plus-pro/gpt-5.1-codex",
       "label": "GPT-5.1 Codex",
       "description": "GPT-5.1 Codex (med reasoning) via ChatGPT Plus/Pro",
+      "legacy": true,
       "updateArgs": {
         "reasoning_effort": "medium",
         "verbosity": "medium",
@@ -970,6 +975,7 @@
       "handle": "chatgpt-plus-pro/gpt-5.1-codex",
       "label": "GPT-5.1 Codex",
       "description": "GPT-5.1 Codex (high reasoning) via ChatGPT Plus/Pro",
+      "legacy": true,
       "updateArgs": {
         "reasoning_effort": "high",
         "verbosity": "medium",
@@ -983,6 +989,7 @@
       "handle": "chatgpt-plus-pro/gpt-5.1-codex-max",
       "label": "GPT-5.1 Codex Max",
       "description": "GPT-5.1 Codex Max (med reasoning) via ChatGPT Plus/Pro",
+      "legacy": true,
       "updateArgs": {
         "reasoning_effort": "medium",
         "verbosity": "medium",
@@ -996,6 +1003,7 @@
       "handle": "chatgpt-plus-pro/gpt-5.1-codex-max",
       "label": "GPT-5.1 Codex Max",
       "description": "GPT-5.1 Codex Max (high reasoning) via ChatGPT Plus/Pro",
+      "legacy": true,
       "updateArgs": {
         "reasoning_effort": "high",
         "verbosity": "medium",
@@ -1009,6 +1017,7 @@
       "handle": "chatgpt-plus-pro/gpt-5.1-codex-max",
       "label": "GPT-5.1 Codex Max",
       "description": "GPT-5.1 Codex Max (extra-high reasoning) via ChatGPT Plus/Pro",
+      "legacy": true,
       "updateArgs": {
         "reasoning_effort": "xhigh",
         "verbosity": "medium",
@@ -1100,6 +1109,7 @@
       "handle": "openai/gpt-5.2-codex",
       "label": "GPT-5.2-Codex",
       "description": "GPT-5.2 variant (no reasoning) optimized for coding",
+      "legacy": true,
       "updateArgs": {
         "reasoning_effort": "none",
         "verbosity": "medium",
@@ -1113,6 +1123,7 @@
       "handle": "openai/gpt-5.2-codex",
       "label": "GPT-5.2-Codex",
       "description": "GPT-5.2 variant (low reasoning) optimized for coding",
+      "legacy": true,
       "updateArgs": {
         "reasoning_effort": "low",
         "verbosity": "medium",
@@ -1126,6 +1137,7 @@
       "handle": "openai/gpt-5.2-codex",
       "label": "GPT-5.2-Codex",
       "description": "GPT-5.2 variant (med reasoning) optimized for coding",
+      "legacy": true,
       "updateArgs": {
         "reasoning_effort": "medium",
         "verbosity": "medium",
@@ -1139,6 +1151,7 @@
       "handle": "openai/gpt-5.2-codex",
       "label": "GPT-5.2-Codex",
       "description": "GPT-5.2 variant (high reasoning) optimized for coding",
+      "legacy": true,
       "updateArgs": {
         "reasoning_effort": "high",
         "verbosity": "medium",
@@ -1152,6 +1165,7 @@
       "handle": "openai/gpt-5.2-codex",
       "label": "GPT-5.2-Codex",
       "description": "GPT-5.2 variant (max reasoning) optimized for coding",
+      "legacy": true,
       "updateArgs": {
         "reasoning_effort": "xhigh",
         "verbosity": "medium",
@@ -1532,6 +1546,7 @@
       "handle": "openai/gpt-5.1",
       "label": "GPT-5.1",
       "description": "Legacy GPT-5.1 (no reasoning)",
+      "legacy": true,
       "updateArgs": {
         "reasoning_effort": "none",
         "verbosity": "medium",
@@ -1545,6 +1560,7 @@
       "handle": "openai/gpt-5.1",
       "label": "GPT-5.1",
       "description": "Legacy GPT-5.1 (low reasoning)",
+      "legacy": true,
       "updateArgs": {
         "reasoning_effort": "low",
         "verbosity": "medium",
@@ -1558,6 +1574,7 @@
       "handle": "openai/gpt-5.1",
       "label": "GPT-5.1",
       "description": "Legacy GPT-5.1 (med reasoning)",
+      "legacy": true,
       "updateArgs": {
         "reasoning_effort": "medium",
         "verbosity": "medium",
@@ -1571,6 +1588,7 @@
       "handle": "openai/gpt-5.1",
       "label": "GPT-5.1",
       "description": "Legacy GPT-5.1 (high reasoning)",
+      "legacy": true,
       "updateArgs": {
         "reasoning_effort": "high",
         "verbosity": "medium",
@@ -1662,6 +1680,7 @@
       "handle": "openai/gpt-5",
       "label": "GPT-5",
       "description": "Legacy GPT-5 (minimal reasoning)",
+      "legacy": true,
       "updateArgs": {
         "reasoning_effort": "minimal",
         "verbosity": "medium",
@@ -1675,6 +1694,7 @@
       "handle": "openai/gpt-5",
       "label": "GPT-5",
       "description": "Legacy GPT-5 (low reasoning)",
+      "legacy": true,
       "updateArgs": {
         "reasoning_effort": "low",
         "verbosity": "medium",
@@ -1688,6 +1708,7 @@
       "handle": "openai/gpt-5",
       "label": "GPT-5",
       "description": "Legacy GPT-5 (med reasoning)",
+      "legacy": true,
       "updateArgs": {
         "reasoning_effort": "medium",
         "verbosity": "medium",
@@ -1701,6 +1722,7 @@
       "handle": "openai/gpt-5",
       "label": "GPT-5",
       "description": "Legacy GPT-5 (high reasoning)",
+      "legacy": true,
       "updateArgs": {
         "reasoning_effort": "high",
         "verbosity": "medium",
@@ -1766,6 +1788,7 @@
       "handle": "zai/glm-5",
       "label": "GLM-5",
       "description": "zAI's latest coding model (legacy)",
+      "legacy": true,
       "isFeatured": true,
       "free": true,
       "updateArgs": {
@@ -1779,6 +1802,7 @@
       "handle": "zai/glm-4.7",
       "label": "GLM-4.7",
       "description": "zAI's latest coding model (legacy)",
+      "legacy": true,
       "free": true,
       "updateArgs": {
         "context_window": 180000,
@@ -1804,6 +1828,7 @@
       "handle": "minimax/MiniMax-M2.5",
       "label": "MiniMax 2.5",
       "description": "MiniMax's latest coding model (legacy)",
+      "legacy": true,
       "free": true,
       "updateArgs": {
         "context_window": 160000,
@@ -1816,6 +1841,7 @@
       "handle": "minimax/MiniMax-M2.1",
       "label": "MiniMax 2.1",
       "description": "MiniMax's latest coding model (legacy)",
+      "legacy": true,
       "free": true,
       "updateArgs": {
         "context_window": 160000,
@@ -1835,10 +1861,33 @@
       }
     },
     {
-      "id": "kimi-k2",
-      "handle": "openrouter/moonshotai/kimi-k2-0905",
-      "label": "Kimi K2",
-      "description": "Kimi's K2 model",
+      "id": "kimi-k2.6",
+      "handle": "openrouter/moonshotai/kimi-k2.6",
+      "label": "Kimi K2.6",
+      "description": "Moonshot AI's next-gen multimodal coding and agent model",
+      "isFeatured": true,
+      "updateArgs": {
+        "context_window": 200000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "kimi-k2.5",
+      "handle": "baseten/moonshotai/Kimi-K2.5",
+      "label": "Kimi K2.5",
+      "description": "Kimi's coding model",
+      "legacy": true,
+      "updateArgs": {
+        "context_window": 262000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "kimi-k2.5",
+      "handle": "openrouter/moonshotai/kimi-k2.5",
+      "label": "Kimi K2.5 (openrouter)",
+      "description": "Kimi's coding model",
+      "legacy": true,
       "updateArgs": {
         "context_window": 262144,
         "parallel_tool_calls": true
@@ -1849,6 +1898,7 @@
       "handle": "openrouter/moonshotai/kimi-k2-thinking",
       "label": "Kimi K2 Thinking",
       "description": "Kimi's K2 model with advanced thinking capabilities",
+      "legacy": true,
       "updateArgs": {
         "context_window": 256000,
         "max_output_tokens": 16000,
@@ -1857,34 +1907,13 @@
       }
     },
     {
-      "id": "kimi-k2.5",
-      "handle": "baseten/moonshotai/Kimi-K2.5",
-      "label": "Kimi K2.5",
-      "description": "Kimi's latest coding model",
-      "isFeatured": true,
-      "updateArgs": {
-        "context_window": 262000,
-        "parallel_tool_calls": true
-      }
-    },
-    {
-      "id": "kimi-k2.5",
-      "handle": "openrouter/moonshotai/kimi-k2.5",
-      "label": "Kimi K2.5 (openrouter)",
-      "description": "Kimi's latest coding model",
+      "id": "kimi-k2",
+      "handle": "openrouter/moonshotai/kimi-k2-0905",
+      "label": "Kimi K2",
+      "description": "Kimi's K2 model",
+      "legacy": true,
       "updateArgs": {
         "context_window": 262144,
-        "parallel_tool_calls": true
-      }
-    },
-    {
-      "id": "kimi-k2.6",
-      "handle": "openrouter/moonshotai/kimi-k2.6",
-      "label": "Kimi K2.6",
-      "description": "Moonshot AI's next-gen multimodal coding and agent model",
-      "isFeatured": true,
-      "updateArgs": {
-        "context_window": 200000,
         "parallel_tool_calls": true
       }
     },
@@ -1926,6 +1955,7 @@
       "handle": "google_ai/gemini-2.5-flash",
       "label": "Gemini 2.5 Flash",
       "description": "Google's fastest model",
+      "legacy": true,
       "updateArgs": {
         "context_window": 180000,
         "parallel_tool_calls": true
@@ -1936,6 +1966,7 @@
       "handle": "google_ai/gemini-2.5-pro",
       "label": "Gemini 2.5 Pro",
       "description": "Google's last generation flagship model",
+      "legacy": true,
       "updateArgs": {
         "context_window": 180000,
         "parallel_tool_calls": true
