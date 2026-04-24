@@ -54,7 +54,6 @@ type UiModel = {
   isDefault?: boolean;
   isFeatured?: boolean;
   free?: boolean;
-  legacy?: boolean;
   updateArgs?: Record<string, unknown>;
 };
 
@@ -202,38 +201,28 @@ export function ModelSelector({
             (m.updateArgs?.context_window as number | undefined) ===
               contextWindow),
       );
-      if (staticCandidates.length === 0) return undefined;
-      // Prefer a non-legacy representative when one exists so handles with a
-      // mix of legacy/current variants (e.g. the Opus 4.6 high-reasoning
-      // entry that still says "(legacy)") surface under their non-legacy
-      // description. Fall back to legacy only when that's all we have —
-      // this keeps the "(all)" tabs able to show a description for
-      // legacy-only handles.
-      const nonLegacy = staticCandidates.filter((m) => !m.legacy);
-      const candidates = nonLegacy.length > 0 ? nonLegacy : staticCandidates;
       return (
-        candidates.find((m) => m.isDefault) ??
-        candidates.find((m) => m.isFeatured) ??
-        candidates.find(
+        staticCandidates.find((m) => m.isDefault) ??
+        staticCandidates.find((m) => m.isFeatured) ??
+        staticCandidates.find(
           (m) =>
             (m.updateArgs as { reasoning_effort?: unknown } | undefined)
               ?.reasoning_effort === "medium",
         ) ??
-        candidates.find(
+        staticCandidates.find(
           (m) =>
             (m.updateArgs as { reasoning_effort?: unknown } | undefined)
               ?.reasoning_effort === "high",
         ) ??
-        candidates[0]
+        staticCandidates[0]
       );
     },
     [typedModels],
   );
 
-  // Supported models: models.json entries that are available.
-  // Legacy entries are hidden here; they remain reachable via the "(all)" tab.
-  // Final order: grouped by family, newer versions first within family,
-  // featured breaks ties. If filterProvider is set, only show that provider.
+  // Supported models: models.json entries that are available
+  // Featured models first, then non-featured, preserving JSON order within each group
+  // If filterProvider is set, only show models from that provider
   const supportedModels = useMemo(() => {
     if (availableHandles === undefined) return [];
     let available = filterModelsByAvailabilityForSelector(
@@ -241,8 +230,6 @@ export function ModelSelector({
       availableHandles,
       allApiHandles,
     );
-    // Hide legacy from the recommended tab.
-    available = available.filter((m) => !m.legacy);
     // Apply provider filter if specified
     if (filterProvider) {
       available = available.filter((m) =>
@@ -274,7 +261,9 @@ export function ModelSelector({
       deduped.push(pickPreferredStaticModel(m.handle, contextWindow) ?? m);
     }
 
-    return deduped;
+    const featured = deduped.filter((m) => m.isFeatured);
+    const nonFeatured = deduped.filter((m) => !m.isFeatured);
+    return [...featured, ...nonFeatured];
   }, [
     typedModels,
     availableHandles,
@@ -313,7 +302,10 @@ export function ModelSelector({
         } satisfies UiModel;
       });
 
-    if (!searchQuery) return modelsForHandles;
+    if (!searchQuery) {
+      return modelsForHandles;
+    }
+
     const query = searchQuery.toLowerCase();
     return modelsForHandles.filter(
       (model) =>
@@ -349,79 +341,73 @@ export function ModelSelector({
     [byokProviderAliases],
   );
 
-  // BYOK (recommended): iterate models.json in order, keeping entries the
-  // user has a BYOK handle for. Legacy entries are hidden (still reachable
-  // under "BYOK (all)"). Display order follows models.json directly, and
-  // we dedupe by (baseHandle, contextWindow) so a single underlying model
-  // exposed via multiple BYOK providers only shows one row.
+  // BYOK (recommended): BYOK API handles that have matching entries in models.json
   const byokModels = useMemo(() => {
     if (availableHandles === undefined) return [];
 
-    // Index BYOK API handles by their base handle for fast lookup.
-    const byokHandleByBase = new Map<string, string>();
-    for (const handle of allApiHandles) {
-      if (!isByokHandle(handle)) continue;
+    // Get all BYOK handles from API
+    const byokHandles = allApiHandles.filter(isByokHandle);
+
+    // Find models.json entries that match (using alias for lc-* providers)
+    const matched: UiModel[] = [];
+    for (const handle of byokHandles) {
       const baseHandle = toBaseHandle(handle);
-      if (!byokHandleByBase.has(baseHandle)) {
-        byokHandleByBase.set(baseHandle, handle);
+      const staticModel = pickPreferredStaticModel(baseHandle);
+      if (staticModel) {
+        // Use models.json data but with the BYOK handle as the ID
+        matched.push({
+          ...staticModel,
+          id: handle,
+          handle: handle,
+        });
       }
     }
 
-    const seen = new Set<string>();
-    const matched: UiModel[] = [];
-    for (const m of typedModels) {
-      if (m.legacy) continue;
-      const byokHandle = byokHandleByBase.get(m.handle);
-      if (!byokHandle) continue;
-      const contextWindow = m.updateArgs?.context_window as number | undefined;
-      const dedupKey = `${m.handle}:${contextWindow ?? 0}`;
-      if (seen.has(dedupKey)) continue;
-      seen.add(dedupKey);
-      const preferred = pickPreferredStaticModel(m.handle, contextWindow) ?? m;
-      matched.push({
-        ...preferred,
-        id: byokHandle,
-        handle: byokHandle,
-      });
+    // Apply search filter
+    if (searchQuery) {
+      const query = searchQuery.toLowerCase();
+      return matched.filter(
+        (m) =>
+          m.label.toLowerCase().includes(query) ||
+          m.description.toLowerCase().includes(query) ||
+          m.handle.toLowerCase().includes(query),
+      );
     }
 
-    if (!searchQuery) return matched;
-    const query = searchQuery.toLowerCase();
-    return matched.filter(
-      (m) =>
-        m.label.toLowerCase().includes(query) ||
-        m.description.toLowerCase().includes(query) ||
-        m.handle.toLowerCase().includes(query),
-    );
+    return matched;
   }, [
     availableHandles,
     allApiHandles,
-    typedModels,
     pickPreferredStaticModel,
     searchQuery,
     isByokHandle,
     toBaseHandle,
   ]);
 
-  // BYOK (all): all BYOK handles from API (including recommended ones).
+  // BYOK (all): all BYOK handles from API (including recommended ones)
   const byokAllModels = useMemo(() => {
     if (availableHandles === undefined) return [];
 
     const byokHandles = allApiHandles.filter(isByokHandle);
-    if (!searchQuery) return byokHandles;
-    const query = searchQuery.toLowerCase();
-    return byokHandles.filter((handle) => handle.toLowerCase().includes(query));
+
+    // Apply search filter
+    let filtered = byokHandles;
+    if (searchQuery) {
+      const query = searchQuery.toLowerCase();
+      filtered = byokHandles.filter((handle) =>
+        handle.toLowerCase().includes(query),
+      );
+    }
+
+    return filtered;
   }, [availableHandles, allApiHandles, searchQuery, isByokHandle]);
 
   // Server-recommended models: models.json entries available on the server (for self-hosted)
-  // Filter out letta/letta-free legacy model and the broader `legacy: true` set.
+  // Filter out letta/letta-free legacy model
   const serverRecommendedModels = useMemo(() => {
     if (!isSelfHosted || availableHandles === undefined) return [];
     let available = typedModels.filter(
-      (m) =>
-        availableHandles?.has(m.handle) &&
-        m.handle !== "letta/letta-free" &&
-        !m.legacy,
+      (m) => availableHandles?.has(m.handle) && m.handle !== "letta/letta-free",
     );
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
@@ -452,13 +438,15 @@ export function ModelSelector({
   ]);
 
   // Server-all models: ALL handles from the server (for self-hosted)
-  // Filter out letta/letta-free legacy model.
+  // Filter out letta/letta-free legacy model
   const serverAllModels = useMemo(() => {
     if (!isSelfHosted) return [];
-    const handles = allApiHandles.filter((h) => h !== "letta/letta-free");
-    if (!searchQuery) return handles;
-    const query = searchQuery.toLowerCase();
-    return handles.filter((h) => h.toLowerCase().includes(query));
+    let handles = allApiHandles.filter((h) => h !== "letta/letta-free");
+    if (searchQuery) {
+      const query = searchQuery.toLowerCase();
+      handles = handles.filter((h) => h.toLowerCase().includes(query));
+    }
+    return handles;
   }, [isSelfHosted, allApiHandles, searchQuery]);
 
   // Get the list for current category
