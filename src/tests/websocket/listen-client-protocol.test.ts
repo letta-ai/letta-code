@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { APIError } from "@letta-ai/letta-client/core/error";
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import WebSocket from "ws";
+import { getMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
 import { buildConversationMessagesCreateRequestBody } from "../../agent/message";
 import { models } from "../../agent/model";
 import {
@@ -24,6 +25,7 @@ import {
   clearAllSubagents,
   registerSubagent,
 } from "../../cli/helpers/subagentState";
+import { setSystemPromptDoctorState } from "../../cli/helpers/systemPromptWarning";
 import { INTERRUPTED_BY_USER } from "../../constants";
 import type { MessageQueueItem } from "../../queue/queueRuntime";
 import type { LocalProjectSettings, Settings } from "../../settings-manager";
@@ -2492,6 +2494,45 @@ describe("listen-client v2 status builders", () => {
       (deviceStatus.current_working_directory ?? "").length,
     ).toBeGreaterThan(0);
     expect(deviceStatus.current_toolset_preference).toBe("auto");
+  });
+
+  test("buildDeviceStatus includes should_doctor state when available", () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    setSystemPromptDoctorState("agent-doctor-status", 31000);
+
+    const deviceStatus = __listenClientTestUtils.buildDeviceStatus(listener, {
+      agent_id: "agent-doctor-status",
+      conversation_id: "default",
+    });
+
+    expect(deviceStatus.should_doctor).toBe(true);
+  });
+
+  test("buildDeviceStatus does not cold-refresh should_doctor from stray memfs", async () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const agentId = `agent-doctor-refresh-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const memoryDir = getMemoryFilesystemRoot(agentId);
+    const systemDir = join(memoryDir, "system");
+    const originalIsMemfsEnabled = settingsManager.isMemfsEnabled;
+
+    await mkdir(systemDir, { recursive: true });
+
+    try {
+      (settingsManager as typeof settingsManager).isMemfsEnabled = (() =>
+        false) as typeof settingsManager.isMemfsEnabled;
+      await writeFile(join(systemDir, "context.md"), "x".repeat(120_000));
+
+      const deviceStatus = __listenClientTestUtils.buildDeviceStatus(listener, {
+        agent_id: agentId,
+        conversation_id: "default",
+      });
+
+      expect(deviceStatus.should_doctor).toBe(false);
+    } finally {
+      (settingsManager as typeof settingsManager).isMemfsEnabled =
+        originalIsMemfsEnabled;
+      await rm(memoryDir, { recursive: true, force: true });
+    }
   });
 
   test("buildDeviceStatus includes only active bash and task background processes", () => {

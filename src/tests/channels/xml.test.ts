@@ -68,6 +68,31 @@ describe("formatChannelNotification", () => {
     expect(reminder).toContain("Current local time on this device:");
   });
 
+  test("mentions toolset-dependent local file/image inspection for attachment paths", () => {
+    const msg: InboundChannelMessage = {
+      channel: "slack",
+      chatId: "C123",
+      senderId: "U123",
+      text: "see image",
+      timestamp: Date.now(),
+      attachments: [
+        {
+          kind: "image",
+          localPath: "/tmp/photo.heic",
+          name: "photo.heic",
+          mimeType: "image/heic",
+        },
+      ],
+    };
+
+    const reminder = buildChannelReminderText(msg);
+
+    expect(reminder).toContain("current toolset");
+    expect(reminder).toContain("Read");
+    expect(reminder).toContain("ViewImage");
+    expect(reminder).not.toContain("ReadFileGemini");
+  });
+
   test("adds Slack thread guidance for channel notifications", () => {
     const msg: InboundChannelMessage = {
       channel: "slack",

@@ -8,19 +8,54 @@ import {
   canonicalizeOutputMediaType,
   MAX_IMAGE_BYTES,
   MAX_IMAGE_HEIGHT,
+  MAX_IMAGE_INPUT_PIXELS,
   MAX_IMAGE_WIDTH,
   type ResizeResult,
 } from "./imageResize.shared";
 
+function createSharpInstance(buffer: Buffer) {
+  return sharp(buffer, {
+    failOn: "warning",
+    limitInputPixels: MAX_IMAGE_INPUT_PIXELS,
+  });
+}
+
+function wrapSharpImageError(error: unknown): Error {
+  if (
+    error instanceof Error &&
+    error.message.toLowerCase().includes("pixel limit")
+  ) {
+    return new Error(
+      `Image exceeds the ${MAX_IMAGE_INPUT_PIXELS.toLocaleString()} pixel input limit`,
+    );
+  }
+
+  return error instanceof Error ? error : new Error(String(error));
+}
+
 async function inspectImageBuffer(
   buffer: Buffer,
   context: string,
-): Promise<{ width: number; height: number; format?: string }> {
-  const metadata = await sharp(buffer).metadata();
+): Promise<{
+  width: number;
+  height: number;
+  format?: string;
+  orientation?: number;
+}> {
+  const metadata = await createSharpInstance(buffer)
+    .metadata()
+    .catch((error) => {
+      throw wrapSharpImageError(error);
+    });
   const width = metadata.width ?? 0;
   const height = metadata.height ?? 0;
   assertImageHasDimensions(width, height, context);
-  return { width, height, format: metadata.format };
+  return {
+    width,
+    height,
+    format: metadata.format,
+    orientation: metadata.orientation,
+  };
 }
 
 async function buildVerifiedResizeResult(
@@ -58,7 +93,9 @@ async function compressToFitByteLimit(
   // Try progressive JPEG quality reduction
   const qualities = [85, 70, 55, 40];
   for (const quality of qualities) {
-    const compressed = await sharp(buffer).jpeg({ quality }).toBuffer();
+    const compressed = await createSharpInstance(buffer)
+      .jpeg({ quality })
+      .toBuffer();
     if (compressed.length <= MAX_IMAGE_BYTES) {
       return buildVerifiedResizeResult(
         compressed,
@@ -74,7 +111,7 @@ async function compressToFitByteLimit(
   for (const scale of scales) {
     const scaledWidth = Math.floor(currentWidth * scale);
     const scaledHeight = Math.floor(currentHeight * scale);
-    const reduced = await sharp(buffer)
+    const reduced = await createSharpInstance(buffer)
       .resize(scaledWidth, scaledHeight, {
         fit: "inside",
         withoutEnlargement: true,
@@ -106,10 +143,15 @@ export async function resizeImageIfNeeded(
   buffer: Buffer,
   inputMediaType: string,
 ): Promise<ResizeResult> {
-  const image = sharp(buffer);
+  const sourceMetadata = await inspectImageBuffer(buffer, "source image");
+  const normalizedBuffer =
+    sourceMetadata.orientation && sourceMetadata.orientation !== 1
+      ? await createSharpInstance(buffer).rotate().toBuffer()
+      : buffer;
+  const image = createSharpInstance(normalizedBuffer);
   const { width, height, format } = await inspectImageBuffer(
-    buffer,
-    "source image",
+    normalizedBuffer,
+    "normalized source image",
   );
 
   const needsResize = width > MAX_IMAGE_WIDTH || height > MAX_IMAGE_HEIGHT;
@@ -119,12 +161,16 @@ export async function resizeImageIfNeeded(
 
   if (!needsResize && isPassthroughFormat) {
     // No resize needed and format is supported - but check byte limit
-    const compressed = await compressToFitByteLimit(buffer, width, height);
+    const compressed = await compressToFitByteLimit(
+      normalizedBuffer,
+      width,
+      height,
+    );
     if (compressed) {
       return compressed;
     }
     return buildVerifiedResizeResult(
-      buffer,
+      normalizedBuffer,
       inputMediaType,
       false,
       "passthrough image output",

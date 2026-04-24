@@ -204,6 +204,20 @@ function getCurrentServerKey(settings?: Settings | null): string {
   return normalizeBaseUrl(baseUrl);
 }
 
+/**
+ * Get the current memfs server key for memfs-related agent settings.
+ * Uses LETTA_MEMFS_BASE_URL and falls back to api.letta.com.
+ * @param settings - Optional settings object to check for env overrides
+ * @returns Normalized server key (e.g., "api.letta.com", "localhost:8283")
+ */
+function getCurrentMemfsServerKey(settings?: Settings | null): string {
+  const baseUrl =
+    process.env.LETTA_MEMFS_BASE_URL ||
+    settings?.env?.LETTA_MEMFS_BASE_URL ||
+    DEFAULT_LETTA_API_URL;
+  return normalizeBaseUrl(baseUrl);
+}
+
 class SettingsManager {
   private settings: Settings | null = null;
   private projectSettings: Map<string, ProjectSettings> = new Map();
@@ -1550,9 +1564,12 @@ class SettingsManager {
    * Get settings for a specific agent on the current server.
    * Returns undefined if agent not found in settings.
    */
-  private getAgentSettings(agentId: string): AgentSettings | undefined {
+  private getAgentSettings(
+    agentId: string,
+    serverKeyOverride?: string,
+  ): AgentSettings | undefined {
     const settings = this.getSettings();
-    const serverKey = getCurrentServerKey(settings);
+    const serverKey = serverKeyOverride ?? getCurrentServerKey(settings);
     const normalizedBaseUrl =
       serverKey === "api.letta.com" ? undefined : serverKey;
 
@@ -1568,9 +1585,10 @@ class SettingsManager {
   private upsertAgentSettings(
     agentId: string,
     updates: Partial<Omit<AgentSettings, "agentId" | "baseUrl">>,
+    serverKeyOverride?: string,
   ): void {
     const settings = this.getSettings();
-    const serverKey = getCurrentServerKey(settings);
+    const serverKey = serverKeyOverride ?? getCurrentServerKey(settings);
     const normalizedBaseUrl =
       serverKey === "api.letta.com" ? undefined : serverKey;
 
@@ -1631,14 +1649,18 @@ class SettingsManager {
    * Check if memory filesystem is enabled for an agent on the current server.
    */
   isMemfsEnabled(agentId: string): boolean {
-    return this.getAgentSettings(agentId)?.memfs === true;
+    const settings = this.getSettings();
+    const memfsServerKey = getCurrentMemfsServerKey(settings);
+    return this.getAgentSettings(agentId, memfsServerKey)?.memfs === true;
   }
 
   /**
    * Enable or disable memory filesystem for an agent on the current server.
    */
   setMemfsEnabled(agentId: string, enabled: boolean): void {
-    this.upsertAgentSettings(agentId, { memfs: enabled });
+    const settings = this.getSettings();
+    const memfsServerKey = getCurrentMemfsServerKey(settings);
+    this.upsertAgentSettings(agentId, { memfs: enabled }, memfsServerKey);
   }
 
   /**

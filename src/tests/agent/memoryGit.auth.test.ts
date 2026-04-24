@@ -13,6 +13,7 @@ import {
 } from "../../agent/memoryGit";
 
 const ORIGINAL_LETTA_BASE_URL = process.env.LETTA_BASE_URL;
+const ORIGINAL_LETTA_MEMFS_BASE_URL = process.env.LETTA_MEMFS_BASE_URL;
 
 let tempDirs: string[] = [];
 
@@ -26,6 +27,12 @@ afterEach(() => {
     delete process.env.LETTA_BASE_URL;
   } else {
     process.env.LETTA_BASE_URL = ORIGINAL_LETTA_BASE_URL;
+  }
+
+  if (ORIGINAL_LETTA_MEMFS_BASE_URL === undefined) {
+    delete process.env.LETTA_MEMFS_BASE_URL;
+  } else {
+    process.env.LETTA_MEMFS_BASE_URL = ORIGINAL_LETTA_MEMFS_BASE_URL;
   }
 });
 
@@ -63,6 +70,22 @@ describe("normalizeCredentialBaseUrl", () => {
     test("builds remote URL from provided base URL", () => {
       expect(getGitRemoteUrl("agent-123", "http://localhost:51338/")).toBe(
         "http://localhost:51338/v1/git/agent-123/state.git",
+      );
+    });
+
+    test("prefers LETTA_MEMFS_BASE_URL over LETTA_BASE_URL when base URL is omitted", () => {
+      process.env.LETTA_BASE_URL = "http://localhost:51338";
+      process.env.LETTA_MEMFS_BASE_URL = "https://selfhost.example.com";
+      expect(getGitRemoteUrl("agent-123")).toBe(
+        "https://selfhost.example.com/v1/git/agent-123/state.git",
+      );
+    });
+
+    test("defaults to api.letta.com when LETTA_MEMFS_BASE_URL is unset, even if LETTA_BASE_URL is localhost", () => {
+      process.env.LETTA_BASE_URL = "http://localhost:51338";
+      delete process.env.LETTA_MEMFS_BASE_URL;
+      expect(getGitRemoteUrl("agent-123")).toBe(
+        "https://api.letta.com/v1/git/agent-123/state.git",
       );
     });
   });
@@ -205,5 +228,27 @@ describe("maybeUpdateMemoryRemoteOrigin", () => {
     expect(
       git(repo, "config --local --get-all remote.origin.pushurl").trim(),
     ).toBe(pushUrl);
+  });
+
+  test("updates stale memfs origin to LETTA_MEMFS_BASE_URL when proxy LETTA_BASE_URL differs", async () => {
+    const repo = makeGitRepo();
+    const agentId = "agent-123";
+    const staleOrigin = getGitRemoteUrl(agentId, "http://localhost:50864");
+    const expectedOrigin = getGitRemoteUrl(
+      agentId,
+      "https://selfhost.example.com",
+    );
+
+    process.env.LETTA_BASE_URL = "http://localhost:54085";
+    process.env.LETTA_MEMFS_BASE_URL = "https://selfhost.example.com";
+    git(repo, `remote add origin ${staleOrigin}`);
+    git(repo, `config --local remote.origin.pushurl ${staleOrigin}`);
+
+    await maybeUpdateMemoryRemoteOrigin(repo, agentId);
+
+    expect(git(repo, "remote get-url origin").trim()).toBe(expectedOrigin);
+    expect(
+      gitOrEmpty(repo, "config --local --get-all remote.origin.pushurl"),
+    ).toBe("");
   });
 });

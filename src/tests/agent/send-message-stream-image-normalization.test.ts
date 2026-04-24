@@ -151,4 +151,28 @@ describe("outbound image normalization", () => {
 
     await expect(normalizeMessageImageParts(rawMessages)).rejects.toThrow();
   });
+
+  test("wraps explicit image normalization failures in a clean error", async () => {
+    const rawMessages: MessageCreate[] = [
+      {
+        role: "user",
+        content: [
+          {
+            type: "image",
+            source: {
+              type: "base64",
+              media_type: "image/heic",
+              data: TEST_PNG_BASE64,
+            },
+          },
+        ],
+      },
+    ];
+
+    await expect(
+      normalizeMessageImageParts(rawMessages, async () => {
+        throw new Error("codec unavailable");
+      }),
+    ).rejects.toThrow(/Failed to prepare image for model: codec unavailable/);
+  });
 });

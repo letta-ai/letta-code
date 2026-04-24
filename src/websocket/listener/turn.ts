@@ -442,7 +442,14 @@ export async function handleIncomingMessage(
     }
 
     const { normalizeInboundMessages } = await import("./queue");
-    const normalizedMessages = await normalizeInboundMessages(msg.messages);
+    const normalizedMessages = await normalizeInboundMessages(
+      msg.messages,
+      undefined,
+      {
+        imageFailureMode:
+          (msg.channelTurnSources?.length ?? 0) > 0 ? "drop" : "strict",
+      },
+    );
     trackListenerUserInput(normalizedMessages, "unknown");
     const messagesToSend: Array<MessageCreate | ApprovalCreate> = [];
     let turnToolContextId: string | null = null;

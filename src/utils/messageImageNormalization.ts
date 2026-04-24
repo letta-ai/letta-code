@@ -14,6 +14,13 @@ export type Base64ImageContentPart = {
   source: { type: "base64"; media_type: string; data: string };
 };
 
+export type ImageNormalizationFailureMode = "strict" | "drop";
+
+function formatImageNormalizationError(error: unknown): Error {
+  const detail = error instanceof Error ? error.message : String(error);
+  return new Error(`Failed to prepare image for model: ${detail}`);
+}
+
 export function isBase64ImageContentPart(
   part: unknown,
 ): part is Base64ImageContentPart {
@@ -44,6 +51,7 @@ export function isBase64ImageContentPart(
 export async function normalizeMessageContentImages(
   content: MessageCreate["content"],
   resize: typeof resizeImageIfNeeded = resizeImageIfNeeded,
+  failureMode: ImageNormalizationFailureMode = "strict",
 ): Promise<MessageCreate["content"]> {
   if (typeof content === "string") {
     return content;
@@ -56,10 +64,19 @@ export async function normalizeMessageContentImages(
         return part;
       }
 
-      const resized = await resize(
-        Buffer.from(part.source.data, "base64"),
-        part.source.media_type,
-      );
+      let resized: Awaited<ReturnType<typeof resize>>;
+      try {
+        resized = await resize(
+          Buffer.from(part.source.data, "base64"),
+          part.source.media_type,
+        );
+      } catch (error) {
+        if (failureMode === "drop") {
+          didChange = true;
+          return null;
+        }
+        throw formatImageNormalizationError(error);
+      }
 
       if (
         resized.data !== part.source.data ||
@@ -80,7 +97,12 @@ export async function normalizeMessageContentImages(
     }),
   );
 
-  return didChange ? normalizedParts : content;
+  const filteredParts = normalizedParts.filter(
+    (part): part is Exclude<(typeof normalizedParts)[number], null> =>
+      part !== null,
+  );
+
+  return didChange ? filteredParts : content;
 }
 
 export async function normalizeMessageImageParts<

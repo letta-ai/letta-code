@@ -169,4 +169,44 @@ describe("listen-client inbound image normalization", () => {
 
     expect(imagePart.source.media_type).toBe("image/png");
   });
+
+  test("drops inbound image parts when best-effort normalization fails", async () => {
+    const normalized = await __listenClientTestUtils.normalizeInboundMessages(
+      [
+        {
+          type: "message",
+          role: "user",
+          content: [
+            { type: "text", text: "channel reminder" },
+            {
+              type: "image",
+              source: {
+                type: "base64",
+                media_type: "image/heic",
+                data: "raw-base64-image",
+              },
+            },
+            { type: "text", text: "<channel-notification />" },
+          ],
+          client_message_id: "cm-image-drop-on-failure",
+        },
+      ],
+      async () => {
+        throw new Error("codec unavailable");
+      },
+      { imageFailureMode: "drop" },
+    );
+
+    expect(normalized).toEqual([
+      {
+        type: "message",
+        role: "user",
+        content: [
+          { type: "text", text: "channel reminder" },
+          { type: "text", text: "<channel-notification />" },
+        ],
+        client_message_id: "cm-image-drop-on-failure",
+      },
+    ]);
+  });
 });

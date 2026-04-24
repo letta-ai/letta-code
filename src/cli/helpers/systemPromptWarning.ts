@@ -12,14 +12,30 @@ import { debugWarn } from "../../utils/debug";
 const STARTUP_SYSTEM_PROMPT_WARNING_THRESHOLD_TOKENS = 30000;
 const STARTUP_SYSTEM_PROMPT_ESTIMATED_BYTES_PER_TOKEN = 4;
 
-function estimateSystemTokens(text: string): number {
+export interface SystemPromptDoctorState {
+  estimated_tokens: number;
+  should_doctor: boolean;
+  updated_at_ms: number;
+}
+
+const systemPromptDoctorStateByAgent = new Map<
+  string,
+  SystemPromptDoctorState
+>();
+
+export function estimateSystemTokens(text: string): number {
   return Math.ceil(
     Buffer.byteLength(text, "utf8") /
       STARTUP_SYSTEM_PROMPT_ESTIMATED_BYTES_PER_TOKEN,
   );
 }
 
-function estimateSystemPromptTokensFromMemoryDir(memoryDir: string): number {
+/**
+ * MemFS-based estimate of system prompt tokens (aggregate of all system/ files)
+ */
+export function estimateSystemPromptTokensFromMemoryDir(
+  memoryDir: string,
+): number {
   const systemDir = join(memoryDir, "system");
   if (!existsSync(systemDir)) {
     return 0;
@@ -61,22 +77,39 @@ function estimateSystemPromptTokensFromMemoryDir(memoryDir: string): number {
     }, 0);
 }
 
-export function buildStartupSystemPromptWarning(
-  agentState: AgentState | null | undefined,
-): string | null {
-  const startupAgentId = agentState?.id;
-  if (!startupAgentId) {
-    return null;
-  }
+export function setSystemPromptDoctorState(
+  agentId: string,
+  estimatedTokens: number,
+): SystemPromptDoctorState {
+  const nextState: SystemPromptDoctorState = {
+    estimated_tokens: estimatedTokens,
+    should_doctor:
+      estimatedTokens >= STARTUP_SYSTEM_PROMPT_WARNING_THRESHOLD_TOKENS,
+    updated_at_ms: Date.now(),
+  };
+  systemPromptDoctorStateByAgent.set(agentId, nextState);
+  return nextState;
+}
 
+export function getSystemPromptDoctorState(
+  agentId: string,
+): SystemPromptDoctorState | null {
+  return systemPromptDoctorStateByAgent.get(agentId) ?? null;
+}
+
+export function refreshSystemPromptDoctorState(
+  agentId: string,
+  agentState: AgentState | null | undefined,
+): SystemPromptDoctorState | null {
   try {
     let estimatedSystemPromptTokens = 0;
 
-    if (settingsManager.isMemfsEnabled(startupAgentId)) {
-      const memoryDir = getMemoryFilesystemRoot(startupAgentId);
+    if (settingsManager.isMemfsEnabled(agentId)) {
+      const memoryDir = getMemoryFilesystemRoot(agentId);
       estimatedSystemPromptTokens =
         estimateSystemPromptTokensFromMemoryDir(memoryDir);
     } else {
+      // non-memfs
       const systemPrompt = (
         agentState as { system?: string | null } | null | undefined
       )?.system;
@@ -85,17 +118,29 @@ export function buildStartupSystemPromptWarning(
       }
     }
 
-    if (
-      estimatedSystemPromptTokens >=
-      STARTUP_SYSTEM_PROMPT_WARNING_THRESHOLD_TOKENS
-    ) {
-      return "⚠ **Warning:** System prompt is large. Consider running **/doctor** to clean up memory.\n";
-    }
+    return setSystemPromptDoctorState(agentId, estimatedSystemPromptTokens);
   } catch (error) {
     debugWarn(
       "startup",
       `Failed to estimate system prompt tokens for startup warning: ${error instanceof Error ? error.message : String(error)}`,
     );
+  }
+
+  return null;
+}
+
+/** On LC CLI startup, display a warning if the system prompt is large. */
+export function buildStartupSystemPromptWarning(
+  agentState: AgentState | null | undefined,
+): string | null {
+  const startupAgentId = agentState?.id;
+  if (!startupAgentId) {
+    return null;
+  }
+
+  const state = refreshSystemPromptDoctorState(startupAgentId, agentState);
+  if (state?.should_doctor) {
+    return "⚠ **Warning:** System prompt is large. Consider running **/doctor** to clean up memory.\n";
   }
 
   return null;

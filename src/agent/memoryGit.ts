@@ -2,7 +2,8 @@
  * Git operations for git-backed agent memory.
  *
  * When memFS is enabled, the agent's memory is stored in a git repo
- * on the server at $LETTA_BASE_URL/v1/git/$AGENT_ID/state.git.
+ * on the server at $LETTA_MEMFS_BASE_URL/v1/git/$AGENT_ID/state.git
+ * (falling back to $LETTA_BASE_URL when unset).
  * This module provides the CLI harness helpers: clone on first run,
  * pull on startup, and status check for system reminders.
  *
@@ -23,7 +24,7 @@ import { homedir, platform } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { debugLog, debugWarn } from "../utils/debug";
-import { getClient, getServerUrl } from "./client";
+import { getClient, getMemfsServerUrl } from "./client";
 
 const execFile = promisify(execFileCb);
 
@@ -79,8 +80,8 @@ export function getMemoryRepoDir(agentId: string): string {
  *
  * Git credential config lookup is sensitive to URL key shape. We normalize to
  * origin form (scheme + host + optional port) and remove trailing slashes so
- * pull/push flows remain resilient when LETTA_BASE_URL has path/trailing-slash
- * variations.
+ * pull/push flows remain resilient when LETTA_MEMFS_BASE_URL /
+ * LETTA_BASE_URL has path/trailing-slash variations.
  */
 export function normalizeCredentialBaseUrl(serverUrl: string): string {
   const trimmed = serverUrl.trim().replace(/\/+$/, "");
@@ -134,7 +135,7 @@ export function isMemfsRemoteUrlForAgent(
 
 /** Git remote URL for the agent's state repo */
 export function getGitRemoteUrl(agentId: string, baseUrl?: string): string {
-  const resolvedBaseUrl = (baseUrl ?? getServerUrl())
+  const resolvedBaseUrl = (baseUrl ?? getMemfsServerUrl())
     .trim()
     .replace(/\/+$/, "");
   return `${resolvedBaseUrl}/v1/git/${agentId}/state.git`;
@@ -167,9 +168,7 @@ export async function maybeUpdateMemoryRemoteOrigin(
     return;
   }
 
-  const expectedOrigin = normalizeRemoteUrl(
-    getGitRemoteUrl(agentId, process.env.LETTA_BASE_URL?.trim() || undefined),
-  );
+  const expectedOrigin = normalizeRemoteUrl(getGitRemoteUrl(agentId));
   const normalizedCurrent = normalizeRemoteUrl(currentOrigin);
 
   if (normalizedCurrent !== expectedOrigin) {
@@ -377,7 +376,7 @@ async function configureLocalCredentialHelper(
   dir: string,
   token: string,
 ): Promise<void> {
-  const rawBaseUrl = getServerUrl();
+  const rawBaseUrl = getMemfsServerUrl();
   const normalizedBaseUrl = normalizeCredentialBaseUrl(rawBaseUrl);
 
   let helper: string;
