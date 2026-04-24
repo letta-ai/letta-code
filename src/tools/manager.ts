@@ -94,8 +94,14 @@ async function maybeResolveDynamicChannelTool(
 function withDynamicMessageChannelCache(registry: ToolRegistry): ToolRegistry {
   const nextRegistry = new Map(registry);
   const existing = nextRegistry.get("MessageChannel");
+
+  // Only update an existing entry — never inject MessageChannel into a registry
+  // that deliberately excluded it (e.g. a conversation with no channel routes).
+  if (!existing) {
+    return nextRegistry;
+  }
+
   if (
-    existing &&
     existing.schema.description !== TOOL_DEFINITIONS.MessageChannel.description
   ) {
     return nextRegistry;
