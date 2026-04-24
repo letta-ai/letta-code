@@ -173,8 +173,6 @@ describe("outbound image normalization", () => {
       normalizeMessageImageParts(rawMessages, async () => {
         throw new Error("codec unavailable");
       }),
-    ).rejects.toThrow(
-      /Failed to prepare image for model: codec unavailable/,
-    );
+    ).rejects.toThrow(/Failed to prepare image for model: codec unavailable/);
   });
 });

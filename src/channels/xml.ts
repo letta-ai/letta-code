@@ -85,7 +85,7 @@ export function buildChannelReminderText(msg: InboundChannelMessage): string {
     lines.splice(
       lines.length - 2,
       0,
-      "If this notification includes attachment local_path values, you can inspect those files with the Read tool.",
+      "If this notification includes attachment local_path values, you can inspect those files with the Read tool. For image attachments, you can also use ViewImage with the local_path.",
     );
   }
 

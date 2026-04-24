@@ -48,10 +48,13 @@ describe("Read tool HEIC support", () => {
 
     expect(result.content[0]).toEqual({ type: "text", text: "[Image: photo.heic]" });
     const imagePart = result.content[1];
-    if (!imagePart || imagePart.type !== "image") {
+    if (
+      !imagePart ||
+      imagePart.type !== "image" ||
+      imagePart.source.type !== "base64"
+    ) {
       throw new Error("Expected image content part");
     }
-    expect(imagePart.source.type).toBe("base64");
     expect(imagePart.source.media_type).toBe("image/jpeg");
   });
 
@@ -93,10 +96,13 @@ describe("Read tool HEIC support", () => {
 
     expect(result.content[0]).toEqual({ type: "text", text: "[Image: photo.heif]" });
     const imagePart = result.content[1];
-    if (!imagePart || imagePart.type !== "image") {
+    if (
+      !imagePart ||
+      imagePart.type !== "image" ||
+      imagePart.source.type !== "base64"
+    ) {
       throw new Error("Expected image content part");
     }
-    expect(imagePart.source.type).toBe("base64");
     expect(imagePart.source.media_type).toBe("image/jpeg");
   });
 

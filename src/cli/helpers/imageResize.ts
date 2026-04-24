@@ -1,6 +1,8 @@
 // Image resizing utilities for clipboard paste
 // Follows Codex CLI's approach (codex-rs/utils/image/src/lib.rs)
 
+import { isHeicMediaType } from "./imageResize.shared";
+
 export type { ResizeResult } from "./imageResize.shared";
 export {
   isHeicMediaType,
@@ -8,7 +10,6 @@ export {
   MAX_IMAGE_HEIGHT,
   MAX_IMAGE_WIDTH,
 } from "./imageResize.shared";
-import { isHeicMediaType } from "./imageResize.shared";
 
 // Build-time constant for magick variant (set via Bun.build define when USE_MAGICK=1)
 // At dev/test time this is undefined, at build time it's true/false
