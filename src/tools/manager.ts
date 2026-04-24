@@ -190,6 +190,7 @@ export const ANTHROPIC_DEFAULT_TOOLS: ToolName[] = [
   "AskUserQuestion",
   "Bash",
   "TaskOutput",
+  "CreateWorktree",
   "Edit",
   "EnterPlanMode",
   "ExitPlanMode",
@@ -223,6 +224,7 @@ export const GEMINI_DEFAULT_TOOLS: ToolName[] = [
   "glob_gemini",
   "search_file_content",
   "memory",
+  "CreateWorktree",
   "replace",
   "write_file_gemini",
   "write_todos",
@@ -235,6 +237,7 @@ export const GEMINI_DEFAULT_TOOLS: ToolName[] = [
 export const OPENAI_PASCAL_TOOLS: ToolName[] = [
   // Additional Letta Code tools
   "AskUserQuestion",
+  "CreateWorktree",
   "EnterPlanMode",
   "ExitPlanMode",
   "memory_apply_patch",
@@ -252,6 +255,7 @@ export const OPENAI_PASCAL_TOOLS: ToolName[] = [
 export const GEMINI_PASCAL_TOOLS: ToolName[] = [
   // Additional Letta Code tools
   "AskUserQuestion",
+  "CreateWorktree",
   "EnterPlanMode",
   "ExitPlanMode",
   "memory",
@@ -275,6 +279,7 @@ const TOOL_PERMISSIONS: Record<ToolName, { requiresApproval: boolean }> = {
   Bash: { requiresApproval: true },
   BashOutput: { requiresApproval: false },
   TaskOutput: { requiresApproval: false },
+  CreateWorktree: { requiresApproval: true },
   Edit: { requiresApproval: true },
   EnterPlanMode: { requiresApproval: true },
   ExitPlanMode: { requiresApproval: false },

@@ -1,5 +1,23 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { runWithRuntimeContext } from "../../runtime-context";
 import { bash } from "../../tools/impl/Bash";
+
+async function runBashInTemp(command: string) {
+  const dir = await mkdtemp(path.join(tmpdir(), "letta-bash-worktree-test-"));
+  try {
+    return await runWithRuntimeContext({ workingDirectory: dir }, () =>
+      bash({
+        command,
+        description: "Test worktree path handling",
+      }),
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
 
 describe("Bash tool", () => {
   test("executes simple command", async () => {
@@ -85,14 +103,12 @@ describe("Bash tool", () => {
     );
   });
 
-  test("blocks git worktree add outside .letta/worktrees/", async () => {
-    const result = await bash({
-      command: "git worktree add -b fix/feature ../my-worktree main",
-      description: "Test worktree path enforcement",
-    });
+  test("does not hardcode git worktree add paths", async () => {
+    const result = await runBashInTemp(
+      "git worktree add -b fix/feature ../my-worktree main",
+    );
 
-    expect(result.status).toBe("error");
-    expect(result.content[0]?.text).toContain(
+    expect(result.content[0]?.text).not.toContain(
       "Worktrees must be created under .letta/worktrees/",
     );
   });
@@ -101,11 +117,9 @@ describe("Bash tool", () => {
     // This tests the validation only — the command itself will fail
     // because there's no git repo, but it should NOT be blocked by
     // the worktree path check.
-    const result = await bash({
-      command:
-        "git worktree add -b fix/feature .letta/worktrees/my-feature main",
-      description: "Test worktree path allowed",
-    });
+    const result = await runBashInTemp(
+      "git worktree add -b fix/feature .letta/worktrees/my-feature main",
+    );
 
     // Should fail with a git error (not our validation error)
     expect(result.content[0]?.text).not.toContain(
@@ -113,15 +127,12 @@ describe("Bash tool", () => {
     );
   });
 
-  test("blocks env-prefixed git worktree add outside .letta/worktrees/", async () => {
-    const result = await bash({
-      command:
-        "FOO=1 env -i BAR=2 git worktree add -b fix/feature ../my-worktree main",
-      description: "Test env-prefixed worktree path enforcement",
-    });
+  test("does not hardcode env-prefixed git worktree add paths", async () => {
+    const result = await runBashInTemp(
+      "FOO=1 env -i BAR=2 git worktree add -b fix/feature ../my-worktree main",
+    );
 
-    expect(result.status).toBe("error");
-    expect(result.content[0]?.text).toContain(
+    expect(result.content[0]?.text).not.toContain(
       "Worktrees must be created under .letta/worktrees/",
     );
   });

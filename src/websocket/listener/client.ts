@@ -148,6 +148,7 @@ import {
   loadPersistedCwdMap,
   setConversationWorkingDirectory,
 } from "./cwd";
+import { switchConversationWorkingDirectory } from "./cwd-change";
 import { runGrepInFiles } from "./grepInFiles";
 import {
   consumeInterruptQueue,
@@ -3900,36 +3901,11 @@ async function handleCwdChange(
       throw new Error(`Not a directory: ${normalizedPath}`);
     }
 
-    setConversationWorkingDirectory(
-      runtime.listener,
+    switchConversationWorkingDirectory({
+      runtime: runtime.listener,
       agentId,
       conversationId,
-      normalizedPath,
-    );
-
-    // Invalidate session-context only (not agent-info) so the agent gets
-    // updated CWD/git info on the next turn.
-    runtime.reminderState.hasSentSessionContext = false;
-    runtime.reminderState.pendingSessionContextReason = "cwd_changed";
-
-    // If the new cwd is outside the current file-index root, re-root the
-    // index so file search covers the new workspace.  setIndexRoot()
-    // triggers a non-blocking rebuild and does NOT mutate process.cwd(),
-    // keeping concurrent conversations safe.
-    const currentRoot = getIndexRoot();
-    if (!normalizedPath.startsWith(currentRoot)) {
-      setIndexRoot(normalizedPath);
-    }
-
-    // Proactively warm the file index so @ file search is instant when
-    // the user first types "@".  ensureFileIndex() is idempotent — if the
-    // index was already built (or a rebuild is in-flight from setIndexRoot
-    // above), this returns immediately / joins the existing promise.
-    void ensureFileIndex();
-
-    emitDeviceStatusUpdate(socket, runtime, {
-      agent_id: agentId,
-      conversation_id: conversationId,
+      workingDirectory: normalizedPath,
     });
 
     // Restart the worktree file watcher for the new CWD so we detect
