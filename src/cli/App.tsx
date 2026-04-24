@@ -7312,8 +7312,9 @@ export default function App({
           memoryPromptMode: willAutoEnableMemfs ? "memfs" : undefined,
         });
 
-        // Enable memfs on Letta Cloud (tags, repo clone, tool detach).
-        await enableMemfsIfCloud(agent.id);
+        // Enable memfs on Letta Cloud (tags, repo clone, tool detach)
+        // without blocking the new-agent UX on the initial clone.
+        void enableMemfsIfCloud(agent.id);
 
         // Update project settings with new agent
         await updateProjectSettings({ lastAgent: agent.id });

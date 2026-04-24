@@ -1722,19 +1722,36 @@ async function main(): Promise<void> {
         // Set agent context for tools that need it (e.g., Skill tool)
         setAgentContext(agent.id, skillsDirectory, resolvedSkillSources);
 
-        // Start memfs sync early — awaited in parallel with getResumeData below
+        // Start memfs sync early. Interactive startup is optimistic: keep the
+        // session moving and let memfs clone/pull finish in the background
+        // unless the user explicitly requested a memfs mode toggle.
         const agentId = agent.id;
         const agentTags = agent.tags ?? undefined;
         const startupMemfsFlag = autoEnableMemfsForFreshAgent
           ? true
           : memfsFlag;
+        const shouldBlockOnMemfsStartup = Boolean(memfsFlag || noMemfsFlag);
         const memfsSyncPromise = import("./agent/memoryFilesystem").then(
           ({ applyMemfsFlags }) =>
             applyMemfsFlags(agentId, startupMemfsFlag, noMemfsFlag, {
+              pullOnExistingRepo: true,
               agentTags,
               skipPromptUpdate: shouldCreateNew,
             }),
         );
+        const memfsSyncBackgroundPromise = memfsSyncPromise.catch((error) => {
+          const message =
+            error instanceof Error ? error.message : String(error);
+          debugWarn(
+            "startup",
+            `Background memfs sync failed for ${agentId}: ${message}`,
+          );
+          console.warn(`[memfs background sync] ${message}`);
+          return null;
+        });
+        if (!shouldBlockOnMemfsStartup) {
+          void memfsSyncBackgroundPromise;
+        }
 
         // Init secrets cache — runs in parallel with memfs sync below.
         const secretsInitPromise = import("./utils/secretsStore").then(
@@ -1793,8 +1810,8 @@ async function main(): Promise<void> {
           }
 
           if (systemPromptPreset) {
-            // Await memfs sync first so isMemfsEnabled() reflects the final state
-            // before updateAgentSystemPrompt reads it to pick the memory addon.
+            // Rebuilding the prompt needs the reconciled memory mode so we
+            // still wait here for this explicit override path.
             try {
               await memfsSyncPromise;
             } catch (error) {
@@ -1923,27 +1940,22 @@ async function main(): Promise<void> {
           // Default (including --new-agent): use the agent's "default" conversation
           conversationIdToUse = "default";
 
-          // Load message history and memfs sync in parallel — they're independent
+          // Load message history without waiting on memfs sync.
           setLoadingState("checking");
-          const [data] = await Promise.all([
-            getResumeData(client, agent, "default"),
-            memfsSyncPromise.catch((error) => {
-              console.error(
-                error instanceof Error ? error.message : String(error),
-              );
-              process.exit(1);
-            }),
-          ]);
+          const data = await getResumeData(client, agent, "default");
           setResumeData(data);
           setResumedExistingConversation(data.messageHistory.length > 0);
         }
 
-        // Ensure memfs sync completed (already resolved for default path via Promise.all above)
-        try {
-          await memfsSyncPromise;
-        } catch (error) {
-          console.error(error instanceof Error ? error.message : String(error));
-          process.exit(1);
+        if (shouldBlockOnMemfsStartup) {
+          try {
+            await memfsSyncPromise;
+          } catch (error) {
+            console.error(
+              error instanceof Error ? error.message : String(error),
+            );
+            process.exit(1);
+          }
         }
 
         // Ensure secrets cache is populated (non-fatal).
@@ -1959,7 +1971,8 @@ async function main(): Promise<void> {
         }
 
         // Auto-heal system prompt drift (rebuild from stored recipe).
-        // Runs after memfs sync so isMemfsEnabled() reflects the final state.
+        // Runs after memfs flag reconciliation so isMemfsEnabled() reflects
+        // the target memory mode even if clone/pull is still in flight.
         if (resuming && !systemPromptPreset) {
           let storedPreset = settingsManager.getSystemPromptPreset(agent.id);
 
