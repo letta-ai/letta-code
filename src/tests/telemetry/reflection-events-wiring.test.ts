@@ -31,9 +31,8 @@ describe("reflection telemetry wiring", () => {
     const appSource = readFileSync(appPath, "utf-8");
     const helperSource = readFileSync(helperPath, "utf-8");
 
-    expect(appSource).toContain('telemetry.trackReflectionStart("manual"');
-    expect(appSource).toContain('telemetry.trackReflectionEnd("manual"');
     expect(appSource).toContain("launchReflectionSubagent({");
+    expect(appSource).toContain('triggerSource: "manual"');
     expect(helperSource).toContain(
       "telemetry.trackReflectionStart(triggerSource",
     );
@@ -41,7 +40,7 @@ describe("reflection telemetry wiring", () => {
       "telemetry.trackReflectionEnd(triggerSource",
     );
     expect(helperSource).toContain("telemetry.trackReflectionSkip(");
-    expect(appSource).toContain("waitForBackgroundSubagentAgentId");
+    expect(helperSource).toContain("waitForBackgroundSubagentAgentId");
     expect(helperSource).toContain(
       "startMessageId: autoPayload.startMessageId",
     );

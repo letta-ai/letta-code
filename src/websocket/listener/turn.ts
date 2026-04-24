@@ -148,7 +148,7 @@ function buildMaybeLaunchReflectionSubagent(params: {
       conversationId,
       workingDirectory,
       triggerSource,
-      waitForCompletion: false,
+      waitUntil: "queued",
       recompileContext: {
         recompileByConversation:
           runtime.listener.systemPromptRecompileByConversation,
@@ -177,7 +177,7 @@ function buildMaybeLaunchReflectionSubagent(params: {
         );
       },
     });
-    return result.launched;
+    return result.status !== "skipped" && result.status !== "failed";
   };
 }
 

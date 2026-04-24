@@ -35,7 +35,7 @@ describe("listen reflection wiring", () => {
 
     expect(helperSource).toContain("buildAutoReflectionPayload(");
     expect(helperSource).toContain("finalizeAutoReflectionPayload(");
-    expect(helperSource).toContain("handleMemorySubagentCompletion(");
+    expect(helperSource).toContain("handleMemorySubagentCompletion");
     expect(helperSource).toContain('subagentType: "reflection"');
 
     expect(listenContextSource).toContain(

@@ -15,7 +15,6 @@ import {
 import { getSubagents } from "./subagentState";
 
 const AUTO_REFLECTION_DESCRIPTION = "Reflect on recent conversations";
-type AutomaticReflectionSource = Exclude<ReflectionSource, "manual">;
 
 export type ReflectionRecompileContext = {
   recompileByConversation: Map<string, Promise<void>>;
@@ -23,21 +22,87 @@ export type ReflectionRecompileContext = {
   logRecompileFailure?: (message: string) => void;
 };
 
+type ReflectionCompletionHandler = typeof handleMemorySubagentCompletion;
+
+type ReflectionTaskDeps = {
+  isMemfsEnabled?: (agentId: string) => boolean;
+  getSystemPrompt?: (agentId: string) => Promise<string | undefined>;
+  spawnBackgroundSubagentTask?: (input: {
+    subagentType: string;
+    prompt: string;
+    description: string;
+    silentCompletion: boolean;
+    parentScope: { agentId: string; conversationId: string };
+    onComplete: (result: {
+      success: boolean;
+      error?: string;
+      agentId?: string;
+      conversationId?: string;
+    }) => void | Promise<void>;
+  }) => { subagentId: string };
+  waitForBackgroundSubagentAgentId?: (
+    subagentId: string,
+    timeoutMs: number | null,
+  ) => Promise<string | null>;
+  handleMemorySubagentCompletion?: ReflectionCompletionHandler;
+};
+
 export type LaunchReflectionInput = {
   agentId: string;
   conversationId: string;
   workingDirectory: string;
-  triggerSource: AutomaticReflectionSource;
+  triggerSource: ReflectionSource;
+  waitUntil?: "queued" | "launched" | "completed";
   waitForCompletion?: boolean;
   emitCompletionNotification?: (message: string) => void | Promise<void>;
   recompileContext: ReflectionRecompileContext;
+  deps?: ReflectionTaskDeps;
 };
 
-export type LaunchReflectionResult = {
-  launched: boolean;
-  success?: boolean;
-  skippedReason?: "memfs-disabled" | "already-active" | "no-transcript-delta";
+export type LaunchReflectionSkippedReason =
+  | "memfs-disabled"
+  | "already-active"
+  | "no-transcript-delta";
+
+export type LaunchReflectionQueuedResult = {
+  status: "queued";
 };
+
+export type LaunchReflectionSkippedResult = {
+  status: "skipped";
+  skippedReason: LaunchReflectionSkippedReason;
+};
+
+export type LaunchReflectionLaunchedResult = {
+  status: "launched";
+  payloadPath: string;
+  subagentId?: string;
+  reflectionAgentId?: string | null;
+  startMessageId?: string;
+  endMessageId?: string;
+};
+
+export type LaunchReflectionCompletedResult = {
+  status: "completed";
+  success: boolean;
+  payloadPath: string;
+  subagentId?: string;
+  reflectionAgentId?: string | null;
+  startMessageId?: string;
+  endMessageId?: string;
+};
+
+export type LaunchReflectionFailedResult = {
+  status: "failed";
+  error: string;
+};
+
+export type LaunchReflectionResult =
+  | LaunchReflectionQueuedResult
+  | LaunchReflectionSkippedResult
+  | LaunchReflectionLaunchedResult
+  | LaunchReflectionCompletedResult
+  | LaunchReflectionFailedResult;
 
 const reflectionQueueByAgent = new Map<string, Promise<void>>();
 
@@ -50,18 +115,52 @@ function hasActiveReflectionSubagent(
 
 function trackSkippedLaunch(
   input: LaunchReflectionInput,
-  skippedReason: NonNullable<LaunchReflectionResult["skippedReason"]>,
-): LaunchReflectionResult {
+  skippedReason: LaunchReflectionSkippedReason,
+): LaunchReflectionSkippedResult {
   telemetry.trackReflectionSkip(input.triggerSource, {
     agentId: input.agentId,
     conversationId: input.conversationId,
     skippedReason,
   });
-  return { launched: false, skippedReason };
+  return { status: "skipped", skippedReason };
+}
+
+function getWaitUntil(
+  input: LaunchReflectionInput,
+): NonNullable<LaunchReflectionInput["waitUntil"]> {
+  if (input.waitUntil) {
+    return input.waitUntil;
+  }
+  return input.waitForCompletion ? "completed" : "queued";
+}
+
+function isMemfsEnabled(input: LaunchReflectionInput): boolean {
+  return (
+    input.deps?.isMemfsEnabled ??
+    settingsManager.isMemfsEnabled.bind(settingsManager)
+  )(input.agentId);
+}
+
+async function getSystemPrompt(
+  input: LaunchReflectionInput,
+): Promise<string | undefined> {
+  if (input.deps?.getSystemPrompt) {
+    return input.deps.getSystemPrompt(input.agentId);
+  }
+
+  try {
+    const client = await getClient();
+    const agent = await client.agents.retrieve(input.agentId);
+    return agent.system ?? undefined;
+  } catch {
+    debugLog("memory", "Failed to fetch agent system prompt for reflection");
+    return undefined;
+  }
 }
 
 async function runReflectionLaunch(
   input: LaunchReflectionInput,
+  onLaunched?: (result: LaunchReflectionLaunchedResult) => void,
 ): Promise<LaunchReflectionResult> {
   const {
     agentId,
@@ -71,7 +170,7 @@ async function runReflectionLaunch(
     recompileContext,
   } = input;
 
-  if (!agentId || !settingsManager.isMemfsEnabled(agentId)) {
+  if (!agentId || !isMemfsEnabled(input)) {
     return trackSkippedLaunch(input, "memfs-disabled");
   }
 
@@ -83,15 +182,7 @@ async function runReflectionLaunch(
     return trackSkippedLaunch(input, "already-active");
   }
 
-  let systemPrompt: string | undefined;
-  try {
-    const client = await getClient();
-    const agent = await client.agents.retrieve(agentId);
-    systemPrompt = agent.system ?? undefined;
-  } catch {
-    debugLog("memory", "Failed to fetch agent system prompt for reflection");
-  }
-
+  const systemPrompt = await getSystemPrompt(input);
   const autoPayload = await buildAutoReflectionPayload(
     agentId,
     conversationId,
@@ -115,12 +206,22 @@ async function runReflectionLaunch(
   });
 
   const { spawnBackgroundSubagentTask, waitForBackgroundSubagentAgentId } =
-    await import("../../tools/impl/Task");
+    input.deps?.spawnBackgroundSubagentTask &&
+    input.deps.waitForBackgroundSubagentAgentId
+      ? {
+          spawnBackgroundSubagentTask: input.deps.spawnBackgroundSubagentTask,
+          waitForBackgroundSubagentAgentId:
+            input.deps.waitForBackgroundSubagentAgentId,
+        }
+      : await import("../../tools/impl/Task");
 
-  let resolveCompletion: (result: LaunchReflectionResult) => void = () => {};
-  const completionPromise = new Promise<LaunchReflectionResult>((resolve) => {
-    resolveCompletion = resolve;
-  });
+  let resolveCompletion: (result: LaunchReflectionCompletedResult) => void =
+    () => {};
+  const completionPromise = new Promise<LaunchReflectionCompletedResult>(
+    (resolve) => {
+      resolveCompletion = resolve;
+    },
+  );
 
   const { subagentId } = spawnBackgroundSubagentTask({
     subagentType: "reflection",
@@ -145,7 +246,10 @@ async function runReflectionLaunch(
           triggerSource,
         );
 
-        const completionMessage = await handleMemorySubagentCompletion(
+        const completionMessage = await (
+          input.deps?.handleMemorySubagentCompletion ??
+          handleMemorySubagentCompletion
+        )(
           {
             agentId,
             conversationId,
@@ -162,7 +266,15 @@ async function runReflectionLaunch(
         );
         await input.emitCompletionNotification?.(completionMessage);
       } finally {
-        resolveCompletion({ launched: true, success });
+        resolveCompletion({
+          status: "completed",
+          success,
+          payloadPath: autoPayload.payloadPath,
+          subagentId,
+          reflectionAgentId: reflectionAgentId ?? null,
+          startMessageId: autoPayload.startMessageId,
+          endMessageId: autoPayload.endMessageId,
+        });
       }
     },
   });
@@ -175,6 +287,15 @@ async function runReflectionLaunch(
     agentId,
     subagentId: reflectionAgentId ?? undefined,
     conversationId,
+    startMessageId: autoPayload.startMessageId,
+    endMessageId: autoPayload.endMessageId,
+  });
+
+  onLaunched?.({
+    status: "launched",
+    payloadPath: autoPayload.payloadPath,
+    subagentId,
+    reflectionAgentId,
     startMessageId: autoPayload.startMessageId,
     endMessageId: autoPayload.endMessageId,
   });
@@ -208,26 +329,47 @@ function enqueueReflectionForAgent<T>(
 
 function enqueueReflectionLaunch(
   input: LaunchReflectionInput,
+  onLaunched?: (result: LaunchReflectionLaunchedResult) => void,
 ): Promise<LaunchReflectionResult> {
   return enqueueReflectionForAgent(input.agentId, () =>
-    runReflectionLaunch(input),
+    runReflectionLaunch(input, onLaunched),
   );
 }
 
 export async function launchReflectionSubagent(
   input: LaunchReflectionInput,
 ): Promise<LaunchReflectionResult> {
-  if (!input.agentId || !settingsManager.isMemfsEnabled(input.agentId)) {
+  if (!input.agentId || !isMemfsEnabled(input)) {
     return trackSkippedLaunch(input, "memfs-disabled");
   }
   if (hasActiveReflectionSubagent(input.agentId, input.conversationId)) {
     return trackSkippedLaunch(input, "already-active");
   }
 
-  const queuedLaunch = enqueueReflectionLaunch(input);
-  if (input.waitForCompletion) {
+  const waitUntil = getWaitUntil(input);
+  if (waitUntil === "queued") {
+    const queuedLaunch = enqueueReflectionLaunch(input);
+    queuedLaunch.catch((error) => {
+      debugWarn(
+        "memory",
+        `Failed to auto-launch reflection subagent (${input.triggerSource}): ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    });
+    return { status: "queued" };
+  }
+
+  let resolveLaunched: (result: LaunchReflectionResult) => void = () => {};
+  const launchedPromise = new Promise<LaunchReflectionResult>((resolve) => {
+    resolveLaunched = resolve;
+  });
+  const queuedLaunch = enqueueReflectionLaunch(input, resolveLaunched);
+
+  if (waitUntil === "launched") {
     try {
-      return await queuedLaunch;
+      const result = await Promise.race([launchedPromise, queuedLaunch]);
+      return result;
     } catch (error) {
       debugWarn(
         "memory",
@@ -235,19 +377,27 @@ export async function launchReflectionSubagent(
           error instanceof Error ? error.message : String(error)
         }`,
       );
-      return { launched: false };
+      return {
+        status: "failed",
+        error: error instanceof Error ? error.message : String(error),
+      };
     }
   }
 
-  queuedLaunch.catch((error) => {
+  try {
+    return await queuedLaunch;
+  } catch (error) {
     debugWarn(
       "memory",
       `Failed to auto-launch reflection subagent (${input.triggerSource}): ${
         error instanceof Error ? error.message : String(error)
       }`,
     );
-  });
-  return { launched: true };
+    return {
+      status: "failed",
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
 }
 
 export const __autoReflectionTestUtils = {

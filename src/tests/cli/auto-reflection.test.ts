@@ -1,5 +1,15 @@
-import { afterEach, describe, expect, test } from "bun:test";
-import { __autoReflectionTestUtils } from "../../cli/helpers/autoReflection";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  __autoReflectionTestUtils,
+  launchReflectionSubagent,
+} from "../../cli/helpers/autoReflection";
+import {
+  appendTranscriptDeltaJsonl,
+  getReflectionTranscriptDerivedState,
+} from "../../cli/helpers/reflectionTranscript";
 
 describe("auto reflection launcher serialization", () => {
   afterEach(() => {
@@ -79,5 +89,148 @@ describe("auto reflection launcher serialization", () => {
     releaseFirst();
     await expect(first).resolves.toBe("first");
     expect(overlapped).toBe(true);
+  });
+});
+
+describe("auto reflection launcher behavior", () => {
+  const agentId = "agent-auto-reflection";
+  const conversationId = "conv-auto-reflection";
+  let testRoot: string;
+
+  beforeEach(async () => {
+    testRoot = await mkdtemp(join(tmpdir(), "letta-auto-reflection-test-"));
+    process.env.LETTA_TRANSCRIPT_ROOT = testRoot;
+  });
+
+  afterEach(async () => {
+    delete process.env.LETTA_TRANSCRIPT_ROOT;
+    __autoReflectionTestUtils.resetReflectionQueue();
+    await rm(testRoot, { recursive: true, force: true });
+  });
+
+  function baseInput() {
+    return {
+      agentId,
+      conversationId,
+      workingDirectory: "/tmp/work",
+      triggerSource: "manual" as const,
+      recompileContext: {
+        recompileByConversation: new Map<string, Promise<void>>(),
+        recompileQueuedByConversation: new Set<string>(),
+      },
+    };
+  }
+
+  test("waitUntil launched reports no transcript delta as a skip", async () => {
+    const result = await launchReflectionSubagent({
+      ...baseInput(),
+      waitUntil: "launched",
+      deps: {
+        isMemfsEnabled: () => true,
+        getSystemPrompt: async () => undefined,
+      },
+    });
+
+    expect(result).toEqual({
+      status: "skipped",
+      skippedReason: "no-transcript-delta",
+    });
+  });
+
+  test("successful subagent completion advances the shared cursor", async () => {
+    await appendTranscriptDeltaJsonl(agentId, conversationId, [
+      { kind: "user", id: "u1", text: "remember this", messageId: "msg-u1" },
+      {
+        kind: "assistant",
+        id: "a1",
+        text: "noted",
+        phase: "finished",
+        messageId: "msg-a1",
+      },
+    ]);
+
+    let onComplete:
+      | ((result: {
+          success: boolean;
+          error?: string;
+          agentId?: string;
+          conversationId?: string;
+        }) => void | Promise<void>)
+      | undefined;
+    const notifications: string[] = [];
+    const result = await launchReflectionSubagent({
+      ...baseInput(),
+      waitUntil: "launched",
+      emitCompletionNotification: (message) => {
+        notifications.push(message);
+      },
+      deps: {
+        isMemfsEnabled: () => true,
+        getSystemPrompt: async () => "system prompt",
+        spawnBackgroundSubagentTask: (input) => {
+          onComplete = input.onComplete;
+          return { subagentId: "subagent-reflection" };
+        },
+        waitForBackgroundSubagentAgentId: async () => "reflection-agent",
+        handleMemorySubagentCompletion: async () => "reflection complete",
+      },
+    });
+
+    expect(result.status).toBe("launched");
+    expect(onComplete).toBeFunction();
+    await onComplete?.({ success: true, agentId: "reflection-agent" });
+
+    const derived = await getReflectionTranscriptDerivedState(
+      agentId,
+      conversationId,
+    );
+    expect(derived.hasUnreflectedMessages).toBe(false);
+    expect(derived.state.turns_since_last_successful_reflection).toBe(0);
+    expect(derived.state.last_reflection_source).toBe("manual");
+    expect(notifications).toEqual(["reflection complete"]);
+  });
+
+  test("failed subagent completion leaves cursor and cadence state unchanged", async () => {
+    await appendTranscriptDeltaJsonl(agentId, conversationId, [
+      { kind: "user", id: "u1", text: "remember this", messageId: "msg-u1" },
+    ]);
+
+    let onComplete:
+      | ((result: {
+          success: boolean;
+          error?: string;
+          agentId?: string;
+          conversationId?: string;
+        }) => void | Promise<void>)
+      | undefined;
+    const result = await launchReflectionSubagent({
+      ...baseInput(),
+      waitUntil: "launched",
+      deps: {
+        isMemfsEnabled: () => true,
+        getSystemPrompt: async () => undefined,
+        spawnBackgroundSubagentTask: (input) => {
+          onComplete = input.onComplete;
+          return { subagentId: "subagent-reflection" };
+        },
+        waitForBackgroundSubagentAgentId: async () => "reflection-agent",
+        handleMemorySubagentCompletion: async () => "reflection failed",
+      },
+    });
+
+    expect(result.status).toBe("launched");
+    await onComplete?.({
+      success: false,
+      error: "boom",
+      agentId: "reflection-agent",
+    });
+
+    const derived = await getReflectionTranscriptDerivedState(
+      agentId,
+      conversationId,
+    );
+    expect(derived.hasUnreflectedMessages).toBe(true);
+    expect(derived.state.reflected_through_message_id).toBeUndefined();
+    expect(derived.state.turns_since_last_successful_reflection).toBe(1);
   });
 });

@@ -93,7 +93,7 @@ export interface ReflectionEndData {
 }
 
 export interface ReflectionSkipData {
-  trigger_source: "step-count" | "compaction-event" | "idle-time";
+  trigger_source: "manual" | "step-count" | "compaction-event" | "idle-time";
   agent_id?: string;
   conversation_id?: string;
   skipped_reason: "memfs-disabled" | "already-active" | "no-transcript-delta";
@@ -651,7 +651,7 @@ class TelemetryManager {
   }
 
   trackReflectionSkip(
-    triggerSource: "step-count" | "compaction-event" | "idle-time",
+    triggerSource: "manual" | "step-count" | "compaction-event" | "idle-time",
     options: {
       agentId?: string;
       conversationId?: string;

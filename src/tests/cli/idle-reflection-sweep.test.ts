@@ -2,7 +2,14 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { __idleReflectionSweepTestUtils } from "../../cli/helpers/idleReflectionSweep";
+import type {
+  LaunchReflectionInput,
+  LaunchReflectionResult,
+} from "../../cli/helpers/autoReflection";
+import {
+  __idleReflectionSweepTestUtils,
+  maybeStartIdleReflectionSweep,
+} from "../../cli/helpers/idleReflectionSweep";
 import { normalizeReflectionSettings } from "../../cli/helpers/memoryReminder";
 import {
   appendTranscriptDeltaJsonl,
@@ -26,6 +33,7 @@ describe("idle reflection sweep candidate discovery", () => {
 
   afterEach(async () => {
     delete process.env.LETTA_TRANSCRIPT_ROOT;
+    __idleReflectionSweepTestUtils.resetInFlight();
     clearAllSubagents();
     await rm(testRoot, { recursive: true, force: true });
   });
@@ -175,5 +183,117 @@ describe("idle reflection sweep candidate discovery", () => {
     expect(candidates.map((candidate) => candidate.conversationId)).toEqual([
       "idle-good",
     ]);
+  });
+
+  test("sweep processes candidates sequentially and emits one aggregate notification", async () => {
+    await appendCompletedTurns("idle-a", 3);
+    await appendCompletedTurns("idle-b", 3);
+    await appendCompletedTurns("idle-c", 3);
+    await ageTranscript("idle-a", 25);
+    await ageTranscript("idle-b", 25);
+    await ageTranscript("idle-c", 25);
+
+    const events: string[] = [];
+    const notifications: string[] = [];
+    let activeLaunches = 0;
+    let maxActiveLaunches = 0;
+    const launch = async (
+      input: LaunchReflectionInput,
+    ): Promise<LaunchReflectionResult> => {
+      events.push(`start:${input.conversationId}`);
+      activeLaunches += 1;
+      maxActiveLaunches = Math.max(maxActiveLaunches, activeLaunches);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      activeLaunches -= 1;
+      events.push(`end:${input.conversationId}`);
+      return {
+        status: "completed",
+        success: input.conversationId !== "idle-b",
+        payloadPath: `/tmp/${input.conversationId}.json`,
+      };
+    };
+
+    await __idleReflectionSweepTestUtils.runIdleReflectionSweep({
+      agentId,
+      activeConversationId: "active",
+      workingDirectory: "/tmp/work",
+      reflectionSettings: normalizeReflectionSettings({
+        trigger: "step-count",
+        stepCount: 25,
+        idleSweepEnabled: true,
+        idleSweepIntervalHours: 24,
+        idleConversationMinAgeHours: 24,
+        idleMinUnreflectedTurns: 3,
+      }),
+      recompileContext: {
+        recompileByConversation: new Map(),
+        recompileQueuedByConversation: new Set(),
+      },
+      launchReflectionSubagent: launch,
+      emitCompletionNotification: (message) => {
+        notifications.push(message);
+      },
+    });
+
+    expect(maxActiveLaunches).toBe(1);
+    expect(events).toEqual([
+      "start:idle-a",
+      "end:idle-a",
+      "start:idle-b",
+      "end:idle-b",
+      "start:idle-c",
+      "end:idle-c",
+    ]);
+    expect(notifications).toEqual([
+      "Idle reflection sweep completed: 2/3 conversation(s) reflected.",
+    ]);
+
+    const state =
+      await __idleReflectionSweepTestUtils.readIdleSweepState(agentId);
+    expect(state.last_idle_sweep_started_at).toBeString();
+    expect(state.last_idle_sweep_completed_at).toBeString();
+  });
+
+  test("scheduler skips when not due", async () => {
+    await appendCompletedTurns("idle-good", 3);
+    await ageTranscript("idle-good", 25);
+
+    const nowMs = Date.parse("2026-04-24T12:00:00.000Z");
+    await __idleReflectionSweepTestUtils.writeIdleSweepState(agentId, {
+      last_idle_sweep_started_at: new Date(
+        nowMs - 60 * 60 * 1000,
+      ).toISOString(),
+    });
+
+    let launchCount = 0;
+    maybeStartIdleReflectionSweep({
+      agentId,
+      activeConversationId: "active",
+      workingDirectory: "/tmp/work",
+      reflectionSettings: normalizeReflectionSettings({
+        trigger: "step-count",
+        stepCount: 25,
+        idleSweepEnabled: true,
+        idleSweepIntervalHours: 24,
+        idleConversationMinAgeHours: 24,
+        idleMinUnreflectedTurns: 3,
+      }),
+      recompileContext: {
+        recompileByConversation: new Map(),
+        recompileQueuedByConversation: new Set(),
+      },
+      now: () => nowMs,
+      launchReflectionSubagent: async () => {
+        launchCount += 1;
+        return {
+          status: "completed",
+          success: true,
+          payloadPath: "/tmp/idle-good.json",
+        };
+      },
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(launchCount).toBe(0);
   });
 });

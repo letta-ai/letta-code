@@ -32,6 +32,8 @@ export type IdleReflectionSweepInput = {
   recompileContext: ReflectionRecompileContext;
   listenerRuntime?: ListenerRuntime;
   emitCompletionNotification?: (message: string) => void | Promise<void>;
+  now?: () => number;
+  launchReflectionSubagent?: typeof launchReflectionSubagent;
 };
 
 type IdleReflectionCandidate = {
@@ -121,7 +123,7 @@ function isConversationRuntimeBusy(
 async function discoverIdleReflectionCandidates(
   input: IdleReflectionSweepInput,
 ): Promise<IdleReflectionCandidate[]> {
-  const nowMs = Date.now();
+  const nowMs = input.now?.() ?? Date.now();
   const reflectionSettings = normalizeReflectionSettings(
     input.reflectionSettings,
   );
@@ -176,12 +178,19 @@ async function discoverIdleReflectionCandidates(
 
 export const __idleReflectionSweepTestUtils = {
   discoverIdleReflectionCandidates,
+  readIdleSweepState,
+  writeIdleSweepState,
+  runIdleReflectionSweep,
+  resetInFlight() {
+    idleSweepInFlightByAgent.clear();
+  },
 };
 
 async function runIdleReflectionSweep(
   input: IdleReflectionSweepInput,
 ): Promise<void> {
-  const startedAt = Date.now();
+  const now = input.now ?? Date.now;
+  const startedAt = now();
   const state = await readIdleSweepState(input.agentId);
   state.last_idle_sweep_started_at = new Date(startedAt).toISOString();
   await writeIdleSweepState(input.agentId, state);
@@ -197,23 +206,24 @@ async function runIdleReflectionSweep(
     );
 
     for (const candidate of candidates) {
-      const result = await launchReflectionSubagent({
+      const launch = input.launchReflectionSubagent ?? launchReflectionSubagent;
+      const result = await launch({
         agentId: input.agentId,
         conversationId: candidate.conversationId,
         workingDirectory: input.workingDirectory,
         triggerSource: "idle-time",
-        waitForCompletion: true,
+        waitUntil: "completed",
         recompileContext: input.recompileContext,
       });
-      if (result.launched) {
+      if (result.status === "completed") {
         launchedCount += 1;
-      }
-      if (result.success) {
-        successCount += 1;
+        if (result.success) {
+          successCount += 1;
+        }
       }
     }
 
-    state.last_idle_sweep_completed_at = new Date().toISOString();
+    state.last_idle_sweep_completed_at = new Date(now()).toISOString();
     await writeIdleSweepState(input.agentId, state);
   } catch (error) {
     debugWarn(
@@ -223,7 +233,7 @@ async function runIdleReflectionSweep(
       }`,
     );
   } finally {
-    const durationMs = Date.now() - startedAt;
+    const durationMs = now() - startedAt;
     telemetry.trackReflectionIdleSweep({
       agentId: input.agentId,
       candidateCount: candidates.length,
@@ -254,9 +264,10 @@ export function maybeStartIdleReflectionSweep(
   idleSweepInFlightByAgent.add(input.agentId);
 
   void (async () => {
+    const now = input.now ?? Date.now;
     const state = await readIdleSweepState(input.agentId);
     if (
-      hoursSince(state.last_idle_sweep_started_at, Date.now()) <
+      hoursSince(state.last_idle_sweep_started_at, now()) <
       reflectionSettings.idleSweepIntervalHours
     ) {
       idleSweepInFlightByAgent.delete(input.agentId);
