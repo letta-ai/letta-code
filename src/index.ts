@@ -58,6 +58,7 @@ import { markMilestone } from "./utils/timing";
 // anti-pattern of creating new [] on every render which triggers useEffect re-runs
 const EMPTY_APPROVAL_ARRAY: ApprovalRequest[] = [];
 const EMPTY_MESSAGE_ARRAY: Message[] = [];
+const GIT_MEMORY_ENABLED_TAG = "git-memory-enabled";
 
 function trackCliBoundaryError(
   errorType: string,
@@ -1722,19 +1723,38 @@ async function main(): Promise<void> {
         // Set agent context for tools that need it (e.g., Skill tool)
         setAgentContext(agent.id, skillsDirectory, resolvedSkillSources);
 
-        // Start memfs sync early — awaited in parallel with getResumeData below
+        // Start memfs setup early, but do not block interactive startup on it.
+        // Memory tools and direct memory-path file tools lazily ensure the local
+        // checkout exists before touching $MEMORY_DIR.
         const agentId = agent.id;
         const agentTags = agent.tags ?? undefined;
         const startupMemfsFlag = autoEnableMemfsForFreshAgent
           ? true
           : memfsFlag;
+        const initialLocalMemfsEnabled =
+          settingsManager.isMemfsEnabled(agentId);
+        if (noMemfsFlag) {
+          settingsManager.setMemfsEnabled(agentId, false);
+        } else if (
+          startupMemfsFlag ||
+          agentTags?.includes(GIT_MEMORY_ENABLED_TAG)
+        ) {
+          settingsManager.setMemfsEnabled(agentId, true);
+        }
         const memfsSyncPromise = import("./agent/memoryFilesystem").then(
           ({ applyMemfsFlags }) =>
             applyMemfsFlags(agentId, startupMemfsFlag, noMemfsFlag, {
               agentTags,
               skipPromptUpdate: shouldCreateNew,
+              initialLocalMemfsEnabled,
             }),
         );
+        void memfsSyncPromise.catch((error) => {
+          debugWarn(
+            "memfs-git",
+            `Background startup sync failed: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        });
 
         // Init secrets cache — runs in parallel with memfs sync below.
         const secretsInitPromise = import("./utils/secretsStore").then(
@@ -1923,27 +1943,25 @@ async function main(): Promise<void> {
           // Default (including --new-agent): use the agent's "default" conversation
           conversationIdToUse = "default";
 
-          // Load message history and memfs sync in parallel — they're independent
+          // Load message history without blocking on memfs. Memfs setup continues
+          // in the background and is awaited lazily by memory access paths.
           setLoadingState("checking");
-          const [data] = await Promise.all([
-            getResumeData(client, agent, "default"),
-            memfsSyncPromise.catch((error) => {
-              console.error(
-                error instanceof Error ? error.message : String(error),
-              );
-              process.exit(1);
-            }),
-          ]);
+          const data = await getResumeData(client, agent, "default");
           setResumeData(data);
           setResumedExistingConversation(data.messageHistory.length > 0);
         }
 
-        // Ensure memfs sync completed (already resolved for default path via Promise.all above)
-        try {
-          await memfsSyncPromise;
-        } catch (error) {
-          console.error(error instanceof Error ? error.message : String(error));
-          process.exit(1);
+        // Explicit memfs mode changes should still be settled before the session
+        // starts; ordinary resume/new-agent startup leaves setup in the background.
+        if (memfsFlag || noMemfsFlag) {
+          try {
+            await memfsSyncPromise;
+          } catch (error) {
+            console.error(
+              error instanceof Error ? error.message : String(error),
+            );
+            process.exit(1);
+          }
         }
 
         // Ensure secrets cache is populated (non-fatal).
@@ -1959,7 +1977,8 @@ async function main(): Promise<void> {
         }
 
         // Auto-heal system prompt drift (rebuild from stored recipe).
-        // Runs after memfs sync so isMemfsEnabled() reflects the final state.
+        // Memfs mode is pre-seeded from the startup flags/server tag above so
+        // this does not need to wait for background local checkout setup.
         if (resuming && !systemPromptPreset) {
           let storedPreset = settingsManager.getSystemPromptPreset(agent.id);
 

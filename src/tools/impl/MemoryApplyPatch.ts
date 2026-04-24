@@ -11,7 +11,7 @@ import {
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { getClient } from "../../agent/client";
 import { getCurrentAgentId } from "../../agent/context";
-import { resolveScopedMemoryDir } from "../../agent/memoryFilesystem";
+import { ensureScopedMemoryDirReady } from "../../agent/memoryFilesystem";
 import {
   assertMemoryRepoReadyForWrite,
   commitAndSyncMemoryWrite,
@@ -115,7 +115,7 @@ export async function memory_apply_patch(
     throw new Error("memory_apply_patch: 'input' must be a non-empty string");
   }
 
-  const memoryDir = resolveMemoryDir();
+  const memoryDir = await resolveMemoryDir();
   ensureMemoryRepo(memoryDir);
 
   await assertMemoryRepoReadyForWrite(memoryDir);
@@ -484,8 +484,8 @@ function normalizeAddedContent(label: string, rawContent: string): string {
   }
 }
 
-function resolveMemoryDir(): string {
-  const scopedMemoryDir = resolveScopedMemoryDir();
+async function resolveMemoryDir(): Promise<string> {
+  const scopedMemoryDir = await ensureScopedMemoryDirReady();
   if (scopedMemoryDir) {
     return scopedMemoryDir;
   }

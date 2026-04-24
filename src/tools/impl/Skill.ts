@@ -2,7 +2,10 @@ import { existsSync, readdirSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { getCurrentAgentId, getSkillsDirectory } from "../../agent/context";
-import { resolveScopedMemoryDir } from "../../agent/memoryFilesystem";
+import {
+  ensureLocalMemfsCheckout,
+  resolveScopedMemoryDir,
+} from "../../agent/memoryFilesystem";
 import {
   GLOBAL_SKILLS_DIR,
   getAgentSkillsDir,
@@ -10,6 +13,7 @@ import {
   SKILLS_DIR,
 } from "../../agent/skills";
 import { getCurrentWorkingDirectory } from "../../runtime-context";
+import { settingsManager } from "../../settings-manager";
 import { queueSkillContent } from "./skillContentRegistry";
 import { validateRequiredParams } from "./validation.js";
 
@@ -104,6 +108,13 @@ async function readSkillContent(
   }
 
   // 3. Try agent memory skills directories
+  if (agentId && settingsManager.isMemfsEnabled(agentId)) {
+    try {
+      await ensureLocalMemfsCheckout(agentId);
+    } catch {
+      // Keep skill lookup best-effort; global/bundled skills may still match.
+    }
+  }
   for (const memorySkillsDir of getMemorySkillsDirs(agentId)) {
     const memorySkillPath = join(memorySkillsDir, skillId, "SKILL.md");
     try {

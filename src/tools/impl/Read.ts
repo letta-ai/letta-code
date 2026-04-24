@@ -4,6 +4,7 @@ import type {
   ImageContent,
   TextContent,
 } from "@letta-ai/letta-client/resources/agents/messages";
+import { ensureMemfsCheckoutForPath } from "../../agent/memoryFilesystem";
 import { resizeImageIfNeeded } from "../../cli/helpers/imageResize.js";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "../../constants";
 import { getCurrentWorkingDirectory } from "../../runtime-context";
@@ -201,6 +202,7 @@ export async function read(args: ReadArgs): Promise<ReadResult> {
   const resolvedPath = path.isAbsolute(file_path)
     ? file_path
     : path.resolve(userCwd, file_path);
+  await ensureMemfsCheckoutForPath(resolvedPath);
   try {
     const stats = await fs.stat(resolvedPath);
     if (stats.isDirectory())

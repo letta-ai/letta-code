@@ -1,5 +1,6 @@
 import { existsSync, statSync } from "node:fs";
 import * as path from "node:path";
+import { ensureMemfsCheckoutForShellCommand } from "../../agent/memoryFilesystem";
 import { getCurrentWorkingDirectory } from "../../runtime-context";
 import { getShellEnv } from "./shellEnv.js";
 import { buildShellLaunchers } from "./shellLaunchers.js";
@@ -92,6 +93,7 @@ export async function shell(args: ShellArgs): Promise<ShellResult> {
 
   const timeout = timeout_ms ?? DEFAULT_TIMEOUT;
   const cwd = resolveShellWorkdir(workdir);
+  await ensureMemfsCheckoutForShellCommand(command.join(" "), cwd);
 
   const context: SpawnContext = {
     command,

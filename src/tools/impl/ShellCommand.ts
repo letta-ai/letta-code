@@ -1,4 +1,5 @@
 import { getCurrentAgentId } from "../../agent/context";
+import { ensureMemfsCheckoutForShellCommand } from "../../agent/memoryFilesystem";
 import { isMemoryDirCommand } from "../../permissions/readOnlyShell";
 import { resolveShellWorkdir, type ShellResult, shell } from "./Shell.js";
 import { buildShellLaunchers } from "./shellLaunchers.js";
@@ -64,6 +65,7 @@ export async function shell_command(
   } = args;
   const envOverrides = getMemoryGitIdentityEnvOverrides(command, workdir);
   const resolvedWorkdir = resolveShellWorkdir(workdir);
+  await ensureMemfsCheckoutForShellCommand(command, resolvedWorkdir);
   const launchers = buildShellLaunchers(command, { login });
   if (launchers.length === 0) {
     throw new Error("Command must be a non-empty string");

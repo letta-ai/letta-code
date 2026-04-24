@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { resolve } from "node:path";
+import { ensureMemfsCheckoutForShellCommand } from "../../agent/memoryFilesystem";
 import { INTERRUPTED_BY_USER } from "../../constants";
 import { getCurrentWorkingDirectory } from "../../runtime-context";
 import {
@@ -178,6 +179,7 @@ export async function bash(args: BashArgs): Promise<BashResult> {
     onOutput,
   } = args;
   const userCwd = getCurrentWorkingDirectory();
+  await ensureMemfsCheckoutForShellCommand(command, userCwd);
 
   // Block worktree creation outside .letta/worktrees/
   const worktreeError = validateWorktreePath(command, userCwd);

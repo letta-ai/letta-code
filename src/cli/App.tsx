@@ -7458,8 +7458,12 @@ export default function App({
 
         // Use spawnCommand for actual execution
         const { spawnCommand } = await import("../tools/impl/Bash.js");
+        const { ensureMemfsCheckoutForShellCommand } = await import(
+          "../agent/memoryFilesystem"
+        );
         const { getShellEnv } = await import("../tools/impl/shellEnv.js");
 
+        await ensureMemfsCheckoutForShellCommand(finalCommand, process.cwd());
         const result = await spawnCommand(finalCommand, {
           cwd: process.cwd(),
           env: getShellEnv(),

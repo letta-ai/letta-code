@@ -9,7 +9,7 @@
 
 import { existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import {
   DIRECTORY_LIMIT_DEFAULTS,
   getDirectoryLimits,
@@ -59,6 +59,63 @@ export interface ResolveScopedMemoryDirOptions {
   homeDir?: string;
 }
 
+const localMemfsCheckoutPromises = new Map<string, Promise<void>>();
+
+export function resolveScopedAgentId(
+  options: ResolveScopedMemoryDirOptions = {},
+): string | null {
+  const env = options.env ?? process.env;
+
+  const explicitAgentId = options.agentId?.trim();
+  if (explicitAgentId) {
+    return explicitAgentId;
+  }
+
+  try {
+    const scopedAgentId = getCurrentAgentId().trim();
+    if (scopedAgentId) {
+      return scopedAgentId;
+    }
+  } catch {
+    // No runtime-scoped agent context; fall back below.
+  }
+
+  const envAgentId = (env.LETTA_AGENT_ID || env.AGENT_ID || "").trim();
+  if (envAgentId) {
+    return envAgentId;
+  }
+
+  return null;
+}
+
+function isPathWithinDirectory(
+  pathToCheck: string,
+  directory: string,
+): boolean {
+  const rel = relative(resolve(directory), resolve(pathToCheck));
+  return rel === "" || (!!rel && !rel.startsWith("..") && !isAbsolute(rel));
+}
+
+async function isMemfsEnabledLocally(agentId: string): Promise<boolean> {
+  try {
+    const { settingsManager } = await import("../settings-manager");
+    return settingsManager.isMemfsEnabled(agentId);
+  } catch {
+    return false;
+  }
+}
+
+export function isPathInsideMemoryDirForAgent(
+  pathToCheck: string,
+  agentId: string,
+  homeDir: string = homedir(),
+): boolean {
+  return isPathWithinDirectory(
+    pathToCheck,
+    getMemoryFilesystemRoot(agentId, homeDir),
+  );
+}
+
 /**
  * Resolve the active memory directory for the current execution scope.
  *
@@ -99,6 +156,82 @@ export function resolveScopedMemoryDir(
   }
 
   return null;
+}
+
+export async function ensureScopedMemoryDirReady(
+  options: ResolveScopedMemoryDirOptions = {},
+): Promise<string | null> {
+  const memoryDir = resolveScopedMemoryDir(options);
+  if (!memoryDir) {
+    return null;
+  }
+
+  const agentId = resolveScopedAgentId(options);
+  if (!agentId) {
+    return memoryDir;
+  }
+
+  const homeDir = options.homeDir ?? homedir();
+  const defaultMemoryDir = getMemoryFilesystemRoot(agentId, homeDir);
+  if (resolve(memoryDir) === resolve(defaultMemoryDir)) {
+    await ensureLocalMemfsCheckout(agentId);
+  }
+
+  return memoryDir;
+}
+
+export async function ensureMemfsCheckoutForPath(
+  pathToCheck: string,
+  options: ResolveScopedMemoryDirOptions = {},
+): Promise<void> {
+  const agentId = resolveScopedAgentId(options);
+  if (!agentId) {
+    return;
+  }
+  if (!(await isMemfsEnabledLocally(agentId))) {
+    return;
+  }
+
+  const homeDir = options.homeDir ?? homedir();
+  if (!isPathInsideMemoryDirForAgent(pathToCheck, agentId, homeDir)) {
+    return;
+  }
+
+  await ensureLocalMemfsCheckout(agentId);
+}
+
+export async function ensureMemfsCheckoutForShellCommand(
+  command: string,
+  workdir?: string,
+  options: ResolveScopedMemoryDirOptions = {},
+): Promise<void> {
+  const agentId = resolveScopedAgentId(options);
+  if (!agentId) {
+    return;
+  }
+  if (!(await isMemfsEnabledLocally(agentId))) {
+    return;
+  }
+
+  const homeDir = options.homeDir ?? homedir();
+  const memoryDir = getMemoryFilesystemRoot(agentId, homeDir);
+  const referencesMemoryEnv =
+    command.includes("$MEMORY_DIR") ||
+    command.includes("$" + "{MEMORY_DIR}") ||
+    command.includes("%MEMORY_DIR%") ||
+    command.includes("$LETTA_MEMORY_DIR") ||
+    command.includes("$" + "{LETTA_MEMORY_DIR}") ||
+    command.includes("%LETTA_MEMORY_DIR%");
+  const referencesMemoryPath = command.includes(memoryDir);
+  const workdirIsMemoryPath = workdir
+    ? isPathWithinDirectory(resolve(workdir), memoryDir)
+    : false;
+
+  if (!referencesMemoryEnv && !referencesMemoryPath && !workdirIsMemoryPath) {
+    return;
+  }
+
+  await ensureLocalMemfsCheckout(agentId);
 }
 
 export function ensureMemoryFilesystemDirs(
@@ -150,7 +283,23 @@ export async function ensureLocalMemfsCheckout(agentId: string): Promise<void> {
   if (isGitRepo(agentId)) {
     return;
   }
-  await cloneMemoryRepo(agentId);
+
+  const existing = localMemfsCheckoutPromises.get(agentId);
+  if (existing) {
+    await existing;
+    return;
+  }
+
+  const checkoutPromise = (async () => {
+    if (!isGitRepo(agentId)) {
+      await cloneMemoryRepo(agentId);
+    }
+  })().finally(() => {
+    localMemfsCheckoutPromises.delete(agentId);
+  });
+
+  localMemfsCheckoutPromises.set(agentId, checkoutPromise);
+  await checkoutPromise;
 }
 
 // ----- Path helpers -----
@@ -326,6 +475,12 @@ export interface ApplyMemfsFlagsOptions {
   agentTags?: string[];
   /** Skip the system prompt update (when the agent was created with the correct mode). */
   skipPromptUpdate?: boolean;
+  /**
+   * Local memfs setting captured before any startup pre-seeding. Used by
+   * interactive startup so tools can see memfs immediately without suppressing
+   * the normal auto-enable-from-server-tag reconciliation path.
+   */
+  initialLocalMemfsEnabled?: boolean;
 }
 
 /**
@@ -359,7 +514,9 @@ export async function applyMemfsFlags(
   }
 
   const hasExplicitToggle = Boolean(memfsFlag || noMemfsFlag);
-  const localMemfsEnabled = settingsManager.isMemfsEnabled(agentId);
+  const localMemfsEnabled =
+    options?.initialLocalMemfsEnabled ??
+    settingsManager.isMemfsEnabled(agentId);
   const { GIT_MEMORY_ENABLED_TAG } = await import("./memoryGit");
   const shouldAutoEnableFromTag =
     !hasExplicitToggle &&
@@ -433,14 +590,15 @@ export async function applyMemfsFlags(
   // 4. Add git tag + clone/pull repo.
   let pullSummary: string | undefined;
   if (isEnabled) {
-    const { addGitMemoryTag, isGitRepo, cloneMemoryRepo, pullMemory } =
-      await import("./memoryGit");
+    const { addGitMemoryTag, isGitRepo, pullMemory } = await import(
+      "./memoryGit"
+    );
     await addGitMemoryTag(
       agentId,
       options?.agentTags ? { tags: options.agentTags } : undefined,
     );
     if (!isGitRepo(agentId)) {
-      await cloneMemoryRepo(agentId);
+      await ensureLocalMemfsCheckout(agentId);
     } else if (options?.pullOnExistingRepo) {
       const result = await pullMemory(agentId);
       pullSummary = result.summary;

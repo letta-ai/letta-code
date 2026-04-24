@@ -1,5 +1,6 @@
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
+import { ensureMemfsCheckoutForPath } from "../../agent/memoryFilesystem";
 import { getCurrentWorkingDirectory } from "../../runtime-context";
 import { validateRequiredParams } from "./validation.js";
 
@@ -144,6 +145,7 @@ export async function edit(args: EditArgs): Promise<EditResult> {
   const resolvedPath = path.isAbsolute(file_path)
     ? file_path
     : path.resolve(userCwd, file_path);
+  await ensureMemfsCheckoutForPath(resolvedPath);
   if (old_string === new_string)
     throw new Error(
       "No changes to make: old_string and new_string are exactly the same.",

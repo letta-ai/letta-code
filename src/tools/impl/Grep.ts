@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { ensureMemfsCheckoutForPath } from "../../agent/memoryFilesystem";
 import { getCurrentWorkingDirectory } from "../../runtime-context";
 import { LIMITS, truncateByChars } from "./truncation.js";
 import { validateRequiredParams } from "./validation.js";
@@ -91,13 +92,14 @@ export async function grep(args: GrepArgs): Promise<GrepResult> {
   if (glob) rgArgs.push("--glob", glob);
   if (multiline) rgArgs.push("-U", "--multiline-dotall");
   rgArgs.push(pattern);
-  if (searchPath)
-    rgArgs.push(
-      path.isAbsolute(searchPath)
-        ? searchPath
-        : path.resolve(userCwd, searchPath),
-    );
-  else rgArgs.push(userCwd);
+  let searchRoot = userCwd;
+  if (searchPath) {
+    searchRoot = path.isAbsolute(searchPath)
+      ? searchPath
+      : path.resolve(userCwd, searchPath);
+  }
+  rgArgs.push(searchRoot);
+  await ensureMemfsCheckoutForPath(searchRoot);
 
   try {
     const { stdout } = await execFileAsync(rgPath, rgArgs, {

@@ -1,5 +1,6 @@
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
+import { ensureMemfsCheckoutForPath } from "../../agent/memoryFilesystem";
 import { getCurrentWorkingDirectory } from "../../runtime-context";
 import { validateRequiredParams } from "./validation.js";
 
@@ -18,6 +19,7 @@ export async function write(args: WriteArgs): Promise<WriteResult> {
   const resolvedPath = path.isAbsolute(file_path)
     ? file_path
     : path.resolve(userCwd, file_path);
+  await ensureMemfsCheckoutForPath(resolvedPath);
   try {
     const dir = path.dirname(resolvedPath);
     await fs.mkdir(dir, { recursive: true });

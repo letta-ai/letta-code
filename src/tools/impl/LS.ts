@@ -1,6 +1,7 @@
 import { readdir, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import picomatch from "picomatch";
+import { ensureMemfsCheckoutForPath } from "../../agent/memoryFilesystem";
 import LSSchema from "../schemas/LS.json";
 import { LIMITS } from "./truncation.js";
 import { validateParamTypes, validateRequiredParams } from "./validation.js";
@@ -26,6 +27,7 @@ export async function ls(
   );
   const { path: inputPath, ignore = [] } = args;
   const dirPath = resolve(inputPath);
+  await ensureMemfsCheckoutForPath(dirPath);
   try {
     const items = await readdir(dirPath);
     const filteredItems = items.filter(

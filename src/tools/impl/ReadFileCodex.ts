@@ -1,4 +1,7 @@
 import { promises as fs } from "node:fs";
+import * as path from "node:path";
+import { ensureMemfsCheckoutForPath } from "../../agent/memoryFilesystem";
+import { getCurrentWorkingDirectory } from "../../runtime-context";
 import { validateRequiredParams } from "./validation.js";
 
 const MAX_LINE_LENGTH = 500;
@@ -48,6 +51,11 @@ export async function read_file(
     mode = "slice",
     indentation,
   } = args;
+  const userCwd = getCurrentWorkingDirectory();
+  const resolvedPath = path.isAbsolute(file_path)
+    ? file_path
+    : path.resolve(userCwd, file_path);
+  await ensureMemfsCheckoutForPath(resolvedPath);
 
   if (offset < 1) {
     throw new Error("offset must be a 1-indexed line number");
@@ -61,13 +69,13 @@ export async function read_file(
 
   if (mode === "indentation") {
     lines = await readIndentationMode(
-      file_path,
+      resolvedPath,
       offset,
       limit,
       indentation ?? {},
     );
   } else {
-    lines = await readSliceMode(file_path, offset, limit);
+    lines = await readSliceMode(resolvedPath, offset, limit);
   }
 
   return { content: lines.join("\n") };

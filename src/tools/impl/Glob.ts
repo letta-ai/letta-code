@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { ensureMemfsCheckoutForPath } from "../../agent/memoryFilesystem";
 import { getCurrentWorkingDirectory } from "../../runtime-context";
 import { LIMITS, truncateArray } from "./truncation.js";
 import { validateRequiredParams } from "./validation.js";
@@ -73,6 +74,7 @@ export async function glob(args: GlobArgs): Promise<GlobResult> {
       ? searchPath
       : path.resolve(userCwd, searchPath)
     : userCwd;
+  await ensureMemfsCheckoutForPath(baseDir);
 
   // Build ripgrep args for file listing
   // --files: list files instead of searching content

@@ -1,5 +1,6 @@
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
+import { ensureMemfsCheckoutForPath } from "../../agent/memoryFilesystem";
 import { getCurrentWorkingDirectory } from "../../runtime-context";
 import { validateRequiredParams } from "./validation.js";
 
@@ -71,6 +72,7 @@ export async function apply_patch(
   for (const op of operations) {
     if (op.kind === "add") {
       const targetPath = resolvePatchPath(cwd, op.path);
+      await ensureMemfsCheckoutForPath(targetPath);
       const parent = path.dirname(targetPath);
       if (parent) {
         await fs.mkdir(parent, { recursive: true });
@@ -84,6 +86,7 @@ export async function apply_patch(
 
     if (op.kind === "delete") {
       const targetPath = resolvePatchPath(cwd, op.path);
+      await ensureMemfsCheckoutForPath(targetPath);
       try {
         await fs.unlink(targetPath);
       } catch {
@@ -94,6 +97,7 @@ export async function apply_patch(
     }
 
     const sourcePath = resolvePatchPath(cwd, op.fromPath);
+    await ensureMemfsCheckoutForPath(sourcePath);
     const newContents = await deriveNewContentsFromChunks(
       sourcePath,
       op.fromPath,
@@ -102,6 +106,7 @@ export async function apply_patch(
 
     if (op.toPath && op.toPath !== op.fromPath) {
       const destinationPath = resolvePatchPath(cwd, op.toPath);
+      await ensureMemfsCheckoutForPath(destinationPath);
       const parent = path.dirname(destinationPath);
       if (parent) {
         await fs.mkdir(parent, { recursive: true });

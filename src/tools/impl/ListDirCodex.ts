@@ -1,5 +1,6 @@
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
+import { ensureMemfsCheckoutForPath } from "../../agent/memoryFilesystem";
 import { getCurrentWorkingDirectory } from "../../runtime-context";
 import { getDirectoryLimits } from "../../utils/directoryLimits.js";
 import { validateRequiredParams } from "./validation.js";
@@ -58,6 +59,7 @@ export async function list_dir(
   const resolvedPath = path.isAbsolute(dir_path)
     ? dir_path
     : path.resolve(userCwd, dir_path);
+  await ensureMemfsCheckoutForPath(resolvedPath);
 
   if (!Number.isInteger(offset) || offset < 1) {
     throw new Error("offset must be a positive integer (1-indexed)");
