@@ -1,4 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import sharp from "sharp";
 import {
   MAX_IMAGE_HEIGHT,
@@ -44,5 +48,45 @@ describe("resizeImageIfNeeded", () => {
     const result = await resizeImageIfNeeded(pngBuffer, "image/tiff");
 
     expect(result.mediaType).toBe("image/png");
+  });
+
+  test("converts HEIC inputs on macOS before applying model limits", async () => {
+    if (process.platform !== "darwin") {
+      return;
+    }
+
+    const tempRoot = mkdtempSync(join(tmpdir(), "letta-heic-resize-"));
+    try {
+      const pngBuffer = await sharp({
+        create: {
+          width: 128,
+          height: 96,
+          channels: 3,
+          background: { r: 30, g: 140, b: 220 },
+        },
+      })
+        .png()
+        .toBuffer();
+      const pngPath = join(tempRoot, "source.png");
+      const heicPath = join(tempRoot, "source.heic");
+      writeFileSync(pngPath, pngBuffer);
+
+      execFileSync(
+        "/usr/bin/sips",
+        ["-s", "format", "heic", pngPath, "--out", heicPath],
+        { stdio: "ignore" },
+      );
+
+      const heicBuffer = readFileSync(heicPath);
+      const result = await resizeImageIfNeeded(heicBuffer, "image/heic");
+      const resizedBuffer = Buffer.from(result.data, "base64");
+      const metadata = await sharp(resizedBuffer).metadata();
+
+      expect(result.mediaType).toBe("image/jpeg");
+      expect(metadata.width).toBeLessThanOrEqual(MAX_IMAGE_WIDTH);
+      expect(metadata.height).toBeLessThanOrEqual(MAX_IMAGE_HEIGHT);
+    } finally {
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
   });
 });
